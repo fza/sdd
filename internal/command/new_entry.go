@@ -87,8 +87,17 @@ type NewEntryCmd struct {
 	// decision. Each --involvement flag parses into one entry here.
 	Involvement []model.Involvement
 
-	SkipPreflight    bool
-	DryRun           bool
+	SkipPreflight bool
+	DryRun        bool
+
+	// PreflightVerified skips the pre-flight LLM call the same way
+	// SkipPreflight does, but leaves no trace: no preflight frontmatter
+	// annotation and no stderr warning. For callers that already ran the
+	// same entry through --dry-run and settled its findings — re-running a
+	// non-deterministic validator on the real capture can surface fresh
+	// findings the dry-run loop already cleared.
+	PreflightVerified bool
+
 	PreflightTimeout time.Duration
 	PreflightModel   string
 

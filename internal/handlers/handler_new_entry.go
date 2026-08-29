@@ -117,7 +117,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 
 	if cmd.SkipPreflight {
 		entry.Preflight = "skipped"
-	} else {
+	} else if !cmd.PreflightVerified {
 		g.Go(func() error {
 			timeout := cmd.PreflightTimeout
 			if timeout == 0 {
@@ -161,6 +161,8 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	// Process pre-flight results on the main goroutine (no concurrent stderr writes).
 	if cmd.SkipPreflight {
 		fmt.Fprintf(h.stderr, "warning: pre-flight validation skipped\n")
+	} else if cmd.PreflightVerified {
+		// Deliberately silent: the caller settled findings in a prior --dry-run.
 	} else if pfErr != nil {
 		return fmt.Errorf("pre-flight error: %w (use --skip-preflight to bypass)", pfErr)
 	} else {

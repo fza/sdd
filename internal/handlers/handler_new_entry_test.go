@@ -22,6 +22,7 @@ import (
 type fakeReader struct {
 	preflightResult *query.PreflightResult
 	preflightErr    error
+	preflightCalls  int
 	graph           *model.Graph
 }
 
@@ -37,6 +38,7 @@ func (f *fakeReader) LoadWIPMarkers(_ string) ([]*model.WIPMarker, error) {
 }
 
 func (f *fakeReader) Preflight(ctx context.Context, q query.PreflightQuery) (*query.PreflightResult, error) {
+	f.preflightCalls++
 	return f.preflightResult, f.preflightErr
 }
 
@@ -735,5 +737,118 @@ func TestNewEntry_ExplicitSummary_SkipsLLM(t *testing.T) {
 	}
 	if entry.Summary != custom {
 		t.Errorf("stored summary = %q, want %q", entry.Summary, custom)
+	}
+}
+
+// TestNewEntry_PreflightVerified_LeavesNoTrace covers the capture path for an
+// entry whose findings were already settled in a prior --dry-run: the
+// validator must not run again (it is non-deterministic and can surface fresh
+// findings), and the written entry must be indistinguishable from one that
+// passed — no preflight annotation, no stderr warning.
+func TestNewEntry_PreflightVerified_LeavesNoTrace(t *testing.T) {
+	tmp := t.TempDir()
+	sddDir := filepath.Join(tmp, ".sdd")
+	if err := os.MkdirAll(sddDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := &fakeReader{
+		preflightResult: &query.PreflightResult{
+			Findings: []query.Finding{
+				{Severity: query.SeverityHigh, Category: "coverage", Observation: "would block"},
+			},
+		},
+	}
+	stderr := &bytes.Buffer{}
+	var reportedID string
+
+	h := handlers.New(handlers.Options{
+		GraphDir:  tmp,
+		SDDDir:    sddDir,
+		Reader:    reader,
+		Committer: &recordingCommitter{},
+		Stderr:    stderr,
+	})
+
+	cmd := &command.NewEntryCmd{
+		Type:              model.TypeSignal,
+		Layer:             model.LayerTactical,
+		Description:       "settled by a prior dry-run",
+		PreflightVerified: true,
+		OnNewEntry:        func(id, _ string) { reportedID = id },
+	}
+
+	if err := h.NewEntry(context.Background(), cmd); err != nil {
+		t.Fatalf("NewEntry: %v", err)
+	}
+	if reader.preflightCalls != 0 {
+		t.Errorf("Preflight called %d times, want 0", reader.preflightCalls)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr should stay silent, got:\n%s", stderr.String())
+	}
+
+	relPath, err := model.IDToRelPath(reportedID)
+	if err != nil {
+		t.Fatalf("IDToRelPath(%s): %v", reportedID, err)
+	}
+	content, err := os.ReadFile(filepath.Join(tmp, relPath))
+	if err != nil {
+		t.Fatalf("reading the entry: %v", err)
+	}
+	if strings.Contains(string(content), "preflight:") {
+		t.Errorf("entry must carry no preflight annotation, got:\n%s", content)
+	}
+}
+
+// TestNewEntry_SkipPreflight_RecordsTheBypass is the counterpart to
+// TestNewEntry_PreflightVerified_LeavesNoTrace: --skip-preflight stays visible.
+func TestNewEntry_SkipPreflight_RecordsTheBypass(t *testing.T) {
+	tmp := t.TempDir()
+	sddDir := filepath.Join(tmp, ".sdd")
+	if err := os.MkdirAll(sddDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := &fakeReader{}
+	stderr := &bytes.Buffer{}
+	var reportedID string
+
+	h := handlers.New(handlers.Options{
+		GraphDir:  tmp,
+		SDDDir:    sddDir,
+		Reader:    reader,
+		Committer: &recordingCommitter{},
+		Stderr:    stderr,
+	})
+
+	cmd := &command.NewEntryCmd{
+		Type:          model.TypeSignal,
+		Layer:         model.LayerTactical,
+		Description:   "bypassed on purpose",
+		SkipPreflight: true,
+		OnNewEntry:    func(id, _ string) { reportedID = id },
+	}
+
+	if err := h.NewEntry(context.Background(), cmd); err != nil {
+		t.Fatalf("NewEntry: %v", err)
+	}
+	if reader.preflightCalls != 0 {
+		t.Errorf("Preflight called %d times, want 0", reader.preflightCalls)
+	}
+	if !strings.Contains(stderr.String(), "pre-flight validation skipped") {
+		t.Errorf("stderr should warn about the bypass, got:\n%s", stderr.String())
+	}
+
+	relPath, err := model.IDToRelPath(reportedID)
+	if err != nil {
+		t.Fatalf("IDToRelPath(%s): %v", reportedID, err)
+	}
+	content, err := os.ReadFile(filepath.Join(tmp, relPath))
+	if err != nil {
+		t.Fatalf("reading the entry: %v", err)
+	}
+	if !strings.Contains(string(content), "preflight: skipped") {
+		t.Errorf("entry should carry preflight: skipped, got:\n%s", content)
 	}
 }
