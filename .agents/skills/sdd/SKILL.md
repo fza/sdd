@@ -3,7 +3,7 @@ allowed-tools: Read Grep Bash(sdd *)
 compatibility: Designed for OpenAI Codex
 description: Work with the SDD decision graph. Check in on project state, capture signals, make decisions, evaluate completed work. Use when starting a session, capturing observations, or making project decisions.
 metadata:
-    sdd-content-hash: 9d13bc30e49c05613821b8ad47bf9ec302a5e06312e7d8bb04a7f42ccdd9e7a9
+    sdd-content-hash: 031c0f367a4b487314b6552a85f4b2f82e84d1b54fe9285c5031913bfc9371d5
     sdd-version: dev
 name: sdd
 ---
@@ -127,6 +127,8 @@ Never silently create graph entries. When capturing anything:
 - `[high]` findings block entry creation. Read each one, decide whether to revise the entry or `--skip-preflight` if the finding is wrong.
 - `[medium]` findings are displayed but don't block. They surface observations worth naming — partial coverage, ambiguity that could be intentional, specific proposal worth dialoguing. Don't reflexively ignore them; decide whether to revise, explain, or proceed.
 - `[low]` findings are informational — stylistic, editorial. Read, decide, continue.
+
+**When a `--dry-run` pass already settled the findings, capture for real with `--preflight-verified`.** Pre-flight is an LLM call and non-deterministic: running it again on the identical entry can raise findings the dry-run loop already cleared, sending the capture back through another revision round. `--preflight-verified` skips the second run and leaves no annotation — the entry is written as the dry-run validated it. Only use it when the dry-run covered the same text; a revised entry needs a fresh dry-run.
 
 Don't reflexively `--skip-preflight` on `medium` findings — they often surface genuine observations worth dialoguing. Only skip when confident the finding is wrong (e.g., the pre-flight argues with rationale that was already dialogued and confirmed — that's over-correction).
 
