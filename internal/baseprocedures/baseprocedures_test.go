@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/networkteam/sdd/internal/engine"
 )
 
 const validProcedure = `---
@@ -108,5 +110,30 @@ func TestEntries_EmbeddedSetLoads(t *testing.T) {
 	}
 	if !slices.Contains(canonicals, "capture") {
 		t.Errorf("embedded set must ship the capture procedure, got canonicals %v", canonicals)
+	}
+}
+
+func TestCaptureCarriesFactIndexThroughPlaybackAndWrite(t *testing.T) {
+	entries, err := Entries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Canonical != "capture" {
+			continue
+		}
+		if !strings.Contains(entry.Content, "optionally enrolls a `fact` in the retrieval index") {
+			t.Error("capture procedure lost the fact-index enrollment guidance")
+		}
+		// Playback visibility lives in the engine-rendered draft block: the
+		// step's serveDelta declaration must carry the index field.
+		spec, err := engine.ParseSpec(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		playback := spec.StepByID["playback"]
+		if playback == nil || !slices.Contains(playback.ServeDelta, "index") {
+			t.Errorf("playback serveDelta must carry index, got %v", playback.ServeDelta)
+		}
 	}
 }

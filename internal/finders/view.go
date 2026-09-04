@@ -32,28 +32,25 @@ import (
 //
 // Unknown function names return an error listing the valid set so users
 // (and future-slice tests) get a clear signal.
-func (f *Finder) View(q query.ViewQuery) (*query.ViewResult, error) {
-	if q.Graph == nil {
+func (gf *GraphFinder) View(q query.ViewQuery) (*query.ViewResult, error) {
+	if gf.graph == nil {
 		return nil, fmt.Errorf("graph is required")
 	}
 
-	// Pre-scan: if any section uses source(wip), load markers once and
-	// reuse across sections. Error at scan time (rather than section
-	// time) so a layout that requires markers but lacks GraphDir fails
-	// fast with a single clear message.
+	// Pre-scan: if any section uses source(wip), resolve markers once and
+	// reuse across sections. The finder holds them (or lazy-loads from the
+	// held graph's directory); a layout that needs markers but has neither
+	// fails fast with a single clear message.
 	var wipMarkers []*model.WIPMarker
 	if layoutHasWipSource(q.Layout) {
-		if q.WIPMarkers != nil {
-			wipMarkers = q.WIPMarkers
-		} else if q.GraphDir == "" {
-			return nil, fmt.Errorf("layout uses source(wip) but graph directory is not configured")
-		} else {
-			var err error
-			wipMarkers, err = f.LoadWIPMarkers(q.GraphDir)
-			if err != nil {
-				return nil, fmt.Errorf("loading wip markers: %w", err)
-			}
+		markers, err := gf.WIPMarkers()
+		if err != nil {
+			return nil, fmt.Errorf("loading wip markers: %w", err)
 		}
+		if markers == nil && gf.wip == nil && gf.graph.GraphDir() == "" {
+			return nil, fmt.Errorf("layout uses source(wip) but graph directory is not configured")
+		}
+		wipMarkers = markers
 	}
 
 	// Sections render independently — each surface carries its own
@@ -66,14 +63,14 @@ func (f *Finder) View(q query.ViewQuery) (*query.ViewResult, error) {
 
 	sections := make([]query.SectionResult, 0, len(q.Layout.Sections))
 	for i, section := range q.Layout.Sections {
-		sr, err := executeSection(q.Graph, wipMarkers, section, now)
+		sr, err := executeSection(gf.graph, wipMarkers, section, q.Budget, now)
 		if err != nil {
 			return nil, fmt.Errorf("section %d: %w", i+1, err)
 		}
 		sections = append(sections, sr)
 	}
 
-	return &query.ViewResult{Graph: q.Graph, Sections: sections}, nil
+	return &query.ViewResult{Graph: gf.graph, Sections: sections}, nil
 }
 
 // layoutHasWipSource reports whether any section in the layout uses
@@ -100,6 +97,7 @@ func layoutHasWipSource(layout model.Layout) bool {
 // result, as-list over a grouped result) is the AC 16 render-shape error
 // the executor emits before the presenter sees the data.
 var renderFunctions = map[string]model.RenderShape{
+	"as-bodies":             model.ShapeBodies,
 	"as-list":               model.ShapeFlatList,
 	"as-grouped":            model.ShapeGrouped,
 	"as-counts":             model.ShapeCounts,
@@ -110,7 +108,25 @@ var renderFunctions = map[string]model.RenderShape{
 
 // knownFunctions lists every function name the executor recognizes. Used
 // in the unknown-function error message so users see what's available.
-var knownFunctions = []string{"source", "active", "kind", "intent", "type", "layer", "since", "topic", "participant", "untagged", "id", "not", "n", "rank", "group", "expand", "name", "name-prefix", "stalled", "brief", "as-list", "as-grouped", "as-counts", "as-focus-block", "as-participants-block", "as-wip-list"}
+var knownFunctions = []string{"source", "active", "indexed", "kind", "intent", "type", "layer", "since", "topic", "participant", "untagged", "id", "not", "n", "skip", "rank", "group", "expand", "name", "name-prefix", "stalled", "brief", "as-list", "as-grouped", "as-counts", "as-focus-block", "as-participants-block", "as-wip-list", "as-bodies"}
+
+// ViewFunctionNames returns the function names accepted by the layout
+// executor. Reference surfaces use this instead of maintaining their own
+// vocabulary list.
+func ViewFunctionNames() []string {
+	return slices.Clone(knownFunctions)
+}
+
+// ViewRenderNames returns the render terminators accepted by the layout
+// executor in deterministic order.
+func ViewRenderNames() []string {
+	names := make([]string, 0, len(renderFunctions))
+	for name := range renderFunctions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
 
 // supportedNotInner lists the inner filter names accepted by `not(<inner>)`
 // in d-tac-e1s's first cut. Pure set-shaped filters with unambiguous
@@ -164,7 +180,7 @@ func parseSourceArg(args []model.FunctionArg) (string, error) {
 //
 // now is the clock used for focus-block heat scoring (test determinism
 // via injection).
-func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model.Section, now time.Time) (query.SectionResult, error) {
+func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model.Section, budget query.ViewBudget, now time.Time) (query.SectionResult, error) {
 	if len(section.Functions) == 0 {
 		return query.SectionResult{}, fmt.Errorf("empty section")
 	}
@@ -202,10 +218,16 @@ func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model
 				"render-shape mismatch: source(wip) produces a wip-list result, but %s expects a different shape (use as-wip-list)",
 				spec.render)
 		}
+		list := model.WipList{Markers: wipMarkers}
+		if budget.GroupItems > 0 && len(list.Markers) > budget.GroupItems {
+			list.Dropped = len(list.Markers) - budget.GroupItems
+			list.Markers = list.Markers[:budget.GroupItems]
+			list.Pull = section.Expr()
+		}
 		return query.SectionResult{
 			Render: spec.render,
 			Name:   spec.sectionName(),
-			Data:   model.WipList{Markers: wipMarkers},
+			Data:   list,
 		}, nil
 	}
 
@@ -222,6 +244,9 @@ func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model
 	// post-Graph.Filter() narrowings doesn't affect the result; chosen
 	// here to keep cheaper structural checks before time/topic walks.
 	entries := g.Filter(spec.filter)
+	if spec.indexed {
+		entries = model.FilterIndexed(entries)
+	}
 	for _, kinds := range spec.kindFilters {
 		entries = filterByKinds(entries, kinds)
 	}
@@ -279,6 +304,16 @@ func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model
 		// below must share one instant within a single View call.
 		entries, scores = applyRanking(g, entries, spec.rank, now)
 	}
+	if spec.skipN > 0 {
+		if spec.skipN >= len(entries) {
+			entries, scores = nil, nil
+		} else {
+			entries = entries[spec.skipN:]
+			if scores != nil {
+				scores = scores[spec.skipN:]
+			}
+		}
+	}
 	if spec.pageN >= 0 && len(entries) > spec.pageN {
 		entries = entries[:spec.pageN]
 		if scores != nil {
@@ -294,11 +329,46 @@ func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model
 	// actorless filter stays quiet rather than producing a bare title.
 	if spec.render == "as-participants-block" {
 		block := participantsBlockFromEntries(g, entries)
+		if budget.GroupItems > 0 && len(block.Groups) > budget.GroupItems {
+			block.Dropped = len(block.Groups) - budget.GroupItems
+			block.Groups = block.Groups[:budget.GroupItems]
+			block.Pull = section.Expr()
+		}
 		return query.SectionResult{
 			Render: spec.render,
 			Name:   spec.sectionName(),
 			Data:   block,
 			Brief:  spec.brief,
+		}, nil
+	}
+
+	// as-bodies serves the entries themselves, so the pipeline hands over the
+	// ranked and paged set unchanged — the render composes each body into the
+	// surrounding document's heading hierarchy.
+	if spec.render == "as-bodies" {
+		bodies := model.Bodies{Entries: entries}
+		if budget.BodyBytes > 0 {
+			// Whole bodies while bytes fit — a body cut mid-way destroys the
+			// content's purpose, so the unit is the entry (d-tac-rzi).
+			kept, total := 0, 0
+			for _, e := range entries {
+				n := len(e.Content)
+				if total+n > budget.BodyBytes {
+					break
+				}
+				kept++
+				total += n
+			}
+			if kept < len(entries) {
+				bodies.Dropped = len(entries) - kept
+				bodies.Entries = entries[:kept]
+				bodies.Pull = section.Expr()
+			}
+		}
+		return query.SectionResult{
+			Render: spec.render,
+			Name:   spec.sectionName(),
+			Data:   bodies,
 		}, nil
 	}
 
@@ -320,6 +390,11 @@ func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model
 		// targets. Score is fixed at heat(exp-14d) per slice-7 design;
 		// stalled threshold takes the user-supplied value if set.
 		block := expandInvolvement(g, entries, focusBlockScorer(g, now), spec.stalledThreshold)
+		if budget.GroupItems > 0 && len(block.Focuses) > budget.GroupItems {
+			block.Dropped = len(block.Focuses) - budget.GroupItems
+			block.Focuses = block.Focuses[:budget.GroupItems]
+			block.Pull = section.Expr()
+		}
 		return query.SectionResult{
 			Render: spec.render,
 			Name:   spec.sectionName(),
@@ -338,6 +413,15 @@ func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model
 	flat := model.FlatList{Entries: entries, Scores: scores}
 	if spec.expandField == "refs" {
 		flat.RefExpansions = expandRefs(g, entries, spec.expandRefsInactive)
+		if budget.RefsPerEntry > 0 {
+			flat.RefExpansionDropped = make([]int, len(flat.RefExpansions))
+			for i, refs := range flat.RefExpansions {
+				if len(refs) > budget.RefsPerEntry {
+					flat.RefExpansionDropped[i] = len(refs) - budget.RefsPerEntry
+					flat.RefExpansions[i] = refs[:budget.RefsPerEntry]
+				}
+			}
+		}
 	}
 	return query.SectionResult{
 		Render: spec.render,
@@ -366,6 +450,12 @@ func parseSectionFunction(spec *sectionSpec, fn model.Function) error {
 			return fmt.Errorf("active takes no arguments")
 		}
 		spec.filter.OpenOnly = true
+
+	case fn.Name == "indexed":
+		if len(fn.Args) > 0 {
+			return fmt.Errorf("indexed takes no arguments")
+		}
+		spec.indexed = true
 
 	case fn.Name == "kind":
 		kinds, err := parseKindArgs(fn.Args)
@@ -491,6 +581,13 @@ func parseSectionFunction(spec *sectionSpec, fn model.Function) error {
 		}
 		spec.pageN = page
 
+	case fn.Name == "skip":
+		skip, err := parseIntegerArg("skip", fn.Args)
+		if err != nil {
+			return err
+		}
+		spec.skipN = skip
+
 	case fn.Name == "group":
 		field, err := parseGroupArgs(fn.Args)
 		if err != nil {
@@ -551,9 +648,12 @@ func parseSectionFunction(spec *sectionSpec, fn model.Function) error {
 		spec.render = fn.Name
 
 	default:
+		// List macros alongside primitives: a wrong guess like recent(15)
+		// is often a reach for a macro (top, focus, done, …), and the
+		// primitive-only list left that vocabulary undiscoverable.
 		return fmt.Errorf(
-			"unknown function %q (known: %s)",
-			fn.Name, strings.Join(knownFunctions, ", "))
+			"unknown function %q (known primitives: %s; macros, valid at section start: %s)",
+			fn.Name, strings.Join(knownFunctions, ", "), strings.Join(query.MacroNames(), ", "))
 	}
 	return nil
 }
@@ -681,12 +781,7 @@ func isRenderFunction(name string) bool {
 // for inclusion in error messages. Iteration order over the map is not
 // stable, so the slice is sorted for deterministic test output.
 func renderFunctionsList() string {
-	names := make([]string, 0, len(renderFunctions))
-	for n := range renderFunctions {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return strings.Join(names, ", ")
+	return strings.Join(ViewRenderNames(), ", ")
 }
 
 // parseNameArgs validates name()'s single string argument. Empty strings

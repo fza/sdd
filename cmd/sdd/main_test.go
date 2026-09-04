@@ -4,83 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
-
-	tea "charm.land/bubbletea/v2"
 
 	"github.com/networkteam/sdd/internal/model"
 )
 
-func pressAgentsKey(m agentsPromptModel, code rune) agentsPromptModel {
-	next, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: code}))
-	return next.(agentsPromptModel)
-}
-
-// TestAgentsPromptModel_ToggleAndConfirm walks the supported-agents multi-select
-// the way an operator would on first run: navigate to codex, toggle it on, and
-// confirm — yielding both targets.
-func TestAgentsPromptModel_ToggleAndConfirm(t *testing.T) {
-	m := newAgentsPromptModel() // claude pre-selected, cursor on claude
-	m = pressAgentsKey(m, 'j')  // move to codex
-	m = pressAgentsKey(m, ' ')  // toggle codex on
-	m = pressAgentsKey(m, tea.KeyEnter)
-	if !m.done {
-		t.Fatal("enter with a selection should confirm")
-	}
-	var chosen []model.AgentTarget
-	for _, o := range m.options {
-		if o.selected {
-			chosen = append(chosen, o.value)
-		}
-	}
-	if !slices.Equal(chosen, []model.AgentTarget{model.AgentClaude, model.AgentCodex}) {
-		t.Errorf("got %v, want [claude codex]", chosen)
-	}
-}
-
-// TestAgentsPromptModel_RequiresSelection verifies enter is ignored until at
-// least one agent is selected.
-func TestAgentsPromptModel_RequiresSelection(t *testing.T) {
-	m := newAgentsPromptModel()
-	m = pressAgentsKey(m, ' ')          // deselect claude (the only default)
-	m = pressAgentsKey(m, tea.KeyEnter) // try to confirm with nothing selected
-	if m.done {
-		t.Error("enter with no selection must not confirm")
-	}
-}
-
-func TestChooseLegacySessionMigrationRequiresExplicitNonInteractiveOptIn(t *testing.T) {
-	promptCalls := 0
-	prompt := func(int) (bool, error) {
-		promptCalls++
-		return true, nil
-	}
-
-	got, err := chooseLegacySessionMigration(2, false, false, prompt)
-	if err != nil || got || promptCalls != 0 {
-		t.Fatalf("non-interactive choice = %v, %v; prompt calls %d", got, err, promptCalls)
-	}
-	got, err = chooseLegacySessionMigration(2, true, false, prompt)
-	if err != nil || !got || promptCalls != 0 {
-		t.Fatalf("explicit non-interactive choice = %v, %v; prompt calls %d", got, err, promptCalls)
-	}
-	got, err = chooseLegacySessionMigration(2, false, true, prompt)
-	if err != nil || !got || promptCalls != 1 {
-		t.Fatalf("interactive choice = %v, %v; prompt calls %d", got, err, promptCalls)
-	}
-	declined, err := chooseLegacySessionMigration(2, false, true, func(int) (bool, error) { return false, nil })
-	if err != nil || declined {
-		t.Fatalf("declined interactive choice = %v, %v", declined, err)
-	}
-}
-
-// TestSplitCSV_TrimsWhitespaceAndDropsEmpty is the regression test for the
-// CSV whitespace-trim bug (s-prc-omw, d-tac-955) and the d-prc-8vh contract
-// requiring regression tests for bug fixes. Before the fix,
-// `--participants "Christopher, Claude"` stored " Claude" with leading space
-// as a distinct participant identity across ~30 entries in the graph.
 func TestSplitCSV_TrimsWhitespaceAndDropsEmpty(t *testing.T) {
 	tests := []struct {
 		input string
@@ -139,7 +68,7 @@ func TestParseAttachSpec(t *testing.T) {
 }
 
 func TestParseAttachFlags_PlainPath(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := canonicalTempDir(t)
 	f := filepath.Join(tmp, "design.md")
 	if err := os.WriteFile(f, []byte("# Design"), 0644); err != nil {
 		t.Fatal(err)
@@ -161,7 +90,7 @@ func TestParseAttachFlags_PlainPath(t *testing.T) {
 }
 
 func TestParseAttachFlags_SourceTargetMapping(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := canonicalTempDir(t)
 	f := filepath.Join(tmp, "tmpXXX.md")
 	if err := os.WriteFile(f, []byte("content"), 0644); err != nil {
 		t.Fatal(err)
@@ -236,7 +165,7 @@ func TestParseAttachFlags_MissingFileError(t *testing.T) {
 }
 
 func TestParseAttachFlags_MultipleAttachments(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := canonicalTempDir(t)
 	f1 := filepath.Join(tmp, "a.md")
 	f2 := filepath.Join(tmp, "b.md")
 	if err := os.WriteFile(f1, []byte("a"), 0644); err != nil {
@@ -387,6 +316,30 @@ func TestParseRefFlags_UnknownKindRejectedAtCapture(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid kind") {
 		t.Errorf("error %q should reject unknown at capture", err.Error())
+	}
+}
+
+func TestParseFactIndexFlag(t *testing.T) {
+	index, err := parseFactIndexFlag(`{"title":"How to compose graph views","topic":"cli/view"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index.Title != "How to compose graph views" || index.Topic.String() != "cli/view" {
+		t.Fatalf("index = %+v", index)
+	}
+	for _, input := range []string{
+		`{"title":"Missing topic"}`,
+		`{"title":" ","topic":"cli/view"}`,
+		`{"title":"Title","topic":"cli view"}`,
+		`{"title":"Title\n## Injected","topic":"cli/view"}`,
+		`{"title":"Title\u0007Injected","topic":"cli/view"}`,
+		`{"title":"Title\u2028Injected","topic":"cli/view"}`,
+		`{"title":"Title","topic":"cli/view","extra":true}`,
+		`{"title":"Title","topic":"cli/view"} {}`,
+	} {
+		if _, err := parseFactIndexFlag(input); err == nil {
+			t.Errorf("parseFactIndexFlag(%q) accepted invalid object", input)
+		}
 	}
 }
 

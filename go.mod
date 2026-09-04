@@ -18,9 +18,10 @@ require (
 	github.com/teilomillet/gollm v0.1.11
 	github.com/urfave/cli/v3 v3.8.0
 	gitlab.com/golang-commonmark/markdown v0.0.0-20211110145824-bf3e522c626a
-	golang.org/x/mod v0.35.0
-	golang.org/x/sync v0.20.0
+	golang.org/x/mod v0.39.0
+	golang.org/x/sync v0.22.0
 	golang.org/x/time v0.15.0
+	golang.org/x/tools v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -78,11 +79,11 @@ require (
 	gitlab.com/golang-commonmark/linkify v0.0.0-20191026162114-a0c2df6c8f82 // indirect
 	gitlab.com/golang-commonmark/mdurl v0.0.0-20191124015652-932350d1cb84 // indirect
 	gitlab.com/golang-commonmark/puny v0.0.0-20191124015043-9f83538fa04f // indirect
-	golang.org/x/crypto v0.47.0 // indirect
-	golang.org/x/net v0.48.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )
 
 // Point gollm at the networkteam fork, which adds provider-aware retry with
@@ -91,4 +92,4 @@ require (
 // source and honor replace; only `go install pkg@version` (which sdd does not
 // use) would break. Remove this directive once the change lands upstream and
 // bump the require above to the released teilomillet/gollm version.
-replace github.com/teilomillet/gollm => github.com/networkteam/gollm v0.0.0-20260614104521-19e75febe86b
+replace github.com/teilomillet/gollm => github.com/networkteam/gollm v0.0.0-20260831213159-f6f84ac83bb5

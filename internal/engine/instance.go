@@ -2,9 +2,16 @@ package engine
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"text/template"
+
+	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/serveview"
+	"github.com/networkteam/sdd/internal/truncate"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // InstanceStatus is a procedure instance's lifecycle state.
@@ -44,6 +51,11 @@ type Instance struct {
 	// answered option declared one; empty means the seed applies to whatever is
 	// dispatched next (a generic junction like engage's move).
 	dispatchProcedure string
+	// draftServed holds, per step, the serveDelta snapshot last served to this
+	// instance — the engine-owned base later serves diff against. In-memory
+	// only, deliberately: a process restart or resume forgets it, so those
+	// paths serve whole (20260826-120330-d-tac-8f8).
+	draftServed map[string]map[string]string
 }
 
 // currentStep returns the instance's step definition, nil when terminal.
@@ -97,6 +109,10 @@ type Serve struct {
 	// UnitText is the rendered unit alone, without diagnostics — what a
 	// shell replaces with a one-line reminder once the unit was served.
 	UnitText string
+	// Lanes are the unit's rendered lanes in declaration order (empty
+	// rendered lanes dropped), the blocks a host dedups independently
+	// (d-tac-87o). UnitText is their join.
+	Lanes []ServeLane
 	// Diagnostics are the stall messages appended to Instructions ("Gate
 	// held" lines), kept separate so shells can recompose around UnitText.
 	Diagnostics []string
@@ -112,7 +128,17 @@ type Serve struct {
 	// Produced carries the engine-written results on completion (e.g. the
 	// created entry ID), excluding internal trust machinery.
 	Produced map[string]any
+	// Sizes is the per-part byte accounting of this serve — inject results,
+	// rendered lanes, schema, diagnostics, produced (d-tac-qwc).
+	Sizes []PartSize
+	// Cuts records every bound that fired on this serve; the engine-owned
+	// cuts lane renders them and the measurement harness reads them.
+	Cuts []truncate.Cut
 }
+
+// ServeLane is defined in pkg/application/types — the exported surface names
+// it, so the definition lives in the cycle-free public leaf (s-tac-ah2).
+type ServeLane = types.ServeLane
 
 // evalGuard evaluates a guard against the registry, returning the verdict
 // and the failing predicates for diagnostics.
@@ -164,7 +190,15 @@ func (s *Session) evalGuard(inst *Instance, g *GuardExpr) (bool, []FailedPredica
 // engine's provider. Reading can fail (a disk load error surfaces here rather
 // than through a mutable field poked from outside); callers propagate it.
 func (s *Session) funcContext(inst *Instance) (*Context, error) {
-	graph, err := s.engine.Graphs.Current()
+	var (
+		graph *model.Graph
+		err   error
+	)
+	if contextual, ok := s.engine.Graphs.(ContextualGraphs); ok {
+		graph, err = contextual.CurrentFor(inst.Store)
+	} else {
+		graph, err = s.engine.Graphs.Current()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("resolving current graph: %w", err)
 	}
@@ -266,7 +300,9 @@ func (s *Session) reopenStalePlayback(inst *Instance, failing []FailedPredicate)
 	if conf.Snapshot == inst.Store.StateSnapshot() {
 		return false, nil // confirmation is current; the gate is held by something else
 	}
-	inst.Store.WriteEngine(fieldPlaybackConfirmation, nil)
+	if err := inst.Store.WriteEngine(fieldPlaybackConfirmation, nil); err != nil {
+		return false, err
+	}
 	s.appendEvent(inst.ID, EventOpResult, map[string]any{
 		"step": inst.Step,
 		"fn":   "reopenPlayback",
@@ -288,12 +324,15 @@ func (s *Session) runCommand(inst *Instance, name string) error {
 	if err != nil {
 		return err
 	}
-	inst.Store.beginJournal()
+	candidate := inst.Store.Clone()
+	ctx.Store = candidate
+	candidate.beginJournal()
 	err = cmd.Fn(ctx)
-	writes := inst.Store.drainJournal()
+	writes := candidate.drainJournal()
 	if err != nil {
 		return fmt.Errorf("command %q at step %s: %w", name, inst.Step, err)
 	}
+	inst.Store.commit(candidate)
 	s.appendEvent(inst.ID, EventOpResult, map[string]any{
 		"step":   inst.Step,
 		"fn":     name,
@@ -343,6 +382,14 @@ func (s *Session) transitionTo(inst *Instance, to string, reopen bool) error {
 	return nil
 }
 
+// isTrustMachineryField reports whether a store field is internal trust
+// machinery — the playback confirmation record and the pre-flight override —
+// never surfaced to the agent as produced or collected state. The one
+// authoritative exclusion list, shared by produced() and Store.Collected().
+func isTrustMachineryField(name string) bool {
+	return name == fieldPlaybackConfirmation || name == fieldPreflightOverride
+}
+
 // produced returns the engine-written values worth surfacing on completion,
 // excluding the internal trust machinery fields.
 func (i *Instance) produced() map[string]any {
@@ -351,7 +398,7 @@ func (i *Instance) produced() map[string]any {
 		if ev.Provenance != ProvenanceEngine {
 			continue
 		}
-		if name == fieldPlaybackConfirmation || name == fieldPreflightOverride {
+		if isTrustMachineryField(name) {
 			continue
 		}
 		if ev.Value == nil {
@@ -365,6 +412,12 @@ func (i *Instance) produced() map[string]any {
 // serve builds the Serve for the instance's current position: rendered
 // instructions, report schema, chooser material, and stall diagnostics.
 func (s *Session) serve(inst *Instance) (*Serve, error) {
+	return s.serveWith(inst, false)
+}
+
+// serveWith renders the position; fullDraft forces serveDelta fields whole —
+// the rehydrate path (Serve), where a resuming agent holds no earlier base.
+func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 	sv := &Serve{
 		Instance:  inst.ID,
 		Procedure: inst.Spec.Canonical,
@@ -373,6 +426,9 @@ func (s *Session) serve(inst *Instance) (*Serve, error) {
 	}
 	if inst.Status != StatusRunning {
 		sv.Produced = inst.produced()
+		if n := partBytes(sv.Produced); n > 0 {
+			sv.Sizes = append(sv.Sizes, PartSize{Part: "produced", Bytes: n})
+		}
 		sv.Goal = "the procedure has ended (" + inst.Outcome + ")"
 		return sv, nil
 	}
@@ -392,10 +448,39 @@ func (s *Session) serve(inst *Instance) (*Serve, error) {
 	if _, ok := inst.Spec.Units[unitName]; ok {
 		sv.Unit = unitName
 	}
-	instructions, err := s.renderUnit(inst, step)
+	lanes, sizes, cuts, err := s.renderUnit(inst, step)
 	if err != nil {
 		return nil, err
 	}
+	if len(step.ServeDelta) > 0 {
+		cur := draftSnapshot(inst, step.ServeDelta)
+		var prev map[string]string
+		if !fullDraft {
+			prev = inst.draftServed[step.ID]
+		}
+		draftCap := serveview.Default().Cap(serveview.PartDraft).MaxBytes
+		if block, draftCuts := renderDraft(inst.Spec, step.ServeDelta, prev, cur, fullDraft, draftCap); block != "" {
+			lanes = append(lanes, ServeLane{Name: "draft", Text: block})
+			cuts = append(cuts, draftCuts...)
+		}
+		if inst.draftServed == nil {
+			inst.draftServed = map[string]map[string]string{}
+		}
+		inst.draftServed[step.ID] = cur
+	}
+	if len(cuts) > 0 {
+		lanes = append(lanes, ServeLane{Name: "cuts", Text: renderCuts(cuts)})
+		sv.Cuts = cuts
+	}
+	sv.Lanes = lanes
+	for _, lane := range lanes {
+		sizes = append(sizes, PartSize{Part: "lane:" + lane.Name, Bytes: len(lane.Text)})
+	}
+	texts := make([]string, 0, len(lanes))
+	for _, lane := range lanes {
+		texts = append(texts, lane.Text)
+	}
+	instructions := strings.Join(texts, "\n\n")
 	sv.UnitText = instructions
 
 	var diagnostics []string
@@ -452,6 +537,13 @@ func (s *Session) serve(inst *Instance) (*Serve, error) {
 
 	sv.Diagnostics = diagnostics
 	sv.Instructions = ComposeInstructions(instructions, diagnostics)
+	if n := partBytes(sv.ReportSchema); n > 0 {
+		sizes = append(sizes, PartSize{Part: "schema", Bytes: n})
+	}
+	if len(diagnostics) > 0 {
+		sizes = append(sizes, PartSize{Part: "diagnostics", Bytes: len(strings.Join(diagnostics, "\n"))})
+	}
+	sv.Sizes = sizes
 
 	s.appendEvent(inst.ID, EventServed, map[string]any{"step": step.ID})
 	return sv, nil
@@ -512,50 +604,97 @@ func (s *Session) transitionDiagnostics(inst *Instance, step *Step) []FailedPred
 }
 
 // renderUnit renders the step's instruction unit (its render override or the
-// section named after the step) as a Go template over the store, with inject
-// query results joined into the template context under each fn's name.
-func (s *Session) renderUnit(inst *Instance, step *Step) (string, error) {
+// section named after the step) lane by lane, each lane a Go template over
+// the store, with inject query results in the template context under each
+// call's effective id. Lanes whose rendered text is empty are dropped.
+func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSize, []truncate.Cut, error) {
 	unitName := step.ID
 	if step.Render != "" {
 		unitName = step.Render
 	}
 	unit, ok := inst.Spec.Units[unitName]
 	if !ok {
-		return "", nil // gates without prose serve diagnostics and schema only
+		return nil, nil, nil, nil // gates without prose serve diagnostics and schema only
 	}
 
-	tmplCtx := inst.Store.TemplateContext()
+	tmplCtx, err := s.templateContext(inst)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("unit %s: %w", unitName, err)
+	}
+	var sizes []PartSize
+	var cuts []truncate.Cut
+	// Store values interpolate into served text uncapped otherwise; the bound
+	// applies only here, on the unit context — inject args render against the
+	// raw store (renderInjectArgs), and the draft lane carries its own bound.
+	storeCap := serveview.Default().Cap(serveview.PartStoreValue)
+	for _, name := range slices.Sorted(maps.Keys(tmplCtx)) {
+		if !inst.Store.Has(name) {
+			continue
+		}
+		bounded, cut := serveview.BoundValue(tmplCtx[name], storeCap)
+		if cut != nil {
+			cut.Part = "store:" + name
+			cuts = append(cuts, *cut)
+		}
+		tmplCtx[name] = bounded
+	}
 	if len(step.Inject) > 0 {
 		fctx, err := s.funcContext(inst)
 		if err != nil {
-			return "", fmt.Errorf("step %s: %w", step.ID, err)
+			return nil, nil, nil, fmt.Errorf("step %s: %w", step.ID, err)
 		}
 		for _, inj := range step.Inject {
 			q, found := s.engine.Registry.Query(inj.Fn)
 			if !found {
-				return "", fmt.Errorf("step %s: inject fn %q is not a registered query", step.ID, inj.Fn)
+				return nil, nil, nil, fmt.Errorf("step %s: inject fn %q is not a registered query", step.ID, inj.Fn)
 			}
 			args, err := s.renderInjectArgs(inst, inj.Args)
 			if err != nil {
-				return "", fmt.Errorf("step %s: inject %s: %w", step.ID, inj.Fn, err)
+				return nil, nil, nil, fmt.Errorf("step %s: inject %s: %w", step.ID, inj.Fn, err)
 			}
 			result, err := q.Fn(fctx, args)
 			if err != nil {
-				return "", fmt.Errorf("step %s: inject %s: %w", step.ID, inj.Fn, err)
+				return nil, nil, nil, fmt.Errorf("step %s: inject %s: %w", step.ID, inj.Fn, err)
 			}
-			tmplCtx[inj.Fn] = result
+			value, cut := boundInject(q, inj, args, result)
+			if cut != nil {
+				cuts = append(cuts, *cut)
+			}
+			tmplCtx[inj.EffectiveID()] = value
+			sizes = append(sizes, PartSize{Part: "inject:" + inj.EffectiveID(), Bytes: partBytes(value)})
 		}
 	}
 
-	tmpl, err := template.New(unitName).Option("missingkey=zero").Parse(unit)
-	if err != nil {
-		return "", fmt.Errorf("unit %s: %w", unitName, err)
+	lanes := make([]ServeLane, 0, len(unit.Lanes))
+	for _, lane := range unit.Lanes {
+		tmpl, err := template.New(lane.Name).Option("missingkey=zero").Parse(lane.Text)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("unit %s: lane %s: %w", unitName, lane.Name, err)
+		}
+		var buf strings.Builder
+		if err := tmpl.Execute(&buf, tmplCtx); err != nil {
+			return nil, nil, nil, fmt.Errorf("unit %s: lane %s: %w", unitName, lane.Name, err)
+		}
+		if text := strings.TrimSpace(buf.String()); text != "" {
+			lanes = append(lanes, ServeLane{Name: lane.Name, Text: text})
+		}
 	}
-	var buf strings.Builder
-	if err := tmpl.Execute(&buf, tmplCtx); err != nil {
-		return "", fmt.Errorf("unit %s: %w", unitName, err)
+	return lanes, sizes, cuts, nil
+}
+
+// boundInject applies one inject's effective cap — the spec's declaration
+// over the query's registration default — and stamps the cut with the part
+// name and, when the query knows how, the pull for the remainder.
+func boundInject(q *Query, inj InjectCall, args map[string]any, result any) (any, *truncate.Cut) {
+	value, cut := serveview.BoundValue(result, serveview.Effective(inj.Cap, q.Bound.Cap))
+	if cut == nil {
+		return value, nil
 	}
-	return strings.TrimSpace(buf.String()), nil
+	cut.Part = inj.EffectiveID()
+	if cut.Pull == "" && q.Bound.Pull != nil {
+		cut.Pull = q.Bound.Pull(args, *cut)
+	}
+	return value, cut
 }
 
 // renderInjectArgs renders string args as Go templates against the store
@@ -566,7 +705,10 @@ func (s *Session) renderInjectArgs(inst *Instance, args map[string]any) (map[str
 		return nil, nil
 	}
 	out := make(map[string]any, len(args))
-	tmplCtx := inst.Store.TemplateContext()
+	tmplCtx, err := s.templateContext(inst)
+	if err != nil {
+		return nil, err
+	}
 	for name, v := range args {
 		str, ok := v.(string)
 		if !ok || !strings.Contains(str, "{{") {
@@ -584,4 +726,22 @@ func (s *Session) renderInjectArgs(inst *Instance, args map[string]any) (map[str
 		out[name] = buf.String()
 	}
 	return out, nil
+}
+
+// templateContext is the store's template context plus the engine's host-
+// supplied template values. A value whose name collides with a declared param
+// or state field fails the render — the spec's own vocabulary always wins,
+// and silently shadowing either side would corrupt whichever loses.
+func (s *Session) templateContext(inst *Instance) (map[string]any, error) {
+	ctx := inst.Store.TemplateContext()
+	for name, value := range s.engine.templateValues {
+		if _, ok := inst.Spec.Params[name]; ok {
+			return nil, fmt.Errorf("template value %q collides with a procedure param", name)
+		}
+		if _, ok := inst.Spec.State[name]; ok {
+			return nil, fmt.Errorf("template value %q collides with a procedure state field", name)
+		}
+		ctx[name] = value
+	}
+	return ctx, nil
 }

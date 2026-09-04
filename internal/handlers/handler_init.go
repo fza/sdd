@@ -38,7 +38,6 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if err := cmd.Validate(); err != nil {
 		return fmt.Errorf("invalid command: %w", err)
 	}
-
 	graphDir := cmd.GraphDir
 	if graphDir == "" {
 		graphDir = model.DefaultGraphDir
@@ -96,7 +95,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		if err := os.MkdirAll(sddDir, 0o755); err != nil {
 			return fmt.Errorf("creating %s: %w", sddDir, err)
 		}
-		if err := os.WriteFile(configPath, []byte(model.FormatConfig(model.PerRepoConfig{GraphDir: graphDir, RepoID: derivedRepoID, Language: cmd.Language, SkillScope: effectiveScope, SupportedAgents: effectiveAgents})), 0o644); err != nil {
+		if err := os.WriteFile(configPath, []byte(model.FormatConfig(model.PerRepoConfig{GraphDir: graphDir, DefaultBranch: cmd.DefaultBranch, RepoID: derivedRepoID, Language: cmd.Language, SkillScope: effectiveScope, SupportedAgents: effectiveAgents})), 0o644); err != nil {
 			return fmt.Errorf("writing %s: %w", configPath, err)
 		}
 		touched = append(touched, configPath)
@@ -134,6 +133,32 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 		if err := os.MkdirAll(absGraphDir, 0o755); err != nil {
 			return fmt.Errorf("creating graph dir %s: %w", absGraphDir, err)
+		}
+
+		// Upgrade configs that predate branch-targeted mutation capture. An
+		// existing value is authoritative and is never replaced by the branch
+		// from which a later init happens to run.
+		if cmd.DefaultBranch != "" {
+			existing, readErr := os.ReadFile(configPath)
+			if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+				return fmt.Errorf("reading %s: %w", configPath, readErr)
+			}
+			recorded, err := model.ParseConfig(existing)
+			if err != nil {
+				return fmt.Errorf("parsing %s: %w", configPath, err)
+			}
+			if recorded.DefaultBranch == "" {
+				updated, err := model.SetYAMLField(existing, "default_branch", cmd.DefaultBranch)
+				if err != nil {
+					return fmt.Errorf("updating %s: %w", configPath, err)
+				}
+				if !bytes.Equal(existing, updated) {
+					if err := os.WriteFile(configPath, updated, 0o644); err != nil {
+						return fmt.Errorf("writing %s: %w", configPath, err)
+					}
+					touched = append(touched, configPath)
+				}
+			}
 		}
 
 		// Upgrade case: record the derived repo_id when the existing config
@@ -252,7 +277,6 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if err := h.migrateLegacyIndexes(cmd, sddDir, configPath); err != nil {
 		return err
 	}
-
 	// Scaffold the AGENTS.md / CLAUDE.md instruction bridge when a non-Claude
 	// agent is in play and the files are absent. AGENTS.md is the cross-tool
 	// canonical instruction file; CLAUDE.md imports it via @AGENTS.md. Existing
@@ -374,6 +398,10 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
+	// Transition messaging (d-tac-o2v): reach users who upgrade without
+	// invoking the skill.
+	log.Info("the /sdd skill family is deprecated — work in /sdd-engine; v0.18.0 will remove the legacy skills and rename /sdd-engine to /sdd")
+
 	// Register the SDD MCP server per agent so engine mode works out of the
 	// box (d-tac-wfl). Project scope only for now: the registration files
 	// live in the repo tree; user-scope registration (home-dir config) is a
@@ -398,33 +426,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	return h.migrateLegacySessions(ctx, cmd)
-}
-
-func (h *Handler) migrateLegacySessions(ctx context.Context, cmd *command.InitCmd) error {
-	if !cmd.MigrateLegacySessions {
-		return nil
-	}
-	if h.sessions == nil {
-		return fmt.Errorf("legacy session migration is not configured")
-	}
-	paths, err := h.sessions.ListLegacySessions(ctx)
-	if err != nil {
-		return fmt.Errorf("listing legacy sessions: %w", err)
-	}
-	log := slogutils.FromContext(ctx)
-	var failures []error
-	for _, path := range paths {
-		if err := h.sessions.MigrateLegacySession(ctx, path); err != nil {
-			log.Error("legacy session migration failed", "path", path, "err", err)
-			failures = append(failures, fmt.Errorf("migrating legacy session %s: %w", path, err))
-			continue
-		}
-		if cmd.OnSessionMigrated != nil {
-			cmd.OnSessionMigrated(path)
-		}
-	}
-	return errors.Join(failures...)
+	return nil
 }
 
 // resolveSkillScope picks the scope `sdd init` should install under and
@@ -919,7 +921,11 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 				repoID = cfgFile.RepoID
 			}
 		}
-		key := index.RepoKey(repoID, filepath.Dir(sddDir))
+		repoRoot := cmd.StableRepoRoot
+		if repoRoot == "" {
+			repoRoot = filepath.Dir(sddDir)
+		}
+		key := index.RepoKey(repoID, repoRoot)
 		target, moved, err := index.MigrateDir(legacyLocal, cacheRoot, key)
 		if err != nil {
 			return fmt.Errorf("migrating local index into the machine-global store: %w", err)

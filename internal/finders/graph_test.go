@@ -3,6 +3,7 @@ package finders
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -89,6 +90,62 @@ Done signal closing decision.`)
 	}
 }
 
+// viewGrammarFactID is the stable ID of the embedded view-grammar base fact
+// (basefacts.viewGrammarID). Duplicated here rather than exported so the wiring
+// test breaks loudly if the shipped ID ever changes.
+const viewGrammarFactID = "20260717-110000-s-prc-vwg"
+
+// TestLoadGraphMergesBaseFact locks the base-facts wiring (AC7): an empty
+// project graph still contains the view-grammar fact, marked Embedded, with a
+// body generated from the live layout vocabulary.
+func TestLoadGraphMergesBaseFact(t *testing.T) {
+	g, err := New(Options{}).LoadGraph(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fact := g.ByID[viewGrammarFactID]
+	if fact == nil {
+		t.Fatalf("loaded graph missing base fact %s", viewGrammarFactID)
+	}
+	if !fact.Embedded {
+		t.Error("base fact is not marked Embedded")
+	}
+	if !strings.Contains(fact.Content, "## Grammar") {
+		t.Error("base fact body missing generated grammar reference")
+	}
+}
+
+// TestLoadGraphDiskWinsOverBaseFact locks disk-wins precedence: a project
+// entry sharing the base fact's ID shadows the embedded one (the per-project
+// customization path).
+func TestLoadGraphDiskWinsOverBaseFact(t *testing.T) {
+	dir := t.TempDir()
+	writeGraphEntry(t, dir, viewGrammarFactID, `---
+type: signal
+layer: process
+kind: fact
+---
+
+Project override of the view-grammar fact.`)
+
+	g, err := New(Options{}).LoadGraph(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fact := g.ByID[viewGrammarFactID]
+	if fact == nil {
+		t.Fatalf("loaded graph missing entry %s", viewGrammarFactID)
+	}
+	if fact.Embedded {
+		t.Error("disk entry did not shadow the embedded base fact")
+	}
+	if !strings.Contains(fact.Content, "Project override") {
+		t.Error("loaded entry is not the on-disk override")
+	}
+}
+
 func TestLoadGraphWithAttachments(t *testing.T) {
 	dir := t.TempDir()
 
@@ -125,6 +182,57 @@ See [design](./06-115516-s-stg-beh/design.md) for details.`)
 	wantPath := filepath.ToSlash(e.Attachments[0])
 	if wantPath != "2026/04/06-115516-s-stg-beh/design.md" {
 		t.Errorf("Attachments[0] = %q, want %q", wantPath, "2026/04/06-115516-s-stg-beh/design.md")
+	}
+}
+
+// TestLoadGraphRecordsParseFailuresAndKeepsReadableEntries pins partial-read
+// resilience: a malformed entry does not abort the walk — every parseable
+// entry still loads, and the failure is recorded on the graph as a load issue
+// rather than swallowed or fatal.
+func TestLoadGraphRecordsParseFailuresAndKeepsReadableEntries(t *testing.T) {
+	dir := t.TempDir()
+
+	writeGraphEntry(t, dir, "20260406-115516-s-stg-beh", `---
+type: signal
+layer: strategic
+---
+
+Readable signal.`)
+
+	// Unterminated quoted scalar — a YAML syntax error, so ParseEntry fails.
+	writeGraphEntry(t, dir, "20260406-115600-s-stg-bad", `---
+type: signal
+layer: strategic
+refs:
+    - "unterminated
+---
+
+Broken frontmatter.`)
+
+	f := New(Options{})
+	g, err := f.LoadGraph(dir)
+	if err != nil {
+		t.Fatalf("LoadGraph aborted on a malformed entry: %v", err)
+	}
+
+	var readable bool
+	for _, e := range projectEntries(g) {
+		switch e.ID {
+		case "20260406-115516-s-stg-beh":
+			readable = true
+		case "20260406-115600-s-stg-bad":
+			t.Fatalf("malformed entry was admitted to the graph")
+		}
+	}
+	if !readable {
+		t.Fatal("readable entry missing after a sibling failed to parse")
+	}
+
+	if len(g.LoadIssues) != 1 {
+		t.Fatalf("LoadIssues = %+v, want exactly one", g.LoadIssues)
+	}
+	if got := g.LoadIssues[0]; got.Ref != "20260406-115600-s-stg-bad" || got.Message == "" {
+		t.Fatalf("LoadIssue = %+v, want the malformed entry ID and a non-empty message", got)
 	}
 }
 

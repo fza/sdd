@@ -1,21 +1,75 @@
 package model
 
 import (
+	"fmt"
 	"sort"
 
 	"gopkg.in/yaml.v3"
 )
 
 // ProcedureSpecRaw retains the machine part of a procedure entry's
-// frontmatter — params, state, steps — as raw YAML nodes. The model does not
-// interpret them: the type-system revision contract places structural
-// validation at engine load time, so the engine decodes these nodes into its
-// typed spec and reports spec errors there. Keeping the raw nodes on the
-// entry lets FormatFrontmatter round-trip a procedure losslessly.
+// frontmatter — params, state, steps, and a shell's framing lanes — as raw
+// YAML nodes. The model does not interpret them: the type-system revision
+// contract places structural validation at engine load time, so the engine
+// decodes these nodes into its typed spec and reports spec errors there.
+// Keeping the raw nodes on the entry lets FormatFrontmatter round-trip a
+// procedure losslessly.
 type ProcedureSpecRaw struct {
-	Params yaml.Node
-	State  yaml.Node
-	Steps  yaml.Node
+	Params  yaml.Node
+	State   yaml.Node
+	Steps   yaml.Node
+	Framing yaml.Node
+	// ServeBudget is the spec's declared worst-case serve total in bytes.
+	// Zero means the engine's default budget applies; a larger declaration
+	// silences the authoring-arithmetic finding and records the trade
+	// (d-tac-rzi). Advisory only — never enforced at load or runtime.
+	ServeBudget int
+}
+
+// ProcedureSpecFromDocument converts a workflow declaration reported as one
+// structured value — {params?, state?, steps, framing?, serveBudget?}, as the
+// report schema advertises it — into the raw spec the entry carries. The
+// write-side counterpart of the frontmatter routing in ParseEntry: unknown
+// sections are rejected so a typo'd key fails the capture instead of being
+// silently dropped, and interpretation stays with the engine (see
+// ProcedureSpecRaw).
+func ProcedureSpecFromDocument(doc map[string]any) (*ProcedureSpecRaw, error) {
+	spec := &ProcedureSpecRaw{}
+	sections := map[string]*yaml.Node{
+		"params":  &spec.Params,
+		"state":   &spec.State,
+		"steps":   &spec.Steps,
+		"framing": &spec.Framing,
+	}
+	for key, value := range doc {
+		if key == "serveBudget" {
+			n, ok := value.(int)
+			if !ok {
+				if f, isFloat := value.(float64); isFloat && f == float64(int(f)) {
+					n, ok = int(f), true
+				}
+			}
+			if !ok || n < 0 {
+				return nil, fmt.Errorf("serveBudget must be a non-negative integer, got %v", value)
+			}
+			spec.ServeBudget = n
+			continue
+		}
+		node, ok := sections[key]
+		if !ok {
+			return nil, fmt.Errorf("unknown workflow section %q (params, state, steps, framing, serveBudget)", key)
+		}
+		if value == nil {
+			continue
+		}
+		if err := node.Encode(value); err != nil {
+			return nil, fmt.Errorf("encoding workflow section %q: %w", key, err)
+		}
+	}
+	if spec.Steps.IsZero() {
+		return nil, fmt.Errorf("a workflow declares steps")
+	}
+	return spec, nil
 }
 
 // ProcedureChain represents a supersession chain of kind: procedure

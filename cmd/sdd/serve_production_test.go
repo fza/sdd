@@ -91,7 +91,7 @@ func TestServeUsesPersistentMachineGlobalIndex(t *testing.T) {
 	server := httptest.NewServer(ollama)
 	defer server.Close()
 
-	root := t.TempDir()
+	root := canonicalTempDir(t)
 	graphRel := filepath.Join(".sdd", "graph")
 	graphDir := filepath.Join(root, graphRel)
 	if err := os.MkdirAll(graphDir, 0o755); err != nil {
@@ -99,6 +99,7 @@ func TestServeUsesPersistentMachineGlobalIndex(t *testing.T) {
 	}
 	const repoID = "example.test/prod"
 	config := "graph_dir: .sdd/graph\n" +
+		"default_branch: main\n" +
 		"repo_id: " + repoID + "\n" +
 		"embedding:\n" +
 		"  provider: ollama\n" +
@@ -244,20 +245,23 @@ func prodServeSearch(t *testing.T, root string) string {
 		t.Fatalf("connect serve: %v\nstderr:\n%s", err, stderr.String())
 	}
 	defer func() { _ = session.Close() }()
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search", Arguments: map[string]any{"query": phrase}})
+	// The fake embeddings are content-hash noise, so ranking is arbitrary; a
+	// limit covering the whole corpus (seeded entries + embedded base facts
+	// and procedures) keeps this warm-index assertion independent of base
+	// content edits.
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "search", Arguments: map[string]any{"query": phrase, "limit": 50}})
 	if err != nil {
 		t.Fatalf("search over stdio: %v\nstderr:\n%s", err, stderr.String())
 	}
 	if result.IsError {
 		t.Fatalf("search returned a tool error: %+v\nstderr:\n%s", result, stderr.String())
 	}
-	var text strings.Builder
-	for _, content := range result.Content {
-		if tc, ok := content.(*mcp.TextContent); ok {
-			text.WriteString(tc.Text)
-		}
+	// structuredContent is the typed channel; the content text block mirrors it.
+	encoded, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal structuredContent: %v", err)
 	}
-	return text.String()
+	return string(encoded)
 }
 
 func prodEnv(root string, extra ...string) []string {

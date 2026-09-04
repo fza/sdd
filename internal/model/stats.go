@@ -1,6 +1,7 @@
 package model
 
 import (
+	"math"
 	"sort"
 	"time"
 )
@@ -10,17 +11,27 @@ import (
 // carries a parsed timestamp and no JSON concerns (those live at the I/O
 // boundary in internal/llmstats).
 type StatsRecord struct {
-	Timestamp         time.Time
-	Op                string
-	Provider          string
-	Model             string
+	Timestamp time.Time
+	Op        string
+	Provider  string
+	Model     string
+	// Variant is the behaviour-affecting model configuration (a reasoning
+	// effort, a thinking budget); it groups separately from the bare model
+	// because it moves latency and token usage.
+	Variant           string
 	Items             int
 	InputTokens       int
 	OutputTokens      int
 	CacheReadTokens   int
 	CacheCreateTokens int
 	DurationMS        int64
+	// Error is the failure text when the call returned no result; empty on
+	// success. Such a record carries no tokens.
+	Error string
 }
+
+// Failed reports whether this record is a failed call.
+func (r StatsRecord) Failed() bool { return r.Error != "" }
 
 // StatMetrics holds the summed counters for a group of calls plus the derived
 // throughput math. Embedded into the per-model and per-op rollups and reused
@@ -33,17 +44,68 @@ type StatMetrics struct {
 	CacheReadTokens   int
 	CacheCreateTokens int
 	DurationMS        int64
+	// Errors counts the calls in this group that returned no result. They are
+	// counted in Calls too: a failed call spent wall-clock time and is part of
+	// what the op cost.
+	Errors int
+	// durations holds every call's wall-clock time so the group can report a
+	// latency distribution. Summed time says what a batch cost; the spread is
+	// what says whether a provider is usable, and a mean hides the tail that
+	// decides it.
+	durations []int64
+}
+
+// Latency is a group's wall-clock distribution in milliseconds.
+type Latency struct {
+	P50 int64
+	P90 int64
+	P99 int64
+	Max int64
+}
+
+// Latency returns the group's distribution, computed in one pass over a sorted
+// copy. A group with no recorded calls yields the zero value.
+func (m StatMetrics) Latency() Latency {
+	if len(m.durations) == 0 {
+		return Latency{}
+	}
+	sorted := append([]int64(nil), m.durations...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	return Latency{
+		P50: nearestRank(sorted, 0.50),
+		P90: nearestRank(sorted, 0.90),
+		P99: nearestRank(sorted, 0.99),
+		Max: sorted[len(sorted)-1],
+	}
+}
+
+// nearestRank picks the value at the ceiling rank for p over a sorted slice —
+// the definition that always returns an observed measurement rather than an
+// interpolated one, so every reported figure is a call that actually happened.
+func nearestRank(sorted []int64, p float64) int64 {
+	rank := int(math.Ceil(p * float64(len(sorted))))
+	if rank < 1 {
+		rank = 1
+	}
+	if rank > len(sorted) {
+		rank = len(sorted)
+	}
+	return sorted[rank-1]
 }
 
 // add folds one record's counters into the metrics.
 func (m *StatMetrics) add(r StatsRecord) {
 	m.Calls++
+	if r.Failed() {
+		m.Errors++
+	}
 	m.Items += r.Items
 	m.InputTokens += r.InputTokens
 	m.OutputTokens += r.OutputTokens
 	m.CacheReadTokens += r.CacheReadTokens
 	m.CacheCreateTokens += r.CacheCreateTokens
 	m.DurationMS += r.DurationMS
+	m.durations = append(m.durations, r.DurationMS)
 }
 
 // durationSeconds returns the summed duration in seconds, guarding the
@@ -58,7 +120,9 @@ func (m StatMetrics) durationSeconds() float64 {
 func (m StatMetrics) HasItems() bool { return m.Items > 0 }
 
 // TokensPerSec is summed input tokens over summed wall-clock seconds. Zero when
-// no time was recorded.
+// no time was recorded. For a chat op this tracks prompt size more than speed —
+// read OutputTokensPerSec for that; it stays meaningful for the embedding ops,
+// whose whole work is consuming input.
 func (m StatMetrics) TokensPerSec() float64 {
 	s := m.durationSeconds()
 	if s == 0 {
@@ -67,12 +131,19 @@ func (m StatMetrics) TokensPerSec() float64 {
 	return float64(m.InputTokens) / s
 }
 
-// MsPerCall is the mean wall-clock duration per call in milliseconds.
-func (m StatMetrics) MsPerCall() float64 {
-	if m.Calls == 0 {
+// OutputTokensPerSec is summed output tokens over summed wall-clock seconds —
+// the generation rate, and the number that explains why one model feels slow.
+// Output tokens (thinking included) are what a call spends its time producing,
+// so this compares models across prompts of unlike size in a way neither
+// latency nor input throughput can. Zero for the embedding ops, which generate
+// nothing. Weighted by call size: a long generation counts for more than a
+// short one, because it occupied proportionally more of the wall clock.
+func (m StatMetrics) OutputTokensPerSec() float64 {
+	s := m.durationSeconds()
+	if s == 0 {
 		return 0
 	}
-	return float64(m.DurationMS) / float64(m.Calls)
+	return float64(m.OutputTokens) / s
 }
 
 // ItemsPerSec is summed items over summed wall-clock seconds (embedding ops).
@@ -90,7 +161,16 @@ func (m StatMetrics) ItemsPerSec() float64 {
 type ModelRollup struct {
 	Model    string
 	Provider string
+	Variant  string
 	StatMetrics
+}
+
+// Label renders the rollup's model with its variant, the form the report shows.
+func (m ModelRollup) Label() string {
+	if m.Variant == "" {
+		return m.Model
+	}
+	return m.Model + " (" + m.Variant + ")"
 }
 
 // OpRollup aggregates calls for one operation.
@@ -134,6 +214,7 @@ func FilterStats(records []StatsRecord, since *time.Time, op, provider, model st
 type modelKey struct {
 	model    string
 	provider string
+	variant  string
 }
 
 // AggregateStats rolls records up into totals, by-model, and by-op groups.
@@ -145,10 +226,10 @@ func AggregateStats(records []StatsRecord) StatsReport {
 	for _, r := range records {
 		report.Totals.add(r)
 
-		mk := modelKey{model: r.Model, provider: r.Provider}
+		mk := modelKey{model: r.Model, provider: r.Provider, variant: r.Variant}
 		mr, ok := byModel[mk]
 		if !ok {
-			mr = &ModelRollup{Model: r.Model, Provider: r.Provider}
+			mr = &ModelRollup{Model: r.Model, Provider: r.Provider, Variant: r.Variant}
 			byModel[mk] = mr
 		}
 		mr.add(r)
@@ -173,7 +254,10 @@ func AggregateStats(records []StatsRecord) StatsReport {
 		if a.Model != b.Model {
 			return a.Model < b.Model
 		}
-		return a.Provider < b.Provider
+		if a.Provider != b.Provider {
+			return a.Provider < b.Provider
+		}
+		return a.Variant < b.Variant
 	})
 
 	report.ByOp = make([]OpRollup, 0, len(byOp))

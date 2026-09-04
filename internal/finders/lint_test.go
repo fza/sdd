@@ -1,8 +1,10 @@
 package finders_test
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
@@ -37,6 +39,17 @@ func lintRefEntry(t *testing.T, id, refID string) *model.Entry {
 	return e
 }
 
+// findingsFor filters a result's findings down to one entry ID.
+func findingsFor(res *query.LintResult, entryID string) []query.LintFinding {
+	var out []query.LintFinding
+	for _, f := range res.Findings {
+		if f.EntryID == entryID {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // TestLint_CrossRepoRefUndeclared flags a ref into a repo missing from the
 // declared dependencies, and stays silent when the dependency is declared —
 // the standing counterpart to capture-time resolve-or-block.
@@ -50,79 +63,140 @@ func TestLint_CrossRepoRefUndeclared(t *testing.T) {
 	g := model.NewGraph([]*model.Entry{declaredEntry, undeclaredEntry})
 	f := finders.New(finders.Options{Config: &model.PerRepoConfig{Dependencies: []string{declaredRepo}}})
 
-	res, err := f.Lint(query.LintQuery{Graph: g})
+	res, err := f.OnGraph(g).Lint(query.LintQuery{})
 	if err != nil {
 		t.Fatalf("Lint: %v", err)
 	}
 
-	warnings := map[string][]model.Warning{}
-	for _, e := range res.Entries {
-		warnings[e.ID] = e.Warnings
+	if got := findingsFor(res, declaredEntry.ID); len(got) != 0 {
+		t.Errorf("declared-dependency ref should not warn, got %+v", got)
+	}
+	got := findingsFor(res, undeclaredEntry.ID)
+	if len(got) != 1 || got[0].Category != "graph" || got[0].Severity != query.LintError {
+		t.Fatalf("undeclared cross-repo ref should raise 1 graph error, got %+v", got)
+	}
+	if !strings.Contains(got[0].Message, undeclaredRepo) {
+		t.Errorf("finding message should name the repo, got %q", got[0].Message)
+	}
+}
+
+// TestLint_LoadErrorsCountedAndReported pins that unreadable entries recorded
+// on the graph surface as error findings, so the CLI exit code reflects them.
+func TestLint_LoadErrorsCountedAndReported(t *testing.T) {
+	clean := lintEntry(t, "20260101-120000-s-prc-ok", "A clean summarized entry.")
+	g := model.NewGraphWithLoadIssues([]*model.Entry{clean}, []model.LoadIssue{
+		{Ref: "20260101-120001-s-prc-bad", Message: "parsing frontmatter: unexpected token"},
+	})
+	f := finders.New(finders.Options{Config: &model.PerRepoConfig{}})
+
+	res, err := f.OnGraph(g).Lint(query.LintQuery{})
+	if err != nil {
+		t.Fatalf("Lint: %v", err)
 	}
 
-	// The ref into the declared dependency raises no cross-repo warning.
-	for _, w := range warnings[declaredEntry.ID] {
-		if w.Field == "refs" {
-			t.Errorf("declared-dependency ref should not warn, got %+v", w)
-		}
+	got := findingsFor(res, "20260101-120001-s-prc-bad")
+	if len(got) != 1 || got[0].Code != "load-error" || got[0].Severity != query.LintError {
+		t.Fatalf("findings = %+v, want one load-error error finding", got)
 	}
-
-	// The ref into the undeclared repo raises exactly one refs warning naming it.
-	var refWarnings []model.Warning
-	for _, w := range warnings[undeclaredEntry.ID] {
-		if w.Field == "refs" {
-			refWarnings = append(refWarnings, w)
-		}
-	}
-	if len(refWarnings) != 1 {
-		t.Fatalf("undeclared cross-repo ref should raise 1 refs warning, got %d: %+v", len(refWarnings), refWarnings)
-	}
-	if refWarnings[0].Value != undeclaredRepo {
-		t.Errorf("warning value = %q, want %q", refWarnings[0].Value, undeclaredRepo)
+	if res.Errors() == 0 {
+		t.Fatal("Errors() = 0, want the load error counted")
 	}
 }
 
 // TestLint_MissingSummaryOnly covers the on-demand summary model (d-cpt-4qi):
 // lint flags entries with no summary and stays silent on entries that have one.
-// There is no hash check, so no "stale summary hash" or "summary exists but no
-// hash" warning is ever produced.
 func TestLint_MissingSummaryOnly(t *testing.T) {
 	withSummary := lintEntry(t, "20260101-120000-s-prc-aaa", "An existing summary.")
 	missing := lintEntry(t, "20260101-120001-s-prc-bbb", "")
 
 	g := model.NewGraph([]*model.Entry{withSummary, missing})
-	f := finders.New(finders.Options{})
+	f := finders.New(finders.Options{Config: &model.PerRepoConfig{}})
 
-	res, err := f.Lint(query.LintQuery{Graph: g})
+	res, err := f.OnGraph(g).Lint(query.LintQuery{})
 	if err != nil {
 		t.Fatalf("Lint: %v", err)
 	}
 
-	warnings := map[string][]model.Warning{}
-	for _, e := range res.Entries {
-		warnings[e.ID] = e.Warnings
+	if got := findingsFor(res, withSummary.ID); len(got) != 0 {
+		t.Errorf("summarized entry should have no findings, got %+v", got)
+	}
+	got := findingsFor(res, missing.ID)
+	if len(got) != 1 || !strings.Contains(got[0].Message, "missing summary") {
+		t.Fatalf("missing-summary entry should have 1 finding, got %+v", got)
+	}
+}
+
+// TestLint_ProcedureRuntimeProvider pins the procedure-runtime provider: a
+// graph-resident spec that fails to load is an error, an overshooting one an
+// advisory that never flips the exit code, and without a registry the
+// provider is skipped.
+func TestLint_ProcedureRuntimeProvider(t *testing.T) {
+	procEntry := func(id, canonical, machine string) *model.Entry {
+		content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: " + canonical +
+			"\nsummary: A procedure.\n" + machine + "\n---\n\n## unit: draft\n\nGuidance.\n"
+		e, err := model.ParseEntry(id+".md", content)
+		if err != nil {
+			t.Fatalf("ParseEntry(%s): %v", id, err)
+		}
+		return e
+	}
+	const overBudget = `state:
+    report: {type: text, desc: x}
+steps:
+    - id: draft
+      collect: [report]
+      inject:
+          - {fn: wide, maxBytes: 50000}
+      transitions:
+          - when: hasBody
+            to: end(completed)`
+	const broken = `state:
+    report: {type: text, desc: x}
+steps:
+    - id: draft
+      collect: [report]
+      inject:
+          - {fn: unknownQuery}
+      transitions:
+          - when: hasBody
+            to: end(completed)`
+
+	reg := engine.NewRegistry()
+	if err := reg.RegisterQuery(engine.Query{
+		Doc: engine.FuncDoc{Name: "wide", Doc: "t"},
+		Fn:  func(*engine.Context, map[string]any) (any, error) { return "", nil },
+	}); err != nil {
+		t.Fatal(err)
 	}
 
-	// The summarized entry carries no warnings.
-	if w := warnings[withSummary.ID]; len(w) != 0 {
-		t.Errorf("summarized entry should have no warnings, got %+v", w)
+	big := procEntry("20260101-130000-d-prc-big", "bigproc", overBudget)
+	bad := procEntry("20260101-130001-d-prc-bad", "badproc", broken)
+	g := model.NewGraph([]*model.Entry{big, bad})
+
+	res, err := finders.New(finders.Options{ProcedureRegistry: reg, Config: &model.PerRepoConfig{}}).OnGraph(g).Lint(query.LintQuery{})
+	if err != nil {
+		t.Fatalf("Lint: %v", err)
+	}
+	gotBig := findingsFor(res, big.ID)
+	if len(gotBig) != 1 || gotBig[0].Code != "serve-budget" || gotBig[0].Severity != query.LintAdvisory {
+		t.Fatalf("over-budget spec findings = %+v, want one serve-budget advisory", gotBig)
+	}
+	gotBad := findingsFor(res, bad.ID)
+	if len(gotBad) != 1 || gotBad[0].Code != "spec-load" || gotBad[0].Severity != query.LintError {
+		t.Fatalf("broken spec findings = %+v, want one spec-load error", gotBad)
+	}
+	if res.Errors() != 1 {
+		t.Errorf("Errors() = %d, want the advisory excluded from the exit-flipping count", res.Errors())
 	}
 
-	// The missing-summary entry carries exactly one "missing summary" warning.
-	mw := warnings[missing.ID]
-	if len(mw) != 1 {
-		t.Fatalf("missing-summary entry should have 1 warning, got %d: %+v", len(mw), mw)
+	// Without a registry the provider is skipped entirely.
+	res, err = finders.New(finders.Options{Config: &model.PerRepoConfig{}}).OnGraph(model.NewGraph([]*model.Entry{big, bad})).Lint(query.LintQuery{})
+	if err != nil {
+		t.Fatalf("Lint: %v", err)
 	}
-	if mw[0].Field != "summary" {
-		t.Errorf("warning field = %q, want %q", mw[0].Field, "summary")
-	}
-
-	// No summary_hash warnings anywhere — the hash check is gone.
-	for _, e := range res.Entries {
-		for _, w := range e.Warnings {
-			if w.Field == "summary_hash" {
-				t.Errorf("unexpected summary_hash warning on %s: %+v", e.ID, w)
-			}
+	for _, f := range res.Findings {
+		if f.Category == "procedure-runtime" {
+			t.Errorf("provider must be skipped without a registry, got %+v", f)
 		}
 	}
 }

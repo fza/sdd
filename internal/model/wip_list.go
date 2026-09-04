@@ -11,7 +11,15 @@ const ShapeWipList RenderShape = "wip-list"
 // section's lifetime.
 type WipList struct {
 	Markers []*WIPMarker
+	// Dropped counts whole units a serve budget kept out of this section;
+	// Pull is the runnable layout expression for the complete section.
+	// Zero/empty on explicit pulls, which are never cut (d-tac-rzi).
+	Dropped int
+	Pull    string
 }
 
 // Shape implements SectionData.
 func (WipList) Shape() RenderShape { return ShapeWipList }
+
+// Count implements SectionData: the number of WIP markers produced.
+func (w WipList) Count() int { return len(w.Markers) }

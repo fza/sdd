@@ -11,10 +11,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/networkteam/sdd/internal/llm"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/pkg/llm"
 )
 
 // Reader is the handler-side view of the finder. It bundles every read
@@ -29,7 +29,10 @@ type Reader interface {
 	// assembly reaches the write path for free at the one seam.
 	CurrentGraph(dir string) (*model.Graph, error)
 	LoadWIPMarkers(graphDir string) ([]*model.WIPMarker, error)
-	Preflight(ctx context.Context, q query.PreflightQuery) (*query.PreflightResult, error)
+	// Preflight validates an entry against a graph the handler already holds.
+	// The graph is passed explicitly (not through the query) because handlers
+	// load and mutate it mid-write; the query stays pure intent.
+	Preflight(ctx context.Context, g *model.Graph, q query.PreflightQuery) (*query.PreflightResult, error)
 	SkillStatus(ctx context.Context, q query.SkillStatusQuery) (*query.SkillStatusResult, error)
 }
 
@@ -67,13 +70,6 @@ type Puller interface {
 	MergePull(ctx context.Context) (string, error)
 }
 
-// LegacySessionMigrator is the local maintenance seam used by init. Runtime
-// session reads never call it: conversion requires an explicit user gate.
-type LegacySessionMigrator interface {
-	ListLegacySessions(context.Context) ([]string, error)
-	MigrateLegacySession(context.Context, string) error
-}
-
 // Handler holds injected dependencies shared across command methods.
 // Each public method corresponds to one command and lives in its own file
 // (handler_new_entry.go, etc.).
@@ -86,10 +82,10 @@ type Handler struct {
 	brancher  Brancher
 	mover     Mover
 	puller    Puller
-	sessions  LegacySessionMigrator
 	repos     *repos.Manager
 	stderr    io.Writer
 	now       func() time.Time
+	language  string
 }
 
 // Options configures a new Handler. Zero-valued fields get sensible defaults.
@@ -102,13 +98,16 @@ type Options struct {
 	Brancher  Brancher
 	Mover     Mover
 	Puller    Puller
-	Sessions  LegacySessionMigrator
 	// Repos owns the connected-repos side effects (clone, pull, config
 	// writes). Nil means no connected-repos support — repo commands fail
 	// loud, and cross-repo cache freshening is skipped.
 	Repos  *repos.Manager
 	Stderr io.Writer
 	Now    func() time.Time
+	// Language is the graph's configured authoring language locale code
+	// (config `language`, empty = English default). Summaries are written
+	// in it regardless of the source material's language.
+	Language string
 }
 
 // New constructs a Handler with the given options.
@@ -122,10 +121,10 @@ func New(opts Options) *Handler {
 		brancher:  opts.Brancher,
 		mover:     opts.Mover,
 		puller:    opts.Puller,
-		sessions:  opts.Sessions,
 		repos:     opts.Repos,
 		stderr:    opts.Stderr,
 		now:       opts.Now,
+		language:  opts.Language,
 	}
 	if h.stderr == nil {
 		h.stderr = os.Stderr

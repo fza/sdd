@@ -41,11 +41,6 @@ func (m *Manager) Registry() *Registry {
 	return m.reg
 }
 
-// Save writes the user-global config to the registry's config path.
-func (m *Manager) Save(cfg *GlobalConfig) error {
-	return SaveConfigTo(m.reg.loc.ConfigPath, cfg)
-}
-
 // EnsureCloned clones repo.CloneURL into dir when no clone is present yet.
 // Reports whether a clone ran (false: the cache already existed).
 func (m *Manager) EnsureCloned(ctx context.Context, repo ConnectedRepo, dir string) (bool, error) {
@@ -53,14 +48,24 @@ func (m *Manager) EnsureCloned(ctx context.Context, repo ConnectedRepo, dir stri
 		return false, nil
 	}
 	logger := slogutils.FromContext(ctx)
-	logger.Info("cloning connected repo", "repo", repo.RepoID, "url", repo.CloneURL)
+	// On repo add the repo ID is unknown until the clone is inspected.
+	attrs := []any{"url", repo.CloneURL}
+	if repo.RepoID != "" {
+		attrs = append([]any{"repo", repo.RepoID}, attrs...)
+	}
+	name := repo.RepoID
+	if name == "" {
+		name = repo.CloneURL
+	}
+	logger.Debug("cloning connected repo", attrs...)
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return false, fmt.Errorf("creating cache dir: %w", err)
 	}
 	if err := m.git.Clone(ctx, repo.CloneURL, dir); err != nil {
-		return false, fmt.Errorf("cloning %s: %w", repo.RepoID, err)
+		return false, fmt.Errorf("cloning %s: %w", name, err)
 	}
 	touchLastPull(dir)
+	logger.Info("cloned connected repo", attrs...)
 	return true, nil
 }
 
@@ -72,7 +77,7 @@ func (m *Manager) CooldownPull(ctx context.Context, dir string, cooldown time.Du
 	if !IsCloned(dir) {
 		return false, fmt.Errorf("no clone at %s", dir)
 	}
-	if last, ok := lastPull(dir); ok && time.Since(last) < cooldown {
+	if !PullDue(dir, cooldown) {
 		return false, nil
 	}
 	return true, m.ForcePull(ctx, dir)

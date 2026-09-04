@@ -1,9 +1,15 @@
 package finders
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/repos"
 )
 
 // EffectiveConfig resolves the config overlay layer by layer and reports
@@ -31,7 +37,9 @@ func (f *Finder) EffectiveConfig(q query.EffectiveConfigQuery) (*query.Effective
 	values := model.EffectiveConfigValues(global, project, local)
 	result := &query.EffectiveConfigResult{}
 	for _, v := range values {
-		if q.Key != "" && v.Key != q.Key {
+		// Key selects exactly, or as a dotted-path prefix ("llm" matches
+		// llm.provider); empty selects everything.
+		if q.Key != "" && v.Key != q.Key && !strings.HasPrefix(v.Key, q.Key+".") {
 			continue
 		}
 		result.Entries = append(result.Entries, query.ConfigEntry{
@@ -40,6 +48,44 @@ func (f *Finder) EffectiveConfig(q query.EffectiveConfigQuery) (*query.Effective
 			Source: string(v.Source),
 			Secret: v.Secret,
 		})
+	}
+	return result, nil
+}
+
+// UnknownConfigKeys reports the keys sdd read past because it does not know
+// them — the one computation behind every surface that says so, rather than
+// each deciding for itself what counts as unknown.
+func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.UnknownConfigKeysResult, error) {
+	type layer struct {
+		path string
+		typ  reflect.Type
+	}
+	var layers []layer
+	if f.repos != nil {
+		layers = append(layers, layer{f.repos.ConfigPath(), reflect.TypeFor[repos.GlobalConfig]()})
+	}
+	if q.SDDDir != "" {
+		for _, name := range []string{"config.yaml", "config.local.yaml"} {
+			layers = append(layers, layer{filepath.Join(q.SDDDir, name), reflect.TypeFor[model.PerRepoConfig]()})
+		}
+	}
+
+	result := &query.UnknownConfigKeysResult{}
+	for _, l := range layers {
+		data, err := os.ReadFile(l.path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		keys, err := model.UnknownYAMLKeys(data, l.typ)
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			result.Keys = append(result.Keys, query.UnknownConfigKey{File: l.path, Key: k})
+		}
 	}
 	return result, nil
 }

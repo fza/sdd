@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +53,12 @@ const (
 	// when last-fetch exceeds this duration. Applied when Config.Sync.Cooldown
 	// is empty or unparseable.
 	DefaultSyncCooldown = "15m"
+
+	// DefaultSessionRetention is how long an ended engine session's log is
+	// kept before collection removes it. Sessions are scaffolding, but a
+	// dialogue that has just ended is exactly the one worth reading when
+	// something went wrong inside it, so the window buys inspectability.
+	DefaultSessionRetention = "14d"
 )
 
 // BaseConfig holds the shared user/machine settings every config location
@@ -65,6 +72,7 @@ type BaseConfig struct {
 	LLM       LLMConfig       `yaml:"llm,omitempty"`
 	Embedding EmbeddingConfig `yaml:"embedding,omitempty"`
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
+	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
 	// set once in the user-global config; a per-repo override covers a
@@ -90,6 +98,10 @@ type PerRepoConfig struct {
 	BaseConfig `yaml:",inline"`
 
 	GraphDir string `yaml:"graph_dir,omitempty"`
+	// DefaultBranch is the concrete branch used by ordinary engine captures
+	// when no workflow-selected branch is supplied. It is committed so a
+	// long-lived server never infers mutation authority from its launch cwd.
+	DefaultBranch string `yaml:"default_branch,omitempty"`
 	// RepoID is the repo's canonical URL-shaped identity (host/path, e.g.
 	// github.com/networkteam/sdd) used as the prefix of cross-repo
 	// references into this graph. Auto-derived from the git remote by
@@ -134,6 +146,14 @@ type SyncConfig struct {
 	Cooldown string `yaml:"cooldown,omitempty"`
 }
 
+// SessionsConfig holds settings for engine session lifetime.
+type SessionsConfig struct {
+	// Retention is how long an ended session is kept before collection
+	// removes it. Days ("14d") or a Go duration ("336h"). Empty means
+	// DefaultSessionRetention.
+	Retention string `yaml:"retention,omitempty"`
+}
+
 // EmbeddingConfig holds settings for the search index's embedding provider.
 // Decoupled from LLMConfig (chat / summary) so a participant can run a
 // local Ollama embedder while still using a remote chat provider, and
@@ -160,7 +180,7 @@ type EmbeddingConfig struct {
 	// APIKeys maps provider name to API key. Defaults to LLMConfig.APIKeys
 	// if empty so a single key value can serve both axes; explicit values
 	// here override that.
-	APIKeys map[string]string `yaml:"api_keys,omitempty"`
+	APIKeys map[string]string `yaml:"api_keys,omitempty" sdd:"secret"`
 	// RateLimitRPS caps remote-provider requests per second. Zero means
 	// "apply a conservative per-provider default safe for tier-1 limits".
 	// Local providers (ollama) ignore this field.
@@ -204,9 +224,7 @@ type EmbeddingConfig struct {
 }
 
 // LLMConfig holds settings for LLM provider selection, model choice, and
-// concurrency/rate-limit behavior. API keys and per-machine endpoints
-// typically live in .sdd/config.local.yaml; defaults (provider, model,
-// timeout, concurrency) are safe to commit in .sdd/config.yaml.
+// concurrency/rate-limit behavior.
 type LLMConfig struct {
 	// Provider selects the runner implementation: "claude-cli" (default, uses
 	// the logged-in Claude Code session) or a gollm-supported provider name
@@ -216,14 +234,20 @@ type LLMConfig struct {
 	Model string `yaml:"model,omitempty"`
 	// Timeout is a Go duration string (e.g. "2m") applied per LLM call.
 	Timeout string `yaml:"timeout,omitempty"`
+	// Params carries behaviour-affecting, provider-specific model settings —
+	// a reasoning effort, a thinking budget — forwarded verbatim into the
+	// provider request. They also form the call's recorded variant, because a
+	// setting that moves latency and token usage makes a different population
+	// of calls that must not be averaged with the defaults.
+	Params map[string]string `yaml:"params,omitempty"`
 	// Concurrency bounds the worker pool for batch operations. Zero means
 	// "use DefaultLLMConcurrency".
 	Concurrency int `yaml:"concurrency,omitempty"`
 	// OllamaEndpoint overrides the default Ollama URL for the gollm adapter.
 	OllamaEndpoint string `yaml:"ollama_endpoint,omitempty"`
-	// APIKeys maps provider name to API key. Typically lives in
-	// config.local.yaml so keys stay out of version control.
-	APIKeys map[string]string `yaml:"api_keys,omitempty"`
+	// APIKeys maps provider name to API key. Never belongs in the
+	// committed .sdd/config.yaml.
+	APIKeys map[string]string `yaml:"api_keys,omitempty" sdd:"secret"`
 	// RateLimitRPS caps remote-provider requests per second. Zero means
 	// "apply a conservative per-model default safe for Anthropic/OpenAI
 	// tier 1"; set an explicit positive value (e.g. a high number like
@@ -283,24 +307,21 @@ func (rc RetryConfig) Resolved() (maxAttempts int, baseDelay, maxDelay time.Dura
 }
 
 // ParseConfig unmarshals YAML bytes into a PerRepoConfig. Empty input is
-// valid and yields a zero-valued config. Unknown keys are an error, never a
-// silent drop — a misplaced setting must surface at load time (d-cpt-6cq's
-// fail-loud rule), and the strict decoder covers nested blocks too.
+// valid and yields a zero-valued config.
 func ParseConfig(data []byte) (*PerRepoConfig, error) {
 	var cfg PerRepoConfig
-	if err := StrictUnmarshalYAML(data, &cfg); err != nil {
+	if err := UnmarshalYAML(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 	return &cfg, nil
 }
 
-// StrictUnmarshalYAML decodes YAML with unknown-key rejection (recursing
-// into nested structs; map-typed fields keep accepting arbitrary keys).
-// Empty input decodes to the zero value. Exported so every config location —
-// per-repo and user-global — shares one definition of strictness.
-func StrictUnmarshalYAML(data []byte, out any) error {
+// UnmarshalYAML decodes YAML tolerantly: a key this binary does not know is
+// carried past rather than rejected, because a config file is shared between
+// sdd versions and one must not be bricked by a key a newer one wrote
+// (20260810-144515-s-tac-8ae).
+func UnmarshalYAML(data []byte, out any) error {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
 	if err := dec.Decode(out); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil
@@ -339,6 +360,9 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	out.BaseConfig = MergeBaseConfig(base.BaseConfig, overlay.BaseConfig)
 	if overlay.GraphDir != "" {
 		out.GraphDir = overlay.GraphDir
+	}
+	if overlay.DefaultBranch != "" {
+		out.DefaultBranch = overlay.DefaultBranch
 	}
 	if overlay.RepoID != "" {
 		out.RepoID = overlay.RepoID
@@ -447,6 +471,23 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 			out.APIKeys[k] = v
 		}
 	}
+	out.Params = mergeStringMap(out.Params, overlay.Params)
+	return out
+}
+
+// mergeStringMap overlays one string map onto another key by key, copying on
+// write so the merge never mutates the base layer.
+func mergeStringMap(base, overlay map[string]string) map[string]string {
+	if len(overlay) == 0 {
+		return base
+	}
+	out := make(map[string]string, len(base)+len(overlay))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overlay {
+		out[k] = v
+	}
 	return out
 }
 
@@ -481,6 +522,13 @@ func FormatConfig(cfg PerRepoConfig) string {
 		repoIDBlock += "repo_id: " + cfg.RepoID + "\n"
 	} else {
 		repoIDBlock += "# repo_id: github.com/org/repo\n"
+	}
+	defaultBranchBlock := "# Concrete branch for ordinary engine captures. Implementation runs carry\n" +
+		"# explicit base/work branches instead; cwd never selects mutation authority.\n"
+	if cfg.DefaultBranch != "" {
+		defaultBranchBlock += "default_branch: " + cfg.DefaultBranch + "\n"
+	} else {
+		defaultBranchBlock += "# default_branch: main\n"
 	}
 	languageBlock := "# Graph language — locale code for the language captured entries are\n" +
 		"# authored in. Empty means English (default). The /sdd skill reads the\n" +
@@ -519,6 +567,8 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"# Graph directory relative to repository root.\n" +
 		"graph_dir: " + graphDir + "\n" +
 		"\n" +
+		defaultBranchBlock +
+		"\n" +
 		repoIDBlock +
 		"\n" +
 		languageBlock +
@@ -540,6 +590,38 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"#   cooldown: " + DefaultSyncCooldown + "\n"
 }
 
+// ResolveSessionRetention returns the effective session retention from cfg.
+// Retention is expressed in days ("14d") or as a Go duration; empty means
+// DefaultSessionRetention. A value that does not parse is a config error the
+// caller must surface, never a silent default.
+func ResolveSessionRetention(cfg *PerRepoConfig) (time.Duration, error) {
+	raw := ""
+	if cfg != nil {
+		raw = strings.TrimSpace(cfg.Sessions.Retention)
+	}
+	if raw == "" {
+		raw = DefaultSessionRetention
+	}
+	d, err := parseDaysOrDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("sessions.retention: %q is not a positive duration — use days (%q) or a Go duration (%q)", raw, "14d", "336h")
+	}
+	return d, nil
+}
+
+// parseDaysOrDuration reads a duration that may use a whole-day suffix,
+// which time.ParseDuration does not know.
+func parseDaysOrDuration(raw string) (time.Duration, error) {
+	if days, ok := strings.CutSuffix(raw, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil {
+			return 0, fmt.Errorf("invalid day count %q", raw)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(raw)
+}
+
 // ResolveSyncCooldown returns the effective cooldown duration from cfg,
 // falling back to DefaultSyncCooldown on empty or unparseable values.
 func ResolveSyncCooldown(cfg *PerRepoConfig) time.Duration {
@@ -547,12 +629,17 @@ func ResolveSyncCooldown(cfg *PerRepoConfig) time.Duration {
 	if cfg != nil {
 		raw = cfg.Sync.Cooldown
 	}
-	if raw == "" {
-		raw = DefaultSyncCooldown
+	return parsePositiveDuration(raw, DefaultSyncCooldown)
+}
+
+// parsePositiveDuration reads a configured duration, falling back to a baked
+// default when it is empty, malformed or not positive.
+func parsePositiveDuration(raw, fallback string) time.Duration {
+	if raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
 	}
-	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
-		return d
-	}
-	d, _ := time.ParseDuration(DefaultSyncCooldown)
+	d, _ := time.ParseDuration(fallback)
 	return d
 }

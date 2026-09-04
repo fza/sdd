@@ -24,6 +24,7 @@ import (
 	"github.com/networkteam/sdd/internal/llm"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	pkgllm "github.com/networkteam/sdd/pkg/llm"
 )
 
 // e2eEmbedder produces deterministic 4-dim vectors. Inputs containing
@@ -114,6 +115,7 @@ func setupE2E(t *testing.T) *e2eSetup {
 
 	reader := finders.New(finders.Options{
 		PreflightRunner: e2eNoopRunner{},
+		Config:          &model.PerRepoConfig{},
 	})
 
 	return &e2eSetup{
@@ -192,13 +194,14 @@ func (s *e2eSetup) loadGraph(t *testing.T) *model.Graph {
 // finder opens the persistent index fresh so it reflects whatever build /
 // lazyFill just committed (they write under index.WriteStore's exclusive lock,
 // so a snapshot opened earlier would miss the new rows).
-func (s *e2eSetup) finder(t *testing.T) *finders.SearchFinder {
+func (s *e2eSetup) finder(t *testing.T, g *model.Graph) *finders.SearchFinder {
 	t.Helper()
 	store, err := index.Open(s.indexDir)
 	if err != nil {
 		t.Fatalf("open index: %v", err)
 	}
 	return finders.NewSearchFinder(finders.SearchFinderOptions{
+		Graph:      g,
 		GraphDir:   s.graphDir,
 		Embedder:   s.embedder,
 		IndexStore: store,
@@ -207,8 +210,8 @@ func (s *e2eSetup) finder(t *testing.T) *finders.SearchFinder {
 
 type e2eNoopRunner struct{}
 
-func (e2eNoopRunner) Run(context.Context, llm.Request) (*llm.RunResult, error) {
-	return nil, fmt.Errorf("noop")
+func (e2eNoopRunner) Run(context.Context, pkgllm.Request) (pkgllm.Result, error) {
+	return pkgllm.Result{}, fmt.Errorf("noop")
 }
 
 func TestE2E_BuildAndVectorSearch(t *testing.T) {
@@ -217,8 +220,7 @@ func TestE2E_BuildAndVectorSearch(t *testing.T) {
 	s.build(t)
 	g := s.loadGraph(t)
 
-	res, err := s.finder(t).Search(context.Background(), query.SearchQuery{
-		Graph:                g,
+	res, err := s.finder(t, g).Search(context.Background(), query.SearchQuery{
 		Phrase:               "looking for apples",
 		MaxCitationsPerEntry: query.DefaultMaxCitationsPerEntry,
 	})
@@ -254,8 +256,7 @@ func TestE2E_LazyFillCoversNewEntry(t *testing.T) {
 	s.lazyFill(t)
 
 	g := s.loadGraph(t)
-	res, err := s.finder(t).Search(context.Background(), query.SearchQuery{
-		Graph:  g,
+	res, err := s.finder(t, g).Search(context.Background(), query.SearchQuery{
 		Phrase: "I'd like a banana",
 	})
 	if err != nil {
@@ -284,8 +285,7 @@ func TestE2E_BranchReconciliation(t *testing.T) {
 	}
 
 	g := s.loadGraph(t)
-	res, err := s.finder(t).Search(context.Background(), query.SearchQuery{
-		Graph:  g,
+	res, err := s.finder(t, g).Search(context.Background(), query.SearchQuery{
 		Phrase: "orange harvest",
 	})
 	if err != nil {
@@ -304,8 +304,7 @@ func TestE2E_HybridFusion(t *testing.T) {
 	s.build(t)
 	g := s.loadGraph(t)
 
-	res, err := s.finder(t).Search(context.Background(), query.SearchQuery{
-		Graph:  g,
+	res, err := s.finder(t, g).Search(context.Background(), query.SearchQuery{
 		Terms:  []string{"orange"},
 		Phrase: "citrus harvest",
 	})
@@ -331,15 +330,15 @@ func TestE2E_TextModeDoesNotEmbed(t *testing.T) {
 
 	// Track embedder usage via a wrapping runner-counter.
 	tracked := &countingEmbedder{inner: s.embedder}
+	g := s.loadGraph(t)
 	finder := finders.NewSearchFinder(finders.SearchFinderOptions{
+		Graph:      g,
 		GraphDir:   s.graphDir,
 		Embedder:   tracked,
 		IndexStore: index.OpenInMemory(),
 	})
 
-	g := s.loadGraph(t)
 	_, err := finder.Search(context.Background(), query.SearchQuery{
-		Graph: g,
 		Terms: []string{"apple"},
 	})
 	if err != nil {

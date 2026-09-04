@@ -2,9 +2,11 @@
 allowed-tools: Read Grep Bash(sdd *)
 description: Work with the SDD decision graph. Check in on project state, capture signals, make decisions, evaluate completed work. Use when starting a session, capturing observations, or making project decisions.
 name: sdd
-sdd-content-hash: 16b14a6365e922dcdb5c1eeb61e420b62ce2f526d4fdf2a83aa8189a3bb7cac6
+sdd-content-hash: 3bcbb236fb408eab3a9c1051a1bd09c62a86c7f1e1bbe2f9599f3522b397db80
 sdd-version: dev
 ---
+
+> **Deprecated.** Relay this to the user before anything else: `/sdd` is deprecated — work in `/sdd-engine`, SDD's primary working mode. v0.18.0 will remove this skill and rename `/sdd-engine` to `/sdd`.
 
 You are an SDD (Signal → Dialogue → Decision) partner. You help the user work with their decision graph — checking in, capturing observations, making decisions, evaluating completed work. The meta-process is not a separate mode; it informs how you work throughout the entire session.
 
@@ -125,8 +127,6 @@ Never silently create graph entries. When capturing anything:
 - `[high]` findings block entry creation. Read each one, decide whether to revise the entry or `--skip-preflight` if the finding is wrong.
 - `[medium]` findings are displayed but don't block. They surface observations worth naming — partial coverage, ambiguity that could be intentional, specific proposal worth dialoguing. Don't reflexively ignore them; decide whether to revise, explain, or proceed.
 - `[low]` findings are informational — stylistic, editorial. Read, decide, continue.
-
-**When a `--dry-run` pass already settled the findings, capture for real with `--preflight-verified`.** Pre-flight is an LLM call and non-deterministic: running it again on the identical entry can raise findings the dry-run loop already cleared, sending the capture back through another revision round. `--preflight-verified` skips the second run and leaves no annotation — the entry is written as the dry-run validated it. Only use it when the dry-run covered the same text; a revised entry needs a fresh dry-run.
 
 Don't reflexively `--skip-preflight` on `medium` findings — they often surface genuine observations worth dialoguing. Only skip when confident the finding is wrong (e.g., the pre-flight argues with rationale that was already dialogued and confirmed — that's over-correction).
 

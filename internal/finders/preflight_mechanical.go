@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/serveview"
 )
 
 // mechanicalPreflight runs Go-side structural checks against a proposed
@@ -17,6 +19,10 @@ import (
 //   - participant-coverage (AC 6): every name in Participants must match
 //     the canonical of an active actor signal. Self-transitioning grace —
 //     skipped when the graph has zero active actor signals.
+//   - focus-actor-drift: on a kind: focus decision, every focus-level actor
+//     and every per-involvement actor override must match an active actor
+//     canonical — participant coverage applied to the focus actor fields,
+//     sharing the same canonical set and grace mode.
 //   - actor-canonical-reused (AC 5): for a new kind: actor signal, the
 //     canonical must not appear in any actor-identity chain other than
 //     the chain the new entry extends.
@@ -51,15 +57,18 @@ import (
 //     resolution is enforced even earlier — a dangling local ref hard-blocks
 //     at write-time validation before pre-flight runs.
 //
-// Severity is strictly binary: SeverityHigh or absent. Mechanical checks
-// never emit medium or low; partial coverage is never "kind-of an actor".
-func mechanicalPreflight(entry *model.Entry, graph *model.Graph, declaredDeps []string) []query.Finding {
+// Severity is binary for structural checks: SeverityHigh or absent — partial
+// coverage is never "kind-of an actor". The one medium is the serve-budget
+// finding on procedure specs, advisory by design: overshoot is a risk, not a
+// defect, and the spec still runs (d-tac-rzi).
+func mechanicalPreflight(entry *model.Entry, graph *model.Graph, declaredDeps []string, resolver engine.QueryResolver) []query.Finding {
 	if entry == nil || graph == nil {
 		return nil
 	}
 	var findings []query.Finding
 
 	findings = append(findings, participantCoverageFindings(entry, graph)...)
+	findings = append(findings, focusActorCoverageFindings(entry, graph)...)
 	findings = append(findings, refKindFindings(entry)...)
 	findings = append(findings, refKindApplicabilityFindings(entry, graph)...)
 	findings = append(findings, supersedeForkFindings(entry, graph)...)
@@ -73,8 +82,35 @@ func mechanicalPreflight(entry *model.Entry, graph *model.Graph, declaredDeps []
 	}
 	if entry.IsProcedure() {
 		findings = append(findings, procedureWriteOnceFindings(entry, graph)...)
+		findings = append(findings, serveBudgetFindings(entry, resolver)...)
 	}
 
+	return findings
+}
+
+// serveBudgetFindings runs the advisory authoring arithmetic (d-tac-rzi) on a
+// procedure entry: each step whose worst-case serve exceeds the effective
+// total is one medium finding. A spec that does not parse is skipped — spec
+// validation reports that on its own — and a nil resolver skips the check
+// (lint catches the spec on every later sweep).
+func serveBudgetFindings(entry *model.Entry, resolver engine.QueryResolver) []query.Finding {
+	if resolver == nil {
+		return nil
+	}
+	spec, err := engine.ParseSpec(entry)
+	if err != nil {
+		return nil
+	}
+	budget := serveview.Default()
+	var findings []query.Finding
+	for _, size := range spec.OverBudget(budget, resolver) {
+		findings = append(findings, query.Finding{
+			Severity: query.SeverityMedium,
+			Category: "serve-budget",
+			Observation: fmt.Sprintf("step %q sizes to a worst-case %d bytes against the %d-byte serve budget — tighten caps, or declare `serveBudget: %d` on the spec to record the trade",
+				size.Step, size.Bytes, spec.EffectiveTotal(budget), size.Bytes),
+		})
+	}
 	return findings
 }
 
@@ -297,15 +333,9 @@ func capturableRefKindList() string {
 // actor signal. Grace mode (no active actors yet) skips the check so
 // fresh graphs aren't blocked before the first actor is captured.
 func participantCoverageFindings(entry *model.Entry, graph *model.Graph) []query.Finding {
-	active := graph.ActiveActorHeads()
-	if len(active) == 0 {
+	canonicals, active := activeActorCanonicals(graph)
+	if !active {
 		return nil // grace mode
-	}
-	canonicals := make(map[string]struct{}, len(active))
-	for _, a := range active {
-		if a.Canonical != "" {
-			canonicals[a.Canonical] = struct{}{}
-		}
 	}
 	var findings []query.Finding
 	for _, p := range entry.Participants {
@@ -320,6 +350,67 @@ func participantCoverageFindings(entry *model.Entry, graph *model.Graph) []query
 			Category:    "participant-drift",
 			Observation: fmt.Sprintf("participant %q does not match any active actor canonical", p),
 		})
+	}
+	return findings
+}
+
+// activeActorCanonicals returns the canonical set of every active actor head.
+// The bool is false in grace mode (no active actor signals yet) so coverage
+// checks skip a fresh graph rather than blocking before the first actor lands.
+func activeActorCanonicals(graph *model.Graph) (map[string]struct{}, bool) {
+	active := graph.ActiveActorHeads()
+	if len(active) == 0 {
+		return nil, false
+	}
+	canonicals := make(map[string]struct{}, len(active))
+	for _, a := range active {
+		if a.Canonical != "" {
+			canonicals[a.Canonical] = struct{}{}
+		}
+	}
+	return canonicals, true
+}
+
+// focusActorCoverageFindings applies participant coverage to the actor fields
+// of a kind: focus decision: every focus-level actor and every per-involvement
+// actor override must match an active actor canonical. Shares the canonical set
+// and grace mode with participantCoverageFindings; non-focus entries pass.
+func focusActorCoverageFindings(entry *model.Entry, graph *model.Graph) []query.Finding {
+	if !entry.IsFocus() {
+		return nil
+	}
+	canonicals, active := activeActorCanonicals(graph)
+	if !active {
+		return nil // grace mode
+	}
+	var findings []query.Finding
+	for i, name := range entry.FocusActors {
+		if name == "" {
+			continue
+		}
+		if _, ok := canonicals[name]; ok {
+			continue
+		}
+		findings = append(findings, query.Finding{
+			Severity:    query.SeverityHigh,
+			Category:    "focus-actor-drift",
+			Observation: fmt.Sprintf("actors[%d] %q does not match any active actor canonical", i, name),
+		})
+	}
+	for i, inv := range entry.Involvement {
+		for j, name := range inv.Actors {
+			if name == "" {
+				continue
+			}
+			if _, ok := canonicals[name]; ok {
+				continue
+			}
+			findings = append(findings, query.Finding{
+				Severity:    query.SeverityHigh,
+				Category:    "focus-actor-drift",
+				Observation: fmt.Sprintf("involvement[%d].actors[%d] %q does not match any active actor canonical", i, j, name),
+			})
+		}
 	}
 	return findings
 }

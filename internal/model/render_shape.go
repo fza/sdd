@@ -17,6 +17,12 @@ const (
 // slices add Grouped, FocusBlock, etc.
 type SectionData interface {
 	Shape() RenderShape
+	// Count reports how many primary units the pipeline matched — entries,
+	// focuses, actors, or WIP markers by shape; aggregating shapes like
+	// as-counts report the entries aggregated, not the rows rendered. Zero
+	// means the pipeline matched nothing, which lets callers distinguish an
+	// empty result from a failure without re-deriving it from rendered text.
+	Count() int
 }
 
 // FlatList is an ordered sequence of entries — the shape consumed by the
@@ -37,6 +43,10 @@ type FlatList struct {
 	Entries       []*Entry
 	Scores        []float64
 	RefExpansions [][]RefExpansion
+	// RefExpansionDropped is parallel to RefExpansions when a serve budget
+	// capped an entry's ref sub-lines: the count of refs not rendered for
+	// Entries[i]. Nil on explicit pulls, which are never cut (d-tac-rzi).
+	RefExpansionDropped []int
 }
 
 // RefExpansion is one resolved outgoing reference for expand(refs) output.
@@ -65,3 +75,6 @@ type RefExpansion struct {
 
 // Shape implements SectionData.
 func (FlatList) Shape() RenderShape { return ShapeFlatList }
+
+// Count implements SectionData.
+func (f FlatList) Count() int { return len(f.Entries) }

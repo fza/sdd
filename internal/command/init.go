@@ -16,9 +16,18 @@ type InitCmd struct {
 	// will live.
 	RepoRoot string
 
+	// StableRepoRoot is the Git common-directory identity invariant across
+	// linked worktrees, used only for identity-less machine-global store keys.
+	// Empty falls back to RepoRoot for non-Git callers and tests.
+	StableRepoRoot string
+
 	// GraphDir is the graph directory path relative to RepoRoot. Empty
 	// defaults to model.DefaultGraphDir (".sdd/graph").
 	GraphDir string
+
+	// DefaultBranch is the concrete Git branch persisted for ordinary engine
+	// captures on fresh initialization or when upgrading an older config.
+	DefaultBranch string
 
 	// Participant is the canonical author name to record in
 	// .sdd/config.local.yaml. Empty means "do not change" — existing
@@ -80,11 +89,6 @@ type InitCmd struct {
 	// BumpMinimumVersionCmd; equal versions are a no-op.
 	Bump bool
 
-	// MigrateLegacySessions requests the explicit legacy-session sweep. The
-	// caller sets this only after interactive confirmation or an equivalent
-	// non-interactive acknowledgement.
-	MigrateLegacySessions bool
-
 	// OnMinimumVersionBumped fires when minimum_version was raised by a
 	// `sdd init --bump` invocation, carrying the previous value (empty
 	// when no floor was recorded) and the new value.
@@ -118,10 +122,6 @@ type InitCmd struct {
 	// store already existed there and the legacy dir was left in place for
 	// manual removal (never clobbered, never merged).
 	OnIndexMigrated func(legacyDir, storeDir string, moved bool)
-
-	// OnSessionMigrated fires after one legacy session was atomically replaced
-	// by the current envelope.
-	OnSessionMigrated func(path string)
 
 	// --- Always-fire callbacks (both initial and repeat runs) ---
 

@@ -23,6 +23,16 @@ const (
 	// Written by the write command's contract (newEntry, wired by the
 	// shell); read here by noHighFindings.
 	fieldFindings = "findings"
+	// fieldGuideFindings holds the last writing-guide findings
+	// ([]query.GuideFinding). Written by the guide op's contract
+	// (writingGuide, wired by the shell); read here by noGuideFindings.
+	fieldGuideFindings = "guideFindings"
+	// fieldGuideReviewed marks that the agent has judged the current guide
+	// findings (recordGuideReview). The guide runs once per capture: with
+	// this set, the guide step passes through to playback instead of
+	// re-serving the review; requestGuideRecheck clears it together with the
+	// findings for an explicit re-run.
+	fieldGuideReviewed = "guideReviewed"
 )
 
 // playbackConfirmation is the value of fieldPlaybackConfirmation.
@@ -32,17 +42,26 @@ type playbackConfirmation struct {
 }
 
 // presenceFields maps each presence predicate to the store field it reads.
-// One predicate per commonly collected field; the mapping is the documented
-// contract (hasKind reads entryKind — the capture spine collects the target
-// kind under that name, kind being the param that pre-selects it).
+// One predicate per commonly collected field, named has<Field> throughout —
+// the regularity is a served contract (PresencePairs), so a new entry here
+// keeps it. (The drafted kind lives in state as entryKind because capture's
+// pre-selection param already owns the name kind.)
 var presenceFields = map[string]string{
-	"hasBody":         "body",
-	"hasRefs":         "refs",
-	"hasTopics":       "topics",
-	"hasConfidence":   "confidence",
-	"hasKind":         "entryKind",
-	"hasLayer":        "layer",
-	"hasWidenReport":  "widenReport",
+	"hasBody":        "body",
+	"hasRefs":        "refs",
+	"hasTopics":      "topics",
+	"hasConfidence":  "confidence",
+	"hasEntryKind":   "entryKind",
+	"hasLayer":       "layer",
+	"hasWidenReport": "widenReport",
+	// Identity-kind capture fields (bootstrap's actor/role captures): canonical
+	// on an actor, the bound actor canonical on a role. Presence only —
+	// resolution is roleActorResolves' job, shape is aliasesWellFormed's.
+	"hasCanonical": "canonical",
+	"hasRoleActor": "roleActor",
+	// A focus's involvement triples: presence only — target resolution is
+	// involvementTargetsResolve's job.
+	"hasInvolvement":  "involvement",
 	"hasAnchor":       "anchor",
 	"hasTargets":      "targets",
 	"hasGoal":         "goal",
@@ -51,9 +70,15 @@ var presenceFields = map[string]string{
 	"hasInspectedIds": "inspectedIds",
 	"hasPlan":         "plan",
 	"hasContract":     "contract",
+	"hasBaseBranch":   "baseBranch",
+	"hasWorkBranch":   "workBranch",
 	"hasDoneEntry":    "doneEntry",
 	"hasCandidates":   "candidates",
 	"hasSynthesis":    "synthesis",
+
+	// Bootstrap's brownfield gate: the host agent's repository read must land
+	// before the conversation opens on it.
+	"hasBrownfieldSynthesis": "brownfieldSynthesis",
 
 	// The evaluate lens gate: at least one lens judgment must land before the
 	// junction; evidence fields are instructed alongside, never gated.
@@ -63,6 +88,64 @@ var presenceFields = map[string]string{
 	// Engine-written by wipStart (see the shell's Writes contract): presence
 	// routes the implementation closeout through wipDone only on tracked runs.
 	"hasWipMarker": "wipMarker",
+}
+
+// loadDraftSpec judges a procedure draft's workflow exactly as the engine
+// will at start: parse the declared YAML, assemble a probe entry from the
+// draft's identity fields and body, and run the loader against the live
+// registry (r is the registry the predicate was registered into, seen after
+// the shell's own registrations). Non-procedure drafts pass vacuously.
+func loadDraftSpec(ctx *Context, r *Registry) error {
+	if draftStoreString(ctx, "entryKind") != string(model.KindProcedure) {
+		return nil
+	}
+	v, _ := ctx.Store.Get("procedureSpec")
+	doc, _ := v.(map[string]any)
+	if len(doc) == 0 {
+		return fmt.Errorf("a procedure draft declares its workflow — report procedureSpec ({params?, state?, steps, framing?} per the served schema)")
+	}
+	spec, err := model.ProcedureSpecFromDocument(doc)
+	if err != nil {
+		return err
+	}
+	probe := &model.Entry{
+		ID: "00000000-000000-d-prc-draft", Type: model.TypeDecision, Kind: model.KindProcedure,
+		Layer:     model.LayerProcess,
+		Canonical: draftStoreString(ctx, "canonical"),
+		Class:     model.ProcedureClass(draftStoreString(ctx, "class")),
+		Content:   draftStoreString(ctx, "body"), ProcedureSpec: spec,
+	}
+	_, err = LoadSpec(probe, r)
+	return err
+}
+
+// draftStoreString reads a store field as a string, "" when unset or not a
+// string.
+func draftStoreString(ctx *Context, field string) string {
+	v, ok := ctx.Store.Get(field)
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
+}
+
+// PresencePair is one gateable field with the presence predicate that reads
+// it — the pairing surfaces render instead of restating.
+type PresencePair struct {
+	Field     string
+	Predicate string
+}
+
+// PresencePairs lists the presence predicates and the store field each reads,
+// sorted by field — the closed gateable vocabulary.
+func PresencePairs() []PresencePair {
+	pairs := make([]PresencePair, 0, len(presenceFields))
+	for pred, field := range presenceFields {
+		pairs = append(pairs, PresencePair{Field: field, Predicate: pred})
+	}
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Field < pairs[j].Field })
+	return pairs
 }
 
 func registerBuiltinPredicates(r *Registry) {
@@ -82,8 +165,28 @@ func registerBuiltinPredicates(r *Registry) {
 
 	mustRegisterPredicate(r, Predicate{
 		Doc: FuncDoc{
+			Name: "specLoads",
+			Doc: "For a procedure draft, the declared workflow loads: procedureSpec parses and validates " +
+				"against this registry through the engine's own loader — capture never duplicates spec rules. " +
+				"Any other draft passes.",
+			Reads: []string{"entryKind", "procedureSpec", "canonical", "class", "body"},
+		},
+		Fn: func(ctx *Context) (bool, error) {
+			return loadDraftSpec(ctx, r) == nil, nil
+		},
+		FailMessage: "the procedure workflow does not load",
+		FailDetail: func(ctx *Context) string {
+			if err := loadDraftSpec(ctx, r); err != nil {
+				return err.Error()
+			}
+			return ""
+		},
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
 			Name:  "anchorsResolve",
-			Doc:   "The anchor and every target resolve to existing graph entries.",
+			Doc:   "Every set anchor and target resolves to an existing graph entry; an absent field passes — this checks resolution, not presence.",
 			Reads: []string{"anchor", "targets"},
 		},
 		Fn:          idsResolve("anchor", "targets"),
@@ -93,7 +196,7 @@ func registerBuiltinPredicates(r *Registry) {
 	mustRegisterPredicate(r, Predicate{
 		Doc: FuncDoc{
 			Name:  "inspectedIdsResolve",
-			Doc:   "Every inspected ID resolves to an existing graph entry.",
+			Doc:   "Every inspected ID resolves to an existing graph entry; an absent field passes — this checks resolution, not presence.",
 			Reads: []string{"inspectedIds"},
 		},
 		Fn:          idsResolve("inspectedIds"),
@@ -103,7 +206,7 @@ func registerBuiltinPredicates(r *Registry) {
 	mustRegisterPredicate(r, Predicate{
 		Doc: FuncDoc{
 			Name:  "doneEntryResolves",
-			Doc:   "The recorded done signal resolves to an existing graph entry.",
+			Doc:   "A set doneEntry resolves to an existing graph entry; an absent field passes — this checks resolution, not presence.",
 			Reads: []string{"doneEntry"},
 		},
 		Fn:          idsResolve("doneEntry"),
@@ -154,12 +257,97 @@ func registerBuiltinPredicates(r *Registry) {
 
 	mustRegisterPredicate(r, Predicate{
 		Doc: FuncDoc{
+			Name: "draftValidates",
+			Doc: "The drafted fields satisfy the construction boundary's structural rules for their kind " +
+				"(model.EntryConstruction, per the type-system contract) — so a gate never restates a " +
+				"per-kind required-field list. Graph-edge resolution stays with refsResolve.",
+			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "participants", "supersedes", "closes", "canonical", "aliases", "roleActor", "involvement", "focusActors", "focusWhen"},
+		},
+		Fn: func(ctx *Context) (bool, error) {
+			return len(draftStructuralFindings(ctx)) == 0, nil
+		},
+		FailMessage: "the draft does not satisfy its kind's structural rules",
+		FailDetail: func(ctx *Context) string {
+			findings := draftStructuralFindings(ctx)
+			if len(findings) == 0 {
+				return ""
+			}
+			messages := make([]string, 0, len(findings))
+			for _, f := range findings {
+				messages = append(messages, f.Message)
+			}
+			return "the draft does not satisfy its kind's structural rules: " + strings.Join(messages, "; ")
+		},
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
 			Name:  "participantsCanonical",
 			Doc:   "All participants resolve to active actor canonicals (grace mode: passes when the graph has no active actors).",
 			Reads: []string{"participants"},
 		},
 		Fn:          participantsCanonical,
 		FailMessage: "a participant is not an active actor canonical — resolve aliases to canonicals before capture",
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
+			Name:  "roleActorResolves",
+			Doc:   "The roleActor canonical resolves to an actor-identity chain in the graph (the bound actor exists). Absent roleActor passes — presence is hasRoleActor's job.",
+			Reads: []string{"roleActor"},
+		},
+		Fn:          roleActorResolves,
+		FailMessage: "roleActor does not name an actor known to the graph — capture the actor first, then bind the role to its canonical",
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
+			Name:  "aliasesWellFormed",
+			Doc:   "Every alias is a non-empty, distinct name, none colliding with the canonical. Absent aliases pass — aliases are optional on an actor.",
+			Reads: []string{"aliases", "canonical"},
+		},
+		Fn:          aliasesWellFormed,
+		FailMessage: "an alias is empty, duplicated, or repeats the canonical — list each alternate name once",
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
+			Name:  "entryKindIsActor",
+			Doc:   "The drafted entryKind is actor. Discriminates the kind-conditional assemble gate's identity branch.",
+			Reads: []string{"entryKind"},
+		},
+		Fn:          entryKindIs("actor"),
+		FailMessage: "the drafted kind is not actor",
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
+			Name:  "entryKindIsRole",
+			Doc:   "The drafted entryKind is role. Discriminates the kind-conditional assemble gate's role branch.",
+			Reads: []string{"entryKind"},
+		},
+		Fn:          entryKindIs("role"),
+		FailMessage: "the drafted kind is not role",
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
+			Name:  "entryKindIsFocus",
+			Doc:   "The drafted entryKind is focus. Discriminates the kind-conditional assemble gate's focus branch.",
+			Reads: []string{"entryKind"},
+		},
+		Fn:          entryKindIs("focus"),
+		FailMessage: "the drafted kind is not focus",
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
+			Name:  "involvementTargetsResolve",
+			Doc:   "Every drafted involvement target resolves to an entry in the graph. Absent involvement passes — presence is hasInvolvement's job.",
+			Reads: []string{"involvement"},
+		},
+		Fn:          involvementTargetsResolve,
+		FailMessage: "an involvement target does not resolve to a known entry — capture or reference the target first",
 	})
 
 	mustRegisterPredicate(r, Predicate{
@@ -201,6 +389,33 @@ func registerBuiltinPredicates(r *Registry) {
 		Fn:          noHighFindings,
 		FailMessage: "the last gate run produced high-severity findings",
 	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
+			Name:  "noGuideFindings",
+			Doc:   "The writing guide ran for the current draft and returned no findings.",
+			Reads: []string{fieldGuideFindings},
+		},
+		Fn:          noGuideFindings,
+		FailMessage: "the writing guide returned findings",
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
+			Name:  "guideReviewed",
+			Doc:   "The agent has judged the current guide findings (recorded by recordGuideReview).",
+			Reads: []string{fieldGuideReviewed},
+		},
+		Fn: func(ctx *Context) (bool, error) {
+			v, ok := ctx.Store.Get(fieldGuideReviewed)
+			if !ok {
+				return false, nil
+			}
+			reviewed, _ := v.(bool)
+			return reviewed, nil
+		},
+		FailMessage: "the guide findings have not been reviewed",
+	})
 }
 
 // registerBuiltinCommands registers the dependency-free trust machinery.
@@ -214,11 +429,10 @@ func registerBuiltinCommands(r *Registry) {
 			Writes: []string{fieldPlaybackConfirmation},
 		},
 		Fn: func(ctx *Context) error {
-			ctx.Store.WriteEngine(fieldPlaybackConfirmation, playbackConfirmation{
+			return ctx.Store.WriteEngine(fieldPlaybackConfirmation, playbackConfirmation{
 				Snapshot: ctx.Store.StateSnapshot(),
 				Step:     ctx.Step,
 			})
-			return nil
 		},
 	})
 
@@ -230,8 +444,33 @@ func registerBuiltinCommands(r *Registry) {
 			Writes: []string{fieldPreflightOverride},
 		},
 		Fn: func(ctx *Context) error {
-			ctx.Store.WriteEngine(fieldPreflightOverride, true)
-			return nil
+			return ctx.Store.WriteEngine(fieldPreflightOverride, true)
+		},
+	})
+
+	mustRegisterCommand(r, Command{
+		Doc: FuncDoc{
+			Name:   "recordGuideReview",
+			Doc:    "Records that the agent judged the current guide findings; the guide step then passes through instead of re-serving the review.",
+			Reads:  []string{fieldGuideFindings},
+			Writes: []string{fieldGuideReviewed},
+		},
+		Fn: func(ctx *Context) error {
+			return ctx.Store.WriteEngine(fieldGuideReviewed, true)
+		},
+	})
+
+	mustRegisterCommand(r, Command{
+		Doc: FuncDoc{
+			Name:   "requestGuideRecheck",
+			Doc:    "Clears the recorded guide run so the writing guide runs fresh on the next arrival — the explicit path for re-checking a substantially reworked draft.",
+			Writes: []string{fieldGuideFindings, fieldGuideReviewed},
+		},
+		Fn: func(ctx *Context) error {
+			if err := ctx.Store.WriteEngine(fieldGuideFindings, nil); err != nil {
+				return err
+			}
+			return ctx.Store.WriteEngine(fieldGuideReviewed, nil)
 		},
 	})
 }
@@ -373,6 +612,201 @@ func participantsCanonical(ctx *Context) (bool, error) {
 	return true, nil
 }
 
+func roleActorResolves(ctx *Context) (bool, error) {
+	if ctx.Graph == nil {
+		return false, fmt.Errorf("roleActorResolves needs a graph")
+	}
+	v, ok := ctx.Store.Get("roleActor")
+	if !ok {
+		return true, nil
+	}
+	canonical, ok := v.(string)
+	if !ok || canonical == "" {
+		return true, nil
+	}
+	return ctx.Graph.ChainForCanonical(canonical) != nil, nil
+}
+
+func involvementTargetsResolve(ctx *Context) (bool, error) {
+	if ctx.Graph == nil {
+		return false, fmt.Errorf("involvementTargetsResolve needs a graph")
+	}
+	v, ok := ctx.Store.Get("involvement")
+	if !ok {
+		return true, nil
+	}
+	for _, inv := range asInvolvements(v) {
+		if _, ok := ctx.Graph.ByID[inv.Target]; !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// draftStructuralFindings assembles the drafted capture fields as an entry
+// and runs the construction boundary's rule set: assembly shape problems,
+// stray-field projection findings, and the full per-kind validation including
+// capture-only rules. No rule reads ID or Time, so neither is set.
+func draftStructuralFindings(ctx *Context) []model.Finding {
+	entry, findings := draftEntryFromStore(ctx.Store)
+	if len(findings) > 0 {
+		return findings
+	}
+	construction, findings := model.ConstructFromEntry(entry)
+	return append(findings, construction.Validate(ctx.Graph)...)
+}
+
+// draftEntryFromStore reads the capture state fields into a model.Entry for
+// structural validation. It mirrors the write op's draft assembly
+// (application.entryFromDraft) — the binding-coverage directive
+// (20260812-160448-d-tac-ymk) is the committed answer to holding the two to
+// one declaration.
+func draftEntryFromStore(store *Store) (*model.Entry, []model.Finding) {
+	str := func(field string) string {
+		v, _ := store.Get(field)
+		s, _ := v.(string)
+		return s
+	}
+	strs := func(field string) []string {
+		v, ok := store.Get(field)
+		if !ok {
+			return nil
+		}
+		return asStrings(v)
+	}
+
+	kind := model.Kind(str("entryKind"))
+	var entryType model.EntryType
+	switch {
+	case kind == "":
+		return nil, []model.Finding{{Field: "kind", Message: "entry kind is required"}}
+	case model.IsValidKindForType(model.TypeSignal, kind):
+		entryType = model.TypeSignal
+	case model.IsValidKindForType(model.TypeDecision, kind):
+		entryType = model.TypeDecision
+	default:
+		return nil, []model.Finding{{Field: "kind", Value: string(kind), Message: fmt.Sprintf("unknown entry kind %q", kind)}}
+	}
+
+	var findings []model.Finding
+	layerValue := str("layer")
+	layer := model.Layer(layerValue)
+	if expanded, ok := model.LayerFromAbbrev[layerValue]; ok {
+		layer = expanded
+	}
+	entry := &model.Entry{
+		Type: entryType, Kind: kind, Layer: layer,
+		Content: str("body"), Confidence: str("confidence"),
+		Intent:    model.Intent(str("intent")),
+		Canonical: str("canonical"), Aliases: strs("aliases"), Actor: str("roleActor"),
+		Participants: strs("participants"), Closes: strs("closes"), Supersedes: strs("supersedes"),
+		FocusActors: strs("focusActors"), Attachments: strs("attachments"),
+	}
+	if v, ok := store.Get("refs"); ok {
+		for _, r := range asRefs(v) {
+			entry.Refs = append(entry.Refs, model.Ref{ID: r.ID, Kind: model.RefKind(r.Kind), Desc: r.Desc})
+		}
+	}
+	for _, label := range strs("topics") {
+		topic, err := model.ParseTopicPath(label)
+		if err != nil {
+			findings = append(findings, model.Finding{Field: "topics", Value: label, Message: fmt.Sprintf("topic %q: %v", label, err)})
+			continue
+		}
+		entry.Topics = append(entry.Topics, topic)
+	}
+	if v, ok := store.Get("index"); ok {
+		if doc, ok := v.(map[string]any); ok {
+			title, _ := doc["title"].(string)
+			topic, _ := doc["topic"].(string)
+			index, err := model.NewFactIndex(title, topic)
+			if err != nil {
+				findings = append(findings, model.Finding{Field: "index", Message: err.Error()})
+			} else {
+				entry.Index = index
+			}
+		}
+	}
+	if v, ok := store.Get("focusWhen"); ok {
+		entry.FocusWhen = asFocusWhen(v)
+	}
+	if v, ok := store.Get("involvement"); ok {
+		for _, inv := range asInvolvements(v) {
+			entry.Involvement = append(entry.Involvement, model.Involvement{
+				Target: inv.Target, Actors: inv.Actors, ActorsSet: inv.ActorsSet,
+				When: whenToFocusWhen(inv.When),
+			})
+		}
+	}
+	return entry, findings
+}
+
+// asFocusWhen normalizes a store when value — typed in-memory or a JSON
+// document after replay — to the model shape. A present-but-empty mapping
+// yields an empty FocusWhen so the model's at-least-one-bound rule sees it.
+func asFocusWhen(v any) *model.FocusWhen {
+	switch w := v.(type) {
+	case When:
+		return &model.FocusWhen{From: w.From, To: w.To}
+	case *When:
+		return whenToFocusWhen(w)
+	case map[string]any:
+		from, _ := w["from"].(string)
+		to, _ := w["to"].(string)
+		return &model.FocusWhen{From: from, To: to}
+	default:
+		return nil
+	}
+}
+
+func whenToFocusWhen(w *When) *model.FocusWhen {
+	if w == nil {
+		return nil
+	}
+	return &model.FocusWhen{From: w.From, To: w.To}
+}
+
+func aliasesWellFormed(ctx *Context) (bool, error) {
+	v, ok := ctx.Store.Get("aliases")
+	if !ok {
+		return true, nil
+	}
+	aliases := asStrings(v)
+	if len(aliases) == 0 {
+		return true, nil
+	}
+	canonical, _ := ctx.Store.Get("canonical")
+	canonicalName, _ := canonical.(string)
+	seen := make(map[string]bool, len(aliases))
+	for _, a := range aliases {
+		if strings.TrimSpace(a) == "" {
+			return false, nil
+		}
+		if a == canonicalName {
+			return false, nil
+		}
+		if seen[a] {
+			return false, nil
+		}
+		seen[a] = true
+	}
+	return true, nil
+}
+
+// entryKindIs builds a predicate that holds when the drafted entryKind equals
+// kind — the kind discriminator the assemble gate's ordered transitions branch
+// on so identity kinds and ordinary kinds carry different requirements.
+func entryKindIs(kind string) func(*Context) (bool, error) {
+	return func(ctx *Context) (bool, error) {
+		v, ok := ctx.Store.Get("entryKind")
+		if !ok {
+			return false, nil
+		}
+		s, ok := v.(string)
+		return ok && s == kind, nil
+	}
+}
+
 func topicsKnown(ctx *Context) (bool, error) {
 	if ctx.Graph == nil {
 		return false, fmt.Errorf("topicsKnown needs a graph")
@@ -426,21 +860,36 @@ func noHighFindings(ctx *Context) (bool, error) {
 		// always writes findings, so absence means the gate hasn't run.
 		return false, nil
 	}
-	findings, ok := v.([]query.Finding)
-	if !ok {
-		// Replay path: findings restored from JSON.
-		normalized, err := VarType{Base: TypePreflightFindings}.ValidateValue(v)
-		if err != nil {
-			return false, fmt.Errorf("findings field has unexpected shape: %w", err)
-		}
-		findings = normalized.([]query.Finding)
+	// Store values are normalized JSON documents, so findings always come back
+	// as the []any/map form; the query type reconstructs the typed findings.
+	normalized, err := VarType{Base: TypePreflightFindings}.ValidateValue(v)
+	if err != nil {
+		return false, fmt.Errorf("findings field has unexpected shape: %w", err)
 	}
+	findings := normalized.([]query.Finding)
 	for _, f := range findings {
 		if f.Severity == query.SeverityHigh {
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+// noGuideFindings passes only when the writing guide has run and returned an
+// empty findings list. Absence fails: the guide op's contract always writes
+// guideFindings, so a missing field means the op has not run for this draft.
+func noGuideFindings(ctx *Context) (bool, error) {
+	v, ok := ctx.Store.Get(fieldGuideFindings)
+	if !ok || v == nil {
+		// Absent or cleared (requestGuideRecheck) — the guide has not run
+		// for the current draft.
+		return false, nil
+	}
+	normalized, err := VarType{Base: TypeGuideFindings}.ValidateValue(v)
+	if err != nil {
+		return false, fmt.Errorf("guideFindings field has unexpected shape: %w", err)
+	}
+	return len(normalized.([]query.GuideFinding)) == 0, nil
 }
 
 // asRefs normalizes a refs store value: a validated list holds engine.Ref
@@ -463,6 +912,27 @@ func asRefs(v any) []Ref {
 		}
 	}
 	return refs
+}
+
+// asInvolvements normalizes a list-of-involvement store value, accepting both
+// the validated engine value and the replay/JSON map form.
+func asInvolvements(v any) []Involvement {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]Involvement, 0, len(items))
+	for _, item := range items {
+		switch iv := item.(type) {
+		case Involvement:
+			out = append(out, iv)
+		case map[string]any:
+			if inv, err := involvementFromMap(iv); err == nil {
+				out = append(out, inv)
+			}
+		}
+	}
+	return out
 }
 
 // asStrings normalizes a list-of-strings store value.

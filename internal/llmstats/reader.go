@@ -23,12 +23,14 @@ type Record struct {
 	Op                string `json:"op"`
 	Provider          string `json:"provider,omitempty"`
 	Model             string `json:"model,omitempty"`
+	Variant           string `json:"variant,omitempty"`
 	Items             int    `json:"items,omitempty"`
 	InputTokens       int    `json:"input_tokens"`
 	OutputTokens      int    `json:"output_tokens"`
 	CacheReadTokens   int    `json:"cache_read_tokens"`
 	CacheCreateTokens int    `json:"cache_create_tokens"`
 	DurationMS        int64  `json:"duration_ms"`
+	Error             string `json:"error,omitempty"`
 }
 
 // toStatsRecord parses the timestamp and lifts the record into the pure domain
@@ -43,12 +45,14 @@ func (r Record) toStatsRecord() (model.StatsRecord, error) {
 		Op:                r.Op,
 		Provider:          r.Provider,
 		Model:             r.Model,
+		Variant:           r.Variant,
 		Items:             r.Items,
 		InputTokens:       r.InputTokens,
 		OutputTokens:      r.OutputTokens,
 		CacheReadTokens:   r.CacheReadTokens,
 		CacheCreateTokens: r.CacheCreateTokens,
 		DurationMS:        r.DurationMS,
+		Error:             r.Error,
 	}, nil
 }
 

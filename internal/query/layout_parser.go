@@ -82,16 +82,15 @@ func (p *parser) parseLayout() (model.Layout, error) {
 // will report).
 func (p *parser) parseSection() (model.Section, error) {
 	var section model.Section
+	start := p.pos
 	for {
 		fn, err := p.parseFunction()
 		if err != nil {
 			return model.Section{}, err
 		}
 		section.Functions = append(section.Functions, fn)
-		if p.pos == len(p.src) {
-			return section, nil
-		}
-		if p.src[p.pos] != ':' {
+		if p.pos == len(p.src) || p.src[p.pos] != ':' {
+			section.Source = p.src[start:p.pos]
 			return section, nil
 		}
 		p.pos++ // consume ':'
@@ -127,7 +126,7 @@ func (p *parser) parseFunction() (model.Function, error) {
 			return model.Function{}, p.errAtf(p.pos, "expected ')'")
 		}
 		if p.src[p.pos] != ')' {
-			return model.Function{}, p.errAtf(p.pos, "expected ')', got %q", string(p.src[p.pos]))
+			return model.Function{}, p.errAtf(p.pos, "expected ')', got %q%s", string(p.src[p.pos]), quotingHint(p.src[p.pos]))
 		}
 		p.pos++ // consume ')'
 		fn.Args = args
@@ -256,6 +255,24 @@ func (p *parser) parseString(delim byte) (model.FunctionArg, error) {
 	content := p.src[start:p.pos]
 	p.pos++ // consume closing quote
 	return model.FunctionArg{Kind: model.ArgKindString, String: content}, nil
+}
+
+// quotingHint returns an actionable suffix when the character that broke
+// argument parsing looks like the middle of an unquoted value — a space
+// (multi-word name), a hyphen (ISO date), or an alphanumeric run (duration
+// like 7d). These are the arguments that must be quoted, and the bare
+// "expected ')'" error left that undiscoverable. Any other character gets no
+// hint, so genuine syntax mistakes aren't drowned in irrelevant advice.
+//
+// The character classes mirror the bare-token lexer (isNameStart/parseNumber):
+// a bare token stops at the first char outside those classes, so the char we
+// tripped on is exactly what a bare value would have continued into. If the
+// bare-token rules change, revisit this set.
+func quotingHint(c byte) string {
+	if c == ' ' || c == '-' || (c >= '0' && c <= '9') || isNameStart(c) {
+		return ` — quote multi-word names, dates, and durations, e.g. since("7d") or participant("Jonathan Philipp")`
+	}
+	return ""
 }
 
 func isNameStart(c byte) bool {

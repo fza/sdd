@@ -1,6 +1,7 @@
 package finders
 
 import (
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -37,7 +38,7 @@ func TestView_ActiveAsList(t *testing.T) {
 
 	layout := mustParseLayout(t, "active:as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -84,7 +85,7 @@ func TestView_AsListAlone_IncludesAll(t *testing.T) {
 
 	layout := mustParseLayout(t, "as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -103,7 +104,7 @@ func TestView_MultipleSections(t *testing.T) {
 
 	layout := mustParseLayout(t, "active:as-list,as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -116,12 +117,15 @@ func TestView_UnknownFunction(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "futurefn:as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for unknown function, got nil")
 	}
 	msg := err.Error()
-	for _, want := range []string{"unknown function", "futurefn", "active", "as-list"} {
+	// Lists primitives AND macros: a wrong guess is often a reach for a macro,
+	// and the primitive-only list left that vocabulary undiscoverable (top,
+	// focus, done, …).
+	for _, want := range []string{"unknown function", "futurefn", "active", "as-list", "top", "focus"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q missing substring %q", msg, want)
 		}
@@ -133,7 +137,7 @@ func TestView_MissingRender(t *testing.T) {
 	// Section has no render terminator — every section must end in a render.
 	layout := mustParseLayout(t, "active")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for missing render, got nil")
 	}
@@ -155,7 +159,7 @@ func TestView_RenderCanAppearMidSection(t *testing.T) {
 
 	layout := mustParseLayout(t, "as-list:active")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -181,7 +185,7 @@ func TestView_MultipleRendersLastWins(t *testing.T) {
 	// by as-grouped without a group() would be a render-shape mismatch.
 	layout := mustParseLayout(t, "as-list:group(by(kind)):as-grouped")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -201,7 +205,7 @@ func TestView_MacroExpansion_TopWithRankModifier(t *testing.T) {
 
 	layout := mustParseLayoutAndExpand(t, "top(2):rank(in-degree)")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -225,7 +229,7 @@ func TestView_MacroExpansion_TopWithRankModifier(t *testing.T) {
 
 func TestView_NilGraph(t *testing.T) {
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: nil, Layout: mustParseLayout(t, "as-list")})
+	_, err := f.OnGraph(nil).View(query.ViewQuery{Layout: mustParseLayout(t, "as-list")})
 	if err == nil {
 		t.Fatalf("expected error for nil graph, got nil")
 	}
@@ -241,7 +245,7 @@ func TestView_KindFilter_Single(t *testing.T) {
 
 	layout := mustParseLayout(t, "kind(plan):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -262,7 +266,7 @@ func TestView_IntentFilter_Single(t *testing.T) {
 
 	layout := mustParseLayout(t, "intent(guiding):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -284,7 +288,7 @@ func TestView_IntentFilter_NotExcludesGuiding(t *testing.T) {
 
 	layout := mustParseLayout(t, "kind(directive):not(intent(guiding)):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -303,7 +307,7 @@ func TestView_ActiveExcludesSettled(t *testing.T) {
 
 	layout := mustParseLayout(t, "kind(directive):active:as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -317,7 +321,7 @@ func TestView_IntentFilter_RejectsInvalidValue(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "intent(tentative):as-list")
 	f := New(Options{})
-	if _, err := f.View(query.ViewQuery{Graph: g, Layout: layout}); err == nil {
+	if _, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout}); err == nil {
 		t.Error("View: expected error for invalid intent value, got nil")
 	}
 }
@@ -331,7 +335,7 @@ func TestView_KindFilter_Disjunction(t *testing.T) {
 
 	layout := mustParseLayout(t, "kind(plan,directive,activity):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -356,7 +360,7 @@ func TestView_KindFilter_MultipleCallsIntersect(t *testing.T) {
 
 	layout := mustParseLayout(t, "kind(plan,directive,activity):kind(plan,directive):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -379,7 +383,7 @@ func TestView_KindFilter_DisjointIntersection(t *testing.T) {
 
 	layout := mustParseLayout(t, "kind(plan):kind(directive):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -398,7 +402,7 @@ func TestView_KindFilter_StringArg(t *testing.T) {
 
 	layout := mustParseLayout(t, `kind("plan"):as-list`)
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -417,7 +421,7 @@ func TestView_ParticipantFilter_Single(t *testing.T) {
 
 	layout := mustParseLayout(t, "participant(Christopher):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -436,7 +440,7 @@ func TestView_ParticipantFilter_QuotedMultiWordName(t *testing.T) {
 
 	layout := mustParseLayout(t, `participant("Jonathan Philipp"):as-list`)
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -454,7 +458,7 @@ func TestView_ParticipantFilter_Disjunction(t *testing.T) {
 
 	layout := mustParseLayout(t, `participant(Christopher,"Jonathan Philipp"):as-list`)
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -473,7 +477,7 @@ func TestView_ParticipantFilter_MultipleCallsIntersect(t *testing.T) {
 
 	layout := mustParseLayout(t, "participant(Christopher):participant(Claude):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -487,7 +491,7 @@ func TestView_ParticipantFilter_NoArgs(t *testing.T) {
 	g := model.NewGraph([]*model.Entry{entry("20260101-100000-d-tac-aaa", withParticipants("Christopher"))})
 	layout := mustParseLayout(t, "participant():as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatal("expected error for participant() with no args")
 	}
@@ -505,7 +509,7 @@ func TestView_NPagination(t *testing.T) {
 
 	layout := mustParseLayout(t, "n(2):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -526,7 +530,7 @@ func TestView_NLargerThanResult(t *testing.T) {
 
 	layout := mustParseLayout(t, "n(100):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -543,7 +547,7 @@ func TestView_NZero(t *testing.T) {
 
 	layout := mustParseLayout(t, "n(0):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -563,7 +567,7 @@ func TestView_KindThenN_Compose(t *testing.T) {
 	// kind first, then n: filter to plans, page first 2.
 	layout := mustParseLayout(t, "kind(plan):n(2):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -587,7 +591,7 @@ func TestView_NThenKind_SameAsKindThenN(t *testing.T) {
 
 	layout := mustParseLayout(t, "n(2):kind(plan):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -612,7 +616,7 @@ func TestView_ActiveKindNCompose(t *testing.T) {
 
 	layout := mustParseLayout(t, "active:kind(plan):n(5):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -632,7 +636,7 @@ func TestView_ActiveTakesNoArgs(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "active(plan):as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for active with args, got nil")
 	}
@@ -645,7 +649,7 @@ func TestView_KindRequiresArgs(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "kind():as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for kind with no args, got nil")
 	}
@@ -658,7 +662,7 @@ func TestView_KindRejectsNonIdentifier(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "kind(10):as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for kind with numeric arg, got nil")
 	}
@@ -677,7 +681,7 @@ func TestView_NRequiresExactlyOneArg(t *testing.T) {
 		t.Run(layoutStr, func(t *testing.T) {
 			layout := mustParseLayout(t, layoutStr)
 			f := New(Options{})
-			_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+			_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 			if err == nil {
 				t.Fatalf("expected error, got nil")
 			}
@@ -692,7 +696,7 @@ func TestView_NRejectsNonNumber(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "n(abc):as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for n with identifier arg, got nil")
 	}
@@ -705,7 +709,7 @@ func TestView_NRejectsNonInteger(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "n(2.5):as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for non-integer n, got nil")
 	}
@@ -718,7 +722,7 @@ func TestView_NRejectsNegative(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "n(-1):as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for negative n, got nil")
 	}
@@ -747,7 +751,7 @@ func TestView_RankInDegree(t *testing.T) {
 
 	layout := mustParseLayout(t, "rank(in-degree):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -786,7 +790,7 @@ func TestView_RankByDate(t *testing.T) {
 
 	layout := mustParseLayout(t, "rank(by(date)):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -812,7 +816,7 @@ func TestView_RankHeatDefaultDecay(t *testing.T) {
 
 	layout := mustParseLayout(t, "rank(heat):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -834,7 +838,7 @@ func TestView_RankHeatExplicitDecay(t *testing.T) {
 
 	layout := mustParseLayout(t, "rank(heat(exp-7d)):as-list")
 	f := New(Options{})
-	if _, err := f.View(query.ViewQuery{Graph: g, Layout: layout}); err != nil {
+	if _, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout}); err != nil {
 		t.Fatalf("View: %v", err)
 	}
 }
@@ -850,7 +854,7 @@ func TestView_RankHeatNoneDecay(t *testing.T) {
 
 	layout := mustParseLayout(t, "rank(heat(none)):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -939,7 +943,7 @@ func TestView_RankColdness(t *testing.T) {
 		g := model.NewGraph(nil)
 		layout := mustParseLayout(t, "rank(coldness(exp-99d)):as-list")
 		f := New(Options{})
-		_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+		_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 		if err == nil {
 			t.Fatalf("expected error for unknown decay, got nil")
 		}
@@ -1007,7 +1011,7 @@ func TestView_RankComposesWithFilterAndPage(t *testing.T) {
 	// 'directive' are filtered out.
 	layout := mustParseLayout(t, "kind(plan):rank(in-degree):n(2):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1028,7 +1032,7 @@ func TestView_RankUnknownAlgorithm(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "rank(future-algo):as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for unknown algorithm, got nil")
 	}
@@ -1043,7 +1047,7 @@ func TestView_RankUnknownDecay(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "rank(heat(exp-99d)):as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for unknown decay, got nil")
 	}
@@ -1061,7 +1065,7 @@ func TestView_RankBareIdentifierAcceptedAsShorthand(t *testing.T) {
 
 	layout := mustParseLayout(t, "rank(in-degree):as-list")
 	f := New(Options{})
-	if _, err := f.View(query.ViewQuery{Graph: g, Layout: layout}); err != nil {
+	if _, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout}); err != nil {
 		t.Fatalf("View: %v (rank(in-degree) shorthand should work)", err)
 	}
 }
@@ -1070,7 +1074,7 @@ func TestView_RankNoArgs(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "rank():as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for rank with no args, got nil")
 	}
@@ -1080,7 +1084,7 @@ func TestView_RankByOnlyDate(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "rank(by(name)):as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for by(name), got nil")
 	}
@@ -1096,7 +1100,7 @@ func TestView_RankInDegreeIgnoresDecayArg(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "rank(in-degree(exp-7d)):as-list")
 	f := New(Options{})
-	if _, err := f.View(query.ViewQuery{Graph: g, Layout: layout}); err != nil {
+	if _, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout}); err != nil {
 		t.Fatalf("View: %v (in-degree should ignore decay)", err)
 	}
 }
@@ -1111,7 +1115,7 @@ func TestView_LayerFilterAbbrev(t *testing.T) {
 
 	layout := mustParseLayout(t, "layer(tac):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1130,7 +1134,7 @@ func TestView_TypeFilterAbbrev(t *testing.T) {
 
 	layout := mustParseLayout(t, "type(d):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1148,7 +1152,7 @@ func TestView_TypeFilterFullName(t *testing.T) {
 
 	layout := mustParseLayout(t, "type(signal):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1167,7 +1171,7 @@ func TestView_TypeFilterComposesWithKind(t *testing.T) {
 
 	layout := mustParseLayout(t, "type(d):kind(gap):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1181,7 +1185,7 @@ func TestView_TypeFilterRequiresOneArg(t *testing.T) {
 	g := model.NewGraph([]*model.Entry{entry("20260101-100000-d-tac-aaa", withKind(model.KindDirective))})
 	layout := mustParseLayout(t, "type():as-list")
 	f := New(Options{})
-	if _, err := f.View(query.ViewQuery{Graph: g, Layout: layout}); err == nil {
+	if _, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout}); err == nil {
 		t.Fatal("expected error for type() with no args")
 	}
 }
@@ -1194,7 +1198,7 @@ func TestView_LayerFilterFullName(t *testing.T) {
 
 	layout := mustParseLayout(t, "layer(tactical):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1212,7 +1216,7 @@ func TestView_LayerFilterStringForm(t *testing.T) {
 
 	layout := mustParseLayout(t, `layer("tac"):as-list`)
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1238,7 +1242,7 @@ func TestView_LayerWrongArgs(t *testing.T) {
 			}
 			layout := mustParseLayout(t, ls)
 			f := New(Options{})
-			if _, err := f.View(query.ViewQuery{Graph: g, Layout: layout}); err == nil {
+			if _, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout}); err == nil {
 				t.Fatalf("expected error, got nil")
 			}
 		})
@@ -1267,7 +1271,7 @@ func TestView_SinceDuration(t *testing.T) {
 
 	layout := mustParseLayout(t, `since("7d"):as-list`)
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1286,7 +1290,7 @@ func TestView_SinceISODate(t *testing.T) {
 
 	layout := mustParseLayout(t, `since("2026-01-01"):as-list`)
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1301,7 +1305,7 @@ func TestView_SinceMalformedSpec(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, `since("not-a-spec"):as-list`)
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error for malformed since spec, got nil")
 	}
@@ -1329,7 +1333,7 @@ func TestView_TopicFilterInline(t *testing.T) {
 
 	layout := mustParseLayout(t, "topic(catch-up-scaling):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1353,7 +1357,7 @@ func TestView_TopicFilterStringForm(t *testing.T) {
 
 	layout := mustParseLayout(t, `topic("infrastructure/cli"):as-list`)
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1383,7 +1387,7 @@ func TestView_TopicFilterPrefixComponent(t *testing.T) {
 
 	layout := mustParseLayout(t, "topic(UX):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1440,7 +1444,7 @@ func TestView_AllFiltersCompose(t *testing.T) {
 
 	layout := mustParseLayout(t, `active:kind(plan):layer(tac):since("7d"):topic(infrastructure):n(10):as-list`)
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1460,7 +1464,7 @@ func TestView_NameModifier_SetsSectionHeader(t *testing.T) {
 
 	layout := mustParseLayout(t, `name("Top entries"):as-list`)
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1475,7 +1479,7 @@ func TestView_NameModifier_LastWriteWins(t *testing.T) {
 
 	layout := mustParseLayout(t, `name("first"):name("second"):as-list`)
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1490,7 +1494,7 @@ func TestView_NameModifier_AcceptsBareIdent(t *testing.T) {
 
 	layout := mustParseLayout(t, "name(Aspirations):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1504,7 +1508,7 @@ func TestView_NameModifier_RequiresExactlyOneArg(t *testing.T) {
 	for _, src := range []string{"name:as-list", "name():as-list", `name("a","b"):as-list`} {
 		t.Run(src, func(t *testing.T) {
 			f := New(Options{})
-			_, err := f.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, src)})
+			_, err := f.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, src)})
 			if err == nil {
 				t.Fatalf("expected error for %q, got nil", src)
 			}
@@ -1518,7 +1522,7 @@ func TestView_NameModifier_RequiresExactlyOneArg(t *testing.T) {
 func TestView_NameModifier_RejectsNonString(t *testing.T) {
 	g := model.NewGraph(nil)
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, "name(42):as-list")})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, "name(42):as-list")})
 	if err == nil {
 		t.Fatalf("expected error for numeric name arg, got nil")
 	}
@@ -1540,7 +1544,7 @@ func TestView_FocusBlock_EndToEnd(t *testing.T) {
 
 	layout := mustParseLayout(t, "kind(focus):active:expand(involvement):as-focus-block")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1578,7 +1582,7 @@ func TestView_SectionsRenderIndependently(t *testing.T) {
 
 	layout := mustParseLayout(t, "kind(focus):active:expand(involvement):as-focus-block,kind(directive):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1619,12 +1623,12 @@ func TestView_FocusBlock_StalledModifierConfigures(t *testing.T) {
 	// Default threshold is 1.0. Heat(exp-14d) for a 2-day-old single
 	// ref: 2^(-2/14) ≈ 0.906 — below 1.0. Without stalled(0.5), state
 	// is stalled. With stalled(0.5), state is driving.
-	resultDefault, err := f(t).View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, "kind(focus):expand(involvement):as-focus-block")})
+	resultDefault, err := f(t).OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, "kind(focus):expand(involvement):as-focus-block")})
 	if err != nil {
 		t.Fatalf("View default: %v", err)
 	}
 	stateDefault := resultDefault.Sections[0].Data.(model.FocusBlock).Focuses[0].Targets[0].State
-	resultLow, err := f(t).View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, "kind(focus):expand(involvement):stalled(0.5):as-focus-block")})
+	resultLow, err := f(t).OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, "kind(focus):expand(involvement):stalled(0.5):as-focus-block")})
 	if err != nil {
 		t.Fatalf("View stalled(0.5): %v", err)
 	}
@@ -1643,7 +1647,7 @@ func TestView_FocusBlock_StalledModifierConfigures(t *testing.T) {
 func TestView_FocusBlock_RankIsExclusive(t *testing.T) {
 	g := model.NewGraph(nil)
 	fdr := New(Options{})
-	_, err := fdr.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t,
+	_, err := fdr.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t,
 		"kind(focus):expand(involvement):rank(in-degree):as-focus-block")})
 	if err == nil {
 		t.Fatalf("expected error for expand+rank, got nil")
@@ -1658,7 +1662,7 @@ func TestView_FocusBlock_StalledRequiresFocusBlock(t *testing.T) {
 	// the modifier has no effect outside focus-block state derivation.
 	g := model.NewGraph(nil)
 	fdr := New(Options{})
-	_, err := fdr.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, "stalled(1.0):as-list")})
+	_, err := fdr.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, "stalled(1.0):as-list")})
 	if err == nil {
 		t.Fatalf("expected error for stalled() outside focus-block, got nil")
 	}
@@ -1670,7 +1674,7 @@ func TestView_FocusBlock_StalledRequiresFocusBlock(t *testing.T) {
 func TestView_FocusBlock_ShapeMismatch_AsList(t *testing.T) {
 	g := model.NewGraph(nil)
 	fdr := New(Options{})
-	_, err := fdr.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t,
+	_, err := fdr.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t,
 		"kind(focus):expand(involvement):as-list")})
 	if err == nil {
 		t.Fatalf("expected render-shape mismatch, got nil")
@@ -1683,7 +1687,7 @@ func TestView_FocusBlock_ShapeMismatch_AsList(t *testing.T) {
 func TestView_FocusBlock_ShapeMismatch_AsFocusBlockOnFlat(t *testing.T) {
 	g := model.NewGraph(nil)
 	fdr := New(Options{})
-	_, err := fdr.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, "as-focus-block")})
+	_, err := fdr.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, "as-focus-block")})
 	if err == nil {
 		t.Fatalf("expected render-shape mismatch, got nil")
 	}
@@ -1707,7 +1711,7 @@ func TestView_GroupByKind_AsGrouped(t *testing.T) {
 
 	layout := mustParseLayout(t, "group(by(kind)):as-grouped")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1750,7 +1754,7 @@ func TestView_GroupByKind_ComposesWithKindFilter(t *testing.T) {
 
 	layout := mustParseLayout(t, "kind(plan,directive):group(by(kind)):as-grouped")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1779,7 +1783,7 @@ func TestView_GroupRequiresByMarker(t *testing.T) {
 	for _, layoutSrc := range cases {
 		t.Run(layoutSrc, func(t *testing.T) {
 			f := New(Options{})
-			_, err := f.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, layoutSrc)})
+			_, err := f.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, layoutSrc)})
 			if err == nil {
 				t.Fatalf("expected error for %q, got nil", layoutSrc)
 			}
@@ -1795,7 +1799,7 @@ func TestView_GroupRequiresFieldArg(t *testing.T) {
 	// than silently grouping into a single empty-key bucket.
 	g := model.NewGraph(nil)
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, "group(by()):as-grouped")})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, "group(by()):as-grouped")})
 	if err == nil {
 		t.Fatalf("expected error for group(by()), got nil")
 	}
@@ -1804,7 +1808,7 @@ func TestView_GroupRequiresFieldArg(t *testing.T) {
 func TestView_GroupRejectsUnknownField(t *testing.T) {
 	g := model.NewGraph(nil)
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, "group(by(summary)):as-grouped")})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, "group(by(summary)):as-grouped")})
 	if err == nil {
 		t.Fatalf("expected error for unknown field 'summary', got nil")
 	}
@@ -1821,7 +1825,7 @@ func TestView_AsGroupedWithoutGroup_ShapeMismatch(t *testing.T) {
 	// mismatch error fired for the first time.
 	g := model.NewGraph(nil)
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, "as-grouped")})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, "as-grouped")})
 	if err == nil {
 		t.Fatalf("expected render-shape mismatch error, got nil")
 	}
@@ -1837,7 +1841,7 @@ func TestView_GroupWithAsList_ShapeMismatch(t *testing.T) {
 	// flat-shape render. Same listed-valid-set guidance.
 	g := model.NewGraph(nil)
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, "group(by(kind)):as-list")})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, "group(by(kind)):as-list")})
 	if err == nil {
 		t.Fatalf("expected render-shape mismatch error, got nil")
 	}
@@ -1853,7 +1857,7 @@ func TestView_GroupExclusiveWithRank(t *testing.T) {
 	// errors clearly. Per-group ranking is reserved for a future slice.
 	g := model.NewGraph(nil)
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, "group(by(kind)):rank(in-degree):as-grouped")})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, "group(by(kind)):rank(in-degree):as-grouped")})
 	if err == nil {
 		t.Fatalf("expected error for group + rank, got nil")
 	}
@@ -1867,7 +1871,7 @@ func TestView_GroupExclusiveWithN(t *testing.T) {
 	// groups is ambiguous in slice 5; clear error rather than guessing.
 	g := model.NewGraph(nil)
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: mustParseLayout(t, "group(by(kind)):n(5):as-grouped")})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, "group(by(kind)):n(5):as-grouped")})
 	if err == nil {
 		t.Fatalf("expected error for group + n, got nil")
 	}
@@ -1883,7 +1887,7 @@ func TestView_GroupAsGroupedKnownInUnknownErr(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "futurefn:as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -1905,7 +1909,7 @@ func TestView_NotKind_ExcludesKinds(t *testing.T) {
 
 	layout := mustParseLayout(t, "not(kind(contract,aspiration)):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1930,7 +1934,7 @@ func TestView_NotKind_ComposesWithPositiveKind(t *testing.T) {
 
 	layout := mustParseLayout(t, "kind(plan,directive,contract,aspiration):not(kind(contract,aspiration)):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1953,7 +1957,7 @@ func TestView_NotKind_MultipleCallsUnion(t *testing.T) {
 
 	layout := mustParseLayout(t, "not(kind(contract,aspiration)):not(kind(annotation)):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -1973,7 +1977,7 @@ func TestView_NotLayer_ExcludesLayer(t *testing.T) {
 
 	layout := mustParseLayout(t, "not(layer(stg)):as-list")
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -2013,7 +2017,7 @@ func TestView_NotTopic_ExcludesTopic(t *testing.T) {
 
 	layout := mustParseLayout(t, `not(topic("infrastructure")):as-list`)
 	f := New(Options{})
-	result, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err != nil {
 		t.Fatalf("View: %v", err)
 	}
@@ -2042,7 +2046,7 @@ func TestView_Not_RejectsUnsupportedInner(t *testing.T) {
 		t.Run(tc.hint, func(t *testing.T) {
 			layout := mustParseLayout(t, tc.layout)
 			f := New(Options{})
-			_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+			_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 			if err == nil {
 				t.Fatalf("expected error, got nil")
 			}
@@ -2069,7 +2073,7 @@ func TestView_Not_ArityErrors(t *testing.T) {
 		t.Run(layoutStr, func(t *testing.T) {
 			layout := mustParseLayout(t, layoutStr)
 			f := New(Options{})
-			_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+			_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 			if err == nil {
 				t.Fatalf("expected error, got nil")
 			}
@@ -2086,7 +2090,7 @@ func TestView_Not_RegisteredInKnownFunctions(t *testing.T) {
 	g := model.NewGraph(nil)
 	layout := mustParseLayout(t, "nott(kind(plan)):as-list")
 	f := New(Options{})
-	_, err := f.View(query.ViewQuery{Graph: g, Layout: layout})
+	_, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -2149,4 +2153,84 @@ func equalIDs(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestView_SkipComposesWithN(t *testing.T) {
+	a := entry("20260101-100000-d-tac-aaa", withKind(model.KindDirective))
+	b := entry("20260101-110000-d-tac-bbb", withKind(model.KindDirective))
+	c := entry("20260101-120000-d-tac-ccc", withKind(model.KindDirective))
+	d := entry("20260101-130000-d-tac-ddd", withKind(model.KindDirective))
+	g := model.NewGraph([]*model.Entry{a, b, c, d})
+
+	layout := mustParseLayout(t, "skip(1):n(2):as-list")
+	f := New(Options{})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
+	if err != nil {
+		t.Fatalf("View: %v", err)
+	}
+	flat := result.Sections[0].Data.(model.FlatList)
+	got := idsOf(flat.Entries)
+	want := []string{b.ID, c.ID}
+	if !equalIDs(got, want) {
+		t.Errorf("entries:\n  got:  %v\n  want: %v", got, want)
+	}
+}
+
+func TestView_SkipPastEndIsEmpty(t *testing.T) {
+	a := entry("20260101-100000-d-tac-aaa", withKind(model.KindDirective))
+	g := model.NewGraph([]*model.Entry{a})
+
+	layout := mustParseLayout(t, "skip(5):as-list")
+	f := New(Options{})
+	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
+	if err != nil {
+		t.Fatalf("View: %v", err)
+	}
+	if n := result.Sections[0].Data.Count(); n != 0 {
+		t.Errorf("skip past the end must yield an empty section, got %d entries", n)
+	}
+}
+
+func TestView_SkipRejectedForParticipantsBlock(t *testing.T) {
+	g := model.NewGraph(nil)
+	layout := mustParseLayout(t, "active:kind(actor):skip(2):as-participants-block")
+	f := New(Options{})
+	if _, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout}); err == nil {
+		t.Fatal("skip over the participants block must be rejected")
+	}
+}
+
+func TestView_ServeBudgetCutsShapesAtWholeUnits(t *testing.T) {
+	hub := entry("20260101-090000-d-tac-hub", withKind(model.KindPlan))
+	refs := []*model.Entry{hub}
+	for i := range 9 {
+		refs = append(refs, entry(
+			fmt.Sprintf("20260101-10%02d00-d-tac-r%c", i, 'a'+i),
+			withKind(model.KindDirective), withRefs(hub.ID),
+		))
+	}
+	g := model.NewGraph(refs)
+	f := New(Options{})
+
+	bodiesLayout := mustParseLayout(t, `kind(directive):as-bodies:name("Bodies")`)
+	bounded, err := f.OnGraph(g).View(query.ViewQuery{Layout: bodiesLayout, Budget: query.ViewBudget{BodyBytes: 1}})
+	if err != nil {
+		t.Fatalf("View: %v", err)
+	}
+	bodies := bounded.Sections[0].Data.(model.Bodies)
+	if len(bodies.Entries) != 0 || bodies.Dropped != 9 {
+		t.Fatalf("bodies cut = %d kept, %d dropped; want whole-body cut accounting", len(bodies.Entries), bodies.Dropped)
+	}
+	if bodies.Pull != `kind(directive):as-bodies:name("Bodies")` {
+		t.Fatalf("bodies pull = %q, want the section's own source", bodies.Pull)
+	}
+
+	unbounded, err := f.OnGraph(g).View(query.ViewQuery{Layout: bodiesLayout})
+	if err != nil {
+		t.Fatalf("View: %v", err)
+	}
+	full := unbounded.Sections[0].Data.(model.Bodies)
+	if full.Dropped != 0 || len(full.Entries) != 9 {
+		t.Fatalf("explicit pulls must arrive complete: %d kept, %d dropped", len(full.Entries), full.Dropped)
+	}
 }

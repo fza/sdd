@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/networkteam/sdd/pkg/application/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -87,28 +88,33 @@ const (
 	KindProcedure  Kind = "procedure"
 )
 
-// signalKinds is the set of kinds valid on type: signal entries.
-var signalKinds = map[Kind]bool{
-	KindGap:        true,
-	KindFact:       true,
-	KindQuestion:   true,
-	KindInsight:    true,
-	KindDone:       true,
-	KindActor:      true,
-	KindAnnotation: true,
+// signalKindOrder is the canonical enumeration of kinds valid on type: signal
+// entries; signalKinds derives from it so set and order share one declaration.
+var signalKindOrder = []Kind{KindGap, KindFact, KindQuestion, KindInsight, KindDone, KindActor, KindAnnotation}
+
+// decisionKindOrder is the canonical enumeration of kinds valid on
+// type: decision entries.
+var decisionKindOrder = []Kind{KindDirective, KindActivity, KindPlan, KindContract, KindAspiration, KindRole, KindFocus, KindProcedure}
+
+var signalKinds = kindSet(signalKindOrder)
+var decisionKinds = kindSet(decisionKindOrder)
+
+func kindSet(order []Kind) map[Kind]bool {
+	set := make(map[Kind]bool, len(order))
+	for _, k := range order {
+		set[k] = true
+	}
+	return set
 }
 
-// decisionKinds is the set of kinds valid on type: decision entries.
-var decisionKinds = map[Kind]bool{
-	KindDirective:  true,
-	KindActivity:   true,
-	KindPlan:       true,
-	KindContract:   true,
-	KindAspiration: true,
-	KindRole:       true,
-	KindFocus:      true,
-	KindProcedure:  true,
-}
+// SignalKindValues lists the kinds valid on type: signal entries in canonical
+// order, for surfaces that render or generate from the enumeration instead of
+// restating it (mirrors RefKindValues).
+func SignalKindValues() []Kind { return append([]Kind(nil), signalKindOrder...) }
+
+// DecisionKindValues lists the kinds valid on type: decision entries in
+// canonical order.
+func DecisionKindValues() []Kind { return append([]Kind(nil), decisionKindOrder...) }
 
 // ParseTypeFilter resolves a user-supplied type filter — an abbreviation
 // ("s"/"d") or the full canonical name ("signal"/"decision") — to its
@@ -180,7 +186,7 @@ func DefaultKindForType(t EntryType) Kind {
 // decisions:
 //
 //   - pending — demands follow-up; the action-on default
-//   - guiding — standing context that shapes later decisions, never "completed"
+//   - guiding — a guideline that keeps applying, shaping later decisions
 //   - settled — born terminal; needs no follow-up and carries no closing edge
 //
 // A directive with no intent reads as unspecified (legacy / pre-attribute) and
@@ -207,12 +213,9 @@ func IsValidIntent(s string) bool {
 	return validIntents[Intent(s)]
 }
 
-// Warning represents a validation issue found on a graph entry.
-type Warning struct {
-	Field   string // "refs", "closes", "supersedes"
-	Value   string // the offending ID or value
-	Message string // human-readable description
-}
+// Warning is defined in pkg/application/types — the exported surface names
+// it, so the definition lives in the cycle-free public leaf (s-tac-ah2).
+type Warning = types.Warning
 
 type Entry struct {
 	ID           string
@@ -263,6 +266,15 @@ type Entry struct {
 	// Warnings rather than failing the parse, matching how other shape rules
 	// are handled.
 	Topics []TopicPath
+	Index  *FactIndex
+	// Override is only meaningful on kind: fact signals. The value "closed"
+	// (OverrideClosed)
+	// marks a fact whose content is coupled to declarations the running
+	// version enforces (the type-system facts, d-tac-9be): superseding it is
+	// refused on every write surface, because a frozen copy would silently
+	// outrank the generated truth. Recognized by this declared property,
+	// never by an ID list.
+	Override string
 	// AnnotationTopics carries the topic assignments declared by a
 	// kind: annotation entry. Each item is either a plain label (Members nil
 	// — applies to all of the annotation's Refs) or a label with explicit
@@ -282,7 +294,7 @@ type Entry struct {
 	// (resolved) when scope.
 	Involvement []Involvement
 	Preflight   string    // "skipped" or "error" annotation from pre-flight validation
-	Attachments []string  // filenames discovered from the co-located attachment directory
+	Attachments []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
 	Summary     string    // LLM-generated summary: this entry + direct relationships
 	Warnings    []Warning // validation issues found during graph construction
 	// Embedded marks a base entry compiled into the sdd binary (base
@@ -325,17 +337,38 @@ func (e *Entry) IsProcedure() bool {
 }
 
 // ProcedureClass classifies a procedure's execution role. See Entry.Class.
+// Each class carries its meaning in Description — the single declaration
+// surfaces render from.
 type ProcedureClass string
 
 const (
 	ProcedureClassMove  ProcedureClass = "move"
 	ProcedureClassShell ProcedureClass = "shell"
-	// ProcedureClassTask is a procedure a move delegates work to: dispatched
-	// with resolved params, no user choosers, kept off the shell's move
-	// enumeration and junction offers, and preferring a disposable (forked)
-	// context. Explore is its first member.
-	ProcedureClassTask ProcedureClass = "task"
+	ProcedureClassTask  ProcedureClass = "task"
 )
+
+// procedureClassOrder is the canonical enumeration; the descriptions beside
+// it are the served meaning of each class (rendered into the procedure
+// authoring fact — a class without one fails the render).
+var procedureClassOrder = []ProcedureClass{ProcedureClassMove, ProcedureClassShell, ProcedureClassTask}
+
+var procedureClassDesc = map[ProcedureClass]string{
+	ProcedureClassMove:  "a playbook move started through the engine loop — the default when class is empty",
+	ProcedureClassShell: "a session base auto-started by the session door, never started as a move",
+	ProcedureClassTask:  "a delegate a move dispatches with resolved inputs and no user choosers, kept off the session's offered moves",
+}
+
+// ProcedureClassValues lists the procedure classes in canonical order, for
+// surfaces that render or generate from the enumeration instead of restating
+// it.
+func ProcedureClassValues() []ProcedureClass {
+	return append([]ProcedureClass(nil), procedureClassOrder...)
+}
+
+// Description returns the class's served meaning; empty for an unknown class.
+func (c ProcedureClass) Description() string {
+	return procedureClassDesc[c]
+}
 
 // IsShellProcedure returns true if this procedure is a session shell —
 // auto-started by the session door rather than startable as a move.
@@ -385,6 +418,9 @@ func (e *Entry) IsSettled() bool {
 // has no knowledge of kind at parse time. The kind-conditional shape rules
 // are enforced after the fact in ParseEntry — we let YAML decode whatever
 // is present, then route fields into the Entry based on Kind.
+// OverrideClosed is the one defined value of Entry.Override.
+const OverrideClosed = "closed"
+
 type frontmatter struct {
 	Type         string            `yaml:"type"`
 	Layer        string            `yaml:"layer"`
@@ -400,14 +436,46 @@ type frontmatter struct {
 	Class        string            `yaml:"class,omitempty"`
 	Actor        string            `yaml:"actor,omitempty"`
 	Topics       []AnnotationTopic `yaml:"topics,omitempty"`
+	Index        *FactIndex        `yaml:"index,omitempty"`
+	Override     string            `yaml:"override,omitempty"`
 	FocusActors  []string          `yaml:"actors,omitempty"`
 	FocusWhen    *FocusWhen        `yaml:"when,omitempty"`
 	Involvement  []involvementYAML `yaml:"involvement,omitempty"`
 	Params       yaml.Node         `yaml:"params,omitempty"`
 	State        yaml.Node         `yaml:"state,omitempty"`
 	Steps        yaml.Node         `yaml:"steps,omitempty"`
+	Framing      yaml.Node         `yaml:"framing,omitempty"`
+	ServeBudget  int               `yaml:"serveBudget,omitempty"`
 	Preflight    string            `yaml:"preflight,omitempty"`
 	Summary      string            `yaml:"summary,omitempty"`
+}
+
+// UnmarshalYAML distinguishes an absent index from an explicit null.
+func (f *frontmatter) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.MappingNode {
+		for offset := 0; offset < len(node.Content); offset += 2 {
+			if node.Content[offset].Value == "index" && yamlNodeIsNull(node.Content[offset+1]) {
+				return fmt.Errorf("index cannot be null; omit it when the entry is not indexed")
+			}
+		}
+	}
+	type plain frontmatter
+	var decoded plain
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+	*f = frontmatter(decoded)
+	return nil
+}
+
+func yamlNodeIsNull(node *yaml.Node) bool {
+	if node == nil {
+		return false
+	}
+	if node.Tag == "!!null" {
+		return true
+	}
+	return node.Kind == yaml.AliasNode && yamlNodeIsNull(node.Alias)
 }
 
 // involvementYAML mirrors the on-disk shape for involvement triples. The
@@ -460,6 +528,8 @@ func ParseEntry(filename, content string) (*Entry, error) {
 		Aliases:      fm.Aliases,
 		Class:        ProcedureClass(fm.Class),
 		Actor:        fm.Actor,
+		Index:        fm.Index,
+		Override:     fm.Override,
 		FocusActors:  fm.FocusActors,
 		FocusWhen:    fm.FocusWhen,
 		Preflight:    fm.Preflight,
@@ -501,11 +571,13 @@ func ParseEntry(filename, content string) (*Entry, error) {
 	// Retain the machine part of a procedure's frontmatter as raw YAML.
 	// Routed by kind like the other per-kind fields; on any other kind the
 	// keys are ignored, matching how unknown frontmatter keys behave.
-	if e.IsProcedure() && (!fm.Params.IsZero() || !fm.State.IsZero() || !fm.Steps.IsZero()) {
+	if e.IsProcedure() && (!fm.Params.IsZero() || !fm.State.IsZero() || !fm.Steps.IsZero() || !fm.Framing.IsZero()) {
 		e.ProcedureSpec = &ProcedureSpecRaw{
-			Params: fm.Params,
-			State:  fm.State,
-			Steps:  fm.Steps,
+			Params:      fm.Params,
+			State:       fm.State,
+			Steps:       fm.Steps,
+			Framing:     fm.Framing,
+			ServeBudget: fm.ServeBudget,
 		}
 	}
 
@@ -601,16 +673,33 @@ func AttachDirRelPath(id string) (string, error) {
 	return strings.TrimSuffix(rel, ".md"), nil
 }
 
-// ResolveAttachmentLinks replaces {{attachments}} placeholders in content with the
-// actual relative directory path for markdown links.
+// ResolveAttachmentLinks replaces {{attachments}} placeholders in content with
+// the actual relative directory path for markdown links. Placeholders inside
+// code regions are documentation of the syntax, not links, and stay literal —
+// the same reading maskCodeRegions gives the link check.
 func ResolveAttachmentLinks(content, id string) string {
 	if len(id) < 8 {
 		return content
 	}
+	const placeholder = "{{attachments}}"
 	// The short filename (without YYYYMM prefix and .md) serves as the directory name
 	// relative to the entry file in the same directory.
-	shortName := id[6:] // DD-HHmmss-type-layer-suffix
-	return strings.ReplaceAll(content, "{{attachments}}", "./"+shortName)
+	resolved := "./" + id[6:] // DD-HHmmss-type-layer-suffix
+
+	masked := maskCodeRegions(content)
+	var b strings.Builder
+	off := 0
+	for {
+		before, _, found := strings.Cut(masked[off:], placeholder)
+		if !found {
+			b.WriteString(content[off:])
+			return b.String()
+		}
+		pos := off + len(before)
+		b.WriteString(content[off:pos])
+		b.WriteString(resolved)
+		off = pos + len(placeholder)
+	}
 }
 
 // parseEntryType resolves a frontmatter type string to a canonical EntryType.
@@ -670,6 +759,8 @@ func FormatFrontmatter(e *Entry) string {
 		Aliases:      e.Aliases,
 		Class:        string(e.Class),
 		Actor:        e.Actor,
+		Index:        e.Index,
+		Override:     e.Override,
 		FocusActors:  e.FocusActors,
 		FocusWhen:    e.FocusWhen,
 		Preflight:    e.Preflight,
@@ -709,6 +800,8 @@ func FormatFrontmatter(e *Entry) string {
 		fm.Params = e.ProcedureSpec.Params
 		fm.State = e.ProcedureSpec.State
 		fm.Steps = e.ProcedureSpec.Steps
+		fm.Framing = e.ProcedureSpec.Framing
+		fm.ServeBudget = e.ProcedureSpec.ServeBudget
 	}
 
 	data, _ := yaml.Marshal(&fm)

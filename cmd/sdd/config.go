@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/networkteam/sdd/internal/command"
@@ -15,8 +16,8 @@ import (
 
 // configCmd is the CLI surface over the config overlay: the bare command
 // prints the effective merged config with per-value provenance, `get` reads
-// one effective value, and `set` writes a key to the global or local layer
-// with a comment-preserving upsert.
+// effective values (one key, a subtree, or everything), and `set`/`unset`
+// write the global or local layer with comment-preserving patches.
 func configCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "config",
@@ -34,11 +35,11 @@ func configCmd() *cli.Command {
 		Commands: []*cli.Command{
 			{
 				Name:      "get",
-				Usage:     "Print one effective config value (e.g. sdd config get llm.model)",
-				ArgsUsage: "<key>",
+				Usage:     "Print effective config values — one key, a subtree (e.g. llm), or everything",
+				ArgsUsage: "[<key-or-prefix>]",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					if cmd.Args().Len() != 1 {
-						return fmt.Errorf("usage: sdd config get <key>")
+					if cmd.Args().Len() > 1 {
+						return fmt.Errorf("usage: sdd config get [<key-or-prefix>]")
 					}
 					return runConfigGet(cmd.Args().First())
 				},
@@ -62,6 +63,27 @@ func configCmd() *cli.Command {
 						target = "local"
 					}
 					return runConfigSet(ctx, target, cmd.Args().Get(0), cmd.Args().Get(1))
+				},
+			},
+			{
+				Name:      "unset",
+				Usage:     "Remove a config key (user-global by default; --local for .sdd/config.local.yaml)",
+				ArgsUsage: "<key>",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:  "local",
+						Usage: "Remove from .sdd/config.local.yaml instead of the user-global config",
+					},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					if cmd.Args().Len() != 1 {
+						return fmt.Errorf("usage: sdd config unset [--local] <key>")
+					}
+					target := "global"
+					if cmd.Bool("local") {
+						target = "local"
+					}
+					return runConfigUnset(ctx, target, cmd.Args().First())
 				},
 			},
 		},
@@ -93,11 +115,38 @@ func runEffectiveConfig(cmd *cli.Command, key string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(result.Entries)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	for _, e := range result.Entries {
-		fmt.Fprintf(w, "%s\t%s\t(%s)\n", e.Key, e.Value, e.Source)
+	if err := printConfigEntries(result.Entries); err != nil {
+		return err
 	}
-	return w.Flush()
+	// The effective table answers "what will happen", and a setting that does
+	// nothing is part of that answer.
+	if key == "" {
+		return printUnknownConfigKeys()
+	}
+	return nil
+}
+
+func printUnknownConfigKeys() error {
+	f, err := newReadFinder()
+	if err != nil {
+		return err
+	}
+	sddDir, err := resolveSDDDir()
+	if err != nil {
+		sddDir = ""
+	}
+	result, err := f.UnknownConfigKeys(query.UnknownConfigKeysQuery{SDDDir: sddDir})
+	if err != nil {
+		return err
+	}
+	if len(result.Keys) == 0 {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "\nignored — this sdd does not know these keys:\n")
+	for _, k := range result.Keys {
+		fmt.Fprintf(os.Stderr, "  %s  (%s)\n", k.Key, k.File)
+	}
+	return nil
 }
 
 func runConfigGet(key string) error {
@@ -106,12 +155,30 @@ func runConfigGet(key string) error {
 		return err
 	}
 	if len(result.Entries) == 0 {
+		if key == "" {
+			return fmt.Errorf("no configuration found")
+		}
 		return fmt.Errorf("no value for %q", key)
 	}
-	for _, e := range result.Entries {
-		fmt.Println(e.Value)
+	// An exact single-key hit prints the bare value (script-friendly);
+	// a subtree or the whole config renders as the provenance table.
+	if len(result.Entries) == 1 && result.Entries[0].Key == key {
+		fmt.Println(result.Entries[0].Value)
+		return nil
 	}
-	return nil
+	return printConfigEntries(result.Entries)
+}
+
+// tableValueEscaper keeps multi-line values on one table row; the bare
+// single-value output stays raw.
+var tableValueEscaper = strings.NewReplacer("\n", `\n`, "\t", `\t`)
+
+func printConfigEntries(entries []query.ConfigEntry) error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	for _, e := range entries {
+		fmt.Fprintf(w, "%s\t%s\t(%s)\n", e.Key, tableValueEscaper.Replace(e.Value), e.Source)
+	}
+	return w.Flush()
 }
 
 func runConfigSet(ctx context.Context, target, key, value string) error {
@@ -133,5 +200,26 @@ func runConfigSet(ctx context.Context, target, key, value string) error {
 		return err
 	}
 	fmt.Printf("%s = %s (%s)\n", key, value, target)
+	return nil
+}
+
+func runConfigUnset(ctx context.Context, target, key string) error {
+	// sddDir is optional for global writes, exactly as in runConfigSet.
+	sddDir, err := resolveSDDDir()
+	if err != nil {
+		sddDir = ""
+	}
+	_, mgr, err := defaultRepos()
+	if err != nil {
+		return err
+	}
+	h := handlers.New(handlers.Options{
+		SDDDir: sddDir,
+		Repos:  mgr,
+	})
+	if err := h.ConfigUnset(ctx, &command.ConfigUnsetCmd{Target: target, Key: key}); err != nil {
+		return err
+	}
+	fmt.Printf("%s removed (%s)\n", key, target)
 	return nil
 }

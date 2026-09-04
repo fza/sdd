@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/command"
-	"github.com/networkteam/sdd/internal/llm"
+	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 )
@@ -97,13 +96,19 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		return fmt.Errorf("resolving supersedes: %w", err)
 	}
 
-	model.ValidateEntry(entry, graph)
-	if len(entry.Warnings) > 0 {
-		for _, w := range entry.Warnings {
-			fmt.Fprintf(h.stderr, "error: %s\n", w.Message)
+	// The construction boundary is the write gate: stray per-kind fields
+	// surface as projection findings, and ValidateForWrite runs the full rule
+	// set including the capture-only rules the read path waives.
+	construction, findings := model.ConstructFromEntry(entry)
+	validated, writeFindings := construction.ValidateForWrite(graph)
+	findings = append(findings, writeFindings...)
+	if len(findings) > 0 {
+		for _, f := range findings {
+			fmt.Fprintf(h.stderr, "error: %s\n", f.Message)
 		}
-		return fmt.Errorf("validation failed: %d issue(s)", len(entry.Warnings))
+		return fmt.Errorf("validation failed: %d issue(s)", len(findings))
 	}
+	entry = validated
 
 	// Pre-flight and summary are independent LLM calls. Run them
 	// concurrently via errgroup to save 30-60s of wall time per entry.
@@ -119,17 +124,9 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		entry.Preflight = "skipped"
 	} else if !cmd.PreflightVerified {
 		g.Go(func() error {
-			timeout := cmd.PreflightTimeout
-			if timeout == 0 {
-				timeout = 120 * time.Second
-			}
-			pctx, cancel := context.WithTimeout(gctx, timeout)
-			defer cancel()
-			result, err := h.reader.Preflight(pctx, query.PreflightQuery{
-				Entry:   entry,
-				Graph:   graph,
-				Model:   cmd.PreflightModel,
-				Timeout: timeout,
+			result, err := h.reader.Preflight(gctx, graph, query.PreflightQuery{
+				Entry: entry,
+				Model: cmd.PreflightModel,
 			})
 			pfResult = result
 			pfErr = err
@@ -139,14 +136,12 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		})
 	}
 
-	var sumResult *llm.SummarizeResult
+	var sumResult *llmops.SummarizeResult
 
 	// A caller-supplied summary is taken verbatim — no LLM call at all.
 	if !cmd.DryRun && h.llmRunner != nil && cmd.Summary == "" {
 		g.Go(func() error {
-			sctx, scancel := context.WithTimeout(gctx, 60*time.Second)
-			defer scancel()
-			result, err := llm.Summarize(sctx, h.llmRunner, entry, graph)
+			result, err := llmops.Summarize(gctx, h.llmRunner, entry, graph, h.language)
 			if err != nil {
 				slogutils.FromContext(gctx).Warn("summary generation failed", "err", err)
 				return nil // non-fatal: entry is valid without a summary

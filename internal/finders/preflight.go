@@ -2,8 +2,10 @@ package finders
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/networkteam/sdd/internal/llm"
+	"github.com/networkteam/sdd/internal/llmops"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 )
 
@@ -21,10 +23,19 @@ import (
 // The language-drift check receives the configured graph language from
 // config (see Finder.language). Empty means no language check (English
 // default); a locale code activates the check against description prose.
-func (f *Finder) Preflight(ctx context.Context, q query.PreflightQuery) (*query.PreflightResult, error) {
-	findings := mechanicalPreflight(q.Entry, q.Graph, f.declaredDependencies())
+func (gf *GraphFinder) Preflight(ctx context.Context, q query.PreflightQuery) (*query.PreflightResult, error) {
+	f := gf.finder
+	deps, err := f.declaredDependencies()
+	if err != nil {
+		return nil, fmt.Errorf("pre-flight: %w", err)
+	}
+	findings := mechanicalPreflight(q.Entry, gf.graph, deps, f.procedureRegistry)
 
-	llmResult, err := llm.Preflight(ctx, f.preflightRunner, q.Entry, q.Graph, f.language())
+	language, err := f.language()
+	if err != nil {
+		return nil, fmt.Errorf("pre-flight: %w", err)
+	}
+	llmResult, err := llmops.Preflight(ctx, f.preflightRunner, q.Entry, gf.graph, language)
 	if err != nil {
 		return nil, err
 	}
@@ -36,4 +47,12 @@ func (f *Finder) Preflight(ctx context.Context, q query.PreflightQuery) (*query.
 		})
 	}
 	return &query.PreflightResult{Findings: findings}, nil
+}
+
+// Preflight validates an entry against the given graph. It is the explicit-
+// graph entry point handlers use (they hold a graph mid-write and consume the
+// finder through the handlers.Reader interface); it binds the graph and
+// forwards to the GraphFinder so the validation logic stays single.
+func (f *Finder) Preflight(ctx context.Context, g *model.Graph, q query.PreflightQuery) (*query.PreflightResult, error) {
+	return f.OnGraph(g).Preflight(ctx, q)
 }

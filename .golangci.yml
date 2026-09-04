@@ -10,7 +10,12 @@ linters:
     - unused
     - misspell
     - unparam
+    - testpackage
   settings:
+    testpackage:
+      skip-regexp: (export|internal)_test\.go
+      allow-packages:
+        - main
     errcheck:
       exclude-functions:
         # Ignore stdio writer errors — failure modes are rare and callers
@@ -31,6 +36,15 @@ linters:
       - path: test_helpers_test\.go
         linters:
           - unused
+
+# Exit-code handling lives in scripts/lint.sh; severity here is the metadata
+# it gates on.
+severity:
+  default: error
+  rules:
+    - linters:
+        - testpackage
+      severity: warning
 
 formatters:
   enable:

@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -953,17 +954,40 @@ func TestLintClosesTypeMismatch(t *testing.T) {
 		wantMsg   string
 	}{
 		{
-			name: "non-done signal cannot close",
+			name: "question signal cannot close",
 			entries: []*Entry{
 				entry("20260406-100000-d-stg-aaa"),
+				entry("20260406-100100-s-stg-bbb", withKind(KindQuestion), withCloses("20260406-100000-d-stg-aaa")),
+			},
+			wantWarns: 1,
+			wantMsg:   "states no findings and closes nothing",
+		},
+		{
+			name: "actor signal cannot close",
+			entries: []*Entry{
+				entry("20260406-100000-s-prc-aaa"),
 				func() *Entry {
-					e := entry("20260406-100100-s-stg-bbb")
-					e.Closes = []string{"20260406-100000-d-stg-aaa"}
+					e := entry("20260406-100100-s-prc-act", withKind(KindActor), withCloses("20260406-100000-s-prc-aaa"))
+					e.Canonical = "Someone"
 					return e
 				}(),
 			},
 			wantWarns: 1,
-			wantMsg:   "only done-kind signals may close entries",
+			wantMsg:   "states no findings and closes nothing",
+		},
+		{
+			name: "annotation signal cannot close",
+			entries: []*Entry{
+				entry("20260406-100000-s-prc-aaa"),
+				func() *Entry {
+					e := entry("20260406-100100-s-prc-ann", withKind(KindAnnotation), withCloses("20260406-100000-s-prc-aaa"))
+					e.Refs = refsOf("20260406-100000-s-prc-aaa")
+					e.AnnotationTopics = []AnnotationTopic{{Label: "test-topic"}}
+					return e
+				}(),
+			},
+			wantWarns: 1,
+			wantMsg:   "states no findings and closes nothing",
 		},
 		{
 			name: "done signal may close decision",
@@ -974,7 +998,7 @@ func TestLintClosesTypeMismatch(t *testing.T) {
 			wantWarns: 0,
 		},
 		{
-			name: "decision cannot close decision (same kind)",
+			name: "valid: directive closes directive (retirement without replacement)",
 			entries: []*Entry{
 				entry("20260406-100000-d-tac-aaa"),
 				func() *Entry {
@@ -983,8 +1007,15 @@ func TestLintClosesTypeMismatch(t *testing.T) {
 					return e
 				}(),
 			},
-			wantWarns: 1,
-			wantMsg:   "decision cannot close another decision",
+			wantWarns: 0,
+		},
+		{
+			name: "valid: directive closes plan (retirement without replacement)",
+			entries: []*Entry{
+				entry("20260406-100000-d-tac-pln", withKind(KindPlan)),
+				entry("20260406-100100-d-tac-ret", withKind(KindDirective), withCloses("20260406-100000-d-tac-pln")),
+			},
+			wantWarns: 0,
 		},
 		{
 			name: "plan decision cannot close contract",
@@ -997,7 +1028,7 @@ func TestLintClosesTypeMismatch(t *testing.T) {
 				}(),
 			},
 			wantWarns: 1,
-			wantMsg:   "decision cannot close another decision",
+			wantMsg:   "only a kind: directive decision may close another decision",
 		},
 		{
 			name: "settled directive cannot be closed",
@@ -1006,7 +1037,7 @@ func TestLintClosesTypeMismatch(t *testing.T) {
 				entry("20260406-100100-s-tac-don", withKind(KindDone), withCloses("20260406-100000-d-tac-set")),
 			},
 			wantWarns: 1,
-			wantMsg:   "cannot close settled directive",
+			wantMsg:   "settled directive is born terminal",
 		},
 		{
 			name: "valid: directive closes contract (retirement)",
@@ -1049,13 +1080,28 @@ func TestLintClosesTypeMismatch(t *testing.T) {
 			wantWarns: 0,
 		},
 		{
-			name: "fact cannot close gap (not dissolution)",
+			name: "valid: fact retires fact (no corrected successor)",
 			entries: []*Entry{
-				entry("20260406-100000-s-tac-gap", withKind(KindGap)),
-				entry("20260406-100100-s-tac-fkg", withKind(KindFact), withCloses("20260406-100000-s-tac-gap")),
+				entry("20260406-100000-s-tac-old", withKind(KindFact)),
+				entry("20260406-100100-s-tac-new", withKind(KindFact), withCloses("20260406-100000-s-tac-old")),
 			},
-			wantWarns: 1,
-			wantMsg:   "only done-kind signals may close entries",
+			wantWarns: 0,
+		},
+		{
+			name: "valid: gap retires stale fact",
+			entries: []*Entry{
+				entry("20260406-100000-s-tac-fct", withKind(KindFact)),
+				entry("20260406-100100-s-tac-gpp", withKind(KindGap), withCloses("20260406-100000-s-tac-fct")),
+			},
+			wantWarns: 0,
+		},
+		{
+			name: "valid: gap closes gap (deviation no longer applies)",
+			entries: []*Entry{
+				entry("20260406-100000-s-tac-ga1", withKind(KindGap)),
+				entry("20260406-100100-s-tac-ga2", withKind(KindGap), withCloses("20260406-100000-s-tac-ga1")),
+			},
+			wantWarns: 0,
 		},
 	}
 
@@ -1174,6 +1220,37 @@ func TestLintBrokenAttachmentLink(t *testing.T) {
 	}
 	if !strings.Contains(w.Message, "design.md") {
 		t.Errorf("Message = %q, want mention of design.md", w.Message)
+	}
+}
+
+// TestLintBrokenPlaceholderAttachmentLink covers the pre-resolution form: a
+// {{attachments}}/ link is the only one authorable before an ID is minted, so
+// the write gate must check it too (20260707-175502-s-prc-lgu).
+func TestLintBrokenPlaceholderAttachmentLink(t *testing.T) {
+	e := entry("20260406-115516-s-stg-beh",
+		withContent("See [design]({{attachments}}/design.md) for details."),
+	)
+	g := NewGraph([]*Entry{e})
+
+	lint := g.Lint()
+	if len(lint) != 1 {
+		t.Fatalf("Lint() = %d entries, want 1", len(lint))
+	}
+	w := lint[0].Warnings[0]
+	if w.Field != "attachments" || !strings.Contains(w.Message, "design.md") {
+		t.Errorf("warning = %+v, want a broken-link warning naming design.md", w)
+	}
+}
+
+func TestLintValidPlaceholderAttachmentLink(t *testing.T) {
+	e := entry("20260406-115516-s-stg-beh",
+		withContent("See [design]({{attachments}}/design.md) for details."),
+		withAttachments("2026/04/06-115516-s-stg-beh/design.md"),
+	)
+	g := NewGraph([]*Entry{e})
+
+	if lint := g.Lint(); len(lint) != 0 {
+		t.Fatalf("Lint() = %d entries, want 0 for a valid placeholder link", len(lint))
 	}
 }
 
@@ -1563,5 +1640,34 @@ func TestGraph_AllParticipants_DedupedAndSorted(t *testing.T) {
 	want := []string{"Alice", "Christopher", "Claude"}
 	if !slices.Equal(got, want) {
 		t.Errorf("AllParticipants = %v, want %v", got, want)
+	}
+}
+
+func TestClosureTargets(t *testing.T) {
+	g := NewGraph([]*Entry{
+		{ID: "20260101-000000-d-tac-old", Type: TypeDecision, Kind: KindDirective, Layer: LayerTactical,
+			Summary: "The retired commitment. A second sentence that must not travel."},
+		{ID: "20260102-000000-d-cpt-sup", Type: TypeDecision, Kind: KindContract, Layer: LayerConceptual,
+			Content: "Body stands in when no summary is stored. More body."},
+		{ID: "20260103-000000-s-tac-done", Type: TypeSignal, Kind: KindDone, Layer: LayerTactical,
+			Closes:     []string{"20260101-000000-d-tac-old", "20260104-000000-d-tac-absent"},
+			Supersedes: []string{"20260102-000000-d-cpt-sup"}},
+	})
+
+	got := g.ClosureTargets(g.ByID["20260103-000000-s-tac-done"])
+	want := []ClosureTarget{
+		{Relation: "closes", ID: "20260101-000000-d-tac-old", Type: TypeDecision, Kind: KindDirective, Summary: "The retired commitment."},
+		{Relation: "closes", ID: "20260104-000000-d-tac-absent"},
+		{Relation: "supersedes", ID: "20260102-000000-d-cpt-sup", Type: TypeDecision, Kind: KindContract, Summary: "Body stands in when no summary is stored."},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ClosureTargets:\ngot  %+v\nwant %+v", got, want)
+	}
+
+	if targets := g.ClosureTargets(g.ByID["20260101-000000-d-tac-old"]); targets != nil {
+		t.Errorf("an entry with no closure edges must yield nil, got %+v", targets)
+	}
+	if targets := g.ClosureTargets(nil); targets != nil {
+		t.Errorf("nil entry must yield nil, got %+v", targets)
 	}
 }

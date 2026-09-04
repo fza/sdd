@@ -182,6 +182,15 @@ steps:
 			wantErr: "field colect not found",
 		},
 		{
+			name: "default on a param is rejected",
+			machine: `params:
+    flag: {type: bool, default: true, desc: x}
+state:
+    note: {type: text, desc: x}
+` + minimalSteps,
+			wantErr: "params.flag: default is not supported on params",
+		},
+		{
 			name:    "no machine frontmatter",
 			machine: "",
 			wantErr: "no params/state/steps frontmatter",
@@ -242,6 +251,65 @@ steps:
 	}
 }
 
+// TestParseSpec_Framing pins the shell framing-lane declaration: framing parses
+// into typed inject calls on a shell, and validation requires each fn to be a
+// registered AND serve-safe query — a framing lane renders on every serve, so a
+// phantom or side-effecting query is rejected at load (I7).
+func TestParseSpec_Framing(t *testing.T) {
+	reg := NewRegistry()
+	mustRegisterQuery(reg, Query{
+		Doc:       FuncDoc{Name: "viewLayout", Doc: "test"},
+		ServeSafe: true,
+		Fn:        func(_ *Context, _ map[string]any) (any, error) { return "", nil },
+	})
+	mustRegisterQuery(reg, Query{
+		Doc: FuncDoc{Name: "loggingLane", Doc: "writes a read event"},
+		Fn:  func(_ *Context, _ map[string]any) (any, error) { return "", nil },
+	})
+	entry := specFixture(t, `class: shell
+framing:
+    - {fn: viewLayout, args: {layout: 'focus:brief', maxBytes: 2500}}
+    - {fn: loggingLane}
+    - {fn: ghostLane}
+`+minimalSteps+`state:
+    note: {type: text, desc: x}
+`, "")
+	spec, err := ParseSpec(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Framing) != 3 || spec.Framing[0].Fn != "viewLayout" {
+		t.Fatalf("framing did not parse into inject calls, got %+v", spec.Framing)
+	}
+	if got := spec.Framing[0].Args["layout"]; got != "focus:brief" {
+		t.Fatalf("framing lane args did not parse, got %v", spec.Framing[0].Args)
+	}
+	problems := strings.Join(spec.Validate(reg), "\n")
+	for _, want := range []string{
+		`framing[1]: query "loggingLane" is not serve-safe`,
+		`framing[2]: inject fn "ghostLane" is not a registered query`,
+	} {
+		if !strings.Contains(problems, want) {
+			t.Fatalf("framing validation missing %q; got:\n%s", want, problems)
+		}
+	}
+}
+
+// TestParseSpec_FramingRejectedOnMove pins the fail-loud rule: framing declared
+// on a non-shell procedure fails spec load rather than parsing clean and being
+// silently inert.
+func TestParseSpec_FramingRejectedOnMove(t *testing.T) {
+	entry := specFixture(t, `framing:
+    - {fn: viewLayout, args: {layout: 'focus:brief'}}
+`+minimalSteps+`state:
+    note: {type: text, desc: x}
+`, "")
+	_, err := ParseSpec(entry)
+	if err == nil || !strings.Contains(err.Error(), "framing: declared on a move procedure") {
+		t.Fatalf("framing on a move must fail spec load, got %v", err)
+	}
+}
+
 func TestParseSpec_UnitsAndOptionalCollect(t *testing.T) {
 	entry := specFixture(t, `state:
     note: {type: text, desc: x}
@@ -273,11 +341,11 @@ Regular heading.
 	if len(spec.Units) != 2 {
 		t.Fatalf("units = %v, want draft and spare", spec.Units)
 	}
-	if !strings.Contains(spec.Units["draft"], "Do the draft.") {
-		t.Errorf("draft unit = %q", spec.Units["draft"])
+	if got := spec.Units["draft"].Lanes; len(got) != 1 || got[0].Name != "draft" || !strings.Contains(got[0].Text, "Do the draft.") {
+		t.Errorf("draft unit = %+v, want one implicit lane named after the unit", got)
 	}
-	if strings.Contains(spec.Units["spare"], "Not a unit") {
-		t.Errorf("unit must end at the next level-2 heading, got %q", spec.Units["spare"])
+	if got := spec.Units["spare"].Lanes; len(got) != 1 || strings.Contains(got[0].Text, "Not a unit") {
+		t.Errorf("unit must end at the next level-2 heading, got %+v", got)
 	}
 	step := spec.StepByID["draft"]
 	if len(step.Collect) != 2 || step.Collect[0].Optional || !step.Collect[1].Optional {

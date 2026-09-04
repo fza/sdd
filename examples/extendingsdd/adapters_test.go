@@ -2,13 +2,11 @@ package main
 
 import (
 	"context"
-	"io"
-	"net/http"
-	"strings"
 	"testing"
 
-	sdd "github.com/networkteam/sdd/application"
-	"github.com/networkteam/sdd/mcpapp"
+	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/llm"
+	"github.com/networkteam/sdd/pkg/mcpapp"
 )
 
 type graphStore struct{}
@@ -23,35 +21,6 @@ func (graphStore) Reconcile(context.Context, string, string) (sdd.ApplyResult, e
 func (graphStore) ReadAttachmentPage(context.Context, string, string, int64, int) (sdd.AttachmentPage, error) {
 	return sdd.AttachmentPage{}, nil
 }
-
-type sessionStore struct{}
-
-func (sessionStore) Create(context.Context, sdd.SessionMetadata) (sdd.StoredSession, error) {
-	return sdd.StoredSession{}, nil
-}
-func (sessionStore) Load(context.Context, sdd.SessionID) (sdd.StoredSession, error) {
-	return sdd.StoredSession{}, nil
-}
-func (sessionStore) List(context.Context, sdd.SessionFilter) ([]sdd.StoredSession, error) {
-	return nil, nil
-}
-func (sessionStore) Append(context.Context, sdd.SessionID, uint64, sdd.SessionAppend) (uint64, error) {
-	return 1, nil
-}
-
-type blobStore struct{}
-
-func (blobStore) Stage(context.Context, sdd.BlobOwner, string, io.Reader) (sdd.StagedBlob, error) {
-	return sdd.StagedBlob{}, nil
-}
-func (blobStore) Stat(context.Context, sdd.BlobOwner, string) (sdd.StagedBlob, error) {
-	return sdd.StagedBlob{}, nil
-}
-func (blobStore) Open(context.Context, sdd.BlobOwner, string) (io.ReadCloser, error) {
-	return io.NopCloser(strings.NewReader("")), nil
-}
-func (blobStore) Retain(context.Context, sdd.BlobOwner, string, []string) error { return nil }
-func (blobStore) Release(context.Context, sdd.BlobOwner, string) error          { return nil }
 
 type embeddingExecutor struct{}
 
@@ -74,11 +43,10 @@ func (indexStore) Nearest(context.Context, []sdd.IndexNamespace, []float32, int)
 	return nil, nil
 }
 
-type llmExecutor struct{}
+type llmRunner struct{}
 
-func (llmExecutor) Capabilities(context.Context) ([]string, error) { return nil, nil }
-func (llmExecutor) Execute(context.Context, sdd.LLMRequest) (sdd.LLMResult, error) {
-	return sdd.LLMResult{ExecutorFingerprint: "example"}, nil
+func (llmRunner) Run(context.Context, llm.Request) (llm.Result, error) {
+	return llm.Result{Identity: llm.Identity{Provider: "example", Model: "stub"}}, nil
 }
 
 type accessResolver struct{ runtime *sdd.ProjectRuntime }
@@ -103,11 +71,11 @@ func (finalizer) Finalize(context.Context, sdd.AppliedMutation) error { return n
 
 var (
 	_ sdd.GraphStore        = graphStore{}
-	_ sdd.SessionStore      = sessionStore{}
-	_ sdd.StagedBlobStore   = blobStore{}
+	_ sdd.SessionStore      = (*memorySessionStore)(nil)
+	_ sdd.StagedBlobStore   = (*memoryStagedBlobStore)(nil)
 	_ sdd.EmbeddingExecutor = embeddingExecutor{}
 	_ sdd.SearchIndexStore  = indexStore{}
-	_ sdd.LLMExecutor       = llmExecutor{}
+	_ llm.Runner            = llmRunner{}
 	_ sdd.AccessResolver    = accessResolver{}
 	_ sdd.MutationFinalizer = finalizer{}
 )
@@ -116,11 +84,11 @@ func TestExternalCompositionCompilesAgainstPublicPorts(t *testing.T) {
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project:     sdd.ProjectRef{ID: "example", DisplayName: "Example"},
 		Graph:       graphStore{},
-		Sessions:    sessionStore{},
-		StagedBlobs: blobStore{},
+		Sessions:    newMemorySessionStore(),
+		StagedBlobs: newMemoryStagedBlobStore(nil),
 		Embeddings:  embeddingExecutor{},
 		SearchIndex: indexStore{},
-		LLM:         llmExecutor{},
+		LLM:         llmRunner{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +104,7 @@ func TestExternalCompositionCompilesAgainstPublicPorts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var handler http.Handler = server.Handler()
+	handler := server.Handler()
 	if handler == nil {
 		t.Fatal("shared HTTP handler is nil")
 	}

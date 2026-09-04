@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"sort"
 	"time"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/truncate"
 )
 
 // LogVersion stamps every event line. A session generally does not survive
@@ -134,6 +137,14 @@ type Graphs interface {
 	Invalidate()
 }
 
+// ContextualGraphs optionally resolves the graph for one procedure store.
+// The engine does not interpret store fields: application shells use this
+// hook when a move carries an explicit graph authority that differs from the
+// session's ordinary read graph. Procedure loading still uses Graphs.Current.
+type ContextualGraphs interface {
+	CurrentFor(*Store) (*model.Graph, error)
+}
+
 // Engine executes procedure instances against a graph provider and a registry.
 // It is pure Go over data — shells (MCP, webapp) sit on top; side-effectful
 // commands come in through the registry with their own dependencies. The
@@ -142,11 +153,31 @@ type Graphs interface {
 type Engine struct {
 	Registry *Registry
 	Graphs   Graphs
+	// templateValues are host-supplied read-only values merged into every
+	// procedure template context — a generic data channel that keeps the
+	// engine agnostic to what the values mean. Name collisions with a spec's
+	// params or state fail the render (templateContext).
+	templateValues map[string]any
+}
+
+// EngineOption configures an engine.
+type EngineOption func(*Engine)
+
+// WithTemplateValues adds read-only values available to procedure templates
+// and inject-argument templates.
+func WithTemplateValues(values map[string]any) EngineOption {
+	return func(e *Engine) {
+		maps.Copy(e.templateValues, values)
+	}
 }
 
 // New creates an engine reading the current graph through graphs.
-func New(registry *Registry, graphs Graphs) *Engine {
-	return &Engine{Registry: registry, Graphs: graphs}
+func New(registry *Registry, graphs Graphs, opts ...EngineOption) *Engine {
+	e := &Engine{Registry: registry, Graphs: graphs, templateValues: map[string]any{}}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
 }
 
 // StaticGraphs is a Graphs backed by a fixed in-memory graph — for tests and
@@ -351,9 +382,9 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 		}
 	}
 
-	s.counter++
+	nextCounter := s.counter + 1
 	inst := &Instance{
-		ID:     fmt.Sprintf("i_%d", s.counter),
+		ID:     fmt.Sprintf("i_%d", nextCounter),
 		Spec:   spec,
 		Store:  NewStore(spec),
 		Step:   spec.Steps[0].ID,
@@ -363,13 +394,13 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 	if err := inst.Store.SetStart(params); err != nil {
 		return nil, fmt.Errorf("start %s: %w", spec.Canonical, err)
 	}
-	s.instances[inst.ID] = inst
-	s.order = append(s.order, inst.ID)
-
 	seed, err := s.seedFromParent(inst, parent)
 	if err != nil {
 		return nil, fmt.Errorf("start %s: %w", spec.Canonical, err)
 	}
+	s.counter = nextCounter
+	s.instances[inst.ID] = inst
+	s.order = append(s.order, inst.ID)
 
 	data := map[string]any{
 		"procedure": spec.Canonical,
@@ -407,8 +438,10 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 // so a child dispatched on a path that answered no seed-bearing option inherits
 // nothing. When the answered option named a procedure, the seed applies only to
 // a child of that procedure. For each child field ← parent field pair, a seed
-// lands only when the child declares the field as state, has not already set it
-// (a caller override wins), and the parent holds a non-empty source value.
+// lands only when the child has not already set it (a caller override wins) and
+// the parent holds a non-empty source value. A child field the seed cannot land
+// in — undeclared, or declared as a param — fails the start: a declared seed
+// that silently skips is a procedure-authoring bug (20260814-233547-s-tac-bqt).
 func (s *Session) seedFromParent(inst *Instance, parent string) (map[string]any, error) {
 	if parent == "" {
 		return nil, nil
@@ -425,9 +458,14 @@ func (s *Session) seedFromParent(inst *Instance, parent string) (map[string]any,
 	}
 
 	seed := make(map[string]any)
-	for childField, parentField := range p.dispatchSeed {
+	for _, childField := range slices.Sorted(maps.Keys(p.dispatchSeed)) {
+		parentField := p.dispatchSeed[childField]
 		if _, declared := inst.Spec.State[childField]; !declared {
-			continue // the child must declare it as report-writable state to receive it
+			target := "not declared"
+			if _, isParam := inst.Spec.Params[childField]; isParam {
+				target = "declared under params, not state"
+			}
+			return nil, fmt.Errorf("dispatch seed %q ← parent %q cannot land: field %q is %s in %s — a seeded field must be declared state", childField, parentField, childField, target, inst.Spec.Canonical)
 		}
 		if inst.Store.Has(childField) {
 			continue // already set on this instance — never overwrite
@@ -551,27 +589,24 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 
 	// Fields on an answer are limited to the option's collect list — the
 	// same state-only trust boundary as reports, narrowed further.
-	if len(fields) > 0 {
-		allowed := make(map[string]bool, len(opt.Collect))
-		for _, cf := range opt.Collect {
-			allowed[cf.Name] = true
-		}
-		for name := range fields {
-			if !allowed[name] {
-				return nil, fmt.Errorf("field %q is not collected by option %q", name, choice)
-			}
-		}
-		if _, err := inst.Store.WriteState(fields); err != nil {
-			return nil, err
+	allowed := make(map[string]bool, len(opt.Collect))
+	for _, cf := range opt.Collect {
+		allowed[cf.Name] = true
+	}
+	for name := range fields {
+		if !allowed[name] {
+			return nil, fmt.Errorf("field %q is not collected by option %q", name, choice)
 		}
 	}
-	for _, cf := range opt.Collect {
-		if cf.Optional {
-			continue
+	if _, err := inst.Store.writeState(fields, func(candidate *Store) error {
+		for _, cf := range opt.Collect {
+			if !cf.Optional && !candidate.Has(cf.Name) {
+				return fmt.Errorf("option %q requires field %q", choice, cf.Name)
+			}
 		}
-		if !inst.Store.Has(cf.Name) {
-			return nil, fmt.Errorf("option %q requires field %q", choice, cf.Name)
-		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	data := map[string]any{
@@ -606,7 +641,9 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 }
 
 // Serve re-serves the instance's current position without advancing it —
-// shells use it to rehydrate an agent after resume_session.
+// shells use it to rehydrate an agent after resume_session. Draft (serveDelta)
+// fields serve whole here: a rehydrating agent holds no earlier base, and the
+// full serve resets the delta base for the rounds that follow.
 func (s *Session) Serve(instanceID string) (*Serve, error) {
 	if err := s.checkSink(); err != nil {
 		return nil, err
@@ -615,7 +652,38 @@ func (s *Session) Serve(instanceID string) (*Serve, error) {
 	if !ok {
 		return nil, fmt.Errorf("instance %q not found in session", instanceID)
 	}
-	return s.serve(inst)
+	return s.serveWith(inst, true)
+}
+
+// Inject runs one registered query against an instance's live context — the
+// same path renderUnit uses for a step's inject, exposed so a shell can render
+// declared framing lanes (which live outside any step unit) through the one
+// query mechanism. Args templates render against the instance store. The
+// result arrives bounded by the call's effective cap; a non-nil cut says what
+// the bound dropped, for the caller's surface to render in its own register.
+func (s *Session) Inject(instanceID string, call InjectCall) (any, *truncate.Cut, error) {
+	inst, ok := s.instances[instanceID]
+	if !ok {
+		return nil, nil, fmt.Errorf("instance %q not found in session", instanceID)
+	}
+	q, found := s.engine.Registry.Query(call.Fn)
+	if !found {
+		return nil, nil, fmt.Errorf("inject fn %q is not a registered query", call.Fn)
+	}
+	ctx, err := s.funcContext(inst)
+	if err != nil {
+		return nil, nil, err
+	}
+	args, err := s.renderInjectArgs(inst, call.Args)
+	if err != nil {
+		return nil, nil, err
+	}
+	result, err := q.Fn(ctx, args)
+	if err != nil {
+		return nil, nil, err
+	}
+	value, cut := boundInject(q, call, args, result)
+	return value, cut, nil
 }
 
 // Abandon explicitly discards a running instance, logged as an abandonment
@@ -853,6 +921,13 @@ func instanceCounter(id string) int {
 }
 
 // checkSink surfaces a deferred log-append failure before advancing.
+// SinkErr returns a stashed durable-append failure without clearing it, so the
+// operation that caused it can surface the typed error synchronously while
+// subsequent operations still refuse through checkSink.
+func (s *Session) SinkErr() error {
+	return s.sinkErr
+}
+
 func (s *Session) checkSink() error {
 	if s.sinkErr != nil {
 		return fmt.Errorf("session log append failed earlier — refusing to advance without durability: %w", s.sinkErr)

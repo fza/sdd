@@ -1,6 +1,6 @@
 ---
 metadata:
-    sdd-content-hash: 824a3496b8936b5eba38a374e391216e80fef57fe63fedf2717f2f9aed8628e5
+    sdd-content-hash: 4dd2428cb5c296fbc730919be8ef768b66c6886a9373dc5eeceae72bbd7a0300
     sdd-version: dev
 ---
 # SDD CLI Reference
@@ -8,7 +8,7 @@ metadata:
 ## Commands
 
 - `sdd info` — session framing only: `Local participant: ...`, `Language: ...` (when configured), `Search: ...`. The session header surface for skill `!`sdd ...`` injections that need the agent to see who's local and which retrieval modes are available; also the bare-`sdd` default command.
-- `sdd view --layout=<spec>` — composable pipeline of primitives (source, filter, transform, aggregate, rank, page, render) with named macros as sugar. The overview surface: `decisions` / `signals` / `aspirations` / `contracts` / `participants` / `insights` / `done` macros render the kind-grouped sections, and mechanical catch-up at scale. Bare `sdd view` prints help with vocabulary tables. `--repo <repo-id>` (repeatable) / `--all-repos` fan out across connected repos. See "`sdd view` pipeline" below.
+- `sdd view --layout=<spec>` — compose custom graph views from source, filter, transform, aggregate, rank, page, and render primitives, with named macros as sugar. The overview surface: `decisions` / `signals` / `aspirations` / `contracts` / `participants` / `insights` / `done` macros render kind-grouped sections. `sdd view --help` prints the full grammar, vocabulary tables, and examples; bare `sdd view` reports the missing `--layout` and directs there. `--repo <repo-id>` (repeatable) / `--all-repos` fan out across connected repos. See "`sdd view` pipeline" below.
 - `sdd show <id>` — full entry plus its upstream (grounding) and downstream (consumers) chains. Both shown by default: upstream depth 2, downstream depth 1.
 - `sdd show <id> [<id2> ...]` — multiple IDs in one call render their entries back to back (handy for comparing a cluster, e.g. the entries a new one will ref)
 - `sdd show <id> --up N --down N` — set the upstream and downstream expansion depths independently. Defaults: `--up 2 --down 1` (downstream fans out faster, so it stays shallower). `0` turns a direction off; `--up 0 --down 0` is the primary entry alone. Increase (e.g. `--up 4 --down 3`) to see more of an entry's surroundings on demand.
@@ -87,6 +87,7 @@ Args use parens: `kind(plan)`, `n(10)`. Multi-arg disjunction: `kind(plan,direct
 |---|---|
 | `rank(<algorithm>)` | Sort by computed score, descending. Adds `{score: X.XXX}` to rendered entries |
 | `n(N)` | Take first N entries (after filtering and ranking) |
+| `skip(N)` | Drop first N entries (after filtering and ranking, before `n(N)`) — pages through what a bounded list cut |
 | `name(<string>)` | Final section header — overrides any prefix and any rank-based auto-derive. Last call wins; `name("")` clears any prior name |
 | `name-prefix(<string>)` | Prefix the auto-derive composer extends with the rank suffix. Macros bake this so `top(N)` reads "Top by heat (exp-14d)" by default and "Top by in-degree" after `:rank(in-degree)` — the prefix stays, the suffix tracks rank |
 | `expand(involvement)` | Per row, explode involvement triples into focus-block sub-rows (focus-block only) |
@@ -249,7 +250,6 @@ Depth is controlled per direction by `--up` / `--down` (see the `sdd show` entry
 - `--involvement '{json}'` — focus involvement triple (kind: focus only). Repeatable. JSON object `{"target":"<id>","actors":["..."],"when":{"from":"...","to":"..."}}`. Omitting `actors` inherits the focus-level default; explicit `"actors":[]` declares pull-available involvement (deliberately unattributed).
 - `--attach spec` — file to attach (repeatable, see below)
 - `--skip-preflight` — skip pre-flight validation (entry is annotated with `preflight: skipped`)
-- `--preflight-verified` — skip pre-flight validation without annotating the entry. For the real capture of an entry whose findings were already settled in a `--dry-run` pass: pre-flight is an LLM call and non-deterministic, so a second run can raise findings the dry-run loop already cleared. Mutually exclusive with `--skip-preflight`.
 - `--dry-run` — run validation and pre-flight only, without writing or committing the entry
 - `--preflight-timeout` — timeout for pre-flight validation (default `2m`)
 
@@ -357,4 +357,3 @@ References usually stay within one graph. When reasoning genuinely builds on ano
 - **Declared-dependency precondition** — a cross-repo ref must resolve to a *declared* dependency when captured, the same resolve-or-block gate that guards local refs. If the target repo isn't connected, offer to `sdd repo add` it first (and confirm the target entry is pushed) rather than dropping the connection to a local paraphrase.
 - **The cache is pushed state** — a connected cache is a clone of the remote's pushed branch, not a working tree. A foreign entry resolves only after it's committed *and pushed*; `sdd repo sync` (and cross-repo `sdd show`/`sdd search`) refresh the cache. When a cross-repo ref won't resolve, the target is usually unpushed or the cache is stale.
 - **Search across repos** with `--repo <repo-id>`/`--all-repos` on `sdd search` and `sdd view` — results fuse into one ranked list under a single shared embedder. `sdd index --repo <repo-id>`/`--all-repos` pre-warms a connected index so the first cross-repo search isn't slow.
-

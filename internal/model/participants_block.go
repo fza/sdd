@@ -11,6 +11,11 @@ const ShapeParticipantsBlock RenderShape = "participants-block"
 // preserves active-actor ordering.
 type ParticipantsBlock struct {
 	Groups []ParticipantsGroup
+	// Dropped counts whole units a serve budget kept out of this section;
+	// Pull is the runnable layout expression for the complete section.
+	// Zero/empty on explicit pulls, which are never cut (d-tac-rzi).
+	Dropped int
+	Pull    string
 }
 
 // ParticipantsGroup couples one active actor head with the derived-active
@@ -24,3 +29,6 @@ type ParticipantsGroup struct {
 
 // Shape implements SectionData.
 func (ParticipantsBlock) Shape() RenderShape { return ShapeParticipantsBlock }
+
+// Count implements SectionData: the number of participant groups produced.
+func (p ParticipantsBlock) Count() int { return len(p.Groups) }

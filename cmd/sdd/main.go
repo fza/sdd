@@ -12,15 +12,14 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/textinput"
-	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
-	sdd "github.com/networkteam/sdd/application"
+	"github.com/networkteam/sdd/internal/cliout"
+	"github.com/networkteam/sdd/internal/cliout/tui"
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
-	"github.com/networkteam/sdd/internal/llm"
+	internalllm "github.com/networkteam/sdd/internal/llm"
 	"github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/llmstats"
@@ -29,7 +28,8 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
-	localadapter "github.com/networkteam/sdd/local"
+	sddapp "github.com/networkteam/sdd/pkg/application"
+	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/slogutils"
 	"github.com/urfave/cli/v3"
 )
@@ -71,15 +71,39 @@ func resolveLLMConfig(cmd *cli.Command) (model.LLMConfig, error) {
 	return cfg, nil
 }
 
-// newRunner builds a llm.Runner from the resolved LLMConfig. Errors surface
+// newRunner builds the composed llm.Runner this host injects everywhere: the
+// factory's provider + rate-limit + timeout stack, wrapped in the observing
+// decorator that writes the stats rows `sdd stats` reads. Errors surface
 // misconfiguration (unknown provider, missing API key, broken config file)
 // at CLI entry so failures are visible before graph work begins.
-func newRunner(cmd *cli.Command) (llm.Runner, error) {
+// timeoutFlag optionally names a per-command duration flag that overrides the
+// configured llm.timeout ("" means config or the factory default).
+func newRunner(cmd *cli.Command, timeoutFlag string) (pkgllm.Runner, error) {
 	cfg, err := resolveLLMConfig(cmd)
 	if err != nil {
 		return nil, err
 	}
-	return factory.New(cfg)
+	if timeoutFlag != "" {
+		d, err := resolveTimeout(cmd, timeoutFlag)
+		if err != nil {
+			return nil, err
+		}
+		if d > 0 {
+			cfg.Timeout = d.String()
+		}
+	}
+	runner, err := factory.New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	// Best-effort sink: outside an sdd repo the runner simply records nothing.
+	var sink internalllm.StatsSink
+	if sddDir, err := resolveSDDDir(); err == nil {
+		if fileSink, err := llmstats.NewFileSink(filepath.Join(sddDir, "stats")); err == nil {
+			sink = fileSink
+		}
+	}
+	return internalllm.Observed(runner, sink), nil
 }
 
 // resolveTimeout returns the per-call LLM timeout for the given flag name,
@@ -89,44 +113,63 @@ func resolveTimeout(cmd *cli.Command, flagName string) (time.Duration, error) {
 	if cmd.IsSet(flagName) {
 		return cmd.Duration(flagName), nil
 	}
+	d, err := configuredLLMTimeout(cmd)
+	if err != nil {
+		return 0, err
+	}
+	if d > 0 {
+		return d, nil
+	}
+	return cmd.Duration(flagName), nil
+}
+
+// configuredLLMTimeout returns the llm.timeout field from config, or zero when
+// it is unset or unparseable. Callers with no flag of their own (sdd serve)
+// take it directly and let their own default stand in for zero.
+func configuredLLMTimeout(cmd *cli.Command) (time.Duration, error) {
 	cfg, err := resolveLLMConfig(cmd)
 	if err != nil {
 		return 0, err
 	}
-	if cfg.Timeout != "" {
-		if d, err := time.ParseDuration(cfg.Timeout); err == nil && d > 0 {
-			return d, nil
-		}
+	if cfg.Timeout == "" {
+		return 0, nil
 	}
-	return cmd.Duration(flagName), nil
+	d, err := time.ParseDuration(cfg.Timeout)
+	if err != nil || d <= 0 {
+		return 0, nil
+	}
+	return d, nil
 }
 
 // readOnlyRunner satisfies llm.Runner but always errors on Run. Used by
 // read-only CLI commands (status, list, show, lint, wip list) so they
 // don't need LLM configuration to operate.
-type readOnlyRunner struct{}
-
-func (readOnlyRunner) Run(context.Context, llm.Request) (*llm.RunResult, error) {
-	return nil, fmt.Errorf("no llm runner configured for this command")
+var readOnlyRunner pkgllm.RunnerFunc = func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
+	return pkgllm.Result{}, fmt.Errorf("no llm runner configured for this command")
 }
 
 // newReadFinder builds a Finder suitable for read-only operations. The
 // runner errors on invocation so accidental use in a code path that does
 // call Preflight is loud. Config load failures propagate — a malformed
 // config is a real problem and the caller decides how to surface it.
-// Returns nil cfg silently only when the CWD is outside an sdd repo or
-// config files simply don't exist (legitimate "no config" states).
+// When the CWD is outside an sdd repo or config files simply don't exist,
+// loadConfig established that absence is the world state, so the effective
+// config is the empty one — resolved here explicitly because a nil config
+// on the finder means a wiring fault and errors (s-tac-uya).
 func newReadFinder() (*finders.Finder, error) {
 	cfg, err := loadConfig()
 	if err != nil {
 		return nil, err
+	}
+	if cfg == nil {
+		cfg = &model.PerRepoConfig{}
 	}
 	reg, _, err := defaultRepos()
 	if err != nil {
 		return nil, err
 	}
 	return finders.New(finders.Options{
-		PreflightRunner: readOnlyRunner{},
+		PreflightRunner: readOnlyRunner,
 		Config:          cfg,
 		Repos:           reg,
 	}), nil
@@ -152,6 +195,15 @@ func defaultRepos() (*repos.Registry, *repos.Manager, error) {
 // and no global settings; both are legitimate "no config" states. Returns
 // (nil, err) when any layer fails to parse, so callers fail hard on broken
 // config instead of silently running on defaults.
+// configLanguage returns the configured graph language, tolerating the nil
+// config loadConfig yields outside an sdd repo.
+func configLanguage(cfg *model.PerRepoConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Language
+}
+
 func loadConfig() (*model.PerRepoConfig, error) {
 	loc, err := repos.DefaultLocations()
 	if err != nil {
@@ -171,6 +223,28 @@ func loadConfig() (*model.PerRepoConfig, error) {
 		return &model.PerRepoConfig{BaseConfig: global.BaseConfig}, nil
 	}
 	return meta.ResolveConfig(global.BaseConfig, sddDir)
+}
+
+// warnUnknownConfigKeys names every config key sdd read past — tolerated is
+// not silent. A finder that will not build is left to the command itself,
+// which resolves the same config and reports the failure properly.
+func warnUnknownConfigKeys(ctx context.Context) {
+	f, err := newReadFinder()
+	if err != nil {
+		return
+	}
+	sddDir, err := resolveSDDDir()
+	if err != nil {
+		sddDir = ""
+	}
+	result, err := f.UnknownConfigKeys(query.UnknownConfigKeysQuery{SDDDir: sddDir})
+	if err != nil {
+		return
+	}
+	log := slogutils.FromContext(ctx)
+	for _, k := range result.Keys {
+		log.Warn("ignoring unknown config key", "key", k.Key, "file", k.File)
+	}
 }
 
 // resolveConfigAt mirrors loadConfig for an explicit .sdd dir — `sdd init`
@@ -258,13 +332,16 @@ func main() {
 			slog.SetDefault(logger)
 			ctx = slogutils.WithLogger(ctx, logger)
 
-			// Attach a stats sink so LLM calls (pre-flight, summarize) record
-			// token + prompt-cache metrics to .sdd/stats/llm.jsonl. Best-effort:
-			// if .sdd/ isn't discoverable or the sink can't be created, LLM
-			// calls simply record nothing.
+			warnUnknownConfigKeys(ctx)
+
+			// Attach a stats sink for the embedding paths, which still record
+			// through the context (chat calls record via the observing
+			// decorator composed in newRunner). Best-effort: if .sdd/ isn't
+			// discoverable or the sink can't be created, embedding calls
+			// simply record nothing.
 			if sddDir, err := resolveSDDDir(); err == nil {
 				if sink, err := llmstats.NewFileSink(filepath.Join(sddDir, "stats")); err == nil {
-					ctx = llm.WithStatsSink(ctx, sink)
+					ctx = internalllm.WithStatsSink(ctx, sink)
 				}
 			}
 
@@ -300,6 +377,7 @@ func main() {
 			indexCmd(),
 			searchCmd(),
 			serveCmd(),
+			recoverCmd(),
 			syncCmd(),
 			repoCmd(),
 			statsCmd(),
@@ -309,9 +387,10 @@ func main() {
 	if err := app.Run(context.Background(), os.Args); err != nil {
 		// Ctrl-C during a long operation (e.g. an embed) cancels the work
 		// context. That is user intent, not a failure — report it calmly and
-		// exit with the conventional SIGINT code (130) rather than dumping a
-		// raw "context canceled" error at the generic error exit.
-		if errors.Is(err, context.Canceled) {
+		// exit with the conventional SIGINT code (130). The coordinator raises
+		// ErrUserCancelled for its interrupt path; a bare context.Canceled
+		// covers cancellations outside a coordinator.
+		if errors.Is(err, cliout.ErrUserCancelled) || errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "cancelled.")
 			os.Exit(130)
 		}
@@ -467,8 +546,7 @@ func showCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			result, err := f.Show(query.ShowQuery{
-				Graph:     g,
+			result, err := f.OnGraph(g).Show(query.ShowQuery{
 				IDs:       ids,
 				UpDepth:   int(cmd.Int("up")),
 				DownDepth: int(cmd.Int("down")),
@@ -552,6 +630,10 @@ func newCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:  "topics",
 				Usage: "Comma-separated topic labels (any kind) — inline topic membership written as `topics:` strings",
+			},
+			&cli.StringFlag{
+				Name:  "index",
+				Usage: "Fact retrieval cue — JSON object {\"title\":\"<standalone title>\",\"topic\":\"<topic also in --topics>\"}",
 			},
 			&cli.StringSliceFlag{
 				Name:  "topic",
@@ -707,15 +789,14 @@ func newCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			factIndex, err := parseFactIndexFlag(cmd.String("index"))
+			if err != nil {
+				return err
+			}
 			refs, err := parseRefFlags(cmd.StringSlice("refs"))
 			if err != nil {
 				return err
 			}
-			preflightTimeout, err := resolveTimeout(cmd, "preflight-timeout")
-			if err != nil {
-				return err
-			}
-
 			ncmd := &command.NewEntryCmd{
 				Type:              typ,
 				Layer:             layer,
@@ -732,6 +813,7 @@ func newCmd() *cli.Command {
 				Class:             strings.TrimSpace(cmd.String("class")),
 				Actor:             strings.TrimSpace(cmd.String("actor")),
 				TopicLabels:       splitCSV(cmd.String("topics")),
+				Index:             factIndex,
 				AnnotationTopics:  annotationTopics,
 				FocusActors:       focusActors,
 				FocusWhen:         focusWhen,
@@ -742,7 +824,6 @@ func newCmd() *cli.Command {
 				Summary:           strings.TrimSpace(cmd.String("summary")),
 				DryRun:            cmd.Bool("dry-run"),
 				PreflightModel:    cmd.String("preflight-model"),
-				PreflightTimeout:  preflightTimeout,
 				OnNewEntry: func(id, summary string) {
 					fmt.Println(id + ".md")
 					if rel, err := model.IDToRelPath(id); err == nil {
@@ -754,7 +835,7 @@ func newCmd() *cli.Command {
 				},
 			}
 
-			runner, err := newRunner(cmd)
+			runner, err := newRunner(cmd, "preflight-timeout")
 			if err != nil {
 				return err
 			}
@@ -766,17 +847,23 @@ func newCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			registry, err := sddapp.ProcedureRegistry()
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
 				GraphDir: dir,
 				SDDDir:   sddDir,
 				Reader: finders.New(finders.Options{
-					PreflightRunner: runner,
-					Config:          cfg,
-					Repos:           reg,
+					PreflightRunner:   runner,
+					Config:            cfg,
+					Repos:             reg,
+					ProcedureRegistry: registry,
 				}),
 				LLMRunner: runner,
 				Committer: git.CLI{},
 				Repos:     mgr,
+				Language:  configLanguage(cfg),
 			})
 
 			return handler.NewEntry(ctx, ncmd)
@@ -913,11 +1000,25 @@ func lintCmd() *cli.Command {
 				return err
 			}
 
-			f, err := newReadFinder()
+			cfg, err := loadConfig()
 			if err != nil {
 				return err
 			}
-			result, err := f.Lint(query.LintQuery{Graph: g})
+			repoReg, _, err := defaultRepos()
+			if err != nil {
+				return err
+			}
+			registry, err := sddapp.ProcedureRegistry()
+			if err != nil {
+				return err
+			}
+			f := finders.New(finders.Options{
+				PreflightRunner:   readOnlyRunner,
+				Config:            cfg,
+				Repos:             repoReg,
+				ProcedureRegistry: registry,
+			})
+			result, err := f.OnGraph(g).Lint(query.LintQuery{})
 			if err != nil {
 				return err
 			}
@@ -939,9 +1040,12 @@ func lintCmd() *cli.Command {
 				Embedding: embCfg,
 				IndexDir:  idxDir,
 			}, result)
-			presenters.RenderLint(os.Stdout, result, g)
-			if result.TotalIssues > 0 {
-				return fmt.Errorf("lint found %d issue(s)", result.TotalIssues)
+			presenters.RenderLint(os.Stdout, result)
+			// Advisories never flip the exit code (d-cpt-xc3): an
+			// overshooting spec still runs; only errors are integrity
+			// failures.
+			if errs := result.Errors(); errs > 0 {
+				return fmt.Errorf("lint found %d error(s)", errs)
 			}
 			return nil
 		},
@@ -1011,15 +1115,10 @@ func summarizeCmd() *cli.Command {
 				explicitText = &value
 			}
 
-			summarizeTimeout, err := resolveTimeout(cmd, "timeout")
-			if err != nil {
-				return err
-			}
 			sumCmd := &command.SummarizeCmd{
 				EntryIDs:     ids,
 				Force:        cmd.Bool("force"),
 				Model:        cmd.String("model"),
-				Timeout:      summarizeTimeout,
 				Concurrency:  int(cmd.Int("concurrency")),
 				ExplicitText: explicitText,
 				OnSummarized: func(id, summary string) {
@@ -1034,7 +1133,7 @@ func summarizeCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			runner, err := newRunner(cmd)
+			runner, err := newRunner(cmd, "timeout")
 			if err != nil {
 				return err
 			}
@@ -1055,6 +1154,7 @@ func summarizeCmd() *cli.Command {
 				}),
 				LLMRunner: runner,
 				Committer: git.CLI{},
+				Language:  configLanguage(cfg),
 			})
 			return handler.Summarize(ctx, sumCmd)
 		}),
@@ -1138,346 +1238,60 @@ func resolveSDDDir() (string, error) {
 	return meta.SDDDir(repoRoot), nil
 }
 
-// graphDirPromptModel is a bubbletea model for the graph directory prompt.
-type graphDirPromptModel struct {
-	textInput textinput.Model
-	done      bool
-}
-
-func newGraphDirPromptModel(defaultValue string) graphDirPromptModel {
-	ti := textinput.New()
-	ti.Placeholder = defaultValue
-	ti.Focus()
-	ti.SetWidth(60)
-	return graphDirPromptModel{textInput: ti}
-}
-
-func (m graphDirPromptModel) Init() tea.Cmd {
-	return textinput.Blink
-}
-
-func (m graphDirPromptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "enter":
-			m.done = true
-			return m, tea.Quit
-		case "ctrl+c", "esc":
-			return m, tea.Quit
-		}
-	}
-	var cmd tea.Cmd
-	m.textInput, cmd = m.textInput.Update(msg)
-	return m, cmd
-}
-
-func (m graphDirPromptModel) View() tea.View {
-	return tea.NewView(fmt.Sprintf("Graph directory (relative to repo root) [%s]: %s",
-		m.textInput.Placeholder, m.textInput.View()))
-}
-
-// promptGraphDir runs an interactive prompt for the graph directory.
+// promptGraphDir runs an interactive prompt for the graph directory. Empty
+// input accepts the default; cancellation returns an error.
 func promptGraphDir(defaultValue string) (string, error) {
-	m := newGraphDirPromptModel(defaultValue)
-	p := tea.NewProgram(m)
-	result, err := p.Run()
-	if err != nil {
-		return "", err
-	}
-	final := result.(graphDirPromptModel)
-	if !final.done {
-		return "", fmt.Errorf("prompt cancelled")
-	}
-	value := strings.TrimSpace(final.textInput.Value())
-	if value == "" {
-		return defaultValue, nil
-	}
-	return value, nil
-}
-
-// participantPromptModel is a bubbletea model for the participant-name prompt.
-type participantPromptModel struct {
-	textInput textinput.Model
-	done      bool
-}
-
-func newParticipantPromptModel(defaultValue string) participantPromptModel {
-	ti := textinput.New()
-	ti.Placeholder = defaultValue
-	ti.Focus()
-	ti.SetWidth(60)
-	return participantPromptModel{textInput: ti}
-}
-
-func (m participantPromptModel) Init() tea.Cmd { return textinput.Blink }
-
-func (m participantPromptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		switch key.String() {
-		case "enter":
-			m.done = true
-			return m, tea.Quit
-		case "ctrl+c", "esc":
-			return m, tea.Quit
-		}
-	}
-	var cmd tea.Cmd
-	m.textInput, cmd = m.textInput.Update(msg)
-	return m, cmd
-}
-
-func (m participantPromptModel) View() tea.View {
-	return tea.NewView(fmt.Sprintf("Participant name [%s]: %s",
-		m.textInput.Placeholder, m.textInput.View()))
+	return tui.RunTextPrompt(tui.TextPrompt{
+		Label:   "Graph directory (relative to repo root)",
+		Default: defaultValue,
+		Width:   60,
+	})
 }
 
 // promptParticipant runs an interactive prompt for the local participant name.
-// Empty input accepts the default. Cancellation returns an error.
+// Empty input accepts the default; cancellation returns an error.
 func promptParticipant(defaultValue string) (string, error) {
-	m := newParticipantPromptModel(defaultValue)
-	result, err := tea.NewProgram(m).Run()
-	if err != nil {
-		return "", err
-	}
-	final := result.(participantPromptModel)
-	if !final.done {
-		return "", fmt.Errorf("prompt cancelled")
-	}
-	value := strings.TrimSpace(final.textInput.Value())
-	if value == "" {
-		return defaultValue, nil
-	}
-	return value, nil
-}
-
-// languagePromptModel is a bubbletea model for the graph-language prompt.
-type languagePromptModel struct {
-	textInput textinput.Model
-	done      bool
-}
-
-func newLanguagePromptModel(defaultValue string) languagePromptModel {
-	ti := textinput.New()
-	ti.Placeholder = defaultValue
-	ti.Focus()
-	ti.SetWidth(20)
-	return languagePromptModel{textInput: ti}
-}
-
-func (m languagePromptModel) Init() tea.Cmd { return textinput.Blink }
-
-func (m languagePromptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		switch key.String() {
-		case "enter":
-			m.done = true
-			return m, tea.Quit
-		case "ctrl+c", "esc":
-			return m, tea.Quit
-		}
-	}
-	var cmd tea.Cmd
-	m.textInput, cmd = m.textInput.Update(msg)
-	return m, cmd
-}
-
-func (m languagePromptModel) View() tea.View {
-	return tea.NewView(fmt.Sprintf("Graph language [%s]: %s",
-		m.textInput.Placeholder, m.textInput.View()))
+	return tui.RunTextPrompt(tui.TextPrompt{
+		Label:   "Participant name",
+		Default: defaultValue,
+		Width:   60,
+	})
 }
 
 // promptLanguage runs an interactive prompt for the graph authoring language.
-// Empty input accepts the default. Cancellation returns an error.
+// Empty input accepts the default; cancellation returns an error.
 func promptLanguage(defaultValue string) (string, error) {
-	m := newLanguagePromptModel(defaultValue)
-	result, err := tea.NewProgram(m).Run()
-	if err != nil {
-		return "", err
-	}
-	final := result.(languagePromptModel)
-	if !final.done {
-		return "", fmt.Errorf("prompt cancelled")
-	}
-	value := strings.TrimSpace(final.textInput.Value())
-	if value == "" {
-		return defaultValue, nil
-	}
-	return value, nil
+	return tui.RunTextPrompt(tui.TextPrompt{
+		Label:   "Graph language",
+		Default: defaultValue,
+		Width:   20,
+	})
 }
 
-// scopePromptModel is a bubbletea model for the skill-scope selector. Two
-// fixed options (project, user) navigated by ↑/↓ or j/k; Enter confirms.
-// Per d-tac-07q the cursor starts on `project` so the keystroke-free path
-// installs into the repo-local tree — friction-minimising for contributors
-// cloning an SDD-instrumented repo.
-type scopePromptModel struct {
-	options []scopeOption
-	cursor  int
-	done    bool
-}
-
-type scopeOption struct {
-	value model.Scope
-	label string
-	hint  string
-}
-
-func newScopePromptModel() scopePromptModel {
-	return scopePromptModel{
-		options: []scopeOption{
-			{value: model.ScopeProject, label: "project", hint: ".claude/skills/ in this repo (recommended for shared SDD-instrumented repos)"},
-			{value: model.ScopeUser, label: "user", hint: "~/.claude/skills/ shared across all projects on this machine"},
-		},
-		cursor: 0,
-	}
-}
-
-func (m scopePromptModel) Init() tea.Cmd { return nil }
-
-func (m scopePromptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		switch key.String() {
-		case "enter":
-			m.done = true
-			return m, tea.Quit
-		case "ctrl+c", "esc":
-			return m, tea.Quit
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.options)-1 {
-				m.cursor++
-			}
-		}
-	}
-	return m, nil
-}
-
-func (m scopePromptModel) View() tea.View {
-	var b strings.Builder
-	b.WriteString("Where should skills be installed? (↑/↓ to navigate, enter to confirm)\n")
-	for i, opt := range m.options {
-		marker := "  "
-		if i == m.cursor {
-			marker = "› "
-		}
-		fmt.Fprintf(&b, "%s%s — %s\n", marker, opt.label, opt.hint)
-	}
-	return tea.NewView(b.String())
-}
-
-// promptScope runs the interactive scope selector. Returns the chosen scope
-// or an error on cancellation. The caller is responsible for the
-// non-interactive branch — this function unconditionally opens a TTY.
+// promptScope runs the skill-scope selector. Per d-tac-07q the cursor starts on
+// `project` so the keystroke-free path installs into the repo-local tree. The
+// caller owns the non-interactive branch — this unconditionally opens a TTY.
 func promptScope() (model.Scope, error) {
-	m := newScopePromptModel()
-	result, err := tea.NewProgram(m).Run()
-	if err != nil {
-		return "", err
-	}
-	final := result.(scopePromptModel)
-	if !final.done {
-		return "", fmt.Errorf("prompt cancelled")
-	}
-	return final.options[final.cursor].value, nil
-}
-
-// agentsPromptModel is a bubbletea model for the supported-agents multi-select
-// shown on fresh init. Options are toggled with space and confirmed with enter;
-// at least one must be selected. Claude starts selected so the keystroke-light
-// path matches the pre-multi-agent default.
-type agentsPromptModel struct {
-	options []agentOption
-	cursor  int
-	done    bool
-}
-
-type agentOption struct {
-	value    model.AgentTarget
-	label    string
-	hint     string
-	selected bool
-}
-
-func newAgentsPromptModel() agentsPromptModel {
-	return agentsPromptModel{
-		options: []agentOption{
-			{value: model.AgentClaude, label: "claude", hint: ".claude/skills/ — Claude Code", selected: true},
-			{value: model.AgentCodex, label: "codex", hint: ".agents/skills/ — Codex (Agent Skills standard)"},
+	return tui.RunSelect(tui.SelectPrompt[model.Scope]{
+		Header: "Where should skills be installed? (↑/↓ to navigate, enter to confirm)",
+		Options: []tui.SelectOption[model.Scope]{
+			{Label: "project", Hint: ".claude/skills/ in this repo (recommended for shared SDD-instrumented repos)", Value: model.ScopeProject},
+			{Label: "user", Hint: "~/.claude/skills/ shared across all projects on this machine", Value: model.ScopeUser},
 		},
-	}
+	})
 }
 
-func (m agentsPromptModel) Init() tea.Cmd { return nil }
-
-func (m agentsPromptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		switch key.String() {
-		case "enter":
-			for _, o := range m.options {
-				if o.selected {
-					m.done = true
-					return m, tea.Quit
-				}
-			}
-			// No selection yet — ignore enter until at least one is chosen.
-		case " ", "space":
-			m.options[m.cursor].selected = !m.options[m.cursor].selected
-		case "ctrl+c", "esc":
-			return m, tea.Quit
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.options)-1 {
-				m.cursor++
-			}
-		}
-	}
-	return m, nil
-}
-
-func (m agentsPromptModel) View() tea.View {
-	var b strings.Builder
-	b.WriteString("Which agents should sdd render skills for? (↑/↓ navigate, space toggle, enter confirm)\n")
-	for i, opt := range m.options {
-		cursor := "  "
-		if i == m.cursor {
-			cursor = "› "
-		}
-		check := "[ ]"
-		if opt.selected {
-			check = "[x]"
-		}
-		fmt.Fprintf(&b, "%s%s %s — %s\n", cursor, check, opt.label, opt.hint)
-	}
-	return tea.NewView(b.String())
-}
-
-// promptAgents runs the interactive supported-agents multi-select, returning
-// the chosen targets or an error on cancellation. The caller is responsible for
-// the non-interactive branch — this function unconditionally opens a TTY.
+// promptAgents runs the supported-agents multi-select shown on fresh init.
+// Claude starts selected so the keystroke-light path matches the pre-multi-agent
+// default. The caller owns the non-interactive branch.
 func promptAgents() ([]model.AgentTarget, error) {
-	m := newAgentsPromptModel()
-	result, err := tea.NewProgram(m).Run()
-	if err != nil {
-		return nil, err
-	}
-	final := result.(agentsPromptModel)
-	if !final.done {
-		return nil, fmt.Errorf("prompt cancelled")
-	}
-	var chosen []model.AgentTarget
-	for _, o := range final.options {
-		if o.selected {
-			chosen = append(chosen, o.value)
-		}
-	}
-	return chosen, nil
+	return tui.RunMultiSelect(tui.MultiSelectPrompt[model.AgentTarget]{
+		Header: "Which agents should sdd render skills for? (↑/↓ navigate, space toggle, enter confirm)",
+		Options: []tui.MultiSelectOption[model.AgentTarget]{
+			{Label: "claude", Hint: ".claude/skills/ — Claude Code", Value: model.AgentClaude, Selected: true},
+			{Label: "codex", Hint: ".agents/skills/ — Codex (Agent Skills standard)", Value: model.AgentCodex},
+		},
+	})
 }
 
 // warnIfParticipantMissing emits a one-line stderr nudge when no local
@@ -1535,47 +1349,6 @@ func isTerminal(f *os.File) bool {
 	return term.IsTerminal(f.Fd())
 }
 
-// confirmPromptModel is a bubbletea model for a single-char [y/N]
-// confirmation. Reuses the same textinput.Model infrastructure as
-// graphDirPromptModel for stylistic consistency with the d-tac-s2g flow.
-type confirmPromptModel struct {
-	textInput textinput.Model
-	prompt    string
-	done      bool
-}
-
-func newConfirmPromptModel(prompt string) confirmPromptModel {
-	ti := textinput.New()
-	ti.Placeholder = "N"
-	ti.CharLimit = 1
-	ti.SetWidth(3)
-	ti.Focus()
-	return confirmPromptModel{textInput: ti, prompt: prompt}
-}
-
-func (m confirmPromptModel) Init() tea.Cmd {
-	return textinput.Blink
-}
-
-func (m confirmPromptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
-		switch key.String() {
-		case "enter":
-			m.done = true
-			return m, tea.Quit
-		case "ctrl+c", "esc":
-			return m, tea.Quit
-		}
-	}
-	var cmd tea.Cmd
-	m.textInput, cmd = m.textInput.Update(msg)
-	return m, cmd
-}
-
-func (m confirmPromptModel) View() tea.View {
-	return tea.NewView(fmt.Sprintf("%s [y/N]: %s", m.prompt, m.textInput.View()))
-}
-
 // promptOverwriteModified asks the user whether to overwrite a user-edited
 // skill file during sdd init. Default N (preserve). Returns false on empty
 // input, EOF, or cancellation — the safe side is always "leave it alone."
@@ -1584,37 +1357,7 @@ func promptOverwriteModified(absPath string) (bool, error) {
 }
 
 func promptConfirmation(prompt string) (bool, error) {
-	m := newConfirmPromptModel(prompt)
-	result, err := tea.NewProgram(m).Run()
-	if err != nil {
-		return false, err
-	}
-	final := result.(confirmPromptModel)
-	if !final.done {
-		return false, nil
-	}
-	v := strings.ToLower(strings.TrimSpace(final.textInput.Value()))
-	return v == "y" || v == "yes", nil
-}
-
-func chooseLegacySessionMigration(count int, explicit, interactive bool, prompt func(int) (bool, error)) (bool, error) {
-	if count == 0 {
-		return false, nil
-	}
-	if explicit {
-		return true, nil
-	}
-	if !interactive {
-		return false, nil
-	}
-	return prompt(count)
-}
-
-func promptLegacySessionMigration(count int) (bool, error) {
-	return promptConfirmation(fmt.Sprintf(
-		"%d legacy session(s) need migration. Confirm no session server is currently using this repository and migrate them now?",
-		count,
-	))
+	return tui.RunConfirm(tui.ConfirmPrompt{Prompt: prompt})
 }
 
 func initCmd() *cli.Command {
@@ -1650,10 +1393,6 @@ func initCmd() *cli.Command {
 			&cli.BoolFlag{
 				Name:  "bump",
 				Usage: "Raise .sdd/meta.json minimum_version to this binary's version (released builds only)",
-			},
-			&cli.BoolFlag{
-				Name:  "migrate-sessions",
-				Usage: "Migrate all legacy sessions; acknowledges that no session server is actively using this repository",
 			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
@@ -1691,7 +1430,10 @@ func initCmd() *cli.Command {
 			if sddExists {
 				// Overlay-aware: a participant configured globally counts
 				// as configured, so init does not demand a per-repo one.
-				existingMerged, _ = resolveConfigAt(sddDir)
+				existingMerged, err = resolveConfigAt(sddDir)
+				if err != nil {
+					return fmt.Errorf("resolving existing configuration before init: %w", err)
+				}
 			}
 			recordedParticipant := ""
 			if existingMerged != nil {
@@ -1700,29 +1442,15 @@ func initCmd() *cli.Command {
 			languageFlag := strings.TrimSpace(cmd.String("language"))
 			participantFlag := strings.TrimSpace(cmd.String("participant"))
 			remoteURL := git.RemoteURL(repoRoot)
-
-			var sessionMigrator handlers.LegacySessionMigrator
-			var legacySessionPaths []string
-			if sddExists {
-				project := sdd.ProjectID("local")
-				if existingMerged != nil && existingMerged.RepoID != "" {
-					project = sdd.ProjectID(existingMerged.RepoID)
-				} else if repoID, deriveErr := model.DeriveRepoID(remoteURL); deriveErr == nil {
-					project = sdd.ProjectID(repoID)
-				}
-				migrator, err := localadapter.NewFilesystemLegacySessionMigrator(
-					filepath.Join(sddDir, "sessions"),
-					filepath.Join(sddDir, "staged-blobs"),
-					"local",
-					project,
-				)
-				if err != nil {
-					return fmt.Errorf("preparing legacy session migration: %w", err)
-				}
-				sessionMigrator = migrator
-				legacySessionPaths, err = migrator.ListLegacySessions(ctx)
-				if err != nil {
-					return fmt.Errorf("detecting legacy sessions: %w", err)
+			defaultBranch := ""
+			if existingMerged != nil {
+				defaultBranch = strings.TrimSpace(existingMerged.DefaultBranch)
+			}
+			if defaultBranch == "" {
+				var branchErr error
+				defaultBranch, branchErr = git.CurrentBranch(repoRoot)
+				if branchErr != nil {
+					return branchErr
 				}
 			}
 
@@ -1827,33 +1555,25 @@ func initCmd() *cli.Command {
 				targets = chosen
 			}
 
-			migrateSessions, err := chooseLegacySessionMigration(
-				len(legacySessionPaths),
-				cmd.Bool("migrate-sessions"),
-				isTerminal(os.Stdin),
-				promptLegacySessionMigration,
-			)
+			stableRepoRoot, err := git.StableRepoRoot(repoRoot)
 			if err != nil {
-				return fmt.Errorf("prompt: %w", err)
+				return err
 			}
-			if len(legacySessionPaths) > 0 && !migrateSessions {
-				fmt.Fprintf(os.Stderr, "  %d legacy session(s) need migration and were left unchanged; after stopping all session servers, rerun with --migrate-sessions\n", len(legacySessionPaths))
-			}
-
 			icmd := &command.InitCmd{
-				RepoRoot:              repoRoot,
-				GraphDir:              graphDir,
-				Participant:           participant,
-				Language:              language,
-				BinaryVersion:         version,
-				Targets:               targets,
-				Scope:                 scope,
-				ScopeExplicit:         scopeExplicit,
-				UserHome:              userHome,
-				RemoteURL:             remoteURL,
-				Force:                 cmd.Bool("force"),
-				Bump:                  cmd.Bool("bump"),
-				MigrateLegacySessions: migrateSessions,
+				RepoRoot:       repoRoot,
+				StableRepoRoot: stableRepoRoot,
+				GraphDir:       graphDir,
+				DefaultBranch:  defaultBranch,
+				Participant:    participant,
+				Language:       language,
+				BinaryVersion:  version,
+				Targets:        targets,
+				Scope:          scope,
+				ScopeExplicit:  scopeExplicit,
+				UserHome:       userHome,
+				RemoteURL:      remoteURL,
+				Force:          cmd.Bool("force"),
+				Bump:           cmd.Bool("bump"),
 				OnMinimumVersionBumped: func(previous, current string) {
 					if previous == "" {
 						fmt.Printf("  minimum_version: → %s\n", current)
@@ -1915,9 +1635,6 @@ func initCmd() *cli.Command {
 					}
 					fmt.Printf("  index store already exists at %s — the legacy copy at %s is unused and can be removed\n", storeDir, legacyDir)
 				},
-				OnSessionMigrated: func(path string) {
-					fmt.Printf("  session migrated: %s\n", path)
-				},
 			}
 
 			reader, err := newReadFinder()
@@ -1932,7 +1649,6 @@ func initCmd() *cli.Command {
 				Reader:    reader,
 				Committer: git.CLI{},
 				Repos:     mgr,
-				Sessions:  sessionMigrator,
 			})
 			if err := handler.Init(ctx, icmd); err != nil {
 				return err
@@ -2197,6 +1913,30 @@ func parseWhenFlag(s string) (*model.FocusWhen, error) {
 		return nil, fmt.Errorf("--when: %w", err)
 	}
 	return &w, nil
+}
+
+func parseFactIndexFlag(s string) (*model.FactIndex, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(s))
+	decoder.DisallowUnknownFields()
+	var raw struct {
+		Title string `json:"title"`
+		Topic string `json:"topic"`
+	}
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, fmt.Errorf("--index: invalid JSON object: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, fmt.Errorf("--index: expected one JSON object")
+	}
+	index, err := model.NewFactIndex(raw.Title, raw.Topic)
+	if err != nil {
+		return nil, fmt.Errorf("--index: %w", err)
+	}
+	return index, nil
 }
 
 // parseInvolvementFlags parses each --involvement JSON value into a

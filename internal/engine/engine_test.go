@@ -2,33 +2,111 @@ package engine
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/networkteam/sdd/internal/baseprocedures"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 )
 
-// captureEntry returns the real embedded base capture procedure — the
-// per-procedure table tests below drive the shipped entry, not a parallel
-// fixture, so spec drift between tests and the served procedure is
-// impossible.
-func captureEntry(t *testing.T) *model.Entry {
-	t.Helper()
-	entries, err := baseprocedures.Entries()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if e.Canonical == "capture" {
-			return e
-		}
-	}
-	t.Fatal("embedded base entries carry no capture procedure")
-	return nil
-}
+// The fixture spec is a synthetic capture-shaped procedure owned by this test
+// package: collect fields across the domain types, a predicate-gated step, a
+// once-only op, user and agent choosers, a guarded write op, and an injected
+// serve — every engine feature the tests below exercise, with no coupling to
+// a shipped procedure or an application registry contract. Shipped-procedure
+// behavior is tested in internal/proctest against the real application.
+const fixtureSpecID = "20260702-120000-d-prc-fix"
+
+const fixtureSpecFrontmatter = `params:
+    anchor: {type: entry-id, optional: true, desc: entry this test capture is anchored on}
+state:
+    body: {type: text, desc: entry description}
+    entryKind: {type: entry-kind, desc: signal or decision kind}
+    layer: {type: layer, desc: the layer}
+    refs: {type: list<ref>, desc: refs}
+    closes: {type: list<entry-id>, optional: true, desc: entries this draft resolves}
+    supersedes: {type: list<entry-id>, optional: true, desc: entries this draft replaces}
+    topics: {type: list<label>, desc: topic labels}
+    index: {type: fact-index, optional: true, desc: fact retrieval cue}
+    confidence: {type: confidence, desc: honest confidence}
+    intent: {type: intent, optional: true, desc: directive intent}
+    widenReport: {type: text, desc: grounding evidence}
+    fidelityNote: {type: text, optional: true, desc: fidelity note}
+    correctedSummary: {type: text, optional: true, desc: corrected summary}
+steps:
+    - id: assemble
+      collect: [body, entryKind, layer, "refs?", "closes?", "supersedes?", "topics?", "index?", confidence, "intent?", widenReport]
+      transitions:
+          - when: hasBody and hasWidenReport
+                  and refsResolve and refKindsValid and refsInspected
+                  and participantsCanonical
+            to: guide
+    - id: guide
+      op: fakeGuide
+      transitions:
+          - when: noGuideFindings
+            to: playback
+          - when: guideReviewed
+            to: playback
+          - otherwise: guideReview
+    - id: guideReview
+      chooser: agent
+      options:
+          - {choice: revise, collect: ["body?", "refs?", "topics?"], call: recordGuideReview, to: assemble}
+          - {choice: proceed, call: recordGuideReview, to: playback}
+          - {choice: recheck, collect: ["body?"], call: requestGuideRecheck, to: assemble}
+    - id: playback
+      chooser: user
+      options:
+          - {choice: confirm, call: confirmPlayback, to: write}
+          - {choice: adjust, collect: ["body?", "refs?", "topics?", "index?"], to: assemble}
+          - {choice: abort, to: end(abandoned)}
+    - id: write
+      guard: playbackConfirmed
+      op: fakeWrite
+      transitions:
+          - when: noHighFindings
+            to: verifySummary
+          - otherwise: reviseOrOverride
+    - id: reviseOrOverride
+      chooser: user
+      render: findings
+      options:
+          - {choice: revise, collect: ["body?"], to: assemble}
+          - {choice: override, call: recordOverride, to: write}
+          - {choice: abort, to: end(abandoned)}
+    - id: verifySummary
+      chooser: agent
+      inject:
+          - {fn: fakeSummary}
+      options:
+          - {choice: faithful, collect: [fidelityNote], to: end(completed)}
+          - {choice: drifted, collect: [correctedSummary], call: fakeReplaceSummary, to: end(completed)}
+`
+
+const fixtureSpecBody = `A synthetic capture-shaped spec for engine tests.
+
+## unit: assemble
+
+Draft the test entry.
+
+## unit: playback
+
+Play back: {{.body}}
+{{if .index}}- index:
+    title: {{.index.title}}
+    topic: {{.index.topic}}
+{{end}}
+## unit: findings
+
+Findings blocked the write.
+
+## unit: verifySummary
+
+Verify: {{.fakeSummary}}
+`
 
 const fixtureRefID = "20260601-120000-d-tac-ref"
 
@@ -67,19 +145,22 @@ A signal no fixture session has read in full.
 }
 
 // fixtureEnv is the test harness around one engine + session: a registry
-// with fake shell commands (newEntry, replaceSummary) and fake injection
-// queries (viewLayout, generatedSummary), plus call counters for
-// side-effect assertions.
+// with fake spec ops (fakeWrite, fakeGuide, fakeReplaceSummary, fakeSummary)
+// plus call counters for side-effect assertions.
 type fixtureEnv struct {
 	engine   *Engine
 	spec     *Spec
 	session  *Session
 	sink     *memorySink
 	newCalls int
-	// highFindingsUnlessOverride makes newEntry return a high finding until
+	// highFindingsUnlessOverride makes fakeWrite return a high finding until
 	// the preflight override is recorded.
 	highFindingsUnlessOverride bool
 	replaceCalls               int
+	guideCalls                 int
+	// guideFindings is what the fakeGuide op returns; nil means a clean pass
+	// (empty findings, straight to playback).
+	guideFindings []query.GuideFinding
 }
 
 type memorySink struct {
@@ -99,25 +180,18 @@ func newFixtureEnv(t *testing.T) *fixtureEnv {
 	t.Helper()
 	env := &fixtureEnv{}
 
-	entry := captureEntry(t)
+	entry := procedureEntry(t, fixtureSpecID, "fixturecap", "", fixtureSpecFrontmatter, fixtureSpecBody)
 
 	reg := NewRegistry()
 	mustRegisterQuery(reg, Query{
-		Doc: FuncDoc{Name: "viewLayout", Doc: "fake view pipeline"},
-		Fn: func(_ *Context, args map[string]any) (any, error) {
-			layout, _ := args["layout"].(string)
-			return "topics for " + layout, nil
-		},
-	})
-	mustRegisterQuery(reg, Query{
-		Doc: FuncDoc{Name: "generatedSummary", Doc: "fake stored summary", Reads: []string{"entryId"}},
+		Doc: FuncDoc{Name: "fakeSummary", Doc: "fake stored summary", Reads: []string{"entryId"}},
 		Fn: func(ctx *Context, _ map[string]any) (any, error) {
 			id, _ := ctx.Store.Get("entryId")
 			return fmt.Sprintf("summary of %v", id), nil
 		},
 	})
 	mustRegisterCommand(reg, Command{
-		Doc: FuncDoc{Name: "newEntry", Doc: "fake write gate", Writes: []string{"entryId", "findings"}},
+		Doc: FuncDoc{Name: "fakeWrite", Doc: "fake write gate", Writes: []string{"entryId", "findings"}},
 		Fn: func(ctx *Context) error {
 			env.newCalls++
 			findings := []query.Finding{}
@@ -130,18 +204,34 @@ func newFixtureEnv(t *testing.T) *fixtureEnv {
 					})
 				}
 			}
-			ctx.Store.WriteEngine("findings", findings)
+			if err := ctx.Store.WriteEngine("findings", findings); err != nil {
+				return err
+			}
 			if len(findings) == 0 {
-				ctx.Store.WriteEngine("entryId", fmt.Sprintf("20260702-13000%d-s-tac-new", env.newCalls))
+				return ctx.Store.WriteEngine("entryId", fmt.Sprintf("20260702-13000%d-s-tac-new", env.newCalls))
 			}
 			return nil
 		},
 	})
 	mustRegisterCommand(reg, Command{
-		Doc: FuncDoc{Name: "replaceSummary", Doc: "fake summary replacement", Reads: []string{"entryId", "correctedSummary"}},
+		Doc: FuncDoc{Name: "fakeReplaceSummary", Doc: "fake summary replacement", Reads: []string{"entryId", "correctedSummary"}},
 		Fn: func(_ *Context) error {
 			env.replaceCalls++
 			return nil
+		},
+	})
+	mustRegisterCommand(reg, Command{
+		Doc: FuncDoc{Name: "fakeGuide", Doc: "fake writing guide (once-only, like the real op)", Reads: []string{"body", "entryKind", "layer", "refs", "intent"}, Writes: []string{"guideFindings"}},
+		Fn: func(ctx *Context) error {
+			if v, ok := ctx.Store.Get("guideFindings"); ok && v != nil {
+				return nil
+			}
+			env.guideCalls++
+			findings := env.guideFindings
+			if findings == nil {
+				findings = []query.GuideFinding{}
+			}
+			return ctx.Store.WriteEngine("guideFindings", findings)
 		},
 	})
 
@@ -178,100 +268,122 @@ func fullDraft() map[string]any {
 	}
 }
 
-func TestCapture_OneShotHappyPath(t *testing.T) {
-	env := newFixtureEnv(t)
-
-	sv, err := env.session.Start(env.spec, nil, "")
+func TestTemplateValueCollisionFailsRender(t *testing.T) {
+	entry := procedureEntry(t, "20260819-100000-d-prc-col", "collide", "", seedChildFrontmatter, "collision fixture\n\n## unit: draft\n\nDraft.\n")
+	reg := NewRegistry()
+	spec, err := LoadSpec(entry, reg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sv.Step != "assemble" {
-		t.Fatalf("start step = %s, want assemble", sv.Step)
-	}
-	if !strings.Contains(sv.Instructions, "topics for active:as-counts") {
-		t.Errorf("assemble unit should carry the injected view result, got %q", sv.Instructions)
-	}
-	if len(sv.Missing) == 0 {
-		t.Error("fresh assemble should name missing required fields")
-	}
-
-	// One-shot batched report cascades straight through assemble to the
-	// playback chooser — as fast as today's full draft.
-	sv, err = env.session.Report(sv.Instance, fullDraft())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sv.Step != "playback" {
-		t.Fatalf("after full draft step = %s, want playback", sv.Step)
-	}
-	if sv.Chooser == nil || sv.Chooser.Kind != ChooserUser {
-		t.Fatalf("playback must serve a user chooser, got %+v", sv.Chooser)
-	}
-	if !strings.Contains(sv.Instructions, "A tactical gap") {
-		t.Errorf("playback unit should render the body, got %q", sv.Instructions)
-	}
-
-	// User confirms → confirmPlayback → write gate → newEntry (no high
-	// findings) → verifySummary agent chooser.
-	sv, err = env.session.Answer(sv.Instance, "playback", "confirm", nil, "capture it")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sv.Step != "verifySummary" {
-		t.Fatalf("after confirm step = %s, want verifySummary", sv.Step)
-	}
-	if env.newCalls != 1 {
-		t.Fatalf("newEntry ran %d times, want 1", env.newCalls)
-	}
-	if sv.Chooser == nil || sv.Chooser.Kind != ChooserAgent {
-		t.Fatalf("verifySummary must serve an agent chooser, got %+v", sv.Chooser)
-	}
-	if !strings.Contains(sv.Instructions, "summary of 20260702-130001-s-tac-new") {
-		t.Errorf("verifySummary unit should render the injected summary, got %q", sv.Instructions)
-	}
-
-	// Agent judges the summary faithful, with its evidence field.
-	sv, err = env.session.Answer(sv.Instance, "verifySummary", "faithful",
-		map[string]any{"fidelityNote": "matches the body"}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sv.Status != StatusCompleted {
-		t.Fatalf("status = %s, want completed", sv.Status)
-	}
-	if sv.Produced["entryId"] != "20260702-130001-s-tac-new" {
-		t.Errorf("produced = %v, want the created entry ID", sv.Produced)
+	eng := New(reg, StaticGraphs{Graph: model.NewGraph(nil)}, WithTemplateValues(map[string]any{
+		"body": "shadowing a declared state field",
+	}))
+	session := eng.NewSession("s_col", "tester", &memorySink{})
+	if _, err := session.Start(spec, nil, ""); err == nil || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("a template value shadowing declared state must fail the render, got err=%v", err)
 	}
 }
 
-func TestCapture_StallNamesExactlyWhatIsMissing(t *testing.T) {
+func TestTemplateValuesReachUnitAndInjectArgs(t *testing.T) {
+	const frontmatter = `state:
+    body: {type: text, desc: the draft body}
+steps:
+    - id: draft
+      collect: [body]
+      inject:
+          - {fn: echoArg, args: {value: "{{.fixtureValue}}"}}
+      transitions:
+          - when: hasBody
+            to: end(completed)
+`
+	entry := procedureEntry(t, "20260819-110000-d-prc-tv", "tmplvalues", "", frontmatter, "fixture\n\n## unit: draft\n\nvalue={{.fixtureValue}} echoed={{.echoArg}}\n")
+	reg := NewRegistry()
+	mustRegisterQuery(reg, Query{
+		Doc: FuncDoc{Name: "echoArg", Doc: "echoes its value arg"},
+		Fn: func(_ *Context, args map[string]any) (any, error) {
+			value, _ := args["value"].(string)
+			return "arg:" + value, nil
+		},
+	})
+	spec, err := LoadSpec(entry, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := New(reg, StaticGraphs{Graph: model.NewGraph(nil)}, WithTemplateValues(map[string]any{
+		"fixtureValue": "from-engine",
+	}))
+	session := eng.NewSession("s_tv", "tester", &memorySink{})
+	sv, err := session.Start(spec, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sv.Instructions, "value=from-engine") {
+		t.Errorf("unit template should see the engine template value, got %q", sv.Instructions)
+	}
+	if !strings.Contains(sv.Instructions, "echoed=arg:from-engine") {
+		t.Errorf("inject-arg templates should see the engine template value, got %q", sv.Instructions)
+	}
+}
+
+func TestFactIndexSetThenClearSurvivesReplay(t *testing.T) {
 	env := newFixtureEnv(t)
+	var log strings.Builder
+	env.session.sink = NewWriterSink(&log)
+
 	sv, err := env.session.Start(env.spec, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// Partial report: no widenReport, no topics — the step stays and names
-	// exactly what's missing.
 	draft := fullDraft()
-	delete(draft, "widenReport")
-	delete(draft, "topics")
+	draft["entryKind"] = "fact"
+	draft["index"] = map[string]any{"title": "How to compose graph views", "topic": "cli/ux"}
 	sv, err = env.session.Report(sv.Instance, draft)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sv.Step != "assemble" {
-		t.Fatalf("step = %s, want assemble (stalled)", sv.Step)
+	const playback = "- index:\n    title: How to compose graph views\n    topic: cli/ux"
+	if !strings.Contains(sv.Instructions, playback) {
+		t.Fatalf("playback missing nested fact index:\n%s", sv.Instructions)
 	}
-	if got := strings.Join(sv.Missing, ","); got != "topics,widenReport" {
-		t.Fatalf("missing = %q, want topics,widenReport", got)
+	index, ok := env.session.instances[sv.Instance].Store.Get("index")
+	if !ok || !reflect.DeepEqual(index, map[string]any{"title": "How to compose graph views", "topic": "cli/ux"}) {
+		t.Fatalf("stored index = %#v", index)
 	}
-	if !strings.Contains(sv.Instructions, "missing: topics, widenReport") {
-		t.Errorf("stall instructions should name missing fields, got %q", sv.Instructions)
+	sv, err = env.session.Answer(sv.Instance, "playback", "adjust", map[string]any{"index": nil}, "remove the index")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sv.Instructions, "- index:") {
+		t.Fatalf("playback retained cleared fact index:\n%s", sv.Instructions)
+	}
+
+	events, err := ReadEvents(strings.NewReader(log.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedEnv := newFixtureEnv(t)
+	replayed, err := replayedEnv.engine.ReplaySession("s_test", "christopher", events,
+		func(string) (*Spec, error) { return replayedEnv.spec, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, ok := replayed.Instance(sv.Instance)
+	if !ok {
+		t.Fatal("replayed capture instance missing")
+	}
+	if index, ok := instance.Store.Get("index"); ok {
+		t.Fatalf("replayed index = %#v, want cleared", index)
+	}
+	replayedServe, err := replayed.Serve(sv.Instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(replayedServe.Instructions, "- index:") {
+		t.Fatalf("replayed playback retained cleared fact index:\n%s", replayedServe.Instructions)
 	}
 }
 
-func TestCapture_ReportCannotWriteUndeclaredOrTrustFields(t *testing.T) {
+func TestReportCannotWriteUndeclaredOrTrustFields(t *testing.T) {
 	env := newFixtureEnv(t)
 	sv, err := env.session.Start(env.spec, nil, "")
 	if err != nil {
@@ -298,7 +410,7 @@ func TestCapture_ReportCannotWriteUndeclaredOrTrustFields(t *testing.T) {
 	}
 }
 
-func TestCapture_ChooserSequenceCannotBeGamed(t *testing.T) {
+func TestChooserSequenceCannotBeGamed(t *testing.T) {
 	env := newFixtureEnv(t)
 	sv, err := env.session.Start(env.spec, nil, "")
 	if err != nil {
@@ -340,166 +452,6 @@ func TestCapture_ChooserSequenceCannotBeGamed(t *testing.T) {
 	if _, err := env.session.Answer(inst, "playback", "confirm", nil, "yes again"); err == nil ||
 		!strings.Contains(err.Error(), `pending chooser is "verifySummary"`) {
 		t.Errorf("double answer must be rejected, got %v", err)
-	}
-}
-
-func TestCapture_HighFindingsRouteToOverride(t *testing.T) {
-	env := newFixtureEnv(t)
-	env.highFindingsUnlessOverride = true
-
-	sv, err := env.session.Start(env.spec, nil, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	inst := sv.Instance
-	if _, err := env.session.Report(inst, fullDraft()); err != nil {
-		t.Fatal(err)
-	}
-	sv, err = env.session.Answer(inst, "playback", "confirm", nil, "capture it")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sv.Step != "reviseOrOverride" {
-		t.Fatalf("high findings should land at reviseOrOverride, got %s", sv.Step)
-	}
-	if !strings.Contains(sv.Instructions, "Pre-flight findings") {
-		t.Errorf("reviseOrOverride should render the findings unit (render override), got %q", sv.Instructions)
-	}
-
-	// The override is a user-only chooser exit; it re-runs the write gate
-	// with the recorded override.
-	sv, err = env.session.Answer(inst, "reviseOrOverride", "override", nil, "skip it, the finding is wrong")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if env.newCalls != 2 {
-		t.Fatalf("newEntry ran %d times, want 2 (re-run after override)", env.newCalls)
-	}
-	if sv.Step != "verifySummary" {
-		t.Fatalf("after override step = %s, want verifySummary", sv.Step)
-	}
-}
-
-func TestCapture_EditAfterConfirmReopensPlayback(t *testing.T) {
-	env := newFixtureEnv(t)
-	env.highFindingsUnlessOverride = true
-
-	sv, err := env.session.Start(env.spec, nil, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	inst := sv.Instance
-	if _, err := env.session.Report(inst, fullDraft()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := env.session.Answer(inst, "playback", "confirm", nil, "capture it"); err != nil {
-		t.Fatal(err)
-	}
-	// Blocked at reviseOrOverride. The agent edits the body — the confirmed
-	// state is now stale.
-	if _, err := env.session.Report(inst, map[string]any{"body": "Edited after confirmation."}); err != nil {
-		t.Fatal(err)
-	}
-	// Overriding would jump back to the write gate — but the confirmation
-	// no longer covers the state, so playback reopens instead of writing.
-	env.highFindingsUnlessOverride = false
-	sv, err = env.session.Answer(inst, "reviseOrOverride", "override", nil, "just write it")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sv.Step != "playback" {
-		t.Fatalf("stale confirmation must reopen playback, got %s", sv.Step)
-	}
-	if env.newCalls != 1 {
-		t.Fatalf("newEntry must not re-run on a stale confirmation, ran %d times", env.newCalls)
-	}
-
-	// Re-confirming the edited state completes the write.
-	sv, err = env.session.Answer(inst, "playback", "confirm", nil, "yes, with the edit")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sv.Step != "verifySummary" {
-		t.Fatalf("after re-confirm step = %s, want verifySummary", sv.Step)
-	}
-	if env.newCalls != 2 {
-		t.Fatalf("newEntry should run on the re-confirmed state, ran %d times", env.newCalls)
-	}
-}
-
-func TestCapture_AdjustLoopsBackAndRequiresReconfirm(t *testing.T) {
-	env := newFixtureEnv(t)
-	sv, err := env.session.Start(env.spec, nil, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	inst := sv.Instance
-	if _, err := env.session.Report(inst, fullDraft()); err != nil {
-		t.Fatal(err)
-	}
-
-	// Adjust with a revised body: back through assemble, fields still
-	// complete, so the cascade returns to playback for a fresh confirm.
-	sv, err = env.session.Answer(inst, "playback", "adjust",
-		map[string]any{"body": "Sharper first sentence."}, "tighten it")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sv.Step != "playback" {
-		t.Fatalf("adjust should cascade back to playback, got %s", sv.Step)
-	}
-	if !strings.Contains(sv.Instructions, "Sharper first sentence.") {
-		t.Errorf("playback should render the adjusted body, got %q", sv.Instructions)
-	}
-}
-
-func TestCapture_AbortAndAbandon(t *testing.T) {
-	env := newFixtureEnv(t)
-	sv, err := env.session.Start(env.spec, nil, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	inst := sv.Instance
-	if _, err := env.session.Report(inst, fullDraft()); err != nil {
-		t.Fatal(err)
-	}
-	sv, err = env.session.Answer(inst, "playback", "abort", nil, "not now")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sv.Status != StatusAbandoned {
-		t.Fatalf("abort should abandon the instance, got %s", sv.Status)
-	}
-	if _, err := env.session.Report(inst, fullDraft()); err == nil {
-		t.Error("reporting to an ended instance must fail")
-	}
-
-	// Explicit abandon of a second instance.
-	sv2, err := env.session.Start(env.spec, nil, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := env.session.Abandon(sv2.Instance, "session over"); err != nil {
-		t.Fatal(err)
-	}
-	if err := env.session.Abandon(sv2.Instance, "twice"); err == nil {
-		t.Error("double abandon must fail")
-	}
-}
-
-func TestCapture_ParamsValidatedAtStart(t *testing.T) {
-	env := newFixtureEnv(t)
-
-	if _, err := env.session.Start(env.spec, map[string]any{"anchor": "not-an-id"}, ""); err == nil ||
-		!strings.Contains(err.Error(), "anchor") {
-		t.Errorf("malformed param must fail start, got %v", err)
-	}
-	if _, err := env.session.Start(env.spec, map[string]any{"unknown": true}, ""); err == nil ||
-		!strings.Contains(err.Error(), "unknown start input") {
-		t.Errorf("unknown start input must fail start, got %v", err)
-	}
-	if _, err := env.session.Start(env.spec, map[string]any{"anchor": fixtureRefID}, ""); err != nil {
-		t.Errorf("valid param rejected: %v", err)
 	}
 }
 
@@ -548,5 +500,80 @@ func TestSession_SinkFailureBlocksAdvance(t *testing.T) {
 	if _, err := env.session.Report(sv.Instance, fullDraft()); err == nil ||
 		!strings.Contains(err.Error(), "durability") {
 		t.Errorf("advance after a failed append must refuse, got %v", err)
+	}
+}
+
+func TestRunCommandDiscardsStoreWritesOnError(t *testing.T) {
+	env := newFixtureEnv(t)
+	mustRegisterCommand(env.engine.Registry, Command{
+		Doc: FuncDoc{Name: "failAfterWrite", Doc: "test failure", Writes: []string{"marker", "leaked", "composite"}},
+		Fn: func(ctx *Context) error {
+			composite, _ := ctx.Store.Get("composite")
+			composite.([]any)[0] = "changed"
+			if err := ctx.Store.WriteEngine("marker", "changed"); err != nil {
+				return err
+			}
+			if err := ctx.Store.WriteEngine("leaked", true); err != nil {
+				return err
+			}
+			return fmt.Errorf("injected command failure")
+		},
+	})
+	sv, err := env.session.Start(env.spec, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, _ := env.session.Instance(sv.Instance)
+	if err := inst.Store.WriteEngine("marker", "original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := inst.Store.WriteEngine("composite", []any{"original"}); err != nil {
+		t.Fatal(err)
+	}
+	beforeEvents := len(env.sink.events)
+	if err := env.session.runCommand(inst, "failAfterWrite"); err == nil || !strings.Contains(err.Error(), "injected command failure") {
+		t.Fatalf("runCommand error = %v", err)
+	}
+	if marker, _ := inst.Store.Get("marker"); marker != "original" {
+		t.Fatalf("failed command changed existing value to %v", marker)
+	}
+	if _, exists := inst.Store.Get("leaked"); exists {
+		t.Fatal("failed command left a new engine value")
+	}
+	if composite, _ := inst.Store.Get("composite"); !reflect.DeepEqual(composite, []any{"original"}) {
+		t.Fatalf("failed command mutated composite value: %#v", composite)
+	}
+	if len(env.sink.events) != beforeEvents {
+		t.Fatal("failed command appended an op result")
+	}
+}
+
+func TestRunCommandCannotWriteReportState(t *testing.T) {
+	env := newFixtureEnv(t)
+	var writeErr error
+	mustRegisterCommand(env.engine.Registry, Command{
+		Doc: FuncDoc{Name: "attemptStateWrite", Doc: "test command boundary"},
+		Fn: func(ctx *Context) error {
+			_, writeErr = ctx.Store.WriteState(map[string]any{"body": "hidden state write"})
+			return nil
+		},
+	})
+	sv, err := env.session.Start(env.spec, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, _ := env.session.Instance(sv.Instance)
+	beforeEvents := len(env.sink.events)
+	if err := env.session.runCommand(inst, "attemptStateWrite"); err != nil {
+		t.Fatal(err)
+	}
+	if writeErr == nil || !strings.Contains(writeErr.Error(), "only through WriteEngine") {
+		t.Fatalf("WriteState error = %v", writeErr)
+	}
+	if _, exists := inst.Store.Get("body"); exists {
+		t.Fatal("command produced an unlogged state write")
+	}
+	if len(env.sink.events) != beforeEvents+1 {
+		t.Fatalf("command events = %d, want one op result", len(env.sink.events)-beforeEvents)
 	}
 }

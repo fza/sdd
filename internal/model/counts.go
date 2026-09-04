@@ -30,6 +30,10 @@ type CountRow struct {
 // the `untagged` filter instead.
 type Counts struct {
 	Rows []CountRow
+	// Matched is the number of entries in the filtered set the rows aggregate.
+	// It can exceed zero while Rows is empty — untagged entries contribute no
+	// row — so the pipeline's matched-anything fact lives here, not in Rows.
+	Matched int
 }
 
 // Shape implements SectionData.
@@ -83,5 +87,33 @@ func (g *Graph) TopicCounts(entries []*Entry, now time.Time) Counts {
 		}
 		return rows[i].Label < rows[j].Label
 	})
-	return Counts{Rows: rows}
+	return Counts{Rows: rows, Matched: len(entries)}
+}
+
+// Count implements SectionData: the entries the section aggregated, not the
+// row count — entries without topics produce no row but still matched the
+// pipeline, and Count answers "did the pipeline match anything".
+func (c Counts) Count() int { return c.Matched }
+
+// TopicLabels returns the distinct effective-topic labels of the given
+// entries — bare, first-seen casing, sorted. The byte-stable projection a
+// serve can repeat without count or heat drift breaking its dedup
+// (20260826-120330-d-tac-8f8); label choice needs the strings, not the
+// numbers.
+func (g *Graph) TopicLabels(entries []*Entry) []string {
+	seen := map[string]string{}
+	for _, e := range entries {
+		for _, t := range g.EffectiveTopics(e) {
+			key := t.FoldKey()
+			if _, ok := seen[key]; !ok {
+				seen[key] = t.String()
+			}
+		}
+	}
+	labels := make([]string, 0, len(seen))
+	for _, display := range seen {
+		labels = append(labels, display)
+	}
+	sort.Strings(labels)
+	return labels
 }

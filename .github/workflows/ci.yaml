@@ -31,6 +31,14 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      # Mirrors scripts/lint.sh: fail on error-severity issues only.
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.11.4
+          args: --issues-exit-code 0 --output.text.path stdout --output.json.path lint.json
+      - name: Fail on error-severity lint issues
+        run: |
+          if jq -e 'any(.Issues[]?; .Severity == "error")' lint.json > /dev/null; then
+            echo "lint: error-severity issues found"
+            exit 1
+          fi

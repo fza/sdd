@@ -2,9 +2,11 @@ package model
 
 import (
 	"fmt"
-	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // Graph holds all entries and their reference indexes.
@@ -14,7 +16,16 @@ type Graph struct {
 	RefsTo       map[string][]string // reverse index: entry ID -> IDs that reference it
 	ClosedBy     map[string][]string // reverse index: entry ID -> IDs that close it
 	SupersededBy map[string][]string // reverse index: entry ID -> IDs that supersede it
-	graphDir     string
+	// InboundRefs is RefsTo resolved through supersession, keyed by live head
+	// with hop distance. Ranking-only: every other consumer needs RefsTo's
+	// literal keying (d-cpt-x6z).
+	InboundRefs map[string][]InboundRef
+	// LoadIssues records entries the I/O loader could not parse. Reading the
+	// graph never stops on a malformed entry: everything parseable still
+	// loads, and each failure is kept here so read surfaces (lint, the
+	// session serve) can surface it — the errors are recorded, not swallowed.
+	LoadIssues []LoadIssue
+	graphDir   string
 	// multi back-wires the cross-graph assembly this graph belongs to (nil
 	// for a standalone graph). Set by NewMultiGraph so traversal code
 	// holding any *Graph can resolve cross-repo references.
@@ -49,14 +60,32 @@ func (g *Graph) qualifyID(id string) string {
 	return g.repoPrefix + id
 }
 
+// LoadIssue records one entry the I/O loader could not parse: the entry ID or
+// path it was reading and the parse error message. It rides on the graph so a
+// malformed entry is surfaced rather than aborting the whole read.
+type LoadIssue struct {
+	Ref     string
+	Message string
+}
+
 // NewGraph builds a graph from the given entries without touching the filesystem.
 func NewGraph(entries []*Entry) *Graph {
+	return NewGraphWithLoadIssues(entries, nil)
+}
+
+// NewGraphWithLoadIssues builds a graph and records load issues the I/O loader
+// collected while reading — entries that failed to parse. Every entry that did
+// parse is still present; issues are carried on the graph for read surfaces to
+// report. Production (finders.LoadGraph) and tests share this one path.
+func NewGraphWithLoadIssues(entries []*Entry, issues []LoadIssue) *Graph {
 	g := &Graph{
 		Entries:      entries,
 		ByID:         make(map[string]*Entry, len(entries)),
 		RefsTo:       make(map[string][]string),
 		ClosedBy:     make(map[string][]string),
 		SupersededBy: make(map[string][]string),
+		InboundRefs:  make(map[string][]InboundRef),
+		LoadIssues:   issues,
 	}
 
 	for _, e := range entries {
@@ -84,6 +113,18 @@ func NewGraph(entries []*Entry) *Graph {
 				continue
 			}
 			g.SupersededBy[s] = append(g.SupersededBy[s], e.ID)
+		}
+	}
+
+	// Second pass: SupersededBy must be complete before any chain can be walked.
+	for _, e := range entries {
+		for _, ref := range e.Refs {
+			if IsCrossRepoID(ref.ID) {
+				continue
+			}
+			r := g.ResolveRef(ref.ID)
+			head := r.Head()
+			g.InboundRefs[head] = append(g.InboundRefs[head], InboundRef{Source: e.ID, Hops: r.Hops()})
 		}
 	}
 
@@ -148,6 +189,17 @@ func (g *Graph) Aspirations() []*Entry {
 // resolved), and done signals are terminal facts of execution. The
 // allow-list shape means new signal kinds default to "not an attention
 // item" rather than silently flooding the open set.
+// openAttentionKinds are the signal kinds whose open entries demand
+// resolution — the attention set OpenSignals filters on, declared once so
+// served kind facts render the same enumeration.
+var openAttentionKinds = []Kind{KindGap, KindQuestion}
+
+// OpenAttentionKinds lists the attention kinds for surfaces that render or
+// generate from the declaration instead of restating it.
+func OpenAttentionKinds() []Kind {
+	return append([]Kind(nil), openAttentionKinds...)
+}
+
 func (g *Graph) OpenSignals() []*Entry {
 	closed := g.closedSet()
 	superseded := g.supersededSet()
@@ -157,7 +209,7 @@ func (g *Graph) OpenSignals() []*Entry {
 		if e.Type != TypeSignal {
 			continue
 		}
-		if e.Kind != KindGap && e.Kind != KindQuestion {
+		if !slices.Contains(openAttentionKinds, e.Kind) {
 			continue
 		}
 		if !closed[e.ID] && !superseded[e.ID] {
@@ -522,6 +574,42 @@ func (g *Graph) ResolveRefIDs(refs []Ref) ([]Ref, error) {
 	return out, nil
 }
 
+// ClosureTarget describes an entry a draft closes or supersedes, at the depth
+// a reader needs to tell which act the draft performs — which entry, of what
+// kind, and its leading summary sentence — without the target's body.
+type ClosureTarget struct {
+	Relation string // closes | supersedes
+	ID       string
+	Type     EntryType
+	Kind     Kind
+	Summary  string
+}
+
+// ClosureTargets describes an entry's closure edges. An ID with no entry
+// behind it is carried by ID alone rather than dropped: a reader must still
+// see that the edge was declared, and an unresolvable edge is the write
+// gate's business (d-cpt-uh0), not a reason to hide it here.
+func (g *Graph) ClosureTargets(e *Entry) []ClosureTarget {
+	if e == nil || (len(e.Closes) == 0 && len(e.Supersedes) == 0) {
+		return nil
+	}
+	groups := []struct {
+		relation string
+		ids      []string
+	}{{"closes", e.Closes}, {"supersedes", e.Supersedes}}
+	targets := make([]ClosureTarget, 0, len(e.Closes)+len(e.Supersedes))
+	for _, group := range groups {
+		for _, id := range group.ids {
+			t := ClosureTarget{Relation: group.relation, ID: id}
+			if target := g.ByID[id]; target != nil {
+				t.Type, t.Kind, t.Summary = target.Type, target.Kind, target.FirstSummarySentence()
+			}
+			targets = append(targets, t)
+		}
+	}
+	return targets
+}
+
 // ResolveUnionID resolves a bare ID (short {type}-{layer}-{suffix} or
 // unprefixed full form) against the flat union of the local graph and its
 // declared dependencies, with no local-first precedence. Exactly one distinct
@@ -667,6 +755,31 @@ func (g *Graph) Lint() []*Entry {
 	return result
 }
 
+// HealthIssue and GraphHealth are defined in pkg/application/types — the
+// exported surface names them, so the definitions live in the cycle-free
+// public leaf (s-tac-ah2).
+type (
+	HealthIssue = types.HealthIssue
+	GraphHealth = types.GraphHealth
+)
+
+// Health flattens the graph's load failures and per-entry warnings into one
+// summary. It is a pure read of state already computed at construction
+// (validate) and load time; callers format and cap it for display.
+func (g *Graph) Health() GraphHealth {
+	h := GraphHealth{LoadErrors: len(g.LoadIssues)}
+	for _, issue := range g.LoadIssues {
+		h.Issues = append(h.Issues, HealthIssue(issue))
+	}
+	for _, e := range g.Entries {
+		for _, w := range e.Warnings {
+			h.Warnings++
+			h.Issues = append(h.Issues, HealthIssue{Ref: e.ID, Message: w.Message})
+		}
+	}
+	return h
+}
+
 // validate checks all entries for integrity issues and populates their Warnings fields.
 // Runs per-entry checks first, then graph-level actor/role checks that
 // require the full graph context (chain membership, canonical history,
@@ -760,14 +873,7 @@ func validateActorInvariant(g *Graph) {
 			if c.Head == nil {
 				continue
 			}
-			isInvolved := false
-			for _, hid := range headIDs {
-				if c.Head.ID == hid {
-					isInvolved = true
-					break
-				}
-			}
-			if !isInvolved {
+			if !slices.Contains(headIDs, c.Head.ID) {
 				continue
 			}
 			if !c.HasCanonical(canonical) {
@@ -880,14 +986,7 @@ func validateAliasAmbiguity(g *Graph) {
 			continue
 		}
 		for _, a := range active {
-			isInvolved := false
-			for _, id := range ids {
-				if a.ID == id {
-					isInvolved = true
-					break
-				}
-			}
-			if !isInvolved {
+			if !slices.Contains(ids, a.ID) {
 				continue
 			}
 			a.Warnings = append(a.Warnings, Warning{
@@ -901,21 +1000,44 @@ func validateAliasAmbiguity(g *Graph) {
 
 // ValidateEntry checks a single entry for integrity issues and populates its Warnings field.
 // Used both at lint time (all entries) and at write time (new entry before commit).
+// Per-kind structural rules run through the construction model — the read side
+// projects the raw parsed form and keeps the findings that hold on historical
+// entries, so it never owns a per-kind rule of its own.
 func ValidateEntry(e *Entry, g *Graph) {
+	validateEdges(e, g)
+	c, findings := ConstructFromEntry(e)
+	findings = append(findings, c.Validate(g)...)
+	e.Warnings = append(e.Warnings, ReadWarnings(findings)...)
+	validateAttachmentLinks(e)
+}
+
+// validateEdges runs the graph-edge rules — refs, lifecycle IDs, and the
+// kind-conditional closes/supersedes semantics — populating e.Warnings.
+func validateEdges(e *Entry, g *Graph) {
 	validateRefs(e, g)
 	validateIDRefs(e, g, "closes", e.Closes)
 	validateIDRefs(e, g, "supersedes", e.Supersedes)
 	validateCloses(e, g)
 	validateSupersedes(e, g)
-	validateKind(e)
-	validateActorFrontmatter(e)
-	validateRoleFrontmatter(e)
-	validateProcedureFrontmatter(e)
-	validateAnnotationFrontmatter(e)
-	validateFocusFrontmatter(e, g)
-	validateInlineTopics(e)
-	validateDoneSignalRefs(e)
+}
+
+// ValidateForWrite runs the full write-path rule set on a construction: every
+// construction rule including the capture-only ones, plus the graph-edge rules
+// on the materialized entry. Every returned finding blocks the write — this is
+// the one boundary all write surfaces (CLI, engine capture, base-entry
+// assembly) validate through. The materialized entry is returned for the
+// caller to carry forward; its Warnings stay empty.
+func (c *EntryConstruction) ValidateForWrite(g *Graph) (*Entry, []Finding) {
+	e := c.Entry()
+	validateEdges(e, g)
 	validateAttachmentLinks(e)
+	findings := make([]Finding, 0, len(e.Warnings))
+	for _, w := range e.Warnings {
+		findings = append(findings, Finding{Field: w.Field, Value: w.Value, Message: w.Message})
+	}
+	e.Warnings = nil
+	findings = append(findings, c.Validate(g)...)
+	return e, findings
 }
 
 // validateRefs checks the refs field with kind awareness. Cross-repo refs
@@ -987,12 +1109,13 @@ func validateIDRefs(e *Entry, g *Graph, field string, ids []string) {
 	}
 }
 
-// validateCloses checks type constraints on closes references.
-// Valid: decision closes signal; done-kind signal closes decision or signal;
-// a fact or insight signal closes (dissolves) a question; kind: directive
-// decision closes a stable-kind decision (contract or aspiration) as retirement.
-// Invalid: any other non-done signal close; any decision-closes-decision
-// other than directive→{contract|aspiration}.
+// validateCloses checks the three closes refusals that hold whatever the
+// entry says (20260820-151100-d-cpt-304): a question, actor, or annotation
+// states no findings and closes nothing; a decision other than a directive
+// closing a decision must use supersedes; a settled directive is retired
+// only by supersession. Every other close is allowed. What makes a close
+// valid is the stated rationale, and pre-flight judges that, flagging a
+// weak one instead of blocking.
 func validateCloses(e *Entry, g *Graph) {
 	for _, id := range e.Closes {
 		target, ok := g.ByID[id]
@@ -1007,39 +1130,34 @@ func validateCloses(e *Entry, g *Graph) {
 			e.Warnings = append(e.Warnings, Warning{
 				Field:   "closes",
 				Value:   id,
-				Message: fmt.Sprintf("cannot close settled directive %s — it is born terminal; supersede it instead", id),
+				Message: fmt.Sprintf("%s (closing %s)", SettledCloseRule, id),
 			})
 			continue
 		}
 
 		switch {
-		case e.Type == TypeSignal && (e.Kind == KindFact || e.Kind == KindInsight) &&
-			target.Type == TypeSignal && target.Kind == KindQuestion:
-			// Dissolution: a fact or insight answers a question into mootness —
-			// the only sanctioned signal-closes-signal path (see retirement
-			// primitives). Pre-flight's dissolution check then verifies dialogue
-			// context. Mirrors the directive→{contract,aspiration} retirement
-			// carve-out below.
-			continue
-		case e.Type == TypeSignal && e.Kind != KindDone:
+		case e.Type == TypeSignal && (e.Kind == KindQuestion || e.Kind == KindActor || e.Kind == KindAnnotation):
 			e.Warnings = append(e.Warnings, Warning{
 				Field:   "closes",
 				Value:   id,
-				Message: fmt.Sprintf("only done-kind signals may close entries, or a fact/insight dissolving a question (got %s signal closing %s %s)", e.Kind, target.Type, id),
+				Message: fmt.Sprintf("%s (got %s signal closing %s %s)", SignalCloseRule, e.Kind, target.Type, id),
 			})
 		case e.Type == TypeDecision && target.Type == TypeDecision:
-			// Retirement exception: a kind: directive decision may close a
-			// kind: contract, aspiration, or procedure decision with
-			// rationale — the retire-without-replacement path for standing
-			// kinds. Every other decision-closes-decision pattern uses
-			// supersedes.
-			if e.Kind == KindDirective && (target.Kind == KindContract || target.Kind == KindAspiration || target.Kind == KindProcedure) {
+			// Retirement without replacement: a kind: directive decision may
+			// close any decision, stating rationale in its body. closes
+			// retires, supersedes replaces with lineage, and which relation
+			// holds is the author's judgment about the work — forcing a
+			// retirement into supersedes would fabricate a successor that
+			// does not exist. Every other decision kind still uses
+			// supersedes; a done signal remains the closer for work that
+			// actually completed.
+			if e.Kind == KindDirective {
 				continue
 			}
 			e.Warnings = append(e.Warnings, Warning{
 				Field:   "closes",
 				Value:   id,
-				Message: fmt.Sprintf("decision cannot close another decision — use supersedes instead (closes decision %s)", id),
+				Message: fmt.Sprintf("only a kind: directive decision may close another decision — use supersedes instead (%s closing decision %s)", e.Kind, id),
 			})
 		}
 	}
@@ -1053,6 +1171,14 @@ func validateSupersedes(e *Entry, g *Graph) {
 			continue // already reported by validateIDRefs
 		}
 
+		if target.Override == OverrideClosed {
+			e.Warnings = append(e.Warnings, Warning{
+				Field:   "supersedes",
+				Value:   id,
+				Message: fmt.Sprintf("supersede refused: %s declares override: closed — its content renders from the running version's declarations, so a superseding copy would freeze stale truth; narrow through project rules instead", id),
+			})
+		}
+
 		if target.Type != e.Type {
 			e.Warnings = append(e.Warnings, Warning{
 				Field:   "supersedes",
@@ -1060,120 +1186,6 @@ func validateSupersedes(e *Entry, g *Graph) {
 				Message: fmt.Sprintf("type mismatch in supersedes: %s supersedes %s %s (expected %s)", e.Type, target.Type, id, e.Type),
 			})
 		}
-	}
-}
-
-// validateKind checks that signals and decisions have a kind consistent with
-// their type.
-func validateKind(e *Entry) {
-	const signalKindList = "gap, fact, question, insight, done, actor, or annotation"
-	const decisionKindList = "directive, activity, plan, contract, aspiration, role, focus, or procedure"
-	switch e.Type {
-	case TypeSignal:
-		if e.Kind == "" {
-			e.Warnings = append(e.Warnings, Warning{
-				Field:   "kind",
-				Message: "signal missing kind field (expected " + signalKindList + ")",
-			})
-			return
-		}
-		if !IsValidKindForType(TypeSignal, e.Kind) {
-			e.Warnings = append(e.Warnings, Warning{
-				Field:   "kind",
-				Value:   string(e.Kind),
-				Message: fmt.Sprintf("invalid signal kind %q (expected %s)", e.Kind, signalKindList),
-			})
-		}
-	case TypeDecision:
-		if e.Kind == "" {
-			e.Warnings = append(e.Warnings, Warning{
-				Field:   "kind",
-				Message: "decision missing kind field (expected " + decisionKindList + ")",
-			})
-			return
-		}
-		if !IsValidKindForType(TypeDecision, e.Kind) {
-			e.Warnings = append(e.Warnings, Warning{
-				Field:   "kind",
-				Value:   string(e.Kind),
-				Message: fmt.Sprintf("invalid decision kind %q (expected %s)", e.Kind, decisionKindList),
-			})
-		}
-	}
-}
-
-// validateActorFrontmatter checks that kind: actor signals have the required
-// canonical field. Actors are process-layer by convention — entries at other
-// layers get a warning.
-func validateActorFrontmatter(e *Entry) {
-	if !e.IsActor() {
-		return
-	}
-	if strings.TrimSpace(e.Canonical) == "" {
-		e.Warnings = append(e.Warnings, Warning{
-			Field:   "canonical",
-			Message: "actor signal missing required canonical field",
-		})
-	}
-	if e.Layer != LayerProcess {
-		e.Warnings = append(e.Warnings, Warning{
-			Field:   "layer",
-			Value:   string(e.Layer),
-			Message: fmt.Sprintf("actor signal should live at process layer (got %s)", e.Layer),
-		})
-	}
-}
-
-// validateRoleFrontmatter checks that kind: role decisions have the required
-// actor field. Roles are process-layer by convention — entries at other
-// layers get a warning.
-func validateRoleFrontmatter(e *Entry) {
-	if !e.IsRole() {
-		return
-	}
-	if strings.TrimSpace(e.Actor) == "" {
-		e.Warnings = append(e.Warnings, Warning{
-			Field:   "actor",
-			Message: "role decision missing required actor field",
-		})
-	}
-	if e.Layer != LayerProcess {
-		e.Warnings = append(e.Warnings, Warning{
-			Field:   "layer",
-			Value:   string(e.Layer),
-			Message: fmt.Sprintf("role decision should live at process layer (got %s)", e.Layer),
-		})
-	}
-}
-
-// validateProcedureFrontmatter checks that kind: procedure decisions have the
-// required canonical field. Procedures are pinned to the process layer like
-// actor and role — a procedure defines how we work.
-func validateProcedureFrontmatter(e *Entry) {
-	if !e.IsProcedure() {
-		return
-	}
-	if strings.TrimSpace(e.Canonical) == "" {
-		e.Warnings = append(e.Warnings, Warning{
-			Field:   "canonical",
-			Message: "procedure decision missing required canonical field",
-		})
-	}
-	if e.Layer != LayerProcess {
-		e.Warnings = append(e.Warnings, Warning{
-			Field:   "layer",
-			Value:   string(e.Layer),
-			Message: fmt.Sprintf("procedure decision should live at process layer (got %s)", e.Layer),
-		})
-	}
-	switch e.Class {
-	case "", ProcedureClassMove, ProcedureClassShell, ProcedureClassTask:
-	default:
-		e.Warnings = append(e.Warnings, Warning{
-			Field:   "class",
-			Value:   string(e.Class),
-			Message: "procedure class must be move, shell, or task (empty means move)",
-		})
 	}
 }
 
@@ -1240,216 +1252,5 @@ func validateProcedureForks(g *Graph) {
 				Message: fmt.Sprintf("procedure chain is forked: %d live heads (%s); %s wins for execution (project head over base) — groom to resolve the fork deliberately", len(headIDs), strings.Join(headIDs, ", "), winner),
 			})
 		}
-	}
-}
-
-// validateDoneSignalRefs checks that a done-kind signal carries at least one
-// closes or refs entry. Required structurally because a done signal is a
-// fact-of-completion pointing at the commitment it fulfills — a target is the
-// minimum anchor for the claim.
-func validateDoneSignalRefs(e *Entry) {
-	if e.Type != TypeSignal || e.Kind != KindDone {
-		return
-	}
-	if len(e.Closes) == 0 && len(e.Refs) == 0 {
-		e.Warnings = append(e.Warnings, Warning{
-			Field:   "closes",
-			Message: "done signal must carry at least one closes or refs (target of the completion claim)",
-		})
-	}
-}
-
-// validateAnnotationFrontmatter checks the structural shape of a kind: annotation
-// entry: at least one ref (the canonical edge to its members), at least one
-// topic, every topic label parses as a TopicPath, and every explicit members
-// list is a subset of the entry's refs.
-func validateAnnotationFrontmatter(e *Entry) {
-	if !e.IsAnnotation() {
-		return
-	}
-	if len(e.Refs) == 0 {
-		e.Warnings = append(e.Warnings, Warning{
-			Field:   "refs",
-			Message: "annotation signal must carry at least one ref (the entries the annotation is about)",
-		})
-	}
-	if len(e.AnnotationTopics) == 0 {
-		e.Warnings = append(e.Warnings, Warning{
-			Field:   "topics",
-			Message: "annotation signal must declare at least one topic",
-		})
-		return
-	}
-	refSet := make(map[string]bool, len(e.Refs))
-	for _, r := range e.Refs {
-		refSet[r.ID] = true
-	}
-	for i, t := range e.AnnotationTopics {
-		if t.Label == "" {
-			e.Warnings = append(e.Warnings, Warning{
-				Field:   "topics",
-				Value:   fmt.Sprintf("topics[%d]", i),
-				Message: fmt.Sprintf("topics[%d]: missing label", i),
-			})
-			continue
-		}
-		if _, err := ParseTopicPath(t.Label); err != nil {
-			e.Warnings = append(e.Warnings, Warning{
-				Field:   "topics",
-				Value:   t.Label,
-				Message: fmt.Sprintf("topics[%d].label: %v", i, err),
-			})
-		}
-		for j, m := range t.Members {
-			if !refSet[m] {
-				e.Warnings = append(e.Warnings, Warning{
-					Field:   "topics",
-					Value:   m,
-					Message: fmt.Sprintf("topics[%d].members[%d]: %s is not in refs (members must be a subset of the annotation's refs)", i, j, m),
-				})
-			}
-		}
-	}
-}
-
-// validateFocusFrontmatter checks the structural shape of a kind: focus
-// decision: top-level when (if present) is well-formed, top-level actors are
-// non-empty strings, and each involvement triple has a target that resolves
-// in the graph plus a per-involvement when (if present) that is well-formed.
-func validateFocusFrontmatter(e *Entry, g *Graph) {
-	if !e.IsFocus() {
-		return
-	}
-	if err := e.FocusWhen.Validate(); err != nil {
-		e.Warnings = append(e.Warnings, Warning{
-			Field:   "when",
-			Message: err.Error(),
-		})
-	}
-	for i, name := range e.FocusActors {
-		if strings.TrimSpace(name) == "" {
-			e.Warnings = append(e.Warnings, Warning{
-				Field:   "actors",
-				Value:   fmt.Sprintf("actors[%d]", i),
-				Message: fmt.Sprintf("actors[%d]: empty actor name", i),
-			})
-		}
-	}
-	if len(e.Involvement) == 0 {
-		e.Warnings = append(e.Warnings, Warning{
-			Field:   "involvement",
-			Message: "focus decision must declare at least one involvement triple",
-		})
-		return
-	}
-	for i, inv := range e.Involvement {
-		if strings.TrimSpace(inv.Target) == "" {
-			e.Warnings = append(e.Warnings, Warning{
-				Field:   "involvement",
-				Value:   fmt.Sprintf("involvement[%d]", i),
-				Message: fmt.Sprintf("involvement[%d]: missing target", i),
-			})
-			continue
-		}
-		if g != nil {
-			if _, ok := g.ByID[inv.Target]; !ok {
-				e.Warnings = append(e.Warnings, Warning{
-					Field:   "involvement",
-					Value:   inv.Target,
-					Message: fmt.Sprintf("involvement[%d].target: %s does not resolve to an existing entry", i, inv.Target),
-				})
-			}
-		}
-		if err := inv.When.Validate(); err != nil {
-			e.Warnings = append(e.Warnings, Warning{
-				Field:   "involvement",
-				Value:   fmt.Sprintf("involvement[%d].when", i),
-				Message: fmt.Sprintf("involvement[%d].when: %v", i, err),
-			})
-		}
-		for j, name := range inv.Actors {
-			if strings.TrimSpace(name) == "" {
-				e.Warnings = append(e.Warnings, Warning{
-					Field:   "involvement",
-					Value:   fmt.Sprintf("involvement[%d].actors[%d]", i, j),
-					Message: fmt.Sprintf("involvement[%d].actors[%d]: empty actor name", i, j),
-				})
-			}
-		}
-	}
-}
-
-// validateInlineTopics checks that every TopicPath on Entry.Topics is well-
-// formed. ParseEntry already converts and warns on parse-time issues for
-// most cases, but the validator runs at lint time too, where entries built
-// programmatically may carry unparsed labels.
-func validateInlineTopics(e *Entry) {
-	for i, t := range e.Topics {
-		if t.IsZero() {
-			e.Warnings = append(e.Warnings, Warning{
-				Field:   "topics",
-				Value:   fmt.Sprintf("topics[%d]", i),
-				Message: fmt.Sprintf("topics[%d]: empty topic path", i),
-			})
-			continue
-		}
-		// Re-validate the path components in case the entry was built
-		// programmatically rather than parsed from disk.
-		if _, err := ParseTopicPath(t.String()); err != nil {
-			e.Warnings = append(e.Warnings, Warning{
-				Field:   "topics",
-				Value:   t.String(),
-				Message: fmt.Sprintf("topics[%d]: %v", i, err),
-			})
-		}
-	}
-}
-
-// validateAttachmentLinks checks that markdown links referencing the entry's attachment
-// directory point to files that exist in the entry's Attachments list.
-func validateAttachmentLinks(e *Entry) {
-	if len(e.ID) < 8 {
-		return
-	}
-	shortName := e.ID[6:] // DD-HHmmss-type-layer-suffix
-	prefix := "./" + shortName + "/"
-
-	if !strings.Contains(e.Content, prefix) {
-		return
-	}
-
-	// Build set of known attachment filenames
-	knownFiles := make(map[string]bool)
-	for _, a := range e.Attachments {
-		knownFiles[filepath.Base(a)] = true
-	}
-
-	// Find all references to the attachment directory in content
-	rest := e.Content
-	for {
-		idx := strings.Index(rest, prefix)
-		if idx < 0 {
-			break
-		}
-		after := rest[idx+len(prefix):]
-		// Extract filename until a markdown/whitespace delimiter
-		end := strings.IndexAny(after, ") \n\t\"'")
-		var filename string
-		if end > 0 {
-			filename = after[:end]
-		} else if end < 0 {
-			filename = after // rest of string
-		}
-		if filename != "" && !knownFiles[filename] {
-			e.Warnings = append(e.Warnings, Warning{
-				Field:   "attachments",
-				Value:   prefix + filename,
-				Message: fmt.Sprintf("broken attachment link: %s%s (file not found in attachment directory)", prefix, filename),
-			})
-		}
-		if end < 0 {
-			break
-		}
-		rest = after[end:]
 	}
 }

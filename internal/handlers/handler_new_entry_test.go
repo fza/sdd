@@ -11,9 +11,9 @@ import (
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/handlers"
-	"github.com/networkteam/sdd/internal/llm"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/pkg/llm"
 )
 
 // fakeReader bundles every read the handler needs into one stub. Tests
@@ -37,7 +37,7 @@ func (f *fakeReader) LoadWIPMarkers(_ string) ([]*model.WIPMarker, error) {
 	return nil, nil
 }
 
-func (f *fakeReader) Preflight(ctx context.Context, q query.PreflightQuery) (*query.PreflightResult, error) {
+func (f *fakeReader) Preflight(ctx context.Context, g *model.Graph, q query.PreflightQuery) (*query.PreflightResult, error) {
 	f.preflightCalls++
 	return f.preflightResult, f.preflightErr
 }
@@ -677,9 +677,9 @@ type trippingRunner struct {
 	t *testing.T
 }
 
-func (r *trippingRunner) Run(_ context.Context, _ llm.Request) (*llm.RunResult, error) {
+func (r *trippingRunner) Run(_ context.Context, _ llm.Request) (llm.Result, error) {
 	r.t.Error("LLM runner invoked despite a caller-supplied summary")
-	return nil, errors.New("must not be called")
+	return llm.Result{}, errors.New("must not be called")
 }
 
 // TestNewEntry_ExplicitSummary_SkipsLLM: a caller-supplied Summary stores

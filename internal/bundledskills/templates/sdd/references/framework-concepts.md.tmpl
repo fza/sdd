@@ -113,7 +113,7 @@ Three fields with distinct semantics:
 
 - `refs`: "builds on / depends on" — context or foundation, **no status effect**. Each ref carries a `kind` from the closed set below; the kind names *why* the reference exists.
 - `supersedes`: "replaces" — the referenced entry is no longer active/open. Bare-string ID list; no per-edge metadata.
-- `closes`: "resolves / fulfills" — the referenced entry is no longer active/open. Decisions close signals; done-kind signals close decisions and gap signals. Bare-string ID list.
+- `closes`: "resolves / fulfills" — the referenced entry is no longer active/open. The closing entry says why the target no longer holds (see Retirement primitives). Bare-string ID list.
 
 **Open signal** = not superseded, not closed. **Active decision** = not superseded, not closed.
 
@@ -127,16 +127,22 @@ Every entry is retireable. Two primitives:
 - **supersedes** — same-kind successor replaces it
 - **closes** — new entry retires it without replacement
 
-Per-kind retirement paths:
+**What makes a close valid is the stated why**, not the closer's kind. The closing entry must say why the target no longer holds. These closes are refused no matter what the entry says:
+
+- a **question, actor, or annotation** closes nothing; it states no findings, so it cannot report that something stopped holding
+- a **decision other than a directive** does not close another decision; `supersedes` records the replacement and links the new decision to the one it replaces
+- a **settled directive** is finished the moment it is written; it can be superseded, never closed
+
+Typical per-kind retirement paths:
 
 | Entry | Supersede path | Close path |
 |---|---|---|
-| gap | refined gap | decision addressing it; or done signal (short-loop, see below) |
-| fact | corrected fact | directive: "no longer true / no longer relevant" |
+| gap | refined gap | decision addressing it; done signal (short-loop, see below); or any entry that says why it no longer applies |
+| fact | corrected fact | any entry that says why it stopped holding (often a directive: "no longer true / no longer relevant"; a fact may close a fact when no corrected version exists) |
 | question | refined question | directive: "answered as X" or "won't pursue"; or fact / insight (dissolution) |
-| insight | corrected insight | directive: "noted, no action needed" |
+| insight | corrected insight | any entry that says why it no longer holds (directive: "noted, no action needed"; or the done that records the work that made the insight no longer correct) |
 | done | corrective done (rare) | — (terminal — facts of execution) |
-| annotation | replacement annotation (rare; usually a new annotation entry instead) | directive retiring it |
+| annotation | replacement annotation (rare; usually a new annotation entry instead) | any entry that says why the label is no longer wanted |
 | directive | replacement directive | done signal (standard); directive retiring it |
 | activity | replacement activity | done signal (standard); directive retiring it |
 | contract | replacement contract | directive retiring it |
@@ -145,7 +151,7 @@ Per-kind retirement paths:
 | focus | replacement focus (priorities shift mid-cycle) | done signal (cycle ended naturally); directive retiring it |
 | procedure | revised procedure (project customization or shipped successor) | directive retiring the move without replacement |
 
-**Retirement rationale is required** when closing a stable-kind entry (fact, insight, contract, aspiration). Pre-flight checks that the narrative states *why* — not whether the why is correct.
+**Retirement rationale is required** whenever a close retires an entry rather than records its completion. Pre-flight checks that the narrative states *why*, not whether the why is correct, and flags a weak rationale instead of blocking the close. It matters most where a commitment is retired unbuilt: a `done` signal says what was delivered, a retiring directive must say why nothing will be.
 
 ## Short-loop closure
 
@@ -155,7 +161,7 @@ A `kind: done` signal may close a `kind: gap` signal directly, bypassing a decis
 
 ## Proposals vs Facts
 
-Open entries — signals, unclosed decisions, open plans — describe *where the graph might go*, not where it is. Only a closing done signal (or a retirement directive) declares what was done, turning proposal into fact.
+Open entries — signals, unclosed decisions, open plans — describe *where the graph might go*, not where it is. Only a closing entry turns proposal into fact: a done signal declares what was done, a retirement says why the entry no longer applies.
 
 ## Contracts
 

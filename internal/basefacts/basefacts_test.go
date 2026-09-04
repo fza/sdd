@@ -1,0 +1,754 @@
+package basefacts
+
+import (
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/networkteam/sdd/internal/engine"
+	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/viewlayout"
+)
+
+func testVocabulary() viewlayout.Vocabulary {
+	return viewlayout.Vocabulary{
+		Functions:  []string{"active", "indexed", "kind", "rank", "n", "as-list"},
+		Renders:    []string{"as-list"},
+		Algorithms: []string{"heat"},
+		Decays:     []string{"exp-14d"},
+		Macros:     []string{"top"},
+	}
+}
+
+// factByID returns the shipped base fact with the given ID, asserting the
+// contract every base fact shares: a kind: fact signal, embedded, carrying no
+// participants and no project refs — a ref may only point at another base
+// fact, since project entries do not exist in the graphs a base fact ships to.
+func factByID(t *testing.T, id string) *model.Entry {
+	t.Helper()
+	entries, err := Entries(testVocabulary())
+	if err != nil {
+		t.Fatalf("Entries: %v", err)
+	}
+	baseIDs := make(map[string]bool, len(entries))
+	for _, fact := range entries {
+		baseIDs[fact.ID] = true
+	}
+	for _, fact := range entries {
+		if fact.ID != id {
+			continue
+		}
+		if fact.Type != model.TypeSignal || fact.Kind != model.KindFact {
+			t.Errorf("fact is %s %s, want signal fact", fact.Type, fact.Kind)
+		}
+		if !fact.Embedded {
+			t.Error("fact is not marked Embedded")
+		}
+		if len(fact.Participants) != 0 {
+			t.Errorf("base fact carries participants %v, want none", fact.Participants)
+		}
+		for _, ref := range fact.Refs {
+			if !baseIDs[ref.ID] {
+				t.Errorf("base fact refs %s, which is not a base fact — project refs never ship embedded", ref.ID)
+			}
+		}
+		return fact
+	}
+	t.Fatalf("no base fact shipped with stable ID %q", id)
+	return nil
+}
+
+func TestEntriesShipViewGrammarFact(t *testing.T) {
+	fact := factByID(t, ViewGrammarFactID)
+	const title = "How to compose graph views (view tool): layout grammar, filters, ranking, quoting, and examples"
+	if fact.Index == nil || fact.Index.Title != title || fact.Index.Topic.String() != "cli/view" {
+		t.Errorf("fact index = %+v", fact.Index)
+	}
+}
+
+// TestEntriesShipPrinciplesFact covers the fact the session shell primes with:
+// selectable by topic, and deliberately absent from the pull-side index, since
+// its words are pushed in full at every session open.
+func TestEntriesShipPrinciplesFact(t *testing.T) {
+	fact := factByID(t, PrinciplesFactID)
+	if len(fact.Topics) != 1 || fact.Topics[0].String() != "principles/interactive" {
+		t.Errorf("topics = %v, want the single selector topic principles/interactive", fact.Topics)
+	}
+	if fact.Index != nil {
+		t.Errorf("principles fact carries index enrollment %+v, want none — it is pushed, not pulled", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("principles fact has no summary; every reading surface needs one")
+	}
+}
+
+// TestPrinciplesBodyIsSelfContained keeps the served words framework-generic:
+// the posture must read for a project SDD knows nothing about, so it cites no
+// entry of the graph it was drawn from and names no host tool.
+func TestPrinciplesBodyIsSelfContained(t *testing.T) {
+	body := factByID(t, PrinciplesFactID).Content
+
+	for _, want := range []string{"# The way of thinking", "Goal first", "Misfit is a signal", "prepares the dialogue", "A correction is a contradiction too", "Expect novelty", "step up"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("served posture missing %q", want)
+		}
+	}
+	if loc := entryIDPattern.FindString(body); loc != "" {
+		t.Errorf("served posture cites project entry %q; a base fact carries no graph-local references", loc)
+	}
+	for _, host := range []string{"sdd ", "MCP", "CLI"} {
+		if strings.Contains(body, host) {
+			t.Errorf("served posture contains host-specific reference %q", host)
+		}
+	}
+}
+
+// entryIDPattern matches a full graph entry ID — what a base fact's prose must
+// never carry, since the entries of the graph it was authored in do not exist
+// in the graphs it ships to.
+var entryIDPattern = regexp.MustCompile(`\d{8}-\d{6}-[sd]-(stg|cpt|tac|ops|prc)-[a-z0-9]+`)
+
+func TestViewGrammarBodyIsGeneratedAndHostNeutral(t *testing.T) {
+	body := factByID(t, ViewGrammarFactID).Content
+
+	for _, want := range []string{"# How to compose graph views", "## Grammar", "```text", "| Category | Syntax | Meaning |", "active", "heat", "exp-14d", "top(N)", "active:indexed:as-list"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("generated body missing live-vocabulary token %q", want)
+		}
+	}
+	for _, host := range []string{"sdd view", "Usage:", "--layout", "MCP", "debugging"} {
+		if strings.Contains(body, host) {
+			t.Errorf("base fact body contains host-specific reference %q", host)
+		}
+	}
+}
+
+// TestEntriesShipDoneKindFact covers the done authoring fact: reached from the
+// capture lane rather than the pull-side index, so no index enrollment, and its
+// mechanics block renders from the model declarations that enforce the rules.
+func TestEntriesShipDoneKindFact(t *testing.T) {
+	fact := factByID(t, DoneFactID)
+	if fact.Index != nil {
+		t.Errorf("done fact carries index enrollment %+v, want none — authoring facts are teased from the capture lane", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("done fact has no summary; every reading surface needs one")
+	}
+	if !strings.Contains(fact.Content, "## Mechanics") {
+		t.Error("done fact body missing the rendered mechanics block")
+	}
+	if !strings.Contains(fact.Content, model.DoneAnchorRequirement) {
+		t.Error("done fact mechanics do not carry the declared anchor rule the validator enforces")
+	}
+	if strings.Contains(fact.Content, "{{") {
+		t.Error("done fact body contains an unrendered template placeholder")
+	}
+}
+
+// TestDoneFactBodyIsSelfContained holds the done fact to the same
+// framework-generic standard as the principles fact: it ships to projects that
+// hold none of this repository's source or graph.
+func TestDoneFactBodyIsSelfContained(t *testing.T) {
+	body := factByID(t, DoneFactID).Content
+
+	for _, want := range []string{"# Recording completed work", "Say what happened, plainly", "The doing is part of the record", "One act, one done", "names what it completes", "Evidence follows the act", "not what was chosen", "Cover the whole commitment", "The baseline goes without saying", "Status is terminal; the loop is not", "shape of the work"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("done fact body missing %q", want)
+		}
+	}
+	if loc := entryIDPattern.FindString(body); loc != "" {
+		t.Errorf("done fact cites project entry %q; a base fact carries no graph-local references", loc)
+	}
+	for _, host := range []string{"sdd ", "MCP", "CLI"} {
+		if strings.Contains(body, host) {
+			t.Errorf("done fact body contains host-specific reference %q", host)
+		}
+	}
+}
+
+// TestAllBaseFactsRenderAndValidate is the table test the composition layer is
+// held to: every shipped base fact must pass full entry validation, so a
+// template or frontmatter mistake fails the build here rather than surfacing
+// at a reader's graph load. Validation runs against the base-fact set itself,
+// since fact-to-fact refs (overview → authoring facts) must resolve.
+func TestAllBaseFactsRenderAndValidate(t *testing.T) {
+	entries, err := Entries(testVocabulary())
+	if err != nil {
+		t.Fatalf("Entries: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no base facts shipped")
+	}
+	graph := model.NewGraph(entries)
+	for _, fact := range entries {
+		model.ValidateEntry(fact, graph)
+		for _, w := range fact.Warnings {
+			t.Errorf("base fact %s invalid: %s: %s", fact.ID, w.Field, w.Message)
+		}
+	}
+}
+
+// TestEntriesShipOverviewFact covers the type-system overview: the indexed
+// introduction whose kind lists render from the model enumeration and which
+// references every authoring fact.
+func TestEntriesShipOverviewFact(t *testing.T) {
+	fact := factByID(t, OverviewFactID)
+	if fact.Index == nil || fact.Index.Topic.String() != "type-system/kinds" {
+		t.Errorf("fact index = %+v, want enrollment under type-system/kinds", fact.Index)
+	}
+	if len(fact.Refs) == 0 || fact.Refs[0].ID != DoneFactID {
+		t.Errorf("overview refs = %v, want the done authoring fact", fact.Refs)
+	}
+	for _, kind := range append(model.SignalKindValues(), model.DecisionKindValues()...) {
+		if !strings.Contains(fact.Content, "`"+string(kind)+"`") {
+			t.Errorf("overview body missing kind %q in its generated lists", kind)
+		}
+	}
+	if strings.Contains(fact.Content, "{{") {
+		t.Error("overview body contains an unrendered template placeholder")
+	}
+}
+
+// TestEveryKindHasAQuestion pins the completeness rule: a kind declared in the
+// model without an authored question fails here, not at a reader's graph load.
+func TestEveryKindHasAQuestion(t *testing.T) {
+	for _, kind := range append(model.SignalKindValues(), model.DecisionKindValues()...) {
+		if q, ok := kindQuestions[kind]; !ok || q == "" {
+			t.Errorf("kind %q has no question in kindQuestions", kind)
+		}
+	}
+}
+
+// TestOverviewBodyIsSelfContained holds the overview to the framework-generic
+// standard, with the one sanctioned exception of base-fact IDs in frontmatter
+// refs (the body itself stays ID-free).
+func TestOverviewBodyIsSelfContained(t *testing.T) {
+	body := factByID(t, OverviewFactID).Content
+
+	for _, want := range []string{"# The type system", "Signal kinds", "Decision kinds", "force, not completion", "WHAT vs THAT", "Standing constraints are guiding directives", "outside vs here", "states no findings and closes nothing", "layer", "This is the map, not the depth", "Entries connect", RefKindsFactID} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overview body missing %q", want)
+		}
+	}
+	for _, id := range entryIDPattern.FindAllString(body, -1) {
+		if !baseFactIDs(t)[id] {
+			t.Errorf("overview body cites project entry %q; a base fact's prose may only cite other base facts", id)
+		}
+	}
+	for _, host := range []string{"sdd ", "MCP", "CLI"} {
+		if strings.Contains(body, host) {
+			t.Errorf("overview body contains host-specific reference %q", host)
+		}
+	}
+}
+
+func TestBuildRejectsNonFact(t *testing.T) {
+	_, err := build("20260101-000000-d-cpt-xxx", "type: decision\nlayer: conceptual\nkind: directive\nconfidence: low\nintent: guiding\n", "body")
+	if err == nil {
+		t.Fatal("build accepted a non-fact base entry, want error")
+	}
+}
+
+func TestBuildRejectsInvalidFactIndexEnrollment(t *testing.T) {
+	frontmatter := "type: signal\nlayer: process\nkind: fact\ntopics: [cli/view]\nindex: {title: Reference, topic: agent/ux}\n"
+	_, err := build("20260101-000000-s-prc-idx", frontmatter, "body")
+	if err == nil || !strings.Contains(err.Error(), "must also appear in topics") {
+		t.Fatalf("build error = %v", err)
+	}
+}
+
+// TestEntriesShipProcedureKindFact covers the procedure authoring fact: like
+// the done fact it is teased from the capture lane (no index enrollment), and
+// its generated blocks render from the declarations that enforce them — the
+// model's class enumeration and the engine's domain-type vocabulary.
+func TestEntriesShipProcedureKindFact(t *testing.T) {
+	fact := factByID(t, ProcedureFactID)
+	if fact.Index != nil {
+		t.Errorf("procedure fact carries index enrollment %+v, want none — authoring facts are teased from the capture lane", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("procedure fact has no summary; every reading surface needs one")
+	}
+	if !strings.Contains(fact.Content, "## Mechanics") {
+		t.Error("procedure fact body missing the rendered mechanics block")
+	}
+	for _, class := range model.ProcedureClassValues() {
+		if !strings.Contains(fact.Content, "`"+string(class)+"` — "+class.Description()) {
+			t.Errorf("procedure fact body missing class %q with its declared description", class)
+		}
+	}
+	if len(fact.Refs) == 0 || fact.Refs[0].ID != ProcedureSpecFactID {
+		t.Errorf("procedure fact refs = %v, want the spec reference fact", fact.Refs)
+	}
+	if strings.Contains(fact.Content, "{{") {
+		t.Error("procedure fact body contains an unrendered template placeholder")
+	}
+}
+
+// TestEntriesShipProcedureSpecFact covers the spec reference — the indexed
+// how-to-write-it fact beside the kind's authoring fact. Its variable types
+// and end targets render from the engine declarations; the ability inventory
+// is deliberately a pull cue for the live registry, never a baked list.
+func TestEntriesShipProcedureSpecFact(t *testing.T) {
+	fact := factByID(t, ProcedureSpecFactID)
+	if fact.Index != nil {
+		t.Errorf("spec reference carries index enrollment %+v, want none — it is reached through the procedure fact and lane teasers", fact.Index)
+	}
+	for _, baseType := range engine.BaseTypeValues() {
+		if !strings.Contains(fact.Content, string(baseType)) {
+			t.Errorf("spec reference missing domain type %q", baseType)
+		}
+	}
+	for _, want := range []string{"# Writing a procedure spec", "`params`", "`state`", "`steps`", "end(completed)", "end(abandoned)", "## A worked example", "```yaml", "registry", "## unit:", "## Dispatching another procedure"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("spec reference missing %q", want)
+		}
+	}
+	if !strings.Contains(fact.Content, engine.ExampleSpecFrontmatter) {
+		t.Error("spec reference does not embed the engine's worked example verbatim")
+	}
+	for _, pair := range engine.PresencePairs() {
+		if !strings.Contains(fact.Content, "`"+pair.Field+"` — checked by `"+pair.Predicate+"`") {
+			t.Errorf("spec reference missing gateable pair %s/%s", pair.Field, pair.Predicate)
+		}
+	}
+	if len(fact.Refs) == 0 || fact.Refs[0].ID != ProcedureFactID {
+		t.Errorf("spec reference refs = %v, want the procedure authoring fact", fact.Refs)
+	}
+	// The body teaches a literal lowercase placeholder ({{.anchor}}); only the
+	// template's own capitalized data fields would mark a failed render.
+	if regexp.MustCompile(`\{\{\s*\.[A-Z]`).MatchString(fact.Content) {
+		t.Error("spec reference body contains an unrendered template placeholder")
+	}
+	body := fact.Content
+	if loc := entryIDPattern.FindString(body); loc != "" {
+		t.Errorf("spec reference cites entry %q in its body; pointers live in refs", loc)
+	}
+	for _, host := range []string{"sdd ", "MCP", "CLI"} {
+		if strings.Contains(body, host) {
+			t.Errorf("spec reference body contains host-specific reference %q", host)
+		}
+	}
+}
+
+// TestEveryProcedureClassHasADescription pins the completeness rule: a class
+// declared in the model without a description fails here (and the render
+// errors), not at a reader's graph load.
+func TestEveryProcedureClassHasADescription(t *testing.T) {
+	for _, class := range model.ProcedureClassValues() {
+		if class.Description() == "" {
+			t.Errorf("procedure class %q has no description beside its declaration", class)
+		}
+	}
+}
+
+// baseFactIDs is the sanctioned exception to the no-IDs-in-prose rule: a base
+// fact's ID resolves in every graph the binary serves, so one base fact may
+// point at another by ID without stranding any reader. Derived from the shipped
+// set rather than listed, so it cannot go stale as facts are added.
+func baseFactIDs(t *testing.T) map[string]bool {
+	t.Helper()
+	entries, err := Entries(testVocabulary())
+	if err != nil {
+		t.Fatalf("Entries: %v", err)
+	}
+	ids := make(map[string]bool, len(entries))
+	for _, fact := range entries {
+		ids[fact.ID] = true
+	}
+	return ids
+}
+
+// TestProcedureFactBodyIsSelfContained holds the procedure fact to the
+// framework-generic standard: no graph-local entry IDs (base-fact IDs are the
+// sanctioned exception — they resolve everywhere), no host-specific surface
+// names.
+func TestProcedureFactBodyIsSelfContained(t *testing.T) {
+	body := factByID(t, ProcedureFactID).Content
+
+	for _, want := range []string{"# Extending the process with workflows", "Every other entry is read; a procedure is also run", "canonical is the identity", "Class places how it enters", "workflow is frontmatter", "Ask where the choice is real", "Shipped and project procedures", "Retire deliberately", "Validation waits for the engine", "spec reference fact `" + ProcedureSpecFactID + "`"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("procedure fact body missing %q", want)
+		}
+	}
+	for _, id := range entryIDPattern.FindAllString(body, -1) {
+		if !baseFactIDs(t)[id] {
+			t.Errorf("procedure fact cites project entry %q; a base fact's prose may only cite other base facts", id)
+		}
+	}
+	for _, host := range []string{"sdd ", "MCP", "CLI"} {
+		if strings.Contains(body, host) {
+			t.Errorf("procedure fact body contains host-specific reference %q", host)
+		}
+	}
+}
+
+// TestEveryBaseTypeHasADescription mirrors the class rule: a domain type
+// declared in the engine without a description fails here (and the spec
+// reference render errors), not at a reader's graph load.
+func TestEveryBaseTypeHasADescription(t *testing.T) {
+	for _, bt := range engine.BaseTypeValues() {
+		if bt.Description() == "" {
+			t.Errorf("domain type %q has no description", bt)
+		}
+	}
+}
+
+// TestTypeSystemFactsAreOverrideClosed pins the declared property (d-tac-9be):
+// facts whose content renders from the running version's declarations refuse
+// supersession, and the marker — not an ID list — is what the write path reads.
+func TestTypeSystemFactsAreOverrideClosed(t *testing.T) {
+	closed := []string{OverviewFactID, DoneFactID, ProcedureFactID, ProcedureSpecFactID, GapFactID, DirectiveFactID, InsightFactID, FactFactID, QuestionFactID, PlanFactID, ActorFactID, RoleFactID, ActivityFactID, FocusFactID, AspirationFactID, AnnotationFactID, DiscriminationFactID, RefKindsFactID}
+	for _, id := range closed {
+		if fact := factByID(t, id); fact.Override != model.OverrideClosed {
+			t.Errorf("fact %s: Override = %q, want %q", id, fact.Override, model.OverrideClosed)
+		}
+	}
+	if fact := factByID(t, PrinciplesFactID); fact.Override != "" {
+		t.Errorf("principles fact must stay project-overridable, got Override = %q", fact.Override)
+	}
+}
+
+// TestEntriesShipRefKindsFact covers the ref-kind vocabulary fact: indexed for
+// retrieval (unlike the authoring facts, it must be findable before a reader
+// knows the word for what they need), with mechanics rendered from the model's
+// ref-kind enumeration.
+func TestEntriesShipRefKindsFact(t *testing.T) {
+	fact := factByID(t, RefKindsFactID)
+	if fact.Index == nil || fact.Index.Topic.String() != "type-system/refs" {
+		t.Errorf("fact index = %+v, want enrollment under type-system/refs", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("refkinds fact has no summary")
+	}
+	for _, want := range []string{"# Connecting entries", "| Kind |", "no status effect", "never a default", "the floor", "A terminal `done` is never", "## Mechanics", "closed set"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("refkinds body missing %q", want)
+		}
+	}
+	for _, k := range model.RefKindValues() {
+		if !strings.Contains(fact.Content, string(k)) {
+			t.Errorf("refkinds mechanics missing kind %q from the running enumeration", k)
+		}
+	}
+}
+
+// TestEntriesShipGapKindFact covers the gap authoring fact: unindexed like
+// every authoring fact, with mechanics rendered from the model declarations.
+func TestEntriesShipGapKindFact(t *testing.T) {
+	fact := factByID(t, GapFactID)
+	if fact.Index != nil {
+		t.Errorf("gap fact carries index enrollment %+v, want none — authoring facts are teased from the capture lane", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("gap fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{"## Mechanics", model.SignalCloseRule, "Both sides, each with its source", "The world input is the substance", "Reasoning enters only under its own name", "Observed, never decided", "Record the act, not the readings", "Frame the level that needs to change", "How a gap resolves"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("gap fact body missing %q", want)
+		}
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestEntriesShipDirectiveKindFact covers the directive authoring fact.
+func TestEntriesShipDirectiveKindFact(t *testing.T) {
+	fact := factByID(t, DirectiveFactID)
+	if fact.Index != nil {
+		t.Errorf("directive fact carries index enrollment %+v, want none — authoring facts are teased from the capture lane", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("directive fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{"## Mechanics", model.DirectiveIntentRequirement, model.SettledCloseRule, "The choice carries its why", "Intent is chosen, never defaulted", "A guiding directive binds", "Retirement follows the posture", "Refining without replacing"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("directive fact body missing %q", want)
+		}
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestEntriesShipInsightKindFact covers the insight authoring fact, whose
+// mechanics render the one derived rule the kind turns on: insight is absent
+// from the attention set, so an open insight owes nothing.
+func TestEntriesShipInsightKindFact(t *testing.T) {
+	fact := factByID(t, InsightFactID)
+	if fact.Index != nil {
+		t.Errorf("insight fact carries index enrollment %+v, want none — authoring facts are teased from the capture lane", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("insight fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{"## Mechanics", model.SignalCloseRule, "not an attention kind", "the reasoning is the part only this entry holds", "re-derivability", "One synthesis, one entry", "Understanding, never commitment", "Narrowing an earlier reading", "Nothing owed after the reading", "Being acted on is not a retirement"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("insight fact body missing %q", want)
+		}
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestEntriesShipFactKindFact covers the fact authoring fact, whose mechanics
+// carry the index-enrollment rules alongside the signal declarations — the one
+// kind whose own structure the drafter can extend.
+func TestEntriesShipFactKindFact(t *testing.T) {
+	fact := factByID(t, FactFactID)
+	if fact.Index != nil {
+		t.Errorf("fact fact carries index enrollment %+v, want none — authoring facts are teased from the capture lane", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("fact fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{"## Mechanics", model.SignalCloseRule, model.FactIndexKindRule, model.FactIndexTopicRule, "The claim carries how it was reached", "Verification is not the price of entry", "Informs, never demands", "Cited and extracted", "Answering a question", "Enrolling in the pull index", "never on the drafter's say-so"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("fact fact body missing %q", want)
+		}
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestEntriesShipQuestionKindFact covers the question authoring fact. Unlike
+// the other signal kinds shipped so far it IS an attention kind, and the
+// mechanics say so from the same declaration the read side filters on.
+func TestEntriesShipQuestionKindFact(t *testing.T) {
+	fact := factByID(t, QuestionFactID)
+	if fact.Index != nil {
+		t.Errorf("question fact carries index enrollment %+v, want none — authoring facts are teased from the capture lane", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("question fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{"## Mechanics", model.SignalCloseRule, "is an attention kind", "# Querying for input", "an unasked question gets answered anyway", "As specific as the demand that raised it", "brought into dialogue", "One demand, with its strands", "How a question resolves"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("question fact body missing %q", want)
+		}
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestEntriesShipPlanKindFact covers the plan authoring fact — the first
+// decision kind shipped with a structural requirement of its own, so the
+// mechanics render the acceptance-criteria rule the validator enforces.
+func TestEntriesShipPlanKindFact(t *testing.T) {
+	fact := factByID(t, PlanFactID)
+	if fact.Index != nil {
+		t.Errorf("plan fact carries index enrollment %+v, want none — authoring facts are teased from the capture lane", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("plan fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{"## Mechanics", model.PlanAcceptanceRequirement, "# Specifying an outcome", "An outcome, not a mechanism", "residue of a design dialogue", "The depth of the record varies", "One criterion, one thing to verify", "A proposal until the work proves it", "Refined in place"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("plan fact body missing %q", want)
+		}
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestEntriesShipActorKindFact covers the actor authoring fact: unindexed
+// like every authoring fact, carrying no discrimination paragraph (that lives in
+// the discrimination fact), with mechanics rendered from the model declarations.
+func TestEntriesShipActorKindFact(t *testing.T) {
+	fact := factByID(t, ActorFactID)
+	if fact.Index != nil {
+		t.Errorf("actor fact carries index enrollment %+v, want none", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("actor fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{"## Mechanics", "# Declaring a participant", "The canonical is the name already in use"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("actor fact body missing %q", want)
+		}
+	}
+	if strings.Contains(fact.Content, "Choosing actor at all") {
+		t.Error("actor fact still carries a discrimination paragraph; that material moved to the discrimination fact")
+	}
+	if !strings.Contains(fact.Content, model.ActorCanonicalRequirement) {
+		t.Error("actor fact mechanics do not carry the declared rule the validator enforces")
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestEntriesShipRoleKindFact covers the role authoring fact: unindexed
+// like every authoring fact, carrying no discrimination paragraph (that lives in
+// the discrimination fact), with mechanics rendered from the model declarations.
+func TestEntriesShipRoleKindFact(t *testing.T) {
+	fact := factByID(t, RoleFactID)
+	if fact.Index != nil {
+		t.Errorf("role fact carries index enrollment %+v, want none", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("role fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{"## Mechanics", "# Granting a part", "The part is granted in dialogue"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("role fact body missing %q", want)
+		}
+	}
+	if strings.Contains(fact.Content, "Choosing role at all") {
+		t.Error("role fact still carries a discrimination paragraph; that material moved to the discrimination fact")
+	}
+	if !strings.Contains(fact.Content, model.RoleActorRequirement) {
+		t.Error("role fact mechanics do not carry the declared rule the validator enforces")
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestEntriesShipActivityKindFact covers the activity authoring fact: unindexed
+// like every authoring fact, carrying no discrimination paragraph (that lives in
+// the discrimination fact), with mechanics rendered from the model declarations.
+func TestEntriesShipActivityKindFact(t *testing.T) {
+	fact := factByID(t, ActivityFactID)
+	if fact.Index != nil {
+		t.Errorf("activity fact carries index enrollment %+v, want none", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("activity fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{"## Mechanics", "# Dispatching a piece of work", "The choosing happened before the entry"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("activity fact body missing %q", want)
+		}
+	}
+	if strings.Contains(fact.Content, "Choosing activity at all") {
+		t.Error("activity fact still carries a discrimination paragraph; that material moved to the discrimination fact")
+	}
+	if !strings.Contains(fact.Content, model.SignalCloseRule) {
+		t.Error("activity fact mechanics do not carry the declared rule the validator enforces")
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestEntriesShipFocusKindFact covers the focus authoring fact: unindexed
+// like every authoring fact, carrying no discrimination paragraph (that lives in
+// the discrimination fact), with mechanics rendered from the model declarations.
+func TestEntriesShipFocusKindFact(t *testing.T) {
+	fact := factByID(t, FocusFactID)
+	if fact.Index != nil {
+		t.Errorf("focus fact carries index enrollment %+v, want none", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("focus fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{"## Mechanics", "# Declaring current attention", "A focus points at work"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("focus fact body missing %q", want)
+		}
+	}
+	if strings.Contains(fact.Content, "Choosing focus at all") {
+		t.Error("focus fact still carries a discrimination paragraph; that material moved to the discrimination fact")
+	}
+	if !strings.Contains(fact.Content, model.FocusInvolvementRule) {
+		t.Error("focus fact mechanics do not carry the declared rule the validator enforces")
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestEntriesShipAspirationKindFact covers the aspiration authoring fact: unindexed
+// like every authoring fact, carrying no discrimination paragraph (that lives in
+// the discrimination fact), with mechanics rendered from the model declarations.
+func TestEntriesShipAspirationKindFact(t *testing.T) {
+	fact := factByID(t, AspirationFactID)
+	if fact.Index != nil {
+		t.Errorf("aspiration fact carries index enrollment %+v, want none", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("aspiration fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{"## Mechanics", "# Orienting the work", "A pull that binds nothing"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("aspiration fact body missing %q", want)
+		}
+	}
+	if strings.Contains(fact.Content, "Choosing aspiration at all") {
+		t.Error("aspiration fact still carries a discrimination paragraph; that material moved to the discrimination fact")
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestEntriesShipAnnotationKindFact covers the annotation authoring fact: unindexed
+// like every authoring fact, carrying no discrimination paragraph (that lives in
+// the discrimination fact), with mechanics rendered from the model declarations.
+func TestEntriesShipAnnotationKindFact(t *testing.T) {
+	fact := factByID(t, AnnotationFactID)
+	if fact.Index != nil {
+		t.Errorf("annotation fact carries index enrollment %+v, want none", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("annotation fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{"## Mechanics", "# Making a thread findable", "Membership is the whole effect"} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("annotation fact body missing %q", want)
+		}
+	}
+	if strings.Contains(fact.Content, "Choosing annotation at all") {
+		t.Error("annotation fact still carries a discrimination paragraph; that material moved to the discrimination fact")
+	}
+	if !strings.Contains(fact.Content, model.AnnotationRefsRequirement) {
+		t.Error("annotation fact mechanics do not carry the declared rule the validator enforces")
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestEntriesShipDiscriminationFact covers the kind-discrimination fact: the
+// one home for the tests that settle a competing kind, unindexed and reached
+// from the type-system introduction, with the closed kind set rendered from the
+// model enumeration so the prose cannot drift from the kinds that exist.
+func TestEntriesShipDiscriminationFact(t *testing.T) {
+	fact := factByID(t, DiscriminationFactID)
+	if fact.Index != nil {
+		t.Errorf("discrimination fact carries index enrollment %+v, want none — it is reached from the introduction", fact.Index)
+	}
+	if fact.Summary == "" {
+		t.Error("discrimination fact has no summary; every reading surface needs one")
+	}
+	for _, want := range []string{
+		"## Mechanics", "# Telling the kinds apart",
+		"## Something was noticed", "## Something is being committed",
+		"## A person is entering the record", "## Structure is being laid over entries",
+		"how does the commitment end?",
+		"the absence of a completion criterion cannot pick between them",
+		"lossy in one direction",
+		"read the shape of the work, not of its outputs",
+		"strip the references away",
+	} {
+		if !strings.Contains(fact.Content, want) {
+			t.Errorf("discrimination fact missing %q", want)
+		}
+	}
+	for _, kind := range append(model.SignalKindValues(), model.DecisionKindValues()...) {
+		if !strings.Contains(fact.Content, string(kind)) {
+			t.Errorf("discrimination fact never mentions kind %q", kind)
+		}
+	}
+	assertFactSelfContained(t, fact)
+}
+
+// TestOverviewPointsAtDiscrimination pins the one pointer that makes the
+// discrimination fact reachable: the introduction is read before a kind is
+// chosen, so it must name where the remaining tests live.
+func TestOverviewPointsAtDiscrimination(t *testing.T) {
+	body := factByID(t, OverviewFactID).Content
+	if !strings.Contains(body, DiscriminationFactID) {
+		t.Error("overview does not point at the discrimination fact; the remaining tests would be unreachable")
+	}
+}
+
+// assertFactSelfContained holds a fact body to the framework-generic
+// standard: no graph-local entry IDs, no host-specific tool references, no
+// unrendered template placeholders.
+func assertFactSelfContained(t *testing.T, fact *model.Entry) {
+	t.Helper()
+	if loc := entryIDPattern.FindString(fact.Content); loc != "" {
+		t.Errorf("fact %s cites project entry %q; a base fact carries no graph-local references", fact.ID, loc)
+	}
+	for _, host := range []string{"sdd ", "MCP", "CLI"} {
+		if strings.Contains(fact.Content, host) {
+			t.Errorf("fact %s body contains host-specific reference %q", fact.ID, host)
+		}
+	}
+	if strings.Contains(fact.Content, "{{") {
+		t.Errorf("fact %s body contains an unrendered template placeholder", fact.ID)
+	}
+}

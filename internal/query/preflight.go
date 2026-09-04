@@ -3,8 +3,6 @@
 package query
 
 import (
-	"time"
-
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -12,10 +10,8 @@ import (
 // the pre-flight LLM validator. Pure read — no side effects of its own; the
 // runner dependency injected into the finder handles the LLM call.
 type PreflightQuery struct {
-	Entry   *model.Entry
-	Graph   *model.Graph
-	Model   string        // LLM model identifier (e.g. "claude-sonnet-4-6")
-	Timeout time.Duration // hard timeout for the validator call
+	Entry *model.Entry
+	Model string // LLM model identifier (e.g. "claude-sonnet-4-6")
 }
 
 // Severity classifies a pre-flight finding. The tooling layer decides what
@@ -29,11 +25,13 @@ const (
 	SeverityLow    Severity = "low"
 )
 
-// Finding is a single observation from pre-flight validation.
+// Finding is a single observation from pre-flight validation. The lowercase
+// JSON tags are load-bearing: store values normalize through JSON, and the
+// capture unit's template addresses findings by these keys.
 type Finding struct {
-	Severity    Severity
-	Category    string
-	Observation string
+	Severity    Severity `json:"severity"`
+	Category    string   `json:"category"`
+	Observation string   `json:"observation"`
 }
 
 // PreflightResult holds all findings from a pre-flight validator run.

@@ -4,55 +4,40 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 )
 
-// RenderLint writes a human-readable lint report to w. Returns nothing —
-// the caller decides what to do about a non-zero issue count (typically
-// returning a non-zero exit code from the CLI).
-func RenderLint(w io.Writer, result *query.LintResult, g *model.Graph) {
-	if len(result.Entries) == 0 {
+// RenderLint writes the categorized lint report to w: findings grouped by
+// category in first-appearance order, errors marked ⚠ and advisories marked
+// ℹ. Returns nothing — the caller derives the exit code from
+// LintResult.Errors alone (advisories never flip it, d-cpt-xc3).
+func RenderLint(w io.Writer, result *query.LintResult) {
+	if len(result.Findings) == 0 {
 		fmt.Fprintln(w, "No issues found.")
-	} else {
-		fmt.Fprintf(w, "%d issue(s) in %d entry/entries:\n\n", result.TotalIssues, len(result.Entries))
-		for _, e := range result.Entries {
-			desc := e.Summary
-			if desc == "" {
-				desc = e.ShortContent(200)
-			}
-			status := FormatStatus(g.DerivedStatus(e))
-			if status != "" {
-				fmt.Fprintf(w, "  %s  %s  %s  %s\n", e.ID, e.TypeLabel(), status, desc)
-			} else {
-				fmt.Fprintf(w, "  %s  %s  %s\n", e.ID, e.TypeLabel(), desc)
-			}
-			for _, warning := range e.Warnings {
-				fmt.Fprintf(w, "    ⚠ %s\n", warning.Message)
-			}
-			fmt.Fprintln(w)
-		}
-	}
-	renderIndexLint(w, result)
-}
-
-// renderIndexLint surfaces the search index's drift count under the
-// configured embedder. Suppressed when no embedder is configured so
-// projects without vector search don't see a noisy "index" section.
-func renderIndexLint(w io.Writer, result *query.LintResult) {
-	if !result.IndexConfigured {
 		return
 	}
-	fmt.Fprintln(w, "Index:")
-	fmt.Fprintf(w, "  fingerprint: %s\n", result.IndexFingerprint)
-	fmt.Fprintf(w, "  entries indexed: %d\n", result.IndexEntryCount)
-	if result.IndexDriftCount > 0 {
-		fmt.Fprintf(w, "  ⚠ %d entry/entries indexed under a different fingerprint — run `sdd index --force` to re-embed (or let `sdd search` lazy-fill)\n", result.IndexDriftCount)
-	} else if result.IndexEntryCount > 0 {
-		fmt.Fprintln(w, "  no fingerprint drift")
+	var categories []string
+	grouped := map[string][]query.LintFinding{}
+	for _, f := range result.Findings {
+		if _, seen := grouped[f.Category]; !seen {
+			categories = append(categories, f.Category)
+		}
+		grouped[f.Category] = append(grouped[f.Category], f)
 	}
-	for _, drift := range result.RepoIndexDrift {
-		fmt.Fprintf(w, "  ⚠ repo %s: %d of %d cached entries indexed under a different fingerprint than the global embedder — the next cross-graph search re-embeds them\n",
-			drift.RepoID, drift.DriftCount, drift.EntryCount)
+	advisories := len(result.Findings) - result.Errors()
+	fmt.Fprintf(w, "%d error(s), %d advisory/advisories:\n", result.Errors(), advisories)
+	for _, category := range categories {
+		fmt.Fprintf(w, "\n%s:\n", category)
+		for _, f := range grouped[category] {
+			marker := "⚠"
+			if f.Severity == query.LintAdvisory {
+				marker = "ℹ"
+			}
+			if f.EntryID != "" {
+				fmt.Fprintf(w, "  %s %s [%s] %s\n", marker, f.EntryID, f.Code, f.Message)
+			} else {
+				fmt.Fprintf(w, "  %s [%s] %s\n", marker, f.Code, f.Message)
+			}
+		}
 	}
 }

@@ -63,6 +63,10 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 		return nil
 	}
 
+	// Past the already-connected no-op: real work follows. Report the stages
+	// so the footer shows connecting → cloning rather than a stuck spinner.
+	emitPhase(cmd.OnPhase, model.PhaseConnecting)
+
 	// Clone into a staging location under the cache root first — the
 	// canonical identity (and so the final cache path) is only known once
 	// the clone's declared config is readable.
@@ -79,6 +83,7 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	defer func() { _ = os.RemoveAll(staging) }()
 	cloneDir := filepath.Join(staging, "clone")
 	repo := repos.ConnectedRepo{CloneURL: cmd.CloneURL}
+	emitPhase(cmd.OnPhase, model.PhaseCloning)
 	if _, err := h.repos.EnsureCloned(ctx, repo, cloneDir); err != nil {
 		return err
 	}
@@ -112,10 +117,7 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	}
 
 	repo.RepoID = declared
-	if err := cfg.AddRepo(repo); err != nil {
-		return err
-	}
-	if err := h.repos.Save(cfg); err != nil {
+	if err := h.connectRepo(repo); err != nil {
 		return err
 	}
 	if _, err := h.declareDependency(declared, cmd); err != nil {
@@ -133,42 +135,64 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 // already there). Outside an sdd repo it is a silent no-op — registering a
 // connection without a dependent graph is legitimate. A graph never depends
 // on itself.
+func (h *Handler) connectRepo(repo repos.ConnectedRepo) error {
+	file, err := h.globalConfigFile()
+	if err != nil {
+		return err
+	}
+	return file.patch(func(existing []byte) ([]byte, error) {
+		cfg, err := repos.ParseGlobalConfig(existing)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", file.path, err)
+		}
+		if err := cfg.AddRepo(repo); err != nil {
+			return nil, err
+		}
+		return model.SetYAMLValue(existing, "repos", cfg.Repos)
+	})
+}
+
 func (h *Handler) declareDependency(repoID string, cmd *command.RepoAddCmd) (bool, error) {
 	if h.sddDir == "" {
 		return false, nil
 	}
-	path := filepath.Join(h.sddDir, "config.yaml")
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return false, fmt.Errorf("reading %s: %w", path, err)
-	}
-	cfgFile, err := model.ParseConfig(data)
+	file, err := h.repoConfigFile()
 	if err != nil {
-		return false, fmt.Errorf("%s: %w", path, err)
+		return false, err
 	}
-	if cfgFile.RepoID == repoID {
-		return false, fmt.Errorf("%q is this repo's own identity — a graph cannot depend on itself", repoID)
-	}
-	for _, dep := range cfgFile.Dependencies {
-		if dep == repoID {
-			if cmd.OnDeclared != nil {
-				cmd.OnDeclared(repoID, true)
-			}
-			return false, nil
+	declared := false
+	err = file.patch(func(existing []byte) ([]byte, error) {
+		cfgFile, err := model.ParseConfig(existing)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", file.path, err)
 		}
-	}
-	patched, err := model.SetYAMLSequence(data, "dependencies", append(cfgFile.Dependencies, repoID))
+		if cfgFile.RepoID == repoID {
+			return nil, fmt.Errorf("%q is this repo's own identity — a graph cannot depend on itself", repoID)
+		}
+		if slices.Contains(cfgFile.Dependencies, repoID) {
+			return nil, nil
+		}
+		patched, err := model.SetYAMLSequence(existing, "dependencies", append(cfgFile.Dependencies, repoID))
+		if err != nil {
+			return nil, fmt.Errorf("declaring dependency in %s: %w", file.path, err)
+		}
+		declared = true
+		return patched, nil
+	})
 	if err != nil {
-		return false, fmt.Errorf("declaring dependency in %s: %w", path, err)
+		return false, err
 	}
-	if err := os.WriteFile(path, patched, 0o644); err != nil {
-		return false, fmt.Errorf("writing %s: %w", path, err)
+	if !declared {
+		if cmd.OnDeclared != nil {
+			cmd.OnDeclared(repoID, true)
+		}
+		return false, nil
 	}
 	// Auto-commit the declaration, consistent with sdd init/new/summarize —
 	// the committed dependencies list is a shared, go.mod-style record other
 	// clones read to know what to connect, so it must not linger uncommitted.
 	if h.committer != nil {
-		if err := h.committer.Commit(fmt.Sprintf("sdd: repo add %s", repoID), path); err != nil {
+		if err := h.committer.Commit(fmt.Sprintf("sdd: repo add %s", repoID), file.path); err != nil {
 			return false, fmt.Errorf("committing dependency declaration: %w", err)
 		}
 	}
@@ -196,17 +220,20 @@ func (h *Handler) RepoRemove(ctx context.Context, cmd *command.RepoRemoveCmd) er
 	}
 	slogutils.FromContext(ctx).Debug("removing declared dependency", "repo", cmd.RepoID, "force", cmd.Force)
 
-	path := filepath.Join(h.sddDir, "config.yaml")
-	data, err := os.ReadFile(path)
+	file, err := h.repoConfigFile()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("no .sdd/config.yaml here — nothing to remove")
-		}
-		return fmt.Errorf("reading %s: %w", path, err)
+		return err
+	}
+	data, err := file.read()
+	if err != nil {
+		return err
+	}
+	if data == nil {
+		return fmt.Errorf("no .sdd/config.yaml here — nothing to remove")
 	}
 	cfgFile, err := model.ParseConfig(data)
 	if err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return fmt.Errorf("%s: %w", file.path, err)
 	}
 	if !slices.Contains(cfgFile.Dependencies, cmd.RepoID) {
 		return fmt.Errorf("repo %q is not a declared dependency in .sdd/config.yaml", cmd.RepoID)
@@ -230,15 +257,17 @@ func (h *Handler) RepoRemove(ctx context.Context, cmd *command.RepoRemoveCmd) er
 	}
 
 	remaining := slices.DeleteFunc(slices.Clone(cfgFile.Dependencies), func(d string) bool { return d == cmd.RepoID })
-	patched, err := model.SetYAMLSequence(data, "dependencies", remaining)
-	if err != nil {
-		return fmt.Errorf("removing dependency from %s: %w", path, err)
-	}
-	if err := os.WriteFile(path, patched, 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+	if err := file.patch(func(existing []byte) ([]byte, error) {
+		patched, err := model.SetYAMLSequence(existing, "dependencies", remaining)
+		if err != nil {
+			return nil, fmt.Errorf("removing dependency from %s: %w", file.path, err)
+		}
+		return patched, nil
+	}); err != nil {
+		return err
 	}
 	if h.committer != nil {
-		if err := h.committer.Commit(fmt.Sprintf("sdd: repo remove %s", cmd.RepoID), path); err != nil {
+		if err := h.committer.Commit(fmt.Sprintf("sdd: repo remove %s", cmd.RepoID), file.path); err != nil {
 			return fmt.Errorf("committing dependency removal: %w", err)
 		}
 	}
@@ -342,7 +371,7 @@ func (h *Handler) freshenReferencedRepos(ctx context.Context, refs []model.Ref) 
 	if len(repoIDs) == 0 {
 		return nil
 	}
-	_, err := h.EnsureReposFresh(ctx, repoIDs)
+	_, err := h.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: repoIDs})
 	return err
 }
 
@@ -440,7 +469,11 @@ func (h *Handler) PrepareCrossRepoSearch(ctx context.Context, q query.SearchQuer
 	// Text-only search needs fresh caches but no embedding; the vector path
 	// freshens and fills in one pass through BuildConnectedIndexes.
 	if q.Phrase == "" || embedder == nil {
-		_, err := h.EnsureReposFresh(ctx, repoIDs)
+		fresh := command.EnsureReposFreshCmd{RepoIDs: repoIDs}
+		if fill != nil {
+			fresh.OnPhase = fill.OnPhase
+		}
+		_, err := h.EnsureReposFresh(ctx, fresh)
 		return err
 	}
 	return h.BuildConnectedIndexes(ctx, repoIDs, embedder, fill)
@@ -463,7 +496,11 @@ func (h *Handler) BuildConnectedIndexes(ctx context.Context, repoIDs []string, e
 	if len(repoIDs) == 0 {
 		return nil
 	}
-	if _, err := h.EnsureReposFresh(ctx, repoIDs); err != nil {
+	fresh := command.EnsureReposFreshCmd{RepoIDs: repoIDs}
+	if fill != nil {
+		fresh.OnPhase = fill.OnPhase
+	}
+	if _, err := h.EnsureReposFresh(ctx, fresh); err != nil {
 		return err
 	}
 	if embedder == nil {
@@ -522,13 +559,16 @@ func (h *Handler) BuildConnectedIndexes(ctx context.Context, repoIDs []string, e
 	return nil
 }
 
-// EnsureReposFresh brings the caches of the given connected repos up to
-// date for a read: lazy clone when absent, cooldown-gated pull otherwise.
+// EnsureReposFresh brings the caches of the named connected repos up to date
+// for a read: lazy clone when absent, cooldown-gated pull otherwise.
 // Unconnected repo IDs are skipped — the read side renders them unresolved,
-// which is that state's honest surface. Reports whether any cache changed
-// so a long-lived caller can invalidate its GraphSource.
-func (h *Handler) EnsureReposFresh(ctx context.Context, repoIDs []string) (changed bool, err error) {
-	if len(repoIDs) == 0 {
+// which is that state's honest surface. Reports whether any cache changed so a
+// long-lived caller can invalidate its GraphSource. cmd.OnPhase (optional)
+// mirrors RepoAdd — connecting → cloning for a clone, syncing for a due pull,
+// nothing for a fresh-cache no-op — so a text-only cross-repo read shows a
+// phase-true label instead of "indexing".
+func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposFreshCmd) (changed bool, err error) {
+	if len(cmd.RepoIDs) == 0 {
 		return false, nil
 	}
 	if h.repos == nil {
@@ -539,7 +579,7 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, repoIDs []string) (chang
 		return false, err
 	}
 	logger := slogutils.FromContext(ctx)
-	for _, repoID := range repoIDs {
+	for _, repoID := range cmd.RepoIDs {
 		repo, ok := cfg.Connected(repoID)
 		if !ok {
 			logger.Debug("repo not connected; skipping cache refresh", "repo", repoID)
@@ -548,6 +588,13 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, repoIDs []string) (chang
 		cacheDir, err := h.repos.Registry().CacheDir(repoID)
 		if err != nil {
 			return changed, err
+		}
+		switch {
+		case !repos.IsCloned(cacheDir):
+			emitPhase(cmd.OnPhase, model.PhaseConnecting)
+			emitPhase(cmd.OnPhase, model.PhaseCloning)
+		case repos.PullDue(cacheDir, repos.DefaultPullCooldown):
+			emitPhase(cmd.OnPhase, model.PhaseSyncing)
 		}
 		cloned, err := h.repos.EnsureCloned(ctx, repo, cacheDir)
 		if err != nil {
@@ -564,4 +611,13 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, repoIDs []string) (chang
 		changed = changed || pulled
 	}
 	return changed, nil
+}
+
+// emitPhase fires an optional phase callback, guarding the nil case at the one
+// point phases cross the CQRS boundary (handlers report phases as plain
+// callback data; internal/cliout stays out of these layers).
+func emitPhase(onPhase func(model.Phase), phase model.Phase) {
+	if onPhase != nil {
+		onPhase(phase)
+	}
 }

@@ -7,10 +7,12 @@ import "github.com/networkteam/sdd/internal/model"
 // skips that direction (downstream off, or upstream off, or both → primary
 // only).
 type ShowQuery struct {
-	Graph     *model.Graph
 	IDs       []string
 	UpDepth   int // upstream expansion depth (grounding chain); 0 = no upstream
 	DownDepth int // downstream expansion depth (consumers); 0 = no downstream
+	// Budget bounds each direction's expansion on the serve path; the zero
+	// value is unbounded — explicit pulls arrive complete (d-tac-rzi).
+	Budget model.ShowTreeBudget
 }
 
 // Default expansion depths applied by the CLI when the flags are omitted.
@@ -37,6 +39,10 @@ type ShowGroup struct {
 	PrimaryTopics        []model.TopicPath
 	Upstream             []model.ShowTreeItem
 	Downstream           []model.ShowTreeItem
+	// UpstreamTruncated and DownstreamTruncated carry the direction-level
+	// budget frontier from the tree build.
+	UpstreamTruncated   []model.TruncatedRef
+	DownstreamTruncated []model.TruncatedRef
 }
 
 // ShowResult is the structured output for a ShowQuery — one group per primary.

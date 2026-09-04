@@ -22,10 +22,10 @@ The `sdd` binary lives at `./bin/sdd` (gitignored — rebuild locally with `devb
 
 - `devbox run build` — build the local `bin/sdd` dev binary (git hooks also run this after pull/rebase/checkout)
 - `go vet ./...` — compilation + correctness check (never use `go build` just to verify compilation — it produces no output on success)
-- `go test ./...` — run all tests
-- `go test -tags=eval -run TestPreflightEval ./internal/llm/...` — pre-flight prompt calibration eval (live `claude` CLI, slow + paid; model via `SDD_EVAL_MODEL`, default `sonnet`). Capture full output to a file and grep the file — `… -v 2>&1 | tee /tmp/eval.log` — never filter the live stream, or a failure shows no findings and forces a costly re-run.
+- `devbox run test` — run all tests: the root module and the separate `examples/extendingsdd` module. Never `go test ./...` alone — `./...` prunes the nested example module (a `go.work` does not change that), so its drift surfaces only in CI.
+- `go test -tags=eval -run TestPreflightEval ./internal/llmops/...` — pre-flight prompt calibration eval (live `claude` CLI, slow + paid; model via `SDD_EVAL_MODEL`, default `sonnet`). Capture full output to a file and grep the file — `… -v 2>&1 | tee /tmp/eval.log` — never filter the live stream, or a failure shows no findings and forces a costly re-run.
 - `go fmt ./...` — format code
-- `golangci-lint run ./...` — lint (must be clean; CI enforces)
+- `devbox run lint` — lint (must be clean; CI enforces). Convention findings print as warnings without failing the run — see `scripts/lint.sh` for the mechanism. Use the wrapper, not bare `golangci-lint run`, which fails on warnings too.
 - `devbox run validate-skills` — validate the rendered Codex skills under `.agents/skills/` against the Agent Skills standard (`uvx skills-ref@0.1.1 agentskills validate`, managed via the devbox `uv` package). Requires a Codex render present (i.e. `codex` in `supported_agents`).
 - `sdd view` — smoke-test the binary against the graph at `.sdd/graph/`
 - `goreleaser check` — validate `.goreleaser.yaml`
@@ -56,13 +56,20 @@ The `sdd` binary lives at `./bin/sdd` (gitignored — rebuild locally with `devb
 
 - **Single path**: I/O functions (file loading, etc.) should delegate to in-memory constructors. Don't duplicate indexing or initialization logic between production and test code paths.
 
-- **Comments explain the current why, not history**: Don't narrate how the code used to be ("previously…", "with the old X…", "changed from Y"). Git carries history. A comment should justify the current code where the why isn't self-evident — and nothing more.
+- **Minimal comment hygiene**: A comment earns its place only by carrying a *why* the code cannot show. Default to none; when one is warranted, one line is perfectly fine.
+  - **No history.** Don't narrate how the code used to be ("previously…", "with the old X…", "changed from Y"). Git carries that.
+  - **No duplication — comments are subject to DRY.** Never restate what the code already says, and never re-explain a concept or decision that is stated once elsewhere (a doc comment on the type, a graph entry, `AGENTS.md`). Duplicated prose drifts out of sync with the code it shadows; that drift is debt. State it in one place and let the reader find it there — reference an entry ID or type name instead of paraphrasing it. This holds across a change set too: when one change touches several files, its why lands in one of them and the other sites point — writing each file's comment in isolation is how the same story gets told four times.
+  - **Keep it small.** No section banners, no restating the signature, no step-by-step narration of the lines below. Prefer a shorter comment over a fuller one; prefer deleting it over shortening it if the code now speaks for itself.
 
 - **Logging**: Use `log/slog`; retrieve the logger via `slogutils.FromContext(ctx)` (from `github.com/networkteam/slogutils`). Handler entry points take `ctx` and pull the logger from it — do not pass loggers as separate arguments, and do not use `fmt.Fprintf(h.stderr, ...)` for operational messages. Stderr writes are reserved for user-facing CLI output that isn't logging (prompts, structured CLI results).
 
 - **Frame cost as maintenance surface and dependencies, not time**: When weighing a technical option (a library, an integration, an adapter), don't estimate effort in hours or days — that's speculation. State what ongoing maintenance surface it opens (code you own, protocols/APIs you must track) and what dependencies it pulls in — how heavy, and how reversible (vendorable? official vs community?). Those are the durable cost signals.
 
 - **Fail loud — never swallow errors into silent fallbacks**: Catch errors early and propagate them to a caller that can act; never degrade a failure to a stderr `warning:` (or any other fallback) that lets execution continue as if nothing broke. This includes background side effects like the git auto-commit: a failed or timed-out commit returns an error — the entry file stays on disk for durability, but the failure surfaces — it is not printed and swallowed.
+
+- **Test the exported surface**: Test files use the external test package (`package foo_test`) and exercise exported types, functions, and methods — that keeps tests honest about the API and free to refactor internals. An internal test is the exception, not the default: it needs an unexported seam that genuinely cannot be reached through the API, and it lives in a file named `*_internal_test.go` so the exception is visible. (Much existing code predates this rule — follow it for new test files, and prefer converting when touching old ones.)
+
+- **Tests live at the layer that owns what they assert, and no test fakes another layer's contract** (graph entry 20260819-152950-d-prc-h1m carries the full reasoning): `internal/engine` tests engine semantics over synthetic specs its test files own; `internal/proctest` tests shipped-procedure behavior against the real application (real registry, real ops, scripted LLM); `application` keeps unit tests for its own surfaces; `mcpapp` tests transport concerns.
 
 ## Structure
 
@@ -76,12 +83,22 @@ sdd/
 │   ├── finders/            # Query execution — pure reads, no side effects
 │   ├── model/              # Pure domain types (no I/O, no deps)
 │   ├── presenters/         # View rendering of query results
-│   ├── llm/                # Pre-flight + summarization via LLM
+│   ├── llm/                # LLM client machinery: observing + timeout decorators, CallStat/StatsSink, embed plumbing; provider adapters (claude, gollm) and the factory beneath it
+│   ├── llmops/             # The LLM operations: pre-flight, summarize, writing guide, with their prompts
+│   ├── llmstats/           # FileSink/Reader for .sdd/stats/llm.jsonl (owns the wire shape)
 │   ├── git/                # Git adapter: exec-based implementations of the consumer-defined git interfaces (handlers.Committer/…, finders.GitSyncer, repos.Git)
 │   ├── repos/              # Connected repos for cross-repo refs: Locations (explicit paths), Registry (pure reads → finders), Manager (clone/pull/config writes → handlers)
 │   ├── meta/               # Config resolution
+│   ├── engine/             # Workflow engine: procedure specs, typed store, choosers, session event log
+│   ├── proctest/           # Integration harness + per-procedure behavior suites over the real application
 │   └── bundledskills/      # Skill source of truth (agent-neutral templates), embedded via //go:embed
 │       └── templates/      # Neutral *.md.tmpl skill tree, rendered per agent (sdd, sdd-catchup, sdd-explore, sdd-groom)
+├── pkg/                    # Exported packages — the only public Go surface (d-tac-zhc)
+│   ├── llm/                # Public LLM contract: Runner over Request/Result/Identity/Usage (d-cpt-q6n)
+│   ├── application/        # Protocol-neutral runtime + composition root (CLI and MCP are shells over it)
+│   ├── local/              # Filesystem and in-memory adapters
+│   ├── mcpapp/             # Shared MCP handler surface
+│   └── sddtest/            # Reusable adapter conformance suites
 ├── .claude/skills/         # Installed Claude render for this repo (rebuilt from internal/bundledskills/templates)
 ├── .agents/skills/         # Installed Codex render for this repo (Agent Skills standard; same template source)
 ├── .sdd/
@@ -103,6 +120,7 @@ sdd/
 - Full ID format: `{YYYYMMDD}-{HHmmss}-{type}-{layer}-{suffix}` — full ID used in code/CLI invocations, path derived from it
 - WIP markers live at `.sdd/graph/wip/`
 - **Finding entries: use `sdd search`, not grep.** To locate graph entries (including when delegating to subagents), use `sdd search` (vector or hybrid retrieval) — it matches semantically across summaries and bodies. Reserve `grep`/`ripgrep` for **source code**; `sdd search` only indexes graph entries, not Go source.
+- **A delegate's report is a summary, not a source.** A subagent's research report has the same status as an entry summary: a pointer. Read the entries it names in full (`sdd show`) before reasoning, planning, or dialoguing on them — a report can misstate what an entry settles.
 
 ## Skill source of truth
 
@@ -121,6 +139,10 @@ Skills are **source-of-truth as agent-neutral templates in `internal/bundledskil
 - **Never move or rewrite the branch on your own — recover only by adding commits.** Do not run `git reset`, `git rebase`, `git commit --amend`, or a force-push without an explicit request — not even to correct a commit you just made. This repo has concurrent sessions committing to `main`, so the tip is a *moving target*: any command that points the branch at an older hash (`reset`) or rewrites history can silently drop another session's commit — and the tip can advance again between the moment you read the log and the moment you act, so even a reset to a hash you "just saw" is unsafe. When a fix genuinely needs applying, the only safe shape is an **additive** one — `git cherry-pick <hash>` onto the current tip — never a reset back to a remembered hash. Losing work is far worse than an imperfect commit: if a commit lands wrong (stray files, wrong message), leave it, say so plainly, and let the user decide.
 - **Scope every manual commit with an explicit `-- <pathspec>`.** `git commit -m …` without a pathspec records the *whole* index, not just what you staged — and with concurrent sessions the index may already hold ambient staged changes. Always `git commit -- path/to/file …` so the commit contains exactly the intended files, the same way `sdd`'s own auto-commits scope themselves.
 - **Trust `sdd`'s auto-commit.** `sdd new`, `sdd summarize`, and `sdd init` make their own `sdd: …` commit. If the command exits without error, the entry and its commit are done — do not re-run `git status` / `git log` to confirm. The only thing worth reading back is the generated summary (for fidelity), not the commit.
+
+## Writing
+
+All dialogue with the user and every graph entry follows the `unslop` skill — load it before writing either. It carries the goal (the tersest text that carries the meaning exactly), how the dialogue and graph-entry registers differ, and the pattern catalog (Christopher, 2026-08-24).
 
 ## Memory
 

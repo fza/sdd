@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -29,56 +30,6 @@ func (r pruneFailReader) SkillStatus(ctx context.Context, q query.SkillStatusQue
 		return nil, fmt.Errorf("injected SkillStatus failure for %s", q.Target)
 	}
 	return r.Reader.SkillStatus(ctx, q)
-}
-
-type fakeLegacySessionMigrator struct {
-	paths    []string
-	failPath string
-	seen     []string
-}
-
-func (m *fakeLegacySessionMigrator) ListLegacySessions(context.Context) ([]string, error) {
-	return append([]string(nil), m.paths...), nil
-}
-
-func (m *fakeLegacySessionMigrator) MigrateLegacySession(_ context.Context, path string) error {
-	m.seen = append(m.seen, path)
-	if path == m.failPath {
-		return fmt.Errorf("injected malformed session")
-	}
-	return nil
-}
-
-func TestInit_LegacySessionMigrationContinuesAfterPerSessionFailure(t *testing.T) {
-	tmp := t.TempDir()
-	migrator := &fakeLegacySessionMigrator{
-		paths:    []string{"/sessions/one.jsonl", "/sessions/broken.jsonl", "/sessions/three.jsonl"},
-		failPath: "/sessions/broken.jsonl",
-	}
-	h := handlers.New(handlers.Options{Reader: finders.New(finders.Options{}), Sessions: migrator})
-	var migrated []string
-	err := h.Init(context.Background(), &command.InitCmd{
-		RepoRoot:              tmp,
-		BinaryVersion:         "v0.2.0",
-		Targets:               []model.AgentTarget{model.AgentClaude},
-		Scope:                 model.ScopeProject,
-		MigrateLegacySessions: true,
-		OnSessionMigrated: func(path string) {
-			migrated = append(migrated, path)
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "/sessions/broken.jsonl") {
-		t.Fatalf("Init error = %v, want failed session path", err)
-	}
-	if !slices.Equal(migrator.seen, migrator.paths) {
-		t.Fatalf("migration sweep = %v, want %v", migrator.seen, migrator.paths)
-	}
-	if !slices.Equal(migrated, []string{"/sessions/one.jsonl", "/sessions/three.jsonl"}) {
-		t.Fatalf("migrated callbacks = %v", migrated)
-	}
-	if _, statErr := os.Stat(filepath.Join(tmp, model.SDDDirName, "config.yaml")); statErr != nil {
-		t.Fatalf("normal init did not complete: %v", statErr)
-	}
 }
 
 // TestInit_FreshProjectEndToEnd exercises the full Init orchestration on an
@@ -1382,4 +1333,50 @@ func TestInit_RepoIDDerivation(t *testing.T) {
 			t.Errorf("repo_id after re-init = %q", cfg.RepoID)
 		}
 	})
+}
+
+func TestInit_DefaultBranchUpgrade(t *testing.T) {
+	h := handlers.New(handlers.Options{Reader: finders.New(finders.Options{})})
+	tmp := t.TempDir()
+	configDir := filepath.Join(tmp, model.SDDDirName)
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(configDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("graph_dir: .sdd/graph\n# keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	base := command.InitCmd{
+		RepoRoot: tmp, DefaultBranch: "main", BinaryVersion: "v0.2.0",
+		Targets: []model.AgentTarget{model.AgentClaude}, Scope: model.ScopeProject,
+	}
+	if err := h.Init(context.Background(), &base); err != nil {
+		t.Fatal(err)
+	}
+	data := readFile(t, configPath)
+	cfg, err := model.ParseConfig(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultBranch != "main" {
+		t.Fatalf("default_branch = %q, want main", cfg.DefaultBranch)
+	}
+	if !bytes.Contains(data, []byte("# keep me")) {
+		t.Fatal("upgrade discarded existing config comments")
+	}
+
+	second := base
+	second.DefaultBranch = "feature"
+	if err := h.Init(context.Background(), &second); err != nil {
+		t.Fatal(err)
+	}
+	data = readFile(t, configPath)
+	cfg, err = model.ParseConfig(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultBranch != "main" {
+		t.Fatalf("recorded default_branch overwritten with %q", cfg.DefaultBranch)
+	}
 }

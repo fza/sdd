@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/networkteam/sdd/internal/textpatch"
 )
 
 // Provenance classifies who wrote a store value. The split carries the trust
@@ -49,6 +51,37 @@ func NewStore(spec *Spec) *Store {
 	}
 }
 
+// Clone creates an isolated store for candidate mutation. Every stored value
+// is a normalized JSON document, so a container-recursion copy fully isolates
+// the candidate — a rejected batch leaves the source untouched.
+func (s *Store) Clone() *Store {
+	values := make(map[string]storeValue, len(s.values))
+	for name, value := range s.values {
+		value.Value = copyStoreValue(value.Value)
+		values[name] = value
+	}
+	return &Store{spec: s.spec, values: values}
+}
+
+func (s *Store) transact(apply func(*Store) error) error {
+	if s.engineJournal != nil {
+		return fmt.Errorf("commands may mutate the store only through WriteEngine")
+	}
+	candidate := s.Clone()
+	if err := apply(candidate); err != nil {
+		return err
+	}
+	s.commit(candidate)
+	return nil
+}
+
+func (s *Store) commit(candidate *Store) {
+	// The candidate is already an isolated copy (Clone at transaction start,
+	// fresh normalized values per write) and is discarded after adoption, so
+	// no further copy is needed.
+	s.values = candidate.values
+}
+
 // SetStart applies the start-time input map, the shared seeding primitive
 // (d-tac-tlo): a key naming a declared param sets that param (fixed at
 // start), a key naming a declared state field seeds it — a start-time state
@@ -70,13 +103,46 @@ func (s *Store) SetStart(inputs map[string]any) error {
 			return fmt.Errorf("unknown start input %q (params: %s; seedable state: %s)", name, joinNames(s.spec.paramNames()), joinNames(s.spec.stateNames()))
 		}
 	}
-	if err := s.SetParams(params); err != nil {
-		return err
-	}
-	if len(seed) > 0 {
-		if _, err := s.WriteState(seed); err != nil {
+	return s.transact(func(candidate *Store) error {
+		if err := candidate.setParams(params); err != nil {
 			return err
 		}
+		if len(seed) > 0 {
+			if _, err := candidate.writeState(seed, nil); err != nil {
+				return err
+			}
+		}
+		return candidate.applyStateDefaults()
+	})
+}
+
+// applyStateDefaults writes each declared state field's Default for fields left
+// unset after params and seed. Deterministic from the spec, so live start and
+// replay (both routed through SetStart) agree without the value ever being
+// logged. A field with a default therefore won't receive a later parent seed —
+// the default counts as already-set — which is exactly right for a constant a
+// procedure carries and seeds outward rather than one it inherits.
+//
+// A default is only safe on a NEW procedure or a NEW field: adding one to an
+// existing field retroactively would apply it on replay of sessions that ran
+// before it existed, silently rewriting their recovered state.
+//
+// Runs on the transaction candidate: decl.Default is already validated at spec
+// load, so it only needs normalizing to the store's JSON-document form before
+// landing with state provenance.
+func (s *Store) applyStateDefaults() error {
+	for name, decl := range s.spec.State {
+		if decl.Default == nil {
+			continue
+		}
+		if _, ok := s.values[name]; ok {
+			continue
+		}
+		nv, err := normalizeStoreValue(decl.Default)
+		if err != nil {
+			return fmt.Errorf("state default %q: %w", name, err)
+		}
+		s.values[name] = storeValue{Value: nv, Provenance: ProvenanceState}
 	}
 	return nil
 }
@@ -94,6 +160,12 @@ func (s *Store) isState(name string) bool {
 // SetParams validates and writes the start-time params. Required params must
 // be present; unknown params are rejected.
 func (s *Store) SetParams(params map[string]any) error {
+	return s.transact(func(candidate *Store) error {
+		return candidate.setParams(params)
+	})
+}
+
+func (s *Store) setParams(params map[string]any) error {
 	for name, raw := range params {
 		decl, ok := s.spec.Params[name]
 		if !ok {
@@ -103,7 +175,11 @@ func (s *Store) SetParams(params map[string]any) error {
 		if err != nil {
 			return fmt.Errorf("param %q: %w", name, err)
 		}
-		s.values[name] = storeValue{Value: v, Provenance: ProvenanceParam}
+		nv, err := normalizeStoreValue(v)
+		if err != nil {
+			return fmt.Errorf("param %q: %w", name, err)
+		}
+		s.values[name] = storeValue{Value: nv, Provenance: ProvenanceParam}
 	}
 	for name, decl := range s.spec.Params {
 		if decl.Optional {
@@ -120,34 +196,105 @@ func (s *Store) SetParams(params map[string]any) error {
 // declared in the spec's state block are writable — this is the report trust
 // boundary. Returns the names actually written, sorted.
 func (s *Store) WriteState(fields map[string]any) ([]string, error) {
-	written := make([]string, 0, len(fields))
-	for name, raw := range fields {
-		decl, ok := s.spec.State[name]
-		if !ok {
-			if _, isParam := s.spec.Params[name]; isParam {
-				return nil, fmt.Errorf("field %q is a param — params are set at start and not report-writable", name)
-			}
-			return nil, fmt.Errorf("field %q is not declared in state — reports can only write declared state fields", name)
-		}
-		v, err := decl.Type.ValidateValue(raw)
-		if err != nil {
-			return nil, fmt.Errorf("field %q: %w", name, err)
-		}
-		s.values[name] = storeValue{Value: v, Provenance: ProvenanceState}
-		written = append(written, name)
+	return s.writeState(fields, nil)
+}
+
+func (s *Store) writeState(fields map[string]any, validate func(*Store) error) ([]string, error) {
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
 	}
-	sort.Strings(written)
+	sort.Strings(names)
+	written := make([]string, 0, len(names))
+	err := s.transact(func(candidate *Store) error {
+		for _, name := range names {
+			raw := fields[name]
+			decl, ok := candidate.spec.State[name]
+			if !ok {
+				if _, isParam := candidate.spec.Params[name]; isParam {
+					return fmt.Errorf("field %q is a param — params are set at start and not report-writable", name)
+				}
+				return fmt.Errorf("field %q is not declared in state — reports can only write declared state fields", name)
+			}
+			if raw == nil {
+				if !decl.Optional {
+					return fmt.Errorf("field %q is required and cannot be cleared", name)
+				}
+				delete(candidate.values, name)
+				written = append(written, name)
+				continue
+			}
+			v, err := decl.Type.ValidateValue(raw)
+			if err != nil {
+				return fmt.Errorf("field %q: %w", name, err)
+			}
+			if decl.PatchOf != "" {
+				// The patch mutates its target; the target's new value is what
+				// lands and logs, so replay re-writes the result, never
+				// re-applies the pairs.
+				if _, direct := fields[decl.PatchOf]; direct {
+					return fmt.Errorf("field %q patches %q — report one or the other, not both", name, decl.PatchOf)
+				}
+				patched, err := applyPatchValue(candidate, decl.PatchOf, v)
+				if err != nil {
+					return fmt.Errorf("field %q: %w (the whole report is refused; no pair applied)", name, err)
+				}
+				candidate.values[decl.PatchOf] = storeValue{Value: patched, Provenance: ProvenanceState}
+				written = append(written, decl.PatchOf)
+				continue
+			}
+			nv, err := normalizeStoreValue(v)
+			if err != nil {
+				return fmt.Errorf("field %q: %w", name, err)
+			}
+			candidate.values[name] = storeValue{Value: nv, Provenance: ProvenanceState}
+			written = append(written, name)
+		}
+		if validate != nil {
+			return validate(candidate)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 	return written, nil
+}
+
+// applyPatchValue applies a validated list<search-replace> value to the named
+// text field's current value in the candidate store.
+func applyPatchValue(candidate *Store, target string, v any) (string, error) {
+	cur, ok := candidate.values[target]
+	text, _ := cur.Value.(string)
+	if !ok || text == "" {
+		return "", fmt.Errorf("%q is not set — nothing to patch; report %q in full instead", target, target)
+	}
+	items, _ := v.([]any)
+	pairs := make([]textpatch.Pair, 0, len(items))
+	for _, item := range items {
+		m, _ := item.(map[string]any)
+		old, _ := m["old"].(string)
+		repl, _ := m["new"].(string)
+		pairs = append(pairs, textpatch.Pair{Old: old, New: repl})
+	}
+	return textpatch.Apply(text, pairs)
 }
 
 // WriteEngine writes an engine-produced value (an op result or chooser-call
 // effect) per the producing function's Go contract. Never reachable from a
-// report.
-func (s *Store) WriteEngine(name string, v any) {
-	s.values[name] = storeValue{Value: v, Provenance: ProvenanceEngine}
-	if s.engineJournal != nil {
-		s.engineJournal[name] = v
+// report. The value is normalized to its JSON document form so pre-restart
+// reads match the replayed form; a value that cannot marshal is a loud
+// write-time error, leaving the store unchanged.
+func (s *Store) WriteEngine(name string, v any) error {
+	nv, err := normalizeStoreValue(v)
+	if err != nil {
+		return fmt.Errorf("engine write %q: %w", name, err)
 	}
+	s.values[name] = storeValue{Value: nv, Provenance: ProvenanceEngine}
+	if s.engineJournal != nil {
+		s.engineJournal[name] = copyStoreValue(nv)
+	}
+	return nil
 }
 
 // beginJournal starts collecting engine writes for the next command run.
@@ -168,7 +315,7 @@ func (s *Store) Get(name string) (any, bool) {
 	if !ok {
 		return nil, false
 	}
-	return sv.Value, true
+	return copyStoreValue(sv.Value), true
 }
 
 // Has reports whether the field is present and non-empty. Empty strings,
@@ -196,7 +343,7 @@ func (s *Store) Has(name string) bool {
 func (s *Store) TemplateContext() map[string]any {
 	ctx := make(map[string]any, len(s.values))
 	for name, sv := range s.values {
-		ctx[name] = sv.Value
+		ctx[name] = copyStoreValue(sv.Value)
 	}
 	return ctx
 }
@@ -227,10 +374,35 @@ func (s *Store) StateSnapshot() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// Collected returns the param- and state-provenance values that are present
+// and non-empty, excluding internal trust machinery. It is a resuming agent's
+// view of what this instance has already gathered — the anchor, chosen scope,
+// and reported judgments that persist across a handover and must not be
+// re-derived. Engine-produced trust records are structurally excluded by the
+// provenance filter; the explicit trust-machinery skip keeps that guarantee
+// even if such a field were ever param- or state-declared.
+func (s *Store) Collected() map[string]any {
+	out := make(map[string]any)
+	for name, sv := range s.values {
+		if sv.Provenance != ProvenanceParam && sv.Provenance != ProvenanceState {
+			continue
+		}
+		if isTrustMachineryField(name) {
+			continue
+		}
+		if !s.Has(name) {
+			continue
+		}
+		out[name] = copyStoreValue(sv.Value)
+	}
+	return out
+}
+
 // Export returns all values with provenance for session-log persistence.
 func (s *Store) Export() map[string]ExportedValue {
 	out := make(map[string]ExportedValue, len(s.values))
 	for name, sv := range s.values {
+		sv.Value = copyStoreValue(sv.Value)
 		out[name] = ExportedValue(sv)
 	}
 	return out
@@ -257,7 +429,11 @@ func (s *Store) importValue(name string, ev ExportedValue) error {
 		if err != nil {
 			return fmt.Errorf("replayed param %q: %w", name, err)
 		}
-		s.values[name] = storeValue{Value: v, Provenance: ProvenanceParam}
+		nv, err := normalizeStoreValue(v)
+		if err != nil {
+			return fmt.Errorf("replayed param %q: %w", name, err)
+		}
+		s.values[name] = storeValue{Value: nv, Provenance: ProvenanceParam}
 	case ProvenanceState:
 		decl, ok := s.spec.State[name]
 		if !ok {
@@ -267,13 +443,66 @@ func (s *Store) importValue(name string, ev ExportedValue) error {
 		if err != nil {
 			return fmt.Errorf("replayed state field %q: %w", name, err)
 		}
-		s.values[name] = storeValue{Value: v, Provenance: ProvenanceState}
+		nv, err := normalizeStoreValue(v)
+		if err != nil {
+			return fmt.Errorf("replayed state field %q: %w", name, err)
+		}
+		s.values[name] = storeValue{Value: nv, Provenance: ProvenanceState}
 	case ProvenanceEngine:
-		s.values[name] = storeValue{Value: ev.Value, Provenance: ProvenanceEngine}
+		nv, err := normalizeStoreValue(ev.Value)
+		if err != nil {
+			return fmt.Errorf("replayed engine field %q: %w", name, err)
+		}
+		s.values[name] = storeValue{Value: nv, Provenance: ProvenanceEngine}
 	default:
 		return fmt.Errorf("replayed field %q has unknown provenance %q", name, ev.Provenance)
 	}
 	return nil
+}
+
+// normalizeStoreValue reduces a value to its JSON document form — the store's
+// contract is that every value is a JSON document. Marshalling then decoding
+// into an untyped `any` yields exactly the persisted shape (map[string]any,
+// []any, string, float64, bool, nil), so a value read before a restart matches
+// the same value replayed from the log, and typed inputs (engine.Ref,
+// engine.FactIndex, time.Time) collapse to that shape at the write boundary. A
+// value that cannot marshal (a channel, a func) is a loud write-time error, not
+// a panic and not a silent skip.
+func normalizeStoreValue(value any) (any, error) {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("store value is not JSON-persistable: %w", err)
+	}
+	var out any
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, fmt.Errorf("store value did not round-trip through JSON: %w", err)
+	}
+	return out, nil
+}
+
+// copyStoreValue returns an isolated copy of a normalized store value so a
+// caller cannot mutate store internals through a returned map or slice. Values
+// are guaranteed JSON shapes by normalizeStoreValue, so a container-recursion
+// walk suffices — scalars (string, float64, bool, nil) are immutable and pass
+// through, and no marshal step is needed on the read path (marshal failures are
+// already surfaced at write time).
+func copyStoreValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, item := range v {
+			out[k] = copyStoreValue(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = copyStoreValue(item)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func joinNames(names []string) string {

@@ -40,10 +40,12 @@ type sectionSpec struct {
 	participantFilters [][]string
 	sinceCutoff        *time.Time // pointer so we can distinguish "no since()" from "since(0d)"
 	topicPrefix        model.TopicPath
+	indexed            bool
 	untagged           bool      // untagged: keep only entries whose effective topic set is empty
 	idFilter           []string  // id(<id>,...): keep only the listed entries (raw IDs, resolved at apply time)
 	rank               *rankSpec // last-write-wins per d-tac-uww §2
 	pageN              int       // -1 = no page limit
+	skipN              int       // -1 = no skip; skip(N) drops the first N after filtering and ranking, before n(N)
 	groupField         string    // empty = no group; non-empty = group(by(<field>))
 	expandField        string    // empty = no expand; "involvement" (focus-block) or "refs" (per-row ref sub-lines on as-list)
 
@@ -99,6 +101,7 @@ func newSectionSpec() *sectionSpec {
 	return &sectionSpec{
 		source:           "graph",
 		pageN:            -1,
+		skipN:            -1,
 		stalledThreshold: DefaultStalledThreshold,
 	}
 }
@@ -122,10 +125,14 @@ func (s *sectionSpec) rejectGraphPrimitivesForWip() error {
 		return fmt.Errorf("source(wip) does not support since(); slice 8 surfaces every active marker")
 	case !s.topicPrefix.IsZero():
 		return fmt.Errorf("source(wip) does not support topic() filters; markers do not carry topics")
+	case s.indexed:
+		return fmt.Errorf("source(wip) does not support indexed; markers are not graph entries")
 	case s.rank != nil:
 		return fmt.Errorf("source(wip) does not support rank(); markers are surfaced in chronological order")
 	case s.pageN >= 0:
 		return fmt.Errorf("source(wip) does not support n() in slice 8; the active-marker set is bounded by what's on disk")
+	case s.skipN >= 0:
+		return fmt.Errorf("source(wip) does not support skip(); the active-marker set is bounded by what's on disk")
 	case s.groupField != "":
 		return fmt.Errorf("source(wip) does not support group(); marker grouping is not yet defined")
 	case s.expandField != "":
@@ -167,14 +174,22 @@ func (s *sectionSpec) validateMutualExclusion() error {
 		return fmt.Errorf("as-counts is mutually exclusive with brief; topic-count rows carry no summary to shorten")
 	case s.render == "as-counts" && s.pageN >= 0:
 		return fmt.Errorf("as-counts is mutually exclusive with n; n truncates entries before aggregation, producing wrong counts — narrow the entry set with filters instead")
+	case s.render == "as-counts" && s.skipN >= 0:
+		return fmt.Errorf("as-counts is mutually exclusive with skip; skip drops entries before aggregation, producing wrong counts")
+	case s.render == "as-bodies" && s.brief:
+		return fmt.Errorf("as-bodies is mutually exclusive with brief; a body render serves each entry's full body, not a shortened entry line")
 	case s.groupField != "" && s.rank != nil:
 		return fmt.Errorf("group is mutually exclusive with rank in slice 5; per-group ranking is reserved for a future slice")
 	case s.groupField != "" && s.pageN >= 0:
 		return fmt.Errorf("group is mutually exclusive with n in slice 5; per-group pagination is reserved for a future slice")
+	case s.groupField != "" && s.skipN >= 0:
+		return fmt.Errorf("group is mutually exclusive with skip; per-group pagination is reserved for a future slice")
 	case s.expandField == "involvement" && s.rank != nil:
 		return fmt.Errorf("expand(involvement) is mutually exclusive with rank; focus-block targets render in involvement order, and heat for stalled classification is fixed at heat(exp-14d)")
 	case s.expandField == "involvement" && s.pageN >= 0:
 		return fmt.Errorf("expand(involvement) is mutually exclusive with n; focus-block target lists are bounded by the focus's involvement frontmatter, not by pagination")
+	case s.expandField == "involvement" && s.skipN >= 0:
+		return fmt.Errorf("expand(involvement) is mutually exclusive with skip; focus-block target lists are bounded by the focus's involvement frontmatter, not by pagination")
 	case s.expandField != "" && s.groupField != "":
 		return fmt.Errorf("expand is mutually exclusive with group; both produce their own non-flat shape")
 	case s.stalledSet && s.expandField != "involvement":
@@ -226,6 +241,8 @@ func (s *sectionSpec) validateRenderShape() error {
 			return fmt.Errorf("as-participants-block does not support rank(); the block groups active actors with bound roles in chain order")
 		case s.pageN >= 0:
 			return fmt.Errorf("as-participants-block does not support n(); pagination is undefined for the participants block")
+		case s.skipN >= 0:
+			return fmt.Errorf("as-participants-block does not support skip(); pagination is undefined for the participants block")
 		}
 	}
 	return nil

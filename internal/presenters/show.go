@@ -7,9 +7,14 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/networkteam/sdd/internal/mdcompose"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 )
+
+// bodyHeadingLevel is where an embedded entry body starts: one level below the
+// `# body` section heading that contains it.
+const bodyHeadingLevel = 2
 
 // ShowOptions controls optional segments of the show rendering.
 type ShowOptions struct {
@@ -44,29 +49,41 @@ func RenderShow(w io.Writer, result *query.ShowResult, opts ShowOptions) {
 func renderShowGroup(w io.Writer, g query.ShowGroup, opts ShowOptions) {
 	writeEnvelope(w, g, opts)
 	fmt.Fprintln(w)
-	// Top-level `# body` heading so the body's own `##` sections nest beneath
-	// it rather than colliding with the neighborhood section headings.
+	// Top-level `# body` heading with the body demoted beneath it, so an
+	// embedded heading never sits level with the section containing it
+	// (d-cpt-5wv).
 	fmt.Fprintln(w, "# body")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, g.Primary.Content)
+	fmt.Fprintln(w, mdcompose.DemoteTo(g.Primary.Content, bodyHeadingLevel))
 
-	if len(g.Upstream) > 0 {
+	if len(g.Upstream) > 0 || len(g.UpstreamTruncated) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "# upstream")
 		fmt.Fprintln(w)
 		for _, item := range g.Upstream {
 			renderTreeItem(w, item, primaryDisplayID(g))
 		}
+		renderDirectionCut(w, g.UpstreamTruncated)
 	}
 
-	if len(g.Downstream) > 0 {
+	if len(g.Downstream) > 0 || len(g.DownstreamTruncated) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "# downstream")
 		fmt.Fprintln(w)
 		for _, item := range g.Downstream {
 			renderTreeItem(w, item, primaryDisplayID(g))
 		}
+		renderDirectionCut(w, g.DownstreamTruncated)
 	}
+}
+
+// renderDirectionCut names the primary's own children a chain budget kept out
+// of the direction entirely — the direction-level honest frontier.
+func renderDirectionCut(w io.Writer, refs []model.TruncatedRef) {
+	if len(refs) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "+%d more entries truncated (chain budget): %s\n", len(refs), truncatedIDs(refs))
 }
 
 // primaryDisplayID is the primary's display identity — the repo-prefixed
@@ -83,27 +100,34 @@ func primaryDisplayID(g query.ShowGroup) string {
 // mirrors the on-disk frontmatter (reusing model.Ref's object-form marshaling)
 // and adds the filename-derived id, the entry time, discovered attachments,
 // and the derived status and effective topics. Field order here is the YAML
-// output order. Summary renders last (and only with --with-summary) so the
-// long opt-in text never pushes the scannable fields down.
+// output order. A procedure's machine part (params/state/steps/framing)
+// renders after the scannable tail, and Summary last (and only with
+// --with-summary), so neither pushes the scannable fields down.
 type showEnvelope struct {
-	ID           string      `yaml:"id"`
-	Type         string      `yaml:"type"`
-	Kind         string      `yaml:"kind,omitempty"`
-	Layer        string      `yaml:"layer"`
-	Confidence   string      `yaml:"confidence,omitempty"`
-	Intent       string      `yaml:"intent,omitempty"`
-	Participants []string    `yaml:"participants,omitempty"`
-	Canonical    string      `yaml:"canonical,omitempty"`
-	Aliases      []string    `yaml:"aliases,omitempty"`
-	Actor        string      `yaml:"actor,omitempty"`
-	Topics       []string    `yaml:"topics,omitempty"`
-	Refs         []model.Ref `yaml:"refs,omitempty"`
-	Closes       []string    `yaml:"closes,omitempty"`
-	Supersedes   []string    `yaml:"supersedes,omitempty"`
-	Attachments  []string    `yaml:"attachments,omitempty"`
-	Status       string      `yaml:"status,omitempty"`
-	Time         string      `yaml:"time"`
-	Summary      string      `yaml:"summary,omitempty"`
+	ID           string           `yaml:"id"`
+	Type         string           `yaml:"type"`
+	Kind         string           `yaml:"kind,omitempty"`
+	Layer        string           `yaml:"layer"`
+	Confidence   string           `yaml:"confidence,omitempty"`
+	Intent       string           `yaml:"intent,omitempty"`
+	Participants []string         `yaml:"participants,omitempty"`
+	Canonical    string           `yaml:"canonical,omitempty"`
+	Aliases      []string         `yaml:"aliases,omitempty"`
+	Class        string           `yaml:"class,omitempty"`
+	Actor        string           `yaml:"actor,omitempty"`
+	Topics       []string         `yaml:"topics,omitempty"`
+	Index        *model.FactIndex `yaml:"index,omitempty"`
+	Refs         []model.Ref      `yaml:"refs,omitempty"`
+	Closes       []string         `yaml:"closes,omitempty"`
+	Supersedes   []string         `yaml:"supersedes,omitempty"`
+	Attachments  []string         `yaml:"attachments,omitempty"`
+	Status       string           `yaml:"status,omitempty"`
+	Time         string           `yaml:"time"`
+	Params       yaml.Node        `yaml:"params,omitempty"`
+	State        yaml.Node        `yaml:"state,omitempty"`
+	Steps        yaml.Node        `yaml:"steps,omitempty"`
+	Framing      yaml.Node        `yaml:"framing,omitempty"`
+	Summary      string           `yaml:"summary,omitempty"`
 }
 
 func writeEnvelope(w io.Writer, g query.ShowGroup, opts ShowOptions) {
@@ -118,14 +142,22 @@ func writeEnvelope(w io.Writer, g query.ShowGroup, opts ShowOptions) {
 		Participants: e.Participants,
 		Canonical:    e.Canonical,
 		Aliases:      e.Aliases,
+		Class:        string(e.Class),
 		Actor:        e.Actor,
 		Topics:       topicLabels(g.PrimaryTopics),
+		Index:        e.Index,
 		Refs:         e.Refs,
 		Closes:       e.Closes,
 		Supersedes:   e.Supersedes,
 		Attachments:  e.Attachments,
 		Status:       formatStatusTrailValue(g.PrimaryStatus, g.PrimarySupersedePath),
 		Time:         e.Time.Format("2006-01-02 15:04:05"),
+	}
+	if e.ProcedureSpec != nil {
+		env.Params = e.ProcedureSpec.Params
+		env.State = e.ProcedureSpec.State
+		env.Steps = e.ProcedureSpec.Steps
+		env.Framing = e.ProcedureSpec.Framing
 	}
 	if opts.WithSummary {
 		env.Summary = e.Summary
@@ -168,13 +200,21 @@ func renderTreeItem(w io.Writer, item model.ShowTreeItem, primaryID string) {
 	}
 
 	if len(item.Truncated) > 0 {
-		ids := make([]string, len(item.Truncated))
-		for i, tr := range item.Truncated {
-			ids[i] = tr.ID
+		reason := fmt.Sprintf("depth %d", item.Depth)
+		if item.TruncatedReason != "" {
+			reason = item.TruncatedReason
 		}
-		fmt.Fprintf(w, "%s+%d more refs truncated (depth %d): %s\n",
-			subIndent, len(item.Truncated), item.Depth, strings.Join(ids, ", "))
+		fmt.Fprintf(w, "%s+%d more refs truncated (%s): %s\n",
+			subIndent, len(item.Truncated), reason, truncatedIDs(item.Truncated))
 	}
+}
+
+func truncatedIDs(refs []model.TruncatedRef) string {
+	ids := make([]string, len(refs))
+	for i, tr := range refs {
+		ids[i] = tr.ID
+	}
+	return strings.Join(ids, ", ")
 }
 
 // treeQualifier is the parenthesized `(<kind>, <status>)` slot for a tree

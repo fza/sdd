@@ -15,14 +15,17 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	sdd "github.com/networkteam/sdd/application"
-	gitadapter "github.com/networkteam/sdd/internal/git"
-	"github.com/networkteam/sdd/internal/index"
+	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/slogutils"
+
+	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/llm"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
-	localadapter "github.com/networkteam/sdd/local"
-	mcpserver "github.com/networkteam/sdd/mcpapp"
+	pkgllm "github.com/networkteam/sdd/pkg/llm"
+	localadapter "github.com/networkteam/sdd/pkg/local"
+	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
 func serveCmd() *cli.Command {
@@ -55,7 +58,7 @@ func serveCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			runner, err := newRunner(cmd)
+			runner, err := newRunner(cmd, "")
 			if err != nil {
 				return err
 			}
@@ -71,6 +74,11 @@ func serveCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			retention, err := model.ResolveSessionRetention(cfg)
+			if err != nil {
+				return err
+			}
+			collectSessions(ctx, application, project, identity, retention)
 
 			transport := cmd.String("transport")
 			srv, err := mcpserver.New(mcpserver.Options{
@@ -210,49 +218,40 @@ func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principa
 	return runtime, nil
 }
 
-func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddDir string, cfg *model.PerRepoConfig, registry *repos.Registry, runner llm.Runner) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
-	project := sdd.ProjectID("local")
+func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddDir string, cfg *model.PerRepoConfig, registry *repos.Registry, runner pkgllm.Runner) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
 	displayName := filepath.Base(filepath.Dir(sddDir))
 	participant := ""
 	language := ""
 	var dependencies []string
 	if cfg != nil {
-		if cfg.RepoID != "" {
-			project = sdd.ProjectID(cfg.RepoID)
-		}
 		participant = cfg.Participant
 		language = cfg.Language
 		dependencies = append(dependencies, cfg.Dependencies...)
 	}
+	locations, err := repos.DefaultLocations()
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	stableRepoRoot, err := git.StableRepoRoot(filepath.Dir(sddDir))
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	storeLocations, err := resolveSessionLocations(sddDir, cfg, locations)
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	project := sessionStoreProject(cfg)
 	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: graphDir})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
-	sessions, err := localadapter.NewFilesystemSessionStore(filepath.Join(sddDir, "sessions"))
+	sessions, err := localadapter.NewFilesystemSessionStore(storeLocations...)
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
-	blobs, err := localadapter.NewFilesystemStagedBlobStore(filepath.Join(sddDir, "staged-blobs"))
+	blobs, err := localadapter.NewFilesystemStagedBlobStore(storeLocations...)
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
-	}
-	executor := sdd.LLMExecutorFuncs{
-		CapabilitiesFunc: func(context.Context) ([]string, error) { return []string{"json-schema"}, nil },
-		ExecuteFunc: func(ctx context.Context, request sdd.LLMRequest) (sdd.LLMResult, error) {
-			result, err := runner.Run(ctx, llm.Request{SystemPrompt: request.SystemPrompt, UserPrompt: request.Prompt})
-			if err != nil {
-				return sdd.LLMResult{}, err
-			}
-			out := sdd.LLMResult{Output: []byte(result.Text), ExecutorFingerprint: "local", FinishReason: "completed"}
-			if result.Meta != nil {
-				out.Usage.InputTokens = int64(result.Meta.InputTokens)
-				out.Usage.OutputTokens = int64(result.Meta.OutputTokens)
-				if result.Meta.Provider != "" {
-					out.ExecutorFingerprint = result.Meta.Provider
-				}
-			}
-			return out, nil
-		},
 	}
 	localEmbedder, err := buildEmbedder(cmd)
 	if err != nil {
@@ -269,16 +268,30 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	// time, so a lazy embedder that reveals its dimensionality only on first
 	// use still routes correctly. No process-local memory store in production.
 	cacheRoot := registry.CacheRoot()
-	baseRepoKey := index.RepoKey(repoIDOf(cfg), filepath.Dir(sddDir))
+	baseRepoKey := persistentIndexRepoKey(cfg, stableRepoRoot)
 	baseIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, baseRepoKey)
 	var embeddings sdd.EmbeddingExecutor
 	if localEmbedder != nil {
 		embeddings = publicEmbeddingExecutor(localEmbedder)
 	}
+	targets, err := newLocalMutationTargets(project, filepath.Dir(sddDir))
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	if cfg == nil || cfg.DefaultBranch == "" {
+		return nil, "", sdd.RequestIdentity{}, fmt.Errorf("default_branch is required in .sdd/config.yaml before serving mutation tools")
+	}
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
-		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, Language: language,
-		Dependencies: dependencies, Graph: graph, Sessions: sessions, StagedBlobs: blobs, Embeddings: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), LLM: executor,
-		Finalizers: []sdd.MutationFinalizer{localGitFinalizer{graphDir: graphDir, git: gitadapter.CLI{}}},
+		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
+		Dependencies: dependencies, Graph: graph, Targets: targets, Branches: targets,
+		Recovery: sdd.RecoveryAuthorizerFunc(func(_ context.Context, request sdd.RecoveryAccessRequest) error {
+			if request.Actor.Subject != request.OriginalSubject {
+				return &sdd.ApplicationError{Code: sdd.ErrorWriteDenied, Message: "cross-principal recovery is not authorized by the local runtime"}
+			}
+			return nil
+		}),
+		Sessions: sessions, StagedBlobs: blobs, Embeddings: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
+		LLM: runner,
 	})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
@@ -301,7 +314,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(dependency), cacheRoot, dependency)
 		member, runtimeErr := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 			Project: sdd.ProjectRef{ID: sdd.ProjectID(dependency), DisplayName: dependency}, Graph: memberGraph,
-			Sessions: sessions, StagedBlobs: blobs, Embeddings: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), LLM: executor,
+			Sessions: sessions, StagedBlobs: blobs, Embeddings: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), LLM: runner,
 			ExcludeEmbeddedFromIndex: true,
 		})
 		if runtimeErr != nil {
@@ -320,50 +333,69 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	return application, project, identity, nil
 }
 
-type localGitFinalizer struct {
-	graphDir string
-	git      localGit
-}
-
-type localGit interface {
-	Commit(string, ...string) error
-	HasCommitMessage(context.Context, string) (bool, error)
-}
-
-func (localGitFinalizer) Name() string { return "git" }
-
-func (f localGitFinalizer) Finalize(ctx context.Context, mutation sdd.AppliedMutation) error {
-	trailer := "SDD-Mutation: " + mutation.BatchID
-	committed, err := f.git.HasCommitMessage(ctx, trailer)
+// collectSessions runs one reclamation pass at startup. This is the trigger
+// rather than a command because the store is being opened anyway and collection
+// involves no procedure and no served instruction, so it stays host-neutral by
+// construction.
+//
+// CollectSessions itself returns its error, so a composition calling it on a
+// schedule can act on one. This adapter cannot: over stdio a server that exits
+// leaves the agent with a dead pipe and no way to act, which is worse than the
+// unreclaimed disk it would be reporting. So startup logs and serves.
+func collectSessions(
+	ctx context.Context,
+	application *sdd.Application,
+	project sdd.ProjectID,
+	identity sdd.RequestIdentity,
+	retention time.Duration,
+) {
+	result, err := application.CollectSessions(ctx, identity, project, sdd.CollectSessionsCmd{
+		Retention: retention,
+	})
 	if err != nil {
-		return err
+		slogutils.FromContext(ctx).Warn("session collection did not complete", "err", err)
+		return
 	}
-	if committed {
-		return nil
+	if len(result.RemovedSessions) > 0 || len(result.RemovedStaged) > 0 || result.DrainedIntents > 0 {
+		slogutils.FromContext(ctx).Info("collected session scaffolding",
+			"sessions", len(result.RemovedSessions),
+			"staged_sessions", len(result.RemovedStaged),
+			"drained_intents", result.DrainedIntents,
+			"skipped", len(result.Skipped),
+		)
 	}
-	seen := map[string]bool{}
-	var paths []string
-	appendPath := func(logical string) {
-		if logical == "" || seen[logical] {
-			return
-		}
-		seen[logical] = true
-		paths = append(paths, filepath.Join(f.graphDir, filepath.FromSlash(logical)))
-	}
-	for _, change := range mutation.Batch.Changes {
-		appendPath(change.LogicalPath)
-	}
-	for _, attachment := range mutation.Batch.Attachments {
-		appendPath(attachment.LogicalPath)
-	}
-	if len(paths) == 0 {
-		return fmt.Errorf("git finalizer: mutation %s has no paths", mutation.BatchID)
-	}
-	message := mutation.Batch.Message
-	if message == "" {
-		message = "sdd: apply " + mutation.BatchID
-	}
-	return f.git.Commit(message+"\n\n"+trailer, paths...)
+}
+
+func newLocalMutationTargets(project sdd.ProjectID, serverCheckout string) (*localadapter.GitWorktreeAcquirer, error) {
+	return localadapter.NewGitWorktreeAcquirer(localadapter.GitWorktreeAcquirerOptions{
+		Project: project, ServerCheckout: serverCheckout,
+		Factory: func(_ context.Context, checkout string, target sdd.MutationTarget) (sdd.GraphStore, []sdd.MutationFinalizer, func() error, error) {
+			targetCfg, cfgErr := resolveConfigAt(filepath.Join(checkout, model.SDDDirName))
+			if cfgErr != nil {
+				return nil, nil, nil, fmt.Errorf("loading mutation target config for %s: %w", target.Branch, cfgErr)
+			}
+			if targetCfg == nil {
+				return nil, nil, nil, fmt.Errorf("mutation target checkout %q does not contain project %s", checkout, project)
+			}
+			targetProject := sdd.ProjectID(targetCfg.RepoID)
+			if targetProject == "" {
+				targetProject = "local"
+			}
+			if targetProject != project {
+				return nil, nil, nil, fmt.Errorf("mutation target checkout %q does not contain project %s", checkout, project)
+			}
+			targetGraphDir := meta.ResolveGraphDir(checkout, targetCfg)
+			targetGraph, graphErr := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: targetGraphDir})
+			if graphErr != nil {
+				return nil, nil, nil, graphErr
+			}
+			graphDirRel := targetCfg.GraphDir
+			if graphDirRel == "" {
+				graphDirRel = model.DefaultGraphDir
+			}
+			return targetGraph, []sdd.MutationFinalizer{localadapter.GitFinalizer{Checkout: checkout, GraphDir: graphDirRel, Branch: target.Branch}}, func() error { return nil }, nil
+		},
+	})
 }
 
 func publicEmbeddingExecutor(embedder llm.Embedder) sdd.EmbeddingExecutor {

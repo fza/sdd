@@ -1,5 +1,10 @@
 package model
 
+import (
+	"fmt"
+	"strings"
+)
+
 // ResolvedRef is the resolution of a target ID to its live head by walking
 // supersession transitively. The path runs origin-first to head-last; a target
 // that nothing supersedes resolves to a single-element path whose head is the
@@ -34,6 +39,38 @@ func (r ResolvedRef) Origin() string {
 // an entry that has since been replaced, so the head differs from the origin.
 func (r ResolvedRef) IsStale() bool {
 	return len(r.path) > 1
+}
+
+// Hops returns the number of supersede steps between origin and head — zero
+// when the reference already points at a live entry.
+func (r ResolvedRef) Hops() int {
+	if len(r.path) == 0 {
+		return 0
+	}
+	return len(r.path) - 1
+}
+
+// InboundRef is one incoming reference after supersede resolution: who made it,
+// and how far the target it named sits from the live head.
+type InboundRef struct {
+	Source string
+	Hops   int
+}
+
+// FactBody resolves a fact reference to its live head — so a project override
+// that supersedes a base fact wins — and returns the head ID with the head's
+// body. A missing or empty fact fails loud: a silently absent reference
+// section would be exactly the wrong degradation.
+func (g *Graph) FactBody(id string) (string, string, error) {
+	head := g.ResolveRef(id).Head()
+	e, ok := g.ByID[head]
+	if !ok {
+		return "", "", fmt.Errorf("reference fact %s does not resolve in the graph", id)
+	}
+	if strings.TrimSpace(e.Content) == "" {
+		return "", "", fmt.Errorf("reference fact %s has an empty body", head)
+	}
+	return head, e.Content, nil
 }
 
 // Path returns the ordered supersession trail from origin to head (origin

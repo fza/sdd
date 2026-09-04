@@ -2,7 +2,7 @@
 
 **signal · dialogue · decision**
 
-**Keep humans and AI agents aligned across parallel work.**
+**SDD is agent-native memory for your project's decisions and the why behind them.** Your agents get exactly the project context they need — what was noticed, discussed, and decided — and new knowledge is captured in dialogue with the people who create it, as the work happens.
 
 SDD records your project's reasoning as an immutable decision graph — signals (what you noticed) and decisions (what you committed to). At any moment, anyone (human or agent) can see what's in flight, which decisions are active, and what's still open. Built for developers and teams shipping with AI agents.
 
@@ -16,7 +16,7 @@ SDD records your project's reasoning as an immutable decision graph — signals 
 
 ## How you use it
 
-You start in Claude Code with the `/sdd` skill. It shows the current state of the graph and carries the moves for taking it forward — capture, decide, engage, groom, explore — all through dialogue. The `sdd` CLI underneath stores entries and derives state from the graph; you rarely invoke it directly.
+You work in Claude Code or Codex through the `/sdd-engine` skill. `sdd init` registers the `sdd` MCP server for the configured agents, and the engine serves the session step by step — check-in, capture, decisions, evaluation, grooming — all through dialogue. The `sdd` CLI underneath stores entries and derives state from the graph; you rarely invoke it directly. The older skill-driven `/sdd` flow still ships but is deprecated: v0.18.0 will remove it and rename `/sdd-engine` to `/sdd`.
 
 ## How it feels
 
@@ -97,16 +97,23 @@ See [Configuration](#configuration) for re-running, version bumps, and non-inter
 In **Claude Code**, run:
 
 ```
-/sdd
+/sdd-engine
 ```
 
 In **OpenAI Codex**, invoke the skill:
 
 ```
-$sdd
+$sdd-engine
 ```
 
-The skill loads the graph state and suggests where to start. Everything after that is dialogue. See [Multiple agents](#multiple-agents) for how the same skill source renders to each.
+The engine opens the session with an orientation — where the project stands and the moves available. Everything after that is dialogue. See [Multiple agents](#multiple-agents) for how the same skill source renders to each.
+
+<details>
+<summary><strong>Deprecated:</strong> the skill-driven <code>/sdd</code> flow</summary>
+
+The original `/sdd` skill (`$sdd` on Codex) still works in v0.17.0 and opens with the same graph state. It is deprecated: v0.18.0 will remove the legacy skills and rename `/sdd-engine` to `/sdd`.
+
+</details>
 
 ## What's here today
 
@@ -125,9 +132,9 @@ The skill loads the graph state and suggests where to start. Everything after th
 
 ## Embed SDD in a Go application
 
-`github.com/networkteam/sdd/application` exposes the protocol-neutral runtime and infrastructure ports. `github.com/networkteam/sdd/local` provides optional filesystem and in-memory adapters, while `github.com/networkteam/sdd/mcpapp` mounts the application as the shared MCP handler surface. An embedding application keeps ownership of authentication, project authorization, storage, model providers, HTTP server lifecycle, and deployment policy. The module root is documentation-only; public symbols have one canonical package owner.
+`github.com/networkteam/sdd/pkg/application` exposes the protocol-neutral runtime and infrastructure ports. `github.com/networkteam/sdd/pkg/local` provides optional filesystem and in-memory adapters, while `github.com/networkteam/sdd/pkg/mcpapp` mounts the application as the shared MCP handler surface. An embedding application keeps ownership of authentication, project authorization, storage, model providers, HTTP server lifecycle, and deployment policy. The module root is documentation-only; public symbols have one canonical package owner.
 
-See [`examples/extendingsdd`](examples/extendingsdd) for a nested external module that implements the public ports and mounts `mcpapp.Server.Handler()` behind bearer middleware. The reusable adapter conformance suites live in `github.com/networkteam/sdd/sddtest`.
+See [`examples/extendingsdd`](examples/extendingsdd) for a nested external module that implements the public ports and mounts `mcpapp.Server.Handler()` behind bearer middleware. The reusable adapter conformance suites live in `github.com/networkteam/sdd/pkg/sddtest`.
 
 ## Where this is heading
 
@@ -137,26 +144,26 @@ SDD also shouldn't be tied to one agent harness. It runs in Claude Code and Code
 
 ## What a session looks like
 
-The skill covers a handful of common moves. You don't pick a mode — you just talk, and `/sdd` figures out where the dialogue is going.
+A session covers a handful of common moves. You don't pick a mode — you just talk, and the dialogue routes itself.
 
 ### Bootstrap
 
 ```
-> /sdd
+> /sdd-engine
 
 Claude: This graph is empty. Want me to walk through bootstrap?
         We'll capture who's on the project and what it's pulling
         toward — gives the rest of the work something to anchor on.
 ```
 
-Bootstrap runs `/sdd-bootstrap` and walks you through capturing your project's actors (participants) and strategic frame. After that, every later session has identity and direction to thread against.
+Bootstrap walks you through capturing your project's actors (participants) and strategic frame. After that, every later session has identity and direction to thread against.
 
 ### Catch up
 
-Every session starts here. `/sdd` renders a colleague-style briefing — what's in flight, what changed recently, what wants your next move.
+Every session starts here. The check-in renders a colleague-style briefing — what's in flight, what changed recently, what wants your next move.
 
 ```
-> /sdd
+> /sdd-engine
 
 Claude: *Current focus: get the importer unblocked.*
 
@@ -189,7 +196,7 @@ Claude: [plays back an operational gap signal — "importer rejects
 
 > Looks right.
 
-Claude: [sdd new s ops --kind gap ...]
+Claude: [records the gap in the graph]
 ```
 
 Before writing, Claude plays back the proposed entry. A pre-flight validator (LLM-based, invoked by the CLI) reviews the draft against its refs and flags contradictions, missing acceptance criteria on plans, unrelated references, and similar calibration gaps. `high` findings block the write; `medium` and `low` are advisory. It works as a required gate to make sure entries are consistent and follow contracts and SDD rules.
@@ -210,10 +217,10 @@ Claude: [drafts d-cpt-vr4 — kind plan, six ACs covering the
 
 > Looks right.
 
-Claude: [sdd new d cpt --kind plan ...]
+Claude: [records the plan in the graph]
 ```
 
-Claude can attach a longer design doc via `--attach` for plans that need more than the ACs to carry.
+Claude can attach a longer design doc for plans that need more than the ACs to carry.
 
 ### Engage
 
@@ -229,14 +236,14 @@ Claude: [reads the entry and its chain, surfaces the design
          Capture that first, or proceed and address it inline?
 ```
 
-For implementation, Claude creates a WIP marker (`sdd wip start`) to signal the work is in flight. When the work finishes, Claude plays back the closing done signal, captures it, and takes the marker down. Add `--branch` to isolate the entry chain on a git branch if multiple participants are working in parallel.
+For implementation, a WIP marker signals the work is in flight. When the work finishes, Claude plays back the closing done signal, captures it, and takes the marker down. The entry chain can ride a git branch when multiple participants work in parallel.
 
 ### Groom
 
 ```
 > Let's groom.
 
-Claude: [invokes /sdd-groom — returns a table of candidates: stale
+Claude: [sweeps the graph — returns a table of candidates: stale
          entries, missing `closes` links, superseded-in-practice
          relationships — then walks through them one at a time]
 ```
@@ -351,7 +358,7 @@ sdd config set llm.provider ollama     # write to the user-global file
 sdd config set --local embedding.api_keys.openai sk-...   # write to .sdd/config.local.yaml
 ```
 
-`sdd config set` writes the user-global file by default, or the machine-local file with `--local`. The committed project file is written by `sdd init` (or edited by hand), so a project property change is a reviewed commit. The provider blocks below can live in any of the three files — put shared defaults in the project file, personal defaults global, and keys local.
+`sdd config set` writes the user-global file by default, or the machine-local file with `--local`. The committed project file is written by `sdd init` (or edited by hand), so a project property change is a reviewed commit. The provider blocks below can live in any of the three files — put shared defaults in the project file and personal defaults, API keys included, at the global layer.
 
 ### Re-running `sdd init`
 
@@ -463,7 +470,9 @@ sdd view --layout='topic(infrastructure/cli)'  # a topic's neighborhood
 sdd view --layout='decisions,signals'          # kind-grouped views
 ```
 
-Bare `sdd view` prints the macro vocabulary and filter primitives.
+Run `sdd view --help` for the full layout grammar, macro vocabulary, filter
+primitives, and worked examples. Bare `sdd view` reports the missing
+`--layout` and points there.
 
 **`sdd search`** — three-mode retrieval:
 
@@ -483,6 +492,8 @@ sdd show d-cpt-vr4              # the entry plus its grounding and consumers
 sdd show d-cpt-vr4 --up 4 --down 3   # widen the neighborhood
 ```
 
+**`sdd recover`** — inspect a durable write whose outcome needs an explicit decision. The interactive command reconciles the concrete branch target before offering a valid action; it never replays pending work automatically. `sdd recover --history` shows terminal audit history. See [local mutation targets and recovery](docs/local-mutation-recovery.md).
+
 For the full CLI surface, run `sdd --help`.
 
 ## Directory layout
@@ -490,7 +501,7 @@ For the full CLI surface, run `sdd --help`.
 ```
 your-project/
 └── .sdd/
-    ├── config.yaml               # graph_dir, language, scope
+    ├── config.yaml               # graph_dir, default_branch, language, scope
     ├── config.local.yaml         # local participant name, llm + embedding config (gitignored)
     ├── meta.json                 # graph_schema_version, minimum_version
     ├── graph/
@@ -508,6 +519,7 @@ The vector index and the connected-repo caches don't live in the project tree �
 - [docs/signal-dialogue-decision.md](docs/signal-dialogue-decision.md) — framework model
 - [docs/story.md](docs/story.md) — a fictional story (Kōgen Coffee) of what SDD could become; the vision that sparked the design
 - [docs/signals.md](docs/signals.md) — open design signals for the framework itself
+- [docs/local-mutation-recovery.md](docs/local-mutation-recovery.md) — explicit branch authority, durable apply, and recovery states
 - [CLAUDE.md](CLAUDE.md) — guidance for Claude Code working on SDD itself
 
 ## Star the repo

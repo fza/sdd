@@ -5,11 +5,14 @@ import (
 	"time"
 )
 
+// Provisional damping per supersede hop; rationale and revision criteria in d-cpt-x6z.
+const SupersedeHopFactor = 0.8
+
 // HeatScore computes the recency-weighted in-degree of an entry: each
 // incoming reference contributes `decay(ageDays(ref_source))` to the
-// score, where ageDays is the gap between `now` and the referencing
-// entry's creation time. Default decay is exp-14d when callers don't
-// override (see DefaultDecayName).
+// score, damped per supersede hop, where ageDays is the gap between
+// `now` and the referencing entry's creation time. Default decay is
+// exp-14d when callers don't override (see DefaultDecayName).
 //
 // Heat is the foundational rank signal: an entry referenced by many
 // recent entries has high heat; an entry referenced only by old entries
@@ -19,22 +22,21 @@ func HeatScore(g *Graph, e *Entry, decay DecayFunc, now time.Time) float64 {
 		return 0
 	}
 	var sum float64
-	for _, refID := range g.RefsTo[e.ID] {
-		ref, ok := g.ByID[refID]
+	for _, in := range g.InboundRefs[e.ID] {
+		ref, ok := g.ByID[in.Source]
 		if !ok {
 			continue
 		}
 		ageDays := now.Sub(ref.Time).Hours() / 24
-		sum += decay(ageDays)
+		sum += decay(ageDays) * math.Pow(SupersedeHopFactor, float64(in.Hops))
 	}
 	return sum
 }
 
-// InDegreeScore returns the raw count of incoming references — purely
-// structural centrality with no recency weighting. Equivalent to
-// HeatScore with the `none` decay.
+// InDegreeScore returns the raw count of incoming references, resolved
+// through supersession and undamped (d-cpt-x6z).
 func InDegreeScore(g *Graph, e *Entry) float64 {
-	return float64(len(g.RefsTo[e.ID]))
+	return float64(len(g.InboundRefs[e.ID]))
 }
 
 // MultScore is heat × in-degree. Entries that are both recent (high

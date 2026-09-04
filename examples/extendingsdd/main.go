@@ -15,9 +15,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
-	sdd "github.com/networkteam/sdd/application"
-	localadapter "github.com/networkteam/sdd/local"
-	"github.com/networkteam/sdd/mcpapp"
+	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/llm"
+	localadapter "github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/pkg/mcpapp"
 )
 
 type externalAccess struct{ runtime *sdd.ProjectRuntime }
@@ -48,18 +49,18 @@ func main() {
 	root := env("SDD_EXAMPLE_DATA", ".example-sdd")
 	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: "example", GraphDir: filepath.Join(root, "graph")})
 	check(err)
-	sessions, err := localadapter.NewFilesystemSessionStore(filepath.Join(root, "sessions"))
+	sessions, err := localadapter.NewFilesystemSessionStoreAt(filepath.Join(root, "sessions"))
 	check(err)
-	blobs, err := localadapter.NewFilesystemStagedBlobStore(filepath.Join(root, "staged-blobs"))
+	blobs, err := localadapter.NewFilesystemStagedBlobStoreAt(filepath.Join(root, "staged-blobs"))
 	check(err)
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "example", DisplayName: "External example"}, Graph: graph, Sessions: sessions, StagedBlobs: blobs,
-		LLM: sdd.LLMExecutorFuncs{
-			CapabilitiesFunc: func(context.Context) ([]string, error) { return nil, nil },
-			ExecuteFunc: func(context.Context, sdd.LLMRequest) (sdd.LLMResult, error) {
-				return sdd.LLMResult{}, errors.New("configure an LLM executor for writes")
-			},
-		},
+		LLM: llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {
+			return llm.Result{}, &llm.Error{
+				Identity: llm.Identity{Provider: "example", Model: "stub"},
+				Err:      errors.New("configure an LLM runner for writes"),
+			}
+		}),
 	})
 	check(err)
 	application, err := sdd.NewApplication(externalAccess{runtime: runtime})
