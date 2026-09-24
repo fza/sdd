@@ -52,6 +52,28 @@ Acceptance criteria:
 
 Out of scope: pre-warmed agent processes with a neutral working directory and a scrubbed environment, taken on by its own plan below; the annotation surface of `--skip-preflight` and `--preflight-verified`, decided separately; graph-resident calibration, which stays untouched.
 
+### Pre-flight bypass provenance
+
+`Entry.Preflight` takes one value today, `skipped`, written by `--skip-preflight` and carried on 58 entries in this graph. No presenter, lint check, view or MCP surface reads it, so a bypass is invisible unless someone opens the file. `--preflight-verified` records nothing at all, and the doc comment on the field promises an `error` value that no code writes.
+
+The field becomes a closed set of three values, and a read surface shows it:
+
+- `skipped` — the author bypassed the check.
+- `unavailable` — the checker failed and the capture proceeded anyway.
+- `dry-run-verified` — findings were settled by a prior `--dry-run` pass, written by `--preflight-verified`.
+
+`sdd show` and `sdd view` display the value, and lint can count it. The 58 entries carrying a bare `skipped` stay valid, since the value keeps its meaning.
+
+`--preflight-verified` recording `dry-run-verified` replaces its original no-trace behavior. The reason that behavior avoided an annotation was that `skipped` misstates a capture which was in fact validated. A distinct value states it accurately instead, so the annotation is no longer a misstatement.
+
+Rejected alternatives:
+
+- A free-text reason written verbatim from the flag. Nothing can aggregate or check unbounded prose in frontmatter, the flag stops being a bare boolean for every script and skill that passes it, and it demands a sentence at the moment the author is trying to get through.
+- A read surface over the existing single value. The three cases stay indistinguishable and `--preflight-verified` stays traceless.
+- Leaving the field alone. The marks stay unreadable without grepping the files.
+
+Open: `unavailable` has no writer. A pre-flight infrastructure error aborts the capture, so no entry exists to carry the value.
+
 ### Agent processes inside sdd
 
 Own plan, not yet drafted. `internal/llm/claude` spawns `claude -p` per call inside the project tree, so every call pays process startup and the project's own instruction files, skills, hooks and servers. An external Ollama-compatible proxy currently covers this by keeping a started process ready and starting it somewhere neutral. What of that belongs in sdd, and in what shape, is undecided.
