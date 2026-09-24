@@ -228,7 +228,7 @@ type EmbeddingConfig struct {
 type LLMConfig struct {
 	// Provider selects the runner implementation: "claude-cli" (default, uses
 	// the logged-in Claude Code session) or a gollm-supported provider name
-	// such as "anthropic", "openai", "ollama".
+	// such as "anthropic", "openai", "mistral", "ollama".
 	Provider string `yaml:"provider,omitempty"`
 	// Model is the provider-specific model identifier.
 	Model string `yaml:"model,omitempty"`
@@ -245,6 +245,12 @@ type LLMConfig struct {
 	Concurrency int `yaml:"concurrency,omitempty"`
 	// OllamaEndpoint overrides the default Ollama URL for the gollm adapter.
 	OllamaEndpoint string `yaml:"ollama_endpoint,omitempty"`
+	// Endpoint overrides the base URL of an OpenAI-compatible chat service —
+	// a gateway, a self-hosted server, a vendor speaking the same wire
+	// protocol. Empty uses the provider's own default. Applies to the
+	// "openai" provider; providers with their own URL (anthropic, mistral)
+	// and Ollama (see OllamaEndpoint) ignore it.
+	Endpoint string `yaml:"endpoint,omitempty"`
 	// APIKeys maps provider name to API key. Never belongs in the
 	// committed .sdd/config.yaml.
 	APIKeys map[string]string `yaml:"api_keys,omitempty" sdd:"secret"`
@@ -451,6 +457,9 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 	}
 	if overlay.OllamaEndpoint != "" {
 		out.OllamaEndpoint = overlay.OllamaEndpoint
+	}
+	if overlay.Endpoint != "" {
+		out.Endpoint = overlay.Endpoint
 	}
 	if overlay.RateLimitRPS != 0 {
 		out.RateLimitRPS = overlay.RateLimitRPS

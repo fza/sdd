@@ -389,7 +389,7 @@ Claude Code is the primary, most-exercised harness; Codex support is recent and 
 
 ### LLM provider (summaries + pre-flight)
 
-SDD calls an LLM in two places — summarizing each captured entry (the short text rendered in `sdd view` and catch-up) and running pre-flight validation on every draft before it lands. Four providers supported: `anthropic` (cloud API), `openai` (cloud API), `ollama` (local), and `claude-cli` (your local Claude Code CLI authentication).
+SDD calls an LLM in two places — summarizing each captured entry (the short text rendered in `sdd view` and catch-up) and running pre-flight validation on every draft before it lands. Five providers supported: `anthropic` (cloud API), `openai` (cloud API), `mistral` (cloud API), `ollama` (local), and `claude-cli` (your local Claude Code CLI authentication).
 
 ```yaml
 # Anthropic API
@@ -412,6 +412,27 @@ llm:
 ```
 
 ```yaml
+# Mistral API
+llm:
+  provider: mistral
+  model: mistral-large-2512
+  api_keys:
+    mistral: ...
+  timeout: 5m
+```
+
+```yaml
+# Any OpenAI-compatible service — a gateway, a self-hosted server, LM Studio
+llm:
+  provider: openai
+  endpoint: http://127.0.0.1:1234/v1
+  model: local-model
+  api_keys:
+    openai: not-needed-but-required
+  timeout: 5m
+```
+
+```yaml
 # Local Ollama
 llm:
   provider: ollama
@@ -427,7 +448,9 @@ llm:
   model: claude-sonnet-4-6
 ```
 
-Remote providers (`anthropic`, `openai`) get a conservative rate limit applied automatically, biased below tier-1 ceilings so bursty operations like `sdd summarize --all` don't trip 429s. Override with `rate_limit_rps` on higher tiers.
+Pre-flight and the writing guide ask the provider to constrain its response to a JSON schema where the provider reads one: `response_format` on `openai` and `mistral`, `format` on `ollama`. Summaries are never constrained, and `anthropic` and `claude-cli` carry no schema.
+
+Remote providers (`anthropic`, `openai`, `mistral`) get a conservative rate limit applied automatically, biased below tier-1 ceilings so bursty operations like `sdd summarize --all` don't trip 429s. Override with `rate_limit_rps` on higher tiers.
 
 ### Embedding provider (vector search)
 

@@ -71,6 +71,9 @@ func resolveLLMConfig(cmd *cli.Command) (model.LLMConfig, error) {
 	if cmd.IsSet("preflight-model") {
 		cfg.Model = cmd.String("preflight-model")
 	}
+	if cmd.IsSet("endpoint") {
+		cfg.Endpoint = cmd.String("endpoint")
+	}
 	if cmd.IsSet("concurrency") {
 		cfg.Concurrency = int(cmd.Int("concurrency"))
 	}
@@ -695,11 +698,15 @@ func newCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "provider",
-				Usage: "LLM provider (claude-cli, anthropic, openai, ollama) — overrides config",
+				Usage: "LLM provider (claude-cli, anthropic, openai, mistral, ollama) — overrides config",
 			},
 			&cli.StringFlag{
 				Name:  "model",
 				Usage: "LLM model identifier — overrides config",
+			},
+			&cli.StringFlag{
+				Name:  "endpoint",
+				Usage: "OpenAI-compatible base URL — overrides config",
 			},
 			&cli.StringFlag{
 				Name:  "preflight-model",
@@ -1090,11 +1097,15 @@ func summarizeCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "provider",
-				Usage: "LLM provider (claude-cli, anthropic, openai, ollama) — overrides config",
+				Usage: "LLM provider (claude-cli, anthropic, openai, mistral, ollama) — overrides config",
 			},
 			&cli.StringFlag{
 				Name:  "model",
 				Usage: "LLM model identifier — overrides config",
+			},
+			&cli.StringFlag{
+				Name:  "endpoint",
+				Usage: "OpenAI-compatible base URL — overrides config",
 			},
 			&cli.IntFlag{
 				Name:  "concurrency",

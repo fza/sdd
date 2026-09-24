@@ -14,7 +14,6 @@ import (
 
 	internalllm "github.com/networkteam/sdd/internal/llm"
 	"github.com/networkteam/sdd/internal/llm/claude"
-	gollmrunner "github.com/networkteam/sdd/internal/llm/gollm"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm"
 )
@@ -26,7 +25,7 @@ const defaultTimeout = 2 * time.Minute
 
 // New builds a composed llm.Runner from config. Provider and model fall back
 // to model.DefaultLLMProvider / model.DefaultLLMModel when empty. Remote
-// providers (anthropic, openai) get wrapped with a rate.Limiter: an
+// providers (anthropic, openai, mistral) get wrapped with a rate.Limiter: an
 // explicit cfg.RateLimitRPS takes precedence, otherwise a conservative
 // tier-1-safe default is selected per provider/model family (see
 // providerDefaultRPS). Local providers (claude-cli, ollama) stay
@@ -112,6 +111,8 @@ func providerDefaultRPS(provider, modelName string) float64 {
 		default:
 			return 1.0
 		}
+	case "mistral":
+		return 1.0
 	default:
 		return 0
 	}
@@ -121,16 +122,16 @@ func buildProvider(cfg model.LLMConfig) (llm.Runner, error) {
 	switch cfg.Provider {
 	case "claude-cli":
 		return claude.NewRunner(cfg.Model), nil
-	case "anthropic", "openai", "ollama":
-		return gollmrunner.NewRunner(cfg)
+	case "anthropic", "openai", "mistral", "ollama":
+		return newPurposeMux(cfg)
 	default:
-		return nil, fmt.Errorf("unknown llm provider %q (supported: claude-cli, anthropic, openai, ollama)", cfg.Provider)
+		return nil, fmt.Errorf("unknown llm provider %q (supported: claude-cli, anthropic, openai, mistral, ollama)", cfg.Provider)
 	}
 }
 
 func isRemote(provider string) bool {
 	switch provider {
-	case "anthropic", "openai":
+	case "anthropic", "openai", "mistral":
 		return true
 	default:
 		return false
