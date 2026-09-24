@@ -75,7 +75,9 @@ The field becomes a closed set of two values, and a read surface shows it:
 
 The doc comment on the field is corrected to match. No code writes the `error` value it currently promises.
 
-`sdd show` and `sdd view` display the value, and lint can count it. The 58 entries carrying a bare `skipped` stay valid, since the value keeps its meaning.
+`sdd show` displays the value as an omitempty field in its YAML envelope. The 58 entries carrying a bare `skipped` stay valid, since the value keeps its meaning.
+
+The entry line shared by `sdd view` and `sdd search` is left alone. Its slot order is documented as fixed at `internal/presenters/presenters.go:22` and skills parse it, so a new always-on slot would change a parsed format and put the marker into every listing naming one of the 58 entries. A `sdd view` filter for bypassed entries is also rejected for now: it only helps someone already looking, and bulk discovery belongs to a lint check.
 
 `--preflight-verified` recording `dry-run-verified` replaces its original no-trace behavior. The reason that behavior avoided an annotation was that `skipped` misstates a capture which was in fact validated. A distinct value states it accurately instead, so the annotation is no longer a misstatement.
 
