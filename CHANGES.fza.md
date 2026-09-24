@@ -43,6 +43,8 @@ Five parts:
 
 The parsers stay exactly as they are. `parseSeverity`, the empty-field checks and the abort-on-first-bad-finding loop are unchanged, so a checker that has stopped working still fails loudly.
 
+The extraction call runs on the same identity as the first call. It fires only after a parse failure, so the doubled cost is bounded and rare, and one identity keeps the stats rows comparable. A configurable `extract_model` is rejected as a second key for the same rare call, and a per-purpose model map, though nearly free once the mux exists, is scope beyond this failure.
+
 The extraction call is bounded separately. `llm.extract_timeout` and a `--preflight-extract-timeout` flag carry it, defaulting to 60 seconds, applied per purpose where the mux already dispatches. `Bounded` starts a fresh deadline on every `Run`, so without a second bound a slipping endpoint spends twice the configured timeout on one check, which is 12 minutes at a `timeout: 6m` configuration.
 
 Rejected for the extraction bound: leaving each call on the full configured timeout, which doubles the worst case; deriving the bound as a fraction of the configured timeout, which invents a number nobody set and can time out an extraction whose phase 1 would have survived; and one shared budget per check, which leaves seconds for the fallback exactly when a slow phase 1 makes it necessary and pushes the deadline from the runner into llmops, against the rule that an instance bounds its own calls.
