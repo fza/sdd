@@ -37,6 +37,8 @@ Five parts:
 
 **Two purposes in `pkg/llm`.** `preflight-extract` and `writing-guide-extract`, which the mux routes to the parent purpose's client. They separate the two calls in `.sdd/stats/llm.jsonl`, which makes the per-endpoint slip rate readable.
 
+**Schemas reflected from tagged structs.** One named struct per check carries `jsonschema` tags, is reflected into the schema sent as `response_format`, and is the unmarshal target, so schema and parser cannot drift by construction. This follows the pattern already used for MCP tool surfaces, and promotes `invopop/jsonschema` from an indirect to a direct dependency. A hand-written schema literal guarded by a drift test is rejected: it declares the same shape twice and makes the test load-bearing. Accepted cost: the reflected output needs post-processing for OpenAI strict mode, so the exact wire shape is one step removed from what the struct states.
+
 **A `severity_scale` partial in `shared_templates`.** Included by `verdict.tmpl` and by the extractor, so the scale is stated once.
 
 The parsers stay exactly as they are. `parseSeverity`, the empty-field checks and the abort-on-first-bad-finding loop are unchanged, so a checker that has stopped working still fails loudly.
