@@ -1,6 +1,6 @@
 ---
 metadata:
-    sdd-content-hash: 0eeb0b2c0d9e84c348fd405303bf20b121dcf0b773674ec1faacead92c9d8d24
+    sdd-content-hash: 4a5cd91eeaf637c5d02af24ed3fead2289dc83420ae87ba1624b522f171be263
     sdd-version: dev
 ---
 # SDD CLI Reference
@@ -250,9 +250,10 @@ Depth is controlled per direction by `--up` / `--down` (see the `sdd show` entry
 - `--involvement '{json}'` — focus involvement triple (kind: focus only). Repeatable. JSON object `{"target":"<id>","actors":["..."],"when":{"from":"...","to":"..."}}`. Omitting `actors` inherits the focus-level default; explicit `"actors":[]` declares pull-available involvement (deliberately unattributed).
 - `--attach spec` — file to attach (repeatable, see below)
 - `--skip-preflight` — skip pre-flight validation (entry is annotated with `preflight: skipped`)
-- `--preflight-verified` — skip pre-flight validation without annotating the entry. For the real capture of an entry whose findings were already settled in a `--dry-run` pass: pre-flight is an LLM call and non-deterministic, so a second run can raise findings the dry-run loop already cleared. Mutually exclusive with `--skip-preflight`.
+- `--preflight-verified` — skip pre-flight validation, annotating the entry with `preflight: dry-run-verified`. For the real capture of an entry whose findings were already settled in a `--dry-run` pass: pre-flight is an LLM call and non-deterministic, so a second run can raise findings the dry-run loop already cleared. Mutually exclusive with `--skip-preflight`.
 - `--dry-run` — run validation and pre-flight only, without writing or committing the entry
 - `--preflight-timeout` — timeout for pre-flight validation (default `2m`)
+- `--preflight-extract-timeout` — timeout for the extraction call a pre-flight response falls back to when it does not parse (default `60s`)
 
 See the Entry IDs section above for how ID arguments are resolved across all commands.
 
