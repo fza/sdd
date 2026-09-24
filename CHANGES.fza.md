@@ -96,7 +96,7 @@ Acceptance criteria:
 - [ ] `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX` are absent from the child environment, asserted by a test over the built command.
 - [ ] Reported input tokens for a claude-cli pre-flight call in `.sdd/stats/llm.jsonl` drop against the pre-change figure.
 
-Open: whether the credential scrub is unconditional. A participant whose only claude-cli authentication is `ANTHROPIC_API_KEY` loses the ability to run pre-flight at all if the variable is always removed.
+The scrub is unconditional. The `claude-cli` provider answers on the signed-in subscription, so an inherited environment key that silently reroutes the bill is the defect, not a configuration. API-key authentication has a better path already: `provider: anthropic` with the same key under `llm.api_keys`, which spawns no process and gets prompt caching. A config switch for the scrub is rejected, because its off state reinstates the billing reroute it exists to prevent. Accepted cost: a setup whose only claude-cli authentication is `ANTHROPIC_API_KEY` fails with an authentication error until it moves to `provider: anthropic`.
 
 ## 0.17.0+fza2
 
