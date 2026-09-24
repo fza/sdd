@@ -56,11 +56,12 @@ Out of scope: pre-warmed agent processes with a neutral working directory and a 
 
 `Entry.Preflight` takes one value today, `skipped`, written by `--skip-preflight` and carried on 58 entries in this graph. No presenter, lint check, view or MCP surface reads it, so a bypass is invisible unless someone opens the file. `--preflight-verified` records nothing at all, and the doc comment on the field promises an `error` value that no code writes.
 
-The field becomes a closed set of three values, and a read surface shows it:
+The field becomes a closed set of two values, and a read surface shows it:
 
-- `skipped` — the author bypassed the check.
-- `unavailable` — the checker failed and the capture proceeded anyway.
+- `skipped` — the author bypassed the check, written by `--skip-preflight`.
 - `dry-run-verified` — findings were settled by a prior `--dry-run` pass, written by `--preflight-verified`.
+
+The doc comment on the field is corrected to match. No code writes the `error` value it currently promises.
 
 `sdd show` and `sdd view` display the value, and lint can count it. The 58 entries carrying a bare `skipped` stay valid, since the value keeps its meaning.
 
@@ -72,7 +73,7 @@ Rejected alternatives:
 - A read surface over the existing single value. The three cases stay indistinguishable and `--preflight-verified` stays traceless.
 - Leaving the field alone. The marks stay unreadable without grepping the files.
 
-Open: `unavailable` has no writer. A pre-flight infrastructure error aborts the capture, so no entry exists to carry the value.
+A third value for a failed checker is rejected. A pre-flight infrastructure error aborts the capture before the entry file is written (`internal/handlers/handler_new_entry.go:163`), so nothing exists to annotate, and every way to write such a value costs more than the distinction is worth: a `--preflight-optional` flag adds a third pre-flight flag and a third exclusivity pair; a value on `--skip-preflight` records an author assertion that sdd never verified; letting pre-flight errors stop blocking is the silent-fallback shape AGENTS.md forbids. Accepted cost: an entry captured because the checker was broken reads identically to one captured to dodge a review.
 
 ### Agent processes inside sdd
 
