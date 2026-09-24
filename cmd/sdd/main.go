@@ -38,6 +38,12 @@ import (
 // Default "dev" applies to local `go build` and `go run`.
 var version = "dev"
 
+// localConfigOverride carries --local-config: the file that stands in for
+// .sdd/config.local.yaml on both reads and writes. Process-wide because
+// config resolution happens in helpers far from the parsed command, and the
+// flag is root-global so every subcommand resolves the same layer.
+var localConfigOverride string
+
 // resolveLLMConfig builds the effective LLMConfig for a command from the
 // config overlay (user-global base, then .sdd/config.yaml, then
 // .sdd/config.local.yaml) and applies CLI flag overrides. Missing config
@@ -216,13 +222,17 @@ func loadConfig() (*model.PerRepoConfig, error) {
 	sddDir, err := resolveSDDDir()
 	if err != nil {
 		// Outside an sdd repo the global settings still apply (they are
-		// the user's, not a repo's).
-		if global.IsZero() {
-			return nil, nil
+		// the user's, not a repo's), and an explicit --local-config layer
+		// overlays them without needing a .sdd/ to live in.
+		if localConfigOverride == "" {
+			if global.IsZero() {
+				return nil, nil
+			}
+			return &model.PerRepoConfig{BaseConfig: global.BaseConfig}, nil
 		}
-		return &model.PerRepoConfig{BaseConfig: global.BaseConfig}, nil
+		sddDir = ""
 	}
-	return meta.ResolveConfig(global.BaseConfig, sddDir)
+	return meta.ResolveConfig(global.BaseConfig, sddDir, localConfigOverride)
 }
 
 // warnUnknownConfigKeys names every config key sdd read past — tolerated is
@@ -237,7 +247,7 @@ func warnUnknownConfigKeys(ctx context.Context) {
 	if err != nil {
 		sddDir = ""
 	}
-	result, err := f.UnknownConfigKeys(query.UnknownConfigKeysQuery{SDDDir: sddDir})
+	result, err := f.UnknownConfigKeys(query.UnknownConfigKeysQuery{SDDDir: sddDir, LocalConfigPath: localConfigOverride})
 	if err != nil {
 		return
 	}
@@ -260,7 +270,7 @@ func resolveConfigAt(sddDir string) (*model.PerRepoConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return meta.ResolveConfig(global.BaseConfig, sddDir)
+	return meta.ResolveConfig(global.BaseConfig, sddDir, localConfigOverride)
 }
 
 // splitCSV returns the comma-split fields of s with each element trimmed of
@@ -302,6 +312,10 @@ func main() {
 				Aliases: []string{"d"},
 				Usage:   "Override graph directory (auto-discovered from .sdd/config.yaml)",
 			},
+			&cli.StringFlag{
+				Name:  "local-config",
+				Usage: "Use this file as the machine-local config layer instead of .sdd/config.local.yaml (read and written)",
+			},
 			&cli.BoolFlag{
 				Name:    "verbose",
 				Aliases: []string{"v"},
@@ -314,6 +328,14 @@ func main() {
 			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			if p := cmd.String("local-config"); p != "" {
+				abs, err := filepath.Abs(p)
+				if err != nil {
+					return ctx, fmt.Errorf("resolving --local-config %s: %w", p, err)
+				}
+				localConfigOverride = abs
+			}
+
 			level := slog.LevelWarn
 			// sdd index is an explicit progress command: on a non-TTY it shows
 			// its per-entry indexed lines (Info) by default. The transient TTY
@@ -1182,7 +1204,7 @@ func resolveGraphDir(cmd *cli.Command) (string, error) {
 		return "", fmt.Errorf("no .sdd/ directory found; run 'sdd init' first")
 	}
 	sddDir := meta.SDDDir(repoRoot)
-	cfg, err := meta.ReadConfig(sddDir)
+	cfg, err := meta.ReadConfig(sddDir, localConfigOverride)
 	if err != nil {
 		return "", fmt.Errorf("reading .sdd/config.yaml: %w", err)
 	}
@@ -1560,20 +1582,21 @@ func initCmd() *cli.Command {
 				return err
 			}
 			icmd := &command.InitCmd{
-				RepoRoot:       repoRoot,
-				StableRepoRoot: stableRepoRoot,
-				GraphDir:       graphDir,
-				DefaultBranch:  defaultBranch,
-				Participant:    participant,
-				Language:       language,
-				BinaryVersion:  version,
-				Targets:        targets,
-				Scope:          scope,
-				ScopeExplicit:  scopeExplicit,
-				UserHome:       userHome,
-				RemoteURL:      remoteURL,
-				Force:          cmd.Bool("force"),
-				Bump:           cmd.Bool("bump"),
+				RepoRoot:        repoRoot,
+				StableRepoRoot:  stableRepoRoot,
+				GraphDir:        graphDir,
+				DefaultBranch:   defaultBranch,
+				Participant:     participant,
+				LocalConfigPath: localConfigOverride,
+				Language:        language,
+				BinaryVersion:   version,
+				Targets:         targets,
+				Scope:           scope,
+				ScopeExplicit:   scopeExplicit,
+				UserHome:        userHome,
+				RemoteURL:       remoteURL,
+				Force:           cmd.Bool("force"),
+				Bump:            cmd.Bool("bump"),
 				OnMinimumVersionBumped: func(previous, current string) {
 					if previous == "" {
 						fmt.Printf("  minimum_version: → %s\n", current)
@@ -1665,7 +1688,7 @@ func initCmd() *cli.Command {
 // name what is missing and prompt for the URL. Informational like
 // warnIfParticipantMissing: errors here never fail an init that succeeded.
 func notifyUnconnectedDependencies(sddDir string) {
-	cfg, err := meta.ReadConfig(sddDir)
+	cfg, err := meta.ReadConfig(sddDir, localConfigOverride)
 	if err != nil || cfg == nil || len(cfg.Dependencies) == 0 {
 		return
 	}

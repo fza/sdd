@@ -40,24 +40,35 @@ func SDDDir(repoRoot string) string {
 	return filepath.Join(repoRoot, model.SDDDirName)
 }
 
+// LocalConfigFileName is the machine-local, gitignored config layer inside
+// .sdd/.
+const LocalConfigFileName = "config.local.yaml"
+
+// LocalConfigPath returns the file backing the machine-local config layer.
+// A non-empty override (the --local-config flag) replaces the in-repo path
+// for both reads and writes, so a run resolves and mutates the same file.
+func LocalConfigPath(sddDir, override string) string {
+	if override != "" {
+		return override
+	}
+	return filepath.Join(sddDir, LocalConfigFileName)
+}
+
 // ReadConfig reads and parses .sdd/config.yaml from the given .sdd directory,
-// then overlays any .sdd/config.local.yaml present. Returns nil config with
-// nil error if neither file exists. The local file is gitignored, parses as
-// the same PerRepoConfig schema, and carries genuinely machine-specific
-// overrides (API keys, endpoints).
-func ReadConfig(sddDir string) (*model.PerRepoConfig, error) {
-	base, err := readConfigFile(filepath.Join(sddDir, "config.yaml"))
+// then overlays the machine-local layer (LocalConfigPath, honouring
+// localConfigPath as a replacement). Returns nil config with nil error if
+// neither file exists. The local file is gitignored, parses as the same
+// PerRepoConfig schema, and carries genuinely machine-specific overrides
+// (API keys, endpoints).
+func ReadConfig(sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
+	base, local, err := ReadConfigLayers(sddDir, localConfigPath)
 	if err != nil {
 		return nil, err
 	}
-	overlay, err := readConfigFile(filepath.Join(sddDir, "config.local.yaml"))
-	if err != nil {
-		return nil, err
-	}
-	if base == nil && overlay == nil {
+	if base == nil && local == nil {
 		return nil, nil
 	}
-	return model.MergeConfig(base, overlay), nil
+	return model.MergeConfig(base, local), nil
 }
 
 // ResolveConfig builds the effective per-repo config from the full overlay:
@@ -66,8 +77,8 @@ func ReadConfig(sddDir string) (*model.PerRepoConfig, error) {
 // nil (no config) only when the global base is empty and neither per-repo
 // file exists — with global settings present, a repo without config files
 // still resolves to them.
-func ResolveConfig(global model.BaseConfig, sddDir string) (*model.PerRepoConfig, error) {
-	fileCfg, err := ReadConfig(sddDir)
+func ResolveConfig(global model.BaseConfig, sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
+	fileCfg, err := ReadConfig(sddDir, localConfigPath)
 	if err != nil {
 		return nil, err
 	}
@@ -85,14 +96,20 @@ func ResolveConfig(global model.BaseConfig, sddDir string) (*model.PerRepoConfig
 // each nil when its file is absent. The effective-config view needs the
 // layers for per-value provenance; everything else wants ReadConfig's
 // merged result.
-func ReadConfigLayers(sddDir string) (committed, local *model.PerRepoConfig, err error) {
-	committed, err = readConfigFile(filepath.Join(sddDir, "config.yaml"))
-	if err != nil {
-		return nil, nil, err
+func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.PerRepoConfig, err error) {
+	if sddDir != "" {
+		committed, err = readConfigFile(filepath.Join(sddDir, "config.yaml"))
+		if err != nil {
+			return nil, nil, err
+		}
 	}
-	local, err = readConfigFile(filepath.Join(sddDir, "config.local.yaml"))
-	if err != nil {
-		return nil, nil, err
+	// Without a .sdd/ directory only an explicit override names a local
+	// layer — joining an empty dir would read a path relative to the cwd.
+	if sddDir != "" || localConfigPath != "" {
+		local, err = readConfigFile(LocalConfigPath(sddDir, localConfigPath))
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	return committed, local, nil
 }

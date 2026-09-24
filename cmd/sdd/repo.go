@@ -198,7 +198,7 @@ func repoHandler() (*handlers.Handler, error) {
 	// since add/sync run fine outside a repo (where it stays empty).
 	graphDir := ""
 	if sddDir != "" {
-		cfg, _ := meta.ReadConfig(sddDir)
+		cfg, _ := meta.ReadConfig(sddDir, localConfigOverride)
 		graphDir = meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)
 	}
 	return handlers.New(handlers.Options{

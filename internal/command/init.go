@@ -36,6 +36,11 @@ type InitCmd struct {
 	// field into the mapping without disturbing other keys (e.g. llm:).
 	Participant string
 
+	// LocalConfigPath replaces the in-repo machine-local config layer file
+	// (--local-config) the participant is written to. Empty resolves it
+	// under .sdd/.
+	LocalConfigPath string
+
 	// Language is the graph authoring language (locale code) to record in
 	// .sdd/config.yaml on fresh init. Empty means "use the default behavior"
 	// — FormatConfig keeps the commented hint, so the graph stays English.

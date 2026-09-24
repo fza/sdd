@@ -344,7 +344,7 @@ SDD config is a layered overlay — each layer overrides the one below:
 
 1. **User-global** — `~/.config/sdd/config.yaml` (or `$XDG_CONFIG_HOME/sdd/config.yaml`). Your personal defaults across every SDD project: participant name, LLM and embedding provider, sync cooldown. Set once, apply everywhere.
 2. **Committed project** — `.sdd/config.yaml`, in git. Properties of the repo itself that every contributor shares: graph directory, authoring language, skill scope, supported agents, the repo's own `repo_id`, and connected-repo [dependencies](#connected-repos). It may also carry safe project-wide defaults for the personal settings above.
-3. **Machine-local** — `.sdd/config.local.yaml`, gitignored. Per-machine overrides for this checkout: API keys, a local endpoint, a provider or participant override you don't want committed.
+3. **Machine-local** — `.sdd/config.local.yaml`, gitignored. Per-machine overrides for this checkout: API keys, a local endpoint, a provider or participant override you don't want committed. The global `--local-config <path>` flag points this layer at another file for the whole invocation — reads resolve it and `--local` writes land in it, so a sandbox, a CI runner or a second identity can supply its own layer without touching the checkout.
 4. **CLI flags** — per-invocation, highest precedence.
 
 Later layers win: a provider set project-wide overrides your global default, and a machine-local override wins over both. The split is by *whose fact each setting is*: repo-identity fields (`repo_id`, `dependencies`, `graph_dir`, `language`, `supported_agents`) belong in the committed project file and can't be set globally; personal preferences (participant, LLM, embedding, sync) default best at the user-global layer, with the local file for machine-specific overrides. A key placed in the wrong file fails loud — naming the file and key — rather than being silently dropped.
@@ -356,6 +356,7 @@ sdd config                             # effective merged config, with each valu
 sdd config get llm.model               # a single effective value
 sdd config set llm.provider ollama     # write to the user-global file
 sdd config set --local embedding.api_keys.openai sk-...   # write to .sdd/config.local.yaml
+sdd --local-config ~/ci-local.yaml config get participant # resolve the local layer from elsewhere
 ```
 
 `sdd config set` writes the user-global file by default, or the machine-local file with `--local`. The committed project file is written by `sdd init` (or edited by hand), so a project property change is a reviewed commit. The provider blocks below can live in any of the three files — put shared defaults in the project file and personal defaults, API keys included, at the global layer.
