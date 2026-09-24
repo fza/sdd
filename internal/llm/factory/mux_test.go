@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -75,10 +76,65 @@ func TestPurposeMuxConstrainsOnlyCheckers(t *testing.T) {
 	}
 }
 
-// Two purposes sharing one schema group must share one client, so a process
-// checking and summarizing holds two clients rather than one per purpose.
-func TestPurposeMuxRejectsUnknownProviderBeforeAnyCall(t *testing.T) {
+// The unconstrained client is built eagerly so a misconfiguration fails the
+// command, not the first call that happens to need a checker.
+func TestPurposeMuxRejectsMissingAPIKeyBeforeAnyCall(t *testing.T) {
 	if _, err := factory.New(model.LLMConfig{Provider: "openai", Model: "gpt-5"}); err == nil {
 		t.Fatal("a missing API key must fail composition, not the first call")
+	}
+}
+
+// An extraction call reformats the shape the call it rescues targets, so it
+// must reach the same schema-carrying client rather than an unconstrained one.
+func TestExtractionPurposesReachTheSchemaClient(t *testing.T) {
+	var mu sync.Mutex
+	bodies := map[string]map[string]any{}
+	var current string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/generate" {
+			_, _ = w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		mu.Lock()
+		bodies[current] = body
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"model":"m","response":"{}","done":true}`))
+	}))
+	defer srv.Close()
+
+	runner, err := factory.New(model.LLMConfig{Provider: "ollama", Model: "m", OllamaEndpoint: srv.URL})
+	if err != nil {
+		t.Fatalf("factory.New: %v", err)
+	}
+
+	for _, purpose := range []llm.Purpose{llm.PurposePreflightExtract, llm.PurposeWritingGuideExtract} {
+		mu.Lock()
+		current = string(purpose)
+		mu.Unlock()
+		if _, err := runner.Run(context.Background(), llm.Request{Purpose: purpose, UserPrompt: "x"}); err != nil {
+			t.Fatalf("Run(%s): %v", purpose, err)
+		}
+		mu.Lock()
+		_, ok := bodies[string(purpose)]["format"]
+		mu.Unlock()
+		if !ok {
+			t.Errorf("%s: schema missing, an extraction call must be constrained like the call it rescues", purpose)
+		}
+	}
+}
+
+// The extraction bound is separate config, so a malformed value must fail
+// composition rather than surface on the rare call that needs it.
+func TestExtractTimeoutIsValidatedAtComposition(t *testing.T) {
+	_, err := factory.New(model.LLMConfig{Provider: "claude-cli", Model: "m", ExtractTimeout: "not-a-duration"})
+	if err == nil {
+		t.Fatal("a malformed extract_timeout must fail composition")
+	}
+	if !strings.Contains(err.Error(), "extract_timeout") {
+		t.Errorf("error should name the setting, got %v", err)
 	}
 }

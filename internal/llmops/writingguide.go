@@ -98,14 +98,9 @@ func WritingGuide(ctx context.Context, runner llm.Runner, entry *model.Entry, cl
 		return nil, fmt.Errorf("rendering writing-guide prompt: %w", err)
 	}
 
-	output, err := runner.Run(ctx, req)
+	result, err := runJSONCheck(ctx, runner, req, writingGuideExtraction, parseWritingGuideResult)
 	if err != nil {
 		return nil, fmt.Errorf("running writing guide: %w", err)
-	}
-
-	result, err := parseWritingGuideResult(output.Text)
-	if err != nil {
-		return nil, fmt.Errorf("parsing writing-guide result: %w", err)
 	}
 	return result, nil
 }

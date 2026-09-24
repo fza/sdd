@@ -20,6 +20,12 @@ const (
 	PurposePreflight    Purpose = "preflight"
 	PurposeSummarize    Purpose = "summarize"
 	PurposeWritingGuide Purpose = "writing-guide"
+	// The extract purposes name the second call a JSON-shaped check makes
+	// when its first response does not parse. They are their own purposes so
+	// a host can route and bound them apart, and so the stats sink separates
+	// a reformat from the reasoning call it rescues.
+	PurposePreflightExtract    Purpose = "preflight-extract"
+	PurposeWritingGuideExtract Purpose = "writing-guide-extract"
 )
 
 // Request carries everything an implementation may route on: ctx (who) and

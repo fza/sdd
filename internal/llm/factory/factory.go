@@ -31,7 +31,8 @@ const defaultTimeout = 2 * time.Minute
 // providerDefaultRPS). Local providers (claude-cli, ollama) stay
 // uncapped. Every runner is bounded by the configured cfg.Timeout (falling
 // back to defaultTimeout) — deadlines are configuration, so they compose here
-// rather than being defaulted by any consumer. Errors distinguish
+// rather than being defaulted by any consumer. The extraction purposes are
+// bounded by cfg.ExtractTimeout instead. Errors distinguish
 // configuration problems from transport failures so the CLI can surface them
 // distinctly.
 func New(cfg model.LLMConfig) (llm.Runner, error) {
@@ -50,7 +51,36 @@ func New(cfg model.LLMConfig) (llm.Runner, error) {
 			timeout = d
 		}
 	}
-	return internalllm.Bounded(runner, timeout), nil
+
+	extractTimeout := model.DefaultLLMExtractTimeout
+	if cfg.ExtractTimeout != "" {
+		d, err := time.ParseDuration(cfg.ExtractTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("llm: parsing extract_timeout %q: %w", cfg.ExtractTimeout, err)
+		}
+		if d > 0 {
+			extractTimeout = d
+		}
+	}
+
+	return boundedPerPurpose(runner, timeout, extractTimeout), nil
+}
+
+// boundedPerPurpose gives the extraction purposes their own deadline. A fresh
+// deadline starts on every call, so a check that falls back would otherwise be
+// free to spend twice the configured timeout; reformatting text the model
+// already produced needs far less than a reasoning pass.
+func boundedPerPurpose(runner llm.Runner, timeout, extractTimeout time.Duration) llm.Runner {
+	reasoning := internalllm.Bounded(runner, timeout)
+	extraction := internalllm.Bounded(runner, extractTimeout)
+	return llm.RunnerFunc(func(ctx context.Context, req llm.Request) (llm.Result, error) {
+		switch req.Purpose {
+		case llm.PurposePreflightExtract, llm.PurposeWritingGuideExtract:
+			return extraction.Run(ctx, req)
+		default:
+			return reasoning.Run(ctx, req)
+		}
+	})
 }
 
 // compose builds the provider adapter and its rate-limit wrap — everything

@@ -33,6 +33,12 @@ const (
 	// against (d-tac-b30).
 	DefaultLLMModel = "claude-sonnet-4-6"
 
+	// DefaultLLMExtractTimeout bounds the extraction call a JSON-shaped
+	// check falls back to. Reformatting text the model already produced is
+	// cheap, and a bound of its own keeps a slipping endpoint from spending
+	// twice the configured timeout on one check.
+	DefaultLLMExtractTimeout = time.Minute
+
 	// DefaultLLMConcurrency is the default worker count for concurrent
 	// LLM calls (e.g. sdd summarize --all).
 	DefaultLLMConcurrency = 4
@@ -234,6 +240,10 @@ type LLMConfig struct {
 	Model string `yaml:"model,omitempty"`
 	// Timeout is a Go duration string (e.g. "2m") applied per LLM call.
 	Timeout string `yaml:"timeout,omitempty"`
+	// ExtractTimeout is a Go duration string bounding the extraction call a
+	// JSON-shaped check falls back to when its first response does not
+	// parse. Empty means DefaultLLMExtractTimeout.
+	ExtractTimeout string `yaml:"extract_timeout,omitempty"`
 	// Params carries behaviour-affecting, provider-specific model settings —
 	// a reasoning effort, a thinking budget — forwarded verbatim into the
 	// provider request. They also form the call's recorded variant, because a
@@ -460,6 +470,9 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 	}
 	if overlay.Endpoint != "" {
 		out.Endpoint = overlay.Endpoint
+	}
+	if overlay.ExtractTimeout != "" {
+		out.ExtractTimeout = overlay.ExtractTimeout
 	}
 	if overlay.RateLimitRPS != 0 {
 		out.RateLimitRPS = overlay.RateLimitRPS

@@ -450,6 +450,8 @@ llm:
 
 Pre-flight and the writing guide ask the provider to constrain its response to a JSON schema where the provider reads one: `response_format` on `openai` and `mistral`, `format` on `ollama`. Summaries are never constrained, and `anthropic` and `claude-cli` carry no schema.
 
+When a checker's response does not parse, SDD makes one more call that carries the unparseable text and asks for the JSON alone, so a model that writes its conclusion into the `severity` field does not cost you the capture. A response that parses costs one call. `extract_timeout` bounds the second call (default `60s`), separately from `timeout`, so a slipping endpoint cannot spend twice the configured timeout on one check. Both responses failing is an error naming both attempts.
+
 Remote providers (`anthropic`, `openai`, `mistral`) get a conservative rate limit applied automatically, biased below tier-1 ceilings so bursty operations like `sdd summarize --all` don't trip 429s. Override with `rate_limit_rps` on higher tiers.
 
 ### Embedding provider (vector search)
