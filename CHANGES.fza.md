@@ -10,7 +10,7 @@ Design settled, not yet implemented.
 
 ## Implementation order
 
-Each unit lands as one self-contained, upstream-shaped commit: upstream naming and conventions, tests included, nothing fork-specific, so any unit can be cherry-picked onto `origin/main` without rework. Targeting upstream first is rejected because it leaves a broken pre-flight in place until a review lands and invites reopening settled decisions; building fork-shaped is rejected because the divergence falls on `pkg/llm`, `LLMConfig` and `internal/llmops`, the surfaces upstream changes most. Accepted cost: a unit upstream does not want was still shaped for a reviewer who never arrives.
+Each unit lands as one self-contained, upstream-shaped commit directly on `dx-improvements`: upstream naming and conventions, tests included, nothing fork-specific, so any unit can be cherry-picked onto `origin/main` without rework. Targeting upstream first is rejected because it leaves a broken pre-flight in place until a review lands and invites reopening settled decisions; building fork-shaped is rejected because the divergence falls on `pkg/llm`, `LLMConfig` and `internal/llmops`, the surfaces upstream changes most. Accepted cost: a unit upstream does not want was still shaped for a reviewer who never arrives.
 
 
 1. `llm.endpoint` with the `SetOpenAIEndpoint` call, the per-purpose mux, and the two schemas. Schema-enforced verdicts on an OpenAI-compatible provider may end the parse failures without the extraction call existing.
