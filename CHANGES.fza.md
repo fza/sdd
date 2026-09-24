@@ -8,6 +8,14 @@ Section headings are local build stamps, matching the version string the binary 
 
 Design settled, not yet implemented.
 
+### gollm pinned to the fork carrying the OpenAI-compatible base URL
+
+`replace github.com/teilomillet/gollm` points at `github.com/fza/gollm v0.0.0-20260919121334-aa9e2d1faebc`, mirrored from `networkteam/gollm`'s `generate-with-usage` branch. The bump moves the pin three commits forward from `f6f84ac` and brings `config.OpenAIEndpoint`, the `SetOpenAIEndpoint` option, `OpenAIProvider.SetEndpoint` applied from config in `SetDefaultOptions`, the shared `providers/endpoint.go` helper that `vllm.go` now uses, and a `llm/validate.go` fix so a missing endpoint field no longer skips the OpenAI key check. Provider-aware retry and per-call usage reporting were already in the pin.
+
+No patch was written. The endpoint feature exists upstream in the org fork with its own tests, so `llm.endpoint` needs only a `SetOpenAIEndpoint` call on the sdd side.
+
+The mirror to a personally owned fork is deliberate: the pin cannot be moved out from under this line. Pinning `networkteam/gollm` directly was rejected because the pin would name a feature-branch head in a shared repository, and waiting for that branch to merge into its `main` would block the endpoint work on a review scheduled elsewhere. Accepted cost: two forks to track when upstream moves, and contributing the same tree back to `networkteam` later means moving the pin twice.
+
 ### Pre-flight and writing-guide verdict extraction
 
 Both JSON checks ask a single LLM call to reason and to emit strict machine-readable output at once. Weaker models put a prose conclusion such as `no finding` into the `severity` field, and `parsePreflightResult` rejects the whole response on the first unparseable finding, so every other finding is lost and the capture aborts. The only way through is `--skip-preflight`, which annotates a good entry as validated by nobody. Observed on `mistral-large-2512` and `claude-sonnet-5`, rare on `claude-sonnet-4-6`.

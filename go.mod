@@ -86,10 +86,11 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 )
 
-// Point gollm at the networkteam fork, which adds provider-aware retry with
-// backoff (d-tac-4v1). The fork keeps the github.com/teilomillet/gollm module
-// path, so this resolves cleanly. goreleaser and the curl installer build from
+// Point gollm at a fork carrying provider-aware retry with backoff (d-tac-4v1),
+// per-call usage reporting, and a configurable base URL for the OpenAI-compatible
+// provider. The fork keeps the github.com/teilomillet/gollm module path, so this
+// resolves cleanly. goreleaser and the curl installer build from
 // source and honor replace; only `go install pkg@version` (which sdd does not
 // use) would break. Remove this directive once the change lands upstream and
 // bump the require above to the released teilomillet/gollm version.
-replace github.com/teilomillet/gollm => github.com/networkteam/gollm v0.0.0-20260831213159-f6f84ac83bb5
+replace github.com/teilomillet/gollm => github.com/fza/gollm v0.0.0-20260919121334-aa9e2d1faebc
