@@ -689,7 +689,7 @@ func newCmd() *cli.Command {
 			},
 			&cli.BoolFlag{
 				Name:  "preflight-verified",
-				Usage: "Skip pre-flight validation without annotating the entry — for a capture whose findings were already settled via --dry-run",
+				Usage: "Skip pre-flight validation, annotating the entry preflight: dry-run-verified — for a capture whose findings were already settled via --dry-run",
 			},
 			&cli.StringFlag{
 				Name:  "summary",
