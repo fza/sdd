@@ -8,6 +8,13 @@ Section headings are local build stamps, matching the version string the binary 
 
 Design settled, not yet implemented.
 
+## Implementation order
+
+1. `llm.endpoint` with the `SetOpenAIEndpoint` call, the per-purpose mux, and the two schemas. Schema-enforced verdicts on an OpenAI-compatible provider may end the parse failures without the extraction call existing.
+2. The lazy extraction call with `extract_timeout` and the two new purposes, as the net for anthropic, claude-cli and any transport with no schema channel.
+3. Isolated claude-cli spawning.
+4. The two-value bypass annotation with its show envelope field.
+
 ### gollm pinned to the fork carrying the OpenAI-compatible base URL
 
 `replace github.com/teilomillet/gollm` points at `github.com/fza/gollm v0.0.0-20260919121334-aa9e2d1faebc`, mirrored from `networkteam/gollm`'s `generate-with-usage` branch. The bump moves the pin three commits forward from `f6f84ac` and brings `config.OpenAIEndpoint`, the `SetOpenAIEndpoint` option, `OpenAIProvider.SetEndpoint` applied from config in `SetDefaultOptions`, the shared `providers/endpoint.go` helper that `vllm.go` now uses, and a `llm/validate.go` fix so a missing endpoint field no longer skips the OpenAI key check. Provider-aware retry and per-call usage reporting were already in the pin.
@@ -109,6 +116,8 @@ Acceptance criteria:
 - [ ] The child process runs in a temporary directory created per call and removed afterwards, never the invocation's working directory.
 - [ ] `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX` are absent from the child environment, asserted by a test over the built command.
 - [ ] Reported input tokens for a claude-cli pre-flight call in `.sdd/stats/llm.jsonl` drop against the pre-change figure.
+
+No lint check counts bypassed entries. `sdd lint` reports no issues on this graph today, advisories never fail the command, and entries are immutable, so a per-entry advisory would add 58 permanent informational lines that train readers to skip the section. An aggregate count is rejected too, since it names no entry and `grep -rl '^preflight:' .sdd/graph` already answers the same question. Accepted cost: a rising bypass rate stays invisible unless someone looks.
 
 The scrub is unconditional. The `claude-cli` provider answers on the signed-in subscription, so an inherited environment key that silently reroutes the bill is the defect, not a configuration. API-key authentication has a better path already: `provider: anthropic` with the same key under `llm.api_keys`, which spawns no process and gets prompt caching. A config switch for the scrub is rejected, because its off state reinstates the billing reroute it exists to prevent. Accepted cost: a setup whose only claude-cli authentication is `ANTHROPIC_API_KEY` fails with an authentication error until it moves to `provider: anthropic`.
 
