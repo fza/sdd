@@ -75,9 +75,28 @@ Rejected alternatives:
 
 A third value for a failed checker is rejected. A pre-flight infrastructure error aborts the capture before the entry file is written (`internal/handlers/handler_new_entry.go:163`), so nothing exists to annotate, and every way to write such a value costs more than the distinction is worth: a `--preflight-optional` flag adds a third pre-flight flag and a third exclusivity pair; a value on `--skip-preflight` records an author assertion that sdd never verified; letting pre-flight errors stop blocking is the silent-fallback shape AGENTS.md forbids. Accepted cost: an entry captured because the checker was broken reads identically to one captured to dodge a review.
 
-### Agent processes inside sdd
+### Isolated claude-cli spawning
 
-Own plan, not yet drafted. `internal/llm/claude` spawns `claude -p` per call inside the project tree, so every call pays process startup and the project's own instruction files, skills, hooks and servers. An external Ollama-compatible proxy currently covers this by keeping a started process ready and starting it somewhere neutral. What of that belongs in sdd, and in what shape, is undecided.
+`internal/llm/claude` spawns `claude -p` with neither `cmd.Dir` nor `cmd.Env` set, so every call inherits the invocation's working directory and its whole environment. Inside a project tree that loads the project's instruction files, skills, hooks and configured servers: the same two-token prompt measures 57,716 tokens there against 21,466 with the agent's own isolation flag set. An inherited `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_BASE_URL` also makes the agent answer on that credential instead of the signed-in account, which moves the bill from the subscription to the API.
+
+The runner spawns `claude -p --safe-mode` in a temporary working directory it creates and removes per call, with the Anthropic credential variables removed from the child environment. No process outlives the invocation, so the CLI stays short-lived and sdd takes on no supervision.
+
+Rejected alternatives:
+
+- A warm process pool inside `sdd serve`, which already outlives invocations. Only agents driving sdd over MCP would benefit, `sdd new` from a terminal would still spawn cold, and the server would hold spare processes for projects nobody is touching.
+- A dedicated daemon subcommand holding the pool behind a unix socket. It buys warmth for every caller at the price of owning process supervision, a socket protocol, retention and concurrency settings, and a second daemon beside `sdd serve`.
+- An OpenAI-compatible endpoint on `sdd serve` backed by a pool, reached through `llm.endpoint`. The dialogue server would grow an unrelated proxy surface with its own auth path, and pointing `llm.endpoint` at sdd itself makes a configuration loop possible.
+
+Accepted cost: process startup stays on every call, measured at roughly 0.5 seconds (2.57-3.30s cold against 2.05-2.36s warm). Warmth stays the job of an external proxy, which `llm.endpoint` reaches.
+
+Acceptance criteria:
+
+- [ ] The claude-cli runner passes `--safe-mode`.
+- [ ] The child process runs in a temporary directory created per call and removed afterwards, never the invocation's working directory.
+- [ ] `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX` are absent from the child environment, asserted by a test over the built command.
+- [ ] Reported input tokens for a claude-cli pre-flight call in `.sdd/stats/llm.jsonl` drop against the pre-change figure.
+
+Open: whether the credential scrub is unconditional. A participant whose only claude-cli authentication is `ANTHROPIC_API_KEY` loses the ability to run pre-flight at all if the variable is always removed.
 
 ## 0.17.0+fza2
 
