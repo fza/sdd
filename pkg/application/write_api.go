@@ -261,7 +261,7 @@ func (a *Application) CreateEntry(ctx context.Context, identity RequestIdentity,
 			}
 		}
 	} else {
-		entry.Preflight = "skipped"
+		entry.Preflight = model.PreflightSkipped
 	}
 	summary, err := llmops.Summarize(ctx, runtime.options.LLM, entry, snapshot.graph, runtime.options.Language)
 	if err != nil {

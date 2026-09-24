@@ -59,7 +59,7 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	if err != nil {
 		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("creating working directory: %w", err)}
 	}
-	defer os.RemoveAll(workDir)
+	defer func() { _ = os.RemoveAll(workDir) }()
 
 	cmd := exec.CommandContext(ctx, "claude", "-p", "--safe-mode", "--model", r.model, "--output-format", "json")
 	cmd.Dir = workDir

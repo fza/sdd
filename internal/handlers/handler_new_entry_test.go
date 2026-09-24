@@ -740,12 +740,12 @@ func TestNewEntry_ExplicitSummary_SkipsLLM(t *testing.T) {
 	}
 }
 
-// TestNewEntry_PreflightVerified_LeavesNoTrace covers the capture path for an
+// TestNewEntry_PreflightVerified_RecordsDryRunVerified covers the capture path for an
 // entry whose findings were already settled in a prior --dry-run: the
 // validator must not run again (it is non-deterministic and can surface fresh
 // findings), and the written entry must be indistinguishable from one that
 // passed — no preflight annotation, no stderr warning.
-func TestNewEntry_PreflightVerified_LeavesNoTrace(t *testing.T) {
+func TestNewEntry_PreflightVerified_RecordsDryRunVerified(t *testing.T) {
 	tmp := t.TempDir()
 	sddDir := filepath.Join(tmp, ".sdd")
 	if err := os.MkdirAll(sddDir, 0755); err != nil {
@@ -796,13 +796,16 @@ func TestNewEntry_PreflightVerified_LeavesNoTrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the entry: %v", err)
 	}
-	if strings.Contains(string(content), "preflight:") {
-		t.Errorf("entry must carry no preflight annotation, got:\n%s", content)
+	if !strings.Contains(string(content), "preflight: "+model.PreflightDryRunVerified) {
+		t.Errorf("entry must record that a prior dry-run settled its findings, got:\n%s", content)
+	}
+	if strings.Contains(string(content), "preflight: "+model.PreflightSkipped) {
+		t.Errorf("a validated capture must not read as a bypassed one, got:\n%s", content)
 	}
 }
 
 // TestNewEntry_SkipPreflight_RecordsTheBypass is the counterpart to
-// TestNewEntry_PreflightVerified_LeavesNoTrace: --skip-preflight stays visible.
+// TestNewEntry_PreflightVerified_RecordsDryRunVerified: --skip-preflight stays visible.
 func TestNewEntry_SkipPreflight_RecordsTheBypass(t *testing.T) {
 	tmp := t.TempDir()
 	sddDir := filepath.Join(tmp, ".sdd")
