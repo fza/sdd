@@ -4,12 +4,6 @@ Changes carried on top of upstream `networkteam/sdd`. The baseline is upstream `
 
 Section headings are local build stamps, matching the version string the binary reports (`sdd --version`).
 
-## Planned
-
-### Eval corpus for the verdict path
-
-The observed failure payloads are not yet pinned as eval fixtures, and the live eval does not yet report how often the extraction call fired per identity. That number is the per-endpoint reliability measure, and pinning a leak before changing rubric wording is the discipline `20260610-233200-d-tac-tph` established.
-
 ## 0.17.0+fza3
 
 Pre-flight reliability across every endpoint, plus the provider surface it needs.
@@ -46,6 +40,10 @@ Six parts:
 
 **A `severity_scale` partial in `shared_templates`.** Included by `verdict.tmpl` and by the extractor, so the scale is stated once.
 
+Every response shape that lost a capture is pinned as a fixture in `observedMalformations`: a conclusion in the `severity` field, `none` as a severity, an empty severity, an empty category, prose with no JSON, and one bad finding among good ones. Each asserts the capture survives on exactly one fallback call, so a parser or rubric change that stops rescuing one fails a test instead of a capture. A transport failure on the first call spends no second call, because the fallback reformats an answer rather than retrying a request.
+
+The live eval prints a verdict-extraction rate per identity, counting checker calls against extraction calls. That figure is the per-endpoint reliability measure: an identity that never slips costs one call per check, one that slips often costs two and risks failing both.
+
 The parsers stay exactly as they are. `parseSeverity`, the empty-field checks and the abort-on-first-bad-finding loop are unchanged, so a checker that has stopped working still fails loudly.
 
 The extraction call runs on the same identity as the first call. It fires only after a parse failure, so the doubled cost is bounded and rare, and one identity keeps the stats rows comparable. A configurable `extract_model` is rejected as a second key for the same rare call, and a per-purpose model map, though nearly free once the mux exists, is scope beyond this failure.
@@ -76,7 +74,7 @@ Acceptance criteria:
 - [x] `llm.endpoint` with `provider: mistral` reaches the configured base URL, and `sdd config` reports its provenance.
 - [x] `.sdd/stats/llm.jsonl` distinguishes an extraction call from a first call.
 - [x] No finding that parses is dropped or downgraded anywhere in the parsers.
-- [ ] The observed failure payloads are pinned as eval fixtures before any rubric wording changes, and the live eval reports how often the extraction call fired per identity.
+- [x] The observed failure payloads are pinned as eval fixtures before any rubric wording changes, and the live eval reports how often the extraction call fired per identity.
 
 Out of scope: pre-warmed agent processes, covered under isolated claude-cli spawning below, which takes the isolation without the warmth; graph-resident calibration, which stays untouched.
 

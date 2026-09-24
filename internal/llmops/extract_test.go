@@ -115,3 +115,72 @@ func graphWithBaseFacts(t *testing.T) *model.Graph {
 	}
 	return model.NewGraph(entries)
 }
+
+// observedMalformations are the response shapes checkers actually produced when
+// a capture was lost. Each is pinned here so a rubric or parser change that
+// would stop rescuing one fails a test rather than a capture.
+var observedMalformations = []struct {
+	name  string
+	first string
+}{
+	{
+		name:  "conclusion in the severity field",
+		first: `{"findings":[{"observation":"The concern does not hold.","category":"ref-applicability","severity":"no finding"}]}`,
+	},
+	{
+		name:  "none as a severity",
+		first: `{"findings":[{"observation":"Nothing to report.","category":"type-correctness","severity":"none"}]}`,
+	},
+	{
+		name:  "empty severity",
+		first: `{"findings":[{"observation":"Reads fine.","category":"layer-appropriate","severity":""}]}`,
+	},
+	{
+		name:  "empty category",
+		first: `{"findings":[{"observation":"Reads fine.","category":"","severity":"low"}]}`,
+	},
+	{
+		name:  "prose with no JSON at all",
+		first: "I reviewed the entry and it looks fine to me.",
+	},
+	{
+		name:  "one bad finding among good ones",
+		first: `{"findings":[{"observation":"Layer fits.","category":"layer-appropriate","severity":"low"},{"observation":"Withdrawn.","category":"ref-applicability","severity":"no finding"}]}`,
+	},
+}
+
+func TestPreflightRescuesEveryObservedMalformation(t *testing.T) {
+	const extracted = `{"findings":[{"observation":"Layer fits.","category":"layer-appropriate","severity":"low"}]}`
+
+	for _, tc := range observedMalformations {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &scriptedRunner{replies: []string{tc.first, extracted}}
+
+			result, err := runPreflight(t, runner)
+			if err != nil {
+				t.Fatalf("the capture must survive this response: %v", err)
+			}
+			if len(result.Findings) != 1 || result.Findings[0].Category != "layer-appropriate" {
+				t.Errorf("findings came from the wrong response: %+v", result.Findings)
+			}
+			if len(runner.requests) != 2 {
+				t.Errorf("expected exactly one fallback call, got %d call(s)", len(runner.requests))
+			}
+		})
+	}
+}
+
+// The fallback is a reformat, not a retry: a transport failure on the first
+// call has nothing to reformat and must surface as itself.
+func TestPreflightDoesNotFallBackOnATransportFailure(t *testing.T) {
+	runner := &scriptedRunner{errs: []error{fmt.Errorf("gollm mistral: timed out")}}
+
+	if _, err := runPreflight(t, runner); err == nil {
+		t.Fatal("a transport failure must surface")
+	} else if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error should name the transport failure, got %v", err)
+	}
+	if len(runner.requests) != 1 {
+		t.Errorf("a transport failure must not spend a second call, got %d", len(runner.requests))
+	}
+}
