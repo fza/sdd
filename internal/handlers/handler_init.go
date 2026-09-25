@@ -15,6 +15,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/index"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
@@ -295,7 +296,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	// the file (notably the llm: block from d-tac-bes) by operating on a
 	// yaml.Node tree rather than re-marshaling the Config struct.
 	if cmd.Participant != "" {
-		configLocalPath := filepath.Join(sddDir, "config.local.yaml")
+		configLocalPath := meta.LocalConfigPath(sddDir, cmd.LocalConfigPath)
 		existing, readErr := os.ReadFile(configLocalPath)
 		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
 			return fmt.Errorf("reading %s: %w", configLocalPath, readErr)
