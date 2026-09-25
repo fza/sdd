@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/networkteam/slogutils"
@@ -29,12 +31,39 @@ func (r *Runner) identity() llm.Identity {
 	return llm.Identity{Provider: "claude-cli", Model: r.model}
 }
 
+// scrubbedEnvVars name the credentials that redirect the CLI away from the
+// signed-in account. This transport exists to answer on that account, so an
+// inherited key would silently move the bill to an API balance with nothing in
+// the output saying which credential answered. A setup authenticating the CLI
+// by key belongs on the anthropic provider, which sends the key deliberately.
+var scrubbedEnvVars = []string{
+	"ANTHROPIC_API_KEY",
+	"ANTHROPIC_AUTH_TOKEN",
+	"ANTHROPIC_BASE_URL",
+	"CLAUDE_CODE_USE_BEDROCK",
+	"CLAUDE_CODE_USE_VERTEX",
+}
+
 // Run executes claude -p --output-format json and parses the JSON response.
 // The claude CLI accepts a single stdin payload, so SystemPrompt and
 // UserPrompt are concatenated — prompt caching is not available through this
 // transport.
+//
+// The process runs isolated: --safe-mode, a working directory of its own, and
+// no Anthropic credentials in its environment. Started inside a project tree
+// the CLI loads that project's instruction files, skills, hooks and configured
+// servers, and every one of them counts against a prompt that needs none of
+// them.
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
-	cmd := exec.CommandContext(ctx, "claude", "-p", "--model", r.model, "--output-format", "json")
+	workDir, err := os.MkdirTemp("", "sdd-claude-")
+	if err != nil {
+		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("creating working directory: %w", err)}
+	}
+	defer os.RemoveAll(workDir)
+
+	cmd := exec.CommandContext(ctx, "claude", "-p", "--safe-mode", "--model", r.model, "--output-format", "json")
+	cmd.Dir = workDir
+	cmd.Env = scrubbedEnv(os.Environ())
 	cmd.Stdin = strings.NewReader(req.Combined())
 	out, err := cmd.Output()
 	if err != nil {
@@ -79,6 +108,20 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 			CostUSD:           resp.TotalCostUSD,
 		},
 	}, nil
+}
+
+// scrubbedEnv returns env without the credential variables, matched by name so
+// a variable whose value merely looks like a key is left alone.
+func scrubbedEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if slices.Contains(scrubbedEnvVars, name) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // claudeResponse maps the JSON output of claude -p --output-format json.
