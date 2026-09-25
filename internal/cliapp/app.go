@@ -40,6 +40,12 @@ type Options struct {
 	ErrWriter io.Writer
 }
 
+// localConfigOverride carries --local-config: the file that stands in for
+// .sdd/config.local.yaml on both reads and writes. Process-wide because config
+// resolution happens in helpers far from the parsed command, and the flag is
+// root-global so every subcommand resolves the same layer.
+var localConfigOverride string
+
 // resolveLLMConfig builds the effective LLMConfig for a command from the
 // config overlay (user-global base, then .sdd/config.yaml, then
 // .sdd/config.local.yaml) and applies CLI flag overrides. Missing config
@@ -234,7 +240,7 @@ func loadConfig() (*model.PerRepoConfig, error) {
 		}
 		return &model.PerRepoConfig{BaseConfig: global.BaseConfig}, nil
 	}
-	return meta.ResolveConfig(global.BaseConfig, sddDir)
+	return meta.ResolveConfig(global.BaseConfig, sddDir, localConfigOverride)
 }
 
 // warnUnknownConfigKeys names every config key sdd read past — tolerated is
@@ -272,7 +278,7 @@ func resolveConfigAt(sddDir string) (*model.PerRepoConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return meta.ResolveConfig(global.BaseConfig, sddDir)
+	return meta.ResolveConfig(global.BaseConfig, sddDir, localConfigOverride)
 }
 
 // splitCSV returns the comma-split fields of s with each element trimmed of
@@ -326,6 +332,10 @@ func New(options Options) *cli.Command {
 				Aliases: []string{"d"},
 				Usage:   "Override graph directory (auto-discovered from .sdd/config.yaml)",
 			},
+			&cli.StringFlag{
+				Name:  "local-config",
+				Usage: "Use this file as the machine-local config layer instead of .sdd/config.local.yaml (read and written)",
+			},
 			&cli.BoolFlag{
 				Name:    "verbose",
 				Aliases: []string{"v"},
@@ -340,6 +350,19 @@ func New(options Options) *cli.Command {
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 			if cmd.Bool("version") {
 				return ctx, nil
+			}
+			// Resolved once, for the whole invocation: config resolution runs in
+			// helpers that hold no parsed command, and the flag is root-global so
+			// every subcommand reads and writes the same layer. Assigned on every
+			// run, including the empty case, so an in-process host running the
+			// command twice does not inherit the previous run's layer.
+			localConfigOverride = ""
+			if path := strings.TrimSpace(cmd.String("local-config")); path != "" {
+				abs, err := filepath.Abs(path)
+				if err != nil {
+					return ctx, fmt.Errorf("resolving --local-config %q: %w", path, err)
+				}
+				localConfigOverride = abs
 			}
 			level := slog.LevelWarn
 			// sdd index is an explicit progress command: on a non-TTY it shows
@@ -1189,7 +1212,7 @@ func resolveGraphDir(cmd *cli.Command) (string, error) {
 		return "", fmt.Errorf("no .sdd/ directory found; run 'sdd init' first")
 	}
 	sddDir := meta.SDDDir(repoRoot)
-	cfg, err := meta.ReadConfig(sddDir)
+	cfg, err := meta.ReadConfig(sddDir, localConfigOverride)
 	if err != nil {
 		return "", fmt.Errorf("reading .sdd/config.yaml: %w", err)
 	}
@@ -1677,7 +1700,7 @@ func initCmd() *cli.Command {
 // name what is missing and prompt for the URL. Informational like
 // warnIfParticipantMissing: errors here never fail an init that succeeded.
 func notifyUnconnectedDependencies(errWriter io.Writer, sddDir string) {
-	cfg, err := meta.ReadConfig(sddDir)
+	cfg, err := meta.ReadConfig(sddDir, localConfigOverride)
 	if err != nil || cfg == nil || len(cfg.Dependencies) == 0 {
 		return
 	}
