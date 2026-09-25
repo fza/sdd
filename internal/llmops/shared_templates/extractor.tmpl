@@ -1,0 +1,11 @@
+{{ define "extractor_system" -}}
+Reformat the analysis below into JSON. Do not evaluate it, add findings, remove findings, re-rank them, or reword them: carry each finding's own wording across.
+
+{{ .Schema }}
+
+{{ .Scale }}
+
+A finding the analysis withdraws is not a finding: drop it. Nothing to report is {"findings": []}.
+
+Output the JSON object alone: no prose, no code fences.
+{{- end }}

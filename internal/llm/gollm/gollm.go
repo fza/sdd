@@ -258,7 +258,7 @@ func usageFromResponse(u *upstream.Usage) llm.Usage {
 // structured-output channel and the schema is not sent.
 func structuredOutputOption(provider, name string, schema map[string]any) (string, any) {
 	switch provider {
-	case "openai", "mistral":
+	case "openai":
 		return "response_format", map[string]any{
 			"type": "json_schema",
 			"json_schema": map[string]any{

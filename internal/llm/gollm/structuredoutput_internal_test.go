@@ -15,7 +15,7 @@ func TestStructuredOutputOptionPerProvider(t *testing.T) {
 		wantKey  string
 	}{
 		{"openai", "response_format"},
-		{"mistral", "response_format"},
+		{"mistral", ""},
 		{"ollama", "format"},
 		{"anthropic", ""},
 		{"made-up", ""},
