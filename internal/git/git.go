@@ -224,12 +224,38 @@ func RepoRoot() (string, error) {
 // RepoRootFor returns the repository root containing path, which need not be
 // the process working directory. An empty string means path is not inside a
 // repository, which a caller reads as "nothing to commit here".
+//
+// A path that does not exist yet resolves through its nearest existing
+// ancestor, so a graph directory about to be created still names the
+// repository it will live in.
 func RepoRootFor(path string) string {
-	out, err := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel").Output()
+	dir := existingAncestor(path)
+	if dir == "" {
+		return ""
+	}
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// existingAncestor returns path, or the closest ancestor that exists on disk.
+func existingAncestor(path string) string {
+	dir, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	for {
+		if _, err := os.Stat(dir); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // UserName reads git config user.name, returning an empty string when git is

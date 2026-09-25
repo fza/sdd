@@ -370,7 +370,11 @@ project-sdd/           # only sdd: capture commits
 
 Git operations follow the paths they act on: entry, summary and WIP-marker commits run in the graph's repository, while `sdd init` commits skills and metadata in the project, and `sdd wip start` branches the project. `sdd sync --pull` syncs the graph's repository, and the background sync check reads its upstream. Grooming keeps reading the project's own history for closure evidence, since it runs where the work is.
 
-Two limits are worth knowing. `sdd serve` refuses to start against a graph in another repository: the engine's write path acquires a worktree of the served checkout and commits the graph inside it, so it would write the entry to disk and commit it nowhere. And `repo_id` is derived from the project's remote, so a graph others reference across repos is still announced under the project's identity rather than the graph repository's.
+`repo_id` and `default_branch` describe the graph, so `sdd init` derives them from the graph's repository: other graphs reference entries under that identity, and the graph is published on that repository's branch. The project's own remote names the code, not the graph.
+
+For the graph to be referenceable from other repos, the graph repository needs its own committed `.sdd/config.yaml` declaring the same `repo_id` and a `graph_dir` **relative** to itself — a connected repo's cache resolves the graph inside the clone, so an absolute path published in a config resolves nowhere. Running `sdd init` inside the graph repository writes exactly that.
+
+One limit: `sdd serve` refuses to start against a graph in another repository. The engine's write path acquires a worktree of the served checkout and commits the graph inside it, so it would write the entry to disk and commit it nowhere. Use the CLI capture commands for this arrangement.
 
 Inspect and edit config with `sdd config`:
 

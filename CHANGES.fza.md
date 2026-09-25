@@ -16,7 +16,13 @@ This keeps the project's history free of `sdd: …` commits, which is why a sepa
 
 `sdd serve` refuses to start when the graph sits in another repository, rather than losing commits quietly: the engine's write path acquires a worktree of the served checkout and commits the graph inside it (`meta.ResolveGraphDir(checkout, cfg)` in `newLocalMutationTargets`), so an absolute `graph_dir` would be written to disk and committed nowhere. The CLI capture path is the supported route for this arrangement.
 
-Known limit: `repo_id` is derived from the project's remote (`git.RemoteURL(repoRoot)` at init), so a graph others reference across repos is announced under the project's identity rather than the graph repository's. Cross-repo refs into a sidecar graph therefore name the project repo.
+**Graph identity follows the graph.** `sdd init` derives `repo_id` and `default_branch` from the repository holding the graph rather than from the checkout it runs in, because both are facts about the graph: other graphs reference entries under that identity, and the graph is published on that repository's branch. Deriving them from the project's remote announced a graph under the identity of a repository that does not contain it, so a cross-repo reference resolved to the wrong clone. The in-repo default is unchanged, since there the two repositories are one.
+
+`git.RepoRootFor` resolves through a path that does not exist yet, so a graph directory named in config before it is created still names its repository.
+
+Accepted cost: the derived values are committed in the project's config as well as in the graph repository's own config, and the two drift silently when the graph repository is renamed or its branch changes. Reading graph facts from the graph repository's config instead would remove the duplication at the price of a second committed config to resolve on every invocation.
+
+Also required for cross-repo reachability, and unchanged: the graph repository carries its own committed `.sdd/config.yaml` with a `graph_dir` relative to itself, because `repos.GraphDir` resolves a cached repo's graph inside the clone (`internal/repos/cache.go:60`).
 
 Files: `internal/git/git.go`, `internal/git/sync.go`, `cmd/sdd/main.go`, `cmd/sdd/sync.go`, `cmd/sdd/serve.go`, `README.md`.
 

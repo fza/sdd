@@ -1494,19 +1494,6 @@ func initCmd() *cli.Command {
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
 			participantFlag := strings.TrimSpace(cmd.String("participant"))
-			remoteURL := git.RemoteURL(repoRoot)
-			defaultBranch := ""
-			if existingMerged != nil {
-				defaultBranch = strings.TrimSpace(existingMerged.DefaultBranch)
-			}
-			if defaultBranch == "" {
-				var branchErr error
-				defaultBranch, branchErr = git.CurrentBranch(repoRoot)
-				if branchErr != nil {
-					return branchErr
-				}
-			}
-
 			// Aggregated non-interactive error (AC 5): a single message
 			// names every missing piece and the exact flag to fix it,
 			// rather than failing the run on the first one. Runs only
@@ -1541,6 +1528,28 @@ func initCmd() *cli.Command {
 			}
 			if graphDir == "" {
 				graphDir = model.DefaultGraphDir
+			}
+
+			// repo_id and default_branch are facts about the graph, so they
+			// come from the repository the graph lives in. A graph kept in a
+			// checkout beside the project is referenced by other graphs under
+			// that repository's identity and published on its branch; the
+			// project's own remote names the code, not the graph.
+			graphRepoRoot := repoRoot
+			if resolved := git.RepoRootFor(meta.ResolveGraphDir(repoRoot, &model.PerRepoConfig{GraphDir: graphDir})); resolved != "" {
+				graphRepoRoot = resolved
+			}
+			remoteURL := git.RemoteURL(graphRepoRoot)
+			defaultBranch := ""
+			if existingMerged != nil {
+				defaultBranch = strings.TrimSpace(existingMerged.DefaultBranch)
+			}
+			if defaultBranch == "" {
+				var branchErr error
+				defaultBranch, branchErr = git.CurrentBranch(graphRepoRoot)
+				if branchErr != nil {
+					return branchErr
+				}
 			}
 
 			// Resolve graph language: explicit flag wins; otherwise prompt

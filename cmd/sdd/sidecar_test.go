@@ -179,3 +179,70 @@ func TestInRepoGraphCommitsLandInTheProjectRepository(t *testing.T) {
 		t.Errorf("the entry is missing from the project's HEAD; files = %v", files)
 	}
 }
+
+// repo_id and default_branch describe the graph, so they come from the
+// repository the graph lives in. Other graphs reference entries under that
+// identity, and the project's own remote names the code rather than the graph.
+func TestInitDerivesIdentityFromTheGraphRepository(t *testing.T) {
+	root := canonicalTempDir(t)
+	project := filepath.Join(root, "project")
+	sidecar := filepath.Join(root, "sidecar")
+	graphDir := filepath.Join(sidecar, "graph")
+
+	for _, dir := range []string{project, graphDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initRepo(t, project)
+	initRepo(t, sidecar)
+	gitInDir(t, project, "remote", "add", "origin", "git@gitlab.com:acme/project.git")
+	gitInDir(t, sidecar, "remote", "add", "origin", "git@gitlab.com:acme/project-sdd.git")
+	gitInDir(t, sidecar, "checkout", "-q", "-b", "graph-main")
+
+	runSDD(t, project, "init",
+		"--graph-dir", graphDir,
+		"--language", "en",
+		"--scope", "project",
+		"--participant", "Ada",
+		"--agents", "claude",
+	)
+
+	config, err := os.ReadFile(filepath.Join(project, ".sdd", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	written := string(config)
+
+	if !strings.Contains(written, "repo_id: gitlab.com/acme/project-sdd") {
+		t.Errorf("repo_id must name the graph's repository:\n%s", written)
+	}
+	if strings.Contains(written, "repo_id: gitlab.com/acme/project\n") {
+		t.Errorf("repo_id must not name the project's repository:\n%s", written)
+	}
+	if !strings.Contains(written, "default_branch: graph-main") {
+		t.Errorf("default_branch must be the graph repository's branch:\n%s", written)
+	}
+}
+
+// The in-repo default keeps deriving from the one repository it has.
+func TestInitDerivesIdentityFromTheProjectWhenTheGraphIsInside(t *testing.T) {
+	project := canonicalTempDir(t)
+	initRepo(t, project)
+	gitInDir(t, project, "remote", "add", "origin", "git@gitlab.com:acme/project.git")
+
+	runSDD(t, project, "init",
+		"--language", "en",
+		"--scope", "project",
+		"--participant", "Ada",
+		"--agents", "claude",
+	)
+
+	config, err := os.ReadFile(filepath.Join(project, ".sdd", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if written := string(config); !strings.Contains(written, "repo_id: gitlab.com/acme/project") {
+		t.Errorf("repo_id must name the project's own repository:\n%s", written)
+	}
+}

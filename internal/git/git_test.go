@@ -235,3 +235,20 @@ func TestRepoRootFor(t *testing.T) {
 		t.Errorf("a path outside a repository must report no root, got %q", outside)
 	}
 }
+
+// A graph directory named in config may not exist yet when init runs, and it
+// still has to name the repository it will live in.
+func TestRepoRootForResolvesThroughAMissingPath(t *testing.T) {
+	sidecar := newTestRepo(t)
+	t.Chdir(t.TempDir())
+
+	missing := filepath.Join(sidecar, "graph", "not", "created", "yet")
+	root := RepoRootFor(missing)
+	resolved, err := filepath.EvalSymlinks(sidecar)
+	if err != nil {
+		resolved = sidecar
+	}
+	if root != resolved && root != sidecar {
+		t.Errorf("RepoRootFor(%s) = %q, want %q", missing, root, resolved)
+	}
+}
