@@ -110,4 +110,47 @@ func printEvalUsageSummary() {
 		Until:     time.Now(),
 		SinkEmpty: len(records) == 0,
 	})
+	printExtractionRates(run)
+}
+
+// printExtractionRates reports how often a checker's first response failed to
+// parse, per identity. The rate is the reliability measure for a candidate: a
+// model that never slips costs one call per check, and one that slips often
+// costs two and risks failing both.
+func printExtractionRates(run []model.StatsRecord) {
+	type counts struct{ checks, extractions int }
+	perIdentity := map[string]*counts{}
+	order := []string{}
+
+	for _, record := range run {
+		identity := record.Provider + " " + record.Model
+		if record.Variant != "" {
+			identity += " (" + record.Variant + ")"
+		}
+		entry, seen := perIdentity[identity]
+		if !seen {
+			entry = &counts{}
+			perIdentity[identity] = entry
+			order = append(order, identity)
+		}
+		switch pkgllm.Purpose(record.Op) {
+		case pkgllm.PurposePreflight, pkgllm.PurposeWritingGuide:
+			entry.checks++
+		case pkgllm.PurposePreflightExtract, pkgllm.PurposeWritingGuideExtract:
+			entry.extractions++
+		}
+	}
+
+	fmt.Printf("\n=== verdict extraction rate — this run ===\n")
+	for _, identity := range order {
+		c := perIdentity[identity]
+		if c.checks == 0 && c.extractions == 0 {
+			continue
+		}
+		rate := 0.0
+		if c.checks > 0 {
+			rate = 100 * float64(c.extractions) / float64(c.checks)
+		}
+		fmt.Printf("%-48s %3d check(s), %3d extraction(s)  %5.1f%%\n", identity, c.checks, c.extractions, rate)
+	}
 }
