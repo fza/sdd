@@ -75,10 +75,21 @@ func (m *purposeMux) runnerFor(purpose llm.Purpose) (llm.Runner, error) {
 	return runner, nil
 }
 
+// extractParent names the purpose whose client serves an extraction call. The
+// reformat targets the same shape as the call it rescues, so it belongs on the
+// same schema-carrying client.
+var extractParent = map[llm.Purpose]llm.Purpose{
+	llm.PurposePreflightExtract:    llm.PurposePreflight,
+	llm.PurposeWritingGuideExtract: llm.PurposeWritingGuide,
+}
+
 // schemaKey collapses every unconstrained purpose onto one client, so a
 // process summarizing and checking holds two clients rather than one per
 // purpose value.
 func schemaKey(purpose llm.Purpose) llm.Purpose {
+	if parent, ok := extractParent[purpose]; ok {
+		purpose = parent
+	}
 	if _, ok := structuredPurposes[purpose]; ok {
 		return purpose
 	}
