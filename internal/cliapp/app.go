@@ -865,7 +865,7 @@ func newCmd() *cli.Command {
 					ProcedureRegistry: registry,
 				}),
 				LLMRunner: runner,
-				Committer: git.CLI{},
+				Committer: graphGit(dir),
 				Repos:     mgr,
 				Language:  configLanguage(cfg),
 			})
@@ -958,8 +958,8 @@ func rewriteCmd() *cli.Command {
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.CLI{},
-				Mover:     git.CLI{},
+				Committer: graphGit(dir),
+				Mover:     graphGit(dir),
 			})
 			return handler.RewriteEntry(ctx, rcmd)
 		}),
@@ -994,7 +994,7 @@ func lintCmd() *cli.Command {
 					Stderr:    cmd.ErrWriter,
 					GraphDir:  dir,
 					Reader:    reader,
-					Committer: git.CLI{},
+					Committer: graphGit(dir),
 				})
 				if err := handler.LintFix(ctx, fixCmd); err != nil {
 					return err
@@ -1160,7 +1160,7 @@ func summarizeCmd() *cli.Command {
 					Repos:           reg,
 				}),
 				LLMRunner: runner,
-				Committer: git.CLI{},
+				Committer: graphGit(dir),
 				Language:  configLanguage(cfg),
 			})
 			return handler.Summarize(ctx, sumCmd)
@@ -1229,6 +1229,18 @@ func resolveParticipantFlag(flagValue, sddDir string) (string, error) {
 		return "", fmt.Errorf("no participant configured; run `sdd init` or pass --participant")
 	}
 	return cfg.Participant, nil
+}
+
+// graphGit is the git adapter for graph writes and graph history: it runs in
+// the repository holding graphDir. That is the project's own repository when
+// the graph lives inside it, and the separate checkout when graph_dir points
+// beside the project — a working directory alone cannot express both, since the
+// process runs where the work is.
+//
+// Operations on the work itself (branches for a WIP marker, the skill and
+// config commits of sdd init) keep the process working directory.
+func graphGit(graphDir string) git.CLI {
+	return git.CLI{Dir: git.RepoRootFor(graphDir)}
 }
 
 // resolveSDDDir discovers the .sdd/ directory by walking up from cwd.
@@ -1449,19 +1461,6 @@ func initCmd() *cli.Command {
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
 			participantFlag := strings.TrimSpace(cmd.String("participant"))
-			remoteURL := git.RemoteURL(repoRoot)
-			defaultBranch := ""
-			if existingMerged != nil {
-				defaultBranch = strings.TrimSpace(existingMerged.DefaultBranch)
-			}
-			if defaultBranch == "" {
-				var branchErr error
-				defaultBranch, branchErr = git.CurrentBranch(repoRoot)
-				if branchErr != nil {
-					return branchErr
-				}
-			}
-
 			// Aggregated non-interactive error (AC 5): a single message
 			// names every missing piece and the exact flag to fix it,
 			// rather than failing the run on the first one. Runs only
@@ -1496,6 +1495,28 @@ func initCmd() *cli.Command {
 			}
 			if graphDir == "" {
 				graphDir = model.DefaultGraphDir
+			}
+
+			// repo_id and default_branch are facts about the graph, so they come
+			// from the repository the graph lives in. A graph kept in a checkout
+			// beside the project is referenced by other graphs under that
+			// repository's identity and published on its branch; the project's
+			// own remote names the code, not the graph.
+			graphRepoRoot := repoRoot
+			if resolved := git.RepoRootFor(meta.ResolveGraphDir(repoRoot, &model.PerRepoConfig{GraphDir: graphDir})); resolved != "" {
+				graphRepoRoot = resolved
+			}
+			remoteURL := git.RemoteURL(graphRepoRoot)
+			defaultBranch := ""
+			if existingMerged != nil {
+				defaultBranch = strings.TrimSpace(existingMerged.DefaultBranch)
+			}
+			if defaultBranch == "" {
+				var branchErr error
+				defaultBranch, branchErr = git.CurrentBranch(graphRepoRoot)
+				if branchErr != nil {
+					return branchErr
+				}
 			}
 
 			// Resolve graph language: explicit flag wins; otherwise prompt
@@ -1771,7 +1792,7 @@ func wipStartCmd() *cli.Command {
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.CLI{},
+				Committer: graphGit(dir),
 				Brancher:  git.CLI{},
 			})
 			return handler.StartWIP(ctx, startCmd)
@@ -1827,7 +1848,7 @@ func wipDoneCmd() *cli.Command {
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.RemovalCommitter{},
+				Committer: git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
 				Brancher:  git.CLI{},
 			})
 			return handler.FinishWIP(ctx, doneCmd)
