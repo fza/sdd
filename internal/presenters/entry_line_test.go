@@ -2,6 +2,7 @@ package presenters_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -189,5 +190,41 @@ func TestEntryLineWithScore_Zero(t *testing.T) {
 	want := "  20260101-100000-d-tac-zer tactical directive decision (Christopher) {status: active} {score: 0.000} zero score entry\n"
 	if got != want {
 		t.Errorf("EntryLineWithScore zero mismatch:\n  got:  %q\n  want: %q", got, want)
+	}
+}
+
+// The first sentence is the entry's name on a brief line, and a sentence
+// written as a paragraph would push the identity columns off the terminal.
+func TestEntryLineBrief_CapsTheTitle(t *testing.T) {
+	long := "This entry commits to a very long and thoroughly qualified statement that keeps adding clauses well past the point where a reader scanning a list has stopped reading it entirely."
+	e := entry("20260410-100000-s-tac-aaa", withSummary(long))
+	g := model.NewGraph([]*model.Entry{e})
+
+	var buf bytes.Buffer
+	presenters.EntryLineBrief(&buf, e, g)
+	line := buf.String()
+
+	if !strings.Contains(line, "…") {
+		t.Errorf("a cut title should say it was cut: %q", line)
+	}
+	if len([]rune(strings.TrimSpace(line))) > 200 {
+		t.Errorf("brief line should stay bounded, got %d runes: %q", len([]rune(line)), line)
+	}
+}
+
+// A short first sentence passes through whole, with no cut marker.
+func TestEntryLineBrief_LeavesAShortTitleWhole(t *testing.T) {
+	e := entry("20260410-100000-s-tac-aaa", withSummary("Graph commits follow the graph's repository."))
+	g := model.NewGraph([]*model.Entry{e})
+
+	var buf bytes.Buffer
+	presenters.EntryLineBrief(&buf, e, g)
+	line := buf.String()
+
+	if !strings.Contains(line, "Graph commits follow the graph's repository.") {
+		t.Errorf("short title should render whole: %q", line)
+	}
+	if strings.Contains(line, "…") {
+		t.Errorf("nothing was cut, so no marker belongs: %q", line)
 	}
 }
