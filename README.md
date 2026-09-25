@@ -398,7 +398,7 @@ Claude Code is the primary, most-exercised harness; Codex support is recent and 
 
 ### LLM provider (summaries + pre-flight)
 
-SDD calls an LLM in two places — summarizing each captured entry (the short text rendered in `sdd view` and catch-up) and running pre-flight validation on every draft before it lands. Four providers supported: `anthropic` (cloud API), `openai` (cloud API), `ollama` (local), and `claude-cli` (your local Claude Code CLI authentication).
+SDD calls an LLM in two places — summarizing each captured entry (the short text rendered in `sdd view` and catch-up) and running pre-flight validation on every draft before it lands. Five providers supported: `anthropic` (cloud API), `openai` (cloud API), `mistral` (cloud API), `ollama` (local), and `claude-cli` (your local Claude Code CLI authentication).
 
 ```yaml
 # Anthropic API
@@ -433,6 +433,16 @@ llm:
 ```
 
 ```yaml
+# Mistral API
+llm:
+  provider: mistral
+  model: mistral-large-2512
+  api_keys:
+    mistral: ...
+  timeout: 5m
+```
+
+```yaml
 # Local Ollama
 llm:
   provider: ollama
@@ -448,7 +458,9 @@ llm:
   model: claude-sonnet-4-6
 ```
 
-Remote providers (`anthropic`, `openai`) get a conservative rate limit applied automatically, biased below tier-1 ceilings so bursty operations like `sdd summarize --all` don't trip 429s. Override with `rate_limit_rps` on higher tiers.
+Pre-flight and the writing guide ask the provider to constrain its response to a JSON schema wherever the provider reads one: `response_format` on `openai` and `mistral`, `format` on `ollama`. The schema is reflected from the same Go struct the response is parsed into, so the wire contract and the parser cannot drift. Summaries are never constrained, since they answer in prose, and `anthropic` and `claude-cli` carry no schema.
+
+Remote providers (`anthropic`, `openai`, `mistral`) get a conservative rate limit applied automatically, biased below tier-1 ceilings so bursty operations like `sdd summarize --all` don't trip 429s. Override with `rate_limit_rps` on higher tiers.
 
 The `openai` provider talks to any service that implements the OpenAI chat completions protocol: set `endpoint` to its base URL and the request goes there instead of to OpenAI. The same URL works with or without a trailing `/v1`. Since the automatic rate limit assumes OpenAI's tier-1 ceilings, set `rate_limit_rps` explicitly for a service that allows more.
 
