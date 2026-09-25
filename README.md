@@ -448,10 +448,11 @@ llm:
   model: claude-sonnet-4-6
 ```
 
+The `claude-cli` provider runs each call with `--safe-mode`, in a working directory of its own, and without `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` in its environment. Started inside a project tree the CLI would otherwise load that project's instruction files, skills, hooks and configured servers into a prompt that needs none of them, and an inherited key would answer on an API balance instead of the signed-in account. Authenticating by key belongs on `provider: anthropic`, which sends the key deliberately.
+
 Pre-flight and the writing guide ask the provider to constrain its response to a JSON schema wherever the provider reads one: `response_format` on `openai`, `format` on `ollama`. The schema is reflected from the same Go struct the response is parsed into, so the wire contract and the parser cannot drift. Summaries are never constrained, since they answer in prose, and `anthropic` and `claude-cli` carry no schema.
 
 When a checker's response does not parse, SDD makes one more call carrying the unparseable text and asking for the JSON alone, so a model that writes its conclusion into the `severity` field does not cost you the capture. A response that parses costs one call. `extract_timeout` bounds the second call (default `60s`) separately from `timeout`, so a slipping endpoint cannot spend twice the configured timeout on one check. Both responses failing is an error naming both attempts.
-
 Remote providers (`anthropic`, `openai`) get a conservative rate limit applied automatically, biased below tier-1 ceilings so bursty operations like `sdd summarize --all` don't trip 429s. Override with `rate_limit_rps` on higher tiers.
 
 The `openai` provider talks to any service that implements the OpenAI chat completions protocol: set `endpoint` to its base URL and the request goes there instead of to OpenAI. The same URL works with or without a trailing `/v1`. Since the automatic rate limit assumes OpenAI's tier-1 ceilings, set `rate_limit_rps` explicitly for a service that allows more.
