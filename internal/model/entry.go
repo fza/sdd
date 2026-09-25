@@ -252,6 +252,12 @@ type Entry struct {
 	// read-side conveniences for mining and dialogue comprehension.
 	Canonical string
 	Aliases   []string
+	// ActorKind is only meaningful on kind: actor signals. It records whether
+	// the participant is a human being or a machine, and is optional: an actor
+	// captured without it is unknown rather than human. It does not change
+	// within an identity chain — a supersede may rename a participant, never
+	// silently reclassify one.
+	ActorKind ActorKind
 	// Class is only meaningful on kind: procedure decisions. It classifies
 	// the procedure's execution role: a move (the default when empty) is a
 	// playbook step started through the engine loop; a shell is a session
@@ -367,6 +373,36 @@ var procedureClassDesc = map[ProcedureClass]string{
 	ProcedureClassTask:  "a delegate a move dispatches with resolved inputs and no user choosers, kept off the session's offered moves",
 }
 
+// ActorKind classifies what sort of participant an actor signal declares:
+// a human being, or a machine such as an assistant or a service. It answers a
+// question prose cannot be trusted for — a consumer assigning ownership needs a
+// field it can read, since somebody has to answer for committed work.
+//
+// The set is closed but open to growth: an identity that is neither, such as a
+// team, has no value yet and stays unset. Empty therefore means unknown, never
+// human: a consumer must not read a person out of silence.
+type ActorKind string
+
+const (
+	ActorKindHuman   ActorKind = "human"
+	ActorKindMachine ActorKind = "machine"
+)
+
+// ActorKindValues lists the actor kinds in canonical order, for flag help and
+// the kind's authoring fact.
+func ActorKindValues() []ActorKind { return []ActorKind{ActorKindHuman, ActorKindMachine} }
+
+// IsValidActorKind reports whether s names an actor kind. The empty string is
+// not a value: an absent field is unset, which callers check separately.
+func IsValidActorKind(s string) bool {
+	for _, v := range ActorKindValues() {
+		if string(v) == s {
+			return true
+		}
+	}
+	return false
+}
+
 // ProcedureClassValues lists the procedure classes in canonical order, for
 // surfaces that render or generate from the enumeration instead of restating
 // it.
@@ -442,6 +478,7 @@ type frontmatter struct {
 	Intent       string            `yaml:"intent,omitempty"`
 	Canonical    string            `yaml:"canonical,omitempty"`
 	Aliases      []string          `yaml:"aliases,omitempty"`
+	ActorKind    string            `yaml:"actor_kind,omitempty"`
 	Class        string            `yaml:"class,omitempty"`
 	Actor        string            `yaml:"actor,omitempty"`
 	Topics       []AnnotationTopic `yaml:"topics,omitempty"`
@@ -535,6 +572,7 @@ func ParseEntry(filename, content string) (*Entry, error) {
 		Intent:       Intent(fm.Intent),
 		Canonical:    fm.Canonical,
 		Aliases:      fm.Aliases,
+		ActorKind:    ActorKind(fm.ActorKind),
 		Class:        ProcedureClass(fm.Class),
 		Actor:        fm.Actor,
 		Index:        fm.Index,
@@ -766,6 +804,7 @@ func FormatFrontmatter(e *Entry) string {
 		Intent:       string(e.Intent),
 		Canonical:    e.Canonical,
 		Aliases:      e.Aliases,
+		ActorKind:    string(e.ActorKind),
 		Class:        string(e.Class),
 		Actor:        e.Actor,
 		Index:        e.Index,

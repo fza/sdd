@@ -58,7 +58,7 @@ func constructionCases(t *testing.T) map[string]*model.EntryConstruction {
 		},
 		"actor": {
 			ID: "20260813-120000-s-prc-act", Type: model.TypeSignal, Layer: model.LayerProcess, Kind: model.KindActor,
-			Actor: &model.ActorFields{Canonical: "Jane", Aliases: []string{"Jane Doe"}},
+			Actor: &model.ActorFields{Canonical: "Jane", Aliases: []string{"Jane Doe"}, ActorKind: model.ActorKindHuman},
 			Body:  "Jane is a participant.",
 		},
 		"annotation": {
