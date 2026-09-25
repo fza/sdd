@@ -80,14 +80,9 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 		return nil, fmt.Errorf("rendering pre-flight prompt: %w", err)
 	}
 
-	output, err := runner.Run(ctx, req)
+	result, err := runJSONCheck(ctx, runner, req, preflightExtraction, parsePreflightResult)
 	if err != nil {
 		return nil, fmt.Errorf("running pre-flight validator: %w", err)
-	}
-
-	result, err := parsePreflightResult(output.Text)
-	if err != nil {
-		return nil, fmt.Errorf("parsing pre-flight result: %w", err)
 	}
 	return result, nil
 }
