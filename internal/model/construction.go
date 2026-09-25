@@ -58,6 +58,7 @@ type DirectiveFields struct {
 type ActorFields struct {
 	Canonical string
 	Aliases   []string
+	ActorKind ActorKind
 }
 
 // RoleFields names the canonical of the actor-identity chain the role binds to.
@@ -154,7 +155,21 @@ const (
 	AnnotationTopicRequirement = "an annotation signal must declare at least one topic, and any members it names must be a subset of its refs"
 	FocusInvolvementRule       = "a focus decision requires at least one involvement whose target resolves in the graph"
 	AliasHygieneRule           = "each alias is non-empty, distinct from the canonical, and listed once"
+	ActorKindScopeRule         = "actor_kind is only meaningful on kind: actor signals"
 )
+
+// ActorKindRule states the value rule the validator enforces, so the actor
+// kind's authoring fact serves the same words.
+var ActorKindRule = fmt.Sprintf("actor_kind is optional and, when present, is one of %s — absent means unknown, never human", actorKindListPhrase())
+
+func actorKindListPhrase() string {
+	values := ActorKindValues()
+	parts := make([]string, len(values))
+	for i, v := range values {
+		parts[i] = string(v)
+	}
+	return strings.Join(parts, " or ")
+}
 
 // processPinnedKinds are the kinds whose entries always live at the process
 // layer, because they describe how the project works rather than the work.
@@ -217,11 +232,14 @@ func ConstructFromEntry(e *Entry) (*EntryConstruction, []Finding) {
 
 	switch {
 	case e.IsActor():
-		c.Actor = &ActorFields{Canonical: e.Canonical, Aliases: e.Aliases}
+		c.Actor = &ActorFields{Canonical: e.Canonical, Aliases: e.Aliases, ActorKind: e.ActorKind}
 	case e.IsProcedure():
 		c.Procedure = &ProcedureFields{Canonical: e.Canonical, Class: e.Class, Spec: e.ProcedureSpec}
 		if len(e.Aliases) > 0 {
 			stray("aliases", "", "aliases are only meaningful on kind: actor signals")
+		}
+		if e.ActorKind != "" {
+			stray("actor_kind", string(e.ActorKind), ActorKindScopeRule)
 		}
 	default:
 		if e.Canonical != "" {
@@ -229,6 +247,9 @@ func ConstructFromEntry(e *Entry) (*EntryConstruction, []Finding) {
 		}
 		if len(e.Aliases) > 0 {
 			stray("aliases", "", "aliases are only meaningful on kind: actor signals")
+		}
+		if e.ActorKind != "" {
+			stray("actor_kind", string(e.ActorKind), ActorKindScopeRule)
 		}
 	}
 	if !e.IsProcedure() {
@@ -314,6 +335,7 @@ func (c *EntryConstruction) Entry() *Entry {
 	if c.Actor != nil {
 		e.Canonical = c.Actor.Canonical
 		e.Aliases = c.Actor.Aliases
+		e.ActorKind = c.Actor.ActorKind
 	}
 	if c.Role != nil {
 		e.Actor = c.Role.Actor
@@ -372,6 +394,9 @@ func (c *EntryConstruction) Validate(g *Graph) []Finding {
 		}
 		if c.Layer != LayerProcess {
 			add("layer", string(c.Layer), fmt.Sprintf("actor signal should live at process layer (got %s)", c.Layer))
+		}
+		if c.Actor != nil && c.Actor.ActorKind != "" && !IsValidActorKind(string(c.Actor.ActorKind)) {
+			add("actor_kind", string(c.Actor.ActorKind), fmt.Sprintf("invalid actor_kind %q (expected %s)", c.Actor.ActorKind, actorKindListPhrase()))
 		}
 		if c.Actor != nil {
 			seen := make(map[string]bool, len(c.Actor.Aliases))

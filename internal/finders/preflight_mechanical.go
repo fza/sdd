@@ -21,6 +21,8 @@ import (
 //   - focus-actor-drift: on a kind: focus decision, every focus-level actor
 //     and every per-involvement actor override must match an active actor
 //     canonical. Skipped when the graph has zero active actor signals.
+//   - actor-kind-changed: a supersede within an identity chain must not
+//     contradict an actor_kind the chain already declares.
 //   - actor-canonical-reused (AC 5): for a new kind: actor signal, the
 //     canonical must not appear in any actor-identity chain the new entry
 //     does not extend.
@@ -74,6 +76,7 @@ func mechanicalPreflight(entry *model.Entry, graph *model.Graph, declaredDeps []
 
 	if entry.IsActor() {
 		findings = append(findings, actorWriteOnceFindings(entry, graph)...)
+		findings = append(findings, actorKindStabilityFindings(entry, graph)...)
 	}
 	if entry.IsRole() {
 		findings = append(findings, roleMechanicalFindings(entry, graph)...)
@@ -426,6 +429,33 @@ func actorWriteOnceFindings(entry *model.Entry, graph *model.Graph) []query.Find
 			Severity:    query.SeverityHigh,
 			Category:    "actor-canonical-reused",
 			Observation: fmt.Sprintf("canonical %q is already used by actor-identity chain with head %s (write-once across chains)", canonical, headID),
+		}}
+	}
+	return nil
+}
+
+// actorKindStabilityFindings refuses a reclassification within an identity
+// chain. A supersede may rename a participant or revise its prose, but the
+// human-or-machine answer is what a consumer assigns ownership on: flipping it
+// silently would rewrite who answers for every attribution already made under
+// that canonical. Setting it on a chain that never carried it is allowed —
+// that is filling in an unknown, not changing an answer.
+func actorKindStabilityFindings(entry *model.Entry, graph *model.Graph) []query.Finding {
+	if entry.ActorKind == "" {
+		return nil
+	}
+	chain := parentActorChain(entry, graph)
+	if chain == nil {
+		return nil
+	}
+	for _, prior := range chain.Entries {
+		if prior.ActorKind == "" || prior.ActorKind == entry.ActorKind {
+			continue
+		}
+		return []query.Finding{{
+			Severity:    query.SeverityHigh,
+			Category:    "actor-kind-changed",
+			Observation: fmt.Sprintf("actor_kind %q contradicts %q declared by %s in the same identity chain — a supersede renames a participant, it does not reclassify one", entry.ActorKind, prior.ActorKind, prior.ID),
 		}}
 	}
 	return nil
