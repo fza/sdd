@@ -4,7 +4,7 @@ Changes carried on top of upstream `networkteam/sdd`. The baseline is upstream `
 
 Section headings are local build stamps, matching the version string the binary reports (`sdd --version`).
 
-## 0.17.0+fza4
+## 0.17.0+fza5
 
 ### Added
 
