@@ -464,3 +464,29 @@ func TestRenderShow_OmitsThePreflightFieldWhenValidated(t *testing.T) {
 		t.Errorf("a validated entry must carry no preflight field, got:\n%s", out)
 	}
 }
+
+// A consumer assigning ownership reads the actor's sort through the same
+// surface that already carries its canonical and aliases.
+func TestRenderShow_CarriesTheActorKind(t *testing.T) {
+	e := entry("20260410-100000-s-prc-aaa", withKind(model.KindActor), withCanonical("Claude"), withContent("An assistant working on the project."))
+	e.Layer = model.LayerProcess
+	e.ActorKind = model.ActorKindMachine
+	g := model.NewGraph([]*model.Entry{e})
+
+	out := renderShow(t, g, []string{e.ID})
+	if !strings.Contains(out, "actor_kind: machine") {
+		t.Errorf("show must carry the actor's sort, got:\n%s", out)
+	}
+}
+
+// An actor captured before the field existed carries no value, and unknown
+// must not render as a value at all.
+func TestRenderShow_OmitsAnUnknownActorKind(t *testing.T) {
+	e := entry("20260410-100000-s-prc-aaa", withKind(model.KindActor), withCanonical("Felix"), withContent("A developer."))
+	e.Layer = model.LayerProcess
+	g := model.NewGraph([]*model.Entry{e})
+
+	if out := renderShow(t, g, []string{e.ID}); strings.Contains(out, "actor_kind") {
+		t.Errorf("an unknown actor kind must not render, got:\n%s", out)
+	}
+}

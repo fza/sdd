@@ -43,6 +43,7 @@ func actorMechanics() string {
 	}
 	fmt.Fprintf(&b, "Layer is pinned to process for these kinds: %s.\n\n", strings.Join(pinned, ", "))
 	fmt.Fprintf(&b, "Enforced at capture: %s. Alias hygiene: %s.\n\n", model.ActorCanonicalRequirement, model.AliasHygieneRule)
+	fmt.Fprintf(&b, "Participant sort: %s. It does not change within an identity chain.\n\n", model.ActorKindRule)
 	fmt.Fprintf(&b, "Closing rule over signal kinds: %s.\n", model.SignalCloseRule)
 	return b.String()
 }
