@@ -4,6 +4,33 @@ Changes carried on top of upstream `networkteam/sdd`. The baseline is upstream `
 
 Section headings are local build stamps, matching the version string the binary reports (`sdd --version`).
 
+## 0.17.0+fza6
+
+### Added
+
+**`actor_kind` on actor signals.** A `kind: actor` signal records whether the participant is a `human` or a `machine`, beside `canonical` and `aliases`. An assistant may propose work, but a person answers for what is committed, so a tool assigning ownership needs a field rather than prose: the graph already separates `Felix` ("a developer") from `Claude` ("an AI assistant") in sentences no consumer can read. Without the field the consuming tool invents its own convention — a topic on the actor entry — which sdd neither knows about nor checks.
+
+A closed value set rather than a boolean: a boolean answers one question, and a value leaves room for an identity that is neither, such as a team, without another schema change.
+
+Rules it carries:
+
+- Meaningful only on `kind: actor`. Anywhere else it is a stray field and refused, exactly as `aliases` is, on read and write alike.
+- Optional, because every actor entry in every existing graph lacks it. Absent means **unknown**, never human: nothing may read a person out of silence.
+- Fixed within an identity chain. A supersede renames a participant or revises its prose; a contradicting `actor_kind` is a blocking `actor-kind-changed` finding, because flipping it would rewrite who answers for every attribution already made under that canonical. Filling in a chain that carried no value is allowed, since that settles an unknown rather than changing an answer.
+- Read through the surface that already carries `canonical` and `aliases`: the `sdd show` envelope, omitted entirely when unset.
+
+Naming: `actor_kind` over `nature`, `agency` and a `person`/`assistant` pair. `nature` and `agency` are abstract where the field is concrete, and `assistant` names a role rather than a category, so a bot or a service fits it badly. Accepted cost: the frontmatter carries `kind: actor` two lines above `actor_kind`, so the two keys sit close enough to be misread as one.
+
+The value is never inferred. Nothing reads it out of the summary and no name is special-cased; `sdd new --actor-kind human|machine` is the only way it is set.
+
+Corrected alongside: `canonical` is write-once *across* chains and deliberately mutable *within* one, so the stability rule for `actor_kind` is a new check rather than an existing one reused.
+
+Files: `internal/model/entry.go`, `internal/model/construction.go`, `internal/command/new_entry.go`, `internal/finders/preflight_mechanical.go`, `internal/presenters/show.go`, `cmd/sdd/main.go`, `pkg/application/write_api.go`, `pkg/application/workflow_registry.go` (engine store key `actorKind`), `internal/basefacts/actor.go`, `internal/basefacts/templates/actor.md`, and the skill templates for the CLI reference, framework concepts and bootstrap.
+
+Tests: `internal/model/actorkind_test.go` (frontmatter round trip, optionality, closed value set, refusal outside actors), `internal/finders/preflight_test.go` (reclassification blocks; filling an unknown, restating and unsetting do not), `internal/presenters/show_test.go` (carried and omitted), `cmd/sdd/actorkind_test.go` (an end-to-end capture records it).
+
+Also fixed: the CLI subprocess test harness split argv on spaces, so no test could pass an entry description or a summary as one argument. Arguments now travel separated by a unit separator, with the space-separated form still accepted.
+
 ## 0.17.0+fza5
 
 ### Added

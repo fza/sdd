@@ -652,6 +652,10 @@ func newCmd() *cli.Command {
 				Usage: "Comma-separated aliases (kind: actor only) — read-side convenience for mining and comprehension",
 			},
 			&cli.StringFlag{
+				Name:  "actor-kind",
+				Usage: "What sort of participant this is (kind: actor only): human or machine — omitted means unknown, never human",
+			},
+			&cli.StringFlag{
 				Name:  "actor",
 				Usage: "Canonical name the role binds to (kind: role only) — must match an active actor chain's head canonical",
 			},
@@ -847,6 +851,7 @@ func newCmd() *cli.Command {
 				Confidence:        confidence,
 				Canonical:         strings.TrimSpace(cmd.String("canonical")),
 				Aliases:           splitCSV(cmd.String("aliases")),
+				ActorKind:         strings.TrimSpace(cmd.String("actor-kind")),
 				Class:             strings.TrimSpace(cmd.String("class")),
 				Actor:             strings.TrimSpace(cmd.String("actor")),
 				TopicLabels:       splitCSV(cmd.String("topics")),

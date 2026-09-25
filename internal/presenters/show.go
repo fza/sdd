@@ -113,6 +113,7 @@ type showEnvelope struct {
 	Participants []string         `yaml:"participants,omitempty"`
 	Canonical    string           `yaml:"canonical,omitempty"`
 	Aliases      []string         `yaml:"aliases,omitempty"`
+	ActorKind    string           `yaml:"actor_kind,omitempty"`
 	Class        string           `yaml:"class,omitempty"`
 	Actor        string           `yaml:"actor,omitempty"`
 	Topics       []string         `yaml:"topics,omitempty"`
@@ -143,6 +144,7 @@ func writeEnvelope(w io.Writer, g query.ShowGroup, opts ShowOptions) {
 		Participants: e.Participants,
 		Canonical:    e.Canonical,
 		Aliases:      e.Aliases,
+		ActorKind:    string(e.ActorKind),
 		Class:        string(e.Class),
 		Actor:        e.Actor,
 		Topics:       topicLabels(g.PrimaryTopics),

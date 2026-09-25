@@ -50,13 +50,14 @@ type EntryDraft struct {
 	Topics            []string
 	Index             *FactIndex
 	AttachmentHandles []string
-	// Canonical and Aliases carry a kind: actor signal's identity; Actor carries
-	// a kind: role decision's bound actor canonical; Class carries a
-	// kind: procedure decision's execution role. Mirrors the CLI-side
-	// NewEntryCmd fields — a value on the wrong kind is a blocking finding at
-	// the construction boundary.
+	// Canonical, Aliases and ActorKind carry a kind: actor signal's identity;
+	// Actor carries a kind: role decision's bound actor canonical; Class
+	// carries a kind: procedure decision's execution role. Mirrors the
+	// CLI-side NewEntryCmd fields — a value on the wrong kind is a blocking
+	// finding at the construction boundary.
 	Canonical string
 	Aliases   []string
+	ActorKind string
 	Actor     string
 	Class     string
 	// ProcedureSpec carries a kind: procedure decision's workflow declaration
@@ -459,7 +460,7 @@ func entryFromDraft(draft EntryDraft, id string, now time.Time) (*model.Entry, [
 		ID: id, Type: entryType, Kind: kind, Layer: draftLayer(draft.Layer), Intent: model.Intent(draft.Intent),
 		Content: draft.Body, Participants: append([]string(nil), draft.Participants...),
 		Confidence: draft.Confidence, Topics: topics, Index: index, Time: now,
-		Canonical: draft.Canonical, Aliases: append([]string(nil), draft.Aliases...), Actor: draft.Actor,
+		Canonical: draft.Canonical, Aliases: append([]string(nil), draft.Aliases...), ActorKind: model.ActorKind(draft.ActorKind), Actor: draft.Actor,
 		Class:       model.ProcedureClass(draft.Class),
 		FocusActors: append([]string(nil), draft.FocusActors...), FocusWhen: draft.FocusWhen,
 		Involvement: append([]types.Involvement(nil), draft.Involvement...),

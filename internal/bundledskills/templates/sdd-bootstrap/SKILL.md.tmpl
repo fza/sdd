@@ -282,7 +282,7 @@ Avoid jargon in user-facing prompts ("canonical", "alias", "frame"). The skill h
 Draft the actor signal from the answers, playback, confirm, capture:
 
 ```bash
-sdd new s prc --kind actor --canonical <name> --aliases <a,b> --confidence high "<description>"
+sdd new s prc --kind actor --canonical <name> --aliases <a,b> --actor-kind human --confidence high "<description>"
 ```
 
 The description should follow the actor rubric: introduce the canonical, include external identity context (affiliation, background, expertise), explain aliases when present. See `../sdd/SKILL.md` `Write canonical names` guidance and framework-concepts `Actors and Roles` section for the full framing already loaded.

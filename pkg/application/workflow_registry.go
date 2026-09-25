@@ -427,6 +427,7 @@ func (w *WorkflowSession) draftFromStore(store *engine.Store) EntryDraft {
 		draft.ProcedureSpec = spec
 	}
 	draft.Aliases = workflowStoreStrings(store, "aliases")
+	draft.ActorKind, _ = workflowStoreString(store, "actorKind")
 	draft.FocusActors = workflowStoreStrings(store, "focusActors")
 	// Store values are normalized JSON documents, so focusWhen comes back as a
 	// map keyed by its JSON field names and involvement as a list of such maps —

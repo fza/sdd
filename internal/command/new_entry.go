@@ -51,6 +51,10 @@ type NewEntryCmd struct {
 	// model-layer validator flags a missing canonical on an actor.
 	Canonical string
 	Aliases   []string
+	// ActorKind is only meaningful for kind: actor signals — whether the
+	// participant is a human being or a machine. Optional: an actor captured
+	// without it is unknown rather than human.
+	ActorKind string
 
 	// Actor is only meaningful for kind: role decisions — names the
 	// canonical of the actor-identity chain the role binds to. Ignored
@@ -158,6 +162,7 @@ func (c *NewEntryCmd) BuildEntry(id string) (*model.Entry, error) {
 		Intent:       model.Intent(c.Intent),
 		Canonical:    c.Canonical,
 		Aliases:      c.Aliases,
+		ActorKind:    model.ActorKind(c.ActorKind),
 		Class:        model.ProcedureClass(c.Class),
 		Actor:        c.Actor,
 		Index:        c.Index,

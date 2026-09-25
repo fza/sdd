@@ -69,7 +69,7 @@ func runSDD(t *testing.T, dir string, args ...string) string {
 	cmd.Env = append(os.Environ(),
 		"XDG_CONFIG_HOME="+filepath.Join(dir, "xdg-config"),
 		"XDG_CACHE_HOME="+filepath.Join(dir, "xdg-cache"),
-		mainHelperArgsEnv+"="+strings.Join(args, " "),
+		mainHelperArgsEnv+"="+strings.Join(args, mainHelperArgsSep),
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

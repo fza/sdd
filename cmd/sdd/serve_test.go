@@ -19,15 +19,23 @@ import (
 
 const (
 	stdioServeHelperEnv = "SDD_STDIO_SERVE_HELPER"
-	// mainHelperArgsEnv carries a space-separated sdd argv for a subprocess
-	// that runs the real CLI (e.g. the production-path test seeds the index
-	// via `sdd index`). The subprocess re-enters main() with these args.
+	// mainHelperArgsEnv carries an sdd argv for a subprocess that runs the real
+	// CLI (e.g. the production-path test seeds the index via `sdd index`). The
+	// subprocess re-enters main() with these args. Arguments are separated by
+	// mainHelperArgsSep where present, so a value with spaces — an entry
+	// description, a summary — arrives as one argument; a plain
+	// space-separated string still works for callers with no such value.
 	mainHelperArgsEnv = "SDD_MAIN_HELPER_ARGS"
+	mainHelperArgsSep = "\x1f"
 )
 
 func TestMain(m *testing.M) {
 	if args := os.Getenv(mainHelperArgsEnv); args != "" {
-		os.Args = append([]string{"sdd"}, strings.Fields(args)...)
+		fields := strings.Fields(args)
+		if strings.Contains(args, mainHelperArgsSep) {
+			fields = strings.Split(args, mainHelperArgsSep)
+		}
+		os.Args = append([]string{"sdd"}, fields...)
 		main()
 		os.Exit(0)
 	}
