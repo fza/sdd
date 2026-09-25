@@ -67,6 +67,9 @@ func resolveLLMConfig(cmd *cli.Command) (model.LLMConfig, error) {
 	if cmd.IsSet("preflight-model") {
 		cfg.Model = cmd.String("preflight-model")
 	}
+	if cmd.IsSet("preflight-extract-timeout") {
+		cfg.ExtractTimeout = cmd.Duration("preflight-extract-timeout").String()
+	}
 	if cmd.IsSet("concurrency") {
 		cfg.Concurrency = int(cmd.Int("concurrency"))
 	}
@@ -695,6 +698,11 @@ func newCmd() *cli.Command {
 				Name:  "preflight-timeout",
 				Usage: "Timeout for pre-flight validation (e.g. 120s, 2m)",
 				Value: 120 * time.Second,
+			},
+			&cli.DurationFlag{
+				Name:  "preflight-extract-timeout",
+				Usage: "Timeout for the extraction call a pre-flight response falls back to (e.g. 60s)",
+				Value: model.DefaultLLMExtractTimeout,
 			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
