@@ -174,8 +174,10 @@ func judgeSummary(t *testing.T, judge llm.Runner, sourceMaterial, summary string
    or did, leading with the entry's own substance (never bookkeeping like "supersedes X" or a list of
    references), is readable at a glance rather than a wall of clauses, and works standalone —
    overview lists display exactly this sentence.
-5. terse — 2-3 sentences, roughly 50-100 words, no filler, no meta-prose ("This summary...",
-   labels, markdown, quotation marks), every clause carrying information.
+5. terse — at most three sentences as a ceiling rather than a target, no filler, no meta-prose
+   ("This summary...", labels, markdown, quotation marks), every clause carrying information. A
+   summary that says the same in fewer words is better, and a first sentence padded with clauses
+   that could have waited for the second fails this check.
 
 Answer with a single JSON object and nothing else:
 {"language_ok": bool, "grounded": bool, "relationships_covered": bool, "first_sentence_standalone": bool, "terse": bool, "verdict": "pass"|"fail", "problems": ["..."]}
@@ -208,6 +210,11 @@ Set verdict to "fail" when any check fails, and name each problem concretely.`,
 	return nil, lastErr
 }
 
+// maxFirstSentenceWords bounds the sentence brief listings render alone as the
+// entry's name. Above it the sentence is a paragraph, which is the lede-stuffing
+// failure the summary contract exists to prevent.
+const maxFirstSentenceWords = 25
+
 // checkSummaryMechanics runs the hard checks no judge is needed for. These are
 // the semantic failures that record as success rows (s-tac-k7d): empty or
 // whitespace output, runaway or degenerate length, and the self-ID bug.
@@ -217,10 +224,15 @@ func checkSummaryMechanics(entryID, summary string) []string {
 	switch {
 	case strings.TrimSpace(summary) == "":
 		problems = append(problems, "summary is empty")
-	case words < 25:
-		problems = append(problems, fmt.Sprintf("summary degenerately short (%d words; contract says 50-100)", words))
+	case words < 8:
+		problems = append(problems, fmt.Sprintf("summary degenerately short (%d words)", words))
 	case words > 140:
-		problems = append(problems, fmt.Sprintf("summary runaway length (%d words; contract says 50-100)", words))
+		problems = append(problems, fmt.Sprintf("summary runaway length (%d words; the ceiling is three sentences)", words))
+	}
+	if first := model.FirstSentence(summary); first != "" {
+		if firstWords := len(strings.Fields(first)); firstWords > maxFirstSentenceWords {
+			problems = append(problems, fmt.Sprintf("first sentence runs %d words; brief listings render it alone, so it carries one meaning in the shortest sentence that carries it", firstWords))
+		}
 	}
 	if strings.Contains(summary, entryID) {
 		problems = append(problems, "summary refers to the entry's own ID (self-ID bug, s-cpt-ed2)")

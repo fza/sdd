@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/networkteam/sdd/pkg/application/types"
 	"gopkg.in/yaml.v3"
@@ -392,7 +393,13 @@ func (e *Entry) FirstSummarySentence() string {
 	if src == "" {
 		src = e.Content
 	}
-	src = strings.TrimSpace(src)
+	return FirstSentence(src)
+}
+
+// FirstSentence returns the leading sentence of text. A sentence ends at the
+// first ". " or line break, whichever comes first.
+func FirstSentence(text string) string {
+	src := strings.TrimSpace(text)
 	if i := strings.IndexByte(src, '\n'); i >= 0 {
 		src = strings.TrimSpace(src[:i])
 	}
@@ -400,6 +407,23 @@ func (e *Entry) FirstSummarySentence() string {
 		src = src[:i+1]
 	}
 	return src
+}
+
+// ShortTitle cuts text to maxRunes at a word boundary, marking the cut with an
+// ellipsis. A summary's first sentence is the entry's name on every brief
+// listing, and one written as a paragraph would otherwise push every other
+// column off the line. maxRunes <= 0 leaves text untouched.
+func ShortTitle(text string, maxRunes int) string {
+	text = strings.TrimSpace(text)
+	if maxRunes <= 0 || utf8.RuneCountInString(text) <= maxRunes {
+		return text
+	}
+	runes := []rune(text)
+	cut := string(runes[:maxRunes])
+	if i := strings.LastIndexByte(cut, ' '); i > 0 {
+		cut = cut[:i]
+	}
+	return strings.TrimRight(cut, " ,;:.") + "…"
 }
 
 // IsSettled returns true if this is a directive born terminal via
