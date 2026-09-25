@@ -71,7 +71,7 @@ func TestResolveConfig_OverlayOrder(t *testing.T) {
 		Participant: "FromGlobal",
 		LLM:         model.LLMConfig{Provider: "ollama", Model: "global-model"},
 	}
-	cfg, err := ResolveConfig(global, sddDir)
+	cfg, err := ResolveConfig(global, sddDir, "")
 	if err != nil {
 		t.Fatalf("ResolveConfig: %v", err)
 	}
@@ -93,14 +93,14 @@ func TestResolveConfig_OverlayOrder(t *testing.T) {
 // layers at all, ResolveConfig keeps the legacy nil "no config" contract.
 func TestResolveConfig_GlobalOnlyAndEmpty(t *testing.T) {
 	sddDir := t.TempDir()
-	cfg, err := ResolveConfig(model.BaseConfig{Participant: "Christopher"}, sddDir)
+	cfg, err := ResolveConfig(model.BaseConfig{Participant: "Christopher"}, sddDir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg == nil || cfg.Participant != "Christopher" {
 		t.Errorf("global-only resolution failed: %+v", cfg)
 	}
-	cfg, err = ResolveConfig(model.BaseConfig{}, sddDir)
+	cfg, err = ResolveConfig(model.BaseConfig{}, sddDir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestReadConfig_ErrorNamesFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sddDir, "config.local.yaml"), []byte("llm:\n  concurrency: not-a-number\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := ReadConfig(sddDir)
+	_, err := ReadConfig(sddDir, "")
 	if err == nil {
 		t.Fatal("an undecodable value must fail")
 	}
@@ -132,7 +132,7 @@ func TestReadConfig_ToleratesForeignKey(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sddDir, "config.local.yaml"), []byte("participant: Christopher\nrepos:\n  - repo_id: a/b\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := ReadConfig(sddDir)
+	cfg, err := ReadConfig(sddDir, "")
 	if err != nil {
 		t.Fatalf("a foreign key must not stop the load: %v", err)
 	}
