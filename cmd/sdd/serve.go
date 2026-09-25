@@ -274,7 +274,11 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if localEmbedder != nil {
 		embeddings = publicEmbeddingExecutor(localEmbedder)
 	}
-	targets, err := newLocalMutationTargets(project, filepath.Dir(sddDir))
+	serverCheckout := filepath.Dir(sddDir)
+	if err := requireGraphInsideCheckout(graphDir, serverCheckout); err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
+	targets, err := newLocalMutationTargets(project, serverCheckout)
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
@@ -364,6 +368,21 @@ func collectSessions(
 			"skipped", len(result.Skipped),
 		)
 	}
+}
+
+// requireGraphInsideCheckout refuses to serve a graph kept in a checkout of its
+// own. The engine's write path acquires a worktree of the server's checkout and
+// commits the graph inside it, so a graph elsewhere would be written to disk and
+// committed nowhere. The CLI capture path supports that arrangement; the engine
+// does not yet, and a server that silently loses commits is worse than one that
+// will not start.
+func requireGraphInsideCheckout(graphDir, serverCheckout string) error {
+	graphRepo := git.RepoRootFor(graphDir)
+	checkoutRepo := git.RepoRootFor(serverCheckout)
+	if graphRepo == "" || checkoutRepo == "" || graphRepo == checkoutRepo {
+		return nil
+	}
+	return fmt.Errorf("graph_dir points at %s, a repository separate from this checkout (%s): the engine write path commits the graph inside the served checkout, so serving a sidecar graph is not supported — use the CLI capture commands for it", graphRepo, checkoutRepo)
 }
 
 func newLocalMutationTargets(project sdd.ProjectID, serverCheckout string) (*localadapter.GitWorktreeAcquirer, error) {

@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
-	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/slogutils"
@@ -41,7 +42,11 @@ func syncCmd() *cli.Command {
 			if !cmd.Bool("pull") {
 				return errors.New("sync: specify --pull to merge upstream changes into the shared graph")
 			}
-			handler := handlers.New(handlers.Options{Puller: git.CLI{}})
+			dir, err := resolveGraphDir(cmd)
+			if err != nil {
+				return err
+			}
+			handler := handlers.New(handlers.Options{Puller: graphGit(dir)})
 			return handler.SyncPull(ctx, &command.SyncPullCmd{
 				OnPulled: func(output string) {
 					if output != "" {
@@ -76,7 +81,7 @@ func runSyncCheck(ctx context.Context) {
 
 	f := finders.New(finders.Options{
 		Config:    cfg,
-		GitSyncer: git.CLI{},
+		GitSyncer: graphGit(meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)),
 	})
 	status, err := f.SyncStatus(ctx, query.SyncStatusQuery{
 		SDDDir:          sddDir,

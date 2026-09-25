@@ -19,12 +19,29 @@ import (
 	"time"
 )
 
-// CLI is the exec-based adapter: a zero-value struct whose methods shell out
-// to the git binary. One value satisfies the consumer-defined git interfaces
+// CLI is the exec-based adapter: a struct whose methods shell out to the git
+// binary. One value satisfies the consumer-defined git interfaces
 // (handlers.Committer/Brancher/Mover/Puller, finders.GitSyncer, repos.Git);
 // the one exception is the staged-deletion commit variant, which shares the
 // Commit method name and therefore lives on its own type (RemovalCommitter).
-type CLI struct{}
+type CLI struct {
+	// Dir is the repository the ambient operations run in. Empty means the
+	// process working directory. A graph kept in its own checkout, beside the
+	// project rather than inside it, needs entry commits to reach that
+	// checkout while the process runs in the project: the working directory
+	// alone cannot express both.
+	Dir string
+}
+
+// at prefixes args with -C Dir so the operation targets this adapter's
+// repository. Methods taking an explicit directory (Clone, PullFFOnly) address
+// their target through arguments and never route through here.
+func (c CLI) at(args ...string) []string {
+	if c.Dir == "" {
+		return args
+	}
+	return append([]string{"-C", c.Dir}, args...)
+}
 
 // commitTimeout caps the detached auto-commit. A signing or credential helper
 // blocking on input would otherwise hang indefinitely when sdd runs as a
@@ -35,11 +52,11 @@ const commitTimeout = 30 * time.Second
 // Commit stages exactly the given paths and commits them, detached from any
 // controlling terminal. It is the production handlers.Committer for the
 // auto-commit paths (sdd new, summarize, init, ...).
-func (CLI) Commit(message string, paths ...string) error {
+func (c CLI) Commit(message string, paths ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), commitTimeout)
 	defer cancel()
 
-	addArgs := append([]string{"add", "--all", "--"}, paths...)
+	addArgs := c.at(append([]string{"add", "--all", "--"}, paths...)...)
 	if out, err := runDetached(ctx, addArgs...); err != nil {
 		return fmt.Errorf("git add: %s (%w)", out, err)
 	}
@@ -47,7 +64,7 @@ func (CLI) Commit(message string, paths ...string) error {
 	// Scope the commit to exactly the staged paths with an explicit pathspec.
 	// Without `-- <paths>`, `git commit` records the whole index, sweeping any
 	// pre-staged unrelated work into the CLI's own commit.
-	commitArgs := append([]string{"commit", "-m", message, "--"}, paths...)
+	commitArgs := c.at(append([]string{"commit", "-m", message, "--"}, paths...)...)
 	if out, err := runDetached(ctx, commitArgs...); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
@@ -58,8 +75,8 @@ func (CLI) Commit(message string, paths ...string) error {
 // HasCommitMessage reports whether any reachable commit contains text. It is
 // used by retryable post-apply finalizers to recognize a commit that landed
 // before its durable finalizer outcome could be recorded.
-func (CLI) HasCommitMessage(ctx context.Context, text string) (bool, error) {
-	out, err := exec.CommandContext(ctx, "git", "log", "--all", "--fixed-strings", "--grep="+text, "--format=%H", "-n", "1").CombinedOutput()
+func (c CLI) HasCommitMessage(ctx context.Context, text string) (bool, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("log", "--all", "--fixed-strings", "--grep="+text, "--format=%H", "-n", "1")...).CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("git log: %s (%w)", out, err)
 	}
@@ -70,21 +87,26 @@ func (CLI) HasCommitMessage(ctx context.Context, text string) (bool, error) {
 // removed from disk: it stages the deletions (`git rm --cached`, falling back
 // to `git add`) before committing. Used by FinishWIP, where the marker file
 // is gone by the time the commit runs.
-type RemovalCommitter struct{}
+type RemovalCommitter struct {
+	// Dir is the repository the removal commit runs in, with the same meaning
+	// as CLI.Dir.
+	Dir string
+}
 
 // Commit stages the deletion of the given paths and commits, scoped to those
 // paths so an unrelated staged index isn't swept into the removal commit.
-func (RemovalCommitter) Commit(message string, paths ...string) error {
+func (r RemovalCommitter) Commit(message string, paths ...string) error {
+	at := CLI(r).at
 	for _, p := range paths {
-		rm := exec.Command("git", "rm", "--cached", "-f", p)
+		rm := exec.Command("git", at("rm", "--cached", "-f", p)...)
 		if out, err := rm.CombinedOutput(); err != nil {
-			add := exec.Command("git", "add", p)
+			add := exec.Command("git", at("add", p)...)
 			if out2, err2 := add.CombinedOutput(); err2 != nil {
 				return fmt.Errorf("git stage: %s (%v); fallback %s (%w)", out, err, out2, err2)
 			}
 		}
 	}
-	commitArgs := append([]string{"commit", "-m", message, "--"}, paths...)
+	commitArgs := at(append([]string{"commit", "-m", message, "--"}, paths...)...)
 	commit := exec.Command("git", commitArgs...)
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
@@ -111,11 +133,11 @@ func runDetached(ctx context.Context, args ...string) ([]byte, error) {
 // Move renames a path in the working tree and the git index as one operation
 // via `git mv`, so the rename is recorded atomically with the working-tree
 // change. Production handlers.Mover.
-func (CLI) Move(src, dst string) error {
+func (c CLI) Move(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("creating destination directory: %w", err)
 	}
-	if out, err := exec.Command("git", "mv", src, dst).CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", c.at("mv", src, dst)...).CombinedOutput(); err != nil {
 		return fmt.Errorf("git mv %s %s: %s (%w)", src, dst, out, err)
 	}
 	return nil
@@ -123,21 +145,21 @@ func (CLI) Move(src, dst string) error {
 
 // Checkout switches to branch, creating it first when create is set.
 // Production handlers.Brancher.
-func (CLI) Checkout(branch string, create bool) error {
+func (c CLI) Checkout(branch string, create bool) error {
 	args := []string{"checkout"}
 	if create {
 		args = append(args, "-b")
 	}
 	args = append(args, branch)
-	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", c.at(args...)...).CombinedOutput(); err != nil {
 		return fmt.Errorf("git checkout: %s (%w)", out, err)
 	}
 	return nil
 }
 
 // BranchMerged reports whether branch is merged into the current HEAD.
-func (CLI) BranchMerged(branch string) bool {
-	out, err := exec.Command("git", "branch", "--merged").Output()
+func (c CLI) BranchMerged(branch string) bool {
+	out, err := exec.Command("git", c.at("branch", "--merged")...).Output()
 	if err != nil {
 		return false
 	}
@@ -153,12 +175,12 @@ func (CLI) BranchMerged(branch string) bool {
 }
 
 // DeleteBranch removes branch (-d, or -D when force is set).
-func (CLI) DeleteBranch(branch string, force bool) error {
+func (c CLI) DeleteBranch(branch string, force bool) error {
 	flag := "-d"
 	if force {
 		flag = "-D"
 	}
-	if out, err := exec.Command("git", "branch", flag, branch).CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", c.at("branch", flag, branch)...).CombinedOutput(); err != nil {
 		return fmt.Errorf("git branch %s: %s (%w)", flag, out, err)
 	}
 	return nil
@@ -166,8 +188,8 @@ func (CLI) DeleteBranch(branch string, force bool) error {
 
 // IsClean reports whether the working tree has no uncommitted changes.
 // Production handlers.Puller.
-func (CLI) IsClean(ctx context.Context) (bool, error) {
-	out, err := exec.CommandContext(ctx, "git", "status", "--porcelain").Output()
+func (c CLI) IsClean(ctx context.Context) (bool, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("status", "--porcelain")...).Output()
 	if err != nil {
 		return false, fmt.Errorf("git status --porcelain: %w", err)
 	}
@@ -177,8 +199,8 @@ func (CLI) IsClean(ctx context.Context) (bool, error) {
 // MergePull runs a merge-only pull. --no-rebase forces a merge pull
 // regardless of the user's pull.rebase config, so background sync never
 // rewrites the shared graph's history.
-func (CLI) MergePull(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", "pull", "--no-rebase").CombinedOutput()
+func (c CLI) MergePull(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("pull", "--no-rebase")...).CombinedOutput()
 	msg := strings.TrimSpace(string(out))
 	if err != nil {
 		if msg == "" {
@@ -197,6 +219,17 @@ func RepoRoot() (string, error) {
 		return os.Getwd()
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// RepoRootFor returns the repository root containing path, which need not be
+// the process working directory. An empty string means path is not inside a
+// repository, which a caller reads as "nothing to commit here".
+func RepoRootFor(path string) string {
+	out, err := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // UserName reads git config user.name, returning an empty string when git is

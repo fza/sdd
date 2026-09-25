@@ -898,7 +898,7 @@ func newCmd() *cli.Command {
 					ProcedureRegistry: registry,
 				}),
 				LLMRunner: runner,
-				Committer: git.CLI{},
+				Committer: graphGit(dir),
 				Repos:     mgr,
 				Language:  configLanguage(cfg),
 			})
@@ -990,8 +990,8 @@ func rewriteCmd() *cli.Command {
 			handler := handlers.New(handlers.Options{
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.CLI{},
-				Mover:     git.CLI{},
+				Committer: graphGit(dir),
+				Mover:     graphGit(dir),
 			})
 			return handler.RewriteEntry(ctx, rcmd)
 		}),
@@ -1025,7 +1025,7 @@ func lintCmd() *cli.Command {
 				handler := handlers.New(handlers.Options{
 					GraphDir:  dir,
 					Reader:    reader,
-					Committer: git.CLI{},
+					Committer: graphGit(dir),
 				})
 				if err := handler.LintFix(ctx, fixCmd); err != nil {
 					return err
@@ -1194,7 +1194,7 @@ func summarizeCmd() *cli.Command {
 					Repos:           reg,
 				}),
 				LLMRunner: runner,
-				Committer: git.CLI{},
+				Committer: graphGit(dir),
 				Language:  configLanguage(cfg),
 			})
 			return handler.Summarize(ctx, sumCmd)
@@ -1263,6 +1263,18 @@ func resolveParticipantFlag(flagValue, sddDir string) (string, error) {
 		return "", fmt.Errorf("no participant configured; run `sdd init` or pass --participant")
 	}
 	return cfg.Participant, nil
+}
+
+// graphGit is the git adapter for graph writes and graph history: it runs in
+// the repository holding graphDir. That is the project's own repository when
+// the graph lives inside it, and the sidecar checkout when graph_dir points
+// beside the project — a working directory alone cannot express both, since
+// the process runs where the work is.
+//
+// Operations on the work itself (branches for a WIP marker, the skill and
+// config commits of sdd init) keep the process working directory.
+func graphGit(graphDir string) git.CLI {
+	return git.CLI{Dir: git.RepoRootFor(graphDir)}
 }
 
 // resolveSDDDir discovers the .sdd/ directory by walking up from cwd.
@@ -1800,7 +1812,7 @@ func wipStartCmd() *cli.Command {
 			handler := handlers.New(handlers.Options{
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.CLI{},
+				Committer: graphGit(dir),
 				Brancher:  git.CLI{},
 			})
 			return handler.StartWIP(ctx, startCmd)
@@ -1855,7 +1867,7 @@ func wipDoneCmd() *cli.Command {
 			handler := handlers.New(handlers.Options{
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.RemovalCommitter{},
+				Committer: git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
 				Brancher:  git.CLI{},
 			})
 			return handler.FinishWIP(ctx, doneCmd)

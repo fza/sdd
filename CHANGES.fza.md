@@ -4,6 +4,24 @@ Changes carried on top of upstream `networkteam/sdd`. The baseline is upstream `
 
 Section headings are local build stamps, matching the version string the binary reports (`sdd --version`).
 
+## 0.17.0+fza4
+
+### Added
+
+**A graph in a repository of its own.** `graph_dir` already accepted an absolute path, so the entry files could live beside the project, but every git operation ran in the process working directory: a capture from the project repository staged a path outside it and failed with `fatal: … is outside repository`. Git operations now follow the paths they act on. `git.CLI` and `git.RemovalCommitter` carry a `Dir`, prefixed as `-C` on every ambient operation, and `git.RepoRootFor(path)` resolves the repository holding a path the process is not in.
+
+The composition root picks the repository per target. Entry, summary, rewrite and WIP-marker commits, plus `sdd sync --pull` and the background sync check, run in the repository holding the graph. `sdd init` commits skills and metadata, `sdd repo` writes connected-repo config, and `sdd wip start` branches, all in the project's own checkout. `repos.Manager` clone and pull are untouched, since those methods address their target through arguments.
+
+This keeps the project's history free of `sdd: …` commits, which is why a separate graph repository exists at all.
+
+`sdd serve` refuses to start when the graph sits in another repository, rather than losing commits quietly: the engine's write path acquires a worktree of the served checkout and commits the graph inside it (`meta.ResolveGraphDir(checkout, cfg)` in `newLocalMutationTargets`), so an absolute `graph_dir` would be written to disk and committed nowhere. The CLI capture path is the supported route for this arrangement.
+
+Known limit: `repo_id` is derived from the project's remote (`git.RemoteURL(repoRoot)` at init), so a graph others reference across repos is announced under the project's identity rather than the graph repository's. Cross-repo refs into a sidecar graph therefore name the project repo.
+
+Files: `internal/git/git.go`, `internal/git/sync.go`, `cmd/sdd/main.go`, `cmd/sdd/sync.go`, `cmd/sdd/serve.go`, `README.md`.
+
+Tests: `internal/git/git_test.go` (commit, removal commit and ambient operations target the configured repository; `RepoRootFor`), `cmd/sdd/sidecar_test.go` (an end-to-end capture from the project repository lands in the graph repository and leaves the project's history untouched; `sdd serve` refuses the arrangement).
+
 ## 0.17.0+fza3
 
 Pre-flight reliability across every endpoint, plus the provider surface it needs.
