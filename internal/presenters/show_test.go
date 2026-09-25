@@ -2,6 +2,7 @@ package presenters_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/bradleyjkemp/cupaloy/v2"
@@ -437,4 +438,29 @@ Do the work.
 	}
 	g := model.NewGraph([]*model.Entry{e})
 	cupaloy.SnapshotT(t, renderShow(t, g, []string{e.ID}))
+}
+
+// Whether a checker validated an entry is provenance a reader needs while
+// reading it, and the two bypass values must read apart.
+func TestRenderShow_CarriesThePreflightBypass(t *testing.T) {
+	for _, value := range []string{model.PreflightSkipped, model.PreflightDryRunVerified} {
+		t.Run(value, func(t *testing.T) {
+			e := entry("20260410-100000-s-tac-aaa", withContent("A signal about something"), withPreflight(value))
+			g := model.NewGraph([]*model.Entry{e})
+			out := renderShow(t, g, []string{e.ID})
+			if !strings.Contains(out, "preflight: "+value) {
+				t.Errorf("show must report the bypass, got:\n%s", out)
+			}
+		})
+	}
+}
+
+// An entry a checker cleared carries nothing, so the field must not appear at
+// all rather than appear empty.
+func TestRenderShow_OmitsThePreflightFieldWhenValidated(t *testing.T) {
+	e := entry("20260410-100000-s-tac-aaa", withContent("A signal about something"))
+	g := model.NewGraph([]*model.Entry{e})
+	if out := renderShow(t, g, []string{e.ID}); strings.Contains(out, "preflight:") {
+		t.Errorf("a validated entry must carry no preflight field, got:\n%s", out)
+	}
 }

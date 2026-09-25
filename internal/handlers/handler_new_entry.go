@@ -121,7 +121,9 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	var pfErr error
 
 	if cmd.SkipPreflight {
-		entry.Preflight = "skipped"
+		entry.Preflight = model.PreflightSkipped
+	} else if cmd.PreflightVerified {
+		entry.Preflight = model.PreflightDryRunVerified
 	} else {
 		g.Go(func() error {
 			result, err := h.reader.Preflight(gctx, graph, query.PreflightQuery{
@@ -156,6 +158,9 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	// Process pre-flight results on the main goroutine (no concurrent stderr writes).
 	if cmd.SkipPreflight {
 		fmt.Fprintf(h.stderr, "warning: pre-flight validation skipped\n")
+	} else if cmd.PreflightVerified {
+		// Deliberately silent: the caller settled findings in a prior --dry-run,
+		// and the entry carries dry-run-verified as the record.
 	} else if pfErr != nil {
 		return fmt.Errorf("pre-flight error: %w (use --skip-preflight to bypass)", pfErr)
 	} else {

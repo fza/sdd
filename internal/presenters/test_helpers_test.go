@@ -67,6 +67,10 @@ func withSummary(s string) entryOpt {
 	return func(e *model.Entry) { e.Summary = s }
 }
 
+func withPreflight(value string) entryOpt {
+	return func(e *model.Entry) { e.Preflight = value }
+}
+
 func withAttachments(a ...string) entryOpt {
 	return func(e *model.Entry) { e.Attachments = a }
 }
