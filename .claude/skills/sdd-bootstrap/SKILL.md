@@ -2,7 +2,7 @@
 allowed-tools: Read Grep Bash
 description: Set up an SDD graph on a fresh or sparse project — walk through a readiness sweep, brownfield context gather, actor capture, and Golden Circle strategic seeding, then hand back to /sdd via catch-up. Invoke when the graph lacks actors or aspirations.
 name: sdd-bootstrap
-sdd-content-hash: 866cd33e64d303f86477b673ca6ea5c34406157ede189b4b6ebed57c45ca2318
+sdd-content-hash: 63e54f7be2590b5134dbf3825185f8684160946e4c7c86876d5208e703a17560
 sdd-version: dev
 ---
 
@@ -281,7 +281,7 @@ Avoid jargon in user-facing prompts ("canonical", "alias", "frame"). The skill h
 Draft the actor signal from the answers, playback, confirm, capture:
 
 ```bash
-sdd new s prc --kind actor --canonical <name> --aliases <a,b> --confidence high "<description>"
+sdd new s prc --kind actor --canonical <name> --aliases <a,b> --actor-kind human --confidence high "<description>"
 ```
 
 The description should follow the actor rubric: introduce the canonical, include external identity context (affiliation, background, expertise), explain aliases when present. See `../sdd/SKILL.md` `Write canonical names` guidance and framework-concepts `Actors and Roles` section for the full framing already loaded.

@@ -1,6 +1,6 @@
 ---
 metadata:
-    sdd-content-hash: 4a5cd91eeaf637c5d02af24ed3fead2289dc83420ae87ba1624b522f171be263
+    sdd-content-hash: b16180e413224aabe361507aca60c2b5ea3c3affe6b25756dfc61851b7cb6b67
     sdd-version: dev
 ---
 # SDD CLI Reference
@@ -242,6 +242,7 @@ Depth is controlled per direction by `--up` / `--down` (see the `sdd show` entry
 - `--canonical name` — frontmatter `canonical` (kind: actor and kind: procedure — actor identity or playbook-move identity)
 - `--class move|shell` — frontmatter `class` (kind: procedure only). Default move (a playbook step started through the engine loop); `shell` marks a session base auto-started by the engine's session door — set it when superseding a shell procedure such as `user-dialogue`
 - `--aliases a,b` — frontmatter `aliases` (kind: actor only)
+- `--actor-kind human|machine` — frontmatter `actor_kind` (kind: actor only); omit when neither applies, since absent means unknown rather than human
 - `--actor canonical` — frontmatter `actor` (kind: role only)
 - `--topics LABEL[,LABEL...]` — inline `topics:` labels (any kind). CSV form. Each label is a topic-path string (`/`-joined components, e.g. `infrastructure/cli`).
 - `--topic '{json}'` — annotation topic cluster (kind: annotation only). Repeatable. Either a JSON object `{"label":"path","members":["id",...]}` (sub-selection of refs) or a bare label like `--topic catch-up-scaling` (applies to all refs).

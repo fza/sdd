@@ -1,6 +1,6 @@
 ---
 metadata:
-    sdd-content-hash: dff091a1781d5e514c7d7ec02305ad8999d867b16ebb3d45a1d169638c2327a6
+    sdd-content-hash: 9eb0b3ca8387869eb2f105fcf12a8dd30094d1f96af223713b7bcc8f9c7ea0e2
     sdd-version: dev
 ---
 # SDD Framework Concepts
@@ -205,7 +205,7 @@ Contracts are decisions marked `kind: contract`. They define standing constraint
 
 Participants are first-class graph entries. Two kinds partition identity from participation:
 
-- **Actor signals** (`kind: actor`) record *who* a participant is — frontmatter carries a required `canonical` (the identity string used in `participants` fields) and optional `aliases` (read-side convenience for mining and dialogue comprehension). Process layer. Default confidence high. Lifecycle: supersede to correct identity facts, retire via directive that closes the head actor signal.
+- **Actor signals** (`kind: actor`) record *who* a participant is — frontmatter carries a required `canonical` (the identity string used in `participants` fields), optional `aliases` (read-side convenience for mining and dialogue comprehension), and optional `actor_kind` (`human` or `machine`, so a consumer can tell a person from an assistant without reading prose; absent means unknown, never human, and it must not change across the identity chain). Process layer. Default confidence high. Lifecycle: supersede to correct identity facts, retire via directive that closes the head actor signal.
 - **Role decisions** (`kind: role`) record *what a participant does* — frontmatter's required `actor:` field names the canonical of the actor-identity chain the role binds to. Process layer. Default confidence medium. Multiple roles per actor are permitted. Roles are **orthogonal to contracts**: a role scopes one actor's participation pattern, while a contract is universal.
 
 ### Canonical-only in participants

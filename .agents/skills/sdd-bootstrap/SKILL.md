@@ -3,7 +3,7 @@ allowed-tools: Read Grep Bash
 compatibility: Designed for OpenAI Codex
 description: Set up an SDD graph on a fresh or sparse project — walk through a readiness sweep, brownfield context gather, actor capture, and Golden Circle strategic seeding, then hand back to /sdd via catch-up. Invoke when the graph lacks actors or aspirations.
 metadata:
-    sdd-content-hash: fe4f3344680d9b1f7230d513b2243ceec0a1013197b54cf2dd589cd06a6e2b45
+    sdd-content-hash: babce99a9bf84d8763dd421421f955796274bdb9a4bdd972bf9f3c35c1100f52
     sdd-version: dev
 name: sdd-bootstrap
 ---
@@ -283,7 +283,7 @@ Avoid jargon in user-facing prompts ("canonical", "alias", "frame"). The skill h
 Draft the actor signal from the answers, playback, confirm, capture:
 
 ```bash
-sdd new s prc --kind actor --canonical <name> --aliases <a,b> --confidence high "<description>"
+sdd new s prc --kind actor --canonical <name> --aliases <a,b> --actor-kind human --confidence high "<description>"
 ```
 
 The description should follow the actor rubric: introduce the canonical, include external identity context (affiliation, background, expertise), explain aliases when present. See `../sdd/SKILL.md` `Write canonical names` guidance and framework-concepts `Actors and Roles` section for the full framing already loaded.
