@@ -143,3 +143,39 @@ func TestServeRefusesASidecarGraph(t *testing.T) {
 		t.Errorf("a graph inside the served checkout must be accepted: %v", err)
 	}
 }
+
+// The graph inside the project's own repository stays the default: one repo,
+// one history, capture commits beside the work.
+func TestInRepoGraphCommitsLandInTheProjectRepository(t *testing.T) {
+	project := canonicalTempDir(t)
+	if err := os.MkdirAll(filepath.Join(project, ".sdd", "graph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initRepo(t, project)
+
+	sddDir := filepath.Join(project, ".sdd")
+	if err := os.WriteFile(filepath.Join(sddDir, "config.yaml"), []byte("graph_dir: .sdd/graph\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sddDir, "config.local.yaml"), []byte("participant: Ada\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runSDD(t, project,
+		"new", "signal", "tactical",
+		"The graph living inside the project's repository keeps one history for work and captures alike.",
+		"--confidence", "high",
+		"--skip-preflight",
+		"--summary", "An in-repo graph keeps captures beside the work.",
+	)
+
+	if entries := graphEntries(t, filepath.Join(sddDir, "graph")); len(entries) != 1 {
+		t.Fatalf("expected one entry in the in-repo graph, got %v", entries)
+	}
+	if subject := headSubject(t, project); !strings.HasPrefix(subject, "sdd: ") {
+		t.Errorf("the capture commit is missing from the project's history: %q", subject)
+	}
+	if files := headFiles(t, project); len(files) == 0 || !strings.HasPrefix(files[0], ".sdd/graph/") {
+		t.Errorf("the entry is missing from the project's HEAD; files = %v", files)
+	}
+}
