@@ -87,13 +87,13 @@ type NewEntryCmd struct {
 	// decision. Each --involvement flag parses into one entry here.
 	Involvement []model.Involvement
 
-	SkipPreflight  bool
+	SkipPreflight bool
 	// PreflightVerified skips the pre-flight call for a capture whose findings
 	// a prior --dry-run pass already settled, recording
 	// model.PreflightDryRunVerified rather than a bypass.
 	PreflightVerified bool
-	DryRun         bool
-	PreflightModel string
+	DryRun            bool
+	PreflightModel    string
 
 	// Summary supplies the entry's stored summary verbatim, skipping LLM
 	// generation entirely. For callers that already hold a faithful
