@@ -174,3 +174,38 @@ func TestConfigSet_TypedScalars(t *testing.T) {
 		t.Errorf("concurrency not written as number: %s", data)
 	}
 }
+
+// A --local-config path takes the local layer's writes with it, so a run
+// that resolves the override also mutates it and the in-repo file stays
+// untouched.
+func TestConfigSet_LocalOverrideWritesOverrideFile(t *testing.T) {
+	dir := t.TempDir()
+	sddDir := filepath.Join(dir, "repo", ".sdd")
+	if err := os.MkdirAll(sddDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	override := filepath.Join(dir, "elsewhere", "local.yaml")
+	reg := repos.NewRegistry(repos.Locations{
+		ConfigPath: filepath.Join(dir, "xdg", "sdd", "config.yaml"),
+		CacheRoot:  filepath.Join(dir, "cache"),
+	})
+	h := New(Options{
+		SDDDir:          sddDir,
+		LocalConfigPath: override,
+		Repos:           repos.NewManager(reg, git.CLI{}),
+	})
+
+	if err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: "local", Key: "participant", Value: "Ada"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(override)
+	if err != nil {
+		t.Fatalf("override file not created: %v", err)
+	}
+	if !strings.Contains(string(data), "participant: Ada") {
+		t.Errorf("participant not written: %s", data)
+	}
+	if _, statErr := os.Stat(filepath.Join(sddDir, "config.local.yaml")); !os.IsNotExist(statErr) {
+		t.Error("the in-repo local file must stay untouched")
+	}
+}

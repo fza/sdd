@@ -6,6 +6,9 @@ package query
 // the caller is outside an sdd repo: global settings and defaults only.
 type EffectiveConfigQuery struct {
 	SDDDir string
+	// LocalConfigPath replaces the in-repo machine-local layer file.
+	// Empty resolves it under SDDDir.
+	LocalConfigPath string
 	// Key restricts the result to one dotted key (e.g. "llm.model").
 	// Empty returns every effective entry.
 	Key string
@@ -30,6 +33,9 @@ type EffectiveConfigResult struct {
 // alone.
 type UnknownConfigKeysQuery struct {
 	SDDDir string
+	// LocalConfigPath replaces the in-repo machine-local layer file.
+	// Empty resolves it under SDDDir.
+	LocalConfigPath string
 }
 
 // UnknownConfigKey is one unrecognised key and the file carrying it.

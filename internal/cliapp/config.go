@@ -46,12 +46,12 @@ func configCmd() *cli.Command {
 			},
 			{
 				Name:      "set",
-				Usage:     "Set a config key (user-global by default; --local for .sdd/config.local.yaml)",
+				Usage:     "Set a config key (user-global by default; --local for the machine-local layer)",
 				ArgsUsage: "<key> <value>",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
 						Name:  "local",
-						Usage: "Write to .sdd/config.local.yaml instead of the user-global config",
+						Usage: "Write to the machine-local layer (.sdd/config.local.yaml, or --local-config) instead of the user-global config",
 					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -67,12 +67,12 @@ func configCmd() *cli.Command {
 			},
 			{
 				Name:      "unset",
-				Usage:     "Remove a config key (user-global by default; --local for .sdd/config.local.yaml)",
+				Usage:     "Remove a config key (user-global by default; --local for the machine-local layer)",
 				ArgsUsage: "<key>",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
 						Name:  "local",
-						Usage: "Remove from .sdd/config.local.yaml instead of the user-global config",
+						Usage: "Remove from the machine-local layer (.sdd/config.local.yaml, or --local-config) instead of the user-global config",
 					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -102,7 +102,7 @@ func effectiveConfigResult(key string) (*query.EffectiveConfigResult, error) {
 	if err != nil {
 		sddDir = ""
 	}
-	return f.EffectiveConfig(query.EffectiveConfigQuery{SDDDir: sddDir, Key: key})
+	return f.EffectiveConfig(query.EffectiveConfigQuery{SDDDir: sddDir, LocalConfigPath: localConfigOverride, Key: key})
 }
 
 func runEffectiveConfig(cmd *cli.Command, key string) error {
@@ -135,7 +135,7 @@ func printUnknownConfigKeys(errWriter io.Writer) error {
 	if err != nil {
 		sddDir = ""
 	}
-	result, err := f.UnknownConfigKeys(query.UnknownConfigKeysQuery{SDDDir: sddDir})
+	result, err := f.UnknownConfigKeys(query.UnknownConfigKeysQuery{SDDDir: sddDir, LocalConfigPath: localConfigOverride})
 	if err != nil {
 		return err
 	}
@@ -193,9 +193,10 @@ func runConfigSet(ctx context.Context, writer, errWriter io.Writer, target, key,
 		return err
 	}
 	h := handlers.New(handlers.Options{
-		Stderr: errWriter,
-		SDDDir: sddDir,
-		Repos:  mgr,
+		Stderr:          errWriter,
+		SDDDir:          sddDir,
+		LocalConfigPath: localConfigOverride,
+		Repos:           mgr,
 	})
 	if err := h.ConfigSet(ctx, &command.ConfigSetCmd{Target: target, Key: key, Value: value}); err != nil {
 		return err
@@ -215,9 +216,10 @@ func runConfigUnset(ctx context.Context, writer, errWriter io.Writer, target, ke
 		return err
 	}
 	h := handlers.New(handlers.Options{
-		Stderr: errWriter,
-		SDDDir: sddDir,
-		Repos:  mgr,
+		Stderr:          errWriter,
+		SDDDir:          sddDir,
+		LocalConfigPath: localConfigOverride,
+		Repos:           mgr,
 	})
 	if err := h.ConfigUnset(ctx, &command.ConfigUnsetCmd{Target: target, Key: key}); err != nil {
 		return err
