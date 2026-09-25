@@ -671,6 +671,10 @@ func newCmd() *cli.Command {
 				Name:  "skip-preflight",
 				Usage: "Skip pre-flight validation (entry is annotated with preflight: skipped)",
 			},
+			&cli.BoolFlag{
+				Name:  "preflight-verified",
+				Usage: "Skip pre-flight validation, annotating the entry preflight: dry-run-verified — for a capture whose findings were already settled via --dry-run",
+			},
 			&cli.StringFlag{
 				Name:  "summary",
 				Usage: "Store this summary verbatim, skipping LLM summary generation",
@@ -699,6 +703,10 @@ func newCmd() *cli.Command {
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = slogutils.WithLogger(ctx, slogutils.FromContext(ctx).With("command", "new"))
+
+			if cmd.Bool("skip-preflight") && cmd.Bool("preflight-verified") {
+				return fmt.Errorf("--skip-preflight and --preflight-verified are mutually exclusive: one records a bypass, the other records findings settled by a prior --dry-run")
+			}
 
 			args := cmd.Args()
 			if args.Len() < 2 {
@@ -823,7 +831,8 @@ func newCmd() *cli.Command {
 				FocusWhen:        focusWhen,
 				Involvement:      involvement,
 				Attachments:      atts,
-				SkipPreflight:    cmd.Bool("skip-preflight"),
+				SkipPreflight:     cmd.Bool("skip-preflight"),
+				PreflightVerified: cmd.Bool("preflight-verified"),
 				Summary:          strings.TrimSpace(cmd.String("summary")),
 				DryRun:           cmd.Bool("dry-run"),
 				PreflightModel:   cmd.String("preflight-model"),

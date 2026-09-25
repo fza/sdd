@@ -18,6 +18,15 @@ const (
 	TypeDecision EntryType = "decision"
 )
 
+// Pre-flight bypass values carried in an entry's frontmatter. Absent means a
+// checker ran and raised nothing blocking. The two values separate a review
+// dodged from findings already settled, because an entry validated by a prior
+// --dry-run pass is not one nobody checked.
+const (
+	PreflightSkipped        = "skipped"
+	PreflightDryRunVerified = "dry-run-verified"
+)
+
 type Layer string
 
 const (
@@ -293,7 +302,7 @@ type Entry struct {
 	// decision. Each triple binds a target entry to (resolved) actors and
 	// (resolved) when scope.
 	Involvement []Involvement
-	Preflight   string    // "skipped" or "error" annotation from pre-flight validation
+	Preflight   string    // PreflightSkipped or PreflightDryRunVerified; empty when a checker validated this entry
 	Attachments []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
 	Summary     string    // LLM-generated summary: this entry + direct relationships
 	Warnings    []Warning // validation issues found during graph construction

@@ -88,6 +88,10 @@ type NewEntryCmd struct {
 	Involvement []model.Involvement
 
 	SkipPreflight  bool
+	// PreflightVerified skips the pre-flight call for a capture whose findings
+	// a prior --dry-run pass already settled, recording
+	// model.PreflightDryRunVerified rather than a bypass.
+	PreflightVerified bool
 	DryRun         bool
 	PreflightModel string
 
