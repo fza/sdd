@@ -695,6 +695,10 @@ func newCmd() *cli.Command {
 				Name:  "skip-preflight",
 				Usage: "Skip pre-flight validation (entry is annotated with preflight: skipped)",
 			},
+			&cli.BoolFlag{
+				Name:  "preflight-verified",
+				Usage: "Skip pre-flight validation, annotating the entry preflight: dry-run-verified — for a capture whose findings were already settled via --dry-run",
+			},
 			&cli.StringFlag{
 				Name:  "summary",
 				Usage: "Store this summary verbatim, skipping LLM summary generation",
@@ -728,6 +732,10 @@ func newCmd() *cli.Command {
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = slogutils.WithLogger(ctx, slogutils.FromContext(ctx).With("command", "new"))
+
+			if cmd.Bool("skip-preflight") && cmd.Bool("preflight-verified") {
+				return fmt.Errorf("--skip-preflight and --preflight-verified are mutually exclusive: one records a bypass, the other records findings settled by a prior --dry-run")
+			}
 
 			args := cmd.Args()
 			if args.Len() < 2 {
@@ -831,31 +839,32 @@ func newCmd() *cli.Command {
 				return err
 			}
 			ncmd := &command.NewEntryCmd{
-				Type:             typ,
-				Layer:            layer,
-				Kind:             kind,
-				Intent:           strings.TrimSpace(cmd.String("intent")),
-				Description:      description,
-				Participants:     participants,
-				Refs:             refs,
-				Supersedes:       splitCSV(cmd.String("supersedes")),
-				Closes:           splitCSV(cmd.String("closes")),
-				Confidence:       confidence,
-				Canonical:        strings.TrimSpace(cmd.String("canonical")),
-				Aliases:          splitCSV(cmd.String("aliases")),
-				Class:            strings.TrimSpace(cmd.String("class")),
-				Actor:            strings.TrimSpace(cmd.String("actor")),
-				TopicLabels:      splitCSV(cmd.String("topics")),
-				Index:            factIndex,
-				AnnotationTopics: annotationTopics,
-				FocusActors:      focusActors,
-				FocusWhen:        focusWhen,
-				Involvement:      involvement,
-				Attachments:      atts,
-				SkipPreflight:    cmd.Bool("skip-preflight"),
-				Summary:          strings.TrimSpace(cmd.String("summary")),
-				DryRun:           cmd.Bool("dry-run"),
-				PreflightModel:   cmd.String("preflight-model"),
+				Type:              typ,
+				Layer:             layer,
+				Kind:              kind,
+				Intent:            strings.TrimSpace(cmd.String("intent")),
+				Description:       description,
+				Participants:      participants,
+				Refs:              refs,
+				Supersedes:        splitCSV(cmd.String("supersedes")),
+				Closes:            splitCSV(cmd.String("closes")),
+				Confidence:        confidence,
+				Canonical:         strings.TrimSpace(cmd.String("canonical")),
+				Aliases:           splitCSV(cmd.String("aliases")),
+				Class:             strings.TrimSpace(cmd.String("class")),
+				Actor:             strings.TrimSpace(cmd.String("actor")),
+				TopicLabels:       splitCSV(cmd.String("topics")),
+				Index:             factIndex,
+				AnnotationTopics:  annotationTopics,
+				FocusActors:       focusActors,
+				FocusWhen:         focusWhen,
+				Involvement:       involvement,
+				Attachments:       atts,
+				SkipPreflight:     cmd.Bool("skip-preflight"),
+				PreflightVerified: cmd.Bool("preflight-verified"),
+				Summary:           strings.TrimSpace(cmd.String("summary")),
+				DryRun:            cmd.Bool("dry-run"),
+				PreflightModel:    cmd.String("preflight-model"),
 				OnNewEntry: func(id, summary string) {
 					fmt.Fprintln(cmd.Writer, id+".md")
 					if rel, err := model.IDToRelPath(id); err == nil {
