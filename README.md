@@ -453,7 +453,7 @@ Pre-flight and the writing guide ask the provider to constrain its response to a
 `structured_output` picks how that request asks for JSON:
 
 - `json_schema` sends the schema for the provider to enforce.
-- `json_object` asks for any JSON object (`response_format: {"type": "json_object"}` on `openai`, `format: json` on `ollama`), states the schema in the system prompt and validates the answer against it locally. An answer that is not one JSON object matching the schema fails the call like an empty answer does.
+- `json_object` asks for any JSON object (`response_format: {"type": "json_object"}` on `openai`, `format: json` on `ollama`), states the schema in the system prompt and validates the answer against it locally. An answer that is not one JSON object matching the schema is never passed on: the check sends it to the reformat call described below, whose answer is validated the same way.
 - `auto`, the default, sends `json_schema`. When the endpoint answers 400 because the model does not support JSON schema mode (code `model_not_capable`, or a message naming `json_schema` or `json_object`), the call is retried once in `json_object` mode, and that endpoint and model stay on `json_object` for the rest of the process. Any other 400 fails the call. The retry runs inside the call's `timeout` (or `extract_timeout`).
 
 Some OpenAI-compatible services serve a model in `json_object` mode only, while another service accepts `json_schema` for the same model. `claude-cli` ignores the setting.

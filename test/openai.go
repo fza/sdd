@@ -24,6 +24,9 @@ type OpenAIBehaviour struct {
 	RejectWith string
 	// Answer is the message content of every accepted request.
 	Answer string
+	// Answers, when set, replaces Answer: the accepted requests get them in
+	// order, the last one repeating.
+	Answers []string
 	// Delay holds back every answer, refusals included, or until the client
 	// gives up.
 	Delay time.Duration
@@ -37,6 +40,7 @@ type OpenAIServer struct {
 	behaviour OpenAIBehaviour
 	mu        sync.Mutex
 	requests  []map[string]any
+	served    int
 }
 
 // NewOpenAIServer starts an OpenAIServer, closed when the test ends.
@@ -75,9 +79,20 @@ func (s *OpenAIServer) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	answer, _ := json.Marshal(map[string]any{
-		"choices": []any{map[string]any{"message": map[string]any{"content": s.behaviour.Answer}}},
+		"choices": []any{map[string]any{"message": map[string]any{"content": s.nextAnswer()}}},
 	})
 	_, _ = w.Write(answer)
+}
+
+func (s *OpenAIServer) nextAnswer() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.behaviour.Answers) == 0 {
+		return s.behaviour.Answer
+	}
+	answer := s.behaviour.Answers[min(s.served, len(s.behaviour.Answers)-1)]
+	s.served++
+	return answer
 }
 
 // Requests returns the request bodies received so far.
@@ -100,11 +115,20 @@ func (s *OpenAIServer) ResponseFormats() []string {
 
 // SystemMessage returns the system message content of the request at index.
 func (s *OpenAIServer) SystemMessage(index int) string {
+	return s.message(index, "system")
+}
+
+// UserMessage returns the user message content of the request at index.
+func (s *OpenAIServer) UserMessage(index int) string {
+	return s.message(index, "user")
+}
+
+func (s *OpenAIServer) message(index int, role string) string {
 	requests := s.Requests()
 	messages, _ := requests[index]["messages"].([]any)
 	for _, message := range messages {
 		fields, _ := message.(map[string]any)
-		if fields["role"] == "system" {
+		if fields["role"] == role {
 			content, _ := fields["content"].(string)
 			return content
 		}

@@ -184,3 +184,44 @@ func TestPreflightDoesNotFallBackOnATransportFailure(t *testing.T) {
 		t.Errorf("a transport failure must not spend a second call, got %d", len(runner.requests))
 	}
 }
+
+// A runner that enforces the shape itself rejects a malformed answer before
+// it is parsed here; the rejected text still deserves the reformat.
+func TestPreflightExtractsAfterARunnerRejectedAnswer(t *testing.T) {
+	rejected := &llm.Error{Err: &llm.MalformedAnswerError{Text: `{"findings":[{"observation":"REJECTED-MARKER"}]}`, Err: fmt.Errorf("schema mismatch")}}
+	runner := &scriptedRunner{
+		errs:    []error{rejected},
+		replies: []string{"", `{"findings":[{"observation":"The ref holds.","category":"ref-applicability","severity":"low"}]}`},
+	}
+
+	result, err := runPreflight(t, runner)
+	if err != nil {
+		t.Fatalf("a rejected answer should be reformatted, not lose the capture: %v", err)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("findings should come from the reformat, got %+v", result.Findings)
+	}
+	if len(runner.requests) != 2 || runner.requests[1].Purpose != llm.PurposePreflightExtract {
+		t.Fatalf("a rejected answer should cost one extraction call, got %d call(s)", len(runner.requests))
+	}
+	if !strings.Contains(runner.requests[1].UserPrompt, "REJECTED-MARKER") {
+		t.Error("the extraction call should carry the rejected answer verbatim")
+	}
+}
+
+func TestPreflightReportsBothPhasesWhenTheRejectedAnswerStaysMalformed(t *testing.T) {
+	rejected := func(text string) error {
+		return &llm.Error{Err: &llm.MalformedAnswerError{Text: text, Err: fmt.Errorf("schema mismatch on %s", text)}}
+	}
+	runner := &scriptedRunner{errs: []error{rejected("first"), rejected("second")}}
+
+	_, err := runPreflight(t, runner)
+	if err == nil {
+		t.Fatal("two malformed answers should fail the check")
+	}
+	for _, phase := range []string{"schema mismatch on first", "schema mismatch on second"} {
+		if !strings.Contains(err.Error(), phase) {
+			t.Errorf("error should name both phases, got %v", err)
+		}
+	}
+}
