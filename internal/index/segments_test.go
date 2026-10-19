@@ -488,3 +488,29 @@ func TestRefreshSegmentsGivesUpOnAHeldStore(t *testing.T) {
 		t.Errorf("a refresh should not wait out a writer, took %s", elapsed)
 	}
 }
+
+func TestRefreshSegmentsRemovesStrayTempFiles(t *testing.T) {
+	indexDir := t.TempDir()
+	publishEntries(t, indexDir, "entry-a")
+	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+		t.Fatal(err)
+	}
+	before := segmentFiles(t, indexDir)
+	stray := filepath.Join(indexDir, "segments", ".segment-4242")
+	if err := os.WriteFile(stray, []byte("half a segment"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := snapshotQuery(t, indexDir, segmentVector(1), 50); len(got) != 2 {
+		t.Errorf("a search should ignore a stray temporary file, got %d hits", len(got))
+	}
+	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stray); !os.IsNotExist(err) {
+		t.Errorf("a refresh should remove a temporary file a killed writer left, stat: %v", err)
+	}
+	if after := segmentFiles(t, indexDir); !reflect.DeepEqual(after, before) {
+		t.Errorf("removing strays should leave the segments untouched, got %v", after)
+	}
+}

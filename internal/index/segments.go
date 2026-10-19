@@ -15,8 +15,10 @@
 // A write session refreshes them under the exclusive lock: one new segment
 // holding only the rows the manifest names and no segment has, merged into
 // one when that would exceed maxSegments or when rows the manifest no longer
-// names outnumber the live ones. A reader never writes: rows it finds missing,
-// written by a binary that knows no segments, it decodes from their gob files.
+// names outnumber the live ones. The same refresh removes temporary segment
+// files a killed writer left behind. A reader never writes: rows it finds
+// missing, written by a binary that knows no segments, it decodes from their
+// gob files.
 // The scan is exact, so results equal a chromem query over the same rows.
 //
 // Rejected: HNSW (approximate recall that post-hoc filters shrink further, a
@@ -53,6 +55,7 @@ import (
 const (
 	segmentsSubdir    = "segments"
 	segmentExt        = ".seg"
+	segmentTempPrefix = ".segment-"
 	segmentHeaderSize = 24
 	maxSegments       = 8
 	refreshLockBound  = time.Second
@@ -198,6 +201,23 @@ func listSegments(indexDir string) ([]*segmentFile, error) {
 	return segments, nil
 }
 
+func strayTempSegments(indexDir string) ([]string, error) {
+	entries, err := os.ReadDir(segmentsDir(indexDir))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("listing index segments: %w", err)
+	}
+	var strays []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), segmentTempPrefix) {
+			strays = append(strays, filepath.Join(segmentsDir(indexDir), entry.Name()))
+		}
+	}
+	return strays, nil
+}
+
 func closeSegments(segments []*segmentFile) {
 	for _, segment := range segments {
 		_ = segment.file.Close()
@@ -211,7 +231,7 @@ func writeSegment(indexDir string, dims int, rows []segmentRow) (string, error) 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("creating index segments dir: %w", err)
 	}
-	temp, err := os.CreateTemp(dir, ".segment-")
+	temp, err := os.CreateTemp(dir, segmentTempPrefix)
 	if err != nil {
 		return "", err
 	}
@@ -385,6 +405,10 @@ type refreshPlan struct {
 	missing   []string
 	live      int
 	dead      int
+	// strays are temporary segment files a writer killed before its rename
+	// left behind. Segments are written only under the exclusive lock, so
+	// under it every temporary file is a stray.
+	strays []string
 }
 
 func planRefresh(indexDir string) (*refreshPlan, error) {
@@ -396,7 +420,12 @@ func planRefresh(indexDir string) (*refreshPlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	plan := &refreshPlan{segments: segments, published: publishedChunks(manifest)}
+	strays, err := strayTempSegments(indexDir)
+	if err != nil {
+		closeSegments(segments)
+		return nil, err
+	}
+	plan := &refreshPlan{segments: segments, published: publishedChunks(manifest), strays: strays}
 	seen := map[string]bool{}
 	for _, segment := range segments {
 		for _, id := range segment.ids {
@@ -422,7 +451,7 @@ func (p *refreshPlan) compact() bool {
 }
 
 func (p *refreshPlan) noop() bool {
-	if len(p.missing) == 0 && !p.compact() {
+	if len(p.missing) == 0 && len(p.strays) == 0 && !p.compact() {
 		closeSegments(p.segments)
 		p.segments = nil
 		return true
@@ -431,6 +460,11 @@ func (p *refreshPlan) noop() bool {
 }
 
 func (p *refreshPlan) apply(indexDir string) error {
+	for _, stray := range p.strays {
+		if err := os.Remove(stray); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing stray index segment: %w", err)
+		}
+	}
 	rows := make([]segmentRow, 0, len(p.missing))
 	if p.compact() {
 		kept := map[string]bool{}
