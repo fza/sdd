@@ -28,6 +28,9 @@ type Runner struct {
 	model    string
 	variant  string
 	useCache bool
+
+	// structured is nil for a runner carrying no schema.
+	structured *structuredOutput
 }
 
 // Option configures a Runner at construction.
@@ -131,40 +134,58 @@ func NewRunner(cfg model.LLMConfig, opts ...Option) (*Runner, error) {
 		cfgOpts = append(cfgOpts, upstream.SetTimeout(d))
 	}
 
-	client, err := upstream.NewLLM(cfgOpts...)
-	if err != nil {
-		// gollm validates ollama by probing the endpoint; on failure it
-		// reports a generic apikey validation error. Rewrap as a targeted
-		// "unreachable" message so users see the actionable hint.
-		if cfg.Provider == "ollama" && strings.Contains(err.Error(), "apikey") {
-			endpoint := cfg.OllamaEndpoint
-			if endpoint == "" {
-				endpoint = "http://localhost:11434"
+	newClient := func(formatKey string, formatValue any) (upstream.LLM, error) {
+		client, err := upstream.NewLLM(cfgOpts...)
+		if err != nil {
+			// gollm validates ollama by probing the endpoint; on failure it
+			// reports a generic apikey validation error. Rewrap as a targeted
+			// "unreachable" message so users see the actionable hint.
+			if cfg.Provider == "ollama" && strings.Contains(err.Error(), "apikey") {
+				endpoint := cfg.OllamaEndpoint
+				if endpoint == "" {
+					endpoint = "http://localhost:11434"
+				}
+				return nil, fmt.Errorf("gollm ollama: provider unreachable at %s (is Ollama running?)", endpoint)
 			}
-			return nil, fmt.Errorf("gollm ollama: provider unreachable at %s (is Ollama running?)", endpoint)
+			return nil, fmt.Errorf("gollm: creating client: %w", err)
 		}
-		return nil, fmt.Errorf("gollm: creating client: %w", err)
-	}
 
-	// Behaviour-affecting params go to the provider verbatim; gollm forwards
-	// unknown option keys straight into the request body.
-	for _, k := range sortedKeys(cfg.Params) {
-		client.SetOption(k, cfg.Params[k])
-	}
-
-	if o.schema != nil {
-		if key, value := structuredOutputOption(cfg.Provider, o.schemaName, o.schema); key != "" {
-			client.SetOption(key, value)
+		// Behaviour-affecting params go to the provider verbatim; gollm forwards
+		// unknown option keys straight into the request body.
+		for _, k := range sortedKeys(cfg.Params) {
+			client.SetOption(k, cfg.Params[k])
 		}
+		if formatKey != "" {
+			client.SetOption(formatKey, formatValue)
+		}
+		return client, nil
 	}
 
-	return &Runner{
-		client:   client,
+	mode, err := model.ParseStructuredOutputMode(string(cfg.StructuredOutput))
+	if err != nil {
+		return nil, fmt.Errorf("gollm: %w", err)
+	}
+
+	runner := &Runner{
 		provider: cfg.Provider,
 		model:    cfg.Model,
 		variant:  canonicalVariant(cfg.Params),
 		useCache: useCache,
-	}, nil
+	}
+
+	if o.schema == nil {
+		runner.client, err = newClient("", nil)
+		if err != nil {
+			return nil, err
+		}
+		return runner, nil
+	}
+
+	runner.structured, err = newStructuredOutput(cfg, mode, o.schemaName, o.schema, newClient)
+	if err != nil {
+		return nil, err
+	}
+	return runner, nil
 }
 
 // canonicalVariant renders the behaviour-affecting params as a stable label —
@@ -202,6 +223,13 @@ func (r *Runner) identity() llm.Identity {
 // the split system/user message pair. Failures carry the identity through the
 // typed llm.Error so they measure like successes.
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
+	if r.structured != nil {
+		return r.structured.run(ctx, r, req)
+	}
+	return r.generate(ctx, r.client, req)
+}
+
+func (r *Runner) generate(ctx context.Context, client upstream.LLM, req llm.Request) (llm.Result, error) {
 	var opts []upstream.PromptOption
 	if req.SystemPrompt != "" {
 		cacheType := upstream.CacheType("")
@@ -213,17 +241,22 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 
 	prompt := upstream.NewPrompt(req.UserPrompt, opts...)
 
-	resp, err := r.client.GenerateWithUsage(ctx, prompt)
+	resp, err := client.GenerateWithUsage(ctx, prompt)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			err = fmt.Errorf("gollm %s: timed out", r.provider)
-		} else {
-			err = fmt.Errorf("gollm %s: %w", r.provider, err)
-		}
-		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: err}
+		return llm.Result{}, r.fault(ctx, err)
 	}
 
 	return llm.Result{Text: resp.Content, Identity: r.identity(), Usage: usageFromResponse(resp.Usage)}, nil
+}
+
+// fault wraps a failed call in the typed llm.Error carrying the identity.
+func (r *Runner) fault(ctx context.Context, err error) error {
+	if ctx.Err() == context.DeadlineExceeded {
+		err = fmt.Errorf("gollm %s: timed out", r.provider)
+	} else {
+		err = fmt.Errorf("gollm %s: %w", r.provider, err)
+	}
+	return &llm.Error{Identity: r.identity(), Err: err}
 }
 
 // usageFromResponse maps a gollm Response.Usage into the common llm.Usage.
@@ -253,9 +286,9 @@ func usageFromResponse(u *upstream.Usage) llm.Usage {
 }
 
 // structuredOutputOption maps a schema onto the request-body key the provider
-// reads it from. The gollm option map is copied into the body verbatim, so the
-// key name is the whole contract. An empty key means the provider has no
-// structured-output channel and the schema is not sent.
+// reads it from in json_schema mode. The gollm option map is copied into the
+// body verbatim, so the key name is the whole contract. An empty key means the
+// provider has no structured-output channel and the schema is not sent.
 func structuredOutputOption(provider, name string, schema map[string]any) (string, any) {
 	switch provider {
 	case "openai":
@@ -269,6 +302,19 @@ func structuredOutputOption(provider, name string, schema map[string]any) (strin
 		}
 	case "ollama":
 		return "format", schema
+	default:
+		return "", nil
+	}
+}
+
+// jsonObjectOption is the json_object mode counterpart of
+// structuredOutputOption: the key asking for any JSON object.
+func jsonObjectOption(provider string) (string, any) {
+	switch provider {
+	case "openai":
+		return "response_format", map[string]any{"type": "json_object"}
+	case "ollama":
+		return "format", "json"
 	default:
 		return "", nil
 	}
