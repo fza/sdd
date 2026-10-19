@@ -721,3 +721,43 @@ func TestFillSessionParsesAnUnchangedManifestOnce(t *testing.T) {
 		t.Error("a saved manifest should be parsed afresh")
 	}
 }
+
+func TestPrepareLeavesTheSearchRowsReady(t *testing.T) {
+	indexDir := t.TempDir()
+	publishEntries(t, indexDir, "entry-a", "entry-b")
+	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := index.Prepare(t.Context(), indexDir, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := index.OpenSearchSnapshot(t.Context(), indexDir, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = snapshot.Close() }()
+	if snapshot.Rebuilt() || snapshot.Count() != 4 {
+		t.Errorf("a search after Prepare should reuse its rows, rebuilt %v with %d rows", snapshot.Rebuilt(), snapshot.Count())
+	}
+}
+
+func TestPrepareGivesUpOnAHeldStore(t *testing.T) {
+	indexDir := t.TempDir()
+	locked, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		done <- index.WriteStore(t.Context(), indexDir, func(*index.Index) error {
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+	err := index.Prepare(t.Context(), indexDir, 200*time.Millisecond)
+	close(release)
+	if writeErr := <-done; writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if !errors.Is(err, index.ErrLockBusy) {
+		t.Errorf("a store held by a writer should report busy, got %v", err)
+	}
+}
