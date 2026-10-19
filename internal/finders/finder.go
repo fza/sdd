@@ -29,6 +29,7 @@ type Finder struct {
 	gitHistory         GitHistory
 	repos              *repos.Registry
 	procedureRegistry  *engine.Registry
+	graphCache         GraphCache
 }
 
 // Options configures a new Finder. Zero-valued fields mean "not available"
@@ -50,6 +51,9 @@ type Options struct {
 	// size against (d-tac-rzi): pre-flight's serve-budget arithmetic and
 	// lint's procedure-runtime provider. Nil skips both checks.
 	ProcedureRegistry *engine.Registry
+	// GraphCache keeps loaded graph documents between processes. Nil loads
+	// every graph from its files.
+	GraphCache GraphCache
 }
 
 // New constructs a Finder with the given options.
@@ -62,6 +66,7 @@ func New(opts Options) *Finder {
 		gitHistory:         opts.GitHistory,
 		repos:              opts.Repos,
 		procedureRegistry:  opts.ProcedureRegistry,
+		graphCache:         opts.GraphCache,
 	}
 }
 

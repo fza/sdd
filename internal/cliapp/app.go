@@ -17,6 +17,7 @@ import (
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/graphcache"
 	"github.com/networkteam/sdd/internal/handlers"
 	localembed "github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/llm/factory"
@@ -189,12 +190,30 @@ func newReadFinder() (*finders.Finder, error) {
 	if err != nil {
 		return nil, err
 	}
+	graphCache, err := defaultGraphCache()
+	if err != nil {
+		return nil, err
+	}
 	return finders.New(finders.Options{
 		PreflightRunner: readOnlyRunner,
 		Config:          cfg,
 		Repos:           reg,
 		GitHistory:      git.CLI{},
+		GraphCache:      graphCache,
 	}), nil
+}
+
+// defaultGraphCache keeps loaded graphs under the user cache root. Setting
+// SDD_GRAPH_CACHE=off loads every graph from its files.
+func defaultGraphCache() (finders.GraphCache, error) {
+	if os.Getenv("SDD_GRAPH_CACHE") == "off" {
+		return nil, nil
+	}
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		return nil, err
+	}
+	return graphcache.New(filepath.Join(loc.CacheRoot, "graph")), nil
 }
 
 // defaultRepos builds the connected-repos dependencies from the XDG default
