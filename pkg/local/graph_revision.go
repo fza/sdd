@@ -7,14 +7,9 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
-)
 
-// racyWindow is how recent a file's change may be before its stat stamp stops
-// proving its content: a write in the same clock tick as the stamp leaves the
-// stamp unchanged, so a file changed this close to the computation is
-// re-read next time. Two seconds covers the coarsest common filesystem
-// timestamps.
-const racyWindow = 2 * time.Second
+	"github.com/networkteam/sdd/internal/filestamp"
+)
 
 // revisionCache remembers the graph directory's last revision with the stat
 // stamp of every file it hashed, so an unchanged graph costs one walk and a
@@ -24,19 +19,7 @@ const racyWindow = 2 * time.Second
 type revisionCache struct {
 	mu       sync.Mutex
 	revision string
-	stamps   map[string]fileStamp
-}
-
-// fileStamp is what a file's metadata says about its content. ctime cannot be
-// set by a program, so a write that restores size and mtime still changes it.
-type fileStamp struct {
-	size    int64
-	mode    fs.FileMode
-	mtime   int64
-	ctime   int64
-	inode   uint64
-	device  uint64
-	trusted bool
+	stamps   map[string]filestamp.Stamp
 }
 
 func (c *revisionCache) current(dir string) (string, error) {
@@ -65,10 +48,9 @@ func (c *revisionCache) currentAt(dir string, now time.Time) (string, error) {
 }
 
 // graphStamps stamps every file graphDirectoryRevision hashes. It reports
-// untrusted when any stamp cannot prove its file unchanged: a platform
-// without inode and ctime, or a change within racyWindow of now.
-func graphStamps(dir string, now time.Time) (map[string]fileStamp, bool, error) {
-	stamps := map[string]fileStamp{}
+// untrusted when any stamp cannot prove its file unchanged.
+func graphStamps(dir string, now time.Time) (map[string]filestamp.Stamp, bool, error) {
+	stamps := map[string]filestamp.Stamp{}
 	trusted := true
 	err := filepath.WalkDir(dir, func(filename string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -90,8 +72,8 @@ func graphStamps(dir string, now time.Time) (map[string]fileStamp, bool, error) 
 		if err != nil {
 			return err
 		}
-		stamp := stampOf(info)
-		if !stamp.trusted || now.Sub(time.Unix(0, max(stamp.mtime, stamp.ctime))) < racyWindow {
+		stamp := filestamp.Of(info)
+		if !stamp.Proves(now) {
 			trusted = false
 		}
 		stamps[filename] = stamp
