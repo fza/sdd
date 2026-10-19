@@ -4,12 +4,21 @@
 // a search on a 15k-row store opened 15k files, 1 s with the OS file cache
 // warm and 16 s with it cold. Segments hold the same rows as a few large
 // immutable files under <store>/segments/, so a search costs a handful of
-// sequential reads and an exact scan, whatever the cache state:
+// mapped files and an exact scan, whatever the cache state:
 //
-//	header   magic, dims, row count, table length
+//	header   magic, format, dims, row count, table length
 //	table    per row: id, payload length (uvarints)
+//	padding  zeros up to a 64-byte boundary
 //	vectors  count*dims little-endian float32, normalized as chromem stores them
 //	payloads per row: JSON {content, metadata}, read only for the hits
+//
+// A segment is mapped read-only and shared, and its vector block is read in
+// place, so every process searching a store shares one copy in the page
+// cache: a running sdd serve keeps the pages a CLI search then finds warm.
+// Format 1 (".seg") lacks the padding, so its vectors are decoded into memory
+// once per open; any refresh folds format 1 segments into format 2 (".seg2").
+// Binaries that know only format 1 never list format 2 files and read the rows
+// those hold from their gob files.
 //
 // The chromem rows and the manifest stay the authority; segments are derived.
 // A write session refreshes them under the exclusive lock: one new segment
@@ -18,18 +27,26 @@
 // names outnumber the live ones. The same refresh removes temporary segment
 // files a killed writer left behind. A reader never writes: rows it finds
 // missing, written by a binary that knows no segments, it decodes from their
-// gob files.
-// The scan is exact, so results equal a chromem query over the same rows.
+// gob files. The scan is exact, so results equal a chromem query over the
+// same rows.
+//
+// A segment file is only ever created by rename and removed by unlink, and a
+// mapping is released only after the last search holding it closes, so sdd
+// never reads an unmapped or shrinking file; guardFaults covers what another
+// program does to one.
 //
 // Rejected: HNSW (approximate recall that post-hoc filters shrink further, a
 // graph to build and repair, no measurable gain below ~100k rows), sqlite-vec
 // (CGO or a WASM runtime, every writer migrated, a pre-1.0 extension, and its
 // KNN is a full scan too), decoding the gob files in parallel (still one open
-// per row, so a cold cache stays slow).
+// per row, so a cold cache stays slow), a resident search daemon (a process to
+// supervise and version; the shared page cache already carries warmth across
+// processes).
 package index
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -45,7 +62,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	chromem "github.com/philippgille/chromem-go"
 
@@ -53,15 +72,21 @@ import (
 )
 
 const (
-	segmentsSubdir    = "segments"
-	segmentExt        = ".seg"
-	segmentTempPrefix = ".segment-"
-	segmentHeaderSize = 24
-	maxSegments       = 8
-	refreshLockBound  = time.Second
+	segmentsSubdir      = "segments"
+	segmentExt          = ".seg2"
+	legacySegmentExt    = ".seg"
+	segmentTempPrefix   = ".segment-"
+	segmentHeaderSize   = 24
+	segmentFormat       = 2
+	legacySegmentFormat = 1
+	vectorAlignment     = 64
+	maxSegments         = 8
+	refreshLockBound    = time.Second
 )
 
-var segmentMagic = [8]byte{'S', 'D', 'D', 'S', 'E', 'G', 0, 1}
+var segmentMagic = [7]byte{'S', 'D', 'D', 'S', 'E', 'G', 0}
+
+var nativeLittleEndian = binary.NativeEndian.Uint16([]byte{1, 0}) == 1
 
 // ErrSegmentCorrupt reports a segment file that does not parse.
 var ErrSegmentCorrupt = errors.New("index segment is corrupt")
@@ -77,13 +102,18 @@ type segmentRow struct {
 	payload []byte
 }
 
+// segmentFile is one mapped segment. It holds a reference count: the mapping
+// is released when the last holder (a store view, a snapshot) lets go.
 type segmentFile struct {
-	file          *os.File
+	path          string
+	format        byte
+	mapping       []byte
+	unmap         func() error
+	refs          atomic.Int64
 	dims          int
 	ids           []string
-	payloadOffset []int64
+	payloadOffset []int
 	payloadLength []int
-	vectorsOffset int64
 	vectors       []float32
 }
 
@@ -96,89 +126,141 @@ func openSegment(path string) (*segmentFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	segment, err := readSegmentTable(file)
+	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
+		return nil, err
+	}
+	mapping, unmap, err := mapSegment(file, int(info.Size()))
+	if err := errors.Join(err, file.Close()); err != nil {
+		if unmap != nil {
+			_ = unmap()
+		}
+		return nil, fmt.Errorf("mapping segment %s: %w", path, err)
+	}
+	segment := &segmentFile{path: path, mapping: mapping, unmap: unmap}
+	segment.refs.Store(1)
+	if err := guardFaults(segment.parse); err != nil {
+		_ = unmap()
 		return nil, fmt.Errorf("reading segment %s: %w", path, err)
 	}
 	return segment, nil
 }
 
-func readSegmentTable(file *os.File) (*segmentFile, error) {
-	header := make([]byte, segmentHeaderSize)
-	if _, err := io.ReadFull(file, header); err != nil {
-		return nil, fmt.Errorf("%w: header: %w", ErrSegmentCorrupt, err)
+func (s *segmentFile) parse() error {
+	data := s.mapping
+	if len(data) < segmentHeaderSize || [7]byte(data[:7]) != segmentMagic {
+		return fmt.Errorf("%w: unknown format", ErrSegmentCorrupt)
 	}
-	if [8]byte(header[:8]) != segmentMagic {
-		return nil, fmt.Errorf("%w: unknown format", ErrSegmentCorrupt)
+	s.format = data[7]
+	if s.format != segmentFormat && s.format != legacySegmentFormat {
+		return fmt.Errorf("%w: unknown format %d", ErrSegmentCorrupt, s.format)
 	}
-	dims := int(binary.LittleEndian.Uint32(header[8:12]))
-	count := int(binary.LittleEndian.Uint32(header[12:16]))
-	tableLength := binary.LittleEndian.Uint64(header[16:24])
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
+	dims := uint64(binary.LittleEndian.Uint32(data[8:12]))
+	count := uint64(binary.LittleEndian.Uint32(data[12:16]))
+	tableLength := binary.LittleEndian.Uint64(data[16:24])
+	size := uint64(len(data))
+	if tableLength > size-segmentHeaderSize {
+		return fmt.Errorf("%w: truncated", ErrSegmentCorrupt)
 	}
-	vectorsOffset := int64(segmentHeaderSize) + int64(tableLength)
-	vectorBytes := int64(count) * int64(dims) * 4
-	if tableLength > uint64(info.Size()) || vectorsOffset+vectorBytes > info.Size() {
-		return nil, fmt.Errorf("%w: truncated", ErrSegmentCorrupt)
+	vectorsOffset := segmentHeaderSize + tableLength
+	if s.format == segmentFormat {
+		vectorsOffset = alignUp(vectorsOffset, vectorAlignment)
 	}
-	table := make([]byte, tableLength)
-	if _, err := io.ReadFull(file, table); err != nil {
-		return nil, fmt.Errorf("%w: table: %w", ErrSegmentCorrupt, err)
+	vectorBytes := count * dims * 4
+	if count != 0 && vectorBytes/count != dims*4 || vectorsOffset > size || vectorBytes > size-vectorsOffset {
+		return fmt.Errorf("%w: truncated", ErrSegmentCorrupt)
 	}
-	segment := &segmentFile{file: file, dims: dims, vectorsOffset: vectorsOffset, ids: make([]string, 0, count), payloadOffset: make([]int64, 0, count), payloadLength: make([]int, 0, count)}
+	table := data[segmentHeaderSize : segmentHeaderSize+tableLength]
+	s.ids = make([]string, 0, count)
+	s.payloadOffset = make([]int, 0, count)
+	s.payloadLength = make([]int, 0, count)
 	offset := vectorsOffset + vectorBytes
 	for range count {
 		idLength, n := binary.Uvarint(table)
 		if n <= 0 || idLength > uint64(len(table)-n) {
-			return nil, fmt.Errorf("%w: table entry", ErrSegmentCorrupt)
+			return fmt.Errorf("%w: table entry", ErrSegmentCorrupt)
 		}
 		table = table[n:]
 		id := string(table[:idLength])
 		table = table[idLength:]
 		payloadLength, n := binary.Uvarint(table)
-		if n <= 0 {
-			return nil, fmt.Errorf("%w: table entry", ErrSegmentCorrupt)
+		if n <= 0 || payloadLength > size-offset {
+			return fmt.Errorf("%w: table entry", ErrSegmentCorrupt)
 		}
 		table = table[n:]
-		segment.ids = append(segment.ids, id)
-		segment.payloadOffset = append(segment.payloadOffset, offset)
-		segment.payloadLength = append(segment.payloadLength, int(payloadLength))
-		offset += int64(payloadLength)
+		s.ids = append(s.ids, id)
+		s.payloadOffset = append(s.payloadOffset, int(offset))
+		s.payloadLength = append(s.payloadLength, int(payloadLength))
+		offset += payloadLength
 	}
-	if offset > info.Size() {
-		return nil, fmt.Errorf("%w: truncated payloads", ErrSegmentCorrupt)
-	}
-	return segment, nil
+	s.dims = int(dims)
+	adviseWillNeed(data, int(vectorsOffset), int(vectorsOffset+vectorBytes))
+	s.vectors = s.vectorBlock(int(vectorsOffset), int(count*dims))
+	return nil
 }
 
-func (s *segmentFile) loadVectors() error {
-	raw := make([]byte, len(s.ids)*s.dims*4)
-	if _, err := s.file.ReadAt(raw, s.vectorsOffset); err != nil {
-		return fmt.Errorf("%w: vectors: %w", ErrSegmentCorrupt, err)
+// vectorBlock views a format 2 vector block in place; a format 1 block, or a
+// platform that is not little-endian, gets a decoded copy.
+func (s *segmentFile) vectorBlock(offset, n int) []float32 {
+	if n == 0 {
+		return nil
 	}
-	s.vectors = make([]float32, len(s.ids)*s.dims)
-	for i := range s.vectors {
-		s.vectors[i] = math.Float32frombits(binary.LittleEndian.Uint32(raw[i*4:]))
+	raw := s.mapping[offset : offset+n*4]
+	if s.format == segmentFormat && nativeLittleEndian && uintptr(unsafe.Pointer(&raw[0]))%4 == 0 {
+		return unsafe.Slice((*float32)(unsafe.Pointer(&raw[0])), n)
 	}
-	return nil
+	vectors := make([]float32, n)
+	for i := range vectors {
+		vectors[i] = math.Float32frombits(binary.LittleEndian.Uint32(raw[i*4:]))
+	}
+	return vectors
+}
+
+func alignUp(offset, alignment uint64) uint64 {
+	return (offset + alignment - 1) / alignment * alignment
 }
 
 func (s *segmentFile) vector(row int) []float32 {
 	return s.vectors[row*s.dims : (row+1)*s.dims : (row+1)*s.dims]
 }
 
+// payload copies a row's payload out of the mapping, so no byte of it outlives
+// the segment's references.
 func (s *segmentFile) payload(row int) ([]byte, error) {
-	data := make([]byte, s.payloadLength[row])
-	if _, err := s.file.ReadAt(data, s.payloadOffset[row]); err != nil {
-		return nil, fmt.Errorf("%w: payload of %s: %w", ErrSegmentCorrupt, s.ids[row], err)
+	var data []byte
+	err := guardFaults(func() error {
+		offset := s.payloadOffset[row]
+		data = bytes.Clone(s.mapping[offset : offset+s.payloadLength[row]])
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("payload of %s: %w", s.ids[row], err)
 	}
 	return data, nil
 }
 
-func listSegments(indexDir string) ([]*segmentFile, error) {
+func (s *segmentFile) retain() {
+	s.refs.Add(1)
+}
+
+func (s *segmentFile) release() error {
+	if s.refs.Add(-1) != 0 {
+		return nil
+	}
+	if err := s.unmap(); err != nil {
+		return fmt.Errorf("unmapping segment %s: %w", s.path, err)
+	}
+	return nil
+}
+
+func isSegmentName(name string) bool {
+	return !strings.HasPrefix(name, segmentTempPrefix) && (strings.HasSuffix(name, segmentExt) || strings.HasSuffix(name, legacySegmentExt))
+}
+
+// segmentNames lists the store's segment files, sorted. Names are content
+// hashes, so an unchanged list means unchanged segments.
+func segmentNames(indexDir string) ([]string, error) {
 	entries, err := os.ReadDir(segmentsDir(indexDir))
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -186,19 +268,13 @@ func listSegments(indexDir string) ([]*segmentFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing index segments: %w", err)
 	}
-	var segments []*segmentFile
+	var names []string
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), segmentExt) {
-			continue
+		if !entry.IsDir() && isSegmentName(entry.Name()) {
+			names = append(names, entry.Name())
 		}
-		segment, err := openSegment(filepath.Join(segmentsDir(indexDir), entry.Name()))
-		if err != nil {
-			closeSegments(segments)
-			return nil, err
-		}
-		segments = append(segments, segment)
 	}
-	return segments, nil
+	return names, nil
 }
 
 func strayTempSegments(indexDir string) ([]string, error) {
@@ -216,12 +292,6 @@ func strayTempSegments(indexDir string) ([]string, error) {
 		}
 	}
 	return strays, nil
-}
-
-func closeSegments(segments []*segmentFile) {
-	for _, segment := range segments {
-		_ = segment.file.Close()
-	}
 }
 
 // writeSegment writes rows to a temporary file and renames it to the hash of
@@ -263,6 +333,7 @@ func writeSegment(indexDir string, dims int, rows []segmentRow) (string, error) 
 func encodeSegment(writer *bufio.Writer, dims int, table []byte, rows []segmentRow) error {
 	header := make([]byte, segmentHeaderSize)
 	copy(header, segmentMagic[:])
+	header[7] = segmentFormat
 	binary.LittleEndian.PutUint32(header[8:12], uint32(dims))
 	binary.LittleEndian.PutUint32(header[12:16], uint32(len(rows)))
 	binary.LittleEndian.PutUint64(header[16:24], uint64(len(table)))
@@ -270,6 +341,10 @@ func encodeSegment(writer *bufio.Writer, dims int, table []byte, rows []segmentR
 		return err
 	}
 	if _, err := writer.Write(table); err != nil {
+		return err
+	}
+	written := uint64(segmentHeaderSize + len(table))
+	if _, err := writer.Write(make([]byte, alignUp(written, vectorAlignment)-written)); err != nil {
 		return err
 	}
 	word := make([]byte, 4)
@@ -361,30 +436,23 @@ func RefreshSegments(ctx context.Context, indexDir string) error {
 	if err := ensureStoreDir(indexDir); err != nil {
 		return err
 	}
+	view := viewFor(indexDir)
 	lock := lockFile(indexDir)
 	if err := lockWithin(ctx, lock.TryRLockContext); err != nil {
 		return err
 	}
-	plan, err := planRefresh(indexDir)
+	needed, err := view.refreshNeeded()
 	if err := errors.Join(err, lock.Unlock()); err != nil {
 		return err
 	}
-	if plan.noop() {
+	if !needed {
 		return nil
 	}
 	if err := lockWithin(ctx, lock.TryLockContext); err != nil {
 		return err
 	}
 	defer func() { _ = lock.Unlock() }()
-	plan, err = planRefresh(indexDir)
-	if err != nil {
-		return err
-	}
-	defer closeSegments(plan.segments)
-	if plan.noop() {
-		return nil
-	}
-	return plan.apply(indexDir)
+	return view.refresh()
 }
 
 func lockWithin(ctx context.Context, tryLock func(context.Context, time.Duration) (bool, error)) error {
@@ -405,29 +473,24 @@ type refreshPlan struct {
 	missing   []string
 	live      int
 	dead      int
+	legacy    int
 	// strays are temporary segment files a writer killed before its rename
 	// left behind. Segments are written only under the exclusive lock, so
 	// under it every temporary file is a stray.
 	strays []string
 }
 
-func planRefresh(indexDir string) (*refreshPlan, error) {
-	manifest, err := LoadManifest(indexDir)
-	if err != nil {
-		return nil, err
-	}
-	segments, err := listSegments(indexDir)
-	if err != nil {
-		return nil, err
-	}
+func planRefresh(indexDir string, segments []*segmentFile, published map[string]string) (*refreshPlan, error) {
 	strays, err := strayTempSegments(indexDir)
 	if err != nil {
-		closeSegments(segments)
 		return nil, err
 	}
-	plan := &refreshPlan{segments: segments, published: publishedChunks(manifest), strays: strays}
+	plan := &refreshPlan{segments: segments, published: published, strays: strays}
 	seen := map[string]bool{}
 	for _, segment := range segments {
+		if segment.format == legacySegmentFormat {
+			plan.legacy++
+		}
 		for _, id := range segment.ids {
 			if _, ok := plan.published[id]; ok && !seen[id] {
 				seen[id] = true
@@ -447,18 +510,15 @@ func planRefresh(indexDir string) (*refreshPlan, error) {
 }
 
 func (p *refreshPlan) compact() bool {
-	return (len(p.missing) > 0 && len(p.segments) >= maxSegments) || p.dead > p.live
+	return (len(p.missing) > 0 && len(p.segments) >= maxSegments) || p.dead > p.live || p.legacy > 0
 }
 
 func (p *refreshPlan) noop() bool {
-	if len(p.missing) == 0 && len(p.strays) == 0 && !p.compact() {
-		closeSegments(p.segments)
-		p.segments = nil
-		return true
-	}
-	return false
+	return len(p.missing) == 0 && len(p.strays) == 0 && !p.compact()
 }
 
+// apply writes the planned segment. Compaction copies vectors out of mapped
+// segments, so the caller runs it under guardFaults.
 func (p *refreshPlan) apply(indexDir string) error {
 	for _, stray := range p.strays {
 		if err := os.Remove(stray); err != nil && !os.IsNotExist(err) {
@@ -469,9 +529,6 @@ func (p *refreshPlan) apply(indexDir string) error {
 	if p.compact() {
 		kept := map[string]bool{}
 		for _, segment := range p.segments {
-			if err := segment.loadVectors(); err != nil {
-				return err
-			}
 			for row, id := range segment.ids {
 				if _, ok := p.published[id]; !ok || kept[id] {
 					continue
@@ -516,24 +573,32 @@ func (p *refreshPlan) apply(indexDir string) error {
 		return nil
 	}
 	for _, segment := range p.segments {
-		if segment.file.Name() == written {
+		if segment.path == written {
 			continue
 		}
-		if err := os.Remove(segment.file.Name()); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(segment.path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("removing merged index segment: %w", err)
 		}
 	}
 	return nil
 }
 
-// SearchSnapshot is the published read view of a store, loaded from its
-// segments for one search. It holds no lock: segment files are immutable and
-// it keeps the ones it read open until Close.
+// SearchSnapshot is one search's hold on a store's published rows. It holds
+// no lock: segment files are immutable, and the mapped segments it reads stay
+// mapped until Close, whatever a merge in any process deletes meanwhile.
 type SearchSnapshot struct {
+	data    *snapshotData
+	rebuilt bool
+	closed  atomic.Bool
+}
+
+type snapshotData struct {
+	view     *storeView
 	indexDir string
 	dims     int
 	rows     []snapshotRow
 	segments []*segmentFile
+	refs     atomic.Int64
 }
 
 type snapshotRow struct {
@@ -545,9 +610,22 @@ type snapshotRow struct {
 	payload []byte
 }
 
+func (d *snapshotData) release() error {
+	if d.refs.Add(-1) != 0 {
+		return nil
+	}
+	var err error
+	for _, segment := range d.segments {
+		err = errors.Join(err, segment.release())
+	}
+	return err
+}
+
 // OpenSearchSnapshot loads the store's published rows for a search, waiting
 // at most bound for the shared lock (ErrLockBusy past it; a bound of zero waits
 // until ctx ends). Rows the segments lack are decoded from their chromem files.
+// The rows are reused across calls in this process while the store's manifest
+// and segment files are unchanged.
 func OpenSearchSnapshot(ctx context.Context, indexDir string, bound time.Duration) (*SearchSnapshot, error) {
 	if indexDir == "" {
 		return nil, errors.New("index dir is required")
@@ -571,100 +649,51 @@ func OpenSearchSnapshot(ctx context.Context, indexDir string, bound time.Duratio
 		return nil, fmt.Errorf("acquiring index read lock at %s: %w", indexDir, err)
 	}
 	defer func() { _ = lock.Unlock() }()
-	snapshot, err := loadSnapshot(ctx, indexDir)
-	if err != nil {
-		return nil, err
-	}
-	return snapshot, nil
-}
-
-func loadSnapshot(ctx context.Context, indexDir string) (*SearchSnapshot, error) {
-	stopRead := timing.Start(ctx, "index-segments-read")
-	manifest, err := LoadManifest(indexDir)
-	if err != nil {
-		stopRead()
-		return nil, err
-	}
-	published := publishedChunks(manifest)
-	segments, err := listSegments(indexDir)
-	if err != nil {
-		stopRead()
-		return nil, err
-	}
-	snapshot := &SearchSnapshot{indexDir: indexDir, segments: segments}
-	seen := map[string]bool{}
-	for _, segment := range segments {
-		if err := segment.loadVectors(); err != nil {
-			stopRead()
-			_ = snapshot.Close()
-			return nil, err
-		}
-		for row, id := range segment.ids {
-			version, ok := published[id]
-			if !ok || seen[id] {
-				continue
-			}
-			seen[id] = true
-			snapshot.rows = append(snapshot.rows, snapshotRow{id: id, version: version, vector: segment.vector(row), segment: segment, index: row})
-		}
-	}
-	stopRead()
-	stopDecode := timing.Start(ctx, "index-rows-decode")
-	defer stopDecode()
-	missing := make([]string, 0)
-	for id := range published {
-		if !seen[id] {
-			missing = append(missing, id)
-		}
-	}
-	sort.Strings(missing)
-	for _, id := range missing {
-		row, err := readRowFile(indexDir, id)
-		if err != nil {
-			_ = snapshot.Close()
-			return nil, err
-		}
-		snapshot.rows = append(snapshot.rows, snapshotRow{id: id, version: published[id], vector: row.vector, payload: row.payload})
-	}
-	for _, row := range snapshot.rows {
-		if snapshot.dims == 0 {
-			snapshot.dims = len(row.vector)
-		}
-		if len(row.vector) != snapshot.dims {
-			_ = snapshot.Close()
-			return nil, errors.New("index: inconsistent vector dimensions across rows")
-		}
-	}
-	return snapshot, nil
+	return viewFor(indexDir).acquire(ctx)
 }
 
 // Path returns the store directory the snapshot was loaded from.
-func (s *SearchSnapshot) Path() string { return s.indexDir }
+func (s *SearchSnapshot) Path() string { return s.data.indexDir }
 
 // Count returns the number of published rows in the snapshot.
-func (s *SearchSnapshot) Count() int { return len(s.rows) }
+func (s *SearchSnapshot) Count() int { return len(s.data.rows) }
 
-// Close releases the segment files the snapshot reads hit payloads from.
+// Rebuilt reports whether opening this snapshot rebuilt the process's row set,
+// rather than reusing it for an unchanged store.
+func (s *SearchSnapshot) Rebuilt() bool { return s.rebuilt }
+
+// Close releases the snapshot's hold on the mapped segments. Further calls do
+// nothing.
 func (s *SearchSnapshot) Close() error {
-	var err error
-	for _, segment := range s.segments {
-		err = errors.Join(err, segment.file.Close())
+	if !s.closed.CompareAndSwap(false, true) {
+		return nil
 	}
-	s.segments = nil
-	return err
+	return s.data.release()
 }
 
 // Query returns the top nResults published rows by cosine similarity, the
 // same hits Index.Query returns over the same rows.
 func (s *SearchSnapshot) Query(ctx context.Context, embedding []float32, nResults int) ([]Hit, error) {
+	if s.closed.Load() {
+		return nil, errors.New("index: query on a closed search snapshot")
+	}
+	hits, err := s.query(ctx, embedding, nResults)
+	if errors.Is(err, ErrSegmentCorrupt) {
+		s.data.view.invalidate()
+	}
+	return hits, err
+}
+
+func (s *SearchSnapshot) query(ctx context.Context, embedding []float32, nResults int) ([]Hit, error) {
+	data := s.data
 	if len(embedding) == 0 {
 		return nil, errors.New("query embedding is empty")
 	}
-	nResults = min(nResults, len(s.rows))
+	nResults = min(nResults, len(data.rows))
 	if nResults <= 0 {
 		return nil, nil
 	}
-	if len(embedding) != s.dims {
+	if len(embedding) != data.dims {
 		return nil, errors.New("vector query: vectors must have the same length")
 	}
 	stopScan := timing.Start(ctx, "index-scan")
@@ -673,13 +702,20 @@ func (s *SearchSnapshot) Query(ctx context.Context, embedding []float32, nResult
 		row   int
 		score float32
 	}
-	scores := make([]scored, len(s.rows))
-	for i, row := range s.rows {
-		var dot float32
-		for j, value := range row.vector {
-			dot += value * query[j]
+	scores := make([]scored, len(data.rows))
+	err := guardFaults(func() error {
+		for i, row := range data.rows {
+			var dot float32
+			for j, value := range row.vector {
+				dot += value * query[j]
+			}
+			scores[i] = scored{row: i, score: dot}
 		}
-		scores[i] = scored{row: i, score: dot}
+		return nil
+	})
+	if err != nil {
+		stopScan()
+		return nil, err
 	}
 	slices.SortFunc(scores, func(a, b scored) int {
 		switch {
@@ -688,23 +724,23 @@ func (s *SearchSnapshot) Query(ctx context.Context, embedding []float32, nResult
 		case a.score < b.score:
 			return 1
 		}
-		return strings.Compare(s.rows[a.row].id, s.rows[b.row].id)
+		return strings.Compare(data.rows[a.row].id, data.rows[b.row].id)
 	})
 	stopScan()
 	defer timing.Start(ctx, "index-hits-read")()
 	hits := make([]Hit, 0, nResults)
 	for _, top := range scores[:nResults] {
-		row := s.rows[top.row]
-		data := row.payload
-		if data == nil {
+		row := data.rows[top.row]
+		payloadData := row.payload
+		if payloadData == nil {
 			var err error
-			data, err = row.segment.payload(row.index)
+			payloadData, err = row.segment.payload(row.index)
 			if err != nil {
 				return nil, err
 			}
 		}
 		var payload segmentPayload
-		if err := json.Unmarshal(data, &payload); err != nil {
+		if err := json.Unmarshal(payloadData, &payload); err != nil {
 			return nil, fmt.Errorf("%w: payload of %s: %w", ErrSegmentCorrupt, row.id, err)
 		}
 		if payload.Metadata == nil {

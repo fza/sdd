@@ -203,7 +203,7 @@ func TestLazyFillRefreshesSearchSegments(t *testing.T) {
 	if err := newFillHandler(graphDir, indexDir, &slowEmbedder{}).LazyFill(t.Context(), &command.LazyFillIndexCmd{}); err != nil {
 		t.Fatal(err)
 	}
-	segments, err := filepath.Glob(filepath.Join(indexDir, "segments", "*.seg"))
+	segments, err := filepath.Glob(filepath.Join(indexDir, "segments", "*.seg2"))
 	if err != nil {
 		t.Fatal(err)
 	}

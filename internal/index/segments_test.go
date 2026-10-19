@@ -2,6 +2,7 @@ package index_test
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
@@ -69,7 +70,7 @@ func unpublishEntries(t *testing.T, indexDir string, entryIDs ...string) {
 
 func segmentFiles(t *testing.T, indexDir string) []string {
 	t.Helper()
-	paths, err := filepath.Glob(filepath.Join(indexDir, "segments", "*.seg"))
+	paths, err := filepath.Glob(filepath.Join(indexDir, "segments", "*.seg2"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,5 +513,215 @@ func TestRefreshSegmentsRemovesStrayTempFiles(t *testing.T) {
 	}
 	if after := segmentFiles(t, indexDir); !reflect.DeepEqual(after, before) {
 		t.Errorf("removing strays should leave the segments untouched, got %v", after)
+	}
+}
+
+// legacySegment rewrites a format 2 segment as format 1: no padding before the
+// vector block, so the block sits wherever the table ends.
+func legacySegment(t *testing.T, format2 []byte) []byte {
+	t.Helper()
+	tableEnd := 24 + int(binary.LittleEndian.Uint64(format2[16:24]))
+	vectors := (tableEnd + 63) / 64 * 64
+	legacy := append([]byte{}, format2[:tableEnd]...)
+	legacy[7] = 1
+	return append(legacy, format2[vectors:]...)
+}
+
+func TestSegmentsAlignTheVectorBlock(t *testing.T) {
+	indexDir := t.TempDir()
+	publishEntries(t, indexDir, "entry-a", "entry-b", "entry-c")
+	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(segmentFiles(t, indexDir)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	tableEnd := 24 + int(binary.LittleEndian.Uint64(data[16:24]))
+	if data[7] != 2 || tableEnd%64 == 0 {
+		t.Fatalf("the fixture should need padding in a format 2 segment, format %d, table end %d", data[7], tableEnd)
+	}
+	for _, b := range data[tableEnd : (tableEnd+63)/64*64] {
+		if b != 0 {
+			t.Fatal("the gap before the vector block should be zero padding")
+		}
+	}
+	if got, want := hitIDs(snapshotQuery(t, indexDir, segmentVector(1), 50)), hitIDs(chromemQuery(t, indexDir, segmentVector(1), 50)); !reflect.DeepEqual(got, want) {
+		t.Errorf("vectors read from the aligned block should rank as chromem does, got %v want %v", got, want)
+	}
+}
+
+func TestRefreshSegmentsFoldsLegacySegments(t *testing.T) {
+	indexDir := t.TempDir()
+	publishEntries(t, indexDir, "entry-a", "entry-b")
+	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+		t.Fatal(err)
+	}
+	current := segmentFiles(t, indexDir)[0]
+	data, err := os.ReadFile(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(indexDir, "segments", "0000000000000000.seg")
+	if err := os.WriteFile(legacy, legacySegment(t, data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(current); err != nil {
+		t.Fatal(err)
+	}
+	want := hitIDs(chromemQuery(t, indexDir, segmentVector(1), 50))
+	if got := hitIDs(snapshotQuery(t, indexDir, segmentVector(1), 50)); !reflect.DeepEqual(got, want) {
+		t.Errorf("a format 1 segment should still serve its rows, got %v want %v", got, want)
+	}
+
+	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("a refresh should fold the format 1 segment away, stat: %v", err)
+	}
+	if got := segmentFiles(t, indexDir); len(got) != 1 {
+		t.Errorf("the rows should land in one format 2 segment, got %v", got)
+	}
+	if got := hitIDs(snapshotQuery(t, indexDir, segmentVector(1), 50)); !reflect.DeepEqual(got, want) {
+		t.Errorf("folding should keep every row, got %v want %v", got, want)
+	}
+}
+
+// A segment truncated while mapped faults on access. That must come back as an
+// error, never take the process down.
+func TestSearchSnapshotSurvivesATruncatedSegment(t *testing.T) {
+	indexDir := t.TempDir()
+	publishEntries(t, indexDir, "entry-a", "entry-b", "entry-c")
+	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := index.OpenSearchSnapshot(t.Context(), indexDir, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = snapshot.Close() }()
+	if err := os.Truncate(segmentFiles(t, indexDir)[0], 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := snapshot.Query(t.Context(), segmentVector(1), 10); !errors.Is(err, index.ErrSegmentCorrupt) {
+		t.Errorf("a search over a truncated mapping should report a corrupt segment, got %v", err)
+	}
+	if _, err := index.OpenSearchSnapshot(t.Context(), indexDir, time.Second); !errors.Is(err, index.ErrSegmentCorrupt) {
+		t.Errorf("the next search should map the segment afresh and report it corrupt, got %v", err)
+	}
+}
+
+func TestSearchSnapshotOutlivesAMergeDeletingItsSegments(t *testing.T) {
+	indexDir := t.TempDir()
+	publishEntries(t, indexDir, "entry-a", "entry-b", "entry-c")
+	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+		t.Fatal(err)
+	}
+	before := segmentFiles(t, indexDir)
+	snapshot, err := index.OpenSearchSnapshot(t.Context(), indexDir, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = snapshot.Close() }()
+	want, err := snapshot.Query(t.Context(), segmentVector(1), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	unpublishEntries(t, indexDir, "entry-a", "entry-b")
+	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(before[0]); !os.IsNotExist(err) {
+		t.Fatalf("the merge should delete the segment the snapshot maps, stat: %v", err)
+	}
+	if got := snapshotQuery(t, indexDir, segmentVector(1), 50); len(got) != 2 {
+		t.Fatalf("a search after the merge should see only the published rows, got %d", len(got))
+	}
+	got, err := snapshot.Query(t.Context(), segmentVector(1), 50)
+	if err != nil {
+		t.Fatalf("an open snapshot should keep reading its deleted segment: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("an open snapshot should keep its rows across a merge\ngot  %+v\nwant %+v", got, want)
+	}
+}
+
+func TestSearchSnapshotReusesRowsUntilTheStoreChanges(t *testing.T) {
+	indexDir := t.TempDir()
+	publishEntries(t, indexDir, "entry-a")
+	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt := func() bool {
+		t.Helper()
+		snapshot, err := index.OpenSearchSnapshot(t.Context(), indexDir, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = snapshot.Close() }()
+		return snapshot.Rebuilt()
+	}
+	if !rebuilt() {
+		t.Error("the first search should build the row set")
+	}
+	if rebuilt() {
+		t.Error("an unchanged store should reuse the row set")
+	}
+	publishEntries(t, indexDir, "entry-b")
+	if !rebuilt() {
+		t.Error("a changed manifest should rebuild the row set")
+	}
+}
+
+func TestSearchSnapshotCloseIsIdempotent(t *testing.T) {
+	indexDir := t.TempDir()
+	publishEntries(t, indexDir, "entry-a")
+	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := index.OpenSearchSnapshot(t.Context(), indexDir, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := errors.Join(snapshot.Close(), snapshot.Close()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshot.Query(t.Context(), segmentVector(1), 1); err == nil {
+		t.Error("a closed snapshot should refuse a query")
+	}
+	if got := snapshotQuery(t, indexDir, segmentVector(1), 10); len(got) != 2 {
+		t.Errorf("a second close should not release another search's segments, got %d hits", len(got))
+	}
+}
+
+func TestFillSessionParsesAnUnchangedManifestOnce(t *testing.T) {
+	indexDir := t.TempDir()
+	publishEntries(t, indexDir, "entry-a")
+	session, err := index.BeginFill(t.Context(), indexDir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	first, err := session.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := session.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != again {
+		t.Error("an unchanged manifest should be served from the process's parse")
+	}
+	unpublishEntries(t, indexDir, "entry-a")
+	changed, err := session.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed == first || len(changed.Entries) != 0 {
+		t.Error("a saved manifest should be parsed afresh")
 	}
 }
