@@ -27,7 +27,7 @@ func TestPersistentStoreSearchesSegmentsAfterAWrite(t *testing.T) {
 	}
 
 	dir := index.StoreDir(cacheRoot, "segments/repo", "fp")
-	segments, err := filepath.Glob(filepath.Join(dir, "segments", "*.seg2"))
+	segments, err := filepath.Glob(filepath.Join(dir, "segments", "*.seg"))
 	if err != nil || len(segments) != 1 {
 		t.Fatalf("a write should leave its rows in one segment, got %v (%v)", segments, err)
 	}
