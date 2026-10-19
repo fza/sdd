@@ -34,7 +34,7 @@ func (h SearchEntryHandler) Index(ctx context.Context, cmd command.IndexSearchEn
 	}
 	inputs := func(yield func(indexInput, error) bool) { yield(indexInput{entry: h.Entry, version: key}, nil) }
 	return indexStream(ctx, inputs, h.Embedder, h.Attachments, textsplitter.NewSplitter(), nil,
-		func(ctx context.Context, entry *model.IndexWork) error {
+		eachEntry(func(ctx context.Context, entry *model.IndexWork) error {
 			if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {
 				return err
 			}
@@ -45,5 +45,5 @@ func (h SearchEntryHandler) Index(ctx context.Context, cmd command.IndexSearchEn
 				cmd.OnPublished(key.EntryID, len(entry.Rows))
 			}
 			return nil
-		}, nil)
+		}), nil)
 }

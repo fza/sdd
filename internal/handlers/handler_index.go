@@ -59,8 +59,8 @@ type IndexEmbedder struct {
 // IndexHandlerOptions configures NewIndexHandler. Required fields are
 // GraphDir, IndexDir, Embedder, Reader. Splitter defaults to
 // textsplitter.NewSplitter() with default options when nil; Now defaults
-// to time.Now. The store is loaded under the exclusive lock at write time
-// (see index.WriteStore), so no pre-opened index is injected.
+// to time.Now. The store is loaded and locked at write time (see
+// index.FillSession), so no pre-opened index is injected.
 type IndexHandlerOptions struct {
 	GraphDir string
 	IndexDir string
@@ -99,17 +99,19 @@ func NewIndexHandler(opts IndexHandlerOptions) *IndexHandler {
 	return h
 }
 
-// Build warms the index, persisting each complete entry before reporting progress.
+// Build warms the index, persisting each embedded batch before reporting
+// progress. It waits for a fill another process is running to finish.
 func (h *IndexHandler) Build(ctx context.Context, cmd *command.BuildIndexCmd) error {
 	if cmd == nil {
 		return errors.New("BuildIndexCmd is required")
 	}
-	return h.indexEntries(ctx, cmd.Force, cmd.OnPlanned, cmd.OnBatchStart, cmd.OnEntryIndexed, cmd.OnEntrySkipped, cmd.OnComplete)
+	return h.indexEntries(ctx, indexRun{force: cmd.Force, wait: true, onPlanned: cmd.OnPlanned, onBatchStart: cmd.OnBatchStart, onIndexed: cmd.OnEntryIndexed, onSkipped: cmd.OnEntrySkipped, onComplete: cmd.OnComplete})
 }
 
 // LazyFill is the sdd-search prelude — only entries missing from the
 // manifest, or whose hash/fingerprint differs from current, are
-// re-embedded.
+// re-embedded. A fill another process is running is left to it: LazyFill
+// returns at once and reports the skip through OnFillBusy.
 func (h *IndexHandler) LazyFill(ctx context.Context, cmd *command.LazyFillIndexCmd) error {
 	if cmd == nil {
 		cmd = &command.LazyFillIndexCmd{}
@@ -119,30 +121,43 @@ func (h *IndexHandler) LazyFill(ctx context.Context, cmd *command.LazyFillIndexC
 			cmd.OnComplete(indexed)
 		}
 	}
-	return h.indexEntries(ctx, false, cmd.OnPlanned, cmd.OnBatchStart, cmd.OnEntryIndexed, nil, onComplete)
+	return h.indexEntries(ctx, indexRun{onBusy: cmd.OnFillBusy, onPlanned: cmd.OnPlanned, onBatchStart: cmd.OnBatchStart, onIndexed: cmd.OnEntryIndexed, onComplete: onComplete})
 }
 
-func (h *IndexHandler) indexEntries(ctx context.Context, force bool,
-	onPlanned func(int), onBatchStart func([]string, int), onIndexed func(string, int), onSkipped func(string), onComplete func(int, int)) error {
+type indexRun struct {
+	force        bool
+	wait         bool
+	onBusy       func()
+	onPlanned    func(int)
+	onBatchStart func([]string, int)
+	onIndexed    func(string, int)
+	onSkipped    func(string)
+	onComplete   func(int, int)
+}
 
+// indexEntries holds the store's fill lock for the whole run, so one process
+// fills at a time, and the exclusive store lock only per embedded batch
+// (index.FillSession), so readers and short writers interleave with a long
+// fill instead of waiting out its embedding calls.
+func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err error) {
 	g, err := h.reader.CurrentGraph(h.graphDir)
 	if err != nil {
 		return fmt.Errorf("loading graph: %w", err)
 	}
+	session, err := index.BeginFill(ctx, h.indexDir, run.wait)
+	if errors.Is(err, index.ErrFillBusy) {
+		slogutils.FromContext(ctx).Info("index fill running in another process, skipping", "index", h.indexDir)
+		if run.onBusy != nil {
+			run.onBusy()
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, session.Close()) }()
 
-	// The whole write session — snapshot load, manifest read, skip pass,
-	// embedding, upserts, manifest saves — runs under the store's exclusive
-	// lock, acquired before the snapshot is loaded, so concurrent writers (a
-	// CLI build racing the MCP server's reconcile) serialize instead of
-	// interleaving chromem's per-document files.
-	return index.WriteStore(ctx, h.indexDir, func(idx *index.Index) error {
-		return h.indexEntriesLocked(ctx, idx, g, force, onPlanned, onBatchStart, onIndexed, onSkipped, onComplete)
-	})
-}
-
-func (h *IndexHandler) indexEntriesLocked(ctx context.Context, idx *index.Index, g *model.Graph, force bool,
-	onPlanned func(int), onBatchStart func([]string, int), onIndexed func(string, int), onSkipped func(string), onComplete func(int, int)) error {
-	manifest, err := index.LoadManifest(h.indexDir)
+	manifest, err := session.Manifest()
 	if err != nil {
 		return fmt.Errorf("loading manifest: %w", err)
 	}
@@ -158,10 +173,10 @@ func (h *IndexHandler) indexEntriesLocked(ctx context.Context, idx *index.Index,
 		if !ok {
 			continue
 		}
-		if !force && manifest.Entries[entry.ID].HasVersion(hash, fingerprint) {
+		if !run.force && manifest.Entries[entry.ID].HasVersion(hash, fingerprint) {
 			skipped++
-			if onSkipped != nil {
-				onSkipped(entry.ID)
+			if run.onSkipped != nil {
+				run.onSkipped(entry.ID)
 			}
 			continue
 		}
@@ -169,8 +184,8 @@ func (h *IndexHandler) indexEntriesLocked(ctx context.Context, idx *index.Index,
 			Namespace: types.IndexNamespace{Project: types.ProjectID(h.graphDir), Fingerprint: fingerprint, Metric: "cosine"}, EntryID: entry.ID, EntryHash: hash,
 		}})
 	}
-	if onPlanned != nil {
-		onPlanned(len(work))
+	if run.onPlanned != nil {
+		run.onPlanned(len(work))
 	}
 	inputs := func(yield func(indexInput, error) bool) {
 		for _, input := range work {
@@ -181,21 +196,39 @@ func (h *IndexHandler) indexEntriesLocked(ctx context.Context, idx *index.Index,
 	}
 	indexed := 0
 	err = indexStream(ctx, inputs, h.embedder, h.attachments, h.splitter, nil,
-		func(ctx context.Context, entry *model.IndexWork) error {
-			if err := h.publishIndexEntry(ctx, idx, manifest, entry, force); err != nil {
+		func(ctx context.Context, entries []*model.IndexWork) error {
+			if err := session.Commit(ctx, func(idx *index.Index, manifest *index.Manifest) error {
+				// The manifest must never name a row that is gone or not yet
+				// written, so it is saved after the batch's rows land and
+				// before the rows it replaced go (see DropVersions).
+				var stale []string
+				for _, entry := range entries {
+					replaced, err := h.publishIndexEntry(ctx, idx, manifest, entry, run.force)
+					if err != nil {
+						return err
+					}
+					stale = append(stale, replaced...)
+				}
+				if err := manifest.Save(h.indexDir); err != nil {
+					return err
+				}
+				return idx.DeleteEntry(ctx, stale)
+			}); err != nil {
 				return err
 			}
-			indexed++
-			if onIndexed != nil {
-				onIndexed(entry.Version.EntryID, len(entry.Rows))
+			for _, entry := range entries {
+				indexed++
+				if run.onIndexed != nil {
+					run.onIndexed(entry.Version.EntryID, len(entry.Rows))
+				}
 			}
 			return nil
-		}, onBatchStart)
+		}, run.onBatchStart)
 	if err != nil {
 		return err
 	}
-	if onComplete != nil {
-		onComplete(indexed, skipped)
+	if run.onComplete != nil {
+		run.onComplete(indexed, skipped)
 	}
 	return nil
 }
@@ -221,9 +254,11 @@ func (h *IndexHandler) currentEntryHashes(ctx context.Context, g *model.Graph) (
 	return hashes, nil
 }
 
-func (h *IndexHandler) publishIndexEntry(ctx context.Context, idx *index.Index, manifest *index.Manifest, entry *model.IndexWork, force bool) error {
+// publishIndexEntry writes one entry's rows and records its version in
+// manifest, returning the rows a forced version replaces.
+func (h *IndexHandler) publishIndexEntry(ctx context.Context, idx *index.Index, manifest *index.Manifest, entry *model.IndexWork, force bool) ([]string, error) {
 	if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {
-		return err
+		return nil, err
 	}
 	rows := make([]index.Row, len(entry.Rows))
 	ids := make([]string, len(rows))
@@ -233,22 +268,18 @@ func (h *IndexHandler) publishIndexEntry(ctx context.Context, idx *index.Index, 
 		rows[i] = index.Row{EntryID: c.EntryID, EntryHash: c.EntryHash, ChunkID: c.ID, Text: c.Text, Body: c.Body, Breadcrumb: c.Breadcrumb, Depth: c.Depth, IsSummary: c.IsSummary, IsAttachment: c.IsAttachment, SourceAttachmentPath: c.SourceAttachmentPath, ContentHash: c.ContentHash, ModelFingerprint: entry.Version.Namespace.Fingerprint, Embedding: row.Vector}
 	}
 	if err := idx.UpsertEntry(ctx, entry.Version.EntryID, nil, rows); err != nil {
-		return err
+		return nil, err
 	}
 	version := index.EntryVersion{Hash: entry.Version.EntryHash, Fingerprint: entry.Version.Namespace.Fingerprint, Derivation: index.DerivationCurrent, ChunkIDs: ids, IndexedAt: h.now()}
 	if !force {
 		manifest.AddVersion(entry.Version.EntryID, version)
-		return manifest.Save(h.indexDir)
+		return nil, nil
 	}
 	// Force replaces only this binary's own derivation rule: another rule's
-	// versions belong to another binary sharing the store (d-tac-c9c). The
-	// replaced rows go after the manifest save, for the reason DropVersions
-	// gives; rows the new version reuses (same hash) are kept.
+	// versions belong to another binary sharing the store (d-tac-c9c). Rows
+	// the new version reuses (same hash) are kept.
 	replaced := manifest.Entries[entry.Version.EntryID].ChunkIDsOf(index.DerivationCurrent)
 	manifest.SetDerivationVersion(entry.Version.EntryID, version)
-	if err := manifest.Save(h.indexDir); err != nil {
-		return err
-	}
 	kept := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		kept[id] = true
@@ -259,7 +290,7 @@ func (h *IndexHandler) publishIndexEntry(ctx context.Context, idx *index.Index, 
 			stale = append(stale, id)
 		}
 	}
-	return idx.DeleteEntry(ctx, stale)
+	return stale, nil
 }
 
 // DropVersions deletes the version groups cmd names from the store — the

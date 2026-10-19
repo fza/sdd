@@ -59,6 +59,10 @@ type LazyFillIndexCmd struct {
 	// OnComplete is called once after lazy-fill finishes, with the count
 	// of entries that were re-embedded.
 	OnComplete func(indexed int)
+
+	// OnFillBusy is called instead of filling when another process is
+	// already filling the same store. Optional.
+	OnFillBusy func()
 }
 
 // BuildConnectedIndexesCmd drives progress for filling one or more connected
