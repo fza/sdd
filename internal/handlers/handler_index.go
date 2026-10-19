@@ -13,6 +13,7 @@ import (
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/textsplitter"
+	"github.com/networkteam/sdd/internal/timing"
 	"github.com/networkteam/sdd/pkg/application/types"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 	"github.com/networkteam/slogutils"
@@ -121,10 +122,11 @@ func (h *IndexHandler) LazyFill(ctx context.Context, cmd *command.LazyFillIndexC
 			cmd.OnComplete(indexed)
 		}
 	}
-	return h.indexEntries(ctx, indexRun{onBusy: cmd.OnFillBusy, onPlanned: cmd.OnPlanned, onBatchStart: cmd.OnBatchStart, onIndexed: cmd.OnEntryIndexed, onComplete: onComplete})
+	return h.indexEntries(ctx, indexRun{graph: cmd.Graph, onBusy: cmd.OnFillBusy, onPlanned: cmd.OnPlanned, onBatchStart: cmd.OnBatchStart, onIndexed: cmd.OnEntryIndexed, onComplete: onComplete})
 }
 
 type indexRun struct {
+	graph        *model.Graph
 	force        bool
 	wait         bool
 	onBusy       func()
@@ -140,11 +142,18 @@ type indexRun struct {
 // (index.FillSession), so readers and short writers interleave with a long
 // fill instead of waiting out its embedding calls.
 func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err error) {
-	g, err := h.reader.CurrentGraph(h.graphDir)
-	if err != nil {
-		return fmt.Errorf("loading graph: %w", err)
+	g := run.graph
+	if g == nil {
+		stopGraph := timing.Start(ctx, "fill-graph-load")
+		g, err = h.reader.CurrentGraph(h.graphDir)
+		stopGraph()
+		if err != nil {
+			return fmt.Errorf("loading graph: %w", err)
+		}
 	}
+	stopLock := timing.Start(ctx, "fill-lock")
 	session, err := index.BeginFill(ctx, h.indexDir, run.wait)
+	stopLock()
 	if errors.Is(err, index.ErrFillBusy) {
 		slogutils.FromContext(ctx).Info("index fill running in another process, skipping", "index", h.indexDir)
 		if run.onBusy != nil {
@@ -157,12 +166,16 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 	}
 	defer func() { err = errors.Join(err, session.Close()) }()
 
+	stopManifest := timing.Start(ctx, "fill-manifest")
 	manifest, err := session.Manifest()
+	stopManifest()
 	if err != nil {
 		return fmt.Errorf("loading manifest: %w", err)
 	}
 	fingerprint := h.embedder.Fingerprint()
+	stopHashes := timing.Start(ctx, "fill-entry-hashes")
 	currentHashes, err := h.currentEntryHashes(ctx, g)
+	stopHashes()
 	if err != nil {
 		return err
 	}
@@ -226,6 +239,11 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 		}, run.onBatchStart)
 	if err != nil {
 		return err
+	}
+	if err := index.RefreshSegments(ctx, h.indexDir); errors.Is(err, index.ErrLockBusy) {
+		slogutils.FromContext(ctx).Info("index store busy, search segments left to the next fill", "index", h.indexDir)
+	} else if err != nil {
+		return fmt.Errorf("refreshing search segments: %w", err)
 	}
 	if run.onComplete != nil {
 		run.onComplete(indexed, skipped)
