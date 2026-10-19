@@ -20,7 +20,8 @@ import (
 
 // ErrSchemaMismatch marks a json_object answer that is not one JSON object
 // matching the response schema. It reaches the caller as the same response
-// fault an empty answer raises, so no unvalidated object is passed on.
+// fault an empty answer raises, wrapped in an llm.MalformedAnswerError, so no
+// unvalidated object is passed on as a result.
 var ErrSchemaMismatch = errors.New("answer does not match the response schema")
 
 // jsonObjectEndpoints remembers, for the rest of the process, every provider,
@@ -114,7 +115,8 @@ func (so *structuredOutput) runJSONObject(ctx context.Context, r *Runner, req ll
 		return llm.Result{}, err
 	}
 	if err := so.validate(result.Text); err != nil {
-		return llm.Result{}, r.fault(ctx, upstreamllm.NewLLMError(upstreamllm.ErrorTypeResponse, "failed to parse response", err))
+		fault := upstreamllm.NewLLMError(upstreamllm.ErrorTypeResponse, "failed to parse response", err)
+		return llm.Result{}, r.fault(ctx, &llm.MalformedAnswerError{Text: result.Text, Err: fault})
 	}
 	return result, nil
 }

@@ -164,6 +164,12 @@ func TestJSONObjectAnswerOutsideTheSchemaIsAResponseFault(t *testing.T) {
 			if errors.Is(err, gollmrunner.ErrSchemaMismatch) != tc.wantMismatch {
 				t.Errorf("schema mismatch should be named only for a delivered answer, got %v", err)
 			}
+			var malformed *llm.MalformedAnswerError
+			if errors.As(err, &malformed) != tc.wantMismatch {
+				t.Errorf("only a delivered answer should be offered for a reformat, got %v", err)
+			} else if tc.wantMismatch && malformed.Text != tc.answer {
+				t.Errorf("the rejected answer should travel verbatim, got %q", malformed.Text)
+			}
 			var attributed *llm.Error
 			if !errors.As(err, &attributed) || attributed.Identity.Model != "m" {
 				t.Errorf("failure should carry the identity, got %v", err)

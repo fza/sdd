@@ -125,3 +125,20 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error {
 	return e.Err
 }
+
+// MalformedAnswerError reports an answer the provider delivered but the
+// implementation rejected, because it does not match the response shape the
+// call asked for. Text carries the rejected answer so a caller may ask for a
+// reformat of it; it is never a result.
+type MalformedAnswerError struct {
+	Text string
+	Err  error
+}
+
+func (e *MalformedAnswerError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *MalformedAnswerError) Unwrap() error {
+	return e.Err
+}
