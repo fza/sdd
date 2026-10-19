@@ -26,6 +26,7 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/timing"
 	sddapp "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/slogutils"
@@ -349,6 +350,11 @@ func New(options Options) *cli.Command {
 				Aliases: []string{"vv"},
 				Usage:   "Enable debug-level logging",
 			},
+			&cli.BoolFlag{
+				Name:    "timing",
+				Usage:   "Print how long each phase of the command takes to stderr",
+				Sources: cli.EnvVars("SDD_TIMING"),
+			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 			if cmd.Bool("version") {
@@ -383,6 +389,9 @@ func New(options Options) *cli.Command {
 				Level: level,
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
+			if cmd.Bool("timing") {
+				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
+			}
 
 			warnUnknownConfigKeys(ctx)
 
@@ -391,7 +400,9 @@ func New(options Options) *cli.Command {
 			// spurious warnings). Cooldown-bound and timeout-bound internally;
 			// any failure logs at Debug and does not affect the command.
 			if cmd.Args().First() != "init" {
+				stopSync := timing.Start(ctx, "sync-check")
 				runSyncCheck(ctx)
+				stopSync()
 				// Participant-missing nudge (AC 8): one-line stderr
 				// warning naming `sdd init` as the fix. Suppressed for
 				// `sdd init` itself (it's the resolution path) and

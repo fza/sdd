@@ -15,6 +15,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/timing"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 )
 
@@ -29,7 +30,7 @@ type SearchFinder struct {
 	graph      *model.Graph // the graph filtered and resolved against
 	graphDir   string
 	embedder   embed.Embedder  // nil disables vector and hybrid modes
-	indexStore *index.Index    // nil disables vector and hybrid modes
+	indexStore VectorIndex     // nil disables vector and hybrid modes
 	repos      *repos.Registry // nil disables cross-repo search
 }
 
@@ -43,8 +44,15 @@ type SearchFinderOptions struct {
 	Graph      *model.Graph
 	GraphDir   string
 	Embedder   embed.Embedder
-	IndexStore *index.Index
+	IndexStore VectorIndex
 	Repos      *repos.Registry
+}
+
+// VectorIndex is the store a vector search scans: index.SearchSnapshot on the
+// CLI path, index.Index over an in-memory store.
+type VectorIndex interface {
+	Query(ctx context.Context, embedding []float32, nResults int) ([]index.Hit, error)
+	Path() string
 }
 
 // NewSearchFinder constructs a SearchFinder.
@@ -238,7 +246,9 @@ func (f *SearchFinder) runVector(ctx context.Context, q query.SearchQuery) ([]qu
 	if q.Phrase == "" {
 		return nil, errors.New("vector search requires a non-empty --query phrase")
 	}
+	stopEmbed := timing.Start(ctx, "query-embed")
 	embedded, err := f.embedder.Embed(ctx, embed.Request{Purpose: embed.PurposeQuery, Texts: []string{q.Phrase}})
+	stopEmbed()
 	if err != nil {
 		return nil, fmt.Errorf("embedding query phrase: %w", err)
 	}
@@ -266,6 +276,7 @@ func (f *SearchFinder) runVector(ctx context.Context, q query.SearchQuery) ([]qu
 		return nil, fmt.Errorf("vector query: %w", err)
 	}
 
+	defer timing.Start(ctx, "rank")()
 	candidates := f.candidates(q)
 	candidateSet := make(map[string]*model.Entry, len(candidates))
 	for _, e := range candidates {
