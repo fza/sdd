@@ -8,7 +8,7 @@ import (
 )
 
 // The cache's trust rule turns on how old a change is, so these tests read the
-// cache at a later clock rather than sleeping past racyWindow.
+// cache at a later clock rather than sleeping past filestamp.RacyWindow.
 func writeGraphFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
