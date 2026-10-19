@@ -536,6 +536,8 @@ your-project/
 
 The vector index and the connected-repo caches don't live in the project tree — they're per-machine derived state in a content-addressed store under your user cache directory (keyed by repo identity and embedder fingerprint), shared across a repo's checkouts and worktrees and rebuilt on demand. Nothing to commit or clean up by hand.
 
+The CLI also keeps each graph's entry files there, read back only while every graph file's size, timestamps and inode match what they were when it was saved, so a command on an unchanged graph reads one file instead of every entry. Set `SDD_GRAPH_CACHE=off` to read every graph from its files.
+
 Engine sessions are per-machine too, stored per project under your XDG state directory and shared across that repo's checkouts and worktrees. Ended sessions are collected on `sdd serve` startup once they pass the retention window (`sessions.retention`); running ones survive a binary upgrade, so there's no offline window when you update sdd.
 
 `sdd init` also installs the skills for each configured agent at that agent's skill directory (defaults to `~/.claude/skills/` for Claude Code, or `.claude/skills/` with `--scope project`). Those paths are an implementation detail of the target agent — inspect them if you're curious, but they aren't part of your project's source tree.
