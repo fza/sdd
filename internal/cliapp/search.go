@@ -2,6 +2,7 @@ package cliapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -23,6 +24,11 @@ import (
 	"github.com/networkteam/sdd/internal/repos"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 )
+
+// searchLockBound caps how long a search waits for the index's read lock. A
+// fill commits one embedded batch per exclusive hold, well under it; a search
+// still blocked after it reads by text instead of waiting out a writer.
+const searchLockBound = 5 * time.Second
 
 // resolveEmbeddingConfig builds the effective EmbeddingConfig by merging
 // .sdd/config.yaml + .sdd/config.local.yaml and applying CLI flag
@@ -488,22 +494,32 @@ func searchCmd() *cli.Command {
 				prog = newEmbedProgress()
 			}
 			work := func(ctx context.Context) (*query.SearchResult, error) {
+				sq := sq
 				if needsVector {
-					lazy := &command.LazyFillIndexCmd{}
+					var lazy *command.LazyFillIndexCmd
 					if prog != nil {
 						lazy = prog.lazyFill()
+					} else {
+						lazy = newPlainFillProgress(cmd.ErrWriter, time.Now).lazyFill()
+					}
+					lazy.OnFillBusy = func() {
+						_, _ = fmt.Fprintln(cmd.ErrWriter, "sdd: another process is filling the search index; searching the index as it stands")
 					}
 					if err := ih.LazyFill(ctx, lazy); err != nil {
 						return nil, err
 					}
 				}
 				// Build the finder after lazy-fill so its index snapshot reflects
-				// the chunks the fill just committed — the fill writes under its
-				// own exclusive lock (index.WriteStore), so a snapshot opened
-				// before it would miss the new rows.
+				// the chunks the fill just committed — the fill writes under the
+				// exclusive store lock, so a snapshot opened before it would miss
+				// the new rows.
 				var idxStore *index.Index
 				if needsVector {
-					idxStore, err = index.Open(idxDir)
+					idxStore, err = index.OpenWithin(ctx, idxDir, searchLockBound)
+					if errors.Is(err, index.ErrLockBusy) {
+						_, _ = fmt.Fprintf(cmd.ErrWriter, "sdd: search index busy for %s; falling back to text search\n", searchLockBound)
+						sq, idxStore, err = sq.TextFallback(), nil, nil
+					}
 					if err != nil {
 						return nil, err
 					}

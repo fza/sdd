@@ -3,6 +3,7 @@ package cliapp
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -92,6 +93,47 @@ func TestEmbedProgressEmptyEntries(t *testing.T) {
 			progress, ok := p.reporter.Recv()
 			if !ok || progress.Note != tc.want || progress.Done != done || progress.Total != done {
 				t.Fatalf("progress = %+v, want note %q and %d completed entries", progress, tc.want, done)
+			}
+		})
+	}
+}
+
+// A fill shorter than one interval prints nothing; a longer one prints a line
+// per elapsed interval and a closing total.
+func TestPlainFillProgress_PacesLines(t *testing.T) {
+	tests := []struct {
+		name  string
+		steps []time.Duration
+		want  []string
+	}{
+		{name: "short fill stays silent", steps: []time.Duration{time.Second, time.Second, time.Second}},
+		{
+			name:  "long fill reports progress and the total",
+			steps: []time.Duration{fillProgressInterval, time.Second, fillProgressInterval},
+			want: []string{
+				"sdd: indexing for search: 1 of 3 entries embedded",
+				"sdd: indexing for search: 3 of 3 entries embedded",
+				"sdd: indexing for search: done, 3 of 3 entries embedded",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out strings.Builder
+			clock := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+			cmd := newPlainFillProgress(&out, func() time.Time { return clock }).lazyFill()
+			cmd.OnPlanned(len(tt.steps))
+			for _, step := range tt.steps {
+				clock = clock.Add(step)
+				cmd.OnEntryIndexed("entry", 2)
+			}
+			cmd.OnComplete(len(tt.steps))
+			var got []string
+			if text := strings.TrimSpace(out.String()); text != "" {
+				got = strings.Split(text, "\n")
+			}
+			if strings.Join(got, "\n") != strings.Join(tt.want, "\n") {
+				t.Errorf("progress lines should follow the interval, got %q", got)
 			}
 		})
 	}

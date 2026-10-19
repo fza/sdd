@@ -68,6 +68,9 @@ func (i *Index) addDocuments(ctx context.Context, docs []chromem.Document) (err 
 	}); err != nil {
 		return err
 	}
+	if i.keepSnapshot {
+		return nil
+	}
 	loaded, err := loadStore(i.indexDir)
 	if err != nil {
 		return err
