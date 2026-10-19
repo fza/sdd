@@ -244,6 +244,9 @@ type LLMConfig struct {
 	// JSON-shaped check falls back to when its first response does not
 	// parse. Empty means DefaultLLMExtractTimeout.
 	ExtractTimeout string `yaml:"extract_timeout,omitempty"`
+	// StructuredOutput selects how a schema-carrying request asks for JSON.
+	// Empty means StructuredOutputAuto.
+	StructuredOutput StructuredOutputMode `yaml:"structured_output,omitempty"`
 	// Params carries behaviour-affecting, provider-specific model settings —
 	// a reasoning effort, a thinking budget — forwarded verbatim into the
 	// provider request. They also form the call's recorded variant, because a
@@ -273,6 +276,35 @@ type LLMConfig struct {
 	// exponential backoff with jitter). Ignored by the claude-cli provider,
 	// whose own CLI handles retries.
 	Retry RetryConfig `yaml:"retry,omitempty"`
+}
+
+// StructuredOutputMode names how a schema-carrying request asks the provider
+// for JSON. Some OpenAI-compatible endpoints serve a model in json_object mode
+// only and refuse a json_schema request for it outright.
+type StructuredOutputMode string
+
+const (
+	// StructuredOutputJSONSchema sends the schema for the provider to enforce.
+	StructuredOutputJSONSchema StructuredOutputMode = "json_schema"
+	// StructuredOutputJSONObject asks for any JSON object, states the schema
+	// in the system prompt and validates the answer against it locally.
+	StructuredOutputJSONObject StructuredOutputMode = "json_object"
+	// StructuredOutputAuto tries json_schema and switches to json_object for
+	// the rest of the process once the endpoint refuses schema mode for the
+	// model.
+	StructuredOutputAuto StructuredOutputMode = "auto"
+)
+
+// ParseStructuredOutputMode resolves a configured mode, empty meaning auto.
+func ParseStructuredOutputMode(value string) (StructuredOutputMode, error) {
+	switch mode := StructuredOutputMode(value); mode {
+	case "":
+		return StructuredOutputAuto, nil
+	case StructuredOutputJSONSchema, StructuredOutputJSONObject, StructuredOutputAuto:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unknown structured_output %q (supported: json_schema, json_object, auto)", value)
+	}
 }
 
 // RetryConfig tunes retry/backoff behavior for the gollm-backed runner. Each
@@ -462,6 +494,9 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 	}
 	if overlay.ExtractTimeout != "" {
 		out.ExtractTimeout = overlay.ExtractTimeout
+	}
+	if overlay.StructuredOutput != "" {
+		out.StructuredOutput = overlay.StructuredOutput
 	}
 	if overlay.Concurrency != 0 {
 		out.Concurrency = overlay.Concurrency

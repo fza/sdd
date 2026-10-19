@@ -450,6 +450,14 @@ llm:
 
 Pre-flight and the writing guide ask the provider to constrain its response to a JSON schema wherever the provider reads one: `response_format` on `openai`, `format` on `ollama`. The schema is reflected from the same Go struct the response is parsed into, so the wire contract and the parser cannot drift. Summaries are never constrained, since they answer in prose, and `anthropic` and `claude-cli` carry no schema.
 
+`structured_output` picks how that request asks for JSON:
+
+- `json_schema` sends the schema for the provider to enforce.
+- `json_object` asks for any JSON object (`response_format: {"type": "json_object"}` on `openai`, `format: json` on `ollama`), states the schema in the system prompt and validates the answer against it locally. An answer that is not one JSON object matching the schema fails the call like an empty answer does.
+- `auto`, the default, sends `json_schema`. When the endpoint answers 400 because the model does not support JSON schema mode (code `model_not_capable`, or a message naming `json_schema` or `json_object`), the call is retried once in `json_object` mode, and that endpoint and model stay on `json_object` for the rest of the process. Any other 400 fails the call. The retry runs inside the call's `timeout` (or `extract_timeout`).
+
+Some OpenAI-compatible services serve a model in `json_object` mode only, while another service accepts `json_schema` for the same model. `claude-cli` ignores the setting.
+
 When a checker's response does not parse, SDD makes one more call carrying the unparseable text and asking for the JSON alone, so a model that writes its conclusion into the `severity` field does not cost you the capture. A response that parses costs one call. `extract_timeout` bounds the second call (default `60s`) separately from `timeout`, so a slipping endpoint cannot spend twice the configured timeout on one check. Both responses failing is an error naming both attempts.
 
 Remote providers (`anthropic`, `openai`) get a conservative rate limit applied automatically, biased below tier-1 ceilings so bursty operations like `sdd summarize --all` don't trip 429s. Override with `rate_limit_rps` on higher tiers.
