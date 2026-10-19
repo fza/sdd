@@ -70,7 +70,7 @@ func unpublishEntries(t *testing.T, indexDir string, entryIDs ...string) {
 
 func segmentFiles(t *testing.T, indexDir string) []string {
 	t.Helper()
-	paths, err := filepath.Glob(filepath.Join(indexDir, "segments", "*.seg2"))
+	paths, err := filepath.Glob(filepath.Join(indexDir, "segments", "*.seg"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,15 +516,11 @@ func TestRefreshSegmentsRemovesStrayTempFiles(t *testing.T) {
 	}
 }
 
-// legacySegment rewrites a format 2 segment as format 1: no padding before the
-// vector block, so the block sits wherever the table ends.
-func legacySegment(t *testing.T, format2 []byte) []byte {
-	t.Helper()
-	tableEnd := 24 + int(binary.LittleEndian.Uint64(format2[16:24]))
-	vectors := (tableEnd + 63) / 64 * 64
-	legacy := append([]byte{}, format2[:tableEnd]...)
-	legacy[7] = 1
-	return append(legacy, format2[vectors:]...)
+// otherFormatSegment rewrites a segment's header to name another format.
+func otherFormatSegment(data []byte) []byte {
+	other := append([]byte{}, data...)
+	other[7] = 1
+	return other
 }
 
 func TestSegmentsAlignTheVectorBlock(t *testing.T) {
@@ -551,7 +547,7 @@ func TestSegmentsAlignTheVectorBlock(t *testing.T) {
 	}
 }
 
-func TestRefreshSegmentsFoldsLegacySegments(t *testing.T) {
+func TestSegmentsInAnotherFormatAreSkippedThenRemoved(t *testing.T) {
 	indexDir := t.TempDir()
 	publishEntries(t, indexDir, "entry-a", "entry-b")
 	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
@@ -562,8 +558,8 @@ func TestRefreshSegmentsFoldsLegacySegments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := filepath.Join(indexDir, "segments", "0000000000000000.seg")
-	if err := os.WriteFile(legacy, legacySegment(t, data), 0o644); err != nil {
+	other := filepath.Join(indexDir, "segments", "0000000000000000.seg")
+	if err := os.WriteFile(other, otherFormatSegment(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(current); err != nil {
@@ -571,20 +567,20 @@ func TestRefreshSegmentsFoldsLegacySegments(t *testing.T) {
 	}
 	want := hitIDs(chromemQuery(t, indexDir, segmentVector(1), 50))
 	if got := hitIDs(snapshotQuery(t, indexDir, segmentVector(1), 50)); !reflect.DeepEqual(got, want) {
-		t.Errorf("a format 1 segment should still serve its rows, got %v want %v", got, want)
+		t.Errorf("a segment in another format should be skipped and its rows read from their files, got %v want %v", got, want)
 	}
 
 	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Errorf("a refresh should fold the format 1 segment away, stat: %v", err)
+	if _, err := os.Stat(other); !os.IsNotExist(err) {
+		t.Errorf("a refresh should remove the segment in another format, stat: %v", err)
 	}
 	if got := segmentFiles(t, indexDir); len(got) != 1 {
-		t.Errorf("the rows should land in one format 2 segment, got %v", got)
+		t.Errorf("the rows should land in one new segment, got %v", got)
 	}
 	if got := hitIDs(snapshotQuery(t, indexDir, segmentVector(1), 50)); !reflect.DeepEqual(got, want) {
-		t.Errorf("folding should keep every row, got %v want %v", got, want)
+		t.Errorf("the rebuilt segment should keep every row, got %v want %v", got, want)
 	}
 }
 

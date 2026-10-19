@@ -40,6 +40,7 @@ type storeView struct {
 	published  map[string]string
 	names      []string
 	segments   map[string]*segmentFile
+	foreign    map[string]bool
 	synced     bool
 	snapshot   *snapshotData
 	rowFiles   map[string]segmentRow
@@ -128,12 +129,21 @@ func (v *storeView) syncLocked() error {
 		return nil
 	}
 	next := make(map[string]*segmentFile, len(names))
+	foreign := map[string]bool{}
 	for _, name := range names {
 		if segment, ok := v.segments[name]; ok {
 			next[name] = segment
 			continue
 		}
+		if v.foreign[name] {
+			foreign[name] = true
+			continue
+		}
 		segment, err := openSegment(filepath.Join(segmentsDir(v.dir), name))
+		if errors.Is(err, errForeignFormat) {
+			foreign[name] = true
+			continue
+		}
 		if err != nil {
 			for opened, kept := range next {
 				if v.segments[opened] != kept {
@@ -150,16 +160,28 @@ func (v *storeView) syncLocked() error {
 			releaseErr = errors.Join(releaseErr, segment.release())
 		}
 	}
-	v.segments, v.names, v.synced = next, names, true
+	v.segments, v.foreign, v.names, v.synced = next, foreign, names, true
 	return releaseErr
 }
 
 func (v *storeView) orderedSegmentsLocked() []*segmentFile {
 	segments := make([]*segmentFile, 0, len(v.names))
 	for _, name := range v.names {
-		segments = append(segments, v.segments[name])
+		if segment, ok := v.segments[name]; ok {
+			segments = append(segments, segment)
+		}
 	}
 	return segments
+}
+
+func (v *storeView) foreignPathsLocked() []string {
+	var paths []string
+	for _, name := range v.names {
+		if v.foreign[name] {
+			paths = append(paths, filepath.Join(segmentsDir(v.dir), name))
+		}
+	}
+	return paths
 }
 
 func (v *storeView) refreshNeeded() (bool, error) {
@@ -168,7 +190,7 @@ func (v *storeView) refreshNeeded() (bool, error) {
 	if err := v.syncLocked(); err != nil {
 		return false, err
 	}
-	plan, err := planRefresh(v.dir, v.orderedSegmentsLocked(), v.published)
+	plan, err := planRefresh(v.dir, v.orderedSegmentsLocked(), v.foreignPathsLocked(), v.published)
 	if err != nil {
 		return false, err
 	}
@@ -183,7 +205,7 @@ func (v *storeView) refresh() error {
 	if err := v.syncLocked(); err != nil {
 		return err
 	}
-	plan, err := planRefresh(v.dir, v.orderedSegmentsLocked(), v.published)
+	plan, err := planRefresh(v.dir, v.orderedSegmentsLocked(), v.foreignPathsLocked(), v.published)
 	if err != nil {
 		return err
 	}
@@ -298,7 +320,7 @@ func (v *storeView) releaseSegmentsLocked() error {
 	for _, segment := range v.segments {
 		err = errors.Join(err, segment.release())
 	}
-	v.segments, v.names, v.synced = nil, nil, false
+	v.segments, v.foreign, v.names, v.synced = nil, nil, nil, false
 	return err
 }
 

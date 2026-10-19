@@ -15,17 +15,15 @@
 // A segment is mapped read-only and shared, and its vector block is read in
 // place, so every process searching a store shares one copy in the page
 // cache: a running sdd serve keeps the pages a CLI search then finds warm.
-// Format 1 (".seg") lacks the padding, so its vectors are decoded into memory
-// once per open; any refresh folds format 1 segments into format 2 (".seg2").
-// Binaries that know only format 1 never list format 2 files and read the rows
-// those hold from their gob files.
+// A segment whose header names another format is skipped by searches, which
+// read its rows from their gob files, and removed by the next refresh.
 //
 // The chromem rows and the manifest stay the authority; segments are derived.
 // A write session refreshes them under the exclusive lock: one new segment
 // holding only the rows the manifest names and no segment has, merged into
 // one when that would exceed maxSegments or when rows the manifest no longer
 // names outnumber the live ones. The same refresh removes temporary segment
-// files a killed writer left behind. A reader never writes: rows it finds
+// files a killed writer left behind and segments in another format. A reader never writes: rows it finds
 // missing, written by a binary that knows no segments, it decodes from their
 // gob files. The scan is exact, so results equal a chromem query over the
 // same rows.
@@ -72,16 +70,14 @@ import (
 )
 
 const (
-	segmentsSubdir      = "segments"
-	segmentExt          = ".seg2"
-	legacySegmentExt    = ".seg"
-	segmentTempPrefix   = ".segment-"
-	segmentHeaderSize   = 24
-	segmentFormat       = 2
-	legacySegmentFormat = 1
-	vectorAlignment     = 64
-	maxSegments         = 8
-	refreshLockBound    = time.Second
+	segmentsSubdir    = "segments"
+	segmentExt        = ".seg"
+	segmentTempPrefix = ".segment-"
+	segmentHeaderSize = 24
+	segmentFormat     = 2
+	vectorAlignment   = 64
+	maxSegments       = 8
+	refreshLockBound  = time.Second
 )
 
 var segmentMagic = [7]byte{'S', 'D', 'D', 'S', 'E', 'G', 0}
@@ -90,6 +86,10 @@ var nativeLittleEndian = binary.NativeEndian.Uint16([]byte{1, 0}) == 1
 
 // ErrSegmentCorrupt reports a segment file that does not parse.
 var ErrSegmentCorrupt = errors.New("index segment is corrupt")
+
+// errForeignFormat marks a well-formed segment header naming a format this
+// binary does not write.
+var errForeignFormat = errors.New("index segment has another format")
 
 type segmentPayload struct {
 	Content  string            `json:"content"`
@@ -106,7 +106,6 @@ type segmentRow struct {
 // is released when the last holder (a store view, a snapshot) lets go.
 type segmentFile struct {
 	path          string
-	format        byte
 	mapping       []byte
 	unmap         func() error
 	refs          atomic.Int64
@@ -152,9 +151,8 @@ func (s *segmentFile) parse() error {
 	if len(data) < segmentHeaderSize || [7]byte(data[:7]) != segmentMagic {
 		return fmt.Errorf("%w: unknown format", ErrSegmentCorrupt)
 	}
-	s.format = data[7]
-	if s.format != segmentFormat && s.format != legacySegmentFormat {
-		return fmt.Errorf("%w: unknown format %d", ErrSegmentCorrupt, s.format)
+	if data[7] != segmentFormat {
+		return fmt.Errorf("%w: %d", errForeignFormat, data[7])
 	}
 	dims := uint64(binary.LittleEndian.Uint32(data[8:12]))
 	count := uint64(binary.LittleEndian.Uint32(data[12:16]))
@@ -163,10 +161,7 @@ func (s *segmentFile) parse() error {
 	if tableLength > size-segmentHeaderSize {
 		return fmt.Errorf("%w: truncated", ErrSegmentCorrupt)
 	}
-	vectorsOffset := segmentHeaderSize + tableLength
-	if s.format == segmentFormat {
-		vectorsOffset = alignUp(vectorsOffset, vectorAlignment)
-	}
+	vectorsOffset := alignUp(segmentHeaderSize+tableLength, vectorAlignment)
 	vectorBytes := count * dims * 4
 	if count != 0 && vectorBytes/count != dims*4 || vectorsOffset > size || vectorBytes > size-vectorsOffset {
 		return fmt.Errorf("%w: truncated", ErrSegmentCorrupt)
@@ -200,14 +195,14 @@ func (s *segmentFile) parse() error {
 	return nil
 }
 
-// vectorBlock views a format 2 vector block in place; a format 1 block, or a
-// platform that is not little-endian, gets a decoded copy.
+// vectorBlock views the vector block in place; a platform that is not
+// little-endian, or a block a heap read left unaligned, gets a decoded copy.
 func (s *segmentFile) vectorBlock(offset, n int) []float32 {
 	if n == 0 {
 		return nil
 	}
 	raw := s.mapping[offset : offset+n*4]
-	if s.format == segmentFormat && nativeLittleEndian && uintptr(unsafe.Pointer(&raw[0]))%4 == 0 {
+	if nativeLittleEndian && uintptr(unsafe.Pointer(&raw[0]))%4 == 0 {
 		return unsafe.Slice((*float32)(unsafe.Pointer(&raw[0])), n)
 	}
 	vectors := make([]float32, n)
@@ -255,7 +250,7 @@ func (s *segmentFile) release() error {
 }
 
 func isSegmentName(name string) bool {
-	return !strings.HasPrefix(name, segmentTempPrefix) && (strings.HasSuffix(name, segmentExt) || strings.HasSuffix(name, legacySegmentExt))
+	return !strings.HasPrefix(name, segmentTempPrefix) && strings.HasSuffix(name, segmentExt)
 }
 
 // segmentNames lists the store's segment files, sorted. Names are content
@@ -473,24 +468,20 @@ type refreshPlan struct {
 	missing   []string
 	live      int
 	dead      int
-	legacy    int
 	// strays are temporary segment files a writer killed before its rename
-	// left behind. Segments are written only under the exclusive lock, so
-	// under it every temporary file is a stray.
+	// left behind, and segments in another format. Segments are written only
+	// under the exclusive lock, so under it every temporary file is a stray.
 	strays []string
 }
 
-func planRefresh(indexDir string, segments []*segmentFile, published map[string]string) (*refreshPlan, error) {
+func planRefresh(indexDir string, segments []*segmentFile, foreign []string, published map[string]string) (*refreshPlan, error) {
 	strays, err := strayTempSegments(indexDir)
 	if err != nil {
 		return nil, err
 	}
-	plan := &refreshPlan{segments: segments, published: published, strays: strays}
+	plan := &refreshPlan{segments: segments, published: published, strays: append(strays, foreign...)}
 	seen := map[string]bool{}
 	for _, segment := range segments {
-		if segment.format == legacySegmentFormat {
-			plan.legacy++
-		}
 		for _, id := range segment.ids {
 			if _, ok := plan.published[id]; ok && !seen[id] {
 				seen[id] = true
@@ -510,7 +501,7 @@ func planRefresh(indexDir string, segments []*segmentFile, published map[string]
 }
 
 func (p *refreshPlan) compact() bool {
-	return (len(p.missing) > 0 && len(p.segments) >= maxSegments) || p.dead > p.live || p.legacy > 0
+	return (len(p.missing) > 0 && len(p.segments) >= maxSegments) || p.dead > p.live
 }
 
 func (p *refreshPlan) noop() bool {
