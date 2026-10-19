@@ -31,6 +31,11 @@ import (
 // still blocked after it reads by text instead of waiting out a writer.
 const searchLockBound = 5 * time.Second
 
+// searchPrepareBound caps how long preparing the index waits for its read
+// lock. Preparing only overlaps the graph load; a store a writer holds is
+// waited for once, by the snapshot open, not twice.
+const searchPrepareBound = 100 * time.Millisecond
+
 // resolveEmbeddingConfig builds the effective EmbeddingConfig by merging
 // .sdd/config.yaml + .sdd/config.local.yaml and applying CLI flag
 // overrides. Mirrors resolveLLMConfig — same precedence rules, same
@@ -390,13 +395,6 @@ func searchCmd() *cli.Command {
 			allRepos := cmd.Bool("all-repos")
 			crossRepo := allRepos || len(repoSelection) > 0
 
-			stopGraph := timing.Start(ctx, "graph-load")
-			g, err := loadGraph(cmd)
-			stopGraph()
-			if err != nil {
-				return err
-			}
-
 			graphDir, err := resolveGraphDir(cmd)
 			if err != nil {
 				return err
@@ -438,6 +436,29 @@ func searchCmd() *cli.Command {
 				})
 			}
 			stopSetup()
+
+			// The query embedding and the index's manifest and segments do
+			// not depend on the graph, so they load while it does.
+			var prepared chan error
+			if needsVector {
+				emb.Embedder = localembed.Prefetch(ctx, emb.Embedder, embed.Request{Purpose: embed.PurposeQuery, Texts: []string{phrase}})
+				prepared = make(chan error, 1)
+				go func() { prepared <- index.Prepare(ctx, idxDir, searchPrepareBound) }()
+			}
+
+			stopGraph := timing.Start(ctx, "graph-load")
+			g, err := loadGraph(cmd)
+			stopGraph()
+			if err != nil {
+				return err
+			}
+			if prepared != nil {
+				// A store busy with a writer is met again, and handled, by the
+				// fill and the snapshot open below.
+				if err := <-prepared; err != nil && !errors.Is(err, index.ErrLockBusy) {
+					return err
+				}
+			}
 
 			reg, mgr, err := defaultRepos()
 			if err != nil {
