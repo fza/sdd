@@ -219,9 +219,13 @@ func (s *FillSession) Close() error {
 // Manifest loads the store's manifest for planning without taking the store
 // lock, so a fill never waits on a writer before its first embedding call.
 // Manifest.Save replaces the file by rename, so the read is never torn, and
-// Commit merges into the manifest as it stands under the lock.
+// Commit merges into the manifest as it stands under the lock. The result is
+// the process's shared parse (cachedManifest): read it, never modify it.
 func (s *FillSession) Manifest() (*Manifest, error) {
-	return LoadManifest(s.indexDir)
+	if s.indexDir == "" {
+		return LoadManifest(s.indexDir)
+	}
+	return cachedManifest(s.indexDir)
 }
 
 // Commit runs fn under the exclusive store lock against the session snapshot
@@ -293,10 +297,7 @@ func WriteStore(ctx context.Context, indexDir string, fn func(*Index) error) err
 		return err
 	}
 	// Bump the write generation only when fn actually mutated the store, and
-	// while the exclusive lock is still held, so readers detect the change on
-	// their next generation check. A no-op write session (a lazy-fill with
-	// nothing to do) leaves the generation untouched, keeping readers' cached
-	// snapshots valid.
+	// while the exclusive lock is still held (see generationPath).
 	if store.dirty {
 		if err := bumpGeneration(indexDir); err != nil {
 			return fmt.Errorf("bumping store generation at %s: %w", indexDir, err)
@@ -331,7 +332,9 @@ func ReadStore(ctx context.Context, indexDir string, fn func(*Index) error) erro
 }
 
 // generationPath is the store's write-generation marker — a small counter file
-// bumped under the exclusive lock by every mutating write session.
+// bumped under the exclusive lock by every mutating write session. Searches
+// here detect changes by manifest identity and segment names; the marker is
+// kept for binaries whose cached readers check it.
 func generationPath(indexDir string) string {
 	return filepath.Join(indexDir, "generation")
 }
@@ -368,84 +371,6 @@ func readGenerationMarker(indexDir string) (value uint64, present bool, err erro
 		return 0, false, fmt.Errorf("parsing generation marker at %s: %w", indexDir, err)
 	}
 	return n, true, nil
-}
-
-// storeGeneration includes publication changes that precede the marker update.
-func storeGeneration(indexDir string) (uint64, error) {
-	if n, present, err := readGenerationMarker(indexDir); err != nil {
-		return 0, err
-	} else if present {
-		info, err := os.Stat(manifestPath(indexDir))
-		if err != nil && !os.IsNotExist(err) {
-			return 0, err
-		}
-		if err == nil {
-			return n ^ uint64(info.ModTime().UnixNano()) ^ (uint64(info.Size()) << 20), nil
-		}
-		return n, nil
-	}
-	info, err := os.Stat(manifestPath(indexDir))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	return uint64(info.ModTime().UnixNano()) ^ (uint64(info.Size()) << 20), nil
-}
-
-// SnapshotCache holds a read snapshot and the store generation it was loaded
-// at, so a long-running reader answers from memory when the store is unchanged.
-// A caller shares one per store directory and guards it with its own mutex —
-// SnapshotCache carries no locking of its own.
-type SnapshotCache struct {
-	index            *Index
-	gen              uint64
-	valid            bool
-	manifestIdentity os.FileInfo
-}
-
-// ReadCached runs fn against a store snapshot under the shared lock, reusing
-// cache when the on-disk generation is unchanged and loading a fresh snapshot
-// otherwise. The generation is read AFTER acquiring the lock and the lock is
-// held through fn, so a writer cannot slip between the check and the query and
-// go unseen. It reports whether it loaded a fresh snapshot (for reload
-// counting). cache must be non-nil; the caller guards it against concurrent use.
-func ReadCached(ctx context.Context, indexDir string, cache *SnapshotCache, fn func(*Index) error) (reloaded bool, err error) {
-	if indexDir == "" {
-		// In-memory (tests): nothing persists, so there is no generation to
-		// reuse across calls.
-		return true, fn(OpenInMemory())
-	}
-	if err := ensureStoreDir(indexDir); err != nil {
-		return false, err
-	}
-	l := lockFile(indexDir)
-	if _, err := l.TryRLockContext(ctx, lockRetryInterval); err != nil {
-		return false, fmt.Errorf("acquiring index read lock at %s: %w", indexDir, err)
-	}
-	defer func() { _ = l.Unlock() }()
-	gen, err := storeGeneration(indexDir)
-	if err != nil {
-		return false, err
-	}
-	identity, statErr := os.Stat(manifestPath(indexDir))
-	if statErr != nil && !os.IsNotExist(statErr) {
-		return false, statErr
-	}
-	sameManifest := identity == nil && cache.manifestIdentity == nil
-	if identity != nil && cache.manifestIdentity != nil {
-		sameManifest = os.SameFile(identity, cache.manifestIdentity) && identity.ModTime().Equal(cache.manifestIdentity.ModTime()) && identity.Size() == cache.manifestIdentity.Size()
-	}
-	if !cache.valid || cache.index == nil || cache.gen != gen || !sameManifest {
-		store, err := loadStore(indexDir)
-		if err != nil {
-			return false, err
-		}
-		cache.index, cache.gen, cache.valid, cache.manifestIdentity = store, gen, true, identity
-		reloaded = true
-	}
-	return reloaded, fn(cache.index)
 }
 
 // ReadManifestLocked runs fn against the manifest under the store's shared
