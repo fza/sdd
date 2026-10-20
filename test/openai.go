@@ -27,6 +27,11 @@ type OpenAIBehaviour struct {
 	// Answers, when set, replaces Answer: the accepted requests get them in
 	// order, the last one repeating.
 	Answers []string
+	// FinishReason, when set, is the finish_reason of every accepted answer.
+	FinishReason string
+	// ReasoningTokens, when set, is reported as the reasoning share of every
+	// accepted answer's completion.
+	ReasoningTokens int
 	// Delay holds back every answer, refusals included, or until the client
 	// gives up.
 	Delay time.Duration
@@ -78,9 +83,18 @@ func (s *OpenAIServer) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(RefusedJSONSchemaBody))
 		return
 	}
-	answer, _ := json.Marshal(map[string]any{
-		"choices": []any{map[string]any{"message": map[string]any{"content": s.nextAnswer()}}},
-	})
+	choice := map[string]any{"message": map[string]any{"content": s.nextAnswer()}}
+	if s.behaviour.FinishReason != "" {
+		choice["finish_reason"] = s.behaviour.FinishReason
+	}
+	response := map[string]any{"choices": []any{choice}}
+	if s.behaviour.ReasoningTokens > 0 {
+		response["usage"] = map[string]any{
+			"completion_tokens":         s.behaviour.ReasoningTokens,
+			"completion_tokens_details": map[string]any{"reasoning_tokens": s.behaviour.ReasoningTokens},
+		}
+	}
+	answer, _ := json.Marshal(response)
 	_, _ = w.Write(answer)
 }
 
