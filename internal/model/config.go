@@ -39,6 +39,12 @@ const (
 	// twice the configured timeout on one check.
 	DefaultLLMExtractTimeout = time.Minute
 
+	// DefaultLLMMaxTokens caps a gollm call's output when llm.max_tokens is
+	// unset. It covers summaries and pre-flight findings from a non-reasoning
+	// model; a reasoning model spends its thinking against the same cap and
+	// needs llm.max_tokens set higher, or to 0 for none.
+	DefaultLLMMaxTokens = 4096
+
 	// DefaultLLMConcurrency is the default worker count for concurrent
 	// LLM calls (e.g. sdd summarize --all).
 	DefaultLLMConcurrency = 4
@@ -253,6 +259,10 @@ type LLMConfig struct {
 	// setting that moves latency and token usage makes a different population
 	// of calls that must not be averaged with the defaults.
 	Params map[string]string `yaml:"params,omitempty"`
+	// MaxTokens caps the output of each call, a reasoning model's thinking
+	// included. Unset means DefaultLLMMaxTokens; 0 sends no cap, leaving the
+	// model's own output limit in force where the provider allows that.
+	MaxTokens *int `yaml:"max_tokens,omitempty"`
 	// Concurrency bounds the worker pool for batch operations. Zero means
 	// "use DefaultLLMConcurrency".
 	Concurrency int `yaml:"concurrency,omitempty"`
@@ -305,6 +315,18 @@ func ParseStructuredOutputMode(value string) (StructuredOutputMode, error) {
 	default:
 		return "", fmt.Errorf("unknown structured_output %q (supported: json_schema, json_object, auto)", value)
 	}
+}
+
+// ResolvedMaxTokens is the output cap a call carries: DefaultLLMMaxTokens when
+// unset, 0 for no cap.
+func (c LLMConfig) ResolvedMaxTokens() (int, error) {
+	if c.MaxTokens == nil {
+		return DefaultLLMMaxTokens, nil
+	}
+	if *c.MaxTokens < 0 {
+		return 0, fmt.Errorf("llm.max_tokens %d is negative (0 sends no cap)", *c.MaxTokens)
+	}
+	return *c.MaxTokens, nil
 }
 
 // RetryConfig tunes retry/backoff behavior for the gollm-backed runner. Each
@@ -497,6 +519,9 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 	}
 	if overlay.StructuredOutput != "" {
 		out.StructuredOutput = overlay.StructuredOutput
+	}
+	if overlay.MaxTokens != nil {
+		out.MaxTokens = overlay.MaxTokens
 	}
 	if overlay.Concurrency != 0 {
 		out.Concurrency = overlay.Concurrency

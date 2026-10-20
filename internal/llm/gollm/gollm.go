@@ -6,16 +6,33 @@ package gollm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	upstream "github.com/teilomillet/gollm"
+	upstreamllm "github.com/teilomillet/gollm/llm"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm"
 )
+
+// ErrAnswerCut marks a call the model ended at the output token cap. A
+// reasoning model spends its thinking against that cap, so the answer comes
+// back cut short or missing; llm.max_tokens raises or lifts the cap.
+var ErrAnswerCut = errors.New("answer cut at the token cap")
+
+// ErrNoAnswer marks a response the provider delivered whole, ended for a
+// reason other than the cap, that carries no answer.
+var ErrNoAnswer = errors.New("no answer")
+
+// anthropicUncappedMaxTokens stands in for "no cap" on Anthropic, whose API
+// requires max_tokens. It is the highest output limit every current Claude
+// model accepts.
+const anthropicUncappedMaxTokens = 32000
 
 // Runner wraps a gollm client and adapts it to llm.Runner. When the provider
 // is Anthropic, the SystemPrompt is passed with ephemeral cache control so
@@ -80,17 +97,22 @@ func NewRunner(cfg model.LLMConfig, opts ...Option) (*Runner, error) {
 		return nil, fmt.Errorf("gollm: %w", err)
 	}
 
+	maxTokens, err := outputCap(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("gollm: %w", err)
+	}
+
 	cfgOpts := []upstream.ConfigOption{
 		upstream.SetProvider(cfg.Provider),
 		upstream.SetModel(cfg.Model),
 		upstream.SetMaxRetries(maxAttempts - 1),
 		upstream.SetRetryDelay(baseDelay),
 		upstream.SetMaxRetryDelay(maxDelay),
-		// Gollm's default MaxTokens (256) truncates longer summaries and
-		// pre-flight JSON responses mid-sentence. 4096 covers summaries
-		// (~150 tokens), pre-flight findings arrays, and has headroom for
-		// richer prompts without being wasteful.
-		upstream.SetMaxTokens(4096),
+	}
+	if maxTokens == 0 {
+		cfgOpts = append(cfgOpts, upstream.SetNoMaxTokens())
+	} else {
+		cfgOpts = append(cfgOpts, upstream.SetMaxTokens(maxTokens))
 	}
 
 	// API key is required for remote providers.
@@ -188,6 +210,18 @@ func NewRunner(cfg model.LLMConfig, opts ...Option) (*Runner, error) {
 	return runner, nil
 }
 
+// outputCap is the max_tokens a call carries, 0 sending none.
+func outputCap(cfg model.LLMConfig) (int, error) {
+	maxTokens, err := cfg.ResolvedMaxTokens()
+	if err != nil {
+		return 0, err
+	}
+	if maxTokens == 0 && cfg.Provider == "anthropic" {
+		return anthropicUncappedMaxTokens, nil
+	}
+	return maxTokens, nil
+}
+
 // canonicalVariant renders the behaviour-affecting params as a stable label —
 // sorted key=value pairs — so the same configuration always groups to the same
 // row across runs and machines.
@@ -243,10 +277,31 @@ func (r *Runner) generate(ctx context.Context, client upstream.LLM, req llm.Requ
 
 	resp, err := client.GenerateWithUsage(ctx, prompt)
 	if err != nil {
+		var noAnswer *upstreamllm.NoAnswerError
+		if errors.As(err, &noAnswer) {
+			err = incompleteAnswer(noAnswer.Truncated(), noAnswer.FinishReason, noAnswer.Usage, "")
+		}
 		return llm.Result{}, r.fault(ctx, err)
+	}
+	if resp.Truncated() {
+		return llm.Result{}, r.fault(ctx, incompleteAnswer(true, resp.FinishReason, resp.Usage, resp.Content))
 	}
 
 	return llm.Result{Text: resp.Content, Identity: r.identity(), Usage: usageFromResponse(resp.Usage)}, nil
+}
+
+// incompleteAnswer reports an answer the model cut or never gave, with what it
+// spent reasoning, so a cap reads apart from a provider fault.
+func incompleteAnswer(cut bool, finishReason string, usage *upstream.Usage, content string) error {
+	reasoning := 0
+	if usage != nil {
+		reasoning = usage.ReasoningTokens
+	}
+	sentinel := ErrNoAnswer
+	if cut {
+		sentinel = ErrAnswerCut
+	}
+	return fmt.Errorf("%w: finish_reason=%s, reasoning %d tokens, content %d chars", sentinel, finishReason, reasoning, utf8.RuneCountInString(content))
 }
 
 // fault wraps a failed call in the typed llm.Error carrying the identity.
