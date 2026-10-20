@@ -95,6 +95,30 @@ func TestObservedRecordsAttributedFailure(t *testing.T) {
 	}
 }
 
+func TestObservedRecordsWhatABilledFailureMetered(t *testing.T) {
+	sink := &recordingSink{}
+	usage := llm.Usage{InputTokens: 900, OutputTokens: 4096, ReasoningTokens: 4096, BillingCost: `{"energy":"0.2"}`}
+	failing := llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {
+		return llm.Result{}, &llm.Error{Identity: llm.Identity{Provider: "p"}, Usage: usage, FinishReason: "length", Err: errors.New("cut")}
+	})
+	_, _ = llm.Observed(failing, sink).Run(context.Background(), llm.Request{Purpose: llm.PurposePreflight})
+	got := sink.stats[0]
+	if got.Usage != usage || got.FinishReason != "length" || got.Error != "cut" {
+		t.Fatalf("a billed failure should record its usage and finish reason, got %+v", got)
+	}
+}
+
+func TestObservedRecordsFinishReason(t *testing.T) {
+	sink := &recordingSink{}
+	inner := llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {
+		return llm.Result{Text: "ok", FinishReason: "stop"}, nil
+	})
+	_, _ = llm.Observed(inner, sink).Run(context.Background(), llm.Request{})
+	if sink.stats[0].FinishReason != "stop" {
+		t.Fatalf("the finish reason should be recorded, got %+v", sink.stats[0])
+	}
+}
+
 func TestObservedUnattributedFailureLeavesIdentityBlank(t *testing.T) {
 	sink := &recordingSink{}
 	failing := llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {

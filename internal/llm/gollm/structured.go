@@ -116,7 +116,7 @@ func (so *structuredOutput) runJSONObject(ctx context.Context, r *Runner, req ll
 	}
 	if err := so.validate(result.Text); err != nil {
 		fault := upstreamllm.NewLLMError(upstreamllm.ErrorTypeResponse, "failed to parse response", err)
-		return llm.Result{}, r.fault(ctx, &llm.MalformedAnswerError{Text: result.Text, Err: fault})
+		return llm.Result{}, r.rejectedReply(ctx, &llm.MalformedAnswerError{Text: result.Text, Err: fault}, result.Usage, result.FinishReason)
 	}
 	return result, nil
 }

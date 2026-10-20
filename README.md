@@ -575,6 +575,8 @@ The vector index and the connected-repo caches don't live in the project tree â€
 
 The CLI also keeps each graph's entry files there, read back only while every graph file's size, timestamps and inode match what they were when it was saved, so a command on an unchanged graph reads one file instead of every entry. Set `SDD_GRAPH_CACHE=off` to read every graph from its files.
 
+Set `SDD_USAGE_LOG` to a file path to meter what sdd spends on models: every LLM call, pre-flight and embedding alike, appends one JSON line with its step, provider, endpoint host, model, token counts, finish reason, the provider's `billing_cost` object where the reply carries one, and whether it succeeded. Keys, prompts and answers never reach it. The record shape is `llmstats.UsageRecord` in `internal/llmstats`.
+
 Engine sessions are per-machine too, stored per project under your XDG state directory and shared across that repo's checkouts and worktrees. Ended sessions are collected on `sdd serve` startup once they pass the retention window (`sessions.retention`); running ones survive a binary upgrade, so there's no offline window when you update sdd.
 
 `sdd init` also installs the skills for each configured agent at that agent's skill directory (defaults to `~/.claude/skills/` for Claude Code, or `.claude/skills/` with `--scope project`). Those paths are an implementation detail of the target agent â€” inspect them if you're curious, but they aren't part of your project's source tree.
