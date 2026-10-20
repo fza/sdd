@@ -32,6 +32,13 @@ type OpenAIBehaviour struct {
 	// ReasoningTokens, when set, is reported as the reasoning share of every
 	// accepted answer's completion.
 	ReasoningTokens int
+	// PromptTokens and CachedTokens, when set, are reported as the prompt
+	// size and its prompt-cache hits of every accepted answer.
+	PromptTokens int
+	CachedTokens int
+	// BillingCost, when set, is the raw JSON object every accepted answer
+	// carries as its top-level billing_cost.
+	BillingCost string
 	// Delay holds back every answer, refusals included, or until the client
 	// gives up.
 	Delay time.Duration
@@ -88,11 +95,16 @@ func (s *OpenAIServer) serve(w http.ResponseWriter, r *http.Request) {
 		choice["finish_reason"] = s.behaviour.FinishReason
 	}
 	response := map[string]any{"choices": []any{choice}}
-	if s.behaviour.ReasoningTokens > 0 {
+	if s.behaviour.ReasoningTokens > 0 || s.behaviour.PromptTokens > 0 {
 		response["usage"] = map[string]any{
+			"prompt_tokens":             s.behaviour.PromptTokens,
+			"prompt_tokens_details":     map[string]any{"cached_tokens": s.behaviour.CachedTokens},
 			"completion_tokens":         s.behaviour.ReasoningTokens,
 			"completion_tokens_details": map[string]any{"reasoning_tokens": s.behaviour.ReasoningTokens},
 		}
+	}
+	if s.behaviour.BillingCost != "" {
+		response["billing_cost"] = json.RawMessage(s.behaviour.BillingCost)
 	}
 	answer, _ := json.Marshal(response)
 	_, _ = w.Write(answer)

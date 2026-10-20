@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 	upstream "github.com/teilomillet/gollm"
 	upstreamllm "github.com/teilomillet/gollm/llm"
+	"github.com/teilomillet/gollm/providers"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm"
@@ -44,6 +46,7 @@ type Runner struct {
 	provider string
 	model    string
 	variant  string
+	host     string
 	useCache bool
 
 	// structured is nil for a runner carrying no schema.
@@ -192,6 +195,7 @@ func NewRunner(cfg model.LLMConfig, opts ...Option) (*Runner, error) {
 		provider: cfg.Provider,
 		model:    cfg.Model,
 		variant:  canonicalVariant(cfg.Params),
+		host:     endpointHost(cfg.Provider, cfg.Model, cfgOpts),
 		useCache: useCache,
 	}
 
@@ -208,6 +212,30 @@ func NewRunner(cfg model.LLMConfig, opts ...Option) (*Runner, error) {
 		return nil, err
 	}
 	return runner, nil
+}
+
+// endpointHost names the host gollm sends this configuration's calls to. It
+// asks a provider built the way gollm builds its own, so a provider's default
+// endpoint and gollm's environment overrides resolve exactly as on the wire.
+// Empty when the provider or its endpoint cannot be resolved.
+func endpointHost(providerName, modelName string, cfgOpts []upstream.ConfigOption) string {
+	gollmConfig, err := upstream.LoadConfig()
+	if err != nil {
+		return ""
+	}
+	for _, apply := range cfgOpts {
+		apply(gollmConfig)
+	}
+	provider, err := providers.GetDefaultRegistry().Get(providerName, "", modelName, nil)
+	if err != nil {
+		return ""
+	}
+	provider.SetDefaultOptions(gollmConfig)
+	endpoint, err := url.Parse(provider.Endpoint())
+	if err != nil {
+		return ""
+	}
+	return endpoint.Hostname()
 }
 
 // outputCap is the max_tokens a call carries, 0 sending none.
@@ -248,7 +276,7 @@ func sortedKeys(params map[string]string) []string {
 // identity names the configured provider and model. Both are known at
 // construction, so they attribute a call whatever the response turns out to be.
 func (r *Runner) identity() llm.Identity {
-	return llm.Identity{Provider: r.provider, Model: r.model, Variant: r.variant}
+	return llm.Identity{Provider: r.provider, Model: r.model, Variant: r.variant, Host: r.host}
 }
 
 // Run sends the request to the underlying gollm client. When caching is
@@ -280,14 +308,21 @@ func (r *Runner) generate(ctx context.Context, client upstream.LLM, req llm.Requ
 		var noAnswer *upstreamllm.NoAnswerError
 		if errors.As(err, &noAnswer) {
 			err = incompleteAnswer(noAnswer.Truncated(), noAnswer.FinishReason, noAnswer.Usage, "")
+			return llm.Result{}, r.rejectedReply(ctx, err, usageFromResponse(noAnswer.Usage), noAnswer.FinishReason)
 		}
 		return llm.Result{}, r.fault(ctx, err)
 	}
 	if resp.Truncated() {
-		return llm.Result{}, r.fault(ctx, incompleteAnswer(true, resp.FinishReason, resp.Usage, resp.Content))
+		err := incompleteAnswer(true, resp.FinishReason, resp.Usage, resp.Content)
+		return llm.Result{}, r.rejectedReply(ctx, err, usageFromResponse(resp.Usage), resp.FinishReason)
 	}
 
-	return llm.Result{Text: resp.Content, Identity: r.identity(), Usage: usageFromResponse(resp.Usage)}, nil
+	return llm.Result{
+		Text:         resp.Content,
+		Identity:     r.identity(),
+		Usage:        usageFromResponse(resp.Usage),
+		FinishReason: resp.FinishReason,
+	}, nil
 }
 
 // incompleteAnswer reports an answer the model cut or never gave, with what it
@@ -305,13 +340,22 @@ func incompleteAnswer(cut bool, finishReason string, usage *upstream.Usage, cont
 }
 
 // fault wraps a failed call in the typed llm.Error carrying the identity.
-func (r *Runner) fault(ctx context.Context, err error) error {
+func (r *Runner) fault(ctx context.Context, err error) *llm.Error {
 	if ctx.Err() == context.DeadlineExceeded {
 		err = fmt.Errorf("gollm %s: timed out", r.provider)
 	} else {
 		err = fmt.Errorf("gollm %s: %w", r.provider, err)
 	}
 	return &llm.Error{Identity: r.identity(), Err: err}
+}
+
+// rejectedReply is fault for a reply the provider delivered and billed, so the
+// failure carries what the reply reported.
+func (r *Runner) rejectedReply(ctx context.Context, err error, usage llm.Usage, finishReason string) error {
+	fault := r.fault(ctx, err)
+	fault.Usage = usage
+	fault.FinishReason = finishReason
+	return fault
 }
 
 // usageFromResponse maps a gollm Response.Usage into the common llm.Usage.
@@ -337,6 +381,8 @@ func usageFromResponse(u *upstream.Usage) llm.Usage {
 		OutputTokens:      out,
 		CacheReadTokens:   u.CacheReadInputTokens,
 		CacheCreateTokens: u.CacheCreationInputTokens,
+		ReasoningTokens:   u.ReasoningTokens,
+		BillingCost:       string(u.BillingCost),
 	}
 }
 

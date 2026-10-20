@@ -40,7 +40,7 @@ func newOpenAI(cfg model.EmbeddingConfig) (pkgembed.Embedder, error) {
 	return &openaiEmbedder{
 		endpoint:         endpoint,
 		apiKey:           apiKey,
-		identity:         llm.Identity{Provider: "openai", Model: cfg.Model},
+		identity:         llm.Identity{Provider: "openai", Model: cfg.Model, Host: hostOf(endpoint)},
 		dimensions:       cfg.Dimensions,
 		queryTemplate:    cfg.QueryTemplate,
 		documentTemplate: cfg.DocumentTemplate,

@@ -61,6 +61,8 @@ func Observed(e Embedder, sink llm.StatsSink) Embedder {
 		if err != nil {
 			if attributed, ok := errors.AsType[*llm.Error](err); ok {
 				stat.Identity = attributed.Identity
+				stat.Usage = attributed.Usage
+				stat.FinishReason = attributed.FinishReason
 			}
 			stat.Error = err.Error()
 		} else {

@@ -35,7 +35,7 @@ func newOllama(cfg model.EmbeddingConfig) pkgembed.Embedder {
 	}
 	return &ollamaEmbedder{
 		endpoint:         endpoint,
-		identity:         llm.Identity{Provider: "ollama", Model: cfg.Model},
+		identity:         llm.Identity{Provider: "ollama", Model: cfg.Model, Host: hostOf(endpoint)},
 		queryTemplate:    cfg.QueryTemplate,
 		documentTemplate: cfg.DocumentTemplate,
 		httpClient:       &http.Client{},

@@ -6,6 +6,7 @@ package embed
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -133,4 +134,14 @@ func templateFor(purpose pkgembed.Purpose, document, query string) (string, erro
 	default:
 		return "", fmt.Errorf("unknown embedding purpose %q", purpose)
 	}
+}
+
+// hostOf names the host of a configured endpoint for call attribution, empty
+// when the endpoint does not parse.
+func hostOf(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	return parsed.Hostname()
 }
