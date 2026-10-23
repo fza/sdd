@@ -22,6 +22,9 @@ type SummarizeCmd struct {
 	// ExplicitTitle, when non-nil, is written as the entry's title directly,
 	// under the same single-entry rule as ExplicitText and combinable with it.
 	ExplicitTitle *string
+	// OnPlanned is called once, before any generation, with the number of
+	// entries the run will fill.
+	OnPlanned func(n int)
 	// OnSummarized is called for each entry that gets a new summary.
 	OnSummarized func(id, summary string)
 	// OnTitled is called for each entry that gets a new title while keeping

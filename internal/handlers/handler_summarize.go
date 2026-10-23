@@ -95,22 +95,26 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 	var g errgroup.Group
 	g.SetLimit(concurrency)
 
+	// --all fills only what is missing unless --force regenerates every
+	// entry; named entries always regenerate. Decided before any worker
+	// writes, so the planned count is known up front.
+	var planned []*model.Entry
 	for _, entry := range entries {
-		g.Go(func() error {
-			// --all fills only entries that have no summary yet unless
-			// --force regenerates every entry; named entries always
-			// regenerate. Read under the lock — other workers may be writing
-			// their own entries' summaries concurrently.
-			graphMu.RLock()
-			hasSummary, hasTitle := entry.Summary != "", entry.Title != ""
-			graphMu.RUnlock()
-			if isAll && !cmd.Force && hasSummary && hasTitle {
-				if cmd.OnSkipped != nil {
-					cmd.OnSkipped(entry.ID)
-				}
-				return nil
+		if isAll && !cmd.Force && entry.Summary != "" && entry.Title != "" {
+			if cmd.OnSkipped != nil {
+				cmd.OnSkipped(entry.ID)
 			}
-			titleOnly := isAll && !cmd.Force && hasSummary
+			continue
+		}
+		planned = append(planned, entry)
+	}
+	if cmd.OnPlanned != nil {
+		cmd.OnPlanned(len(planned))
+	}
+
+	for _, entry := range planned {
+		titleOnly := isAll && !cmd.Force && entry.Summary != ""
+		g.Go(func() error {
 
 			// Render prompt under read lock — other workers may be writing
 			// their own entries' summaries concurrently, and those feed

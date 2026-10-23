@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -136,5 +137,24 @@ func TestPlainFillProgress_PacesLines(t *testing.T) {
 				t.Errorf("progress lines should follow the interval, got %q", got)
 			}
 		})
+	}
+}
+
+func TestBackfillProgressCountsFilledEntries(t *testing.T) {
+	backfill := &command.SummarizeCmd{}
+	reporter := newBackfillProgress(backfill)
+	backfill.OnPlanned(3)
+	backfill.OnTitled("20260101-120000-s-prc-aaa", "A title")
+	backfill.OnSummarized("20260101-120001-s-prc-bbb", "A summary.")
+
+	snap, ok := reporter.Recv()
+	if !ok {
+		t.Fatal("reporter closed unexpectedly")
+	}
+	if snap.Phase != model.PhaseSummarizing || snap.Total != 3 || snap.Done != 2 {
+		t.Errorf("each filled entry should advance a summarizing bar over the planned total, got %+v", snap)
+	}
+	if snap.Note != "20260101-120001-s-prc-bbb" {
+		t.Errorf("the note should name the entry last filled, got %q", snap.Note)
 	}
 }
