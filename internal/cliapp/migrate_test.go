@@ -150,3 +150,26 @@ func TestMigrateStampOnlyDefersTheBackfill(t *testing.T) {
 		t.Errorf("a later migrate on the stamped graph should fill the deferred titles:\n%s", entry)
 	}
 }
+
+func TestMigrateCommitsTitlesAFailedCommitLeftBehind(t *testing.T) {
+	project := newMigrateProject(t)
+	if output, err := runReleased(t, project, "", "migrate", "--yes", "--stamp-only"); err != nil {
+		t.Fatalf("stamp: %v\n%s", err, output)
+	}
+	entryPath := filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel))
+	writeFile(t, entryPath, strings.Replace(readFile(t, entryPath), "summary:", "title: stranded title\nsummary:", 1))
+
+	output, err := runReleased(t, project, "", "migrate", "--yes")
+	if err != nil {
+		t.Fatalf("sdd migrate: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "committed 1 entries an earlier backfill titled but did not commit") || !strings.Contains(output, "nothing to migrate") {
+		t.Errorf("the stranded title should be committed and leave nothing to migrate:\n%s", output)
+	}
+	if status := gitIn(t, project, "status", "--porcelain", "--", ".sdd/graph"); strings.TrimSpace(status) != "" {
+		t.Errorf("no graph file should stay uncommitted:\n%s", status)
+	}
+	if entry := readFile(t, entryPath); !strings.Contains(entry, "title: stranded title") {
+		t.Errorf("the stranded title should be kept as written:\n%s", entry)
+	}
+}

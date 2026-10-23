@@ -1279,6 +1279,7 @@ func summarizeHandler(cmd *cli.Command) (*handlers.Handler, error) {
 		}),
 		LLMRunner: runner,
 		Committer: graphGit(dir),
+		Changes:   graphGit(dir),
 		Language:  configLanguage(cfg),
 	}), nil
 }

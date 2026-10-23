@@ -68,6 +68,19 @@ func migrateCmd() *cli.Command {
 			if from > model.CurrentGraphSchemaVersion {
 				return fmt.Errorf("graph schema version %d is newer than this binary's schema version %d; upgrade sdd to continue", from, model.CurrentGraphSchemaVersion)
 			}
+			out := cmd.ErrWriter
+			handler, err := summarizeHandler(cmd)
+			if err != nil {
+				return err
+			}
+			err = handler.CommitStrandedTitles(ctx, &command.CommitStrandedTitlesCmd{
+				OnCommitted: func(count int) {
+					fmt.Fprintf(out, "committed %d entries an earlier backfill titled but did not commit\n", count)
+				},
+			})
+			if err != nil {
+				return err
+			}
 			graph, err := loadGraph(cmd)
 			if err != nil {
 				return err
@@ -79,7 +92,6 @@ func migrateCmd() *cli.Command {
 				return nil
 			}
 
-			out := cmd.ErrWriter
 			if from < model.CurrentGraphSchemaVersion {
 				fmt.Fprintf(out, "Graph schema %d -> %d:\n", from, model.CurrentGraphSchemaVersion)
 				for _, change := range model.SchemaChanges(from, model.CurrentGraphSchemaVersion) {
@@ -102,10 +114,6 @@ func migrateCmd() *cli.Command {
 				}
 			}
 
-			handler, err := summarizeHandler(cmd)
-			if err != nil {
-				return err
-			}
 			err = handler.MigrateSchema(ctx, &command.MigrateSchemaCmd{
 				SDDDir:        sddDir,
 				SchemaVersion: model.CurrentGraphSchemaVersion,
