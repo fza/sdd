@@ -97,7 +97,7 @@ func TestMigrate(t *testing.T) {
 			if !strings.Contains(meta, `"graph_schema_version": 2`) {
 				t.Errorf("an approved migration should stamp the new schema version:\n%s", meta)
 			}
-			if !strings.Contains(entry, "title: migrated title") || !strings.Contains(entry, "summary: A stored summary that stays.") {
+			if !strings.Contains(entry, "title: Migrated title") || !strings.Contains(entry, "summary: A stored summary that stays.") {
 				t.Errorf("the backfill should add the title and keep the stored summary:\n%s", entry)
 			}
 			if log := gitIn(t, project, "log", "--format=%s"); !strings.Contains(log, "sdd: migrate graph schema 1 -> 2") {
@@ -146,7 +146,7 @@ func TestMigrateStampOnlyDefersTheBackfill(t *testing.T) {
 	if output, err := runReleased(t, project, "", "migrate", "--yes"); err != nil {
 		t.Fatalf("sdd migrate: %v\n%s", err, output)
 	}
-	if entry := readFile(t, entryPath); !strings.Contains(entry, "title: migrated title") {
+	if entry := readFile(t, entryPath); !strings.Contains(entry, "title: Migrated title") {
 		t.Errorf("a later migrate on the stamped graph should fill the deferred titles:\n%s", entry)
 	}
 }

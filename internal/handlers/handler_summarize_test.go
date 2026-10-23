@@ -167,11 +167,11 @@ func TestSummarize_ExplicitTitle(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Summarize: %v", err)
 			}
-			if titled != "hand-written title" {
-				t.Errorf("the trimmed title should be reported, got %q", titled)
+			if titled != "Hand-written title" {
+				t.Errorf("the trimmed, capitalized title should be reported, got %q", titled)
 			}
 			written := readEntryFile(t, graphDir, id)
-			if !strings.Contains(written, "title: hand-written title") || !strings.Contains(written, tc.wantSummary) {
+			if !strings.Contains(written, "title: Hand-written title") || !strings.Contains(written, tc.wantSummary) {
 				t.Errorf("the written entry should carry the supplied title and the expected summary:\n%s", written)
 			}
 		})

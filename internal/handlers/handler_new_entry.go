@@ -208,7 +208,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		entry.Summary = sumResult.Summary
 		generatedTitle = sumResult.Title
 	}
-	entry.Title = cmd.Title
+	entry.Title = model.CapitalizeTitle(cmd.Title)
 	if entry.Title == "" {
 		entry.Title = generatedTitle
 	}

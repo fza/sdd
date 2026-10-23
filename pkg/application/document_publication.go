@@ -171,14 +171,15 @@ func (a *Application) ReplaceSummary(ctx context.Context, identity RequestIdenti
 		return DocumentPublication{}, err
 	}
 	canonical := current.Content
+	title := model.CapitalizeTitle(replacement.Title)
 	summaryReplaced := replacement.Summary == "" || entry.Summary == replacement.Summary
-	titleReplaced := replacement.Title == "" || entry.Title == replacement.Title
+	titleReplaced := title == "" || entry.Title == title
 	if replacement.ExpectedBlob == "" || GitBlobID(current.Content) == replacement.ExpectedBlob {
 		if replacement.Summary != "" {
 			entry.Summary = replacement.Summary
 		}
-		if replacement.Title != "" {
-			entry.Title = replacement.Title
+		if title != "" {
+			entry.Title = title
 		}
 		canonical = []byte(model.FormatFrontmatter(entry) + "\n" + entry.Content + "\n")
 	} else if !summaryReplaced || !titleReplaced {

@@ -224,7 +224,7 @@ func (h *Handler) summarizeExplicit(graph *model.Graph, idArg string, cmd *comma
 		if strings.ContainsAny(title, "\r\n") {
 			return fmt.Errorf("--title value spans more than one line")
 		}
-		entry.Title = title
+		entry.Title = model.CapitalizeTitle(title)
 	}
 
 	relPath, err := model.IDToRelPath(entry.ID)
