@@ -35,6 +35,7 @@ const (
 	TypeLayer             BaseType = "layer"
 	TypeConfidence        BaseType = "confidence"
 	TypeIntent            BaseType = "intent"
+	TypeActorKind         BaseType = "actor-kind"
 	TypeAttachmentHandle  BaseType = "attachment-handle"
 	TypeProcedureSpec     BaseType = "procedure-spec"
 	TypeFactIndex         BaseType = "fact-index"
@@ -53,7 +54,7 @@ const (
 // derives from it so set and order share one declaration.
 var baseTypeOrder = []BaseType{
 	TypeText, TypeBool, TypeEntryID, TypeRef, TypeLabel, TypeParticipant,
-	TypeEntryKind, TypeLayer, TypeConfidence, TypeIntent, TypeAttachmentHandle,
+	TypeEntryKind, TypeLayer, TypeConfidence, TypeIntent, TypeActorKind, TypeAttachmentHandle,
 	TypeProcedureSpec, TypeFactIndex, TypePreflightFindings, TypeGuideFindings,
 	TypeInvolvement, TypeInvolvementWhen, TypeSearchReplace, TypeProse,
 }
@@ -87,6 +88,7 @@ var baseTypeDesc = map[BaseType]string{
 	TypeLayer:             "one of the thinking layers",
 	TypeConfidence:        "a confidence grade",
 	TypeIntent:            "a directive's intent",
+	TypeActorKind:         "an actor's participant sort; absent means unknown",
 	TypeAttachmentHandle:  "the handle returned when a file is staged during the session, binding that file to the entry being written",
 	TypeProcedureSpec:     "a procedure's workflow declaration as one structured value: params, state, steps, and, for shells, the framing lanes rendered on every serve",
 	TypeFactIndex:         "a fact's enrollment in the served fact index: the title and topic its index line carries",
@@ -308,6 +310,13 @@ func validateBaseValue(base BaseType, v any) (any, error) {
 		s, ok := v.(string)
 		if !ok || !model.IsValidIntent(s) {
 			return nil, fmt.Errorf("expected intent pending|guiding|settled")
+		}
+		return s, nil
+
+	case TypeActorKind:
+		s, ok := v.(string)
+		if !ok || !model.IsValidActorKind(s) {
+			return nil, fmt.Errorf("expected actor kind %s", actorKindAlternatives())
 		}
 		return s, nil
 
@@ -577,4 +586,13 @@ func whenFromValue(v any) (*When, error) {
 		return nil, err
 	}
 	return &When{From: from, To: to}, nil
+}
+
+func actorKindAlternatives() string {
+	values := model.ActorKindValues()
+	names := make([]string, 0, len(values))
+	for _, v := range values {
+		names = append(names, string(v))
+	}
+	return strings.Join(names, "|")
 }

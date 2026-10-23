@@ -309,6 +309,13 @@ func schemaForType(t VarType, desc string) map[string]any {
 		schema = map[string]any{"type": "string", "enum": []any{"high", "medium", "low"}}
 	case TypeIntent:
 		schema = map[string]any{"type": "string", "enum": []any{"pending", "guiding", "settled"}}
+	case TypeActorKind:
+		values := model.ActorKindValues()
+		enum := make([]any, 0, len(values))
+		for _, v := range values {
+			enum = append(enum, string(v))
+		}
+		schema = map[string]any{"type": "string", "enum": enum}
 	case TypeFactIndex:
 		schema = map[string]any{
 			"type": "object",
