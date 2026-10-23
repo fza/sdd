@@ -39,7 +39,7 @@ func servedRepository(t *testing.T) (*gitRepository, *sdd.WorkflowSession, sdd.R
 			case pkgllm.PurposePreflight, pkgllm.PurposeWritingGuide:
 				return pkgllm.Result{Text: `{"findings":[]}`}, nil
 			case pkgllm.PurposeSummarize:
-				return pkgllm.Result{Text: "The run delivered the anchor."}, nil
+				return pkgllm.Result{Text: `{"title": "test title", "summary": "The run delivered the anchor."}`}, nil
 			}
 			return pkgllm.Result{}, fmt.Errorf("unexpected LLM purpose %q", request.Purpose)
 		}),

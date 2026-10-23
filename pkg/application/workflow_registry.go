@@ -221,21 +221,42 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 	}); err != nil {
 		return err
 	}
-	return registry.RegisterQuery(engine.Query{
+	if err := registry.RegisterQuery(engine.Query{
 		Doc:       engine.FuncDoc{Name: "generatedSummary", Doc: "The stored summary of the entry named by the store's entryId, for fidelity review.", Reads: []string{"entryId"}},
 		ServeSafe: true,
 		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
-			id, ok := workflowStoreString(ctx.Store, "entryId")
-			if !ok {
-				return nil, fmt.Errorf("generatedSummary: entryId is not set — the write gate has not created an entry")
-			}
-			entry, ok := ctx.Graph.ByID[id]
-			if !ok {
-				return nil, fmt.Errorf("generatedSummary: entry %s not found", id)
+			entry, err := writtenEntry(ctx, "generatedSummary")
+			if err != nil {
+				return nil, err
 			}
 			return entry.Summary, nil
 		},
+	}); err != nil {
+		return err
+	}
+	return registry.RegisterQuery(engine.Query{
+		Doc:       engine.FuncDoc{Name: "generatedTitle", Doc: "The stored title of the entry named by the store's entryId, for fidelity review.", Reads: []string{"entryId"}},
+		ServeSafe: true,
+		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
+			entry, err := writtenEntry(ctx, "generatedTitle")
+			if err != nil {
+				return nil, err
+			}
+			return entry.Title, nil
+		},
 	})
+}
+
+func writtenEntry(ctx *engine.Context, fn string) (*model.Entry, error) {
+	id, ok := workflowStoreString(ctx.Store, "entryId")
+	if !ok {
+		return nil, fmt.Errorf("%s: entryId is not set — the write gate has not created an entry", fn)
+	}
+	entry, ok := ctx.Graph.ByID[id]
+	if !ok {
+		return nil, fmt.Errorf("%s: entry %s not found", fn, id)
+	}
+	return entry, nil
 }
 
 func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) error {
@@ -276,7 +297,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 		return err
 	}
 	return registry.RegisterCommand(engine.Command{
-		Doc:              engine.FuncDoc{Name: "replaceSummary", Doc: "Writes the user-supplied corrected summary onto the entry named by entryId, conditioned on the document the correction was read from.", Reads: []string{"entryId", "correctedSummary"}},
+		Doc:              engine.FuncDoc{Name: "replaceSummary", Doc: "Writes the corrected summary, title or both onto the entry named by entryId, conditioned on the document the correction was read from.", Reads: []string{"entryId", "correctedSummary", "correctedTitle"}},
 		MutatesGraph:     true,
 		GraphIndependent: true,
 		Prepare:          w.prepareWorkflowReplaceSummary,

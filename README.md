@@ -402,6 +402,10 @@ When an upgrade leaves sessions in an older format, interactive init offers to m
 
 Pass `--bump` from a released binary to raise `.sdd/meta.json`'s `minimum_version` — this locks older binaries out of the graph after a breaking change.
 
+### Upgrading the graph schema
+
+A binary that writes a newer graph schema than `.sdd/meta.json` records refuses writes and points at `sdd migrate`. It states what the new schema adds and what the backfill costs in model calls, then runs only on your approval (`y`, or `--yes`). It stamps the new version first, so writes resume and older binaries are locked out, then fills what the graph lacks. Schema 2 gives every entry a `title` beside its summary; an entry that already has a summary keeps it, and the title comes from a title-only call. An interrupted backfill continues on the next `sdd migrate`.
+
 Run non-interactively by passing every required flag: `sdd init --scope project --participant <name> --language en`. Missing flags produce a single error naming what's still needed.
 
 ### Multiple agents

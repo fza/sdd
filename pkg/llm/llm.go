@@ -19,8 +19,11 @@ import "context"
 type Purpose string
 
 const (
-	PurposePreflight    Purpose = "preflight"
-	PurposeSummarize    Purpose = "summarize"
+	PurposePreflight Purpose = "preflight"
+	PurposeSummarize Purpose = "summarize"
+	// PurposeTitle writes only the title of an entry that keeps its stored
+	// summary.
+	PurposeTitle        Purpose = "title"
 	PurposeWritingGuide Purpose = "writing-guide"
 	// The extract purposes name the second call a JSON-shaped check makes
 	// when its first response does not parse. They are their own purposes so

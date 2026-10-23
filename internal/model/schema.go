@@ -14,7 +14,25 @@ const SchemaMetaFileName = "meta.json"
 
 // CurrentGraphSchemaVersion is the schema version this binary knows how to
 // read and write. Bumped only by an explicit schema migration.
-const CurrentGraphSchemaVersion = 1
+const CurrentGraphSchemaVersion = 2
+
+// schemaChanges states what each graph schema version adds over the one
+// before it, keyed by the version that introduced the change.
+var schemaChanges = map[int]string{
+	2: "every entry carries a title, written by the same call as its summary",
+}
+
+// SchemaChanges lists what a migration from version from to version to
+// adds, in version order.
+func SchemaChanges(from, to int) []string {
+	var changes []string
+	for v := from + 1; v <= to; v++ {
+		if change, ok := schemaChanges[v]; ok {
+			changes = append(changes, change)
+		}
+	}
+	return changes
+}
 
 // SchemaMeta is the decoded contents of .sdd/meta.json.
 //
@@ -114,18 +132,28 @@ func ShouldBumpMinimumVersion(current, binaryVersion string) bool {
 // minimum_version or a bumped schema_version.
 //
 // For released binaries: a schema_version mismatch errors with a pointer to
-// sdd init / sdd migrate. A minimum_version higher than the binary errors
-// with upgrade guidance. Either failure leaves Compatible = false.
+// sdd migrate for an older graph and an upgrade for a newer one. A
+// minimum_version higher than the binary errors with upgrade guidance. Either
+// failure leaves Compatible = false.
 func CheckCompatibility(meta SchemaMeta, binaryVersion string, binarySchemaVersion int) CompatibilityResult {
 	if IsDevVersion(binaryVersion) {
 		return CompatibilityResult{Compatible: true, IsDevBuild: true}
 	}
 
-	if meta.GraphSchemaVersion != binarySchemaVersion {
+	if meta.GraphSchemaVersion < binarySchemaVersion {
 		return CompatibilityResult{
 			Compatible: false,
 			Reason: fmt.Sprintf(
-				"graph schema version %d does not match binary schema version %d; run `sdd init` or a future `sdd migrate`",
+				"graph schema version %d is older than this binary's schema version %d; run `sdd migrate` to upgrade the graph",
+				meta.GraphSchemaVersion, binarySchemaVersion,
+			),
+		}
+	}
+	if meta.GraphSchemaVersion > binarySchemaVersion {
+		return CompatibilityResult{
+			Compatible: false,
+			Reason: fmt.Sprintf(
+				"graph schema version %d is newer than this binary's schema version %d; upgrade sdd to continue",
 				meta.GraphSchemaVersion, binarySchemaVersion,
 			),
 		}

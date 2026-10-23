@@ -12,24 +12,24 @@ import (
 )
 
 // structuredPurposes names the schema each purpose constrains its response to.
-// A purpose absent here is served unconstrained, which is what summarize needs
-// since it answers in prose.
+// A purpose absent here is served unconstrained.
 var structuredPurposes = map[llm.Purpose]func() (string, map[string]any){
 	llm.PurposePreflight:    func() (string, map[string]any) { return llmops.PreflightSchemaName, llmops.PreflightSchema() },
 	llm.PurposeWritingGuide: func() (string, map[string]any) { return llmops.WritingGuideSchemaName, llmops.WritingGuideSchema() },
+	llm.PurposeSummarize:    func() (string, map[string]any) { return llmops.SummarySchemaName, llmops.SummarySchema() },
+	llm.PurposeTitle:        func() (string, map[string]any) { return llmops.TitleSchemaName, llmops.TitleSchema() },
 }
 
 // purposeMux routes a call to the client configured for its purpose. A gollm
 // client carries its structured-output schema for the life of the client
 // (options are client-level, not per call), so one client per schema is what
-// keeps a JSON-constrained pre-flight and a prose summarize on the same
-// configuration.
+// keeps each JSON-constrained purpose on the same configuration.
 //
 // The unconstrained client is built eagerly, so a misconfiguration (a missing
 // API key, an unreachable Ollama) fails the command rather than the first call
 // that happens to need a checker. Schema-carrying clients are built on first
 // use, because constructing one probes the endpoint on the Ollama provider and
-// a command that only summarizes never calls a checker.
+// a command builds only the clients of the purposes it calls.
 type purposeMux struct {
 	cfg model.LLMConfig
 

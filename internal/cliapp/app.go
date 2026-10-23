@@ -451,6 +451,7 @@ func New(options Options) *cli.Command {
 			wipCmd(),
 			lintCmd(),
 			summarizeCmd(),
+			migrateCmd(),
 			indexCmd(),
 			searchCmd(),
 			serveCmd(),
@@ -744,6 +745,10 @@ func newCmd() *cli.Command {
 				Name:  "summary",
 				Usage: "Store this summary verbatim, skipping LLM summary generation",
 			},
+			&cli.StringFlag{
+				Name:  "title",
+				Usage: "Store this title verbatim instead of the generated one",
+			},
 			&cli.BoolFlag{
 				Name:  "dry-run",
 				Usage: "Run validation and pre-flight only, without writing or committing the entry",
@@ -905,6 +910,7 @@ func newCmd() *cli.Command {
 				SkipPreflight:     cmd.Bool("skip-preflight"),
 				PreflightVerified: cmd.Bool("preflight-verified"),
 				Summary:           strings.TrimSpace(cmd.String("summary")),
+				Title:             strings.TrimSpace(cmd.String("title")),
 				DryRun:            cmd.Bool("dry-run"),
 				PreflightModel:    cmd.String("preflight-model"),
 				OnNewEntry: func(id, summary string) {
@@ -1141,16 +1147,16 @@ func lintCmd() *cli.Command {
 func summarizeCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "summarize",
-		Usage:     "Generate or regenerate entry summaries",
+		Usage:     "Generate or regenerate entry summaries and titles",
 		ArgsUsage: "[id...]",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
 				Name:  "all",
-				Usage: "Fill summaries for every entry that has none (in topological order)",
+				Usage: "Fill what is missing on every entry (in topological order): summary and title, or the title alone beside a stored summary",
 			},
 			&cli.BoolFlag{
 				Name:  "force",
-				Usage: "With --all, regenerate every entry rather than only those missing a summary",
+				Usage: "With --all, regenerate summary and title of every entry rather than only what is missing",
 			},
 			&cli.StringFlag{
 				Name:  "provider",
@@ -1172,6 +1178,10 @@ func summarizeCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:  "text",
 				Usage: "Write the supplied text as the summary, bypassing the LLM. Use '-' to read from stdin. Single entry only.",
+			},
+			&cli.StringFlag{
+				Name:  "title",
+				Usage: "Write the supplied text as the title, bypassing the LLM. Single entry only; combinable with --text.",
 			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
@@ -1200,52 +1210,77 @@ func summarizeCmd() *cli.Command {
 				}
 				explicitText = &value
 			}
+			var explicitTitle *string
+			if cmd.IsSet("title") {
+				if cmd.Bool("all") {
+					return fmt.Errorf("--title cannot be combined with --all (single entry only)")
+				}
+				if len(ids) != 1 {
+					return fmt.Errorf("--title requires exactly one entry ID (got %d)", len(ids))
+				}
+				value := cmd.String("title")
+				explicitTitle = &value
+			}
 
 			sumCmd := &command.SummarizeCmd{
-				EntryIDs:     ids,
-				Force:        cmd.Bool("force"),
-				Model:        cmd.String("model"),
-				Concurrency:  int(cmd.Int("concurrency")),
-				ExplicitText: explicitText,
+				EntryIDs:      ids,
+				Force:         cmd.Bool("force"),
+				Model:         cmd.String("model"),
+				Concurrency:   int(cmd.Int("concurrency")),
+				ExplicitText:  explicitText,
+				ExplicitTitle: explicitTitle,
 				OnSummarized: func(id, summary string) {
 					fmt.Fprintf(cmd.ErrWriter, "  summarized %s\n", id)
 				},
+				OnTitled: func(id, title string) {
+					fmt.Fprintf(cmd.ErrWriter, "  titled %s\n", id)
+				},
 				OnSkipped: func(id string) {
-					fmt.Fprintf(cmd.ErrWriter, "  skipped %s (already has a summary)\n", id)
+					fmt.Fprintf(cmd.ErrWriter, "  skipped %s (already has a summary and a title)\n", id)
 				},
 			}
 
-			dir, err := resolveGraphDir(cmd)
+			handler, err := summarizeHandler(cmd)
 			if err != nil {
 				return err
 			}
-			runner, err := newRunner(cmd, "timeout")
-			if err != nil {
-				return err
-			}
-			cfg, err := loadConfig()
-			if err != nil {
-				return err
-			}
-			reg, _, err := defaultRepos()
-			if err != nil {
-				return err
-			}
-			handler := handlers.New(handlers.Options{
-				Stderr:   cmd.ErrWriter,
-				GraphDir: dir,
-				Reader: finders.New(finders.Options{
-					PreflightRunner: runner,
-					Config:          cfg,
-					Repos:           reg,
-				}),
-				LLMRunner: runner,
-				Committer: graphGit(dir),
-				Language:  configLanguage(cfg),
-			})
 			return handler.Summarize(ctx, sumCmd)
 		}),
 	}
+}
+
+// summarizeHandler wires the handler summary generation runs on: the graph,
+// the configured runner bounded by the command's --timeout, and the graph's
+// committer.
+func summarizeHandler(cmd *cli.Command) (*handlers.Handler, error) {
+	dir, err := resolveGraphDir(cmd)
+	if err != nil {
+		return nil, err
+	}
+	runner, err := newRunner(cmd, "timeout")
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	reg, _, err := defaultRepos()
+	if err != nil {
+		return nil, err
+	}
+	return handlers.New(handlers.Options{
+		Stderr:   cmd.ErrWriter,
+		GraphDir: dir,
+		Reader: finders.New(finders.Options{
+			PreflightRunner: runner,
+			Config:          cfg,
+			Repos:           reg,
+		}),
+		LLMRunner: runner,
+		Committer: graphGit(dir),
+		Language:  configLanguage(cfg),
+	}), nil
 }
 
 // resolveGraphDir determines the graph directory from the --graph-dir flag

@@ -311,6 +311,7 @@ type Entry struct {
 	Involvement []Involvement
 	Preflight   string    // PreflightSkipped or PreflightDryRunVerified; empty when a checker validated this entry
 	Attachments []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
+	Title       string    // short headline naming the entry's subject, generated with the summary
 	Summary     string    // LLM-generated summary: this entry + direct relationships
 	Warnings    []Warning // validation issues found during graph construction
 	// Embedded marks a base entry compiled into the sdd binary (base
@@ -441,6 +442,32 @@ func (e *Entry) FirstSummarySentence() string {
 	return FirstSentence(src)
 }
 
+// ListingTitle names the entry on a one-line listing: its title, or the
+// first summary sentence for an entry that has none yet.
+func (e *Entry) ListingTitle() string {
+	if e.Title != "" {
+		return e.Title
+	}
+	return e.FirstSummarySentence()
+}
+
+// TitleBackfill counts what filling the missing titles of entries costs:
+// entries lacking a summary get summary and title from one call, entries
+// holding a summary get a title-only call. Embedded entries have no file to
+// write and are not counted.
+func TitleBackfill(entries []*Entry) (withSummary, titleOnly int) {
+	for _, e := range entries {
+		switch {
+		case e.Embedded || e.Title != "":
+		case e.Summary == "":
+			withSummary++
+		default:
+			titleOnly++
+		}
+	}
+	return withSummary, titleOnly
+}
+
 // FirstSentence returns the leading sentence of text. A sentence ends at the
 // first ". " or line break, whichever comes first.
 func FirstSentence(text string) string {
@@ -517,6 +544,7 @@ type frontmatter struct {
 	Framing      yaml.Node         `yaml:"framing,omitempty"`
 	ServeBudget  int               `yaml:"serveBudget,omitempty"`
 	Preflight    string            `yaml:"preflight,omitempty"`
+	Title        string            `yaml:"title,omitempty"`
 	Summary      string            `yaml:"summary,omitempty"`
 }
 
@@ -604,6 +632,7 @@ func ParseEntry(filename, content string) (*Entry, error) {
 		FocusActors:  fm.FocusActors,
 		FocusWhen:    fm.FocusWhen,
 		Preflight:    fm.Preflight,
+		Title:        fm.Title,
 		Summary:      fm.Summary,
 		Content:      strings.TrimSpace(body),
 		Time:         idParts.Time,
@@ -836,6 +865,7 @@ func FormatFrontmatter(e *Entry) string {
 		FocusActors:  e.FocusActors,
 		FocusWhen:    e.FocusWhen,
 		Preflight:    e.Preflight,
+		Title:        e.Title,
 		Summary:      e.Summary,
 	}
 

@@ -11,6 +11,8 @@ import (
 const (
 	PreflightSchemaName    = "preflight_findings"
 	WritingGuideSchemaName = "writing_guide_findings"
+	SummarySchemaName      = "entry_summary"
+	TitleSchemaName        = "entry_title"
 )
 
 // preflightResponse is both the parse target of a pre-flight response and the
@@ -39,12 +41,29 @@ type writingGuideFinding struct {
 	Severity  string `json:"severity" jsonschema:"enum=substantive,enum=minor"`
 }
 
+// summaryResponse is the paired title-and-summary answer.
+type summaryResponse struct {
+	Title   string `json:"title" jsonschema:"description=the entry's subject in a few plain words"`
+	Summary string `json:"summary" jsonschema:"description=at most three sentences, the first stating what the entry observes, commits to or did"`
+}
+
+// titleResponse is the title-only answer for an entry that keeps its summary.
+type titleResponse struct {
+	Title string `json:"title" jsonschema:"description=the entry's subject in a few plain words"`
+}
+
 // PreflightSchema is the response shape a pre-flight checker is constrained to
 // where the provider supports structured output.
 func PreflightSchema() map[string]any { return structuredSchema(&preflightResponse{}) }
 
 // WritingGuideSchema is the writing guide's equivalent.
 func WritingGuideSchema() map[string]any { return structuredSchema(&writingGuideResponse{}) }
+
+// SummarySchema constrains the paired title-and-summary answer.
+func SummarySchema() map[string]any { return structuredSchema(&summaryResponse{}) }
+
+// TitleSchema constrains the title-only answer.
+func TitleSchema() map[string]any { return structuredSchema(&titleResponse{}) }
 
 // structuredSchema reflects v into a JSON Schema a provider accepts in strict
 // mode: every object closed, every field required, nothing referenced out of

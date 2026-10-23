@@ -23,6 +23,7 @@ func TestNewActorRecordsTheActorKind(t *testing.T) {
 		"--canonical", "Claude", "--actor-kind", "machine",
 		"--confidence", "high", "--skip-preflight",
 		"--summary", "An assistant participating in the project.",
+		"--title", "test title",
 		"Claude is an assistant working on this project; the decision behind its proposals belongs to a human participant.",
 	)
 

@@ -378,7 +378,7 @@ func newTestServerConfig(t *testing.T, findings []query.Finding, graphDir, sessi
 		LLM: pkgllm.RunnerFunc(func(_ context.Context, request pkgllm.Request) (pkgllm.Result, error) {
 			identity := pkgllm.Identity{Provider: "test", Model: "test"}
 			if request.Purpose == pkgllm.PurposeSummarize {
-				return pkgllm.Result{Text: "Test capture entry summary.", Identity: identity}, nil
+				return pkgllm.Result{Text: `{"title": "test title", "summary": "Test capture entry summary."}`, Identity: identity}, nil
 			}
 			items := make([]map[string]string, 0, len(findings))
 			for _, finding := range findings {

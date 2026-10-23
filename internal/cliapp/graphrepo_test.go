@@ -25,6 +25,7 @@ func TestGraphInItsOwnRepositoryCommitsThere(t *testing.T) {
 		"The project repository carries only the work, while signals and decisions live in a checkout beside it.",
 		"--confidence", "high", "--skip-preflight",
 		"--summary", "A graph beside the project keeps the project history free of capture commits.",
+		"--title", "test title",
 	)
 
 	if entries := graphEntries(t, graphDir); len(entries) != 1 {
@@ -54,6 +55,7 @@ func TestGraphInsideTheProjectCommitsThere(t *testing.T) {
 		"The graph living inside the project's repository keeps one history for work and captures alike.",
 		"--confidence", "high", "--skip-preflight",
 		"--summary", "An in-repo graph keeps captures beside the work.",
+		"--title", "test title",
 	)
 
 	if entries := graphEntries(t, filepath.Join(project, ".sdd", "graph")); len(entries) != 1 {

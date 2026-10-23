@@ -157,6 +157,7 @@ func (a *Application) CreateEntry(ctx context.Context, identity RequestIdentity,
 			return result, fmt.Errorf("generating summary: %w", err)
 		}
 		entry.Summary = summary.Summary
+		entry.Title = summary.Title
 		logicalPath, err := model.IDToRelPath(draft.EntryID)
 		if err != nil {
 			return result, err
