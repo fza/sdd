@@ -184,3 +184,187 @@ func TestCapture_RootEntryPassesWithoutRefsOrTopics(t *testing.T) {
 		t.Fatalf("a root entry must pass assemble without refs or topics, diagnostics=%v", serve.Diagnostics)
 	}
 }
+
+func TestCapture_ActorLandsWithItsActorKind(t *testing.T) {
+	world, session := newIdentityWorld(t, "identity-actor-kind")
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+
+	draft := actorDraft()
+	draft["actorKind"] = "human"
+	serve = session.Report(t, instance, draft)
+	proctest.RequireStep(t, serve, "playback")
+	if !strings.Contains(serve.Instructions, "actorKind: human") {
+		t.Errorf("playback should render the actor kind beside the identity fields, got %q", serve.Instructions)
+	}
+
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "that's me")
+	proctest.RequireStep(t, serve, "verifySummary")
+	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	proctest.RequireStatus(t, serve, "completed")
+	entryID, _ := serve.Produced["entryId"].(string)
+	entry := proctest.LoadEntry(t, world.GraphDir, entryID)
+	if entry.ActorKind != model.ActorKindHuman {
+		t.Errorf("the reported actor kind should persist on the written actor, got %q", entry.ActorKind)
+	}
+}
+
+func TestCapture_ActorKindOutsideTheSortsIsRefused(t *testing.T) {
+	_, session := newIdentityWorld(t, "identity-actor-kind-invalid")
+	serve := session.Start(t, "capture", nil)
+	draft := actorDraft()
+	draft["actorKind"] = "robot"
+	_, err := session.ReportErr(t, serve.Instance, draft)
+	if err == nil || !strings.Contains(err.Error(), "actorKind") {
+		t.Fatalf("an actor kind outside the sorts should be refused by name, got %v", err)
+	}
+}
+
+func TestCapture_ActorKindOnANonActorStalls(t *testing.T) {
+	_, session := newIdentityWorld(t, "identity-actor-kind-stray")
+	serve := session.Start(t, "capture", nil)
+	serve = session.Report(t, serve.Instance, map[string]any{
+		"body":        "A tactical gap carrying a stray actor kind.",
+		"entryKind":   "gap",
+		"layer":       "tactical",
+		"actorKind":   "human",
+		"confidence":  "medium",
+		"widenReport": "widened",
+	})
+	proctest.RequireStep(t, serve, "assemble")
+	if !hasDiagnostic(serve, model.ActorKindScopeRule) {
+		t.Fatalf("an actor kind on a non-actor should hold at assemble naming the scope rule, diagnostics=%v", serve.Diagnostics)
+	}
+}
+
+func TestCapture_PlaybackAdjustCorrectsTheActorKind(t *testing.T) {
+	world, session := newIdentityWorld(t, "identity-actor-kind-adjust")
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+
+	draft := actorDraft()
+	draft["actorKind"] = "human"
+	session.Report(t, instance, draft)
+	serve = session.Answer(t, instance, "playback", "adjust", map[string]any{"actorKind": "machine"}, "it's an assistant, not a person")
+	proctest.RequireStep(t, serve, "playback")
+	if !strings.Contains(serve.Instructions, "actorKind: machine") {
+		t.Errorf("playback after an adjust should render the corrected actor kind, got %q", serve.Instructions)
+	}
+
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "yes")
+	proctest.RequireStep(t, serve, "verifySummary")
+	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	proctest.RequireStatus(t, serve, "completed")
+	entryID, _ := serve.Produced["entryId"].(string)
+	if entry := proctest.LoadEntry(t, world.GraphDir, entryID); entry.ActorKind != model.ActorKindMachine {
+		t.Errorf("the adjusted actor kind should persist, got %q", entry.ActorKind)
+	}
+}
+
+const classifiedActorID = "20260601-110000-s-prc-cls"
+
+// startReclassifyingCapture drafts a supersede of an actor declared as a
+// machine that declares it human, confirms it, and returns at the hold the
+// chain stability rule raises before write.
+func startReclassifyingCapture(t *testing.T, connID string) (*proctest.Session, string) {
+	t.Helper()
+	world := proctest.NewWorld(t, proctest.WithEntries(append(captureFixtureEntries(),
+		&model.Entry{
+			ID: identityActorID, Type: model.TypeSignal, Kind: model.KindActor, Layer: model.LayerProcess, Canonical: "Christopher",
+			Summary: "Christopher, the session's participant.", Content: "Christopher, the session's participant.",
+		},
+		&model.Entry{
+			ID: classifiedActorID, Type: model.TypeSignal, Kind: model.KindActor, Layer: model.LayerProcess,
+			Canonical: "Helper", ActorKind: model.ActorKindMachine,
+			Summary: "Helper, an assistant declared as a machine.",
+			Content: "Helper, an assistant declared as a machine.",
+		})...))
+	session := world.Open(t, connID)
+	session.LogRead(t, "show", []string{captureRefID, classifiedActorID}, nil)
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+
+	serve = session.Report(t, instance, map[string]any{
+		"body":        "Helper is the coding assistant that drafts changes for review.",
+		"entryKind":   "actor",
+		"layer":       "process",
+		"canonical":   "Helper",
+		"actorKind":   "human",
+		"supersedes":  []any{classifiedActorID},
+		"confidence":  "high",
+		"widenReport": "read the existing Helper actor before superseding it",
+	})
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "go")
+	proctest.RequireStep(t, serve, "reviseOrOverride")
+	if !strings.Contains(serve.Instructions, "actor_kind") || !strings.Contains(serve.Instructions, "contradicts") {
+		t.Fatalf("the hold should name the actor kind contradicting its chain, got %q", serve.Instructions)
+	}
+	return session, instance
+}
+
+// TestCapture_ActorKindReclassificationHeldAtPreflight pins the chain
+// stability rule on the engine path: a supersede contradicting the sort its
+// chain declares is held before write, and the revise path can correct it.
+func TestCapture_ActorKindReclassificationHeldAtPreflight(t *testing.T) {
+	session, instance := startReclassifyingCapture(t, "identity-actor-kind-reclassify")
+
+	serve := session.Answer(t, instance, "reviseOrOverride", "revise", map[string]any{"actorKind": "machine"}, "keep it a machine")
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "go")
+	proctest.RequireStep(t, serve, "verifySummary")
+}
+
+func TestCapture_ActorKindWrittenAfterPreflightReruns(t *testing.T) {
+	session, instance := startReclassifyingCapture(t, "identity-actor-kind-stale-preflight")
+
+	session.Report(t, instance, map[string]any{"actorKind": "human"})
+	serve := session.Answer(t, instance, "reviseOrOverride", "override", nil, "write it")
+	proctest.RequireStep(t, serve, "reviseOrOverride")
+}
+
+func TestReportSchema_AdvertisesActorKindSorts(t *testing.T) {
+	_, session := newIdentityWorld(t, "identity-actor-kind-schema")
+	serve := session.Start(t, "capture", nil)
+	props, _ := serve.ReportSchema["properties"].(map[string]any)
+	field, _ := props["actorKind"].(map[string]any)
+	if field == nil {
+		t.Fatalf("assemble should advertise actorKind, got %v", props)
+	}
+	enum, _ := nullableBranch(t, field, "string")["enum"].([]any)
+	values := model.ActorKindValues()
+	if len(enum) != len(values) {
+		t.Fatalf("actorKind should advertise exactly the actor sorts, got %v", enum)
+	}
+	for i, v := range values {
+		if enum[i] != string(v) {
+			t.Errorf("actorKind should advertise the actor sorts in canonical order, got %v", enum)
+		}
+	}
+}
+
+func TestCapture_GuideReviewCorrectsTheActorKind(t *testing.T) {
+	for _, choice := range []string{"revise", "recheck"} {
+		t.Run(choice, func(t *testing.T) {
+			world, session := newIdentityWorld(t, "identity-actor-kind-guide-"+choice)
+			world.LLM.GuideFindings = []proctest.GuideFinding{{
+				Reasoning: "two identities fused", Axis: "conflation",
+				Quote: "CEO of networkteam", Repair: "split", Severity: "substantive",
+			}}
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+
+			draft := actorDraft()
+			draft["actorKind"] = "machine"
+			serve = session.Report(t, instance, draft)
+			proctest.RequireStep(t, serve, "guideReview")
+
+			world.LLM.GuideFindings = nil
+			serve = session.Answer(t, instance, "guideReview", choice, map[string]any{"actorKind": "human"}, "")
+			proctest.RequireStep(t, serve, "playback")
+			if !strings.Contains(serve.Instructions, "actorKind: human") {
+				t.Errorf("playback after a guide review should render the corrected actor kind, got %q", serve.Instructions)
+			}
+		})
+	}
+}

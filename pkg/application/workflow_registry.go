@@ -256,7 +256,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "newEntry", Doc: "Publishes the recorded entry identity from accepted capture state and immutable staged references.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
 		},
 		MutatesGraph:     true,
 		GraphIndependent: true,

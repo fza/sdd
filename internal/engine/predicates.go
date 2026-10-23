@@ -259,7 +259,7 @@ func registerBuiltinPredicates(r *Registry) {
 			Doc: "The drafted fields satisfy the construction boundary's structural rules for their kind " +
 				"(model.EntryConstruction, per the type-system contract) — so a gate never restates a " +
 				"per-kind required-field list. Graph-edge resolution stays with refsResolve.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "participants", "supersedes", "closes", "canonical", "aliases", "roleActor", "involvement", "focusActors", "focusWhen"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "participants", "supersedes", "closes", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen"},
 		},
 		Fn: func(ctx *Context) (bool, error) {
 			return len(draftStructuralFindings(ctx)) == 0, nil
@@ -696,7 +696,7 @@ func draftEntryFromStore(store *Store) (*model.Entry, []model.Finding) {
 		Type: entryType, Kind: kind, Layer: layer,
 		Content: str("body"), Confidence: str("confidence"),
 		Intent:    model.Intent(str("intent")),
-		Canonical: str("canonical"), Aliases: strs("aliases"), Actor: str("roleActor"),
+		Canonical: str("canonical"), Aliases: strs("aliases"), ActorKind: model.ActorKind(str("actorKind")), Actor: str("roleActor"),
 		Participants: strs("participants"), Closes: strs("closes"), Supersedes: strs("supersedes"),
 		FocusActors: strs("focusActors"), Attachments: strs("attachments"),
 	}
