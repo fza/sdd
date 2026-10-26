@@ -446,6 +446,31 @@ func TestMechanical_ActorWriteOnce_CrossChainReuseBlocks(t *testing.T) {
 	}
 }
 
+func TestMechanical_ActorWriteOnce_MergingChainsAllowed(t *testing.T) {
+	// Superseding the heads of two duplicate chains merges them
+	// (20261026-144315-s-tac-5y1), so neither counts as another chain.
+	first := actorEntry("Christopher", nil)
+	second := actorEntry("Christopher", nil)
+	second.ID = "20260411-120000-s-prc-dup"
+	second.Time = first.Time.AddDate(0, 0, 1)
+	graph := model.NewGraph([]*model.Entry{first, second})
+
+	proposed := &model.Entry{
+		Type:       model.TypeSignal,
+		Kind:       model.KindActor,
+		Layer:      model.LayerProcess,
+		Canonical:  "Christopher",
+		Supersedes: []string{first.ID, second.ID},
+		Content:    "one identity replacing two duplicate captures",
+	}
+
+	for _, f := range mechanicalPreflight(proposed, graph, nil, nil) {
+		if f.Category == "actor-canonical-reused" {
+			t.Errorf("merging the chains holding the canonical must be allowed, got %+v", f)
+		}
+	}
+}
+
 func TestMechanical_RoleCanonicalMismatch_Blocks(t *testing.T) {
 	actor := actorEntry("Christopher", nil)
 	graph := model.NewGraph([]*model.Entry{actor})
@@ -822,6 +847,27 @@ func TestMechanical_ProcedureWriteOnce_SupersedeSameChainAllowed(t *testing.T) {
 	for _, f := range got {
 		if f.Category == "procedure-canonical-reused" {
 			t.Errorf("supersede within the chain must not trip write-once, got %+v", f)
+		}
+	}
+}
+
+func TestMechanical_ProcedureWriteOnce_MergingChainsAllowed(t *testing.T) {
+	first := procedureEntry("20260702-120000-d-prc-rel", "release")
+	second := procedureEntry("20260703-120000-d-prc-dup", "release")
+	graph := model.NewGraph([]*model.Entry{first, second})
+
+	proposed := &model.Entry{
+		Type:       model.TypeDecision,
+		Kind:       model.KindProcedure,
+		Layer:      model.LayerProcess,
+		Canonical:  "release",
+		Supersedes: []string{first.ID, second.ID},
+		Content:    "one move replacing two chains of the same canonical",
+	}
+
+	for _, f := range mechanicalPreflight(proposed, graph, nil, nil) {
+		if f.Category == "procedure-canonical-reused" {
+			t.Errorf("merging the chains holding the canonical must be allowed, got %+v", f)
 		}
 	}
 }
