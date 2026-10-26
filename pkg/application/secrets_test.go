@@ -11,6 +11,7 @@ import (
 	"github.com/networkteam/sdd/internal/secrets"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/llm"
+	localadapter "github.com/networkteam/sdd/pkg/local"
 	"github.com/networkteam/sdd/test"
 )
 
@@ -110,5 +111,32 @@ func TestEngineRefusesAGeneratedSummaryHoldingACredential(t *testing.T) {
 	files, globErr := filepath.Glob(filepath.Join(f.graphDir, "*", "*", "*.md"))
 	if globErr != nil || len(files) != 0 {
 		t.Errorf("a refused capture should publish nothing: %v %v", files, globErr)
+	}
+}
+
+// A credential-shaped search phrase never reaches the embedding provider: it is
+// searched literally, and the response says so.
+func TestSearchKeepsACredentialPhraseOffTheEmbeddingProvider(t *testing.T) {
+	embeddings := &countingEmbeddings{}
+	runtime := indexRuntime(t, "base", localadapter.NewMemorySearchIndexStore(), embeddings)
+	app, err := sdd.NewApplication(sdd.ApplicationOptions{Access: &multiAccessResolver{base: runtime}, Sessions: noSessionStore{}, StagedBlobs: noBlobStore{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := fixtureCredential(t, "github-pat")
+
+	result, err := app.Search(t.Context(), sdd.RequestIdentity{Subject: "reader"}, "base", sdd.SearchRequest{SyncMode: sdd.SearchSyncNone, Phrase: credential})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if embeddings.queryEmbeds != 0 {
+		t.Error("the phrase must not be embedded")
+	}
+	if !strings.Contains(result.Notice, "searched for it literally") || !strings.Contains(result.Results, "searched for it literally") {
+		t.Errorf("the response should say the phrase was searched literally: %+v", result)
+	}
+	if strings.Contains(result.Notice, credential) {
+		t.Error("the notice must never repeat the credential")
 	}
 }

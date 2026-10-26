@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/chunking"
@@ -200,5 +201,38 @@ func TestCLIIndexPublishesBeforeProgressAndResumes(t *testing.T) {
 	}
 	if planned != 2 || published != 3 {
 		t.Fatalf("resumed planned %d published %d", planned, published)
+	}
+}
+
+// A chunk holding a credential never reaches the embedding provider; the
+// entry's other chunks are indexed and published as usual.
+func TestReconcileKeepsCredentialChunksOutOfTheProvider(t *testing.T) {
+	credential := "Setup: export SLACK_BOT_TOKEN=xoxb-123456789012-123456789012-AbCdEfGhIjKlMnOpQrStUvWx"
+	ns := types.IndexNamespace{Project: "test", Fingerprint: "test", Metric: "cosine"}
+	entries := []*model.Entry{{ID: "leaky", Summary: "A clean summary.", Content: "## Clean\nNothing here.\n\n## Leak\n" + credential}}
+	store := streamStore{MemorySearchIndexStore: local.NewMemorySearchIndexStore(), rows: map[string][]types.IndexedChunk{}}
+	var sent []string
+	inner := embed.EmbedderFunc{Space: "test", Run: func(_ context.Context, req embed.Request) (embed.Result, error) {
+		sent = append(sent, req.Texts...)
+		out := embed.Result{}
+		for range req.Texts {
+			out.Vectors = append(out.Vectors, []float32{1, 2})
+		}
+		return out, nil
+	}}
+	h := handlers.SearchIndexHandler{Graph: model.NewGraph(entries), Namespace: ns, Store: store, Embedder: handlers.IndexEmbedder{Embedder: inner, BatchSize: 8}}
+
+	err := h.Reconcile(t.Context(), command.ReconcileSearchIndexCmd{})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range sent {
+		if strings.Contains(text, "xoxb-") {
+			t.Fatal("a chunk holding a credential reached the embedding provider")
+		}
+	}
+	if len(sent) == 0 || len(store.rows["leaky"]) == 0 {
+		t.Errorf("the entry's clean chunks should still be indexed and published: sent %d, rows %d", len(sent), len(store.rows["leaky"]))
 	}
 }

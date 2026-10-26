@@ -12,6 +12,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/llm/claude"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -59,7 +60,8 @@ func New(cfg model.LLMConfig) (llm.Runner, error) {
 		}
 	}
 
-	return boundedPerPurpose(runner, timeout, extractTimeout), nil
+	// Every prompt crosses this boundary, whatever produced it.
+	return secrets.GuardRunner(boundedPerPurpose(runner, timeout, extractTimeout)), nil
 }
 
 // boundedPerPurpose gives the extraction purposes their own deadline. A fresh
