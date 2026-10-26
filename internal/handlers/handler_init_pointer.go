@@ -46,8 +46,10 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 		return fmt.Errorf("reading %s: %w", configPath, err)
 	}
 	configExisted := err == nil
+	var recorded *model.PerRepoConfig
 	if configExisted {
-		recorded, parseErr := model.ParseConfig(existing)
+		var parseErr error
+		recorded, parseErr = model.ParseConfig(existing)
 		if parseErr != nil {
 			return fmt.Errorf("parsing %s: %w", configPath, parseErr)
 		}
@@ -80,9 +82,15 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 			cmd.OnCreated(sddDir, meta.ResolveGraphDir(filepath.Dir(projectSDDDir), projectCfg))
 		}
 	} else {
-		updated, setErr := model.SetYAMLField(existing, "project_dir", cmd.ProjectDir)
-		if setErr != nil {
-			return fmt.Errorf("updating %s: %w", configPath, setErr)
+		// SetYAMLField re-serializes the file, so it runs only for a value that
+		// changes: a repeat init leaves the file byte-identical.
+		updated := existing
+		var setErr error
+		if recorded.ProjectDir != cmd.ProjectDir {
+			updated, setErr = model.SetYAMLField(updated, "project_dir", cmd.ProjectDir)
+			if setErr != nil {
+				return fmt.Errorf("updating %s: %w", configPath, setErr)
+			}
 		}
 		if persistScope {
 			updated, setErr = model.SetYAMLField(updated, "skill_scope", string(effectiveScope))

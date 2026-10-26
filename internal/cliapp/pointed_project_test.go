@@ -330,9 +330,13 @@ func TestInitPointsTheWorkRepositoryAtTheProject(t *testing.T) {
 		t.Errorf("init should leave the work repository clean:\n%s", status)
 	}
 
+	workHead := gitIn(t, work, "rev-parse", "HEAD")
 	runApp(t, work, "init")
 	if subject := headSubject(t, project); subject != "seed" {
 		t.Errorf("a repeat init should not commit in the project, HEAD is %q", subject)
+	}
+	if gitIn(t, work, "rev-parse", "HEAD") != workHead {
+		t.Error("a repeat init should leave the work repository's config untouched and commit nothing")
 	}
 }
 
