@@ -207,7 +207,7 @@ func TestCLIIndexPublishesBeforeProgressAndResumes(t *testing.T) {
 // A chunk holding a credential never reaches the embedding provider; the
 // entry's other chunks are indexed and published as usual.
 func TestReconcileKeepsCredentialChunksOutOfTheProvider(t *testing.T) {
-	credential := "Setup: export SLACK_BOT_TOKEN=xoxb-123456789012-123456789012-AbCdEfGhIjKlMnOpQrStUvWx"
+	credential := "Setup: " + fixtureCredential(t, "slack-bot-token")
 	ns := types.IndexNamespace{Project: "test", Fingerprint: "test", Metric: "cosine"}
 	entries := []*model.Entry{{ID: "leaky", Summary: "A clean summary.", Content: "## Clean\nNothing here.\n\n## Leak\n" + credential}}
 	store := streamStore{MemorySearchIndexStore: local.NewMemorySearchIndexStore(), rows: map[string][]types.IndexedChunk{}}
