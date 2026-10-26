@@ -14,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 )
 
 // Summarize executes a SummarizeCmd: loads the graph, determines which
@@ -144,6 +145,13 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 			if err != nil {
 				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
 			}
+			err = secrets.CheckText("title", result.Title)
+			if err == nil && !titleOnly {
+				err = secrets.CheckText("summary", result.Summary)
+			}
+			if err != nil {
+				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
+			}
 
 			// Apply the answer under write lock, then format and write file
 			// under read lock so FormatFrontmatter sees a consistent entry.
@@ -218,6 +226,10 @@ func (h *Handler) summarizeExplicit(graph *model.Graph, idArg string, cmd *comma
 		if summary == "" {
 			return fmt.Errorf("--text value is empty after trimming whitespace")
 		}
+		err := secrets.CheckText("summary", summary)
+		if err != nil {
+			return err
+		}
 		entry.Summary = summary
 	}
 	if cmd.ExplicitTitle != nil {
@@ -227,6 +239,10 @@ func (h *Handler) summarizeExplicit(graph *model.Graph, idArg string, cmd *comma
 		}
 		if strings.ContainsAny(title, "\r\n") {
 			return fmt.Errorf("--title value spans more than one line")
+		}
+		err := secrets.CheckText("title", title)
+		if err != nil {
+			return err
 		}
 		entry.Title = model.CapitalizeTitle(title)
 	}

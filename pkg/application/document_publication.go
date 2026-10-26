@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 )
 
 // DocumentWrite is one entry-less graph write under the session's recorded
@@ -145,6 +146,14 @@ type SummaryReplacement struct {
 // document that moved meanwhile is a conflict carrying the current summary, so
 // the next attempt is a deliberate one (d-tac-wgw).
 func (a *Application) ReplaceSummary(ctx context.Context, identity RequestIdentity, project ProjectID, binding SessionBinding, replacement SummaryReplacement) (DocumentPublication, error) {
+	err := secrets.CheckText("summary", replacement.Summary)
+	if err != nil {
+		return DocumentPublication{}, err
+	}
+	err = secrets.CheckText("title", replacement.Title)
+	if err != nil {
+		return DocumentPublication{}, err
+	}
 	logicalPath, err := model.IDToRelPath(replacement.EntryID)
 	if err != nil {
 		return DocumentPublication{}, err
@@ -212,6 +221,10 @@ type WIPMarkerWrite struct {
 // marker's identity was allocated before the intent and its path is unique to
 // the run, so a retry that finds the marker present publishes nothing.
 func (a *Application) StartWIP(ctx context.Context, identity RequestIdentity, project ProjectID, binding SessionBinding, write WIPMarkerWrite) (DocumentPublication, error) {
+	err := secrets.CheckText("WIP description", write.Description)
+	if err != nil {
+		return DocumentPublication{}, err
+	}
 	principal, runtime, err := a.resolve(ctx, identity, project, AccessWrite)
 	if err != nil {
 		return DocumentPublication{}, err

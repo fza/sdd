@@ -14,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/secrets"
 )
 
 // NewEntry executes a NewEntryCmd: validates, loads the graph, runs
@@ -109,6 +110,15 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		return fmt.Errorf("validation failed: %d issue(s)", len(findings))
 	}
 	entry = validated
+
+	// Pre-flight and summary send the entry to an LLM provider, so a
+	// credential is refused before either runs.
+	err = refuseCredentials(entry, cmd)
+	if err != nil {
+		// A credential is never kept, not even in the stdin retry copy.
+		stdinSaved = true
+		return err
+	}
 
 	// Pre-flight and summary are independent LLM calls. Run them
 	// concurrently via errgroup to save 30-60s of wall time per entry.
@@ -213,6 +223,12 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		entry.Title = generatedTitle
 	}
 
+	// The generated summary and title are new text too.
+	err = secrets.CheckEntry(entry)
+	if err != nil {
+		return err
+	}
+
 	// Write entry file.
 	relPath, err := model.IDToRelPath(id)
 	if err != nil {
@@ -271,6 +287,32 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		msg := fmt.Sprintf("sdd: %s %s %s", entry.TypeLabel(), entry.LayerLabel(), entry.ShortContent(72))
 		if err := h.committer.Commit(msg, commitPaths...); err != nil {
 			return fmt.Errorf("git commit: %w", err)
+		}
+	}
+	return nil
+}
+
+// refuseCredentials scans what the write will hold: the entry with the
+// caller's summary and title, and every attachment.
+func refuseCredentials(entry *model.Entry, cmd *command.NewEntryCmd) error {
+	probe := *entry
+	probe.Summary = cmd.Summary
+	probe.Title = cmd.Title
+	err := secrets.CheckEntry(&probe)
+	if err != nil {
+		return err
+	}
+	for _, attachment := range cmd.Attachments {
+		data := attachment.Data
+		if attachment.Source != "-" {
+			data, err = os.ReadFile(attachment.Source)
+			if err != nil {
+				return fmt.Errorf("reading attachment %s: %w", attachment.Source, err)
+			}
+		}
+		err = secrets.CheckFile(attachment.Target, data)
+		if err != nil {
+			return err
 		}
 	}
 	return nil

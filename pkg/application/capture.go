@@ -11,6 +11,7 @@ import (
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/application/types"
 )
 
@@ -158,6 +159,10 @@ func (a *Application) CreateEntry(ctx context.Context, identity RequestIdentity,
 		}
 		entry.Summary = summary.Summary
 		entry.Title = summary.Title
+		err = secrets.CheckEntry(entry)
+		if err != nil {
+			return result, err
+		}
 		logicalPath, err := model.IDToRelPath(draft.EntryID)
 		if err != nil {
 			return result, err
@@ -280,6 +285,12 @@ func (a *Application) prepareCaptureEntry(ctx context.Context, identity RequestI
 	findings = append(findings, writeFindings...)
 	if len(findings) > 0 {
 		return nil, nil, nil, captureValidationError(findings)
+	}
+	// Pre-flight and summary send the entry to an LLM provider; staged
+	// attachments were scanned when they were staged.
+	err = secrets.CheckEntry(validated)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	return validated, snapshot, attachments, nil
 }
