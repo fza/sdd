@@ -1,6 +1,7 @@
 package secrets_test
 
 import (
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"path"
@@ -151,6 +152,64 @@ func TestCheckEntryNamesThePart(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), token) {
 				t.Error("the refusal must never repeat the credential")
+			}
+		})
+	}
+}
+
+type gitleaksSample struct {
+	Path string `json:"path"`
+	Text string `json:"text"`
+}
+
+type gitleaksSamples struct {
+	Rule           string           `json:"rule"`
+	TruePositives  []gitleaksSample `json:"truePositives"`
+	FalsePositives []gitleaksSample `json:"falsePositives"`
+}
+
+func (s gitleaksSample) scan() ([]secrets.Finding, error) {
+	if s.Path != "" {
+		return secrets.ScanFile(s.Path, []byte(s.Text))
+	}
+	return secrets.Scan(s.Text)
+}
+
+// gitleaks' own samples hold the engine to gitleaks' verdicts rule by rule.
+func TestScanGitleaksSamples(t *testing.T) {
+	fixtures := test.SecretFixtures()
+	files, err := fs.ReadDir(fixtures, "gitleaks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		data, err := fs.ReadFile(fixtures, path.Join("gitleaks", file.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var samples gitleaksSamples
+		err = json.Unmarshal(data, &samples)
+		if err != nil {
+			t.Fatalf("%s: %v", file.Name(), err)
+		}
+		t.Run(samples.Rule, func(t *testing.T) {
+			for i, sample := range samples.TruePositives {
+				findings, err := sample.scan()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !slices.Contains(ruleIDs(findings), samples.Rule) {
+					t.Errorf("true positive %d should raise the rule, raised %v", i, ruleIDs(findings))
+				}
+			}
+			for i, sample := range samples.FalsePositives {
+				findings, err := sample.scan()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if slices.Contains(ruleIDs(findings), samples.Rule) {
+					t.Errorf("false positive %d should not raise the rule", i)
+				}
 			}
 		})
 	}
