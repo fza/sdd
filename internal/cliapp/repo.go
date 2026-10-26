@@ -190,16 +190,18 @@ func repoHandler(errWriter io.Writer) (*handlers.Handler, error) {
 	}
 	// SDDDir is optional: outside a repo the dependency declaration is
 	// skipped and only the global registration happens.
-	sddDir, err := resolveSDDDir()
+	sddDir, err := optionalSDDDir()
 	if err != nil {
-		sddDir = ""
+		return nil, err
 	}
 	// GraphDir backs the ref-safety scan on repo remove; resolved best-effort
 	// since add/sync run fine outside a repo (where it stays empty).
 	graphDir := ""
+	committer := git.CLI{}
 	if sddDir != "" {
 		cfg, _ := meta.ReadConfig(sddDir, localConfigOverride)
 		graphDir = meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)
+		committer = git.CLI{Dir: filepath.Dir(sddDir)}
 	}
 	return handlers.New(handlers.Options{
 		Stderr:    errWriter,
@@ -207,7 +209,7 @@ func repoHandler(errWriter io.Writer) (*handlers.Handler, error) {
 		Repos:     mgr,
 		SDDDir:    sddDir,
 		GraphDir:  graphDir,
-		Committer: git.CLI{},
+		Committer: committer,
 	}), nil
 }
 

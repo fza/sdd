@@ -146,6 +146,38 @@ type PerRepoConfig struct {
 	// dependency (clone URL, cache) is per-user and lives in the global
 	// config's repos list, never here.
 	Dependencies []string `yaml:"dependencies,omitempty"`
+	// ProjectDir points a work repository at the sdd project that holds its
+	// graph, kept in a repository of its own: the folder holding that
+	// project's .sdd/, relative to the folder holding this .sdd/ or absolute.
+	// A repository setting it carries no project settings of its own — see
+	// PointerKeys and LocalPointerKeys.
+	ProjectDir string `yaml:"project_dir,omitempty"`
+}
+
+// PointerKeys are the keys a committed config may set beside project_dir:
+// what concerns the agents working in the repository, not the graph.
+var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents"}
+
+// LocalPointerKeys are the keys a machine-local config may set beside
+// project_dir: only where this machine keeps the project's checkout.
+var LocalPointerKeys = []string{"project_dir"}
+
+// TopLevelKeys returns the top-level keys of a YAML mapping, in file order.
+// Empty input yields none.
+func TopLevelKeys(data []byte) ([]string, error) {
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err != nil {
+		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+	if len(node.Content) == 0 || node.Content[0].Kind != yaml.MappingNode {
+		return nil, nil
+	}
+	mapping := node.Content[0]
+	keys := make([]string, 0, len(mapping.Content)/2)
+	for i := 0; i < len(mapping.Content); i += 2 {
+		keys = append(keys, mapping.Content[i].Value)
+	}
+	return keys, nil
 }
 
 // SyncConfig governs background sync awareness: the auto-fetch cooldown and
@@ -447,6 +479,9 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	if len(overlay.Dependencies) > 0 {
 		out.Dependencies = overlay.Dependencies
 	}
+	if overlay.ProjectDir != "" {
+		out.ProjectDir = overlay.ProjectDir
+	}
 	return &out
 }
 
@@ -619,29 +654,6 @@ func FormatConfig(cfg PerRepoConfig) string {
 	} else {
 		languageBlock += "# language: de\n"
 	}
-	skillScopeBlock := "# Skill installation scope — where `sdd init` extracts the agent skill\n" +
-		"# bundle. `user` installs into the user-global directory (e.g.\n" +
-		"# ~/.claude/skills/); `project` installs into the repo-local\n" +
-		"# .claude/skills/ tree. Recorded on first run so subsequent runs (and\n" +
-		"# clones) reinstall to the same place without re-prompting.\n"
-	if cfg.SkillScope != "" {
-		skillScopeBlock += "skill_scope: " + string(cfg.SkillScope) + "\n"
-	} else {
-		skillScopeBlock += "# skill_scope: project\n"
-	}
-	supportedAgentsBlock := "# Agent targets `sdd init` renders skills for. Each listed agent gets its\n" +
-		"# own rendered, committed skill dir (claude → .claude/skills/, codex →\n" +
-		"# .agents/skills/). Chosen via multi-select on first run; every contributor\n" +
-		"# on the repo renders the same set.\n"
-	if len(cfg.SupportedAgents) > 0 {
-		names := make([]string, len(cfg.SupportedAgents))
-		for i, a := range cfg.SupportedAgents {
-			names[i] = string(a)
-		}
-		supportedAgentsBlock += "supported_agents: [" + strings.Join(names, ", ") + "]\n"
-	} else {
-		supportedAgentsBlock += "# supported_agents: [claude]\n"
-	}
 	return "# SDD configuration\n" +
 		"# See https://github.com/networkteam/sdd for documentation.\n" +
 		"\n" +
@@ -654,9 +666,9 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"\n" +
 		languageBlock +
 		"\n" +
-		skillScopeBlock +
+		skillScopeBlock(cfg) +
 		"\n" +
-		supportedAgentsBlock +
+		supportedAgentsBlock(cfg) +
 		"\n" +
 		"# LLM provider settings (defaults shown — override here or in config.local.yaml).\n" +
 		"# llm:\n" +
@@ -723,4 +735,48 @@ func parsePositiveDuration(raw, fallback string) time.Duration {
 	}
 	d, _ := time.ParseDuration(fallback)
 	return d
+}
+
+// FormatPointerConfig returns the config of a work repository whose graph
+// lives in the sdd project at cfg.ProjectDir: the pointer and the agent keys,
+// nothing about the graph.
+func FormatPointerConfig(cfg PerRepoConfig) string {
+	return "# SDD configuration\n" +
+		"# See https://github.com/networkteam/sdd for documentation.\n" +
+		"\n" +
+		"# The sdd project holding this repository's graph: the folder holding its\n" +
+		"# .sdd/, relative to this repository's root. Every project setting lives\n" +
+		"# there; this file carries only project_dir, skill_scope and supported_agents.\n" +
+		"project_dir: " + cfg.ProjectDir + "\n" +
+		"\n" +
+		skillScopeBlock(cfg) +
+		"\n" +
+		supportedAgentsBlock(cfg)
+}
+
+func skillScopeBlock(cfg PerRepoConfig) string {
+	block := "# Skill installation scope — where `sdd init` extracts the agent skill\n" +
+		"# bundle. `user` installs into the user-global directory (e.g.\n" +
+		"# ~/.claude/skills/); `project` installs into the repo-local\n" +
+		"# .claude/skills/ tree. Recorded on first run so subsequent runs (and\n" +
+		"# clones) reinstall to the same place without re-prompting.\n"
+	if cfg.SkillScope != "" {
+		return block + "skill_scope: " + string(cfg.SkillScope) + "\n"
+	}
+	return block + "# skill_scope: project\n"
+}
+
+func supportedAgentsBlock(cfg PerRepoConfig) string {
+	block := "# Agent targets `sdd init` renders skills for. Each listed agent gets its\n" +
+		"# own rendered, committed skill dir (claude → .claude/skills/, codex →\n" +
+		"# .agents/skills/). Chosen via multi-select on first run; every contributor\n" +
+		"# on the repo renders the same set.\n"
+	if len(cfg.SupportedAgents) == 0 {
+		return block + "# supported_agents: [claude]\n"
+	}
+	names := make([]string, len(cfg.SupportedAgents))
+	for i, a := range cfg.SupportedAgents {
+		names[i] = string(a)
+	}
+	return block + "supported_agents: [" + strings.Join(names, ", ") + "]\n"
 }

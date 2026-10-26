@@ -361,26 +361,31 @@ Later layers win: a provider set project-wide overrides your global default, and
 
 ### A graph in its own repository
 
-`graph_dir` may be an absolute path, which puts the graph in a checkout beside the project instead of inside it. The project's history then carries only the work, and every `sdd: …` capture commit lands in the graph's own repository.
+The graph can live in an sdd project of its own, beside the repository where the work happens. The work repository's history then carries only the work, and every `sdd: …` commit lands in the project's repository. Set the project up first, then point the work repository at it:
 
-```yaml
-# project-repo/.sdd/config.yaml
-graph_dir: /Users/you/src/project-sdd/graph
+```bash
+cd project-sdd && sdd init
+cd ../project && sdd init --project-dir ../project-sdd
 ```
 
 ```
-project-repo/          # only work commits
-  .sdd/config.yaml
-  .claude/skills/      # sdd init commits these here
+project/                     # only work commits
+  .sdd/config.yaml           # project_dir, skill_scope, supported_agents
+  .sdd/config.local.yaml     # optional: project_dir for this machine
+  .claude/skills/            # sdd init installs and commits these here
+  .mcp.json                  # sdd serve
   src/
 
-project-sdd/           # only sdd: capture commits
-  graph/2026/09/...
+project-sdd/                 # only sdd: commits
+  .sdd/config.yaml           # graph_dir, repo_id, default_branch, language, dependencies, ...
+  .sdd/config.local.yaml     # participant and other personal settings for this project
+  .sdd/meta.json
+  .sdd/graph/2026/09/...
 ```
 
-Git operations follow the paths they act on: entry, summary and WIP-marker commits run in the graph's repository, while `sdd init` commits skills and metadata in the project, and `sdd wip start` branches the project. `sdd sync --pull` syncs the graph's repository, and the background sync check reads its upstream. Grooming keeps reading the project's own history for closure evidence, since it runs where the work is.
+`project_dir` names the folder holding the project's `.sdd/`, relative to the work repository's root or absolute. The work repository's files carry nothing else: every project setting, the graph, `meta.json`, sessions and stats live in the project, so a work repository that sets any other key is refused, naming the file and key. A `graph_dir` leading into another repository is refused the same way, since commits, the schema and engine branches all belong to the repository holding the project's `.sdd/`.
 
-Two limits are worth knowing. `sdd serve` refuses to start against a graph in another repository: the engine's write path acquires a worktree of the served checkout and commits the graph inside it, so it would write the entry to disk and commit it nowhere. And `repo_id` is derived from the project's remote, so a graph others reference across repos is still announced under the project's identity rather than the graph repository's.
+Every command run in the work repository acts on the project: captures commit there, `sdd serve` serves it and works on its branches (a session binds a branch checked out in the project's repository), and `sdd migrate` and the write gate read its `meta.json`. The work itself stays where it is: `sdd init` installs skills and registers the MCP server in the work repository, `sdd wip start` branches it, and closure evidence comes from its history.
 
 Inspect and edit config with `sdd config`:
 
