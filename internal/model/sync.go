@@ -47,6 +47,16 @@ const (
 	SyncStateSkipped SyncState = "skipped"
 )
 
+// Fetched reports whether the sync check reached the upstream, so the
+// remote-tracking ref an automatic pull merges is fresh.
+func (s SyncState) Fetched() bool {
+	switch s {
+	case SyncStateUpToDate, SyncStateFastForward, SyncStateCleanRebase, SyncStateConflictPredicted, SyncStateLocalAhead:
+		return true
+	}
+	return false
+}
+
 // SyncStatus is the structured result of a background sync check. Callers
 // emit the appropriate slog line based on State; the skill pattern-matches
 // on the rendered message.

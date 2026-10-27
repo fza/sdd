@@ -332,6 +332,7 @@ func (a *Application) RefreshWorkflow(ctx context.Context, identity RequestIdent
 	if end := stored.Metadata.Ended; end != nil {
 		return nil, endedSessionError(stored.Metadata, *end)
 	}
+	runtime.syncGraph(ctx, stored.Metadata.Branch)
 	return a.replayWorkflow(ctx, identity, runtime, stored)
 }
 

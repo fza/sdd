@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // syncedProject builds a single-repository project whose branch tracks a
@@ -329,4 +331,35 @@ func TestPullHeldForAMergeChangingCode(t *testing.T) {
 	if !strings.Contains(out, "changes main.go, outside the graph") {
 		t.Errorf("the held pull should name the path the merge changed, got %q", out)
 	}
+}
+
+// The server pulls upstream graph commits when a session acts, not only when
+// the server starts.
+func TestServedSessionPullsUpstreamGraphCommits(t *testing.T) {
+	root := syncedProject(t, "auto")
+	branch := strings.TrimSpace(gitIn(t, root, "rev-parse", "--abbrev-ref", "HEAD"))
+	writeFile(t, filepath.Join(root, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/synced\nlanguage: en\ndefault_branch: "+branch+"\n")
+	gitIn(t, root, "commit", "-q", "-am", "sdd: name the default branch")
+	gitIn(t, root, "push", "-q")
+	t.Chdir(root)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, ".sdd", "tmp", "xdg-config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, ".sdd", "tmp", "xdg-cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, ".sdd", "tmp", "xdg-state"))
+	fixture := &appFixture{root: root}
+
+	fixture.serve(t, func(client *mcp.ClientSession) {
+		door, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_session", Arguments: map[string]any{}})
+		if err != nil || door.IsError {
+			t.Fatalf("start_session: %v %+v", err, door)
+		}
+		handle, _ := door.StructuredContent.(map[string]any)["session"].(string)
+		theirs := upstreamCommit(t, root, "sdd: capture elsewhere", ".sdd/graph/elsewhere.md")
+		info, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "info", Arguments: map[string]any{"session": handle}})
+		if err != nil || info.IsError {
+			t.Fatalf("info: %v %+v", err, info)
+		}
+		if localHead(t, root) != theirs {
+			t.Error("a session call should bring upstream graph commits into the branch")
+		}
+	})
 }
