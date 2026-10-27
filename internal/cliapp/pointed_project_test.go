@@ -98,6 +98,39 @@ func TestPointedCaptureCommitsInTheProject(t *testing.T) {
 	}
 }
 
+// The pointer runs one way: the project knows nothing of the work repository
+// naming it, so someone working in the project alone needs no work repository
+// on disk.
+func TestProjectWorksWithoutItsWorkRepository(t *testing.T) {
+	work, project := pointedRepos(t)
+	captureSignal(t, work)
+	err := os.RemoveAll(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	captureSignal(t, project)
+
+	entries := graphEntries(t, filepath.Join(project, ".sdd", "graph"))
+	if len(entries) != 2 {
+		t.Fatalf("a capture in the project should land in its graph beside the earlier one, got %v", entries)
+	}
+	if subject := headSubject(t, project); !strings.HasPrefix(subject, "sdd: ") {
+		t.Errorf("the project repository should carry the capture commit, HEAD is %q", subject)
+	}
+	parts := strings.Split(filepath.ToSlash(entries[0]), "/")
+	entryID := parts[0] + parts[1] + strings.TrimSuffix(parts[2], ".md")
+	for _, args := range [][]string{{"show", entryID}, {"view", "--layout", "layer(tac):as-list"}} {
+		output, err := runAppErr(t, project, args...)
+		if err != nil {
+			t.Fatalf("sdd %s should run in the project alone: %v\n%s", args[0], err, output)
+		}
+		if !strings.Contains(output, entryID) {
+			t.Errorf("sdd %s should read the project's graph, got:\n%s", args[0], output)
+		}
+	}
+}
+
 // The project's meta.json decides whether this binary may write; a pointing
 // repository has none to consult.
 func TestPointedWriteGateReadsTheProjectSchema(t *testing.T) {
