@@ -43,13 +43,13 @@ type writingGuideFinding struct {
 
 // summaryResponse is the paired title-and-summary answer.
 type summaryResponse struct {
-	Title   string `json:"title" jsonschema:"description=the entry's subject in a few plain words"`
+	Title   string `json:"title" jsonschema:"description=the entry's title written to the title rule the instructions state"`
 	Summary string `json:"summary" jsonschema:"description=at most three sentences, the first stating what the entry observes, commits to or did"`
 }
 
 // titleResponse is the title-only answer for an entry that keeps its summary.
 type titleResponse struct {
-	Title string `json:"title" jsonschema:"description=the entry's subject in a few plain words"`
+	Title string `json:"title" jsonschema:"description=the entry's title written to the title rule the instructions state"`
 }
 
 // PreflightSchema is the response shape a pre-flight checker is constrained to
