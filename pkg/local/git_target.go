@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/networkteam/sdd/internal/model"
 	app "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -29,7 +30,10 @@ type GitWorktreeAcquirer struct {
 	serverCheckout string
 	factory        TargetRuntimeFactory
 	readFactory    func(context.Context, string, app.SnapshotReadQuery) (*app.AcquiredSnapshot, error)
-	runGit         func(context.Context, ...string) ([]byte, error)
+	// resolveConfig reads a checkout's effective config; nil leaves SyncGraph
+	// without effect.
+	resolveConfig func(checkout string) (*model.PerRepoConfig, error)
+	runGit        func(context.Context, ...string) ([]byte, error)
 }
 
 func NewGitWorktreeAcquirer(options GitWorktreeAcquirerOptions) (*GitWorktreeAcquirer, error) {

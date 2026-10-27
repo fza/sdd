@@ -42,6 +42,12 @@ func (h *Handler) PullGraph(ctx context.Context, cmd *command.PullGraphCmd) erro
 	return nil
 }
 
+// PublishGraph pushes the graph commits ahead of upstream under automatic
+// sync, retrying a push the upstream rejected once after merging.
+func (h *Handler) PublishGraph(ctx context.Context) error {
+	return h.publishGraph(ctx)
+}
+
 // AutoPullGraph runs PullGraph reporting through the context's logger, the
 // way every automatic sync step reports.
 func (h *Handler) AutoPullGraph(ctx context.Context) error {

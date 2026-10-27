@@ -94,20 +94,9 @@ func runSyncCheck(ctx context.Context) {
 		return
 	}
 	emitSyncStatus(logger, status)
-	if model.ResolveSyncMode(cfg) == model.SyncModeAuto && fetched(status.State) {
+	if model.ResolveSyncMode(cfg) == model.SyncModeAuto && status.State.Fetched() {
 		pullGraph(ctx, graphRepo, graphDir)
 	}
-}
-
-// fetched reports whether the sync check reached the upstream, so the
-// remote-tracking ref an automatic pull merges is fresh.
-func fetched(state model.SyncState) bool {
-	switch state {
-	case model.SyncStateUpToDate, model.SyncStateFastForward, model.SyncStateCleanRebase,
-		model.SyncStateConflictPredicted, model.SyncStateLocalAhead:
-		return true
-	}
-	return false
 }
 
 // pullGraph runs the automatic pull the sync check triggers. Like the check

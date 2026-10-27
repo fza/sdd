@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/networkteam/slogutils"
+
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 )
@@ -37,12 +39,41 @@ type ProjectRuntimeOptions struct {
 	SearchIndex SearchIndexStore
 	LLM         llm.Runner
 	Finalizers  []MutationFinalizer
+	// Sync brings upstream graph commits into a branch before a session acts
+	// on it; nil leaves branches as they are.
+	Sync GraphSync
 	// ExcludeEmbeddedFromIndex mirrors the CLI's excludeEmbedded semantics for
 	// the vector index: connected-repo runtimes set it so binary-shipped base
 	// entries embed once per machine (in the base store) rather than once per
 	// connected repo. The base runtime leaves it false — its store includes
 	// embedded entries. The rule is applied identically at index and read time.
 	ExcludeEmbeddedFromIndex bool
+}
+
+// GraphSync brings upstream graph commits into the checkout of a branch under
+// automatic sync (20261027-194536-d-tac-190).
+type GraphSync interface {
+	SyncGraph(ctx context.Context, branch string) error
+}
+
+// syncGraph runs the runtime's GraphSync for branch, the base branch when
+// empty. A sync failure never blocks the session it precedes; it is reported.
+func (r *ProjectRuntime) syncGraph(ctx context.Context, branch string) {
+	if r.options.Sync == nil {
+		return
+	}
+	if branch == "" {
+		target, _, err := r.baseTarget(ctx)
+		if err != nil {
+			slogutils.FromContext(ctx).Warn("sync: resolving the base branch", "err", err)
+			return
+		}
+		branch = target.Branch
+	}
+	err := r.options.Sync.SyncGraph(ctx, branch)
+	if err != nil {
+		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: %v", err), "branch", branch)
+	}
 }
 
 func NewProjectRuntime(options ProjectRuntimeOptions) (*ProjectRuntime, error) {
