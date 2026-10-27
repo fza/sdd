@@ -74,16 +74,10 @@ func ProcedureSpecFromDocument(doc map[string]any) (*ProcedureSpecRaw, error) {
 
 // ProcedureChain represents a supersession chain of kind: procedure
 // decisions — one playbook move's identity across revisions, base-shipped
-// and project-captured alike. Mirrors ActorChain: canonicals within a chain
-// may change across entries; across chains each canonical is write-once
-// (procedure canonicals are their own namespace, separate from actor
-// canonicals — see validateProcedureInvariant).
+// and project-captured alike. Procedure canonicals are their own namespace,
+// separate from actor canonicals.
 type ProcedureChain struct {
-	// Entries are all procedure decisions in the chain, oldest first.
-	Entries []*Entry
-	// Heads are the chain's non-superseded entries, oldest first. A linear
-	// chain has exactly one.
-	Heads []*Entry
+	CanonicalChain
 	// LiveHeads are the Heads that are also not closed — the candidates for
 	// execution-head resolution. More than one means the chain is forked: a
 	// shipped base successor and a project override compete (or two project
@@ -98,19 +92,6 @@ type ProcedureChain struct {
 	// execution only — resolving the fork in the graph stays a deliberate,
 	// merge-style grooming step.
 	Head *Entry
-	// CanonicalHistory is the ordered list of distinct canonicals ever
-	// carried by entries in this chain, oldest first.
-	CanonicalHistory []string
-	// canonicalSet is an internal lookup for membership checks.
-	canonicalSet map[string]bool
-}
-
-// HasCanonical reports whether the chain has ever held canonical c.
-func (c *ProcedureChain) HasCanonical(name string) bool {
-	if c == nil {
-		return false
-	}
-	return c.canonicalSet[name]
 }
 
 // Forked reports whether the chain has more than one live head — a shipped
@@ -124,26 +105,12 @@ func (c *ProcedureChain) Forked() bool {
 // wins fork rule. Pure computation — no I/O. Returned in deterministic
 // order by resolved head ID.
 func (g *Graph) ProcedureChains() []*ProcedureChain {
-	superseded := g.supersededSet()
 	closed := g.closedSet()
 
 	result := make([]*ProcedureChain, 0)
 	for _, group := range g.chainGroups((*Entry).IsProcedure) {
-		chain := &ProcedureChain{
-			Entries:      group,
-			canonicalSet: make(map[string]bool),
-		}
-		for _, e := range group {
-			if e.Canonical != "" && !chain.canonicalSet[e.Canonical] {
-				chain.canonicalSet[e.Canonical] = true
-				chain.CanonicalHistory = append(chain.CanonicalHistory, e.Canonical)
-			}
-		}
-		for _, e := range group {
-			if superseded[e.ID] {
-				continue
-			}
-			chain.Heads = append(chain.Heads, e)
+		chain := &ProcedureChain{CanonicalChain: g.newCanonicalChain(group)}
+		for _, e := range chain.Heads {
 			if !closed[e.ID] {
 				chain.LiveHeads = append(chain.LiveHeads, e)
 			}
