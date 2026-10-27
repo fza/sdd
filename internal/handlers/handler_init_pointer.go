@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/meta"
@@ -191,6 +192,10 @@ func (h *Handler) persistSupportedAgents(ctx context.Context, cmd *command.InitC
 				return err
 			}
 		}
+	}
+	// SetYAMLSequence re-serializes the file and drops its blank lines.
+	if slices.Equal(recorded, effective) {
+		return nil
 	}
 	existing, err := os.ReadFile(configPath)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {

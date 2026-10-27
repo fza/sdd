@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/networkteam/sdd/test"
 )
 
 func TestInitCommitsAroundIgnoredAgentSurfaces(t *testing.T) {
@@ -40,5 +42,23 @@ func TestInitCommitsAroundIgnoredAgentSurfaces(t *testing.T) {
 	}
 	if status := gitIn(t, repo, "status", "--porcelain"); status != "" {
 		t.Errorf("a repeat init should leave nothing staged:\n%s", status)
+	}
+}
+
+func TestInitLeavesAnUnchangedAgentListAlone(t *testing.T) {
+	repo := canonicalTemp(t)
+	initRepo(t, repo)
+	runApp(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada")
+	writeFile(t, filepath.Join(repo, ".sdd", "config.yaml"), test.SpacedConfig)
+	gitIn(t, repo, "commit", "-q", "-m", "spaced config", "--", ".sdd/config.yaml")
+	head := gitIn(t, repo, "rev-parse", "HEAD")
+
+	runApp(t, repo, "init", "--scope", "project", "--agents", "claude")
+
+	if config := readFile(t, filepath.Join(repo, ".sdd", "config.yaml")); config != test.SpacedConfig {
+		t.Errorf("init should not rewrite a config whose agent list it would leave the same:\n%s", config)
+	}
+	if gitIn(t, repo, "rev-parse", "HEAD") != head {
+		t.Error("init with nothing to change should commit nothing")
 	}
 }
