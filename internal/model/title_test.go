@@ -8,17 +8,21 @@ import (
 )
 
 func TestTitleSurvivesTheFrontmatterRoundTrip(t *testing.T) {
-	entry := &model.Entry{ID: "20260101-100000-s-tac-ttl", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Title: "daemon project removal", Summary: "S.", Content: "Body."}
-	written := model.FormatFrontmatter(entry) + "\n" + entry.Content + "\n"
-	if !strings.Contains(written, "title: daemon project removal") {
-		t.Fatalf("the title should be written to the frontmatter:\n%s", written)
-	}
-	parsed, err := model.ParseEntry(entry.ID+".md", written)
-	if err != nil {
-		t.Fatalf("ParseEntry: %v", err)
-	}
-	if parsed.Title != entry.Title {
-		t.Errorf("the title should read back unchanged, got %q", parsed.Title)
+	for _, title := range []string{"daemon project removal", "`sdd` info JSON output"} {
+		t.Run(title, func(t *testing.T) {
+			entry := &model.Entry{ID: "20260101-100000-s-tac-ttl", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Title: title, Summary: "S.", Content: "Body."}
+			written := model.FormatFrontmatter(entry) + "\n" + entry.Content + "\n"
+			if !strings.Contains(written, "title: ") {
+				t.Fatalf("the title should be written to the frontmatter:\n%s", written)
+			}
+			parsed, err := model.ParseEntry(entry.ID+".md", written)
+			if err != nil {
+				t.Fatalf("ParseEntry: %v", err)
+			}
+			if parsed.Title != entry.Title {
+				t.Errorf("the title should read back unchanged, got %q", parsed.Title)
+			}
+		})
 	}
 }
 
@@ -78,12 +82,14 @@ func TestCapitalizeTitle(t *testing.T) {
 		{in: "Daemon project removal", want: "Daemon project removal"},
 		{in: "übergabe der projekte", want: "Übergabe der projekte"},
 		{in: "3d printing setup", want: "3d printing setup"},
+		{in: "`sdd` info JSON output", want: "`sdd` info JSON output"},
+		{in: "`go.mod` replace directive", want: "`go.mod` replace directive"},
 		{in: "", want: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
 			if got := model.CapitalizeTitle(tc.in); got != tc.want {
-				t.Errorf("only the first letter should change, to a capital, got %q", got)
+				t.Errorf("only a first letter outside a code span should change, to a capital, got %q", got)
 			}
 		})
 	}

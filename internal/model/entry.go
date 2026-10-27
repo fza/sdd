@@ -454,6 +454,8 @@ func (e *Entry) ListingTitle() string {
 
 // CapitalizeTitle starts a title with a capital letter, whatever wrote it:
 // listings show titles in a column, and a mix of cases reads as noise there.
+// A title opening with a code span keeps its casing, a backtick having no
+// capital (20261027-132914-d-tac-dcy).
 func CapitalizeTitle(title string) string {
 	first, size := utf8.DecodeRuneInString(title)
 	if size == 0 {

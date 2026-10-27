@@ -753,6 +753,47 @@ func TestNewEntry_ExplicitSummary_SkipsLLM(t *testing.T) {
 	}
 }
 
+func TestNewEntry_ExplicitTitleKeepsALeadingCodeSpan(t *testing.T) {
+	tmp := t.TempDir()
+	sddDir := filepath.Join(tmp, ".sdd")
+	if err := os.MkdirAll(sddDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	h := handlers.New(handlers.Options{
+		GraphDir:  tmp,
+		SDDDir:    sddDir,
+		Reader:    &fakeReader{},
+		Committer: &recordingCommitter{},
+		LLMRunner: &trippingRunner{t: t},
+		Stderr:    &bytes.Buffer{},
+	})
+	const title = "`sdd` info JSON output"
+	var id string
+	err := h.NewEntry(context.Background(), &command.NewEntryCmd{
+		Type: model.TypeSignal, Layer: model.LayerTactical, Description: "Body.",
+		Summary: "A summary.", Title: title, SkipPreflight: true,
+		OnNewEntry: func(newID, _ string) { id = newID },
+	})
+	if err != nil {
+		t.Fatalf("NewEntry: %v", err)
+	}
+	relPath, err := model.IDToRelPath(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(tmp, relPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := model.ParseEntry(id+".md", string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Title != title {
+		t.Errorf("a title opening with a code span should be stored as written, got %q", entry.Title)
+	}
+}
+
 // TestNewEntry_PreflightVerified_RecordsDryRunVerified covers the capture path for an
 // entry whose findings were already settled in a prior --dry-run: the
 // validator must not run again (it is non-deterministic and can surface fresh

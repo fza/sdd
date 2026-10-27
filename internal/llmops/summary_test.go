@@ -106,3 +106,17 @@ func TestRenderTitlePromptCarriesTheStoredSummary(t *testing.T) {
 		t.Errorf("the title-only call should not ask for a summary:\n%s", req.SystemPrompt)
 	}
 }
+
+func TestTitleRulesWriteCodeTermsAsCodeSpans(t *testing.T) {
+	entry, graph := titledFixture()
+	req, err := llmops.RenderTitlePrompt(entry, graph, "")
+	if err != nil {
+		t.Fatalf("RenderTitlePrompt: %v", err)
+	}
+	if !strings.Contains(req.SystemPrompt, "backtick code span") || !strings.Contains(req.SystemPrompt, "\"`sdd` info JSON output\"") {
+		t.Errorf("the title rules should ask for code terms as code spans, with an example opening on one:\n%s", req.SystemPrompt)
+	}
+	if strings.Contains(req.SystemPrompt, "`Daemon project removal`") {
+		t.Errorf("the example title should not sit inside a code span:\n%s", req.SystemPrompt)
+	}
+}
