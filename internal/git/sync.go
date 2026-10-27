@@ -88,7 +88,7 @@ func (c CLI) CountCommits(ctx context.Context, rangeSpec, subjectPattern string)
 // including changes a merge commit makes on its own. Renames count as a
 // deletion and an addition, so both paths are listed.
 func (c CLI) ChangedPaths(ctx context.Context, base, tip string) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("diff", "--name-only", "--no-renames", base+"..."+tip)...).Output()
+	out, err := exec.CommandContext(ctx, "git", c.at("-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", base+"..."+tip)...).Output()
 	if err != nil {
 		return nil, fmt.Errorf("git diff --name-only %s...%s: %w", base, tip, err)
 	}
@@ -128,7 +128,7 @@ func (c CLI) MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]s
 	// section so stdout after the OID is purely the conflicted path list.
 	// --merge-base is omitted so git computes the base internally (2.38
 	// compatibility — the explicit flag was added in 2.40).
-	cmd := exec.CommandContext(ctx, "git", c.at("merge-tree", "--write-tree", "--name-only", "--no-messages", ourRef, theirRef)...)
+	cmd := exec.CommandContext(ctx, "git", c.at("-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", ourRef, theirRef)...)
 	out, err := cmd.Output()
 	if err != nil {
 		// Exit 1 is the documented conflict signal; parse stdout for paths.
