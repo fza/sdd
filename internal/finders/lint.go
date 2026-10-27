@@ -1,6 +1,7 @@
 package finders
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/networkteam/sdd/internal/engine"
@@ -8,7 +9,6 @@ import (
 	"github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
-	"github.com/networkteam/sdd/internal/repos"
 	"github.com/networkteam/sdd/internal/serveview"
 )
 
@@ -113,9 +113,9 @@ func (f *Finder) IndexLint(q query.IndexLintQuery, result *query.LintResult) {
 	f.repoIndexLint(result)
 }
 
-// repoIndexLint reports connected repos whose cache index was built under a
-// fingerprint other than the shared (global) embedder — a drifted repo
-// re-embeds on the next cross-graph search; lint surfaces it so the cost
+// repoIndexLint reports dependency-closure repos whose cache index was built
+// under a fingerprint other than the shared (global) embedder — a drifted
+// repo re-embeds on the next cross-graph search; lint surfaces it so the cost
 // isn't a surprise.
 func (f *Finder) repoIndexLint(result *query.LintResult) {
 	if f.repos == nil {
@@ -129,20 +129,25 @@ func (f *Finder) repoIndexLint(result *query.LintResult) {
 	if err != nil {
 		return
 	}
+	// Lint carries no context; the walk only reads cached configs.
+	closure, err := f.DependencyClosure(context.Background(), query.DependencyClosureQuery{})
+	if err != nil {
+		return
+	}
 	fingerprint := emb.Fingerprint()
-	for _, r := range gcfg.Repos {
-		cacheDir, err := f.repos.CacheDir(r.RepoID)
-		if err != nil || !repos.IsCloned(cacheDir) {
+	for _, repoID := range closure {
+		cache, connected, err := f.repos.Cache(repoID)
+		if err != nil || !connected || !cache.Cloned() {
 			continue
 		}
-		manifest, err := index.LoadManifest(index.StoreDir(f.repos.CacheRoot(), index.RepoKey(r.RepoID, cacheDir), fingerprint))
+		manifest, err := index.LoadManifest(index.StoreDir(f.repos.CacheRoot(), index.RepoKey(repoID, cache.Dir), fingerprint))
 		if err != nil || len(manifest.Entries) == 0 {
 			continue
 		}
 		if drift := manifest.MismatchCount(fingerprint); drift > 0 {
 			result.Findings = append(result.Findings, query.LintFinding{
 				Category: "index", Code: "repo-fingerprint-drift", Severity: query.LintAdvisory,
-				EntryID: string(r.RepoID),
+				EntryID: string(repoID),
 				Message: fmt.Sprintf("%d of %d cached entries indexed under a different fingerprint than the global embedder — the next cross-graph search re-embeds them",
 					drift, len(manifest.Entries)),
 			})
