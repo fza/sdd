@@ -79,7 +79,8 @@ func runSyncCheck(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, syncCheckTimeout)
 	defer cancel()
 
-	graphRepo := graphGit(meta.ResolveGraphDir(filepath.Dir(sddDir), cfg))
+	graphDir := meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)
+	graphRepo := graphGit(graphDir)
 	f := finders.New(finders.Options{
 		Config:    cfg,
 		GitSyncer: graphRepo,
@@ -94,7 +95,7 @@ func runSyncCheck(ctx context.Context) {
 	}
 	emitSyncStatus(logger, status)
 	if model.ResolveSyncMode(cfg) == model.SyncModeAuto && fetched(status.State) {
-		pullGraph(ctx, graphRepo)
+		pullGraph(ctx, graphRepo, graphDir)
 	}
 }
 
@@ -111,23 +112,11 @@ func fetched(state model.SyncState) bool {
 
 // pullGraph runs the automatic pull the sync check triggers. Like the check
 // itself it never fails the command; what it could not do is reported.
-func pullGraph(ctx context.Context, graphRepo git.CLI) {
-	logger := slogutils.FromContext(ctx)
-	handler := handlers.New(handlers.Options{GraphPuller: graphRepo, Pusher: graphRepo, SyncMode: model.SyncModeAuto})
-	err := handler.PullGraph(ctx, &command.PullGraphCmd{
-		OnMerged: func(upstream string, commits int) {
-			logger.Info(fmt.Sprintf("sync: merged %d commits from %s", commits, upstream))
-		},
-		OnHeld: func(verdict model.PullVerdict, upstream string) {
-			if verdict == model.PullDirty {
-				logger.Warn(fmt.Sprintf("sync: not pulling %s: the working tree has uncommitted changes", upstream))
-				return
-			}
-			logger.Warn(fmt.Sprintf("sync: not pulling %s: a commit there was not written by sdd; pull it yourself", upstream))
-		},
-	})
+func pullGraph(ctx context.Context, graphRepo git.CLI, graphDir string) {
+	handler := handlers.New(handlers.Options{GraphDir: graphDir, GraphPuller: graphRepo, Pusher: graphRepo, SyncMode: model.SyncModeAuto})
+	err := handler.AutoPullGraph(ctx)
 	if err != nil {
-		logger.Warn(fmt.Sprintf("sync: %v", err))
+		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: %v", err))
 	}
 }
 

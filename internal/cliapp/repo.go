@@ -208,14 +208,15 @@ func repoHandler(errWriter io.Writer) (*handlers.Handler, error) {
 		return nil, err
 	}
 	return handlers.New(handlers.Options{
-		Stderr:    errWriter,
-		Reader:    reader,
-		Repos:     mgr,
-		SDDDir:    sddDir,
-		GraphDir:  graphDir,
-		Committer: committer,
-		Pusher:    committer,
-		SyncMode:  syncMode,
+		Stderr:      errWriter,
+		Reader:      reader,
+		Repos:       mgr,
+		SDDDir:      sddDir,
+		GraphDir:    graphDir,
+		Committer:   committer,
+		Pusher:      committer,
+		GraphPuller: committer,
+		SyncMode:    syncMode,
 	}), nil
 }
 

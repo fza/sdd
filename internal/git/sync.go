@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -80,6 +81,46 @@ func (c CLI) CountCommits(ctx context.Context, rangeSpec, subjectPattern string)
 		return 0, fmt.Errorf("git log %s: %w", rangeSpec, err)
 	}
 	return model.CountMatchingSubjects(string(out), pattern), nil
+}
+
+// ChangedPaths lists the repository-relative paths the commits in rangeSpec
+// change, each once. Renames count as a deletion and an addition, so both
+// paths are listed.
+func (c CLI) ChangedPaths(ctx context.Context, rangeSpec string) ([]string, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("log", "--no-renames", "--name-only", "--format=", rangeSpec)...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("git log --name-only %s: %w", rangeSpec, err)
+	}
+	var paths []string
+	seen := map[string]bool{}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if line == "" || seen[line] {
+			continue
+		}
+		seen[line] = true
+		paths = append(paths, line)
+	}
+	return paths, nil
+}
+
+// RepoPath returns path relative to the root of this adapter's repository.
+func (c CLI) RepoPath(ctx context.Context, path string) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--show-toplevel")...).Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
+	}
+	root, err := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
+	if err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
+		abs = resolved
+	}
+	return filepath.Rel(root, abs)
 }
 
 // MergeTreePredict simulates a three-way merge in memory and returns the
