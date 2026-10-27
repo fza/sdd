@@ -62,24 +62,12 @@ func TestSchemaChangesNameWhatAMigrationAdds(t *testing.T) {
 	}
 }
 
-func TestCheckCompatibilityPointsAnOlderGraphAtMigrate(t *testing.T) {
-	cases := []struct {
-		name       string
-		graph      int
-		wantReason string
-	}{
-		{name: "older graph", graph: model.CurrentGraphSchemaVersion - 1, wantReason: "sdd migrate"},
-		{name: "newer graph", graph: model.CurrentGraphSchemaVersion + 1, wantReason: "upgrade sdd"},
+func TestCheckCompatibilityPointsANewerGraphAtUpgrade(t *testing.T) {
+	res := model.CheckCompatibility(model.SchemaMeta{GraphSchemaVersion: model.CurrentGraphSchemaVersion + 1}, "1.0.0", model.CurrentGraphSchemaVersion)
+	if res.Compatible {
+		t.Fatal("a graph newer than the binary should refuse writes")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			res := model.CheckCompatibility(model.SchemaMeta{GraphSchemaVersion: tc.graph}, "1.0.0", model.CurrentGraphSchemaVersion)
-			if res.Compatible {
-				t.Fatal("a schema mismatch should refuse writes")
-			}
-			if !strings.Contains(res.Reason, tc.wantReason) {
-				t.Errorf("the refusal should name the way forward, got %q", res.Reason)
-			}
-		})
+	if !strings.Contains(res.Reason, "upgrade sdd") {
+		t.Errorf("the refusal should name the way forward, got %q", res.Reason)
 	}
 }

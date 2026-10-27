@@ -1,11 +1,16 @@
 package finders
 
-import "github.com/networkteam/sdd/internal/query"
+import (
+	"context"
+
+	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/query"
+)
 
 // Info gathers session framing for the `sdd info` command — the session
-// header surface that skill session-start injections read. Pure config
-// inspection — no graph access required.
-func (f *Finder) Info(_ query.InfoQuery) (*query.InfoResult, error) {
+// header surface that skill session-start injections read. Config and
+// meta.json inspection — no graph access required.
+func (f *Finder) Info(ctx context.Context, q query.InfoQuery) (*query.InfoResult, error) {
 	participant, err := f.localParticipant()
 	if err != nil {
 		return nil, err
@@ -14,11 +19,22 @@ func (f *Finder) Info(_ query.InfoQuery) (*query.InfoResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &query.InfoResult{
+	result := &query.InfoResult{
 		LocalParticipant: participant,
 		Language:         language,
 		Search:           f.searchCapability(),
-	}, nil
+		BinarySchema:     model.CurrentGraphSchemaVersion,
+	}
+	if q.SDDDir != "" {
+		status, err := f.SchemaStatus(ctx, query.SchemaStatusQuery{SDDDir: q.SDDDir, BinarySchemaVersion: model.CurrentGraphSchemaVersion})
+		if err != nil {
+			return nil, err
+		}
+		if status.MetaExists {
+			result.GraphSchema = status.Meta.GraphSchemaVersion
+		}
+	}
+	return result, nil
 }
 
 // searchCapability reports whether vector search is configured. Returns

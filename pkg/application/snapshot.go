@@ -26,6 +26,26 @@ type Snapshot struct {
 	graph    *model.Graph
 	finder   *finders.GraphFinder
 	wip      []*model.WIPMarker
+	// schemaVersion is the schema the graph's meta.json records; zero when
+	// the store does not report one.
+	schemaVersion int
+}
+
+// SchemaVersion is the schema the snapshot's graph records, the binary's own
+// when the store reports none.
+func (s *Snapshot) SchemaVersion() int {
+	if s == nil || s.schemaVersion == 0 {
+		return model.CurrentGraphSchemaVersion
+	}
+	return s.schemaVersion
+}
+
+// WithSchemaVersion returns the snapshot stamped with the schema its graph
+// records.
+func (s *Snapshot) WithSchemaVersion(version int) *Snapshot {
+	stamped := *s
+	stamped.schemaVersion = version
+	return &stamped
 }
 
 func (s *Snapshot) Project() ProjectID {

@@ -494,7 +494,16 @@ func infoCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			result, err := f.Info(query.InfoQuery{})
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("getting working directory: %w", err)
+			}
+			// Outside a project the schema line is left out.
+			var sddDir string
+			if root := meta.DiscoverRoot(cwd); root != "" {
+				sddDir = meta.SDDDir(root)
+			}
+			result, err := f.Info(ctx, query.InfoQuery{SDDDir: sddDir})
 			if err != nil {
 				return err
 			}
@@ -1257,6 +1266,15 @@ func summarizeHandler(cmd *cli.Command) (*handlers.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	// An explicit --graph-dir may name a graph with no .sdd/ beside it; the
+	// handler then writes at the binary's schema.
+	var sddDir string
+	if cmd.String("graph-dir") == "" {
+		sddDir, err = resolveSDDDir()
+		if err != nil {
+			return nil, err
+		}
+	}
 	runner, err := newRunner(cmd, "timeout")
 	if err != nil {
 		return nil, err
@@ -1272,6 +1290,7 @@ func summarizeHandler(cmd *cli.Command) (*handlers.Handler, error) {
 	return handlers.New(handlers.Options{
 		Stderr:   cmd.ErrWriter,
 		GraphDir: dir,
+		SDDDir:   sddDir,
 		Reader: finders.New(finders.Options{
 			PreflightRunner: runner,
 			Config:          cfg,

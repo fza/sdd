@@ -19,11 +19,16 @@ type InfoRequest struct {
 	BranchFromSession bool
 }
 
+// InfoResult describes a project as a session reads it. GraphSchema is the
+// schema the read graph records and BinarySchema the one this build writes by
+// default; writes keep GraphSchema when it is older.
 type InfoResult struct {
-	Project     ProjectRef
-	Participant string
-	Language    string
-	Search      string
+	Project      ProjectRef
+	Participant  string
+	Language     string
+	Search       string
+	GraphSchema  int
+	BinarySchema int
 }
 
 type ViewRequest struct {

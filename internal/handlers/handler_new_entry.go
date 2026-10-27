@@ -69,6 +69,14 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		return err
 	}
 
+	schema, err := h.resolveWriteSchema(ctx)
+	if err != nil {
+		return err
+	}
+	if cmd.Title != "" && !schema.capabilities.Titles {
+		return schema.refuseTitle()
+	}
+
 	// Cross-repo refs resolve against the live caches: refresh the
 	// referenced repos before the graph loads (lazy clone + cooldown pull),
 	// then force-fetch once for any backward-class target still missing —
@@ -153,7 +161,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 			sumResult = result
 			return nil
 		})
-	} else if !cmd.DryRun && h.llmRunner != nil && cmd.Title == "" {
+	} else if !cmd.DryRun && h.llmRunner != nil && cmd.Title == "" && schema.capabilities.Titles {
 		summarized := *entry
 		summarized.Summary = cmd.Summary
 		g.Go(func() error {
@@ -209,7 +217,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		generatedTitle = sumResult.Title
 	}
 	entry.Title = cmd.Title
-	if entry.Title == "" {
+	if entry.Title == "" && schema.capabilities.Titles {
 		entry.Title = generatedTitle
 	}
 

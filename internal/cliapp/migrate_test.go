@@ -52,14 +52,28 @@ func runReleased(t *testing.T, dir, stdin string, args ...string) (string, error
 	return stdout.String() + stderr.String(), err
 }
 
-func TestWritesOnAnOlderGraphPointAtMigrate(t *testing.T) {
+func TestWritesOnAnOlderGraphKeepItsSchema(t *testing.T) {
 	project := newMigrateProject(t)
-	output, err := runReleased(t, project, "", "new", "s", "tac", "--confidence", "high", "--skip-preflight", "--summary", "S.", "--title", "t", "A new gap.")
-	if err == nil {
-		t.Fatal("a write on an older graph should be refused")
+
+	output, err := runReleased(t, project, "", "new", "s", "tac", "--confidence", "high", "--skip-preflight", "--summary", "S.", "A new gap.")
+	if err != nil {
+		t.Fatalf("a write on an older graph should go through: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "sdd migrate") {
-		t.Errorf("the refusal should point at sdd migrate:\n%s", output)
+	written := gitIn(t, project, "show", "--name-only", "--format=", "HEAD")
+	entry := readFile(t, filepath.Join(project, strings.TrimSpace(written)))
+	if strings.Contains(entry, "\ntitle:") {
+		t.Errorf("an entry on a schema-1 graph should carry no title:\n%s", entry)
+	}
+	if meta := readFile(t, filepath.Join(project, ".sdd", "meta.json")); !strings.Contains(meta, `"graph_schema_version": 1`) {
+		t.Errorf("a write should leave the graph's schema alone:\n%s", meta)
+	}
+
+	output, err = runReleased(t, project, "", "new", "s", "tac", "--confidence", "high", "--skip-preflight", "--summary", "S.", "--title", "t", "Another gap.")
+	if err == nil {
+		t.Fatal("an explicit title on a schema-1 graph should be refused")
+	}
+	if !strings.Contains(err.Error()+output, "schema 1") {
+		t.Errorf("the refusal should name the graph's schema:\n%v\n%s", err, output)
 	}
 }
 
@@ -148,5 +162,17 @@ func TestMigrateStampOnlyDefersTheBackfill(t *testing.T) {
 	}
 	if entry := readFile(t, entryPath); !strings.Contains(entry, "title: migrated title") {
 		t.Errorf("a later migrate on the stamped graph should fill the deferred titles:\n%s", entry)
+	}
+}
+
+func TestSummarizeAllOnAnOlderGraphOwesNoTitles(t *testing.T) {
+	project := newMigrateProject(t)
+	output, err := runReleased(t, project, "", "summarize", "--all")
+	if err != nil {
+		t.Fatalf("summarize --all: %v\n%s", err, output)
+	}
+	entry := readFile(t, filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel)))
+	if strings.Contains(entry, "\ntitle:") {
+		t.Errorf("a summarized entry on a schema-1 graph owes no title:\n%s", entry)
 	}
 }

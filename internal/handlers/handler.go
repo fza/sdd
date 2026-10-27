@@ -34,6 +34,7 @@ type Reader interface {
 	// load and mutate it mid-write; the query stays pure intent.
 	Preflight(ctx context.Context, g *model.Graph, q query.PreflightQuery) (*query.PreflightResult, error)
 	SkillStatus(ctx context.Context, q query.SkillStatusQuery) (*query.SkillStatusResult, error)
+	SchemaStatus(ctx context.Context, q query.SchemaStatusQuery) (*query.SchemaStatusResult, error)
 }
 
 // Committer performs a git commit of the given paths with the given message.

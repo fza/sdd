@@ -41,8 +41,16 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 	// resolution reassigns cmd.EntryIDs below.
 	isAll := len(cmd.EntryIDs) == 0
 
+	schema, err := h.resolveWriteSchema(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Explicit-text path: single entry, no LLM call.
 	if cmd.ExplicitText != nil || cmd.ExplicitTitle != nil {
+		if cmd.ExplicitTitle != nil && !schema.capabilities.Titles {
+			return schema.refuseTitle()
+		}
 		if len(cmd.EntryIDs) != 1 {
 			return fmt.Errorf("--text and --title require exactly one entry ID (no --all, no multi-entry batches)")
 		}
@@ -102,7 +110,7 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 			// regenerate. Read under the lock — other workers may be writing
 			// their own entries' summaries concurrently.
 			graphMu.RLock()
-			hasSummary, hasTitle := entry.Summary != "", entry.Title != ""
+			hasSummary, hasTitle := entry.Summary != "", entry.Title != "" || !schema.capabilities.Titles
 			graphMu.RUnlock()
 			if isAll && !cmd.Force && hasSummary && hasTitle {
 				if cmd.OnSkipped != nil {
@@ -144,7 +152,9 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 			// Apply the answer under write lock, then format and write file
 			// under read lock so FormatFrontmatter sees a consistent entry.
 			graphMu.Lock()
-			entry.Title = result.Title
+			if schema.capabilities.Titles {
+				entry.Title = result.Title
+			}
 			if !titleOnly {
 				entry.Summary = result.Summary
 			}

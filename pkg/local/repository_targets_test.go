@@ -129,7 +129,7 @@ func (r *gitRepository) captureApplication(t *testing.T, runner pkgllm.Runner) (
 	targets := r.targets()
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "example"}, DefaultBranch: "main",
-		Graph: graph, Targets: targets, Branches: targets, LLM: runner,
+		Graph: local.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: "main"}, Targets: targets, Branches: targets, LLM: runner,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -177,4 +177,36 @@ func (runtimeAccess) ResolveDependency(_ context.Context, _ sdd.Principal, _ sdd
 }
 func (runtimeAccess) AuthorizeSession(ctx context.Context, request sdd.SessionAccessRequest) error {
 	return sdd.OwnerOnly(ctx, request)
+}
+
+func TestRepositoryTargetsWriteAndReadAtTheCheckoutSchema(t *testing.T) {
+	repo := newGitRepository(t)
+	repo.write(".sdd/config.yaml", "repo_id: example\ngraph_dir: .sdd/graph\ndefault_branch: main\n")
+	repo.write(".sdd/meta.json", "{\"graph_schema_version\": 1}\n")
+	repo.write("global-config.yaml", "")
+	application, identity, binding := repo.captureApplication(t, pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
+		return pkgllm.Result{Text: `{"title": "test title", "summary": "Rendered summary."}`}, nil
+	}))
+	const entryID = "20260914-020000-s-tac-old"
+	draft := sdd.EntryDraft{
+		Kind: "gap", Layer: "tactical", Confidence: "high", Body: "A checkout on an older schema keeps it.",
+		EntryID: entryID, Publication: sdd.PublicationKey{Session: binding.SessionID, Sequence: 1, Discriminator: "new-entry"},
+	}
+	if _, err := application.CreateEntry(t.Context(), identity, "example", binding, draft); err != nil {
+		t.Fatal(err)
+	}
+	relPath, err := model.IDToRelPath(entryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed := repo.git("show", "HEAD:.sdd/graph/"+relPath); strings.Contains(committed, "\ntitle:") {
+		t.Errorf("a capture into a schema-1 checkout should carry no title:\n%s", committed)
+	}
+	info, err := application.Info(t.Context(), identity, "example", sdd.InfoRequest{Branch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.GraphSchema != 1 {
+		t.Errorf("a read of the checkout should report its schema, got %d", info.GraphSchema)
+	}
 }

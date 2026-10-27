@@ -24,6 +24,8 @@ type fakeReader struct {
 	preflightErr    error
 	preflightCalls  int
 	graph           *model.Graph
+	// graphSchema is the schema meta.json records; zero means no meta.json.
+	graphSchema int
 }
 
 func (f *fakeReader) CurrentGraph(_ string) (*model.Graph, error) {
@@ -44,6 +46,13 @@ func (f *fakeReader) Preflight(ctx context.Context, g *model.Graph, q query.Pref
 
 func (f *fakeReader) SkillStatus(ctx context.Context, q query.SkillStatusQuery) (*query.SkillStatusResult, error) {
 	return &query.SkillStatusResult{}, nil
+}
+
+func (f *fakeReader) SchemaStatus(ctx context.Context, q query.SchemaStatusQuery) (*query.SchemaStatusResult, error) {
+	if f.graphSchema == 0 {
+		return &query.SchemaStatusResult{Compatibility: model.CompatibilityResult{Compatible: true}}, nil
+	}
+	return &query.SchemaStatusResult{MetaExists: true, Meta: &model.SchemaMeta{GraphSchemaVersion: f.graphSchema}}, nil
 }
 
 // recordingCommitter captures commit calls so tests can assert whether a

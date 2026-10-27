@@ -44,6 +44,7 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 			}
 			graph, err := NewFilesystemGraphStore(FilesystemGraphStoreOptions{
 				Project: project, GraphDir: meta.ResolveGraphDir(checkout, cfg), Branch: q.Branch,
+				MetaPath: filepath.Join(meta.SDDDir(checkout), model.SchemaMetaFileName),
 			})
 			if err != nil {
 				return nil, err
@@ -62,6 +63,7 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 			finalizer := GitFinalizer{Checkout: checkout, GraphDir: graphDir, Branch: target.Branch}
 			graph, err := NewFilesystemGraphStore(FilesystemGraphStoreOptions{
 				Project: project, GraphDir: meta.ResolveGraphDir(checkout, cfg), Branch: target.Branch, PublicationGit: &finalizer,
+				MetaPath: filepath.Join(meta.SDDDir(checkout), model.SchemaMetaFileName),
 			})
 			if err != nil {
 				return nil, nil, nil, err
