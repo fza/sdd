@@ -69,11 +69,17 @@ func (h *Handler) commitGraph(ctx context.Context, message string, paths ...stri
 	if err != nil {
 		return err
 	}
+	return h.publishGraph(ctx)
+}
+
+// publishGraph pushes the graph commits ahead of upstream under automatic
+// sync and reports the ones it holds back.
+func (h *Handler) publishGraph(ctx context.Context) error {
 	if h.syncMode != model.SyncModeAuto {
 		return nil
 	}
 	log := slogutils.FromContext(ctx)
-	err = h.PushGraph(ctx, &command.PushGraphCmd{
+	err := h.PushGraph(ctx, &command.PushGraphCmd{
 		OnPushed: func(upstream string, commits int) {
 			log.Info(fmt.Sprintf("sync: pushed %d commits to %s", commits, upstream))
 		},

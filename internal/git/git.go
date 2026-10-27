@@ -84,6 +84,27 @@ func (c CLI) Push(ctx context.Context) error {
 	return nil
 }
 
+// Merge merges ref into the current branch, committing a merge with message
+// when the histories diverged. A failed merge is aborted so the working tree
+// stays as it was. Production handlers.GraphPuller.
+func (c CLI) Merge(ctx context.Context, ref, message string) error {
+	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
+	defer cancel()
+	out, err := runDetached(ctx, c.at("merge", "--no-edit", "-m", message, ref)...)
+	if err == nil {
+		return nil
+	}
+	mergeErr := fmt.Errorf("git merge %s: %s (%w)", ref, strings.TrimSpace(string(out)), err)
+	abortOut, abortErr := exec.Command("git", c.at("merge", "--abort")...).CombinedOutput()
+	if abortErr != nil && strings.Contains(string(abortOut), "MERGE_HEAD missing") {
+		return mergeErr
+	}
+	if abortErr != nil {
+		return errors.Join(mergeErr, fmt.Errorf("git merge --abort: %s (%w)", strings.TrimSpace(string(abortOut)), abortErr))
+	}
+	return mergeErr
+}
+
 // HasCommitMessage reports whether any reachable commit contains text. It is
 // used by retryable post-apply finalizers to recognize a commit that landed
 // before its durable finalizer outcome could be recorded.
