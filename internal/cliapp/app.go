@@ -261,6 +261,9 @@ func warnUnknownConfigKeys(ctx context.Context) {
 	for _, k := range result.Keys {
 		log.Warn("ignoring unknown config key", "key", k.Key, "file", k.File)
 	}
+	for _, s := range result.Ignored {
+		log.Warn("ignoring config setting", "key", s.Key, "file", s.File, "reason", s.Reason)
+	}
 }
 
 // resolveConfigAt mirrors loadConfig for an explicit .sdd dir — `sdd init`

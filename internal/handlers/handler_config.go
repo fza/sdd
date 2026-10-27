@@ -47,6 +47,15 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 		if err := model.UnmarshalYAML(patched, probe); err != nil {
 			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
 		}
+		var settings model.BaseConfig
+		if err := model.UnmarshalYAML(patched, &settings); err != nil {
+			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
+		}
+		for _, ignored := range model.IgnoredSettings(settings, false) {
+			if ignored.Key == cmd.Key {
+				return nil, fmt.Errorf("%s = %s is not valid for the %s config: %s", cmd.Key, cmd.Value, layer, ignored.Reason)
+			}
+		}
 		return patched, nil
 	})
 }

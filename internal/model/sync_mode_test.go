@@ -2,7 +2,6 @@ package model_test
 
 import (
 	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -10,42 +9,70 @@ import (
 
 func TestSyncModeAtConfigLoad(t *testing.T) {
 	cases := []struct {
-		name    string
-		yaml    string
-		want    model.SyncMode
-		refused bool
+		name string
+		yaml string
+		want model.SyncMode
 	}{
 		{name: "unset", yaml: "sync:\n  cooldown: 5m\n", want: model.SyncModeManual},
 		{name: "manual", yaml: "sync:\n  mode: manual\n", want: model.SyncModeManual},
 		{name: "auto", yaml: "sync:\n  mode: auto\n", want: model.SyncModeAuto},
-		{name: "unknown value", yaml: "sync:\n  mode: always\n", refused: true},
-		{name: "wrong case", yaml: "sync:\n  mode: Auto\n", refused: true},
-		{name: "not a scalar", yaml: "sync:\n  mode: [auto]\n", refused: true},
+		{name: "unknown value", yaml: "sync:\n  mode: always\n", want: model.SyncModeManual},
+		{name: "wrong case", yaml: "sync:\n  mode: Auto\n", want: model.SyncModeManual},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, err := model.ParseConfig([]byte(tc.yaml))
-			if tc.refused {
-				if err == nil || !strings.Contains(err.Error(), "sync.mode") {
-					t.Fatalf("an unknown mode should be refused naming the key, got %v", err)
-				}
-				return
-			}
 			if err != nil {
-				t.Fatalf("a known mode should load: %v", err)
+				t.Fatalf("any mode value should load: %v", err)
 			}
 			if got := model.ResolveSyncMode(cfg); got != tc.want {
-				t.Errorf("the effective mode should follow the file, got %q", got)
+				t.Errorf("only auto should switch sync on, got %q", got)
 			}
 		})
 	}
 }
 
-func TestSyncModeRefusedInGlobalLayer(t *testing.T) {
-	var global model.BaseConfig
-	err := model.UnmarshalYAML([]byte("sync:\n  mode: sometimes\n"), &global)
-	if err == nil || !strings.Contains(err.Error(), "sync.mode") {
-		t.Fatalf("the global layer should refuse an unknown mode naming the key, got %v", err)
+func TestIgnoredSettings(t *testing.T) {
+	cases := []struct {
+		name      string
+		mode      model.SyncMode
+		committed bool
+		ignored   bool
+	}{
+		{name: "unset in the committed layer", committed: true},
+		{name: "auto in the committed layer", mode: model.SyncModeAuto, committed: true, ignored: true},
+		{name: "manual in the committed layer", mode: model.SyncModeManual, committed: true, ignored: true},
+		{name: "auto in a personal layer", mode: model.SyncModeAuto},
+		{name: "manual in a personal layer", mode: model.SyncModeManual},
+		{name: "unknown value in a personal layer", mode: "always", ignored: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := model.IgnoredSettings(model.BaseConfig{Sync: model.SyncConfig{Mode: tc.mode}}, tc.committed)
+			if !tc.ignored {
+				if len(got) != 0 {
+					t.Errorf("a setting the layer may make should be honored, got %v", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].Key != "sync.mode" || got[0].Reason == "" {
+				t.Errorf("the setting should be reported as ignored with its key and a reason, got %v", got)
+			}
+		})
+	}
+}
+
+func TestHonoredCommittedDropsTheMode(t *testing.T) {
+	committed := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Sync: model.SyncConfig{Mode: model.SyncModeAuto, Cooldown: "5m"}}}
+	honored := model.HonoredCommitted(committed)
+	if honored.Sync.Mode != "" || honored.Sync.Cooldown != "5m" {
+		t.Errorf("only the mode should be dropped from the committed layer, got %+v", honored.Sync)
+	}
+	if committed.Sync.Mode != model.SyncModeAuto {
+		t.Error("the layer read should be left as it was")
+	}
+	if model.HonoredCommitted(nil) != nil {
+		t.Error("an absent committed layer should stay absent")
 	}
 }
 

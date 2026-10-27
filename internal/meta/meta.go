@@ -50,6 +50,7 @@ func ReadConfig(sddDir string) (*model.PerRepoConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	base = model.HonoredCommitted(base)
 	overlay, err := readConfigFile(filepath.Join(sddDir, "config.local.yaml"))
 	if err != nil {
 		return nil, err
@@ -90,6 +91,7 @@ func ReadConfigLayers(sddDir string) (committed, local *model.PerRepoConfig, err
 	if err != nil {
 		return nil, nil, err
 	}
+	committed = model.HonoredCommitted(committed)
 	local, err = readConfigFile(filepath.Join(sddDir, "config.local.yaml"))
 	if err != nil {
 		return nil, nil, err
