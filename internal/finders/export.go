@@ -44,7 +44,7 @@ func (gf *GraphFinder) Export(ctx context.Context, q query.ExportQuery) (*query.
 	if gf.graph == nil {
 		return nil, fmt.Errorf("export: graph is required")
 	}
-	repoID, err := gf.finder.localRepoID()
+	repoID, err := gf.finder.LocalRepoID()
 	if err != nil {
 		return nil, err
 	}

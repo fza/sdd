@@ -93,9 +93,9 @@ func (f *Finder) declaredDependencies() ([]model.RepoID, error) {
 	return f.cfg.Dependencies, nil
 }
 
-// localRepoID returns the repo's canonical identity from config; "" means the
+// LocalRepoID returns the repo's canonical identity from config; "" means the
 // repo declares none (local-only).
-func (f *Finder) localRepoID() (model.RepoID, error) {
+func (f *Finder) LocalRepoID() (model.RepoID, error) {
 	if f.cfg == nil {
 		return "", fmt.Errorf("repo ID unavailable: no per-repo config")
 	}

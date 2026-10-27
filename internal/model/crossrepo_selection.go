@@ -2,7 +2,10 @@ package model
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"iter"
+	"slices"
 )
 
 // DependencyResolver answers one step of a declared-dependency walk: the
@@ -11,6 +14,36 @@ import (
 // resolve.
 type DependencyResolver[K comparable] interface {
 	Dependencies(ctx context.Context, k K) ([]K, error)
+}
+
+// DependencyResolverFunc adapts a function to a DependencyResolver.
+type DependencyResolverFunc[K comparable] func(ctx context.Context, k K) ([]K, error)
+
+func (f DependencyResolverFunc[K]) Dependencies(ctx context.Context, k K) ([]K, error) {
+	return f(ctx, k)
+}
+
+// ErrNotInClosure reports a repo a read names outside the project's
+// dependency closure, its horizon (20261026-194528-d-cpt-gcq).
+var ErrNotInClosure = errors.New("not in the project's dependency closure")
+
+// SelectRepos resolves a read's repo selection against the dependency
+// closure: all selects the whole closure, otherwise each named repo, once,
+// and a named repo outside the closure is an ErrNotInClosure.
+func SelectRepos(named []RepoID, all bool, closure []RepoID) ([]RepoID, error) {
+	if all {
+		return slices.Clone(closure), nil
+	}
+	var selected []RepoID
+	for _, repoID := range named {
+		if !slices.Contains(closure, repoID) {
+			return nil, fmt.Errorf("repo %s: %w", repoID, ErrNotInClosure)
+		}
+		if !slices.Contains(selected, repoID) {
+			selected = append(selected, repoID)
+		}
+	}
+	return selected, nil
 }
 
 // DependencyClosure walks the declared dependencies of root transitively and

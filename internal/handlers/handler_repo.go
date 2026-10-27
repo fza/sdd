@@ -371,13 +371,16 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 // freshenReferencedRepos refreshes the caches of every repo a ref set
 // points into (lazy clone + cooldown pull) so capture-time resolution reads
 // live state. Unconnected repos are skipped — resolve-or-block reports them.
-func (h *Handler) freshenReferencedRepos(ctx context.Context, refs []model.Ref) error {
+// The refresh is optional (20261027-150208-d-tac-bg4): a failed one is a
+// warning, and resolution reads the caches as they stand.
+func (h *Handler) freshenReferencedRepos(ctx context.Context, refs []model.Ref) {
 	repoIDs := model.CrossRepoIDs(model.RefIDs(refs))
 	if len(repoIDs) == 0 {
-		return nil
+		return
 	}
-	_, err := h.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: repoIDs})
-	return err
+	if _, err := h.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: repoIDs}); err != nil {
+		slogutils.FromContext(ctx).Warn("could not refresh referenced dependencies; resolving against their caches as they stand", "repos", repoIDs, "err", err)
+	}
 }
 
 // fetchOnMiss force-pulls the cache of any connected repo whose referenced
@@ -440,39 +443,89 @@ func (h *Handler) fetchOnMiss(ctx context.Context, graph *model.Graph, refs []mo
 	return reloaded
 }
 
-// PrepareCrossRepoSearch runs the side-effect half of a cross-graph
-// search, mirroring how the local lazy-fill precedes the search finder:
-// resolve the query's repo selection, bring those caches up to date, and —
-// when vector mode is in play — lazy-fill each repo's index with the shared
+// PrepareCrossRepoSearch runs the side-effect half of a cross-graph search,
+// mirroring how the local lazy-fill precedes the search finder: refresh the
+// dependency closure, select the query's repos from it, and — when vector
+// mode is in play — lazy-fill each selected repo's index with the shared
 // embedder. The finder read (finders.MultiSearch) then runs pure. fill is
 // optional: the CLI passes progress callbacks so the member builds render
-// through the output coordinator; the MCP server passes nil (non-TTY slog).
-func (h *Handler) PrepareCrossRepoSearch(ctx context.Context, q query.SearchQuery, embedder IndexEmbedder, fill *command.BuildConnectedIndexesCmd) error {
-	if h.repos == nil {
-		if q.AllRepos || len(q.Repos) > 0 {
-			return errNoRepos
-		}
+// through the output coordinator.
+func (h *Handler) PrepareCrossRepoSearch(ctx context.Context, q query.SearchQuery, embedder IndexEmbedder, refresh command.RefreshDependencyClosureCmd, fill *command.BuildConnectedIndexesCmd) error {
+	if !q.AllRepos && len(q.Repos) == 0 {
 		return nil
 	}
-	repoIDs, err := h.repos.Registry().SelectRepoIDs(q.Repos, q.AllRepos)
-	if err != nil || len(repoIDs) == 0 {
+	closure, err := h.refreshDependencyClosure(ctx, refresh)
+	if err != nil {
 		return err
 	}
-	// Text-only search needs fresh caches but no embedding; the vector path
-	// freshens and fills in one pass through BuildConnectedIndexes.
-	if q.Phrase == "" || embedder.Embedder == nil {
-		fresh := command.EnsureReposFreshCmd{RepoIDs: repoIDs}
-		if fill != nil {
-			fresh.OnPhase = fill.OnPhase
-		}
-		_, err := h.EnsureReposFresh(ctx, fresh)
+	repoIDs, err := model.SelectRepos(q.Repos, q.AllRepos, closure)
+	if err != nil || q.Phrase == "" {
 		return err
 	}
 	return h.BuildConnectedIndexes(ctx, repoIDs, embedder, fill)
 }
 
-// BuildConnectedIndexes freshens the given connected repos' caches and fills
-// each member's index under the shared embedder, excluding embedded entries.
+// RefreshDependencyClosure walks the local repo's dependency closure,
+// refreshing each connected repo's cache (lazy clone, cooldown pull) before
+// reading what it declares, so a config repaired upstream is read after its
+// pull. What the refresh cannot do is reported through the command's
+// callbacks; only a failure to read the closure itself is returned.
+func (h *Handler) RefreshDependencyClosure(ctx context.Context, cmd command.RefreshDependencyClosureCmd) error {
+	_, err := h.refreshDependencyClosure(ctx, cmd)
+	return err
+}
+
+func (h *Handler) refreshDependencyClosure(ctx context.Context, cmd command.RefreshDependencyClosureCmd) ([]model.RepoID, error) {
+	if err := cmd.Validate(); err != nil {
+		return nil, err
+	}
+	if h.repos == nil {
+		return nil, errNoRepos
+	}
+	root, err := h.reader.LocalRepoID()
+	if err != nil {
+		return nil, err
+	}
+	step := func(ctx context.Context, repoID model.RepoID) ([]model.RepoID, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if repoID != root {
+			if err := h.refreshCache(ctx, repoID, cmd); err != nil {
+				return nil, err
+			}
+		}
+		return h.reader.DeclaredDependencies(ctx, repoID)
+	}
+	var closure []model.RepoID
+	for repoID, err := range model.DependencyClosure(ctx, root, model.DependencyResolverFunc[model.RepoID](step)) {
+		if err != nil {
+			return nil, err
+		}
+		closure = append(closure, repoID)
+	}
+	return closure, nil
+}
+
+// refreshCache refreshes one closure member, reporting a missing connection
+// or a failed clone or pull instead of returning it.
+func (h *Handler) refreshCache(ctx context.Context, repoID model.RepoID, cmd command.RefreshDependencyClosureCmd) error {
+	_, connected, err := h.repos.Registry().Cache(repoID)
+	if err != nil {
+		return err
+	}
+	if !connected {
+		cmd.OnUnconnected(repoID)
+		return nil
+	}
+	if _, err := h.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: []model.RepoID{repoID}, OnPhase: cmd.OnPhase}); err != nil {
+		cmd.OnRefreshFailed(repoID, err)
+	}
+	return nil
+}
+
+// BuildConnectedIndexes fills each given repo's index under the shared
+// embedder, excluding embedded entries; callers refresh the caches first.
 // Entries indexed under a different fingerprint re-embed here rather than
 // excluding the repo, so one vector space holds across every selected index.
 // It is the shared spine for eager pre-indexing (`sdd index --repo`) and the
@@ -485,17 +538,7 @@ func (h *Handler) BuildConnectedIndexes(ctx context.Context, repoIDs []model.Rep
 	if h.repos == nil {
 		return errNoRepos
 	}
-	if len(repoIDs) == 0 {
-		return nil
-	}
-	fresh := command.EnsureReposFreshCmd{RepoIDs: repoIDs}
-	if fill != nil {
-		fresh.OnPhase = fill.OnPhase
-	}
-	if _, err := h.EnsureReposFresh(ctx, fresh); err != nil {
-		return err
-	}
-	if embedder.Embedder == nil {
+	if len(repoIDs) == 0 || embedder.Embedder == nil {
 		return nil
 	}
 	if fill == nil {

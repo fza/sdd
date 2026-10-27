@@ -41,7 +41,7 @@ func MultiSearch(ctx context.Context, local *SearchFinder, q query.SearchQuery) 
 	if local.repos == nil {
 		return nil, fmt.Errorf("cross-repo search needs the connected-repos registry — construct the SearchFinder with Repos")
 	}
-	repoIDs, err := local.repos.SelectRepoIDs(q.Repos, q.AllRepos)
+	repoIDs, err := model.SelectRepos(q.Repos, q.AllRepos, local.closure)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func MultiSearch(ctx context.Context, local *SearchFinder, q query.SearchQuery) 
 			return nil, err
 		}
 		if member == nil {
-			logger.Warn("connected repo unavailable for search; skipping", "repo", repoID)
+			logger.Warn("dependency unavailable for search; skipping", "repo", repoID)
 			continue
 		}
 		mq := q

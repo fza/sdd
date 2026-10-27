@@ -2,6 +2,7 @@ package finders
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -59,13 +60,17 @@ func TestMultiSearchTextAcrossRepos(t *testing.T) {
 	}
 	repostest.WriteConfig(t, loc.ConfigPath, cfg)
 
-	f := New(Options{Repos: reg, Config: &model.PerRepoConfig{}})
+	f := New(Options{Repos: reg, Config: &model.PerRepoConfig{RepoID: "example.com/team/local", Dependencies: []model.RepoID{repoID}}})
 	g, err := f.CurrentGraph(localDir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	closure, err := f.DependencyClosure(t.Context(), query.DependencyClosureQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	local := NewSearchFinder(SearchFinderOptions{Graph: g, GraphDir: localDir, Repos: reg})
+	local := NewSearchFinder(SearchFinderOptions{Graph: g, GraphDir: localDir, Repos: reg, Closure: closure})
 	q := query.SearchQuery{
 		Terms:    []string{"telemetry"},
 		AllRepos: true,
@@ -73,6 +78,9 @@ func TestMultiSearchTextAcrossRepos(t *testing.T) {
 	res, err := MultiSearch(context.Background(), local, q)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := MultiSearch(context.Background(), local, query.SearchQuery{Terms: []string{"telemetry"}, Repos: []model.RepoID{"example.com/team/undeclared"}}); !errors.Is(err, model.ErrNotInClosure) {
+		t.Errorf("searching a repo outside the closure: err = %v, want ErrNotInClosure", err)
 	}
 
 	byID := map[string]query.SearchEntry{}

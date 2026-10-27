@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 
+	"github.com/networkteam/slogutils"
 	"github.com/urfave/cli/v3"
 
 	"github.com/networkteam/sdd/internal/cliout"
@@ -224,16 +225,26 @@ func repoIDArgs(args []string) []model.RepoID {
 	return ids
 }
 
-// freshenRepoCaches brings the named connected repos' caches up to date
-// before a read (lazy clone + cooldown pull). A no-op for an empty list.
-func freshenRepoCaches(ctx context.Context, errWriter io.Writer, repoIDs []model.RepoID) error {
-	if len(repoIDs) == 0 {
-		return nil
-	}
+// refreshDependencies refreshes the dependency closure's caches ahead of a
+// read that reaches beyond the local graph.
+func refreshDependencies(ctx context.Context, errWriter io.Writer) error {
 	h, err := repoHandler(errWriter)
 	if err != nil {
 		return err
 	}
-	_, err = h.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: repoIDs})
-	return err
+	return h.RefreshDependencyClosure(ctx, dependencyRefreshCmd(ctx))
+}
+
+// dependencyRefreshCmd logs what a refresh could not do as warnings; the read
+// proceeds on the caches as they stand.
+func dependencyRefreshCmd(ctx context.Context) command.RefreshDependencyClosureCmd {
+	logger := slogutils.FromContext(ctx)
+	return command.RefreshDependencyClosureCmd{
+		OnRefreshFailed: func(repoID model.RepoID, err error) {
+			logger.Warn("could not refresh dependency; reading its cache as it stands", "repo", repoID, "err", err)
+		},
+		OnUnconnected: func(repoID model.RepoID) {
+			logger.Warn("dependency is not connected on this machine; connect it with `sdd repo add <clone-url>`", "repo", repoID)
+		},
+	}
 }

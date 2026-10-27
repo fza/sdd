@@ -45,6 +45,31 @@ type EnsureReposFreshCmd struct {
 	OnPhase func(phase model.Phase)
 }
 
+// RefreshDependencyClosureCmd refreshes the caches of the local repo's
+// declared dependency closure ahead of a read, each repo before its
+// declarations are read. The refresh is optional to the read
+// (20261027-150208-d-tac-bg4): its failures are reported through the
+// callbacks, and the read uses the caches as they stand.
+type RefreshDependencyClosureCmd struct {
+	// OnRefreshFailed reports a clone or pull that failed. Required.
+	OnRefreshFailed func(repoID model.RepoID, err error)
+
+	// OnUnconnected reports a closure member with no connection on this
+	// machine. Required.
+	OnUnconnected func(repoID model.RepoID)
+
+	// OnPhase reports the refresh stage. Optional.
+	OnPhase func(phase model.Phase)
+}
+
+// Validate checks that no refresh failure can go unreported.
+func (c *RefreshDependencyClosureCmd) Validate() error {
+	if c.OnRefreshFailed == nil || c.OnUnconnected == nil {
+		return fmt.Errorf("OnRefreshFailed and OnUnconnected are required")
+	}
+	return nil
+}
+
 // Validate checks the command's required fields.
 func (c *RepoAddCmd) Validate() error {
 	if c.CloneURL == "" {

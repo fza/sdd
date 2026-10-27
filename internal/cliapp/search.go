@@ -188,11 +188,11 @@ func indexCmd() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:  "repo",
-				Usage: "Also build a connected repo's index by its repo-id (repeatable) — eager pre-indexing so the first cross-repo search is warm",
+				Usage: "Also build a dependency's index by its repo-id (repeatable; must be in the declared dependency closure) — eager pre-indexing so the first cross-repo search is warm",
 			},
 			&cli.BoolFlag{
 				Name:  "all-repos",
-				Usage: "Also build every connected repo's index",
+				Usage: "Also build the index of every repo in the declared dependency closure",
 			},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -249,16 +249,22 @@ func indexCmd() *cli.Command {
 				doneIndexed, doneSkipped, haveSummary = indexed, skipped, true
 			})
 
-			var reg *repos.Registry
-			var mgr *repos.Manager
+			var connH *handlers.Handler
 			var repoIDs []model.RepoID
 			if crossRepo {
-				reg, mgr, err = defaultRepos()
+				_, mgr, err := defaultRepos()
 				if err != nil {
 					return err
 				}
-				repoIDs, err = reg.SelectRepoIDs(repoSelection, allRepos)
+				connH = handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr})
+				if err := connH.RefreshDependencyClosure(ctx, dependencyRefreshCmd(ctx)); err != nil {
+					return err
+				}
+				closure, err := reader.DependencyClosure(ctx, query.DependencyClosureQuery{})
 				if err != nil {
+					return err
+				}
+				if repoIDs, err = model.SelectRepos(repoSelection, allRepos, closure); err != nil {
 					return err
 				}
 			}
@@ -271,7 +277,6 @@ func indexCmd() *cli.Command {
 					return struct{}{}, err
 				}
 				if crossRepo {
-					connH := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr})
 					if err := connH.BuildConnectedIndexes(ctx, repoIDs, emb, fill); err != nil {
 						return struct{}{}, err
 					}
@@ -366,11 +371,11 @@ func searchCmd() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:  "repo",
-				Usage: "Also search a connected repo by its repo-id (repeatable, additive to the local graph)",
+				Usage: "Also search a dependency by its repo-id (repeatable, additive to the local graph; must be in the declared dependency closure)",
 			},
 			&cli.BoolFlag{
 				Name:  "all-repos",
-				Usage: "Also search every connected repo",
+				Usage: "Also search every repo in the declared dependency closure",
 			},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -508,32 +513,37 @@ func searchCmd() *cli.Command {
 						return nil, err
 					}
 				}
-				finder := finders.NewSearchFinder(finders.SearchFinderOptions{
+				opts := finders.SearchFinderOptions{
 					Graph:      g,
 					GraphDir:   graphDir,
 					Embedder:   emb,
 					IndexStore: idxStore,
 					Repos:      reg,
-				})
-				if crossRepo {
-					// Side effects first (cache freshen + member index fill,
-					// the cross-repo analog of the local lazy-fill above),
-					// then the pure cross-graph read.
-					reader, err := newReadFinder()
-					if err != nil {
-						return nil, err
-					}
-					h := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr})
-					var fill *command.BuildConnectedIndexesCmd
-					if prog != nil {
-						fill = prog.connected(false)
-					}
-					if err := h.PrepareCrossRepoSearch(ctx, sq, emb, fill); err != nil {
-						return nil, err
-					}
-					return finders.MultiSearch(ctx, finder, sq)
 				}
-				return finder.Search(ctx, sq)
+				if !crossRepo {
+					return finders.NewSearchFinder(opts).Search(ctx, sq)
+				}
+				// Side effects first (closure refresh + member index fill, the
+				// cross-repo analog of the local lazy-fill above), then the pure
+				// cross-graph read over the refreshed closure.
+				reader, err := newReadFinder()
+				if err != nil {
+					return nil, err
+				}
+				h := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr})
+				refresh := dependencyRefreshCmd(ctx)
+				var fill *command.BuildConnectedIndexesCmd
+				if prog != nil {
+					fill = prog.connected(false)
+					refresh.OnPhase = fill.OnPhase
+				}
+				if err := h.PrepareCrossRepoSearch(ctx, sq, emb, refresh, fill); err != nil {
+					return nil, err
+				}
+				if opts.Closure, err = reader.DependencyClosure(ctx, query.DependencyClosureQuery{}); err != nil {
+					return nil, err
+				}
+				return finders.MultiSearch(ctx, finders.NewSearchFinder(opts), sq)
 			}
 
 			var res *query.SearchResult

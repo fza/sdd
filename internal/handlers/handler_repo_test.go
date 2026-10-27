@@ -184,7 +184,7 @@ func TestRepoAdd_ClonePathReportsConnectingThenCloning(t *testing.T) {
 // exercises a pre-cloned member end to end — the cooldown pull runs, the
 // member index is written under (repo-id, fingerprint), and the fill
 // callbacks report the repo and its chunks.
-func TestBuildConnectedIndexes_FreshensAndFills(t *testing.T) {
+func TestBuildConnectedIndexes_Fills(t *testing.T) {
 	dir := t.TempDir()
 	loc := repos.Locations{
 		ConfigPath: filepath.Join(dir, "xdg", "sdd", "config.yaml"),
@@ -234,8 +234,8 @@ func TestBuildConnectedIndexes_FreshensAndFills(t *testing.T) {
 		t.Fatalf("BuildConnectedIndexes: %v", err)
 	}
 
-	if fg.pulls != 1 {
-		t.Errorf("expected 1 cooldown pull on a fresh read, got %d", fg.pulls)
+	if fg.pulls != 0 {
+		t.Errorf("BuildConnectedIndexes pulled %d time(s); its callers refresh first", fg.pulls)
 	}
 	if len(startedRepos) != 1 || startedRepos[0] != repoID {
 		t.Errorf("OnRepoStart calls = %v, want [%s]", startedRepos, repoID)

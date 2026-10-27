@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/networkteam/sdd/internal/command"
-	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/urfave/cli/v3"
@@ -65,7 +63,7 @@ func exportCmd() *cli.Command {
 				return err
 			}
 			if mode != query.ExportDependenciesNone {
-				if err := freshenDependencyClosure(ctx, cmd.ErrWriter, f); err != nil {
+				if err := refreshDependencies(ctx, cmd.ErrWriter); err != nil {
 					return err
 				}
 			}
@@ -84,27 +82,6 @@ func exportCmd() *cli.Command {
 			}
 			return presenters.RenderExportJSON(cmd.Writer, result)
 		},
-	}
-}
-
-// freshenDependencyClosure brings the caches of the declared dependency
-// closure up to date before the export assembles its graphs. A freshened cache
-// can declare more, so the closure is recomputed until freshening changes
-// nothing.
-func freshenDependencyClosure(ctx context.Context, errWriter io.Writer, f *finders.Finder) error {
-	h, err := repoHandler(errWriter)
-	if err != nil {
-		return err
-	}
-	for {
-		closure, err := f.DependencyClosure(ctx, query.DependencyClosureQuery{})
-		if err != nil {
-			return err
-		}
-		changed, err := h.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: closure})
-		if err != nil || !changed {
-			return err
-		}
 	}
 }
 

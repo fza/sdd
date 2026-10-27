@@ -7,19 +7,17 @@ import (
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
-	"github.com/networkteam/sdd/internal/repos"
 )
 
 // DependencyClosure lists the repos the local repo reaches through declared
-// dependencies, as they stand in the connected-repo caches. Freshening those
-// caches is the caller's side effect: a refreshed cache can declare more.
+// dependencies, walking DeclaredDependencies. Refreshing the caches is the
+// handler's side effect (Handler.RefreshDependencyClosure), run before.
 func (f *Finder) DependencyClosure(ctx context.Context, _ query.DependencyClosureQuery) ([]model.RepoID, error) {
 	if f.cfg == nil {
 		return nil, nil
 	}
-	r := repoDependencies{local: f.cfg.RepoID, declared: f.cfg.Dependencies, repos: f.repos}
 	var closure []model.RepoID
-	for repoID, err := range model.DependencyClosure(ctx, f.cfg.RepoID, r) {
+	for repoID, err := range model.DependencyClosure(ctx, f.cfg.RepoID, model.DependencyResolverFunc[model.RepoID](f.DeclaredDependencies)) {
 		if err != nil {
 			return nil, err
 		}
@@ -28,25 +26,19 @@ func (f *Finder) DependencyClosure(ctx context.Context, _ query.DependencyClosur
 	return closure, nil
 }
 
-// repoDependencies resolves a declared dependency to the connected repo of
-// the same ID: the local repo answers from its per-repo config, a connected
-// repo from the committed config in its cache, read as the local composition
-// reads a dependency project's. A repo that is not connected or not cached
-// declares nothing, so it stays in the closure with nothing reached behind it.
-type repoDependencies struct {
-	local    model.RepoID
-	declared []model.RepoID
-	repos    *repos.Registry
-}
-
-func (r repoDependencies) Dependencies(_ context.Context, repoID model.RepoID) ([]model.RepoID, error) {
-	if repoID == r.local {
-		return r.declared, nil
+// DeclaredDependencies is one step of the dependency walk, as the caches
+// stand: the local repo answers from its per-repo config, a connected repo
+// from the committed config in its cache. A repo that is not connected, not
+// cached or without a config declares nothing, so it stays in the closure
+// with nothing reached behind it.
+func (f *Finder) DeclaredDependencies(_ context.Context, repoID model.RepoID) ([]model.RepoID, error) {
+	if f.cfg != nil && repoID == f.cfg.RepoID {
+		return f.cfg.Dependencies, nil
 	}
-	if r.repos == nil {
+	if f.repos == nil {
 		return nil, nil
 	}
-	cache, connected, err := r.repos.Cache(repoID)
+	cache, connected, err := f.repos.Cache(repoID)
 	if err != nil || !connected {
 		return nil, err
 	}
