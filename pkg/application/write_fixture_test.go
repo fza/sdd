@@ -2,8 +2,12 @@ package application_test
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	localadapter "github.com/networkteam/sdd/pkg/local"
@@ -24,12 +28,25 @@ type writeFixtureOptions struct {
 	SourceConfig *sdd.ProjectConfig
 	Dependency   *sdd.ProjectRuntime
 	Dependencies []string
+	// GraphSchema is the schema the graph's meta.json records; zero writes no
+	// meta.json, leaving the graph at the binary's schema.
+	GraphSchema int
 }
 
 func newWriteFixture(t *testing.T, options ...writeFixtureOptions) *writeFixture {
 	t.Helper()
 	dir := t.TempDir()
-	baseGraph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: "example", GraphDir: dir})
+	var metaPath string
+	for _, option := range options {
+		if option.GraphSchema != 0 {
+			metaPath = filepath.Join(t.TempDir(), model.SchemaMetaFileName)
+			err := os.WriteFile(metaPath, fmt.Appendf(nil, "{\"graph_schema_version\": %d}\n", option.GraphSchema), 0o644)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	baseGraph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: "example", GraphDir: dir, MetaPath: metaPath})
 	if err != nil {
 		t.Fatal(err)
 	}

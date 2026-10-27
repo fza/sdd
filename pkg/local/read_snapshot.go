@@ -50,9 +50,13 @@ func (s *FilesystemGraphStore) AcquireSnapshot(ctx context.Context, q app.Snapsh
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	schemaVersion, err := s.GraphSchemaVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if q.ExactRevision != "" {
 		if retained := s.snapshots[q.ExactRevision]; retained != nil {
-			return s.leaseSnapshot(retained), nil
+			return s.leaseSnapshot(retained, schemaVersion), nil
 		}
 	}
 	lock, err := s.lock()
@@ -77,7 +81,7 @@ func (s *FilesystemGraphStore) AcquireSnapshot(ctx context.Context, q app.Snapsh
 		}
 	}
 	if retained := s.snapshots[revision]; retained != nil {
-		return s.leaseSnapshot(retained), nil
+		return s.leaseSnapshot(retained, schemaVersion), nil
 	}
 	files, err := freezeGraphFS(ctx, s.dir)
 	if err != nil {
@@ -99,13 +103,15 @@ func (s *FilesystemGraphStore) AcquireSnapshot(ctx context.Context, q app.Snapsh
 		s.snapshots = map[string]*retainedSnapshot{}
 	}
 	s.snapshots[revision] = retained
-	return s.leaseSnapshot(retained), nil
+	return s.leaseSnapshot(retained, schemaVersion), nil
 }
 
-func (s *FilesystemGraphStore) leaseSnapshot(retained *retainedSnapshot) *app.AcquiredSnapshot {
+// leaseSnapshot stamps the lease with the schema meta.json records now: a
+// migration that only stamps meta.json leaves the graph's revision unchanged.
+func (s *FilesystemGraphStore) leaseSnapshot(retained *retainedSnapshot, schemaVersion int) *app.AcquiredSnapshot {
 	retained.leases++
 	var once sync.Once
-	return &app.AcquiredSnapshot{Snapshot: retained.snapshot, Attachments: snapshotAttachments{files: retained.files, dir: s.dir}, Release: func() error {
+	return &app.AcquiredSnapshot{Snapshot: retained.snapshot.WithSchemaVersion(schemaVersion), Attachments: snapshotAttachments{files: retained.files, dir: s.dir}, Release: func() error {
 		once.Do(func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()

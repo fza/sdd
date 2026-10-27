@@ -223,6 +223,14 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
+        "binarySchema": {
+          "description": "schema version this build writes by default",
+          "type": "integer"
+        },
+        "graphSchema": {
+          "description": "schema version the graph records; entries are written at it until an explicit sdd migrate",
+          "type": "integer"
+        },
         "language": {
           "description": "configured graph language; empty = English",
           "type": "string"

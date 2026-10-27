@@ -68,15 +68,26 @@ func TestSchemaStatus_ParsesAndChecks(t *testing.T) {
 		t.Errorf("v0.1.0 < minimum_version v0.2.0 should refuse")
 	}
 
-	// Schema mismatch refuses.
+	// A graph older than the binary is written at its own schema.
 	res, err = f.SchemaStatus(context.Background(), query.SchemaStatusQuery{
 		SDDDir: tmp, BinaryVersion: "v0.2.0", BinarySchemaVersion: 2,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !res.Compatibility.Compatible {
+		t.Errorf("an older graph should be accepted: %+v", res.Compatibility)
+	}
+
+	// A graph newer than the binary refuses.
+	res, err = f.SchemaStatus(context.Background(), query.SchemaStatusQuery{
+		SDDDir: tmp, BinaryVersion: "v0.2.0", BinarySchemaVersion: 0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if res.Compatibility.Compatible {
-		t.Errorf("schema version mismatch should refuse")
+		t.Errorf("a graph newer than the binary should refuse")
 	}
 
 	// Dev build bypasses.

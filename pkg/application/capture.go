@@ -135,6 +135,10 @@ func (a *Application) CreateEntry(ctx context.Context, identity RequestIdentity,
 		return result, err
 	}
 	if !exists {
+		schema, err := graphSchemaOf(ctx, acquired.Graph)
+		if err != nil {
+			return result, err
+		}
 		readRuntime := *runtime
 		readRuntime.options.Graph = acquired.Graph
 		target, effective, err := readMaterializedSnapshot(ctx, &readRuntime, "")
@@ -158,7 +162,9 @@ func (a *Application) CreateEntry(ctx context.Context, identity RequestIdentity,
 			return result, fmt.Errorf("generating summary: %w", err)
 		}
 		entry.Summary = summary.Summary
-		entry.Title = summary.Title
+		if schema.capabilities.Titles {
+			entry.Title = summary.Title
+		}
 		err = secrets.CheckEntry(entry)
 		if err != nil {
 			return result, err

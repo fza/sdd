@@ -18,6 +18,8 @@ import (
 // changes from one RewriteEntry call are observed by a later one).
 type graphReader struct {
 	loadErr error
+	// graphSchema is the schema meta.json records; zero means no meta.json.
+	graphSchema int
 }
 
 func (r *graphReader) CurrentGraph(dir string) (*model.Graph, error) {
@@ -63,6 +65,13 @@ func (r *graphReader) Preflight(context.Context, *model.Graph, query.PreflightQu
 }
 func (r *graphReader) SkillStatus(context.Context, query.SkillStatusQuery) (*query.SkillStatusResult, error) {
 	return &query.SkillStatusResult{}, nil
+}
+
+func (r *graphReader) SchemaStatus(context.Context, query.SchemaStatusQuery) (*query.SchemaStatusResult, error) {
+	if r.graphSchema == 0 {
+		return &query.SchemaStatusResult{}, nil
+	}
+	return &query.SchemaStatusResult{MetaExists: true, Meta: &model.SchemaMeta{GraphSchemaVersion: r.graphSchema}}, nil
 }
 
 // recordingMover records move calls and performs the rename on disk.

@@ -1,10 +1,11 @@
 package query
 
 // InfoQuery captures intent to read session framing — participant
-// identity, search capability, and configured graph language. No fields
-// today; declared as a struct so the surface evolves consistently with
-// the rest of the CQRS layer.
-type InfoQuery struct{}
+// identity, search capability, configured graph language and graph schema.
+// SDDDir locates the graph's meta.json; empty leaves the schema unreported.
+type InfoQuery struct {
+	SDDDir string
+}
 
 // InfoResult is the structured snapshot of session framing.
 //
@@ -20,8 +21,14 @@ type InfoQuery struct{}
 //
 // Search renders as `text` when only text mode is available and
 // `vector,text` when an embedding provider is configured.
+//
+// GraphSchema is the schema the graph's meta.json records, zero when unknown;
+// BinarySchema is the schema this binary writes by default. Writes happen at
+// GraphSchema when it is older.
 type InfoResult struct {
 	LocalParticipant string
 	Language         string
 	Search           string
+	GraphSchema      int
+	BinarySchema     int
 }
