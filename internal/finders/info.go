@@ -25,6 +25,9 @@ func (f *Finder) Info(ctx context.Context, q query.InfoQuery) (*query.InfoResult
 		Search:           f.searchCapability(),
 		BinarySchema:     model.CurrentGraphSchemaVersion,
 	}
+	if f.cfg != nil {
+		result.Contribution = f.cfg.Contribution
+	}
 	if q.SDDDir != "" {
 		status, err := f.SchemaStatus(ctx, query.SchemaStatusQuery{SDDDir: q.SDDDir, BinarySchemaVersion: model.CurrentGraphSchemaVersion})
 		if err != nil {

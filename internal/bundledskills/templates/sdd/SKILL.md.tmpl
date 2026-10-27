@@ -18,6 +18,10 @@ claude mcp add sdd -- sdd serve
 
 then restart the session.
 
+## Contribution mode
+
+When the repository is a fork whose features go upstream as pull requests, contribution mode keeps each feature's entries on that feature's branch: run `sdd config set --local contribution <upstream ref>` in the feature's worktree and start the session there. `sdd info` shows when it is on.
+
 ## The door
 
 Call `start_session`. Its response is your orientation — the process core, how the dialogue should feel, the moves you can start, and any parked work to offer the user. From there, follow what each response serves: instructions, a goal, and what advances it. Served instructions are authoritative — they override any generic habit.

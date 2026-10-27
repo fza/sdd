@@ -29,6 +29,9 @@ type InfoResult struct {
 	Search       string
 	GraphSchema  int
 	BinarySchema int
+	// Contribution is the read checkout's contribution ref, empty outside
+	// contribution mode.
+	Contribution string
 }
 
 type ViewRequest struct {

@@ -265,7 +265,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		return nil, "", sdd.RequestIdentity{}, err
 	}
 	project := sessionStoreProject(cfg)
-	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: graphDir, MetaPath: filepath.Join(sddDir, model.SchemaMetaFileName)})
+	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: graphDir, MetaPath: filepath.Join(sddDir, model.SchemaMetaFileName), Contribution: cfg.Contribution})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
