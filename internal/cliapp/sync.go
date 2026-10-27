@@ -104,7 +104,11 @@ func runSyncCheck(ctx context.Context) {
 func pullGraph(ctx context.Context, graphRepo git.CLI, graphDir string) {
 	handler := handlers.New(handlers.Options{GraphDir: graphDir, GraphPuller: graphRepo, Pusher: graphRepo, SyncMode: model.SyncModeAuto})
 	err := handler.AutoPullGraph(ctx)
-	if err != nil {
+	var conflict *handlers.MergeConflictError
+	switch {
+	case errors.As(err, &conflict):
+		slogutils.FromContext(ctx).Warn(conflict.Notice())
+	case err != nil:
 		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: %v", err))
 	}
 }

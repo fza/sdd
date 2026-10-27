@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	sdd "github.com/networkteam/sdd/pkg/application"
@@ -13,24 +14,27 @@ import (
 
 type recordingGraphSync struct {
 	branches []string
+	notice   string
 	err      error
 }
 
-func (s *recordingGraphSync) SyncGraph(_ context.Context, branch string) error {
+func (s *recordingGraphSync) SyncGraph(_ context.Context, branch string) (string, error) {
 	s.branches = append(s.branches, branch)
-	return s.err
+	return s.notice, s.err
 }
 
 func TestRefreshWorkflowSyncsTheSessionBranchFirst(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		err  error
+		name   string
+		notice string
+		err    error
 	}{
 		{name: "sync succeeds"},
+		{name: "sync raises a notice", notice: "sync: merging origin/main would conflict in a.md."},
 		{name: "sync fails", err: errors.New("upstream unreachable")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sync := &recordingGraphSync{err: tc.err}
+			sync := &recordingGraphSync{notice: tc.notice, err: tc.err}
 			graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: "example", GraphDir: t.TempDir()})
 			if err != nil {
 				t.Fatal(err)
@@ -61,11 +65,26 @@ func TestRefreshWorkflowSyncsTheSessionBranchFirst(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := application.RefreshWorkflow(t.Context(), identity, workflow.ID()); err != nil {
+			refreshed, err := application.RefreshWorkflow(t.Context(), identity, workflow.ID())
+			if err != nil {
 				t.Fatalf("a sync failure should not block the session: %v", err)
 			}
 			if !slices.Equal(sync.branches, []string{"main"}) {
 				t.Errorf("a refresh of an unbound session should sync the base branch once, got %v", sync.branches)
+			}
+			first, err := refreshed.ServeShell(t.Context(), identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.HasPrefix(first.Instructions, tc.notice); tc.notice != "" && !got {
+				t.Errorf("the first serve after the sync should lead with its notice, got %q", first.Instructions)
+			}
+			second, err := refreshed.ServeShell(t.Context(), identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.notice != "" && strings.Contains(second.Instructions, tc.notice) {
+				t.Error("the notice should ride one serve only")
 			}
 		})
 	}

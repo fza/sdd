@@ -51,29 +51,32 @@ type ProjectRuntimeOptions struct {
 }
 
 // GraphSync brings upstream graph commits into the checkout of a branch under
-// automatic sync (20261027-194536-d-tac-190).
+// automatic sync (20261027-194536-d-tac-190). The notice is what the agent
+// must act on, such as a conflicting merge to resolve by hand.
 type GraphSync interface {
-	SyncGraph(ctx context.Context, branch string) error
+	SyncGraph(ctx context.Context, branch string) (notice string, err error)
 }
 
 // syncGraph runs the runtime's GraphSync for branch, the base branch when
-// empty. A sync failure never blocks the session it precedes; it is reported.
-func (r *ProjectRuntime) syncGraph(ctx context.Context, branch string) {
+// empty, and returns its notice. A sync failure never blocks the session it
+// precedes; it is reported.
+func (r *ProjectRuntime) syncGraph(ctx context.Context, branch string) string {
 	if r.options.Sync == nil {
-		return
+		return ""
 	}
 	if branch == "" {
 		target, _, err := r.baseTarget(ctx)
 		if err != nil {
 			slogutils.FromContext(ctx).Warn("sync: resolving the base branch", "err", err)
-			return
+			return ""
 		}
 		branch = target.Branch
 	}
-	err := r.options.Sync.SyncGraph(ctx, branch)
+	notice, err := r.options.Sync.SyncGraph(ctx, branch)
 	if err != nil {
 		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: %v", err), "branch", branch)
 	}
+	return notice
 }
 
 func NewProjectRuntime(options ProjectRuntimeOptions) (*ProjectRuntime, error) {

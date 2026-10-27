@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -55,29 +56,35 @@ func (p GraphPublisher) Finalize(ctx context.Context, _ app.AppliedMutation) err
 
 // SyncGraph is the application's GraphSync over registered checkouts: the
 // sync check and automatic pull in the checkout of branch, when that
-// checkout's config sets sync.mode auto.
-func (a *GitWorktreeAcquirer) SyncGraph(ctx context.Context, branch string) error {
+// checkout's config sets sync.mode auto. A conflicting merge returns its
+// notice instead of an error.
+func (a *GitWorktreeAcquirer) SyncGraph(ctx context.Context, branch string) (string, error) {
 	if a.resolveConfig == nil {
-		return nil
+		return "", nil
 	}
 	checkout, err := a.resolveCheckout(ctx, app.MutationTarget{Project: a.project, Branch: branch})
 	if err != nil {
-		return err
+		return "", err
 	}
 	cfg, err := a.resolveConfig(checkout)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if model.ResolveSyncMode(cfg) != model.SyncModeAuto {
-		return nil
+		return "", nil
 	}
 	sddDir := filepath.Join(checkout, model.SDDDirName)
 	status, err := checkGraphSync(ctx, sddDir, cfg)
 	if err != nil {
-		return fmt.Errorf("checking graph sync on %s: %w", branch, err)
+		return "", fmt.Errorf("checking graph sync on %s: %w", branch, err)
 	}
 	if !status.State.Fetched() {
-		return nil
+		return "", nil
 	}
-	return pullGraph(ctx, sddDir, cfg)
+	err = pullGraph(ctx, sddDir, cfg)
+	var conflict *handlers.MergeConflictError
+	if errors.As(err, &conflict) {
+		return conflict.Notice(), nil
+	}
+	return "", err
 }

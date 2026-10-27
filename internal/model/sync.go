@@ -214,12 +214,16 @@ func GraphMergeMessage(upstream string) string {
 	return fmt.Sprintf("sdd: merge %s", upstream)
 }
 
-// MergeConflict is one path an automatic pull could not merge: the content
-// at the merge base and on each side. Base is empty when both sides added
-// the path.
+// MergeConflict is an automatic pull that would not merge cleanly: the
+// upstream ref and the paths both sides changed.
 type MergeConflict struct {
-	Path   string
-	Base   string
-	Ours   string
-	Theirs string
+	Upstream string
+	Paths    []string
+}
+
+// Notice tells the agent how to resolve the conflict by hand, naming the merge
+// message that keeps later automatic pushes going (20261027-231225-d-tac-n5o).
+func (c MergeConflict) Notice() string {
+	return fmt.Sprintf("sync: merging %s would conflict in %s. Merge it with git, resolve the conflicts, and commit the merge as %q; automatic sync holds until then.",
+		c.Upstream, strings.Join(c.Paths, ", "), GraphMergeMessage(c.Upstream))
 }

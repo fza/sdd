@@ -14,6 +14,18 @@ import (
 // cleanly; nothing was merged.
 var ErrMergeConflict = errors.New("graph merge would conflict")
 
+// MergeConflictError carries the conflict an automatic pull stopped at; it
+// matches ErrMergeConflict.
+type MergeConflictError struct {
+	model.MergeConflict
+}
+
+func (e *MergeConflictError) Error() string {
+	return fmt.Sprintf("%v in %s", ErrMergeConflict, strings.Join(e.Paths, ", "))
+}
+
+func (e *MergeConflictError) Unwrap() error { return ErrMergeConflict }
+
 // GraphPuller is the git surface automatic sync merges upstream graph
 // commits through. Merge leaves the working tree as it found it when the
 // merge fails.
@@ -85,7 +97,7 @@ func (h *Handler) mergeUpstream(ctx context.Context, cmd *command.PullGraphCmd) 
 			return "", fmt.Errorf("predicting merge with %s: %w", upstream, err)
 		}
 		if len(conflicts) > 0 {
-			return "", fmt.Errorf("%w in %s", ErrMergeConflict, strings.Join(conflicts, ", "))
+			return "", &MergeConflictError{model.MergeConflict{Upstream: upstream, Paths: conflicts}}
 		}
 		err = h.graphPuller.Merge(ctx, upstream, model.GraphMergeMessage(upstream))
 		if err != nil {
