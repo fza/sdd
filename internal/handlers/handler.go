@@ -74,33 +74,35 @@ type Puller interface {
 // Each public method corresponds to one command and lives in its own file
 // (handler_new_entry.go, etc.).
 type Handler struct {
-	graphDir  string
-	sddDir    string // path to .sdd/ directory; required for commands that write tmp files
-	reader    Reader
-	llmRunner llm.Runner
-	committer Committer
-	brancher  Brancher
-	mover     Mover
-	puller    Puller
-	pusher    Pusher
-	syncMode  model.SyncMode
-	repos     *repos.Manager
-	stderr    io.Writer
-	now       func() time.Time
-	language  string
+	graphDir    string
+	sddDir      string // path to .sdd/ directory; required for commands that write tmp files
+	reader      Reader
+	llmRunner   llm.Runner
+	committer   Committer
+	brancher    Brancher
+	mover       Mover
+	puller      Puller
+	pusher      Pusher
+	graphPuller GraphPuller
+	syncMode    model.SyncMode
+	repos       *repos.Manager
+	stderr      io.Writer
+	now         func() time.Time
+	language    string
 }
 
 // Options configures a new Handler. Zero-valued fields get sensible defaults.
 type Options struct {
-	GraphDir  string
-	SDDDir    string // path to .sdd/ directory; required for commands that write tmp files
-	Reader    Reader
-	LLMRunner llm.Runner
-	Committer Committer
-	Brancher  Brancher
-	Mover     Mover
-	Puller    Puller
-	Pusher    Pusher
+	GraphDir    string
+	SDDDir      string // path to .sdd/ directory; required for commands that write tmp files
+	Reader      Reader
+	LLMRunner   llm.Runner
+	Committer   Committer
+	Brancher    Brancher
+	Mover       Mover
+	Puller      Puller
+	Pusher      Pusher
+	GraphPuller GraphPuller
 	// SyncMode decides whether a graph commit is pushed before the command
 	// returns; empty means manual.
 	SyncMode model.SyncMode
@@ -119,20 +121,21 @@ type Options struct {
 // New constructs a Handler with the given options.
 func New(opts Options) *Handler {
 	h := &Handler{
-		graphDir:  opts.GraphDir,
-		sddDir:    opts.SDDDir,
-		reader:    opts.Reader,
-		llmRunner: opts.LLMRunner,
-		committer: opts.Committer,
-		brancher:  opts.Brancher,
-		mover:     opts.Mover,
-		puller:    opts.Puller,
-		pusher:    opts.Pusher,
-		syncMode:  opts.SyncMode,
-		repos:     opts.Repos,
-		stderr:    opts.Stderr,
-		now:       opts.Now,
-		language:  opts.Language,
+		graphDir:    opts.GraphDir,
+		sddDir:      opts.SDDDir,
+		reader:      opts.Reader,
+		llmRunner:   opts.LLMRunner,
+		committer:   opts.Committer,
+		brancher:    opts.Brancher,
+		mover:       opts.Mover,
+		puller:      opts.Puller,
+		pusher:      opts.Pusher,
+		graphPuller: opts.GraphPuller,
+		syncMode:    opts.SyncMode,
+		repos:       opts.Repos,
+		stderr:      opts.Stderr,
+		now:         opts.Now,
+		language:    opts.Language,
 	}
 	if h.stderr == nil {
 		h.stderr = os.Stderr

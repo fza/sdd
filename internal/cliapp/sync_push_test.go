@@ -2,7 +2,9 @@ package cliapp_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -22,12 +24,39 @@ func syncedProject(t *testing.T, mode string) string {
 	gitIn(t, root, "remote", "add", "origin", remote)
 	gitIn(t, root, "push", "-q", "-u", "origin", "HEAD")
 	writeFile(t, filepath.Join(root, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/synced\nlanguage: en\n")
-	local := "participant: Ada\n"
+	writeFile(t, filepath.Join(root, ".gitignore"), ".sdd/tmp/\n.sdd/config.local.yaml\n.sdd/index/\n.sdd/stats/\n.sdd/sessions/\n.sdd/staged-blobs/\n.sdd/graph/.sdd-runtime/\n")
+	gitIn(t, root, "add", ".gitignore", ".sdd/config.yaml")
+	gitIn(t, root, "commit", "-q", "-m", "sdd: init")
+	gitIn(t, root, "push", "-q")
+	local := "participant: Ada\nsync:\n  cooldown: 1ns\n"
 	if mode != "" {
-		local += "sync:\n  mode: " + mode + "\n"
+		local += "  mode: " + mode + "\n"
 	}
 	writeFile(t, filepath.Join(root, ".sdd", "config.local.yaml"), local)
 	return root
+}
+
+// upstreamCommit pushes a commit with the given subject from a second clone,
+// as another participant would.
+func upstreamCommit(t *testing.T, root, subject, file string) string {
+	t.Helper()
+	remote := strings.TrimSpace(gitIn(t, root, "remote", "get-url", "origin"))
+	other := filepath.Join(canonicalTemp(t), "other")
+	gitIn(t, filepath.Dir(other), "clone", "-q", remote, other)
+	gitIn(t, other, "config", "user.email", "other@example.com")
+	gitIn(t, other, "config", "user.name", "Other")
+	writeFile(t, filepath.Join(other, file), subject+"\n")
+	gitIn(t, other, "add", file)
+	gitIn(t, other, "commit", "-q", "-m", subject)
+	gitIn(t, other, "push", "-q")
+	return strings.TrimSpace(gitIn(t, other, "rev-parse", "HEAD"))
+}
+
+func contains(t *testing.T, root, ancestor string) bool {
+	t.Helper()
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", ancestor, "HEAD")
+	cmd.Dir = root
+	return cmd.Run() == nil
 }
 
 func remoteHead(t *testing.T, root string) string {
@@ -118,5 +147,108 @@ func TestFailedPushFailsTheCaptureAndKeepsTheCommit(t *testing.T) {
 	}
 	if len(graphEntries(t, filepath.Join(root, ".sdd", "graph"))) != 1 {
 		t.Error("the entry file should stay after a failed push")
+	}
+}
+
+func TestUpstreamGraphCommitsArriveOnTheSyncCheck(t *testing.T) {
+	root := syncedProject(t, "auto")
+	theirs := upstreamCommit(t, root, "sdd: capture elsewhere", ".sdd/graph/elsewhere.md")
+
+	out, err := runAppErr(t, root, captureArgs()...)
+	if err != nil {
+		t.Fatalf("capture should succeed: %v\n%s", err, out)
+	}
+	if !contains(t, root, theirs) {
+		t.Error("the upstream graph commit should be merged before the command runs")
+	}
+	if !strings.HasPrefix(remoteHead(t, root), localHead(t, root)) {
+		t.Error("the capture after the pull should reach the upstream")
+	}
+}
+
+func TestDivergedGraphMergesWithAGraphCommit(t *testing.T) {
+	root := syncedProject(t, "auto")
+	writeFile(t, filepath.Join(root, ".sdd", "graph", "local.md"), "local\n")
+	gitIn(t, root, "add", ".sdd/graph/local.md")
+	gitIn(t, root, "commit", "-q", "-m", "sdd: capture here")
+	theirs := upstreamCommit(t, root, "sdd: capture elsewhere", ".sdd/graph/elsewhere.md")
+
+	out, err := runAppErr(t, root, "view", "--layout", "layer(tac):as-list")
+	if err != nil {
+		t.Fatalf("view should succeed: %v\n%s", err, out)
+	}
+	if !contains(t, root, theirs) {
+		t.Fatalf("the upstream graph commit should be merged, got %q", out)
+	}
+	if subject := headSubject(t, root); !strings.HasPrefix(subject, "sdd: merge") {
+		t.Errorf("the merge commit should carry a graph subject, got %q", subject)
+	}
+	if !strings.HasPrefix(remoteHead(t, root), localHead(t, root)) {
+		t.Error("the merge should be published")
+	}
+}
+
+func TestPullHeldAndReported(t *testing.T) {
+	cases := []struct {
+		name    string
+		subject string
+		dirty   bool
+		report  string
+	}{
+		{name: "a foreign commit upstream", subject: "feat: change code", report: "not written by sdd"},
+		{name: "a dirty working tree", subject: "sdd: capture elsewhere", dirty: true, report: "uncommitted changes"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := syncedProject(t, "auto")
+			theirs := upstreamCommit(t, root, tc.subject, "elsewhere.txt")
+			if tc.dirty {
+				writeFile(t, filepath.Join(root, "seed.txt"), "edited\n")
+			}
+			before := localHead(t, root)
+
+			out, err := runAppErr(t, root, "view", "--layout", "layer(tac):as-list")
+			if err != nil {
+				t.Fatalf("view should succeed: %v\n%s", err, out)
+			}
+			if localHead(t, root) != before || contains(t, root, theirs) {
+				t.Error("nothing should be merged")
+			}
+			if !strings.Contains(out, tc.report) {
+				t.Errorf("the held pull should be reported, got %q", out)
+			}
+		})
+	}
+}
+
+func TestManualSyncNeverPulls(t *testing.T) {
+	root := syncedProject(t, "manual")
+	theirs := upstreamCommit(t, root, "sdd: capture elsewhere", ".sdd/graph/elsewhere.md")
+	runApp(t, root, "view", "--layout", "layer(tac):as-list")
+	if contains(t, root, theirs) {
+		t.Error("manual sync should merge nothing")
+	}
+}
+
+func TestConflictingUpstreamIsReportedAndNothingMerged(t *testing.T) {
+	root := syncedProject(t, "auto")
+	writeFile(t, filepath.Join(root, ".sdd", "graph", "shared.md"), "here\n")
+	gitIn(t, root, "add", ".sdd/graph/shared.md")
+	gitIn(t, root, "commit", "-q", "-m", "sdd: edit here")
+	theirs := upstreamCommit(t, root, "sdd: edit elsewhere", ".sdd/graph/shared.md")
+	before := localHead(t, root)
+
+	out, err := runAppErr(t, root, "view", "--layout", "layer(tac):as-list")
+	if err != nil {
+		t.Fatalf("view should succeed: %v\n%s", err, out)
+	}
+	if localHead(t, root) != before || contains(t, root, theirs) {
+		t.Error("a conflicting upstream should leave the branch as it was")
+	}
+	if status := gitIn(t, root, "status", "--porcelain"); status != "" {
+		t.Errorf("the working tree should stay clean, got %q", status)
+	}
+	if !regexp.MustCompile(`graph merge would conflict in \S*shared\.md`).MatchString(out) {
+		t.Errorf("the pull should report the conflict naming the path, got %q", out)
 	}
 }
