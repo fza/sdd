@@ -90,11 +90,11 @@ func NewFilesystemGraphStore(options FilesystemGraphStoreOptions) (*FilesystemGr
 // migration between two writes of one server is honoured.
 func (s *FilesystemGraphStore) GraphSchemaVersion(context.Context) (int, error) {
 	if s.metaPath == "" {
-		return model.CurrentGraphSchemaVersion, nil
+		return model.WriteSchemaVersion(nil), nil
 	}
 	data, err := os.ReadFile(s.metaPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		return model.CurrentGraphSchemaVersion, nil
+		return model.WriteSchemaVersion(nil), nil
 	}
 	if err != nil {
 		return 0, fmt.Errorf("reading %s: %w", s.metaPath, err)
@@ -103,7 +103,7 @@ func (s *FilesystemGraphStore) GraphSchemaVersion(context.Context) (int, error) 
 	if err != nil {
 		return 0, fmt.Errorf("%s: %w", s.metaPath, err)
 	}
-	return meta.GraphSchemaVersion, nil
+	return model.WriteSchemaVersion(meta), nil
 }
 
 func (s *FilesystemGraphStore) Current(ctx context.Context) (*app.Snapshot, error) {

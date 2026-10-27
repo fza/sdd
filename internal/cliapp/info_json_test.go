@@ -75,6 +75,21 @@ func TestInfoJSONReportsTheWriteSchemaCapabilities(t *testing.T) {
 	}
 }
 
+func TestInfoRefusesAMetaWithoutSchemaVersion(t *testing.T) {
+	for _, meta := range []string{"{}\n", "{\n  \"graph_schema_version\": 0\n}\n"} {
+		t.Run(strings.TrimSpace(meta), func(t *testing.T) {
+			f := newAppFixture(t)
+			f.write(t, ".sdd/meta.json", meta)
+			for _, format := range []string{"text", "json"} {
+				result := f.run(t, "info", "--format", format)
+				if result.err == nil {
+					t.Errorf("info --format %s should refuse a meta.json the write path refuses", format)
+				}
+			}
+		})
+	}
+}
+
 func TestInfoJSONNamesEveryCapability(t *testing.T) {
 	f := newAppFixture(t)
 	capabilities, ok := runInfoJSON(t, f)["capabilities"].(map[string]any)

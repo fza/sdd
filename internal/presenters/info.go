@@ -37,7 +37,7 @@ type infoJSON struct {
 func RenderInfoJSON(w io.Writer, result *query.InfoResult) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(infoJSON{
+	err := encoder.Encode(infoJSON{
 		Participant:  result.LocalParticipant,
 		Language:     result.Language,
 		Search:       result.Search,
@@ -46,6 +46,10 @@ func RenderInfoJSON(w io.Writer, result *query.InfoResult) error {
 		Capabilities: result.Capabilities,
 		Contribution: result.Contribution,
 	})
+	if err != nil {
+		return fmt.Errorf("encoding info as JSON: %w", err)
+	}
+	return nil
 }
 
 // SchemaLine names the graph's schema and, when the graph is older than the

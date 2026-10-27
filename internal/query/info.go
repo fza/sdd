@@ -33,8 +33,8 @@ type InfoResult struct {
 	Search           string
 	GraphSchema      int
 	BinarySchema     int
-	// Capabilities describes the schema writes use: GraphSchema when known,
-	// else BinarySchema. Nil when that schema is unknown to this binary.
+	// Capabilities describes the schema writes use (model.WriteSchemaVersion);
+	// nil when that schema is unknown to this binary.
 	Capabilities *model.SchemaCapabilities
 	// Contribution is the machine-local contribution ref, empty outside
 	// contribution mode.

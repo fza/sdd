@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 
@@ -34,13 +35,26 @@ var schemaVersions = map[int]struct {
 	2: {capabilities: SchemaCapabilities{Titles: true}, change: "every entry carries a title, written by the same call as its summary"},
 }
 
+// ErrUnknownSchemaVersion reports a graph schema version this binary has no
+// capabilities for, a graph newer than the binary.
+var ErrUnknownSchemaVersion = errors.New("unknown to this binary")
+
 // CapabilitiesFor returns what graph schema version supports.
 func CapabilitiesFor(version int) (SchemaCapabilities, error) {
 	known, ok := schemaVersions[version]
 	if !ok {
-		return SchemaCapabilities{}, fmt.Errorf("graph schema version %d is unknown to this binary", version)
+		return SchemaCapabilities{}, fmt.Errorf("graph schema version %d: %w", version, ErrUnknownSchemaVersion)
 	}
 	return known.capabilities, nil
+}
+
+// WriteSchemaVersion returns the schema a write to the graph produces: the
+// version meta records, or the binary's for a graph without meta.json (nil).
+func WriteSchemaVersion(meta *SchemaMeta) int {
+	if meta == nil {
+		return CurrentGraphSchemaVersion
+	}
+	return meta.GraphSchemaVersion
 }
 
 // SchemaChanges lists what a migration from version from to version to
@@ -71,6 +85,9 @@ func ParseSchemaMeta(data []byte) (*SchemaMeta, error) {
 	var m SchemaMeta
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parsing schema meta: %w", err)
+	}
+	if m.GraphSchemaVersion < 1 {
+		return nil, fmt.Errorf("parsing schema meta: graph_schema_version must be at least 1, got %d", m.GraphSchemaVersion)
 	}
 	return &m, nil
 }
