@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -53,13 +54,14 @@ type SyncStatus struct {
 	Reason string
 }
 
-// CountGraphCommits counts non-empty lines from `git log --grep='^sdd:'
-// --pretty=format:%H <range>`. Each line is one SDD-written commit in the
-// range; we only need the count, not the hashes themselves.
-func CountGraphCommits(gitLogOutput string) int {
+// CountMatchingSubjects counts the lines of `git log --format=%s` output,
+// one commit subject per line, that pattern matches. Only the subject is
+// judged: a body line starting with the graph prefix does not make a commit
+// a graph commit.
+func CountMatchingSubjects(subjects string, pattern *regexp.Regexp) int {
 	n := 0
-	for line := range strings.SplitSeq(gitLogOutput, "\n") {
-		if strings.TrimSpace(line) != "" {
+	for line := range strings.SplitSeq(subjects, "\n") {
+		if pattern.MatchString(line) {
 			n++
 		}
 	}
