@@ -52,7 +52,7 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	// ensure the committed declaration. Errors when that too is already in
 	// place, so a true no-op still reads as "nothing to do".
 	if existing, ok := cfg.ConnectedByURL(cmd.CloneURL); ok {
-		declared, err := h.declareDependency(existing.RepoID, cmd)
+		declared, err := h.declareDependency(ctx, existing.RepoID, cmd)
 		if err != nil {
 			return err
 		}
@@ -119,7 +119,7 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	if err := h.connectRepo(repo); err != nil {
 		return err
 	}
-	if _, err := h.declareDependency(declared, cmd); err != nil {
+	if _, err := h.declareDependency(ctx, declared, cmd); err != nil {
 		return err
 	}
 	if cmd.OnAdded != nil {
@@ -151,7 +151,7 @@ func (h *Handler) connectRepo(repo repos.ConnectedRepo) error {
 	})
 }
 
-func (h *Handler) declareDependency(repoID string, cmd *command.RepoAddCmd) (bool, error) {
+func (h *Handler) declareDependency(ctx context.Context, repoID string, cmd *command.RepoAddCmd) (bool, error) {
 	if h.sddDir == "" {
 		return false, nil
 	}
@@ -191,7 +191,7 @@ func (h *Handler) declareDependency(repoID string, cmd *command.RepoAddCmd) (boo
 	// the committed dependencies list is a shared, go.mod-style record other
 	// clones read to know what to connect, so it must not linger uncommitted.
 	if h.committer != nil {
-		if err := h.committer.Commit(fmt.Sprintf("sdd: repo add %s", repoID), file.path); err != nil {
+		if err := h.commitGraph(ctx, fmt.Sprintf("sdd: repo add %s", repoID), file.path); err != nil {
 			return false, fmt.Errorf("committing dependency declaration: %w", err)
 		}
 	}
@@ -266,7 +266,7 @@ func (h *Handler) RepoRemove(ctx context.Context, cmd *command.RepoRemoveCmd) er
 		return err
 	}
 	if h.committer != nil {
-		if err := h.committer.Commit(fmt.Sprintf("sdd: repo remove %s", cmd.RepoID), file.path); err != nil {
+		if err := h.commitGraph(ctx, fmt.Sprintf("sdd: repo remove %s", cmd.RepoID), file.path); err != nil {
 			return fmt.Errorf("committing dependency removal: %w", err)
 		}
 	}

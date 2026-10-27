@@ -10,11 +10,6 @@ import (
 	"github.com/networkteam/sdd/internal/query"
 )
 
-// GraphCommitSubjectPattern matches the subject every SDD-written commit
-// starts with. The sync finder counts commits matching it on either side of
-// the local/upstream divergence to report graph activity.
-const GraphCommitSubjectPattern = "^sdd:"
-
 // GitSyncer is the git surface consumed by the sync finder. Production
 // shells out via exec.Command; tests inject stubs. Methods return errors
 // only for unexpected failures — missing-repo / missing-remote /
@@ -91,11 +86,11 @@ func (f *Finder) SyncStatus(ctx context.Context, q query.SyncStatusQuery) (model
 		return model.SyncStatus{State: model.SyncStateFetchFailed, Reason: fetchErr.Error()}, nil
 	}
 
-	remoteAhead, err := f.gitSyncer.CountCommits(ctx, "HEAD..@{u}", GraphCommitSubjectPattern)
+	remoteAhead, err := f.gitSyncer.CountCommits(ctx, "HEAD..@{u}", model.GraphCommitSubjectPattern)
 	if err != nil {
 		return model.SyncStatus{}, fmt.Errorf("counting remote-ahead commits: %w", err)
 	}
-	localAhead, err := f.gitSyncer.CountCommits(ctx, "@{u}..HEAD", GraphCommitSubjectPattern)
+	localAhead, err := f.gitSyncer.CountCommits(ctx, "@{u}..HEAD", model.GraphCommitSubjectPattern)
 	if err != nil {
 		return model.SyncStatus{}, fmt.Errorf("counting local-ahead commits: %w", err)
 	}

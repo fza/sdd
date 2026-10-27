@@ -861,6 +861,10 @@ func newCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			syncMode, err := graphSyncMode()
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
 				Stderr:   cmd.ErrWriter,
 				GraphDir: dir,
@@ -873,6 +877,8 @@ func newCmd() *cli.Command {
 				}),
 				LLMRunner: runner,
 				Committer: graphGit(dir),
+				Pusher:    graphGit(dir),
+				SyncMode:  syncMode,
 				Repos:     mgr,
 				Language:  configLanguage(cfg),
 			})
@@ -961,11 +967,17 @@ func rewriteCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			syncMode, err := graphSyncMode()
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
 				Committer: graphGit(dir),
+				Pusher:    graphGit(dir),
+				SyncMode:  syncMode,
 				Mover:     graphGit(dir),
 			})
 			return handler.RewriteEntry(ctx, rcmd)
@@ -997,11 +1009,17 @@ func lintCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
+				syncMode, err := graphSyncMode()
+				if err != nil {
+					return err
+				}
 				handler := handlers.New(handlers.Options{
 					Stderr:    cmd.ErrWriter,
 					GraphDir:  dir,
 					Reader:    reader,
 					Committer: graphGit(dir),
+					Pusher:    graphGit(dir),
+					SyncMode:  syncMode,
 				})
 				if err := handler.LintFix(ctx, fixCmd); err != nil {
 					return err
@@ -1158,6 +1176,10 @@ func summarizeCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			syncMode, err := graphSyncMode()
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
 				Stderr:   cmd.ErrWriter,
 				GraphDir: dir,
@@ -1168,6 +1190,8 @@ func summarizeCmd() *cli.Command {
 				}),
 				LLMRunner: runner,
 				Committer: graphGit(dir),
+				Pusher:    graphGit(dir),
+				SyncMode:  syncMode,
 				Language:  configLanguage(cfg),
 			})
 			return handler.Summarize(ctx, sumCmd)
@@ -1241,6 +1265,15 @@ func resolveParticipantFlag(flagValue, sddDir string) (string, error) {
 // config commits of sdd init) keep the process working directory.
 func graphGit(graphDir string) git.CLI {
 	return git.CLI{Dir: git.RepoRootFor(graphDir)}
+}
+
+// graphSyncMode is the sync mode a graph-writing command runs under.
+func graphSyncMode() (model.SyncMode, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return "", err
+	}
+	return model.ResolveSyncMode(cfg), nil
 }
 
 var errNoProject = errors.New("no .sdd/ directory found; run 'sdd init' first")
@@ -1862,11 +1895,17 @@ func wipStartCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			syncMode, err := graphSyncMode()
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
 				Committer: graphGit(dir),
+				Pusher:    graphGit(dir),
+				SyncMode:  syncMode,
 				Brancher:  git.CLI{},
 			})
 			return handler.StartWIP(ctx, startCmd)
@@ -1918,11 +1957,17 @@ func wipDoneCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			syncMode, err := graphSyncMode()
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
 				Committer: git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
+				Pusher:    graphGit(dir),
+				SyncMode:  syncMode,
 				Brancher:  git.CLI{},
 			})
 			return handler.FinishWIP(ctx, doneCmd)
