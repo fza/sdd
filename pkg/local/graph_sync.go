@@ -49,6 +49,11 @@ type GraphPublisher struct {
 func (GraphPublisher) Name() string { return "git-publish" }
 
 func (p GraphPublisher) Finalize(ctx context.Context, _ app.AppliedMutation) error {
+	lock, err := lockGraph(p.GraphDir)
+	if err != nil {
+		return err
+	}
+	defer unlock(lock)
 	repo := git.CLI{Dir: p.Checkout}
 	handler := handlers.New(handlers.Options{GraphDir: p.GraphDir, Pusher: repo, GraphPuller: repo, SyncMode: model.SyncModeAuto})
 	return handler.PublishGraph(ctx)
@@ -73,6 +78,11 @@ func (a *GitWorktreeAcquirer) SyncGraph(ctx context.Context, branch string) (str
 	if model.ResolveSyncMode(cfg) != model.SyncModeAuto {
 		return "", nil
 	}
+	lock, err := lockGraph(meta.ResolveGraphDir(checkout, cfg))
+	if err != nil {
+		return "", err
+	}
+	defer unlock(lock)
 	sddDir := filepath.Join(checkout, model.SDDDirName)
 	status, err := checkGraphSync(ctx, sddDir, cfg)
 	if err != nil {

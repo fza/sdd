@@ -410,3 +410,17 @@ func TestPointedProjectSyncLeavesTheWorkRepositoryAlone(t *testing.T) {
 		t.Error("a sync should leave the work repository's HEAD, refs and index unchanged")
 	}
 }
+
+func TestCaptureIntoAnotherGraphStaysLocal(t *testing.T) {
+	root := syncedProject(t, "auto")
+	other := syncedProject(t, "manual")
+	before := remoteHead(t, other)
+
+	out, err := runAppErr(t, root, append(captureArgs(), "--graph-dir", filepath.Join(other, ".sdd", "graph"))...)
+	if err != nil {
+		t.Fatalf("capture: %v\n%s", err, out)
+	}
+	if remoteHead(t, other) != before {
+		t.Error("a capture into a graph outside the project should not push under the project's sync mode")
+	}
+}
