@@ -168,14 +168,15 @@ func TestCacheLifecycle(t *testing.T) {
 	}
 
 	// The declared identity and graph dir resolve from the cached config.
-	declared, err := DeclaredRepoID(cacheDir)
+	cache := Cache{RepoID: repoID, Dir: cacheDir}
+	cfg, err := cache.Config()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if declared != repoID {
-		t.Errorf("DeclaredRepoID = %q, want %q", declared, repoID)
+	if cfg.RepoID != repoID {
+		t.Errorf("declared repo_id = %q, want %q", cfg.RepoID, repoID)
 	}
-	graphDir, err := GraphDir(cacheDir)
+	graphDir, err := cache.GraphDir()
 	if err != nil {
 		t.Fatal(err)
 	}

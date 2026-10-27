@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/repos"
 )
 
 // GraphSource is the read side's owner of "what the current graph is": a
@@ -62,21 +61,11 @@ func (f *Finder) memberGraphLoader() func(repoID model.RepoID) (*model.Graph, er
 		if f.repos == nil {
 			return nil, nil
 		}
-		cfg, err := f.repos.Load()
-		if err != nil {
+		cache, connected, err := f.repos.Cache(repoID)
+		if err != nil || !connected || !cache.Cloned() {
 			return nil, err
 		}
-		if _, connected := cfg.Connected(repoID); !connected {
-			return nil, nil
-		}
-		dir, err := f.repos.CacheDir(repoID)
-		if err != nil {
-			return nil, err
-		}
-		if !repos.IsCloned(dir) {
-			return nil, nil
-		}
-		graphDir, err := repos.GraphDir(dir)
+		graphDir, err := cache.GraphDir()
 		if err != nil {
 			return nil, err
 		}

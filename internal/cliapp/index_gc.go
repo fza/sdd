@@ -163,11 +163,12 @@ func selectIndexStores(cmd *cli.Command) ([]indexStore, handlers.IndexEmbedder, 
 		if err != nil {
 			return nil, emb, nil, err
 		}
-		if !repos.IsCloned(cacheDir) {
+		cache := repos.Cache{RepoID: repoID, Dir: cacheDir}
+		if !cache.Cloned() {
 			presenters.RenderResultLine(cmd.ErrWriter, "skipped "+string(repoID), "no local cache, so no index store; `sdd index --repo "+string(repoID)+"` creates one")
 			continue
 		}
-		cacheGraph, err := repos.GraphDir(cacheDir)
+		cacheGraph, err := cache.GraphDir()
 		if err != nil {
 			return nil, emb, nil, err
 		}

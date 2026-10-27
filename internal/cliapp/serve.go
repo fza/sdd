@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/index"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
@@ -327,14 +327,19 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		// The same cache as a project of its own: its committed config supplies
 		// the graph layout, the language, and the dependencies its horizon is
 		// composed from. A cache without one is a graph at the default layout.
-		dependencyCfg, cfgErr := sdd.ReadProjectConfigFS(os.DirFS(cacheDir))
-		if cfgErr != nil && !errors.Is(cfgErr, sdd.ErrNotAnSDDProject) {
-			return nil, "", sdd.RequestIdentity{}, fmt.Errorf("reading config of dependency %s: %w", dependency, cfgErr)
+		cache := repos.Cache{RepoID: dependency, Dir: cacheDir}
+		dependencyCfg, cfgErr := cache.Config()
+		if errors.Is(cfgErr, meta.ErrNotAnSDDProject) {
+			dependencyCfg, cfgErr = &model.PerRepoConfig{}, nil
 		}
 		if cfgErr != nil {
-			dependencyCfg.GraphDir = model.DefaultGraphDir
+			return nil, "", sdd.RequestIdentity{}, cfgErr
 		}
-		memberGraph, graphErr := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: sdd.ProjectID(dependency), GraphDir: filepath.Join(cacheDir, filepath.FromSlash(dependencyCfg.GraphDir))})
+		graphDir, graphErr := cache.GraphDir()
+		if graphErr != nil {
+			return nil, "", sdd.RequestIdentity{}, graphErr
+		}
+		memberGraph, graphErr := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: sdd.ProjectID(dependency), GraphDir: graphDir})
 		if graphErr != nil {
 			return nil, "", sdd.RequestIdentity{}, graphErr
 		}

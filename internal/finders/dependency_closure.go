@@ -3,8 +3,6 @@ package finders
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
 
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
@@ -48,23 +46,16 @@ func (r repoDependencies) Dependencies(_ context.Context, repoID model.RepoID) (
 	if r.repos == nil {
 		return nil, nil
 	}
-	connected, err := r.repos.Load()
-	if err != nil {
+	cache, connected, err := r.repos.Cache(repoID)
+	if err != nil || !connected {
 		return nil, err
 	}
-	if _, ok := connected.Connected(repoID); !ok {
-		return nil, nil
-	}
-	cacheDir, err := r.repos.CacheDir(repoID)
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := meta.ReadCommittedConfigFS(os.DirFS(cacheDir))
+	cfg, err := cache.Config()
 	if errors.Is(err, meta.ErrNotAnSDDProject) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading config of dependency %s: %w", repoID, err)
+		return nil, err
 	}
 	return cfg.Dependencies, nil
 }

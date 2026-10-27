@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/index"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
@@ -87,10 +89,14 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 		return err
 	}
 
-	declared, err := repos.DeclaredRepoID(cloneDir)
-	if err != nil {
-		return err
+	cloneCfg, err := repos.Cache{Dir: cloneDir}.Config()
+	if err != nil && !errors.Is(err, meta.ErrNotAnSDDProject) {
+		return fmt.Errorf("repo at %s: %w", cmd.CloneURL, err)
 	}
+	if cloneCfg == nil || cloneCfg.RepoID == "" {
+		return fmt.Errorf("repo at %s declares no repo_id in .sdd/config.yaml — run `sdd init` there (or add repo_id) first", cmd.CloneURL)
+	}
+	declared := cloneCfg.RepoID
 	if err := model.ValidateRepoID(declared); err != nil {
 		return fmt.Errorf("repo at %s declares invalid repo_id %q: %w", cmd.CloneURL, declared, err)
 	}
@@ -500,10 +506,11 @@ func (h *Handler) BuildConnectedIndexes(ctx context.Context, repoIDs []model.Rep
 		if err != nil {
 			return err
 		}
-		if !repos.IsCloned(cacheDir) {
+		cache := repos.Cache{RepoID: repoID, Dir: cacheDir}
+		if !cache.Cloned() {
 			continue // unconnected or clone failed — the finder reports the skip
 		}
-		graphDir, err := repos.GraphDir(cacheDir)
+		graphDir, err := cache.GraphDir()
 		if err != nil {
 			return err
 		}

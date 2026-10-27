@@ -94,7 +94,7 @@ func searchMember(q query.SearchQuery, repoID model.RepoID, local *SearchFinder)
 	if err != nil {
 		return nil, err
 	}
-	graphDir, err := repos.GraphDir(cacheDir)
+	graphDir, err := repos.Cache{RepoID: repoID, Dir: cacheDir}.GraphDir()
 	if err != nil {
 		return nil, err
 	}
