@@ -252,7 +252,7 @@ func TestConflictingUpstreamIsReportedAndNothingMerged(t *testing.T) {
 	if status := gitIn(t, root, "status", "--porcelain"); status != "" {
 		t.Errorf("the working tree should stay clean, got %q", status)
 	}
-	if !regexp.MustCompile(`would conflict in \S*shared\.md\. Merge it with git.*sdd: merge \S+`).MatchString(out) {
+	if !regexp.MustCompile(`would conflict in "\S*shared\.md"\. Merge it with git.*sdd: merge \S+`).MatchString(out) {
 		t.Errorf("the pull should name the conflicting path and the merge message to commit, got %q", out)
 	}
 }

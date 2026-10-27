@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -221,9 +222,22 @@ type MergeConflict struct {
 	Paths    []string
 }
 
+// noticePathLimit caps the paths a conflict notice lists.
+const noticePathLimit = 10
+
 // Notice tells the agent how to resolve the conflict by hand, naming the merge
 // message that keeps later automatic pushes going (20261027-231225-d-tac-n5o).
+// The paths come from upstream commits and reach agent instructions, so each
+// is quoted with its control characters escaped and the list is capped.
 func (c MergeConflict) Notice() string {
+	quoted := make([]string, 0, min(len(c.Paths), noticePathLimit))
+	for _, path := range c.Paths[:min(len(c.Paths), noticePathLimit)] {
+		quoted = append(quoted, strconv.Quote(path))
+	}
+	listed := strings.Join(quoted, ", ")
+	if more := len(c.Paths) - noticePathLimit; more > 0 {
+		listed += fmt.Sprintf(" and %d more", more)
+	}
 	return fmt.Sprintf("sync: merging %s would conflict in %s. Merge it with git, resolve the conflicts, and commit the merge as %q; automatic sync holds until then.",
-		c.Upstream, strings.Join(c.Paths, ", "), GraphMergeMessage(c.Upstream))
+		c.Upstream, listed, GraphMergeMessage(c.Upstream))
 }
