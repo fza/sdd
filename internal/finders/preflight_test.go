@@ -1195,8 +1195,33 @@ func TestMechanical_ActorKind_ReclassificationBlocks(t *testing.T) {
 		Content:    "reclassified",
 	}
 
-	if !hasCategory(mechanicalPreflight(proposed, graph, nil, nil), "actor-kind-changed") {
+	if !blocksReclassification(mechanicalPreflight(proposed, graph, nil, nil)) {
 		t.Error("a contradicting actor_kind within the chain must block")
+	}
+}
+
+// An entry merging two chains answers to the actor_kind of each, not only
+// the first chain it names.
+func TestMechanical_ActorKind_MergingChainsChecksEveryChain(t *testing.T) {
+	unknown := actorEntry("Claude", nil)
+	declared := actorEntry("Claude", nil)
+	declared.ID = "20260411-120000-s-prc-dup"
+	declared.Time = unknown.Time.AddDate(0, 0, 1)
+	declared.ActorKind = model.ActorKindMachine
+	graph := model.NewGraph([]*model.Entry{unknown, declared})
+
+	proposed := &model.Entry{
+		Type:       model.TypeSignal,
+		Kind:       model.KindActor,
+		Layer:      model.LayerProcess,
+		Canonical:  "Claude",
+		ActorKind:  model.ActorKindHuman,
+		Supersedes: []string{unknown.ID, declared.ID},
+		Content:    "one identity replacing two duplicate captures",
+	}
+
+	if !blocksReclassification(mechanicalPreflight(proposed, graph, nil, nil)) {
+		t.Error("a contradicting actor_kind in any merged chain must block")
 	}
 }
 
@@ -1227,7 +1252,7 @@ func TestMechanical_ActorKind_FillingAndRestatingAllowed(t *testing.T) {
 				Content:    "same identity",
 			}
 
-			if hasCategory(mechanicalPreflight(proposed, graph, nil, nil), "actor-kind-changed") {
+			if blocksReclassification(mechanicalPreflight(proposed, graph, nil, nil)) {
 				t.Error("this is not a reclassification and must not block")
 			}
 		})
@@ -1244,14 +1269,14 @@ func TestMechanical_ActorKind_NewChainAllowed(t *testing.T) {
 		ActorKind: model.ActorKindHuman,
 		Content:   "joining the project",
 	}
-	if hasCategory(mechanicalPreflight(proposed, model.NewGraph(nil), nil, nil), "actor-kind-changed") {
+	if blocksReclassification(mechanicalPreflight(proposed, model.NewGraph(nil), nil, nil)) {
 		t.Error("a first actor entry must not block")
 	}
 }
 
-func hasCategory(findings []query.Finding, category string) bool {
+func blocksReclassification(findings []query.Finding) bool {
 	for _, f := range findings {
-		if f.Category == category {
+		if f.Category == "actor-kind-changed" {
 			return true
 		}
 	}
