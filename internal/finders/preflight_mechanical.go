@@ -2,6 +2,7 @@ package finders
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
@@ -454,21 +455,31 @@ func actorKindStabilityFindings(entry *model.Entry, graph *model.Graph) []query.
 	if entry.ActorKind == "" {
 		return nil
 	}
-	chain := parentActorChain(entry, graph)
-	if chain == nil {
-		return nil
-	}
-	for _, prior := range chain.Entries {
-		if prior.ActorKind == "" || prior.ActorKind == entry.ActorKind {
-			continue
+	for _, chain := range supersededActorChains(entry, graph) {
+		for _, prior := range chain.Entries {
+			if prior.ActorKind == "" || prior.ActorKind == entry.ActorKind {
+				continue
+			}
+			return []query.Finding{{
+				Severity:    query.SeverityHigh,
+				Category:    "actor-kind-changed",
+				Observation: fmt.Sprintf("actor_kind %q contradicts %q declared by %s in the same identity chain — a supersede renames a participant, it does not reclassify one", entry.ActorKind, prior.ActorKind, prior.ID),
+			}}
 		}
-		return []query.Finding{{
-			Severity:    query.SeverityHigh,
-			Category:    "actor-kind-changed",
-			Observation: fmt.Sprintf("actor_kind %q contradicts %q declared by %s in the same identity chain — a supersede renames a participant, it does not reclassify one", entry.ActorKind, prior.ActorKind, prior.ID),
-		}}
 	}
 	return nil
+}
+
+// supersededActorChains returns every actor chain holding an entry the new
+// entry supersedes; one entry may merge several chains.
+func supersededActorChains(entry *model.Entry, graph *model.Graph) []*model.ActorChain {
+	var chains []*model.ActorChain
+	for _, chain := range graph.ActorChains() {
+		if slices.ContainsFunc(chain.Entries, func(e *model.Entry) bool { return slices.Contains(entry.Supersedes, e.ID) }) {
+			chains = append(chains, chain)
+		}
+	}
+	return chains
 }
 
 // roleMechanicalFindings enforces AC 7: role's Actor must match the current
