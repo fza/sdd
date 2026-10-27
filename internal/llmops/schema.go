@@ -23,7 +23,7 @@ type preflightResponse struct {
 }
 
 type preflightFinding struct {
-	Observation string `json:"observation" jsonschema:"description=one to three sentences working through what you noticed, ending in a conclusion"`
+	Observation string `json:"observation" jsonschema:"description=one to three sentences working through what you noticed\\, ending in a conclusion"`
 	Category    string `json:"category" jsonschema:"description=short hyphenated tag naming what the observation found"`
 	Severity    string `json:"severity" jsonschema:"enum=high,enum=medium,enum=low"`
 }
@@ -34,9 +34,9 @@ type writingGuideResponse struct {
 }
 
 type writingGuideFinding struct {
-	Reasoning string `json:"reasoning" jsonschema:"description=the finding's work: what you noticed, before naming any conclusion"`
+	Reasoning string `json:"reasoning" jsonschema:"description=the finding's work: what you noticed\\, before naming any conclusion"`
 	Axis      string `json:"axis" jsonschema:"enum=stranding,enum=dilution,enum=conflation,enum=pointing,enum=form"`
-	Quote     string `json:"quote" jsonschema:"description=the excerpt the finding is about, reproduced exactly"`
+	Quote     string `json:"quote" jsonschema:"description=the excerpt the finding is about\\, reproduced exactly"`
 	Repair    string `json:"repair" jsonschema:"enum=cut,enum=write-in,enum=split,enum=point,enum=reword"`
 	Severity  string `json:"severity" jsonschema:"enum=substantive,enum=minor"`
 }
@@ -44,7 +44,7 @@ type writingGuideFinding struct {
 // summaryResponse is the paired title-and-summary answer.
 type summaryResponse struct {
 	Title   string `json:"title" jsonschema:"description=the entry's title written to the title rule the instructions state"`
-	Summary string `json:"summary" jsonschema:"description=at most three sentences, the first stating what the entry observes, commits to or did"`
+	Summary string `json:"summary" jsonschema:"description=at most three sentences\\, the first stating what the entry observes\\, commits to or did"`
 }
 
 // titleResponse is the title-only answer for an entry that keeps its summary.
