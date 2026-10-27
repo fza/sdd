@@ -463,7 +463,7 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "info",
-		Description: "Session framing header for the session named by session (required): project, local participant, configured language, available search modes, and actionable recovery notices.",
+		Description: "Session framing header for the session named by session (required): project, local participant, configured language, and available search modes.",
 	}, toolBoundary(s.info))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
@@ -922,7 +922,7 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, args ViewAr
 	// An empty result must never reach an agent as a blank string — it cannot
 	// tell "matched nothing" from a broken call. Say so, and when a participant
 	// filter came up empty (exact-match miss), name the participants the graph
-	// knows. Any rendered content (e.g. recovery notices) is kept below.
+	// knows. Any rendered content is kept below.
 	if result.MatchedCount == 0 {
 		msg := emptyViewMessage(result.KnownParticipants)
 		if strings.TrimSpace(sections) == "" {

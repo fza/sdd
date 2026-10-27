@@ -204,7 +204,7 @@
     }
   },
   {
-    "description": "Session framing header for the session named by session (required): project, local participant, configured language, available search modes, and actionable recovery notices.",
+    "description": "Session framing header for the session named by session (required): project, local participant, configured language, and available search modes.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

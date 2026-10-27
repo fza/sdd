@@ -229,7 +229,7 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	// Matched count is a read-side fact owned by the finder; sum it across the
 	// local graph and every queried dependency so "empty" means nothing
 	// rendered anywhere, not just an empty rendered string (which is also false
-	// once a repo header or recovery notice prints).
+	// once a repo header prints).
 	matched := viewResult.MatchedCount()
 	repos, err := a.selectedDependencies(request.Repos, request.AllRepos, runtime.options.Dependencies)
 	if err != nil {
