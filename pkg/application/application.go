@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -231,20 +230,20 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	// rendered anywhere, not just an empty rendered string (which is also false
 	// once a repo header prints).
 	matched := viewResult.MatchedCount()
-	repos, err := a.selectedDependencies(request.Repos, request.AllRepos, runtime.options.Dependencies)
+	repos, reach, err := a.selectedDependencies(ctx, identity, runtime, request.Repos, request.AllRepos)
 	if err != nil {
 		return ViewResult{}, err
 	}
 	for _, repoID := range repos {
-		dependency, err := a.dependency(ctx, identity, runtime, repoID)
+		dependency, err := reach.member(repoID)
 		if err != nil {
 			return ViewResult{}, err
 		}
-		member, _, err := readMaterializedSnapshot(ctx, dependency, "")
+		member, err := reach.view(dependency, "")
 		if err != nil {
 			return ViewResult{}, err
 		}
-		memberResult, err := member.finder.View(query.ViewQuery{Layout: layout})
+		memberResult, err := member.snapshot.finder.View(query.ViewQuery{Layout: layout})
 		if err != nil {
 			return ViewResult{}, err
 		}
@@ -348,12 +347,12 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 	members := []*searchTargetMember{{runtime: runtime, selected: selected}}
 	target := SearchTarget{state: &searchTargetState{members: members, mode: request.SyncMode}}
 	defer target.state.closed.Store(true)
-	repos, err := a.selectedDependencies(request.Repos, request.AllRepos, runtime.options.Dependencies)
+	repos, reach, err := a.selectedDependencies(ctx, identity, runtime, request.Repos, request.AllRepos)
 	if err != nil {
 		return SearchResult{}, err
 	}
 	for _, repoID := range repos {
-		dependency, err := a.dependency(ctx, identity, runtime, repoID)
+		dependency, err := reach.member(repoID)
 		if err != nil {
 			return SearchResult{}, err
 		}
@@ -640,12 +639,32 @@ func (a *Application) snapshotWithDependencyPolicy(ctx context.Context, identity
 			return nil, readErr
 		}
 	}
+	// The direct dependencies load eagerly above; a repo further out in the
+	// closure loads on first use, when a cross-repo ID names it.
+	var reach *horizon
 	model.NewMultiGraph(local, append([]RepoID(nil), runtime.options.Dependencies...), func(repoID RepoID) (*model.Graph, error) {
-		member, ok := members[repoID]
-		if !ok {
+		if member, ok := members[repoID]; ok {
+			return member.graph, member.err
+		}
+		if reach == nil {
+			h, err := a.horizon(ctx, principal, runtime)
+			if err != nil {
+				return nil, err
+			}
+			reach = h
+		}
+		dependency, err := reach.member(repoID)
+		if err != nil {
+			return nil, err
+		}
+		view, err := reach.view(dependency, "")
+		if err != nil {
+			if requireSources {
+				return nil, err
+			}
 			return nil, dependencyUnavailable()
 		}
-		return member.graph, member.err
+		return model.NewGraph(append([]*model.Entry(nil), view.snapshot.graph.Entries...)), nil
 	})
 	clone := *base
 	clone.graph = local
@@ -656,37 +675,39 @@ func (a *Application) snapshotWithDependencyPolicy(ctx context.Context, identity
 	return &clone, nil
 }
 
+// dependency resolves a repo in runtime's dependency closure, the horizon
+// a cross-repo ID may name.
 func (a *Application) dependency(ctx context.Context, identity RequestIdentity, runtime *ProjectRuntime, repoID RepoID) (*ProjectRuntime, error) {
-	if !slices.Contains(runtime.options.Dependencies, repoID) {
-		return nil, dependencyUnavailable()
-	}
 	principal, err := a.access.ResolvePrincipal(ctx, identity)
 	if err != nil {
 		return nil, err
 	}
-	dependency, err := a.access.ResolveDependency(ctx, principal, runtime.options.Project.ID, repoID)
-	if err != nil || dependency == nil {
-		return nil, dependencyUnavailable()
+	reach, err := a.horizon(ctx, principal, runtime)
+	if err != nil {
+		return nil, err
 	}
-	return dependency, nil
+	return reach.member(repoID)
 }
 
-func (a *Application) selectedDependencies(named []RepoID, all bool, declared []RepoID) ([]RepoID, error) {
-	if all {
-		return append([]RepoID(nil), declared...), nil
+// selectedDependencies resolves a read's repo selection against runtime's
+// dependency closure, walked only when the read selects any.
+func (a *Application) selectedDependencies(ctx context.Context, identity RequestIdentity, runtime *ProjectRuntime, named []RepoID, all bool) ([]RepoID, *horizon, error) {
+	if !all && len(named) == 0 {
+		return nil, nil, nil
 	}
-	seen := map[RepoID]bool{}
-	selected := make([]RepoID, 0, len(named))
-	for _, repoID := range named {
-		if !slices.Contains(declared, repoID) {
-			return nil, dependencyUnavailable()
-		}
-		if !seen[repoID] {
-			seen[repoID] = true
-			selected = append(selected, repoID)
-		}
+	principal, err := a.access.ResolvePrincipal(ctx, identity)
+	if err != nil {
+		return nil, nil, err
 	}
-	return selected, nil
+	reach, err := a.horizon(ctx, principal, runtime)
+	if err != nil {
+		return nil, nil, err
+	}
+	selected, err := model.SelectRepos(named, all, reach.repos)
+	if errors.Is(err, model.ErrNotInClosure) {
+		return nil, nil, dependencyUnavailable()
+	}
+	return selected, reach, err
 }
 
 func dependencyUnavailable() error {

@@ -177,11 +177,7 @@ func (a *Application) resolveTargetProject(ctx context.Context, identity Request
 // ID: only the composition knows which project carries it.
 func (a *Application) inDependencyClosure(ctx context.Context, principal Principal, home *ProjectRuntime, target ProjectID, readConfig bool, sourceView func(*ProjectRuntime, string) (*materializedGraphView, error)) error {
 	homeID := home.options.Project.ID
-	declarations := &accessDependencies{
-		access: a.access, principal: principal, home: homeID, readConfig: readConfig, sourceView: sourceView,
-		runtimes: map[ProjectID]*ProjectRuntime{homeID: home},
-	}
-	for id, err := range model.DependencyClosure(ctx, homeID, declarations) {
+	for id, err := range model.DependencyClosure(ctx, homeID, a.closureStep(principal, home, readConfig, sourceView)) {
 		if err != nil {
 			return err
 		}
@@ -192,13 +188,64 @@ func (a *Application) inDependencyClosure(ctx context.Context, principal Princip
 	return &ApplicationError{Code: ErrorProjectUnavailable, Message: fmt.Sprintf("project %s is not in the declared dependency closure of %s", target, homeID)}
 }
 
+func (a *Application) closureStep(principal Principal, home *ProjectRuntime, readConfig bool, sourceView func(*ProjectRuntime, string) (*materializedGraphView, error)) *accessDependencies {
+	homeID := home.options.Project.ID
+	return &accessDependencies{
+		access: a.access, principal: principal, home: homeID, readConfig: readConfig, sourceView: sourceView,
+		runtimes: map[ProjectID]*ProjectRuntime{homeID: home}, byRepo: map[RepoID]*ProjectRuntime{},
+	}
+}
+
+// horizon is the dependency closure a read reaches (20261026-194528-d-cpt-gcq):
+// the repos the walk reached, in walk order, each with the runtime it resolved
+// to, read through the same step as the gate so a read reaches exactly what a
+// session may work in. A member's view is acquired once per horizon.
+type horizon struct {
+	repos    []RepoID
+	runtimes map[RepoID]*ProjectRuntime
+	view     func(*ProjectRuntime, string) (*materializedGraphView, error)
+}
+
+func (a *Application) horizon(ctx context.Context, principal Principal, home *ProjectRuntime) (*horizon, error) {
+	views := map[ProjectID]*materializedGraphView{}
+	view := func(runtime *ProjectRuntime, branch string) (*materializedGraphView, error) {
+		if v := views[runtime.options.Project.ID]; v != nil {
+			return v, nil
+		}
+		snapshot, selected, err := readMaterializedSnapshot(ctx, runtime, branch)
+		if err != nil {
+			return nil, err
+		}
+		v := &materializedGraphView{snapshot: snapshot, runtime: selected}
+		views[runtime.options.Project.ID] = v
+		return v, nil
+	}
+	step := a.closureStep(principal, home, true, view)
+	for _, err := range model.DependencyClosure(ctx, home.options.Project.ID, step) {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &horizon{repos: step.repos, runtimes: step.byRepo, view: view}, nil
+}
+
+// member returns a closure member's runtime, or the unavailable error for a
+// repo outside the closure or one the composition refused.
+func (h *horizon) member(repoID RepoID) (*ProjectRuntime, error) {
+	if runtime := h.runtimes[repoID]; runtime != nil {
+		return runtime, nil
+	}
+	return nil, dependencyUnavailable()
+}
+
 // accessDependencies is serve's step of the closure walk, built per walk. A
 // project's declarations resolve per principal and per declaring project
 // through the AccessResolver; a dependency the composition cannot resolve is
 // not part of the reachable closure, so nothing behind it is a valid target.
 // The runtimes it resolved are kept so the next step reads their
 // declarations, and with readConfig a dependency's declarations come from its
-// selected source view, as a read sees them.
+// selected source view, as a read sees them. byRepo and repos keep the first
+// runtime each declared repo ID resolved to, for reads that select by repo ID.
 type accessDependencies struct {
 	access     AccessResolver
 	principal  Principal
@@ -206,6 +253,8 @@ type accessDependencies struct {
 	readConfig bool
 	sourceView func(*ProjectRuntime, string) (*materializedGraphView, error)
 	runtimes   map[ProjectID]*ProjectRuntime
+	byRepo     map[RepoID]*ProjectRuntime
+	repos      []RepoID
 }
 
 func (d *accessDependencies) Dependencies(ctx context.Context, id ProjectID) ([]ProjectID, error) {
@@ -221,13 +270,30 @@ func (d *accessDependencies) Dependencies(ctx context.Context, id ProjectID) ([]
 	for _, dependency := range current.options.Dependencies {
 		runtime, err := d.access.ResolveDependency(ctx, d.principal, current.options.Project.ID, dependency)
 		if err != nil || runtime == nil {
+			d.record(dependency, nil)
 			continue
 		}
 		dependencyID := runtime.options.Project.ID
 		if _, known := d.runtimes[dependencyID]; !known {
 			d.runtimes[dependencyID] = runtime
 		}
+		if dependencyID != d.home {
+			d.record(dependency, runtime)
+		}
 		resolved = append(resolved, dependencyID)
 	}
 	return resolved, nil
+}
+
+// record keeps the first runtime a declared repo ID resolved to; a nil
+// runtime keeps a declaration the composition refused, so a read selecting
+// it fails as unavailable rather than silently narrowing.
+func (d *accessDependencies) record(repoID RepoID, runtime *ProjectRuntime) {
+	known, seen := d.byRepo[repoID]
+	if !seen {
+		d.repos = append(d.repos, repoID)
+	}
+	if known == nil {
+		d.byRepo[repoID] = runtime
+	}
 }

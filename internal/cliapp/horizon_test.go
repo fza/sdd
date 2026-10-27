@@ -3,6 +3,8 @@ package cliapp_test
 import (
 	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // TestCLIReadsReachTheDependencyClosure: the local repo declares dep, dep
@@ -51,6 +53,75 @@ func TestCLIReadsReachTheDependencyClosure(t *testing.T) {
 	if show := f.run(t, "show", "example.test/stray:"+strayEntry); show.err == nil {
 		t.Errorf("show reached an undeclared repo:\n%s", show.stdout)
 	}
+}
+
+// TestServeReachesTheDependencyClosure runs the same repos through `sdd
+// serve`: the session reads across the whole closure, works in a
+// second-level dependency, and never reaches stray, though it is connected and
+// cached on this machine.
+func TestServeReachesTheDependencyClosure(t *testing.T) {
+	f := newAppFixture(t)
+	const (
+		depEntry   = "20260901-100000-s-tac-dep"
+		deepEntry  = "20260801-100000-s-tac-dpe"
+		strayEntry = "20260701-100000-s-tac-sty"
+	)
+	gap := "---\ntype: signal\nkind: gap\nlayer: tactical\nconfidence: medium\nparticipants: [Local Author]\n---\n\nA zebrafinch gap.\n"
+	newDependencyRepo(t, f, "example.test/deep", nil, map[string]string{"2026/08/01-100000-s-tac-dpe.md": gap})
+	newDependencyRepo(t, f, "example.test/dep", []string{"example.test/deep"}, map[string]string{"2026/09/01-100000-s-tac-dep.md": gap})
+	newDependencyRepo(t, f, "example.test/stray", nil, map[string]string{"2026/07/01-100000-s-tac-sty.md": gap})
+	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\ndependencies: [example.test/dep]\n")
+	if sync := f.run(t, "repo", "sync"); sync.err != nil {
+		t.Fatalf("repo sync: %v\n%s", sync.err, sync.stderr)
+	}
+
+	f.serve(t, func(client *mcp.ClientSession) {
+		door, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_session", Arguments: map[string]any{}})
+		if err != nil || door.IsError {
+			t.Fatalf("start_session: %v %+v", err, door)
+		}
+		handle, _ := door.StructuredContent.(map[string]any)["session"].(string)
+		call := func(tool string, args map[string]any) (string, bool) {
+			t.Helper()
+			args["session"] = handle
+			result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: tool, Arguments: args})
+			if err != nil {
+				t.Fatalf("%s: %v", tool, err)
+			}
+			var text strings.Builder
+			for _, content := range result.Content {
+				if c, ok := content.(*mcp.TextContent); ok {
+					text.WriteString(c.Text)
+				}
+			}
+			return text.String(), result.IsError
+		}
+
+		results, isError := call("search", map[string]any{"terms": []string{"zebrafinch"}, "all_repos": true})
+		if isError {
+			t.Fatalf("search all_repos: %s", results)
+		}
+		for _, want := range []string{"example.test/dep:" + depEntry, "example.test/deep:" + deepEntry} {
+			if !strings.Contains(results, want) {
+				t.Errorf("search all_repos omitted %s:\n%s", want, results)
+			}
+		}
+		if strings.Contains(results, strayEntry) {
+			t.Errorf("search all_repos reached an undeclared repo:\n%s", results)
+		}
+		if out, isError := call("search", map[string]any{"terms": []string{"zebrafinch"}, "repos": []string{"example.test/stray"}}); !isError {
+			t.Errorf("search of an undeclared repo succeeded:\n%s", out)
+		}
+		if out, isError := call("show", map[string]any{"ids": []string{"example.test/deep:" + deepEntry}, "up": 0, "down": 0}); isError || !strings.Contains(out, deepEntry) {
+			t.Errorf("show of a second-level dependency entry from home: %s", out)
+		}
+		if out, isError := call("show", map[string]any{"ids": []string{deepEntry}, "project": "example.test/deep", "up": 0, "down": 0}); isError || !strings.Contains(out, deepEntry) {
+			t.Errorf("show in a second-level dependency project: %s", out)
+		}
+		if out, isError := call("show", map[string]any{"ids": []string{strayEntry}, "project": "example.test/stray", "up": 0, "down": 0}); !isError {
+			t.Errorf("show in an undeclared project succeeded:\n%s", out)
+		}
+	})
 }
 
 // TestCLIReadProceedsWhenRefreshFails: a dependency whose remote is

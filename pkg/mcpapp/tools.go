@@ -272,8 +272,8 @@ type SearchArgs struct {
 	IncludeSuperseded bool         `json:"include_superseded,omitempty"`
 	Limit             int          `json:"limit,omitempty" jsonschema:"hit cap; default 8"`
 	MaxCitations      *int         `json:"max_citations,omitempty" jsonschema:"citation snippet lines per entry; omitted = 1 (the strongest matching chunk, the match evidence), 0 = headers only"`
-	Repos             []sdd.RepoID `json:"repos,omitempty" jsonschema:"also search these connected repos by repo-id (additive to the local graph)"`
-	AllRepos          bool         `json:"all_repos,omitempty" jsonschema:"also search every connected repo"`
+	Repos             []sdd.RepoID `json:"repos,omitempty" jsonschema:"also search these repos of the project's dependency closure by repo-id (additive to the local graph)"`
+	AllRepos          bool         `json:"all_repos,omitempty" jsonschema:"also search every repo in the project's dependency closure"`
 }
 
 type SearchResult struct {
@@ -286,8 +286,8 @@ type ViewArgs struct {
 	Session  string       `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch"`
 	Project  string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
 	Layout   string       `json:"layout" jsonschema:"sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'"`
-	Repos    []sdd.RepoID `json:"repos,omitempty" jsonschema:"also render the layout over these connected repos' graphs (additive to the local graph)"`
-	AllRepos bool         `json:"all_repos,omitempty" jsonschema:"also render the layout over every connected repo"`
+	Repos    []sdd.RepoID `json:"repos,omitempty" jsonschema:"also render the layout over these repos of the project's dependency closure (additive to the local graph)"`
+	AllRepos bool         `json:"all_repos,omitempty" jsonschema:"also render the layout over every repo in the project's dependency closure"`
 }
 
 type ViewResult struct {
