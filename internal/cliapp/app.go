@@ -295,6 +295,9 @@ func warnUnknownConfigKeys(ctx context.Context) {
 	for _, k := range result.Keys {
 		log.Warn("ignoring unknown config key", "key", k.Key, "file", k.File)
 	}
+	for _, s := range result.Ignored {
+		log.Warn("ignoring config setting", "key", s.Key, "file", s.File, "reason", s.Reason)
+	}
 }
 
 // resolveConfigAt mirrors loadConfig for an explicit .sdd dir — `sdd init`
@@ -969,6 +972,10 @@ func newCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			syncMode, err := graphSyncMode(dir)
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
 				Stderr:   cmd.ErrWriter,
 				GraphDir: dir,
@@ -979,10 +986,13 @@ func newCmd() *cli.Command {
 					Repos:             reg,
 					ProcedureRegistry: registry,
 				}),
-				LLMRunner: runner,
-				Committer: graphGit(dir),
-				Repos:     mgr,
-				Language:  configLanguage(cfg),
+				LLMRunner:   runner,
+				Committer:   graphGit(dir),
+				Pusher:      graphGit(dir),
+				GraphPuller: graphGit(dir),
+				SyncMode:    syncMode,
+				Repos:       mgr,
+				Language:    configLanguage(cfg),
 			})
 
 			return handler.NewEntry(ctx, ncmd)
@@ -1069,12 +1079,19 @@ func rewriteCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			syncMode, err := graphSyncMode(dir)
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
-				Stderr:    cmd.ErrWriter,
-				GraphDir:  dir,
-				Reader:    reader,
-				Committer: graphGit(dir),
-				Mover:     graphGit(dir),
+				Stderr:      cmd.ErrWriter,
+				GraphDir:    dir,
+				Reader:      reader,
+				Committer:   graphGit(dir),
+				Pusher:      graphGit(dir),
+				GraphPuller: graphGit(dir),
+				SyncMode:    syncMode,
+				Mover:       graphGit(dir),
 			})
 			return handler.RewriteEntry(ctx, rcmd)
 		})),
@@ -1105,11 +1122,18 @@ func lintCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
+				syncMode, err := graphSyncMode(dir)
+				if err != nil {
+					return err
+				}
 				handler := handlers.New(handlers.Options{
-					Stderr:    cmd.ErrWriter,
-					GraphDir:  dir,
-					Reader:    reader,
-					Committer: graphGit(dir),
+					Stderr:      cmd.ErrWriter,
+					GraphDir:    dir,
+					Reader:      reader,
+					Committer:   graphGit(dir),
+					Pusher:      graphGit(dir),
+					GraphPuller: graphGit(dir),
+					SyncMode:    syncMode,
 				})
 				if err := handler.LintFix(ctx, fixCmd); err != nil {
 					return err
@@ -1307,6 +1331,10 @@ func summarizeHandler(cmd *cli.Command) (*handlers.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	syncMode, err := graphSyncMode(dir)
+	if err != nil {
+		return nil, err
+	}
 	return handlers.New(handlers.Options{
 		Stderr:   cmd.ErrWriter,
 		GraphDir: dir,
@@ -1316,10 +1344,13 @@ func summarizeHandler(cmd *cli.Command) (*handlers.Handler, error) {
 			Config:          cfg,
 			Repos:           reg,
 		}),
-		LLMRunner: runner,
-		Committer: graphGit(dir),
-		Changes:   graphGit(dir),
-		Language:  configLanguage(cfg),
+		LLMRunner:   runner,
+		Committer:   graphGit(dir),
+		Pusher:      graphGit(dir),
+		GraphPuller: graphGit(dir),
+		SyncMode:    syncMode,
+		Changes:     graphGit(dir),
+		Language:    configLanguage(cfg),
 	}), nil
 }
 
@@ -1389,6 +1420,28 @@ func resolveParticipantFlag(flagValue, sddDir string) (string, error) {
 // config commits of sdd init) keep the process working directory.
 func graphGit(graphDir string) git.CLI {
 	return git.CLI{Dir: git.RepoRootFor(graphDir)}
+}
+
+// graphSyncMode is the sync mode a graph-writing command on graphDir runs
+// under. The project's config decides only for the project's own graph; a
+// --graph-dir naming another graph stays manual, as its repository's config
+// is not the one read.
+func graphSyncMode(graphDir string) (model.SyncMode, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return "", err
+	}
+	if graphDir == "" {
+		return model.SyncModeManual, nil
+	}
+	project, err := resolveProject()
+	if err != nil {
+		return "", err
+	}
+	if filepath.Clean(graphDir) != filepath.Clean(meta.ResolveGraphDir(project.Root, cfg)) {
+		return model.SyncModeManual, nil
+	}
+	return model.ResolveSyncMode(cfg), nil
 }
 
 var errNoProject = errors.New("no .sdd/ directory found; run 'sdd init' first")
@@ -2011,12 +2064,19 @@ func wipStartCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			syncMode, err := graphSyncMode(dir)
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
-				Stderr:    cmd.ErrWriter,
-				GraphDir:  dir,
-				Reader:    reader,
-				Committer: graphGit(dir),
-				Brancher:  git.CLI{},
+				Stderr:      cmd.ErrWriter,
+				GraphDir:    dir,
+				Reader:      reader,
+				Committer:   graphGit(dir),
+				Pusher:      graphGit(dir),
+				GraphPuller: graphGit(dir),
+				SyncMode:    syncMode,
+				Brancher:    git.CLI{},
 			})
 			return handler.StartWIP(ctx, startCmd)
 		})),
@@ -2067,12 +2127,19 @@ func wipDoneCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			syncMode, err := graphSyncMode(dir)
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
-				Stderr:    cmd.ErrWriter,
-				GraphDir:  dir,
-				Reader:    reader,
-				Committer: git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
-				Brancher:  git.CLI{},
+				Stderr:      cmd.ErrWriter,
+				GraphDir:    dir,
+				Reader:      reader,
+				Committer:   git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
+				Pusher:      graphGit(dir),
+				GraphPuller: graphGit(dir),
+				SyncMode:    syncMode,
+				Brancher:    git.CLI{},
 			})
 			return handler.FinishWIP(ctx, doneCmd)
 		})),

@@ -104,6 +104,9 @@ type Handler struct {
 	brancher        Brancher
 	mover           Mover
 	puller          Puller
+	pusher          Pusher
+	graphPuller     GraphPuller
+	syncMode        model.SyncMode
 	changes         ChangeReader
 	repos           *repos.Manager
 	stderr          io.Writer
@@ -125,7 +128,12 @@ type Options struct {
 	Brancher        Brancher
 	Mover           Mover
 	Puller          Puller
-	Changes         ChangeReader
+	Pusher          Pusher
+	GraphPuller     GraphPuller
+	// SyncMode decides whether a graph commit is pushed before the command
+	// returns; empty means manual.
+	SyncMode model.SyncMode
+	Changes  ChangeReader
 	// Repos owns the connected-repos side effects (clone, pull, config
 	// writes). Nil means no connected-repos support — repo commands fail
 	// loud, and cross-repo cache freshening is skipped.
@@ -151,6 +159,9 @@ func New(opts Options) *Handler {
 		brancher:        opts.Brancher,
 		mover:           opts.Mover,
 		puller:          opts.Puller,
+		pusher:          opts.Pusher,
+		graphPuller:     opts.GraphPuller,
+		syncMode:        opts.SyncMode,
 		changes:         opts.Changes,
 		repos:           opts.Repos,
 		stderr:          opts.Stderr,

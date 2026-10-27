@@ -46,17 +46,17 @@ func (c CLI) at(args ...string) []string {
 	return append([]string{"-C", c.Dir}, args...)
 }
 
-// commitTimeout caps the detached auto-commit. A signing or credential helper
-// blocking on input would otherwise hang indefinitely when sdd runs as a
-// long-lived server; the timeout is a backstop on top of the TTY detach in
-// runDetached. See d-tac-zhp.
-const commitTimeout = 30 * time.Second
+// detachedTimeout caps a detached auto-commit or push. A signing or
+// credential helper blocking on input would otherwise hang indefinitely when
+// sdd runs as a long-lived server; the timeout is a backstop on top of the
+// TTY detach in runDetached. See d-tac-zhp.
+const detachedTimeout = 30 * time.Second
 
 // Commit stages exactly the given paths and commits them, detached from any
 // controlling terminal. It is the production handlers.Committer for the
 // auto-commit paths (sdd new, summarize, init, ...).
 func (c CLI) Commit(message string, paths ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), commitTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), detachedTimeout)
 	defer cancel()
 
 	addArgs := c.at(append([]string{"add", "--all", "--"}, paths...)...)
@@ -156,6 +156,66 @@ func runDetachedPastIndexLock(ctx context.Context, args ...string) ([]byte, erro
 	}
 }
 
+// Push publishes HEAD to the branch the current branch tracks, detached like
+// Commit. The explicit refspec keeps a configured push refspec or mirror
+// setting from publishing other branches the push rule never counted.
+// Production handlers.Pusher.
+func (c CLI) Push(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
+	defer cancel()
+	branch, err := c.output(ctx, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return fmt.Errorf("resolving the current branch: %w", err)
+	}
+	remote, err := c.output(ctx, "config", "branch."+branch+".remote")
+	if err != nil {
+		return fmt.Errorf("resolving the remote of %s: %w", branch, err)
+	}
+	merge, err := c.output(ctx, "config", "branch."+branch+".merge")
+	if err != nil {
+		return fmt.Errorf("resolving the upstream branch of %s: %w", branch, err)
+	}
+	out, err := runDetached(ctx, c.at("push", remote, "HEAD:"+merge)...)
+	if err != nil {
+		return fmt.Errorf("git push: %s (%w)", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func (c CLI) output(ctx context.Context, args ...string) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at(args...)...).Output()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// Merge merges ref into the current branch, committing a merge with message
+// when the histories diverged. A failed merge is aborted so the working tree
+// stays as it was. Production handlers.GraphPuller.
+func (c CLI) Merge(ctx context.Context, ref, message string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("git merge %s: %w", ref, err)
+	}
+	// A merge killed halfway leaves a partly checked-out tree and a stale
+	// index.lock, so once started it outlives the caller's cancellation.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachedTimeout)
+	defer cancel()
+	out, err := runDetached(ctx, c.at("merge", "--no-edit", "--no-overwrite-ignore", "-m", message, ref)...)
+	if err == nil {
+		return nil
+	}
+	mergeErr := fmt.Errorf("git merge %s: %s (%w)", ref, strings.TrimSpace(string(out)), err)
+	abortOut, abortErr := exec.Command("git", c.at("merge", "--abort")...).CombinedOutput()
+	if abortErr != nil && strings.Contains(string(abortOut), "MERGE_HEAD missing") {
+		return mergeErr
+	}
+	if abortErr != nil {
+		return errors.Join(mergeErr, fmt.Errorf("git merge --abort: %s (%w)", strings.TrimSpace(string(abortOut)), abortErr))
+	}
+	return mergeErr
+}
+
 // HasCommitMessage reports whether any reachable commit contains text. It is
 // used by retryable post-apply finalizers to recognize a commit that landed
 // before its durable finalizer outcome could be recorded.
@@ -209,7 +269,7 @@ func runDetached(ctx context.Context, args ...string) ([]byte, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
-		return out, fmt.Errorf("git %s: timed out after %s (a commit signer or credential helper may be blocking on input)", args[0], commitTimeout)
+		return out, fmt.Errorf("git %s: timed out after %s (a commit signer or credential helper may be blocking on input)", args[0], detachedTimeout)
 	}
 	return out, err
 }

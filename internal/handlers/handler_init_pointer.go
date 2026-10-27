@@ -274,7 +274,7 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 	if len(commitPaths) == 0 {
 		return nil
 	}
-	err = h.committer.Commit(commitMessage, commitPaths...)
+	err = h.commitGraph(ctx, commitMessage, commitPaths...)
 	if err != nil {
 		return fmt.Errorf("git commit: %w", err)
 	}

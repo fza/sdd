@@ -107,6 +107,7 @@ func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.P
 			return nil, nil, fmt.Errorf("%s: contribution is machine-local; set it in %s instead", committedPath, LocalConfigFileName)
 		}
 	}
+	committed = model.HonoredCommitted(committed)
 	// Without a .sdd/ directory only an explicit override names a local
 	// layer — joining an empty dir would read a path relative to the cwd.
 	if sddDir != "" || localConfigPath != "" {

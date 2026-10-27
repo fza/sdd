@@ -55,7 +55,7 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 		if len(cmd.EntryIDs) != 1 {
 			return fmt.Errorf("--text and --title require exactly one entry ID (no --all, no multi-entry batches)")
 		}
-		return h.summarizeExplicit(graph, cmd.EntryIDs[0], cmd)
+		return h.summarizeExplicit(ctx, graph, cmd.EntryIDs[0], cmd)
 	}
 
 	// Determine which entries to process.
@@ -208,7 +208,7 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 		if len(cmd.EntryIDs) == 1 {
 			msg = fmt.Sprintf("sdd: summarize %s", cmd.EntryIDs[0])
 		}
-		if err := h.committer.Commit(msg, commitPaths...); err != nil {
+		if err := h.commitGraph(ctx, msg, commitPaths...); err != nil {
 			return errors.Join(runErr, fmt.Errorf("git commit: %w", err))
 		}
 	}
@@ -217,7 +217,7 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 
 // summarizeExplicit writes a user-supplied summary, title or both on a single
 // entry, bypassing the LLM.
-func (h *Handler) summarizeExplicit(graph *model.Graph, idArg string, cmd *command.SummarizeCmd) error {
+func (h *Handler) summarizeExplicit(ctx context.Context, graph *model.Graph, idArg string, cmd *command.SummarizeCmd) error {
 	resolved, err := graph.ResolveIDs([]string{idArg})
 	if err != nil {
 		return err
@@ -270,7 +270,7 @@ func (h *Handler) summarizeExplicit(graph *model.Graph, idArg string, cmd *comma
 
 	if h.committer != nil {
 		msg := fmt.Sprintf("sdd: summarize %s (manual)", entry.ID)
-		if err := h.committer.Commit(msg, filePath); err != nil {
+		if err := h.commitGraph(ctx, msg, filePath); err != nil {
 			return fmt.Errorf("git commit: %w", err)
 		}
 	}

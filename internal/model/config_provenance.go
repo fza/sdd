@@ -37,6 +37,7 @@ var configDefaults = map[string]string{
 	"llm.max_tokens":  strconv.Itoa(DefaultLLMMaxTokens),
 	"llm.concurrency": strconv.Itoa(DefaultLLMConcurrency),
 	"sync.cooldown":   DefaultSyncCooldown,
+	"sync.mode":       string(SyncModeManual),
 
 	"sessions.retention": DefaultSessionRetention,
 }

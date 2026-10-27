@@ -1,6 +1,18 @@
 package model
 
-import "strings"
+import (
+	"fmt"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+)
+
+// GraphCommitSubjectPattern matches the subject every SDD-written commit
+// starts with; sync counts commits matching it on either side of the
+// local/upstream divergence.
+const GraphCommitSubjectPattern = "^sdd:"
 
 // SyncState describes the overall state of background sync detection.
 type SyncState string
@@ -36,6 +48,16 @@ const (
 	SyncStateSkipped SyncState = "skipped"
 )
 
+// Fetched reports whether the sync check reached the upstream, so the
+// remote-tracking ref an automatic pull merges is fresh.
+func (s SyncState) Fetched() bool {
+	switch s {
+	case SyncStateUpToDate, SyncStateFastForward, SyncStateCleanRebase, SyncStateConflictPredicted, SyncStateLocalAhead:
+		return true
+	}
+	return false
+}
+
 // SyncStatus is the structured result of a background sync check. Callers
 // emit the appropriate slog line based on State; the skill pattern-matches
 // on the rendered message.
@@ -50,13 +72,14 @@ type SyncStatus struct {
 	Reason string
 }
 
-// CountGraphCommits counts non-empty lines from `git log --grep='^sdd:'
-// --pretty=format:%H <range>`. Each line is one SDD-written commit in the
-// range; we only need the count, not the hashes themselves.
-func CountGraphCommits(gitLogOutput string) int {
+// CountMatchingSubjects counts the lines of `git log --format=%s` output,
+// one commit subject per line, that pattern matches. Only the subject is
+// judged: a body line starting with the graph prefix does not make a commit
+// a graph commit.
+func CountMatchingSubjects(subjects string, pattern *regexp.Regexp) int {
 	n := 0
-	for line := range strings.SplitSeq(gitLogOutput, "\n") {
-		if strings.TrimSpace(line) != "" {
+	for line := range strings.SplitSeq(subjects, "\n") {
+		if pattern.MatchString(line) {
 			n++
 		}
 	}
@@ -84,4 +107,139 @@ func ParseMergeTreeConflicts(output string) []string {
 		paths = append(paths, line)
 	}
 	return paths
+}
+
+// PushVerdict is what automatic sync does with the commits a branch holds
+// ahead of its upstream.
+type PushVerdict string
+
+const (
+	PushOff        PushVerdict = "off"
+	PushNoUpstream PushVerdict = "no-upstream"
+	PushNothing    PushVerdict = "nothing"
+	// PushUnpublished: a commit not written by sdd is ahead, and a push would
+	// publish it; the graph commits stay local.
+	PushUnpublished PushVerdict = "unpublished"
+	PushReady       PushVerdict = "ready"
+)
+
+// DecidePush judges a push from the commits ahead of upstream: all of them
+// and the ones matching ^sdd:.
+func DecidePush(mode SyncMode, hasUpstream bool, ahead, graphAhead int) PushVerdict {
+	switch {
+	case mode != SyncModeAuto:
+		return PushOff
+	case !hasUpstream:
+		return PushNoUpstream
+	case ahead == 0:
+		return PushNothing
+	case graphAhead < ahead:
+		return PushUnpublished
+	default:
+		return PushReady
+	}
+}
+
+// PullVerdict is what automatic sync does with the commits upstream holds
+// ahead of the branch.
+type PullVerdict string
+
+const (
+	PullOff        PullVerdict = "off"
+	PullNoUpstream PullVerdict = "no-upstream"
+	PullNothing    PullVerdict = "nothing"
+	// PullForeign: an incoming commit was not written by sdd, so merging it
+	// would bring code changes into the working tree unasked.
+	PullForeign PullVerdict = "foreign"
+	// PullOutsideGraph: an incoming commit changes a path sdd never writes,
+	// whatever its subject says (20261027-222018-d-tac-ue8).
+	PullOutsideGraph PullVerdict = "outside-graph"
+	PullDirty        PullVerdict = "dirty"
+	PullReady        PullVerdict = "ready"
+)
+
+// IncomingCommits describes the commits upstream holds ahead of the branch.
+type IncomingCommits struct {
+	All   int
+	Graph int
+	// Outside lists the changed paths that lie outside the paths sdd writes.
+	Outside []string
+}
+
+// DecidePull judges a pull from the incoming commits and whether the working
+// tree is clean.
+func DecidePull(mode SyncMode, hasUpstream bool, incoming IncomingCommits, clean bool) PullVerdict {
+	switch {
+	case mode != SyncModeAuto:
+		return PullOff
+	case !hasUpstream:
+		return PullNoUpstream
+	case incoming.All == 0:
+		return PullNothing
+	case incoming.Graph < incoming.All:
+		return PullForeign
+	case len(incoming.Outside) > 0:
+		return PullOutsideGraph
+	case !clean:
+		return PullDirty
+	default:
+		return PullReady
+	}
+}
+
+// OutsideGraphPaths returns the paths, relative to the repository holding the
+// graph, that an automatic pull may not merge unreviewed: everything but
+// graphDir (also repository-relative; "." makes the whole repository the
+// graph), .sdd/meta.json, the rendered agent skills and .gitignore. Config
+// stays outside, since an incoming config change alters sdd itself
+// (20261027-235201-d-tac-hkq).
+func OutsideGraphPaths(paths []string, graphDir string) []string {
+	graphDir = strings.Trim(filepath.ToSlash(filepath.Clean(graphDir)), "/")
+	if graphDir == "." {
+		return nil
+	}
+	prefixes := []string{".claude/skills/", ".agents/skills/", graphDir + "/"}
+	var outside []string
+	for _, path := range paths {
+		if path == "" || path == ".gitignore" || path == ".sdd/meta.json" {
+			continue
+		}
+		if !slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(path, prefix) }) {
+			outside = append(outside, path)
+		}
+	}
+	return outside
+}
+
+// GraphMergeMessage is the message of the merge commit an automatic pull
+// writes; it matches ^sdd: so the merge itself passes the push rule.
+func GraphMergeMessage(upstream string) string {
+	return fmt.Sprintf("sdd: merge %s", upstream)
+}
+
+// MergeConflict is an automatic pull that would not merge cleanly: the
+// upstream ref and the paths both sides changed.
+type MergeConflict struct {
+	Upstream string
+	Paths    []string
+}
+
+// noticePathLimit caps the paths a conflict notice lists.
+const noticePathLimit = 10
+
+// Notice tells the agent how to resolve the conflict by hand, naming the merge
+// message that keeps later automatic pushes going (20261027-231225-d-tac-n5o).
+// The paths come from upstream commits and reach agent instructions, so each
+// is quoted with its control characters escaped and the list is capped.
+func (c MergeConflict) Notice() string {
+	quoted := make([]string, 0, min(len(c.Paths), noticePathLimit))
+	for _, path := range c.Paths[:min(len(c.Paths), noticePathLimit)] {
+		quoted = append(quoted, strconv.Quote(path))
+	}
+	listed := strings.Join(quoted, ", ")
+	if more := len(c.Paths) - noticePathLimit; more > 0 {
+		listed += fmt.Sprintf(" and %d more", more)
+	}
+	return fmt.Sprintf("sync: merging %s would conflict in %s. Merge it with git, resolve the conflicts, and commit the merge as %q; automatic sync holds until then.",
+		c.Upstream, listed, GraphMergeMessage(c.Upstream))
 }

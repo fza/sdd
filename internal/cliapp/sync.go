@@ -11,6 +11,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
+	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
@@ -78,9 +79,11 @@ func runSyncCheck(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, syncCheckTimeout)
 	defer cancel()
 
+	graphDir := meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)
+	graphRepo := graphGit(graphDir)
 	f := finders.New(finders.Options{
 		Config:    cfg,
-		GitSyncer: graphGit(meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)),
+		GitSyncer: graphRepo,
 	})
 	status, err := f.SyncStatus(ctx, query.SyncStatusQuery{
 		SDDDir:          sddDir,
@@ -91,6 +94,23 @@ func runSyncCheck(ctx context.Context) {
 		return
 	}
 	emitSyncStatus(logger, status)
+	if model.ResolveSyncMode(cfg) == model.SyncModeAuto && status.State.Fetched() {
+		pullGraph(ctx, graphRepo, graphDir)
+	}
+}
+
+// pullGraph runs the automatic pull the sync check triggers. Like the check
+// itself it never fails the command; what it could not do is reported.
+func pullGraph(ctx context.Context, graphRepo git.CLI, graphDir string) {
+	handler := handlers.New(handlers.Options{GraphDir: graphDir, GraphPuller: graphRepo, Pusher: graphRepo, SyncMode: model.SyncModeAuto})
+	err := handler.AutoPullGraph(ctx)
+	var conflict *handlers.MergeConflictError
+	switch {
+	case errors.As(err, &conflict):
+		slogutils.FromContext(ctx).Warn(conflict.Notice())
+	case err != nil:
+		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: %v", err))
+	}
 }
 
 // emitSyncStatus renders a SyncStatus as one slog line. The phrasing is

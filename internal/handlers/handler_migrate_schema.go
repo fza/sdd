@@ -45,7 +45,7 @@ func (h *Handler) MigrateSchema(ctx context.Context, cmd *command.MigrateSchemaC
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	if h.committer != nil {
-		if err := h.committer.Commit(fmt.Sprintf("sdd: migrate graph schema %d -> %d", from, cmd.SchemaVersion), path); err != nil {
+		if err := h.commitGraph(ctx, fmt.Sprintf("sdd: migrate graph schema %d -> %d", from, cmd.SchemaVersion), path); err != nil {
 			return fmt.Errorf("git commit: %w", err)
 		}
 	}
@@ -103,7 +103,7 @@ func (h *Handler) CommitStrandedTitles(ctx context.Context, cmd *command.CommitS
 	if len(stranded) == 0 {
 		return nil
 	}
-	if err := h.committer.Commit(fmt.Sprintf("sdd: migrate commit %d stranded titles", len(stranded)), stranded...); err != nil {
+	if err := h.commitGraph(ctx, fmt.Sprintf("sdd: migrate commit %d stranded titles", len(stranded)), stranded...); err != nil {
 		return fmt.Errorf("git commit: %w", err)
 	}
 	if cmd.OnCommitted != nil {

@@ -36,7 +36,7 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 		}
 		return cfg, nil
 	}
-	return NewGitWorktreeAcquirer(GitWorktreeAcquirerOptions{
+	acquirer, err := NewGitWorktreeAcquirer(GitWorktreeAcquirerOptions{
 		Project: project, ServerCheckout: serverCheckout,
 		ReadFactory: func(ctx context.Context, checkout string, q app.SnapshotReadQuery) (*app.AcquiredSnapshot, error) {
 			cfg, err := resolveConfig(checkout)
@@ -75,7 +75,16 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			return graph, []app.MutationFinalizer{finalizer}, func() error { return nil }, nil
+			finalizers := []app.MutationFinalizer{finalizer}
+			if model.ResolveSyncMode(cfg) == model.SyncModeAuto {
+				finalizers = append(finalizers, GraphPublisher{Checkout: checkout, GraphDir: meta.ResolveGraphDir(checkout, cfg)})
+			}
+			return graph, finalizers, func() error { return nil }, nil
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+	acquirer.resolveConfig = resolveConfig
+	return acquirer, nil
 }

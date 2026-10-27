@@ -203,13 +203,20 @@ func repoHandler(errWriter io.Writer) (*handlers.Handler, error) {
 		graphDir = meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)
 		committer = git.CLI{Dir: filepath.Dir(sddDir)}
 	}
+	syncMode, err := graphSyncMode(graphDir)
+	if err != nil {
+		return nil, err
+	}
 	return handlers.New(handlers.Options{
-		Stderr:    errWriter,
-		Reader:    reader,
-		Repos:     mgr,
-		SDDDir:    sddDir,
-		GraphDir:  graphDir,
-		Committer: committer,
+		Stderr:      errWriter,
+		Reader:      reader,
+		Repos:       mgr,
+		SDDDir:      sddDir,
+		GraphDir:    graphDir,
+		Committer:   committer,
+		Pusher:      committer,
+		GraphPuller: committer,
+		SyncMode:    syncMode,
 	}), nil
 }
 

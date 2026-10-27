@@ -193,6 +193,52 @@ type SyncConfig struct {
 	// Cooldown is the minimum interval between background git fetches. Go
 	// duration string (e.g. "15m", "1h"). Empty means DefaultSyncCooldown.
 	Cooldown string `yaml:"cooldown,omitempty"`
+	// Mode chooses whether graph commits are pushed and upstream graph
+	// commits pulled automatically. Empty means SyncModeManual.
+	Mode SyncMode `yaml:"mode,omitempty"`
+}
+
+// SyncMode is the sync.mode setting. It is set per person: only the
+// user-global config and config.local.yaml may set it, and a value sdd must
+// not honor is read past as manual (20261027-211908-d-tac-l8j).
+type SyncMode string
+
+const (
+	SyncModeManual SyncMode = "manual"
+	SyncModeAuto   SyncMode = "auto"
+)
+
+// IgnoredSetting is a setting a config layer carries that sdd reads past:
+// a value it does not know, or a key that layer may not set.
+type IgnoredSetting struct {
+	Key    string
+	Reason string
+}
+
+// IgnoredSettings returns the settings in one config layer that sdd reads
+// past. committed marks the shared .sdd/config.yaml.
+func IgnoredSettings(layer BaseConfig, committed bool) []IgnoredSetting {
+	mode := layer.Sync.Mode
+	switch {
+	case mode == "":
+		return nil
+	case committed:
+		return []IgnoredSetting{{Key: "sync.mode", Reason: "only the user-global config or config.local.yaml may set it"}}
+	case mode != SyncModeManual && mode != SyncModeAuto:
+		return []IgnoredSetting{{Key: "sync.mode", Reason: fmt.Sprintf("%q is not %s or %s", mode, SyncModeManual, SyncModeAuto)}}
+	}
+	return nil
+}
+
+// HonoredCommitted returns the committed layer without the settings only a
+// person's own config may make.
+func HonoredCommitted(committed *PerRepoConfig) *PerRepoConfig {
+	if committed == nil || committed.Sync.Mode == "" {
+		return committed
+	}
+	honored := *committed
+	honored.Sync.Mode = ""
+	return &honored
 }
 
 // SessionsConfig holds settings for engine session lifetime.
@@ -543,6 +589,9 @@ func mergeSyncConfig(base, overlay SyncConfig) SyncConfig {
 	if overlay.Cooldown != "" {
 		out.Cooldown = overlay.Cooldown
 	}
+	if overlay.Mode != "" {
+		out.Mode = overlay.Mode
+	}
 	return out
 }
 
@@ -686,9 +735,11 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"#   concurrency: 4\n" +
 		"\n" +
 		"# Background sync — controls how often the CLI auto-fetches to detect graph\n" +
-		"# changes from collaborators. Go duration string.\n" +
+		"# changes from collaborators. Go duration string. mode: auto pushes every\n" +
+		"# graph commit and pulls upstream graph commits on that check.\n" +
 		"# sync:\n" +
-		"#   cooldown: " + DefaultSyncCooldown + "\n"
+		"#   cooldown: " + DefaultSyncCooldown + "\n" +
+		"#   mode: " + string(SyncModeManual) + "\n"
 }
 
 // ResolveSessionRetention returns the effective session retention from cfg.
@@ -731,6 +782,14 @@ func ResolveSyncCooldown(cfg *PerRepoConfig) time.Duration {
 		raw = cfg.Sync.Cooldown
 	}
 	return parsePositiveDuration(raw, DefaultSyncCooldown)
+}
+
+// ResolveSyncMode returns the effective sync mode from cfg.
+func ResolveSyncMode(cfg *PerRepoConfig) SyncMode {
+	if cfg != nil && cfg.Sync.Mode == SyncModeAuto {
+		return SyncModeAuto
+	}
+	return SyncModeManual
 }
 
 // parsePositiveDuration reads a configured duration, falling back to a baked
