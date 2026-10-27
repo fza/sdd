@@ -260,6 +260,12 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 		return nil
 	}
 	commitPaths := filterRepoPaths(cmd.RepoRoot, touched)
+	if h.tracker != nil {
+		commitPaths, err = h.tracker.Committable(ctx, commitPaths)
+		if err != nil {
+			return fmt.Errorf("selecting init paths to commit: %w", err)
+		}
+	}
 	if len(commitPaths) == 0 {
 		return nil
 	}

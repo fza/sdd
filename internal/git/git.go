@@ -8,9 +8,11 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,6 +73,66 @@ func (c CLI) Commit(message string, paths ...string) error {
 	}
 
 	return nil
+}
+
+// Committable returns paths without those git refuses to stage: untracked
+// paths an ignore rule matches, and untracked paths no longer on disk.
+func (c CLI) Committable(ctx context.Context, paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	ignored, err := c.ignored(ctx, paths)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if ignored[path] {
+			continue
+		}
+		_, statErr := os.Stat(path)
+		if errors.Is(statErr, fs.ErrNotExist) {
+			tracked, err := c.tracked(ctx, path)
+			if err != nil {
+				return nil, err
+			}
+			if !tracked {
+				continue
+			}
+		}
+		out = append(out, path)
+	}
+	return out, nil
+}
+
+func (c CLI) ignored(ctx context.Context, paths []string) (map[string]bool, error) {
+	cmd := exec.CommandContext(ctx, "git", c.at("check-ignore", "-z", "--stdin")...)
+	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00"))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("git check-ignore: %s (%w)", stderr.Bytes(), err)
+	}
+	ignored := map[string]bool{}
+	for path := range strings.SplitSeq(string(out), "\x00") {
+		if path != "" {
+			ignored[path] = true
+		}
+	}
+	return ignored, nil
+}
+
+func (c CLI) tracked(ctx context.Context, path string) (bool, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("ls-files", "-z", "--", path)...).CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("git ls-files: %s (%w)", out, err)
+	}
+	return len(out) > 0, nil
 }
 
 // runDetachedPastIndexLock retries a git subprocess while another process

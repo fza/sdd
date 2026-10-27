@@ -1868,6 +1868,7 @@ func initCmd() *cli.Command {
 				Stderr:    cmd.ErrWriter,
 				Reader:    reader,
 				Committer: git.CLI{},
+				Tracker:   git.CLI{},
 				Repos:     mgr,
 			})
 			if err := handler.Init(ctx, icmd); err != nil {

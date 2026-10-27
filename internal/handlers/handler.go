@@ -42,6 +42,13 @@ type Committer interface {
 	Commit(message string, paths ...string) error
 }
 
+// Tracker narrows paths to those git can commit. Init writes agent surfaces
+// a repository may ignore, and may prune renders git never tracked. Without
+// one, init commits every path it touched.
+type Tracker interface {
+	Committable(ctx context.Context, paths []string) ([]string, error)
+}
+
 // Brancher performs git branch operations. Injected so tests can fake
 // checkout/branch deletion without touching real git.
 type Brancher interface {
@@ -92,6 +99,7 @@ type Handler struct {
 	reader          Reader
 	llmRunner       llm.Runner
 	committer       Committer
+	tracker         Tracker
 	brancher        Brancher
 	mover           Mover
 	puller          Puller
@@ -112,6 +120,7 @@ type Options struct {
 	Reader          Reader
 	LLMRunner       llm.Runner
 	Committer       Committer
+	Tracker         Tracker
 	Brancher        Brancher
 	Mover           Mover
 	Puller          Puller
@@ -137,6 +146,7 @@ func New(opts Options) *Handler {
 		reader:          opts.Reader,
 		llmRunner:       opts.LLMRunner,
 		committer:       opts.Committer,
+		tracker:         opts.Tracker,
 		brancher:        opts.Brancher,
 		mover:           opts.Mover,
 		puller:          opts.Puller,
