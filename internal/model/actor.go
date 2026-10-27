@@ -2,58 +2,25 @@ package model
 
 import "sort"
 
-// ActorChain represents a supersession chain of kind: actor signals — all
-// actor entries linked by supersedes (transitively) plus their shared
-// canonical history. Canonicals within a chain may change across entries
-// (e.g., typo correction supersedes an earlier spelling); across chains
-// each canonical is write-once (see validateActorInvariant in lint).
+// ActorChain represents a supersession chain of kind: actor signals — one
+// participant identity across its revisions.
 type ActorChain struct {
-	// Entries are all actor signals in the chain, ordered by time (oldest
-	// first).
-	Entries []*Entry
-	// Head is the chain's current head — the actor signal not superseded
-	// by any other entry in the chain. Capture-time checks resolve against
-	// the head's canonical; derivation-time checks walk CanonicalHistory.
+	CanonicalChain
+	// Head is the chain's current head — its oldest non-superseded actor
+	// signal. Capture-time checks resolve against the head's canonical;
+	// derivation-time checks walk CanonicalHistory.
 	Head *Entry
-	// CanonicalHistory is the ordered list of distinct canonicals ever
-	// carried by entries in this chain, oldest first.
-	CanonicalHistory []string
-	// canonicalSet is an internal lookup for membership checks.
-	canonicalSet map[string]bool
-}
-
-// HasCanonical reports whether the chain has ever held canonical c.
-func (c *ActorChain) HasCanonical(name string) bool {
-	if c == nil {
-		return false
-	}
-	return c.canonicalSet[name]
 }
 
 // ActorChains groups all kind: actor signals into supersession chains.
 // Each chain surfaces its head, full entry list, and canonical history.
 // Pure computation — no I/O. Returned in deterministic order by head ID.
 func (g *Graph) ActorChains() []*ActorChain {
-	superseded := g.supersededSet()
-
 	result := make([]*ActorChain, 0)
 	for _, group := range g.chainGroups((*Entry).IsActor) {
-		chain := &ActorChain{
-			Entries:      group,
-			canonicalSet: make(map[string]bool),
-		}
-		for _, e := range group {
-			if e.Canonical != "" && !chain.canonicalSet[e.Canonical] {
-				chain.canonicalSet[e.Canonical] = true
-				chain.CanonicalHistory = append(chain.CanonicalHistory, e.Canonical)
-			}
-		}
-		// Head = the one not superseded by any other entry.
-		for _, e := range group {
-			if !superseded[e.ID] {
-				chain.Head = e
-				break
-			}
+		chain := &ActorChain{CanonicalChain: g.newCanonicalChain(group)}
+		if len(chain.Heads) > 0 {
+			chain.Head = chain.Heads[0]
 		}
 		result = append(result, chain)
 	}
