@@ -31,4 +31,7 @@ type InfoResult struct {
 	Search           string
 	GraphSchema      int
 	BinarySchema     int
+	// Contribution is the machine-local contribution ref, empty outside
+	// contribution mode.
+	Contribution string
 }

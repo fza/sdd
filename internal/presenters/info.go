@@ -15,6 +15,9 @@ func RenderInfo(w io.Writer, result *query.InfoResult) {
 	if line := SchemaLine(result.GraphSchema, result.BinarySchema); line != "" {
 		fmt.Fprintln(w, line)
 	}
+	if result.Contribution != "" {
+		fmt.Fprintf(w, "Mode: contribution (%s)\n", result.Contribution)
+	}
 }
 
 // SchemaLine names the graph's schema and, when the graph is older than the

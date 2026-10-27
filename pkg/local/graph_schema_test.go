@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
+	sdd "github.com/networkteam/sdd/pkg/application"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -75,5 +76,33 @@ func TestFilesystemGraphStoreRefusesAnUnreadableMeta(t *testing.T) {
 	_, err = store.GraphSchemaVersion(t.Context())
 	if err == nil || !strings.Contains(err.Error(), metaPath) {
 		t.Errorf("a broken meta.json should fail naming the file, got %v", err)
+	}
+}
+
+func TestFilesystemGraphStoreReportsTheContributionRef(t *testing.T) {
+	root := t.TempDir()
+	store, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: "example", GraphDir: filepath.Join(root, "graph"), Contribution: "origin/main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.Current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Contribution() != "origin/main" {
+		t.Errorf("a snapshot should carry its checkout's contribution ref, got %q", snapshot.Contribution())
+	}
+	leased, err := store.AcquireSnapshot(t.Context(), sdd.SnapshotReadQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		err := leased.Release()
+		if err != nil {
+			t.Error(err)
+		}
+	}()
+	if leased.Snapshot.Contribution() != "origin/main" {
+		t.Errorf("a leased snapshot should carry its checkout's contribution ref, got %q", leased.Snapshot.Contribution())
 	}
 }

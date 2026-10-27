@@ -146,6 +146,11 @@ type PerRepoConfig struct {
 	// dependency (clone URL, cache) is per-user and lives in the global
 	// config's repos list, never here.
 	Dependencies []string `yaml:"dependencies,omitempty"`
+	// Contribution names the upstream ref (e.g. origin/main) a checkout's
+	// graph writes are contributed to; set, it turns on contribution mode
+	// (ContributionRefusal). Machine-local only: a checkout opts in, the
+	// committed config.yaml never does.
+	Contribution string `yaml:"contribution,omitempty"`
 }
 
 // SyncConfig governs background sync awareness: the auto-fetch cooldown and
@@ -446,6 +451,9 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	}
 	if len(overlay.Dependencies) > 0 {
 		out.Dependencies = overlay.Dependencies
+	}
+	if overlay.Contribution != "" {
+		out.Contribution = overlay.Contribution
 	}
 	return &out
 }
