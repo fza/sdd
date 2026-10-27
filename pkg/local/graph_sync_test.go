@@ -139,8 +139,9 @@ func TestSyncGraphPullsUpstreamGraphCommits(t *testing.T) {
 			gitIn(t, other, "push", "-q")
 			upstream := gitIn(t, other, "rev-parse", "HEAD")
 
-			if err := repo.targets().SyncGraph(t.Context(), "main"); err != nil {
-				t.Fatal(err)
+			notice, err := repo.targets().SyncGraph(t.Context(), "main")
+			if err != nil || notice != "" {
+				t.Fatalf("a clean pull should raise no notice: %q, %v", notice, err)
 			}
 			if pulled := repo.git("rev-parse", "HEAD") == upstream; pulled != tc.pulled {
 				t.Error("upstream graph commits should arrive exactly when sync is auto")
@@ -160,10 +161,40 @@ func TestSyncGraphWaitsOutTheCooldown(t *testing.T) {
 	repo.git("fetch", "-q")
 	before := repo.git("rev-parse", "HEAD")
 
-	if err := repo.targets().SyncGraph(t.Context(), "main"); err != nil {
+	if _, err := repo.targets().SyncGraph(t.Context(), "main"); err != nil {
 		t.Fatal(err)
 	}
 	if repo.git("rev-parse", "HEAD") != before {
 		t.Error("a sync inside the cooldown should leave the branch as it is")
+	}
+}
+
+func TestSyncGraphReturnsAConflictNotice(t *testing.T) {
+	repo, remote := syncedRepository(t, "auto")
+	other := filepath.Join(canonicalTempDir(t), "other")
+	gitIn(t, "", "clone", "-q", remote, other)
+	if err := os.MkdirAll(filepath.Join(other, ".sdd", "graph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(other, ".sdd", "graph", "shared.md"), []byte("theirs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, other, "add", ".sdd/graph/shared.md")
+	gitIn(t, other, "-c", "user.name=Other", "-c", "user.email=other@example.invalid", "commit", "-q", "-m", "sdd: edit elsewhere")
+	gitIn(t, other, "push", "-q")
+	repo.write(".sdd/graph/shared.md", "ours\n")
+	repo.git("add", ".sdd/graph/shared.md")
+	repo.git("commit", "-m", "sdd: edit here")
+	before := repo.git("rev-parse", "HEAD")
+
+	notice, err := repo.targets().SyncGraph(t.Context(), "main")
+	if err != nil {
+		t.Fatalf("a conflict should come back as a notice, not an error: %v", err)
+	}
+	if !strings.Contains(notice, ".sdd/graph/shared.md") || !strings.Contains(notice, `"sdd: merge origin/main"`) {
+		t.Errorf("the notice should name the conflicting path and the merge message, got %q", notice)
+	}
+	if repo.git("rev-parse", "HEAD") != before || repo.git("status", "--porcelain") != "" {
+		t.Error("a conflict should leave the branch and the working tree as they were")
 	}
 }
