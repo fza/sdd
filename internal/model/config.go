@@ -176,6 +176,28 @@ type SyncConfig struct {
 	// Cooldown is the minimum interval between background git fetches. Go
 	// duration string (e.g. "15m", "1h"). Empty means DefaultSyncCooldown.
 	Cooldown string `yaml:"cooldown,omitempty"`
+	// Mode chooses whether graph commits are pushed and upstream graph
+	// commits pulled automatically. Empty means SyncModeManual.
+	Mode SyncMode `yaml:"mode,omitempty"`
+}
+
+// SyncMode is the sync.mode setting (20261027-194536-d-tac-190).
+type SyncMode string
+
+const (
+	SyncModeManual SyncMode = "manual"
+	SyncModeAuto   SyncMode = "auto"
+)
+
+// UnmarshalYAML refuses a mode this binary does not know, so a typo cannot
+// leave sync silently manual.
+func (m *SyncMode) UnmarshalYAML(node *yaml.Node) error {
+	mode := SyncMode(node.Value)
+	if mode != SyncModeManual && mode != SyncModeAuto {
+		return fmt.Errorf("line %d: sync.mode %q is not %s or %s", node.Line, node.Value, SyncModeManual, SyncModeAuto)
+	}
+	*m = mode
+	return nil
 }
 
 // SessionsConfig holds settings for engine session lifetime.
@@ -471,6 +493,9 @@ func mergeSyncConfig(base, overlay SyncConfig) SyncConfig {
 	if overlay.Cooldown != "" {
 		out.Cooldown = overlay.Cooldown
 	}
+	if overlay.Mode != "" {
+		out.Mode = overlay.Mode
+	}
 	return out
 }
 
@@ -605,9 +630,11 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"#   concurrency: 4\n" +
 		"\n" +
 		"# Background sync — controls how often the CLI auto-fetches to detect graph\n" +
-		"# changes from collaborators. Go duration string.\n" +
+		"# changes from collaborators. Go duration string. mode: auto pushes every\n" +
+		"# graph commit and pulls upstream graph commits on that check.\n" +
 		"# sync:\n" +
-		"#   cooldown: " + DefaultSyncCooldown + "\n"
+		"#   cooldown: " + DefaultSyncCooldown + "\n" +
+		"#   mode: " + string(SyncModeManual) + "\n"
 }
 
 // ResolveSessionRetention returns the effective session retention from cfg.
@@ -650,6 +677,14 @@ func ResolveSyncCooldown(cfg *PerRepoConfig) time.Duration {
 		raw = cfg.Sync.Cooldown
 	}
 	return parsePositiveDuration(raw, DefaultSyncCooldown)
+}
+
+// ResolveSyncMode returns the effective sync mode from cfg.
+func ResolveSyncMode(cfg *PerRepoConfig) SyncMode {
+	if cfg == nil || cfg.Sync.Mode == "" {
+		return SyncModeManual
+	}
+	return cfg.Sync.Mode
 }
 
 // parsePositiveDuration reads a configured duration, falling back to a baked

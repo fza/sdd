@@ -1,6 +1,9 @@
 package model
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // SyncState describes the overall state of background sync detection.
 type SyncState string
@@ -84,4 +87,85 @@ func ParseMergeTreeConflicts(output string) []string {
 		paths = append(paths, line)
 	}
 	return paths
+}
+
+// PushVerdict is what automatic sync does with the commits a branch holds
+// ahead of its upstream.
+type PushVerdict string
+
+const (
+	PushOff        PushVerdict = "off"
+	PushNoUpstream PushVerdict = "no-upstream"
+	PushNothing    PushVerdict = "nothing"
+	// PushUnpublished: a commit not written by sdd is ahead, and a push would
+	// publish it; the graph commits stay local.
+	PushUnpublished PushVerdict = "unpublished"
+	PushReady       PushVerdict = "ready"
+)
+
+// DecidePush judges a push from the commits ahead of upstream: all of them
+// and the ones matching ^sdd:.
+func DecidePush(mode SyncMode, hasUpstream bool, ahead, graphAhead int) PushVerdict {
+	switch {
+	case mode != SyncModeAuto:
+		return PushOff
+	case !hasUpstream:
+		return PushNoUpstream
+	case ahead == 0:
+		return PushNothing
+	case graphAhead < ahead:
+		return PushUnpublished
+	default:
+		return PushReady
+	}
+}
+
+// PullVerdict is what automatic sync does with the commits upstream holds
+// ahead of the branch.
+type PullVerdict string
+
+const (
+	PullOff        PullVerdict = "off"
+	PullNoUpstream PullVerdict = "no-upstream"
+	PullNothing    PullVerdict = "nothing"
+	// PullForeign: an incoming commit was not written by sdd, so merging it
+	// would bring code changes into the working tree unasked.
+	PullForeign PullVerdict = "foreign"
+	PullDirty   PullVerdict = "dirty"
+	PullReady   PullVerdict = "ready"
+)
+
+// DecidePull judges a pull from the commits upstream holds ahead, all of
+// them and the ones matching ^sdd:, and whether the working tree is clean.
+func DecidePull(mode SyncMode, hasUpstream bool, incoming, graphIncoming int, clean bool) PullVerdict {
+	switch {
+	case mode != SyncModeAuto:
+		return PullOff
+	case !hasUpstream:
+		return PullNoUpstream
+	case incoming == 0:
+		return PullNothing
+	case graphIncoming < incoming:
+		return PullForeign
+	case !clean:
+		return PullDirty
+	default:
+		return PullReady
+	}
+}
+
+// GraphMergeMessage is the message of the merge commit an automatic pull
+// writes; it matches ^sdd: so the merge itself passes the push rule.
+func GraphMergeMessage(upstream string) string {
+	return fmt.Sprintf("sdd: merge %s", upstream)
+}
+
+// MergeConflict is one path an automatic pull could not merge: the content
+// at the merge base and on each side. Base is empty when both sides added
+// the path.
+type MergeConflict struct {
+	Path   string
+	Base   string
+	Ours   string
+	Theirs string
 }

@@ -36,6 +36,7 @@ var configDefaults = map[string]string{
 	"llm.model":       DefaultLLMModel,
 	"llm.concurrency": strconv.Itoa(DefaultLLMConcurrency),
 	"sync.cooldown":   DefaultSyncCooldown,
+	"sync.mode":       string(SyncModeManual),
 
 	"sessions.retention": DefaultSessionRetention,
 }
