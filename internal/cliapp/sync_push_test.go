@@ -201,6 +201,7 @@ func TestPullHeldAndReported(t *testing.T) {
 		{name: "a foreign commit upstream", subject: "feat: change code", file: "main.go", report: "not written by sdd"},
 		{name: "a dirty working tree", subject: "sdd: capture elsewhere", file: ".sdd/graph/elsewhere.md", dirty: true, report: "uncommitted changes"},
 		{name: "a graph commit changing code", subject: "sdd: capture elsewhere", file: "main.go", report: "changes main.go, outside the graph"},
+		{name: "a graph commit changing the project config", subject: "sdd: widen the graph", file: ".sdd/config.yaml", report: "changes .sdd/config.yaml, outside the graph"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
