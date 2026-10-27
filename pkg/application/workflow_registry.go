@@ -234,7 +234,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 	}); err != nil {
 		return err
 	}
-	return registry.RegisterQuery(engine.Query{
+	if err := registry.RegisterQuery(engine.Query{
 		Doc:       engine.FuncDoc{Name: "generatedTitle", Doc: "The stored title of the entry named by the store's entryId, for fidelity review.", Reads: []string{"entryId"}},
 		ServeSafe: true,
 		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
@@ -243,6 +243,15 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 				return nil, err
 			}
 			return entry.Title, nil
+		},
+	}); err != nil {
+		return err
+	}
+	return registry.RegisterQuery(engine.Query{
+		Doc:       engine.FuncDoc{Name: "titleRule", Doc: "The guidance every entry title follows, for an agent writing a title."},
+		ServeSafe: true,
+		Fn: func(_ *engine.Context, _ map[string]any) (any, error) {
+			return model.TitleRule, nil
 		},
 	})
 }

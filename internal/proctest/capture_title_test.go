@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 )
 
@@ -31,6 +32,9 @@ func TestCapture_TitleIsWrittenShownAndCorrectable(t *testing.T) {
 			proctest.RequireStep(t, serve, "verifySummary")
 			if !strings.Contains(serve.Instructions, "Generated title: Generated title") {
 				t.Errorf("the summary check should show the generated title:\n%s", serve.Instructions)
+			}
+			if !strings.Contains(serve.Instructions, model.TitleRule) {
+				t.Errorf("the summary check should state the title rule a corrected title follows:\n%s", serve.Instructions)
 			}
 			entryID := writtenEntryID(t, world.GraphDir, before)
 			if got := proctest.LoadEntry(t, world.GraphDir, entryID).Title; got != "Generated title" {

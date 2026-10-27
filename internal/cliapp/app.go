@@ -773,8 +773,10 @@ func newCmd() *cli.Command {
 				Usage: "Store this summary verbatim, skipping LLM summary generation",
 			},
 			&cli.StringFlag{
-				Name:  "title",
-				Usage: "Store this title verbatim instead of the generated one",
+				Name: "title",
+				// urfave/cli takes a usage's first backtick pair as the value
+				// placeholder; naming it keeps the title rule's code spans intact.
+				Usage: "Use `TITLE` instead of the generated title; a first letter that is not a backtick is capitalized. " + model.TitleRule,
 			},
 			&cli.BoolFlag{
 				Name:  "dry-run",
@@ -1208,7 +1210,7 @@ func summarizeCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "title",
-				Usage: "Write the supplied text as the title, bypassing the LLM. Single entry only; combinable with --text.",
+				Usage: "Write `TITLE` as the title, bypassing the LLM. Single entry only; combinable with --text. " + model.TitleRule,
 			},
 		},
 		Action: withWriteGate(withContributionGuard(func(ctx context.Context, cmd *cli.Command) error {

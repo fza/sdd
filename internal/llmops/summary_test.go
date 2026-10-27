@@ -107,16 +107,24 @@ func TestRenderTitlePromptCarriesTheStoredSummary(t *testing.T) {
 	}
 }
 
-func TestTitleRulesWriteCodeTermsAsCodeSpans(t *testing.T) {
-	entry, graph := titledFixture()
-	req, err := llmops.RenderTitlePrompt(entry, graph, "")
-	if err != nil {
-		t.Fatalf("RenderTitlePrompt: %v", err)
+func TestTitlePromptsStateTheTitleRule(t *testing.T) {
+	renderers := map[string]func(*model.Entry, *model.Graph, string) (llm.Request, error){
+		"title":   llmops.RenderTitlePrompt,
+		"summary": llmops.RenderSummaryPrompt,
 	}
-	if !strings.Contains(req.SystemPrompt, "backtick code span") || !strings.Contains(req.SystemPrompt, "\"`sdd` info JSON output\"") {
-		t.Errorf("the title rules should ask for code terms as code spans, with an example opening on one:\n%s", req.SystemPrompt)
-	}
-	if strings.Contains(req.SystemPrompt, "`Daemon project removal`") {
-		t.Errorf("the example title should not sit inside a code span:\n%s", req.SystemPrompt)
+	for name, render := range renderers {
+		t.Run(name, func(t *testing.T) {
+			entry, graph := titledFixture()
+			req, err := render(entry, graph, "")
+			if err != nil {
+				t.Fatalf("rendering the %s prompt: %v", name, err)
+			}
+			if !strings.Contains(req.SystemPrompt, model.TitleRule) {
+				t.Errorf("the prompt should state the title rule:\n%s", req.SystemPrompt)
+			}
+			if strings.Contains(req.SystemPrompt, "at most 32 characters") {
+				t.Errorf("the prompt should no longer cap titles at 32 characters:\n%s", req.SystemPrompt)
+			}
+		})
 	}
 }
