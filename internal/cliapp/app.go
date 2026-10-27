@@ -875,12 +875,13 @@ func newCmd() *cli.Command {
 					Repos:             reg,
 					ProcedureRegistry: registry,
 				}),
-				LLMRunner: runner,
-				Committer: graphGit(dir),
-				Pusher:    graphGit(dir),
-				SyncMode:  syncMode,
-				Repos:     mgr,
-				Language:  configLanguage(cfg),
+				LLMRunner:   runner,
+				Committer:   graphGit(dir),
+				Pusher:      graphGit(dir),
+				GraphPuller: graphGit(dir),
+				SyncMode:    syncMode,
+				Repos:       mgr,
+				Language:    configLanguage(cfg),
 			})
 
 			return handler.NewEntry(ctx, ncmd)
@@ -972,13 +973,14 @@ func rewriteCmd() *cli.Command {
 				return err
 			}
 			handler := handlers.New(handlers.Options{
-				Stderr:    cmd.ErrWriter,
-				GraphDir:  dir,
-				Reader:    reader,
-				Committer: graphGit(dir),
-				Pusher:    graphGit(dir),
-				SyncMode:  syncMode,
-				Mover:     graphGit(dir),
+				Stderr:      cmd.ErrWriter,
+				GraphDir:    dir,
+				Reader:      reader,
+				Committer:   graphGit(dir),
+				Pusher:      graphGit(dir),
+				GraphPuller: graphGit(dir),
+				SyncMode:    syncMode,
+				Mover:       graphGit(dir),
 			})
 			return handler.RewriteEntry(ctx, rcmd)
 		}),
@@ -1014,12 +1016,13 @@ func lintCmd() *cli.Command {
 					return err
 				}
 				handler := handlers.New(handlers.Options{
-					Stderr:    cmd.ErrWriter,
-					GraphDir:  dir,
-					Reader:    reader,
-					Committer: graphGit(dir),
-					Pusher:    graphGit(dir),
-					SyncMode:  syncMode,
+					Stderr:      cmd.ErrWriter,
+					GraphDir:    dir,
+					Reader:      reader,
+					Committer:   graphGit(dir),
+					Pusher:      graphGit(dir),
+					GraphPuller: graphGit(dir),
+					SyncMode:    syncMode,
 				})
 				if err := handler.LintFix(ctx, fixCmd); err != nil {
 					return err
@@ -1188,11 +1191,12 @@ func summarizeCmd() *cli.Command {
 					Config:          cfg,
 					Repos:           reg,
 				}),
-				LLMRunner: runner,
-				Committer: graphGit(dir),
-				Pusher:    graphGit(dir),
-				SyncMode:  syncMode,
-				Language:  configLanguage(cfg),
+				LLMRunner:   runner,
+				Committer:   graphGit(dir),
+				Pusher:      graphGit(dir),
+				GraphPuller: graphGit(dir),
+				SyncMode:    syncMode,
+				Language:    configLanguage(cfg),
 			})
 			return handler.Summarize(ctx, sumCmd)
 		}),
@@ -1900,13 +1904,14 @@ func wipStartCmd() *cli.Command {
 				return err
 			}
 			handler := handlers.New(handlers.Options{
-				Stderr:    cmd.ErrWriter,
-				GraphDir:  dir,
-				Reader:    reader,
-				Committer: graphGit(dir),
-				Pusher:    graphGit(dir),
-				SyncMode:  syncMode,
-				Brancher:  git.CLI{},
+				Stderr:      cmd.ErrWriter,
+				GraphDir:    dir,
+				Reader:      reader,
+				Committer:   graphGit(dir),
+				Pusher:      graphGit(dir),
+				GraphPuller: graphGit(dir),
+				SyncMode:    syncMode,
+				Brancher:    git.CLI{},
 			})
 			return handler.StartWIP(ctx, startCmd)
 		}),
@@ -1962,13 +1967,14 @@ func wipDoneCmd() *cli.Command {
 				return err
 			}
 			handler := handlers.New(handlers.Options{
-				Stderr:    cmd.ErrWriter,
-				GraphDir:  dir,
-				Reader:    reader,
-				Committer: git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
-				Pusher:    graphGit(dir),
-				SyncMode:  syncMode,
-				Brancher:  git.CLI{},
+				Stderr:      cmd.ErrWriter,
+				GraphDir:    dir,
+				Reader:      reader,
+				Committer:   git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
+				Pusher:      graphGit(dir),
+				GraphPuller: graphGit(dir),
+				SyncMode:    syncMode,
+				Brancher:    git.CLI{},
 			})
 			return handler.FinishWIP(ctx, doneCmd)
 		}),

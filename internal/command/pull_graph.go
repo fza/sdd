@@ -9,6 +9,7 @@ type PullGraphCmd struct {
 	// commits it brought in.
 	OnMerged func(upstream string, commits int)
 	// OnHeld is invoked when the upstream commits are left unmerged: one of
-	// them was not written by sdd, or the working tree is dirty.
-	OnHeld func(verdict model.PullVerdict, upstream string)
+	// them was not written by sdd, changes a path sdd never writes (listed in
+	// outside), or the working tree is dirty.
+	OnHeld func(verdict model.PullVerdict, upstream string, outside []string)
 }

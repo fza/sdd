@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"regexp"
+	"slices"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -137,26 +138,52 @@ func TestDecidePush(t *testing.T) {
 }
 
 func TestDecidePull(t *testing.T) {
+	graphOnly := model.IncomingCommits{All: 2, Graph: 2}
 	cases := []struct {
-		name          string
-		mode          model.SyncMode
-		hasUpstream   bool
-		incoming      int
-		graphIncoming int
-		clean         bool
-		want          model.PullVerdict
+		name        string
+		mode        model.SyncMode
+		hasUpstream bool
+		incoming    model.IncomingCommits
+		clean       bool
+		want        model.PullVerdict
 	}{
-		{name: "manual never pulls", mode: model.SyncModeManual, hasUpstream: true, incoming: 1, graphIncoming: 1, clean: true, want: model.PullOff},
-		{name: "no upstream", mode: model.SyncModeAuto, incoming: 1, graphIncoming: 1, clean: true, want: model.PullNoUpstream},
+		{name: "manual never pulls", mode: model.SyncModeManual, hasUpstream: true, incoming: graphOnly, clean: true, want: model.PullOff},
+		{name: "no upstream", mode: model.SyncModeAuto, incoming: graphOnly, clean: true, want: model.PullNoUpstream},
 		{name: "nothing incoming", mode: model.SyncModeAuto, hasUpstream: true, clean: true, want: model.PullNothing},
-		{name: "a foreign commit incoming", mode: model.SyncModeAuto, hasUpstream: true, incoming: 2, graphIncoming: 1, clean: true, want: model.PullForeign},
-		{name: "dirty tree", mode: model.SyncModeAuto, hasUpstream: true, incoming: 1, graphIncoming: 1, want: model.PullDirty},
-		{name: "only graph commits on a clean tree", mode: model.SyncModeAuto, hasUpstream: true, incoming: 2, graphIncoming: 2, clean: true, want: model.PullReady},
+		{name: "a foreign commit incoming", mode: model.SyncModeAuto, hasUpstream: true, incoming: model.IncomingCommits{All: 2, Graph: 1}, clean: true, want: model.PullForeign},
+		{name: "a graph commit changing other paths", mode: model.SyncModeAuto, hasUpstream: true, incoming: model.IncomingCommits{All: 1, Graph: 1, Outside: []string{"main.go"}}, clean: true, want: model.PullOutsideGraph},
+		{name: "dirty tree", mode: model.SyncModeAuto, hasUpstream: true, incoming: graphOnly, want: model.PullDirty},
+		{name: "only graph commits on a clean tree", mode: model.SyncModeAuto, hasUpstream: true, incoming: graphOnly, clean: true, want: model.PullReady},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := model.DecidePull(tc.mode, tc.hasUpstream, tc.incoming, tc.graphIncoming, tc.clean); got != tc.want {
+			if got := model.DecidePull(tc.mode, tc.hasUpstream, tc.incoming, tc.clean); got != tc.want {
 				t.Errorf("the pull verdict should follow mode, upstream, incoming commits and tree state, got %q", got)
+			}
+		})
+	}
+}
+
+func TestOutsideGraphPaths(t *testing.T) {
+	cases := []struct {
+		name     string
+		paths    []string
+		graphDir string
+		want     []string
+	}{
+		{name: "graph entries", paths: []string{".sdd/graph/2026/10/27-1-s-tac-a.md"}, graphDir: ".sdd/graph"},
+		{name: "graph directory outside .sdd", paths: []string{"decisions/2026/10/a.md"}, graphDir: "decisions"},
+		{name: "graph at the repository root", paths: []string{"2026/10/a.md", "notes.txt"}, graphDir: "."},
+		{name: "graph directory with a trailing slash", paths: []string{"decisions/a.md"}, graphDir: "decisions/"},
+		{name: "sdd config and skills", paths: []string{".sdd/config.yaml", ".claude/skills/sdd/SKILL.md", ".agents/skills/sdd/SKILL.md", ".gitignore"}, graphDir: ".sdd/graph"},
+		{name: "code", paths: []string{".sdd/graph/a.md", "main.go", ".claude/settings.json"}, graphDir: ".sdd/graph", want: []string{"main.go", ".claude/settings.json"}},
+		{name: "a prefix that is not a directory", paths: []string{"decisions-old/a.md"}, graphDir: "decisions", want: []string{"decisions-old/a.md"}},
+		{name: "a nested gitignore", paths: []string{"src/.gitignore"}, graphDir: ".sdd/graph", want: []string{"src/.gitignore"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := model.OutsideGraphPaths(tc.paths, tc.graphDir); !slices.Equal(got, tc.want) {
+				t.Errorf("only paths sdd never writes should be outside, got %v", got)
 			}
 		})
 	}

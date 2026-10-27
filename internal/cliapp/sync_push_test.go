@@ -192,16 +192,18 @@ func TestPullHeldAndReported(t *testing.T) {
 	cases := []struct {
 		name    string
 		subject string
+		file    string
 		dirty   bool
 		report  string
 	}{
-		{name: "a foreign commit upstream", subject: "feat: change code", report: "not written by sdd"},
-		{name: "a dirty working tree", subject: "sdd: capture elsewhere", dirty: true, report: "uncommitted changes"},
+		{name: "a foreign commit upstream", subject: "feat: change code", file: "main.go", report: "not written by sdd"},
+		{name: "a dirty working tree", subject: "sdd: capture elsewhere", file: ".sdd/graph/elsewhere.md", dirty: true, report: "uncommitted changes"},
+		{name: "a graph commit changing code", subject: "sdd: capture elsewhere", file: "main.go", report: "changes main.go, outside the graph"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := syncedProject(t, "auto")
-			theirs := upstreamCommit(t, root, tc.subject, "elsewhere.txt")
+			theirs := upstreamCommit(t, root, tc.subject, tc.file)
 			if tc.dirty {
 				writeFile(t, filepath.Join(root, "seed.txt"), "edited\n")
 			}
@@ -250,5 +252,50 @@ func TestConflictingUpstreamIsReportedAndNothingMerged(t *testing.T) {
 	}
 	if !regexp.MustCompile(`graph merge would conflict in \S*shared\.md`).MatchString(out) {
 		t.Errorf("the pull should report the conflict naming the path, got %q", out)
+	}
+}
+
+// holdSyncCheck keeps the background check from fetching, so a push meets an
+// upstream this checkout has not seen.
+func holdSyncCheck(t *testing.T, root string) {
+	t.Helper()
+	writeFile(t, filepath.Join(root, ".sdd", "config.local.yaml"), "participant: Ada\nsync:\n  cooldown: 1h\n  mode: auto\n")
+	writeFile(t, filepath.Join(root, ".sdd", "tmp", "last-fetch"), "")
+}
+
+func TestRejectedPushMergesUpstreamAndPushesAgain(t *testing.T) {
+	root := syncedProject(t, "auto")
+	holdSyncCheck(t, root)
+	theirs := upstreamCommit(t, root, "sdd: capture elsewhere", ".sdd/graph/elsewhere.md")
+
+	out, err := runAppErr(t, root, captureArgs()...)
+	if err != nil {
+		t.Fatalf("a push rejected for upstream graph commits should be retried: %v\n%s", err, out)
+	}
+	if !contains(t, root, theirs) {
+		t.Error("the upstream graph commit should be merged by the retry")
+	}
+	if subject := headSubject(t, root); !strings.HasPrefix(subject, "sdd: merge") {
+		t.Errorf("the retry should merge with a graph subject, got %q", subject)
+	}
+	if !strings.HasPrefix(remoteHead(t, root), localHead(t, root)) {
+		t.Error("the capture should reach the upstream after the retry")
+	}
+}
+
+func TestRejectedPushFailsWhenUpstreamCannotMerge(t *testing.T) {
+	root := syncedProject(t, "auto")
+	holdSyncCheck(t, root)
+	upstreamCommit(t, root, "feat: change code", "main.go")
+
+	out, err := runAppErr(t, root, captureArgs()...)
+	if err == nil {
+		t.Fatalf("a retry that cannot merge should fail the command, got %q", out)
+	}
+	if !strings.HasPrefix(headSubject(t, root), "sdd: signal") {
+		t.Error("the capture commit should stay after the failed retry")
+	}
+	if !strings.Contains(out, "not written by sdd") {
+		t.Errorf("the held merge should be reported, got %q", out)
 	}
 }
