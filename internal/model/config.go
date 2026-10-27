@@ -181,7 +181,9 @@ type SyncConfig struct {
 	Mode SyncMode `yaml:"mode,omitempty"`
 }
 
-// SyncMode is the sync.mode setting (20261027-194536-d-tac-190).
+// SyncMode is the sync.mode setting. It is set per person: only the
+// user-global config and config.local.yaml may set it, and a value sdd must
+// not honor is read past as manual (20261027-211908-d-tac-l8j).
 type SyncMode string
 
 const (
@@ -189,15 +191,37 @@ const (
 	SyncModeAuto   SyncMode = "auto"
 )
 
-// UnmarshalYAML refuses a mode this binary does not know, so a typo cannot
-// leave sync silently manual.
-func (m *SyncMode) UnmarshalYAML(node *yaml.Node) error {
-	mode := SyncMode(node.Value)
-	if mode != SyncModeManual && mode != SyncModeAuto {
-		return fmt.Errorf("line %d: sync.mode %q is not %s or %s", node.Line, node.Value, SyncModeManual, SyncModeAuto)
+// IgnoredSetting is a setting a config layer carries that sdd reads past:
+// a value it does not know, or a key that layer may not set.
+type IgnoredSetting struct {
+	Key    string
+	Reason string
+}
+
+// IgnoredSettings returns the settings in one config layer that sdd reads
+// past. committed marks the shared .sdd/config.yaml.
+func IgnoredSettings(layer BaseConfig, committed bool) []IgnoredSetting {
+	mode := layer.Sync.Mode
+	switch {
+	case mode == "":
+		return nil
+	case committed:
+		return []IgnoredSetting{{Key: "sync.mode", Reason: "only the user-global config or config.local.yaml may set it"}}
+	case mode != SyncModeManual && mode != SyncModeAuto:
+		return []IgnoredSetting{{Key: "sync.mode", Reason: fmt.Sprintf("%q is not %s or %s", mode, SyncModeManual, SyncModeAuto)}}
 	}
-	*m = mode
 	return nil
+}
+
+// HonoredCommitted returns the committed layer without the settings only a
+// person's own config may make.
+func HonoredCommitted(committed *PerRepoConfig) *PerRepoConfig {
+	if committed == nil || committed.Sync.Mode == "" {
+		return committed
+	}
+	honored := *committed
+	honored.Sync.Mode = ""
+	return &honored
 }
 
 // SessionsConfig holds settings for engine session lifetime.
@@ -681,10 +705,10 @@ func ResolveSyncCooldown(cfg *PerRepoConfig) time.Duration {
 
 // ResolveSyncMode returns the effective sync mode from cfg.
 func ResolveSyncMode(cfg *PerRepoConfig) SyncMode {
-	if cfg == nil || cfg.Sync.Mode == "" {
-		return SyncModeManual
+	if cfg != nil && cfg.Sync.Mode == SyncModeAuto {
+		return SyncModeAuto
 	}
-	return cfg.Sync.Mode
+	return SyncModeManual
 }
 
 // parsePositiveDuration reads a configured duration, falling back to a baked
