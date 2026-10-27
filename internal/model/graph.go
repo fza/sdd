@@ -848,45 +848,32 @@ func validateSupersedeForks(g *Graph) {
 }
 
 // validateActorInvariant enforces the write-once-across-chains invariant
-// per plan d-cpt-d34 AC 12: a canonical may appear in at most one actor-
-// identity chain's history. Defense-in-depth against race conditions or
-// validator bypass — the pre-flight mechanical check is the first line.
+// per plan d-cpt-d34 AC 12 for actor canonicals.
 func validateActorInvariant(g *Graph) {
-	chains := g.ActorChains()
-	// Map canonical → list of chain head IDs that carry it.
-	ownerChains := make(map[string][]string)
+	var chains []*CanonicalChain
+	for _, c := range g.ActorChains() {
+		chains = append(chains, &c.CanonicalChain)
+	}
+	flagCanonicalReuse(chains, "actor-identity chains")
+}
+
+// flagCanonicalReuse warns on every entry whose canonical more than one of
+// the chains has held. Defense-in-depth against race conditions or
+// validator bypass — the pre-flight mechanical check is the first line.
+func flagCanonicalReuse(chains []*CanonicalChain, noun string) {
+	owners := make(map[string]int)
 	for _, c := range chains {
-		headID := ""
-		if c.Head != nil {
-			headID = c.Head.ID
-		}
 		for _, canonical := range c.CanonicalHistory {
-			ownerChains[canonical] = append(ownerChains[canonical], headID)
+			owners[canonical]++
 		}
 	}
-	for canonical, headIDs := range ownerChains {
-		if len(headIDs) < 2 {
-			continue
-		}
-		// Flag every actor entry in the offending chains.
-		for _, c := range chains {
-			if c.Head == nil {
-				continue
-			}
-			if !slices.Contains(headIDs, c.Head.ID) {
-				continue
-			}
-			if !c.HasCanonical(canonical) {
-				continue
-			}
-			for _, e := range c.Entries {
-				if e.Canonical != canonical {
-					continue
-				}
+	for _, c := range chains {
+		for _, e := range c.Entries {
+			if n := owners[e.Canonical]; n > 1 {
 				e.Warnings = append(e.Warnings, Warning{
 					Field:   "canonical",
-					Value:   canonical,
-					Message: fmt.Sprintf("canonical %q appears in %d actor-identity chains (write-once invariant violated)", canonical, len(headIDs)),
+					Value:   e.Canonical,
+					Message: fmt.Sprintf("canonical %q appears in %d %s (write-once invariant violated)", e.Canonical, n, noun),
 				})
 			}
 		}
@@ -1190,38 +1177,13 @@ func validateSupersedes(e *Entry, g *Graph) {
 }
 
 // validateProcedureInvariant enforces write-once-across-chains for procedure
-// canonicals, mirroring validateActorInvariant: a canonical may appear in at
-// most one procedure chain's history. Procedure canonicals are their own
-// namespace — actor canonicals are checked separately. Defense-in-depth; the
-// pre-flight mechanical check is the first line.
+// canonicals, their own namespace separate from actor canonicals.
 func validateProcedureInvariant(g *Graph) {
-	chains := g.ProcedureChains()
-	ownerChains := make(map[string]int)
-	for _, c := range chains {
-		for _, canonical := range c.CanonicalHistory {
-			ownerChains[canonical]++
-		}
+	var chains []*CanonicalChain
+	for _, c := range g.ProcedureChains() {
+		chains = append(chains, &c.CanonicalChain)
 	}
-	for canonical, count := range ownerChains {
-		if count < 2 {
-			continue
-		}
-		for _, c := range chains {
-			if !c.HasCanonical(canonical) {
-				continue
-			}
-			for _, e := range c.Entries {
-				if e.Canonical != canonical {
-					continue
-				}
-				e.Warnings = append(e.Warnings, Warning{
-					Field:   "canonical",
-					Value:   canonical,
-					Message: fmt.Sprintf("canonical %q appears in %d procedure chains (write-once invariant violated)", canonical, count),
-				})
-			}
-		}
-	}
+	flagCanonicalReuse(chains, "procedure chains")
 }
 
 // validateProcedureForks flags procedure chains with more than one live head

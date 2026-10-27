@@ -186,6 +186,7 @@ func newReadFinder() (*finders.Finder, error) {
 		PreflightRunner: readOnlyRunner,
 		Config:          cfg,
 		Repos:           reg,
+		GitHistory:      git.CLI{},
 	}), nil
 }
 
@@ -386,6 +387,7 @@ func New(options Options) *cli.Command {
 			configCmd(),
 			showCmd(),
 			viewCmd(),
+			exportCmd(),
 			newCmd(),
 			rewriteCmd(),
 			wipCmd(),
