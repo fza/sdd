@@ -72,25 +72,52 @@ func (c CLI) Commit(message string, paths ...string) error {
 	return nil
 }
 
-// Push publishes the current branch to the branch it tracks, detached like
-// Commit. push.default=upstream sends it there even when the two names
-// differ. Production handlers.Pusher.
+// Push publishes HEAD to the branch the current branch tracks, detached like
+// Commit. The explicit refspec keeps a configured push refspec or mirror
+// setting from publishing other branches the push rule never counted.
+// Production handlers.Pusher.
 func (c CLI) Push(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
 	defer cancel()
-	if out, err := runDetached(ctx, c.at("-c", "push.default=upstream", "push")...); err != nil {
+	branch, err := c.output(ctx, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return fmt.Errorf("resolving the current branch: %w", err)
+	}
+	remote, err := c.output(ctx, "config", "branch."+branch+".remote")
+	if err != nil {
+		return fmt.Errorf("resolving the remote of %s: %w", branch, err)
+	}
+	merge, err := c.output(ctx, "config", "branch."+branch+".merge")
+	if err != nil {
+		return fmt.Errorf("resolving the upstream branch of %s: %w", branch, err)
+	}
+	out, err := runDetached(ctx, c.at("push", remote, "HEAD:"+merge)...)
+	if err != nil {
 		return fmt.Errorf("git push: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
 	return nil
+}
+
+func (c CLI) output(ctx context.Context, args ...string) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at(args...)...).Output()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // Merge merges ref into the current branch, committing a merge with message
 // when the histories diverged. A failed merge is aborted so the working tree
 // stays as it was. Production handlers.GraphPuller.
 func (c CLI) Merge(ctx context.Context, ref, message string) error {
-	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("git merge %s: %w", ref, err)
+	}
+	// A merge killed halfway leaves a partly checked-out tree and a stale
+	// index.lock, so once started it outlives the caller's cancellation.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachedTimeout)
 	defer cancel()
-	out, err := runDetached(ctx, c.at("merge", "--no-edit", "-m", message, ref)...)
+	out, err := runDetached(ctx, c.at("merge", "--no-edit", "--no-overwrite-ignore", "-m", message, ref)...)
 	if err == nil {
 		return nil
 	}
