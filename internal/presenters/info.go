@@ -1,9 +1,11 @@
 package presenters
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 )
 
@@ -18,6 +20,32 @@ func RenderInfo(w io.Writer, result *query.InfoResult) {
 	if result.Contribution != "" {
 		fmt.Fprintf(w, "Mode: contribution (%s)\n", result.Contribution)
 	}
+}
+
+type infoJSON struct {
+	Participant  string                    `json:"participant"`
+	Language     string                    `json:"language"`
+	Search       string                    `json:"search"`
+	GraphSchema  int                       `json:"graph_schema,omitempty"`
+	BinarySchema int                       `json:"binary_schema"`
+	Capabilities *model.SchemaCapabilities `json:"capabilities"`
+	Contribution string                    `json:"contribution"`
+}
+
+// RenderInfoJSON writes the session framing as one JSON object for tools
+// that drive sdd (20261027-122627-d-tac-2cx).
+func RenderInfoJSON(w io.Writer, result *query.InfoResult) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(infoJSON{
+		Participant:  result.LocalParticipant,
+		Language:     result.Language,
+		Search:       result.Search,
+		GraphSchema:  result.GraphSchema,
+		BinarySchema: result.BinarySchema,
+		Capabilities: result.Capabilities,
+		Contribution: result.Contribution,
+	})
 }
 
 // SchemaLine names the graph's schema and, when the graph is older than the

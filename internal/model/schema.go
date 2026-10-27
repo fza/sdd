@@ -18,9 +18,10 @@ const CurrentGraphSchemaVersion = 2
 
 // SchemaCapabilities states which entry fields a graph schema version
 // defines. A write at an older version leaves out what that version lacks.
+// The JSON keys are public through `sdd info --format json`.
 type SchemaCapabilities struct {
 	// Titles: every entry carries a title written beside its summary.
-	Titles bool
+	Titles bool `json:"titles"`
 }
 
 // schemaVersions holds, per version, what it supports and what it adds over

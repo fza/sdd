@@ -37,6 +37,16 @@ func (f *Finder) Info(ctx context.Context, q query.InfoQuery) (*query.InfoResult
 			result.GraphSchema = status.Meta.GraphSchemaVersion
 		}
 	}
+	writeSchema := result.BinarySchema
+	if result.GraphSchema != 0 {
+		writeSchema = result.GraphSchema
+	}
+	// A graph newer than the binary has no capabilities this binary knows;
+	// info still reports it, and the write gate refuses the write.
+	capabilities, err := model.CapabilitiesFor(writeSchema)
+	if err == nil {
+		result.Capabilities = &capabilities
+	}
 	return result, nil
 }
 

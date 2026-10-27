@@ -493,7 +493,18 @@ func infoCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "info",
 		Usage: "Show session framing — participant, language, search capability",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:  "format",
+				Usage: "Output format: text (default) or json",
+				Value: "text",
+			},
+		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
+			format := cmd.String("format")
+			if format != "text" && format != "json" {
+				return fmt.Errorf("--format: unsupported value %q (text or json)", format)
+			}
 			f, err := newReadFinder()
 			if err != nil {
 				return err
@@ -510,6 +521,9 @@ func infoCmd() *cli.Command {
 			result, err := f.Info(ctx, query.InfoQuery{SDDDir: sddDir})
 			if err != nil {
 				return err
+			}
+			if format == "json" {
+				return presenters.RenderInfoJSON(cmd.Writer, result)
 			}
 			presenters.RenderInfo(cmd.Writer, result)
 			return nil
