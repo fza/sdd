@@ -861,7 +861,7 @@ func newCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			syncMode, err := graphSyncMode()
+			syncMode, err := graphSyncMode(dir)
 			if err != nil {
 				return err
 			}
@@ -968,7 +968,7 @@ func rewriteCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			syncMode, err := graphSyncMode()
+			syncMode, err := graphSyncMode(dir)
 			if err != nil {
 				return err
 			}
@@ -1011,7 +1011,7 @@ func lintCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				syncMode, err := graphSyncMode()
+				syncMode, err := graphSyncMode(dir)
 				if err != nil {
 					return err
 				}
@@ -1179,7 +1179,7 @@ func summarizeCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			syncMode, err := graphSyncMode()
+			syncMode, err := graphSyncMode(dir)
 			if err != nil {
 				return err
 			}
@@ -1271,11 +1271,24 @@ func graphGit(graphDir string) git.CLI {
 	return git.CLI{Dir: git.RepoRootFor(graphDir)}
 }
 
-// graphSyncMode is the sync mode a graph-writing command runs under.
-func graphSyncMode() (model.SyncMode, error) {
+// graphSyncMode is the sync mode a graph-writing command on graphDir runs
+// under. The project's config decides only for the project's own graph; a
+// --graph-dir naming another graph stays manual, as its repository's config
+// is not the one read.
+func graphSyncMode(graphDir string) (model.SyncMode, error) {
 	cfg, err := loadConfig()
 	if err != nil {
 		return "", err
+	}
+	if graphDir == "" {
+		return model.SyncModeManual, nil
+	}
+	project, err := resolveProject()
+	if err != nil {
+		return "", err
+	}
+	if filepath.Clean(graphDir) != filepath.Clean(meta.ResolveGraphDir(project.Root, cfg)) {
+		return model.SyncModeManual, nil
 	}
 	return model.ResolveSyncMode(cfg), nil
 }
@@ -1899,7 +1912,7 @@ func wipStartCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			syncMode, err := graphSyncMode()
+			syncMode, err := graphSyncMode(dir)
 			if err != nil {
 				return err
 			}
@@ -1962,7 +1975,7 @@ func wipDoneCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			syncMode, err := graphSyncMode()
+			syncMode, err := graphSyncMode(dir)
 			if err != nil {
 				return err
 			}
