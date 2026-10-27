@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+// GraphCommitSubjectPattern matches the subject every SDD-written commit
+// starts with; sync counts commits matching it on either side of the
+// local/upstream divergence.
+const GraphCommitSubjectPattern = "^sdd:"
+
 // SyncState describes the overall state of background sync detection.
 type SyncState string
 

@@ -82,6 +82,8 @@ type Handler struct {
 	brancher  Brancher
 	mover     Mover
 	puller    Puller
+	pusher    Pusher
+	syncMode  model.SyncMode
 	repos     *repos.Manager
 	stderr    io.Writer
 	now       func() time.Time
@@ -98,6 +100,10 @@ type Options struct {
 	Brancher  Brancher
 	Mover     Mover
 	Puller    Puller
+	Pusher    Pusher
+	// SyncMode decides whether a graph commit is pushed before the command
+	// returns; empty means manual.
+	SyncMode model.SyncMode
 	// Repos owns the connected-repos side effects (clone, pull, config
 	// writes). Nil means no connected-repos support — repo commands fail
 	// loud, and cross-repo cache freshening is skipped.
@@ -121,6 +127,8 @@ func New(opts Options) *Handler {
 		brancher:  opts.Brancher,
 		mover:     opts.Mover,
 		puller:    opts.Puller,
+		pusher:    opts.Pusher,
+		syncMode:  opts.SyncMode,
 		repos:     opts.Repos,
 		stderr:    opts.Stderr,
 		now:       opts.Now,

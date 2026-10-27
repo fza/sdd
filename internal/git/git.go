@@ -43,17 +43,17 @@ func (c CLI) at(args ...string) []string {
 	return append([]string{"-C", c.Dir}, args...)
 }
 
-// commitTimeout caps the detached auto-commit. A signing or credential helper
-// blocking on input would otherwise hang indefinitely when sdd runs as a
-// long-lived server; the timeout is a backstop on top of the TTY detach in
-// runDetached. See d-tac-zhp.
-const commitTimeout = 30 * time.Second
+// detachedTimeout caps a detached auto-commit or push. A signing or
+// credential helper blocking on input would otherwise hang indefinitely when
+// sdd runs as a long-lived server; the timeout is a backstop on top of the
+// TTY detach in runDetached. See d-tac-zhp.
+const detachedTimeout = 30 * time.Second
 
 // Commit stages exactly the given paths and commits them, detached from any
 // controlling terminal. It is the production handlers.Committer for the
 // auto-commit paths (sdd new, summarize, init, ...).
 func (c CLI) Commit(message string, paths ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), commitTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), detachedTimeout)
 	defer cancel()
 
 	addArgs := c.at(append([]string{"add", "--all", "--"}, paths...)...)
@@ -69,6 +69,18 @@ func (c CLI) Commit(message string, paths ...string) error {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
 
+	return nil
+}
+
+// Push publishes the current branch to the branch it tracks, detached like
+// Commit. push.default=upstream sends it there even when the two names
+// differ. Production handlers.Pusher.
+func (c CLI) Push(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
+	defer cancel()
+	if out, err := runDetached(ctx, c.at("-c", "push.default=upstream", "push")...); err != nil {
+		return fmt.Errorf("git push: %s (%w)", strings.TrimSpace(string(out)), err)
+	}
 	return nil
 }
 
@@ -125,7 +137,7 @@ func runDetached(ctx context.Context, args ...string) ([]byte, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
-		return out, fmt.Errorf("git %s: timed out after %s (a commit signer or credential helper may be blocking on input)", args[0], commitTimeout)
+		return out, fmt.Errorf("git %s: timed out after %s (a commit signer or credential helper may be blocking on input)", args[0], detachedTimeout)
 	}
 	return out, err
 }
