@@ -1200,6 +1200,31 @@ func TestMechanical_ActorKind_ReclassificationBlocks(t *testing.T) {
 	}
 }
 
+// An entry merging two chains answers to the actor_kind of each, not only
+// the first chain it names.
+func TestMechanical_ActorKind_MergingChainsChecksEveryChain(t *testing.T) {
+	unknown := actorEntry("Claude", nil)
+	declared := actorEntry("Claude", nil)
+	declared.ID = "20260411-120000-s-prc-dup"
+	declared.Time = unknown.Time.AddDate(0, 0, 1)
+	declared.ActorKind = model.ActorKindMachine
+	graph := model.NewGraph([]*model.Entry{unknown, declared})
+
+	proposed := &model.Entry{
+		Type:       model.TypeSignal,
+		Kind:       model.KindActor,
+		Layer:      model.LayerProcess,
+		Canonical:  "Claude",
+		ActorKind:  model.ActorKindHuman,
+		Supersedes: []string{unknown.ID, declared.ID},
+		Content:    "one identity replacing two duplicate captures",
+	}
+
+	if !hasCategory(mechanicalPreflight(proposed, graph, nil, nil), "actor-kind-changed") {
+		t.Error("a contradicting actor_kind in any merged chain must block")
+	}
+}
+
 // Filling in an unknown is not a reclassification, and restating the same
 // answer is not a change.
 func TestMechanical_ActorKind_FillingAndRestatingAllowed(t *testing.T) {
