@@ -188,18 +188,20 @@ func DecidePull(mode SyncMode, hasUpstream bool, incoming IncomingCommits, clean
 }
 
 // OutsideGraphPaths returns the paths, relative to the repository holding the
-// graph, that lie outside what sdd's own commits write: graphDir (also
-// repository-relative; "." makes the whole repository the graph), .sdd/, the
-// rendered agent skills and .gitignore.
+// graph, that an automatic pull may not merge unreviewed: everything but
+// graphDir (also repository-relative; "." makes the whole repository the
+// graph), .sdd/meta.json, the rendered agent skills and .gitignore. Config
+// stays outside, since an incoming config change alters sdd itself
+// (20261027-235201-d-tac-hkq).
 func OutsideGraphPaths(paths []string, graphDir string) []string {
 	graphDir = strings.Trim(filepath.ToSlash(filepath.Clean(graphDir)), "/")
 	if graphDir == "." {
 		return nil
 	}
-	prefixes := []string{".sdd/", ".claude/skills/", ".agents/skills/", graphDir + "/"}
+	prefixes := []string{".claude/skills/", ".agents/skills/", graphDir + "/"}
 	var outside []string
 	for _, path := range paths {
-		if path == "" || path == ".gitignore" {
+		if path == "" || path == ".gitignore" || path == ".sdd/meta.json" {
 			continue
 		}
 		if !slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(path, prefix) }) {
