@@ -299,3 +299,34 @@ func TestRejectedPushFailsWhenUpstreamCannotMerge(t *testing.T) {
 		t.Errorf("the held merge should be reported, got %q", out)
 	}
 }
+
+func TestPullHeldForAMergeChangingCode(t *testing.T) {
+	root := syncedProject(t, "auto")
+	remote := strings.TrimSpace(gitIn(t, root, "remote", "get-url", "origin"))
+	other := filepath.Join(canonicalTemp(t), "other")
+	gitIn(t, filepath.Dir(other), "clone", "-q", remote, other)
+	gitIn(t, other, "config", "user.email", "other@example.com")
+	gitIn(t, other, "config", "user.name", "Other")
+	gitIn(t, other, "checkout", "-q", "-b", "side")
+	writeFile(t, filepath.Join(other, ".sdd", "graph", "side.md"), "side\n")
+	gitIn(t, other, "add", ".sdd/graph/side.md")
+	gitIn(t, other, "commit", "-q", "-m", "sdd: capture on a side branch")
+	gitIn(t, other, "checkout", "-q", "-")
+	gitIn(t, other, "merge", "-q", "--no-ff", "--no-commit", "side")
+	writeFile(t, filepath.Join(other, "main.go"), "package main\n")
+	gitIn(t, other, "add", "main.go")
+	gitIn(t, other, "commit", "-q", "-m", "sdd: merge side")
+	gitIn(t, other, "push", "-q")
+	before := localHead(t, root)
+
+	out, err := runAppErr(t, root, "view", "--layout", "layer(tac):as-list")
+	if err != nil {
+		t.Fatalf("view should succeed: %v\n%s", err, out)
+	}
+	if localHead(t, root) != before {
+		t.Error("a merge commit changing code should hold the pull")
+	}
+	if !strings.Contains(out, "changes main.go, outside the graph") {
+		t.Errorf("the held pull should name the path the merge changed, got %q", out)
+	}
+}

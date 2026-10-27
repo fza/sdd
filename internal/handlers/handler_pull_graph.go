@@ -21,7 +21,7 @@ type GraphPuller interface {
 	UpstreamRef(ctx context.Context) (string, error)
 	Fetch(ctx context.Context) error
 	CountCommits(ctx context.Context, rangeSpec, subjectPattern string) (int, error)
-	ChangedPaths(ctx context.Context, rangeSpec string) ([]string, error)
+	ChangedPaths(ctx context.Context, base, tip string) ([]string, error)
 	RepoPath(ctx context.Context, path string) (string, error)
 	IsClean(ctx context.Context) (bool, error)
 	MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]string, error)
@@ -110,7 +110,7 @@ func (h *Handler) incomingCommits(ctx context.Context, upstream string) (model.I
 	if incoming.All == 0 {
 		return incoming, nil
 	}
-	paths, err := h.graphPuller.ChangedPaths(ctx, "HEAD..@{u}")
+	paths, err := h.graphPuller.ChangedPaths(ctx, "HEAD", "@{u}")
 	if err != nil {
 		return incoming, fmt.Errorf("listing paths changed on %s: %w", upstream, err)
 	}

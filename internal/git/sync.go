@@ -83,22 +83,20 @@ func (c CLI) CountCommits(ctx context.Context, rangeSpec, subjectPattern string)
 	return model.CountMatchingSubjects(string(out), pattern), nil
 }
 
-// ChangedPaths lists the repository-relative paths the commits in rangeSpec
-// change, each once. Renames count as a deletion and an addition, so both
-// paths are listed.
-func (c CLI) ChangedPaths(ctx context.Context, rangeSpec string) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("log", "--no-renames", "--name-only", "--format=", rangeSpec)...).Output()
+// ChangedPaths lists the repository-relative paths tip changes against its
+// merge base with base: the net difference a merge of tip brings in,
+// including changes a merge commit makes on its own. Renames count as a
+// deletion and an addition, so both paths are listed.
+func (c CLI) ChangedPaths(ctx context.Context, base, tip string) ([]string, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("diff", "--name-only", "--no-renames", base+"..."+tip)...).Output()
 	if err != nil {
-		return nil, fmt.Errorf("git log --name-only %s: %w", rangeSpec, err)
+		return nil, fmt.Errorf("git diff --name-only %s...%s: %w", base, tip, err)
 	}
 	var paths []string
-	seen := map[string]bool{}
 	for line := range strings.SplitSeq(string(out), "\n") {
-		if line == "" || seen[line] {
-			continue
+		if line != "" {
+			paths = append(paths, line)
 		}
-		seen[line] = true
-		paths = append(paths, line)
 	}
 	return paths, nil
 }
