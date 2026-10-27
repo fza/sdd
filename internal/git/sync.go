@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -59,16 +61,25 @@ func (c CLI) Fetch(ctx context.Context) error {
 	return nil
 }
 
-// CountCommits counts commits in rangeSpec whose messages match grepPattern.
-func (c CLI) CountCommits(ctx context.Context, rangeSpec, grepPattern string) (int, error) {
-	// -E enables ERE so patterns like ^sdd: match. --pretty=format:%H gives
-	// one hash per commit; an empty output (no matches) yields zero lines.
-	cmd := exec.CommandContext(ctx, "git", c.at("log", "--grep="+grepPattern, "-E", "--pretty=format:%H", rangeSpec)...)
-	out, err := cmd.Output()
+// CountCommits counts commits in rangeSpec whose subject matches
+// subjectPattern; an empty pattern counts every commit.
+func (c CLI) CountCommits(ctx context.Context, rangeSpec, subjectPattern string) (int, error) {
+	if subjectPattern == "" {
+		out, err := exec.CommandContext(ctx, "git", c.at("rev-list", "--count", rangeSpec)...).Output()
+		if err != nil {
+			return 0, fmt.Errorf("git rev-list --count %s: %w", rangeSpec, err)
+		}
+		return strconv.Atoi(strings.TrimSpace(string(out)))
+	}
+	pattern, err := regexp.Compile(subjectPattern)
+	if err != nil {
+		return 0, fmt.Errorf("compiling subject pattern: %w", err)
+	}
+	out, err := exec.CommandContext(ctx, "git", c.at("log", "--format=%s", rangeSpec)...).Output()
 	if err != nil {
 		return 0, fmt.Errorf("git log %s: %w", rangeSpec, err)
 	}
-	return model.CountGraphCommits(string(out)), nil
+	return model.CountMatchingSubjects(string(out), pattern), nil
 }
 
 // MergeTreePredict simulates a three-way merge in memory and returns the

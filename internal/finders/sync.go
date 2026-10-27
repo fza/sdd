@@ -10,12 +10,10 @@ import (
 	"github.com/networkteam/sdd/internal/query"
 )
 
-// GraphCommitGrepPattern is the commit-message prefix emitted by every SDD
-// handler (handler_new_entry, handler_summarize, handler_wip_start,
-// handler_wip_done, handler_lint_fix, handler_rewrite, handler_init). The
-// sync finder counts commits matching this pattern on either side of the
-// local/upstream divergence to report graph activity.
-const GraphCommitGrepPattern = "^sdd:"
+// GraphCommitSubjectPattern matches the subject every SDD-written commit
+// starts with. The sync finder counts commits matching it on either side of
+// the local/upstream divergence to report graph activity.
+const GraphCommitSubjectPattern = "^sdd:"
 
 // GitSyncer is the git surface consumed by the sync finder. Production
 // shells out via exec.Command; tests inject stubs. Methods return errors
@@ -35,10 +33,10 @@ type GitSyncer interface {
 	// Fetch runs `git fetch` with no args. A non-nil error means the fetch
 	// attempt failed (network, auth, etc.).
 	Fetch(ctx context.Context) error
-	// CountCommits counts commits in rangeSpec whose messages match the
-	// given grep pattern (ERE). rangeSpec is a git log range such as
-	// "HEAD..@{u}" or "@{u}..HEAD".
-	CountCommits(ctx context.Context, rangeSpec, grepPattern string) (int, error)
+	// CountCommits counts commits in rangeSpec whose subject line matches
+	// subjectPattern; an empty pattern counts every commit. rangeSpec is a
+	// git log range such as "HEAD..@{u}" or "@{u}..HEAD".
+	CountCommits(ctx context.Context, rangeSpec, subjectPattern string) (int, error)
 	// MergeTreePredict simulates a three-way merge in memory and returns
 	// the list of paths that would conflict. An empty slice means clean.
 	// The merge base is computed by git internally from (ourRef, theirRef)
@@ -93,11 +91,11 @@ func (f *Finder) SyncStatus(ctx context.Context, q query.SyncStatusQuery) (model
 		return model.SyncStatus{State: model.SyncStateFetchFailed, Reason: fetchErr.Error()}, nil
 	}
 
-	remoteAhead, err := f.gitSyncer.CountCommits(ctx, "HEAD..@{u}", GraphCommitGrepPattern)
+	remoteAhead, err := f.gitSyncer.CountCommits(ctx, "HEAD..@{u}", GraphCommitSubjectPattern)
 	if err != nil {
 		return model.SyncStatus{}, fmt.Errorf("counting remote-ahead commits: %w", err)
 	}
-	localAhead, err := f.gitSyncer.CountCommits(ctx, "@{u}..HEAD", GraphCommitGrepPattern)
+	localAhead, err := f.gitSyncer.CountCommits(ctx, "@{u}..HEAD", GraphCommitSubjectPattern)
 	if err != nil {
 		return model.SyncStatus{}, fmt.Errorf("counting local-ahead commits: %w", err)
 	}
