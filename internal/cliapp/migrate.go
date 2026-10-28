@@ -71,7 +71,7 @@ func migrateCmd() *cli.Command {
 				return fmt.Errorf("graph schema version %d is newer than this binary's schema version %d; upgrade sdd to continue", from, model.CurrentGraphSchemaVersion)
 			}
 			out := cmd.ErrWriter
-			handler, err := summarizeHandler(cmd)
+			handler, err := summarizeHandler(ctx, cmd)
 			if err != nil {
 				return err
 			}

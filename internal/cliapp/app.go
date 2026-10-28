@@ -431,6 +431,7 @@ func New(options Options) *cli.Command {
 			// spurious warnings). Cooldown-bound and timeout-bound internally;
 			// any failure logs at Debug and does not affect the command.
 			if cmd.Args().First() != "init" {
+				ctx = withSyncBanner(ctx, cmd.ErrWriter)
 				stopSync := timing.Start(ctx, "sync-check")
 				runSyncCheck(ctx)
 				stopSync()
@@ -529,6 +530,11 @@ func infoCmd() *cli.Command {
 				return presenters.RenderInfoJSON(cmd.Writer, result)
 			}
 			presenters.RenderInfo(cmd.Writer, result)
+			block, err := syncBlocked(ctx)
+			if err != nil {
+				return err
+			}
+			presenters.RenderSyncBlocked(cmd.Writer, block, time.Now())
 			return nil
 		},
 	}
@@ -976,7 +982,7 @@ func newCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			handler := handlers.New(handlers.Options{
+			opts, err := graphSyncOptions(ctx, dir, handlers.Options{
 				Stderr:   cmd.ErrWriter,
 				GraphDir: dir,
 				SDDDir:   sddDir,
@@ -986,14 +992,16 @@ func newCmd() *cli.Command {
 					Repos:             reg,
 					ProcedureRegistry: registry,
 				}),
-				LLMRunner:   runner,
-				Committer:   graphGit(dir),
-				Pusher:      graphGit(dir),
-				GraphPuller: graphGit(dir),
-				SyncMode:    syncMode,
-				Repos:       mgr,
-				Language:    configLanguage(cfg),
+				LLMRunner: runner,
+				Committer: graphGit(dir),
+				SyncMode:  syncMode,
+				Repos:     mgr,
+				Language:  configLanguage(cfg),
 			})
+			if err != nil {
+				return err
+			}
+			handler := handlers.New(opts)
 
 			return handler.NewEntry(ctx, ncmd)
 		})),
@@ -1083,16 +1091,18 @@ func rewriteCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			handler := handlers.New(handlers.Options{
-				Stderr:      cmd.ErrWriter,
-				GraphDir:    dir,
-				Reader:      reader,
-				Committer:   graphGit(dir),
-				Pusher:      graphGit(dir),
-				GraphPuller: graphGit(dir),
-				SyncMode:    syncMode,
-				Mover:       graphGit(dir),
+			opts, err := graphSyncOptions(ctx, dir, handlers.Options{
+				Stderr:    cmd.ErrWriter,
+				GraphDir:  dir,
+				Reader:    reader,
+				Committer: graphGit(dir),
+				SyncMode:  syncMode,
+				Mover:     graphGit(dir),
 			})
+			if err != nil {
+				return err
+			}
+			handler := handlers.New(opts)
 			return handler.RewriteEntry(ctx, rcmd)
 		})),
 	}
@@ -1126,15 +1136,17 @@ func lintCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				handler := handlers.New(handlers.Options{
-					Stderr:      cmd.ErrWriter,
-					GraphDir:    dir,
-					Reader:      reader,
-					Committer:   graphGit(dir),
-					Pusher:      graphGit(dir),
-					GraphPuller: graphGit(dir),
-					SyncMode:    syncMode,
+				opts, err := graphSyncOptions(ctx, dir, handlers.Options{
+					Stderr:    cmd.ErrWriter,
+					GraphDir:  dir,
+					Reader:    reader,
+					Committer: graphGit(dir),
+					SyncMode:  syncMode,
 				})
+				if err != nil {
+					return err
+				}
+				handler := handlers.New(opts)
 				if err := handler.LintFix(ctx, fixCmd); err != nil {
 					return err
 				}
@@ -1293,7 +1305,7 @@ func summarizeCmd() *cli.Command {
 				},
 			}
 
-			handler, err := summarizeHandler(cmd)
+			handler, err := summarizeHandler(ctx, cmd)
 			if err != nil {
 				return err
 			}
@@ -1305,7 +1317,7 @@ func summarizeCmd() *cli.Command {
 // summarizeHandler wires the handler summary generation runs on: the graph,
 // the configured runner bounded by the command's --timeout, and the graph's
 // committer.
-func summarizeHandler(cmd *cli.Command) (*handlers.Handler, error) {
+func summarizeHandler(ctx context.Context, cmd *cli.Command) (*handlers.Handler, error) {
 	dir, err := resolveGraphDir(cmd)
 	if err != nil {
 		return nil, err
@@ -1335,7 +1347,7 @@ func summarizeHandler(cmd *cli.Command) (*handlers.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return handlers.New(handlers.Options{
+	opts, err := graphSyncOptions(ctx, dir, handlers.Options{
 		Stderr:   cmd.ErrWriter,
 		GraphDir: dir,
 		SDDDir:   sddDir,
@@ -1344,14 +1356,16 @@ func summarizeHandler(cmd *cli.Command) (*handlers.Handler, error) {
 			Config:          cfg,
 			Repos:           reg,
 		}),
-		LLMRunner:   runner,
-		Committer:   graphGit(dir),
-		Pusher:      graphGit(dir),
-		GraphPuller: graphGit(dir),
-		SyncMode:    syncMode,
-		Changes:     graphGit(dir),
-		Language:    configLanguage(cfg),
-	}), nil
+		LLMRunner: runner,
+		Committer: graphGit(dir),
+		SyncMode:  syncMode,
+		Changes:   graphGit(dir),
+		Language:  configLanguage(cfg),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return handlers.New(opts), nil
 }
 
 // resolveGraphDir determines the graph directory from the --graph-dir flag
@@ -2068,16 +2082,18 @@ func wipStartCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			handler := handlers.New(handlers.Options{
-				Stderr:      cmd.ErrWriter,
-				GraphDir:    dir,
-				Reader:      reader,
-				Committer:   graphGit(dir),
-				Pusher:      graphGit(dir),
-				GraphPuller: graphGit(dir),
-				SyncMode:    syncMode,
-				Brancher:    git.CLI{},
+			opts, err := graphSyncOptions(ctx, dir, handlers.Options{
+				Stderr:    cmd.ErrWriter,
+				GraphDir:  dir,
+				Reader:    reader,
+				Committer: graphGit(dir),
+				SyncMode:  syncMode,
+				Brancher:  git.CLI{},
 			})
+			if err != nil {
+				return err
+			}
+			handler := handlers.New(opts)
 			return handler.StartWIP(ctx, startCmd)
 		})),
 	}
@@ -2131,16 +2147,18 @@ func wipDoneCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			handler := handlers.New(handlers.Options{
-				Stderr:      cmd.ErrWriter,
-				GraphDir:    dir,
-				Reader:      reader,
-				Committer:   git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
-				Pusher:      graphGit(dir),
-				GraphPuller: graphGit(dir),
-				SyncMode:    syncMode,
-				Brancher:    git.CLI{},
+			opts, err := graphSyncOptions(ctx, dir, handlers.Options{
+				Stderr:    cmd.ErrWriter,
+				GraphDir:  dir,
+				Reader:    reader,
+				Committer: git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
+				SyncMode:  syncMode,
+				Brancher:  git.CLI{},
 			})
+			if err != nil {
+				return err
+			}
+			handler := handlers.New(opts)
 			return handler.FinishWIP(ctx, doneCmd)
 		})),
 	}

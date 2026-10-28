@@ -118,7 +118,7 @@ func TestCaptureHeldBehindAForeignCommit(t *testing.T) {
 	if remoteHead(t, root) != before {
 		t.Error("a commit not written by sdd ahead of upstream should keep everything local")
 	}
-	if !strings.Contains(out, "captured but unpublished") {
+	if !strings.Contains(out, "graph commits stay unpublished") {
 		t.Errorf("the held capture should be reported, got %q", out)
 	}
 }
@@ -131,18 +131,21 @@ func TestCaptureWithoutUpstreamIsReported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("capture should succeed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "captured but unpublished") || !strings.Contains(out, "no upstream") {
+	if !strings.Contains(out, "graph commits stay unpublished") || !strings.Contains(out, "no upstream") {
 		t.Errorf("a branch without upstream should be reported, got %q", out)
 	}
 }
 
-func TestFailedPushFailsTheCaptureAndKeepsTheCommit(t *testing.T) {
+func TestFailedPushIsReportedAndKeepsTheCommit(t *testing.T) {
 	root := syncedProject(t, "auto")
 	gitIn(t, root, "remote", "set-url", "origin", filepath.Join(filepath.Dir(root), "missing.git"))
 
 	out, err := runAppErr(t, root, captureArgs()...)
-	if err == nil {
-		t.Fatalf("a failed push should fail the command, got output %q", out)
+	if err != nil {
+		t.Fatalf("a failed push should be reported, not fail the command: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "sync blocked since") {
+		t.Errorf("the failed push should be reported as a blocked sync, got %q", out)
 	}
 	if !strings.HasPrefix(headSubject(t, root), "sdd: ") {
 		t.Error("the capture commit should stay after a failed push")
@@ -200,8 +203,8 @@ func TestPullHeldAndReported(t *testing.T) {
 	}{
 		{name: "a foreign commit upstream", subject: "feat: change code", file: "main.go", report: "not written by sdd"},
 		{name: "a dirty working tree", subject: "sdd: capture elsewhere", file: ".sdd/graph/elsewhere.md", dirty: true, report: "uncommitted changes"},
-		{name: "a graph commit changing code", subject: "sdd: capture elsewhere", file: "main.go", report: "changes main.go, outside the graph"},
-		{name: "a graph commit changing the project config", subject: "sdd: widen the graph", file: ".sdd/config.yaml", report: "changes .sdd/config.yaml, outside the graph"},
+		{name: "a graph commit changing code", subject: "sdd: capture elsewhere", file: "main.go", report: `changes "main.go", outside the graph`},
+		{name: "a graph commit changing the project config", subject: "sdd: widen the graph", file: ".sdd/config.yaml", report: `changes ".sdd/config.yaml", outside the graph`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -253,8 +256,8 @@ func TestConflictingUpstreamIsReportedAndNothingMerged(t *testing.T) {
 	if status := gitIn(t, root, "status", "--porcelain"); status != "" {
 		t.Errorf("the working tree should stay clean, got %q", status)
 	}
-	if !regexp.MustCompile(`would conflict in "\S*shared\.md"\. Merge it with git.*sdd: merge \S+`).MatchString(out) {
-		t.Errorf("the pull should name the conflicting path and the merge message to commit, got %q", out)
+	if !regexp.MustCompile(`merging origin/\S+ would conflict in "\S*shared\.md"; automatic sync is paused`).MatchString(out) {
+		t.Errorf("the pull should name the conflicting path and the pause, got %q", out)
 	}
 }
 
@@ -286,14 +289,14 @@ func TestRejectedPushMergesUpstreamAndPushesAgain(t *testing.T) {
 	}
 }
 
-func TestRejectedPushFailsWhenUpstreamCannotMerge(t *testing.T) {
+func TestRejectedPushIsReportedWhenUpstreamCannotMerge(t *testing.T) {
 	root := syncedProject(t, "auto")
 	holdSyncCheck(t, root)
 	upstreamCommit(t, root, "feat: change code", "main.go")
 
 	out, err := runAppErr(t, root, captureArgs()...)
-	if err == nil {
-		t.Fatalf("a retry that cannot merge should fail the command, got %q", out)
+	if err != nil {
+		t.Fatalf("a retry that cannot merge should be reported, not fail the command: %v\n%s", err, out)
 	}
 	if !strings.HasPrefix(headSubject(t, root), "sdd: signal") {
 		t.Error("the capture commit should stay after the failed retry")
@@ -329,7 +332,7 @@ func TestPullHeldForAMergeChangingCode(t *testing.T) {
 	if localHead(t, root) != before {
 		t.Error("a merge commit changing code should hold the pull")
 	}
-	if !strings.Contains(out, "changes main.go, outside the graph") {
+	if !strings.Contains(out, `changes "main.go", outside the graph`) {
 		t.Errorf("the held pull should name the path the merge changed, got %q", out)
 	}
 }

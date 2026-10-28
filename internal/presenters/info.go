@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
@@ -78,4 +81,35 @@ func writeInfoHeader(w io.Writer, localParticipant, language, search string) {
 	if search != "" {
 		fmt.Fprintf(w, "Search: %s\n", search)
 	}
+}
+
+// RenderSyncBlocked emits the blocked-sync record and the steps that clear
+// it, or, while an agent session's lease on the fix is live at now, who owns
+// it.
+func RenderSyncBlocked(w io.Writer, block *model.SyncBlocked, now time.Time) {
+	if block == nil {
+		return
+	}
+	fmt.Fprintf(w, "Sync blocked: %s since %s\n", block.Kind, block.Since.Local().Format(time.RFC3339))
+	paths := make([]string, 0, len(block.Paths))
+	for _, path := range block.Paths {
+		paths = append(paths, strconv.Quote(path))
+	}
+	detail := ""
+	if block.Detail != "" {
+		detail = strconv.Quote(block.Detail)
+	}
+	for _, field := range []struct{ label, value string }{
+		{"Upstream", block.Upstream}, {"Source", block.Source}, {"Destination", block.Destination},
+		{"Paths", strings.Join(paths, ", ")}, {"Detail", detail}, {"Owner", block.Owner},
+	} {
+		if field.value != "" {
+			fmt.Fprintf(w, "  %s: %s\n", field.label, field.value)
+		}
+	}
+	if owner := block.LiveOwner(now); owner != "" {
+		fmt.Fprintf(w, "Agent session %s owns the fix; leave it to that agent.\n", owner)
+		return
+	}
+	fmt.Fprintln(w, block.Steps())
 }

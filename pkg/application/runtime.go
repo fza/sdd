@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/networkteam/slogutils"
+	"time"
 
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
+	"github.com/networkteam/slogutils"
 )
 
 // ProjectRuntime owns the immutable ports and project configuration resolved
@@ -39,8 +39,8 @@ type ProjectRuntimeOptions struct {
 	SearchIndex SearchIndexStore
 	LLM         llm.Runner
 	Finalizers  []MutationFinalizer
-	// Sync brings upstream graph commits into a branch before a session acts
-	// on it; nil leaves branches as they are.
+	// Sync runs automatic graph sync before a session acts on a branch and
+	// serves what blocks it; nil leaves branches as they are.
 	Sync GraphSync
 	// ExcludeEmbeddedFromIndex mirrors the CLI's excludeEmbedded semantics for
 	// the vector index: connected-repo runtimes set it so binary-shipped base
@@ -50,33 +50,152 @@ type ProjectRuntimeOptions struct {
 	ExcludeEmbeddedFromIndex bool
 }
 
-// GraphSync brings upstream graph commits into the checkout of a branch under
-// automatic sync (20261027-194536-d-tac-190). The notice is what the agent
-// must act on, such as a conflicting merge to resolve by hand.
+// GraphSync runs automatic sync of the graph repository behind a branch's
+// checkout (20261027-194536-d-tac-190) and serves what blocks it
+// (20261028-201909-d-tac-fxp).
 type GraphSync interface {
-	SyncGraph(ctx context.Context, branch string) (notice string, err error)
+	// SyncGraph runs one sync round for branch, skipping it when another
+	// process is syncing.
+	SyncGraph(ctx context.Context, branch string, trigger SyncTrigger) error
+	// SyncNotice returns the blocked-sync notice for session, empty while
+	// sync proceeds; the first session to ask owns the fix.
+	SyncNotice(ctx context.Context, branch, session string) (string, error)
+	// ReleaseSyncOwner gives up session's ownership of branch's blocked sync
+	// as the session ends, returning the banner while sync is blocked.
+	ReleaseSyncOwner(ctx context.Context, branch, session string) (string, error)
+	// SyncInterval is how often a timer syncs branch, false when none runs.
+	SyncInterval(ctx context.Context, branch string) (time.Duration, bool, error)
+	// SyncBlocked reads what blocks sync of branch, nil while sync proceeds.
+	SyncBlocked(ctx context.Context, branch string) (*SyncBlocked, error)
 }
 
-// syncGraph runs the runtime's GraphSync for branch, the base branch when
-// empty, and returns its notice. A sync failure never blocks the session it
-// precedes; it is reported.
-func (r *ProjectRuntime) syncGraph(ctx context.Context, branch string) string {
+// SyncBlocked is what blocks automatic sync of a graph repository, since
+// when, and the session owning the fix. A conflict also names the upstream
+// commit that would not merge (Source) and the local commit it was to merge
+// into (Destination).
+type SyncBlocked struct {
+	Kind        string
+	Since       time.Time
+	Upstream    string
+	Detail      string
+	Source      string
+	Destination string
+	Paths       []string
+	Owner       string
+	// Steps tells the owning agent how to clear the block.
+	Steps string
+}
+
+// SyncTrigger is what starts a sync round.
+type SyncTrigger string
+
+const (
+	// SyncOnCall: an engine call; the round fetches once the cooldown has
+	// passed.
+	SyncOnCall SyncTrigger = "call"
+	// SyncOnTimer: the timer of a running server; the round always fetches.
+	SyncOnTimer SyncTrigger = "timer"
+)
+
+// syncGraph runs a sync round for branch, the base branch when empty. A
+// sync failure never blocks the session it precedes; it is logged.
+func (r *ProjectRuntime) syncGraph(ctx context.Context, branch string, trigger SyncTrigger) {
 	if r.options.Sync == nil {
-		return ""
+		return
 	}
-	if branch == "" {
-		target, _, err := r.baseTarget(ctx)
-		if err != nil {
-			slogutils.FromContext(ctx).Warn("sync: resolving the base branch", "err", err)
-			return ""
-		}
-		branch = target.Branch
+	branch, ok := r.syncBranch(ctx, branch)
+	if !ok {
+		return
 	}
-	notice, err := r.options.Sync.SyncGraph(ctx, branch)
+	err := r.options.Sync.SyncGraph(ctx, branch, trigger)
 	if err != nil {
 		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: %v", err), "branch", branch)
 	}
+}
+
+// syncNotice returns the blocked-sync notice of branch's graph repository
+// for session.
+func (r *ProjectRuntime) syncNotice(ctx context.Context, branch, session string) string {
+	if r.options.Sync == nil {
+		return ""
+	}
+	branch, ok := r.syncBranch(ctx, branch)
+	if !ok {
+		return ""
+	}
+	notice, err := r.options.Sync.SyncNotice(ctx, branch, session)
+	if err != nil {
+		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: reading the blocked state: %v", err), "branch", branch)
+	}
 	return notice
+}
+
+func (r *ProjectRuntime) releaseSyncOwner(ctx context.Context, branch, session string) string {
+	if r.options.Sync == nil {
+		return ""
+	}
+	branch, ok := r.syncBranch(ctx, branch)
+	if !ok {
+		return ""
+	}
+	notice, err := r.options.Sync.ReleaseSyncOwner(ctx, branch, session)
+	if err != nil {
+		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: releasing the blocked state: %v", err), "branch", branch)
+	}
+	return notice
+}
+
+func (r *ProjectRuntime) syncBlocked(ctx context.Context, branch string) (*SyncBlocked, error) {
+	if r.options.Sync == nil {
+		return nil, nil
+	}
+	branch, ok := r.syncBranch(ctx, branch)
+	if !ok {
+		return nil, nil
+	}
+	return r.options.Sync.SyncBlocked(ctx, branch)
+}
+
+func (r *ProjectRuntime) syncBranch(ctx context.Context, branch string) (string, bool) {
+	if branch != "" {
+		return branch, true
+	}
+	target, source, err := r.baseTarget(ctx)
+	if err != nil {
+		slogutils.FromContext(ctx).Warn("sync: resolving the base branch", "err", err)
+		return "", false
+	}
+	// A serving checkout outside Git or on a detached HEAD has no branch to sync.
+	if source == BaseWithoutBranch {
+		return "", false
+	}
+	return target.Branch, true
+}
+
+// RunSyncTimer syncs the base branch's graph repository once per configured
+// sync.interval until ctx ends, and returns at once when no timer is set.
+func (r *ProjectRuntime) RunSyncTimer(ctx context.Context) error {
+	if r.options.Sync == nil {
+		return nil
+	}
+	branch, ok := r.syncBranch(ctx, "")
+	if !ok {
+		return nil
+	}
+	interval, on, err := r.options.Sync.SyncInterval(ctx, branch)
+	if err != nil || !on {
+		return err
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			r.syncGraph(ctx, branch, SyncOnTimer)
+		}
+	}
 }
 
 func NewProjectRuntime(options ProjectRuntimeOptions) (*ProjectRuntime, error) {
