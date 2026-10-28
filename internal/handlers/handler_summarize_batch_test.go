@@ -111,7 +111,9 @@ func TestSummarize_All_FillsWhatIsMissing(t *testing.T) {
 	})
 
 	var summarized, titled, skipped []string
+	planned := -1
 	scmd := &command.SummarizeCmd{
+		OnPlanned:    func(n int) { planned = n },
 		OnSummarized: func(id, _ string) { summarized = append(summarized, id) },
 		OnTitled:     func(id, _ string) { titled = append(titled, id) },
 		OnSkipped:    func(id string) { skipped = append(skipped, id) },
@@ -120,6 +122,9 @@ func TestSummarize_All_FillsWhatIsMissing(t *testing.T) {
 		t.Fatalf("Summarize: %v", err)
 	}
 
+	if planned != 2 {
+		t.Errorf("the plan should count only the entries the run fills, got %d", planned)
+	}
 	if runner.purposeCount(llm.PurposeSummarize) != 1 || runner.purposeCount(llm.PurposeTitle) != 1 {
 		t.Errorf("one paired and one title-only call expected, got %v", runner.byUse)
 	}

@@ -9,6 +9,8 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/networkteam/sdd/internal/cliout"
+	clitui "github.com/networkteam/sdd/internal/cliout/tui"
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
@@ -131,7 +133,7 @@ func migrateCmd() *cli.Command {
 			if stampOnly {
 				return nil
 			}
-			return handler.Summarize(ctx, &command.SummarizeCmd{
+			backfill := &command.SummarizeCmd{
 				Concurrency: int(cmd.Int("concurrency")),
 				Model:       cmd.String("model"),
 				OnSummarized: func(id, summary string) {
@@ -140,7 +142,35 @@ func migrateCmd() *cli.Command {
 				OnTitled: func(id, title string) {
 					fmt.Fprintf(out, "  titled %s\n", id)
 				},
-			})
+			}
+			if !cliout.IsInteractive(out) {
+				return handler.Summarize(ctx, backfill)
+			}
+			progress := newBackfillProgress(backfill)
+			_, err = clitui.Interactive(ctx, transientViewPolicy(),
+				clitui.View{Reader: cmd.Reader, Writer: out, InitialPhase: model.PhaseSummarizing, Progress: progress},
+				func(ctx context.Context) (struct{}, error) {
+					return struct{}{}, handler.Summarize(ctx, backfill)
+				})
+			return err
 		},
 	}
+}
+
+// newBackfillProgress reroutes a backfill's per-entry callbacks onto a footer
+// reporter: on a terminal the bar replaces the line per entry.
+func newBackfillProgress(backfill *command.SummarizeCmd) *cliout.Reporter {
+	reporter := cliout.NewReporter()
+	reporter.SetUnit("entries")
+	backfill.OnPlanned = func(n int) {
+		reporter.SetPhase(model.PhaseSummarizing)
+		reporter.SetTotal(n)
+	}
+	advance := func(id, _ string) {
+		reporter.Add(1)
+		reporter.SetNote(id)
+	}
+	backfill.OnSummarized = advance
+	backfill.OnTitled = advance
+	return reporter
 }
