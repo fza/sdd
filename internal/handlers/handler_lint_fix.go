@@ -53,7 +53,7 @@ func (h *Handler) LintFix(ctx context.Context, cmd *command.LintFixCmd) error {
 
 	if len(commitPaths) > 0 && h.committer != nil {
 		msg := fmt.Sprintf("sdd: lint --fix applied %d fix(es) to %d entries", fixCount, len(commitPaths))
-		if err := h.committer.Commit(msg, commitPaths...); err != nil {
+		if err := h.commitGraph(ctx, msg, commitPaths...); err != nil {
 			return fmt.Errorf("git commit: %w", err)
 		}
 	}

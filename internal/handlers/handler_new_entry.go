@@ -250,7 +250,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	// the error propagates (durable but loud). See d-tac-zhp.
 	if h.committer != nil {
 		msg := fmt.Sprintf("sdd: %s %s %s", entry.TypeLabel(), entry.LayerLabel(), entry.ShortContent(72))
-		if err := h.committer.Commit(msg, commitPaths...); err != nil {
+		if err := h.commitGraph(ctx, msg, commitPaths...); err != nil {
 			return fmt.Errorf("git commit: %w", err)
 		}
 	}

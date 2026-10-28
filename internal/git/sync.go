@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -59,16 +62,63 @@ func (c CLI) Fetch(ctx context.Context) error {
 	return nil
 }
 
-// CountCommits counts commits in rangeSpec whose messages match grepPattern.
-func (c CLI) CountCommits(ctx context.Context, rangeSpec, grepPattern string) (int, error) {
-	// -E enables ERE so patterns like ^sdd: match. --pretty=format:%H gives
-	// one hash per commit; an empty output (no matches) yields zero lines.
-	cmd := exec.CommandContext(ctx, "git", c.at("log", "--grep="+grepPattern, "-E", "--pretty=format:%H", rangeSpec)...)
-	out, err := cmd.Output()
+// CountCommits counts commits in rangeSpec whose subject matches
+// subjectPattern; an empty pattern counts every commit.
+func (c CLI) CountCommits(ctx context.Context, rangeSpec, subjectPattern string) (int, error) {
+	if subjectPattern == "" {
+		out, err := exec.CommandContext(ctx, "git", c.at("rev-list", "--count", rangeSpec)...).Output()
+		if err != nil {
+			return 0, fmt.Errorf("git rev-list --count %s: %w", rangeSpec, err)
+		}
+		return strconv.Atoi(strings.TrimSpace(string(out)))
+	}
+	pattern, err := regexp.Compile(subjectPattern)
+	if err != nil {
+		return 0, fmt.Errorf("compiling subject pattern: %w", err)
+	}
+	out, err := exec.CommandContext(ctx, "git", c.at("log", "--format=%s", rangeSpec)...).Output()
 	if err != nil {
 		return 0, fmt.Errorf("git log %s: %w", rangeSpec, err)
 	}
-	return model.CountGraphCommits(string(out)), nil
+	return model.CountMatchingSubjects(string(out), pattern), nil
+}
+
+// ChangedPaths lists the repository-relative paths tip changes against its
+// merge base with base: the net difference a merge of tip brings in,
+// including changes a merge commit makes on its own. Renames count as a
+// deletion and an addition, so both paths are listed.
+func (c CLI) ChangedPaths(ctx context.Context, base, tip string) ([]string, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", base+"..."+tip)...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --name-only %s...%s: %w", base, tip, err)
+	}
+	var paths []string
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if line != "" {
+			paths = append(paths, line)
+		}
+	}
+	return paths, nil
+}
+
+// RepoPath returns path relative to the root of this adapter's repository.
+func (c CLI) RepoPath(ctx context.Context, path string) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--show-toplevel")...).Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
+	}
+	root, err := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
+	if err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
+		abs = resolved
+	}
+	return filepath.Rel(root, abs)
 }
 
 // MergeTreePredict simulates a three-way merge in memory and returns the
@@ -78,7 +128,7 @@ func (c CLI) MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]s
 	// section so stdout after the OID is purely the conflicted path list.
 	// --merge-base is omitted so git computes the base internally (2.38
 	// compatibility — the explicit flag was added in 2.40).
-	cmd := exec.CommandContext(ctx, "git", c.at("merge-tree", "--write-tree", "--name-only", "--no-messages", ourRef, theirRef)...)
+	cmd := exec.CommandContext(ctx, "git", c.at("-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", ourRef, theirRef)...)
 	out, err := cmd.Output()
 	if err != nil {
 		// Exit 1 is the documented conflict signal; parse stdout for paths.

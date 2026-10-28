@@ -34,12 +34,20 @@ type Reader interface {
 	// load and mutate it mid-write; the query stays pure intent.
 	Preflight(ctx context.Context, g *model.Graph, q query.PreflightQuery) (*query.PreflightResult, error)
 	SkillStatus(ctx context.Context, q query.SkillStatusQuery) (*query.SkillStatusResult, error)
+	SchemaStatus(ctx context.Context, q query.SchemaStatusQuery) (*query.SchemaStatusResult, error)
 }
 
 // Committer performs a git commit of the given paths with the given message.
 // Injected so tests can record or no-op commits.
 type Committer interface {
 	Commit(message string, paths ...string) error
+}
+
+// Tracker narrows paths to those git can commit. Init writes agent surfaces
+// a repository may ignore, and may prune renders git never tracked. Without
+// one, init commits every path it touched.
+type Tracker interface {
+	Committable(ctx context.Context, paths []string) ([]string, error)
 }
 
 // Brancher performs git branch operations. Injected so tests can fake
@@ -56,6 +64,16 @@ type Brancher interface {
 // type and its file needs a new on-disk location.
 type Mover interface {
 	Move(src, dst string) error
+}
+
+// ChangeReader reads the working tree against HEAD, so files a failed commit
+// left on disk can be found and committed.
+type ChangeReader interface {
+	// ModifiedFiles lists tracked files under dir whose working copy differs
+	// from HEAD, as absolute paths.
+	ModifiedFiles(ctx context.Context, dir string) ([]string, error)
+	// HeadContent returns the file at path as HEAD records it.
+	HeadContent(ctx context.Context, path string) ([]byte, error)
 }
 
 // Puller is the git surface for `sdd sync --pull`: a merge-only pull that
@@ -82,9 +100,14 @@ type Handler struct {
 	reader          Reader
 	llmRunner       llm.Runner
 	committer       Committer
+	tracker         Tracker
 	brancher        Brancher
 	mover           Mover
 	puller          Puller
+	pusher          Pusher
+	graphPuller     GraphPuller
+	syncMode        model.SyncMode
+	changes         ChangeReader
 	repos           *repos.Manager
 	stderr          io.Writer
 	now             func() time.Time
@@ -101,9 +124,16 @@ type Options struct {
 	Reader          Reader
 	LLMRunner       llm.Runner
 	Committer       Committer
+	Tracker         Tracker
 	Brancher        Brancher
 	Mover           Mover
 	Puller          Puller
+	Pusher          Pusher
+	GraphPuller     GraphPuller
+	// SyncMode decides whether a graph commit is pushed before the command
+	// returns; empty means manual.
+	SyncMode model.SyncMode
+	Changes  ChangeReader
 	// Repos owns the connected-repos side effects (clone, pull, config
 	// writes). Nil means no connected-repos support — repo commands fail
 	// loud, and cross-repo cache freshening is skipped.
@@ -125,9 +155,14 @@ func New(opts Options) *Handler {
 		reader:          opts.Reader,
 		llmRunner:       opts.LLMRunner,
 		committer:       opts.Committer,
+		tracker:         opts.Tracker,
 		brancher:        opts.Brancher,
 		mover:           opts.Mover,
 		puller:          opts.Puller,
+		pusher:          opts.Pusher,
+		graphPuller:     opts.GraphPuller,
+		syncMode:        opts.SyncMode,
+		changes:         opts.Changes,
 		repos:           opts.Repos,
 		stderr:          opts.Stderr,
 		now:             opts.Now,

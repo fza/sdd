@@ -98,11 +98,16 @@ func ResolveConfig(global model.BaseConfig, sddDir, localConfigPath string) (*mo
 // merged result.
 func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.PerRepoConfig, err error) {
 	if sddDir != "" {
-		committed, err = readConfigFile(filepath.Join(sddDir, "config.yaml"))
+		committedPath := filepath.Join(sddDir, "config.yaml")
+		committed, err = readConfigFile(committedPath)
 		if err != nil {
 			return nil, nil, err
 		}
+		if committed != nil && committed.Contribution != "" {
+			return nil, nil, fmt.Errorf("%s: contribution is machine-local; set it in %s instead", committedPath, LocalConfigFileName)
+		}
 	}
+	committed = model.HonoredCommitted(committed)
 	// Without a .sdd/ directory only an explicit override names a local
 	// layer — joining an empty dir would read a path relative to the cwd.
 	if sddDir != "" || localConfigPath != "" {

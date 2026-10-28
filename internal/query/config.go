@@ -44,8 +44,18 @@ type UnknownConfigKey struct {
 	Key  string
 }
 
-// UnknownConfigKeysResult lists the unrecognised keys across every layer,
-// global first. Empty means every key in every layer is understood.
+// IgnoredConfigSetting is one setting sdd read past, the file carrying it,
+// and why it is not honored.
+type IgnoredConfigSetting struct {
+	File   string
+	Key    string
+	Reason string
+}
+
+// UnknownConfigKeysResult lists the unrecognised keys and the ignored
+// settings across every layer, global first. Both empty means every key in
+// every layer is understood and honored.
 type UnknownConfigKeysResult struct {
-	Keys []UnknownConfigKey
+	Keys    []UnknownConfigKey
+	Ignored []IgnoredConfigSetting
 }
