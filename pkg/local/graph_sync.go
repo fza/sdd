@@ -67,12 +67,29 @@ func (a *GitWorktreeAcquirer) SyncNotice(ctx context.Context, branch, session st
 	if err != nil || model.ResolveSyncMode(cfg) != model.SyncModeAuto {
 		return "", err
 	}
-	opts, err := syncstate.HandlerOptions(ctx, meta.ResolveGraphDir(checkout, cfg), handlers.Options{})
+	graphDir := meta.ResolveGraphDir(checkout, cfg)
+	opts, err := syncstate.HandlerOptions(ctx, graphDir, handlers.Options{GraphDir: graphDir})
 	if err != nil {
 		return "", err
 	}
 	var notice string
 	err = handlers.New(opts).ClaimSyncNotice(ctx, &command.ClaimSyncNoticeCmd{Session: session, OnNotice: func(text string) { notice = text }})
+	return notice, err
+}
+
+// ReleaseSyncOwner gives up session's ownership of the blocked sync of
+// branch's graph repository.
+func (a *GitWorktreeAcquirer) ReleaseSyncOwner(ctx context.Context, branch, session string) (string, error) {
+	checkout, cfg, err := a.syncCheckout(ctx, branch)
+	if err != nil || model.ResolveSyncMode(cfg) != model.SyncModeAuto {
+		return "", err
+	}
+	opts, err := syncstate.HandlerOptions(ctx, meta.ResolveGraphDir(checkout, cfg), handlers.Options{})
+	if err != nil {
+		return "", err
+	}
+	var notice string
+	err = handlers.New(opts).ReleaseSyncOwner(ctx, &command.ReleaseSyncOwnerCmd{Session: session, OnNotice: func(text string) { notice = text }})
 	return notice, err
 }
 

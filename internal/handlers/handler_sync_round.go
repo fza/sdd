@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/networkteam/slogutils"
 
@@ -70,9 +71,11 @@ func (h *Handler) FetchGraph(ctx context.Context, cmd *command.FetchGraphCmd) er
 	}
 	// Stamped whatever the outcome: the cooldown bounds attempts, so an
 	// offline remote is not retried by every command.
-	err = meta.TouchLastFetch(cmd.SDDDir)
-	if err != nil {
-		return fmt.Errorf("stamping last-fetch: %w", err)
+	if cmd.SDDDir != "" {
+		err = meta.TouchLastFetch(cmd.SDDDir)
+		if err != nil {
+			return fmt.Errorf("stamping last-fetch: %w", err)
+		}
 	}
 	report(state, reason)
 	return nil
@@ -119,12 +122,17 @@ func (h *Handler) SyncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 		return h.reportRecorded(ctx)
 	}
 	defer release()
-	paused, err := h.syncPaused(ctx)
+	paused, resumed, err := h.syncPaused(ctx)
 	if err != nil {
 		return err
 	}
+	round := *cmd
+	if resumed {
+		// The hand merge that resumed sync still has to reach the upstream.
+		round.Cooldown = 0
+	}
 	if !paused || cmd.Explicit {
-		err = h.syncRound(ctx, cmd)
+		err = h.syncRound(ctx, &round)
 		if err != nil {
 			return err
 		}
@@ -230,9 +238,14 @@ func (h *Handler) retryPush(ctx context.Context, push *command.PushGraphCmd, pus
 	if h.graphPuller == nil {
 		return failed(pushErr)
 	}
-	err := h.graphPuller.Fetch(ctx)
+	var fetched model.SyncState
+	var reason string
+	err := h.FetchGraph(ctx, &command.FetchGraphCmd{OnFetched: func(state model.SyncState, why string) { fetched, reason = state, why }})
 	if err != nil {
-		return failed(errors.Join(pushErr, err))
+		return false, err
+	}
+	if fetched != model.SyncStateFetched {
+		return failed(errors.Join(pushErr, errors.New(reason)))
 	}
 	blocked, err := h.pullUpstream(ctx)
 	if err != nil || blocked {
@@ -257,7 +270,7 @@ func (h *Handler) publishGraph(ctx context.Context) error {
 		return err
 	}
 	defer release()
-	paused, err := h.syncPaused(ctx)
+	paused, _, err := h.syncPaused(ctx)
 	if err != nil {
 		return err
 	}
@@ -276,6 +289,10 @@ func (h *Handler) publishGraph(ctx context.Context) error {
 	return h.reportRecorded(ctx)
 }
 
+// syncLockWait bounds how long a publish waits for another process's round,
+// which its own git timeouts bound in turn.
+const syncLockWait = 2 * time.Minute
+
 // takeSyncLock returns the lock's release, nil when wait is false and another
 // process holds it.
 func (h *Handler) takeSyncLock(ctx context.Context, wait bool) (func(), error) {
@@ -285,7 +302,9 @@ func (h *Handler) takeSyncLock(ctx context.Context, wait bool) (func(), error) {
 	var release func()
 	var err error
 	if wait {
-		release, err = h.syncLock.Lock(ctx)
+		waitCtx, cancel := context.WithTimeout(ctx, syncLockWait)
+		defer cancel()
+		release, err = h.syncLock.Lock(waitCtx)
 	} else {
 		release, err = h.syncLock.TryLock(ctx)
 	}
@@ -296,23 +315,24 @@ func (h *Handler) takeSyncLock(ctx context.Context, wait bool) (func(), error) {
 }
 
 // syncPaused reports whether a recorded conflict still pauses automatic
-// sync, removing the record once its source commit is in the branch.
-func (h *Handler) syncPaused(ctx context.Context) (bool, error) {
+// sync, removing the record and reporting resumed once its source commit is
+// in the branch.
+func (h *Handler) syncPaused(ctx context.Context) (paused, resumed bool, err error) {
 	current, err := h.loadRecord()
 	if err != nil || current == nil || !current.Pauses() {
-		return false, err
+		return false, false, err
 	}
 	if h.graphPuller == nil {
-		return true, nil
+		return true, false, nil
 	}
-	resolved, err := h.graphPuller.Contains(ctx, current.Source)
+	merged, err := h.graphPuller.Contains(ctx, current.Source)
 	if err != nil {
-		return false, fmt.Errorf("checking whether the conflict was merged: %w", err)
+		return false, false, fmt.Errorf("checking whether the conflict was merged: %w", err)
 	}
-	if !resolved {
-		return true, nil
+	if !merged {
+		return true, false, nil
 	}
-	return false, h.clearRecord(func(recorded model.SyncBlocked) bool {
+	return false, true, h.clearRecord(func(recorded model.SyncBlocked) bool {
 		return recorded.Kind == current.Kind && recorded.Source == current.Source
 	})
 }
@@ -344,6 +364,11 @@ func (h *Handler) recordBlocked(ctx context.Context, block model.SyncBlocked) er
 	}
 	renewed := block
 	err := h.syncRecord.Update(func(current *model.SyncBlocked) *model.SyncBlocked {
+		// Only its merge lifts a conflict; a failed fetch or a held pull found
+		// meanwhile leaves the pause in place.
+		if current != nil && current.Pauses() && !block.Pauses() {
+			return current
+		}
 		renewed = block.Renew(current)
 		return &renewed
 	})
@@ -395,6 +420,10 @@ func (h *Handler) reportRecorded(ctx context.Context) error {
 // the fix when no session does yet.
 func (h *Handler) ClaimSyncNotice(_ context.Context, cmd *command.ClaimSyncNoticeCmd) error {
 	if h.syncRecord == nil {
+		if h.graphDir != "" && cmd.OnNotice != nil {
+			missing := model.SyncBlocked{Kind: model.SyncBlockedGraphMissing, Since: h.now(), Detail: h.graphDir}
+			cmd.OnNotice(missing.Banner())
+		}
 		return nil
 	}
 	var notice string
@@ -402,12 +431,36 @@ func (h *Handler) ClaimSyncNotice(_ context.Context, cmd *command.ClaimSyncNotic
 		if current == nil {
 			return nil
 		}
-		claimed := current.Claim(cmd.Session)
+		claimed := current.Claim(cmd.Session, h.now())
 		notice = claimed.NoticeFor(cmd.Session)
 		return &claimed
 	})
 	if err != nil {
 		return fmt.Errorf("claiming the blocked sync: %w", err)
+	}
+	if notice != "" && cmd.OnNotice != nil {
+		cmd.OnNotice(notice)
+	}
+	return nil
+}
+
+// ReleaseSyncOwner gives up the session's ownership of the blocked sync, so
+// the next agent to call owns the fix (20261028-233037-d-tac-1mc).
+func (h *Handler) ReleaseSyncOwner(_ context.Context, cmd *command.ReleaseSyncOwnerCmd) error {
+	if h.syncRecord == nil {
+		return nil
+	}
+	var notice string
+	err := h.syncRecord.Update(func(current *model.SyncBlocked) *model.SyncBlocked {
+		if current == nil {
+			return nil
+		}
+		released := current.Release(cmd.Session)
+		notice = released.Banner()
+		return &released
+	})
+	if err != nil {
+		return fmt.Errorf("releasing the blocked sync: %w", err)
 	}
 	if notice != "" && cmd.OnNotice != nil {
 		cmd.OnNotice(notice)
@@ -430,9 +483,16 @@ func WithSyncReport(ctx context.Context, emit func(model.SyncBlocked)) context.C
 	return context.WithValue(ctx, syncReportKey{}, &syncReport{reported: map[model.SyncBlockedKind]bool{}, emit: emit})
 }
 
+// WithoutSyncReport ends the invocation scope ctx carries, for a process
+// such as `sdd serve` whose every request and timer round is an invocation of
+// its own.
+func WithoutSyncReport(ctx context.Context) context.Context {
+	return context.WithValue(ctx, syncReportKey{}, (*syncReport)(nil))
+}
+
 func (h *Handler) reportBlocked(ctx context.Context, block model.SyncBlocked) {
-	report, ok := ctx.Value(syncReportKey{}).(*syncReport)
-	if !ok {
+	report, _ := ctx.Value(syncReportKey{}).(*syncReport)
+	if report == nil {
 		slogutils.FromContext(ctx).Info(block.Banner())
 		return
 	}

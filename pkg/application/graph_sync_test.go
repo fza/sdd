@@ -18,6 +18,7 @@ type recordingGraphSync struct {
 	branches []string
 	triggers []sdd.SyncTrigger
 	sessions []string
+	released []string
 	notice   string
 	err      error
 	interval time.Duration
@@ -36,6 +37,13 @@ func (s *recordingGraphSync) SyncNotice(_ context.Context, _, session string) (s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessions = append(s.sessions, session)
+	return s.notice, nil
+}
+
+func (s *recordingGraphSync) ReleaseSyncOwner(_ context.Context, _, session string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.released = append(s.released, session)
 	return s.notice, nil
 }
 

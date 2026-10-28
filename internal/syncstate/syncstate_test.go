@@ -45,7 +45,7 @@ func run(t *testing.T, dir string, args ...string) {
 	}
 }
 
-func TestStateIsSharedByWorktrees(t *testing.T) {
+func TestLockIsSharedAndRecordIsPerBranch(t *testing.T) {
 	root := graphRepo(t)
 	linked := filepath.Join(t.TempDir(), "linked")
 	run(t, root, "worktree", "add", "-q", "-b", "side", linked)
@@ -82,18 +82,22 @@ func TestStateIsSharedByWorktrees(t *testing.T) {
 	if err := main.Update(func(*model.SyncBlocked) *model.SyncBlocked { return &block }); err != nil {
 		t.Fatal(err)
 	}
-	got, err := side.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got == nil || got.Kind != block.Kind || !got.Since.Equal(block.Since) {
-		t.Errorf("a record written in one worktree should be read in the other, got %+v", got)
+	if got, _ := side.Load(); got != nil {
+		t.Errorf("another branch's worktree should not read the record, got %+v", got)
 	}
 	if err := side.Update(func(*model.SyncBlocked) *model.SyncBlocked { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := main.Load(); got != nil {
-		t.Error("a record removed in one worktree should be gone in the other")
+	_, again, err := syncstate.Open(t.Context(), filepath.Join(root, ".sdd", "graph"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := again.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Kind != block.Kind || !got.Since.Equal(block.Since) {
+		t.Errorf("a round on another branch should leave the record alone, and every process on the branch should read it, got %+v", got)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".git", "sdd", "sync.lock")); err != nil {
 		t.Errorf("the lock should live in the common git directory: %v", err)
@@ -126,5 +130,53 @@ func TestOpenRefusesAMissingGraphDirectory(t *testing.T) {
 	_, _, err := syncstate.Open(t.Context(), filepath.Join(graphRepo(t), "missing"))
 	if !errors.Is(err, git.ErrGraphRepoMissing) {
 		t.Errorf("a missing graph directory should never resolve to its parent's repository, got %v", err)
+	}
+}
+
+func TestTryLockSkipsAHeldGraphLock(t *testing.T) {
+	graphDir := filepath.Join(graphRepo(t), ".sdd", "graph")
+	_, state, err := syncstate.Open(t.Context(), graphDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	graphLock, err := syncstate.LockGraph(graphDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := state.TryLock(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if release != nil {
+		release()
+		t.Error("a round should skip while a commit holds the graph lock")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := state.Lock(ctx); err == nil {
+		t.Error("a waiting publish should give up on the graph lock when its context ends")
+	}
+	syncstate.Unlock(graphLock)
+	release, err = state.TryLock(t.Context())
+	if err != nil || release == nil {
+		t.Fatalf("a free graph lock should be taken: %v", err)
+	}
+	release()
+}
+
+func TestDetachedHeadKeepsNoRecord(t *testing.T) {
+	root := graphRepo(t)
+	run(t, root, "checkout", "-q", "--detach")
+	_, state, err := syncstate.Open(t.Context(), filepath.Join(root, ".sdd", "graph"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Update(func(*model.SyncBlocked) *model.SyncBlocked {
+		return &model.SyncBlocked{Kind: model.SyncBlockedNoUpstream}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := state.Load(); got != nil {
+		t.Errorf("a detached HEAD should keep no record, got %+v", got)
 	}
 }

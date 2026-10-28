@@ -27,7 +27,7 @@ func TestSyncBlockedPauses(t *testing.T) {
 func TestSyncBlockedRenew(t *testing.T) {
 	began := time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
 	now := began.Add(time.Hour)
-	previous := &model.SyncBlocked{Kind: model.SyncBlockedFetchFailed, Since: began, Owner: "s_1"}
+	previous := &model.SyncBlocked{Kind: model.SyncBlockedFetchFailed, Since: began, Owner: "s_1", OwnerSeen: began}
 	cases := []struct {
 		name      string
 		previous  *model.SyncBlocked
@@ -42,21 +42,41 @@ func TestSyncBlockedRenew(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := model.SyncBlocked{Kind: tc.kind, Since: now}.Renew(tc.previous)
-			if !got.Since.Equal(tc.wantSince) || got.Owner != tc.wantOwner {
-				t.Errorf("a block found again should keep its start and owner, a new one starts afresh, got %v %q", got.Since, got.Owner)
+			if !got.Since.Equal(tc.wantSince) || got.Owner != tc.wantOwner || (tc.wantOwner != "" && !got.OwnerSeen.Equal(began)) {
+				t.Errorf("a block found again should keep its start and owner with its lease, a new one starts afresh, got %v %q %v", got.Since, got.Owner, got.OwnerSeen)
 			}
 		})
 	}
 }
 
 func TestSyncBlockedClaim(t *testing.T) {
-	unowned := model.SyncBlocked{Kind: model.SyncBlockedDirty}
-	if got := unowned.Claim("s_1").Owner; got != "s_1" {
-		t.Errorf("the first session to claim should own the block, got %q", got)
+	start := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	owned := model.SyncBlocked{Kind: model.SyncBlockedDirty}.Claim("s_1", start)
+	for _, tc := range []struct {
+		name    string
+		block   model.SyncBlocked
+		session string
+		at      time.Duration
+		want    string
+	}{
+		{name: "unowned goes to the first caller", block: model.SyncBlocked{Kind: model.SyncBlockedDirty}, session: "s_1", want: "s_1"},
+		{name: "a live lease keeps the owner", block: owned, session: "s_2", at: model.OwnerLease, want: "s_1"},
+		{name: "a lapsed lease passes on", block: owned, session: "s_2", at: model.OwnerLease + time.Second, want: "s_2"},
+		{name: "a released block passes on", block: owned.Release("s_1"), session: "s_2", want: "s_2"},
+		{name: "another session cannot release it", block: owned.Release("s_2"), session: "s_2", want: "s_1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.block.Claim(tc.session, start.Add(tc.at)).Owner; got != tc.want {
+				t.Errorf("the claim should leave the block with its rightful owner, got %q", got)
+			}
+		})
 	}
-	if got := unowned.Claim("s_1").Claim("s_2").Owner; got != "s_1" {
-		t.Errorf("a later session should not take the block over, got %q", got)
-	}
+	t.Run("the owner's call renews its lease", func(t *testing.T) {
+		renewed := owned.Claim("s_1", start.Add(10*time.Minute))
+		if got := renewed.Claim("s_2", start.Add(10*time.Minute+model.OwnerLease)).Owner; got != "s_1" {
+			t.Errorf("a lease should run from the owner's last call, got %q", got)
+		}
+	})
 }
 
 func TestSyncBlockedNoticeFor(t *testing.T) {

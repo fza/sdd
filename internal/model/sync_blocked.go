@@ -37,7 +37,12 @@ type SyncBlocked struct {
 	Destination string          `json:"destination,omitempty"`
 	Paths       []string        `json:"paths,omitempty"`
 	Owner       string          `json:"owner,omitempty"`
+	OwnerSeen   time.Time       `json:"owner_seen,omitzero"`
 }
+
+// OwnerLease is how long a block stays owned without a call from its owner
+// (20261028-233037-d-tac-1mc).
+const OwnerLease = 15 * time.Minute
 
 // HeldPullBlock is the blocked state a held pull verdict stands for, and
 // false for a verdict that blocks nothing.
@@ -91,17 +96,36 @@ func (b SyncBlocked) Persisted() bool { return b.Kind != SyncBlockedGraphMissing
 func (b SyncBlocked) Renew(previous *SyncBlocked) SyncBlocked {
 	if previous != nil && previous.Kind == b.Kind {
 		b.Since = previous.Since
-		b.Owner = previous.Owner
+		b.Owner, b.OwnerSeen = previous.Owner, previous.OwnerSeen
 	}
 	return b
 }
 
-// Claim returns b owned by session when no agent owns it yet.
-func (b SyncBlocked) Claim(session string) SyncBlocked {
-	if b.Owner == "" {
-		b.Owner = session
+// Claim returns b as session's call at now leaves it: the owner's call renews
+// its lease, and a block nobody owns, or whose owner's lease ran out, passes
+// to session.
+func (b SyncBlocked) Claim(session string, now time.Time) SyncBlocked {
+	if b.Owner == session || b.LiveOwner(now) == "" {
+		b.Owner, b.OwnerSeen = session, now
 	}
 	return b
+}
+
+// Release returns b with session's ownership given up.
+func (b SyncBlocked) Release(session string) SyncBlocked {
+	if b.Owner == session {
+		b.Owner, b.OwnerSeen = "", time.Time{}
+	}
+	return b
+}
+
+// LiveOwner is the session owning b at now, empty when nobody does or the
+// owner's lease ran out.
+func (b SyncBlocked) LiveOwner(now time.Time) string {
+	if b.Owner == "" || now.Sub(b.OwnerSeen) > OwnerLease {
+		return ""
+	}
+	return b.Owner
 }
 
 // Banner is the one line every response carries while the block lasts.

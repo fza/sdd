@@ -60,6 +60,9 @@ type GraphSync interface {
 	// SyncNotice returns the blocked-sync notice for session, empty while
 	// sync proceeds; the first session to ask owns the fix.
 	SyncNotice(ctx context.Context, branch, session string) (string, error)
+	// ReleaseSyncOwner gives up session's ownership of branch's blocked sync
+	// as the session ends, returning the banner while sync is blocked.
+	ReleaseSyncOwner(ctx context.Context, branch, session string) (string, error)
 	// SyncInterval is how often a timer syncs branch, false when none runs.
 	SyncInterval(ctx context.Context, branch string) (time.Duration, bool, error)
 	// SyncBlocked reads what blocks sync of branch, nil while sync proceeds.
@@ -123,6 +126,21 @@ func (r *ProjectRuntime) syncNotice(ctx context.Context, branch, session string)
 	notice, err := r.options.Sync.SyncNotice(ctx, branch, session)
 	if err != nil {
 		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: reading the blocked state: %v", err), "branch", branch)
+	}
+	return notice
+}
+
+func (r *ProjectRuntime) releaseSyncOwner(ctx context.Context, branch, session string) string {
+	if r.options.Sync == nil {
+		return ""
+	}
+	branch, ok := r.syncBranch(ctx, branch)
+	if !ok {
+		return ""
+	}
+	notice, err := r.options.Sync.ReleaseSyncOwner(ctx, branch, session)
+	if err != nil {
+		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: releasing the blocked state: %v", err), "branch", branch)
 	}
 	return notice
 }

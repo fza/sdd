@@ -19,6 +19,7 @@ import (
 	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
@@ -69,15 +70,25 @@ func serveCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			ctx = handlers.WithoutSyncReport(ctx)
 			application, runtime, identity, err := buildLocalApplication(ctx, cmd, dir, sddDir, cfg, reg, runner)
 			if err != nil {
 				return err
 			}
+			timerCtx, stopTimer := context.WithCancel(ctx)
+			timerDone := make(chan struct{})
 			go func() {
-				err := runtime.RunSyncTimer(ctx)
+				defer close(timerDone)
+				err := runtime.RunSyncTimer(timerCtx)
 				if err != nil {
 					slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: timer: %v", err))
 				}
+			}()
+			// A round in flight finishes before serve returns, so no merge
+			// outlives the process that held the sync lock.
+			defer func() {
+				stopTimer()
+				<-timerDone
 			}()
 			retention, err := model.ResolveSessionRetention(cfg)
 			if err != nil {

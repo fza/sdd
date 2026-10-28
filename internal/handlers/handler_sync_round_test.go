@@ -382,3 +382,64 @@ func TestSyncRecordNamesGitFailuresByFixedText(t *testing.T) {
 		}
 	})
 }
+
+func TestSyncRoundAfterAHandMerge(t *testing.T) {
+	conflict := func(now time.Time) *model.SyncBlocked {
+		return &model.SyncBlocked{Kind: model.SyncBlockedConflict, Since: now, Upstream: "origin/main", Source: "upstream-commit"}
+	}
+	t.Run("within the cooldown", func(t *testing.T) {
+		repo := &synctest.Repo{Upstream: "origin/main", Contained: map[string]bool{"upstream-commit": true}, Ahead: 1, GraphAhead: 1}
+		f := newSyncFixture(t, repo)
+		f.record.Current = conflict(f.now)
+		if err := meta.TouchLastFetch(f.sddDir); err != nil {
+			t.Fatal(err)
+		}
+		f.round(t, context.Background(), command.SyncRoundCmd{Cooldown: time.Hour})
+		if !repo.Called("fetch") || !repo.Called("push") {
+			t.Error("the round resuming sync should fetch and push the merge despite the cooldown")
+		}
+	})
+	t.Run("explicit round failing", func(t *testing.T) {
+		repo := &synctest.Repo{Upstream: "origin/main", FetchErr: errors.New("fatal: unable to access")}
+		f := newSyncFixture(t, repo)
+		f.record.Current = conflict(f.now)
+		f.round(t, context.Background(), command.SyncRoundCmd{Explicit: true})
+		if f.record.Current == nil || f.record.Current.Kind != model.SyncBlockedConflict {
+			t.Errorf("a failed explicit round should keep the conflict pausing sync, got %+v", f.record.Current)
+		}
+	})
+}
+
+func TestWithoutSyncReportEndsTheInvocationScope(t *testing.T) {
+	f := newSyncFixture(t, &synctest.Repo{NoRemote: true})
+	ctx, reported := collect(context.Background())
+	f.round(t, handlers.WithoutSyncReport(ctx), command.SyncRoundCmd{})
+	if len(*reported) != 0 {
+		t.Errorf("a block found outside any invocation scope should be logged, not collected, got %+v", *reported)
+	}
+}
+
+func TestClaimSyncNoticeForAMissingGraphRepository(t *testing.T) {
+	handler := handlers.New(handlers.Options{GraphDir: "missing/graph"})
+	var notice string
+	err := handler.ClaimSyncNotice(context.Background(), &command.ClaimSyncNoticeCmd{Session: "s_1", OnNotice: func(text string) { notice = text }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(notice, "is not in a git repository or does not exist") {
+		t.Errorf("a missing graph repository should reach every agent as a banner, got %q", notice)
+	}
+}
+
+func TestReleaseSyncOwner(t *testing.T) {
+	record := &synctest.Record{Current: &model.SyncBlocked{Kind: model.SyncBlockedDirty, Since: time.Now(), Owner: "s_1", OwnerSeen: time.Now()}}
+	handler := handlers.New(handlers.Options{SyncRecord: record})
+	var notice string
+	err := handler.ReleaseSyncOwner(context.Background(), &command.ReleaseSyncOwnerCmd{Session: "s_1", OnNotice: func(text string) { notice = text }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Current.Owner != "" || notice != record.Current.Banner() {
+		t.Errorf("an ending session should give up the fix and get the banner, got owner %q notice %q", record.Current.Owner, notice)
+	}
+}

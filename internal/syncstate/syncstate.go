@@ -23,12 +23,14 @@ import (
 // lockRetryDelay is how often a waiting sync lock retries.
 const lockRetryDelay = 50 * time.Millisecond
 
-// State is the sync lock and the blocked-sync record of one graph
-// repository. Both live in its common git directory, so every worktree and
-// every sdd process on the repository shares them.
+// State is the sync lock of one graph repository and the blocked-sync record
+// of the branch a worktree has checked out. Both live in the repository's
+// common git directory: the lock is shared by every worktree and process, the
+// record by every process on that branch (20261028-231901-d-tac-kr9).
 type State struct {
 	dir      string
 	graphDir string
+	branch   string
 }
 
 // Open resolves the repository holding graphDir and its sync state. A graph
@@ -43,11 +45,17 @@ func Open(ctx context.Context, graphDir string) (git.CLI, *State, error) {
 	if err != nil {
 		return git.CLI{}, nil, fmt.Errorf("locating the sync state of %s: %w", root, err)
 	}
-	return repo, &State{dir: filepath.Join(common, "sdd"), graphDir: graphDir}, nil
+	branch, err := repo.CurrentBranch(ctx)
+	if err != nil {
+		return git.CLI{}, nil, fmt.Errorf("locating the sync state of %s: %w", root, err)
+	}
+	return repo, &State{dir: filepath.Join(common, "sdd"), graphDir: graphDir, branch: branch}, nil
 }
 
-// TryLock takes the sync lock when no process holds it, then the graph lock;
-// the sync lock is always taken first.
+// TryLock takes the sync lock, then the graph lock, when no process holds
+// either; release is nil otherwise. A graph lock held by a commit in flight
+// skips the round instead of waiting, so a commit hook running sdd never
+// waits on the commit that runs it.
 func (s *State) TryLock(context.Context) (func(), error) {
 	lock, err := s.syncLock()
 	if err != nil {
@@ -57,7 +65,17 @@ func (s *State) TryLock(context.Context) (func(), error) {
 	if err != nil || !taken {
 		return nil, err
 	}
-	return s.withGraphLock(lock)
+	graphLock, err := newGraphLock(s.graphDir)
+	if err != nil {
+		Unlock(lock)
+		return nil, err
+	}
+	taken, err = graphLock.TryLock()
+	if err != nil || !taken {
+		Unlock(lock)
+		return nil, err
+	}
+	return releaseBoth(graphLock, lock), nil
 }
 
 // Lock waits for the sync lock until ctx ends, then takes the graph lock.
@@ -73,7 +91,20 @@ func (s *State) Lock(ctx context.Context) (func(), error) {
 	if !taken {
 		return nil, errors.New("sync lock not taken")
 	}
-	return s.withGraphLock(lock)
+	graphLock, err := newGraphLock(s.graphDir)
+	if err != nil {
+		Unlock(lock)
+		return nil, err
+	}
+	taken, err = graphLock.TryLockContext(ctx, lockRetryDelay)
+	if err == nil && !taken {
+		err = errors.New("graph lock not taken")
+	}
+	if err != nil {
+		Unlock(lock)
+		return nil, err
+	}
+	return releaseBoth(graphLock, lock), nil
 }
 
 func (s *State) syncLock() (*flock.Flock, error) {
@@ -84,22 +115,23 @@ func (s *State) syncLock() (*flock.Flock, error) {
 	return flock.New(filepath.Join(s.dir, "sync.lock")), nil
 }
 
-func (s *State) withGraphLock(syncLock *flock.Flock) (func(), error) {
-	graphLock, err := LockGraph(s.graphDir)
-	if err != nil {
-		Unlock(syncLock)
-		return nil, err
-	}
+func releaseBoth(graphLock, syncLock *flock.Flock) func() {
 	return func() {
 		Unlock(graphLock)
 		Unlock(syncLock)
-	}, nil
+	}
 }
 
-func (s *State) recordPath() string { return filepath.Join(s.dir, "sync-blocked.json") }
+func (s *State) recordPath() string {
+	return filepath.Join(s.dir, "sync-blocked", filepath.FromSlash(s.branch)+".json")
+}
 
-// Load reads the blocked-sync record, nil when sync is not blocked.
+// Load reads the branch's blocked-sync record, nil when its sync is not
+// blocked or the worktree is on no branch.
 func (s *State) Load() (*model.SyncBlocked, error) {
+	if s.branch == "" {
+		return nil, nil
+	}
 	data, err := os.ReadFile(s.recordPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -115,10 +147,14 @@ func (s *State) Load() (*model.SyncBlocked, error) {
 	return &record, nil
 }
 
-// Update replaces the record under its own short-lived lock, so a claim never
-// waits for a round's fetch; nil removes it.
+// Update replaces the branch's record under its own short-lived lock, so a
+// claim never waits for a round's fetch; nil removes it. A worktree on no
+// branch keeps no record.
 func (s *State) Update(change func(*model.SyncBlocked) *model.SyncBlocked) error {
-	err := os.MkdirAll(s.dir, 0o755)
+	if s.branch == "" {
+		return nil
+	}
+	err := os.MkdirAll(filepath.Dir(s.recordPath()), 0o755)
 	if err != nil {
 		return err
 	}
@@ -158,17 +194,24 @@ func (s *State) Update(change func(*model.SyncBlocked) *model.SyncBlocked) error
 // LockGraph serializes every writer of one graph directory: the graph store,
 // the Git finalizer and every sync path.
 func LockGraph(dir string) (*flock.Flock, error) {
-	runtimeDir := filepath.Join(dir, ".sdd-runtime")
-	err := os.MkdirAll(runtimeDir, 0o755)
+	lock, err := newGraphLock(dir)
 	if err != nil {
 		return nil, err
 	}
-	lock := flock.New(filepath.Join(runtimeDir, "graph.lock"))
 	err = lock.Lock()
 	if err != nil {
 		return nil, err
 	}
 	return lock, nil
+}
+
+func newGraphLock(dir string) (*flock.Flock, error) {
+	runtimeDir := filepath.Join(dir, ".sdd-runtime")
+	err := os.MkdirAll(runtimeDir, 0o755)
+	if err != nil {
+		return nil, err
+	}
+	return flock.New(filepath.Join(runtimeDir, "graph.lock")), nil
 }
 
 // Unlock releases lock when one was taken.

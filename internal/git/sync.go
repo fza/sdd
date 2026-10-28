@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -49,9 +50,13 @@ func (c CLI) UpstreamRef(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// Fetch runs `git fetch` with no args.
+// Fetch runs `git fetch` with no args, detached from the terminal and bounded
+// like Push, so a stalled remote or a credential prompt cannot hold the sync
+// lock.
 func (c CLI) Fetch(ctx context.Context) error {
-	out, err := exec.CommandContext(ctx, "git", c.at("fetch")...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
+	defer cancel()
+	out, err := runDetached(ctx, c.at("fetch")...)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -60,6 +65,19 @@ func (c CLI) Fetch(ctx context.Context) error {
 		return fmt.Errorf("git fetch: %s", msg)
 	}
 	return nil
+}
+
+// CurrentBranch is the branch HEAD has checked out, empty on a detached HEAD.
+func (c CLI) CurrentBranch(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("symbolic-ref", "--quiet", "--short", "HEAD")...).Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("git symbolic-ref HEAD: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // CountCommits counts commits in rangeSpec whose subject matches

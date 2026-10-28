@@ -449,7 +449,7 @@ func infoCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			presenters.RenderSyncBlocked(cmd.Writer, block)
+			presenters.RenderSyncBlocked(cmd.Writer, block, time.Now())
 			return nil
 		},
 	}

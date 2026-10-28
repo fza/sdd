@@ -34,8 +34,9 @@ func writeInfoHeader(w io.Writer, localParticipant, language, search string) {
 }
 
 // RenderSyncBlocked emits the blocked-sync record and the steps that clear
+// it, or, while an agent session's lease on the fix is live at now, who owns
 // it.
-func RenderSyncBlocked(w io.Writer, block *model.SyncBlocked) {
+func RenderSyncBlocked(w io.Writer, block *model.SyncBlocked, now time.Time) {
 	if block == nil {
 		return
 	}
@@ -55,6 +56,10 @@ func RenderSyncBlocked(w io.Writer, block *model.SyncBlocked) {
 		if field.value != "" {
 			fmt.Fprintf(w, "  %s: %s\n", field.label, field.value)
 		}
+	}
+	if owner := block.LiveOwner(now); owner != "" {
+		fmt.Fprintf(w, "Agent session %s owns the fix; leave it to that agent.\n", owner)
+		return
 	}
 	fmt.Fprintln(w, block.Steps())
 }

@@ -210,6 +210,9 @@ type WorkflowAbandonResult struct {
 	Discarded   []WorkflowInstanceSummary
 	HeldMarkers []string
 	Base        *WorkflowServe
+	// SyncNotice is the blocked-sync banner on a teardown by handle, which
+	// releases the session's ownership of the fix.
+	SyncNotice string
 }
 
 type WorkflowParkResult struct {
@@ -342,6 +345,9 @@ func (w *WorkflowSession) SyncNotice(ctx context.Context, identity RequestIdenti
 	_, runtime, err := w.app.resolve(ctx, identity, w.project, AccessRead)
 	if err != nil {
 		return ""
+	}
+	if w.Finished() {
+		return runtime.releaseSyncOwner(ctx, w.branch, string(w.ID()))
 	}
 	return runtime.syncNotice(ctx, w.branch, string(w.ID()))
 }
@@ -1192,6 +1198,7 @@ func (a *Application) AbandonWorkflowSession(ctx context.Context, identity Reque
 	if _, err := a.sessions.Append(ctx, request.SessionID, stored.Version, appendData); err != nil {
 		return WorkflowAbandonResult{}, err
 	}
+	result.SyncNotice = runtime.releaseSyncOwner(ctx, w.branch, string(request.SessionID))
 	return result, nil
 }
 

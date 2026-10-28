@@ -755,6 +755,7 @@ func (s *Server) abandonSession(ctx context.Context, req *mcp.CallToolRequest, a
 		return nil, AbandonResult{}, err
 	}
 	out := AbandonResult{Abandoned: true, Session: string(result.Session), Label: result.Label, HeldMarkers: boundList(result.HeldMarkers, "held markers")}
+	out.SyncNotice = result.SyncNotice
 	for _, instance := range result.Discarded {
 		out.DiscardedThreads = append(out.DiscardedThreads, instance.Procedure+" at "+instance.Step)
 	}
@@ -1230,10 +1231,18 @@ func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolReques
 		if err != nil && errors.As(err, &coded) && coded.Code != "" {
 			err = fmt.Errorf("%s: %w", coded.Code, err)
 		}
-		if err == nil && slot.claim != nil {
-			if carrier, ok := any(&out).(interface{ setSyncNotice(string) }); ok {
-				carrier.setSyncNotice(slot.claim(ctx))
+		if slot.claim == nil {
+			return res, out, err
+		}
+		notice := slot.claim(ctx)
+		if err != nil {
+			if notice != "" {
+				err = fmt.Errorf("%w\n\n%s", err, notice)
 			}
+			return res, out, err
+		}
+		if carrier, ok := any(&out).(interface{ setSyncNotice(string) }); ok {
+			carrier.setSyncNotice(notice)
 		}
 		return res, out, err
 	}

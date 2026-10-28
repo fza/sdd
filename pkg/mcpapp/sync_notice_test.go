@@ -38,9 +38,20 @@ func (s *testGraphSync) SyncNotice(_ context.Context, _, session string) (string
 	if s.blocked == nil {
 		return "", nil
 	}
-	claimed := s.blocked.Claim(session)
+	claimed := s.blocked.Claim(session, time.Now())
 	s.blocked = &claimed
 	return claimed.NoticeFor(session), nil
+}
+
+func (s *testGraphSync) ReleaseSyncOwner(_ context.Context, _, session string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.blocked == nil {
+		return "", nil
+	}
+	released := s.blocked.Release(session)
+	s.blocked = &released
+	return released.Banner(), nil
 }
 
 func (s *testGraphSync) SyncInterval(context.Context, string) (time.Duration, bool, error) {
@@ -105,6 +116,43 @@ func TestEveryResponseCarriesTheSyncNotice(t *testing.T) {
 	}
 }
 
+func TestFailedCallsAndTeardownsCarryTheSyncNotice(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	owner := connect(t, env.srv)
+	other := connect(t, env.srv)
+	ownerSession := openSession(t, owner).Session
+	otherSession := openSession(t, other).Session
+	env.sync.blocked = conflictBlock()
+
+	res, err := owner.CallTool(t.Context(), &mcp.CallToolParams{Name: "show", Arguments: map[string]any{"session": ownerSession, "ids": []string{"20990101-000000-s-tac-zzz"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(toolText(res), "sync blocked since") {
+		t.Errorf("a failed call should still carry the banner, got %q", toolText(res))
+	}
+	var abandoned mcpserver.AbandonResult
+	call(t, owner, "abandon", map[string]any{"session": ownerSession, "reason": "done here"}, &abandoned)
+	if !strings.HasPrefix(abandoned.SyncNotice, "sync blocked since") || strings.Contains(abandoned.SyncNotice, "git merge") {
+		t.Errorf("a teardown by handle should carry the banner without the steps, got %q", abandoned.SyncNotice)
+	}
+	var view mcpserver.ViewResult
+	call(t, other, "view", map[string]any{"session": otherSession, "layout": "active:as-counts"}, &view)
+	if !strings.Contains(view.SyncNotice, "git merge origin/main") {
+		t.Errorf("once the owner's session is torn down the next caller should own the fix, got %q", view.SyncNotice)
+	}
+}
+
+func toolText(res *mcp.CallToolResult) string {
+	var text []string
+	for _, content := range res.Content {
+		if tc, ok := content.(*mcp.TextContent); ok {
+			text = append(text, tc.Text)
+		}
+	}
+	return strings.Join(text, "\n")
+}
+
 func TestSyncNoticeIsPlainContent(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
@@ -145,5 +193,28 @@ func TestEveryToolSchemaListsTheSyncNotice(t *testing.T) {
 		if !strings.Contains(string(encoded), `"sync_notice"`) {
 			t.Errorf("tool %s should list sync_notice in its output schema", tool.Name)
 		}
+	}
+}
+
+func TestConcludingTheOwnerHandsTheFixOn(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	owner := connect(t, env.srv)
+	other := connect(t, env.srv)
+	shell := openSession(t, owner)
+	otherSession := openSession(t, other).Session
+	env.sync.blocked = conflictBlock()
+
+	var view mcpserver.ViewResult
+	call(t, owner, "view", map[string]any{"session": shell.Session, "layout": "active:as-counts"}, &view)
+	var concluded mcpserver.ServeResult
+	call(t, owner, "next", map[string]any{"session": shell.Session, "instance": shell.Instance, "report": map[string]any{
+		"chooser": "junction", "choice": "conclude", "userWords": "done",
+	}}, &concluded)
+	if !strings.HasPrefix(concluded.SyncNotice, "sync blocked since") || strings.Contains(concluded.SyncNotice, "git merge") {
+		t.Errorf("the concluding call should carry the banner without the steps, got %q", concluded.SyncNotice)
+	}
+	call(t, other, "view", map[string]any{"session": otherSession, "layout": "active:as-counts"}, &view)
+	if !strings.Contains(view.SyncNotice, "git merge origin/main") {
+		t.Errorf("once the owner concluded the next caller should own the fix, got %q", view.SyncNotice)
 	}
 }

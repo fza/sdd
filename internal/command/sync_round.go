@@ -32,6 +32,14 @@ type SyncRoundCmd struct {
 	OnSkipped func()
 }
 
+// ReleaseSyncOwnerCmd captures intent to give up a session's ownership of the
+// blocked sync, when that session ends.
+type ReleaseSyncOwnerCmd struct {
+	Session string
+	// OnNotice is invoked with the banner while sync is blocked.
+	OnNotice func(notice string)
+}
+
 // ClaimSyncNoticeCmd captures intent to deliver the blocked-sync notice to
 // one agent session, making it the owner of the fix when nobody is.
 type ClaimSyncNoticeCmd struct {

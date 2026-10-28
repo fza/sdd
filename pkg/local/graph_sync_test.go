@@ -9,7 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/networkteam/sdd/internal/syncstate"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/local"
@@ -294,5 +296,92 @@ func TestConcurrentSyncRoundsNeverOverlap(t *testing.T) {
 	}
 	if repo.git("rev-parse", "HEAD") != gitIn(t, "", "-C", remote, "rev-parse", "main") {
 		t.Error("the rounds should leave the branch at the upstream")
+	}
+}
+
+// sideWorktree checks branch side out beside repo's main checkout, tracking
+// its own upstream, with the same per-person sync config.
+func sideWorktree(t *testing.T, repo *gitRepository) string {
+	t.Helper()
+	side := filepath.Join(canonicalTempDir(t), "side")
+	repo.git("worktree", "add", "-q", "-b", "side", side)
+	gitIn(t, side, "push", "-q", "-u", "origin", "side")
+	config, err := os.ReadFile(filepath.Join(repo.root, ".sdd", "config.local.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(side, ".sdd", "config.local.yaml"), config, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return side
+}
+
+func TestHeldSyncLockKeepsAnotherWorktreeOut(t *testing.T) {
+	repo, remote := syncedRepository(t, "auto")
+	sideWorktree(t, repo)
+	upstream := pushUpstream(t, remote, ".sdd/graph/upstream.md", "upstream\n", "sdd: capture upstream")
+	_, state, err := syncstate.Open(t.Context(), filepath.Join(repo.root, ".sdd", "graph"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := state.Lock(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.targets().SyncGraph(t.Context(), "side", sdd.SyncOnTimer); err != nil {
+		t.Fatal(err)
+	}
+	if repo.git("rev-parse", "origin/main") == upstream {
+		t.Error("a round in another worktree should not fetch while the sync lock is held")
+	}
+	release()
+	if err := repo.targets().SyncGraph(t.Context(), "side", sdd.SyncOnTimer); err != nil {
+		t.Fatal(err)
+	}
+	if repo.git("rev-parse", "origin/main") != upstream {
+		t.Error("once the lock is free the other worktree's round should fetch")
+	}
+}
+
+func TestPublishWaitsForTheSyncLock(t *testing.T) {
+	repo, remote := syncedRepository(t, "auto")
+	side := sideWorktree(t, repo)
+	before := gitIn(t, "", "-C", remote, "rev-parse", "main")
+	// Held from the other worktree, so only the sync lock stands in the way,
+	// never this graph directory's own lock.
+	_, state, err := syncstate.Open(t.Context(), filepath.Join(side, ".sdd", "graph"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := state.Lock(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	application, identity, binding := repo.captureApplication(t, summaryRunner())
+	done := make(chan error, 1)
+	go func() {
+		_, err := application.CreateEntry(t.Context(), identity, "example", binding, captureDraft(binding, "20261028-230000-s-tac-wai"))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		release()
+		t.Fatalf("a publish should wait for the sync lock, returned %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	if gitIn(t, "", "-C", remote, "rev-parse", "main") != before {
+		t.Error("nothing should be pushed while another process holds the sync lock")
+	}
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the publish should finish once the lock is free")
+	}
+	if gitIn(t, "", "-C", remote, "rev-parse", "main") != repo.git("rev-parse", "HEAD") {
+		t.Error("the waiting publish should still reach the upstream")
 	}
 }
