@@ -222,18 +222,7 @@ func (a *Application) horizon(ctx context.Context, principal Principal, home *Pr
 		return v, nil
 	}
 	step := a.closureStep(principal, home, true, view)
-	// A member whose source view cannot be read declares nothing, so it fails
-	// only a read that selects it, which reads it again
-	// (20260903-153224-s-cpt-ir1).
-	readable := model.DependencyResolverFunc[ProjectID](func(ctx context.Context, id ProjectID) ([]ProjectID, error) {
-		dependencies, err := step.Dependencies(ctx, id)
-		var cleanup *snapshotReleaseError
-		if err != nil && ctx.Err() == nil && !errors.As(err, &cleanup) {
-			return nil, nil
-		}
-		return dependencies, err
-	})
-	for _, err := range model.DependencyClosure(ctx, home.options.Project.ID, readable) {
+	for _, err := range model.DependencyClosure(ctx, home.options.Project.ID, step) {
 		if err != nil {
 			return nil, err
 		}
@@ -256,7 +245,9 @@ func (h *horizon) member(repoID RepoID) (*ProjectRuntime, error) {
 // not part of the reachable closure, so nothing behind it is a valid target.
 // The runtimes it resolved are kept so the next step reads their
 // declarations, and with readConfig a dependency's declarations come from its
-// selected source view, as a read sees them. byRepo and repos keep the first
+// selected source view, as a read sees them; a member whose source view cannot
+// be read declares nothing, so it fails only a read that selects it, which
+// reads it again (20260903-153224-s-cpt-ir1). byRepo and repos keep the first
 // runtime each declared repo ID resolved to, for reads that select by repo ID.
 type accessDependencies struct {
 	access     AccessResolver
@@ -273,8 +264,12 @@ func (d *accessDependencies) Dependencies(ctx context.Context, id ProjectID) ([]
 	current := d.runtimes[id]
 	if d.readConfig && id != d.home {
 		selected, err := d.sourceView(current, "")
-		if err != nil {
+		var cleanup *snapshotReleaseError
+		if err != nil && (ctx.Err() != nil || errors.As(err, &cleanup)) {
 			return nil, err
+		}
+		if err != nil {
+			return nil, nil
 		}
 		current = selected.runtime
 	}
