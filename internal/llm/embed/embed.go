@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	pkgembed "github.com/networkteam/sdd/pkg/llm/embed"
 )
 
@@ -63,7 +64,7 @@ func New(cfg model.EmbeddingConfig) (pkgembed.Embedder, error) {
 			embedder = pkgembed.RateLimited(embedder, rps)
 		}
 	}
-	return embedder, nil
+	return secrets.GuardEmbedder(embedder), nil
 }
 
 // BatchSize resolves the number of texts one request carries: cfg.BatchSize

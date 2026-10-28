@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/urfave/cli/v3"
@@ -22,6 +23,7 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/internal/timing"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 )
@@ -390,6 +392,15 @@ func searchCmd() *cli.Command {
 			phrase := cmd.String("query")
 			if len(terms) == 0 && phrase == "" {
 				return fmt.Errorf("at least one of --term or --query is required")
+			}
+			literal, notice, err := secrets.SearchPhrase(phrase)
+			if err != nil {
+				return err
+			}
+			if literal {
+				terms = append(terms, regexp.QuoteMeta(phrase))
+				phrase = ""
+				fmt.Fprintln(cmd.ErrWriter, notice)
 			}
 			repoSelection := cmd.StringSlice("repo")
 			allRepos := cmd.Bool("all-repos")
