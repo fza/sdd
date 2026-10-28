@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // SyncBlockedKind names why automatic sync of the graph repository cannot
@@ -134,11 +135,11 @@ func (b SyncBlocked) reason() string {
 	case SyncBlockedNoUpstream:
 		return "the branch has no upstream, so graph commits stay unpublished"
 	case SyncBlockedFetchFailed:
-		return fmt.Sprintf("fetching failed: %s", b.Detail)
+		return fmt.Sprintf("fetching failed, git reported %s", strconv.Quote(b.Detail))
 	case SyncBlockedPushFailed:
-		return fmt.Sprintf("pushing to %s failed: %s", b.Upstream, b.Detail)
+		return fmt.Sprintf("pushing to %s failed, git reported %s", b.Upstream, strconv.Quote(b.Detail))
 	case SyncBlockedGraphMissing:
-		return fmt.Sprintf("the graph directory %s is not in a git repository or does not exist", b.Detail)
+		return fmt.Sprintf("the graph directory %s is not in a git repository or does not exist", strconv.Quote(b.Detail))
 	}
 	return string(b.Kind)
 }
@@ -171,6 +172,35 @@ func (b SyncBlocked) Steps() string {
 	return fmt.Sprintf("You own this block, in %s. %s Fix it yourself first and tell the user in one line once it is fixed. "+
 		"When you cannot, such as for commits you may not rewrite, an authentication failure or a missing repository, tell the user and ask how to proceed.",
 		where, fix)
+}
+
+// gitDetailLimit caps the git output a notice quotes.
+const gitDetailLimit = 300
+
+// GitFailureDetail is the part of a failed git call's message a blocked-sync
+// record keeps: one line, capped, with every "remote:" line cut, because the
+// remote server writes those and the notice is served to agents as
+// instructions.
+func GitFailureDetail(err error) string {
+	var kept []string
+	for _, line := range strings.Split(err.Error(), "\n") {
+		if before, _, sent := strings.Cut(line, "remote:"); sent {
+			line = strings.TrimSuffix(strings.TrimSpace(before), ":")
+		}
+		line = strings.TrimSpace(line)
+		if line != "" {
+			kept = append(kept, line)
+		}
+	}
+	detail := strings.Join(kept, "; ")
+	if len(detail) <= gitDetailLimit {
+		return detail
+	}
+	cut := gitDetailLimit
+	for cut > 0 && !utf8.RuneStart(detail[cut]) {
+		cut--
+	}
+	return detail[:cut] + "…"
 }
 
 // noticePathLimit caps the paths a notice lists.

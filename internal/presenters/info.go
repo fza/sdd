@@ -3,6 +3,7 @@ package presenters
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,9 +40,17 @@ func RenderSyncBlocked(w io.Writer, block *model.SyncBlocked) {
 		return
 	}
 	fmt.Fprintf(w, "Sync blocked: %s since %s\n", block.Kind, block.Since.Local().Format(time.RFC3339))
+	paths := make([]string, 0, len(block.Paths))
+	for _, path := range block.Paths {
+		paths = append(paths, strconv.Quote(path))
+	}
+	detail := ""
+	if block.Detail != "" {
+		detail = strconv.Quote(block.Detail)
+	}
 	for _, field := range []struct{ label, value string }{
 		{"Upstream", block.Upstream}, {"Source", block.Source}, {"Destination", block.Destination},
-		{"Paths", strings.Join(block.Paths, ", ")}, {"Detail", block.Detail}, {"Owner", block.Owner},
+		{"Paths", strings.Join(paths, ", ")}, {"Detail", detail}, {"Owner", block.Owner},
 	} {
 		if field.value != "" {
 			fmt.Fprintf(w, "  %s: %s\n", field.label, field.value)

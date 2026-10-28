@@ -45,7 +45,7 @@ func TestInfoShowsTheConflictRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("info should succeed: %v\n%s", err, out)
 	}
-	for _, want := range []string{"Sync blocked: conflict since", "Upstream: origin/", "Source: " + source, "Destination: " + destination, "Paths: .sdd/graph/shared.md", "git merge origin/"} {
+	for _, want := range []string{"Sync blocked: conflict since", "Upstream: origin/", "Source: " + source, "Destination: " + destination, `Paths: ".sdd/graph/shared.md"`, "git merge origin/"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("info should show the record and its fix, missing %q in %q", want, out)
 		}

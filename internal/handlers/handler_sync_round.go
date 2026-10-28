@@ -91,7 +91,7 @@ func (h *Handler) fetchUpstream(ctx context.Context) (model.SyncState, string, e
 	}
 	err = h.fetcher.Fetch(ctx)
 	if err != nil {
-		return model.SyncStateFetchFailed, err.Error(), nil
+		return model.SyncStateFetchFailed, model.GitFailureDetail(err), nil
 	}
 	return model.SyncStateFetched, "", nil
 }
@@ -225,7 +225,7 @@ func (h *Handler) publish(ctx context.Context) (bool, error) {
 
 func (h *Handler) retryPush(ctx context.Context, push *command.PushGraphCmd, pushErr error) (bool, error) {
 	failed := func(cause error) (bool, error) {
-		return true, h.recordBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedPushFailed, Detail: cause.Error()})
+		return true, h.recordBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedPushFailed, Detail: model.GitFailureDetail(cause)})
 	}
 	if h.graphPuller == nil {
 		return failed(pushErr)
