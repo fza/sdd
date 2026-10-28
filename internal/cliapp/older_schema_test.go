@@ -2,7 +2,6 @@ package cliapp_test
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -11,7 +10,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-func TestServeAndInfoOnAnOlderGraph(t *testing.T) {
+func TestServeAndInfoOnASchemaOneGraph(t *testing.T) {
 	f := newAppFixture(t)
 	f.write(t, ".sdd/meta.json", "{\n  \"graph_schema_version\": 1\n}\n")
 
@@ -19,19 +18,19 @@ func TestServeAndInfoOnAnOlderGraph(t *testing.T) {
 	if info.err != nil {
 		t.Fatalf("info: %v\n%s", info.err, info.stderr)
 	}
-	assertContainsOutput(t, "info", info.stdout, fmt.Sprintf("Schema: graph 1, binary %d (writes keep schema 1 until `sdd migrate`)", model.CurrentGraphSchemaVersion))
+	assertContainsOutput(t, "info", info.stdout, "Schema: 1")
 
 	f.serve(t, func(client *mcp.ClientSession) {
 		door, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_session", Arguments: map[string]any{}})
 		if err != nil || door.IsError {
-			t.Fatalf("serve should open a session on an older graph: %v %+v", err, door)
+			t.Fatalf("serve should open a session on a schema-1 graph: %v %+v", err, door)
 		}
 		served, err := json.Marshal(door)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(served), "Graph schema: 1") {
-			t.Errorf("the session framing should name the graph's older schema:\n%s", served)
+		if strings.Contains(string(served), "until `sdd migrate`") {
+			t.Errorf("a graph at the binary's schema should owe no migration in the session framing:\n%s", served)
 		}
 		handle, _ := door.StructuredContent.(map[string]any)["session"].(string)
 		result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "info", Arguments: map[string]any{"session": handle}})

@@ -199,8 +199,8 @@ func TestRepositoryTargetsWriteAndReadAtTheCheckoutSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if committed := repo.git("show", "HEAD:.sdd/graph/"+relPath); strings.Contains(committed, "\ntitle:") {
-		t.Errorf("a capture into a schema-1 checkout should carry no title:\n%s", committed)
+	if committed := repo.git("show", "HEAD:.sdd/graph/"+relPath); !strings.Contains(committed, "\ntitle: test title") {
+		t.Errorf("a capture into a schema-1 checkout should carry its title:\n%s", committed)
 	}
 	info, err := application.Info(t.Context(), identity, "example", sdd.InfoRequest{Branch: "main"})
 	if err != nil {

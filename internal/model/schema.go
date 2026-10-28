@@ -14,12 +14,12 @@ const SchemaMetaFileName = "meta.json"
 
 // CurrentGraphSchemaVersion is the schema version this binary knows how to
 // read and write. Bumped only by an explicit schema migration.
-const CurrentGraphSchemaVersion = 2
+const CurrentGraphSchemaVersion = 1
 
 // SchemaCapabilities states which entry fields a graph schema version
 // defines. A write at an older version leaves out what that version lacks.
 type SchemaCapabilities struct {
-	// Titles: every entry carries a title written beside its summary.
+	// Titles: an entry may carry a title written beside its summary.
 	Titles bool
 }
 
@@ -29,8 +29,7 @@ var schemaVersions = map[int]struct {
 	capabilities SchemaCapabilities
 	change       string
 }{
-	1: {},
-	2: {capabilities: SchemaCapabilities{Titles: true}, change: "every entry carries a title, written by the same call as its summary"},
+	1: {capabilities: SchemaCapabilities{Titles: true}},
 }
 
 // CapabilitiesFor returns what graph schema version supports.

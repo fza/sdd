@@ -20,13 +20,6 @@ func TestCapabilitiesForEveryKnownVersion(t *testing.T) {
 	if !current.Titles {
 		t.Error("the binary's own schema should carry titles")
 	}
-	first, err := model.CapabilitiesFor(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Titles {
-		t.Error("schema 1 should not carry titles")
-	}
 }
 
 func TestCapabilitiesForUnknownVersion(t *testing.T) {
