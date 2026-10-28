@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 // SyncBlockedKind names why automatic sync of the graph repository cannot
@@ -135,9 +134,9 @@ func (b SyncBlocked) reason() string {
 	case SyncBlockedNoUpstream:
 		return "the branch has no upstream, so graph commits stay unpublished"
 	case SyncBlockedFetchFailed:
-		return fmt.Sprintf("fetching failed, git reported %s", strconv.Quote(b.Detail))
+		return fmt.Sprintf("fetching failed: %s", b.Detail)
 	case SyncBlockedPushFailed:
-		return fmt.Sprintf("pushing to %s failed, git reported %s", b.Upstream, strconv.Quote(b.Detail))
+		return fmt.Sprintf("pushing to %s failed: %s", b.Upstream, b.Detail)
 	case SyncBlockedGraphMissing:
 		return fmt.Sprintf("the graph directory %s is not in a git repository or does not exist", strconv.Quote(b.Detail))
 	}
@@ -174,33 +173,37 @@ func (b SyncBlocked) Steps() string {
 		where, fix)
 }
 
-// gitDetailLimit caps the git output a notice quotes.
-const gitDetailLimit = 300
+// gitFailures maps messages git itself prints on a failed fetch or push to
+// fixed descriptions, most specific first.
+var gitFailures = []struct{ marker, description string }{
+	{"Could not resolve host", "the remote host could not be resolved"},
+	{"Authentication failed", "authentication with the remote failed"},
+	{"Permission denied", "authentication with the remote failed"},
+	{"could not read Username", "authentication with the remote failed"},
+	{"[remote rejected]", "the remote declined the push"},
+	{"non-fast-forward", "the remote holds commits not merged here"},
+	{"fetch first", "the remote holds commits not merged here"},
+	{"[rejected]", "the remote rejected the push"},
+	{"Repository not found", "the remote repository does not exist"},
+	{"does not appear to be a git repository", "the remote repository does not exist"},
+	{"Could not read from remote repository", "the remote repository could not be read"},
+	{"unable to access", "the remote could not be reached"},
+	{"Connection refused", "the remote could not be reached"},
+	{"timed out", "the remote could not be reached"},
+	{"hung up", "the remote closed the connection"},
+}
 
-// GitFailureDetail is the part of a failed git call's message a blocked-sync
-// record keeps: one line, capped, with every "remote:" line cut, because the
-// remote server writes those and the notice is served to agents as
-// instructions.
+// GitFailureDetail describes a failed fetch or push by a fixed phrase picked
+// from git's own messages. Git's output is never passed on: the remote server
+// writes part of it, and the notice is served to agents as instructions.
 func GitFailureDetail(err error) string {
-	var kept []string
-	for _, line := range strings.Split(err.Error(), "\n") {
-		if before, _, sent := strings.Cut(line, "remote:"); sent {
-			line = strings.TrimSuffix(strings.TrimSpace(before), ":")
-		}
-		line = strings.TrimSpace(line)
-		if line != "" {
-			kept = append(kept, line)
+	message := err.Error()
+	for _, failure := range gitFailures {
+		if strings.Contains(message, failure.marker) {
+			return failure.description
 		}
 	}
-	detail := strings.Join(kept, "; ")
-	if len(detail) <= gitDetailLimit {
-		return detail
-	}
-	cut := gitDetailLimit
-	for cut > 0 && !utf8.RuneStart(detail[cut]) {
-		cut--
-	}
-	return detail[:cut] + "…"
+	return "for a reason git did not name in a known message; run the command by hand to see it"
 }
 
 // noticePathLimit caps the paths a notice lists.
