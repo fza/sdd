@@ -111,7 +111,7 @@ func (s *FilesystemGraphStore) AcquireSnapshot(ctx context.Context, q app.Snapsh
 func (s *FilesystemGraphStore) leaseSnapshot(retained *retainedSnapshot, schemaVersion int) *app.AcquiredSnapshot {
 	retained.leases++
 	var once sync.Once
-	return &app.AcquiredSnapshot{Snapshot: retained.snapshot.WithSchemaVersion(schemaVersion), Attachments: snapshotAttachments{files: retained.files, dir: s.dir}, Release: func() error {
+	return &app.AcquiredSnapshot{Snapshot: retained.snapshot.WithSchemaVersion(schemaVersion).WithContribution(s.contribution), Attachments: snapshotAttachments{files: retained.files, dir: s.dir}, Release: func() error {
 		once.Do(func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()

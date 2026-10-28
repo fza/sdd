@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
@@ -44,17 +45,23 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 			}
 			graph, err := NewFilesystemGraphStore(FilesystemGraphStoreOptions{
 				Project: project, GraphDir: meta.ResolveGraphDir(checkout, cfg), Branch: q.Branch,
-				MetaPath: filepath.Join(meta.SDDDir(checkout), model.SchemaMetaFileName),
+				MetaPath: filepath.Join(meta.SDDDir(checkout), model.SchemaMetaFileName), Contribution: cfg.Contribution,
 			})
 			if err != nil {
 				return nil, err
 			}
 			return graph.AcquireSnapshot(ctx, q)
 		},
-		Factory: func(_ context.Context, checkout string, target app.MutationTarget) (app.GraphStore, []app.MutationFinalizer, func() error, error) {
+		Factory: func(ctx context.Context, checkout string, target app.MutationTarget) (app.GraphStore, []app.MutationFinalizer, func() error, error) {
 			cfg, err := resolveConfig(checkout)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("mutation target %s: %w", target.Branch, err)
+			}
+			if cfg.Contribution != "" {
+				err = git.CLI{Dir: checkout}.CheckContribution(ctx, cfg.Contribution, cfg.DefaultBranch)
+				if err != nil {
+					return nil, nil, nil, fmt.Errorf("mutation target %s: %w", target.Branch, err)
+				}
 			}
 			graphDir := cfg.GraphDir
 			if graphDir == "" {

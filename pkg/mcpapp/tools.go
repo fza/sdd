@@ -341,6 +341,7 @@ type InfoResult struct {
 	Version      string `json:"version,omitempty"`
 	GraphSchema  int    `json:"graphSchema,omitempty" jsonschema:"schema version the graph records; entries are written at it until an explicit sdd migrate"`
 	BinarySchema int    `json:"binarySchema,omitempty" jsonschema:"schema version this build writes by default"`
+	Contribution string `json:"contribution,omitempty" jsonschema:"upstream ref the checkout contributes to; set, graph writes are refused off a feature branch cut from it"`
 }
 
 type RegistryArgs struct {
@@ -1161,7 +1162,7 @@ func (s *Server) info(ctx context.Context, req *mcp.CallToolRequest, args InfoAr
 	}
 	return nil, InfoResult{
 		Project: string(info.Project.ID), Participant: info.Participant, Language: info.Language, Search: info.Search,
-		Version: s.version, GraphSchema: info.GraphSchema, BinarySchema: info.BinarySchema,
+		Version: s.version, GraphSchema: info.GraphSchema, BinarySchema: info.BinarySchema, Contribution: info.Contribution,
 	}, nil
 
 }

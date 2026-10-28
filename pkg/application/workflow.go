@@ -935,6 +935,9 @@ func (w *WorkflowSession) Framing(ctx context.Context, identity RequestIdentity)
 	if info.GraphSchema < info.BinarySchema {
 		fmt.Fprintf(&infoBlock, "\nGraph schema: %d; entries are written at schema %d until `sdd migrate`", info.GraphSchema, info.GraphSchema)
 	}
+	if info.Contribution != "" {
+		fmt.Fprintf(&infoBlock, "\nMode: contribution (%s); entries are written only on a feature branch cut from it", info.Contribution)
+	}
 	base, err := w.baseLine()
 	if err != nil {
 		return nil, err
@@ -1378,9 +1381,9 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 type materializedGraphView struct {
 	snapshot *Snapshot
 	runtime  *ProjectRuntime
-	// schemaVersion is the source graph's schema; the merged snapshot spans
-	// dependencies and carries none.
-	schemaVersion int
+	// source is the project's own snapshot; the merged snapshot spans
+	// dependencies and carries no schema or contribution stamp.
+	source *Snapshot
 }
 
 type workflowGraphs struct {
@@ -1440,7 +1443,7 @@ func (g *workflowGraphs) targetView(target MutationTarget, fromBinding bool) (*m
 	if g.views == nil {
 		g.views = make(map[MutationTarget]*materializedGraphView)
 	}
-	view := &materializedGraphView{snapshot: snapshot, runtime: runtime, schemaVersion: source.snapshot.SchemaVersion()}
+	view := &materializedGraphView{snapshot: snapshot, runtime: runtime, source: source.snapshot}
 	g.views[target] = view
 	return view, nil
 }
@@ -1476,7 +1479,7 @@ func (w *WorkflowSession) readInfo() (InfoResult, error) {
 	if err != nil {
 		return InfoResult{}, err
 	}
-	return w.app.infoFromRuntime(w.ctx, principal, view.runtime, view.schemaVersion)
+	return w.app.infoFromRuntime(w.ctx, principal, view.runtime, view.source)
 }
 
 type workflowSink struct{ workflow *WorkflowSession }

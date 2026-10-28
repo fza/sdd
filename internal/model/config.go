@@ -152,6 +152,11 @@ type PerRepoConfig struct {
 	// A repository setting it carries no project settings of its own — see
 	// PointerKeys and LocalPointerKeys.
 	ProjectDir string `yaml:"project_dir,omitempty"`
+	// Contribution names the upstream ref (e.g. origin/main) a checkout's
+	// graph writes are contributed to; set, it turns on contribution mode
+	// (ContributionRefusal). Machine-local only: a checkout opts in, the
+	// committed config.yaml never does.
+	Contribution string `yaml:"contribution,omitempty"`
 }
 
 // PointerKeys are the keys a committed config may set beside project_dir:
@@ -527,6 +532,9 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	}
 	if overlay.ProjectDir != "" {
 		out.ProjectDir = overlay.ProjectDir
+	}
+	if overlay.Contribution != "" {
+		out.Contribution = overlay.Contribution
 	}
 	return &out
 }

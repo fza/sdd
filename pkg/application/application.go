@@ -103,10 +103,10 @@ func (a *Application) infoForBranch(ctx context.Context, identity RequestIdentit
 	if err != nil {
 		return InfoResult{}, err
 	}
-	return a.infoFromRuntime(ctx, principal, runtime, snapshot.SchemaVersion())
+	return a.infoFromRuntime(ctx, principal, runtime, snapshot)
 }
 
-func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, runtime *ProjectRuntime, graphSchema int) (InfoResult, error) {
+func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, runtime *ProjectRuntime, source *Snapshot) (InfoResult, error) {
 	search := "text"
 	if runtime.options.Embedder != nil && runtime.options.SearchIndex != nil {
 		search = "vector,text"
@@ -117,7 +117,8 @@ func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, 
 	}
 	return InfoResult{
 		Project: runtime.options.Project, Participant: participant, Language: runtime.options.Language,
-		Search: search, GraphSchema: graphSchema, BinarySchema: model.CurrentGraphSchemaVersion,
+		Search: search, GraphSchema: source.SchemaVersion(), BinarySchema: model.CurrentGraphSchemaVersion,
+		Contribution: source.Contribution(),
 	}, nil
 }
 
