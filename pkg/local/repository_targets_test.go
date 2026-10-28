@@ -50,7 +50,7 @@ func TestRepositoryTargetPublishesCaptureThroughOneCommit(t *testing.T) {
 	if !strings.Contains(message, "SDD-Mutation: "+draft.Publication.String()) || strings.Contains(message, string(binding.SessionID)) {
 		t.Fatalf("publication commit = %q; want the opaque publication ID without the session handle", message)
 	}
-	if subject := repo.git("log", "-1", "--format=%s"); subject != "sdd: signal tactical Local capture is committed once." {
+	if subject := repo.git("log", "-1", "--format=%s"); subject != "sdd: signal tactical test title" {
 		t.Errorf("a capture committed on retry should name what was captured, got %q", subject)
 	}
 	relPath, err := model.IDToRelPath(entryID)
@@ -78,18 +78,18 @@ func TestRepositoryTargetCommitNamesTheCapture(t *testing.T) {
 	repo.write(".sdd/config.yaml", "repo_id: example\ngraph_dir: .sdd/graph\ndefault_branch: main\n")
 	repo.write("global-config.yaml", "")
 	application, identity, binding := repo.captureApplication(t, pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
-		return pkgllm.Result{Text: "Rendered summary."}, nil
+		return pkgllm.Result{Text: `{"title": "Capture commit subjects", "summary": "Rendered summary."}`}, nil
 	}))
 	draft := sdd.EntryDraft{
 		Kind: "directive", Layer: "process", Confidence: "high", Intent: "pending",
-		Body:    "Every capture commit names its entry. A second sentence stays out of the subject once the first fills it up to the limit.",
+		Body:    "Every capture commit names its entry.",
 		EntryID: "20260914-020001-d-prc-cap", Publication: sdd.PublicationKey{Session: binding.SessionID, Sequence: 1, Discriminator: "new-entry"},
 	}
 	if _, err := application.CreateEntry(t.Context(), identity, "example", binding, draft); err != nil {
 		t.Fatal(err)
 	}
-	if subject := repo.git("log", "-1", "--format=%s"); subject != "sdd: decision process Every capture commit names its entry. ..." {
-		t.Errorf("the capture commit should name type, layer and opening of the entry, got %q", subject)
+	if subject := repo.git("log", "-1", "--format=%s"); subject != "sdd: decision process Capture commit subjects" {
+		t.Errorf("the capture commit should name type, layer and title of the entry, got %q", subject)
 	}
 }
 
