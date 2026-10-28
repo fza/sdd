@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -133,6 +134,78 @@ func TestApplicationLoadsDependencyPartiallyWithUnreadableEntry(t *testing.T) {
 	show, err := application.Show(t.Context(), identity, "base", sdd.ShowRequest{IDs: []string{"example.org/dep:20260713-040000-s-tac-dep"}})
 	if err != nil || !strings.Contains(show.Entries, "authorized dependency body") {
 		t.Fatalf("cross-project Show over a partially-loaded dependency = %q, %v", show.Entries, err)
+	}
+}
+
+type unreadableGraphStore struct{}
+
+func (unreadableGraphStore) Current(context.Context) (*sdd.Snapshot, error) {
+	return nil, errors.New("snapshot unreadable")
+}
+func (unreadableGraphStore) ReadAttachmentPage(context.Context, string, string, int64, int) (sdd.AttachmentPage, error) {
+	return sdd.AttachmentPage{}, errors.New("snapshot unreadable")
+}
+
+// TestUnreadableClosureMemberFailsOnlyReadsSelectingIt: base declares a and
+// b, and b's snapshot cannot be read. Reads naming a succeed; a read selecting
+// b, alone or through all repos, fails (20260903-153224-s-cpt-ir1).
+func TestUnreadableClosureMemberFailsOnlyReadsSelectingIt(t *testing.T) {
+	llm := pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
+		return pkgllm.Result{Identity: pkgllm.Identity{Provider: "test", Model: "test"}}, nil
+	})
+	snapshot := func(project sdd.ProjectID, documents ...sdd.EntryDocument) *sdd.Snapshot {
+		s, err := sdd.BuildSnapshot(t.Context(), sdd.SnapshotData{Project: project, Revision: "r1", Entries: documents})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	runtimes := map[sdd.ProjectID]*sdd.ProjectRuntime{}
+	for _, project := range []struct {
+		id           sdd.ProjectID
+		graph        sdd.GraphStore
+		dependencies []sdd.RepoID
+	}{
+		{id: "base", graph: staticGraphStore{snapshot: snapshot("base")}, dependencies: []sdd.RepoID{"dep.example/a", "dep.example/b"}},
+		{id: "dep.example/a", graph: staticGraphStore{attachment: "a attachment", snapshot: snapshot("dep.example/a", sdd.EntryDocument{
+			LogicalPath: "2026/07/13-040000-s-tac-dep.md",
+			Frontmatter: map[string]any{"type": "signal", "kind": "gap", "layer": "tactical", "summary": "A zebrafinch gap."},
+			Body:        "A zebrafinch gap.",
+		})}},
+		{id: "dep.example/b", graph: unreadableGraphStore{}},
+	} {
+		runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{Project: sdd.ProjectRef{ID: project.id}, Graph: project.graph, Dependencies: project.dependencies, LLM: llm})
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtimes[project.id] = runtime
+	}
+	access := &compositionAccess{runtimes: runtimes, permissions: map[string]map[sdd.ProjectID]compositionPermission{
+		"alice": {"base": {read: true}, "dep.example/a": {read: true}, "dep.example/b": {read: true}},
+	}}
+	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: access, Sessions: noSessionStore{}, StagedBlobs: noBlobStore{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := sdd.RequestIdentity{Subject: "alice"}
+	search := func(repos []sdd.RepoID, all bool) (sdd.SearchResult, error) {
+		return application.Search(t.Context(), alice, "base", sdd.SearchRequest{SyncMode: sdd.SearchSyncNone, Terms: []string{"zebrafinch"}, Repos: repos, AllRepos: all})
+	}
+
+	if result, err := search([]sdd.RepoID{"dep.example/a"}, false); err != nil || !strings.Contains(result.Results, "20260713-040000-s-tac-dep") {
+		t.Errorf("search naming a = %q, %v", result.Results, err)
+	}
+	if result, err := application.View(t.Context(), alice, "base", sdd.ViewRequest{Layout: "top(5)", Repos: []sdd.RepoID{"dep.example/a"}}); err != nil || !strings.Contains(result.Sections, "repo: dep.example/a") {
+		t.Errorf("view naming a = %q, %v", result.Sections, err)
+	}
+	if page, err := application.ReadAttachment(t.Context(), alice, "base", sdd.ReadAttachmentRequest{EntryID: "dep.example/a:20260713-040000-s-tac-dep", Filename: "evidence.md", MaxBytes: 64}); err != nil || string(page.Page.Content) != "a attachment" {
+		t.Errorf("attachment of a = %+v, %v", page, err)
+	}
+	if _, err := search([]sdd.RepoID{"dep.example/b"}, false); err == nil {
+		t.Error("search naming b succeeded")
+	}
+	if _, err := search(nil, true); err == nil {
+		t.Error("search across all repos succeeded")
 	}
 }
 

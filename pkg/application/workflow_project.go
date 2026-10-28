@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/networkteam/sdd/internal/engine"
@@ -221,7 +222,18 @@ func (a *Application) horizon(ctx context.Context, principal Principal, home *Pr
 		return v, nil
 	}
 	step := a.closureStep(principal, home, true, view)
-	for _, err := range model.DependencyClosure(ctx, home.options.Project.ID, step) {
+	// A member whose source view cannot be read declares nothing, so it fails
+	// only a read that selects it, which reads it again
+	// (20260903-153224-s-cpt-ir1).
+	readable := model.DependencyResolverFunc[ProjectID](func(ctx context.Context, id ProjectID) ([]ProjectID, error) {
+		dependencies, err := step.Dependencies(ctx, id)
+		var cleanup *snapshotReleaseError
+		if err != nil && ctx.Err() == nil && !errors.As(err, &cleanup) {
+			return nil, nil
+		}
+		return dependencies, err
+	})
+	for _, err := range model.DependencyClosure(ctx, home.options.Project.ID, readable) {
 		if err != nil {
 			return nil, err
 		}
