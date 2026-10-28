@@ -33,7 +33,7 @@ func TestSyncModeIsSetPerPerson(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			cfg, err := meta.ResolveConfig(tc.global, sddDir)
+			cfg, err := meta.ResolveConfig(tc.global, sddDir, "")
 			if err != nil {
 				t.Fatalf("every layer should load: %v", err)
 			}
