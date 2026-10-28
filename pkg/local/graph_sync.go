@@ -2,99 +2,118 @@ package local
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
+	"time"
 
-	"github.com/networkteam/sdd/internal/finders"
-	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/slogutils"
+
+	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/syncstate"
 	app "github.com/networkteam/sdd/pkg/application"
 )
-
-// checkGraphSync runs the cooldown-gated sync check in the repository holding
-// the graph of the project at sddDir: it fetches once the cooldown has passed
-// and compares the branch with its upstream.
-func checkGraphSync(ctx context.Context, sddDir string, cfg *model.PerRepoConfig) (model.SyncStatus, error) {
-	f := finders.New(finders.Options{Config: cfg, GitSyncer: graphRepository(sddDir, cfg)})
-	return f.SyncStatus(ctx, query.SyncStatusQuery{SDDDir: sddDir, RespectCooldown: true})
-}
-
-// pullGraph merges and publishes upstream graph commits under automatic sync
-// (20261027-194536-d-tac-190), reading the remote-tracking ref the last check
-// fetched.
-func pullGraph(ctx context.Context, sddDir string, cfg *model.PerRepoConfig) error {
-	repo := graphRepository(sddDir, cfg)
-	handler := handlers.New(handlers.Options{
-		GraphDir: meta.ResolveGraphDir(filepath.Dir(sddDir), cfg), GraphPuller: repo, Pusher: repo, SyncMode: model.ResolveSyncMode(cfg),
-	})
-	return handler.AutoPullGraph(ctx)
-}
-
-func graphRepository(sddDir string, cfg *model.PerRepoConfig) git.CLI {
-	return git.CLI{Dir: git.RepoRootFor(meta.ResolveGraphDir(filepath.Dir(sddDir), cfg))}
-}
 
 // GraphPublisher pushes what a mutation committed under automatic sync. It
 // runs after GitFinalizer and is independent of it, so a retried mutation
 // whose commit already landed still publishes.
 type GraphPublisher struct {
-	Checkout string
 	GraphDir string
 }
 
 func (GraphPublisher) Name() string { return "git-publish" }
 
 func (p GraphPublisher) Finalize(ctx context.Context, _ app.AppliedMutation) error {
-	lock, err := lockGraph(p.GraphDir)
+	opts, err := syncstate.HandlerOptions(ctx, p.GraphDir, handlers.Options{SyncMode: model.SyncModeAuto})
 	if err != nil {
 		return err
 	}
-	defer unlock(lock)
-	repo := git.CLI{Dir: p.Checkout}
-	handler := handlers.New(handlers.Options{GraphDir: p.GraphDir, Pusher: repo, GraphPuller: repo, SyncMode: model.SyncModeAuto})
-	return handler.PublishGraph(ctx)
+	return handlers.New(opts).PublishGraph(ctx)
 }
 
-// SyncGraph is the application's GraphSync over registered checkouts: the
-// sync check and automatic pull in the checkout of branch, when that
-// checkout's config sets sync.mode auto. A conflicting merge returns its
-// notice instead of an error.
-func (a *GitWorktreeAcquirer) SyncGraph(ctx context.Context, branch string) (string, error) {
+// SyncGraph runs one sync round in the checkout of branch when that
+// checkout's config sets sync.mode auto. A round started by a call waits out
+// the cooldown; a timer round always fetches and stamps the marker.
+func (a *GitWorktreeAcquirer) SyncGraph(ctx context.Context, branch string, trigger app.SyncTrigger) error {
+	checkout, cfg, err := a.syncCheckout(ctx, branch)
+	if err != nil || model.ResolveSyncMode(cfg) != model.SyncModeAuto {
+		return err
+	}
+	opts, err := syncstate.HandlerOptions(ctx, meta.ResolveGraphDir(checkout, cfg), handlers.Options{
+		GraphDir: meta.ResolveGraphDir(checkout, cfg), SyncMode: model.SyncModeAuto,
+	})
+	if err != nil {
+		return err
+	}
+	var cooldown time.Duration
+	if trigger == app.SyncOnCall {
+		cooldown = model.ResolveSyncCooldown(cfg)
+	}
+	log := slogutils.FromContext(ctx)
+	ctx = handlers.WithSyncReport(ctx, func(block model.SyncBlocked) { log.Info(block.Banner()) })
+	err = handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{SDDDir: filepath.Join(checkout, model.SDDDirName), Cooldown: cooldown})
+	if err != nil {
+		return fmt.Errorf("syncing the graph of %s: %w", branch, err)
+	}
+	return nil
+}
+
+// SyncNotice claims the blocked-sync notice of branch's graph repository for
+// session.
+func (a *GitWorktreeAcquirer) SyncNotice(ctx context.Context, branch, session string) (string, error) {
+	checkout, cfg, err := a.syncCheckout(ctx, branch)
+	if err != nil || model.ResolveSyncMode(cfg) != model.SyncModeAuto {
+		return "", err
+	}
+	opts, err := syncstate.HandlerOptions(ctx, meta.ResolveGraphDir(checkout, cfg), handlers.Options{})
+	if err != nil {
+		return "", err
+	}
+	var notice string
+	err = handlers.New(opts).ClaimSyncNotice(ctx, &command.ClaimSyncNoticeCmd{Session: session, OnNotice: func(text string) { notice = text }})
+	return notice, err
+}
+
+// SyncInterval is the sync.interval of branch's checkout under automatic
+// sync.
+func (a *GitWorktreeAcquirer) SyncInterval(ctx context.Context, branch string) (time.Duration, bool, error) {
+	_, cfg, err := a.syncCheckout(ctx, branch)
+	if err != nil {
+		return 0, false, err
+	}
+	interval, on := model.ResolveSyncInterval(cfg)
+	return interval, on, nil
+}
+
+func (a *GitWorktreeAcquirer) syncCheckout(ctx context.Context, branch string) (string, *model.PerRepoConfig, error) {
 	if a.resolveConfig == nil {
-		return "", nil
+		return "", nil, nil
 	}
 	checkout, err := a.resolveCheckout(ctx, app.MutationTarget{Project: a.project, Branch: branch})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	cfg, err := a.resolveConfig(checkout)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	if model.ResolveSyncMode(cfg) != model.SyncModeAuto {
-		return "", nil
+	return checkout, cfg, nil
+}
+
+// SyncBlocked reads what blocks sync of branch's graph repository.
+func (a *GitWorktreeAcquirer) SyncBlocked(ctx context.Context, branch string) (*app.SyncBlocked, error) {
+	checkout, cfg, err := a.syncCheckout(ctx, branch)
+	if err != nil || model.ResolveSyncMode(cfg) != model.SyncModeAuto {
+		return nil, err
 	}
-	lock, err := lockGraph(meta.ResolveGraphDir(checkout, cfg))
-	if err != nil {
-		return "", err
+	block, err := syncstate.ReadBlocked(ctx, meta.ResolveGraphDir(checkout, cfg))
+	if err != nil || block == nil {
+		return nil, err
 	}
-	defer unlock(lock)
-	sddDir := filepath.Join(checkout, model.SDDDirName)
-	status, err := checkGraphSync(ctx, sddDir, cfg)
-	if err != nil {
-		return "", fmt.Errorf("checking graph sync on %s: %w", branch, err)
-	}
-	if !status.State.Fetched() {
-		return "", nil
-	}
-	err = pullGraph(ctx, sddDir, cfg)
-	var conflict *handlers.MergeConflictError
-	if errors.As(err, &conflict) {
-		return conflict.Notice(), nil
-	}
-	return "", err
+	return &app.SyncBlocked{
+		Kind: string(block.Kind), Since: block.Since, Upstream: block.Upstream, Detail: block.Detail,
+		Source: block.Source, Destination: block.Destination, Paths: block.Paths, Owner: block.Owner, Steps: block.Steps(),
+	}, nil
 }

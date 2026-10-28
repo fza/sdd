@@ -54,6 +54,10 @@ const (
 	// is empty or unparseable.
 	DefaultSyncCooldown = "15m"
 
+	// MinSyncInterval is the shortest sync.interval a timer runs at, so a
+	// typo cannot make every server hammer the remote.
+	MinSyncInterval = time.Minute
+
 	// DefaultSessionRetention is how long an ended engine session's log is
 	// kept before collection removes it. Sessions are scaffolding, but a
 	// dialogue that has just ended is exactly the one worth reading when
@@ -179,6 +183,10 @@ type SyncConfig struct {
 	// Mode chooses whether graph commits are pushed and upstream graph
 	// commits pulled automatically. Empty means SyncModeManual.
 	Mode SyncMode `yaml:"mode,omitempty"`
+	// Interval is how often a running `sdd serve` syncs the graph repository
+	// under automatic sync. Go duration string, at least MinSyncInterval;
+	// empty means no timer.
+	Interval string `yaml:"interval,omitempty"`
 }
 
 // SyncMode is the sync.mode setting. It is set per person: only the
@@ -201,26 +209,56 @@ type IgnoredSetting struct {
 // IgnoredSettings returns the settings in one config layer that sdd reads
 // past. committed marks the shared .sdd/config.yaml.
 func IgnoredSettings(layer BaseConfig, committed bool) []IgnoredSetting {
-	mode := layer.Sync.Mode
+	var ignored []IgnoredSetting
+	if reason := ignoredSyncMode(layer.Sync.Mode, committed); reason != "" {
+		ignored = append(ignored, IgnoredSetting{Key: "sync.mode", Reason: reason})
+	}
+	if reason := ignoredSyncInterval(layer.Sync.Interval, committed); reason != "" {
+		ignored = append(ignored, IgnoredSetting{Key: "sync.interval", Reason: reason})
+	}
+	return ignored
+}
+
+const personalOnlyReason = "only the user-global config or config.local.yaml may set it"
+
+func ignoredSyncMode(mode SyncMode, committed bool) string {
 	switch {
 	case mode == "":
-		return nil
+		return ""
 	case committed:
-		return []IgnoredSetting{{Key: "sync.mode", Reason: "only the user-global config or config.local.yaml may set it"}}
+		return personalOnlyReason
 	case mode != SyncModeManual && mode != SyncModeAuto:
-		return []IgnoredSetting{{Key: "sync.mode", Reason: fmt.Sprintf("%q is not %s or %s", mode, SyncModeManual, SyncModeAuto)}}
+		return fmt.Sprintf("%q is not %s or %s", mode, SyncModeManual, SyncModeAuto)
 	}
-	return nil
+	return ""
+}
+
+func ignoredSyncInterval(interval string, committed bool) string {
+	if interval == "" {
+		return ""
+	}
+	if committed {
+		return personalOnlyReason
+	}
+	d, err := time.ParseDuration(interval)
+	if err != nil {
+		return fmt.Sprintf("%q is not a duration such as 5m", interval)
+	}
+	if d < MinSyncInterval {
+		return fmt.Sprintf("%s is below the %s minimum", interval, MinSyncInterval)
+	}
+	return ""
 }
 
 // HonoredCommitted returns the committed layer without the settings only a
 // person's own config may make.
 func HonoredCommitted(committed *PerRepoConfig) *PerRepoConfig {
-	if committed == nil || committed.Sync.Mode == "" {
+	if committed == nil || (committed.Sync.Mode == "" && committed.Sync.Interval == "") {
 		return committed
 	}
 	honored := *committed
 	honored.Sync.Mode = ""
+	honored.Sync.Interval = ""
 	return &honored
 }
 
@@ -520,6 +558,9 @@ func mergeSyncConfig(base, overlay SyncConfig) SyncConfig {
 	if overlay.Mode != "" {
 		out.Mode = overlay.Mode
 	}
+	if overlay.Interval != "" {
+		out.Interval = overlay.Interval
+	}
 	return out
 }
 
@@ -655,10 +696,12 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"\n" +
 		"# Background sync — controls how often the CLI auto-fetches to detect graph\n" +
 		"# changes from collaborators. Go duration string. mode: auto pushes every\n" +
-		"# graph commit and pulls upstream graph commits on that check.\n" +
+		"# graph commit and pulls upstream graph commits on that check; interval,\n" +
+		"# set per person, makes a running `sdd serve` sync on that timer too.\n" +
 		"# sync:\n" +
 		"#   cooldown: " + DefaultSyncCooldown + "\n" +
-		"#   mode: " + string(SyncModeManual) + "\n"
+		"#   mode: " + string(SyncModeManual) + "\n" +
+		"#   interval: 5m\n"
 }
 
 // ResolveSessionRetention returns the effective session retention from cfg.
@@ -709,6 +752,17 @@ func ResolveSyncMode(cfg *PerRepoConfig) SyncMode {
 		return SyncModeAuto
 	}
 	return SyncModeManual
+}
+
+// ResolveSyncInterval returns how often a running `sdd serve` syncs the
+// graph repository, and false when no timer runs: sync.mode is not auto, or
+// sync.interval is unset, malformed or below MinSyncInterval.
+func ResolveSyncInterval(cfg *PerRepoConfig) (time.Duration, bool) {
+	if ResolveSyncMode(cfg) != SyncModeAuto || cfg.Sync.Interval == "" || ignoredSyncInterval(cfg.Sync.Interval, false) != "" {
+		return 0, false
+	}
+	d, _ := time.ParseDuration(cfg.Sync.Interval)
+	return d, true
 }
 
 // parsePositiveDuration reads a configured duration, falling back to a baked

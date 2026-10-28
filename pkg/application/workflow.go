@@ -241,8 +241,6 @@ type WorkflowSession struct {
 	// startProject is the project the instance being started targets, which
 	// the sink records in the same append as the engine's start event.
 	startProject ProjectID
-	// syncNotice rides the first serve after the sync that raised it.
-	syncNotice string
 }
 
 func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity, project ProjectID, request WorkflowOpenRequest) (*WorkflowSession, *WorkflowServe, error) {
@@ -334,13 +332,18 @@ func (a *Application) RefreshWorkflow(ctx context.Context, identity RequestIdent
 	if end := stored.Metadata.Ended; end != nil {
 		return nil, endedSessionError(stored.Metadata, *end)
 	}
-	notice := runtime.syncGraph(ctx, stored.Metadata.Branch)
-	w, err := a.replayWorkflow(ctx, identity, runtime, stored)
+	runtime.syncGraph(ctx, stored.Metadata.Branch, SyncOnCall)
+	return a.replayWorkflow(ctx, identity, runtime, stored)
+}
+
+// SyncNotice returns the blocked-sync notice a response in this session
+// carries, empty while sync of its branch's graph repository proceeds.
+func (w *WorkflowSession) SyncNotice(ctx context.Context, identity RequestIdentity) string {
+	_, runtime, err := w.app.resolve(ctx, identity, w.project, AccessRead)
 	if err != nil {
-		return nil, err
+		return ""
 	}
-	w.syncNotice = notice
-	return w, nil
+	return runtime.syncNotice(ctx, w.branch, string(w.ID()))
 }
 
 func (a *Application) replayWorkflow(ctx context.Context, identity RequestIdentity, runtime *ProjectRuntime, stored StoredSession) (*WorkflowSession, error) {
@@ -1347,10 +1350,6 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		result.PendingOperation = pending
 	}
 	result.Cancellation = workflowCancellation(serve.Cancellation)
-	if w.syncNotice != "" {
-		result.Instructions = w.syncNotice + "\n\n" + result.Instructions
-		w.syncNotice = ""
-	}
 	if serve.Chooser != nil {
 		chooser := &WorkflowChooser{Chooser: serve.Chooser.Chooser, Kind: ChooserKind(serve.Chooser.Kind)}
 		for _, option := range serve.Chooser.Options {

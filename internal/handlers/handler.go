@@ -84,6 +84,9 @@ type Handler struct {
 	puller      Puller
 	pusher      Pusher
 	graphPuller GraphPuller
+	fetcher     GraphFetcher
+	syncLock    SyncLock
+	syncRecord  SyncRecord
 	syncMode    model.SyncMode
 	repos       *repos.Manager
 	stderr      io.Writer
@@ -103,6 +106,11 @@ type Options struct {
 	Puller      Puller
 	Pusher      Pusher
 	GraphPuller GraphPuller
+	// GraphFetcher, SyncLock and SyncRecord serve automatic sync rounds; a
+	// round without a GraphFetcher reports the graph repository missing.
+	GraphFetcher GraphFetcher
+	SyncLock     SyncLock
+	SyncRecord   SyncRecord
 	// SyncMode decides whether a graph commit is pushed before the command
 	// returns; empty means manual.
 	SyncMode model.SyncMode
@@ -131,6 +139,9 @@ func New(opts Options) *Handler {
 		puller:      opts.Puller,
 		pusher:      opts.Pusher,
 		graphPuller: opts.GraphPuller,
+		fetcher:     opts.GraphFetcher,
+		syncLock:    opts.SyncLock,
+		syncRecord:  opts.SyncRecord,
 		syncMode:    opts.SyncMode,
 		repos:       opts.Repos,
 		stderr:      opts.Stderr,

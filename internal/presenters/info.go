@@ -3,7 +3,10 @@ package presenters
 import (
 	"fmt"
 	"io"
+	"strings"
+	"time"
 
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 )
 
@@ -27,4 +30,22 @@ func writeInfoHeader(w io.Writer, localParticipant, language, search string) {
 	if search != "" {
 		fmt.Fprintf(w, "Search: %s\n", search)
 	}
+}
+
+// RenderSyncBlocked emits the blocked-sync record and the steps that clear
+// it.
+func RenderSyncBlocked(w io.Writer, block *model.SyncBlocked) {
+	if block == nil {
+		return
+	}
+	fmt.Fprintf(w, "Sync blocked: %s since %s\n", block.Kind, block.Since.Local().Format(time.RFC3339))
+	for _, field := range []struct{ label, value string }{
+		{"Upstream", block.Upstream}, {"Source", block.Source}, {"Destination", block.Destination},
+		{"Paths", strings.Join(block.Paths, ", ")}, {"Detail", block.Detail}, {"Owner", block.Owner},
+	} {
+		if field.value != "" {
+			fmt.Fprintf(w, "  %s: %s\n", field.label, field.value)
+		}
+	}
+	fmt.Fprintln(w, block.Steps())
 }

@@ -103,7 +103,15 @@ func (a *Application) infoForBranch(ctx context.Context, identity RequestIdentit
 	if err != nil {
 		return InfoResult{}, err
 	}
-	return a.infoFromRuntime(ctx, principal, runtime)
+	result, err := a.infoFromRuntime(ctx, principal, runtime)
+	if err != nil {
+		return InfoResult{}, err
+	}
+	result.SyncBlocked, err = runtime.syncBlocked(ctx, branch)
+	if err != nil {
+		return InfoResult{}, fmt.Errorf("reading the blocked sync: %w", err)
+	}
+	return result, nil
 }
 
 func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, runtime *ProjectRuntime) (InfoResult, error) {

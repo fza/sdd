@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -73,6 +74,7 @@ type AbandonArgs struct {
 }
 
 type AbandonResult struct {
+	SyncNoticeField
 	Abandoned bool   `json:"abandoned"`
 	Session   string `json:"session,omitempty" jsonschema:"the torn-down session, on teardown by handle"`
 	Label     string `json:"label,omitempty" jsonschema:"the torn-down session's subject label"`
@@ -91,6 +93,7 @@ type ParkArgs struct {
 }
 
 type ParkResult struct {
+	SyncNoticeField
 	Parked       bool       `json:"parked"`
 	Instance     string     `json:"instance"`
 	Procedure    string     `json:"procedure"`
@@ -168,6 +171,7 @@ func cancellationResult(cancelled *sdd.WorkflowCancellation) *CancellationResult
 // ServeResult is the loop's uniform response shape: where the instance
 // stands, what advances it, and the material to work with.
 type ServeResult struct {
+	SyncNoticeField
 	Session          string                  `json:"session,omitempty" jsonschema:"session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool"`
 	Project          string                  `json:"project,omitempty" jsonschema:"the project this instance works in — the session's home project unless the move was started in a dependency"`
 	Projects         []ProjectResult         `json:"projects,omitempty" jsonschema:"start_session only: the principal's accessible projects, served with status project-required when several exist and none was passed — no session opened yet"`
@@ -217,6 +221,7 @@ type ResumeSessionArgs struct {
 }
 
 type ResumeSessionResult struct {
+	SyncNoticeField
 	Session          string                  `json:"session" jsonschema:"session handle (the session ID)"`
 	Project          string                  `json:"project,omitempty" jsonschema:"the project this session is bound to"`
 	Participant      string                  `json:"participant,omitempty"`
@@ -236,6 +241,7 @@ type BindBranchArgs struct {
 }
 
 type BindBranchResult struct {
+	SyncNoticeField
 	Branch string `json:"branch,omitempty" jsonschema:"the now-effective branch binding; empty after clear"`
 	Status string `json:"status"`
 }
@@ -255,6 +261,7 @@ type SearchReplaceArg struct {
 }
 
 type StageAttachmentResult struct {
+	SyncNoticeField
 	Handle string `json:"handle" jsonschema:"attachment handle; pass it in a report's attachments field"`
 }
 
@@ -277,6 +284,7 @@ type SearchArgs struct {
 }
 
 type SearchResult struct {
+	SyncNoticeField
 	Coverage []sdd.SearchCoverage `json:"coverage,omitempty" jsonschema:"published entry coverage for each fixed search snapshot"`
 	Notice   string               `json:"notice,omitempty" jsonschema:"readable incomplete-indexing notice"`
 	Results  string               `json:"results" jsonschema:"matching entries with citations"`
@@ -291,6 +299,7 @@ type ViewArgs struct {
 }
 
 type ViewResult struct {
+	SyncNoticeField
 	Sections string `json:"sections"`
 	Hint     string `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, served once per connection"`
 }
@@ -304,6 +313,7 @@ type ShowArgs struct {
 }
 
 type ShowResult struct {
+	SyncNoticeField
 	Entries string `json:"entries"`
 }
 
@@ -318,6 +328,7 @@ type ReadAttachmentArgs struct {
 }
 
 type ReadAttachmentResult struct {
+	SyncNoticeField
 	Name       string   `json:"name"`
 	Content    string   `json:"content"`
 	Offset     int64    `json:"offset"`
@@ -328,17 +339,40 @@ type ReadAttachmentResult struct {
 	Path       string   `json:"path,omitempty" jsonschema:"absolute filesystem path; present only for local (stdio) clients, which may read the file directly instead of paging"`
 }
 
+// SyncNoticeField carries, on every result, the blocked-sync notice while
+// automatic sync of the graph repository cannot proceed
+// (20261028-201909-d-tac-fxp).
+type SyncNoticeField struct {
+	SyncNotice string `json:"sync_notice,omitempty" jsonschema:"set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says"`
+}
+
+func (f *SyncNoticeField) setSyncNotice(notice string) { f.SyncNotice = notice }
+
+// SyncBlockedResult is the blocked-sync record info shows.
+type SyncBlockedResult struct {
+	Kind        string   `json:"kind"`
+	Since       string   `json:"since"`
+	Upstream    string   `json:"upstream,omitempty"`
+	Detail      string   `json:"detail,omitempty"`
+	Source      string   `json:"source,omitempty" jsonschema:"for a conflict: the upstream commit that would not merge"`
+	Destination string   `json:"destination,omitempty" jsonschema:"for a conflict: the local commit it was to merge into"`
+	Paths       []string `json:"paths,omitempty"`
+	Owner       string   `json:"owner,omitempty" jsonschema:"session owning the fix"`
+}
+
 type InfoArgs struct {
 	Session string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the header describes that session's project"`
 	Project string `json:"project,omitempty" jsonschema:"project to describe; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
 }
 
 type InfoResult struct {
-	Project     string `json:"project,omitempty" jsonschema:"the session's project ID"`
-	Participant string `json:"participant,omitempty" jsonschema:"configured local participant (canonical name)"`
-	Language    string `json:"language,omitempty" jsonschema:"configured graph language; empty = English"`
-	Search      string `json:"search" jsonschema:"available retrieval modes: text or vector,text"`
-	Version     string `json:"version,omitempty"`
+	SyncNoticeField
+	SyncBlocked *SyncBlockedResult `json:"sync_blocked,omitempty" jsonschema:"what blocks automatic sync of the graph repository; absent while sync proceeds"`
+	Project     string             `json:"project,omitempty" jsonschema:"the session's project ID"`
+	Participant string             `json:"participant,omitempty" jsonschema:"configured local participant (canonical name)"`
+	Language    string             `json:"language,omitempty" jsonschema:"configured graph language; empty = English"`
+	Search      string             `json:"search" jsonschema:"available retrieval modes: text or vector,text"`
+	Version     string             `json:"version,omitempty"`
 }
 
 type RegistryArgs struct {
@@ -355,6 +389,7 @@ type RegistryFuncResult struct {
 }
 
 type RegistryResult struct {
+	SyncNoticeField
 	Functions []RegistryFuncResult `json:"functions"`
 }
 
@@ -503,6 +538,7 @@ func (s *Server) attachedSession(ctx context.Context, req *mcp.CallToolRequest, 
 		ss.root = workflow
 	}
 	ss.pending, ss.seen = nil, nil
+	s.noteSyncSession(ctx, req, ss)
 	if ss.root.Finished() {
 		ss.mu.Unlock()
 		s.sessions.evict(id)
@@ -557,6 +593,7 @@ func (s *Server) startSession(ctx context.Context, req *mcp.CallToolRequest, arg
 		return nil, ServeResult{}, err
 	}
 	ss := s.sessions.put(&shellSession{root: workflow})
+	s.noteSyncSession(ctx, req, ss)
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	result, err := s.toRootServeResult(ctx, req, ss, serve)
@@ -1159,7 +1196,7 @@ func (s *Server) info(ctx context.Context, req *mcp.CallToolRequest, args InfoAr
 	}
 	return nil, InfoResult{
 		Project: string(info.Project.ID), Participant: info.Participant, Language: info.Language, Search: info.Search,
-		Version: s.version,
+		Version: s.version, SyncBlocked: syncBlockedResult(info.SyncBlocked),
 	}, nil
 
 }
@@ -1187,12 +1224,50 @@ func (s *Server) registryDocs(ctx context.Context, req *mcp.CallToolRequest, arg
 // its code rather than its prose (d-cpt-s2i). Uncoded errors pass unchanged.
 func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
-		res, out, err := handler(ctx, req, in)
+		slot := &syncNoticeSlot{}
+		res, out, err := handler(context.WithValue(ctx, syncNoticeKey{}, slot), req, in)
 		var coded *sdd.ApplicationError
 		if err != nil && errors.As(err, &coded) && coded.Code != "" {
 			err = fmt.Errorf("%s: %w", coded.Code, err)
 		}
+		if err == nil && slot.claim != nil {
+			if carrier, ok := any(&out).(interface{ setSyncNotice(string) }); ok {
+				carrier.setSyncNotice(slot.claim(ctx))
+			}
+		}
 		return res, out, err
+	}
+}
+
+type syncNoticeKey struct{}
+
+// syncNoticeSlot lets the call's session, once attached, name how its
+// blocked-sync notice is claimed after the handler ran, so the notice
+// reflects what the call itself recorded.
+type syncNoticeSlot struct {
+	claim func(context.Context) string
+}
+
+func (s *Server) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession) {
+	slot, ok := ctx.Value(syncNoticeKey{}).(*syncNoticeSlot)
+	if !ok {
+		return
+	}
+	identity := s.requestIdentity(req)
+	slot.claim = func(ctx context.Context) string {
+		ss.mu.Lock()
+		defer ss.mu.Unlock()
+		return ss.root.SyncNotice(ctx, identity)
+	}
+}
+
+func syncBlockedResult(block *sdd.SyncBlocked) *SyncBlockedResult {
+	if block == nil {
+		return nil
+	}
+	return &SyncBlockedResult{
+		Kind: block.Kind, Since: block.Since.Format(time.RFC3339), Upstream: block.Upstream, Detail: block.Detail,
+		Source: block.Source, Destination: block.Destination, Paths: block.Paths, Owner: block.Owner,
 	}
 }
 

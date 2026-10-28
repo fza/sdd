@@ -139,3 +139,35 @@ func (c CLI) MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]s
 	}
 	return model.ParseMergeTreeConflicts(string(out)), nil
 }
+
+// CommonDir returns the repository's common git directory, the one every
+// worktree of it shares.
+func (c CLI) CommonDir(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--path-format=absolute", "--git-common-dir")...).Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --git-common-dir: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// RevParse returns the commit ref names.
+func (c CLI) RevParse(ctx context.Context, ref string) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--verify", "--quiet", ref+"^{commit}")...).Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse %s: %w", ref, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// Contains reports whether commit is reachable from HEAD. A commit the
+// repository does not know is not contained.
+func (c CLI) Contains(ctx context.Context, commit string) (bool, error) {
+	err := exec.CommandContext(ctx, "git", c.at("merge-base", "--is-ancestor", commit, "HEAD")...).Run()
+	if err == nil {
+		return true, nil
+	}
+	if code := errExitCode(err); code == 1 || code == 128 {
+		return false, nil
+	}
+	return false, fmt.Errorf("git merge-base --is-ancestor %s HEAD: %w", commit, err)
+}

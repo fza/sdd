@@ -69,10 +69,16 @@ func serveCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			application, _, identity, err := buildLocalApplication(ctx, cmd, dir, sddDir, cfg, reg, runner)
+			application, runtime, identity, err := buildLocalApplication(ctx, cmd, dir, sddDir, cfg, reg, runner)
 			if err != nil {
 				return err
 			}
+			go func() {
+				err := runtime.RunSyncTimer(ctx)
+				if err != nil {
+					slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: timer: %v", err))
+				}
+			}()
 			retention, err := model.ResolveSessionRetention(cfg)
 			if err != nil {
 				return err
@@ -242,7 +248,7 @@ func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principa
 	return runtime, nil
 }
 
-func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddDir string, cfg *model.PerRepoConfig, registry *repos.Registry, runner pkgllm.Runner) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
+func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddDir string, cfg *model.PerRepoConfig, registry *repos.Registry, runner pkgllm.Runner) (*sdd.Application, *sdd.ProjectRuntime, sdd.RequestIdentity, error) {
 	displayName := filepath.Base(filepath.Dir(sddDir))
 	participant := ""
 	language := ""
@@ -254,36 +260,36 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	}
 	locations, err := repos.DefaultLocations()
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	stableRepoRoot, err := git.StableRepoRoot(filepath.Dir(sddDir))
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	storeLocations, err := resolveSessionLocations(sddDir, cfg, locations)
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	project := sessionStoreProject(cfg)
 	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: graphDir})
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	sessions, err := localadapter.NewFilesystemSessionStore(storeLocations...)
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	blobs, err := localadapter.NewFilesystemStagedBlobStore(storeLocations...)
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	localEmbedder, err := buildEmbedder(cmd)
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	crossEmbedder, err := crossRepoEmbedder(cmd)
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	// The machine-global persistent store the CLI also builds and reads: one
 	// store per (repo-key, embedding fingerprint) under the cache root. The
@@ -301,10 +307,10 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	serverCheckout := filepath.Dir(sddDir)
 	targets, err := localadapter.NewRepositoryTargets(project, serverCheckout, locations.ConfigPath)
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	if cfg == nil || cfg.DefaultBranch == "" {
-		return nil, "", sdd.RequestIdentity{}, fmt.Errorf("default_branch is required in .sdd/config.yaml before serving mutation tools")
+		return nil, nil, sdd.RequestIdentity{}, fmt.Errorf("default_branch is required in .sdd/config.yaml before serving mutation tools")
 	}
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
@@ -313,7 +319,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		LLM: runner,
 	})
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	access := &localRuntimeAccess{
 		project: project, participant: participant, runtime: runtime,
@@ -322,21 +328,21 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	for _, dependency := range dependencies {
 		cacheDir, cacheErr := registry.CacheDir(dependency)
 		if cacheErr != nil {
-			return nil, "", sdd.RequestIdentity{}, cacheErr
+			return nil, nil, sdd.RequestIdentity{}, cacheErr
 		}
 		// The same cache as a project of its own: its committed config supplies
 		// the graph layout, the language, and the dependencies its horizon is
 		// composed from. A cache without one is a graph at the default layout.
 		dependencyCfg, cfgErr := sdd.ReadProjectConfigFS(os.DirFS(cacheDir))
 		if cfgErr != nil && !errors.Is(cfgErr, sdd.ErrNotAnSDDProject) {
-			return nil, "", sdd.RequestIdentity{}, fmt.Errorf("reading config of dependency %s: %w", dependency, cfgErr)
+			return nil, nil, sdd.RequestIdentity{}, fmt.Errorf("reading config of dependency %s: %w", dependency, cfgErr)
 		}
 		if cfgErr != nil {
 			dependencyCfg.GraphDir = model.DefaultGraphDir
 		}
 		memberGraph, graphErr := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: sdd.ProjectID(dependency), GraphDir: filepath.Join(cacheDir, filepath.FromSlash(dependencyCfg.GraphDir))})
 		if graphErr != nil {
-			return nil, "", sdd.RequestIdentity{}, graphErr
+			return nil, nil, sdd.RequestIdentity{}, graphErr
 		}
 		// Connected stores are keyed by the connected repo's ID (the existing
 		// connected-repository storage contract) and exclude embedded entries,
@@ -354,26 +360,26 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		}
 		member, runtimeErr := sdd.NewProjectRuntime(options)
 		if runtimeErr != nil {
-			return nil, "", sdd.RequestIdentity{}, runtimeErr
+			return nil, nil, sdd.RequestIdentity{}, runtimeErr
 		}
 		access.dependencies[dependency] = member
 		options.Language = dependencyCfg.Language
 		options.Dependencies = dependencyCfg.Dependencies
 		full, runtimeErr := sdd.NewProjectRuntime(options)
 		if runtimeErr != nil {
-			return nil, "", sdd.RequestIdentity{}, runtimeErr
+			return nil, nil, sdd.RequestIdentity{}, runtimeErr
 		}
 		access.projects[sdd.ProjectID(dependency)] = full
 	}
 	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: access, Sessions: sessions, StagedBlobs: blobs})
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	identity := sdd.RequestIdentity{Subject: "local"}
 	if _, err := application.Info(ctx, identity, project, sdd.InfoRequest{}); err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, nil, sdd.RequestIdentity{}, err
 	}
-	return application, project, identity, nil
+	return application, runtime, identity, nil
 }
 
 // collectSessions runs one reclamation pass at startup. This is the trigger

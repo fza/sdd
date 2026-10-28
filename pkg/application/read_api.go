@@ -24,6 +24,9 @@ type InfoResult struct {
 	Participant string
 	Language    string
 	Search      string
+	// SyncBlocked is what blocks automatic sync of the branch's graph
+	// repository, nil while sync proceeds.
+	SyncBlocked *SyncBlocked
 }
 
 type ViewRequest struct {

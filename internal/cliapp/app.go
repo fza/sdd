@@ -372,6 +372,7 @@ func New(options Options) *cli.Command {
 			// spurious warnings). Cooldown-bound and timeout-bound internally;
 			// any failure logs at Debug and does not affect the command.
 			if cmd.Args().First() != "init" {
+				ctx = withSyncBanner(ctx, cmd.ErrWriter)
 				runSyncCheck(ctx)
 				// Participant-missing nudge (AC 8): one-line stderr
 				// warning naming `sdd init` as the fix. Suppressed for
@@ -444,6 +445,11 @@ func infoCmd() *cli.Command {
 				return err
 			}
 			presenters.RenderInfo(cmd.Writer, result)
+			block, err := syncBlocked(ctx)
+			if err != nil {
+				return err
+			}
+			presenters.RenderSyncBlocked(cmd.Writer, block)
 			return nil
 		},
 	}
@@ -865,7 +871,7 @@ func newCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			handler := handlers.New(handlers.Options{
+			opts, err := graphSyncOptions(ctx, dir, handlers.Options{
 				Stderr:   cmd.ErrWriter,
 				GraphDir: dir,
 				SDDDir:   sddDir,
@@ -875,14 +881,16 @@ func newCmd() *cli.Command {
 					Repos:             reg,
 					ProcedureRegistry: registry,
 				}),
-				LLMRunner:   runner,
-				Committer:   graphGit(dir),
-				Pusher:      graphGit(dir),
-				GraphPuller: graphGit(dir),
-				SyncMode:    syncMode,
-				Repos:       mgr,
-				Language:    configLanguage(cfg),
+				LLMRunner: runner,
+				Committer: graphGit(dir),
+				SyncMode:  syncMode,
+				Repos:     mgr,
+				Language:  configLanguage(cfg),
 			})
+			if err != nil {
+				return err
+			}
+			handler := handlers.New(opts)
 
 			return handler.NewEntry(ctx, ncmd)
 		}),
@@ -972,16 +980,18 @@ func rewriteCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			handler := handlers.New(handlers.Options{
-				Stderr:      cmd.ErrWriter,
-				GraphDir:    dir,
-				Reader:      reader,
-				Committer:   graphGit(dir),
-				Pusher:      graphGit(dir),
-				GraphPuller: graphGit(dir),
-				SyncMode:    syncMode,
-				Mover:       graphGit(dir),
+			opts, err := graphSyncOptions(ctx, dir, handlers.Options{
+				Stderr:    cmd.ErrWriter,
+				GraphDir:  dir,
+				Reader:    reader,
+				Committer: graphGit(dir),
+				SyncMode:  syncMode,
+				Mover:     graphGit(dir),
 			})
+			if err != nil {
+				return err
+			}
+			handler := handlers.New(opts)
 			return handler.RewriteEntry(ctx, rcmd)
 		}),
 	}
@@ -1015,15 +1025,17 @@ func lintCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				handler := handlers.New(handlers.Options{
-					Stderr:      cmd.ErrWriter,
-					GraphDir:    dir,
-					Reader:      reader,
-					Committer:   graphGit(dir),
-					Pusher:      graphGit(dir),
-					GraphPuller: graphGit(dir),
-					SyncMode:    syncMode,
+				opts, err := graphSyncOptions(ctx, dir, handlers.Options{
+					Stderr:    cmd.ErrWriter,
+					GraphDir:  dir,
+					Reader:    reader,
+					Committer: graphGit(dir),
+					SyncMode:  syncMode,
 				})
+				if err != nil {
+					return err
+				}
+				handler := handlers.New(opts)
 				if err := handler.LintFix(ctx, fixCmd); err != nil {
 					return err
 				}
@@ -1183,7 +1195,7 @@ func summarizeCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			handler := handlers.New(handlers.Options{
+			opts, err := graphSyncOptions(ctx, dir, handlers.Options{
 				Stderr:   cmd.ErrWriter,
 				GraphDir: dir,
 				Reader: finders.New(finders.Options{
@@ -1191,13 +1203,15 @@ func summarizeCmd() *cli.Command {
 					Config:          cfg,
 					Repos:           reg,
 				}),
-				LLMRunner:   runner,
-				Committer:   graphGit(dir),
-				Pusher:      graphGit(dir),
-				GraphPuller: graphGit(dir),
-				SyncMode:    syncMode,
-				Language:    configLanguage(cfg),
+				LLMRunner: runner,
+				Committer: graphGit(dir),
+				SyncMode:  syncMode,
+				Language:  configLanguage(cfg),
 			})
+			if err != nil {
+				return err
+			}
+			handler := handlers.New(opts)
 			return handler.Summarize(ctx, sumCmd)
 		}),
 	}
@@ -1916,16 +1930,18 @@ func wipStartCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			handler := handlers.New(handlers.Options{
-				Stderr:      cmd.ErrWriter,
-				GraphDir:    dir,
-				Reader:      reader,
-				Committer:   graphGit(dir),
-				Pusher:      graphGit(dir),
-				GraphPuller: graphGit(dir),
-				SyncMode:    syncMode,
-				Brancher:    git.CLI{},
+			opts, err := graphSyncOptions(ctx, dir, handlers.Options{
+				Stderr:    cmd.ErrWriter,
+				GraphDir:  dir,
+				Reader:    reader,
+				Committer: graphGit(dir),
+				SyncMode:  syncMode,
+				Brancher:  git.CLI{},
 			})
+			if err != nil {
+				return err
+			}
+			handler := handlers.New(opts)
 			return handler.StartWIP(ctx, startCmd)
 		}),
 	}
@@ -1979,16 +1995,18 @@ func wipDoneCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			handler := handlers.New(handlers.Options{
-				Stderr:      cmd.ErrWriter,
-				GraphDir:    dir,
-				Reader:      reader,
-				Committer:   git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
-				Pusher:      graphGit(dir),
-				GraphPuller: graphGit(dir),
-				SyncMode:    syncMode,
-				Brancher:    git.CLI{},
+			opts, err := graphSyncOptions(ctx, dir, handlers.Options{
+				Stderr:    cmd.ErrWriter,
+				GraphDir:  dir,
+				Reader:    reader,
+				Committer: git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
+				SyncMode:  syncMode,
+				Brancher:  git.CLI{},
 			})
+			if err != nil {
+				return err
+			}
+			handler := handlers.New(opts)
 			return handler.FinishWIP(ctx, doneCmd)
 		}),
 	}
