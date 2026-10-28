@@ -2,6 +2,7 @@ package finders
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
@@ -23,6 +24,8 @@ import (
 //     and every per-involvement actor override must match an active actor
 //     canonical — participant coverage applied to the focus actor fields,
 //     sharing the same canonical set and grace mode.
+//   - actor-kind-changed: a supersede within an identity chain must not
+//     contradict an actor_kind the chain already declares.
 //   - actor-canonical-reused (AC 5): for a new kind: actor signal, the
 //     canonical must not appear in any actor-identity chain the new entry
 //     does not extend.
@@ -76,6 +79,7 @@ func mechanicalPreflight(entry *model.Entry, graph *model.Graph, declaredDeps []
 
 	if entry.IsActor() {
 		findings = append(findings, actorWriteOnceFindings(entry, graph)...)
+		findings = append(findings, actorKindStabilityFindings(entry, graph)...)
 	}
 	if entry.IsRole() {
 		findings = append(findings, roleMechanicalFindings(entry, graph)...)
@@ -439,6 +443,43 @@ func actorWriteOnceFindings(entry *model.Entry, graph *model.Graph) []query.Find
 		}}
 	}
 	return nil
+}
+
+// actorKindStabilityFindings refuses a reclassification within an identity
+// chain. A supersede may rename a participant or revise its prose, but the
+// human-or-machine answer is what a consumer assigns ownership on: flipping it
+// silently would rewrite who answers for every attribution already made under
+// that canonical. Setting it on a chain that never carried it is allowed —
+// that is filling in an unknown, not changing an answer.
+func actorKindStabilityFindings(entry *model.Entry, graph *model.Graph) []query.Finding {
+	if entry.ActorKind == "" {
+		return nil
+	}
+	for _, chain := range supersededActorChains(entry, graph) {
+		for _, prior := range chain.Entries {
+			if prior.ActorKind == "" || prior.ActorKind == entry.ActorKind {
+				continue
+			}
+			return []query.Finding{{
+				Severity:    query.SeverityHigh,
+				Category:    "actor-kind-changed",
+				Observation: fmt.Sprintf("actor_kind %q contradicts %q declared by %s in the same identity chain — a supersede renames a participant, it does not reclassify one", entry.ActorKind, prior.ActorKind, prior.ID),
+			}}
+		}
+	}
+	return nil
+}
+
+// supersededActorChains returns every actor chain holding an entry the new
+// entry supersedes; one entry may merge several chains.
+func supersededActorChains(entry *model.Entry, graph *model.Graph) []*model.ActorChain {
+	var chains []*model.ActorChain
+	for _, chain := range graph.ActorChains() {
+		if slices.ContainsFunc(chain.Entries, func(e *model.Entry) bool { return slices.Contains(entry.Supersedes, e.ID) }) {
+			chains = append(chains, chain)
+		}
+	}
+	return chains
 }
 
 // roleMechanicalFindings enforces AC 7: role's Actor must match the current

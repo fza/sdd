@@ -1176,3 +1176,109 @@ func TestMechanical_CrossRepoRef_ResolverOutcomes(t *testing.T) {
 		t.Errorf("unavailable-repo finding should name the unconnected repo, got %q", got[0].Observation)
 	}
 }
+
+// An identity chain may rename a participant, never reclassify one: the
+// human-or-machine answer is what ownership is assigned on, so flipping it
+// would rewrite who answers for every attribution made under that canonical.
+func TestMechanical_ActorKind_ReclassificationBlocks(t *testing.T) {
+	existing := actorEntry("Claude", nil)
+	existing.ActorKind = model.ActorKindMachine
+	graph := model.NewGraph([]*model.Entry{existing})
+
+	proposed := &model.Entry{
+		Type:       model.TypeSignal,
+		Kind:       model.KindActor,
+		Layer:      model.LayerProcess,
+		Canonical:  "Claude",
+		ActorKind:  model.ActorKindHuman,
+		Supersedes: []string{existing.ID},
+		Content:    "reclassified",
+	}
+
+	if !blocksReclassification(mechanicalPreflight(proposed, graph, nil, nil)) {
+		t.Error("a contradicting actor_kind within the chain must block")
+	}
+}
+
+// An entry merging two chains answers to the actor_kind of each, not only
+// the first chain it names.
+func TestMechanical_ActorKind_MergingChainsChecksEveryChain(t *testing.T) {
+	unknown := actorEntry("Claude", nil)
+	declared := actorEntry("Claude", nil)
+	declared.ID = "20260411-120000-s-prc-dup"
+	declared.Time = unknown.Time.AddDate(0, 0, 1)
+	declared.ActorKind = model.ActorKindMachine
+	graph := model.NewGraph([]*model.Entry{unknown, declared})
+
+	proposed := &model.Entry{
+		Type:       model.TypeSignal,
+		Kind:       model.KindActor,
+		Layer:      model.LayerProcess,
+		Canonical:  "Claude",
+		ActorKind:  model.ActorKindHuman,
+		Supersedes: []string{unknown.ID, declared.ID},
+		Content:    "one identity replacing two duplicate captures",
+	}
+
+	if !blocksReclassification(mechanicalPreflight(proposed, graph, nil, nil)) {
+		t.Error("a contradicting actor_kind in any merged chain must block")
+	}
+}
+
+// Filling in an unknown is not a reclassification, and restating the same
+// answer is not a change.
+func TestMechanical_ActorKind_FillingAndRestatingAllowed(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		prior model.ActorKind
+		next  model.ActorKind
+	}{
+		{name: "prior unknown", prior: "", next: model.ActorKindHuman},
+		{name: "unchanged", prior: model.ActorKindHuman, next: model.ActorKindHuman},
+		{name: "proposed unset", prior: model.ActorKindHuman, next: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			existing := actorEntry("Felix", nil)
+			existing.ActorKind = tc.prior
+			graph := model.NewGraph([]*model.Entry{existing})
+
+			proposed := &model.Entry{
+				Type:       model.TypeSignal,
+				Kind:       model.KindActor,
+				Layer:      model.LayerProcess,
+				Canonical:  "Felix",
+				ActorKind:  tc.next,
+				Supersedes: []string{existing.ID},
+				Content:    "same identity",
+			}
+
+			if blocksReclassification(mechanicalPreflight(proposed, graph, nil, nil)) {
+				t.Error("this is not a reclassification and must not block")
+			}
+		})
+	}
+}
+
+// A fresh chain declaring the field collides with nothing.
+func TestMechanical_ActorKind_NewChainAllowed(t *testing.T) {
+	proposed := &model.Entry{
+		Type:      model.TypeSignal,
+		Kind:      model.KindActor,
+		Layer:     model.LayerProcess,
+		Canonical: "Ada",
+		ActorKind: model.ActorKindHuman,
+		Content:   "joining the project",
+	}
+	if blocksReclassification(mechanicalPreflight(proposed, model.NewGraph(nil), nil, nil)) {
+		t.Error("a first actor entry must not block")
+	}
+}
+
+func blocksReclassification(findings []query.Finding) bool {
+	for _, f := range findings {
+		if f.Category == "actor-kind-changed" {
+			return true
+		}
+	}
+	return false
+}
