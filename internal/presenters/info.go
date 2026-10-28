@@ -33,14 +33,28 @@ type infoJSON struct {
 	BinarySchema int                       `json:"binary_schema"`
 	Capabilities *model.SchemaCapabilities `json:"capabilities"`
 	Contribution string                    `json:"contribution"`
+	SyncBlocked  *syncBlockedJSON          `json:"sync_blocked,omitempty"`
+}
+
+type syncBlockedJSON struct {
+	Kind        string   `json:"kind"`
+	Since       string   `json:"since"`
+	Upstream    string   `json:"upstream,omitempty"`
+	Detail      string   `json:"detail,omitempty"`
+	Source      string   `json:"source,omitempty"`
+	Destination string   `json:"destination,omitempty"`
+	Paths       []string `json:"paths,omitempty"`
+	Owner       string   `json:"owner,omitempty"`
 }
 
 // RenderInfoJSON writes the session framing as one JSON object for tools
-// that drive sdd (20261027-122627-d-tac-2cx).
-func RenderInfoJSON(w io.Writer, result *query.InfoResult) error {
+// that drive sdd (20261027-122627-d-tac-2cx), with what blocks automatic sync
+// when block is set. Its owner is named only while the lease is live, as in
+// RenderSyncBlocked.
+func RenderInfoJSON(w io.Writer, result *query.InfoResult, block *model.SyncBlocked, now time.Time) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
-	err := encoder.Encode(infoJSON{
+	info := infoJSON{
 		Participant:  result.LocalParticipant,
 		Language:     result.Language,
 		Search:       result.Search,
@@ -48,7 +62,14 @@ func RenderInfoJSON(w io.Writer, result *query.InfoResult) error {
 		BinarySchema: result.BinarySchema,
 		Capabilities: result.Capabilities,
 		Contribution: result.Contribution,
-	})
+	}
+	if block != nil {
+		info.SyncBlocked = &syncBlockedJSON{
+			Kind: string(block.Kind), Since: block.Since.Format(time.RFC3339), Upstream: block.Upstream, Detail: block.Detail,
+			Source: block.Source, Destination: block.Destination, Paths: block.Paths, Owner: block.LiveOwner(now),
+		}
+	}
+	err := encoder.Encode(info)
 	if err != nil {
 		return fmt.Errorf("encoding info as JSON: %w", err)
 	}

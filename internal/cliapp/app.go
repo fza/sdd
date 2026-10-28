@@ -526,14 +526,14 @@ func infoCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			if format == "json" {
-				return presenters.RenderInfoJSON(cmd.Writer, result)
-			}
-			presenters.RenderInfo(cmd.Writer, result)
 			block, err := syncBlocked(ctx)
 			if err != nil {
 				return err
 			}
+			if format == "json" {
+				return presenters.RenderInfoJSON(cmd.Writer, result, block, time.Now())
+			}
+			presenters.RenderInfo(cmd.Writer, result)
 			presenters.RenderSyncBlocked(cmd.Writer, block, time.Now())
 			return nil
 		},

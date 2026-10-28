@@ -1,11 +1,15 @@
 package cliapp_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/networkteam/sdd/internal/cliapp"
 )
 
 func TestBlockedSyncBannerPrintsOncePerCommand(t *testing.T) {
@@ -49,6 +53,38 @@ func TestInfoShowsTheConflictRecord(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("info should show the record and its fix, missing %q in %q", want, out)
 		}
+	}
+}
+
+func TestInfoJSONCarriesTheConflictRecord(t *testing.T) {
+	root := syncedProject(t, "auto")
+	writeFile(t, filepath.Join(root, ".sdd", "graph", "shared.md"), "here\n")
+	gitIn(t, root, "add", ".sdd/graph/shared.md")
+	gitIn(t, root, "commit", "-q", "-m", "sdd: edit here")
+	destination := localHead(t, root)
+	source := upstreamCommit(t, root, "sdd: edit elsewhere", ".sdd/graph/shared.md")
+	t.Chdir(root)
+	var stdout, stderr bytes.Buffer
+	command := cliapp.New(cliapp.Options{Version: "test", Reader: strings.NewReader(""), Writer: &stdout, ErrWriter: &stderr})
+	if err := command.Run(t.Context(), []string{"sdd", "info", "--format", "json"}); err != nil {
+		t.Fatalf("info --format json should succeed: %v\n%s", err, stderr.String())
+	}
+	var info struct {
+		SyncBlocked *struct {
+			Kind        string   `json:"kind"`
+			Since       string   `json:"since"`
+			Source      string   `json:"source"`
+			Destination string   `json:"destination"`
+			Paths       []string `json:"paths"`
+		} `json:"sync_blocked"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &info); err != nil {
+		t.Fatalf("info --format json should print one JSON object: %v\n%s", err, stdout.String())
+	}
+	block := info.SyncBlocked
+	if block == nil || block.Kind != "conflict" || block.Since == "" || block.Source != source || block.Destination != destination ||
+		len(block.Paths) != 1 || block.Paths[0] != ".sdd/graph/shared.md" {
+		t.Errorf("the JSON form should carry the conflict record, got %s", stdout.String())
 	}
 }
 
