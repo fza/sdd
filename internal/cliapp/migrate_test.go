@@ -52,17 +52,6 @@ func runReleased(t *testing.T, dir, stdin string, args ...string) (string, error
 	return stdout.String() + stderr.String(), err
 }
 
-func TestWritesOnAnOlderGraphPointAtMigrate(t *testing.T) {
-	project := newMigrateProject(t)
-	output, err := runReleased(t, project, "", "new", "s", "tac", "--confidence", "high", "--skip-preflight", "--summary", "S.", "--title", "t", "A new gap.")
-	if err == nil {
-		t.Fatal("a write on an older graph should be refused")
-	}
-	if !strings.Contains(output, "sdd migrate") {
-		t.Errorf("the refusal should point at sdd migrate:\n%s", output)
-	}
-}
-
 func TestMigrate(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -85,6 +74,9 @@ func TestMigrate(t *testing.T) {
 			if !strings.Contains(output, "1 entries get a title beside their stored summary") {
 				t.Errorf("the plan should state the backfill before it runs:\n%s", output)
 			}
+			if strings.Contains(output, "stamped") {
+				t.Errorf("the plan for a graph at the current schema should promise no stamp:\n%s", output)
+			}
 
 			meta := readFile(t, filepath.Join(project, ".sdd", "meta.json"))
 			entry := readFile(t, filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel)))
@@ -94,14 +86,14 @@ func TestMigrate(t *testing.T) {
 				}
 				return
 			}
-			if !strings.Contains(meta, `"graph_schema_version": 2`) {
-				t.Errorf("an approved migration should stamp the new schema version:\n%s", meta)
+			if !strings.Contains(meta, `"graph_schema_version": 1`) {
+				t.Errorf("filling titles should leave the schema version as it is:\n%s", meta)
 			}
 			if !strings.Contains(entry, "title: migrated title") || !strings.Contains(entry, "summary: A stored summary that stays.") {
 				t.Errorf("the backfill should add the title and keep the stored summary:\n%s", entry)
 			}
-			if log := gitIn(t, project, "log", "--format=%s"); !strings.Contains(log, "sdd: migrate graph schema 1 -> 2") {
-				t.Errorf("the stamp should land as its own commit:\n%s", log)
+			if log := gitIn(t, project, "log", "--format=%s"); strings.Contains(log, "migrate graph schema") {
+				t.Errorf("a graph at the current schema should see no stamp commit:\n%s", log)
 			}
 		})
 	}
@@ -125,28 +117,21 @@ func TestMigrateOnACurrentGraphOwesNothing(t *testing.T) {
 	}
 }
 
-func TestMigrateStampOnlyDefersTheBackfill(t *testing.T) {
+func TestMigrateStampOnlyOnACurrentGraphChangesNothing(t *testing.T) {
 	project := newMigrateProject(t)
-	entryPath := filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel))
-
+	before := gitIn(t, project, "rev-parse", "HEAD")
 	output, err := runReleased(t, project, "", "migrate", "--yes", "--stamp-only")
 	if err != nil {
 		t.Fatalf("sdd migrate --stamp-only: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "Backfill skipped") {
-		t.Errorf("the plan should say the backfill is deferred:\n%s", output)
+	if !strings.Contains(output, "nothing to migrate") {
+		t.Errorf("a stamp-only run on a current graph should report nothing owed:\n%s", output)
 	}
-	if meta := readFile(t, filepath.Join(project, ".sdd", "meta.json")); !strings.Contains(meta, `"graph_schema_version": 2`) {
-		t.Errorf("a stamp-only run should stamp the new schema version:\n%s", meta)
-	}
-	if entry := readFile(t, entryPath); strings.Contains(entry, "title:") {
+	entry := readFile(t, filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel)))
+	if strings.Contains(entry, "title:") {
 		t.Errorf("a stamp-only run should leave entries as they are:\n%s", entry)
 	}
-
-	if output, err := runReleased(t, project, "", "migrate", "--yes"); err != nil {
-		t.Fatalf("sdd migrate: %v\n%s", err, output)
-	}
-	if entry := readFile(t, entryPath); !strings.Contains(entry, "title: migrated title") {
-		t.Errorf("a later migrate on the stamped graph should fill the deferred titles:\n%s", entry)
+	if after := gitIn(t, project, "rev-parse", "HEAD"); after != before {
+		t.Error("a stamp-only run on a current graph should see no commit")
 	}
 }

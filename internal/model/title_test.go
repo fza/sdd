@@ -53,15 +53,6 @@ func TestTitleBackfill(t *testing.T) {
 	}
 }
 
-func TestSchemaChangesNameWhatAMigrationAdds(t *testing.T) {
-	if changes := model.SchemaChanges(1, model.CurrentGraphSchemaVersion); len(changes) == 0 || !strings.Contains(changes[0], "title") {
-		t.Errorf("migrating to the current version should name the title change, got %v", changes)
-	}
-	if changes := model.SchemaChanges(model.CurrentGraphSchemaVersion, model.CurrentGraphSchemaVersion); len(changes) != 0 {
-		t.Errorf("a graph at the current version owes no change, got %v", changes)
-	}
-}
-
 func TestCheckCompatibilityPointsAnOlderGraphAtMigrate(t *testing.T) {
 	cases := []struct {
 		name       string

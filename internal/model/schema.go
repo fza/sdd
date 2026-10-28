@@ -14,13 +14,11 @@ const SchemaMetaFileName = "meta.json"
 
 // CurrentGraphSchemaVersion is the schema version this binary knows how to
 // read and write. Bumped only by an explicit schema migration.
-const CurrentGraphSchemaVersion = 2
+const CurrentGraphSchemaVersion = 1
 
 // schemaChanges states what each graph schema version adds over the one
 // before it, keyed by the version that introduced the change.
-var schemaChanges = map[int]string{
-	2: "every entry carries a title, written by the same call as its summary",
-}
+var schemaChanges = map[int]string{}
 
 // SchemaChanges lists what a migration from version from to version to
 // adds, in version order.
