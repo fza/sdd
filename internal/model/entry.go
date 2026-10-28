@@ -987,6 +987,17 @@ func (e *Entry) LayerLabel() string {
 	return string(e.Layer)
 }
 
+// CaptureCommitMessage is the subject of the commit that captures e: its
+// type, layer and title, or its opening content where it has no title, so the
+// history names what was captured.
+func (e *Entry) CaptureCommitMessage() string {
+	subject := e.Title
+	if subject == "" {
+		subject = e.ShortContent(72)
+	}
+	return fmt.Sprintf("sdd: %s %s %s", e.TypeLabel(), e.LayerLabel(), subject)
+}
+
 // ShortContent returns content truncated to maxLen, preferring sentence boundaries.
 // Accumulates complete sentences up to the limit. If no sentence fits, accumulates words.
 func (e *Entry) ShortContent(maxLen int) string {
