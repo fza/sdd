@@ -7,6 +7,7 @@ import (
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/secrets"
 )
 
 // GuideFinding mirrors query.GuideFinding at the API boundary.
@@ -71,6 +72,11 @@ func (a *Application) WritingGuideCheck(ctx context.Context, identity RequestIde
 		closureTargets = snapshot.graph.ClosureTargets(entry)
 	}
 
+	// The guide sends the draft to an LLM provider.
+	err = secrets.CheckEntry(entry)
+	if err != nil {
+		return nil, err
+	}
 	finder := finders.New(finders.Options{WritingGuideRunner: runtime.options.LLM})
 	result, err := finder.WritingGuide(ctx, snapshot.graph, query.WritingGuideQuery{Entry: entry, ClosureTargets: closureTargets})
 	if err != nil {

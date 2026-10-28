@@ -196,6 +196,8 @@ Claude: [records the gap in the graph]
 
 Before the playback, a writing guide judges the draft on its own terms — stranding, dilution, conflation, pointing, form — and returns findings that lead with their reasoning, which the agent folds in by judgment. Nothing gates on them: the findings arrive, the drafting call stays with the agent. Then Claude plays the entry back exactly as it will be written, and you confirm it. At the write, a pre-flight validator checks the draft against the graph — contradictions with its refs, missing acceptance criteria on plans, unrelated references. `high` findings block the write, and only you can choose to override them.
 
+A credential never reaches the graph or a model. Before the writing guide, the pre-flight or the summary sees a draft, sdd scans what the write will hold (title, summary, body, every frontmatter value, each attachment) with gitleaks' default rules, vendored in `internal/secrets`. A finding refuses the write and names the part, the rule and the line, never the credential: `refusing to write: the body looks like a credential (github-pat, line 3); the graph is shared and immutable`. Nothing overrides it: rewrite the text. The same scan guards summary and title corrections, WIP markers and staged attachments, and `sdd lint` lists credentials already in the graph as advisories, naming what to rotate.
+
 Capture also works on material from elsewhere — a transcript, an article, a meeting note. The agent reads it against the graph, ties passages to existing entries, and synthesizes with you what's actually new — facts the source adds, insights the connection produces, gaps it raises, decisions the source records. Those become entries.
 
 ### Plan a change

@@ -2,6 +2,9 @@ package finders
 
 import (
 	"fmt"
+	"os"
+	"path"
+	"path/filepath"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/index"
@@ -9,12 +12,14 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/internal/serveview"
 )
 
 // Lint runs the categorized graph-side lint providers (d-cpt-xc3): graph
 // integrity (load errors, entry warnings, missing summaries) as error
-// findings, and the procedure runtime (spec load, then the serve-budget
+// findings, credentials already in the graph as advisories, and the procedure
+// runtime (spec load, then the serve-budget
 // arithmetic) — a spec that fails to load is an error, an overshooting one an
 // advisory, because it still runs (d-tac-rzi). Index findings are filled in
 // separately by IndexLint, whose inputs the shell resolves.
@@ -43,8 +48,57 @@ func (gf *GraphFinder) Lint(_ query.LintQuery) (*query.LintResult, error) {
 			})
 		}
 	}
+	credentials, err := gf.credentialFindings()
+	if err != nil {
+		return nil, fmt.Errorf("lint: %w", err)
+	}
+	result.Findings = append(result.Findings, credentials...)
 	result.Findings = append(result.Findings, gf.procedureRuntimeFindings()...)
 	return result, nil
+}
+
+// credentialFindings reports every entry and attachment already holding a
+// credential, naming what to rotate. They are advisories: an entry cannot be
+// edited, so a false positive in one would otherwise fail lint for good.
+func (gf *GraphFinder) credentialFindings() ([]query.LintFinding, error) {
+	var findings []query.LintFinding
+	report := func(entryID, description string) {
+		findings = append(findings, query.LintFinding{
+			Category: "secrets", Code: "credential", Severity: query.LintAdvisory,
+			EntryID: entryID, Message: description + "; rotate it, the graph keeps it",
+		})
+	}
+	for _, entry := range gf.graph.Entries {
+		if entry.Embedded {
+			continue
+		}
+		where, found, err := secrets.ScanEntry(entry)
+		if err != nil {
+			return nil, err
+		}
+		if len(found) > 0 {
+			report(entry.ID, secrets.Describe(where, found))
+		}
+		if len(entry.Attachments) == 0 || gf.graph.GraphDir() == "" {
+			continue
+		}
+		// A loaded graph's attachments are graph-relative paths.
+		for _, relPath := range entry.Attachments {
+			content, err := os.ReadFile(filepath.Join(gf.graph.GraphDir(), relPath))
+			if err != nil {
+				return nil, fmt.Errorf("reading attachment %s of %s: %w", relPath, entry.ID, err)
+			}
+			name := path.Base(relPath)
+			found, err = secrets.ScanFile(name, content)
+			if err != nil {
+				return nil, err
+			}
+			if len(found) > 0 {
+				report(entry.ID, secrets.Describe("attachment "+name, found))
+			}
+		}
+	}
+	return findings, nil
 }
 
 // procedureRuntimeFindings is the procedure-runtime lint provider: every

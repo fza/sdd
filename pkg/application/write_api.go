@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/application/types"
 )
 
@@ -130,6 +131,10 @@ func (a *Application) StageBlob(ctx context.Context, identity RequestIdentity, p
 	}
 	if ref.Subject != principal.Subject {
 		return StagedBlob{}, &ApplicationError{Code: ErrorSessionOwnership, Message: "staged blobs belong to another principal"}
+	}
+	err = secrets.CheckFile(filename, content)
+	if err != nil {
+		return StagedBlob{}, err
 	}
 	return a.blobs.Stage(ctx, ref, filename, bytes.NewReader(content))
 }
