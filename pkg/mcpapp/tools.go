@@ -334,11 +334,13 @@ type InfoArgs struct {
 }
 
 type InfoResult struct {
-	Project     string `json:"project,omitempty" jsonschema:"the session's project ID"`
-	Participant string `json:"participant,omitempty" jsonschema:"configured local participant (canonical name)"`
-	Language    string `json:"language,omitempty" jsonschema:"configured graph language; empty = English"`
-	Search      string `json:"search" jsonschema:"available retrieval modes: text or vector,text"`
-	Version     string `json:"version,omitempty"`
+	Project      string `json:"project,omitempty" jsonschema:"the session's project ID"`
+	Participant  string `json:"participant,omitempty" jsonschema:"configured local participant (canonical name)"`
+	Language     string `json:"language,omitempty" jsonschema:"configured graph language; empty = English"`
+	Search       string `json:"search" jsonschema:"available retrieval modes: text or vector,text"`
+	Version      string `json:"version,omitempty"`
+	GraphSchema  int    `json:"graphSchema,omitempty" jsonschema:"schema version the graph records; entries are written at it until an explicit sdd migrate"`
+	BinarySchema int    `json:"binarySchema,omitempty" jsonschema:"schema version this build writes by default"`
 }
 
 type RegistryArgs struct {
@@ -1159,7 +1161,7 @@ func (s *Server) info(ctx context.Context, req *mcp.CallToolRequest, args InfoAr
 	}
 	return nil, InfoResult{
 		Project: string(info.Project.ID), Participant: info.Participant, Language: info.Language, Search: info.Search,
-		Version: s.version,
+		Version: s.version, GraphSchema: info.GraphSchema, BinarySchema: info.BinarySchema,
 	}, nil
 
 }

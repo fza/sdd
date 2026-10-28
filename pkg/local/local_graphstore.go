@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/gofrs/flock"
+	"github.com/networkteam/sdd/internal/model"
 	app "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -27,6 +29,9 @@ type FilesystemGraphStoreOptions struct {
 	// finalizer wrote; the finalizer, not the store, commits. Without it,
 	// publication recognizes retries by entry ID only.
 	PublicationGit *GitFinalizer
+	// MetaPath is the graph's .sdd/meta.json. Empty, or a missing file, means
+	// the graph is at the binary's schema.
+	MetaPath string
 }
 
 // FilesystemGraphStore is the local canonical graph authority. It owns its
@@ -38,6 +43,7 @@ type FilesystemGraphStore struct {
 	mu             sync.Mutex
 	snapshots      map[string]*retainedSnapshot
 	publicationGit *GitFinalizer
+	metaPath       string
 	// lineage maps a published revision to the revision it replaced, so a read
 	// can be shown to include an earlier write. It is cached from the lineage
 	// file under the runtime directory, which every store over this graph
@@ -71,7 +77,28 @@ func NewFilesystemGraphStore(options FilesystemGraphStoreOptions) (*FilesystemGr
 		branch:         options.Branch,
 		dir:            options.GraphDir,
 		publicationGit: options.PublicationGit,
+		metaPath:       options.MetaPath,
 	}, nil
+}
+
+// GraphSchemaVersion reads the schema meta.json records on every call, so a
+// migration between two writes of one server is honoured.
+func (s *FilesystemGraphStore) GraphSchemaVersion(context.Context) (int, error) {
+	if s.metaPath == "" {
+		return model.CurrentGraphSchemaVersion, nil
+	}
+	data, err := os.ReadFile(s.metaPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return model.CurrentGraphSchemaVersion, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("reading %s: %w", s.metaPath, err)
+	}
+	meta, err := model.ParseSchemaMeta(data)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", s.metaPath, err)
+	}
+	return meta.GraphSchemaVersion, nil
 }
 
 func (s *FilesystemGraphStore) Current(ctx context.Context) (*app.Snapshot, error) {
@@ -90,7 +117,15 @@ func (s *FilesystemGraphStore) currentLocked(ctx context.Context) (*app.Snapshot
 	if err != nil {
 		return nil, err
 	}
-	return app.LoadSnapshotFS(ctx, s.project, revision, os.DirFS(s.dir), ".")
+	snapshot, err := app.LoadSnapshotFS(ctx, s.project, revision, os.DirFS(s.dir), ".")
+	if err != nil {
+		return nil, err
+	}
+	version, err := s.GraphSchemaVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.WithSchemaVersion(version), nil
 }
 
 func (s *FilesystemGraphStore) ReadAttachmentPage(_ context.Context, entryID, filename string, offset int64, maxBytes int) (app.AttachmentPage, error) {

@@ -14,12 +14,31 @@ const SchemaMetaFileName = "meta.json"
 
 // CurrentGraphSchemaVersion is the schema version this binary knows how to
 // read and write. Bumped only by an explicit schema migration.
-const CurrentGraphSchemaVersion = 2
+const CurrentGraphSchemaVersion = 1
 
-// schemaChanges states what each graph schema version adds over the one
-// before it, keyed by the version that introduced the change.
-var schemaChanges = map[int]string{
-	2: "every entry carries a title, written by the same call as its summary",
+// SchemaCapabilities states which entry fields a graph schema version
+// defines. A write at an older version leaves out what that version lacks.
+type SchemaCapabilities struct {
+	// Titles: an entry may carry a title written beside its summary.
+	Titles bool
+}
+
+// schemaVersions holds, per version, what it supports and what it adds over
+// the version before it.
+var schemaVersions = map[int]struct {
+	capabilities SchemaCapabilities
+	change       string
+}{
+	1: {capabilities: SchemaCapabilities{Titles: true}},
+}
+
+// CapabilitiesFor returns what graph schema version supports.
+func CapabilitiesFor(version int) (SchemaCapabilities, error) {
+	known, ok := schemaVersions[version]
+	if !ok {
+		return SchemaCapabilities{}, fmt.Errorf("graph schema version %d is unknown to this binary", version)
+	}
+	return known.capabilities, nil
 }
 
 // SchemaChanges lists what a migration from version from to version to
@@ -27,8 +46,8 @@ var schemaChanges = map[int]string{
 func SchemaChanges(from, to int) []string {
 	var changes []string
 	for v := from + 1; v <= to; v++ {
-		if change, ok := schemaChanges[v]; ok {
-			changes = append(changes, change)
+		if known, ok := schemaVersions[v]; ok && known.change != "" {
+			changes = append(changes, known.change)
 		}
 	}
 	return changes
@@ -131,24 +150,16 @@ func ShouldBumpMinimumVersion(current, binaryVersion string) bool {
 // are bypassed so local development isn't blocked by a released graph's
 // minimum_version or a bumped schema_version.
 //
-// For released binaries: a schema_version mismatch errors with a pointer to
-// sdd migrate for an older graph and an upgrade for a newer one. A
-// minimum_version higher than the binary errors with upgrade guidance. Either
-// failure leaves Compatible = false.
+// For released binaries: a graph newer than the binary errors with upgrade
+// guidance, and a minimum_version higher than the binary does too; either
+// leaves Compatible = false. A graph older than the binary is compatible and
+// written at its own schema; only `sdd migrate`, confirmed by the user,
+// raises it.
 func CheckCompatibility(meta SchemaMeta, binaryVersion string, binarySchemaVersion int) CompatibilityResult {
 	if IsDevVersion(binaryVersion) {
 		return CompatibilityResult{Compatible: true, IsDevBuild: true}
 	}
 
-	if meta.GraphSchemaVersion < binarySchemaVersion {
-		return CompatibilityResult{
-			Compatible: false,
-			Reason: fmt.Sprintf(
-				"graph schema version %d is older than this binary's schema version %d; run `sdd migrate` to upgrade the graph",
-				meta.GraphSchemaVersion, binarySchemaVersion,
-			),
-		}
-	}
 	if meta.GraphSchemaVersion > binarySchemaVersion {
 		return CompatibilityResult{
 			Compatible: false,

@@ -53,33 +53,12 @@ func TestTitleBackfill(t *testing.T) {
 	}
 }
 
-func TestSchemaChangesNameWhatAMigrationAdds(t *testing.T) {
-	if changes := model.SchemaChanges(1, model.CurrentGraphSchemaVersion); len(changes) == 0 || !strings.Contains(changes[0], "title") {
-		t.Errorf("migrating to the current version should name the title change, got %v", changes)
+func TestCheckCompatibilityPointsANewerGraphAtUpgrade(t *testing.T) {
+	res := model.CheckCompatibility(model.SchemaMeta{GraphSchemaVersion: model.CurrentGraphSchemaVersion + 1}, "1.0.0", model.CurrentGraphSchemaVersion)
+	if res.Compatible {
+		t.Fatal("a graph newer than the binary should refuse writes")
 	}
-	if changes := model.SchemaChanges(model.CurrentGraphSchemaVersion, model.CurrentGraphSchemaVersion); len(changes) != 0 {
-		t.Errorf("a graph at the current version owes no change, got %v", changes)
-	}
-}
-
-func TestCheckCompatibilityPointsAnOlderGraphAtMigrate(t *testing.T) {
-	cases := []struct {
-		name       string
-		graph      int
-		wantReason string
-	}{
-		{name: "older graph", graph: model.CurrentGraphSchemaVersion - 1, wantReason: "sdd migrate"},
-		{name: "newer graph", graph: model.CurrentGraphSchemaVersion + 1, wantReason: "upgrade sdd"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			res := model.CheckCompatibility(model.SchemaMeta{GraphSchemaVersion: tc.graph}, "1.0.0", model.CurrentGraphSchemaVersion)
-			if res.Compatible {
-				t.Fatal("a schema mismatch should refuse writes")
-			}
-			if !strings.Contains(res.Reason, tc.wantReason) {
-				t.Errorf("the refusal should name the way forward, got %q", res.Reason)
-			}
-		})
+	if !strings.Contains(res.Reason, "upgrade sdd") {
+		t.Errorf("the refusal should name the way forward, got %q", res.Reason)
 	}
 }
