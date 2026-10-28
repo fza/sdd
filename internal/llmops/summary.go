@@ -113,6 +113,7 @@ type summaryContext struct {
 	// StoredSummary is the entry's summary as stored, given to a title-only
 	// call so the title names what the summary already says.
 	StoredSummary string
+	TitleRule     string
 }
 
 // RenderSummaryPrompt renders the paired title-and-summary prompt for an entry.
@@ -132,6 +133,7 @@ func newSummaryContext(entry *model.Entry, graph *model.Graph, configuredLanguag
 	sctx := &summaryContext{
 		EntryContent:       FormatEntryForPrompt(entry),
 		ConfiguredLanguage: configuredLanguage,
+		TitleRule:          model.TitleRule,
 	}
 
 	// Collect direct refs, closes, and supersedes entries.

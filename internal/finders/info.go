@@ -2,6 +2,7 @@ package finders
 
 import (
 	"context"
+	"errors"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
@@ -28,15 +29,27 @@ func (f *Finder) Info(ctx context.Context, q query.InfoQuery) (*query.InfoResult
 	if f.cfg != nil {
 		result.Contribution = f.cfg.Contribution
 	}
+	var meta *model.SchemaMeta
 	if q.SDDDir != "" {
 		status, err := f.SchemaStatus(ctx, query.SchemaStatusQuery{SDDDir: q.SDDDir, BinarySchemaVersion: model.CurrentGraphSchemaVersion})
 		if err != nil {
 			return nil, err
 		}
 		if status.MetaExists {
-			result.GraphSchema = status.Meta.GraphSchemaVersion
+			meta = status.Meta
+			result.GraphSchema = meta.GraphSchemaVersion
 		}
 	}
+	capabilities, err := model.CapabilitiesFor(model.WriteSchemaVersion(meta))
+	// A graph newer than the binary has no capabilities this binary knows;
+	// info still reports it, and the write gate refuses the write.
+	if errors.Is(err, model.ErrUnknownSchemaVersion) {
+		return result, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	result.Capabilities = &capabilities
 	return result, nil
 }
 

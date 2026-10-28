@@ -9,6 +9,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/model"
 )
 
 // messageRecordingCommitter captures commit messages so summarize tests can
@@ -175,6 +176,26 @@ func TestSummarize_ExplicitTitle(t *testing.T) {
 				t.Errorf("the written entry should carry the supplied title and the expected summary:\n%s", written)
 			}
 		})
+	}
+}
+
+func TestSummarize_ExplicitTitleKeepsALeadingCodeSpan(t *testing.T) {
+	const id = "20260427-120302-s-prc-tt3"
+	graphDir := t.TempDir()
+	writeEntryFile(t, graphDir, id, "---\ntype: signal\nlayer: process\nkind: gap\nsummary: Stored summary.\n---\n\nBody.\n")
+	h := handlers.New(handlers.Options{GraphDir: graphDir, Reader: &graphReader{}, Committer: &messageRecordingCommitter{}})
+
+	title := "`sdd` info JSON output"
+	err := h.Summarize(context.Background(), &command.SummarizeCmd{EntryIDs: []string{id}, ExplicitTitle: &title})
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	entry, err := model.ParseEntry(id+".md", readEntryFile(t, graphDir, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Title != title {
+		t.Errorf("a title opening with a code span should be stored as written, got %q", entry.Title)
 	}
 }
 

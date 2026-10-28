@@ -106,3 +106,25 @@ func TestRenderTitlePromptCarriesTheStoredSummary(t *testing.T) {
 		t.Errorf("the title-only call should not ask for a summary:\n%s", req.SystemPrompt)
 	}
 }
+
+func TestTitlePromptsStateTheTitleRule(t *testing.T) {
+	renderers := map[string]func(*model.Entry, *model.Graph, string) (llm.Request, error){
+		"title":   llmops.RenderTitlePrompt,
+		"summary": llmops.RenderSummaryPrompt,
+	}
+	for name, render := range renderers {
+		t.Run(name, func(t *testing.T) {
+			entry, graph := titledFixture()
+			req, err := render(entry, graph, "")
+			if err != nil {
+				t.Fatalf("rendering the %s prompt: %v", name, err)
+			}
+			if !strings.Contains(req.SystemPrompt, model.TitleRule) {
+				t.Errorf("the prompt should state the title rule:\n%s", req.SystemPrompt)
+			}
+			if strings.Contains(req.SystemPrompt, "at most 32 characters") {
+				t.Errorf("the prompt should no longer cap titles at 32 characters:\n%s", req.SystemPrompt)
+			}
+		})
+	}
+}

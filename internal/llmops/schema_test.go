@@ -1,6 +1,7 @@
 package llmops_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/llmops"
@@ -56,5 +57,23 @@ func TestWritingGuideSchemaCarriesItsClosedSets(t *testing.T) {
 		if len(enum) != want {
 			t.Errorf("%s enum has %d values, want %d: %v", field, len(enum), want, enum)
 		}
+	}
+}
+
+// The title rule lives in model.TitleRule and reaches the model through the
+// prompt; the schema's field description only points at it.
+func TestTitleSchemasPointAtTheTitleRule(t *testing.T) {
+	schemas := map[string]map[string]any{"summary": llmops.SummarySchema(), "title": llmops.TitleSchema()}
+	for name, schema := range schemas {
+		t.Run(name, func(t *testing.T) {
+			title := schema["properties"].(map[string]any)["title"].(map[string]any)
+			description, _ := title["description"].(string)
+			if !strings.Contains(description, "title rule") {
+				t.Errorf("the title field should point at the title rule, got %q", description)
+			}
+			if strings.Contains(description, "words") || strings.Contains(description, "characters") {
+				t.Errorf("the title field should not state its own length guidance, got %q", description)
+			}
+		})
 	}
 }

@@ -19,16 +19,15 @@ type writeSchema struct {
 // between two writes of one process is honoured. A handler without an .sdd
 // directory, or a graph without meta.json, writes at the binary's schema.
 func (h *Handler) resolveWriteSchema(ctx context.Context) (writeSchema, error) {
-	version := model.CurrentGraphSchemaVersion
+	var meta *model.SchemaMeta
 	if h.sddDir != "" {
 		status, err := h.reader.SchemaStatus(ctx, query.SchemaStatusQuery{SDDDir: h.sddDir, BinarySchemaVersion: model.CurrentGraphSchemaVersion})
 		if err != nil {
 			return writeSchema{}, fmt.Errorf("reading the graph schema: %w", err)
 		}
-		if status.MetaExists {
-			version = status.Meta.GraphSchemaVersion
-		}
+		meta = status.Meta
 	}
+	version := model.WriteSchemaVersion(meta)
 	capabilities, err := model.CapabilitiesFor(version)
 	if err != nil {
 		return writeSchema{}, err
