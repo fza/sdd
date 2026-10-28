@@ -25,7 +25,7 @@ func TestRepositoryTargetPublishesCaptureThroughOneCommit(t *testing.T) {
 	summaries := 0
 	application, identity, binding := repo.captureApplication(t, pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
 		summaries++
-		return pkgllm.Result{Text: fmt.Sprintf(`{"title": "test title", "summary": "Rendered summary %d."}`, summaries)}, nil
+		return pkgllm.Result{Text: fmt.Sprintf(`{"title": "Committed capture", "summary": "Rendered summary %d."}`, summaries)}, nil
 	}))
 	const entryID = "20260914-020000-s-tac-cap"
 	draft := sdd.EntryDraft{
@@ -50,7 +50,7 @@ func TestRepositoryTargetPublishesCaptureThroughOneCommit(t *testing.T) {
 	if !strings.Contains(message, "SDD-Mutation: "+draft.Publication.String()) || strings.Contains(message, string(binding.SessionID)) {
 		t.Fatalf("publication commit = %q; want the opaque publication ID without the session handle", message)
 	}
-	if subject := repo.git("log", "-1", "--format=%s"); subject != "sdd: signal tactical test title" {
+	if subject := repo.git("log", "-1", "--format=%s"); subject != "sdd: signal tactical Committed capture" {
 		t.Errorf("a capture committed on retry should name what was captured, got %q", subject)
 	}
 	relPath, err := model.IDToRelPath(entryID)
