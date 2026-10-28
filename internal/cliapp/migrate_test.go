@@ -115,7 +115,7 @@ func TestMigrate(t *testing.T) {
 			if !strings.Contains(meta, `"graph_schema_version": 1`) {
 				t.Errorf("filling titles should leave the schema version as it is:\n%s", meta)
 			}
-			if !strings.Contains(entry, "title: migrated title") || !strings.Contains(entry, "summary: A stored summary that stays.") {
+			if !strings.Contains(entry, "title: Migrated title") || !strings.Contains(entry, "summary: A stored summary that stays.") {
 				t.Errorf("the backfill should add the title and keep the stored summary:\n%s", entry)
 			}
 			if log := gitIn(t, project, "log", "--format=%s"); strings.Contains(log, "migrate graph schema") {
@@ -162,18 +162,6 @@ func TestMigrateStampOnlyOnACurrentGraphChangesNothing(t *testing.T) {
 	}
 }
 
-func TestSummarizeAllFillsTitlesOnASchemaOneGraph(t *testing.T) {
-	project := newMigrateProject(t)
-	output, err := runReleased(t, project, "", "summarize", "--all")
-	if err != nil {
-		t.Fatalf("summarize --all: %v\n%s", err, output)
-	}
-	entry := readFile(t, filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel)))
-	if !strings.Contains(entry, "title: migrated title") {
-		t.Errorf("a summarized entry on a schema-1 graph should gain its title:\n%s", entry)
-	}
-}
-
 func TestMigrateCommitsTitlesAFailedCommitLeftBehind(t *testing.T) {
 	project := newMigrateProject(t)
 	if output, err := runReleased(t, project, "", "migrate", "--yes", "--stamp-only"); err != nil {
@@ -194,5 +182,17 @@ func TestMigrateCommitsTitlesAFailedCommitLeftBehind(t *testing.T) {
 	}
 	if entry := readFile(t, entryPath); !strings.Contains(entry, "title: stranded title") {
 		t.Errorf("the stranded title should be kept as written:\n%s", entry)
+	}
+}
+
+func TestSummarizeAllFillsTitlesOnASchemaOneGraph(t *testing.T) {
+	project := newMigrateProject(t)
+	output, err := runReleased(t, project, "", "summarize", "--all")
+	if err != nil {
+		t.Fatalf("summarize --all: %v\n%s", err, output)
+	}
+	entry := readFile(t, filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel)))
+	if !strings.Contains(entry, "title: Migrated title") {
+		t.Errorf("a summarized entry on a schema-1 graph should gain its title:\n%s", entry)
 	}
 }

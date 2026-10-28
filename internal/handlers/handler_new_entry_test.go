@@ -748,8 +748,8 @@ func TestNewEntry_ExplicitSummary_SkipsLLM(t *testing.T) {
 	if entry.Summary != custom {
 		t.Errorf("stored summary = %q, want %q", entry.Summary, custom)
 	}
-	if entry.Title != "custom title" {
-		t.Errorf("the supplied title should be stored verbatim, got %q", entry.Title)
+	if entry.Title != "Custom title" {
+		t.Errorf("the supplied title should be stored with a capital first letter, got %q", entry.Title)
 	}
 }
 
@@ -916,7 +916,7 @@ func TestNewEntry_GeneratedTitle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if entry.Title != stubTitle || entry.Summary != tc.wantSummary {
+			if entry.Title != storedTitle || entry.Summary != tc.wantSummary {
 				t.Errorf("the entry should carry the generated title beside the expected summary, got title %q summary %q", entry.Title, entry.Summary)
 			}
 		})

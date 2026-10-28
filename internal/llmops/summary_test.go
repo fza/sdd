@@ -17,9 +17,9 @@ func TestParseSummaryResponse(t *testing.T) {
 		wantSummary string
 		wantErr     string
 	}{
-		{name: "paired answer", output: `{"title": "daemon project removal", "summary": "The daemon project is removed."}`, wantTitle: "daemon project removal", wantSummary: "The daemon project is removed."},
-		{name: "answer wrapped in prose", output: "Here it is:\n```json\n{\"title\": \"daemon project removal\", \"summary\": \"The daemon project is removed.\"}\n```", wantTitle: "daemon project removal", wantSummary: "The daemon project is removed."},
-		{name: "trailing period dropped from the title", output: `{"title": "daemon project removal.", "summary": "S."}`, wantTitle: "daemon project removal", wantSummary: "S."},
+		{name: "paired answer", output: `{"title": "daemon project removal", "summary": "The daemon project is removed."}`, wantTitle: "Daemon project removal", wantSummary: "The daemon project is removed."},
+		{name: "answer wrapped in prose", output: "Here it is:\n```json\n{\"title\": \"daemon project removal\", \"summary\": \"The daemon project is removed.\"}\n```", wantTitle: "Daemon project removal", wantSummary: "The daemon project is removed."},
+		{name: "trailing period dropped from the title", output: `{"title": "daemon project removal.", "summary": "S."}`, wantTitle: "Daemon project removal", wantSummary: "S."},
 		{name: "plain prose", output: "The daemon project is removed.", wantErr: "no JSON object"},
 		{name: "empty title", output: `{"title": " ", "summary": "S."}`, wantErr: "empty title"},
 		{name: "multi-line title", output: `{"title": "daemon\nremoval", "summary": "S."}`, wantErr: "more than one line"},
@@ -49,8 +49,8 @@ func TestParseTitleResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseTitleResponse: %v", err)
 	}
-	if title != "daemon project removal" {
-		t.Errorf("the title should be read trimmed, got %q", title)
+	if title != "Daemon project removal" {
+		t.Errorf("the title should be read trimmed and capitalized, got %q", title)
 	}
 	if _, err := llmops.ParseTitleResponse(`{"title": ""}`); err == nil {
 		t.Error("an empty title should be refused")

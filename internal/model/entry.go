@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/networkteam/sdd/pkg/application/types"
@@ -449,6 +450,16 @@ func (e *Entry) ListingTitle() string {
 		return e.Title
 	}
 	return e.FirstSummarySentence()
+}
+
+// CapitalizeTitle starts a title with a capital letter, whatever wrote it:
+// listings show titles in a column, and a mix of cases reads as noise there.
+func CapitalizeTitle(title string) string {
+	first, size := utf8.DecodeRuneInString(title)
+	if size == 0 {
+		return title
+	}
+	return string(unicode.ToTitle(first)) + title[size:]
 }
 
 // TitleBackfill counts what filling the missing titles of entries costs:

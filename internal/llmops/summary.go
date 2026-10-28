@@ -99,7 +99,7 @@ func cleanTitle(raw string) (string, error) {
 	if strings.ContainsAny(title, "\r\n") {
 		return "", fmt.Errorf("title %q spans more than one line", title)
 	}
-	return title, nil
+	return model.CapitalizeTitle(title), nil
 }
 
 // summaryContext holds all data needed to render the summary prompt template.

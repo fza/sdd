@@ -26,7 +26,11 @@ type stubRunner struct {
 	byUse map[llm.Purpose]int
 }
 
-const stubTitle = "generated title"
+// stubTitle is the stub runner's lowercase answer; files carry it capitalized.
+const (
+	stubTitle   = "generated title"
+	storedTitle = "Generated title"
+)
 
 func (r *stubRunner) Run(_ context.Context, request llm.Request) (llm.Result, error) {
 	r.mu.Lock()
@@ -130,11 +134,11 @@ func TestSummarize_All_FillsWhatIsMissing(t *testing.T) {
 	}
 
 	withSummary := readEntryFile(t, graphDir, summarizedEntry)
-	if !strings.Contains(withSummary, "summary: Existing summary.") || !strings.Contains(withSummary, "title: "+stubTitle) {
+	if !strings.Contains(withSummary, "summary: Existing summary.") || !strings.Contains(withSummary, "title: "+storedTitle) {
 		t.Errorf("a stored summary should survive while the title is added:\n%s", withSummary)
 	}
 	empty := readEntryFile(t, graphDir, emptyEntry)
-	if !strings.Contains(empty, "summary: GENERATED") || !strings.Contains(empty, "title: "+stubTitle) {
+	if !strings.Contains(empty, "summary: GENERATED") || !strings.Contains(empty, "title: "+storedTitle) {
 		t.Errorf("an entry without a summary should gain summary and title:\n%s", empty)
 	}
 	if kept := readEntryFile(t, graphDir, titledEntry); !strings.Contains(kept, "title: kept title") || !strings.Contains(kept, "summary: Kept summary.") {
@@ -175,7 +179,7 @@ func TestSummarize_AllForce_RegeneratesAll(t *testing.T) {
 		t.Errorf("--force should regenerate both fields in paired calls, got %v", runner.byUse)
 	}
 	for _, id := range []string{summarizedEntry, emptyEntry} {
-		if text := readEntryFile(t, graphDir, id); !strings.Contains(text, "summary: GENERATED") || !strings.Contains(text, "title: "+stubTitle) {
+		if text := readEntryFile(t, graphDir, id); !strings.Contains(text, "summary: GENERATED") || !strings.Contains(text, "title: "+storedTitle) {
 			t.Errorf("%s should regenerate summary and title:\n%s", id, text)
 		}
 	}
@@ -215,7 +219,7 @@ func TestSummarize_NamedEntry_RegeneratesUnconditionally(t *testing.T) {
 	if len(skipped) != 0 {
 		t.Errorf("skipped = %v, want none for a named entry", skipped)
 	}
-	if text := readEntryFile(t, graphDir, summarizedEntry); !strings.Contains(text, "summary: GENERATED") || !strings.Contains(text, "title: "+stubTitle) {
+	if text := readEntryFile(t, graphDir, summarizedEntry); !strings.Contains(text, "summary: GENERATED") || !strings.Contains(text, "title: "+storedTitle) {
 		t.Errorf("named entry should regenerate summary and title:\n%s", text)
 	}
 }

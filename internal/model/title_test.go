@@ -62,3 +62,20 @@ func TestCheckCompatibilityPointsANewerGraphAtUpgrade(t *testing.T) {
 		t.Errorf("the refusal should name the way forward, got %q", res.Reason)
 	}
 }
+
+func TestCapitalizeTitle(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{in: "daemon project removal", want: "Daemon project removal"},
+		{in: "Daemon project removal", want: "Daemon project removal"},
+		{in: "übergabe der projekte", want: "Übergabe der projekte"},
+		{in: "3d printing setup", want: "3d printing setup"},
+		{in: "", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			if got := model.CapitalizeTitle(tc.in); got != tc.want {
+				t.Errorf("only the first letter should change, to a capital, got %q", got)
+			}
+		})
+	}
+}
