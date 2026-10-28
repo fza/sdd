@@ -28,7 +28,7 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 		projectRoot = filepath.Join(cmd.RepoRoot, projectRoot)
 	}
 	projectSDDDir := meta.SDDDir(filepath.Clean(projectRoot))
-	projectCfg, _, err := meta.ReadConfigLayers(projectSDDDir)
+	projectCfg, _, err := meta.ReadConfigLayers(projectSDDDir, "")
 	if err != nil {
 		return err
 	}
@@ -149,7 +149,7 @@ func writeParticipant(sddDir string, cmd *command.InitCmd) error {
 	if cmd.Participant == "" {
 		return nil
 	}
-	configLocalPath := filepath.Join(sddDir, "config.local.yaml")
+	configLocalPath := meta.LocalConfigPath(sddDir, cmd.LocalConfigPath)
 	existing, err := os.ReadFile(configLocalPath)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("reading %s: %w", configLocalPath, err)

@@ -33,8 +33,8 @@ func (p Project) Pointed() bool { return p.Root != p.WorkRoot }
 func ResolveProject(workRoot string) (Project, error) {
 	sddDir := SDDDir(workRoot)
 	committedPath := filepath.Join(sddDir, "config.yaml")
-	localPath := filepath.Join(sddDir, "config.local.yaml")
-	committed, local, err := ReadConfigLayers(sddDir)
+	localPath := LocalConfigPath(sddDir, "")
+	committed, local, err := ReadConfigLayers(sddDir, localPath)
 	if err != nil {
 		return Project{}, err
 	}

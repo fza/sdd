@@ -60,6 +60,7 @@ func captureSignal(t *testing.T, dir string) {
 		"The work repository carries only the work, while signals and decisions live in a project beside it.",
 		"--confidence", "high", "--skip-preflight",
 		"--summary", "A project beside the work keeps the work history free of capture commits.",
+		"--title", "Graph beside the work",
 	)
 }
 
@@ -138,7 +139,7 @@ func TestPointedWriteGateReadsTheProjectSchema(t *testing.T) {
 
 	_, err := runAppAs(t, work, "1.2.3",
 		"new", "signal", "tactical", "A capture against a graph from a newer schema must not be written.",
-		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.",
+		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.", "--title", "Refused capture",
 	)
 
 	if err == nil {
@@ -259,7 +260,7 @@ func TestGraphDirIntoAnotherRepositoryIsRefused(t *testing.T) {
 
 	_, err := runAppErr(t, project,
 		"new", "signal", "tactical", "A graph reached across repositories must be refused.",
-		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.",
+		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.", "--title", "Refused capture",
 	)
 
 	if err == nil || !strings.Contains(err.Error(), "project_dir") {
