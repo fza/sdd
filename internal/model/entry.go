@@ -312,7 +312,7 @@ type Entry struct {
 	Involvement []Involvement
 	Preflight   string    // PreflightSkipped or PreflightDryRunVerified; empty when a checker validated this entry
 	Attachments []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
-	Title       string    // short headline naming the entry's subject, generated with the summary
+	Title       string    // short headline naming the entry's subject, generated with the summary; optional at graph schema 1 (20261028-005411-d-tac-tit)
 	Summary     string    // LLM-generated summary: this entry + direct relationships
 	Warnings    []Warning // validation issues found during graph construction
 	// Embedded marks a base entry compiled into the sdd binary (base

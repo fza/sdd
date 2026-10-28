@@ -22,12 +22,6 @@ func TestInfoJSONReportsTheWriteSchemaCapabilities(t *testing.T) {
 		wantCapabilities any
 	}{
 		{
-			name:             "schema-1 graph",
-			meta:             "{\n  \"graph_schema_version\": 1\n}\n",
-			wantGraphSchema:  float64(1),
-			wantCapabilities: map[string]any{"titles": false},
-		},
-		{
 			name:             "graph at the binary's schema",
 			meta:             fmt.Sprintf("{\n  \"graph_schema_version\": %d\n}\n", model.CurrentGraphSchemaVersion),
 			wantGraphSchema:  float64(model.CurrentGraphSchemaVersion),

@@ -22,7 +22,7 @@ import (
 func migrateCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "migrate",
-		Usage: "Upgrade the graph to this binary's schema version, after approval",
+		Usage: "Upgrade the graph to this binary's schema version and fill missing titles, after approval",
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
 				Name:  "yes",
@@ -104,7 +104,11 @@ func migrateCmd() *cli.Command {
 				fmt.Fprintf(out, "Backfill skipped: %d entries owe a title or summary; a later `sdd migrate` fills them.\n", titleOnly+withSummary)
 			} else {
 				fmt.Fprintf(out, "Backfill: %d entries get a title beside their stored summary, %d entries get a summary and a title -> %d model calls.\n", titleOnly, withSummary, titleOnly+withSummary)
-				fmt.Fprintln(out, "The schema version is stamped first; an interrupted backfill continues on the next `sdd migrate`.")
+				if from < model.CurrentGraphSchemaVersion {
+					fmt.Fprintln(out, "The schema version is stamped first; an interrupted backfill continues on the next `sdd migrate`.")
+				} else {
+					fmt.Fprintln(out, "An interrupted backfill continues on the next `sdd migrate`.")
+				}
 			}
 			if !cmd.Bool("yes") {
 				fmt.Fprint(out, "Proceed? [y/N] ")
