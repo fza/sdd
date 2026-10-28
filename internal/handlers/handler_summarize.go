@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 )
 
 // Summarize executes a SummarizeCmd: loads the graph, determines which
@@ -24,8 +26,12 @@ import (
 // the factory applies a rate limiter on top. A short-lived mutex guards graph
 // reads and writes; the LLM call itself runs without the lock.
 //
-// When cmd.ExplicitText is set, the LLM is bypassed entirely: the supplied
-// text is written as the summary on a single named entry.
+// One call writes an entry's summary and title together. An --all run that
+// finds a summary without a title asks for the title alone, so a summary
+// corrected by hand survives the fill.
+//
+// When cmd.ExplicitText or cmd.ExplicitTitle is set, the LLM is bypassed
+// entirely: the supplied text is written on a single named entry.
 func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) error {
 	graph, err := h.reader.CurrentGraph(h.graphDir)
 	if err != nil {
@@ -36,12 +42,20 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 	// resolution reassigns cmd.EntryIDs below.
 	isAll := len(cmd.EntryIDs) == 0
 
+	schema, err := h.resolveWriteSchema(ctx)
+	if err != nil {
+		return err
+	}
+
 	// Explicit-text path: single entry, no LLM call.
-	if cmd.ExplicitText != nil {
-		if len(cmd.EntryIDs) != 1 {
-			return fmt.Errorf("--text requires exactly one entry ID (no --all, no multi-entry batches)")
+	if cmd.ExplicitText != nil || cmd.ExplicitTitle != nil {
+		if cmd.ExplicitTitle != nil && !schema.capabilities.Titles {
+			return schema.refuseTitle()
 		}
-		return h.summarizeExplicit(ctx, graph, cmd.EntryIDs[0], *cmd.ExplicitText, cmd.OnSummarized)
+		if len(cmd.EntryIDs) != 1 {
+			return fmt.Errorf("--text and --title require exactly one entry ID (no --all, no multi-entry batches)")
+		}
+		return h.summarizeExplicit(ctx, graph, cmd.EntryIDs[0], cmd)
 	}
 
 	// Determine which entries to process.
@@ -90,27 +104,36 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 	var g errgroup.Group
 	g.SetLimit(concurrency)
 
+	// --all fills only what is missing unless --force regenerates every
+	// entry; named entries always regenerate. Decided before any worker
+	// writes, so the planned count is known up front.
+	var planned []*model.Entry
 	for _, entry := range entries {
-		g.Go(func() error {
-			// --all fills only entries that have no summary yet unless
-			// --force regenerates every entry; named entries always
-			// regenerate. Read under the lock — other workers may be writing
-			// their own entries' summaries concurrently.
-			graphMu.RLock()
-			alreadySummarized := entry.Summary != ""
-			graphMu.RUnlock()
-			if isAll && !cmd.Force && alreadySummarized {
-				if cmd.OnSkipped != nil {
-					cmd.OnSkipped(entry.ID)
-				}
-				return nil
+		if isAll && !cmd.Force && entry.Summary != "" && (entry.Title != "" || !schema.capabilities.Titles) {
+			if cmd.OnSkipped != nil {
+				cmd.OnSkipped(entry.ID)
 			}
+			continue
+		}
+		planned = append(planned, entry)
+	}
+	if cmd.OnPlanned != nil {
+		cmd.OnPlanned(len(planned))
+	}
+
+	for _, entry := range planned {
+		titleOnly := isAll && !cmd.Force && entry.Summary != ""
+		g.Go(func() error {
 
 			// Render prompt under read lock — other workers may be writing
 			// their own entries' summaries concurrently, and those feed
 			// neighbor prose into this prompt.
 			graphMu.RLock()
-			req, renderErr := llmops.RenderSummaryPrompt(entry, graph, h.language)
+			render := llmops.RenderSummaryPrompt
+			if titleOnly {
+				render = llmops.RenderTitlePrompt
+			}
+			req, renderErr := render(entry, graph, h.language)
 			graphMu.RUnlock()
 			if renderErr != nil {
 				return fmt.Errorf("rendering summary for %s: %w", entry.ID, renderErr)
@@ -121,12 +144,32 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 			if err != nil {
 				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
 			}
-			summary := strings.TrimSpace(output.Text)
+			result := &llmops.SummarizeResult{}
+			if titleOnly {
+				result.Title, err = llmops.ParseTitleResponse(output.Text)
+			} else {
+				result, err = llmops.ParseSummaryResponse(output.Text)
+			}
+			if err != nil {
+				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
+			}
+			err = secrets.CheckText("title", result.Title)
+			if err == nil && !titleOnly {
+				err = secrets.CheckText("summary", result.Summary)
+			}
+			if err != nil {
+				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
+			}
 
-			// Apply summary under write lock, then format and write file
+			// Apply the answer under write lock, then format and write file
 			// under read lock so FormatFrontmatter sees a consistent entry.
 			graphMu.Lock()
-			entry.Summary = summary
+			if schema.capabilities.Titles {
+				entry.Title = result.Title
+			}
+			if !titleOnly {
+				entry.Summary = result.Summary
+			}
 			graphMu.Unlock()
 
 			relPath, err := model.IDToRelPath(entry.ID)
@@ -147,34 +190,34 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 			commitPaths = append(commitPaths, filePath)
 			pathsMu.Unlock()
 
-			if cmd.OnSummarized != nil {
-				cmd.OnSummarized(entry.ID, summary)
+			switch {
+			case titleOnly && cmd.OnTitled != nil:
+				cmd.OnTitled(entry.ID, result.Title)
+			case !titleOnly && cmd.OnSummarized != nil:
+				cmd.OnSummarized(entry.ID, result.Summary)
 			}
 			return nil
 		})
 	}
 
-	if err := g.Wait(); err != nil {
-		return err
-	}
-
-	// Commit all changes in one batch.
+	// A failed entry still commits what the others wrote: a rerun skips
+	// entries already filled, so an uncommitted file would never be committed.
+	runErr := g.Wait()
 	if h.committer != nil && len(commitPaths) > 0 {
 		msg := fmt.Sprintf("sdd: summarize %d entries", len(commitPaths))
 		if len(cmd.EntryIDs) == 1 {
 			msg = fmt.Sprintf("sdd: summarize %s", cmd.EntryIDs[0])
 		}
 		if err := h.commitGraph(ctx, msg, commitPaths...); err != nil {
-			return fmt.Errorf("git commit: %w", err)
+			return errors.Join(runErr, fmt.Errorf("git commit: %w", err))
 		}
 	}
-
-	return nil
+	return runErr
 }
 
-// summarizeExplicit writes user-supplied summary text on a single entry,
-// bypassing the LLM.
-func (h *Handler) summarizeExplicit(ctx context.Context, graph *model.Graph, idArg, text string, onSummarized func(id, summary string)) error {
+// summarizeExplicit writes a user-supplied summary, title or both on a single
+// entry, bypassing the LLM.
+func (h *Handler) summarizeExplicit(ctx context.Context, graph *model.Graph, idArg string, cmd *command.SummarizeCmd) error {
 	resolved, err := graph.ResolveIDs([]string{idArg})
 	if err != nil {
 		return err
@@ -188,12 +231,31 @@ func (h *Handler) summarizeExplicit(ctx context.Context, graph *model.Graph, idA
 		return fmt.Errorf("%s is an embedded base entry — its summary ships with the binary and cannot be replaced here", id)
 	}
 
-	summary := strings.TrimSpace(text)
-	if summary == "" {
-		return fmt.Errorf("--text value is empty after trimming whitespace")
+	if cmd.ExplicitText != nil {
+		summary := strings.TrimSpace(*cmd.ExplicitText)
+		if summary == "" {
+			return fmt.Errorf("--text value is empty after trimming whitespace")
+		}
+		err := secrets.CheckText("summary", summary)
+		if err != nil {
+			return err
+		}
+		entry.Summary = summary
 	}
-
-	entry.Summary = summary
+	if cmd.ExplicitTitle != nil {
+		title := strings.TrimSpace(*cmd.ExplicitTitle)
+		if title == "" {
+			return fmt.Errorf("--title value is empty after trimming whitespace")
+		}
+		if strings.ContainsAny(title, "\r\n") {
+			return fmt.Errorf("--title value spans more than one line")
+		}
+		err := secrets.CheckText("title", title)
+		if err != nil {
+			return err
+		}
+		entry.Title = model.CapitalizeTitle(title)
+	}
 
 	relPath, err := model.IDToRelPath(entry.ID)
 	if err != nil {
@@ -213,8 +275,11 @@ func (h *Handler) summarizeExplicit(ctx context.Context, graph *model.Graph, idA
 		}
 	}
 
-	if onSummarized != nil {
-		onSummarized(entry.ID, summary)
+	if cmd.ExplicitText != nil && cmd.OnSummarized != nil {
+		cmd.OnSummarized(entry.ID, entry.Summary)
+	}
+	if cmd.ExplicitTitle != nil && cmd.OnTitled != nil {
+		cmd.OnTitled(entry.ID, entry.Title)
 	}
 	return nil
 }

@@ -140,3 +140,59 @@ func TestSummarize_ExplicitText_RejectsEmptyEntryIDs(t *testing.T) {
 		t.Fatal("expected error for empty EntryIDs with --text, got nil")
 	}
 }
+
+func TestSummarize_ExplicitTitle(t *testing.T) {
+	const id = "20260427-120300-s-prc-tt1"
+	text := "  Hand-written summary.  "
+	cases := []struct {
+		name        string
+		text        *string
+		wantSummary string
+	}{
+		{name: "title alone keeps the stored summary", wantSummary: "summary: Stored summary."},
+		{name: "title beside text writes both", text: &text, wantSummary: "summary: Hand-written summary."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			graphDir := t.TempDir()
+			writeEntryFile(t, graphDir, id, "---\ntype: signal\nlayer: process\nkind: gap\nsummary: Stored summary.\n---\n\nBody.\n")
+			h := handlers.New(handlers.Options{GraphDir: graphDir, Reader: &graphReader{}, Committer: &messageRecordingCommitter{}})
+
+			title := "  hand-written title  "
+			var titled string
+			err := h.Summarize(context.Background(), &command.SummarizeCmd{
+				EntryIDs: []string{id}, ExplicitText: tc.text, ExplicitTitle: &title,
+				OnTitled: func(_, title string) { titled = title },
+			})
+			if err != nil {
+				t.Fatalf("Summarize: %v", err)
+			}
+			if titled != "hand-written title" {
+				t.Errorf("the trimmed title should be reported, got %q", titled)
+			}
+			written := readEntryFile(t, graphDir, id)
+			if !strings.Contains(written, "title: hand-written title") || !strings.Contains(written, tc.wantSummary) {
+				t.Errorf("the written entry should carry the supplied title and the expected summary:\n%s", written)
+			}
+		})
+	}
+}
+
+func TestSummarize_ExplicitTitleRefusesAnUnusableTitle(t *testing.T) {
+	const id = "20260427-120301-s-prc-tt2"
+	for name, title := range map[string]string{"multi-line": "first line\nsecond line", "blank": "   "} {
+		t.Run(name, func(t *testing.T) {
+			graphDir := t.TempDir()
+			writeEntryFile(t, graphDir, id, "---\ntype: signal\nlayer: process\nkind: gap\n---\n\nBody.\n")
+			h := handlers.New(handlers.Options{GraphDir: graphDir, Reader: &graphReader{}})
+
+			err := h.Summarize(context.Background(), &command.SummarizeCmd{EntryIDs: []string{id}, ExplicitTitle: &title})
+			if err == nil || !strings.Contains(err.Error(), "--title") {
+				t.Fatalf("an unusable title should be refused naming the flag, got %v", err)
+			}
+			if written := readEntryFile(t, graphDir, id); strings.Contains(written, "title:") {
+				t.Errorf("a refused title should not be written:\n%s", written)
+			}
+		})
+	}
+}

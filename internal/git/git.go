@@ -1,6 +1,6 @@
 // Package git is the production git adapter for the sdd binary: every git
 // subprocess sdd runs is implemented here, behind the narrow interfaces its
-// consumers define (handlers.Committer/Brancher/Mover/Puller,
+// consumers define (handlers.Committer/Brancher/Mover/Puller/ChangeReader,
 // finders.GitSyncer, the repos package's clone/pull surface). Interfaces stay
 // with their consumers; this package only provides the implementations, so a
 // future — possibly partial — swap to an in-process implementation such as
@@ -8,9 +8,11 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +23,8 @@ import (
 
 // CLI is the exec-based adapter: a struct whose methods shell out to the git
 // binary. One value satisfies the consumer-defined git interfaces
-// (handlers.Committer/Brancher/Mover/Puller, finders.GitSyncer, repos.Git);
+// (handlers.Committer/Brancher/Mover/Puller/ChangeReader, finders.GitSyncer,
+// repos.Git);
 // the one exception is the staged-deletion commit variant, which shares the
 // Commit method name and therefore lives on its own type (RemovalCommitter).
 type CLI struct {
@@ -57,7 +60,7 @@ func (c CLI) Commit(message string, paths ...string) error {
 	defer cancel()
 
 	addArgs := c.at(append([]string{"add", "--all", "--"}, paths...)...)
-	if out, err := runDetached(ctx, addArgs...); err != nil {
+	if out, err := runDetachedPastIndexLock(ctx, addArgs...); err != nil {
 		return fmt.Errorf("git add: %s (%w)", out, err)
 	}
 
@@ -65,11 +68,92 @@ func (c CLI) Commit(message string, paths ...string) error {
 	// Without `-- <paths>`, `git commit` records the whole index, sweeping any
 	// pre-staged unrelated work into the CLI's own commit.
 	commitArgs := c.at(append([]string{"commit", "-m", message, "--"}, paths...)...)
-	if out, err := runDetached(ctx, commitArgs...); err != nil {
+	if out, err := runDetachedPastIndexLock(ctx, commitArgs...); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
 
 	return nil
+}
+
+// Committable returns paths without those git refuses to stage: untracked
+// paths an ignore rule matches, and untracked paths no longer on disk.
+func (c CLI) Committable(ctx context.Context, paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	ignored, err := c.ignored(ctx, paths)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if ignored[path] {
+			continue
+		}
+		_, statErr := os.Stat(path)
+		if errors.Is(statErr, fs.ErrNotExist) {
+			tracked, err := c.tracked(ctx, path)
+			if err != nil {
+				return nil, err
+			}
+			if !tracked {
+				continue
+			}
+		}
+		out = append(out, path)
+	}
+	return out, nil
+}
+
+func (c CLI) ignored(ctx context.Context, paths []string) (map[string]bool, error) {
+	cmd := exec.CommandContext(ctx, "git", c.at("check-ignore", "-z", "--stdin")...)
+	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00"))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("git check-ignore: %s (%w)", stderr.Bytes(), err)
+	}
+	ignored := map[string]bool{}
+	for path := range strings.SplitSeq(string(out), "\x00") {
+		if path != "" {
+			ignored[path] = true
+		}
+	}
+	return ignored, nil
+}
+
+func (c CLI) tracked(ctx context.Context, path string) (bool, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("ls-files", "-z", "--", path)...).CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("git ls-files: %s (%w)", out, err)
+	}
+	return len(out) > 0, nil
+}
+
+// runDetachedPastIndexLock retries a git subprocess while another process
+// holds the repository's index lock, which clears when that process finishes;
+// a graph written beside concurrent captures meets it routinely. Retries stop
+// with ctx, so the commit timeout bounds the wait. Any other failure returns
+// at once.
+func runDetachedPastIndexLock(ctx context.Context, args ...string) ([]byte, error) {
+	delay := 100 * time.Millisecond
+	for {
+		out, err := runDetached(ctx, args...)
+		if err == nil || !strings.Contains(string(out), "index.lock") {
+			return out, err
+		}
+		select {
+		case <-ctx.Done():
+			return out, err
+		case <-time.After(delay):
+		}
+		delay = min(2*delay, 2*time.Second)
+	}
 }
 
 // Push publishes HEAD to the branch the current branch tracks, detached like
@@ -188,6 +272,66 @@ func runDetached(ctx context.Context, args ...string) ([]byte, error) {
 		return out, fmt.Errorf("git %s: timed out after %s (a commit signer or credential helper may be blocking on input)", args[0], detachedTimeout)
 	}
 	return out, err
+}
+
+// ModifiedFiles lists tracked files under dir whose working copy differs from
+// HEAD, as absolute paths. Production handlers.ChangeReader.
+func (c CLI) ModifiedFiles(ctx context.Context, dir string) ([]string, error) {
+	root, err := c.toplevel(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return nil, fmt.Errorf("locating %s in %s: %w", dir, root, err)
+	}
+	out, err := exec.CommandContext(ctx, "git", c.at("status", "--porcelain=v1", "-z", "--untracked-files=no", "--", rel)...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("git status: %w", err)
+	}
+	var paths []string
+	records := strings.Split(string(out), "\x00")
+	for i := 0; i < len(records); i++ {
+		record := records[i]
+		if len(record) < 4 {
+			continue
+		}
+		status, path := record[:2], record[3:]
+		if status[0] == 'R' || status[0] == 'C' {
+			i++ // the source path follows as its own record
+			continue
+		}
+		if status[0] == 'M' || status[1] == 'M' {
+			paths = append(paths, filepath.Join(root, path))
+		}
+	}
+	return paths, nil
+}
+
+// HeadContent returns the file at path as HEAD records it. Production
+// handlers.ChangeReader.
+func (c CLI) HeadContent(ctx context.Context, path string) ([]byte, error) {
+	root, err := c.toplevel(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return nil, fmt.Errorf("locating %s in %s: %w", path, root, err)
+	}
+	out, err := exec.CommandContext(ctx, "git", c.at("show", "HEAD:"+filepath.ToSlash(rel))...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("git show HEAD:%s: %w", rel, err)
+	}
+	return out, nil
+}
+
+func (c CLI) toplevel(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--show-toplevel")...).Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // Move renames a path in the working tree and the git index as one operation

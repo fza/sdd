@@ -14,11 +14,11 @@ import (
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
-// A schema option is client-level in gollm, so whether summarize stays
-// unconstrained while the checkers are constrained is only observable on the
-// wire. This drives both purposes through one composed runner against a local
-// listener and asserts on the bytes each produced.
-func TestPurposeMuxConstrainsOnlyCheckers(t *testing.T) {
+// A schema option is client-level in gollm, so whether each purpose carries
+// its own schema is only observable on the wire. This drives every purpose
+// through one composed runner against a local listener and asserts on the
+// bytes each produced.
+func TestPurposeMuxConstrainsEachPurposeToItsSchema(t *testing.T) {
 	var mu sync.Mutex
 	bodies := map[string]map[string]any{}
 	var current string
@@ -45,7 +45,13 @@ func TestPurposeMuxConstrainsOnlyCheckers(t *testing.T) {
 		t.Fatalf("factory.New: %v", err)
 	}
 
-	for _, purpose := range []llm.Purpose{llm.PurposeSummarize, llm.PurposePreflight, llm.PurposeWritingGuide} {
+	wantProperty := map[llm.Purpose]string{
+		llm.PurposeSummarize:    "summary",
+		llm.PurposeTitle:        "title",
+		llm.PurposePreflight:    "findings",
+		llm.PurposeWritingGuide: "findings",
+	}
+	for purpose := range wantProperty {
 		mu.Lock()
 		current = string(purpose)
 		mu.Unlock()
@@ -57,11 +63,7 @@ func TestPurposeMuxConstrainsOnlyCheckers(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if _, ok := bodies[string(llm.PurposeSummarize)]["format"]; ok {
-		t.Error("summarize must not carry a schema: it answers in prose")
-	}
-
-	for _, purpose := range []llm.Purpose{llm.PurposePreflight, llm.PurposeWritingGuide} {
+	for purpose, property := range wantProperty {
 		schema, ok := bodies[string(purpose)]["format"].(map[string]any)
 		if !ok {
 			t.Fatalf("%s: format key missing, got %v", purpose, bodies[string(purpose)])
@@ -69,9 +71,12 @@ func TestPurposeMuxConstrainsOnlyCheckers(t *testing.T) {
 		if schema["additionalProperties"] != false {
 			t.Errorf("%s: schema must close the object, got %v", purpose, schema["additionalProperties"])
 		}
-		if _, ok := schema["properties"].(map[string]any)["findings"]; !ok {
-			t.Errorf("%s: schema has no findings property: %v", purpose, schema)
+		if _, ok := schema["properties"].(map[string]any)[property]; !ok {
+			t.Errorf("%s: schema lacks the purpose's answer property: %v", purpose, schema)
 		}
+	}
+	if _, ok := bodies[string(llm.PurposeTitle)]["format"].(map[string]any)["properties"].(map[string]any)["summary"]; ok {
+		t.Error("the title-only schema must not ask for a summary")
 	}
 }
 

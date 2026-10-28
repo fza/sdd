@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -233,5 +234,84 @@ func TestRepoRootFor(t *testing.T) {
 	}
 	if outside := RepoRootFor(t.TempDir()); outside != "" {
 		t.Errorf("a path outside a repository must report no root, got %q", outside)
+	}
+}
+
+// A commit meeting another process's index lock waits for it to clear rather
+// than failing: captures running beside a backfill hold the lock briefly.
+func TestCommit_WaitsOutAHeldIndexLock(t *testing.T) {
+	dir := newTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "touched.txt"), []byte("touched\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(dir, ".git", "index.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		released <- os.Remove(lock)
+	}()
+
+	if err := (CLI{Dir: dir}).Commit("touch", "touched.txt"); err != nil {
+		t.Fatalf("a commit should succeed once the index lock clears: %v", err)
+	}
+	if err := <-released; err != nil {
+		t.Fatal(err)
+	}
+	if files := commitFiles(t, dir); !slices.Contains(files, "touched.txt") {
+		t.Errorf("the commit should record the touched file, got %v", files)
+	}
+}
+
+// A failure other than the index lock is not retried.
+func TestCommit_FailsAtOnceOnOtherErrors(t *testing.T) {
+	dir := newTestRepo(t)
+	start := time.Now()
+	if err := (CLI{Dir: dir}).Commit("nothing", "absent.txt"); err == nil {
+		t.Fatal("staging a path that does not exist should fail")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("a failure unrelated to the index lock should return without waiting, took %s", elapsed)
+	}
+}
+
+func TestModifiedFilesAndHeadContent(t *testing.T) {
+	dir := newTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gone.txt"), []byte("gone\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "gone.txt")
+	runGit(t, dir, "commit", "-q", "-m", "gone")
+	if err := os.Remove(filepath.Join(dir, "gone.txt")); err != nil {
+		t.Fatal(err)
+	}
+	cli := CLI{Dir: dir}
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	modified, err := cli.ModifiedFiles(t.Context(), root)
+	if err != nil {
+		t.Fatalf("ModifiedFiles: %v", err)
+	}
+	if want := filepath.Join(root, "seed.txt"); len(modified) != 1 || modified[0] != want {
+		t.Errorf("only the modified tracked file should be listed, as an absolute path, got %v", modified)
+	}
+
+	head, err := cli.HeadContent(t.Context(), filepath.Join(root, "seed.txt"))
+	if err != nil {
+		t.Fatalf("HeadContent: %v", err)
+	}
+	if string(head) != "seed\n" {
+		t.Errorf("HEAD content should be the committed version, got %q", head)
 	}
 }

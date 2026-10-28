@@ -3,8 +3,13 @@ import starlightLlmTools from "@wave-rf/starlight-llm-tools";
 import { defineConfig } from "astro/config";
 import starlightThemeNova from "starlight-theme-nova";
 
+// GitHub Actions names the repository building the site, so a fork publishes
+// under its own Pages domain and links back to itself.
+const repository = process.env.GITHUB_REPOSITORY ?? "networkteam/sdd";
+const owner = repository.split("/")[0];
+
 export default defineConfig({
-  site: "https://networkteam.github.io",
+  site: `https://${owner}.github.io`,
   base: "/sdd",
   integrations: [
     starlight({
@@ -23,7 +28,7 @@ export default defineConfig({
         {
           icon: "github",
           label: "GitHub",
-          href: "https://github.com/networkteam/sdd",
+          href: `https://github.com/${repository}`,
         },
       ],
     }),

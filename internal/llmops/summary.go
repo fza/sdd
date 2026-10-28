@@ -3,6 +3,7 @@ package llmops
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"text/template"
@@ -14,12 +15,13 @@ import (
 //go:embed summary_templates/*.tmpl
 var summaryTemplates embed.FS
 
-// SummarizeResult holds the generated summary.
+// SummarizeResult holds the generated title and summary.
 type SummarizeResult struct {
+	Title   string
 	Summary string
 }
 
-// Summarize generates a summary for a single entry using the LLM runner.
+// Summarize generates a title and a summary for a single entry in one call.
 // Summaries are derived on demand with no staleness tracking (d-cpt-4qi), so
 // this always regenerates — the caller decides when to invoke it.
 // configuredLanguage is the graph's authoring language locale code from config
@@ -35,12 +37,69 @@ func Summarize(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 	if err != nil {
 		return nil, fmt.Errorf("running summary generator: %w", err)
 	}
+	return ParseSummaryResponse(output.Text)
+}
 
-	summary := strings.TrimSpace(output.Text)
+// ParseSummaryResponse reads a summary call's answer. Both fields are
+// required: a reply without a usable title is as broken as one without a
+// summary.
+func ParseSummaryResponse(output string) (*SummarizeResult, error) {
+	jsonText, err := extractJSONObject(output)
+	if err != nil {
+		return nil, fmt.Errorf("reading summary answer: %w", err)
+	}
+	var resp summaryResponse
+	if err := json.Unmarshal([]byte(jsonText), &resp); err != nil {
+		return nil, fmt.Errorf("parsing summary answer: %w", err)
+	}
+	title, err := cleanTitle(resp.Title)
+	if err != nil {
+		return nil, err
+	}
+	summary := strings.TrimSpace(resp.Summary)
+	if summary == "" {
+		return nil, fmt.Errorf("summary answer carries an empty summary")
+	}
+	return &SummarizeResult{Title: title, Summary: summary}, nil
+}
 
-	return &SummarizeResult{
-		Summary: summary,
-	}, nil
+// GenerateTitle writes a title for an entry that already holds a summary,
+// leaving the summary as stored: a summary may have been corrected by hand,
+// and nothing records which were.
+func GenerateTitle(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string) (string, error) {
+	req, err := RenderTitlePrompt(entry, graph, configuredLanguage)
+	if err != nil {
+		return "", fmt.Errorf("rendering title prompt: %w", err)
+	}
+	output, err := runner.Run(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("running title generator: %w", err)
+	}
+	return ParseTitleResponse(output.Text)
+}
+
+// ParseTitleResponse reads a title-only call's answer.
+func ParseTitleResponse(output string) (string, error) {
+	jsonText, err := extractJSONObject(output)
+	if err != nil {
+		return "", fmt.Errorf("reading title answer: %w", err)
+	}
+	var resp titleResponse
+	if err := json.Unmarshal([]byte(jsonText), &resp); err != nil {
+		return "", fmt.Errorf("parsing title answer: %w", err)
+	}
+	return cleanTitle(resp.Title)
+}
+
+func cleanTitle(raw string) (string, error) {
+	title := strings.TrimRight(strings.TrimSpace(raw), ".")
+	if title == "" {
+		return "", fmt.Errorf("answer carries an empty title")
+	}
+	if strings.ContainsAny(title, "\r\n") {
+		return "", fmt.Errorf("title %q spans more than one line", title)
+	}
+	return title, nil
 }
 
 // summaryContext holds all data needed to render the summary prompt template.
@@ -51,12 +110,25 @@ type summaryContext struct {
 	// config (empty = English default). Stable per repo, so the system-prompt
 	// prefix stays byte-stable across a graph's captures.
 	ConfiguredLanguage string
+	// StoredSummary is the entry's summary as stored, given to a title-only
+	// call so the title names what the summary already says.
+	StoredSummary string
 }
 
-// RenderSummaryPrompt renders the summary prompt for an entry. Returns a
-// Request with the full rendered prompt in UserPrompt; the system/user split
-// is introduced when templates are refactored (see the plan decision).
+// RenderSummaryPrompt renders the paired title-and-summary prompt for an entry.
 func RenderSummaryPrompt(entry *model.Entry, graph *model.Graph, configuredLanguage string) (llm.Request, error) {
+	return renderSummaryTemplates(llm.PurposeSummarize, "summary", newSummaryContext(entry, graph, configuredLanguage))
+}
+
+// RenderTitlePrompt renders the title-only prompt for an entry that already
+// holds a summary.
+func RenderTitlePrompt(entry *model.Entry, graph *model.Graph, configuredLanguage string) (llm.Request, error) {
+	sctx := newSummaryContext(entry, graph, configuredLanguage)
+	sctx.StoredSummary = entry.Summary
+	return renderSummaryTemplates(llm.PurposeTitle, "title", sctx)
+}
+
+func newSummaryContext(entry *model.Entry, graph *model.Graph, configuredLanguage string) *summaryContext {
 	sctx := &summaryContext{
 		EntryContent:       FormatEntryForPrompt(entry),
 		ConfiguredLanguage: configuredLanguage,
@@ -86,7 +158,11 @@ func RenderSummaryPrompt(entry *model.Entry, graph *model.Graph, configuredLangu
 					triple += " " + string(e.Kind)
 				}
 				triple += " " + e.TypeLabel()
-				parts = append(parts, fmt.Sprintf("[%s] %s (ID: %s)\nSummary: %s", relation, triple, e.ID, e.Summary))
+				part := fmt.Sprintf("[%s] %s (ID: %s)\n", relation, triple, e.ID)
+				if e.Title != "" {
+					part += "Title: " + e.Title + "\n"
+				}
+				parts = append(parts, part+"Summary: "+e.Summary)
 			} else {
 				parts = append(parts, fmt.Sprintf("[%s] %s", relation, FormatEntryForPrompt(e)))
 			}
@@ -100,22 +176,25 @@ func RenderSummaryPrompt(entry *model.Entry, graph *model.Graph, configuredLangu
 	if len(parts) > 0 {
 		sctx.RelatedEntries = strings.Join(parts, "\n\n---\n\n")
 	}
+	return sctx
+}
 
+func renderSummaryTemplates(purpose llm.Purpose, name string, sctx *summaryContext) (llm.Request, error) {
 	tmpl, err := template.ParseFS(summaryTemplates, "summary_templates/*.tmpl")
 	if err != nil {
 		return llm.Request{}, fmt.Errorf("parsing summary templates: %w", err)
 	}
 
 	var sysB, userB strings.Builder
-	if err := tmpl.ExecuteTemplate(&sysB, "summary_system", sctx); err != nil {
-		return llm.Request{}, fmt.Errorf("executing summary_system template: %w", err)
+	if err := tmpl.ExecuteTemplate(&sysB, name+"_system", sctx); err != nil {
+		return llm.Request{}, fmt.Errorf("executing %s_system template: %w", name, err)
 	}
-	if err := tmpl.ExecuteTemplate(&userB, "summary_user", sctx); err != nil {
-		return llm.Request{}, fmt.Errorf("executing summary_user template: %w", err)
+	if err := tmpl.ExecuteTemplate(&userB, name+"_user", sctx); err != nil {
+		return llm.Request{}, fmt.Errorf("executing %s_user template: %w", name, err)
 	}
 
 	return llm.Request{
-		Purpose:      llm.PurposeSummarize,
+		Purpose:      purpose,
 		SystemPrompt: strings.TrimSpace(sysB.String()),
 		UserPrompt:   strings.TrimSpace(userB.String()),
 	}, nil

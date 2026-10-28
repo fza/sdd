@@ -228,3 +228,17 @@ func TestEntryLineBrief_LeavesAShortTitleWhole(t *testing.T) {
 		t.Errorf("nothing was cut, so no marker belongs: %q", line)
 	}
 }
+
+func TestEntryLineBrief_NamesATitledEntryByItsTitle(t *testing.T) {
+	e := entry("20260410-100000-s-tac-aaa", withSummary("This gap observes that graph commits follow the graph's repository."))
+	e.Title = "graph commit placement"
+	g := model.NewGraph([]*model.Entry{e})
+
+	var buf bytes.Buffer
+	presenters.EntryLineBrief(&buf, e, g)
+	line := buf.String()
+
+	if !strings.HasSuffix(line, " graph commit placement\n") || strings.Contains(line, "This gap observes") {
+		t.Errorf("a titled entry should be named by its title alone: %q", line)
+	}
+}

@@ -55,9 +55,9 @@ func EntryLineDisplay(w io.Writer, e *model.Entry, g *model.Graph, displayID str
 // topics) dropped. Built for injection surfaces where full lines cost
 // context without informing the decision at hand.
 //
-// Format: `<id> <layer> <kind>? <type> <first summary sentence>`
-// briefTitleWidth bounds the first sentence on the brief line, where it stands
-// in as the entry's name. The remaining columns are fixed-width identity, so an
+// Format: `<id> <layer> <kind>? <type> <title>`
+// briefTitleWidth bounds the listing title on the brief line — for an untitled
+// entry its first summary sentence. The remaining columns are fixed-width identity, so an
 // unbounded sentence is the only thing that can push a line past a terminal.
 const briefTitleWidth = 110
 
@@ -74,7 +74,7 @@ func EntryLineBrief(w io.Writer, e *model.Entry, g *model.Graph) {
 	sb.WriteString(" ")
 	sb.WriteString(e.TypeLabel())
 	sb.WriteString(" ")
-	sb.WriteString(model.ShortTitle(e.FirstSummarySentence(), briefTitleWidth))
+	sb.WriteString(model.ShortTitle(e.ListingTitle(), briefTitleWidth))
 	sb.WriteString("\n")
 	fmt.Fprint(w, sb.String())
 }

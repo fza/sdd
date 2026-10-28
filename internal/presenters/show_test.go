@@ -490,3 +490,13 @@ func TestRenderShow_OmitsAnUnknownActorKind(t *testing.T) {
 		t.Errorf("an unknown actor kind must not render, got:\n%s", out)
 	}
 }
+
+func TestRenderShow_CarriesTheTitle(t *testing.T) {
+	e := entry("20260410-100000-s-tac-ttl", withContent("Graph commits follow the graph's repository."))
+	e.Title = "graph commit placement"
+	g := model.NewGraph([]*model.Entry{e})
+
+	if out := renderShow(t, g, []string{e.ID}); !strings.Contains(out, "title: graph commit placement") {
+		t.Errorf("show should carry the entry's title, got:\n%s", out)
+	}
+}

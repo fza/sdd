@@ -103,7 +103,7 @@ Branch-targeted workflow reads need to follow the written artifact.
 			case pkgllm.PurposePreflight, pkgllm.PurposeWritingGuide:
 				return pkgllm.Result{Text: `{"findings":[]}`, Identity: identity}, nil
 			case pkgllm.PurposeSummarize:
-				return pkgllm.Result{Text: "Work branch done summary.", Identity: identity}, nil
+				return pkgllm.Result{Text: `{"title": "test title", "summary": "Work branch done summary."}`, Identity: identity}, nil
 			default:
 				return pkgllm.Result{}, fmt.Errorf("unexpected LLM purpose %q", request.Purpose)
 			}
@@ -316,7 +316,7 @@ This reference exists only on the bound work branch.
 			case pkgllm.PurposeWritingGuide:
 				return pkgllm.Result{Text: `{"findings":[]}`, Identity: identity}, nil
 			case pkgllm.PurposeSummarize:
-				return pkgllm.Result{Text: "Generated routing summary.", Identity: identity}, nil
+				return pkgllm.Result{Text: `{"title": "test title", "summary": "Generated routing summary."}`, Identity: identity}, nil
 			default:
 				return pkgllm.Result{}, fmt.Errorf("unexpected LLM purpose %q", request.Purpose)
 			}

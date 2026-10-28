@@ -27,6 +27,7 @@ func TestGraphInsideTheProjectCommitsThere(t *testing.T) {
 		"The graph living inside the project's repository keeps one history for work and captures alike.",
 		"--confidence", "high", "--skip-preflight",
 		"--summary", "An in-repo graph keeps captures beside the work.",
+		"--title", "test title",
 	)
 
 	if entries := graphEntries(t, filepath.Join(project, ".sdd", "graph")); len(entries) != 1 {

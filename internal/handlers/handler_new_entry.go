@@ -139,8 +139,10 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	}
 
 	var sumResult *llmops.SummarizeResult
+	var generatedTitle string
 
-	// A caller-supplied summary is taken verbatim — no LLM call at all.
+	// A caller-supplied summary is taken verbatim; only a missing title still
+	// costs a call.
 	if !cmd.DryRun && h.llmRunner != nil && cmd.Summary == "" {
 		g.Go(func() error {
 			result, err := llmops.Summarize(gctx, h.llmRunner, entry, graph, h.language)
@@ -149,6 +151,18 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 				return nil // non-fatal: entry is valid without a summary
 			}
 			sumResult = result
+			return nil
+		})
+	} else if !cmd.DryRun && h.llmRunner != nil && cmd.Title == "" {
+		summarized := *entry
+		summarized.Summary = cmd.Summary
+		g.Go(func() error {
+			title, err := llmops.GenerateTitle(gctx, h.llmRunner, &summarized, graph, h.language)
+			if err != nil {
+				slogutils.FromContext(gctx).Warn("title generation failed", "err", err)
+				return nil // non-fatal: entry is valid without a title
+			}
+			generatedTitle = title
 			return nil
 		})
 	}
@@ -192,6 +206,11 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		entry.Summary = cmd.Summary
 	} else if sumResult != nil {
 		entry.Summary = sumResult.Summary
+		generatedTitle = sumResult.Title
+	}
+	entry.Title = cmd.Title
+	if entry.Title == "" {
+		entry.Title = generatedTitle
 	}
 
 	// Write entry file.
