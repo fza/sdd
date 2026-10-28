@@ -154,6 +154,10 @@
         "session": {
           "description": "the torn-down session, on teardown by handle",
           "type": "string"
+        },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "type": "string"
         }
       },
       "required": [
@@ -194,6 +198,10 @@
           "type": "string"
         },
         "status": {
+          "type": "string"
+        },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -249,6 +257,57 @@
         },
         "search": {
           "description": "available retrieval modes: text or vector,text",
+          "type": "string"
+        },
+        "sync_blocked": {
+          "additionalProperties": false,
+          "description": "what blocks automatic sync of the graph repository; absent while sync proceeds",
+          "properties": {
+            "destination": {
+              "description": "for a conflict: the local commit it was to merge into",
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "owner": {
+              "description": "session owning the fix",
+              "type": "string"
+            },
+            "paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "since": {
+              "type": "string"
+            },
+            "source": {
+              "description": "for a conflict: the upstream commit that would not merge",
+              "type": "string"
+            },
+            "upstream": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "since"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         },
         "version": {
@@ -662,6 +721,10 @@
         "step": {
           "type": "string"
         },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "type": "string"
+        },
         "vocabulary": {
           "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; served once per connection",
           "type": "string"
@@ -813,6 +876,10 @@
         },
         "step": {
           "type": "string"
+        },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "type": "string"
         }
       },
       "required": [
@@ -893,6 +960,10 @@
           "description": "absolute filesystem path; present only for local (stdio) clients, which may read the file directly instead of paging",
           "type": "string"
         },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "type": "string"
+        },
         "total_bytes": {
           "type": "integer"
         }
@@ -971,6 +1042,10 @@
             "null",
             "array"
           ]
+        },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "type": "string"
         }
       },
       "required": [
@@ -1441,6 +1516,10 @@
               "step": {
                 "type": "string"
               },
+              "sync_notice": {
+                "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+                "type": "string"
+              },
               "vocabulary": {
                 "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; served once per connection",
                 "type": "string"
@@ -1512,6 +1591,10 @@
         },
         "session": {
           "description": "session handle (the session ID)",
+          "type": "string"
+        },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -1642,6 +1725,10 @@
         "results": {
           "description": "matching entries with citations",
           "type": "string"
+        },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "type": "string"
         }
       },
       "required": [
@@ -1698,6 +1785,10 @@
       "additionalProperties": false,
       "properties": {
         "entries": {
+          "type": "string"
+        },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -1765,6 +1856,10 @@
       "properties": {
         "handle": {
           "description": "attachment handle; pass it in a report's attachments field",
+          "type": "string"
+        },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -2173,6 +2268,10 @@
         "step": {
           "type": "string"
         },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "type": "string"
+        },
         "vocabulary": {
           "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; served once per connection",
           "type": "string"
@@ -2568,6 +2667,10 @@
         "step": {
           "type": "string"
         },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "type": "string"
+        },
         "vocabulary": {
           "description": "translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; served once per connection",
           "type": "string"
@@ -2626,6 +2729,10 @@
           "type": "string"
         },
         "sections": {
+          "type": "string"
+        },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },

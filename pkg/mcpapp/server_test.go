@@ -265,6 +265,7 @@ type testEnv struct {
 	sessionsDir string
 	sessions    sdd.SessionStore
 	targets     *testBranchTargets
+	sync        *testGraphSync
 }
 
 type testBranchTargets struct {
@@ -359,13 +360,14 @@ func newTestServerConfig(t *testing.T, findings []query.Finding, graphDir, sessi
 		t.Fatal(err)
 	}
 	targets := &testBranchTargets{fallback: graph, graphs: map[string]sdd.GraphStore{"main": graph}}
+	graphSync := &testGraphSync{}
 	// The fixture clock stays after every embedded base fact's authoring
 	// stamp — the real world's invariant — so recency-sorted lanes rank
 	// test-written entries above the merged base facts.
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(testRuntimeGeneration.Add(1)) * time.Hour)
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "test", DisplayName: "Test"}, DefaultBranch: "main", Language: language,
-		Graph: testBranchReadStore{GraphStore: graph, targets: targets}, Targets: targets,
+		Graph: testBranchReadStore{GraphStore: graph, targets: targets}, Targets: targets, Sync: graphSync,
 		Branches: sdd.BranchValidatorFunc(func(_ context.Context, target sdd.MutationTarget) error {
 			if target.Project != "test" {
 				return fmt.Errorf("unexpected branch project %q", target.Project)
@@ -414,7 +416,7 @@ func newTestServerConfig(t *testing.T, findings []query.Finding, graphDir, sessi
 			t.Errorf("shutting down MCP server: %v", err)
 		}
 	})
-	return testEnv{srv: srv, graphDir: graphDir, sessionsDir: sessionsDir, sessions: opts.Application.Sessions, targets: targets}
+	return testEnv{srv: srv, graphDir: graphDir, sessionsDir: sessionsDir, sessions: opts.Application.Sessions, targets: targets, sync: graphSync}
 }
 
 // connect uses an in-memory connection unless the caller supplies a transport.

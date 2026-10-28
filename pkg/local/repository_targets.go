@@ -77,7 +77,7 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 			}
 			finalizers := []app.MutationFinalizer{finalizer}
 			if model.ResolveSyncMode(cfg) == model.SyncModeAuto {
-				finalizers = append(finalizers, GraphPublisher{Checkout: checkout, GraphDir: meta.ResolveGraphDir(checkout, cfg)})
+				finalizers = append(finalizers, GraphPublisher{GraphDir: meta.ResolveGraphDir(checkout, cfg)})
 			}
 			return graph, finalizers, func() error { return nil }, nil
 		},

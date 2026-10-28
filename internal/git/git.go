@@ -444,6 +444,25 @@ func RepoRootFor(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// ErrGraphRepoMissing reports a graph directory that does not exist or lies
+// in no git repository.
+var ErrGraphRepoMissing = errors.New("graph directory is not in a git repository")
+
+// GraphRepoRoot returns the root of the repository holding the existing graph
+// directory graphDir. Unlike RepoRootFor it never falls back to an ancestor,
+// so sync cannot act on a repository that does not hold the graph.
+func GraphRepoRoot(graphDir string) (string, error) {
+	info, err := os.Stat(graphDir)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%s: %w", graphDir, ErrGraphRepoMissing)
+	}
+	out, err := exec.Command("git", "-C", graphDir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", graphDir, ErrGraphRepoMissing)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // existingAncestor returns path, or the closest ancestor that exists on disk.
 func existingAncestor(path string) string {
 	dir, err := filepath.Abs(path)

@@ -38,32 +38,15 @@ type GraphPuller interface {
 	IsClean(ctx context.Context) (bool, error)
 	MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]string, error)
 	Merge(ctx context.Context, ref, message string) error
+	RevParse(ctx context.Context, ref string) (string, error)
+	// Contains reports whether commit is reachable from HEAD.
+	Contains(ctx context.Context, commit string) (bool, error)
 }
 
-// PullGraph merges the commits upstream holds ahead of the branch when they
-// pass the pull rules, then publishes what the branch holds ahead. It reads
-// the remote-tracking ref as last fetched; it does not fetch.
-func (h *Handler) PullGraph(ctx context.Context, cmd *command.PullGraphCmd) error {
-	verdict, err := h.mergeUpstream(ctx, cmd)
-	if err != nil {
-		return err
-	}
-	if verdict == model.PullReady || verdict == model.PullNothing {
-		return h.publishGraph(ctx)
-	}
-	return nil
-}
-
-// PublishGraph pushes the graph commits ahead of upstream under automatic
-// sync, retrying a push the upstream rejected once after merging.
+// PublishGraph publishes the graph commits ahead of upstream under
+// automatic sync, as a graph command does after committing.
 func (h *Handler) PublishGraph(ctx context.Context) error {
 	return h.publishGraph(ctx)
-}
-
-// AutoPullGraph runs PullGraph reporting through the context's logger, the
-// way every automatic sync step reports.
-func (h *Handler) AutoPullGraph(ctx context.Context) error {
-	return h.PullGraph(ctx, h.reportingPull(ctx))
 }
 
 // mergeUpstream merges the incoming commits when DecidePull finds them ready

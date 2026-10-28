@@ -32,6 +32,9 @@ type InfoResult struct {
 	// Contribution is the read checkout's contribution ref, empty outside
 	// contribution mode.
 	Contribution string
+	// SyncBlocked is what blocks automatic sync of the branch's graph
+	// repository, nil while sync proceeds.
+	SyncBlocked *SyncBlocked
 }
 
 type ViewRequest struct {

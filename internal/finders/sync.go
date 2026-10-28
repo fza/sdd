@@ -3,9 +3,7 @@ package finders
 import (
 	"context"
 	"fmt"
-	"time"
 
-	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 )
@@ -25,9 +23,6 @@ type GitSyncer interface {
 	// (e.g. "origin/main"). Empty string + nil error means the branch has
 	// no upstream configured.
 	UpstreamRef(ctx context.Context) (string, error)
-	// Fetch runs `git fetch` with no args. A non-nil error means the fetch
-	// attempt failed (network, auth, etc.).
-	Fetch(ctx context.Context) error
 	// CountCommits counts commits in rangeSpec whose subject line matches
 	// subjectPattern; an empty pattern counts every commit. rangeSpec is a
 	// git log range such as "HEAD..@{u}" or "@{u}..HEAD".
@@ -40,50 +35,24 @@ type GitSyncer interface {
 	MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]string, error)
 }
 
-// SyncStatus processes a SyncStatusQuery into a SyncStatus. Cooldown is
-// read from the finder's Config; callers supply SDDDir for the last-fetch
-// marker. The finder touches last-fetch on every successful attempt and on
-// terminal failure states (no remote, no upstream, fetch failure) so
-// transient environment issues don't re-poll on every command.
-func (f *Finder) SyncStatus(ctx context.Context, q query.SyncStatusQuery) (model.SyncStatus, error) {
+// SyncStatus compares the branch with its upstream as last fetched. It
+// reads only: fetching is Handler.FetchGraph's (20261028-192101-d-tac-16h).
+func (f *Finder) SyncStatus(ctx context.Context, _ query.SyncStatusQuery) (model.SyncStatus, error) {
 	if f.gitSyncer == nil {
 		return model.SyncStatus{State: model.SyncStateSkipped}, nil
 	}
 	if !f.gitSyncer.InRepo(ctx) {
 		return model.SyncStatus{State: model.SyncStateNoRepo}, nil
 	}
-
-	if q.RespectCooldown {
-		last, err := meta.ReadLastFetch(q.SDDDir)
-		if err != nil {
-			return model.SyncStatus{}, fmt.Errorf("reading last-fetch: %w", err)
-		}
-		cooldown := model.ResolveSyncCooldown(f.cfg)
-		if !last.IsZero() && time.Since(last) < cooldown {
-			return model.SyncStatus{State: model.SyncStateSkipped}, nil
-		}
-	}
-
 	if !f.gitSyncer.HasRemote(ctx) {
-		_ = meta.TouchLastFetch(q.SDDDir)
 		return model.SyncStatus{State: model.SyncStateNoRemote}, nil
 	}
-
 	upstream, err := f.gitSyncer.UpstreamRef(ctx)
 	if err != nil {
 		return model.SyncStatus{}, fmt.Errorf("resolving upstream: %w", err)
 	}
 	if upstream == "" {
-		_ = meta.TouchLastFetch(q.SDDDir)
 		return model.SyncStatus{State: model.SyncStateNoUpstream}, nil
-	}
-
-	fetchErr := f.gitSyncer.Fetch(ctx)
-	// Stamp the attempt regardless of outcome — cooldown bounds attempts,
-	// not successes, to avoid hammering git on persistent offline states.
-	_ = meta.TouchLastFetch(q.SDDDir)
-	if fetchErr != nil {
-		return model.SyncStatus{State: model.SyncStateFetchFailed, Reason: fetchErr.Error()}, nil
 	}
 
 	remoteAhead, err := f.gitSyncer.CountCommits(ctx, "HEAD..@{u}", model.GraphCommitSubjectPattern)
