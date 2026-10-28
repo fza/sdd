@@ -43,6 +43,10 @@ type BuildIndexCmd struct {
 // search before the query so cold-start cost on a fresh clone or branch
 // switch is paid lazily rather than requiring an explicit warm-up.
 type LazyFillIndexCmd struct {
+	// Graph is the current graph when the caller has already loaded it; nil
+	// loads it.
+	Graph *model.Graph
+
 	// OnPlanned mirrors BuildIndexCmd's callback — fired once with the total
 	// entry count to index, the authoritative progress total.
 	OnPlanned func(totalEntries int)
@@ -59,6 +63,10 @@ type LazyFillIndexCmd struct {
 	// OnComplete is called once after lazy-fill finishes, with the count
 	// of entries that were re-embedded.
 	OnComplete func(indexed int)
+
+	// OnFillBusy is called instead of filling when another process is
+	// already filling the same store. Optional.
+	OnFillBusy func()
 }
 
 // BuildConnectedIndexesCmd drives progress for filling one or more connected

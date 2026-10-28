@@ -17,12 +17,14 @@ type CallStat struct {
 	Usage    Usage
 	// Items is the number of inputs in the call. Embedding batches set it so
 	// throughput per item is derivable from Duration; chat calls leave it 0.
-	Items    int
-	Duration time.Duration
+	Items        int
+	Duration     time.Duration
+	FinishReason string
 	// Error is the failure text when the call returned no result, empty on
 	// success. Failures are recorded because a call that times out or errors
-	// is exactly what a sink exists to make countable. Such a row carries no
-	// tokens, and an identity only when the failure was attributed.
+	// is exactly what a sink exists to make countable. Such a row carries an
+	// identity, and the usage of a delivered but rejected reply, only when the
+	// failure was attributed.
 	Error string
 }
 

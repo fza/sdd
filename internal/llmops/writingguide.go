@@ -98,14 +98,9 @@ func WritingGuide(ctx context.Context, runner llm.Runner, entry *model.Entry, cl
 		return nil, fmt.Errorf("rendering writing-guide prompt: %w", err)
 	}
 
-	output, err := runner.Run(ctx, req)
+	result, err := runJSONCheck(ctx, runner, req, writingGuideExtraction, parseWritingGuideResult)
 	if err != nil {
 		return nil, fmt.Errorf("running writing guide: %w", err)
-	}
-
-	result, err := parseWritingGuideResult(output.Text)
-	if err != nil {
-		return nil, fmt.Errorf("parsing writing-guide result: %w", err)
 	}
 	return result, nil
 }
@@ -227,15 +222,7 @@ func parseWritingGuideResult(output string) (*WritingGuideResult, error) {
 		return nil, err
 	}
 
-	var resp struct {
-		Findings []struct {
-			Reasoning string `json:"reasoning"`
-			Axis      string `json:"axis"`
-			Quote     string `json:"quote"`
-			Repair    string `json:"repair"`
-			Severity  string `json:"severity"`
-		} `json:"findings"`
-	}
+	var resp writingGuideResponse
 	if err := json.Unmarshal([]byte(jsonText), &resp); err != nil {
 		return nil, fmt.Errorf("parsing writing-guide JSON: %w", err)
 	}

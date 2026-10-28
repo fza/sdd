@@ -33,6 +33,18 @@ const (
 	// against (d-tac-b30).
 	DefaultLLMModel = "claude-sonnet-4-6"
 
+	// DefaultLLMExtractTimeout bounds the extraction call a JSON-shaped
+	// check falls back to. Reformatting text the model already produced is
+	// cheap, and a bound of its own keeps a slipping endpoint from spending
+	// twice the configured timeout on one check.
+	DefaultLLMExtractTimeout = time.Minute
+
+	// DefaultLLMMaxTokens caps a gollm call's output when llm.max_tokens is
+	// unset. It covers summaries and pre-flight findings from a non-reasoning
+	// model; a reasoning model spends its thinking against the same cap and
+	// needs llm.max_tokens set higher, or to 0 for none.
+	DefaultLLMMaxTokens = 4096
+
 	// DefaultLLMConcurrency is the default worker count for concurrent
 	// LLM calls (e.g. sdd summarize --all).
 	DefaultLLMConcurrency = 4
@@ -234,12 +246,23 @@ type LLMConfig struct {
 	Model string `yaml:"model,omitempty"`
 	// Timeout is a Go duration string (e.g. "2m") applied per LLM call.
 	Timeout string `yaml:"timeout,omitempty"`
+	// ExtractTimeout is a Go duration string bounding the extraction call a
+	// JSON-shaped check falls back to when its first response does not
+	// parse. Empty means DefaultLLMExtractTimeout.
+	ExtractTimeout string `yaml:"extract_timeout,omitempty"`
+	// StructuredOutput selects how a schema-carrying request asks for JSON.
+	// Empty means StructuredOutputAuto.
+	StructuredOutput StructuredOutputMode `yaml:"structured_output,omitempty"`
 	// Params carries behaviour-affecting, provider-specific model settings —
 	// a reasoning effort, a thinking budget — forwarded verbatim into the
 	// provider request. They also form the call's recorded variant, because a
 	// setting that moves latency and token usage makes a different population
 	// of calls that must not be averaged with the defaults.
 	Params map[string]string `yaml:"params,omitempty"`
+	// MaxTokens caps the output of each call, a reasoning model's thinking
+	// included. Unset means DefaultLLMMaxTokens; 0 sends no cap, leaving the
+	// model's own output limit in force where the provider allows that.
+	MaxTokens *int `yaml:"max_tokens,omitempty"`
 	// Concurrency bounds the worker pool for batch operations. Zero means
 	// "use DefaultLLMConcurrency".
 	Concurrency int `yaml:"concurrency,omitempty"`
@@ -263,6 +286,47 @@ type LLMConfig struct {
 	// exponential backoff with jitter). Ignored by the claude-cli provider,
 	// whose own CLI handles retries.
 	Retry RetryConfig `yaml:"retry,omitempty"`
+}
+
+// StructuredOutputMode names how a schema-carrying request asks the provider
+// for JSON. Some OpenAI-compatible endpoints serve a model in json_object mode
+// only and refuse a json_schema request for it outright.
+type StructuredOutputMode string
+
+const (
+	// StructuredOutputJSONSchema sends the schema for the provider to enforce.
+	StructuredOutputJSONSchema StructuredOutputMode = "json_schema"
+	// StructuredOutputJSONObject asks for any JSON object, states the schema
+	// in the system prompt and validates the answer against it locally.
+	StructuredOutputJSONObject StructuredOutputMode = "json_object"
+	// StructuredOutputAuto tries json_schema and switches to json_object for
+	// the rest of the process once the endpoint refuses schema mode for the
+	// model.
+	StructuredOutputAuto StructuredOutputMode = "auto"
+)
+
+// ParseStructuredOutputMode resolves a configured mode, empty meaning auto.
+func ParseStructuredOutputMode(value string) (StructuredOutputMode, error) {
+	switch mode := StructuredOutputMode(value); mode {
+	case "":
+		return StructuredOutputAuto, nil
+	case StructuredOutputJSONSchema, StructuredOutputJSONObject, StructuredOutputAuto:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unknown structured_output %q (supported: json_schema, json_object, auto)", value)
+	}
+}
+
+// ResolvedMaxTokens is the output cap a call carries: DefaultLLMMaxTokens when
+// unset, 0 for no cap.
+func (c LLMConfig) ResolvedMaxTokens() (int, error) {
+	if c.MaxTokens == nil {
+		return DefaultLLMMaxTokens, nil
+	}
+	if *c.MaxTokens < 0 {
+		return 0, fmt.Errorf("llm.max_tokens %d is negative (0 sends no cap)", *c.MaxTokens)
+	}
+	return *c.MaxTokens, nil
 }
 
 // RetryConfig tunes retry/backoff behavior for the gollm-backed runner. Each
@@ -449,6 +513,15 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 	}
 	if overlay.Timeout != "" {
 		out.Timeout = overlay.Timeout
+	}
+	if overlay.ExtractTimeout != "" {
+		out.ExtractTimeout = overlay.ExtractTimeout
+	}
+	if overlay.StructuredOutput != "" {
+		out.StructuredOutput = overlay.StructuredOutput
+	}
+	if overlay.MaxTokens != nil {
+		out.MaxTokens = overlay.MaxTokens
 	}
 	if overlay.Concurrency != 0 {
 		out.Concurrency = overlay.Concurrency

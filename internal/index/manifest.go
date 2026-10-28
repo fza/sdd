@@ -90,30 +90,32 @@ func (s EntryState) MarshalJSON() ([]byte, error) {
 	if len(s.Versions) == 1 {
 		return json.Marshal(s.Versions[0])
 	}
-	return json.Marshal(entryStateWire(s))
+	return json.Marshal(entryStateWire{Versions: append([]EntryVersion{}, s.Versions...)})
+}
+
+// entryStateDecoding reads either on-disk shape in one decode: the versions
+// list when its key is present, the flat fields otherwise.
+type entryStateDecoding struct {
+	Versions *[]EntryVersion `json:"versions"`
+	EntryVersion
+}
+
+func (d entryStateDecoding) state() EntryState {
+	if d.Versions != nil {
+		return EntryState{Versions: *d.Versions}
+	}
+	return EntryState{Versions: []EntryVersion{d.EntryVersion}}
 }
 
 // UnmarshalJSON loads either shape: a {"versions": [...]} object as-is, or a
 // legacy flat {hash, fingerprint, chunk_ids, indexed_at} object as the entry's
 // sole version.
 func (s *EntryState) UnmarshalJSON(data []byte) error {
-	var probe map[string]json.RawMessage
-	if err := json.Unmarshal(data, &probe); err != nil {
+	var decoded entryStateDecoding
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	if _, ok := probe["versions"]; ok {
-		var wire entryStateWire
-		if err := json.Unmarshal(data, &wire); err != nil {
-			return err
-		}
-		s.Versions = wire.Versions
-		return nil
-	}
-	var v EntryVersion
-	if err := json.Unmarshal(data, &v); err != nil {
-		return err
-	}
-	s.Versions = []EntryVersion{v}
+	*s = decoded.state()
 	return nil
 }
 
@@ -149,12 +151,23 @@ func LoadManifest(indexDir string) (*Manifest, error) {
 		}
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
-	var m Manifest
-	if err := json.Unmarshal(data, &m); err != nil {
+	return parseManifest(data)
+}
+
+// parseManifest decodes the entries without EntryState's UnmarshalJSON: a
+// value with its own decoder is scanned again for each entry, which dominates
+// reading a manifest of thousands of entries.
+func parseManifest(data []byte) (*Manifest, error) {
+	var decoded struct {
+		Version int                           `json:"version"`
+		Entries map[string]entryStateDecoding `json:"entries"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		return nil, fmt.Errorf("parse manifest: %w", err)
 	}
-	if m.Entries == nil {
-		m.Entries = map[string]EntryState{}
+	m := Manifest{Version: decoded.Version, Entries: make(map[string]EntryState, len(decoded.Entries))}
+	for id, state := range decoded.Entries {
+		m.Entries[id] = state.state()
 	}
 	if m.Version == 0 {
 		m.Version = 1

@@ -27,9 +27,7 @@ Category is a short hyphenated tag (e.g. `type-mismatch`, `missing-ref`, `plan-c
 
 Flag findings at the severity that matches what you observe:
 
-- **high** — Clear wrong usage, direct contradiction, or structural type error
-- **medium** — Observation worth naming for dialogue: deviation, specific proposal, partial coverage, ambiguity that could be intentional
-- **low** — Stylistic, editorial, or suggestion
+{{ template "severity_scale" }}
 
 All three levels are valid, and an empty `findings` array is a valid result. Don't force `high` to name a minor observation, and don't suppress observations to avoid commitment.
 

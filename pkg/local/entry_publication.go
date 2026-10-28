@@ -42,7 +42,7 @@ func (s *PersistentSearchIndexStore) PublishEntry(ctx context.Context, version a
 	if err != nil {
 		return err
 	}
-	return index.WriteStore(ctx, dir, func(idx *index.Index) error {
+	if err := index.WriteStore(ctx, dir, func(idx *index.Index) error {
 		manifest, err := index.LoadManifest(dir)
 		if err != nil {
 			return err
@@ -77,7 +77,10 @@ func (s *PersistentSearchIndexStore) PublishEntry(ctx context.Context, version a
 		}
 		manifest.AddVersion(version.EntryID, index.EntryVersion{Hash: version.EntryHash, Fingerprint: version.Namespace.Fingerprint, ChunkIDs: ids, IndexedAt: s.now()})
 		return manifest.Save(dir)
-	})
+	}); err != nil {
+		return err
+	}
+	return refreshSegments(ctx, dir)
 }
 
 func (s *PersistentSearchIndexStore) readManifest(dir string) (*index.Manifest, error) {

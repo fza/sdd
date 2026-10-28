@@ -12,6 +12,8 @@ require (
 	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260608090822-c3ad58c6c9e5
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/gofrs/flock v0.13.0
+	github.com/google/jsonschema-go v0.4.3
+	github.com/invopop/jsonschema v0.13.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/networkteam/slogutils v0.4.0
 	github.com/philippgille/chromem-go v0.7.0
@@ -20,6 +22,7 @@ require (
 	gitlab.com/golang-commonmark/markdown v0.0.0-20211110145824-bf3e522c626a
 	golang.org/x/mod v0.39.0
 	golang.org/x/sync v0.22.0
+	golang.org/x/sys v0.47.0
 	golang.org/x/time v0.15.0
 	golang.org/x/tools v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -49,10 +52,8 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.1 // indirect
-	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
-	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
@@ -82,14 +83,18 @@ require (
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 )
 
-// Point gollm at the networkteam fork, which adds provider-aware retry with
-// backoff (d-tac-4v1). The fork keeps the github.com/teilomillet/gollm module
-// path, so this resolves cleanly. goreleaser and the curl installer build from
-// source and honor replace; only `go install pkg@version` (which sdd does not
-// use) would break. Remove this directive once the change lands upstream and
-// bump the require above to the released teilomillet/gollm version.
-replace github.com/teilomillet/gollm => github.com/networkteam/gollm v0.0.0-20260919121334-aa9e2d1faebc
+// Point gollm at the fza fork, which carries the networkteam fork's
+// provider-aware retry with backoff (d-tac-4v1) and sends the OpenAI system
+// prompt with role system to endpoints other than OpenAI's, which commonly
+// reject role developer (d-cpt-cnu). Its API errors carry the provider's
+// error code and message, which tell a refused json_schema request apart from
+// any other 400. The fork keeps the
+// github.com/teilomillet/gollm module path, so this resolves cleanly.
+// goreleaser and the curl installer build from source and honor replace; only
+// `go install pkg@version` (which sdd does not use) would break. Remove this
+// directive once the changes land upstream and bump the require above to the
+// released teilomillet/gollm version.
+replace github.com/teilomillet/gollm => github.com/fza/gollm v0.0.0-20261020094442-f406f9660768

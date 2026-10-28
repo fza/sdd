@@ -2,6 +2,7 @@ package cliapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -21,8 +22,19 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/timing"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 )
+
+// searchLockBound caps how long a search waits for the index's read lock. A
+// fill commits one embedded batch per exclusive hold, well under it; a search
+// still blocked after it reads by text instead of waiting out a writer.
+const searchLockBound = 5 * time.Second
+
+// searchPrepareBound caps how long preparing the index waits for its read
+// lock. Preparing only overlaps the graph load; a store a writer holds is
+// waited for once, by the snapshot open, not twice.
+const searchPrepareBound = 100 * time.Millisecond
 
 // resolveEmbeddingConfig builds the effective EmbeddingConfig by merging
 // .sdd/config.yaml + .sdd/config.local.yaml and applying CLI flag
@@ -383,11 +395,6 @@ func searchCmd() *cli.Command {
 			allRepos := cmd.Bool("all-repos")
 			crossRepo := allRepos || len(repoSelection) > 0
 
-			g, err := loadGraph(cmd)
-			if err != nil {
-				return err
-			}
-
 			graphDir, err := resolveGraphDir(cmd)
 			if err != nil {
 				return err
@@ -399,6 +406,7 @@ func searchCmd() *cli.Command {
 				ih     *handlers.IndexHandler
 			)
 			needsVector := phrase != ""
+			stopSetup := timing.Start(ctx, "embedder-setup")
 			if needsVector {
 				if crossRepo {
 					emb, err = crossRepoEmbedder(cmd)
@@ -426,6 +434,30 @@ func searchCmd() *cli.Command {
 					Embedder: emb,
 					Reader:   reader,
 				})
+			}
+			stopSetup()
+
+			// The query embedding and the index's manifest and segments do
+			// not depend on the graph, so they load while it does.
+			var prepared chan error
+			if needsVector {
+				emb.Embedder = localembed.Prefetch(ctx, emb.Embedder, embed.Request{Purpose: embed.PurposeQuery, Texts: []string{phrase}})
+				prepared = make(chan error, 1)
+				go func() { prepared <- index.Prepare(ctx, idxDir, searchPrepareBound) }()
+			}
+
+			stopGraph := timing.Start(ctx, "graph-load")
+			g, err := loadGraph(cmd)
+			stopGraph()
+			if err != nil {
+				return err
+			}
+			if prepared != nil {
+				// A store busy with a writer is met again, and handled, by the
+				// fill and the snapshot open below.
+				if err := <-prepared; err != nil && !errors.Is(err, index.ErrLockBusy) {
+					return err
+				}
 			}
 
 			reg, mgr, err := defaultRepos()
@@ -488,24 +520,43 @@ func searchCmd() *cli.Command {
 				prog = newEmbedProgress()
 			}
 			work := func(ctx context.Context) (*query.SearchResult, error) {
+				sq := sq
 				if needsVector {
-					lazy := &command.LazyFillIndexCmd{}
+					var lazy *command.LazyFillIndexCmd
 					if prog != nil {
 						lazy = prog.lazyFill()
+					} else {
+						lazy = newPlainFillProgress(cmd.ErrWriter, time.Now).lazyFill()
 					}
-					if err := ih.LazyFill(ctx, lazy); err != nil {
+					lazy.Graph = g
+					lazy.OnFillBusy = func() {
+						_, _ = fmt.Fprintln(cmd.ErrWriter, "sdd: another process is filling the search index; searching the index as it stands")
+					}
+					stopFill := timing.Start(ctx, "lazy-fill")
+					err := ih.LazyFill(ctx, lazy)
+					stopFill()
+					if err != nil {
 						return nil, err
 					}
 				}
 				// Build the finder after lazy-fill so its index snapshot reflects
-				// the chunks the fill just committed — the fill writes under its
-				// own exclusive lock (index.WriteStore), so a snapshot opened
-				// before it would miss the new rows.
-				var idxStore *index.Index
+				// the chunks the fill just committed — the fill writes under the
+				// exclusive store lock, so a snapshot opened before it would miss
+				// the new rows.
+				var idxStore finders.VectorIndex
 				if needsVector {
-					idxStore, err = index.Open(idxDir)
-					if err != nil {
+					stopOpen := timing.Start(ctx, "index-open")
+					snapshot, err := index.OpenSearchSnapshot(ctx, idxDir, searchLockBound)
+					stopOpen()
+					switch {
+					case errors.Is(err, index.ErrLockBusy):
+						_, _ = fmt.Fprintf(cmd.ErrWriter, "sdd: search index busy for %s; falling back to text search\n", searchLockBound)
+						sq = sq.TextFallback()
+					case err != nil:
 						return nil, err
+					default:
+						defer func() { _ = snapshot.Close() }()
+						idxStore = snapshot
 					}
 				}
 				finder := finders.NewSearchFinder(finders.SearchFinderOptions{
@@ -533,6 +584,7 @@ func searchCmd() *cli.Command {
 					}
 					return finders.MultiSearch(ctx, finder, sq)
 				}
+				defer timing.Start(ctx, "search")()
 				return finder.Search(ctx, sq)
 			}
 
@@ -558,7 +610,9 @@ func searchCmd() *cli.Command {
 				return err
 			}
 
+			stopRender := timing.Start(ctx, "render")
 			presenters.RenderSearch(cmd.Writer, res, g)
+			stopRender()
 			return nil
 		},
 	}

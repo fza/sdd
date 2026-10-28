@@ -22,6 +22,12 @@ const (
 	PurposePreflight    Purpose = "preflight"
 	PurposeSummarize    Purpose = "summarize"
 	PurposeWritingGuide Purpose = "writing-guide"
+	// The extract purposes name the second call a JSON-shaped check makes
+	// when its first response does not parse. They are their own purposes so
+	// a host can route and bound them apart, and so the stats sink separates
+	// a reformat from the reasoning call it rescues.
+	PurposePreflightExtract    Purpose = "preflight-extract"
+	PurposeWritingGuideExtract Purpose = "writing-guide-extract"
 )
 
 // Request carries everything an implementation may route on: ctx (who) and
@@ -61,6 +67,10 @@ type Identity struct {
 	// a value sent as its own field is a variant, a value inside the model
 	// identifier is the model.
 	Variant string
+	// Host is the network host the call was sent to, without scheme, port or
+	// path; empty for an implementation that reaches no host, such as a
+	// local CLI bridge.
+	Host string
 }
 
 // String renders the identity for display: model, then variant in parentheses.
@@ -78,7 +88,14 @@ type Usage struct {
 	OutputTokens      int
 	CacheReadTokens   int
 	CacheCreateTokens int
-	CostUSD           float64
+	// ReasoningTokens is the share of OutputTokens a reasoning model spent
+	// thinking.
+	ReasoningTokens int
+	CostUSD         float64
+	// BillingCost is the provider's own per-reply billing object as raw JSON
+	// (melious.ai reports energy and credits), empty when the reply carries
+	// none. Raw because its fields and units are the provider's.
+	BillingCost string
 }
 
 // Result reports what a call produced and what served it.
@@ -87,6 +104,9 @@ type Result struct {
 	// Identity is required on success: what actually served this call.
 	Identity Identity
 	Usage    Usage
+	// FinishReason is why the model stopped, as the provider names it;
+	// empty when the provider reports none.
+	FinishReason string
 }
 
 // Runner is the single port. Contract, stated RoundTripper-style: fill
@@ -106,10 +126,15 @@ func (f RunnerFunc) Run(ctx context.Context, req Request) (Result, error) {
 }
 
 // Error optionally attributes a failed call. An implementation that knows what
-// it routed to wraps its error so failures measure like successes.
+// it routed to wraps its error so failures measure like successes. Usage and
+// FinishReason carry what the provider reported for a reply it delivered but
+// the implementation rejected (an answer cut at the token cap, an empty or
+// malformed answer): such a reply is billed, so it meters like a success.
 type Error struct {
-	Identity Identity
-	Err      error
+	Identity     Identity
+	Usage        Usage
+	FinishReason string
+	Err          error
 }
 
 func (e *Error) Error() string {
@@ -117,5 +142,22 @@ func (e *Error) Error() string {
 }
 
 func (e *Error) Unwrap() error {
+	return e.Err
+}
+
+// MalformedAnswerError reports an answer the provider delivered but the
+// implementation rejected, because it does not match the response shape the
+// call asked for. Text carries the rejected answer so a caller may ask for a
+// reformat of it; it is never a result.
+type MalformedAnswerError struct {
+	Text string
+	Err  error
+}
+
+func (e *MalformedAnswerError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *MalformedAnswerError) Unwrap() error {
 	return e.Err
 }

@@ -19,7 +19,7 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 		if err != nil {
 			return nil, err
 		}
-		cfg, err := meta.ResolveConfig(global.BaseConfig, filepath.Join(checkout, model.SDDDirName))
+		cfg, err := meta.ResolveConfig(global.BaseConfig, filepath.Join(checkout, model.SDDDirName), "")
 		if err != nil {
 			return nil, err
 		}

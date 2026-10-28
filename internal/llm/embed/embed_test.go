@@ -121,7 +121,7 @@ func TestOpenAIEmbedder_Embed(t *testing.T) {
 	if !reflect.DeepEqual(got.Vectors, want) {
 		t.Errorf("vectors: got %#v, want %#v", got.Vectors, want)
 	}
-	if got.Identity != (llm.Identity{Provider: "openai", Model: "text-embedding-3-small"}) {
+	if got.Identity != (llm.Identity{Provider: "openai", Model: "text-embedding-3-small", Host: "127.0.0.1"}) {
 		t.Errorf("identity: got %+v", got.Identity)
 	}
 	if got.Usage.InputTokens != 42 {
@@ -254,7 +254,7 @@ func TestOllamaEmbedder_Embed(t *testing.T) {
 	if len(got.Vectors) != 2 || len(got.Vectors[0]) != 2 || len(got.Vectors[1]) != 2 {
 		t.Fatalf("expected 2x2 embeddings, got %#v", got.Vectors)
 	}
-	if got.Identity != (llm.Identity{Provider: "ollama", Model: "nomic-embed-text"}) || got.Usage.InputTokens != 17 {
+	if got.Identity != (llm.Identity{Provider: "ollama", Model: "nomic-embed-text", Host: "127.0.0.1"}) || got.Usage.InputTokens != 17 {
 		t.Errorf("identity/usage: got %+v %+v", got.Identity, got.Usage)
 	}
 	if emb.Fingerprint() != "ollama/nomic-embed-text" {

@@ -17,6 +17,7 @@ import (
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/graphcache"
 	"github.com/networkteam/sdd/internal/handlers"
 	localembed "github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/llm/factory"
@@ -26,6 +27,7 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/timing"
 	sddapp "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/slogutils"
@@ -39,6 +41,12 @@ type Options struct {
 	Writer    io.Writer
 	ErrWriter io.Writer
 }
+
+// localConfigOverride carries --local-config: the file that stands in for
+// .sdd/config.local.yaml on both reads and writes. Process-wide because config
+// resolution happens in helpers far from the parsed command, and the flag is
+// root-global so every subcommand resolves the same layer.
+var localConfigOverride string
 
 // resolveLLMConfig builds the effective LLMConfig for a command from the
 // config overlay (user-global base, then .sdd/config.yaml, then
@@ -66,6 +74,9 @@ func resolveLLMConfig(cmd *cli.Command) (model.LLMConfig, error) {
 	// preflight-model is a legacy alias for --model in the `sdd new` context.
 	if cmd.IsSet("preflight-model") {
 		cfg.Model = cmd.String("preflight-model")
+	}
+	if cmd.IsSet("preflight-extract-timeout") {
+		cfg.ExtractTimeout = cmd.Duration("preflight-extract-timeout").String()
 	}
 	if cmd.IsSet("concurrency") {
 		cfg.Concurrency = int(cmd.Int("concurrency"))
@@ -102,19 +113,24 @@ func newRunner(cmd *cli.Command, timeoutFlag string) (pkgllm.Runner, error) {
 }
 
 // statsSink is the recording sink both the chat runner and the embedder are
-// observed into: one debug log line per call, and one row in .sdd/stats/llm.jsonl
-// that `sdd stats` reads. Best-effort: outside an sdd repo, or when the sink
-// directory cannot be created, calls are logged but not recorded.
+// observed into: one debug log line per call, one row in .sdd/stats/llm.jsonl
+// that `sdd stats` reads, and one line in the usage log when SDD_USAGE_LOG
+// names one. Best-effort: outside an sdd repo, or when the sink directory
+// cannot be created, calls are not recorded in .sdd/stats.
 func statsSink() pkgllm.StatsSink {
+	var sinks []pkgllm.StatsSink
 	sddDir, err := resolveSDDDir()
-	if err != nil {
-		return llmstats.Logged(nil)
+	if err == nil {
+		fileSink, err := llmstats.NewFileSink(filepath.Join(sddDir, "stats"))
+		if err == nil {
+			sinks = append(sinks, fileSink)
+		}
 	}
-	fileSink, err := llmstats.NewFileSink(filepath.Join(sddDir, "stats"))
-	if err != nil {
-		return llmstats.Logged(nil)
+	usageLogPath := os.Getenv(llmstats.UsageLogEnv)
+	if usageLogPath != "" {
+		sinks = append(sinks, llmstats.NewUsageLog(usageLogPath))
 	}
-	return llmstats.Logged(fileSink)
+	return llmstats.Logged(llmstats.Fanout(sinks...))
 }
 
 // resolveTimeout returns the per-call LLM timeout for the given flag name,
@@ -179,12 +195,30 @@ func newReadFinder() (*finders.Finder, error) {
 	if err != nil {
 		return nil, err
 	}
+	graphCache, err := defaultGraphCache()
+	if err != nil {
+		return nil, err
+	}
 	return finders.New(finders.Options{
 		PreflightRunner: readOnlyRunner,
 		Config:          cfg,
 		Repos:           reg,
 		GitHistory:      git.CLI{},
+		GraphCache:      graphCache,
 	}), nil
+}
+
+// defaultGraphCache keeps loaded graphs under the user cache root. Setting
+// SDD_GRAPH_CACHE=off loads every graph from its files.
+func defaultGraphCache() (finders.GraphCache, error) {
+	if os.Getenv("SDD_GRAPH_CACHE") == "off" {
+		return nil, nil
+	}
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		return nil, err
+	}
+	return graphcache.New(filepath.Join(loc.CacheRoot, "graph")), nil
 }
 
 // defaultRepos builds the connected-repos dependencies from the XDG default
@@ -234,7 +268,7 @@ func loadConfig() (*model.PerRepoConfig, error) {
 		}
 		return &model.PerRepoConfig{BaseConfig: global.BaseConfig}, nil
 	}
-	return meta.ResolveConfig(global.BaseConfig, sddDir)
+	return meta.ResolveConfig(global.BaseConfig, sddDir, localConfigOverride)
 }
 
 // warnUnknownConfigKeys names every config key sdd read past — tolerated is
@@ -272,7 +306,7 @@ func resolveConfigAt(sddDir string) (*model.PerRepoConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return meta.ResolveConfig(global.BaseConfig, sddDir)
+	return meta.ResolveConfig(global.BaseConfig, sddDir, localConfigOverride)
 }
 
 // splitCSV returns the comma-split fields of s with each element trimmed of
@@ -326,6 +360,10 @@ func New(options Options) *cli.Command {
 				Aliases: []string{"d"},
 				Usage:   "Override graph directory (auto-discovered from .sdd/config.yaml)",
 			},
+			&cli.StringFlag{
+				Name:  "local-config",
+				Usage: "Use this file as the machine-local config layer instead of .sdd/config.local.yaml (read and written)",
+			},
 			&cli.BoolFlag{
 				Name:    "verbose",
 				Aliases: []string{"v"},
@@ -336,10 +374,28 @@ func New(options Options) *cli.Command {
 				Aliases: []string{"vv"},
 				Usage:   "Enable debug-level logging",
 			},
+			&cli.BoolFlag{
+				Name:    "timing",
+				Usage:   "Print how long each phase of the command takes to stderr",
+				Sources: cli.EnvVars("SDD_TIMING"),
+			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 			if cmd.Bool("version") {
 				return ctx, nil
+			}
+			// Resolved once, for the whole invocation: config resolution runs in
+			// helpers that hold no parsed command, and the flag is root-global so
+			// every subcommand reads and writes the same layer. Assigned on every
+			// run, including the empty case, so an in-process host running the
+			// command twice does not inherit the previous run's layer.
+			localConfigOverride = ""
+			if path := strings.TrimSpace(cmd.String("local-config")); path != "" {
+				abs, err := filepath.Abs(path)
+				if err != nil {
+					return ctx, fmt.Errorf("resolving --local-config %q: %w", path, err)
+				}
+				localConfigOverride = abs
 			}
 			level := slog.LevelWarn
 			// sdd index is an explicit progress command: on a non-TTY it shows
@@ -357,6 +413,9 @@ func New(options Options) *cli.Command {
 				Level: level,
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
+			if cmd.Bool("timing") {
+				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
+			}
 
 			warnUnknownConfigKeys(ctx)
 
@@ -365,7 +424,9 @@ func New(options Options) *cli.Command {
 			// spurious warnings). Cooldown-bound and timeout-bound internally;
 			// any failure logs at Debug and does not affect the command.
 			if cmd.Args().First() != "init" {
+				stopSync := timing.Start(ctx, "sync-check")
 				runSyncCheck(ctx)
+				stopSync()
 				// Participant-missing nudge (AC 8): one-line stderr
 				// warning naming `sdd init` as the fix. Suppressed for
 				// `sdd init` itself (it's the resolution path) and
@@ -675,6 +736,10 @@ func newCmd() *cli.Command {
 				Name:  "skip-preflight",
 				Usage: "Skip pre-flight validation (entry is annotated with preflight: skipped)",
 			},
+			&cli.BoolFlag{
+				Name:  "preflight-verified",
+				Usage: "Skip pre-flight validation, annotating the entry preflight: dry-run-verified — for a capture whose findings were already settled via --dry-run",
+			},
 			&cli.StringFlag{
 				Name:  "summary",
 				Usage: "Store this summary verbatim, skipping LLM summary generation",
@@ -700,9 +765,18 @@ func newCmd() *cli.Command {
 				Usage: "Timeout for pre-flight validation (e.g. 120s, 2m)",
 				Value: 120 * time.Second,
 			},
+			&cli.DurationFlag{
+				Name:  "preflight-extract-timeout",
+				Usage: "Timeout for the extraction call a pre-flight response falls back to (e.g. 60s)",
+				Value: model.DefaultLLMExtractTimeout,
+			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = slogutils.WithLogger(ctx, slogutils.FromContext(ctx).With("command", "new"))
+
+			if cmd.Bool("skip-preflight") && cmd.Bool("preflight-verified") {
+				return fmt.Errorf("--skip-preflight and --preflight-verified are mutually exclusive: one records a bypass, the other records findings settled by a prior --dry-run")
+			}
 
 			args := cmd.Args()
 			if args.Len() < 2 {
@@ -806,32 +880,33 @@ func newCmd() *cli.Command {
 				return err
 			}
 			ncmd := &command.NewEntryCmd{
-				Type:             typ,
-				Layer:            layer,
-				Kind:             kind,
-				Intent:           strings.TrimSpace(cmd.String("intent")),
-				Description:      description,
-				Participants:     participants,
-				Refs:             refs,
-				Supersedes:       splitCSV(cmd.String("supersedes")),
-				Closes:           splitCSV(cmd.String("closes")),
-				Confidence:       confidence,
-				Canonical:        strings.TrimSpace(cmd.String("canonical")),
-				Aliases:          splitCSV(cmd.String("aliases")),
-				ActorKind:        strings.TrimSpace(cmd.String("actor-kind")),
-				Class:            strings.TrimSpace(cmd.String("class")),
-				Actor:            strings.TrimSpace(cmd.String("actor")),
-				TopicLabels:      splitCSV(cmd.String("topics")),
-				Index:            factIndex,
-				AnnotationTopics: annotationTopics,
-				FocusActors:      focusActors,
-				FocusWhen:        focusWhen,
-				Involvement:      involvement,
-				Attachments:      atts,
-				SkipPreflight:    cmd.Bool("skip-preflight"),
-				Summary:          strings.TrimSpace(cmd.String("summary")),
-				DryRun:           cmd.Bool("dry-run"),
-				PreflightModel:   cmd.String("preflight-model"),
+				Type:              typ,
+				Layer:             layer,
+				Kind:              kind,
+				Intent:            strings.TrimSpace(cmd.String("intent")),
+				Description:       description,
+				Participants:      participants,
+				Refs:              refs,
+				Supersedes:        splitCSV(cmd.String("supersedes")),
+				Closes:            splitCSV(cmd.String("closes")),
+				Confidence:        confidence,
+				Canonical:         strings.TrimSpace(cmd.String("canonical")),
+				Aliases:           splitCSV(cmd.String("aliases")),
+				ActorKind:         strings.TrimSpace(cmd.String("actor-kind")),
+				Class:             strings.TrimSpace(cmd.String("class")),
+				Actor:             strings.TrimSpace(cmd.String("actor")),
+				TopicLabels:       splitCSV(cmd.String("topics")),
+				Index:             factIndex,
+				AnnotationTopics:  annotationTopics,
+				FocusActors:       focusActors,
+				FocusWhen:         focusWhen,
+				Involvement:       involvement,
+				Attachments:       atts,
+				SkipPreflight:     cmd.Bool("skip-preflight"),
+				PreflightVerified: cmd.Bool("preflight-verified"),
+				Summary:           strings.TrimSpace(cmd.String("summary")),
+				DryRun:            cmd.Bool("dry-run"),
+				PreflightModel:    cmd.String("preflight-model"),
 				OnNewEntry: func(id, summary string) {
 					fmt.Fprintln(cmd.Writer, id+".md")
 					if rel, err := model.IDToRelPath(id); err == nil {
@@ -870,7 +945,7 @@ func newCmd() *cli.Command {
 					ProcedureRegistry: registry,
 				}),
 				LLMRunner: runner,
-				Committer: git.CLI{},
+				Committer: graphGit(dir),
 				Repos:     mgr,
 				Language:  configLanguage(cfg),
 			})
@@ -963,8 +1038,8 @@ func rewriteCmd() *cli.Command {
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.CLI{},
-				Mover:     git.CLI{},
+				Committer: graphGit(dir),
+				Mover:     graphGit(dir),
 			})
 			return handler.RewriteEntry(ctx, rcmd)
 		}),
@@ -999,7 +1074,7 @@ func lintCmd() *cli.Command {
 					Stderr:    cmd.ErrWriter,
 					GraphDir:  dir,
 					Reader:    reader,
-					Committer: git.CLI{},
+					Committer: graphGit(dir),
 				})
 				if err := handler.LintFix(ctx, fixCmd); err != nil {
 					return err
@@ -1165,7 +1240,7 @@ func summarizeCmd() *cli.Command {
 					Repos:           reg,
 				}),
 				LLMRunner: runner,
-				Committer: git.CLI{},
+				Committer: graphGit(dir),
 				Language:  configLanguage(cfg),
 			})
 			return handler.Summarize(ctx, sumCmd)
@@ -1194,7 +1269,7 @@ func resolveGraphDir(cmd *cli.Command) (string, error) {
 		return "", fmt.Errorf("no .sdd/ directory found; run 'sdd init' first")
 	}
 	sddDir := meta.SDDDir(repoRoot)
-	cfg, err := meta.ReadConfig(sddDir)
+	cfg, err := meta.ReadConfig(sddDir, localConfigOverride)
 	if err != nil {
 		return "", fmt.Errorf("reading .sdd/config.yaml: %w", err)
 	}
@@ -1234,6 +1309,18 @@ func resolveParticipantFlag(flagValue, sddDir string) (string, error) {
 		return "", fmt.Errorf("no participant configured; run `sdd init` or pass --participant")
 	}
 	return cfg.Participant, nil
+}
+
+// graphGit is the git adapter for graph writes and graph history: it runs in
+// the repository holding graphDir. That is the project's own repository when
+// the graph lives inside it, and the separate checkout when graph_dir points
+// beside the project — a working directory alone cannot express both, since the
+// process runs where the work is.
+//
+// Operations on the work itself (branches for a WIP marker, the skill and
+// config commits of sdd init) keep the process working directory.
+func graphGit(graphDir string) git.CLI {
+	return git.CLI{Dir: git.RepoRootFor(graphDir)}
 }
 
 // resolveSDDDir discovers the .sdd/ directory by walking up from cwd.
@@ -1454,19 +1541,6 @@ func initCmd() *cli.Command {
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
 			participantFlag := strings.TrimSpace(cmd.String("participant"))
-			remoteURL := git.RemoteURL(repoRoot)
-			defaultBranch := ""
-			if existingMerged != nil {
-				defaultBranch = strings.TrimSpace(existingMerged.DefaultBranch)
-			}
-			if defaultBranch == "" {
-				var branchErr error
-				defaultBranch, branchErr = git.CurrentBranch(repoRoot)
-				if branchErr != nil {
-					return branchErr
-				}
-			}
-
 			// Aggregated non-interactive error (AC 5): a single message
 			// names every missing piece and the exact flag to fix it,
 			// rather than failing the run on the first one. Runs only
@@ -1501,6 +1575,28 @@ func initCmd() *cli.Command {
 			}
 			if graphDir == "" {
 				graphDir = model.DefaultGraphDir
+			}
+
+			// repo_id and default_branch are facts about the graph, so they come
+			// from the repository the graph lives in. A graph kept in a checkout
+			// beside the project is referenced by other graphs under that
+			// repository's identity and published on its branch; the project's
+			// own remote names the code, not the graph.
+			graphRepoRoot := repoRoot
+			if resolved := git.RepoRootFor(meta.ResolveGraphDir(repoRoot, &model.PerRepoConfig{GraphDir: graphDir})); resolved != "" {
+				graphRepoRoot = resolved
+			}
+			remoteURL := git.RemoteURL(graphRepoRoot)
+			defaultBranch := ""
+			if existingMerged != nil {
+				defaultBranch = strings.TrimSpace(existingMerged.DefaultBranch)
+			}
+			if defaultBranch == "" {
+				var branchErr error
+				defaultBranch, branchErr = git.CurrentBranch(graphRepoRoot)
+				if branchErr != nil {
+					return branchErr
+				}
 			}
 
 			// Resolve graph language: explicit flag wins; otherwise prompt
@@ -1682,7 +1778,7 @@ func initCmd() *cli.Command {
 // name what is missing and prompt for the URL. Informational like
 // warnIfParticipantMissing: errors here never fail an init that succeeded.
 func notifyUnconnectedDependencies(errWriter io.Writer, sddDir string) {
-	cfg, err := meta.ReadConfig(sddDir)
+	cfg, err := meta.ReadConfig(sddDir, localConfigOverride)
 	if err != nil || cfg == nil || len(cfg.Dependencies) == 0 {
 		return
 	}
@@ -1776,7 +1872,7 @@ func wipStartCmd() *cli.Command {
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.CLI{},
+				Committer: graphGit(dir),
 				Brancher:  git.CLI{},
 			})
 			return handler.StartWIP(ctx, startCmd)
@@ -1832,7 +1928,7 @@ func wipDoneCmd() *cli.Command {
 				Stderr:    cmd.ErrWriter,
 				GraphDir:  dir,
 				Reader:    reader,
-				Committer: git.RemovalCommitter{},
+				Committer: git.RemovalCommitter{Dir: git.RepoRootFor(dir)},
 				Brancher:  git.CLI{},
 			})
 			return handler.FinishWIP(ctx, doneCmd)

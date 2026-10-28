@@ -354,10 +354,33 @@ SDD config is a layered overlay — each layer overrides the one below:
 
 1. **User-global** — `~/.config/sdd/config.yaml` (or `$XDG_CONFIG_HOME/sdd/config.yaml`). Your personal defaults across every SDD project: participant name, LLM and embedding provider, sync cooldown. Set once, apply everywhere.
 2. **Committed project** — `.sdd/config.yaml`, in git. Properties of the repo itself that every contributor shares: graph directory, authoring language, skill scope, supported agents, the repo's own `repo_id`, and connected-repo [dependencies](#connected-repos). It may also carry safe project-wide defaults for the personal settings above.
-3. **Machine-local** — `.sdd/config.local.yaml`, gitignored. Per-machine overrides for this checkout: API keys, a local endpoint, a provider or participant override you don't want committed.
+3. **Machine-local** — `.sdd/config.local.yaml`, gitignored. Per-machine overrides for this checkout: API keys, a local endpoint, a provider or participant override you don't want committed. The global `--local-config <path>` flag points this layer at another file for the whole invocation — reads resolve it and `--local` writes land in it, so a sandbox, a CI runner or a second identity can supply its own layer without touching the checkout.
 4. **CLI flags** — per-invocation, highest precedence.
 
 Later layers win: a provider set project-wide overrides your global default, and a machine-local override wins over both. The split is by *whose fact each setting is*: repo-identity fields (`repo_id`, `dependencies`, `graph_dir`, `language`, `supported_agents`) belong in the committed project file and can't be set globally; personal preferences (participant, LLM, embedding, sync) default best at the user-global layer, with the local file for machine-specific overrides. A key placed in the wrong file fails loud — naming the file and key — rather than being silently dropped.
+
+### A graph in its own repository
+
+`graph_dir` may be an absolute path, which puts the graph in a checkout beside the project instead of inside it. The project's history then carries only the work, and every `sdd: …` capture commit lands in the graph's own repository.
+
+```yaml
+# project-repo/.sdd/config.yaml
+graph_dir: /Users/you/src/project-sdd/graph
+```
+
+```
+project-repo/          # only work commits
+  .sdd/config.yaml
+  .claude/skills/      # sdd init commits these here
+  src/
+
+project-sdd/           # only sdd: capture commits
+  graph/2026/09/...
+```
+
+Git operations follow the paths they act on: entry, summary and WIP-marker commits run in the graph's repository, while `sdd init` commits skills and metadata in the project, and `sdd wip start` branches the project. `sdd sync --pull` syncs the graph's repository, and the background sync check reads its upstream. Grooming keeps reading the project's own history for closure evidence, since it runs where the work is.
+
+Two limits are worth knowing. `sdd serve` refuses to start against a graph in another repository: the engine's write path acquires a worktree of the served checkout and commits the graph inside it, so it would write the entry to disk and commit it nowhere. And `repo_id` is derived from the project's remote, so a graph others reference across repos is still announced under the project's identity rather than the graph repository's.
 
 Inspect and edit config with `sdd config`:
 
@@ -366,6 +389,7 @@ sdd config                             # effective merged config, with each valu
 sdd config get llm.model               # a single effective value
 sdd config set llm.provider ollama     # write to the user-global file
 sdd config set --local embedding.api_keys.openai sk-...   # write to .sdd/config.local.yaml
+sdd --local-config ~/ci-local.yaml config get participant # resolve the local layer from elsewhere
 ```
 
 `sdd config set` writes the user-global file by default, or the machine-local file with `--local`. The committed project file is written by `sdd init` (or edited by hand), so a project property change is a reviewed commit. The provider blocks below can live in any of the three files — put shared defaults in the project file and personal defaults, API keys included, at the global layer.
@@ -398,7 +422,7 @@ Claude Code is the primary, most-exercised harness; Codex support is recent and 
 
 ### LLM provider (summaries + pre-flight)
 
-SDD calls an LLM in two places — summarizing each captured entry (the short text rendered in `sdd view` and catch-up) and running pre-flight validation on every draft before it lands. Four providers supported: `anthropic` (cloud API), `openai` (cloud API), `ollama` (local), and `claude-cli` (your local Claude Code CLI authentication).
+SDD calls an LLM in two places — summarizing each captured entry (the short text rendered in `sdd view` and catch-up) and running pre-flight validation on every draft before it lands. Four providers supported: `anthropic` (cloud API), `openai` (cloud API), `ollama` (local), and `claude-cli` (your local Claude Code CLI authentication). Any model behind an OpenAI-compatible gateway is reached as `openai` with an `endpoint`.
 
 ```yaml
 # Anthropic API
@@ -448,6 +472,19 @@ llm:
   model: claude-sonnet-4-6
 ```
 
+The `claude-cli` provider runs each call with `--safe-mode`, in a working directory of its own, and without `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` in its environment. Started inside a project tree the CLI would otherwise load that project's instruction files, skills, hooks and configured servers into a prompt that needs none of them, and an inherited key would answer on an API balance instead of the signed-in account. Authenticating by key belongs on `provider: anthropic`, which sends the key deliberately.
+
+Pre-flight and the writing guide ask the provider to constrain its response to a JSON schema wherever the provider reads one: `response_format` on `openai`, `format` on `ollama`. The schema is reflected from the same Go struct the response is parsed into, so the wire contract and the parser cannot drift. Summaries are never constrained, since they answer in prose, and `anthropic` and `claude-cli` carry no schema.
+
+`structured_output` picks how that request asks for JSON:
+
+- `json_schema` sends the schema for the provider to enforce.
+- `json_object` asks for any JSON object (`response_format: {"type": "json_object"}` on `openai`, `format: json` on `ollama`), states the schema in the system prompt and validates the answer against it locally. An answer that is not one JSON object matching the schema is never passed on: the check sends it to the reformat call described below, whose answer is validated the same way.
+- `auto`, the default, sends `json_schema`. When the endpoint answers 400 because the model does not support JSON schema mode (code `model_not_capable`, or a message naming `json_schema` or `json_object`), the call is retried once in `json_object` mode, and that endpoint and model stay on `json_object` for the rest of the process. Any other 400 fails the call. The retry runs inside the call's `timeout` (or `extract_timeout`).
+
+Some OpenAI-compatible services serve a model in `json_object` mode only, while another service accepts `json_schema` for the same model. `claude-cli` ignores the setting.
+
+When a checker's response does not parse, SDD makes one more call carrying the unparseable text and asking for the JSON alone, so a model that writes its conclusion into the `severity` field does not cost you the capture. A response that parses costs one call. `extract_timeout` bounds the second call (default `60s`) separately from `timeout`, so a slipping endpoint cannot spend twice the configured timeout on one check. Both responses failing is an error naming both attempts.
 Remote providers (`anthropic`, `openai`) get a conservative rate limit applied automatically, biased below tier-1 ceilings so bursty operations like `sdd summarize --all` don't trip 429s. Override with `rate_limit_rps` on higher tiers.
 
 The `openai` provider talks to any service that implements the OpenAI chat completions protocol: set `endpoint` to its base URL and the request goes there instead of to OpenAI. The same URL works with or without a trailing `/v1`. Since the automatic rate limit assumes OpenAI's tier-1 ceilings, set `rate_limit_rps` explicitly for a service that allows more.
@@ -535,6 +572,10 @@ your-project/
 ```
 
 The vector index and the connected-repo caches don't live in the project tree — they're per-machine derived state in a content-addressed store under your user cache directory (keyed by repo identity and embedder fingerprint), shared across a repo's checkouts and worktrees and rebuilt on demand. Nothing to commit or clean up by hand.
+
+The CLI also keeps each graph's entry files there, read back only while every graph file's size, timestamps and inode match what they were when it was saved, so a command on an unchanged graph reads one file instead of every entry. Set `SDD_GRAPH_CACHE=off` to read every graph from its files.
+
+Set `SDD_USAGE_LOG` to a file path to meter what sdd spends on models: every LLM call, pre-flight and embedding alike, appends one JSON line with its step, provider, endpoint host, model, token counts, finish reason, the provider's `billing_cost` object where the reply carries one, and whether it succeeded. Keys, prompts and answers never reach it. The record shape is `llmstats.UsageRecord` in `internal/llmstats`.
 
 Engine sessions are per-machine too, stored per project under your XDG state directory and shared across that repo's checkouts and worktrees. Ended sessions are collected on `sdd serve` startup once they pass the retention window (`sessions.retention`); running ones survive a binary upgrade, so there's no offline window when you update sdd.
 

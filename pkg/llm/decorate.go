@@ -51,11 +51,14 @@ func Observed(r Runner, sink StatsSink) Runner {
 		if err != nil {
 			if attributed, ok := errors.AsType[*Error](err); ok {
 				stat.Identity = attributed.Identity
+				stat.Usage = attributed.Usage
+				stat.FinishReason = attributed.FinishReason
 			}
 			stat.Error = err.Error()
 		} else {
 			stat.Identity = result.Identity
 			stat.Usage = result.Usage
+			stat.FinishReason = result.FinishReason
 		}
 		sink.RecordCall(ctx, stat)
 		return result, err
