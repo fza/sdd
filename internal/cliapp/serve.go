@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -18,10 +19,12 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/slogutils"
 
+	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
@@ -207,9 +210,11 @@ type localRuntimeAccess struct {
 
 // cachedDependencies builds a connected repo's runtime from its cache on
 // first use and keeps it; a repo that is not connected or not cached is
-// unavailable until it is.
+// unavailable until it is. closure walks the served project's declarations
+// over the same caches.
 type cachedDependencies struct {
 	registry *repos.Registry
+	closure  *finders.Finder
 	build    func(repos.Cache, *model.PerRepoConfig) (*sdd.ProjectRuntime, error)
 
 	mu       sync.Mutex
@@ -250,6 +255,23 @@ func (d *cachedDependencies) resolve(repoID sdd.RepoID) (*sdd.ProjectRuntime, er
 	return runtime, nil
 }
 
+// resolveMember resolves a project this process serves beyond its home: a
+// member of the served project's closure (20261026-194528-d-cpt-gcq), never a
+// repo merely connected on this machine.
+func (d *cachedDependencies) resolveMember(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
+	if d == nil {
+		return nil, dependencyUnavailable()
+	}
+	closure, err := d.closure.DependencyClosure(ctx, query.DependencyClosureQuery{})
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(closure, repoID) {
+		return nil, dependencyUnavailable()
+	}
+	return d.resolve(repoID)
+}
+
 func dependencyUnavailable() error {
 	return &sdd.ApplicationError{Code: sdd.ErrorProjectUnavailable, Message: "dependency unavailable"}
 }
@@ -271,12 +293,12 @@ func (a *localRuntimeAccess) ListProjects(context.Context, sdd.Principal) (sdd.P
 	return sdd.ProjectList{Projects: []sdd.ProjectSummary{{ProjectRef: a.runtime.Project(), CanRead: true, CanWrite: true, State: sdd.ProjectReady}}}, nil
 }
 
-func (a *localRuntimeAccess) ResolveProject(_ context.Context, _ sdd.Principal, project sdd.ProjectID, _ sdd.Access) (*sdd.ProjectRuntime, error) {
+func (a *localRuntimeAccess) ResolveProject(ctx context.Context, _ sdd.Principal, project sdd.ProjectID, _ sdd.Access) (*sdd.ProjectRuntime, error) {
 	if project == a.project {
 		return a.runtime, nil
 	}
 	// Locally a dependency's project ID is its repo ID.
-	return a.dependencies.resolve(sdd.RepoID(project))
+	return a.dependencies.resolveMember(ctx, sdd.RepoID(project))
 }
 
 func (a *localRuntimeAccess) AuthorizeSession(ctx context.Context, request sdd.SessionAccessRequest) error {
@@ -365,7 +387,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	}
 	access := &localRuntimeAccess{
 		project: project, participant: participant, runtime: runtime,
-		dependencies: &cachedDependencies{registry: registry, build: func(cache repos.Cache, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
+		dependencies: &cachedDependencies{registry: registry, closure: finders.New(finders.Options{Config: cfg, Repos: registry}), build: func(cache repos.Cache, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
 			// The cache as a project of its own: its committed config supplies
 			// the graph layout, the language, and the dependencies its horizon
 			// is composed from.

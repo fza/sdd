@@ -58,7 +58,7 @@ func TestCLIReadsReachTheDependencyClosure(t *testing.T) {
 // TestServeReachesTheDependencyClosure runs the same repos through `sdd
 // serve`: the session reads across the whole closure, works in a
 // second-level dependency, and never reaches stray, though it is connected and
-// cached on this machine.
+// cached on this machine; nor does a session opened there.
 func TestServeReachesTheDependencyClosure(t *testing.T) {
 	f := newAppFixture(t)
 	const (
@@ -120,6 +120,16 @@ func TestServeReachesTheDependencyClosure(t *testing.T) {
 		}
 		if out, isError := call("show", map[string]any{"ids": []string{strayEntry}, "project": "example.test/stray", "up": 0, "down": 0}); !isError {
 			t.Errorf("show in an undeclared project succeeded:\n%s", out)
+		}
+
+		for project, wantOpen := range map[string]bool{"example.test/deep": true, "example.test/stray": false} {
+			opened, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_session", Arguments: map[string]any{"project": project}})
+			if err != nil {
+				t.Fatalf("start_session in %s: %v", project, err)
+			}
+			if opened.IsError == wantOpen {
+				t.Errorf("start_session in %s: opened = %v, want %v", project, !opened.IsError, wantOpen)
+			}
 		}
 	})
 }
