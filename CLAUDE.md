@@ -4,10 +4,6 @@
 
 Claude-Code-specific notes for the SDD framework. All agent-neutral guidance — project overview, setup, commands, architecture, structure, graph conventions, skill source of truth, git rules, and the no-parallel-memory rule — lives in [AGENTS.md](AGENTS.md), imported above. Add to `AGENTS.md` unless a note is genuinely Claude-Code-only.
 
-## Pushing (fza fork)
-
-Pushing is allowed to the fork remotes only: `private` (`github.com/fza/sdd`) and `github.com/fza/gollm`. Never push to `origin` (`networkteam/sdd`) or `fd` (`Format-D/sdd`); a change for networkteam goes there as a pull request the owner files.
-
 ## Worktrees
 
 `EnterWorktree` moves the session into the worktree, but the agent's Bash environment is a frozen snapshot from session start — `DEVBOX_PROJECT_ROOT`, `PATH`, and direnv all still point at the **base** checkout, and Claude Code has no supported way to auto-activate the worktree's env on entry (the `worktree` settings cover only `baseRef`/`bgIsolation`; direnv's hook doesn't re-fire in a non-interactive shell). So, from inside a worktree:
