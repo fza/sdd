@@ -25,16 +25,20 @@ archives:
   - ids:
       - sdd
 
+# GITHUB_REPOSITORY_OWNER is set by GitHub Actions, so the release, the tap
+# and the cask homepage follow whichever repository runs the release.
 homebrew_casks:
   - name: sdd
-    # auto: no cask for prerelease tags — brew users track stable.
-    skip_upload: "auto"
+    # auto: no cask for prerelease tags — brew users track stable. A
+    # repository whose releases are all prereleases sets the Actions variable
+    # HOMEBREW_CASK_SKIP_UPLOAD to false.
+    skip_upload: "{{ with .Env.HOMEBREW_CASK_SKIP_UPLOAD }}{{ . }}{{ else }}auto{{ end }}"
     repository:
-      owner: networkteam
+      owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
       name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    homepage: https://github.com/networkteam/sdd
+    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY_OWNER }}/sdd"
     description: Signal-Dialogue-Decision graph tool
     hooks:
       post:
@@ -53,9 +57,10 @@ changelog:
 
 release:
   github:
-    owner: networkteam
+    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
     name: sdd
   # Without this the default (false) overwrites a prerelease flag already set on the release.
   prerelease: auto
   extra_files:
-    - glob: install.sh
+    - glob: "{{ with .Env.SDD_INSTALLER }}{{ . }}{{ else }}install.sh{{ end }}"
+      name_template: install.sh

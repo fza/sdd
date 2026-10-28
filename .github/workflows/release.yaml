@@ -21,6 +21,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # install.sh is generated for networkteam/sdd; a release from another
+      # repository ships a copy pointing at that repository's releases. The
+      # copy lives outside the checkout, which goreleaser requires clean.
+      - name: Point install.sh at this repository
+        run: |
+          sed "s|networkteam/sdd|${GITHUB_REPOSITORY}|g" install.sh > "$RUNNER_TEMP/install.sh"
+          echo "SDD_INSTALLER=$RUNNER_TEMP/install.sh" >> "$GITHUB_ENV"
+
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
@@ -28,10 +36,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_CASK_SKIP_UPLOAD: ${{ vars.HOMEBREW_CASK_SKIP_UPLOAD }}
 
       - uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             dist/*.tar.gz
             dist/*_checksums.txt
-            install.sh
+            ${{ env.SDD_INSTALLER }}
