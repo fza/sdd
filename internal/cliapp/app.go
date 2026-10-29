@@ -1491,7 +1491,7 @@ func initCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "project-dir",
-				Usage: "Root of the sdd project holding this repository's graph, kept in a repository of its own; this repository then carries only the pointer and the agent skills",
+				Usage: "Root of the sdd project holding this repository's graph, kept in a repository of its own and set up there when it holds none yet; this repository then carries only the pointer and the agent skills",
 			},
 			&cli.StringFlag{
 				Name:  "participant",
@@ -1562,16 +1562,22 @@ func initCmd() *cli.Command {
 			// The participant is a setting of the project holding the graph,
 			// which a pointing repository is not.
 			projectSDDDir := sddDir
+			// A pointer at a folder holding no sdd project sets that project
+			// up first, asking what a fresh init asks (20261029-130154-d-tac-frl).
+			projectMissing := false
 			if pointer {
-				if cmd.IsSet("graph-dir") || cmd.IsSet("language") {
-					return fmt.Errorf("--graph-dir and --language configure the project holding the graph; run `sdd init` with them in %s", projectDir)
-				}
 				projectRoot := projectDir
 				if !filepath.IsAbs(projectRoot) {
 					projectRoot = filepath.Join(repoRoot, projectRoot)
 				}
 				projectSDDDir = meta.SDDDir(filepath.Clean(projectRoot))
+				projectFiles, err := meta.ReadConfig(projectSDDDir)
+				if err != nil {
+					return fmt.Errorf("reading the project's configuration before init: %w", err)
+				}
+				projectMissing = projectFiles == nil
 			}
+			freshGraph := !pointer && !sddExists || projectMissing
 			var existingMerged *model.PerRepoConfig
 			if sddExists || pointer {
 				// Overlay-aware: a participant configured globally counts
@@ -1594,7 +1600,7 @@ func initCmd() *cli.Command {
 			// to the per-piece prompts below.
 			if !cliout.IsTerminalReader(cmd.Reader) {
 				var missing []string
-				if !sddExists && !pointer && languageFlag == "" {
+				if freshGraph && languageFlag == "" {
 					missing = append(missing, "--language LOCALE   (e.g. --language en — graph authoring language)")
 				}
 				if !scopeExplicit && recordedScope == "" {
@@ -1611,23 +1617,36 @@ func initCmd() *cli.Command {
 				}
 			}
 
-			var graphDir, remoteURL, defaultBranch, language string
-			if !pointer {
-				graphDir = cmd.String("graph-dir")
-				if graphDir == "" && !sddExists && cliout.IsTerminalReader(cmd.Reader) {
-					prompted, err := promptGraphDir(cmd, model.DefaultGraphDir)
-					if err != nil {
-						return fmt.Errorf("prompt: %w", err)
-					}
-					graphDir = prompted
+			graphDir := cmd.String("graph-dir")
+			if graphDir == "" && freshGraph && cliout.IsTerminalReader(cmd.Reader) {
+				prompted, err := promptGraphDir(cmd, model.DefaultGraphDir)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
 				}
+				graphDir = prompted
+			}
+			// Resolve graph language: explicit flag wins; otherwise prompt
+			// only on fresh init with stdin interactive. The default is
+			// `en` (English); choosing it still writes the key so future
+			// readers of the file don't have to infer default vs. unset.
+			language := languageFlag
+			if language == "" && freshGraph && cliout.IsTerminalReader(cmd.Reader) {
+				prompted, err := promptLanguage(cmd, "en")
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
+				language = prompted
+			}
+
+			var remoteURL, defaultBranch string
+			if !pointer {
 				if graphDir == "" {
 					graphDir = model.DefaultGraphDir
 				}
 
 				graphRepoRoot := git.RepoRootFor(meta.ResolveGraphDir(repoRoot, &model.PerRepoConfig{GraphDir: graphDir}))
 				if graphRepoRoot != "" && graphRepoRoot != repoRoot {
-					return fmt.Errorf("--graph-dir leads into %s, a repository separate from %s; run `sdd init` there and point this repository at it with --project-dir", graphRepoRoot, repoRoot)
+					return fmt.Errorf("--graph-dir leads into %s, a repository separate from %s; point this repository at it with --project-dir instead", graphRepoRoot, repoRoot)
 				}
 				remoteURL = git.RemoteURL(repoRoot)
 				if existingMerged != nil {
@@ -1639,19 +1658,6 @@ func initCmd() *cli.Command {
 					if branchErr != nil {
 						return branchErr
 					}
-				}
-
-				// Resolve graph language: explicit flag wins; otherwise prompt
-				// only on fresh init with stdin interactive. The default is
-				// `en` (English); choosing it still writes the key so future
-				// readers of the file don't have to infer default vs. unset.
-				language = languageFlag
-				if language == "" && !sddExists && cliout.IsTerminalReader(cmd.Reader) {
-					prompted, err := promptLanguage(cmd, "en")
-					if err != nil {
-						return fmt.Errorf("prompt: %w", err)
-					}
-					language = prompted
 				}
 			}
 
@@ -1802,10 +1808,12 @@ func initCmd() *cli.Command {
 				return err
 			}
 			handler := handlers.New(handlers.Options{
-				Stderr:    cmd.ErrWriter,
-				Reader:    reader,
-				Committer: git.CLI{},
-				Repos:     mgr,
+				Stderr:              cmd.ErrWriter,
+				Reader:              reader,
+				Committer:           git.CLI{},
+				Repos:               mgr,
+				ProjectRepositories: git.Repositories{},
+				CommitterAt:         func(dir string) handlers.Committer { return git.CLI{Dir: dir} },
 			})
 			if err := handler.Init(ctx, icmd); err != nil {
 				return err
