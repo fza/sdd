@@ -37,6 +37,9 @@ const (
 	// LLM calls (e.g. sdd summarize --all).
 	DefaultLLMConcurrency = 4
 
+	// DefaultLLMTimeout bounds each LLM call when llm.timeout is unset.
+	DefaultLLMTimeout = "2m"
+
 	// DefaultRetryMaxAttempts is the total number of LLM call attempts
 	// (1 = no retry) when the gollm runner hits a transient failure. Five
 	// attempts ride out a connection blip or a short 429 without making an

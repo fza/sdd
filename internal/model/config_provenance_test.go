@@ -51,6 +51,9 @@ func TestEffectiveConfigValues_PrecedenceAndDefaults(t *testing.T) {
 	if v := findValue(t, values, "llm.concurrency"); v.Source != ConfigSourceDefault {
 		t.Errorf("llm.concurrency = %+v, want default source", v)
 	}
+	if v := findValue(t, values, "llm.timeout"); v.Value != DefaultLLMTimeout || v.Source != ConfigSourceDefault {
+		t.Errorf("an unset llm.timeout should show its default, got %+v", v)
+	}
 }
 
 func TestEffectiveConfigValues_APIKeysMaskedPerKey(t *testing.T) {

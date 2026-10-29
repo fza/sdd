@@ -32,14 +32,15 @@ func (r *Runner) identity() llm.Identity {
 // Run executes claude -p --output-format json and parses the JSON response.
 // The claude CLI accepts a single stdin payload, so SystemPrompt and
 // UserPrompt are concatenated — prompt caching is not available through this
-// transport.
+// transport. The calls are text reviews, so the CLI runs without its built-in
+// tools (`--tools ""`).
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
-	cmd := exec.CommandContext(ctx, "claude", "-p", "--model", r.model, "--output-format", "json")
+	cmd := exec.CommandContext(ctx, "claude", "-p", "--tools", "", "--model", r.model, "--output-format", "json")
 	cmd.Stdin = strings.NewReader(req.Combined())
 	out, err := cmd.Output()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			err = fmt.Errorf("claude -p timed out (increase with --preflight-timeout)")
+		if ctx.Err() != nil {
+			err = fmt.Errorf("claude -p: %w", ctx.Err())
 		} else {
 			err = fmt.Errorf("claude -p: %w", err)
 		}
