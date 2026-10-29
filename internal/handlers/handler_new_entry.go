@@ -82,9 +82,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	// referenced repos before the graph loads (lazy clone + cooldown pull),
 	// then force-fetch once for any backward-class target still missing —
 	// so a just-pushed remote entry doesn't false-block resolve-or-block.
-	if err := h.freshenReferencedRepos(ctx, entry.Refs); err != nil {
-		return err
-	}
+	h.freshenReferencedRepos(ctx, entry.Refs)
 
 	// Load graph and validate entry against it.
 	graph, err := h.reader.CurrentGraph(h.graphDir)

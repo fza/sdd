@@ -22,7 +22,7 @@ type ProjectRuntimeOptions struct {
 	Project       ProjectRef
 	DefaultBranch string
 	Language      string
-	Dependencies  []string
+	Dependencies  []RepoID
 	Graph         GraphStore
 	Targets       TargetAcquirer
 	Branches      BranchValidator

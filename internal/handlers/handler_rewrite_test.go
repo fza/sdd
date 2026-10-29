@@ -74,6 +74,14 @@ func (r *graphReader) SchemaStatus(context.Context, query.SchemaStatusQuery) (*q
 	return &query.SchemaStatusResult{MetaExists: true, Meta: &model.SchemaMeta{GraphSchemaVersion: r.graphSchema}}, nil
 }
 
+func (r *graphReader) LocalRepoID() (model.RepoID, error) {
+	return "", nil
+}
+
+func (r *graphReader) DeclaredDependencies(context.Context, model.RepoID) ([]model.RepoID, error) {
+	return nil, nil
+}
+
 // recordingMover records move calls and performs the rename on disk.
 type recordingMover struct {
 	calls []moveCall

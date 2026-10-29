@@ -55,6 +55,14 @@ func (f *fakeReader) SchemaStatus(ctx context.Context, q query.SchemaStatusQuery
 	return &query.SchemaStatusResult{MetaExists: true, Meta: &model.SchemaMeta{GraphSchemaVersion: f.graphSchema}}, nil
 }
 
+func (f *fakeReader) LocalRepoID() (model.RepoID, error) {
+	return "", nil
+}
+
+func (f *fakeReader) DeclaredDependencies(context.Context, model.RepoID) ([]model.RepoID, error) {
+	return nil, nil
+}
+
 // recordingCommitter captures commit calls so tests can assert whether a
 // commit was attempted. Set err to make Commit fail (the fail-loud path).
 type recordingCommitter struct {
