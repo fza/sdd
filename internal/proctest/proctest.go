@@ -136,6 +136,7 @@ type config struct {
 	entries     []*model.Entry
 	branchDirs  map[string]string
 	finalizers  []sdd.MutationFinalizer
+	dialogue    sdd.Dialogue
 }
 
 // Option configures NewWorld.
@@ -152,6 +153,12 @@ func WithEntries(entries ...*model.Entry) Option {
 
 // WithParticipant sets the resolved participant (default Christopher).
 func WithParticipant(name string) Option { return func(c *config) { c.participant = name } }
+
+// WithAutonomousDialogue opens every session of the world in the autonomous
+// dialogue mode.
+func WithAutonomousDialogue() Option {
+	return func(c *config) { c.dialogue = sdd.Dialogue{Mode: "autonomous", Source: "config.local.yaml"} }
+}
 
 // WithFinalizers configures required completion after publication.
 func WithFinalizers(finalizers ...sdd.MutationFinalizer) Option {
@@ -248,6 +255,11 @@ func (w *World) DropBranch(t *testing.T, branch string) {
 type accessResolver struct {
 	runtime     *sdd.ProjectRuntime
 	participant string
+	dialogue    sdd.Dialogue
+}
+
+func (r *accessResolver) ResolveDialogue(context.Context, sdd.Principal, sdd.ProjectID) (sdd.Dialogue, error) {
+	return r.dialogue, nil
 }
 
 func (r *accessResolver) ResolvePrincipal(_ context.Context, identity sdd.RequestIdentity) (sdd.Principal, error) {
@@ -326,7 +338,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 		t.Fatal(err)
 	}
 	application, err := sdd.NewApplication(sdd.ApplicationOptions{
-		Access: &accessResolver{runtime: runtime, participant: cfg.participant}, Sessions: sessions, StagedBlobs: blobs,
+		Access: &accessResolver{runtime: runtime, participant: cfg.participant, dialogue: cfg.dialogue}, Sessions: sessions, StagedBlobs: blobs,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -437,6 +449,27 @@ func (s *Session) AnswerErr(t *testing.T, instance, chooser, choice string, fiel
 	}
 	if userWords != "" {
 		report["userWords"] = userWords
+	}
+	return s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: report})
+}
+
+// Decide answers a delegable chooser the agent decides itself in an
+// autonomous session, carrying its reason.
+func (s *Session) Decide(t *testing.T, instance, chooser, choice string, fields map[string]any, reason string) *sdd.WorkflowServe {
+	t.Helper()
+	serve, err := s.DecideErr(t, instance, chooser, choice, fields, reason)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return serve
+}
+
+// DecideErr is Decide for tests asserting the failure.
+func (s *Session) DecideErr(t *testing.T, instance, chooser, choice string, fields map[string]any, reason string) (*sdd.WorkflowServe, error) {
+	t.Helper()
+	report := map[string]any{"chooser": chooser, "choice": choice, "reason": reason}
+	if fields != nil {
+		report["fields"] = fields
 	}
 	return s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: report})
 }

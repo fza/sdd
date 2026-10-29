@@ -664,7 +664,7 @@ steps:
 	if err != nil {
 		t.Fatalf("loading pick spec: %v", err)
 	}
-	schema := spec.AnswerSchemaForStep(spec.StepByID["pick"])
+	schema := spec.AnswerSchemaForStep(spec.StepByID["pick"], model.DialogueGuided)
 	props, _ := schema["properties"].(map[string]any)
 	if props == nil {
 		t.Fatalf("answer schema has no properties: %+v", schema)

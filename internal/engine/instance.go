@@ -613,10 +613,13 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		// At a chooser the report is a chooser-answer envelope, not a flat
 		// state write — serve the schema that matches, so collected fields nest
 		// under `fields` and the chooser is named where the answer needs it.
-		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step)
-		if step.Chooser == ChooserUser {
+		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.DialogueMode)
+		switch {
+		case step.Chooser == ChooserUser && step.Delegable && s.DialogueMode == model.DialogueAutonomous:
+			sv.Goal = "decide the choice yourself and answer with a one-line reason"
+		case step.Chooser == ChooserUser:
 			sv.Goal = "put the choice to the user and relay their answer verbatim"
-		} else {
+		default:
 			sv.Goal = "judge and answer the chooser, with the evidence its option collects"
 		}
 	}
@@ -832,5 +835,23 @@ func (s *Session) templateContext(inst *Instance) (map[string]any, error) {
 		}
 		ctx[name] = value
 	}
+	if _, ok := inst.Spec.Params[dialogueModeValue]; ok {
+		return nil, fmt.Errorf("template value %q collides with a procedure param", dialogueModeValue)
+	}
+	if _, ok := inst.Spec.State[dialogueModeValue]; ok {
+		return nil, fmt.Errorf("template value %q collides with a procedure state field", dialogueModeValue)
+	}
+	ctx[dialogueModeValue] = string(s.dialogueMode())
 	return ctx, nil
+}
+
+// dialogueModeValue names the session's dialogue mode in every unit's
+// template context.
+const dialogueModeValue = "dialogueMode"
+
+func (s *Session) dialogueMode() model.DialogueMode {
+	if s.DialogueMode == model.DialogueAutonomous {
+		return model.DialogueAutonomous
+	}
+	return model.DialogueGuided
 }

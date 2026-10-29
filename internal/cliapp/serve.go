@@ -20,6 +20,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
@@ -215,6 +216,7 @@ func localBearerAuth(token string, next http.Handler) http.Handler {
 type localRuntimeAccess struct {
 	project      sdd.ProjectID
 	participant  string
+	dialogue     sdd.Dialogue
 	runtime      *sdd.ProjectRuntime
 	dependencies map[string]*sdd.ProjectRuntime
 	projects     map[sdd.ProjectID]*sdd.ProjectRuntime
@@ -231,6 +233,12 @@ func (a *localRuntimeAccess) ResolvePrincipal(_ context.Context, identity sdd.Re
 // serves one project, so the name is the same for it.
 func (a *localRuntimeAccess) ResolveParticipant(context.Context, sdd.Principal, sdd.ProjectID) (string, error) {
 	return a.participant, nil
+}
+
+// ResolveDialogue returns the dialogue mode read from the person's config
+// when the server started.
+func (a *localRuntimeAccess) ResolveDialogue(context.Context, sdd.Principal, sdd.ProjectID) (sdd.Dialogue, error) {
+	return a.dialogue, nil
 }
 
 func (a *localRuntimeAccess) ListProjects(context.Context, sdd.Principal) (sdd.ProjectList, error) {
@@ -257,6 +265,33 @@ func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principa
 		return nil, &sdd.ApplicationError{Code: sdd.ErrorProjectUnavailable, Message: "dependency unavailable"}
 	}
 	return runtime, nil
+}
+
+// localDialogue reads dialogue.mode and the layer that sets it; the committed
+// config cannot set it (20261029-150854-d-tac-b2f).
+func localDialogue(sddDir string) (sdd.Dialogue, error) {
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		return sdd.Dialogue{}, err
+	}
+	global, err := repos.LoadConfigFrom(loc.ConfigPath)
+	if err != nil {
+		return sdd.Dialogue{}, err
+	}
+	committed, local, err := meta.ReadConfigLayers(sddDir)
+	if err != nil {
+		return sdd.Dialogue{}, err
+	}
+	sources := map[model.ConfigValueSource]string{
+		model.ConfigSourceGlobal: loc.ConfigPath,
+		model.ConfigSourceLocal:  filepath.Join(sddDir, "config.local.yaml"),
+	}
+	for _, value := range model.EffectiveConfigValues(global.BaseConfig, model.HonoredCommitted(committed), local) {
+		if value.Key == "dialogue.mode" {
+			return sdd.Dialogue{Mode: value.Value, Source: sources[value.Source]}, nil
+		}
+	}
+	return sdd.Dialogue{Mode: string(model.DialogueGuided)}, nil
 }
 
 func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddDir string, cfg *model.PerRepoConfig, registry *repos.Registry, runner pkgllm.Runner) (*sdd.Application, *sdd.ProjectRuntime, sdd.RequestIdentity, error) {
@@ -332,8 +367,12 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
+	dialogue, err := localDialogue(sddDir)
+	if err != nil {
+		return nil, nil, sdd.RequestIdentity{}, err
+	}
 	access := &localRuntimeAccess{
-		project: project, participant: participant, runtime: runtime,
+		project: project, participant: participant, dialogue: dialogue, runtime: runtime,
 		dependencies: map[string]*sdd.ProjectRuntime{}, projects: map[sdd.ProjectID]*sdd.ProjectRuntime{},
 	}
 	for _, dependency := range dependencies {

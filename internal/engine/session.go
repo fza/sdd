@@ -215,6 +215,11 @@ type Session struct {
 	// picks a parked dialogue by. Agent-supplied via SetLabel, updatable;
 	// empty until supplied.
 	Label string
+	// DialogueMode is fixed when the session opens and kept on resume;
+	// DialogueSource names the config layer that set it
+	// (20261029-150854-d-tac-b2f).
+	DialogueMode   model.DialogueMode
+	DialogueSource string
 
 	engine    *Engine
 	sink      EventSink
@@ -243,6 +248,14 @@ type Session struct {
 // SessionOption configures a session.
 type SessionOption func(*Session)
 
+// WithDialogue opens the session in mode, set by the config layer source.
+func WithDialogue(mode model.DialogueMode, source string) SessionOption {
+	return func(s *Session) {
+		s.DialogueMode = mode
+		s.DialogueSource = source
+	}
+}
+
 // WithClock injects the timestamp source (tests use a fixed clock).
 func WithClock(now func() time.Time) SessionOption {
 	return func(s *Session) { s.now = now }
@@ -264,11 +277,42 @@ func (e *Engine) NewSession(id, participant string, sink EventSink, opts ...Sess
 		o(s)
 	}
 	if sink != nil {
-		s.appendEvent("", EventSessionMeta, map[string]any{
-			"participant": participant,
-		})
+		meta := map[string]any{"participant": participant}
+		// A guided session's header stays as it always was; an absent mode
+		// reads back as guided.
+		if s.DialogueMode == model.DialogueAutonomous {
+			meta["dialogue"] = string(s.DialogueMode)
+			meta["dialogueSource"] = s.DialogueSource
+		}
+		s.appendEvent("", EventSessionMeta, meta)
 	}
 	return s
+}
+
+// answerer judges who may answer step and returns who did, as the answer
+// event records it in an autonomous session; guided sessions record nothing
+// and keep today's answer form.
+func (s *Session) answerer(step *Step, userWords, reason string) (string, error) {
+	autonomous := s.DialogueMode == model.DialogueAutonomous
+	switch {
+	case reason != "" && userWords != "":
+		return "", fmt.Errorf("give either the user's words or your reason at %s, not both", step.ID)
+	case reason != "" && step.Chooser != ChooserUser:
+		return "", fmt.Errorf("a reason answers only a user chooser; %s is not one", step.ID)
+	case reason != "" && !autonomous:
+		return "", fmt.Errorf("%s is the user's choice in a guided session — relay the user's words", step.ID)
+	case reason != "" && !step.Delegable:
+		return "", fmt.Errorf("%s stays the user's choice even in an autonomous session — relay the user's words", step.ID)
+	case !autonomous || step.Chooser != ChooserUser:
+		return "", nil
+	case reason != "":
+		return "agent", nil
+	case userWords == "" && step.Delegable:
+		return "", fmt.Errorf("%s needs the user's words or your reason", step.ID)
+	case userWords == "":
+		return "", fmt.Errorf("%s stays the user's choice even in an autonomous session — relay the user's words", step.ID)
+	}
+	return "user", nil
 }
 
 // SetLabel records the session's subject label. Idempotent per value — a
@@ -607,6 +651,20 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 // are limited to the option's collect list. User answers carry the user's
 // words verbatim for the auditable-relay record.
 func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]any, userWords string) (*Serve, error) {
+	return s.AnswerWith(instanceID, chooser, choice, fields, AnswerWords{User: userWords})
+}
+
+// AnswerWords is who speaks in a chooser answer: the user's words relayed, or
+// the agent's one-line reason for a delegable user chooser it decided itself
+// in an autonomous session (20261029-150854-d-tac-b2f).
+type AnswerWords struct {
+	User   string
+	Reason string
+}
+
+// AnswerWith is Answer carrying either the user's words or the agent's reason.
+func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[string]any, words AnswerWords) (*Serve, error) {
+	userWords, reason := words.User, words.Reason
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
@@ -626,6 +684,10 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 	}
 	if chooser != step.ID {
 		return nil, fmt.Errorf("chooser %q is not pending — the pending chooser is %q (answers are validated: no early, late, or double answers)", chooser, step.ID)
+	}
+	answeredBy, err := s.answerer(step, userWords, reason)
+	if err != nil {
+		return nil, err
 	}
 
 	var opt *Option
@@ -673,6 +735,12 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 	}
 	if userWords != "" {
 		data["userWords"] = userWords
+	}
+	if reason != "" {
+		data["reason"] = reason
+	}
+	if answeredBy != "" {
+		data["answeredBy"] = answeredBy
 	}
 	if len(fields) > 0 {
 		data["fields"] = fields
@@ -808,6 +876,10 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 	case EventSessionMeta:
 		if p, ok := ev.Data["participant"].(string); ok && p != "" {
 			s.Participant = p
+		}
+		if mode, ok := ev.Data["dialogue"].(string); ok && model.DialogueMode(mode) == model.DialogueAutonomous {
+			s.DialogueMode = model.DialogueAutonomous
+			s.DialogueSource, _ = ev.Data["dialogueSource"].(string)
 		}
 
 	case EventLabeled:

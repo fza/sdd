@@ -273,7 +273,11 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err != nil {
 		return nil, nil, err
 	}
-	w.session = w.engine.NewSession(string(id), info.Participant, w.sink)
+	dialogue, err := a.dialogueFor(ctx, principal, runtime)
+	if err != nil {
+		return nil, nil, err
+	}
+	w.session = w.engine.NewSession(string(id), info.Participant, w.sink, engine.WithDialogue(model.DialogueMode(dialogue.Mode), dialogue.Source))
 	canonical := strings.TrimSpace(request.Shell)
 	if canonical == "" {
 		canonical = DefaultShellCanonical
@@ -509,6 +513,13 @@ func (w *WorkflowSession) IsShell(instance string) bool { return instance != "" 
 // Finished reports whether this dialogue is over: the shell has left running,
 // which is the act that wrote the terminal record. A finished session is spent —
 // the door opens a new one rather than re-serving it, and no move may carry it on.
+// Autonomous reports whether the session opened in the autonomous dialogue
+// mode, where the agent takes the choices procedures hand over
+// (20261029-150854-d-tac-b2f).
+func (w *WorkflowSession) Autonomous() bool {
+	return w.session.DialogueMode == model.DialogueAutonomous
+}
+
 func (w *WorkflowSession) Finished() bool {
 	inst, ok := w.session.Instance(w.shell)
 	return ok && inst.Status != engine.StatusRunning
@@ -600,14 +611,15 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 		// (20260811-233331-s-tac-bjn). Refuse by name instead.
 		for _, key := range slices.Sorted(maps.Keys(request.Report)) {
 			switch key {
-			case "chooser", "choice", "fields", "userWords":
+			case "chooser", "choice", "fields", "userWords", "reason":
 			default:
 				return nil, fmt.Errorf("field %q cannot ride a chooser answer at the top level and was not applied — state a chooser answer collects goes inside its fields object", key)
 			}
 		}
 		fields, _ := request.Report["fields"].(map[string]any)
 		words, _ := request.Report["userWords"].(string)
-		serve, err = w.session.Answer(request.Instance, chooser, choice, fields, words)
+		reason, _ := request.Report["reason"].(string)
+		serve, err = w.session.AnswerWith(request.Instance, chooser, choice, fields, engine.AnswerWords{User: words, Reason: reason})
 	} else {
 		serve, err = w.session.Report(request.Instance, request.Report)
 	}

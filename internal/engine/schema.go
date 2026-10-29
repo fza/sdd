@@ -61,8 +61,9 @@ func (s *Spec) ReportSchemaForStep(step *Step) map[string]any {
 // collected fields at the top level (rejected); this envelope makes the
 // required nesting explicit. `fields` unions every option's collect fields —
 // each option enforces its own required set at answer time, so the envelope
-// marks none of them required.
-func (s *Spec) AnswerSchemaForStep(step *Step) map[string]any {
+// marks none of them required. In an autonomous session a delegable user
+// chooser takes the agent's reason in place of the user's words.
+func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[string]any {
 	choices := make([]any, 0, len(step.Options))
 	fieldProps := make(map[string]any)
 	for _, o := range step.Options {
@@ -90,7 +91,17 @@ func (s *Spec) AnswerSchemaForStep(step *Step) map[string]any {
 		},
 	}
 	required := []string{"choice", "chooser"}
-	if step.Chooser == ChooserUser {
+	switch {
+	case step.Chooser == ChooserUser && step.Delegable && mode == model.DialogueAutonomous:
+		properties["userWords"] = map[string]any{
+			"type":        "string",
+			"description": "the user's answer, relayed verbatim, when the user gave one — otherwise omit it and give reason",
+		}
+		properties["reason"] = map[string]any{
+			"type":        "string",
+			"description": "one line on why you chose this option yourself — give exactly one of reason and userWords",
+		}
+	case step.Chooser == ChooserUser:
 		properties["userWords"] = map[string]any{
 			"type":        "string",
 			"description": "the user's answer, relayed verbatim",
@@ -200,6 +211,7 @@ func procedureSpecSchema() map[string]any {
 			"transitions": map[string]any{"type": "array", "items": transition},
 			"goal":        map[string]any{"type": "string"},
 			"serveDelta":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"delegable":   map[string]any{"type": "boolean"},
 		},
 		"required":             []string{"id"},
 		"additionalProperties": false,
