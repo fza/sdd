@@ -3,6 +3,7 @@ package local_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,9 +110,39 @@ func TestRepositoryTargetsReloadConfiguration(t *testing.T) {
 	}
 }
 
+func TestRepositoryTargetsReadTheLocalConfigOverride(t *testing.T) {
+	repo := newGitRepository(t)
+	repo.write(".sdd/config.yaml", "repo_id: committed\ndefault_branch: main\n")
+	repo.write(".sdd/config.local.yaml", "repo_id: other\n")
+	repo.write("global-config.yaml", "")
+	override := filepath.Join(t.TempDir(), "override-config.yaml")
+	if err := os.WriteFile(override, []byte("repo_id: example\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := local.NewRepositoryTargets("example", repo.root, filepath.Join(repo.root, "global-config.yaml"), override)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	read, err := targets.AcquireSnapshot(t.Context(), sdd.SnapshotReadQuery{Branch: "main"})
+	if err != nil {
+		t.Fatalf("a read should resolve the project through the override, not the repo's own layer: %v", err)
+	}
+	if err := read.Release(); err != nil {
+		t.Fatal(err)
+	}
+	write, err := targets.Acquire(t.Context(), sdd.MutationTarget{Project: "example", Branch: "main"})
+	if err != nil {
+		t.Fatalf("a write should resolve the project through the override, not the repo's own layer: %v", err)
+	}
+	if err := write.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (r *gitRepository) targets() *local.GitWorktreeAcquirer {
 	r.t.Helper()
-	targets, err := local.NewRepositoryTargets("example", r.root, filepath.Join(r.root, "global-config.yaml"))
+	targets, err := local.NewRepositoryTargets("example", r.root, filepath.Join(r.root, "global-config.yaml"), "")
 	if err != nil {
 		r.t.Fatal(err)
 	}

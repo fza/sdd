@@ -1592,20 +1592,21 @@ func initCmd() *cli.Command {
 				return err
 			}
 			icmd := &command.InitCmd{
-				RepoRoot:       repoRoot,
-				StableRepoRoot: stableRepoRoot,
-				GraphDir:       graphDir,
-				DefaultBranch:  defaultBranch,
-				Participant:    participant,
-				Language:       language,
-				BinaryVersion:  cmd.Root().Version,
-				Targets:        targets,
-				Scope:          scope,
-				ScopeExplicit:  scopeExplicit,
-				UserHome:       userHome,
-				RemoteURL:      remoteURL,
-				Force:          cmd.Bool("force"),
-				Bump:           cmd.Bool("bump"),
+				RepoRoot:        repoRoot,
+				StableRepoRoot:  stableRepoRoot,
+				GraphDir:        graphDir,
+				DefaultBranch:   defaultBranch,
+				Participant:     participant,
+				LocalConfigPath: localConfigOverride,
+				Language:        language,
+				BinaryVersion:   cmd.Root().Version,
+				Targets:         targets,
+				Scope:           scope,
+				ScopeExplicit:   scopeExplicit,
+				UserHome:        userHome,
+				RemoteURL:       remoteURL,
+				Force:           cmd.Bool("force"),
+				Bump:            cmd.Bool("bump"),
 				OnMinimumVersionBumped: func(previous, current string) {
 					if previous == "" {
 						fmt.Fprintf(cmd.Writer, "  minimum_version: → %s\n", current)

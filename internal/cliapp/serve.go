@@ -365,7 +365,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if localEmbedder.Embedder != nil {
 		embeddings = localEmbedder
 	}
-	targets, err := localadapter.NewRepositoryTargets(project, filepath.Dir(sddDir), locations.ConfigPath)
+	targets, err := localadapter.NewRepositoryTargets(project, filepath.Dir(sddDir), locations.ConfigPath, localConfigOverride)
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
