@@ -321,7 +321,7 @@
     }
   },
   {
-    "description": "Advance a procedure instance in the session named by session (required): send state fields per the served report_schema, or answer a pending chooser with {chooser, choice, userWords?, fields?}. User choosers must carry the user's answer relayed verbatim in userWords. For an unfinished operation, omit report and pass its exact retry_ref to continue or cancel_ref to leave its effects in place and return to the preceding interaction. Other transitions remain blocked until the operation is retried or cancelled. When a move ends, the response carries the session shell's serve — where the dialogue lands.",
+    "description": "Advance a procedure instance in the session named by session (required): send state fields per the served report_schema, or answer a pending chooser with {chooser, choice, userWords?, reason?, fields?}. User choosers must carry the user's answer relayed verbatim in userWords, unless the served schema offers reason for a choice you decide yourself. For an unfinished operation, omit report and pass its exact retry_ref to continue or cancel_ref to leave its effects in place and return to the preceding interaction. Other transitions remain blocked until the operation is retried or cancelled. When a move ends, the response carries the session shell's serve — where the dialogue lands.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -340,7 +340,7 @@
         },
         "report": {
           "additionalProperties": true,
-          "description": "state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, fields?}",
+          "description": "state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}",
           "type": "object"
         },
         "retry_ref": {

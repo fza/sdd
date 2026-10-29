@@ -89,6 +89,7 @@ type BaseConfig struct {
 	Embedding EmbeddingConfig `yaml:"embedding,omitempty"`
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
+	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
 	// set once in the user-global config; a per-repo override covers a
@@ -216,6 +217,23 @@ const (
 	SyncModeAuto   SyncMode = "auto"
 )
 
+// DialogueConfig holds how engine sessions treat the choices procedures put
+// to the user.
+type DialogueConfig struct {
+	// Mode decides whether the agent may take those choices itself. Empty
+	// means DialogueGuided.
+	Mode DialogueMode `yaml:"mode,omitempty"`
+}
+
+// DialogueMode is the dialogue.mode setting, set per person like sync.mode
+// (20261029-150854-d-tac-b2f).
+type DialogueMode string
+
+const (
+	DialogueGuided     DialogueMode = "guided"
+	DialogueAutonomous DialogueMode = "autonomous"
+)
+
 // IgnoredSetting is a setting a config layer carries that sdd reads past:
 // a value it does not know, or a key that layer may not set.
 type IgnoredSetting struct {
@@ -233,6 +251,9 @@ func IgnoredSettings(layer BaseConfig, committed bool) []IgnoredSetting {
 	if reason := ignoredSyncInterval(layer.Sync.Interval, committed); reason != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "sync.interval", Reason: reason})
 	}
+	if reason := ignoredDialogueMode(layer.Dialogue.Mode, committed); reason != "" {
+		ignored = append(ignored, IgnoredSetting{Key: "dialogue.mode", Reason: reason})
+	}
 	return ignored
 }
 
@@ -246,6 +267,18 @@ func ignoredSyncMode(mode SyncMode, committed bool) string {
 		return personalOnlyReason
 	case mode != SyncModeManual && mode != SyncModeAuto:
 		return fmt.Sprintf("%q is not %s or %s", mode, SyncModeManual, SyncModeAuto)
+	}
+	return ""
+}
+
+func ignoredDialogueMode(mode DialogueMode, committed bool) string {
+	switch {
+	case mode == "":
+		return ""
+	case committed:
+		return personalOnlyReason
+	case mode != DialogueGuided && mode != DialogueAutonomous:
+		return fmt.Sprintf("%q is not %s or %s", mode, DialogueGuided, DialogueAutonomous)
 	}
 	return ""
 }
@@ -270,12 +303,13 @@ func ignoredSyncInterval(interval string, committed bool) string {
 // HonoredCommitted returns the committed layer without the settings only a
 // person's own config may make.
 func HonoredCommitted(committed *PerRepoConfig) *PerRepoConfig {
-	if committed == nil || (committed.Sync.Mode == "" && committed.Sync.Interval == "") {
+	if committed == nil || (committed.Sync.Mode == "" && committed.Sync.Interval == "" && committed.Dialogue.Mode == "") {
 		return committed
 	}
 	honored := *committed
 	honored.Sync.Mode = ""
 	honored.Sync.Interval = ""
+	honored.Dialogue.Mode = ""
 	return &honored
 }
 
@@ -531,6 +565,9 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	out.LLM = mergeLLMConfig(base.LLM, overlay.LLM)
 	out.Embedding = mergeEmbeddingConfig(base.Embedding, overlay.Embedding)
 	out.Sync = mergeSyncConfig(base.Sync, overlay.Sync)
+	if overlay.Dialogue.Mode != "" {
+		out.Dialogue.Mode = overlay.Dialogue.Mode
+	}
 	return out
 }
 
@@ -782,7 +819,12 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"# sync:\n" +
 		"#   cooldown: " + DefaultSyncCooldown + "\n" +
 		"#   mode: " + string(SyncModeManual) + "\n" +
-		"#   interval: 5m\n"
+		"#   interval: 5m\n" +
+		"\n" +
+		"# Dialogue, set per person: mode: autonomous lets the agent take the\n" +
+		"# choices an engine session otherwise puts to you.\n" +
+		"# dialogue:\n" +
+		"#   mode: " + string(DialogueGuided) + "\n"
 }
 
 // ResolveSessionRetention returns the effective session retention from cfg.
@@ -825,6 +867,14 @@ func ResolveSyncCooldown(cfg *PerRepoConfig) time.Duration {
 		raw = cfg.Sync.Cooldown
 	}
 	return parsePositiveDuration(raw, DefaultSyncCooldown)
+}
+
+// ResolveDialogueMode returns the effective dialogue mode from cfg.
+func ResolveDialogueMode(cfg *PerRepoConfig) DialogueMode {
+	if cfg != nil && cfg.Dialogue.Mode == DialogueAutonomous {
+		return DialogueAutonomous
+	}
+	return DialogueGuided
 }
 
 // ResolveSyncMode returns the effective sync mode from cfg.
