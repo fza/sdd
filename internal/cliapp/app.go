@@ -1422,6 +1422,20 @@ func promptSyncMode(cmd *cli.Command) (model.SyncMode, error) {
 	})
 }
 
+// promptDialogueMode asks whether this person's agents take the choices an
+// engine session otherwise puts to them.
+func promptDialogueMode(cmd *cli.Command) (model.DialogueMode, error) {
+	return tui.RunSelect(tui.SelectPrompt[model.DialogueMode]{
+		Reader: cmd.Reader,
+		Writer: cmd.Writer,
+		Header: "Who takes the choices an sdd session puts to you? (↑/↓ to navigate, enter to confirm)",
+		Options: []tui.SelectOption[model.DialogueMode]{
+			{Label: string(model.DialogueGuided), Hint: "you confirm entries, pick moves and end sessions", Value: model.DialogueGuided},
+			{Label: string(model.DialogueAutonomous), Hint: "your agent decides, except overriding a failed pre-flight", Value: model.DialogueAutonomous},
+		},
+	})
+}
+
 // promptSyncInterval asks how often a running `sdd serve` syncs. Empty input
 // keeps the timer off.
 func promptSyncInterval(cmd *cli.Command) (string, error) {
@@ -1590,6 +1604,10 @@ func initCmd() *cli.Command {
 				Name:  "sync-interval",
 				Usage: "How often a running `sdd serve` syncs under auto sync, e.g. 15m (prompted interactively when choosing auto)",
 			},
+			&cli.StringFlag{
+				Name:  "dialogue-mode",
+				Usage: "Your dialogue mode, guided or autonomous, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
+			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			// `--bump` cannot be honoured from a dev build — fail before
@@ -1674,9 +1692,11 @@ func initCmd() *cli.Command {
 			}
 			recordedParticipant := ""
 			var recordedSyncMode model.SyncMode
+			var recordedDialogueMode model.DialogueMode
 			if existingMerged != nil {
 				recordedParticipant = existingMerged.Participant
 				recordedSyncMode = existingMerged.Sync.Mode
+				recordedDialogueMode = existingMerged.Dialogue.Mode
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
 			participantFlag := strings.TrimSpace(cmd.String("participant"))
@@ -1817,6 +1837,14 @@ func initCmd() *cli.Command {
 				}
 			}
 
+			dialogueMode := model.DialogueMode(strings.TrimSpace(cmd.String("dialogue-mode")))
+			if dialogueMode == "" && recordedDialogueMode == "" && cliout.IsTerminalReader(cmd.Reader) {
+				dialogueMode, err = promptDialogueMode(cmd)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
+			}
+
 			stableRepoRoot, err := git.StableRepoRoot(repoRoot)
 			if err != nil {
 				return err
@@ -1829,6 +1857,7 @@ func initCmd() *cli.Command {
 				SetUpProject:   setUpProject,
 				SyncMode:       syncMode,
 				SyncInterval:   syncInterval,
+				DialogueMode:   dialogueMode,
 				DefaultBranch:  defaultBranch,
 				Participant:    participant,
 				Language:       language,

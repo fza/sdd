@@ -174,6 +174,7 @@ func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
 		{"participant", cmd.Participant},
 		{"sync.mode", string(cmd.SyncMode)},
 		{"sync.interval", cmd.SyncInterval},
+		{"dialogue.mode", string(cmd.DialogueMode)},
 	}
 	configLocalPath := filepath.Join(sddDir, "config.local.yaml")
 	for _, setting := range settings {
