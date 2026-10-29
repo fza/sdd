@@ -1,11 +1,13 @@
 package repos
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -31,32 +33,48 @@ func IsCloned(dir string) bool {
 	return err == nil
 }
 
-// DeclaredRepoID reads the repo_id the cached repo declares in its committed
-// .sdd/config.yaml. Verification for `sdd repo add`: the connection is only
-// valid when the target declares the identity the caller registers it under.
-func DeclaredRepoID(dir string) (string, error) {
-	cfg, err := readCachedConfig(dir)
+// Cache is a connected repo's read-only clone, the one reader of what a cache
+// holds. Every error it returns names the repo.
+type Cache struct {
+	RepoID model.RepoID
+	Dir    string
+}
+
+// Cloned reports whether the cache holds a git clone.
+func (c Cache) Cloned() bool {
+	return IsCloned(c.Dir)
+}
+
+// Config reads the cached repo's committed .sdd/config.yaml; the error wraps
+// meta.ErrNotAnSDDProject when it has none.
+func (c Cache) Config() (*model.PerRepoConfig, error) {
+	cfg, err := meta.ReadCommittedConfigFS(os.DirFS(c.Dir))
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("reading config of %s: %w", c.name(), err)
 	}
-	if cfg == nil || cfg.RepoID == "" {
-		return "", fmt.Errorf("repo at %s declares no repo_id in .sdd/config.yaml — run `sdd init` there (or add repo_id) first", dir)
-	}
-	return cfg.RepoID, nil
+	return cfg, nil
 }
 
 // GraphDir resolves the cached repo's graph directory from its committed
-// config, defaulting to the conventional location.
-func GraphDir(dir string) (string, error) {
-	cfg, err := readCachedConfig(dir)
-	if err != nil {
-		return "", err
-	}
+// config, the conventional location when it declares none or has no config.
+func (c Cache) GraphDir() (string, error) {
 	graphDir := model.DefaultGraphDir
-	if cfg != nil && cfg.GraphDir != "" {
+	cfg, err := c.Config()
+	switch {
+	case errors.Is(err, meta.ErrNotAnSDDProject):
+	case err != nil:
+		return "", err
+	case cfg.GraphDir != "":
 		graphDir = cfg.GraphDir
 	}
-	return filepath.Join(dir, filepath.FromSlash(graphDir)), nil
+	return filepath.Join(c.Dir, filepath.FromSlash(graphDir)), nil
+}
+
+func (c Cache) name() string {
+	if c.RepoID != "" {
+		return string(c.RepoID)
+	}
+	return c.Dir
 }
 
 // LegacyIndexDir is the pre-store per-repo index location inside a clone
@@ -64,20 +82,6 @@ func GraphDir(dir string) (string, error) {
 // build into the machine-global store. Nothing writes here anymore.
 func LegacyIndexDir(dir string) string {
 	return filepath.Join(dir, ".index")
-}
-
-// readCachedConfig reads the cached repo's committed .sdd/config.yaml.
-// A missing file returns nil without error — the cache may point at a repo
-// that was never initialized; callers decide whether that matters.
-func readCachedConfig(dir string) (*model.PerRepoConfig, error) {
-	data, err := os.ReadFile(filepath.Join(dir, model.SDDDirName, "config.yaml"))
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("reading cached repo config: %w", err)
-	}
-	return model.ParseConfig(data)
 }
 
 // PullDue reports whether a cooldown pull is due — the marker is missing or
