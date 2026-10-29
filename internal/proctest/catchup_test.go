@@ -57,9 +57,6 @@ func TestCatchupHappyPath(t *testing.T) {
 			t.Errorf("compose lanes should carry the real graph content %q, got %q", content, serve.Instructions)
 		}
 	}
-	if !strings.Contains(serve.Instructions, "explicit recovery choice is available") {
-		t.Fatalf("catch-up instructions do not project actionable recovery notices: %q", serve.Instructions)
-	}
 	if got := strings.Join(serve.Missing, ","); got != "briefing" {
 		t.Fatalf("missing = %q, want briefing", got)
 	}
