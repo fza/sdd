@@ -2,6 +2,8 @@ package engine
 
 import (
 	"testing"
+
+	"github.com/networkteam/sdd/internal/model"
 )
 
 func TestReportSchemaForStep(t *testing.T) {
@@ -73,7 +75,7 @@ func TestReportSchemaForStep(t *testing.T) {
 		t.Fatalf("index required = %#v", indexObject["required"])
 	}
 
-	answer := env.spec.AnswerSchemaForStep(env.spec.StepByID["playback"])
+	answer := env.spec.AnswerSchemaForStep(env.spec.StepByID["playback"], model.DialogueGuided)
 	answerProps, _ := answer["properties"].(map[string]any)
 	fields, _ := answerProps["fields"].(map[string]any)
 	fieldProps, _ := fields["properties"].(map[string]any)

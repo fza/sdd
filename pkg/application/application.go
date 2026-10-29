@@ -132,6 +132,20 @@ func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, 
 	}, nil
 }
 
+// dialogueFor resolves the dialogue mode a new session of the principal opens
+// in; the engine opens anything but autonomous guided.
+func (a *Application) dialogueFor(ctx context.Context, principal Principal, runtime *ProjectRuntime) (Dialogue, error) {
+	resolver, ok := a.access.(DialogueResolver)
+	if !ok {
+		return Dialogue{}, nil
+	}
+	dialogue, err := resolver.ResolveDialogue(ctx, principal, runtime.options.Project.ID)
+	if err != nil {
+		return Dialogue{}, fmt.Errorf("resolving the dialogue mode: %w", err)
+	}
+	return dialogue, nil
+}
+
 // participantFor resolves the participant the principal appears as in the
 // resolved project.
 func (a *Application) participantFor(ctx context.Context, principal Principal, runtime *ProjectRuntime) (string, error) {

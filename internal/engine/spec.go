@@ -192,6 +192,10 @@ type Step struct {
 	// what changed after — prose fields as content diffs, lists item-level,
 	// scalars whole (20260826-120330-d-tac-8f8).
 	ServeDelta []string
+	// Delegable hands a user chooser to the agent in an autonomous session;
+	// an unmarked one stays the user's in every mode
+	// (20261029-150854-d-tac-b2f).
+	Delegable bool
 }
 
 // Terminal transition targets. A procedure ends by transitioning to one of
@@ -282,6 +286,7 @@ type stepYAML struct {
 	Transitions []transitionYAML `yaml:"transitions"`
 	Goal        string           `yaml:"goal"`
 	ServeDelta  []string         `yaml:"serveDelta"`
+	Delegable   bool             `yaml:"delegable"`
 }
 
 // decodeStrict re-encodes a retained YAML node and decodes it with unknown
@@ -571,6 +576,7 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		Chooser:    ChooserGate,
 		Goal:       sy.Goal,
 		ServeDelta: sy.ServeDelta,
+		Delegable:  sy.Delegable,
 	}
 
 	switch sy.Chooser {
@@ -581,6 +587,9 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		step.Chooser = ChooserUser
 	default:
 		addProblem("%s: unknown chooser %q (gate, agent, or user)", prefix, sy.Chooser)
+	}
+	if sy.Delegable && step.Chooser != ChooserUser {
+		addProblem("%s: delegable applies only to a user chooser", prefix)
 	}
 
 	for _, f := range sy.Collect {

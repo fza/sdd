@@ -51,6 +51,12 @@ running move at its current step with the schema to continue it, in full. If
 you lost the handle itself, ask the user: sessions are never listed on this
 surface, and a handle is never guessed.`
 
+const autonomousResumeInstructions = `Session resumed: step position and collected evidence persist; the
+open_instances list carries each running instance's current serve — the
+session shell (user-dialogue) among them, carrying the open-threads block.
+Continue through next, carrying this session's handle. If you lose your place
+again later, resume_session with this handle re-serves this list in full.`
+
 const resumeInstructions = `Session resumed: step position and collected evidence persist; the
 open_instances list carries each running instance's current serve — the
 session shell (user-dialogue) among them, carrying the open-threads block.

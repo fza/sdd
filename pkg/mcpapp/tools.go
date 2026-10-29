@@ -62,8 +62,8 @@ type NextArgs struct {
 	Session   string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction"`
 	Instance  string `json:"instance" jsonschema:"instance handle from start_procedure"`
 	// Report carries either state fields for the current step (per the served
-	// report_schema) or a chooser answer {chooser, choice, userWords?, fields?}.
-	Report map[string]any `json:"report,omitempty" jsonschema:"state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, fields?}"`
+	// report_schema) or a chooser answer {chooser, choice, userWords?, reason?, fields?}.
+	Report map[string]any `json:"report,omitempty" jsonschema:"state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}"`
 	Label  string         `json:"label,omitempty" jsonschema:"update the session's subject label when the dialogue's subject has sharpened"`
 }
 
@@ -421,8 +421,8 @@ func (s *Server) registerTools() {
 		Name: "next",
 		Description: "Advance a procedure instance in the session named by session (required): send state " +
 			"fields per the served report_schema, or answer a pending chooser with {chooser, choice, " +
-			"userWords?, fields?}. User choosers must carry the user's answer relayed verbatim in " +
-			"userWords. For an unfinished operation, omit report and pass its exact retry_ref to " +
+			"userWords?, reason?, fields?}. User choosers must carry the user's answer relayed verbatim in " +
+			"userWords, unless the served schema offers reason for a choice you decide yourself. For an unfinished operation, omit report and pass its exact retry_ref to " +
 			"continue or cancel_ref to leave its effects in place and return to the preceding interaction. " +
 			"Other transitions remain blocked until the operation is retried or cancelled. " +
 			"When a move ends, the response carries the session shell's serve — where the " +
@@ -1434,7 +1434,7 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 	result := ResumeSessionResult{
 		Session: string(source.Session), Project: string(ss.root.Project()),
 		Participant: source.Participant, Label: source.Label, Branch: source.Branch,
-		Instructions: resumeInstructions, PendingOperation: pendingOperationResult(source.PendingOperation), Cancellation: cancellationResult(source.Cancellation),
+		Instructions: resumeInstructionsFor(ss), PendingOperation: pendingOperationResult(source.PendingOperation), Cancellation: cancellationResult(source.Cancellation),
 	}
 	if source.Instructions != "" {
 		result.Instructions += "\n\n" + source.Instructions
@@ -1511,13 +1511,29 @@ func openThreadsRoot(ss *shellSession) string {
 	// The one serve that reports dropped work states it in full — never stubbed by
 	// served-once dedup, and never framed as continuations it no longer offers.
 	if ss.root.Finished() {
+		if ss.root.Autonomous() {
+			return autonomousConcludedThreadsIntro + "\n" + body
+		}
 		return concludedThreadsIntro + "\n" + body
 	}
+	intro := openThreadsIntro
+	if ss.root.Autonomous() {
+		intro = autonomousOpenThreadsIntro
+	}
 	header := openThreadsReminder
-	if !ss.servedBefore(openThreadsIntro) {
-		header = openThreadsIntro
+	if !ss.servedBefore(intro) {
+		header = intro
 	}
 	return header + "\n" + body
+}
+
+// resumeInstructionsFor leaves out briefing the user when the session is
+// autonomous.
+func resumeInstructionsFor(ss *shellSession) string {
+	if ss.root.Autonomous() {
+		return autonomousResumeInstructions
+	}
+	return resumeInstructions
 }
 
 // boundList cuts a whole-item string list at the line-list cap, appending a

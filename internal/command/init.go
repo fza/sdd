@@ -39,6 +39,9 @@ type InitCmd struct {
 	// is RepoRoot unless ProjectDir names another (20261027-211908-d-tac-l8j).
 	SyncMode     model.SyncMode
 	SyncInterval string
+	// DialogueMode, when set, records the person's dialogue.mode in the same
+	// file (20261029-150854-d-tac-b2f).
+	DialogueMode model.DialogueMode
 
 	// SetUpProject allows init to set up a missing project at ProjectDir. Only
 	// a path the caller typed qualifies: a recorded project_dir names a shared
@@ -223,7 +226,7 @@ func (c *InitCmd) Validate() error {
 	if c.RepoRoot == "" {
 		return fmt.Errorf("repo root is required")
 	}
-	settings := model.BaseConfig{Sync: model.SyncConfig{Mode: c.SyncMode, Interval: c.SyncInterval}}
+	settings := model.BaseConfig{Sync: model.SyncConfig{Mode: c.SyncMode, Interval: c.SyncInterval}, Dialogue: model.DialogueConfig{Mode: c.DialogueMode}}
 	ignored := model.IgnoredSettings(settings, false)
 	if len(ignored) > 0 {
 		return fmt.Errorf("%s: %s", ignored[0].Key, ignored[0].Reason)
