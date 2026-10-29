@@ -11,13 +11,15 @@ import (
 )
 
 // TestCurrentGraphResolvesConnectedRepo exercises the full seam: a local
-// graph whose entry refs a connected repo, the connection registered in the
-// user-global config, the remote graph present as a cache clone — all
-// resolved through Finder.CurrentGraph's MultiGraph assembly. The registry
-// is built over explicit temp locations, the same way the composition root
-// injects it in production.
+// graph whose entry refs a declared, connected repo, the connection
+// registered in the user-global config, the remote graph present as a cache
+// clone — all resolved through Finder.CurrentGraph's MultiGraph assembly. A
+// connected repo the project does not declare stays outside its horizon. The
+// registry is built over explicit temp locations, the same way the
+// composition root injects it in production.
 func TestCurrentGraphResolvesConnectedRepo(t *testing.T) {
 	const repoID = "example.com/team/other"
+	const undeclared = "example.com/team/undeclared"
 	loc := repos.Locations{
 		ConfigPath: filepath.Join(t.TempDir(), "config.yaml"),
 		CacheRoot:  t.TempDir(),
@@ -34,30 +36,31 @@ func TestCurrentGraphResolvesConnectedRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Connected-repo cache: a fake clone (a .git marker suffices — the
-	// loader only reads the graph files) with one remote entry.
-	cacheDir, err := reg.CacheDir(repoID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(cacheDir, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(cacheDir, ".sdd/graph/2026/04"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	remote := "---\ntype: decision\nlayer: cpt\nkind: directive\nintent: guiding\n---\n\nA remote directive.\n"
-	if err := os.WriteFile(filepath.Join(cacheDir, ".sdd/graph/2026/04/01-090000-d-cpt-rem.md"), []byte(remote), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
+	// Connected-repo caches: fake clones (a .git marker suffices — the
+	// loader only reads the graph files) with one remote entry each.
 	cfg := &repos.GlobalConfig{}
-	if err := cfg.AddRepo(repos.ConnectedRepo{RepoID: repoID, CloneURL: "https://" + repoID}); err != nil {
-		t.Fatal(err)
+	for _, id := range []model.RepoID{repoID, undeclared} {
+		cacheDir, err := reg.CacheDir(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(cacheDir, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(cacheDir, ".sdd/graph/2026/04"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		remote := "---\ntype: decision\nlayer: cpt\nkind: directive\nintent: guiding\n---\n\nA remote directive.\n"
+		if err := os.WriteFile(filepath.Join(cacheDir, ".sdd/graph/2026/04/01-090000-d-cpt-rem.md"), []byte(remote), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := cfg.AddRepo(repos.ConnectedRepo{RepoID: id, CloneURL: "https://" + string(id)}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	repostest.WriteConfig(t, loc.ConfigPath, cfg)
 
-	f := New(Options{Repos: reg, Config: &model.PerRepoConfig{}})
+	f := New(Options{Repos: reg, Config: &model.PerRepoConfig{RepoID: "example.com/team/local", Dependencies: []model.RepoID{repoID}}})
 	g, err := f.CurrentGraph(localDir)
 	if err != nil {
 		t.Fatal(err)
@@ -74,8 +77,12 @@ func TestCurrentGraphResolvesConnectedRepo(t *testing.T) {
 		t.Errorf("remote entry kind = %q", e.Kind)
 	}
 
-	// An unconnected repo stays unresolved.
+	// An unconnected repo stays unresolved, and so does a connected one the
+	// project does not declare.
 	if _, _, ok := g.ResolveAcross("example.com/team/unknown:20260401-090000-d-cpt-rem"); ok {
 		t.Error("unconnected repo must not resolve")
+	}
+	if _, _, ok := g.ResolveAcross(undeclared + ":20260401-090000-d-cpt-rem"); ok {
+		t.Error("connected repo outside the dependency closure must not resolve")
 	}
 }
