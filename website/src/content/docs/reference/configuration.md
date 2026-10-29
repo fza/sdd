@@ -84,7 +84,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `llm.api_keys.<provider>` | None | API key for a provider. Required for `anthropic` and `openai`. Optional for `ollama`, which receives it as a bearer token. |
 | `llm.endpoint` | The vendor's public API | Base URL of a gateway or compatible service, for `openai` and `anthropic` only. Accepts the host, a URL ending in `/v1`, or the full URL ending in `/chat/completions` for `openai` or `/messages` for `anthropic`. |
 | `llm.ollama_endpoint` | `http://localhost:11434` | Ollama server for the `ollama` provider. |
-| `llm.timeout` | `2m` | Time limit for one model call. |
+| `llm.timeout` | `5m` for `claude-cli`, `2m` for every other provider | Time limit for one model call. `sdd new --preflight-timeout` and `sdd summarize --timeout` override it for one run. |
 | `llm.params.<name>` | None | Provider settings that sdd adds unchanged to every request body, such as `reasoning_effort` set to `low`. `claude-cli` ignores them. |
 | `llm.rate_limit_rps` | See below | Maximum requests per second to `anthropic` or `openai`. Raise it on a higher account tier or for a gateway that allows more. |
 | `llm.retry.max_attempts` | `5` | Attempts per call, counting the first. `1` turns retries off. |
@@ -239,7 +239,7 @@ Ollama Cloud does not work, because it ignores the response schema.
 
 ### Claude Code CLI
 
-`claude-cli` is the fallback when no provider is set. It runs every call through `claude -p` with your Claude Code login, so it needs no API key, only the `claude` command on your `PATH`. Each call starts a new Claude Code process, which is slow, and checks can hit the 2 minute limit. If they do, raise `llm.timeout` or set up another provider.
+`claude-cli` is the fallback when no provider is set. It runs every call through `claude -p` with your Claude Code login, so it needs no API key, only the `claude` command on your `PATH`. Each call starts a new Claude Code process and answers only when its turn completes, so a call gets 5 minutes by default where other providers get 2. A long entry can still run past that: raise `llm.timeout` or set up another provider.
 
 ```bash
 sdd config set llm.provider claude-cli

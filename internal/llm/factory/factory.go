@@ -24,8 +24,9 @@ import (
 // tier-1-safe default is selected per provider/model family (see
 // providerDefaultRPS). Local providers (claude-cli, ollama) stay
 // uncapped. Every runner is bounded by the configured cfg.Timeout (falling
-// back to model.DefaultLLMTimeout) — deadlines are configuration, so they
-// compose here rather than being defaulted by any consumer; an unbounded
+// back to model.DefaultLLMTimeoutFor the provider). Deadlines are
+// configuration, so they compose here rather than being defaulted by any
+// consumer; an unbounded
 // runner would turn a hung provider into a hung process. Errors distinguish
 // configuration problems from transport failures so the CLI can surface them
 // distinctly.
@@ -35,9 +36,9 @@ func New(cfg model.LLMConfig) (llm.Runner, error) {
 		return nil, err
 	}
 
-	timeout, err := time.ParseDuration(model.DefaultLLMTimeout)
+	timeout, err := time.ParseDuration(model.DefaultLLMTimeoutFor(cfg.Provider))
 	if err != nil {
-		return nil, fmt.Errorf("llm: parsing default timeout %q: %w", model.DefaultLLMTimeout, err)
+		return nil, fmt.Errorf("llm: parsing default timeout for %q: %w", cfg.Provider, err)
 	}
 	if cfg.Timeout != "" {
 		d, err := time.ParseDuration(cfg.Timeout)
