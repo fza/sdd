@@ -337,7 +337,7 @@ This clones the repo's graph into a local cache, verifies the `repo_id` it decla
 
 **Referencing across repos.** With a repo connected, refer to its entries by full ID (`github.com/acme/platform:20260709-...-d-cpt-abc`) or by a **bare ID** — a short form (`d-cpt-abc`) or an unprefixed full ID — which SDD resolves across the union of your local graph and its declared dependencies. A bare ID that matches exactly one entry resolves; a genuine collision across repos is reported with the candidates so you can disambiguate. `sdd show d-cpt-abc` resolves and displays a connected repo's entry the same way it does a local one. References stored on an entry are always written in full `<repo-id>:<entry-id>` form, so the committed graph stays explicit and portable. A cross-repo reference must resolve to a declared dependency when it's captured — the same resolve-or-block rule that guards local references — and `sdd lint` re-checks it afterward as a standing invariant.
 
-**Searching across repos.** `sdd search` and `sdd view` reach connected graphs with `--repo <repo-id>` (repeatable) or `--all-repos`:
+**Searching across repos.** Reads beyond your own graph reach its **dependency closure**: your declared dependencies, theirs, and so on. `sdd search` and `sdd view` reach it with `--repo <repo-id>` (repeatable, must be in the closure) or `--all-repos` (the whole closure); a repo you've connected but your graph doesn't depend on is never reached. Every repo in the closure needs a connection on your machine; one that has none is reported as a warning and skipped:
 
 ```bash
 sdd search --query "index fingerprint" --all-repos
@@ -346,7 +346,7 @@ sdd view --layout='top(20)' --repo github.com/acme/platform
 
 Results from every selected graph fuse into one ranked list. Cross-repo vector search uses your **user-global embedding config** as the single shared embedder, so every connected index lives in one vector space and rankings stay comparable across repos. **Configure your embedding provider at the global layer** for this to work — `sdd config set embedding.provider ...` (see [Configuration](#configuration)). A per-repo embedding override in `.sdd/config.yaml` defines a *different* vector space and is deliberately left out of cross-repo search (`sdd lint` flags the fingerprint mismatch). The first cross-repo search embeds a connected graph on demand, which can be slow; pre-index eagerly with `sdd index --repo <repo-id>` (or `--all-repos`) so it's warm, and `sdd index --repo <repo-id> --force` rebuilds a connected index that has drifted.
 
-**The cache is pushed state.** A connected repo's cache is a clone of the remote's *pushed* branch — not anyone's working tree. So a new entry in a connected repo becomes referenceable only after it's committed **and pushed**, and your cache picks it up on the next `sdd repo sync` (cross-repo `sdd show` and `sdd search` also freshen caches as they run). The same holds in reverse: for others to reference your entries, commit and push them. This is the one non-obvious part of the model — when a cross-repo reference won't resolve, the target is usually just unpushed, or the local cache is stale.
+**The cache is pushed state.** A connected repo's cache is a clone of the remote's *pushed* branch — not anyone's working tree. So a new entry in a connected repo becomes referenceable only after it's committed **and pushed**, and your cache picks it up on the next `sdd repo sync`. Reads that reach dependencies refresh their caches first, at most once per 15 minutes per repo; a refresh that fails, offline for instance, is a warning, and the read uses the cache as it stands. The same holds in reverse: for others to reference your entries, commit and push them. This is the one non-obvious part of the model — when a cross-repo reference won't resolve, the target is usually just unpushed, or the local cache is stale.
 
 ## Configuration
 
@@ -510,10 +510,10 @@ primitives, and worked examples. Bare `sdd view` reports the missing
 sdd search --term importer                     # keyword (live grep)
 sdd search --query "variants and references"   # semantic (vector)
 sdd search --term importer --query "variants"  # hybrid (RRF fusion)
-sdd search --query "variants" --all-repos      # fan out across connected repos
+sdd search --query "variants" --all-repos      # fan out across the dependency closure
 ```
 
-Vector and hybrid modes require an embedding provider — see [Embedding provider](#embedding-provider-vector-search) above. `--repo`/`--all-repos` reach connected graphs — see [Connected repos](#connected-repos).
+Vector and hybrid modes require an embedding provider — see [Embedding provider](#embedding-provider-vector-search) above. `--repo`/`--all-repos` reach the dependency closure — see [Connected repos](#connected-repos).
 
 **`sdd show <id>`** — one entry in full, with its upstream and downstream chains:
 
