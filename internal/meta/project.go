@@ -60,7 +60,7 @@ func ResolveProject(workRoot string) (Project, error) {
 		return Project{}, err
 	}
 	if target == nil {
-		return Project{}, fmt.Errorf("project_dir %s in %s: %w; run `sdd init` there first", projectDir, sddDir, ErrNotAProject)
+		return Project{}, fmt.Errorf("project_dir %s in %s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", projectDir, sddDir, ErrNotAProject, projectDir)
 	}
 	if target.ProjectDir != "" {
 		return Project{}, fmt.Errorf("project_dir %s in %s names a repository that itself sets project_dir; point at the project holding the graph", projectDir, sddDir)

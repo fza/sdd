@@ -30,7 +30,7 @@ func pointedRepos(t *testing.T) (work, project string) {
 	}
 	initRepo(t, work)
 	initRepo(t, project)
-	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: "+pointedProjectID+"\ndefault_branch: main\nlanguage: en\n")
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: "+pointedProjectID+"\ndefault_branch: main\nlanguage: en\nskill_scope: project\n")
 	writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
 	writeFile(t, filepath.Join(work, ".sdd", "config.yaml"), "project_dir: ../work-sdd\nskill_scope: project\nsupported_agents: [claude]\n")
 	return work, project
@@ -226,7 +226,7 @@ func TestProjectDirMustNameAProjectThatDoesNotPointOn(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			mention: "run `sdd init` there first",
+			mention: "clone the project there",
 		},
 		{
 			name: "the project points on",
@@ -330,6 +330,8 @@ func TestInitPointsTheWorkRepositoryAtTheProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	gitIn(t, project, "add", ".sdd/config.yaml")
+	gitIn(t, project, "commit", "-q", "-m", "chore: record the project")
 
 	runApp(t, work, "init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada", "--agents", "claude")
 
@@ -354,8 +356,11 @@ func TestInitPointsTheWorkRepositoryAtTheProject(t *testing.T) {
 	if !strings.Contains(readFile(t, filepath.Join(project, ".sdd", "config.local.yaml")), "participant: Ada") {
 		t.Error("the participant should be recorded with the project")
 	}
-	if subject := headSubject(t, project); subject != "seed" {
-		t.Errorf("init in the work repository should not commit in the project, HEAD is %q", subject)
+	if subject := headSubject(t, project); !strings.HasPrefix(subject, "sdd: ") {
+		t.Errorf("init in the work repository should commit the project's refresh in the project, HEAD is %q", subject)
+	}
+	if status := gitIn(t, project, "status", "--porcelain"); status != "" {
+		t.Errorf("the project's refresh should leave the project clean:\n%s", status)
 	}
 	if subject := headSubject(t, work); subject == "seed" {
 		t.Error("init should commit the pointer and skills in the work repository")
@@ -365,9 +370,10 @@ func TestInitPointsTheWorkRepositoryAtTheProject(t *testing.T) {
 	}
 
 	workHead := gitIn(t, work, "rev-parse", "HEAD")
+	projectHead := gitIn(t, project, "rev-parse", "HEAD")
 	runApp(t, work, "init")
-	if subject := headSubject(t, project); subject != "seed" {
-		t.Errorf("a repeat init should not commit in the project, HEAD is %q", subject)
+	if gitIn(t, project, "rev-parse", "HEAD") != projectHead {
+		t.Error("a repeat init with nothing to refresh should not commit in the project")
 	}
 	if gitIn(t, work, "rev-parse", "HEAD") != workHead {
 		t.Error("a repeat init should leave the work repository's config untouched and commit nothing")
@@ -388,29 +394,6 @@ func TestInitRefusesAPointerItCannotHonour(t *testing.T) {
 		args    []string
 		mention string
 	}{
-		{
-			name: "project not set up",
-			prepare: func(t *testing.T, work, project string) {
-				err := os.Remove(filepath.Join(project, ".sdd", "config.yaml"))
-				if err != nil {
-					t.Fatal(err)
-				}
-			},
-			args:    []string{"init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada"},
-			mention: "run `sdd init` there first",
-		},
-		{
-			name: "project not set up, fresh work repository",
-			prepare: func(t *testing.T, work, project string) {
-				removeWorkSDD(t, work)
-				err := os.Remove(filepath.Join(project, ".sdd", "config.yaml"))
-				if err != nil {
-					t.Fatal(err)
-				}
-			},
-			args:    []string{"init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada"},
-			mention: "run `sdd init` there first",
-		},
 		{
 			name: "project pointing on, fresh work repository",
 			prepare: func(t *testing.T, work, project string) {
@@ -433,6 +416,14 @@ func TestInitRefusesAPointerItCannotHonour(t *testing.T) {
 			name:    "graph settings beside a pointer",
 			args:    []string{"init", "--project-dir", "../work-sdd", "--language", "de", "--scope", "project", "--participant", "Ada"},
 			mention: "--language",
+		},
+		{
+			name: "project graph_dir reading as more than one ignore rule",
+			prepare: func(t *testing.T, work, project string) {
+				writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: \"graph\\n!secret.txt\"\nrepo_id: "+pointedProjectID+"\ndefault_branch: main\nlanguage: en\n")
+			},
+			args:    []string{"init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada"},
+			mention: "reads as more than one path",
 		},
 		{
 			name: "work repository configured as a project",

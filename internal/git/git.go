@@ -463,6 +463,47 @@ func GraphRepoRoot(graphDir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// Repositories reaches repositories by path rather than through one adapter's
+// Dir: a work repository's init sets its project up in a repository beside it.
+// It is the production handlers.ProjectRepositories.
+type Repositories struct{}
+
+// RootOf is RepoRootFor that fails loud: only git's own "not a git
+// repository" answer means no repository, so a setup never runs `git init`
+// inside a repository git could not read.
+func (Repositories) RootOf(dir string) (string, error) {
+	ancestor := existingAncestor(dir)
+	if ancestor == "" {
+		return "", nil
+	}
+	probe := exec.Command("git", "-C", ancestor, "rev-parse", "--show-toplevel")
+	probe.Env = append(os.Environ(), "LC_ALL=C")
+	var stderr strings.Builder
+	probe.Stderr = &stderr
+	out, err := probe.Output()
+	if err == nil {
+		return strings.TrimSpace(string(out)), nil
+	}
+	if strings.Contains(stderr.String(), "not a git repository") {
+		return "", nil
+	}
+	return "", fmt.Errorf("finding the repository holding %s: %s (%w)", dir, strings.TrimSpace(stderr.String()), err)
+}
+
+func (Repositories) Init(dir string) error {
+	out, err := exec.Command("git", "init", "--quiet", dir).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git init %s: %s (%w)", dir, strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func (Repositories) CurrentBranch(dir string) (string, error) { return CurrentBranch(dir) }
+
+func (Repositories) RemoteURL(dir string) string { return RemoteURL(dir) }
+
+func (Repositories) StableRoot(dir string) (string, error) { return StableRepoRoot(dir) }
+
 // existingAncestor returns path, or the closest ancestor that exists on disk.
 func existingAncestor(path string) string {
 	dir, err := filepath.Abs(path)

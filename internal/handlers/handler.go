@@ -50,6 +50,12 @@ type Tracker interface {
 	Committable(ctx context.Context, paths []string) ([]string, error)
 }
 
+// Repository commits in, and narrows paths for, one given repository.
+type Repository interface {
+	Committer
+	Tracker
+}
+
 // Brancher performs git branch operations. Injected so tests can fake
 // checkout/branch deletion without touching real git.
 type Brancher interface {
@@ -112,6 +118,8 @@ type Handler struct {
 	syncMode        model.SyncMode
 	changes         ChangeReader
 	repos           *repos.Manager
+	projectRepos    ProjectRepositories
+	repositoryAt    func(dir string) Repository
 	stderr          io.Writer
 	now             func() time.Time
 	language        string
@@ -145,9 +153,13 @@ type Options struct {
 	// Repos owns the connected-repos side effects (clone, pull, config
 	// writes). Nil means no connected-repos support — repo commands fail
 	// loud, and cross-repo cache freshening is skipped.
-	Repos  *repos.Manager
-	Stderr io.Writer
-	Now    func() time.Time
+	Repos *repos.Manager
+	// ProjectRepositories and RepositoryAt let a work repository's init set up
+	// and refresh its project in a repository of its own. Nil refuses both.
+	ProjectRepositories ProjectRepositories
+	RepositoryAt        func(dir string) Repository
+	Stderr              io.Writer
+	Now                 func() time.Time
 	// Language is the graph's configured authoring language locale code
 	// (config `language`, empty = English default). Summaries are written
 	// in it regardless of the source material's language.
@@ -175,6 +187,8 @@ func New(opts Options) *Handler {
 		syncMode:        opts.SyncMode,
 		changes:         opts.Changes,
 		repos:           opts.Repos,
+		projectRepos:    opts.ProjectRepositories,
+		repositoryAt:    opts.RepositoryAt,
 		stderr:          opts.Stderr,
 		now:             opts.Now,
 		language:        opts.Language,

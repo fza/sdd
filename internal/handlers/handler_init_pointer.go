@@ -16,10 +16,11 @@ import (
 )
 
 // initPointer sets up a work repository whose graph lives in the sdd project
-// at cmd.ProjectDir. The project owns every setting, the graph, meta.json and
-// runtime state, so this repository receives only the pointer config, the
-// agents' skills and registrations, and a gitignore entry for the local file
-// that may override project_dir.
+// at cmd.ProjectDir, running the project's own init first: a set-up when the
+// project is missing, a refresh otherwise (20261029-132740-d-tac-g32). The
+// project owns every setting, the graph, meta.json and runtime state, so this
+// repository receives only the pointer config, the agents' skills and
+// registrations, and the project's gitignore entries.
 func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 	if cmd.Bump {
 		return fmt.Errorf("--bump raises the project's minimum_version; run it in %s", cmd.ProjectDir)
@@ -28,15 +29,18 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 	if !filepath.IsAbs(projectRoot) {
 		projectRoot = filepath.Join(cmd.RepoRoot, projectRoot)
 	}
-	projectSDDDir := meta.SDDDir(filepath.Clean(projectRoot))
+	projectRoot = filepath.Clean(projectRoot)
+	projectSDDDir := meta.SDDDir(projectRoot)
 	projectCfg, _, err := meta.ReadConfigLayers(projectSDDDir, "")
 	if err != nil {
 		return err
 	}
-	if projectCfg == nil {
-		return fmt.Errorf("%s: %w; run `sdd init` there first", cmd.ProjectDir, meta.ErrNotAProject)
-	}
-	if projectCfg.ProjectDir != "" {
+	switch {
+	case projectCfg == nil && !cmd.SetUpProject:
+		return fmt.Errorf("%s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", cmd.ProjectDir, meta.ErrNotAProject, cmd.ProjectDir)
+	case projectCfg != nil && (cmd.GraphDir != "" || cmd.Language != ""):
+		return fmt.Errorf("--graph-dir and --language configure the project holding the graph; run `sdd init` with them in %s", cmd.ProjectDir)
+	case projectCfg != nil && projectCfg.ProjectDir != "":
 		return fmt.Errorf("%s sets project_dir itself; point at the project holding the graph", cmd.ProjectDir)
 	}
 
@@ -64,6 +68,25 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 		return err
 	}
 	effectiveAgents, recordedAgents, persistAgents, err := resolveSupportedAgents(configExisted, configPath, cmd.Targets)
+	if err != nil {
+		return err
+	}
+
+	if projectCfg != nil {
+		err = gitignoreLine(projectCfg.GraphDir)
+		if err != nil {
+			return fmt.Errorf("graph_dir in %s: %w", projectSDDDir, err)
+		}
+	}
+	if projectCfg == nil {
+		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents)
+	} else {
+		err = h.refreshProject(ctx, cmd, projectRoot, projectCfg)
+	}
+	if err != nil {
+		return err
+	}
+	projectCfg, _, err = meta.ReadConfigLayers(projectSDDDir, "")
 	if err != nil {
 		return err
 	}
@@ -115,7 +138,11 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 	}
 
 	gitignorePath := filepath.Join(cmd.RepoRoot, ".gitignore")
-	gitignoreAdded, err := ensureGitignoreEntries(gitignorePath, []string{".sdd/config.local.yaml"})
+	projectGraphDir := projectCfg.GraphDir
+	if projectGraphDir == "" {
+		projectGraphDir = model.DefaultGraphDir
+	}
+	gitignoreAdded, err := ensureGitignoreEntries(gitignorePath, initGitignoreEntries(projectGraphDir))
 	if err != nil {
 		return fmt.Errorf("updating %s: %w", gitignorePath, err)
 	}
@@ -137,39 +164,46 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	err = writeParticipant(projectSDDDir, cmd)
-	if err != nil {
-		return err
-	}
 	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(configExisted))
 }
 
-// writeParticipant records cmd.Participant in sddDir's config.local.yaml,
-// keeping every other key in that file.
-func writeParticipant(sddDir string, cmd *command.InitCmd) error {
-	if cmd.Participant == "" {
-		return nil
+// writeLocalSettings records the per-person settings cmd carries, the
+// participant and graph sync, in sddDir's config.local.yaml, keeping every
+// other key in that file.
+func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
+	settings := []struct{ key, value string }{
+		{"participant", cmd.Participant},
+		{"sync.mode", string(cmd.SyncMode)},
+		{"sync.interval", cmd.SyncInterval},
 	}
 	configLocalPath := meta.LocalConfigPath(sddDir, cmd.LocalConfigPath)
-	existing, err := os.ReadFile(configLocalPath)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("reading %s: %w", configLocalPath, err)
-	}
-	updated, err := model.SetYAMLField(existing, "participant", cmd.Participant)
-	if err != nil {
-		return fmt.Errorf("updating %s: %w", configLocalPath, err)
-	}
-	if bytes.Equal(existing, updated) {
-		return nil
-	}
-	err = os.WriteFile(configLocalPath, updated, 0o644)
-	if err != nil {
-		return fmt.Errorf("writing %s: %w", configLocalPath, err)
-	}
-	// Not committed: config.local.yaml is gitignored, so staging it would fail
-	// the commit.
-	if cmd.OnParticipantWritten != nil {
-		cmd.OnParticipantWritten(configLocalPath, cmd.Participant)
+	for _, setting := range settings {
+		if setting.value == "" {
+			continue
+		}
+		existing, err := os.ReadFile(configLocalPath)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("reading %s: %w", configLocalPath, err)
+		}
+		updated, err := model.SetYAMLField(existing, setting.key, setting.value)
+		if err != nil {
+			return fmt.Errorf("updating %s: %w", configLocalPath, err)
+		}
+		if bytes.Equal(existing, updated) {
+			continue
+		}
+		err = os.WriteFile(configLocalPath, updated, 0o644)
+		if err != nil {
+			return fmt.Errorf("writing %s: %w", configLocalPath, err)
+		}
+		// Not committed: config.local.yaml is gitignored, so staging it would
+		// fail the commit.
+		if setting.key == "participant" && cmd.OnParticipantWritten != nil {
+			cmd.OnParticipantWritten(configLocalPath, setting.value)
+		}
+		if setting.key != "participant" && cmd.OnLocalSettingWritten != nil {
+			cmd.OnLocalSettingWritten(configLocalPath, setting.key, setting.value)
+		}
 	}
 	return nil
 }
