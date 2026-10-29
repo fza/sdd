@@ -212,7 +212,7 @@
     }
   },
   {
-    "description": "Session framing header for the session named by session (required): project, local participant, configured language, available search modes, and actionable recovery notices.",
+    "description": "Session framing header for the session named by session (required): project, local participant, configured language, and available search modes.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1599,7 +1599,7 @@
       "additionalProperties": false,
       "properties": {
         "all_repos": {
-          "description": "also search every connected repo",
+          "description": "also search every repo in the project's dependency closure",
           "type": "boolean"
         },
         "include_superseded": {
@@ -1637,7 +1637,7 @@
           "type": "string"
         },
         "repos": {
-          "description": "also search these connected repos by repo-id (additive to the local graph)",
+          "description": "also search these repos of the project's dependency closure by repo-id (additive to the local graph)",
           "items": {
             "type": "string"
           },
@@ -2677,7 +2677,7 @@
       "additionalProperties": false,
       "properties": {
         "all_repos": {
-          "description": "also render the layout over every connected repo",
+          "description": "also render the layout over every repo in the project's dependency closure",
           "type": "boolean"
         },
         "layout": {
@@ -2689,7 +2689,7 @@
           "type": "string"
         },
         "repos": {
-          "description": "also render the layout over these connected repos' graphs (additive to the local graph)",
+          "description": "also render the layout over these repos of the project's dependency closure (additive to the local graph)",
           "items": {
             "type": "string"
           },
