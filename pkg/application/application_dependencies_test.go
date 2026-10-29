@@ -2,12 +2,15 @@ package application_test
 
 import (
 	"context"
+	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
+	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
 type staticGraphStore struct {
@@ -73,7 +76,7 @@ func (r *multiAccessResolver) AuthorizeSession(ctx context.Context, request sdd.
 	return sdd.OwnerOnly(ctx, request)
 }
 
-func (r *multiAccessResolver) ResolveDependency(context.Context, sdd.Principal, sdd.ProjectID, string) (*sdd.ProjectRuntime, error) {
+func (r *multiAccessResolver) ResolveDependency(context.Context, sdd.Principal, sdd.ProjectID, sdd.RepoID) (*sdd.ProjectRuntime, error) {
 	if r.deny {
 		return nil, &sdd.ApplicationError{Code: sdd.ErrorReadDenied, Message: "secret policy detail"}
 	}
@@ -119,7 +122,7 @@ func TestApplicationLoadsDependencyPartiallyWithUnreadableEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	base, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
-		Project: sdd.ProjectRef{ID: "base"}, Dependencies: []string{"example.org/dep"}, Graph: staticGraphStore{snapshot: baseSnapshot},
+		Project: sdd.ProjectRef{ID: "base"}, Dependencies: []sdd.RepoID{"example.org/dep"}, Graph: staticGraphStore{snapshot: baseSnapshot},
 		LLM: llm,
 	})
 	if err != nil {
@@ -133,6 +136,104 @@ func TestApplicationLoadsDependencyPartiallyWithUnreadableEntry(t *testing.T) {
 	show, err := application.Show(t.Context(), identity, "base", sdd.ShowRequest{IDs: []string{"example.org/dep:20260713-040000-s-tac-dep"}})
 	if err != nil || !strings.Contains(show.Entries, "authorized dependency body") {
 		t.Fatalf("cross-project Show over a partially-loaded dependency = %q, %v", show.Entries, err)
+	}
+}
+
+type unreadableGraphStore struct{}
+
+func (unreadableGraphStore) Current(context.Context) (*sdd.Snapshot, error) {
+	return nil, errors.New("snapshot unreadable")
+}
+func (unreadableGraphStore) ReadAttachmentPage(context.Context, string, string, int64, int) (sdd.AttachmentPage, error) {
+	return sdd.AttachmentPage{}, errors.New("snapshot unreadable")
+}
+
+// TestUnreadableClosureMemberFailsOnlyReadsSelectingIt: base declares a, a
+// declares b and d, d declares c, and b's snapshot cannot be read, so the walk
+// meets b before c. Reads naming a or c succeed, and a session in base may
+// work in c; a read selecting b, alone or through all repos, fails
+// (20260903-153224-s-cpt-ir1).
+func TestUnreadableClosureMemberFailsOnlyReadsSelectingIt(t *testing.T) {
+	llm := pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
+		return pkgllm.Result{Identity: pkgllm.Identity{Provider: "test", Model: "test"}}, nil
+	})
+	snapshot := func(project sdd.ProjectID, documents ...sdd.EntryDocument) *sdd.Snapshot {
+		s, err := sdd.BuildSnapshot(t.Context(), sdd.SnapshotData{Project: project, Revision: "r1", Entries: documents})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	gap := func(path string) sdd.EntryDocument {
+		return sdd.EntryDocument{
+			LogicalPath: path,
+			Frontmatter: map[string]any{"type": "signal", "kind": "gap", "layer": "tactical", "summary": "A zebrafinch gap."},
+			Body:        "A zebrafinch gap.",
+		}
+	}
+	runtimes := map[sdd.ProjectID]*sdd.ProjectRuntime{}
+	for _, project := range []struct {
+		id           sdd.ProjectID
+		graph        sdd.GraphStore
+		dependencies []sdd.RepoID
+	}{
+		{id: "base", graph: staticGraphStore{snapshot: snapshot("base")}, dependencies: []sdd.RepoID{"dep.example/a"}},
+		{id: "dep.example/a", graph: staticGraphStore{attachment: "a attachment", snapshot: snapshot("dep.example/a", gap("2026/07/13-040000-s-tac-dep.md"))}, dependencies: []sdd.RepoID{"dep.example/b", "dep.example/d"}},
+		{id: "dep.example/b", graph: unreadableGraphStore{}},
+		{id: "dep.example/d", graph: staticGraphStore{snapshot: snapshot("dep.example/d")}, dependencies: []sdd.RepoID{"dep.example/c"}},
+		{id: "dep.example/c", graph: staticGraphStore{snapshot: snapshot("dep.example/c", gap("2026/07/12-040000-s-tac-dpe.md"))}},
+	} {
+		runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{Project: sdd.ProjectRef{ID: project.id}, DefaultBranch: "main", Graph: project.graph, Dependencies: project.dependencies, LLM: llm})
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtimes[project.id] = runtime
+	}
+	access := &compositionAccess{runtimes: runtimes, permissions: map[string]map[sdd.ProjectID]compositionPermission{
+		"alice": {"base": {read: true}, "dep.example/a": {read: true}, "dep.example/b": {read: true}, "dep.example/c": {read: true}, "dep.example/d": {read: true}},
+	}}
+	root := t.TempDir()
+	sessions, err := localadapter.NewFilesystemSessionStoreAt(filepath.Join(root, "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobs, err := localadapter.NewFilesystemStagedBlobStoreAt(filepath.Join(root, "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: access, Sessions: sessions, StagedBlobs: blobs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := sdd.RequestIdentity{Subject: "alice"}
+	search := func(repos []sdd.RepoID, all bool) (sdd.SearchResult, error) {
+		return application.Search(t.Context(), alice, "base", sdd.SearchRequest{SyncMode: sdd.SearchSyncNone, Terms: []string{"zebrafinch"}, Repos: repos, AllRepos: all})
+	}
+
+	if result, err := search([]sdd.RepoID{"dep.example/a"}, false); err != nil || !strings.Contains(result.Results, "20260713-040000-s-tac-dep") {
+		t.Errorf("search naming a = %q, %v", result.Results, err)
+	}
+	if result, err := search([]sdd.RepoID{"dep.example/c"}, false); err != nil || !strings.Contains(result.Results, "20260712-040000-s-tac-dpe") {
+		t.Errorf("search naming c = %q, %v", result.Results, err)
+	}
+	workflow, _, err := application.OpenWorkflow(t.Context(), alice, "base", sdd.WorkflowOpenRequest{ClientName: "alice-mcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project, _, _, err := workflow.ReadScope(t.Context(), alice, "dep.example/c"); err != nil || project != "dep.example/c" {
+		t.Errorf("read scope in c = %q, %v", project, err)
+	}
+	if result, err := application.View(t.Context(), alice, "base", sdd.ViewRequest{Layout: "top(5)", Repos: []sdd.RepoID{"dep.example/a"}}); err != nil || !strings.Contains(result.Sections, "repo: dep.example/a") {
+		t.Errorf("view naming a = %q, %v", result.Sections, err)
+	}
+	if page, err := application.ReadAttachment(t.Context(), alice, "base", sdd.ReadAttachmentRequest{EntryID: "dep.example/a:20260713-040000-s-tac-dep", Filename: "evidence.md", MaxBytes: 64}); err != nil || string(page.Page.Content) != "a attachment" {
+		t.Errorf("attachment of a = %+v, %v", page, err)
+	}
+	if _, err := search([]sdd.RepoID{"dep.example/b"}, false); err == nil {
+		t.Error("search naming b succeeded")
+	}
+	if _, err := search(nil, true); err == nil {
+		t.Error("search across all repos succeeded")
 	}
 }
 
@@ -161,7 +262,7 @@ func TestApplicationResolvesAuthorizedDependenciesWithoutLeakingDenials(t *testi
 		t.Fatal(err)
 	}
 	base, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
-		Project: sdd.ProjectRef{ID: "base"}, Dependencies: []string{"example.org/dep"}, Graph: staticGraphStore{snapshot: baseSnapshot},
+		Project: sdd.ProjectRef{ID: "base"}, Dependencies: []sdd.RepoID{"example.org/dep"}, Graph: staticGraphStore{snapshot: baseSnapshot},
 		LLM: llm,
 	})
 	if err != nil {
