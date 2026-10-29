@@ -319,6 +319,25 @@ func GraphRepoRoot(graphDir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// Repositories reaches repositories by path rather than through one adapter's
+// Dir: a work repository's init sets its project up in a repository beside it.
+// It is the production handlers.ProjectRepositories.
+type Repositories struct{}
+
+func (Repositories) RootOf(dir string) string { return RepoRootFor(dir) }
+
+func (Repositories) Init(dir string) error {
+	out, err := exec.Command("git", "init", "--quiet", dir).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git init %s: %s (%w)", dir, strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func (Repositories) CurrentBranch(dir string) (string, error) { return CurrentBranch(dir) }
+
+func (Repositories) RemoteURL(dir string) string { return RemoteURL(dir) }
+
 // existingAncestor returns path, or the closest ancestor that exists on disk.
 func existingAncestor(path string) string {
 	dir, err := filepath.Abs(path)

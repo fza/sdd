@@ -27,15 +27,16 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 	if !filepath.IsAbs(projectRoot) {
 		projectRoot = filepath.Join(cmd.RepoRoot, projectRoot)
 	}
-	projectSDDDir := meta.SDDDir(filepath.Clean(projectRoot))
+	projectRoot = filepath.Clean(projectRoot)
+	projectSDDDir := meta.SDDDir(projectRoot)
 	projectCfg, _, err := meta.ReadConfigLayers(projectSDDDir)
 	if err != nil {
 		return err
 	}
-	if projectCfg == nil {
-		return fmt.Errorf("%s: %w; run `sdd init` there first", cmd.ProjectDir, meta.ErrNotAProject)
+	if projectCfg != nil && (cmd.GraphDir != "" || cmd.Language != "") {
+		return fmt.Errorf("--graph-dir and --language configure the project holding the graph; run `sdd init` with them in %s", cmd.ProjectDir)
 	}
-	if projectCfg.ProjectDir != "" {
+	if projectCfg != nil && projectCfg.ProjectDir != "" {
 		return fmt.Errorf("%s sets project_dir itself; point at the project holding the graph", cmd.ProjectDir)
 	}
 
@@ -65,6 +66,17 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 	effectiveAgents, recordedAgents, persistAgents, err := resolveSupportedAgents(configExisted, configPath, cmd.Targets)
 	if err != nil {
 		return err
+	}
+
+	if projectCfg == nil {
+		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents)
+		if err != nil {
+			return err
+		}
+		projectCfg, _, err = meta.ReadConfigLayers(projectSDDDir)
+		if err != nil {
+			return err
+		}
 	}
 
 	var touched []string

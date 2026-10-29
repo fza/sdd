@@ -21,14 +21,17 @@ type InitCmd struct {
 	// Empty falls back to RepoRoot for non-Git callers and tests.
 	StableRepoRoot string
 
-	// GraphDir is the graph directory path relative to RepoRoot. Empty
-	// defaults to model.DefaultGraphDir (".sdd/graph").
+	// GraphDir is the graph directory path relative to RepoRoot, or to the
+	// project init sets up at ProjectDir. Empty defaults to
+	// model.DefaultGraphDir (".sdd/graph").
 	GraphDir string
 
 	// ProjectDir, when set, makes RepoRoot a work repository whose graph lives
 	// in the sdd project at this path (relative to RepoRoot or absolute):
-	// init writes only the pointer config and the agent surfaces, never a
-	// graph, meta.json or project settings.
+	// init writes only the pointer config and the agent surfaces in RepoRoot.
+	// A path holding no sdd project is first set up as one, in a repository
+	// of its own, configured by GraphDir and Language; beside an existing
+	// project those two are refused.
 	ProjectDir string
 
 	// DefaultBranch is the concrete Git branch persisted for ordinary engine
@@ -43,7 +46,7 @@ type InitCmd struct {
 	Participant string
 
 	// Language is the graph authoring language (locale code) to record in
-	// .sdd/config.yaml on fresh init. Empty means "use the default behavior"
+	// .sdd/config.yaml on fresh init, the project's under ProjectDir. Empty means "use the default behavior"
 	// — FormatConfig keeps the commented hint, so the graph stays English.
 	// Only applied on fresh init; existing config.yaml is never rewritten.
 	Language string
