@@ -44,16 +44,33 @@ func (r *Registry) CacheRoot() string {
 
 // CacheDir resolves a connected repo's clone location under the cache root.
 // The repo-id's host/path shape nests naturally under the root.
-func (r *Registry) CacheDir(repoID string) (string, error) {
+func (r *Registry) CacheDir(repoID model.RepoID) (string, error) {
 	if err := model.ValidateRepoID(repoID); err != nil {
 		return "", err
 	}
-	return filepath.Join(r.loc.CacheRoot, filepath.FromSlash(repoID)), nil
+	return filepath.Join(r.loc.CacheRoot, filepath.FromSlash(string(repoID))), nil
+}
+
+// Cache returns a connected repo's cache; ok is false when the repo is not
+// connected on this machine.
+func (r *Registry) Cache(repoID model.RepoID) (c Cache, ok bool, err error) {
+	cfg, err := r.Load()
+	if err != nil {
+		return Cache{}, false, err
+	}
+	if _, connected := cfg.Connected(repoID); !connected {
+		return Cache{}, false, nil
+	}
+	dir, err := r.CacheDir(repoID)
+	if err != nil {
+		return Cache{}, false, err
+	}
+	return Cache{RepoID: repoID, Dir: dir}, true, nil
 }
 
 // SelectRepoIDs resolves a caller's repo selection against the connected
 // set (see GlobalConfig.SelectRepoIDs).
-func (r *Registry) SelectRepoIDs(named []string, all bool) ([]string, error) {
+func (r *Registry) SelectRepoIDs(named []model.RepoID, all bool) ([]model.RepoID, error) {
 	if !all && len(named) == 0 {
 		return nil, nil
 	}

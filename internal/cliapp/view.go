@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/networkteam/sdd/internal/finders"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/viewlayout"
@@ -23,11 +24,11 @@ func viewCmd() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:  "repo",
-				Usage: "Also render the layout over a connected repo's graph by repo-id (repeatable, additive to the local graph)",
+				Usage: "Also render the layout over a dependency's graph by repo-id (repeatable, additive to the local graph; must be in the declared dependency closure)",
 			},
 			&cli.BoolFlag{
 				Name:  "all-repos",
-				Usage: "Also render the layout over every connected repo",
+				Usage: "Also render the layout over every repo in the declared dependency closure",
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -56,16 +57,12 @@ func viewCmd() *cli.Command {
 				return err
 			}
 
-			reg, _, err := defaultRepos()
-			if err != nil {
-				return err
-			}
-			repoIDs, err := reg.SelectRepoIDs(cmd.StringSlice("repo"), cmd.Bool("all-repos"))
-			if err != nil {
-				return err
-			}
-			if err := freshenRepoCaches(ctx, cmd.ErrWriter, repoIDs); err != nil {
-				return err
+			named, all := repoIDArgs(cmd.StringSlice("repo")), cmd.Bool("all-repos")
+			crossRepo := all || len(named) > 0
+			if crossRepo {
+				if err := refreshDependencies(ctx, cmd.ErrWriter); err != nil {
+					return err
+				}
 			}
 
 			dir, err := resolveGraphDir(cmd)
@@ -75,6 +72,16 @@ func viewCmd() *cli.Command {
 			f, err := newReadFinder()
 			if err != nil {
 				return err
+			}
+			var repoIDs []model.RepoID
+			if crossRepo {
+				closure, err := f.DependencyClosure(ctx, query.DependencyClosureQuery{})
+				if err != nil {
+					return err
+				}
+				if repoIDs, err = model.SelectRepos(named, all, closure); err != nil {
+					return err
+				}
 			}
 			g, err := f.CurrentGraph(dir)
 			if err != nil {
