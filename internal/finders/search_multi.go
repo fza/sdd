@@ -8,6 +8,7 @@ import (
 	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/index"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
 )
@@ -40,7 +41,7 @@ func MultiSearch(ctx context.Context, local *SearchFinder, q query.SearchQuery) 
 	if local.repos == nil {
 		return nil, fmt.Errorf("cross-repo search needs the connected-repos registry — construct the SearchFinder with Repos")
 	}
-	repoIDs, err := local.repos.SelectRepoIDs(q.Repos, q.AllRepos)
+	repoIDs, err := model.SelectRepos(q.Repos, q.AllRepos, local.closure)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +52,7 @@ func MultiSearch(ctx context.Context, local *SearchFinder, q query.SearchQuery) 
 			return nil, err
 		}
 		if member == nil {
-			logger.Warn("connected repo unavailable for search; skipping", "repo", repoID)
+			logger.Warn("dependency unavailable for search; skipping", "repo", repoID)
 			continue
 		}
 		mq := q
@@ -83,7 +84,7 @@ func MultiSearch(ctx context.Context, local *SearchFinder, q query.SearchQuery) 
 // function releasing that index once the member search ran. A nil finder means
 // the repo is not available — not connected or not cached — which the caller
 // reports.
-func searchMember(ctx context.Context, q query.SearchQuery, repoID string, local *SearchFinder) (*SearchFinder, func(), error) {
+func searchMember(ctx context.Context, q query.SearchQuery, repoID model.RepoID, local *SearchFinder) (*SearchFinder, func(), error) {
 	member, err := local.graph.MemberGraph(repoID)
 	if err != nil {
 		return nil, nil, err
@@ -95,7 +96,7 @@ func searchMember(ctx context.Context, q query.SearchQuery, repoID string, local
 	if err != nil {
 		return nil, nil, err
 	}
-	graphDir, err := repos.GraphDir(cacheDir)
+	graphDir, err := repos.Cache{RepoID: repoID, Dir: cacheDir}.GraphDir()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -104,7 +105,7 @@ func searchMember(ctx context.Context, q query.SearchQuery, repoID string, local
 	if q.Phrase != "" && local.embedder != nil {
 		// The member index is the same machine-global store the repo's own
 		// checkout uses — keyed by (repo-id, fingerprint), embedded once.
-		storeDir := index.StoreDir(local.repos.CacheRoot(), repoID, local.embedder.Fingerprint())
+		storeDir := index.StoreDir(local.repos.CacheRoot(), index.RepoKey(repoID, cacheDir), local.embedder.Fingerprint())
 		snapshot, err := index.OpenSearchSnapshot(ctx, storeDir, 0)
 		if err != nil {
 			return nil, nil, fmt.Errorf("opening index for %s: %w", repoID, err)
