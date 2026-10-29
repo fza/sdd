@@ -45,6 +45,38 @@ func TestLocalConfigFlagRedirectsReadsAndWrites(t *testing.T) {
 	}
 }
 
+// init records the participant in the override too, not in the repo's own
+// layer.
+func TestLocalConfigFlagRedirectsInitParticipant(t *testing.T) {
+	f := newAppFixture(t)
+	runGit(t, f.root, "init", "-q", "-b", "main")
+	runGit(t, f.root, "config", "user.email", "test@example.com")
+	runGit(t, f.root, "config", "user.name", "Test")
+	runGit(t, f.root, "add", ".")
+	runGit(t, f.root, "commit", "-q", "-m", "chore: seed")
+	override := filepath.Join(t.TempDir(), "override-config.yaml")
+
+	result := f.run(t, "--local-config", override, "init", "--scope", "project", "--agents", "claude", "--participant", "Ada")
+	if result.err != nil {
+		t.Fatalf("init: %v\n%s", result.err, result.stderr)
+	}
+
+	written, err := os.ReadFile(override)
+	if err != nil {
+		t.Fatalf("init should write the participant to the override: %v", err)
+	}
+	if !strings.Contains(string(written), "Ada") {
+		t.Errorf("the participant landed elsewhere: %s", written)
+	}
+	inRepo, err := os.ReadFile(filepath.Join(f.root, ".sdd", "config.local.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(inRepo), "Ada") {
+		t.Errorf("the in-repo layer was written despite the override: %s", inRepo)
+	}
+}
+
 // The layer is per invocation: a run without the flag must not inherit a
 // previous run's override.
 func TestLocalConfigOverrideDoesNotLeakBetweenRuns(t *testing.T) {

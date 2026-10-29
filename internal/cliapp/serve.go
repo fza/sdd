@@ -417,7 +417,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		embeddings = localEmbedder
 	}
 	serverCheckout := filepath.Dir(sddDir)
-	targets, err := localadapter.NewRepositoryTargets(project, serverCheckout, locations.ConfigPath)
+	targets, err := localadapter.NewRepositoryTargets(project, serverCheckout, locations.ConfigPath, localConfigOverride)
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
