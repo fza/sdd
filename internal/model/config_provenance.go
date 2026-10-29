@@ -31,11 +31,12 @@ type ConfigValue struct {
 // layer sets a key — the values a run actually uses, so `sdd config` answers
 // "what will happen" rather than "what is written down".
 var configDefaults = map[string]string{
-	"graph_dir":       DefaultGraphDir,
-	"llm.provider":    DefaultLLMProvider,
-	"llm.model":       DefaultLLMModel,
-	"llm.concurrency": strconv.Itoa(DefaultLLMConcurrency),
-	"sync.cooldown":   DefaultSyncCooldown,
+	"graph_dir":           DefaultGraphDir,
+	"llm.provider":        DefaultLLMProvider,
+	"llm.model":           DefaultLLMModel,
+	"llm.concurrency":     strconv.Itoa(DefaultLLMConcurrency),
+	"llm.extract_timeout": DefaultLLMExtractTimeout.String(),
+	"sync.cooldown":       DefaultSyncCooldown,
 
 	"sessions.retention": DefaultSessionRetention,
 }
