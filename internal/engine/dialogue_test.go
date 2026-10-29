@@ -181,6 +181,46 @@ func TestGuidedSessionHeaderIsUnchanged(t *testing.T) {
 	}
 }
 
+func TestReasonAnswersOnlyAUserChooser(t *testing.T) {
+	machine := `steps:
+    - id: judge
+      chooser: agent
+      options:
+          - {choice: go, to: end(completed)}`
+	spec := mustParseLanes(t, machine, "## unit: judge\n\nJudge.\n")
+	eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
+	session := eng.NewSession("s_dialogue", "tester", nopSink{}, autonomous())
+	sv, err := session.Start(spec, nil, "")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := session.AnswerWith(sv.Instance, "judge", "go", nil, engine.AnswerWords{Reason: "obvious"}); err == nil || !strings.Contains(err.Error(), "only a user chooser") {
+		t.Errorf("a reason at an agent chooser should be refused, got %v", err)
+	}
+}
+
+func TestDialogueModeNameStaysTheEngines(t *testing.T) {
+	declarations := map[string]string{
+		"state":  "state:\n    dialogueMode: {type: text, optional: true, desc: x}\n    note: {type: text, desc: x}\n",
+		"params": "params:\n    dialogueMode: {type: text, optional: true, desc: x}\nstate:\n    note: {type: text, desc: x}\n",
+	}
+	for block, declared := range declarations {
+		t.Run(block, func(t *testing.T) {
+			machine := declared + `steps:
+    - id: draft
+      collect: [note]
+      transitions:
+          - when: hasBody
+            to: end(completed)`
+			spec := mustParseLanes(t, machine, "## unit: draft\n\nDraft.\n")
+			eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
+			if _, err := eng.NewSession("s_dialogue", "tester", nopSink{}).Start(spec, nil, ""); err == nil || !strings.Contains(err.Error(), "dialogueMode") {
+				t.Errorf("a procedure field named dialogueMode should fail the render instead of shadowing the mode, got %v", err)
+			}
+		})
+	}
+}
+
 func TestDelegableOnlyOnAUserChooser(t *testing.T) {
 	machine := `steps:
     - id: pick
