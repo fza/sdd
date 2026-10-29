@@ -27,7 +27,7 @@ type writeFixtureOptions struct {
 	Finalizers   []sdd.MutationFinalizer
 	SourceConfig *sdd.ProjectConfig
 	Dependency   *sdd.ProjectRuntime
-	Dependencies []string
+	Dependencies []sdd.RepoID
 	// GraphSchema is the schema the graph's meta.json records; zero writes no
 	// meta.json, leaving the graph at the binary's schema.
 	GraphSchema int
@@ -68,7 +68,7 @@ func newWriteFixture(t *testing.T, options ...writeFixtureOptions) *writeFixture
 	var finalizers []sdd.MutationFinalizer
 	var graph sdd.GraphStore = baseGraph
 	var dependency *sdd.ProjectRuntime
-	var dependencies []string
+	var dependencies []sdd.RepoID
 	for _, option := range options {
 		if option.Runner != nil {
 			runner = option.Runner
