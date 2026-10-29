@@ -324,7 +324,23 @@ func GraphRepoRoot(graphDir string) (string, error) {
 // It is the production handlers.ProjectRepositories.
 type Repositories struct{}
 
-func (Repositories) RootOf(dir string) string { return RepoRootFor(dir) }
+// RootOf is RepoRootFor that fails loud: only git's own "not a git
+// repository" answer means no repository, so a setup never runs `git init`
+// inside a repository git could not read.
+func (Repositories) RootOf(dir string) (string, error) {
+	ancestor := existingAncestor(dir)
+	if ancestor == "" {
+		return "", nil
+	}
+	out, err := exec.Command("git", "-C", ancestor, "rev-parse", "--show-toplevel").CombinedOutput()
+	if err == nil {
+		return strings.TrimSpace(string(out)), nil
+	}
+	if strings.Contains(string(out), "not a git repository") {
+		return "", nil
+	}
+	return "", fmt.Errorf("finding the repository holding %s: %s (%w)", dir, strings.TrimSpace(string(out)), err)
+}
 
 func (Repositories) Init(dir string) error {
 	out, err := exec.Command("git", "init", "--quiet", dir).CombinedOutput()
@@ -337,6 +353,8 @@ func (Repositories) Init(dir string) error {
 func (Repositories) CurrentBranch(dir string) (string, error) { return CurrentBranch(dir) }
 
 func (Repositories) RemoteURL(dir string) string { return RemoteURL(dir) }
+
+func (Repositories) StableRoot(dir string) (string, error) { return StableRepoRoot(dir) }
 
 // existingAncestor returns path, or the closest ancestor that exists on disk.
 func existingAncestor(path string) string {

@@ -34,6 +34,12 @@ type InitCmd struct {
 	// project those two are refused.
 	ProjectDir string
 
+	// SyncMode and SyncInterval, when set, record the person's graph sync
+	// settings in config.local.yaml of the project holding the graph, which
+	// is RepoRoot unless ProjectDir names another (20261027-211908-d-tac-l8j).
+	SyncMode     model.SyncMode
+	SyncInterval string
+
 	// SetUpProject allows init to set up a missing project at ProjectDir. Only
 	// a path the caller typed qualifies: a recorded project_dir names a shared
 	// project to clone, never one to create.
@@ -152,6 +158,10 @@ type InitCmd struct {
 	// value already matches (idempotent re-init produces no callback).
 	OnParticipantWritten func(path, name string)
 
+	// OnLocalSettingWritten fires when init records another per-person
+	// setting, such as sync.mode, in .sdd/config.local.yaml.
+	OnLocalSettingWritten func(path, key, value string)
+
 	// OnRepoIDWritten fires when a derived repo_id is recorded in
 	// .sdd/config.yaml — on fresh init or as an upgrade upsert. Does not
 	// fire when the config already carries a value.
@@ -207,6 +217,11 @@ func (r AgentPruneResult) TouchedAnything() bool {
 func (c *InitCmd) Validate() error {
 	if c.RepoRoot == "" {
 		return fmt.Errorf("repo root is required")
+	}
+	settings := model.BaseConfig{Sync: model.SyncConfig{Mode: c.SyncMode, Interval: c.SyncInterval}}
+	ignored := model.IgnoredSettings(settings, false)
+	if len(ignored) > 0 {
+		return fmt.Errorf("%s: %s", ignored[0].Key, ignored[0].Reason)
 	}
 	return nil
 }

@@ -234,9 +234,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	// longer lives in the tree (machine-global store, d-tac-nhx), so its
 	// gitignore entry is not emitted anymore; existing entries are harmless
 	// and left alone.
-	graphRuntimeEntry := filepath.ToSlash(filepath.Join(graphDir, ".sdd-runtime")) + "/"
-	gitignoreEntries := []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/", graphRuntimeEntry}
-	gitignoreAdded, err := ensureGitignoreEntries(gitignorePath, gitignoreEntries)
+	gitignoreAdded, err := ensureGitignoreEntries(gitignorePath, initGitignoreEntries(graphDir))
 	if err != nil {
 		log.Warn("could not update .gitignore", "path", gitignorePath, "err", err)
 	} else if gitignoreAdded {
@@ -269,7 +267,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	if err := writeParticipant(sddDir, cmd); err != nil {
+	if err := writeLocalSettings(sddDir, cmd); err != nil {
 		return err
 	}
 
@@ -929,4 +927,12 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 		}
 	}
 	return nil
+}
+
+// initGitignoreEntries lists the runtime paths init keeps out of git, the
+// same in a project and in a work repository pointing at it
+// (20261029-132740-d-tac-g32). graphDir is the project's graph_dir.
+func initGitignoreEntries(graphDir string) []string {
+	graphRuntimeEntry := filepath.ToSlash(filepath.Join(graphDir, ".sdd-runtime")) + "/"
+	return []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/", graphRuntimeEntry}
 }

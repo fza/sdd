@@ -1383,6 +1383,56 @@ func promptGraphDir(cmd *cli.Command, defaultValue string) (string, error) {
 	})
 }
 
+// promptGraphLocation asks whether the graph lives in this repository or in a
+// repository of its own, reporting true for its own.
+func promptGraphLocation(cmd *cli.Command) (bool, error) {
+	return tui.RunSelect(tui.SelectPrompt[bool]{
+		Reader: cmd.Reader,
+		Writer: cmd.Writer,
+		Header: "Where should the graph live? (↑/↓ to navigate, enter to confirm)",
+		Options: []tui.SelectOption[bool]{
+			{Label: "this repository", Hint: "graph and settings committed beside the code", Value: false},
+			{Label: "a repository of its own", Hint: "this repository keeps only a pointer to it (project_dir)", Value: true},
+		},
+	})
+}
+
+// promptProjectDir asks for the path of the repository holding the graph.
+// Empty input accepts the default; cancellation returns an error.
+func promptProjectDir(cmd *cli.Command, defaultValue string) (string, error) {
+	return tui.RunTextPrompt(tui.TextPrompt{
+		Reader:  cmd.Reader,
+		Writer:  cmd.Writer,
+		Label:   "Graph repository path (relative to this repository)",
+		Default: defaultValue,
+		Width:   60,
+	})
+}
+
+// promptSyncMode asks how this person's graph changes sync with the remote.
+func promptSyncMode(cmd *cli.Command) (model.SyncMode, error) {
+	return tui.RunSelect(tui.SelectPrompt[model.SyncMode]{
+		Reader: cmd.Reader,
+		Writer: cmd.Writer,
+		Header: "How should your graph changes sync with the remote? (↑/↓ to navigate, enter to confirm)",
+		Options: []tui.SelectOption[model.SyncMode]{
+			{Label: string(model.SyncModeManual), Hint: "you push and pull the graph yourself", Value: model.SyncModeManual},
+			{Label: string(model.SyncModeAuto), Hint: "every graph commit is pushed, upstream graph commits pulled", Value: model.SyncModeAuto},
+		},
+	})
+}
+
+// promptSyncInterval asks how often a running `sdd serve` syncs. Empty input
+// keeps the timer off.
+func promptSyncInterval(cmd *cli.Command) (string, error) {
+	return tui.RunTextPrompt(tui.TextPrompt{
+		Reader: cmd.Reader,
+		Writer: cmd.Writer,
+		Label:  "Sync interval for `sdd serve`, e.g. 15m (empty: no timer)",
+		Width:  60,
+	})
+}
+
 // promptParticipant runs an interactive prompt for the local participant name.
 // Empty input accepts the default; cancellation returns an error.
 func promptParticipant(cmd *cli.Command, defaultValue string) (string, error) {
@@ -1532,6 +1582,14 @@ func initCmd() *cli.Command {
 				Name:  "bump",
 				Usage: "Raise .sdd/meta.json minimum_version to this binary's version (released builds only)",
 			},
+			&cli.StringFlag{
+				Name:  "sync-mode",
+				Usage: "Your graph sync mode, manual or auto, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
+			},
+			&cli.StringFlag{
+				Name:  "sync-interval",
+				Usage: "How often a running `sdd serve` syncs under auto sync, e.g. 15m (prompted interactively when choosing auto)",
+			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			// `--bump` cannot be honoured from a dev build — fail before
@@ -1572,6 +1630,22 @@ func initCmd() *cli.Command {
 			if projectDir == "" && recordedFiles != nil {
 				projectDir = recordedFiles.ProjectDir
 			}
+			// Only a path typed or chosen here may name a project to set up; a
+			// recorded one names a shared project to clone (20261029-132422-d-tac-2sn).
+			setUpProject := cmd.IsSet("project-dir")
+			if projectDir == "" && !sddExists && cliout.IsTerminalReader(cmd.Reader) {
+				ownRepository, err := promptGraphLocation(cmd)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
+				if ownRepository {
+					projectDir, err = promptProjectDir(cmd, filepath.Join("..", filepath.Base(repoRoot)+"-sdd"))
+					if err != nil {
+						return fmt.Errorf("prompt: %w", err)
+					}
+					setUpProject = true
+				}
+			}
 			pointer := projectDir != ""
 			// The participant is a setting of the project holding the graph,
 			// which a pointing repository is not.
@@ -1585,25 +1659,24 @@ func initCmd() *cli.Command {
 					projectRoot = filepath.Join(repoRoot, projectRoot)
 				}
 				projectSDDDir = meta.SDDDir(filepath.Clean(projectRoot))
-				projectFiles, err := meta.ReadConfig(projectSDDDir)
+				projectCommitted, _, err := meta.ReadConfigLayers(projectSDDDir)
 				if err != nil {
 					return fmt.Errorf("reading the project's configuration before init: %w", err)
 				}
-				projectMissing = projectFiles == nil && cmd.IsSet("project-dir")
+				projectMissing = projectCommitted == nil && setUpProject
 			}
 			freshGraph := !pointer && !sddExists || projectMissing
-			var existingMerged *model.PerRepoConfig
-			if sddExists || pointer {
-				// Overlay-aware: a participant configured globally counts
-				// as configured, so init does not demand a per-repo one.
-				existingMerged, err = resolveConfigAt(projectSDDDir)
-				if err != nil {
-					return fmt.Errorf("resolving existing configuration before init: %w", err)
-				}
+			// Overlay-aware: a participant or sync mode configured globally
+			// counts as configured, so init does not ask for one.
+			existingMerged, err := resolveConfigAt(projectSDDDir)
+			if err != nil {
+				return fmt.Errorf("resolving existing configuration before init: %w", err)
 			}
 			recordedParticipant := ""
+			var recordedSyncMode model.SyncMode
 			if existingMerged != nil {
 				recordedParticipant = existingMerged.Participant
+				recordedSyncMode = existingMerged.Sync.Mode
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
 			participantFlag := strings.TrimSpace(cmd.String("participant"))
@@ -1727,6 +1800,23 @@ func initCmd() *cli.Command {
 				targets = chosen
 			}
 
+			// Graph sync is set per person, so it is asked whenever no layer
+			// sets it, as the participant is (20261029-132422-d-tac-2sn).
+			syncMode := model.SyncMode(strings.TrimSpace(cmd.String("sync-mode")))
+			syncInterval := strings.TrimSpace(cmd.String("sync-interval"))
+			if syncMode == "" && recordedSyncMode == "" && cliout.IsTerminalReader(cmd.Reader) {
+				syncMode, err = promptSyncMode(cmd)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
+				if syncMode == model.SyncModeAuto && syncInterval == "" {
+					syncInterval, err = promptSyncInterval(cmd)
+					if err != nil {
+						return fmt.Errorf("prompt: %w", err)
+					}
+				}
+			}
+
 			stableRepoRoot, err := git.StableRepoRoot(repoRoot)
 			if err != nil {
 				return err
@@ -1736,7 +1826,9 @@ func initCmd() *cli.Command {
 				StableRepoRoot: stableRepoRoot,
 				GraphDir:       graphDir,
 				ProjectDir:     projectDir,
-				SetUpProject:   cmd.IsSet("project-dir"),
+				SetUpProject:   setUpProject,
+				SyncMode:       syncMode,
+				SyncInterval:   syncInterval,
 				DefaultBranch:  defaultBranch,
 				Participant:    participant,
 				Language:       language,
@@ -1779,6 +1871,9 @@ func initCmd() *cli.Command {
 				},
 				OnParticipantWritten: func(path, name string) {
 					fmt.Fprintf(cmd.Writer, "  participant: %s → %s\n", name, path)
+				},
+				OnLocalSettingWritten: func(path, key, value string) {
+					fmt.Fprintf(cmd.Writer, "  %s: %s → %s\n", key, value, path)
 				},
 				OnRepoIDWritten: func(repoID string) {
 					fmt.Fprintf(cmd.Writer, "  repo_id: %s\n", repoID)

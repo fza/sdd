@@ -353,8 +353,11 @@ func TestInitPointsTheWorkRepositoryAtTheProject(t *testing.T) {
 	if !strings.Contains(readFile(t, filepath.Join(project, ".sdd", "config.local.yaml")), "participant: Ada") {
 		t.Error("the participant should be recorded with the project")
 	}
-	if subject := headSubject(t, project); subject != "seed" {
-		t.Errorf("init in the work repository should not commit in the project, HEAD is %q", subject)
+	if subject := headSubject(t, project); !strings.HasPrefix(subject, "sdd: ") {
+		t.Errorf("init in the work repository should commit the project's refresh in the project, HEAD is %q", subject)
+	}
+	if status := gitIn(t, project, "status", "--porcelain"); status != "" {
+		t.Errorf("the project's refresh should leave the project clean:\n%s", status)
 	}
 	if subject := headSubject(t, work); subject == "seed" {
 		t.Error("init should commit the pointer and skills in the work repository")
@@ -364,9 +367,10 @@ func TestInitPointsTheWorkRepositoryAtTheProject(t *testing.T) {
 	}
 
 	workHead := gitIn(t, work, "rev-parse", "HEAD")
+	projectHead := gitIn(t, project, "rev-parse", "HEAD")
 	runApp(t, work, "init")
-	if subject := headSubject(t, project); subject != "seed" {
-		t.Errorf("a repeat init should not commit in the project, HEAD is %q", subject)
+	if gitIn(t, project, "rev-parse", "HEAD") != projectHead {
+		t.Error("a repeat init with nothing to refresh should not commit in the project")
 	}
 	if gitIn(t, work, "rev-parse", "HEAD") != workHead {
 		t.Error("a repeat init should leave the work repository's config untouched and commit nothing")

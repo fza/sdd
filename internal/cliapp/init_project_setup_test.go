@@ -3,6 +3,7 @@ package cliapp_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -75,7 +76,7 @@ func TestInitSetsUpAMissingProject(t *testing.T) {
 				tc.prepare(t, project)
 			}
 
-			runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "de", "--scope", "project", "--participant", "Ada", "--agents", "claude")
+			runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "de", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--sync-mode", "auto", "--sync-interval", "5m")
 
 			projectConfig := readFile(t, filepath.Join(project, ".sdd", "config.yaml"))
 			for _, setting := range []string{"graph_dir: graph", "language: de", "skill_scope: project"} {
@@ -92,8 +93,19 @@ func TestInitSetsUpAMissingProject(t *testing.T) {
 			if _, statErr := os.Stat(filepath.Join(project, ".sdd", "meta.json")); statErr != nil {
 				t.Errorf("the project should hold its meta.json: %v", statErr)
 			}
-			if !strings.Contains(readFile(t, filepath.Join(project, ".sdd", "config.local.yaml")), "participant: Ada") {
-				t.Error("the participant should be recorded with the project")
+			projectLocal := readFile(t, filepath.Join(project, ".sdd", "config.local.yaml"))
+			for _, setting := range []string{"participant: Ada", "mode: auto", "interval: 5m"} {
+				if !strings.Contains(projectLocal, setting) {
+					t.Errorf("the person's settings should be recorded with the project, missing %q:\n%s", setting, projectLocal)
+				}
+			}
+			if _, statErr := os.Stat(filepath.Join(work, ".sdd", "config.local.yaml")); statErr == nil {
+				t.Error("the work repository should receive no per-person settings")
+			}
+			projectIgnore := readFile(t, filepath.Join(project, ".gitignore"))
+			workIgnore := readFile(t, filepath.Join(work, ".gitignore"))
+			if projectIgnore != workIgnore || !strings.Contains(workIgnore, "graph/.sdd-runtime/") {
+				t.Errorf("both repositories should ignore the same runtime paths:\nproject:\n%s\nwork:\n%s", projectIgnore, workIgnore)
 			}
 			if !strings.HasPrefix(headSubject(t, project), "sdd: ") {
 				t.Error("the project's setup should be committed in its own repository")
@@ -150,13 +162,48 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 			name:       "folder inside the work repository",
 			projectDir: "graph-project",
 			args:       []string{"--language", "en"},
-			mention:    "lies inside the repository",
+			mention:    "lies inside this repository",
 		},
 		{
 			name:       "work repository itself",
 			projectDir: ".",
 			args:       []string{"--language", "en"},
-			mention:    "lies inside the repository",
+			mention:    "lies inside this repository",
+		},
+		{
+			name:       "repository of its own nested in the work repository",
+			projectDir: "nested-project",
+			prepare: func(t *testing.T, work, project string) {
+				nested := filepath.Join(work, "nested-project")
+				err := os.MkdirAll(nested, 0o755)
+				if err != nil {
+					t.Fatal(err)
+				}
+				initRepo(t, nested)
+			},
+			args:    []string{"--language", "en"},
+			mention: "lies inside this repository",
+		},
+		{
+			name:       "graph directory leading out of the project",
+			projectDir: "../work-sdd",
+			args:       []string{"--language", "en", "--graph-dir", "../elsewhere"},
+			mention:    "leads out of the project",
+		},
+		{
+			name:       "project folder with a .sdd/ but no config",
+			projectDir: "../work-sdd",
+			prepare: func(t *testing.T, work, project string) {
+				writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
+			},
+			args:    []string{"--language", "en"},
+			mention: "without config.yaml",
+		},
+		{
+			name:       "unknown sync mode",
+			projectDir: "../work-sdd",
+			args:       []string{"--language", "en", "--sync-mode", "sometimes"},
+			mention:    "sync.mode",
 		},
 		{
 			name:       "folder inside another repository",
@@ -185,17 +232,78 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 				args = append(args, "--project-dir", tc.projectDir)
 			}
 			args = append(args, tc.args...)
+			workHead := gitIn(t, work, "rev-parse", "HEAD")
+			workStatus := gitIn(t, work, "status", "--porcelain", "--untracked-files=all")
+			_, projectExisted := os.Stat(projectRoot)
+
 			_, err := runAppErr(t, work, args...)
 
 			if err == nil || !strings.Contains(err.Error(), tc.mention) {
 				t.Errorf("the setup should be refused naming the fix: %v", err)
 			}
-			if subject := headSubject(t, work); subject != "seed" {
-				t.Errorf("a refused setup should commit nothing in the work repository, HEAD is %q", subject)
+			if gitIn(t, work, "rev-parse", "HEAD") != workHead {
+				t.Error("a refused setup should commit nothing in the work repository")
 			}
-			if _, statErr := os.Stat(filepath.Join(projectRoot, ".sdd")); statErr == nil {
+			if gitIn(t, work, "status", "--porcelain", "--untracked-files=all") != workStatus {
+				t.Error("a refused setup should leave the work repository's files as they were")
+			}
+			if _, statErr := os.Stat(filepath.Join(projectRoot, ".sdd", "config.yaml")); statErr == nil {
 				t.Error("a refused setup should write no project")
 			}
+			if _, statErr := os.Stat(projectRoot); projectExisted != nil && statErr == nil {
+				t.Error("a refused setup should create no project folder")
+			}
 		})
+	}
+}
+
+// An init in the work repository runs the project's own init too, with the
+// settings the project records (20261029-132740-d-tac-g32).
+func TestInitRefreshesTheProjectFromTheWorkRepository(t *testing.T) {
+	work, project := workRepository(t)
+	runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
+	skill := filepath.Join(project, ".claude", "skills", "sdd", "SKILL.md")
+	gitIn(t, project, "rm", "-q", skill)
+	gitIn(t, project, "commit", "-q", "-m", "chore: drop the skill")
+	workHead := gitIn(t, work, "rev-parse", "HEAD")
+
+	runApp(t, work, "init")
+
+	if _, statErr := os.Stat(skill); statErr != nil {
+		t.Errorf("the project's skills should be refreshed from the work repository: %v", statErr)
+	}
+	if !strings.HasPrefix(headSubject(t, project), "sdd: ") {
+		t.Error("the project's refresh should be committed in the project repository")
+	}
+	if status := gitIn(t, project, "status", "--porcelain"); status != "" {
+		t.Errorf("the refresh should leave the project clean:\n%s", status)
+	}
+	if _, statErr := os.Stat(filepath.Join(project, ".sdd", "graph")); statErr == nil {
+		t.Error("the refresh should keep the project's own graph_dir")
+	}
+	if gitIn(t, work, "rev-parse", "HEAD") != workHead {
+		t.Error("the work repository had nothing to refresh and should gain no commit")
+	}
+
+	projectHead := gitIn(t, project, "rev-parse", "HEAD")
+	runApp(t, work, "init")
+	if gitIn(t, project, "rev-parse", "HEAD") != projectHead || gitIn(t, work, "rev-parse", "HEAD") != workHead {
+		t.Error("a repeat init with nothing to refresh should commit in neither repository")
+	}
+}
+
+// Graph sync is set per person, in the config.local.yaml of the repository
+// holding the graph (20261027-211908-d-tac-l8j).
+func TestInitRecordsGraphSyncSettings(t *testing.T) {
+	work, _ := workRepository(t)
+
+	runApp(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--sync-mode", "manual")
+
+	local := readFile(t, filepath.Join(work, ".sdd", "config.local.yaml"))
+	if !strings.Contains(local, "mode: manual") {
+		t.Errorf("an explicit manual sync should be recorded so it is not asked again:\n%s", local)
+	}
+	if regexp.MustCompile(`(?m)^\s*mode:`).MatchString(readFile(t, filepath.Join(work, ".sdd", "config.yaml"))) {
+		t.Error("the sync mode should stay out of the committed config")
 	}
 }
