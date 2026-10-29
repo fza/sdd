@@ -31,6 +31,7 @@ type SearchFinder struct {
 	embedder   embed.Embedder  // nil disables vector and hybrid modes
 	indexStore *index.Index    // nil disables vector and hybrid modes
 	repos      *repos.Registry // nil disables cross-repo search
+	closure    []model.RepoID
 }
 
 // SearchFinderOptions configures NewSearchFinder. Graph is the graph the
@@ -45,6 +46,9 @@ type SearchFinderOptions struct {
 	Embedder   embed.Embedder
 	IndexStore *index.Index
 	Repos      *repos.Registry
+	// Closure is the dependency closure cross-repo search selects from
+	// (Finder.DependencyClosure).
+	Closure []model.RepoID
 }
 
 // NewSearchFinder constructs a SearchFinder.
@@ -55,6 +59,7 @@ func NewSearchFinder(opts SearchFinderOptions) *SearchFinder {
 		embedder:   opts.Embedder,
 		indexStore: opts.IndexStore,
 		repos:      opts.Repos,
+		closure:    opts.Closure,
 	}
 }
 
