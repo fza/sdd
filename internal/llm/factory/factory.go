@@ -6,6 +6,7 @@ package factory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -16,11 +17,6 @@ import (
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
-// defaultTimeout bounds each call when neither config nor caller sets one.
-// The factory always composes a timeout: an unbounded runner turns a hung
-// provider into a hung process.
-const defaultTimeout = 2 * time.Minute
-
 // New builds a composed llm.Runner from config. Provider and model fall back
 // to model.DefaultLLMProvider / model.DefaultLLMModel when empty. Remote
 // providers (anthropic, openai) get wrapped with llm.RateLimited: an
@@ -28,9 +24,10 @@ const defaultTimeout = 2 * time.Minute
 // tier-1-safe default is selected per provider/model family (see
 // providerDefaultRPS). Local providers (claude-cli, ollama) stay
 // uncapped. Every runner is bounded by the configured cfg.Timeout (falling
-// back to defaultTimeout) — deadlines are configuration, so they compose here
-// rather than being defaulted by any consumer. The extraction purposes are
-// bounded by cfg.ExtractTimeout instead. Errors distinguish
+// back to model.DefaultLLMTimeoutFor the provider) — deadlines are
+// configuration, so they compose here rather than being defaulted by any
+// consumer; an unbounded runner would turn a hung provider into a hung process.
+// The extraction purposes are bounded by cfg.ExtractTimeout instead. Errors distinguish
 // configuration problems from transport failures so the CLI can surface them
 // distinctly.
 func New(cfg model.LLMConfig) (llm.Runner, error) {
@@ -39,7 +36,10 @@ func New(cfg model.LLMConfig) (llm.Runner, error) {
 		return nil, err
 	}
 
-	timeout := defaultTimeout
+	timeout, err := time.ParseDuration(model.DefaultLLMTimeoutFor(cfg.Provider))
+	if err != nil {
+		return nil, fmt.Errorf("llm: parsing default timeout for %q: %w", cfg.Provider, err)
+	}
 	if cfg.Timeout != "" {
 		d, err := time.ParseDuration(cfg.Timeout)
 		if err != nil {
@@ -69,8 +69,8 @@ func New(cfg model.LLMConfig) (llm.Runner, error) {
 // free to spend twice the configured timeout; reformatting text the model
 // already produced needs far less than a reasoning pass.
 func boundedPerPurpose(runner llm.Runner, timeout, extractTimeout time.Duration) llm.Runner {
-	reasoning := llm.Bounded(runner, timeout)
-	extraction := llm.Bounded(runner, extractTimeout)
+	reasoning := namedTimeout(llm.Bounded(runner, timeout), "llm.timeout", timeout)
+	extraction := namedTimeout(llm.Bounded(runner, extractTimeout), "llm.extract_timeout", extractTimeout)
 	return llm.RunnerFunc(func(ctx context.Context, req llm.Request) (llm.Result, error) {
 		switch req.Purpose {
 		case llm.PurposePreflightExtract, llm.PurposeWritingGuideExtract:
@@ -78,6 +78,19 @@ func boundedPerPurpose(runner llm.Runner, timeout, extractTimeout time.Duration)
 		default:
 			return reasoning.Run(ctx, req)
 		}
+	})
+}
+
+// namedTimeout names the setting behind a call that ran out its bound: the
+// error otherwise reaches a CLI user or an MCP agent with no hint that the
+// setting exists. A deadline the caller set itself is passed through.
+func namedTimeout(r llm.Runner, setting string, timeout time.Duration) llm.Runner {
+	return llm.RunnerFunc(func(ctx context.Context, req llm.Request) (llm.Result, error) {
+		result, err := r.Run(ctx, req)
+		if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+			return result, fmt.Errorf("%w: no answer within %s (%s); raise it with `sdd config set %s <duration>`", err, setting, timeout, setting)
+		}
+		return result, err
 	})
 }
 

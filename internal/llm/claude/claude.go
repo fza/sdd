@@ -49,11 +49,14 @@ var scrubbedEnvVars = []string{
 // UserPrompt are concatenated — prompt caching is not available through this
 // transport.
 //
-// The process runs isolated: --safe-mode, a working directory of its own, and
-// no Anthropic credentials in its environment. Started inside a project tree
-// the CLI loads that project's instruction files, skills, hooks and configured
-// servers, and every one of them counts against a prompt that needs none of
-// them.
+// The process runs isolated: --safe-mode, no tools, a working directory of its
+// own, and no Anthropic credentials in its environment. Started inside a
+// project tree the CLI loads that project's instruction files, skills, hooks
+// and configured servers, and every one of them counts against a prompt that
+// needs none of them. The calls are text reviews: `--tools ""` removes the
+// built-in tools and `--strict-mcp-config` the configured MCP servers, whose
+// tool definitions would otherwise load in full into every prompt. A draft's
+// text then has nothing to act through.
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	workDir, err := os.MkdirTemp("", "sdd-claude-")
 	if err != nil {
@@ -61,14 +64,14 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
 
-	cmd := exec.CommandContext(ctx, "claude", "-p", "--safe-mode", "--model", r.model, "--output-format", "json")
+	cmd := exec.CommandContext(ctx, "claude", "-p", "--safe-mode", "--tools", "", "--strict-mcp-config", "--model", r.model, "--output-format", "json")
 	cmd.Dir = workDir
 	cmd.Env = scrubbedEnv(os.Environ())
 	cmd.Stdin = strings.NewReader(req.Combined())
 	out, err := cmd.Output()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			err = fmt.Errorf("claude -p timed out (increase with --preflight-timeout)")
+		if ctx.Err() != nil {
+			err = fmt.Errorf("claude -p: %w", ctx.Err())
 		} else {
 			err = fmt.Errorf("claude -p: %w", err)
 		}

@@ -59,6 +59,7 @@ func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []C
 	}
 
 	var out []ConfigValue
+	provider := ""
 	for _, leaf := range collectConfigLeaves(reflect.TypeFor[PerRepoConfig](), nil, nil) {
 		switch leaf.kind {
 		case leafMap:
@@ -80,10 +81,16 @@ func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []C
 			}
 			if !set {
 				def, ok := configDefaults[leaf.path]
+				if leaf.path == "llm.timeout" {
+					def, ok = DefaultLLMTimeoutFor(provider), true
+				}
 				if !ok {
 					continue
 				}
 				val = ConfigValue{Key: leaf.path, Value: def, Source: ConfigSourceDefault}
+			}
+			if leaf.path == "llm.provider" {
+				provider = val.Value
 			}
 			out = append(out, val)
 		}
