@@ -45,6 +45,10 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if graphDir == "" {
 		graphDir = model.DefaultGraphDir
 	}
+	err := gitignoreLine(graphDir)
+	if err != nil {
+		return fmt.Errorf("graph directory: %w", err)
+	}
 
 	sddDir := filepath.Join(cmd.RepoRoot, model.SDDDirName)
 	absGraphDir := filepath.Join(cmd.RepoRoot, graphDir)

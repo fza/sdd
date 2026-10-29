@@ -35,6 +35,9 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 	if within(projectRoot, cmd.RepoRoot) {
 		return fmt.Errorf("--project-dir %s lies inside this repository; the project needs a repository of its own", cmd.ProjectDir)
 	}
+	if within(cmd.RepoRoot, projectRoot) {
+		return fmt.Errorf("--project-dir %s contains this repository; the project needs a repository of its own beside it", cmd.ProjectDir)
+	}
 	root, err := h.projectRepos.RootOf(projectRoot)
 	if err != nil {
 		return err
@@ -75,7 +78,12 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 			return err
 		}
 	}
+	branch, err := h.projectRepos.CurrentBranch(projectRoot)
+	if err != nil {
+		return err
+	}
 	return h.runProjectInit(ctx, cmd, projectRoot, func(projectCmd *command.InitCmd) {
+		projectCmd.DefaultBranch = branch
 		projectCmd.Scope = scope
 		projectCmd.ScopeExplicit = true
 		projectCmd.Targets = agents
@@ -89,8 +97,20 @@ func (h *Handler) refreshProject(ctx context.Context, cmd *command.InitCmd, proj
 	if h.projectRepos == nil || h.committerAt == nil {
 		return fmt.Errorf("refreshing the project at %s needs a git adapter for it", cmd.ProjectDir)
 	}
+	// default_branch is asked of git only when the project records none, so a
+	// detached HEAD in the project blocks no refresh.
+	var branch string
+	if projectCfg.DefaultBranch == "" {
+		var err error
+		branch, err = h.projectRepos.CurrentBranch(projectRoot)
+		if err != nil {
+			return err
+		}
+	}
 	return h.runProjectInit(ctx, cmd, projectRoot, func(projectCmd *command.InitCmd) {
+		projectCmd.DefaultBranch = branch
 		projectCmd.GraphDir = projectCfg.GraphDir
+		projectCmd.Scope = ""
 		projectCmd.ScopeExplicit = false
 		projectCmd.Targets = nil
 	})
@@ -100,10 +120,6 @@ func (h *Handler) refreshProject(ctx context.Context, cmd *command.InitCmd, proj
 // run's per-person answers and flags; adjust sets what differs between a
 // set-up and a refresh.
 func (h *Handler) runProjectInit(ctx context.Context, cmd *command.InitCmd, projectRoot string, adjust func(*command.InitCmd)) error {
-	branch, err := h.projectRepos.CurrentBranch(projectRoot)
-	if err != nil {
-		return err
-	}
 	stableRoot, err := h.projectRepos.StableRoot(projectRoot)
 	if err != nil {
 		return err
@@ -115,7 +131,6 @@ func (h *Handler) runProjectInit(ctx context.Context, cmd *command.InitCmd, proj
 	projectCmd.StableRepoRoot = stableRoot
 	projectCmd.ProjectDir = ""
 	projectCmd.SetUpProject = false
-	projectCmd.DefaultBranch = branch
 	projectCmd.RemoteURL = h.projectRepos.RemoteURL(projectRoot)
 	adjust(&projectCmd)
 	err = project.Init(ctx, &projectCmd)
@@ -129,11 +144,7 @@ func (h *Handler) runProjectInit(ctx context.Context, cmd *command.InitCmd, proj
 // as macOS's /var → /private/var, resolving path's nearest existing ancestor
 // when path does not exist yet.
 func within(path, dir string) bool {
-	resolvedDir, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		resolvedDir = filepath.Clean(dir)
-	}
-	rel, err := filepath.Rel(resolvedDir, resolveExisting(path))
+	rel, err := filepath.Rel(resolveExisting(dir), resolveExisting(path))
 	if err != nil {
 		return false
 	}

@@ -200,6 +200,12 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 			mention: "without config.yaml",
 		},
 		{
+			name:       "folder containing the work repository",
+			projectDir: "..",
+			args:       []string{"--language", "en"},
+			mention:    "contains this repository",
+		},
+		{
 			name:       "graph directory reading as an ignore negation",
 			projectDir: "../work-sdd",
 			args:       []string{"--language", "en", "--graph-dir", "!graph"},
@@ -311,5 +317,68 @@ func TestInitRecordsGraphSyncSettings(t *testing.T) {
 	}
 	if regexp.MustCompile(`(?m)^\s*mode:`).MatchString(readFile(t, filepath.Join(work, ".sdd", "config.yaml"))) {
 		t.Error("the sync mode should stay out of the committed config")
+	}
+}
+
+// A project recording its default branch needs no branch checked out to be
+// refreshed.
+func TestInitRefreshesAProjectOnADetachedHead(t *testing.T) {
+	work, project := pointedRepos(t)
+	gitIn(t, project, "add", ".sdd/config.yaml")
+	gitIn(t, project, "commit", "-q", "-m", "chore: record the project")
+	gitIn(t, project, "checkout", "-q", "--detach")
+
+	_, err := runAppErr(t, work, "init")
+
+	if err != nil {
+		t.Errorf("a detached HEAD in the project should not block its refresh: %v", err)
+	}
+}
+
+// A project path spelled through a symlinked prefix, as macOS's /var is,
+// resolves like the canonical one.
+func TestInitSetsUpAProjectAtAnAbsolutePathThroughASymlink(t *testing.T) {
+	work, _ := workRepository(t)
+	project := filepath.Join(t.TempDir(), "work-sdd")
+
+	runApp(t, work, "init", "--project-dir", project, "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	if _, statErr := os.Stat(filepath.Join(project, ".sdd", "config.yaml")); statErr != nil {
+		t.Errorf("the project should be set up at the absolute path: %v", statErr)
+	}
+}
+
+func TestInitRefusesAGraphDirReadingAsIgnoreRules(t *testing.T) {
+	work, _ := workRepository(t)
+
+	_, err := runAppErr(t, work, "init", "--graph-dir", "!graph", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	if err == nil || !strings.Contains(err.Error(), "reads as more than one path") {
+		t.Errorf("init should refuse a graph directory that negates an ignore rule: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(work, ".sdd")); statErr == nil {
+		t.Error("a refused init should write nothing")
+	}
+}
+
+// The project's refresh runs with the scope the project records, not the
+// work repository's, falling back to the default as an init inside the
+// project would.
+func TestInitRefreshKeepsTheWorkRepositoryScopeOut(t *testing.T) {
+	work, project := pointedRepos(t)
+	home := filepath.Join(filepath.Dir(work), "home")
+	t.Setenv("HOME", home)
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: "+pointedProjectID+"\ndefault_branch: main\nlanguage: en\n")
+	gitIn(t, project, "add", ".sdd/config.yaml")
+	gitIn(t, project, "commit", "-q", "-m", "chore: record the project")
+
+	runApp(t, work, "init", "--scope", "project", "--participant", "Ada")
+
+	projectConfig := readFile(t, filepath.Join(project, ".sdd", "config.yaml"))
+	if strings.Contains(projectConfig, "skill_scope: project") {
+		t.Errorf("the work repository's --scope should not reach the project's config:\n%s", projectConfig)
+	}
+	if _, statErr := os.Stat(filepath.Join(project, ".claude", "skills")); statErr == nil {
+		t.Error("the project should not receive project-scope skills it never chose")
 	}
 }

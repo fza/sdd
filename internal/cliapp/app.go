@@ -1809,11 +1809,11 @@ func initCmd() *cli.Command {
 				if err != nil {
 					return fmt.Errorf("prompt: %w", err)
 				}
-				if syncMode == model.SyncModeAuto && syncInterval == "" {
-					syncInterval, err = promptSyncInterval(cmd)
-					if err != nil {
-						return fmt.Errorf("prompt: %w", err)
-					}
+			}
+			if syncMode == model.SyncModeAuto && syncInterval == "" && (existingMerged == nil || existingMerged.Sync.Interval == "") && cliout.IsTerminalReader(cmd.Reader) {
+				syncInterval, err = promptSyncInterval(cmd)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
 				}
 			}
 

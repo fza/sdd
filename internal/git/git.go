@@ -332,14 +332,18 @@ func (Repositories) RootOf(dir string) (string, error) {
 	if ancestor == "" {
 		return "", nil
 	}
-	out, err := exec.Command("git", "-C", ancestor, "rev-parse", "--show-toplevel").CombinedOutput()
+	probe := exec.Command("git", "-C", ancestor, "rev-parse", "--show-toplevel")
+	probe.Env = append(os.Environ(), "LC_ALL=C")
+	var stderr strings.Builder
+	probe.Stderr = &stderr
+	out, err := probe.Output()
 	if err == nil {
 		return strings.TrimSpace(string(out)), nil
 	}
-	if strings.Contains(string(out), "not a git repository") {
+	if strings.Contains(stderr.String(), "not a git repository") {
 		return "", nil
 	}
-	return "", fmt.Errorf("finding the repository holding %s: %s (%w)", dir, strings.TrimSpace(string(out)), err)
+	return "", fmt.Errorf("finding the repository holding %s: %s (%w)", dir, strings.TrimSpace(stderr.String()), err)
 }
 
 func (Repositories) Init(dir string) error {
