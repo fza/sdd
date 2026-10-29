@@ -267,8 +267,8 @@ func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principa
 	return runtime, nil
 }
 
-// localDialogue reads dialogue.mode and the layer that sets it; the committed
-// config cannot set it (20261029-150854-d-tac-b2f).
+// localDialogue reads dialogue.mode and the layer that sets it; the
+// committed layer arrives without it (20261029-150854-d-tac-b2f).
 func localDialogue(sddDir string) (sdd.Dialogue, error) {
 	loc, err := repos.DefaultLocations()
 	if err != nil {
@@ -286,7 +286,7 @@ func localDialogue(sddDir string) (sdd.Dialogue, error) {
 		model.ConfigSourceGlobal: loc.ConfigPath,
 		model.ConfigSourceLocal:  filepath.Join(sddDir, "config.local.yaml"),
 	}
-	for _, value := range model.EffectiveConfigValues(global.BaseConfig, model.HonoredCommitted(committed), local) {
+	for _, value := range model.EffectiveConfigValues(global.BaseConfig, committed, local) {
 		if value.Key == "dialogue.mode" {
 			return sdd.Dialogue{Mode: value.Value, Source: sources[value.Source]}, nil
 		}
