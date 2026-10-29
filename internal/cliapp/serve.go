@@ -8,8 +8,9 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -18,8 +19,12 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/slogutils"
 
+	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/index"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
@@ -189,18 +194,86 @@ func localBearerAuth(token string, next http.Handler) http.Handler {
 	})
 }
 
-// localRuntimeAccess serves one repository and the dependencies its config
-// declares. Each dependency has two runtimes: the horizon member composing the
-// home view (dependencies), and the full project a move may work in (projects)
-// — its own declared dependencies, its own index namespace, no write authority
-// until the ephemeral clone of d-cpt-n8z exists (d-cpt-yjc). ListProjects
-// names the home alone, so a session still opens there without choosing.
+// localRuntimeAccess serves one repository and every connected repo its
+// dependency closure reaches. A dependency resolves to one runtime built on
+// demand from its cache, both as a member of a horizon and as a project a
+// move may work in: its own declared dependencies, its own index namespace,
+// no write authority until the ephemeral clone of d-cpt-n8z exists
+// (d-cpt-yjc). ListProjects names the home alone, so a session still opens
+// there without choosing.
 type localRuntimeAccess struct {
 	project      sdd.ProjectID
 	participant  string
 	runtime      *sdd.ProjectRuntime
-	dependencies map[string]*sdd.ProjectRuntime
-	projects     map[sdd.ProjectID]*sdd.ProjectRuntime
+	dependencies *cachedDependencies
+}
+
+// cachedDependencies builds a connected repo's runtime from its cache on
+// first use and keeps it; a repo that is not connected or not cached is
+// unavailable until it is. closure walks the served project's declarations
+// over the same caches.
+type cachedDependencies struct {
+	registry *repos.Registry
+	closure  *finders.Finder
+	build    func(repos.Cache, *model.PerRepoConfig) (*sdd.ProjectRuntime, error)
+
+	mu       sync.Mutex
+	runtimes map[sdd.RepoID]*sdd.ProjectRuntime
+}
+
+func (d *cachedDependencies) resolve(repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
+	if d == nil {
+		return nil, dependencyUnavailable()
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if runtime := d.runtimes[repoID]; runtime != nil {
+		return runtime, nil
+	}
+	cache, connected, err := d.registry.Cache(repoID)
+	if err != nil {
+		return nil, err
+	}
+	if !connected || !cache.Cloned() {
+		return nil, dependencyUnavailable()
+	}
+	cfg, err := cache.Config()
+	if errors.Is(err, meta.ErrNotAnSDDProject) {
+		cfg, err = &model.PerRepoConfig{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	runtime, err := d.build(cache, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if d.runtimes == nil {
+		d.runtimes = map[sdd.RepoID]*sdd.ProjectRuntime{}
+	}
+	d.runtimes[repoID] = runtime
+	return runtime, nil
+}
+
+// resolveMember resolves a project this process serves beyond its home: a
+// member of the served project's closure (20261026-194528-d-cpt-gcq), never a
+// repo merely connected on this machine.
+func (d *cachedDependencies) resolveMember(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
+	if d == nil {
+		return nil, dependencyUnavailable()
+	}
+	closure, err := d.closure.DependencyClosure(ctx, query.DependencyClosureQuery{})
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(closure, repoID) {
+		return nil, dependencyUnavailable()
+	}
+	return d.resolve(repoID)
+}
+
+func dependencyUnavailable() error {
+	return &sdd.ApplicationError{Code: sdd.ErrorProjectUnavailable, Message: "dependency unavailable"}
 }
 
 func (a *localRuntimeAccess) ResolvePrincipal(_ context.Context, identity sdd.RequestIdentity) (sdd.Principal, error) {
@@ -220,33 +293,27 @@ func (a *localRuntimeAccess) ListProjects(context.Context, sdd.Principal) (sdd.P
 	return sdd.ProjectList{Projects: []sdd.ProjectSummary{{ProjectRef: a.runtime.Project(), CanRead: true, CanWrite: true, State: sdd.ProjectReady}}}, nil
 }
 
-func (a *localRuntimeAccess) ResolveProject(_ context.Context, _ sdd.Principal, project sdd.ProjectID, _ sdd.Access) (*sdd.ProjectRuntime, error) {
+func (a *localRuntimeAccess) ResolveProject(ctx context.Context, _ sdd.Principal, project sdd.ProjectID, _ sdd.Access) (*sdd.ProjectRuntime, error) {
 	if project == a.project {
 		return a.runtime, nil
 	}
-	if runtime := a.projects[project]; runtime != nil {
-		return runtime, nil
-	}
-	return nil, &sdd.ApplicationError{Code: sdd.ErrorProjectUnavailable, Message: "project unavailable"}
+	// Locally a dependency's project ID is its repo ID.
+	return a.dependencies.resolveMember(ctx, sdd.RepoID(project))
 }
 
 func (a *localRuntimeAccess) AuthorizeSession(ctx context.Context, request sdd.SessionAccessRequest) error {
 	return sdd.OwnerOnly(ctx, request)
 }
 
-func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principal, _ sdd.ProjectID, dependency string) (*sdd.ProjectRuntime, error) {
-	runtime := a.dependencies[dependency]
-	if runtime == nil {
-		return nil, &sdd.ApplicationError{Code: sdd.ErrorProjectUnavailable, Message: "dependency unavailable"}
-	}
-	return runtime, nil
+func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principal, _ sdd.ProjectID, dependency sdd.RepoID) (*sdd.ProjectRuntime, error) {
+	return a.dependencies.resolve(dependency)
 }
 
 func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddDir string, cfg *model.PerRepoConfig, registry *repos.Registry, runner pkgllm.Runner) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
 	displayName := filepath.Base(filepath.Dir(sddDir))
 	participant := ""
 	language := ""
-	var dependencies []string
+	var dependencies []sdd.RepoID
 	if cfg != nil {
 		participant = cfg.Participant
 		language = cfg.Language
@@ -314,55 +381,36 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
+	var memberEmbedder embed.Embedder
+	if crossEmbedder.Embedder != nil {
+		memberEmbedder = crossEmbedder
+	}
 	access := &localRuntimeAccess{
 		project: project, participant: participant, runtime: runtime,
-		dependencies: map[string]*sdd.ProjectRuntime{}, projects: map[sdd.ProjectID]*sdd.ProjectRuntime{},
-	}
-	for _, dependency := range dependencies {
-		cacheDir, cacheErr := registry.CacheDir(dependency)
-		if cacheErr != nil {
-			return nil, "", sdd.RequestIdentity{}, cacheErr
-		}
-		// The same cache as a project of its own: its committed config supplies
-		// the graph layout, the language, and the dependencies its horizon is
-		// composed from. A cache without one is a graph at the default layout.
-		dependencyCfg, cfgErr := sdd.ReadProjectConfigFS(os.DirFS(cacheDir))
-		if cfgErr != nil && !errors.Is(cfgErr, sdd.ErrNotAnSDDProject) {
-			return nil, "", sdd.RequestIdentity{}, fmt.Errorf("reading config of dependency %s: %w", dependency, cfgErr)
-		}
-		if cfgErr != nil {
-			dependencyCfg.GraphDir = model.DefaultGraphDir
-		}
-		memberGraph, graphErr := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: sdd.ProjectID(dependency), GraphDir: filepath.Join(cacheDir, filepath.FromSlash(dependencyCfg.GraphDir))})
-		if graphErr != nil {
-			return nil, "", sdd.RequestIdentity{}, graphErr
-		}
-		// Connected stores are keyed by the connected repo's ID (the existing
-		// connected-repository storage contract) and exclude embedded entries,
-		// so binary-shipped base facts embed once per machine in the base store,
-		// not once per connected repo.
-		var memberEmbedder embed.Embedder
-		if crossEmbedder.Embedder != nil {
-			memberEmbedder = crossEmbedder
-		}
-		memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(dependency), cacheRoot, dependency)
-		options := sdd.ProjectRuntimeOptions{
-			Project: sdd.ProjectRef{ID: sdd.ProjectID(dependency), DisplayName: dependency}, Graph: memberGraph,
-			Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), LLM: runner,
-			ExcludeEmbeddedFromIndex: true,
-		}
-		member, runtimeErr := sdd.NewProjectRuntime(options)
-		if runtimeErr != nil {
-			return nil, "", sdd.RequestIdentity{}, runtimeErr
-		}
-		access.dependencies[dependency] = member
-		options.Language = dependencyCfg.Language
-		options.Dependencies = dependencyCfg.Dependencies
-		full, runtimeErr := sdd.NewProjectRuntime(options)
-		if runtimeErr != nil {
-			return nil, "", sdd.RequestIdentity{}, runtimeErr
-		}
-		access.projects[sdd.ProjectID(dependency)] = full
+		dependencies: &cachedDependencies{registry: registry, closure: finders.New(finders.Options{Config: cfg, Repos: registry}), build: func(cache repos.Cache, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
+			// The cache as a project of its own: its committed config supplies
+			// the graph layout, the language, and the dependencies its horizon
+			// is composed from.
+			graphDir, err := cache.GraphDir()
+			if err != nil {
+				return nil, err
+			}
+			memberGraph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: sdd.ProjectID(cache.RepoID), GraphDir: graphDir})
+			if err != nil {
+				return nil, err
+			}
+			// Connected stores are keyed by the connected repo's ID (the existing
+			// connected-repository storage contract) and exclude embedded entries,
+			// so binary-shipped base facts embed once per machine in the base
+			// store, not once per connected repo.
+			memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(cache.RepoID), cacheRoot, index.RepoKey(cache.RepoID, cache.Dir))
+			return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
+				Project: sdd.ProjectRef{ID: sdd.ProjectID(cache.RepoID), DisplayName: string(cache.RepoID)}, Graph: memberGraph,
+				Language: dependencyCfg.Language, Dependencies: dependencyCfg.Dependencies,
+				Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), LLM: runner,
+				ExcludeEmbeddedFromIndex: true,
+			})
+		}},
 	}
 	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: access, Sessions: sessions, StagedBlobs: blobs})
 	if err != nil {
@@ -422,7 +470,7 @@ func optionalSearchIndex(embeddings embed.Embedder, index sdd.SearchIndexStore) 
 // repoIDOf returns the committed repo_id, or "" when unconfigured — the input
 // to index.RepoKey, which hashes the repo root under the "local" namespace
 // when there is no declared ID.
-func repoIDOf(cfg *model.PerRepoConfig) string {
+func repoIDOf(cfg *model.PerRepoConfig) model.RepoID {
 	if cfg == nil {
 		return ""
 	}
