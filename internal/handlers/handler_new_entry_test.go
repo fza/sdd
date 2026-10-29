@@ -46,6 +46,14 @@ func (f *fakeReader) SkillStatus(ctx context.Context, q query.SkillStatusQuery) 
 	return &query.SkillStatusResult{}, nil
 }
 
+func (f *fakeReader) LocalRepoID() (model.RepoID, error) {
+	return "", nil
+}
+
+func (f *fakeReader) DeclaredDependencies(context.Context, model.RepoID) ([]model.RepoID, error) {
+	return nil, nil
+}
+
 // recordingCommitter captures commit calls so tests can assert whether a
 // commit was attempted. Set err to make Commit fail (the fail-loud path).
 type recordingCommitter struct {
