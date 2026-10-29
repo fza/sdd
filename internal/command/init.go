@@ -21,15 +21,29 @@ type InitCmd struct {
 	// Empty falls back to RepoRoot for non-Git callers and tests.
 	StableRepoRoot string
 
-	// GraphDir is the graph directory path relative to RepoRoot. Empty
-	// defaults to model.DefaultGraphDir (".sdd/graph").
+	// GraphDir is the graph directory path relative to RepoRoot, or to the
+	// project init sets up at ProjectDir. Empty defaults to
+	// model.DefaultGraphDir (".sdd/graph").
 	GraphDir string
 
 	// ProjectDir, when set, makes RepoRoot a work repository whose graph lives
 	// in the sdd project at this path (relative to RepoRoot or absolute):
-	// init writes only the pointer config and the agent surfaces, never a
-	// graph, meta.json or project settings.
+	// init writes only the pointer config and the agent surfaces in RepoRoot.
+	// A path holding no sdd project is first set up as one, in a repository
+	// of its own, configured by GraphDir and Language; beside an existing
+	// project those two are refused.
 	ProjectDir string
+
+	// SyncMode and SyncInterval, when set, record the person's graph sync
+	// settings in config.local.yaml of the project holding the graph, which
+	// is RepoRoot unless ProjectDir names another (20261027-211908-d-tac-l8j).
+	SyncMode     model.SyncMode
+	SyncInterval string
+
+	// SetUpProject allows init to set up a missing project at ProjectDir. Only
+	// a path the caller typed qualifies: a recorded project_dir names a shared
+	// project to clone, never one to create.
+	SetUpProject bool
 
 	// DefaultBranch is the concrete Git branch persisted for ordinary engine
 	// captures on fresh initialization or when upgrading an older config.
@@ -48,7 +62,7 @@ type InitCmd struct {
 	LocalConfigPath string
 
 	// Language is the graph authoring language (locale code) to record in
-	// .sdd/config.yaml on fresh init. Empty means "use the default behavior"
+	// .sdd/config.yaml on fresh init, the project's under ProjectDir. Empty means "use the default behavior"
 	// — FormatConfig keeps the commented hint, so the graph stays English.
 	// Only applied on fresh init; existing config.yaml is never rewritten.
 	Language string
@@ -149,6 +163,10 @@ type InitCmd struct {
 	// value already matches (idempotent re-init produces no callback).
 	OnParticipantWritten func(path, name string)
 
+	// OnLocalSettingWritten fires when init records another per-person
+	// setting, such as sync.mode, in .sdd/config.local.yaml.
+	OnLocalSettingWritten func(path, key, value string)
+
 	// OnRepoIDWritten fires when a derived repo_id is recorded in
 	// .sdd/config.yaml — on fresh init or as an upgrade upsert. Does not
 	// fire when the config already carries a value.
@@ -204,6 +222,11 @@ func (r AgentPruneResult) TouchedAnything() bool {
 func (c *InitCmd) Validate() error {
 	if c.RepoRoot == "" {
 		return fmt.Errorf("repo root is required")
+	}
+	settings := model.BaseConfig{Sync: model.SyncConfig{Mode: c.SyncMode, Interval: c.SyncInterval}}
+	ignored := model.IgnoredSettings(settings, false)
+	if len(ignored) > 0 {
+		return fmt.Errorf("%s: %s", ignored[0].Key, ignored[0].Reason)
 	}
 	return nil
 }

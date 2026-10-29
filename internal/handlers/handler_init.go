@@ -45,6 +45,10 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if graphDir == "" {
 		graphDir = model.DefaultGraphDir
 	}
+	err := gitignoreLine(graphDir)
+	if err != nil {
+		return fmt.Errorf("graph directory: %w", err)
+	}
 
 	sddDir := filepath.Join(cmd.RepoRoot, model.SDDDirName)
 	absGraphDir := filepath.Join(cmd.RepoRoot, graphDir)
@@ -234,9 +238,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	// longer lives in the tree (machine-global store, d-tac-nhx), so its
 	// gitignore entry is not emitted anymore; existing entries are harmless
 	// and left alone.
-	graphRuntimeEntry := filepath.ToSlash(filepath.Join(graphDir, ".sdd-runtime")) + "/"
-	gitignoreEntries := []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/", graphRuntimeEntry}
-	gitignoreAdded, err := ensureGitignoreEntries(gitignorePath, gitignoreEntries)
+	gitignoreAdded, err := ensureGitignoreEntries(gitignorePath, initGitignoreEntries(graphDir))
 	if err != nil {
 		log.Warn("could not update .gitignore", "path", gitignorePath, "err", err)
 	} else if gitignoreAdded {
@@ -269,7 +271,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	if err := writeParticipant(sddDir, cmd); err != nil {
+	if err := writeLocalSettings(sddDir, cmd); err != nil {
 		return err
 	}
 
@@ -754,6 +756,16 @@ func initCommitMessage(sddExisted bool) string {
 // present. Creates the file if it does not exist. Returns true when at least
 // one entry was added so the caller can decide whether to record the file
 // as touched.
+// gitignoreLine refuses an entry that would read as more than the one path it
+// names: graph_dir comes from a shared config, and a line break, a leading !
+// or # in it would add, negate or hide rules.
+func gitignoreLine(entry string) error {
+	if strings.ContainsAny(entry, "\r\n") || strings.HasPrefix(entry, "!") || strings.HasPrefix(entry, "#") {
+		return fmt.Errorf("refusing .gitignore entry %q: it reads as more than one path", entry)
+	}
+	return nil
+}
+
 func ensureGitignoreEntries(path string, entries []string) (bool, error) {
 	existing := make(map[string]bool)
 	var fileData []byte
@@ -770,6 +782,10 @@ func ensureGitignoreEntries(path string, entries []string) (bool, error) {
 
 	var toAdd []string
 	for _, e := range entries {
+		err := gitignoreLine(e)
+		if err != nil {
+			return false, err
+		}
 		if !existing[e] {
 			toAdd = append(toAdd, e)
 		}
@@ -929,4 +945,12 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 		}
 	}
 	return nil
+}
+
+// initGitignoreEntries lists the runtime paths init keeps out of git, the
+// same in a project and in a work repository pointing at it
+// (20261029-132740-d-tac-g32). graphDir is the project's graph_dir.
+func initGitignoreEntries(graphDir string) []string {
+	graphRuntimeEntry := filepath.ToSlash(filepath.Join(graphDir, ".sdd-runtime")) + "/"
+	return []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/", graphRuntimeEntry}
 }
