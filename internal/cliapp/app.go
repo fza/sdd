@@ -1589,7 +1589,7 @@ func initCmd() *cli.Command {
 				if err != nil {
 					return fmt.Errorf("reading the project's configuration before init: %w", err)
 				}
-				projectMissing = projectFiles == nil
+				projectMissing = projectFiles == nil && cmd.IsSet("project-dir")
 			}
 			freshGraph := !pointer && !sddExists || projectMissing
 			var existingMerged *model.PerRepoConfig
@@ -1736,6 +1736,7 @@ func initCmd() *cli.Command {
 				StableRepoRoot: stableRepoRoot,
 				GraphDir:       graphDir,
 				ProjectDir:     projectDir,
+				SetUpProject:   cmd.IsSet("project-dir"),
 				DefaultBranch:  defaultBranch,
 				Participant:    participant,
 				Language:       language,

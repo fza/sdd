@@ -225,7 +225,7 @@ func TestProjectDirMustNameAProjectThatDoesNotPointOn(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			mention: "run `sdd init` there first",
+			mention: "clone the project there",
 		},
 		{
 			name: "the project points on",

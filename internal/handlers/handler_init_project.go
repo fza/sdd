@@ -25,8 +25,8 @@ type ProjectRepositories interface {
 // setUpProject runs a plain init in projectRoot, which holds no sdd project
 // yet, giving it the repository of its own it needs (20261029-130154-d-tac-frl).
 func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget) error {
-	if h.projectRepos == nil || h.committerAt == nil {
-		return fmt.Errorf("%s: %w; run `sdd init` there first", cmd.ProjectDir, meta.ErrNotAProject)
+	if !cmd.SetUpProject || h.projectRepos == nil || h.committerAt == nil {
+		return fmt.Errorf("%s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", cmd.ProjectDir, meta.ErrNotAProject, cmd.ProjectDir)
 	}
 	root := h.projectRepos.RootOf(projectRoot)
 	if root == "" {
