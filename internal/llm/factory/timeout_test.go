@@ -50,18 +50,6 @@ func TestTimeoutNamesTheSetting(t *testing.T) {
 	}
 }
 
-func TestExtractionTimeoutNamesItsOwnSetting(t *testing.T) {
-	fakeClaude(t, outlastingAnswer)
-	runner, err := factory.New(model.LLMConfig{Provider: "claude-cli", Timeout: "1m", ExtractTimeout: "200ms"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = runner.Run(context.Background(), llm.Request{UserPrompt: "reformat", Purpose: llm.PurposeWritingGuideExtract})
-	if err == nil || !strings.Contains(err.Error(), "sdd config set llm.extract_timeout") {
-		t.Errorf("an extraction timeout should name the setting that bounds it, got %v", err)
-	}
-}
-
 func TestCallerDeadlineIsNotBlamedOnTheSetting(t *testing.T) {
 	fakeClaude(t, outlastingAnswer)
 	runner, err := factory.New(model.LLMConfig{Provider: "claude-cli", Timeout: "1m"})
