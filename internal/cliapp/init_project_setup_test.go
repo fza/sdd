@@ -126,6 +126,7 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 	cases := []struct {
 		name       string
 		projectDir string
+		recorded   bool
 		prepare    func(t *testing.T, work, project string)
 		args       []string
 		mention    string
@@ -134,6 +135,16 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 			name:       "language missing without a terminal",
 			projectDir: "../work-sdd",
 			mention:    "--language",
+		},
+		{
+			name:       "recorded pointer at a project not cloned",
+			projectDir: "../work-sdd",
+			recorded:   true,
+			prepare: func(t *testing.T, work, project string) {
+				writeFile(t, filepath.Join(work, ".sdd", "config.yaml"), "project_dir: ../work-sdd\nskill_scope: project\nsupported_agents: [claude]\n")
+			},
+			args:    []string{"--language", "en"},
+			mention: "clone the project there",
 		},
 		{
 			name:       "folder inside the work repository",
@@ -169,7 +180,11 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 			}
 			projectRoot := filepath.Join(work, tc.projectDir)
 
-			args := append([]string{"init", "--project-dir", tc.projectDir, "--scope", "project", "--participant", "Ada"}, tc.args...)
+			args := []string{"init", "--scope", "project", "--participant", "Ada"}
+			if !tc.recorded {
+				args = append(args, "--project-dir", tc.projectDir)
+			}
+			args = append(args, tc.args...)
 			_, err := runAppErr(t, work, args...)
 
 			if err == nil || !strings.Contains(err.Error(), tc.mention) {
