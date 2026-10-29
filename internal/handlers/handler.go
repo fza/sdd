@@ -34,6 +34,10 @@ type Reader interface {
 	// load and mutate it mid-write; the query stays pure intent.
 	Preflight(ctx context.Context, g *model.Graph, q query.PreflightQuery) (*query.PreflightResult, error)
 	SkillStatus(ctx context.Context, q query.SkillStatusQuery) (*query.SkillStatusResult, error)
+	// LocalRepoID and DeclaredDependencies are the root and the step of the
+	// dependency walk the refresh drives with its own side effect.
+	LocalRepoID() (model.RepoID, error)
+	DeclaredDependencies(ctx context.Context, repoID model.RepoID) ([]model.RepoID, error)
 }
 
 // Committer performs a git commit of the given paths with the given message.

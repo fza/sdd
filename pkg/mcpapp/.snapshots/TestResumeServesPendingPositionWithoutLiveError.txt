@@ -55,8 +55,6 @@ open_instances:
 
       **The branch you work on.** The session framing names the base branch — what the engine reads and writes while no branch is declared. When your work happens on another branch, declare it through the engine's session branch-binding capability; declare again whenever the branch you work on changes, and clear the declaration once you are back on the base. Where the base is where you work, declare nothing.
 
-
-
       **Reference facts available before composing or guessing.** Pull the relevant fact in full first:
       - `20260717-110000-s-prc-vwg` — How to compose graph views (view tool): layout grammar, filters, ranking, quoting, and examples
       - `20260812-180000-s-prc-typ` — Understanding the type system: how types, kinds, and layers fit together, which entry to draft when kinds compete, and where each kind's crafting guide lives
