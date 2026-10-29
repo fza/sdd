@@ -40,6 +40,11 @@ const (
 	// DefaultLLMTimeout bounds each LLM call when llm.timeout is unset.
 	DefaultLLMTimeout = "2m"
 
+	// DefaultClaudeCLITimeout replaces DefaultLLMTimeout for the claude-cli
+	// provider: `claude -p` returns nothing until its turn completes, and a
+	// writing-guide review of a 5 KB entry takes it over three minutes.
+	DefaultClaudeCLITimeout = "5m"
+
 	// DefaultRetryMaxAttempts is the total number of LLM call attempts
 	// (1 = no retry) when the gollm runner hits a transient failure. Five
 	// attempts ride out a connection blip or a short 429 without making an
@@ -137,6 +142,15 @@ type PerRepoConfig struct {
 	// dependency (clone URL, cache) is per-user and lives in the global
 	// config's repos list, never here.
 	Dependencies []RepoID `yaml:"dependencies,omitempty"`
+}
+
+// DefaultLLMTimeoutFor is the llm.timeout in effect for provider when none
+// is set; an empty provider means DefaultLLMProvider.
+func DefaultLLMTimeoutFor(provider string) string {
+	if provider == "" || provider == DefaultLLMProvider {
+		return DefaultClaudeCLITimeout
+	}
+	return DefaultLLMTimeout
 }
 
 // SyncConfig governs background sync awareness: the auto-fetch cooldown and
