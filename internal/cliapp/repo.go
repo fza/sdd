@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 
+	"github.com/networkteam/slogutils"
 	"github.com/urfave/cli/v3"
 
 	"github.com/networkteam/sdd/internal/cliout"
@@ -43,7 +44,8 @@ func repoCmd() *cli.Command {
 					// Result fields are captured in the callbacks and rendered
 					// after the transient view tears down — printing to stdout
 					// mid-view would corrupt the footer the coordinator owns.
-					var addedRepoID, addedCacheDir, declaredRepoID string
+					var addedRepoID, declaredRepoID model.RepoID
+					var addedCacheDir string
 					var alreadyDeclared, haveAdded, haveDeclared bool
 					// A phase-only reporter (no chunk total) so the footer label
 					// tracks the reported stage — connecting → cloning — rather
@@ -51,10 +53,10 @@ func repoCmd() *cli.Command {
 					reporter := cliout.NewReporter()
 					addCmd := &command.RepoAddCmd{
 						CloneURL: cmd.Args().First(),
-						OnAdded: func(repoID, cacheDir string) {
+						OnAdded: func(repoID model.RepoID, cacheDir string) {
 							addedRepoID, addedCacheDir, haveAdded = repoID, cacheDir, true
 						},
-						OnDeclared: func(repoID string, already bool) {
+						OnDeclared: func(repoID model.RepoID, already bool) {
 							declaredRepoID, alreadyDeclared, haveDeclared = repoID, already, true
 						},
 						OnPhase: reporter.SetPhase,
@@ -141,12 +143,12 @@ func repoCmd() *cli.Command {
 						return err
 					}
 					return h.RepoRemove(ctx, &command.RepoRemoveCmd{
-						RepoID: cmd.Args().First(),
+						RepoID: model.RepoID(cmd.Args().First()),
 						Force:  cmd.Bool("force"),
-						OnRemoved: func(repoID string) {
+						OnRemoved: func(repoID model.RepoID) {
 							fmt.Fprintf(cmd.Writer, "removed dependency %s from .sdd/config.yaml\n", repoID)
 						},
-						OnStranded: func(repoID string, stranded []command.StrandedRef) {
+						OnStranded: func(repoID model.RepoID, stranded []command.StrandedRef) {
 							fmt.Fprintf(cmd.ErrWriter, "warning: --force stranded %d ref(s) into %s:\n", len(stranded), repoID)
 							for _, s := range stranded {
 								fmt.Fprintf(cmd.ErrWriter, "  %s  %s  %s\n", s.EntryID, s.Kind, s.RefID)
@@ -165,8 +167,8 @@ func repoCmd() *cli.Command {
 						return err
 					}
 					return h.RepoSync(ctx, &command.RepoSyncCmd{
-						RepoIDs: cmd.Args().Slice(),
-						OnSynced: func(repoID string) {
+						RepoIDs: repoIDArgs(cmd.Args().Slice()),
+						OnSynced: func(repoID model.RepoID) {
 							fmt.Fprintf(cmd.Writer, "synced %s\n", repoID)
 						},
 					})
@@ -211,16 +213,38 @@ func repoHandler(errWriter io.Writer) (*handlers.Handler, error) {
 	}), nil
 }
 
-// freshenRepoCaches brings the named connected repos' caches up to date
-// before a read (lazy clone + cooldown pull). A no-op for an empty list.
-func freshenRepoCaches(ctx context.Context, errWriter io.Writer, repoIDs []string) error {
-	if len(repoIDs) == 0 {
+// repoIDArgs types repo IDs given as command-line text.
+func repoIDArgs(args []string) []model.RepoID {
+	if len(args) == 0 {
 		return nil
 	}
+	ids := make([]model.RepoID, len(args))
+	for i, arg := range args {
+		ids[i] = model.RepoID(arg)
+	}
+	return ids
+}
+
+// refreshDependencies refreshes the dependency closure's caches ahead of a
+// read that reaches beyond the local graph.
+func refreshDependencies(ctx context.Context, errWriter io.Writer) error {
 	h, err := repoHandler(errWriter)
 	if err != nil {
 		return err
 	}
-	_, err = h.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: repoIDs})
-	return err
+	return h.RefreshDependencyClosure(ctx, dependencyRefreshCmd(ctx))
+}
+
+// dependencyRefreshCmd logs what a refresh could not do as warnings; the read
+// proceeds on the caches as they stand.
+func dependencyRefreshCmd(ctx context.Context) command.RefreshDependencyClosureCmd {
+	logger := slogutils.FromContext(ctx)
+	return command.RefreshDependencyClosureCmd{
+		OnRefreshFailed: func(repoID model.RepoID, err error) {
+			logger.Warn("could not refresh dependency; reading its cache as it stands", "repo", repoID, "err", err)
+		},
+		OnUnconnected: func(repoID model.RepoID) {
+			logger.Warn("dependency is not connected on this machine; connect it with `sdd repo add <clone-url>`", "repo", repoID)
+		},
+	}
 }
