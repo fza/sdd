@@ -556,10 +556,11 @@ func showCmd() *cli.Command {
 				return fmt.Errorf("usage: sdd show <id> [id2 id3 ...]")
 			}
 
-			// Cross-repo IDs read through the connected-repos caches — bring
-			// those up to date first (lazy clone + cooldown pull), then load.
-			if err := freshenRepoCaches(ctx, cmd.ErrWriter, model.CrossRepoIDs(ids)); err != nil {
-				return err
+			// Cross-repo IDs read through the dependency caches; refresh them first.
+			if len(model.CrossRepoIDs(ids)) > 0 {
+				if err := refreshDependencies(ctx, cmd.ErrWriter); err != nil {
+					return err
+				}
 			}
 
 			g, err := loadGraph(cmd)
@@ -1773,7 +1774,7 @@ func initCmd() *cli.Command {
 				OnParticipantWritten: func(path, name string) {
 					fmt.Fprintf(cmd.Writer, "  participant: %s → %s\n", name, path)
 				},
-				OnRepoIDWritten: func(repoID string) {
+				OnRepoIDWritten: func(repoID model.RepoID) {
 					fmt.Fprintf(cmd.Writer, "  repo_id: %s\n", repoID)
 				},
 				OnSkillsInstalled: func(result command.SkillInstallResult) {
