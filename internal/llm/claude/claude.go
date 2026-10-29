@@ -32,9 +32,12 @@ func (r *Runner) identity() llm.Identity {
 // Run executes claude -p --output-format json and parses the JSON response.
 // The claude CLI accepts a single stdin payload, so SystemPrompt and
 // UserPrompt are concatenated — prompt caching is not available through this
-// transport.
+// transport. The calls are text reviews, so the CLI runs with no tools at
+// all: `--tools ""` removes the built-in ones and `--strict-mcp-config` the
+// configured MCP servers, whose tool definitions would otherwise load in full
+// into every prompt. A draft's text then has nothing to act through.
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
-	cmd := exec.CommandContext(ctx, "claude", "-p", "--model", r.model, "--output-format", "json")
+	cmd := exec.CommandContext(ctx, "claude", "-p", "--tools", "", "--strict-mcp-config", "--model", r.model, "--output-format", "json")
 	cmd.Stdin = strings.NewReader(req.Combined())
 	out, err := cmd.Output()
 	if err != nil {
