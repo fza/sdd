@@ -13,14 +13,16 @@ import (
 )
 
 // NewRepositoryTargets opens configured graph readers and Git-backed mutation
-// targets. Each acquisition rereads the global, committed and local config.
-func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPath string) (*GitWorktreeAcquirer, error) {
+// targets. Each acquisition rereads the global, committed and local config;
+// a non-empty localConfigPath stands in for every checkout's
+// .sdd/config.local.yaml.
+func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPath, localConfigPath string) (*GitWorktreeAcquirer, error) {
 	resolveConfig := func(checkout string) (*model.PerRepoConfig, error) {
 		global, err := repos.LoadConfigFrom(globalConfigPath)
 		if err != nil {
 			return nil, err
 		}
-		cfg, err := meta.ResolveConfig(global.BaseConfig, filepath.Join(checkout, model.SDDDirName), "")
+		cfg, err := meta.ResolveConfig(global.BaseConfig, filepath.Join(checkout, model.SDDDirName), localConfigPath)
 		if err != nil {
 			return nil, err
 		}

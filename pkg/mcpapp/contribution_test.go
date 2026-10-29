@@ -55,7 +55,7 @@ func contributionServer(t *testing.T) (*mcpserver.Server, string, string) {
 	global := filepath.Join(repo, "global.yaml")
 	write(global, "")
 
-	targets, err := localadapter.NewRepositoryTargets("test", repo, global)
+	targets, err := localadapter.NewRepositoryTargets("test", repo, global, "")
 	if err != nil {
 		t.Fatal(err)
 	}
