@@ -415,6 +415,14 @@ func TestInitRefusesAPointerItCannotHonour(t *testing.T) {
 			mention: "--language",
 		},
 		{
+			name: "project graph_dir reading as more than one ignore rule",
+			prepare: func(t *testing.T, work, project string) {
+				writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: \"graph\\n!secret.txt\"\nrepo_id: "+pointedProjectID+"\ndefault_branch: main\nlanguage: en\n")
+			},
+			args:    []string{"init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada"},
+			mention: "reads as more than one path",
+		},
+		{
 			name: "work repository configured as a project",
 			prepare: func(t *testing.T, work, project string) {
 				writeFile(t, filepath.Join(work, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/work\n")

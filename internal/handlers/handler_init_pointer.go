@@ -71,6 +71,12 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 		return err
 	}
 
+	if projectCfg != nil {
+		err = gitignoreLine(projectCfg.GraphDir)
+		if err != nil {
+			return fmt.Errorf("graph_dir in %s: %w", projectSDDDir, err)
+		}
+	}
 	if projectCfg == nil {
 		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents)
 	} else {

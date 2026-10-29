@@ -200,6 +200,12 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 			mention: "without config.yaml",
 		},
 		{
+			name:       "graph directory reading as an ignore negation",
+			projectDir: "../work-sdd",
+			args:       []string{"--language", "en", "--graph-dir", "!graph"},
+			mention:    "reads as more than one path",
+		},
+		{
 			name:       "unknown sync mode",
 			projectDir: "../work-sdd",
 			args:       []string{"--language", "en", "--sync-mode", "sometimes"},

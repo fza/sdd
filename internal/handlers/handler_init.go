@@ -752,6 +752,16 @@ func initCommitMessage(sddExisted bool) string {
 // present. Creates the file if it does not exist. Returns true when at least
 // one entry was added so the caller can decide whether to record the file
 // as touched.
+// gitignoreLine refuses an entry that would read as more than the one path it
+// names: graph_dir comes from a shared config, and a line break, a leading !
+// or # in it would add, negate or hide rules.
+func gitignoreLine(entry string) error {
+	if strings.ContainsAny(entry, "\r\n") || strings.HasPrefix(entry, "!") || strings.HasPrefix(entry, "#") {
+		return fmt.Errorf("refusing .gitignore entry %q: it reads as more than one path", entry)
+	}
+	return nil
+}
+
 func ensureGitignoreEntries(path string, entries []string) (bool, error) {
 	existing := make(map[string]bool)
 	var fileData []byte
@@ -768,6 +778,10 @@ func ensureGitignoreEntries(path string, entries []string) (bool, error) {
 
 	var toAdd []string
 	for _, e := range entries {
+		err := gitignoreLine(e)
+		if err != nil {
+			return false, err
+		}
 		if !existing[e] {
 			toAdd = append(toAdd, e)
 		}

@@ -50,6 +50,10 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 	if !filepath.IsAbs(absGraphDir) {
 		absGraphDir = filepath.Join(projectRoot, absGraphDir)
 	}
+	err = gitignoreLine(graphDir)
+	if err != nil {
+		return fmt.Errorf("--graph-dir: %w", err)
+	}
 	if !within(absGraphDir, projectRoot) {
 		return fmt.Errorf("--graph-dir %s leads out of the project at %s; the graph lives inside its project", cmd.GraphDir, cmd.ProjectDir)
 	}
