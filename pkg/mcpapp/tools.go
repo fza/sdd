@@ -261,19 +261,19 @@ type StageAttachmentResult struct {
 // --- free reads -------------------------------------------------------------
 
 type SearchArgs struct {
-	IncludesRevision  string   `json:"includes_revision,omitempty" jsonschema:"require a selected revision containing this successful write"`
-	Session           string   `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch"`
-	Project           string   `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
-	Terms             []string `json:"terms,omitempty" jsonschema:"text mode: regex terms combined with AND"`
-	Query             string   `json:"query,omitempty" jsonschema:"vector mode: free-form phrase (requires a configured embedding provider); both together run hybrid"`
-	Type              string   `json:"type,omitempty" jsonschema:"filter: s/signal or d/decision"`
-	Layer             string   `json:"layer,omitempty" jsonschema:"filter: stg, cpt, tac, ops, prc"`
-	Kind              string   `json:"kind,omitempty" jsonschema:"filter: entry kind"`
-	IncludeSuperseded bool     `json:"include_superseded,omitempty"`
-	Limit             int      `json:"limit,omitempty" jsonschema:"hit cap; default 8"`
-	MaxCitations      *int     `json:"max_citations,omitempty" jsonschema:"citation snippet lines per entry; omitted = 1 (the strongest matching chunk, the match evidence), 0 = headers only"`
-	Repos             []string `json:"repos,omitempty" jsonschema:"also search these connected repos by repo-id (additive to the local graph)"`
-	AllRepos          bool     `json:"all_repos,omitempty" jsonschema:"also search every connected repo"`
+	IncludesRevision  string       `json:"includes_revision,omitempty" jsonschema:"require a selected revision containing this successful write"`
+	Session           string       `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch"`
+	Project           string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
+	Terms             []string     `json:"terms,omitempty" jsonschema:"text mode: regex terms combined with AND"`
+	Query             string       `json:"query,omitempty" jsonschema:"vector mode: free-form phrase (requires a configured embedding provider); both together run hybrid"`
+	Type              string       `json:"type,omitempty" jsonschema:"filter: s/signal or d/decision"`
+	Layer             string       `json:"layer,omitempty" jsonschema:"filter: stg, cpt, tac, ops, prc"`
+	Kind              string       `json:"kind,omitempty" jsonschema:"filter: entry kind"`
+	IncludeSuperseded bool         `json:"include_superseded,omitempty"`
+	Limit             int          `json:"limit,omitempty" jsonschema:"hit cap; default 8"`
+	MaxCitations      *int         `json:"max_citations,omitempty" jsonschema:"citation snippet lines per entry; omitted = 1 (the strongest matching chunk, the match evidence), 0 = headers only"`
+	Repos             []sdd.RepoID `json:"repos,omitempty" jsonschema:"also search these repos of the project's dependency closure by repo-id (additive to the local graph)"`
+	AllRepos          bool         `json:"all_repos,omitempty" jsonschema:"also search every repo in the project's dependency closure"`
 }
 
 type SearchResult struct {
@@ -283,11 +283,11 @@ type SearchResult struct {
 }
 
 type ViewArgs struct {
-	Session  string   `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch"`
-	Project  string   `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
-	Layout   string   `json:"layout" jsonschema:"sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'"`
-	Repos    []string `json:"repos,omitempty" jsonschema:"also render the layout over these connected repos' graphs (additive to the local graph)"`
-	AllRepos bool     `json:"all_repos,omitempty" jsonschema:"also render the layout over every connected repo"`
+	Session  string       `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch"`
+	Project  string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
+	Layout   string       `json:"layout" jsonschema:"sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'"`
+	Repos    []sdd.RepoID `json:"repos,omitempty" jsonschema:"also render the layout over these repos of the project's dependency closure (additive to the local graph)"`
+	AllRepos bool         `json:"all_repos,omitempty" jsonschema:"also render the layout over every repo in the project's dependency closure"`
 }
 
 type ViewResult struct {
@@ -463,7 +463,7 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "info",
-		Description: "Session framing header for the session named by session (required): project, local participant, configured language, available search modes, and actionable recovery notices.",
+		Description: "Session framing header for the session named by session (required): project, local participant, configured language, and available search modes.",
 	}, toolBoundary(s.info))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
@@ -922,7 +922,7 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, args ViewAr
 	// An empty result must never reach an agent as a blank string — it cannot
 	// tell "matched nothing" from a broken call. Say so, and when a participant
 	// filter came up empty (exact-match miss), name the participants the graph
-	// knows. Any rendered content (e.g. recovery notices) is kept below.
+	// knows. Any rendered content is kept below.
 	if result.MatchedCount == 0 {
 		msg := emptyViewMessage(result.KnownParticipants)
 		if strings.TrimSpace(sections) == "" {
