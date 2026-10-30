@@ -407,11 +407,23 @@ func (s *Session) StartErr(t *testing.T, canonical string, params map[string]any
 // Stage places bytes in the session's staged scratch and returns the handle.
 func (s *Session) Stage(t *testing.T, filename string, content []byte) string {
 	t.Helper()
-	handle, err := s.WF.StageAttachment(t.Context(), s.World.Identity, filename, content)
+	return s.StageFile(t, filename, content).Handle
+}
+
+// StageFile is Stage returning the whole staging answer.
+func (s *Session) StageFile(t *testing.T, filename string, content []byte) sdd.StagedFile {
+	t.Helper()
+	staged, err := s.StageErr(t, filename, content)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return handle
+	return staged
+}
+
+// StageErr is Stage for tests asserting the failure.
+func (s *Session) StageErr(t *testing.T, filename string, content []byte) (sdd.StagedFile, error) {
+	t.Helper()
+	return s.WF.StageAttachment(t.Context(), s.World.Identity, filename, content)
 }
 
 // StartChild starts a procedure under a spawning parent, so a dispatch seed

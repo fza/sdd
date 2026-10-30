@@ -2,6 +2,7 @@ package mcpapp_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1242,6 +1243,52 @@ func TestStagedAttachmentEditAndRead(t *testing.T) {
 	}, &page)
 	if page.Content != "alpha BETA gamma" {
 		t.Fatalf("refused edit must leave the staged file unchanged, got %q", page.Content)
+	}
+}
+
+// TestStagedAttachmentHashesRawBytes pins the staging answer's sha256
+// (20261030-121523-d-tac-isy): the raw bytes as read from a path, header,
+// CRLF and byte order mark included, then the patched bytes; the path itself
+// is only read.
+func TestStagedAttachmentHashesRawBytes(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+	raw := "\uFEFF---\r\nlayer: tactical\r\n---\r\nBody line.\r\n"
+	path := filepath.Join(t.TempDir(), "draft.md")
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var staged mcpserver.StageAttachmentResult
+	call(t, cs, "stage_attachment", map[string]any{"session": session, "name": "draft.md", "path": path}, &staged)
+	if want := fmt.Sprintf("%x", sha256.Sum256([]byte(raw))); staged.SHA256 != want {
+		t.Errorf("staging by path should answer the sha256 of the file's raw bytes, got %q", staged.SHA256)
+	}
+
+	call(t, cs, "stage_attachment", map[string]any{
+		"session": session, "name": "draft.md",
+		"patches": []map[string]any{{"old": "Body line.", "new": "Patched line."}},
+	}, &staged)
+	patched := strings.Replace(raw, "Body line.", "Patched line.", 1)
+	if want := fmt.Sprintf("%x", sha256.Sum256([]byte(patched))); staged.SHA256 != want {
+		t.Errorf("a staging patch should answer the sha256 of the patched bytes, got %q", staged.SHA256)
+	}
+
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != raw || !after.ModTime().Equal(before.ModTime()) {
+		t.Error("staging and patching should never write the source file")
 	}
 }
 

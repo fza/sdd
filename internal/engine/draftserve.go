@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 
@@ -214,4 +215,18 @@ func compactJSON(v any) string {
 		return ""
 	}
 	return string(b)
+}
+
+// draftChangedUnserved reports whether the step's draft differs from the one
+// it last served this instance. Only a write that serves nothing (Update)
+// leaves them apart; a base forgotten by a restart reports no change.
+func draftChangedUnserved(inst *Instance, step *Step) bool {
+	if len(step.ServeDelta) == 0 {
+		return false
+	}
+	served, ok := inst.draftServed[step.ID]
+	if !ok {
+		return false
+	}
+	return !maps.Equal(served, draftSnapshot(inst, step.ServeDelta))
 }

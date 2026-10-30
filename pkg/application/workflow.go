@@ -600,6 +600,11 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	)
 	chooser, hasChooser := request.Report["chooser"].(string)
 	choice, hasChoice := request.Report["choice"].(string)
+	if request.Report != nil {
+		if err := w.applyStagedBody(ctx, identity, request, hasChooser && hasChoice && chooser != "" && choice != ""); err != nil {
+			return nil, err
+		}
+	}
 	if request.CancelRef != 0 {
 		serve, err = w.session.Cancel(request.Instance, request.CancelRef)
 	} else if request.RetryRef != 0 {
@@ -754,21 +759,31 @@ func (w *WorkflowSession) Park(ctx context.Context, identity RequestIdentity, in
 	return WorkflowParkResult{Instance: inst.ID, Procedure: inst.Spec.Canonical, Step: inst.Step, Base: base}, nil
 }
 
-func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestIdentity, filename string, content []byte) (string, error) {
+// StageAttachment stages content under filename. A running capture taking its
+// body from that handle gets the new body and hash; a header contradicting it
+// refuses the staging.
+func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestIdentity, filename string, content []byte) (StagedFile, error) {
 	w.setOperation(ctx, identity)
+	if err := w.checkRestagedBody(filename, content); err != nil {
+		return StagedFile{}, err
+	}
 	blob, err := w.app.StageBlob(ctx, identity, w.project, SessionRef{Subject: w.binding.Subject, Session: w.binding.SessionID}, filename, content)
 	if err != nil {
-		return "", err
+		return StagedFile{}, err
 	}
 	payload, err := json.Marshal(map[string]string{"handle": filename, "blob_id": blob.ID})
 	if err != nil {
-		return "", err
+		return StagedFile{}, err
 	}
 	if err := w.appendStoredEvent(workflowStagedBlobCode, payload); err != nil {
-		return "", err
+		return StagedFile{}, err
 	}
 	w.staged[filename] = blob.ID
-	return filename, nil
+	bound, err := w.syncRestagedBody(filename, content)
+	if err != nil {
+		return StagedFile{}, err
+	}
+	return StagedFile{Handle: filename, SHA256: stagedSHA256(content), Bound: bound}, nil
 }
 
 // EditStagedAttachment applies ordered exact search-replace pairs to a staged
@@ -776,18 +791,17 @@ func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestI
 // so a small correction costs neither a full re-stage nor a full re-read
 // (20260826-120330-d-tac-8f8). Atomic: a failing pair names itself and the
 // staged file stays unchanged.
-func (w *WorkflowSession) EditStagedAttachment(ctx context.Context, identity RequestIdentity, handle string, pairs []types.PatchPair) error {
+func (w *WorkflowSession) EditStagedAttachment(ctx context.Context, identity RequestIdentity, handle string, pairs []types.PatchPair) (StagedFile, error) {
 	w.setOperation(ctx, identity)
 	current, err := w.readStagedBlob(ctx, identity, handle)
 	if err != nil {
-		return err
+		return StagedFile{}, err
 	}
 	patched, err := textpatch.Apply(string(current), pairs)
 	if err != nil {
-		return fmt.Errorf("editing staged %q: %w (nothing applied; the staged file is unchanged)", handle, err)
+		return StagedFile{}, fmt.Errorf("editing staged %q: %w (nothing applied; the staged file is unchanged)", handle, err)
 	}
-	_, err = w.StageAttachment(ctx, identity, handle, []byte(patched))
-	return err
+	return w.StageAttachment(ctx, identity, handle, []byte(patched))
 }
 
 // ReadStagedAttachment returns one bounded page of a staged file by handle,
