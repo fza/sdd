@@ -314,9 +314,9 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 		if err != nil {
 			return fmt.Errorf("selecting init paths to commit: %w", err)
 		}
-		leftover, err = h.tracker.Uncommitted(ctx, leftover)
+		leftover, err = h.trustedLeftover(ctx, record, leftover)
 		if err != nil {
-			return fmt.Errorf("selecting the paths an earlier init left uncommitted: %w", err)
+			return err
 		}
 	}
 	for _, path := range leftover {

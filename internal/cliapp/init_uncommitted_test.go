@@ -133,3 +133,46 @@ func TestInitCompletesARefusedCommitInTheProjectRepository(t *testing.T) {
 		t.Errorf("a landed commit should remove the project's record: %v", statErr)
 	}
 }
+
+func TestInitRefusesARecordItCannotTrust(t *testing.T) {
+	cases := []struct {
+		name    string
+		record  string
+		prepare func(t *testing.T, repo string)
+	}{
+		{name: "the repository root", record: ".\n"},
+		{name: "a path outside the repository", record: "../outside.txt\n"},
+		{name: "an absolute path", record: "/etc/hosts\n"},
+		{name: "an unclean path", record: ".claude/../.env\n"},
+		{
+			name:   "a record git tracks",
+			record: ".env\n",
+			prepare: func(t *testing.T, repo string) {
+				gitIn(t, repo, "add", "-f", uncommittedRecord(repo))
+				gitIn(t, repo, "commit", "-q", "-m", "chore: ship a record")
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := canonicalTemp(t)
+			initRepo(t, repo)
+			runApp(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada")
+			writeFile(t, filepath.Join(repo, ".env"), "TOKEN=x\n")
+			writeFile(t, uncommittedRecord(repo), tc.record)
+			if tc.prepare != nil {
+				tc.prepare(t, repo)
+			}
+			head := gitIn(t, repo, "rev-parse", "HEAD")
+
+			_, err := runAppErr(t, repo, "init")
+
+			if err == nil {
+				t.Error("init should refuse a record it cannot trust")
+			}
+			if gitIn(t, repo, "rev-parse", "HEAD") != head {
+				t.Error("a refused record should commit nothing")
+			}
+		})
+	}
+}
