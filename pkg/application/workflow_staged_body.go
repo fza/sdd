@@ -42,10 +42,11 @@ func takesStagedBody(inst *engine.Instance) bool {
 }
 
 // stagedBodyFields resolves the staged body a report names or keeps bound. It
-// refuses what a report may not carry beside a staged body and a header
-// stating a reported field otherwise, and returns body, bodyHash and
-// bodyHandle to write when the report names a handle; nil when nothing is to
-// be written.
+// refuses what a report may not carry beside a staged body, and returns body,
+// bodyHash and bodyHandle to write when the report names a handle; nil when
+// nothing is to be written. Header and fields are compared at the confirm
+// only, so the two halves of a header edit can arrive in either order
+// (20261030-174307-d-tac-r7k).
 func (w *WorkflowSession) stagedBodyFields(ctx context.Context, identity RequestIdentity, inst *engine.Instance, fields map[string]any) (map[string]any, error) {
 	if !takesStagedBody(inst) {
 		return nil, nil
@@ -74,18 +75,49 @@ func (w *WorkflowSession) stagedBodyFields(ctx context.Context, identity Request
 		}
 		return nil, fmt.Errorf("field %q cannot change a body taken from the staged file %q: patch the staged file with stage_attachment, or report %q null to draft the body inline", inline, handle, fieldBodyHandle)
 	}
+	if !reportsHandle {
+		return nil, nil
+	}
 	content, err := w.readStagedBlob(ctx, identity, handle)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", fieldBodyHandle, err)
 	}
-	header, body := model.SplitStagedBody(string(content))
-	if err := stagedHeaderAgrees(header, handle, inst, fields); err != nil {
-		return nil, err
-	}
-	if !reportsHandle {
-		return nil, nil
-	}
+	_, body := model.SplitStagedBody(string(content))
 	return map[string]any{fieldBodyHandle: handle, fieldBody: body, fieldBodyHash: stagedSHA256(content)}, nil
+}
+
+// checkStagedHeaderAtConfirm refuses a confirm while the header of the staged
+// file a capture takes its body from states a field otherwise than the
+// capture holds it, before the answer is recorded.
+func (w *WorkflowSession) checkStagedHeaderAtConfirm(ctx context.Context, identity RequestIdentity, inst *engine.Instance, chooser, choice string) error {
+	if !takesStagedBody(inst) || !callsConfirmPlayback(inst.Spec, chooser, choice) {
+		return nil
+	}
+	bound, _ := inst.Store.Get(fieldBodyHandle)
+	handle, _ := bound.(string)
+	if handle == "" {
+		return nil
+	}
+	content, err := w.readStagedBlob(ctx, identity, handle)
+	if err != nil {
+		return fmt.Errorf("%s: %w", fieldBodyHandle, err)
+	}
+	header, _ := model.SplitStagedBody(string(content))
+	return stagedHeaderAgrees(header, handle, inst, nil)
+}
+
+func callsConfirmPlayback(spec *engine.Spec, chooser, choice string) bool {
+	for _, step := range spec.Steps {
+		if step.ID != chooser {
+			continue
+		}
+		for _, option := range step.Options {
+			if option.Choice == choice {
+				return option.Call == "confirmPlayback"
+			}
+		}
+	}
+	return false
 }
 
 // stagedHeaderAgrees refuses a header key stating a report field otherwise
@@ -107,7 +139,7 @@ func stagedHeaderAgrees(header map[string]any, handle string, inst *engine.Insta
 		}
 	}
 	if key, mismatch := model.StagedHeaderMismatch(header, reported); mismatch {
-		return fmt.Errorf("the header of the staged file %q states %q otherwise than the report; make them agree", handle, key)
+		return fmt.Errorf("the header of the staged file %q states %q otherwise than the capture: re-stage the file or report %q so they agree, then confirm", handle, key, key)
 	}
 	return nil
 }
@@ -123,6 +155,12 @@ func (w *WorkflowSession) applyStagedBody(ctx context.Context, identity RequestI
 	fields := request.Report
 	if answer {
 		fields, _ = request.Report["fields"].(map[string]any)
+		chooser, _ := request.Report["chooser"].(string)
+		choice, _ := request.Report["choice"].(string)
+		err := w.checkStagedHeaderAtConfirm(ctx, identity, inst, chooser, choice)
+		if err != nil {
+			return err
+		}
 	}
 	resolved, err := w.stagedBodyFields(ctx, identity, inst, fields)
 	if err != nil || resolved == nil {
@@ -134,9 +172,10 @@ func (w *WorkflowSession) applyStagedBody(ctx context.Context, identity RequestI
 	return nil
 }
 
-// checkRestagedBody refuses a staging whose header contradicts a running
-// capture taking its body from the handle, before anything is staged.
-func (w *WorkflowSession) checkRestagedBody(handle string, content []byte) error {
+// checkRestagedBody refuses staging a file a running capture takes its body
+// from while an operation of the session is unfinished, before anything is
+// staged.
+func (w *WorkflowSession) checkRestagedBody(handle string) error {
 	bound := w.boundCaptures(handle)
 	if len(bound) == 0 {
 		return nil
@@ -146,12 +185,6 @@ func (w *WorkflowSession) checkRestagedBody(handle string, content []byte) error
 	}
 	if pending := w.session.PendingMutation(); pending != nil {
 		return fmt.Errorf("capture %s takes its body from %q, and the operation %q in this session is unfinished: continue or cancel it before staging that file again", bound[0].ID, handle, pending.Command)
-	}
-	header, _ := model.SplitStagedBody(string(content))
-	for _, inst := range bound {
-		if err := stagedHeaderAgrees(header, handle, inst, nil); err != nil {
-			return fmt.Errorf("capture %s: %w", inst.ID, err)
-		}
 	}
 	return nil
 }
