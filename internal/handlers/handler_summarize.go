@@ -42,16 +42,13 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 	// resolution reassigns cmd.EntryIDs below.
 	isAll := len(cmd.EntryIDs) == 0
 
-	schema, err := h.resolveWriteSchema(ctx)
+	err = h.checkWriteSchema(ctx)
 	if err != nil {
 		return err
 	}
 
 	// Explicit-text path: single entry, no LLM call.
 	if cmd.ExplicitText != nil || cmd.ExplicitTitle != nil {
-		if cmd.ExplicitTitle != nil && !schema.capabilities.Titles {
-			return schema.refuseTitle()
-		}
 		if len(cmd.EntryIDs) != 1 {
 			return fmt.Errorf("--text and --title require exactly one entry ID (no --all, no multi-entry batches)")
 		}
@@ -109,7 +106,7 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 	// writes, so the planned count is known up front.
 	var planned []*model.Entry
 	for _, entry := range entries {
-		if isAll && !cmd.Force && entry.Summary != "" && (entry.Title != "" || !schema.capabilities.Titles) {
+		if isAll && !cmd.Force && entry.Summary != "" && entry.Title != "" {
 			if cmd.OnSkipped != nil {
 				cmd.OnSkipped(entry.ID)
 			}
@@ -164,9 +161,7 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 			// Apply the answer under write lock, then format and write file
 			// under read lock so FormatFrontmatter sees a consistent entry.
 			graphMu.Lock()
-			if schema.capabilities.Titles {
-				entry.Title = result.Title
-			}
+			entry.Title = result.Title
 			if !titleOnly {
 				entry.Summary = result.Summary
 			}
