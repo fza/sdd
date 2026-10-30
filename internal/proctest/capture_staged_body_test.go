@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/proctest"
+	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/application/types"
 )
 
@@ -100,12 +101,6 @@ func TestCapture_StagedBodyRefusals(t *testing.T) {
 				return draft
 			},
 			want: "cannot be reported",
-		},
-		{
-			name:   "a header stating a reported field otherwise",
-			file:   "---\nconfidence: high\n---\nBody.\n",
-			report: stagedBodyDraft,
-			want:   `"confidence"`,
 		},
 	}
 	for _, tt := range tests {
@@ -208,19 +203,72 @@ func TestCapture_RestagedBodyReopensConfirmedPlayback(t *testing.T) {
 	}
 }
 
-func TestCapture_RestageContradictingABoundCaptureIsRefused(t *testing.T) {
-	_, session := newCaptureWorld(t, "staged-body-contradiction")
-	staged := session.StageFile(t, "draft.md", []byte(stagedBodyFile))
+func TestCapture_HeaderDisagreeingAtTheConfirmIsRefused(t *testing.T) {
+	_, session := newCaptureWorld(t, "staged-body-header-confirm")
+	handle := session.Stage(t, "draft.md", []byte("---\nconfidence: high\n---\nA tactical gap with a header.\n"))
 	serve := session.Start(t, "capture", nil)
-	session.Report(t, serve.Instance, stagedBodyDraft(staged.Handle))
+	instance := serve.Instance
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
 
-	_, err := session.StageErr(t, staged.Handle, []byte("---\nlayer: strategic\n---\nOther body.\n"))
-	if err == nil || !strings.Contains(err.Error(), `"layer"`) {
-		t.Fatalf("a re-stage contradicting the bound capture should be refused naming the key, got %v", err)
+	_, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "capture it")
+	if err == nil || !strings.Contains(err.Error(), `"confidence"`) {
+		t.Fatalf("a confirm while header and fields disagree should be refused naming the key, got %v", err)
 	}
-	page, _, err := session.WF.ReadStagedAttachment(t.Context(), session.World.Identity, staged.Handle, 0, 0)
-	if err != nil || string(page.Content) != stagedBodyFile {
-		t.Errorf("a refused re-stage should leave the staged file as it was, got %q (%v)", page.Content, err)
+	position, err := session.WF.ServeAll(t.Context(), session.World.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, open := range position.Open {
+		if open.Instance == instance && open.Step != "playback" {
+			t.Errorf("a refused confirm should leave the capture at playback, got %q", open.Step)
+		}
+	}
+}
+
+// answerPlayback answers playback, once more when the answer met a re-staged
+// body not yet served and was turned into a fresh playback instead.
+func answerPlayback(t *testing.T, session *proctest.Session, instance, choice string, fields map[string]any) *sdd.WorkflowServe {
+	t.Helper()
+	serve := session.Answer(t, instance, "playback", choice, fields, "as discussed")
+	if hasDiagnostic(serve, "not answered") {
+		serve = session.Answer(t, instance, "playback", choice, fields, "as discussed")
+	}
+	return serve
+}
+
+func TestCapture_HeaderFieldEditInEitherOrder(t *testing.T) {
+	const restaged = "---\nentryKind: gap\nlayer: strategic\n---\nA strategic gap after the edit.\n"
+	edits := map[string]func(t *testing.T, session *proctest.Session, instance, handle string){
+		"re-stage first": func(t *testing.T, session *proctest.Session, instance, handle string) {
+			session.Stage(t, handle, []byte(restaged))
+			proctest.RequireStep(t, answerPlayback(t, session, instance, "adjust", map[string]any{"layer": "strategic"}), "playback")
+		},
+		"report first": func(t *testing.T, session *proctest.Session, instance, handle string) {
+			proctest.RequireStep(t, answerPlayback(t, session, instance, "adjust", map[string]any{"layer": "strategic"}), "playback")
+			session.Stage(t, handle, []byte(restaged))
+		},
+	}
+	for name, edit := range edits {
+		t.Run(name, func(t *testing.T) {
+			world, session := newCaptureWorld(t, "staged-body-header-edit")
+			handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+			proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+
+			edit(t, session, instance, handle)
+
+			serve = answerPlayback(t, session, instance, "confirm", nil)
+			proctest.RequireStep(t, serve, "verifySummary")
+			serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+			entryID, _ := serve.Produced["entryId"].(string)
+			if !strings.Contains(entryID, "-stg-") {
+				t.Errorf("the entry should carry the edited layer, got %q", entryID)
+			}
+			if entry := proctest.LoadEntry(t, world.GraphDir, entryID); !strings.Contains(entry.Content, "A strategic gap after the edit.") {
+				t.Errorf("the entry should carry the re-staged body, got %q", entry.Content)
+			}
+		})
 	}
 }
 

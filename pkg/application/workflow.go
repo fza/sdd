@@ -760,11 +760,10 @@ func (w *WorkflowSession) Park(ctx context.Context, identity RequestIdentity, in
 }
 
 // StageAttachment stages content under filename. A running capture taking its
-// body from that handle gets the new body and hash; a header contradicting it
-// refuses the staging.
+// body from that handle gets the new body and hash.
 func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestIdentity, filename string, content []byte) (StagedFile, error) {
 	w.setOperation(ctx, identity)
-	if err := w.checkRestagedBody(filename, content); err != nil {
+	if err := w.checkRestagedBody(filename); err != nil {
 		return StagedFile{}, err
 	}
 	blob, err := w.app.StageBlob(ctx, identity, w.project, SessionRef{Subject: w.binding.Subject, Session: w.binding.SessionID}, filename, content)
