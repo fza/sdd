@@ -120,3 +120,27 @@ func TestDraftServe_Rounds(t *testing.T) {
 		t.Fatalf("post-rehydrate delta should carry only the change, got %q", sv.UnitText)
 	}
 }
+
+func TestDraftServe_UpdateKeepsTheServedBase(t *testing.T) {
+	spec, err := engine.ParseSpec(draftServeEntry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_update", "tester", &recordingSink{})
+	sv, err := sess.Start(spec, map[string]any{"body": longBody(), "topics": []any{"cli/ux"}, "layer": "tactical"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	edited := strings.Replace(longBody(), "line seven", "line SEVEN updated", 1)
+	if err := sess.Update(sv.Instance, map[string]any{"body": edited}); err != nil {
+		t.Fatal(err)
+	}
+	sv, err = sess.Report(sv.Instance, map[string]any{"layer": "process"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sv.UnitText, "+line SEVEN updated") {
+		t.Errorf("an update should stay in the next delta, as nothing served it, got %q", sv.UnitText)
+	}
+}

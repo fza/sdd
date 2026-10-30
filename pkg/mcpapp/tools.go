@@ -262,7 +262,9 @@ type SearchReplaceArg struct {
 
 type StageAttachmentResult struct {
 	SyncNoticeField
-	Handle string `json:"handle" jsonschema:"attachment handle; pass it in a report's attachments field"`
+	Handle string   `json:"handle" jsonschema:"attachment handle; pass it in a report's attachments field, or as bodyHandle when the file holds an entry body"`
+	SHA256 string   `json:"sha256" jsonschema:"sha256 of the staged file's raw bytes, as hex; a playback confirm binds to it when the file is a capture's bodyHandle"`
+	Bound  []string `json:"bound,omitempty" jsonschema:"captures taking their body from this handle, whose body and playback this staging replaced"`
 }
 
 // --- free reads -------------------------------------------------------------
@@ -467,8 +469,10 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "stage_attachment",
 		Description: "Stage a file into the session scratch (session required) and get back a handle to pass " +
-			"in a report's attachments field, or amend what is already staged: with patches, the file named " +
+			"in a report's attachments field, or as a capture's bodyHandle when the file holds the entry body, " +
+			"plus the sha256 of the staged bytes; or amend what is already staged: with patches, the file named " +
 			"by name is edited in place through atomic search-replace pairs instead of re-staging it whole. " +
+			"A path is only read, never written. " +
 			"Never a graph write — the write gate materializes staged files with the entry.",
 	}, toolBoundary(s.stageAttachment))
 
@@ -842,10 +846,11 @@ func (s *Server) stageAttachment(ctx context.Context, req *mcp.CallToolRequest, 
 		for _, p := range args.Patches {
 			pairs = append(pairs, textpatch.Pair{Old: p.Old, New: p.New})
 		}
-		if err := ss.root.EditStagedAttachment(ctx, identity, args.Name, pairs); err != nil {
+		staged, err := ss.root.EditStagedAttachment(ctx, identity, args.Name, pairs)
+		if err != nil {
 			return nil, StageAttachmentResult{}, err
 		}
-		return nil, StageAttachmentResult{Handle: args.Name}, nil
+		return nil, StageAttachmentResult{Handle: staged.Handle, SHA256: staged.SHA256, Bound: staged.Bound}, nil
 	}
 	content := []byte(args.Content)
 	if args.Path != "" {
@@ -854,11 +859,11 @@ func (s *Server) stageAttachment(ctx context.Context, req *mcp.CallToolRequest, 
 			return nil, StageAttachmentResult{}, toolError("reading %s: %v", args.Path, err)
 		}
 	}
-	handle, err := ss.root.StageAttachment(ctx, identity, args.Name, content)
+	staged, err := ss.root.StageAttachment(ctx, identity, args.Name, content)
 	if err != nil {
 		return nil, StageAttachmentResult{}, err
 	}
-	return nil, StageAttachmentResult{Handle: handle}, nil
+	return nil, StageAttachmentResult{Handle: staged.Handle, SHA256: staged.SHA256, Bound: staged.Bound}, nil
 }
 
 func validAttachmentName(name string) error {

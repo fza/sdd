@@ -604,6 +604,23 @@ func recordDispatchSeed(inst *Instance, opt *Option) {
 // cascades. Reports can only write declared state fields; batched fields for
 // later steps are accepted. A report does not answer a pending chooser.
 func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, error) {
+	inst, err := s.report(instanceID, fields)
+	if err != nil {
+		return nil, err
+	}
+	return s.serve(inst)
+}
+
+// Update applies state fields as Report does but serves nothing, so the
+// draft an agent was last served stays the base the next serve diffs
+// against. For state a shell keeps in step with something outside the
+// session, such as a staged file.
+func (s *Session) Update(instanceID string, fields map[string]any) error {
+	_, err := s.report(instanceID, fields)
+	return err
+}
+
+func (s *Session) report(instanceID string, fields map[string]any) (*Instance, error) {
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
@@ -642,7 +659,7 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 	if err := s.cascade(inst); err != nil {
 		return nil, err
 	}
-	return s.serve(inst)
+	return inst, nil
 }
 
 // Answer resolves the pending chooser at the instance's current step: the

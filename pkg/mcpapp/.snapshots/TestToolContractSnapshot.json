@@ -1799,7 +1799,7 @@
     }
   },
   {
-    "description": "Stage a file into the session scratch (session required) and get back a handle to pass in a report's attachments field, or amend what is already staged: with patches, the file named by name is edited in place through atomic search-replace pairs instead of re-staging it whole. Never a graph write — the write gate materializes staged files with the entry.",
+    "description": "Stage a file into the session scratch (session required) and get back a handle to pass in a report's attachments field, or as a capture's bodyHandle when the file holds the entry body, plus the sha256 of the staged bytes; or amend what is already staged: with patches, the file named by name is edited in place through atomic search-replace pairs instead of re-staging it whole. A path is only read, never written. Never a graph write — the write gate materializes staged files with the entry.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1854,8 +1854,22 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
+        "bound": {
+          "description": "captures taking their body from this handle, whose body and playback this staging replaced",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "handle": {
-          "description": "attachment handle; pass it in a report's attachments field",
+          "description": "attachment handle; pass it in a report's attachments field, or as bodyHandle when the file holds an entry body",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "sha256 of the staged file's raw bytes, as hex; a playback confirm binds to it when the file is a capture's bodyHandle",
           "type": "string"
         },
         "sync_notice": {
@@ -1864,7 +1878,8 @@
         }
       },
       "required": [
-        "handle"
+        "handle",
+        "sha256"
       ],
       "type": "object"
     }
