@@ -104,6 +104,22 @@ func (c CLI) Committable(ctx context.Context, paths []string) ([]string, error) 
 	return out, nil
 }
 
+// Uncommitted returns the paths git status reports a change under: staged,
+// modified, removed, or untracked and not ignored.
+func (c CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) {
+	var out []string
+	for _, path := range paths {
+		status, err := exec.CommandContext(ctx, "git", c.at("status", "--porcelain", "-z", "--untracked-files=all", "--", path)...).CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("git status: %s (%w)", status, err)
+		}
+		if len(status) > 0 {
+			out = append(out, path)
+		}
+	}
+	return out, nil
+}
+
 func (c CLI) ignored(ctx context.Context, paths []string) (map[string]bool, error) {
 	cmd := exec.CommandContext(ctx, "git", c.at("check-ignore", "-z", "--stdin")...)
 	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00"))

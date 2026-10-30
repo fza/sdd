@@ -52,6 +52,7 @@ type Committer interface {
 // one, init commits every path it touched.
 type Tracker interface {
 	Committable(ctx context.Context, paths []string) ([]string, error)
+	Uncommitted(ctx context.Context, paths []string) ([]string, error)
 }
 
 // Repository commits in, and narrows paths for, one given repository.

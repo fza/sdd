@@ -299,19 +299,37 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 	if h.committer == nil {
 		return nil
 	}
-	commitPaths := filterRepoPaths(cmd.RepoRoot, touched)
+	repoRoot, err := filepath.Abs(cmd.RepoRoot)
+	if err != nil {
+		return fmt.Errorf("resolving the repository root: %w", err)
+	}
+	record := uncommittedRecord{repoRoot: repoRoot}
+	leftover, err := record.read()
+	if err != nil {
+		return err
+	}
+	commitPaths := filterRepoPaths(repoRoot, touched)
 	if h.tracker != nil {
 		commitPaths, err = h.tracker.Committable(ctx, commitPaths)
 		if err != nil {
 			return fmt.Errorf("selecting init paths to commit: %w", err)
 		}
+		leftover, err = h.tracker.Uncommitted(ctx, leftover)
+		if err != nil {
+			return fmt.Errorf("selecting the paths an earlier init left uncommitted: %w", err)
+		}
+	}
+	for _, path := range leftover {
+		if !slices.Contains(commitPaths, path) {
+			commitPaths = append(commitPaths, path)
+		}
 	}
 	if len(commitPaths) == 0 {
-		return nil
+		return record.clear()
 	}
 	err = h.commitGraph(ctx, commitMessage, commitPaths...)
 	if err != nil {
-		return fmt.Errorf("git commit: %w", err)
+		return errors.Join(fmt.Errorf("git commit, which the next sdd init retries: %w", err), record.write(commitPaths))
 	}
-	return nil
+	return record.clear()
 }
