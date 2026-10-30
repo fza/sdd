@@ -69,6 +69,17 @@ func TestEnsureMergeDriver(t *testing.T) {
 		}
 	})
 
+	t.Run("a command an earlier sdd wrote is replaced", func(t *testing.T) {
+		dir := test.GitRepo(t)
+		test.Git(t, dir, "config", driverKey, "sdd merge-entry %O %A %B %L %P")
+		if err := (git.CLI{Dir: dir}).EnsureMergeDriver(context.Background()); err != nil {
+			t.Fatalf("EnsureMergeDriver: %v", err)
+		}
+		if got := driverConfig(t, dir); got != git.MergeDriverCommand {
+			t.Errorf("an earlier sdd driver command should be upgraded, got %q", got)
+		}
+	})
+
 	t.Run("a directory outside any repository is left alone", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := (git.CLI{Dir: dir}).EnsureMergeDriver(context.Background()); err != nil {
@@ -78,19 +89,155 @@ func TestEnsureMergeDriver(t *testing.T) {
 			t.Errorf("no repository should be created, stat: %v", err)
 		}
 	})
+
+	t.Run("a failure to locate the repository is reported", func(t *testing.T) {
+		dir := test.GitRepo(t)
+		t.Setenv("PATH", t.TempDir())
+		if err := (git.CLI{Dir: dir}).EnsureMergeDriver(context.Background()); err == nil {
+			t.Error("a git that cannot run should fail the setup, not read as no repository")
+		}
+	})
 }
 
 // A clone that never ran sdd init gains the driver from the next sdd commit.
 func TestCommitSetsUpTheMergeDriver(t *testing.T) {
+	t.Run("commit", func(t *testing.T) {
+		dir := test.GitRepo(t)
+		if err := os.WriteFile(filepath.Join(dir, "entry.md"), []byte("entry\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := (git.CLI{Dir: dir}).Commit("sdd: capture", "entry.md"); err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+		if got := driverConfig(t, dir); got != git.MergeDriverCommand {
+			t.Errorf("a commit should set up the merge driver, got %q", got)
+		}
+	})
+
+	t.Run("a config that cannot be written still lets the commit land", func(t *testing.T) {
+		dir := test.GitRepo(t)
+		if err := os.WriteFile(filepath.Join(dir, ".git", "config.lock"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "entry.md"), []byte("entry\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := (git.CLI{Dir: dir}).Commit("sdd: capture locked", "entry.md"); err == nil {
+			t.Error("a driver setup that fails should be reported")
+		}
+		if subject := strings.TrimSpace(test.Git(t, dir, "log", "-1", "--format=%s")); subject != "sdd: capture locked" {
+			t.Errorf("the entry commit should land before the driver setup, head is %q", subject)
+		}
+	})
+
+	t.Run("removal commit", func(t *testing.T) {
+		dir := test.GitRepo(t)
+		if err := os.WriteFile(filepath.Join(dir, "marker.md"), []byte("wip\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		test.Git(t, dir, "add", "marker.md")
+		test.Git(t, dir, "commit", "-q", "-m", "marker")
+		if err := os.Remove(filepath.Join(dir, "marker.md")); err != nil {
+			t.Fatal(err)
+		}
+		if err := (git.RemovalCommitter{Dir: dir}).Commit("sdd: wip done", "marker.md"); err != nil {
+			t.Fatalf("RemovalCommitter.Commit: %v", err)
+		}
+		if got := driverConfig(t, dir); got != git.MergeDriverCommand {
+			t.Errorf("a removal commit should set up the merge driver, got %q", got)
+		}
+	})
+
+	t.Run("a directory that becomes a repository later", func(t *testing.T) {
+		dir := t.TempDir()
+		repo := git.CLI{Dir: dir}
+		if err := repo.Merge(context.Background(), "other", "sdd: merge other"); err == nil {
+			t.Fatal("a merge outside a repository should fail")
+		}
+		test.Git(t, dir, "init", "-q")
+		test.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "seed")
+		test.Git(t, dir, "branch", "other")
+		if err := repo.Merge(context.Background(), "other", "sdd: merge other"); err != nil {
+			t.Fatalf("Merge: %v", err)
+		}
+		if got := driverConfig(t, dir); got != git.MergeDriverCommand {
+			t.Errorf("a repository created after a first attempt should still get the driver, got %q", got)
+		}
+	})
+}
+
+// fallbackRepo holds one entry whose summary both sides changed, the
+// .gitattributes line and the driver section, ready for `git merge other`.
+func fallbackRepo(t *testing.T) string {
+	t.Helper()
 	dir := test.GitRepo(t)
-	if err := os.WriteFile(filepath.Join(dir, "entry.md"), []byte("entry\n"), 0o644); err != nil {
+	write := func(fixture string) {
+		err := os.WriteFile(filepath.Join(dir, "entry.md"), []byte(test.MergeEntryFixture(t, fixture)), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gitattributes"), []byte("*.md merge=sdd-entry\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := (git.CLI{Dir: dir}).Commit("sdd: capture", "entry.md"); err != nil {
-		t.Fatalf("Commit: %v", err)
+	if err := (git.CLI{Dir: dir}).EnsureMergeDriver(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if got := driverConfig(t, dir); got != git.MergeDriverCommand {
-		t.Errorf("a commit should set up the merge driver, got %q", got)
+	write("base.md")
+	test.Git(t, dir, "add", ".")
+	test.Git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(test.Git(t, dir, "rev-parse", "--abbrev-ref", "HEAD"))
+	test.Git(t, dir, "checkout", "-q", "-b", "other")
+	write("summary-a.md")
+	test.Git(t, dir, "commit", "-q", "-am", "theirs")
+	test.Git(t, dir, "checkout", "-q", base)
+	write("summary-b.md")
+	test.Git(t, dir, "commit", "-q", "-am", "ours")
+	return dir
+}
+
+// An sdd that cannot run merge-entry leaves git's text merge, conflict
+// markers included, never a file holding one side only.
+func TestDriverFallsBackToTextMerge(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		sdd  string
+	}{
+		{name: "an sdd without merge-entry", sdd: "#!/bin/sh\necho \"No help topic for '$1'\" >&2\nexit 3\n"},
+		{name: "no sdd on PATH"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := fallbackRepo(t)
+			bin := t.TempDir()
+			if err := os.Symlink(gitPath, filepath.Join(bin, "git")); err != nil {
+				t.Fatal(err)
+			}
+			if tt.sdd != "" {
+				if err := os.WriteFile(filepath.Join(bin, "sdd"), []byte(tt.sdd), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command("git", "-C", dir, "merge", "-q", "--no-edit", "other")
+			cmd.Env = append(os.Environ(), "PATH="+bin+":/bin")
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("both summaries changed should conflict under the fallback text merge:\n%s", out)
+			}
+			merged, err := os.ReadFile(filepath.Join(dir, "entry.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"<<<<<<< ours", "A summary, sorting first.", "B summary, sorting second.", ">>>>>>> theirs"} {
+				if !strings.Contains(string(merged), want) {
+					t.Errorf("the fallback should leave both sides between markers, missing %q:\n%s\n%s", want, merged, out)
+				}
+			}
+		})
 	}
 }
 

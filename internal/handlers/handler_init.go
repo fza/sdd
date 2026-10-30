@@ -811,30 +811,38 @@ func ensureGitignoreEntries(path string, entries []string) (bool, error) {
 		return false, nil
 	}
 
+	var appended strings.Builder
+	// Ensure we start on a new line if the file doesn't end with one.
+	if len(fileData) > 0 && fileData[len(fileData)-1] != '\n' {
+		appended.WriteString("\n")
+	}
+	for _, e := range toAdd {
+		appended.WriteString(e + "\n")
+	}
+
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return false, err
 	}
-	defer f.Close()
-
-	// Ensure we start on a new line if the file doesn't end with one.
-	if len(fileData) > 0 && fileData[len(fileData)-1] != '\n' {
-		fmt.Fprintln(f)
+	if _, err := f.WriteString(appended.String()); err != nil {
+		_ = f.Close()
+		return false, fmt.Errorf("appending to %s: %w", path, err)
 	}
-
-	for _, e := range toAdd {
-		fmt.Fprintln(f, e)
+	if err := f.Close(); err != nil {
+		return false, fmt.Errorf("appending to %s: %w", path, err)
 	}
 	return true, nil
 }
 
 // ensureEntryMergeAttribute appends the .gitattributes line routing the
 // markdown files under graphDir to the entry merge driver when it is missing.
-// A graph directory with whitespace or a line break would split the pattern,
-// so it is refused.
+// A graph directory the pattern cannot name literally inside the repository
+// (whitespace, glob or comment characters, an absolute path, a parent step)
+// is refused rather than written as a line matching nothing.
 func ensureEntryMergeAttribute(path, graphDir string) (bool, error) {
 	dir := filepath.ToSlash(filepath.Clean(graphDir))
-	if strings.ContainsAny(dir, " \t\r\n") || strings.HasPrefix(dir, "#") || strings.HasPrefix(dir, "!") {
+	if strings.ContainsAny(dir, " \t\r\n*?[\\") || strings.HasPrefix(dir, "#") || strings.HasPrefix(dir, "!") ||
+		filepath.IsAbs(graphDir) || dir == ".." || strings.HasPrefix(dir, "../") {
 		return false, fmt.Errorf("graph directory %q cannot be written as a .gitattributes pattern", graphDir)
 	}
 	pattern := dir + "/**/*.md"

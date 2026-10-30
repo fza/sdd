@@ -51,6 +51,26 @@ func TestFrontmatterFields(t *testing.T) {
 			},
 		},
 		{
+			name:    "a leading byte order mark still opens the frontmatter",
+			content: "\uFEFF---\ntitle: T\n---\n",
+			wantOK:  true,
+			want: map[string]model.FrontmatterField{
+				"title": {Present: true, Value: "T", Lines: "title: T\n"},
+			},
+		},
+		{
+			name:    "a closing delimiter with trailing spaces ends the frontmatter",
+			content: "---\ntitle: T\n---  \n\n---\nnot: frontmatter\n",
+			wantOK:  true,
+			want: map[string]model.FrontmatterField{
+				"title": {Present: true, Value: "T", Lines: "title: T\n"},
+			},
+		},
+		{
+			name:    "a flow-style mapping is not handled",
+			content: "---\n{title: a, summary: b}\n---\n",
+		},
+		{
 			name:    "content without frontmatter is not handled",
 			content: "# just markdown\n",
 		},
@@ -107,6 +127,13 @@ func TestResolveMergedField(t *testing.T) {
 			ours:   model.FrontmatterField{Present: true, Value: "a", Lines: "summary: 'a'\n"},
 			theirs: field("b"),
 			want:   field("b"),
+		},
+		{
+			name:   "an unchanged value requoted on one side resolves by its lines",
+			base:   field("a"),
+			ours:   model.FrontmatterField{Present: true, Value: "a", Lines: "summary: 'a'\n"},
+			theirs: field("a"),
+			want:   model.FrontmatterField{Present: true, Value: "a", Lines: "summary: 'a'\n"},
 		},
 		{
 			name:   "equal values written differently resolve by their lines",

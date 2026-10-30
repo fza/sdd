@@ -59,10 +59,6 @@ func (c CLI) Commit(message string, paths ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), detachedTimeout)
 	defer cancel()
 
-	if err := c.ensureMergeDriverOnce(ctx); err != nil {
-		return err
-	}
-
 	addArgs := c.at(append([]string{"add", "--all", "--"}, paths...)...)
 	if out, err := runDetachedPastIndexLock(ctx, addArgs...); err != nil {
 		return fmt.Errorf("git add: %s (%w)", out, err)
@@ -76,7 +72,9 @@ func (c CLI) Commit(message string, paths ...string) error {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
 
-	return nil
+	// After the commit, so a config that cannot be written never keeps an
+	// entry from being recorded.
+	return c.ensureMergeDriverOnce(ctx)
 }
 
 // Committable returns paths without those git refuses to stage: untracked
@@ -262,7 +260,7 @@ func (r RemovalCommitter) Commit(message string, paths ...string) error {
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
-	return nil
+	return CLI(r).ensureMergeDriverOnce(context.Background())
 }
 
 // runDetached runs a git subprocess detached from any controlling terminal

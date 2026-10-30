@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/git"
-	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/test"
+	"github.com/urfave/cli/v3"
 )
 
 const entryAttribute = ".sdd/graph/**/*.md merge=sdd-entry"
@@ -79,17 +79,65 @@ func TestMergeEntryCommand(t *testing.T) {
 		}
 	})
 
-	t.Run("a conflict fails the command", func(t *testing.T) {
+	t.Run("a conflict exits 1 with markers written", func(t *testing.T) {
 		base, ours, theirs := write("base", "base.md"), write("ours", "body-ours.md"), write("theirs", "body-theirs.md")
 		_, err := runAppErr(t, dir, "merge-entry", base, ours, theirs, "7", ".sdd/graph/entry.md")
-		if !errors.Is(err, handlers.ErrEntryConflict) {
-			t.Errorf("a conflicted merge should fail with the conflict, got %v", err)
+		if code := exitCode(err); code != 1 {
+			t.Errorf("a conflicted merge should exit with the conflict code, got %d (%v)", code, err)
+		}
+		if !strings.Contains(readFile(t, ours), "<<<<<<<") {
+			t.Error("a conflicted merge should leave markers in ours")
 		}
 	})
 
-	t.Run("too few arguments are refused", func(t *testing.T) {
-		if _, err := runAppErr(t, dir, "merge-entry", "base", "ours"); err == nil {
-			t.Error("merge-entry without theirs should fail")
+	t.Run("any other failure exits 2 and leaves ours untouched", func(t *testing.T) {
+		ours, theirs := write("ours", "summary-b.md"), write("theirs", "summary-a.md")
+		_, err := runAppErr(t, dir, "merge-entry", filepath.Join(dir, "missing"), ours, theirs, "7", ".sdd/graph/entry.md")
+		if code := exitCode(err); code != 2 {
+			t.Errorf("a failed merge should exit with the fallback code, got %d (%v)", code, err)
+		}
+		if readFile(t, ours) != test.MergeEntryFixture(t, "summary-b.md") {
+			t.Error("a failed merge should leave ours as git handed it over")
 		}
 	})
+
+	t.Run("too few arguments exit 2", func(t *testing.T) {
+		_, err := runAppErr(t, dir, "merge-entry", "base", "ours")
+		if code := exitCode(err); code != 2 {
+			t.Errorf("merge-entry without theirs should exit with the fallback code, got %d (%v)", code, err)
+		}
+	})
+}
+
+func TestInitRefusesAGraphDirThePatternCannotName(t *testing.T) {
+	tests := []struct {
+		name     string
+		graphDir func(repo string) string
+	}{
+		{name: "glob characters", graphDir: func(string) string { return "graph*" }},
+		{name: "a parent step", graphDir: func(string) string { return "../graph" }},
+		{name: "an absolute path", graphDir: func(repo string) string { return filepath.Join(repo, "graph") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := canonicalTemp(t)
+			initRepo(t, repo)
+			output, err := runAppErr(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada", "--graph-dir", tt.graphDir(repo))
+			if err == nil || !strings.Contains(err.Error(), ".gitattributes") {
+				t.Errorf("init should refuse a graph directory no .gitattributes pattern can name, got %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+// exitCode is the process exit code main derives from a command's error.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exit cli.ExitCoder
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
+	return 1
 }

@@ -52,11 +52,17 @@ func FrontmatterFields(content string, keys []string) (fields map[string]Frontma
 
 // ResolveMergedField is the value a three-way merge keeps for a field whose
 // values are all valid: a side that left the base value alone yields to the
-// other, and when both changed it the lower one wins (absent first, then the
-// value by byte order, then the raw lines), so every clone resolves the same
-// pair alike whichever side it merges from.
+// other, and when both changed it, or both kept it in different bytes, the
+// lower one wins (absent first, then the value by byte order, then the raw
+// lines), so every clone resolves the same pair alike whichever side it
+// merges from.
 func ResolveMergedField(base, ours, theirs FrontmatterField) FrontmatterField {
 	switch {
+	case ours.sameValue(base) && theirs.sameValue(base):
+		if compareFields(ours, theirs) <= 0 {
+			return ours
+		}
+		return theirs
 	case ours.sameValue(base):
 		return theirs
 	case theirs.sameValue(base):
@@ -111,7 +117,7 @@ type frontmatterRegion struct {
 // it: from its key line up to the next key, or to the closing delimiter.
 func frontmatterRegions(content string) ([]string, map[string]frontmatterRegion, bool) {
 	lines := strings.SplitAfter(content, "\n")
-	if len(lines) == 0 || !isDelimiter(lines[0]) {
+	if len(lines) == 0 || !isDelimiter(strings.TrimPrefix(lines[0], "\uFEFF")) {
 		return nil, nil, false
 	}
 	closing := -1
@@ -127,10 +133,16 @@ func frontmatterRegions(content string) ([]string, map[string]frontmatterRegion,
 
 	var document yaml.Node
 	err := yaml.Unmarshal([]byte(strings.Join(lines[1:closing], "")), &document)
-	if err != nil || len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+	if err != nil || len(document.Content) != 1 {
 		return nil, nil, false
 	}
-	mapping := document.Content[0].Content
+	// A flow-style mapping states several keys on one line, so no key owns a
+	// line range of its own.
+	root := document.Content[0]
+	if root.Kind != yaml.MappingNode || root.Style&yaml.FlowStyle != 0 {
+		return nil, nil, false
+	}
+	mapping := root.Content
 
 	// A YAML line number counts from the first line after the opening
 	// delimiter, which is that line's index in lines.
@@ -152,5 +164,5 @@ func frontmatterRegions(content string) ([]string, map[string]frontmatterRegion,
 }
 
 func isDelimiter(line string) bool {
-	return strings.TrimRight(line, "\r\n") == "---"
+	return strings.TrimRight(line, " \t\r\n") == "---"
 }

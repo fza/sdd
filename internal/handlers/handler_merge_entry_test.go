@@ -96,6 +96,47 @@ func TestMergeEntryWithOneSideLackingFrontmatterMergesAsText(t *testing.T) {
 	}
 }
 
+type failingMerger struct{}
+
+func (failingMerger) MergeFile(context.Context, string, string, string, int) (bool, error) {
+	return false, errors.New("merge-file failed")
+}
+
+// The driver command falls back to git's text merge on any failure, which
+// needs git's file exactly as git handed it over.
+func TestMergeEntryFailureLeavesOursUntouched(t *testing.T) {
+	dir := t.TempDir()
+	paths := map[string]string{"base": "base.md", "ours": "summary-b.md", "theirs": "summary-a.md"}
+	for name, fixture := range paths {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(test.MergeEntryFixture(t, fixture)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := handlers.New(handlers.Options{FileMerger: failingMerger{}})
+	err := h.MergeEntry(context.Background(), &command.MergeEntryCmd{
+		BasePath:   filepath.Join(dir, "base"),
+		OursPath:   filepath.Join(dir, "ours"),
+		TheirsPath: filepath.Join(dir, "theirs"),
+	})
+	if err == nil || errors.Is(err, handlers.ErrEntryConflict) {
+		t.Fatalf("a failed merge should report a failure, not a conflict, got %v", err)
+	}
+	ours, err := os.ReadFile(filepath.Join(dir, "ours"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(ours) != test.MergeEntryFixture(t, "summary-b.md") {
+		t.Errorf("ours should stay as git handed it over:\n%s", ours)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Errorf("no staged result should be left beside ours, found %d files", len(entries))
+	}
+}
+
 func TestMergeEntryWithoutFrontmatterMergesAsText(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, content string) string {

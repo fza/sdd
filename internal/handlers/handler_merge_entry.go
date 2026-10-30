@@ -38,23 +38,34 @@ func (h *Handler) MergeEntry(ctx context.Context, cmd *command.MergeEntryCmd) er
 	versions := [3]string{string(base), string(ours), string(theirs)}
 	resolveDerivedFields(&versions)
 
-	if err := os.WriteFile(cmd.OursPath, []byte(versions[1]), 0o644); err != nil {
-		return fmt.Errorf("writing our version: %w", err)
+	// git's file is written only with a finished result, so a failure leaves
+	// it as git handed it over for a fallback merge (20261030-093341-d-tac-t6j).
+	var paths [3]string
+	for i, name := range []string{"base", "ours", "theirs"} {
+		path, clean, err := writeTempVersion(name, versions[i])
+		if err != nil {
+			return err
+		}
+		defer clean()
+		paths[i] = path
 	}
-	basePath, cleanBase, err := writeTempVersion("base", versions[0])
-	if err != nil {
-		return err
-	}
-	defer cleanBase()
-	theirsPath, cleanTheirs, err := writeTempVersion("theirs", versions[2])
-	if err != nil {
-		return err
-	}
-	defer cleanTheirs()
 
-	conflicted, err := h.fileMerger.MergeFile(ctx, cmd.OursPath, basePath, theirsPath, cmd.MarkerSize)
+	conflicted, err := h.fileMerger.MergeFile(ctx, paths[1], paths[0], paths[2], cmd.MarkerSize)
 	if err != nil {
 		return fmt.Errorf("merging %s: %w", cmd.OursPath, err)
+	}
+	merged, err := os.ReadFile(paths[1])
+	if err != nil {
+		return fmt.Errorf("reading the merge result: %w", err)
+	}
+	staged := cmd.OursPath + ".sdd-merge"
+	if err := os.WriteFile(staged, merged, 0o644); err != nil {
+		_ = os.Remove(staged)
+		return fmt.Errorf("writing the merge result: %w", err)
+	}
+	if err := os.Rename(staged, cmd.OursPath); err != nil {
+		_ = os.Remove(staged)
+		return fmt.Errorf("writing the merge result: %w", err)
 	}
 	if conflicted {
 		return ErrEntryConflict
