@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -34,11 +35,37 @@ func (r uncommittedRecord) read() ([]string, error) {
 	var paths []string
 	for line := range strings.Lines(string(content)) {
 		line = strings.TrimSpace(line)
-		if line != "" {
-			paths = append(paths, filepath.Join(r.repoRoot, filepath.FromSlash(line)))
+		if line == "" {
+			continue
 		}
+		rel := filepath.FromSlash(line)
+		if !filepath.IsLocal(rel) || filepath.Clean(rel) != rel || rel == "." {
+			return nil, fmt.Errorf("%s names %q, which is no file path inside the repository: delete the record and run init again", r.file(), line)
+		}
+		paths = append(paths, filepath.Join(r.repoRoot, rel))
 	}
 	return paths, nil
+}
+
+// trustedLeftover narrows the recorded paths to those with a change to
+// commit. A record git could commit did not come from this checkout's own
+// failed run: a cloned one could sweep untracked files into a pushed commit.
+func (h *Handler) trustedLeftover(ctx context.Context, record uncommittedRecord, leftover []string) ([]string, error) {
+	if len(leftover) == 0 {
+		return nil, nil
+	}
+	committable, err := h.tracker.Committable(ctx, []string{record.file()})
+	if err != nil {
+		return nil, fmt.Errorf("checking that git ignores %s: %w", record.file(), err)
+	}
+	if len(committable) > 0 {
+		return nil, fmt.Errorf("%s is tracked by git or not ignored, so init does not trust it: remove it from git or delete it, then run init again", record.file())
+	}
+	leftover, err = h.tracker.Uncommitted(ctx, leftover)
+	if err != nil {
+		return nil, fmt.Errorf("selecting the paths an earlier init left uncommitted: %w", err)
+	}
+	return leftover, nil
 }
 
 func (r uncommittedRecord) write(paths []string) error {
