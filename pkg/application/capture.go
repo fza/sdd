@@ -135,7 +135,7 @@ func (a *Application) CreateEntry(ctx context.Context, identity RequestIdentity,
 		return result, err
 	}
 	if !exists {
-		schema, err := graphSchemaOf(ctx, acquired.Graph)
+		err = checkGraphSchema(ctx, acquired.Graph)
 		if err != nil {
 			return result, err
 		}
@@ -162,9 +162,7 @@ func (a *Application) CreateEntry(ctx context.Context, identity RequestIdentity,
 			return result, fmt.Errorf("generating summary: %w", err)
 		}
 		entry.Summary = summary.Summary
-		if schema.capabilities.Titles {
-			entry.Title = summary.Title
-		}
+		entry.Title = summary.Title
 		err = secrets.CheckEntry(entry)
 		if err != nil {
 			return result, err

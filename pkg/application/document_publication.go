@@ -21,25 +21,24 @@ type DocumentWrite struct {
 	Mutation    DocumentMutation
 }
 
-// readDocument returns a document's current bytes on the target, or Absent.
-// targetGraphSchema answers the schema of the graph a mutation target holds.
-func (a *Application) targetGraphSchema(ctx context.Context, identity RequestIdentity, target MutationTarget) (_ graphSchema, err error) {
+func (a *Application) checkTargetGraphSchema(ctx context.Context, identity RequestIdentity, target MutationTarget) (err error) {
 	_, runtime, err := a.resolve(ctx, identity, target.Project, AccessRead)
 	if err != nil {
-		return graphSchema{}, err
+		return err
 	}
 	target, err = resolveMutationTarget(ctx, runtime, target)
 	if err != nil {
-		return graphSchema{}, err
+		return err
 	}
 	acquired, err := runtime.acquire(ctx, target)
 	if err != nil {
-		return graphSchema{}, err
+		return err
 	}
 	defer func() { err = errors.Join(err, acquired.Release()) }()
-	return graphSchemaOf(ctx, acquired.Graph)
+	return checkGraphSchema(ctx, acquired.Graph)
 }
 
+// readDocument returns a document's current bytes on the target, or Absent.
 func (a *Application) readDocument(ctx context.Context, identity RequestIdentity, target MutationTarget, logicalPath string) (_ DocumentPublication, err error) {
 	_, runtime, err := a.resolve(ctx, identity, target.Project, AccessRead)
 	if err != nil {
@@ -187,12 +186,9 @@ func (a *Application) ReplaceSummary(ctx context.Context, identity RequestIdenti
 		return published, nil
 	}
 	if replacement.Title != "" {
-		schema, err := a.targetGraphSchema(ctx, identity, target)
+		err := a.checkTargetGraphSchema(ctx, identity, target)
 		if err != nil {
 			return DocumentPublication{}, err
-		}
-		if !schema.capabilities.Titles {
-			return DocumentPublication{}, schema.refuseTitle()
 		}
 	}
 	current, err := a.readDocument(ctx, identity, target, logicalPath)

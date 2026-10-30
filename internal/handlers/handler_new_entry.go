@@ -70,12 +70,9 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		return err
 	}
 
-	schema, err := h.resolveWriteSchema(ctx)
+	err = h.checkWriteSchema(ctx)
 	if err != nil {
 		return err
-	}
-	if cmd.Title != "" && !schema.capabilities.Titles {
-		return schema.refuseTitle()
 	}
 
 	// Cross-repo refs resolve against the live caches: refresh the
@@ -169,7 +166,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 			sumResult = result
 			return nil
 		})
-	} else if !cmd.DryRun && h.llmRunner != nil && cmd.Title == "" && schema.capabilities.Titles {
+	} else if !cmd.DryRun && h.llmRunner != nil && cmd.Title == "" {
 		summarized := *entry
 		summarized.Summary = cmd.Summary
 		g.Go(func() error {
@@ -225,7 +222,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		generatedTitle = sumResult.Title
 	}
 	entry.Title = model.CapitalizeTitle(cmd.Title)
-	if entry.Title == "" && schema.capabilities.Titles {
+	if entry.Title == "" {
 		entry.Title = generatedTitle
 	}
 
