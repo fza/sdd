@@ -244,3 +244,115 @@ func TestCapture_AdjustNamesAnotherStagedBody(t *testing.T) {
 		t.Errorf("the entry should carry the body of the file named last, got %q", entry.Content)
 	}
 }
+
+const unseenStagedBody = "A tactical gap in text not yet played back.\n"
+
+func TestCapture_RestageAtPlaybackServesTheChangeBeforeAConfirm(t *testing.T) {
+	world, session := newCaptureWorld(t, "staged-body-unseen")
+	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	if staged := session.StageFile(t, handle, []byte(unseenStagedBody)); !slices.Equal(staged.Bound, []string{instance}) {
+		t.Fatalf("the staging should name the capture it changed, got %v", staged.Bound)
+	}
+
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+	proctest.RequireStep(t, serve, "playback")
+	if !strings.Contains(serve.Instructions, "not yet played back") || !strings.Contains(serve.Instructions, "not answered") {
+		t.Fatalf("a confirm over an unseen body should serve the body instead:\n%s", serve.Instructions)
+	}
+	proctest.RequireStep(t, session.Answer(t, instance, "playback", "confirm", nil, "capture what I saw"), "verifySummary")
+	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	entryID, _ := serve.Produced["entryId"].(string)
+	if entry := proctest.LoadEntry(t, world.GraphDir, entryID); !strings.Contains(entry.Content, "not yet played back") {
+		t.Errorf("the entry should carry the body played back last, got %q", entry.Content)
+	}
+}
+
+func TestCapture_RefusedAnswerLeavesTheStagedBodyAlone(t *testing.T) {
+	tests := []struct {
+		name, chooser, choice string
+	}{
+		{name: "an option collecting nothing", chooser: "playback", choice: "confirm"},
+		{name: "a chooser not pending", chooser: "reviseOrOverride", choice: "revise"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, session := newCaptureWorld(t, "staged-body-refused-answer")
+			handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+			other := session.Stage(t, "other.md", []byte(unseenStagedBody))
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+			proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+
+			if _, err := session.AnswerErr(t, instance, tt.chooser, tt.choice, map[string]any{"bodyHandle": other}, "use the other file"); err == nil {
+				t.Fatal("the answer should be refused")
+			}
+			resumed, err := session.WF.ServeAll(t.Context(), session.World.Identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, open := range resumed.Open {
+				if open.Instance == instance && strings.Contains(open.Instructions, "not yet played back") {
+					t.Errorf("a refused answer should leave the body as it was:\n%s", open.Instructions)
+				}
+			}
+		})
+	}
+}
+
+func TestCapture_RestageDuringAnUnfinishedOperationIsRefused(t *testing.T) {
+	_, session := newCaptureWorld(t, "staged-body-pending", proctest.WithFinalizers(&captureCompletionFailure{}))
+	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	failed, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "capture it")
+	if err != nil || failed.PendingOperation == nil {
+		t.Fatalf("the failing finalizer should leave the write unfinished, got %v", err)
+	}
+
+	if _, err := session.StageErr(t, handle, []byte(unseenStagedBody)); err == nil || !strings.Contains(err.Error(), "unfinished") {
+		t.Fatalf("a re-stage while the write is unfinished should be refused, got %v", err)
+	}
+	page, _, err := session.WF.ReadStagedAttachment(t.Context(), session.World.Identity, handle, 0, 0)
+	if err != nil || string(page.Content) != stagedBodyFile {
+		t.Errorf("a refused re-stage should leave the staged file as it was, got %q (%v)", page.Content, err)
+	}
+}
+
+func TestCapture_RestageAfterPublicationBindsNothing(t *testing.T) {
+	_, session := newCaptureWorld(t, "staged-body-published")
+	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	proctest.RequireStep(t, session.Answer(t, instance, "playback", "confirm", nil, "capture it"), "verifySummary")
+
+	if staged := session.StageFile(t, handle, []byte(unseenStagedBody)); len(staged.Bound) > 0 {
+		t.Errorf("a capture that wrote its entry should not take a later staging, got %v", staged.Bound)
+	}
+}
+
+func TestCapture_RestagedBodySurvivesAResume(t *testing.T) {
+	world, session := newCaptureWorld(t, "staged-body-replay")
+	world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "high", Category: "test-block", Observation: "Review this finding."}}
+	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	proctest.RequireStep(t, session.Answer(t, instance, "playback", "confirm", nil, "capture it"), "reviseOrOverride")
+	session.Stage(t, handle, []byte(unseenStagedBody))
+	world.LLM.PreflightFindings = nil
+
+	resumed, _ := world.Resume(t, session.ID, "staged-body-replay-resumed")
+	serve = resumed.Answer(t, instance, "reviseOrOverride", "override", nil, "the finding does not apply")
+	proctest.RequireStep(t, serve, "playback")
+	proctest.RequireStep(t, resumed.Answer(t, instance, "playback", "confirm", nil, "capture the revision"), "verifySummary")
+	serve = resumed.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	entryID, _ := serve.Produced["entryId"].(string)
+	if entry := proctest.LoadEntry(t, world.GraphDir, entryID); !strings.Contains(entry.Content, "not yet played back") {
+		t.Errorf("the re-staged body should survive a resume, got %q", entry.Content)
+	}
+}

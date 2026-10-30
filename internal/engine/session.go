@@ -706,6 +706,18 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	if err != nil {
 		return nil, err
 	}
+	if draftChangedUnserved(inst, step) {
+		// A draft written by Update since this step last served it was never
+		// shown: answering would confirm unseen text, so the step serves the
+		// change instead and the answer is not applied.
+		sv, err := s.serve(inst)
+		if err != nil {
+			return nil, err
+		}
+		sv.Diagnostics = append(sv.Diagnostics, "not answered: the draft changed since it was last served — play the change back and answer again")
+		sv.Instructions = ComposeInstructions(sv.UnitText, sv.Diagnostics)
+		return sv, nil
+	}
 
 	var opt *Option
 	for i := range step.Options {

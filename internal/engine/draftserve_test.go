@@ -144,3 +144,49 @@ func TestDraftServe_UpdateKeepsTheServedBase(t *testing.T) {
 		t.Errorf("an update should stay in the next delta, as nothing served it, got %q", sv.UnitText)
 	}
 }
+
+const unservedDraftMachine = `state:
+    body: {type: prose, desc: the draft}
+steps:
+    - id: playback
+      chooser: user
+      serveDelta: [body]
+      options:
+          - {choice: confirm, to: end(completed)}`
+
+func TestDraftServe_AnswerOverAnUnservedChangeServesItInstead(t *testing.T) {
+	content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: unservedproc\n" +
+		unservedDraftMachine + "\n---\n\nunserved draft procedure\n\n## unit: playback\n\nPlay the draft back.\n"
+	entry, err := model.ParseEntry("20260826-140000-d-prc-uns.md", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := engine.ParseSpec(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_unserved", "tester", &recordingSink{})
+	sv, err := sess.Start(spec, map[string]any{"body": "first draft"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Update(sv.Instance, map[string]any{"body": "second draft"}); err != nil {
+		t.Fatal(err)
+	}
+
+	sv, err = sess.Answer(sv.Instance, "playback", "confirm", nil, "yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Status != engine.StatusRunning || !strings.Contains(sv.UnitText, "second draft") || !strings.Contains(sv.Instructions, "not answered") {
+		t.Fatalf("an answer over an unserved change should serve the change and not apply, got %s %q", sv.Status, sv.Instructions)
+	}
+
+	sv, err = sess.Answer(sv.Instance, "playback", "confirm", nil, "yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Status != engine.StatusCompleted {
+		t.Errorf("an answer once the change was served should apply, got %s", sv.Status)
+	}
+}

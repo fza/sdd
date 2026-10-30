@@ -15,11 +15,12 @@ var StagedHeaderKeys = []string{"entryKind", "layer", "confidence", "intent", "r
 // SplitStagedBody splits a staged body file into its header and its body. A
 // file whose first line is `---` and that holds a second such line opens with
 // a header block, and the body is everything after the second line; any other
-// file is all body. header is nil when there is no block or the block is no
-// YAML mapping.
+// file is all body, without a leading byte order mark. header is nil when
+// there is no block or the block is no YAML mapping.
 func SplitStagedBody(content string) (header map[string]any, body string) {
+	content = strings.TrimPrefix(content, "\uFEFF")
 	lines := strings.SplitAfter(content, "\n")
-	if !isHeaderDelimiter(strings.TrimPrefix(lines[0], "\uFEFF")) {
+	if !isHeaderDelimiter(lines[0]) {
 		return nil, content
 	}
 	for i := 1; i < len(lines); i++ {

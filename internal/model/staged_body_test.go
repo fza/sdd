@@ -18,6 +18,7 @@ func TestSplitStagedBody(t *testing.T) {
 		{name: "an unclosed block is all body", content: "---\nlayer: tactical\nBody line.\n", wantBody: "---\nlayer: tactical\nBody line.\n"},
 		{name: "CRLF delimiters count", content: "---\r\nlayer: tactical\r\n---\r\nBody\r\n", wantHeader: true, wantBody: "Body\r\n"},
 		{name: "a byte order mark before the first delimiter counts", content: "\uFEFF---\nlayer: tactical\n---\nBody\n", wantHeader: true, wantBody: "Body\n"},
+		{name: "a byte order mark without a header stays out of the body", content: "\uFEFFBody\n", wantBody: "Body\n"},
 		{name: "a delimiter with trailing spaces is no delimiter", content: "--- \nlayer: tactical\n---\nBody\n", wantBody: "--- \nlayer: tactical\n---\nBody\n"},
 		{name: "a block that is no valid YAML still splits off", content: "---\n: : :\n---\nBody\n", wantBody: "Body\n"},
 		{name: "a block that is no mapping still splits off", content: "---\n- a\n---\nBody\n", wantBody: "Body\n"},

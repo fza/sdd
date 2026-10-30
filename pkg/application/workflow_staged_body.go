@@ -112,9 +112,9 @@ func stagedHeaderAgrees(header map[string]any, handle string, inst *engine.Insta
 	return nil
 }
 
-// applyStagedBody writes the staged body a report or chooser answer names
-// before the engine sees it: merged into a plain report, or updated ahead of
-// a chooser answer, whose options collect no bodyHash.
+// applyStagedBody merges the staged body a report or chooser answer names
+// into the fields it carries, so the engine validates and writes them in one
+// step and a refused answer leaves nothing behind.
 func (w *WorkflowSession) applyStagedBody(ctx context.Context, identity RequestIdentity, request WorkflowAdvanceRequest, answer bool) error {
 	inst, ok := w.session.Instance(request.Instance)
 	if !ok || inst.Status != engine.StatusRunning {
@@ -128,23 +128,27 @@ func (w *WorkflowSession) applyStagedBody(ctx context.Context, identity RequestI
 	if err != nil || resolved == nil {
 		return err
 	}
-	if !answer {
-		for name, value := range resolved {
-			request.Report[name] = value
-		}
-		return nil
+	for name, value := range resolved {
+		fields[name] = value
 	}
-	if err := w.session.Update(inst.ID, resolved); err != nil {
-		return err
-	}
-	return w.session.SinkErr()
+	return nil
 }
 
 // checkRestagedBody refuses a staging whose header contradicts a running
 // capture taking its body from the handle, before anything is staged.
 func (w *WorkflowSession) checkRestagedBody(handle string, content []byte) error {
+	bound := w.boundCaptures(handle)
+	if len(bound) == 0 {
+		return nil
+	}
+	if err := w.session.SinkErr(); err != nil {
+		return err
+	}
+	if pending := w.session.PendingMutation(); pending != nil {
+		return fmt.Errorf("capture %s takes its body from %q, and the operation %q in this session is unfinished: continue or cancel it before staging that file again", bound[0].ID, handle, pending.Command)
+	}
 	header, _ := model.SplitStagedBody(string(content))
-	for _, inst := range w.boundCaptures(handle) {
+	for _, inst := range bound {
 		if err := stagedHeaderAgrees(header, handle, inst, nil); err != nil {
 			return fmt.Errorf("capture %s: %w", inst.ID, err)
 		}
@@ -178,7 +182,9 @@ func (w *WorkflowSession) syncRestagedBody(handle string, content []byte) ([]str
 func (w *WorkflowSession) boundCaptures(handle string) []*engine.Instance {
 	var bound []*engine.Instance
 	for _, inst := range w.session.Instances() {
-		if inst.Status != engine.StatusRunning || !takesStagedBody(inst) {
+		// A capture holding an entryId has written its entry; its body is
+		// final.
+		if inst.Status != engine.StatusRunning || !takesStagedBody(inst) || inst.Store.Has("entryId") {
 			continue
 		}
 		if named, _ := inst.Store.Get(fieldBodyHandle); named == handle {
