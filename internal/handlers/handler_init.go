@@ -49,6 +49,10 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if err != nil {
 		return fmt.Errorf("graph directory: %w", err)
 	}
+	entryAttribute, err := entryMergeAttributeLine(graphDir)
+	if err != nil {
+		return fmt.Errorf("graph directory: %w", err)
+	}
 
 	sddDir := filepath.Join(cmd.RepoRoot, model.SDDDirName)
 	absGraphDir := filepath.Join(cmd.RepoRoot, graphDir)
@@ -249,7 +253,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	}
 
 	attributesPath := filepath.Join(cmd.RepoRoot, ".gitattributes")
-	attributesAdded, err := ensureEntryMergeAttribute(attributesPath, graphDir)
+	attributesAdded, err := ensureGitignoreEntries(attributesPath, []string{entryAttribute})
 	if err != nil {
 		return fmt.Errorf("routing graph entries to the merge driver in %s: %w", attributesPath, err)
 	}
@@ -834,22 +838,23 @@ func ensureGitignoreEntries(path string, entries []string) (bool, error) {
 	return true, nil
 }
 
-// ensureEntryMergeAttribute appends the .gitattributes line routing the
-// markdown files under graphDir to the entry merge driver when it is missing.
-// A graph directory the pattern cannot name literally inside the repository
-// (whitespace, glob or comment characters, an absolute path, a parent step)
-// is refused rather than written as a line matching nothing.
-func ensureEntryMergeAttribute(path, graphDir string) (bool, error) {
+// entryMergeAttributeLine is the .gitattributes line routing the markdown
+// files under graphDir to the entry merge driver. Glob characters are
+// escaped, and a pattern holding whitespace or opening with a quote is written
+// C-quoted, so the line matches the directory as named. A directory outside the repository cannot be matched and is refused.
+func entryMergeAttributeLine(graphDir string) (string, error) {
 	dir := filepath.ToSlash(filepath.Clean(graphDir))
-	if strings.ContainsAny(dir, " \t\r\n*?[\\") || strings.HasPrefix(dir, "#") || strings.HasPrefix(dir, "!") ||
-		filepath.IsAbs(graphDir) || dir == ".." || strings.HasPrefix(dir, "../") {
-		return false, fmt.Errorf("graph directory %q cannot be written as a .gitattributes pattern", graphDir)
+	if filepath.IsAbs(graphDir) || dir == ".." || strings.HasPrefix(dir, "../") {
+		return "", fmt.Errorf("%q cannot be named by a .gitattributes pattern inside the repository", graphDir)
 	}
-	pattern := dir + "/**/*.md"
-	if dir == "." {
-		pattern = "*.md"
+	pattern := "*.md"
+	if dir != "." {
+		pattern = strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`).Replace(dir) + "/**/*.md"
 	}
-	return ensureGitignoreEntries(path, []string{pattern + " merge=" + model.EntryMergeDriver})
+	if strings.ContainsAny(pattern, " \t") || strings.HasPrefix(pattern, `"`) {
+		pattern = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\t", `\t`).Replace(pattern) + `"`
+	}
+	return pattern + " merge=" + model.EntryMergeDriver, nil
 }
 
 // migrateOldTmpDir moves files from oldDir to newDir. Returns the count

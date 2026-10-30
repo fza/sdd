@@ -9,6 +9,7 @@ import (
 	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
@@ -31,6 +32,23 @@ func (p GraphPublisher) Finalize(ctx context.Context, _ app.AppliedMutation) err
 		return err
 	}
 	return handlers.New(opts).PublishGraph(ctx)
+}
+
+// MergeDriverSetup sets up the entry merge driver in a mutation target's
+// checkout. It runs after GitFinalizer and GraphPublisher, so a config it
+// cannot write never holds back the commit or its push.
+type MergeDriverSetup struct {
+	Checkout string
+}
+
+func (MergeDriverSetup) Name() string { return "git-merge-driver" }
+
+func (s MergeDriverSetup) Finalize(ctx context.Context, _ app.AppliedMutation) error {
+	err := git.CLI{Dir: s.Checkout}.EnsureMergeDriver(ctx)
+	if err != nil {
+		return fmt.Errorf("setting up the entry merge driver: %w", err)
+	}
+	return nil
 }
 
 // SyncGraph runs one sync round in the checkout of branch when that

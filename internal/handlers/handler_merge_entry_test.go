@@ -19,8 +19,14 @@ import (
 // error.
 func mergeEntry(t *testing.T, ours, theirs string) (string, error) {
 	t.Helper()
+	return mergeEntryOver(t, "base.md", ours, theirs)
+}
+
+// mergeEntryOver is mergeEntry against another base fixture.
+func mergeEntryOver(t *testing.T, base, ours, theirs string) (string, error) {
+	t.Helper()
 	dir := t.TempDir()
-	paths := map[string]string{"base": "base.md", "ours": ours, "theirs": theirs}
+	paths := map[string]string{"base": base, "ours": ours, "theirs": theirs}
 	for name, fixture := range paths {
 		err := os.WriteFile(filepath.Join(dir, name), []byte(test.MergeEntryFixture(t, fixture)), 0o644)
 		if err != nil {
@@ -161,5 +167,23 @@ func TestMergeEntryWithoutFrontmatterMergesAsText(t *testing.T) {
 	}
 	if string(merged) != "A\nb\nC\n" {
 		t.Errorf("a file without frontmatter should merge as plain text, got %q", merged)
+	}
+}
+
+// Both sides adding the summary at different lines keep one statement of it,
+// the first in file order, whichever side the merge runs from.
+func TestMergeEntryKeepsOneStatementOfAFieldBothSidesAdded(t *testing.T) {
+	want := test.MergeEntryFixture(t, "summary-added-after-kind.md")
+	for _, sides := range [][2]string{
+		{"summary-added-after-kind.md", "summary-added-after-title.md"},
+		{"summary-added-after-title.md", "summary-added-after-kind.md"},
+	} {
+		merged, err := mergeEntryOver(t, "no-summary.md", sides[0], sides[1])
+		if err != nil {
+			t.Fatalf("MergeEntry %s into %s: %v", sides[1], sides[0], err)
+		}
+		if merged != want {
+			t.Errorf("merging %s into %s should state the summary once:\n%s\nwant\n%s", sides[1], sides[0], merged, want)
+		}
 	}
 }

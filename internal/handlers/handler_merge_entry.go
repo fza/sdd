@@ -58,6 +58,9 @@ func (h *Handler) MergeEntry(ctx context.Context, cmd *command.MergeEntryCmd) er
 	if err != nil {
 		return fmt.Errorf("reading the merge result: %w", err)
 	}
+	if !conflicted {
+		merged = []byte(model.DropRepeatedFrontmatterKeys(string(merged), model.MergeResolvedKeys))
+	}
 	staged := cmd.OursPath + ".sdd-merge"
 	if err := os.WriteFile(staged, merged, 0o644); err != nil {
 		_ = os.Remove(staged)

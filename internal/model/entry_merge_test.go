@@ -203,3 +203,45 @@ func TestReplaceFrontmatterField(t *testing.T) {
 		})
 	}
 }
+
+func TestDropRepeatedFrontmatterKeys(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "a repeated statement of a handled key goes, the first stays",
+			content: "---\ntitle: T\nsummary: s\nkind: gap\nsummary: s\n---\nbody\n",
+			want:    "---\ntitle: T\nsummary: s\nkind: gap\n---\nbody\n",
+		},
+		{
+			name:    "a multi-line repeat goes with all its lines",
+			content: "---\nsummary: >-\n  a\n  b\nkind: gap\nsummary: >-\n  a\n  b\n---\n",
+			want:    "---\nsummary: >-\n  a\n  b\nkind: gap\n---\n",
+		},
+		{
+			name:    "a repeat stating something else stays",
+			content: "---\nsummary: s\nsummary: other\n---\n",
+			want:    "---\nsummary: s\nsummary: other\n---\n",
+		},
+		{
+			name:    "an unhandled key stays repeated",
+			content: "---\nkind: gap\nkind: gap\n---\n",
+			want:    "---\nkind: gap\nkind: gap\n---\n",
+		},
+		{
+			name:    "content without frontmatter stays as it is",
+			content: "summary: s\nsummary: s\n",
+			want:    "summary: s\nsummary: s\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := model.DropRepeatedFrontmatterKeys(tt.content, model.MergeResolvedKeys)
+			if got != tt.want {
+				t.Errorf("content should keep one statement of each handled key:\n%q\nwant\n%q", got, tt.want)
+			}
+		})
+	}
+}

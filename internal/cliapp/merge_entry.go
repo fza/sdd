@@ -17,12 +17,9 @@ import (
 // repository, since git runs it in the middle of a merge.
 const mergeEntryCommandName = "merge-entry"
 
-// Exit 1 tells the driver command a conflict was written; any other failure
-// exits 2 so it falls back to git's text merge (20261030-093341-d-tac-t6j).
-const (
-	mergeEntryConflictExit = 1
-	mergeEntryFailureExit  = 2
-)
+// Any failure but a written conflict exits 2, which the driver command answers
+// with git's text merge.
+const mergeEntryFailureExit = 2
 
 func mergeEntryCmd() *cli.Command {
 	return &cli.Command{
@@ -36,7 +33,7 @@ func mergeEntryCmd() *cli.Command {
 			case err == nil:
 				return nil
 			case errors.Is(err, handlers.ErrEntryConflict):
-				return cli.Exit(err, mergeEntryConflictExit)
+				return cli.Exit(err, git.MergeEntryConflictExit)
 			default:
 				return cli.Exit(err, mergeEntryFailureExit)
 			}

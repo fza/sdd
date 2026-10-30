@@ -71,10 +71,7 @@ func (c CLI) Commit(message string, paths ...string) error {
 	if out, err := runDetachedPastIndexLock(ctx, commitArgs...); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
-
-	// After the commit, so a config that cannot be written never keeps an
-	// entry from being recorded.
-	return c.ensureMergeDriverOnce(ctx)
+	return nil
 }
 
 // Committable returns paths without those git refuses to stage: untracked
@@ -203,8 +200,8 @@ func (c CLI) Merge(ctx context.Context, ref, message string) error {
 	// index.lock, so once started it outlives the caller's cancellation.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachedTimeout)
 	defer cancel()
-	if err := c.ensureMergeDriverOnce(ctx); err != nil {
-		return err
+	if err := c.EnsureMergeDriver(ctx); err != nil {
+		return fmt.Errorf("setting up the entry merge driver: %w", err)
 	}
 	out, err := runDetached(ctx, c.at("merge", "--no-edit", "--no-overwrite-ignore", "-m", message, ref)...)
 	if err == nil {
@@ -260,7 +257,12 @@ func (r RemovalCommitter) Commit(message string, paths ...string) error {
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
-	return CLI(r).ensureMergeDriverOnce(context.Background())
+	return nil
+}
+
+// EnsureMergeDriver sets up the entry merge driver in the repository at Dir.
+func (r RemovalCommitter) EnsureMergeDriver(ctx context.Context) error {
+	return CLI(r).EnsureMergeDriver(ctx)
 }
 
 // runDetached runs a git subprocess detached from any controlling terminal
@@ -409,8 +411,8 @@ func (c CLI) IsClean(ctx context.Context) (bool, error) {
 // regardless of the user's pull.rebase config, so background sync never
 // rewrites the shared graph's history.
 func (c CLI) MergePull(ctx context.Context) (string, error) {
-	if err := c.ensureMergeDriverOnce(ctx); err != nil {
-		return "", err
+	if err := c.EnsureMergeDriver(ctx); err != nil {
+		return "", fmt.Errorf("setting up the entry merge driver: %w", err)
 	}
 	out, err := exec.CommandContext(ctx, "git", c.at("pull", "--no-rebase")...).CombinedOutput()
 	msg := strings.TrimSpace(string(out))

@@ -79,10 +79,10 @@ func TestMergeEntryCommand(t *testing.T) {
 		}
 	})
 
-	t.Run("a conflict exits 1 with markers written", func(t *testing.T) {
+	t.Run("a conflict exits with the conflict code, markers written", func(t *testing.T) {
 		base, ours, theirs := write("base", "base.md"), write("ours", "body-ours.md"), write("theirs", "body-theirs.md")
 		_, err := runAppErr(t, dir, "merge-entry", base, ours, theirs, "7", ".sdd/graph/entry.md")
-		if code := exitCode(err); code != 1 {
+		if code := exitCode(err); code != git.MergeEntryConflictExit {
 			t.Errorf("a conflicted merge should exit with the conflict code, got %d (%v)", code, err)
 		}
 		if !strings.Contains(readFile(t, ours), "<<<<<<<") {
@@ -114,8 +114,8 @@ func TestInitRefusesAGraphDirThePatternCannotName(t *testing.T) {
 		name     string
 		graphDir func(repo string) string
 	}{
-		{name: "glob characters", graphDir: func(string) string { return "graph*" }},
 		{name: "a parent step", graphDir: func(string) string { return "../graph" }},
+		{name: "the parent itself", graphDir: func(string) string { return ".." }},
 		{name: "an absolute path", graphDir: func(repo string) string { return filepath.Join(repo, "graph") }},
 	}
 	for _, tt := range tests {
@@ -125,6 +125,67 @@ func TestInitRefusesAGraphDirThePatternCannotName(t *testing.T) {
 			output, err := runAppErr(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada", "--graph-dir", tt.graphDir(repo))
 			if err == nil || !strings.Contains(err.Error(), ".gitattributes") {
 				t.Errorf("init should refuse a graph directory no .gitattributes pattern can name, got %v\n%s", err, output)
+			}
+			if _, statErr := os.Stat(filepath.Join(repo, ".sdd")); !os.IsNotExist(statErr) {
+				t.Error("a refused graph directory should leave nothing written")
+			}
+		})
+	}
+}
+
+func TestInitRoutesAGraphDirNeedingQuotesOrEscapes(t *testing.T) {
+	tests := []struct {
+		graphDir string
+		line     string
+	}{
+		{graphDir: "my graph", line: `"my graph/**/*.md" merge=sdd-entry`},
+		{graphDir: "graph*", line: `graph\*/**/*.md merge=sdd-entry`},
+		{graphDir: `"graph`, line: `"\"graph/**/*.md" merge=sdd-entry`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.graphDir, func(t *testing.T) {
+			repo := canonicalTemp(t)
+			initRepo(t, repo)
+			runApp(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada", "--graph-dir", tt.graphDir)
+			if attributes := readFile(t, filepath.Join(repo, ".gitattributes")); !strings.Contains(attributes, tt.line+"\n") {
+				t.Errorf(".gitattributes should name the graph directory as it is:\n%s", attributes)
+			}
+			entry := tt.graphDir + "/2026/10/30-120000-s-tac-abc.md"
+			if got := strings.TrimSpace(gitIn(t, repo, "check-attr", "merge", "--", entry)); !strings.HasSuffix(got, ": merge: sdd-entry") {
+				t.Errorf("git should route an entry under the graph directory to the driver, got %q", got)
+			}
+			if got := strings.TrimSpace(gitIn(t, repo, "check-attr", "merge", "--", "other/2026/e.md")); !strings.HasSuffix(got, ": merge: unspecified") {
+				t.Errorf("git should leave files outside the graph directory alone, got %q", got)
+			}
+		})
+	}
+}
+
+func TestRepeatInitRoutesTheRecordedGraphDir(t *testing.T) {
+	tests := []struct {
+		name     string
+		recorded func(repo string) string
+	}{
+		{name: "relative", recorded: func(string) string { return "docs/graph" }},
+		{name: "absolute", recorded: func(repo string) string { return filepath.Join(repo, "docs", "graph") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := canonicalTemp(t)
+			initRepo(t, repo)
+			runApp(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada", "--graph-dir", "docs/graph")
+			configPath := filepath.Join(repo, ".sdd", "config.yaml")
+			writeFile(t, configPath, strings.Replace(readFile(t, configPath), "graph_dir: docs/graph", "graph_dir: "+tt.recorded(repo), 1))
+			writeFile(t, filepath.Join(repo, ".gitattributes"), "")
+			gitIn(t, repo, "commit", "-q", "-am", "drop the attribute line")
+
+			runApp(t, repo, "init")
+
+			if attributes := readFile(t, filepath.Join(repo, ".gitattributes")); attributes != "docs/graph/**/*.md merge=sdd-entry\n" {
+				t.Errorf("a repeat init should route the recorded graph directory:\n%s", attributes)
+			}
+			if _, err := os.Stat(filepath.Join(repo, ".sdd", "graph")); !os.IsNotExist(err) {
+				t.Error("a repeat init should create no graph directory beside the recorded one")
 			}
 		})
 	}

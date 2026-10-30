@@ -81,6 +81,7 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 			if model.ResolveSyncMode(cfg) == model.SyncModeAuto {
 				finalizers = append(finalizers, GraphPublisher{GraphDir: meta.ResolveGraphDir(checkout, cfg)})
 			}
+			finalizers = append(finalizers, MergeDriverSetup{Checkout: checkout})
 			return graph, finalizers, func() error { return nil }, nil
 		},
 	})

@@ -1373,6 +1373,19 @@ func summarizeHandler(ctx context.Context, cmd *cli.Command) (*handlers.Handler,
 	return handlers.New(opts), nil
 }
 
+// recordedGraphDir is the graph_dir an existing project's config records,
+// relative to repoRoot as init takes it.
+func recordedGraphDir(repoRoot, recorded string) (string, error) {
+	if recorded == "" || !filepath.IsAbs(recorded) {
+		return recorded, nil
+	}
+	rel, err := filepath.Rel(repoRoot, recorded)
+	if err != nil {
+		return "", fmt.Errorf("reading the recorded graph_dir %s: %w", recorded, err)
+	}
+	return rel, nil
+}
+
 // resolveGraphDir determines the graph directory from the --graph-dir flag
 // or by discovering .sdd/config.yaml. Errors if neither is available.
 func resolveGraphDir(cmd *cli.Command) (string, error) {
@@ -1903,6 +1916,12 @@ func initCmd() *cli.Command {
 
 			var remoteURL, defaultBranch string
 			if !pointer {
+				if graphDir == "" && !freshGraph && existingMerged != nil {
+					graphDir, err = recordedGraphDir(repoRoot, existingMerged.GraphDir)
+					if err != nil {
+						return err
+					}
+				}
 				if graphDir == "" {
 					graphDir = model.DefaultGraphDir
 				}

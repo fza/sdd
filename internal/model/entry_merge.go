@@ -1,6 +1,7 @@
 package model
 
 import (
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -89,6 +90,44 @@ func ReplaceFrontmatterField(content, key, lines string) string {
 	return strings.Join(all[:region.start], "") + lines + strings.Join(all[region.end:], "")
 }
 
+// DropRepeatedFrontmatterKeys removes each later statement of one of keys
+// whose lines repeat the first statement of it. A three-way merge of two
+// sides adding the same resolved field at different lines keeps both, which
+// no entry reader accepts; the first in file order stays, whichever side the
+// merge ran from.
+func DropRepeatedFrontmatterKeys(content string, keys []string) string {
+	lines, ordered, ok := frontmatterKeyRegions(content)
+	if !ok {
+		return content
+	}
+	first := make(map[string]string, len(keys))
+	drop := make([]bool, len(lines))
+	for _, region := range ordered {
+		if !slices.Contains(keys, region.key) {
+			continue
+		}
+		stated := strings.Join(lines[region.start:region.end], "")
+		earlier, seen := first[region.key]
+		if !seen {
+			first[region.key] = stated
+			continue
+		}
+		if stated != earlier {
+			continue
+		}
+		for i := region.start; i < region.end; i++ {
+			drop[i] = true
+		}
+	}
+	var kept strings.Builder
+	for i, line := range lines {
+		if !drop[i] {
+			kept.WriteString(line)
+		}
+	}
+	return kept.String()
+}
+
 func (f FrontmatterField) sameValue(other FrontmatterField) bool {
 	return f.Present == other.Present && f.Value == other.Value
 }
@@ -107,15 +146,32 @@ func compareFields(a, b FrontmatterField) int {
 }
 
 type frontmatterRegion struct {
+	key        string
 	start, end int
 	scalar     bool
 	value      string
 }
 
-// frontmatterRegions splits content into lines that keep their line breaks
-// and maps each top-level frontmatter key to the half-open line range stating
-// it: from its key line up to the next key, or to the closing delimiter.
+// frontmatterRegions maps each top-level frontmatter key of content to the
+// half-open line range stating it; a key stated twice maps to its last
+// statement.
 func frontmatterRegions(content string) ([]string, map[string]frontmatterRegion, bool) {
+	lines, ordered, ok := frontmatterKeyRegions(content)
+	if !ok {
+		return nil, nil, false
+	}
+	regions := make(map[string]frontmatterRegion, len(ordered))
+	for _, region := range ordered {
+		regions[region.key] = region
+	}
+	return lines, regions, true
+}
+
+// frontmatterKeyRegions splits content into lines that keep their line breaks
+// and lists the top-level frontmatter keys in file order, each with the
+// half-open line range stating it: from its key line up to the next key, or
+// to the closing delimiter.
+func frontmatterKeyRegions(content string) ([]string, []frontmatterRegion, bool) {
 	lines := strings.SplitAfter(content, "\n")
 	if len(lines) == 0 || !isDelimiter(strings.TrimPrefix(lines[0], "\uFEFF")) {
 		return nil, nil, false
@@ -146,21 +202,22 @@ func frontmatterRegions(content string) ([]string, map[string]frontmatterRegion,
 
 	// A YAML line number counts from the first line after the opening
 	// delimiter, which is that line's index in lines.
-	regions := make(map[string]frontmatterRegion, len(mapping)/2)
+	ordered := make([]frontmatterRegion, 0, len(mapping)/2)
 	for i := 0; i+1 < len(mapping); i += 2 {
 		key, value := mapping[i], mapping[i+1]
 		end := closing
 		if i+2 < len(mapping) {
 			end = mapping[i+2].Line
 		}
-		regions[key.Value] = frontmatterRegion{
+		ordered = append(ordered, frontmatterRegion{
+			key:    key.Value,
 			start:  key.Line,
 			end:    end,
 			scalar: value.Kind == yaml.ScalarNode,
 			value:  value.Value,
-		}
+		})
 	}
-	return lines, regions, true
+	return lines, ordered, true
 }
 
 func isDelimiter(line string) bool {
