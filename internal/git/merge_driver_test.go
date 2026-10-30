@@ -96,6 +96,27 @@ func TestEnsureMergeDriver(t *testing.T) {
 		}
 	})
 
+	t.Run("a failed name write leaves the command configured", func(t *testing.T) {
+		dir := test.GitRepo(t)
+		realGit, err := exec.LookPath("git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		bin := t.TempDir()
+		script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in *'merge.sdd-entry.name sdd'*) exit 255;; esac\nexec %q \"$@\"\n", realGit)
+		if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+		if err := (git.CLI{Dir: dir}).EnsureMergeDriver(context.Background()); err == nil {
+			t.Error("a name that cannot be written should fail the setup")
+		}
+		if got := driverConfig(t, dir); got != git.MergeDriverCommand {
+			t.Errorf("the command should be written before the name, so git never holds a driver without one, got %q", got)
+		}
+	})
+
 	t.Run("a directory outside any repository is left alone", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := (git.CLI{Dir: dir}).EnsureMergeDriver(context.Background()); err != nil {

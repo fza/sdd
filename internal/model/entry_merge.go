@@ -75,6 +75,28 @@ func ResolveMergedField(base, ours, theirs FrontmatterField) FrontmatterField {
 	}
 }
 
+// ResolveDerivedFields writes the resolved value of each MergeResolvedKeys
+// field into every one of versions (base, ours, theirs) stating it, so a text
+// merge of the result sees no difference there. Versions are returned as
+// given when one has no frontmatter to resolve in.
+func ResolveDerivedFields(versions [3]string) [3]string {
+	var fields [3]map[string]FrontmatterField
+	for i, content := range versions {
+		parsed, ok := FrontmatterFields(content, MergeResolvedKeys)
+		if !ok {
+			return versions
+		}
+		fields[i] = parsed
+	}
+	for _, key := range MergeResolvedKeys {
+		resolved := ResolveMergedField(fields[0][key], fields[1][key], fields[2][key])
+		for i := range versions {
+			versions[i] = ReplaceFrontmatterField(versions[i], key, resolved.Lines)
+		}
+	}
+	return versions
+}
+
 // ReplaceFrontmatterField swaps the lines stating key in content's
 // frontmatter for lines; empty lines remove the key. Content whose
 // frontmatter lacks key, or that has none, comes back unchanged.
@@ -209,6 +231,7 @@ func frontmatterKeyRegions(content string) ([]string, []frontmatterRegion, bool)
 		if i+2 < len(mapping) {
 			end = mapping[i+2].Line
 		}
+		end = beforeTrailingComments(lines, key.Line+1, end)
 		ordered = append(ordered, frontmatterRegion{
 			key:    key.Value,
 			start:  key.Line,
@@ -218,6 +241,32 @@ func frontmatterKeyRegions(content string) ([]string, []frontmatterRegion, bool)
 		})
 	}
 	return lines, ordered, true
+}
+
+// beforeTrailingComments moves end, the exclusive end of a key's lines, back
+// over a closing run of blank and column-0 comment lines that holds a
+// comment, so the comment stays where it is when the key's lines are replaced.
+// A run of blank lines alone stays with the key, as a kept block scalar may
+// own it.
+func beforeTrailingComments(lines []string, first, end int) int {
+	cut := end
+	for i := end - 1; i >= first; i-- {
+		line := strings.TrimRight(lines[i], "\r\n")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "#") {
+			break
+		}
+		cut = i
+	}
+	if cut == end {
+		return end
+	}
+	for cut > first && strings.TrimSpace(lines[cut-1]) == "" {
+		cut--
+	}
+	return cut
 }
 
 func isDelimiter(line string) bool {

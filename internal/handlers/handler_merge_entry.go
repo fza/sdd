@@ -35,8 +35,7 @@ func (h *Handler) MergeEntry(ctx context.Context, cmd *command.MergeEntryCmd) er
 		return fmt.Errorf("reading their version: %w", err)
 	}
 
-	versions := [3]string{string(base), string(ours), string(theirs)}
-	resolveDerivedFields(&versions)
+	versions := model.ResolveDerivedFields([3]string{string(base), string(ours), string(theirs)})
 
 	// git's file is written only with a finished result, so a failure leaves
 	// it as git handed it over for a fallback merge (20261030-093341-d-tac-t6j).
@@ -74,25 +73,6 @@ func (h *Handler) MergeEntry(ctx context.Context, cmd *command.MergeEntryCmd) er
 		return ErrEntryConflict
 	}
 	return nil
-}
-
-// resolveDerivedFields writes each resolved title and summary into every
-// version stating that key, so the text merge sees no difference there.
-func resolveDerivedFields(versions *[3]string) {
-	var fields [3]map[string]model.FrontmatterField
-	for i, content := range versions {
-		parsed, ok := model.FrontmatterFields(content, model.MergeResolvedKeys)
-		if !ok {
-			return
-		}
-		fields[i] = parsed
-	}
-	for _, key := range model.MergeResolvedKeys {
-		resolved := model.ResolveMergedField(fields[0][key], fields[1][key], fields[2][key])
-		for i := range versions {
-			versions[i] = model.ReplaceFrontmatterField(versions[i], key, resolved.Lines)
-		}
-	}
 }
 
 func writeTempVersion(name, content string) (path string, clean func(), err error) {

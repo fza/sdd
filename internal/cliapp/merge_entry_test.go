@@ -3,16 +3,18 @@ package cliapp_test
 import (
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/test"
 	"github.com/urfave/cli/v3"
 )
 
-const entryAttribute = ".sdd/graph/**/*.md merge=sdd-entry"
+const entryAttribute = ".sdd/graph/[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]-*.md merge=sdd-entry"
 
 func TestInitSetsUpTheEntryMergeDriver(t *testing.T) {
 	repo := canonicalTemp(t)
@@ -138,9 +140,10 @@ func TestInitRoutesAGraphDirNeedingQuotesOrEscapes(t *testing.T) {
 		graphDir string
 		line     string
 	}{
-		{graphDir: "my graph", line: `"my graph/**/*.md" merge=sdd-entry`},
-		{graphDir: "graph*", line: `graph\*/**/*.md merge=sdd-entry`},
-		{graphDir: `"graph`, line: `"\"graph/**/*.md" merge=sdd-entry`},
+		{graphDir: "my graph", line: `"my graph/` + model.EntryPathGlob + `" merge=sdd-entry`},
+		{graphDir: "graph*", line: `graph\*/` + model.EntryPathGlob + ` merge=sdd-entry`},
+		{graphDir: `"graph`, line: `"\"graph/` + model.EntryPathGlob + `" merge=sdd-entry`},
+		{graphDir: ".", line: model.EntryPathGlob + ` merge=sdd-entry`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.graphDir, func(t *testing.T) {
@@ -150,12 +153,19 @@ func TestInitRoutesAGraphDirNeedingQuotesOrEscapes(t *testing.T) {
 			if attributes := readFile(t, filepath.Join(repo, ".gitattributes")); !strings.Contains(attributes, tt.line+"\n") {
 				t.Errorf(".gitattributes should name the graph directory as it is:\n%s", attributes)
 			}
-			entry := tt.graphDir + "/2026/10/30-120000-s-tac-abc.md"
+			entry := path.Join(tt.graphDir, "2026/10/30-120000-s-tac-abc.md")
 			if got := strings.TrimSpace(gitIn(t, repo, "check-attr", "merge", "--", entry)); !strings.HasSuffix(got, ": merge: sdd-entry") {
 				t.Errorf("git should route an entry under the graph directory to the driver, got %q", got)
 			}
-			if got := strings.TrimSpace(gitIn(t, repo, "check-attr", "merge", "--", "other/2026/e.md")); !strings.HasSuffix(got, ": merge: unspecified") {
-				t.Errorf("git should leave files outside the graph directory alone, got %q", got)
+			for _, other := range []string{
+				"other/2026/e.md",
+				"README.md",
+				path.Join(tt.graphDir, "2026/10/30-120000-s-tac-abc/notes.md"),
+				path.Join(tt.graphDir, "wip/20261030-120000-abc.md"),
+			} {
+				if got := strings.TrimSpace(gitIn(t, repo, "check-attr", "merge", "--", other)); !strings.HasSuffix(got, ": merge: unspecified") {
+					t.Errorf("git should leave a file that is no entry to its own merge, got %q", got)
+				}
 			}
 		})
 	}
@@ -181,7 +191,7 @@ func TestRepeatInitRoutesTheRecordedGraphDir(t *testing.T) {
 
 			runApp(t, repo, "init")
 
-			if attributes := readFile(t, filepath.Join(repo, ".gitattributes")); attributes != "docs/graph/**/*.md merge=sdd-entry\n" {
+			if attributes := readFile(t, filepath.Join(repo, ".gitattributes")); attributes != "docs/graph/"+model.EntryPathGlob+" merge=sdd-entry\n" {
 				t.Errorf("a repeat init should route the recorded graph directory:\n%s", attributes)
 			}
 			if _, err := os.Stat(filepath.Join(repo, ".sdd", "graph")); !os.IsNotExist(err) {

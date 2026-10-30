@@ -172,6 +172,22 @@ func TestMergeEntryWithoutFrontmatterMergesAsText(t *testing.T) {
 
 // Both sides adding the summary at different lines keep one statement of it,
 // the first in file order, whichever side the merge runs from.
+func TestMergeEntryKeepsACommentBelowAResolvedField(t *testing.T) {
+	want := test.MergeEntryFixture(t, "summary-b-comment-below.md")
+	for _, sides := range [][2]string{
+		{"summary-b.md", "comment-below-summary.md"},
+		{"comment-below-summary.md", "summary-b.md"},
+	} {
+		merged, err := mergeEntry(t, sides[0], sides[1])
+		if err != nil {
+			t.Fatalf("MergeEntry %s into %s: %v", sides[1], sides[0], err)
+		}
+		if merged != want {
+			t.Errorf("merging %s into %s should keep the changed summary and the comment below it:\n%s\nwant\n%s", sides[1], sides[0], merged, want)
+		}
+	}
+}
+
 func TestMergeEntryKeepsOneStatementOfAFieldBothSidesAdded(t *testing.T) {
 	want := test.MergeEntryFixture(t, "summary-added-after-kind.md")
 	for _, sides := range [][2]string{

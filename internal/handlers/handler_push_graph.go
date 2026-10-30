@@ -64,7 +64,8 @@ func (h *Handler) PushGraph(ctx context.Context, cmd *command.PushGraphCmd) erro
 // commitGraph commits paths and, under automatic sync, publishes the commit
 // before the command returns. A committer that can set up the entry merge
 // driver does so last, so a config it cannot write never holds back the
-// commit or its push.
+// commit or its push, and its error names the commit as landed so the caller
+// does not repeat the write.
 func (h *Handler) commitGraph(ctx context.Context, message string, paths ...string) error {
 	err := h.committer.Commit(message, paths...)
 	if err != nil {
@@ -80,7 +81,7 @@ func (h *Handler) commitGraph(ctx context.Context, message string, paths ...stri
 	}
 	err = installer.EnsureMergeDriver(ctx)
 	if err != nil {
-		return fmt.Errorf("setting up the entry merge driver: %w", err)
+		return fmt.Errorf("commit %q landed, setting up the entry merge driver failed: %w", message, err)
 	}
 	return nil
 }

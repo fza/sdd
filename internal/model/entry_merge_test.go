@@ -67,6 +67,38 @@ func TestFrontmatterFields(t *testing.T) {
 			},
 		},
 		{
+			name:    "a comment below a key stays out of its lines",
+			content: "---\nsummary: s\n\n# note\ntype: signal\n---\n",
+			wantOK:  true,
+			want: map[string]model.FrontmatterField{
+				"summary": {Present: true, Value: "s", Lines: "summary: s\n"},
+			},
+		},
+		{
+			name:    "a comment above the closing delimiter stays out of the last key's lines",
+			content: "---\ntitle: T\n# note\n---\n",
+			wantOK:  true,
+			want: map[string]model.FrontmatterField{
+				"title": {Present: true, Value: "T", Lines: "title: T\n"},
+			},
+		},
+		{
+			name:    "blank lines closing a kept block scalar stay with the key",
+			content: "---\nsummary: |+\n  a\n\ntype: signal\n---\n",
+			wantOK:  true,
+			want: map[string]model.FrontmatterField{
+				"summary": {Present: true, Value: "a\n\n", Lines: "summary: |+\n  a\n\n"},
+			},
+		},
+		{
+			name:    "an indented hash line in a block scalar is part of the value",
+			content: "---\nsummary: |\n  a\n  # not a comment\ntype: signal\n---\n",
+			wantOK:  true,
+			want: map[string]model.FrontmatterField{
+				"summary": {Present: true, Value: "a\n# not a comment\n", Lines: "summary: |\n  a\n  # not a comment\n"},
+			},
+		},
+		{
 			name:    "a flow-style mapping is not handled",
 			content: "---\n{title: a, summary: b}\n---\n",
 		},
@@ -180,6 +212,13 @@ func TestReplaceFrontmatterField(t *testing.T) {
 			want:    "---\ntype: signal\nsummary: 'Old summary: quoted'\nfuture_key: kept\n---\n\n# body\n",
 		},
 		{
+			name:    "a comment below the key stays in place",
+			content: "---\ntitle: T\n# keep\nsummary: s\n---\n",
+			key:     "title",
+			lines:   "title: New\n",
+			want:    "---\ntitle: New\n# keep\nsummary: s\n---\n",
+		},
+		{
 			name:    "a missing key leaves the content alone",
 			content: "---\ntype: signal\n---\n",
 			key:     "title",
@@ -202,6 +241,27 @@ func TestReplaceFrontmatterField(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveDerivedFields(t *testing.T) {
+	t.Run("every version carries the resolved title and summary", func(t *testing.T) {
+		base := "---\ntitle: T\nsummary: a\n---\nbody\n"
+		ours := "---\ntitle: T\nsummary: c\n---\nbody\n"
+		theirs := "---\ntitle: U\nsummary: b\n---\nbody\n"
+		want := "---\ntitle: U\nsummary: b\n---\nbody\n"
+		for i, got := range model.ResolveDerivedFields([3]string{base, ours, theirs}) {
+			if got != want {
+				t.Errorf("version %d should carry the resolved fields:\n%q\nwant\n%q", i, got, want)
+			}
+		}
+	})
+
+	t.Run("a version without frontmatter leaves all three as given", func(t *testing.T) {
+		versions := [3]string{"---\nsummary: a\n---\n", "plain\n", "---\nsummary: b\n---\n"}
+		if got := model.ResolveDerivedFields(versions); got != versions {
+			t.Errorf("versions should be returned unchanged, got %q", got)
+		}
+	})
 }
 
 func TestDropRepeatedFrontmatterKeys(t *testing.T) {

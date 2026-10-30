@@ -43,9 +43,11 @@ func (c CLI) EnsureMergeDriver(ctx context.Context) error {
 	if current == MergeDriverCommand || (current != "" && !strings.HasPrefix(current, mergeDriverPrefix)) {
 		return nil
 	}
+	// The command goes first: git refuses to merge with a driver that has a
+	// name but no command, which a failed second write would leave.
 	settings := [][2]string{
-		{"merge." + model.EntryMergeDriver + ".name", "sdd entry title and summary merge"},
 		{key, MergeDriverCommand},
+		{"merge." + model.EntryMergeDriver + ".name", "sdd entry title and summary merge"},
 	}
 	for _, setting := range settings {
 		out, writeErr := exec.CommandContext(ctx, "git", c.at("config", "--local", setting[0], setting[1])...).CombinedOutput()

@@ -838,18 +838,20 @@ func ensureGitignoreEntries(path string, entries []string) (bool, error) {
 	return true, nil
 }
 
-// entryMergeAttributeLine is the .gitattributes line routing the markdown
-// files under graphDir to the entry merge driver. Glob characters are
-// escaped, and a pattern holding whitespace or opening with a quote is written
-// C-quoted, so the line matches the directory as named. A directory outside the repository cannot be matched and is refused.
+// entryMergeAttributeLine is the .gitattributes line routing the entry files
+// under graphDir to the entry merge driver; other markdown files, a graph at
+// the repository root included, are left to git. Glob characters in graphDir
+// are escaped, and a pattern holding whitespace or opening with a quote is
+// written C-quoted, so the line matches the directory as named. A directory
+// outside the repository cannot be matched and is refused.
 func entryMergeAttributeLine(graphDir string) (string, error) {
 	dir := filepath.ToSlash(filepath.Clean(graphDir))
 	if filepath.IsAbs(graphDir) || dir == ".." || strings.HasPrefix(dir, "../") {
 		return "", fmt.Errorf("%q cannot be named by a .gitattributes pattern inside the repository", graphDir)
 	}
-	pattern := "*.md"
+	pattern := model.EntryPathGlob
 	if dir != "." {
-		pattern = strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`).Replace(dir) + "/**/*.md"
+		pattern = strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`).Replace(dir) + "/" + model.EntryPathGlob
 	}
 	if strings.ContainsAny(pattern, " \t") || strings.HasPrefix(pattern, `"`) {
 		pattern = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\t", `\t`).Replace(pattern) + `"`

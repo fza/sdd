@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/command"
@@ -44,8 +45,8 @@ func TestCommitGraphSetsUpTheMergeDriverAfterThePush(t *testing.T) {
 
 	err := h.StartWIP(context.Background(), &command.StartWIPCmd{EntryID: summarizedEntry, Participant: "Ada", Description: "work"})
 
-	if err == nil {
-		t.Error("a driver setup that fails should be reported")
+	if err == nil || !strings.Contains(err.Error(), "landed") {
+		t.Errorf("a driver setup that fails should be reported as failing after the commit landed, got %v", err)
 	}
 	if committer.commits != 1 || !repo.Called("push") {
 		t.Error("the commit should land and be pushed despite the failing setup")
