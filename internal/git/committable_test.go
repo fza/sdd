@@ -73,6 +73,52 @@ func TestCommittable_CommitSucceedsOnTheResult(t *testing.T) {
 	}
 }
 
+func TestUncommitted(t *testing.T) {
+	dir := test.GitRepo(t)
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		mustNot(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		mustNot(t, os.WriteFile(path, []byte(content), 0o644))
+		return path
+	}
+	mustNot(t, os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".claude/\n"), 0o644))
+	unchanged := write("unchanged.md", "a\n")
+	modified := write("modified.md", "a\n")
+	staged := write("staged.md", "a\n")
+	removed := write("removed.md", "a\n")
+	test.Git(t, dir, "add", ".gitignore", unchanged, modified, staged, removed)
+	test.Git(t, dir, "commit", "-q", "-m", "tracked")
+	write("modified.md", "b\n")
+	write("staged.md", "b\n")
+	test.Git(t, dir, "add", staged)
+	mustNot(t, os.Remove(removed))
+	untracked := write("skills/new.md", "a\n")
+	ignored := write(".claude/skills/SKILL.md", "a\n")
+	vanished := filepath.Join(dir, "gone.md")
+
+	cases := []struct {
+		name  string
+		paths []string
+		want  []string
+	}{
+		{name: "keeps modified, staged, removed and untracked paths", paths: []string{modified, staged, removed, untracked}, want: []string{modified, staged, removed, untracked}},
+		{name: "drops an unchanged tracked path", paths: []string{unchanged, modified}, want: []string{modified}},
+		{name: "drops an ignored path", paths: []string{ignored}, want: nil},
+		{name: "drops a path that never existed", paths: []string{vanished}, want: nil},
+		{name: "keeps a directory with a change beneath it", paths: []string{filepath.Join(dir, "skills")}, want: []string{filepath.Join(dir, "skills")}},
+		{name: "nothing in, nothing out", paths: nil, want: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := git.CLI{Dir: dir}.Uncommitted(t.Context(), tc.paths)
+			mustNot(t, err)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("only paths with a change git can commit should remain, got %v", got)
+			}
+		})
+	}
+}
+
 func mustNot(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
