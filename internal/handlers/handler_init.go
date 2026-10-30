@@ -248,6 +248,23 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
+	attributesPath := filepath.Join(cmd.RepoRoot, ".gitattributes")
+	attributesAdded, err := ensureEntryMergeAttribute(attributesPath, graphDir)
+	if err != nil {
+		return fmt.Errorf("routing graph entries to the merge driver in %s: %w", attributesPath, err)
+	}
+	if attributesAdded {
+		touched = append(touched, attributesPath)
+		if cmd.OnGitattributesUpdated != nil {
+			cmd.OnGitattributesUpdated(attributesPath)
+		}
+	}
+	if h.mergeDriverAt != nil {
+		if err := h.mergeDriverAt(cmd.RepoRoot).EnsureMergeDriver(ctx); err != nil {
+			return fmt.Errorf("setting up the entry merge driver: %w", err)
+		}
+	}
+
 	// Migrate legacy indexes into the machine-global store: the in-tree
 	// .sdd/index and, for connected repos, the clone cache's .index — both
 	// predate the store. Move-if-absent, never clobber: when a store already
@@ -809,6 +826,22 @@ func ensureGitignoreEntries(path string, entries []string) (bool, error) {
 		fmt.Fprintln(f, e)
 	}
 	return true, nil
+}
+
+// ensureEntryMergeAttribute appends the .gitattributes line routing the
+// markdown files under graphDir to the entry merge driver when it is missing.
+// A graph directory with whitespace or a line break would split the pattern,
+// so it is refused.
+func ensureEntryMergeAttribute(path, graphDir string) (bool, error) {
+	dir := filepath.ToSlash(filepath.Clean(graphDir))
+	if strings.ContainsAny(dir, " \t\r\n") || strings.HasPrefix(dir, "#") || strings.HasPrefix(dir, "!") {
+		return false, fmt.Errorf("graph directory %q cannot be written as a .gitattributes pattern", graphDir)
+	}
+	pattern := dir + "/**/*.md"
+	if dir == "." {
+		pattern = "*.md"
+	}
+	return ensureGitignoreEntries(path, []string{pattern + " merge=" + model.EntryMergeDriver})
 }
 
 // migrateOldTmpDir moves files from oldDir to newDir. Returns the count

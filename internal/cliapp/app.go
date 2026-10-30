@@ -423,6 +423,9 @@ func New(options Options) *cli.Command {
 			if cmd.Bool("timing") {
 				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
 			}
+			if cmd.Args().First() == mergeEntryCommandName {
+				return ctx, nil
+			}
 
 			warnUnknownConfigKeys(ctx)
 
@@ -465,6 +468,7 @@ func New(options Options) *cli.Command {
 			serveCmd(),
 			sessionsCmd(),
 			syncCmd(),
+			mergeEntryCmd(),
 			repoCmd(),
 			statsCmd(),
 		},
@@ -2048,6 +2052,9 @@ func initCmd() *cli.Command {
 				OnGitignoreUpdated: func(path string) {
 					fmt.Fprintf(cmd.ErrWriter, "  updated %s\n", path)
 				},
+				OnGitattributesUpdated: func(path string) {
+					fmt.Fprintf(cmd.ErrWriter, "  updated %s\n", path)
+				},
 				OnMetaWritten: func(path string) {
 					fmt.Fprintf(cmd.Writer, "  meta: %s\n", path)
 				},
@@ -2107,6 +2114,7 @@ func initCmd() *cli.Command {
 				Repos:               mgr,
 				ProjectRepositories: git.Repositories{},
 				RepositoryAt:        func(dir string) handlers.Repository { return git.CLI{Dir: dir} },
+				MergeDriverAt:       func(dir string) handlers.MergeDriverInstaller { return git.CLI{Dir: dir} },
 			})
 			if err := handler.Init(ctx, icmd); err != nil {
 				return err
