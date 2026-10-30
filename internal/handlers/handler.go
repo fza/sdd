@@ -60,6 +60,18 @@ type Repository interface {
 	Tracker
 }
 
+// FileMerger three-way merges other into current against base, writing the
+// result into current and reporting whether conflict markers were left.
+type FileMerger interface {
+	MergeFile(ctx context.Context, current, base, other string, markerSize int) (conflicted bool, err error)
+}
+
+// MergeDriverInstaller writes the entry merge driver into a repository's
+// local config when it has none.
+type MergeDriverInstaller interface {
+	EnsureMergeDriver(ctx context.Context) error
+}
+
 // Brancher performs git branch operations. Injected so tests can fake
 // checkout/branch deletion without touching real git.
 type Brancher interface {
@@ -124,6 +136,8 @@ type Handler struct {
 	repos           *repos.Manager
 	projectRepos    ProjectRepositories
 	repositoryAt    func(dir string) Repository
+	fileMerger      FileMerger
+	mergeDriverAt   func(dir string) MergeDriverInstaller
 	stderr          io.Writer
 	now             func() time.Time
 	language        string
@@ -162,8 +176,13 @@ type Options struct {
 	// and refresh its project in a repository of its own. Nil refuses both.
 	ProjectRepositories ProjectRepositories
 	RepositoryAt        func(dir string) Repository
-	Stderr              io.Writer
-	Now                 func() time.Time
+	// FileMerger merges the rest of an entry file for MergeEntry.
+	FileMerger FileMerger
+	// MergeDriverAt sets up the entry merge driver in the repository at dir
+	// for init. Nil skips the setup.
+	MergeDriverAt func(dir string) MergeDriverInstaller
+	Stderr        io.Writer
+	Now           func() time.Time
 	// Language is the graph's configured authoring language locale code
 	// (config `language`, empty = English default). Summaries are written
 	// in it regardless of the source material's language.
@@ -193,6 +212,8 @@ func New(opts Options) *Handler {
 		repos:           opts.Repos,
 		projectRepos:    opts.ProjectRepositories,
 		repositoryAt:    opts.RepositoryAt,
+		fileMerger:      opts.FileMerger,
+		mergeDriverAt:   opts.MergeDriverAt,
 		stderr:          opts.Stderr,
 		now:             opts.Now,
 		language:        opts.Language,

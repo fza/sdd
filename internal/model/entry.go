@@ -756,6 +756,10 @@ func ParseID(id string) (IDParts, error) {
 	}, nil
 }
 
+// EntryPathGlob matches the relative path IDToRelPath gives an entry, and no
+// attachment or WIP marker beside it, as a gitattributes pattern.
+const EntryPathGlob = "[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]-*.md"
+
 // IDToRelPath converts an entry ID to its relative file path in the hierarchical layout.
 // ID format: YYYYMMDD-HHmmss-type-layer-suffix
 // Path format: YYYY/MM/DD-HHmmss-type-layer-suffix.md

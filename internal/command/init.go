@@ -144,6 +144,10 @@ type InitCmd struct {
 	// OnGitignoreUpdated fires after .gitignore is updated with .sdd/tmp/.
 	OnGitignoreUpdated func(gitignorePath string)
 
+	// OnGitattributesUpdated fires after .gitattributes gains the line routing
+	// graph entries to the entry merge driver.
+	OnGitattributesUpdated func(gitattributesPath string)
+
 	// OnIndexMigrated fires per legacy index dir (in-tree .sdd/index or a
 	// clone cache's .index) the init pass handled: moved=true when it was
 	// moved into the machine-global store at storeDir, moved=false when a

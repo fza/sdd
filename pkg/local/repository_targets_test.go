@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
@@ -325,5 +327,39 @@ func TestRepositoryTargetsApplyContributionModePerCheckout(t *testing.T) {
 	err = capture(4, "main")
 	if !errors.Is(err, model.ErrContributionRefused) || !strings.Contains(err.Error(), "main is the default branch") {
 		t.Errorf("the default branch should be refused in contribution mode, got %v", err)
+	}
+}
+
+// A capture through the local target sets up the entry merge driver, the
+// retry of a finished publication included.
+func TestRepositoryTargetSetsUpTheMergeDriver(t *testing.T) {
+	repo := newGitRepository(t)
+	repo.write(".sdd/config.yaml", "repo_id: example\ngraph_dir: .sdd/graph\ndefault_branch: main\n")
+	repo.write("global-config.yaml", "")
+	application, identity, binding := repo.captureApplication(t, pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
+		return pkgllm.Result{Text: `{"title": "test title", "summary": "Rendered summary."}`}, nil
+	}))
+	draft := sdd.EntryDraft{
+		Kind: "gap", Layer: "tactical", Confidence: "high", Body: "Local capture sets up the merge driver.",
+		EntryID: "20260914-020000-s-tac-mdr", Publication: sdd.PublicationKey{Session: binding.SessionID, Sequence: 1, Discriminator: "new-entry"},
+	}
+	driver := func() string {
+		out, _ := exec.Command("git", "-C", repo.root, "config", "--local", "--get", "merge.sdd-entry.driver").Output()
+		return strings.TrimSpace(string(out))
+	}
+
+	if _, err := application.CreateEntry(t.Context(), identity, "example", binding, draft); err != nil {
+		t.Fatal(err)
+	}
+	if driver() != git.MergeDriverCommand {
+		t.Error("a capture should set up the merge driver")
+	}
+
+	repo.git("config", "--local", "--remove-section", "merge.sdd-entry")
+	if _, err := application.CreateEntry(t.Context(), identity, "example", binding, draft); err != nil {
+		t.Fatal(err)
+	}
+	if driver() != git.MergeDriverCommand {
+		t.Error("the retry of a finished publication should set up the merge driver too")
 	}
 }

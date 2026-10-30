@@ -49,6 +49,10 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if err != nil {
 		return fmt.Errorf("graph directory: %w", err)
 	}
+	entryAttribute, err := entryMergeAttributeLine(graphDir)
+	if err != nil {
+		return fmt.Errorf("graph directory: %w", err)
+	}
 
 	sddDir := filepath.Join(cmd.RepoRoot, model.SDDDirName)
 	absGraphDir := filepath.Join(cmd.RepoRoot, graphDir)
@@ -245,6 +249,23 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		touched = append(touched, gitignorePath)
 		if cmd.OnGitignoreUpdated != nil {
 			cmd.OnGitignoreUpdated(gitignorePath)
+		}
+	}
+
+	attributesPath := filepath.Join(cmd.RepoRoot, ".gitattributes")
+	attributesAdded, err := ensureGitignoreEntries(attributesPath, []string{entryAttribute})
+	if err != nil {
+		return fmt.Errorf("routing graph entries to the merge driver in %s: %w", attributesPath, err)
+	}
+	if attributesAdded {
+		touched = append(touched, attributesPath)
+		if cmd.OnGitattributesUpdated != nil {
+			cmd.OnGitattributesUpdated(attributesPath)
+		}
+	}
+	if h.mergeDriverAt != nil {
+		if err := h.mergeDriverAt(cmd.RepoRoot).EnsureMergeDriver(ctx); err != nil {
+			return fmt.Errorf("setting up the entry merge driver: %w", err)
 		}
 	}
 
@@ -794,21 +815,48 @@ func ensureGitignoreEntries(path string, entries []string) (bool, error) {
 		return false, nil
 	}
 
+	var appended strings.Builder
+	// Ensure we start on a new line if the file doesn't end with one.
+	if len(fileData) > 0 && fileData[len(fileData)-1] != '\n' {
+		appended.WriteString("\n")
+	}
+	for _, e := range toAdd {
+		appended.WriteString(e + "\n")
+	}
+
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return false, err
 	}
-	defer f.Close()
-
-	// Ensure we start on a new line if the file doesn't end with one.
-	if len(fileData) > 0 && fileData[len(fileData)-1] != '\n' {
-		fmt.Fprintln(f)
+	if _, err := f.WriteString(appended.String()); err != nil {
+		_ = f.Close()
+		return false, fmt.Errorf("appending to %s: %w", path, err)
 	}
-
-	for _, e := range toAdd {
-		fmt.Fprintln(f, e)
+	if err := f.Close(); err != nil {
+		return false, fmt.Errorf("appending to %s: %w", path, err)
 	}
 	return true, nil
+}
+
+// entryMergeAttributeLine is the .gitattributes line routing the entry files
+// under graphDir to the entry merge driver; other markdown files, a graph at
+// the repository root included, are left to git. Glob characters in graphDir
+// are escaped, and a pattern holding whitespace or opening with a quote is
+// written C-quoted, so the line matches the directory as named. A directory
+// outside the repository cannot be matched and is refused.
+func entryMergeAttributeLine(graphDir string) (string, error) {
+	dir := filepath.ToSlash(filepath.Clean(graphDir))
+	if filepath.IsAbs(graphDir) || dir == ".." || strings.HasPrefix(dir, "../") {
+		return "", fmt.Errorf("%q cannot be named by a .gitattributes pattern inside the repository", graphDir)
+	}
+	pattern := model.EntryPathGlob
+	if dir != "." {
+		pattern = strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`).Replace(dir) + "/" + model.EntryPathGlob
+	}
+	if strings.ContainsAny(pattern, " \t") || strings.HasPrefix(pattern, `"`) {
+		pattern = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\t", `\t`).Replace(pattern) + `"`
+	}
+	return pattern + " merge=" + model.EntryMergeDriver, nil
 }
 
 // migrateOldTmpDir moves files from oldDir to newDir. Returns the count
