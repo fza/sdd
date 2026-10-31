@@ -48,12 +48,16 @@ func AttachmentChunkID(entryID, attachmentPath string, n int) string {
 // cannot overwrite one another through a truncated chunk identity.
 func VersionSegment(entryHash string) string { return entryHash }
 
-// SummaryChunkIDVersioned is the version-qualified summary chunk ID:
-// entryID#v-<hash>#summary. New writes mint versioned IDs so a changed entry
-// adds a version rather than overwriting the old one — two branches holding
-// different versions of one entry each own their own rows in the shared store.
-func SummaryChunkIDVersioned(entryID, entryHash string) string {
-	return fmt.Sprintf("%s#v-%s#summary", entryID, VersionSegment(entryHash))
+// SummaryChunkIDVersioned is the version-qualified n-th summary chunk ID:
+// entryID#v-<hash>#summary for the first piece, #summary-N after it. New
+// writes mint versioned IDs so a changed entry adds a version rather than
+// overwriting the old one — two branches holding different versions of one
+// entry each own their own rows in the shared store.
+func SummaryChunkIDVersioned(entryID, entryHash string, n int) string {
+	if n == 0 {
+		return fmt.Sprintf("%s#v-%s#summary", entryID, VersionSegment(entryHash))
+	}
+	return fmt.Sprintf("%s#v-%s#summary-%d", entryID, VersionSegment(entryHash), n)
 }
 
 // BodyChunkIDVersioned is the version-qualified n-th body chunk ID:

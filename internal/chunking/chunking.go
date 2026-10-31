@@ -60,8 +60,8 @@ func IncludeEntry(entry *model.Entry, excludeEmbedded bool) bool {
 func DeriveChunks(ctx context.Context, entry *model.Entry, entryHash string, splitter *textsplitter.Splitter, attachments AttachmentReader) ([]Chunk, error) {
 	out := make([]Chunk, 0, 8)
 
-	if sc, ok := splitter.SummaryChunk(entry.Summary); ok {
-		out = append(out, Chunk{ChunkID: index.SummaryChunkIDVersioned(entry.ID, entryHash), Chunk: sc})
+	for n, sc := range splitter.SummaryChunks(entry.Summary) {
+		out = append(out, Chunk{ChunkID: index.SummaryChunkIDVersioned(entry.ID, entryHash, n), Chunk: sc})
 	}
 
 	bodyOut, err := splitter.Split(textsplitter.SplitInput{

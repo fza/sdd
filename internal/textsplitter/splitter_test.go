@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestSplitter_StripsFrontmatter covers d-tac-85r's "Strip YAML frontmatter
@@ -167,17 +168,18 @@ func TestSplitter_AttachmentMetadata(t *testing.T) {
 // TestSplitter_SummaryChunk verifies the dedicated summary chunk: text is
 // the raw summary (no preamble), IsSummary is true, empty input returns
 // (zero, false).
-func TestSplitter_SummaryChunk(t *testing.T) {
+func TestSplitter_SummaryChunks(t *testing.T) {
 	t.Parallel()
 
 	s := NewSplitter()
 
 	t.Run("populated", func(t *testing.T) {
 		t.Parallel()
-		c, ok := s.SummaryChunk("This is the summary.")
-		if !ok {
-			t.Fatal("expected ok=true")
+		cs := s.SummaryChunks("This is the summary.")
+		if len(cs) != 1 {
+			t.Fatalf("chunks: got %d, want 1", len(cs))
 		}
+		c := cs[0]
 		if !c.IsSummary {
 			t.Error("IsSummary should be true")
 		}
@@ -191,17 +193,29 @@ func TestSplitter_SummaryChunk(t *testing.T) {
 
 	t.Run("empty", func(t *testing.T) {
 		t.Parallel()
-		_, ok := s.SummaryChunk("")
-		if ok {
-			t.Error("expected ok=false for empty input")
+		if cs := s.SummaryChunks(""); len(cs) != 0 {
+			t.Errorf("chunks for empty input: got %d, want 0", len(cs))
 		}
 	})
 
 	t.Run("whitespace-only", func(t *testing.T) {
 		t.Parallel()
-		_, ok := s.SummaryChunk("   \n\t  ")
-		if ok {
-			t.Error("expected ok=false for whitespace-only input")
+		if cs := s.SummaryChunks("   \n\t  "); len(cs) != 0 {
+			t.Errorf("chunks for whitespace-only input: got %d, want 0", len(cs))
+		}
+	})
+
+	t.Run("capped summary splits into pieces within the cap", func(t *testing.T) {
+		t.Parallel()
+		capped := NewSplitter().WithMaxRunes(10)
+		cs := capped.SummaryChunks(strings.Repeat("y", 25))
+		if len(cs) != 3 {
+			t.Fatalf("chunks: got %d, want 3", len(cs))
+		}
+		for _, c := range cs {
+			if n := utf8.RuneCountInString(c.Text); n > 10 {
+				t.Errorf("chunk runes: got %d, want at most 10", n)
+			}
 		}
 	})
 }
@@ -303,4 +317,45 @@ func TestStripFrontmatter(t *testing.T) {
 			t.Errorf("fm: got %#v", fm)
 		}
 	})
+}
+
+func TestSplitter_MaxRunes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		markdown  string
+		summary   string
+		maxRunes  int
+		wantErr   bool
+		wantChunk int
+	}{
+		{name: "uncapped keeps one chunk", markdown: "## H\n" + strings.Repeat("x", 500), maxRunes: 0, wantChunk: 1},
+		{name: "fits the cap", markdown: "## H\nshort", maxRunes: 200, wantChunk: 1},
+		{name: "body over cap splits", markdown: "## H\n" + strings.Repeat("字", 300), maxRunes: 100, wantChunk: 4},
+		{name: "preamble leaves no room", markdown: "## H\nbody", summary: "S.", maxRunes: 1, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := NewSplitter().WithMaxRunes(tc.maxRunes).Split(SplitInput{Markdown: tc.markdown, EntrySummary: tc.summary})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected an error when the preamble leaves no room")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Split: %v", err)
+			}
+			if len(out.Chunks) != tc.wantChunk {
+				t.Fatalf("chunks: got %d, want %d", len(out.Chunks), tc.wantChunk)
+			}
+			for _, c := range out.Chunks {
+				if tc.maxRunes > 0 && utf8.RuneCountInString(c.Text) > tc.maxRunes {
+					t.Errorf("chunk runes: got %d, want at most %d", utf8.RuneCountInString(c.Text), tc.maxRunes)
+				}
+			}
+		})
+	}
 }

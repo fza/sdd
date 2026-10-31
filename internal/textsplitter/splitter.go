@@ -3,6 +3,7 @@ package textsplitter
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -13,6 +14,7 @@ import (
 // preamble onto each chunk's Text. Construct via NewSplitter.
 type Splitter struct {
 	markdown *MarkdownTextSplitter
+	maxRunes int
 }
 
 // NewSplitter constructs a Splitter with the given markdown splitter
@@ -20,6 +22,14 @@ type Splitter struct {
 // ChunkSize=DefaultChunkSize, ChunkOverlap=DefaultChunkOverlap).
 func NewSplitter(opts ...Option) *Splitter {
 	return &Splitter{markdown: NewMarkdownTextSplitter(opts...)}
+}
+
+// WithMaxRunes returns a copy whose chunk Text, Entry preamble included,
+// holds at most n runes. n <= 0 leaves chunks uncapped.
+func (s *Splitter) WithMaxRunes(n int) *Splitter {
+	capped := *s
+	capped.maxRunes = n
+	return &capped
 }
 
 // SplitInput captures everything the splitter needs to produce per-chunk
@@ -70,37 +80,83 @@ func (s *Splitter) Split(input SplitInput) (SplitOutput, error) {
 	}
 
 	summaryFirstSentence := firstSentence(input.EntrySummary)
+	if s.maxRunes > 0 {
+		summaryFirstSentence = truncateRunes(summaryFirstSentence, s.maxRunes/4)
+	}
 
 	out := SplitOutput{Frontmatter: fm}
 	for _, raw := range raws {
-		text := composePreamble(summaryFirstSentence, raw.Breadcrumb, raw.Body)
-		out.Chunks = append(out.Chunks, Chunk{
-			Text:                 text,
-			Body:                 raw.Body,
-			Breadcrumb:           raw.Breadcrumb,
-			Depth:                raw.Depth,
-			IsAttachment:         input.IsAttachment,
-			SourceAttachmentPath: input.SourceAttachmentPath,
-		})
+		bodies, err := s.fitBodies(summaryFirstSentence, raw.Breadcrumb, raw.Body)
+		if err != nil {
+			return SplitOutput{}, err
+		}
+		for _, body := range bodies {
+			out.Chunks = append(out.Chunks, Chunk{
+				Text:                 composePreamble(summaryFirstSentence, raw.Breadcrumb, body),
+				Body:                 body,
+				Breadcrumb:           raw.Breadcrumb,
+				Depth:                raw.Depth,
+				IsAttachment:         input.IsAttachment,
+				SourceAttachmentPath: input.SourceAttachmentPath,
+			})
+		}
 	}
 	return out, nil
 }
 
-// SummaryChunk produces the dedicated entry-summary chunk. The text is the
-// raw summary (no preamble — the summary already self-identifies).
-// IsSummary is set so the indexer can apply the depth-aware boost at
-// retrieval time. Returns the zero-value Chunk and false when summary is
+// fitBodies returns body unchanged when the cap is off or the chunk fits.
+// Otherwise it cuts body into pieces that, with the preamble, fit the cap.
+// A preamble that leaves no room for body is an error, never a silent cut.
+func (s *Splitter) fitBodies(summary string, breadcrumb []string, body string) ([]string, error) {
+	if s.maxRunes <= 0 || utf8.RuneCountInString(composePreamble(summary, breadcrumb, body)) <= s.maxRunes {
+		return []string{body}, nil
+	}
+	room := s.maxRunes - utf8.RuneCountInString(composePreamble(summary, breadcrumb, ""))
+	if room < 1 {
+		return nil, fmt.Errorf("preamble of %d runes leaves no room in a %d-rune cap", s.maxRunes-room, s.maxRunes)
+	}
+	runes := []rune(body)
+	var pieces []string
+	for start := 0; start < len(runes); start += room {
+		pieces = append(pieces, string(runes[start:min(start+room, len(runes))]))
+	}
+	return pieces, nil
+}
+
+// SummaryChunks produces the entry-summary chunks: the raw summary, split by
+// the cap when one is set. Each chunk carries IsSummary so the indexer can
+// apply the depth-aware boost at retrieval time. Returns nil when summary is
 // empty so callers can skip indexing entries without summaries.
-func (s *Splitter) SummaryChunk(summary string) (Chunk, bool) {
+func (s *Splitter) SummaryChunks(summary string) []Chunk {
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
-		return Chunk{}, false
+		return nil
 	}
-	return Chunk{
-		Text:      summary,
-		Body:      summary,
-		IsSummary: true,
-	}, true
+	pieces := []string{summary}
+	if s.maxRunes > 0 {
+		pieces = splitRunes(summary, s.maxRunes)
+	}
+	chunks := make([]Chunk, 0, len(pieces))
+	for _, piece := range pieces {
+		chunks = append(chunks, Chunk{Text: piece, Body: piece, IsSummary: true})
+	}
+	return chunks
+}
+
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
+}
+
+func splitRunes(s string, n int) []string {
+	runes := []rune(s)
+	var pieces []string
+	for start := 0; start < len(runes); start += n {
+		pieces = append(pieces, string(runes[start:min(start+n, len(runes))]))
+	}
+	return pieces
 }
 
 // composePreamble builds the chunk text per d-tac-jvd: an `Entry:` line, a
