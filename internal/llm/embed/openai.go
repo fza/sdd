@@ -13,13 +13,17 @@ import (
 	pkgembed "github.com/networkteam/sdd/pkg/llm/embed"
 )
 
-const defaultOpenAIEndpoint = "https://api.openai.com"
+const (
+	defaultOpenAIEndpoint = "https://api.openai.com"
+	defaultOpenAIPath     = "/v1/embeddings"
+)
 
 // openaiEmbedder implements embed.Embedder against the
-// `POST {endpoint}/v1/embeddings` API contract used by OpenAI and
+// `POST {endpoint}{path}` API contract used by OpenAI and
 // OpenAI-compatible self-hosted services.
 type openaiEmbedder struct {
 	endpoint         string
+	path             string
 	apiKey           string
 	identity         llm.Identity
 	dimensions       int // 0 means "use model native"
@@ -37,8 +41,13 @@ func newOpenAI(cfg model.EmbeddingConfig) (pkgembed.Embedder, error) {
 	if endpoint == "" {
 		endpoint = defaultOpenAIEndpoint
 	}
+	path := cfg.Path
+	if path == "" {
+		path = defaultOpenAIPath
+	}
 	return &openaiEmbedder{
 		endpoint:         endpoint,
+		path:             path,
 		apiKey:           apiKey,
 		identity:         llm.Identity{Provider: "openai", Model: cfg.Model, Host: hostOf(endpoint)},
 		dimensions:       cfg.Dimensions,
@@ -97,7 +106,7 @@ func (e *openaiEmbedder) request(ctx context.Context, texts []string) (result pk
 	if err != nil {
 		return pkgembed.Result{}, fmt.Errorf("marshal request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.endpoint+"/v1/embeddings", bytes.NewReader(buf))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.endpoint+e.path, bytes.NewReader(buf))
 	if err != nil {
 		return pkgembed.Result{}, fmt.Errorf("build request: %w", err)
 	}

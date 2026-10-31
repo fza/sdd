@@ -357,6 +357,10 @@ type EmbeddingConfig struct {
 	// the OpenAI public endpoint. Useful for self-hosted proxies that
 	// implement the same wire protocol.
 	Endpoint string `yaml:"endpoint,omitempty"`
+	// Path is the request path joined to Endpoint by the openai provider.
+	// Empty means "/v1/embeddings"; gateways that serve the route elsewhere
+	// set it explicitly.
+	Path string `yaml:"path,omitempty"`
 	// OllamaEndpoint overrides the default Ollama URL for the embedding
 	// adapter. Independent of LLMConfig.OllamaEndpoint so embedding and
 	// chat can target different instances.
@@ -641,6 +645,9 @@ func mergeEmbeddingConfig(base, overlay EmbeddingConfig) EmbeddingConfig {
 	}
 	if overlay.Endpoint != "" {
 		out.Endpoint = overlay.Endpoint
+	}
+	if overlay.Path != "" {
+		out.Path = overlay.Path
 	}
 	if overlay.OllamaEndpoint != "" {
 		out.OllamaEndpoint = overlay.OllamaEndpoint

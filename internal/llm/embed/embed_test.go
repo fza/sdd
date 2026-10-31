@@ -338,3 +338,49 @@ func TestOllamaEmbedder_Error(t *testing.T) {
 		t.Fatalf("expected error mentioning model not found, got %v", err)
 	}
 }
+
+func TestOpenAIEmbedder_RequestPath(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		path     string
+		wantPath string
+	}{
+		{name: "default path", path: "", wantPath: "/v1/embeddings"},
+		{name: "gateway path", path: "/v3/compat/embeddings", wantPath: "/v3/compat/embeddings"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data": []map[string]any{{"embedding": []float32{0.1}}},
+				})
+			}))
+			defer srv.Close()
+
+			emb, err := localembed.New(model.EmbeddingConfig{
+				Provider:     "openai",
+				Model:        "text-embedding-3-large",
+				Endpoint:     srv.URL,
+				Path:         c.path,
+				APIKeys:      map[string]string{"openai": "test-key"},
+				RateLimitRPS: 1000,
+			})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if _, err := emb.Embed(context.Background(), documents("hello")); err != nil {
+				t.Fatalf("Embed: %v", err)
+			}
+			if gotPath != c.wantPath {
+				t.Errorf("request path: got %q, want %q", gotPath, c.wantPath)
+			}
+		})
+	}
+}
