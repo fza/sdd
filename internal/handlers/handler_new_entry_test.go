@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/handlers"
@@ -743,5 +745,54 @@ func TestNewEntry_ExplicitSummary_SkipsLLM(t *testing.T) {
 	}
 	if entry.Summary != custom {
 		t.Errorf("stored summary = %q, want %q", entry.Summary, custom)
+	}
+}
+
+func TestNewEntry_SameSecondCapturesNeverOverwrite(t *testing.T) {
+	tmp := t.TempDir()
+	sddDir := filepath.Join(tmp, ".sdd")
+	if err := os.MkdirAll(sddDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	frozen := time.Date(2026, 10, 31, 23, 0, 0, 0, time.Local)
+
+	h := handlers.New(handlers.Options{
+		GraphDir:  tmp,
+		SDDDir:    sddDir,
+		Reader:    &fakeReader{},
+		Committer: &recordingCommitter{},
+		Stderr:    &bytes.Buffer{},
+		Now:       func() time.Time { return frozen },
+	})
+
+	// 1000 captures over 46656 suffixes in one second collide with near
+	// certainty, so a write over a taken ID would lose an entry here.
+	const captures = 1000
+	ids := map[string]bool{}
+	for i := range captures {
+		cmd := &command.NewEntryCmd{
+			Type:          model.TypeSignal,
+			Layer:         model.LayerTactical,
+			Description:   fmt.Sprintf("capture %d in the same second", i),
+			Summary:       "same-second capture",
+			SkipPreflight: true,
+			OnNewEntry:    func(id, _ string) { ids[id] = true },
+		}
+		if err := h.NewEntry(context.Background(), cmd); err != nil {
+			t.Fatalf("NewEntry: %v", err)
+		}
+	}
+
+	if len(ids) != captures {
+		t.Errorf("every capture should report its own ID, got %d distinct", len(ids))
+	}
+	for id := range ids {
+		relPath, err := model.IDToRelPath(id)
+		if err != nil {
+			t.Fatalf("IDToRelPath(%s): %v", id, err)
+		}
+		if _, err := os.Stat(filepath.Join(tmp, relPath)); err != nil {
+			t.Errorf("every reported entry should exist on disk: %v", err)
+		}
 	}
 }

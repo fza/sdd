@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -187,20 +189,11 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		entry.Summary = sumResult.Summary
 	}
 
-	// Write entry file.
-	relPath, err := model.IDToRelPath(id)
+	filePath, err := h.createEntryFile(entry)
 	if err != nil {
-		return fmt.Errorf("computing path for %s: %w", id, err)
+		return err
 	}
-	filePath := filepath.Join(h.graphDir, relPath)
-	fileContent := model.FormatFrontmatter(entry) + "\n" + entry.Content + "\n"
-
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return fmt.Errorf("creating directories: %w", err)
-	}
-	if err := os.WriteFile(filePath, []byte(fileContent), 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", filePath, err)
-	}
+	id = entry.ID
 
 	commitPaths := []string{filePath}
 
@@ -226,7 +219,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 				data = b
 			}
 			dst := filepath.Join(attachDir, a.Target)
-			if err := os.WriteFile(dst, data, 0644); err != nil {
+			if err := writeNewFile(dst, data); err != nil {
 				return fmt.Errorf("writing attachment %s: %w", dst, err)
 			}
 			commitPaths = append(commitPaths, dst)
@@ -248,4 +241,61 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		}
 	}
 	return nil
+}
+
+const maxEntryIDAttempts = 8
+
+// createEntryFile writes the entry under its ID, never over an existing file:
+// two captures in the same second with the same type and layer can draw the
+// same suffix, so a taken ID gets a fresh suffix and entry.ID follows it.
+func (h *Handler) createEntryFile(entry *model.Entry) (string, error) {
+	content := []byte(model.FormatFrontmatter(entry) + "\n" + entry.Content + "\n")
+	for range maxEntryIDAttempts {
+		relPath, err := model.IDToRelPath(entry.ID)
+		if err != nil {
+			return "", fmt.Errorf("computing path for %s: %w", entry.ID, err)
+		}
+		filePath := filepath.Join(h.graphDir, relPath)
+		err = os.MkdirAll(filepath.Dir(filePath), 0755)
+		if err != nil {
+			return "", fmt.Errorf("creating directories: %w", err)
+		}
+		err = writeNewFile(filePath, content)
+		if err == nil {
+			return filePath, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return "", fmt.Errorf("writing %s: %w", filePath, err)
+		}
+		entry.ID, err = withFreshSuffix(entry.ID)
+		if err != nil {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("no free entry ID after %d attempts", maxEntryIDAttempts)
+}
+
+func withFreshSuffix(id string) (string, error) {
+	parts, err := model.ParseID(id)
+	if err != nil {
+		return "", fmt.Errorf("parsing entry ID %s: %w", id, err)
+	}
+	suffix, err := model.RandomSuffix(len(parts.Suffix))
+	if err != nil {
+		return "", fmt.Errorf("generating suffix: %w", err)
+	}
+	return fmt.Sprintf("%s-%s-%s-%s", parts.Timestamp, parts.TypeCode, parts.LayerCode, suffix), nil
+}
+
+func writeNewFile(path string, data []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return err
+	}
+	_, err = file.Write(data)
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
 }
