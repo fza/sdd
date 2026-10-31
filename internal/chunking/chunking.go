@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/index"
@@ -105,9 +106,19 @@ func DeriveChunks(ctx context.Context, entry *model.Entry, entryHash string, spl
 // can detect changes without re-chunking and re-embedding. This is the
 // definition CanonicalChunk.EntryHash and the CLI manifest hash share.
 func EntryStateHash(ctx context.Context, entry *model.Entry, attachments AttachmentReader) (string, error) {
+	return EntryStateHashCapped(ctx, entry, attachments, 0)
+}
+
+// EntryStateHashCapped is EntryStateHash for rows chunked under a rune cap.
+// The cap is part of the digest, so rows chunked under another cap never
+// match. A zero cap means uncapped and yields EntryStateHash's digest.
+func EntryStateHashCapped(ctx context.Context, entry *model.Entry, attachments AttachmentReader, maxRunes int) (string, error) {
 	hh := sha256.New()
 	// The rule name changes every hash, so a new rule never reuses old chunks.
 	hh.Write([]byte("sdd-entry-derivation-" + index.DerivationCurrent + "\n"))
+	if maxRunes > 0 {
+		hh.Write([]byte("--max-runes:" + strconv.Itoa(maxRunes) + "--\n"))
+	}
 	hh.Write([]byte(entry.Content))
 	hh.Write([]byte("\n--summary--\n"))
 	hh.Write([]byte(entry.Summary))

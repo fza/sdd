@@ -112,3 +112,41 @@ func TestIncludeEntry(t *testing.T) {
 		t.Error("on-disk entries are always included")
 	}
 }
+
+func TestEntryStateHashCapped(t *testing.T) {
+	t.Parallel()
+
+	entry := &model.Entry{ID: "20260101-100000-d-tac-aaa", Content: "## H\nbody", Summary: "S."}
+	base := chunking.DiskAttachmentReader{GraphDir: t.TempDir()}
+	plain, err := chunking.EntryStateHash(context.Background(), entry, base)
+	if err != nil {
+		t.Fatalf("EntryStateHash: %v", err)
+	}
+
+	cases := []struct {
+		name     string
+		maxRunes int
+		wantSame bool
+	}{
+		{name: "zero cap matches the uncapped digest", maxRunes: 0, wantSame: true},
+		{name: "a cap changes the digest", maxRunes: 1792, wantSame: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := chunking.EntryStateHashCapped(context.Background(), entry, base, tc.maxRunes)
+			if err != nil {
+				t.Fatalf("EntryStateHashCapped: %v", err)
+			}
+			if (got == plain) != tc.wantSame {
+				t.Errorf("digest equal to uncapped: got %t, want %t", got == plain, tc.wantSame)
+			}
+		})
+	}
+
+	a, _ := chunking.EntryStateHashCapped(context.Background(), entry, base, 1792)
+	b, _ := chunking.EntryStateHashCapped(context.Background(), entry, base, 1856)
+	if a == b {
+		t.Errorf("two caps should yield two digests")
+	}
+}
