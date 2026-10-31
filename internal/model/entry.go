@@ -624,7 +624,7 @@ func ParseID(id string) (IDParts, error) {
 	}
 
 	timestamp := id[:dashes[1]]
-	t, err := time.Parse("20060102-150405", timestamp)
+	t, err := time.ParseInLocation("20060102-150405", timestamp, time.Local)
 	if err != nil {
 		return IDParts{}, fmt.Errorf("parsing time from %q: %w", id, err)
 	}
