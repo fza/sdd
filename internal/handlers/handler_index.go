@@ -11,6 +11,7 @@ import (
 	"github.com/networkteam/sdd/internal/chunking"
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/index"
+	llmembed "github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/textsplitter"
 	"github.com/networkteam/sdd/internal/timing"
@@ -51,10 +52,35 @@ type IndexHandler struct {
 	excludeEmbedded bool
 }
 
-// IndexEmbedder carries the local composition size through CLI and MCP indexing.
+// IndexEmbedder carries the local composition size through CLI and MCP indexing,
+// and the calibration identity of the endpoint behind it.
 type IndexEmbedder struct {
 	embed.Embedder
 	BatchSize int
+	// CalibrationDir holds the endpoint's stored calibration. Empty probes the
+	// endpoint on every call and stores nothing.
+	CalibrationDir string
+	// CalibrationKey identifies the serving endpoint (see llmembed.LoadOrCalibrate).
+	CalibrationKey string
+}
+
+// MaxRunes returns the rune cap rows are chunked under for this endpoint,
+// calibrating the endpoint when no calibration is stored yet.
+func (e IndexEmbedder) MaxRunes(ctx context.Context) (int, error) {
+	var cal llmembed.Calibration
+	var err error
+	if e.CalibrationDir == "" {
+		cal, err = llmembed.Calibrate(ctx, e.Embedder)
+	} else {
+		cal, err = llmembed.LoadOrCalibrate(ctx, e.Embedder, e.CalibrationDir, e.CalibrationKey)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if cal.MaxRunes < llmembed.CapQuantum {
+		return 0, fmt.Errorf("calibration for %s holds no usable rune cap (%d)", e.CalibrationKey, cal.MaxRunes)
+	}
+	return cal.MaxRunes, nil
 }
 
 // IndexHandlerOptions configures NewIndexHandler. Required fields are
@@ -173,8 +199,13 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 		return fmt.Errorf("loading manifest: %w", err)
 	}
 	fingerprint := h.embedder.Fingerprint()
+	maxRunes, err := h.embedder.MaxRunes(ctx)
+	if err != nil {
+		return fmt.Errorf("calibrating embedding endpoint: %w", err)
+	}
+	splitter := h.splitter.WithMaxRunes(maxRunes)
 	stopHashes := timing.Start(ctx, "fill-entry-hashes")
-	currentHashes, err := h.currentEntryHashes(ctx, g)
+	currentHashes, err := h.currentEntryHashes(ctx, g, maxRunes)
 	stopHashes()
 	if err != nil {
 		return err
@@ -208,7 +239,7 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 		}
 	}
 	indexed := 0
-	err = indexStream(ctx, inputs, h.embedder, h.attachments, h.splitter, nil,
+	err = indexStream(ctx, inputs, h.embedder, h.attachments, splitter, nil,
 		func(ctx context.Context, entries []*model.IndexWork) error {
 			if err := session.Commit(ctx, func(idx *index.Index, manifest *index.Manifest) error {
 				// The manifest must never name a row that is gone or not yet
@@ -222,6 +253,7 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 					}
 					stale = append(stale, replaced...)
 				}
+				manifest.MaxRunes = maxRunes
 				if err := manifest.Save(h.indexDir); err != nil {
 					return err
 				}
@@ -252,9 +284,9 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 }
 
 // currentEntryHashes maps every indexable entry of the graph to its state hash
-// — the checkout's current versions, which the skip pass and version grouping
-// compare against.
-func (h *IndexHandler) currentEntryHashes(ctx context.Context, g *model.Graph) (map[string]string, error) {
+// under maxRunes — the checkout's current versions, which the skip pass and
+// version grouping compare against.
+func (h *IndexHandler) currentEntryHashes(ctx context.Context, g *model.Graph, maxRunes int) (map[string]string, error) {
 	hashes := make(map[string]string, len(g.Entries))
 	for _, entry := range g.Entries {
 		if err := ctx.Err(); err != nil {
@@ -263,7 +295,7 @@ func (h *IndexHandler) currentEntryHashes(ctx context.Context, g *model.Graph) (
 		if !chunking.IncludeEntry(entry, h.excludeEmbedded) {
 			continue
 		}
-		hash, err := chunking.EntryStateHash(ctx, entry, h.attachments)
+		hash, err := chunking.EntryStateHashCapped(ctx, entry, h.attachments, maxRunes)
 		if err != nil {
 			return nil, err
 		}
@@ -328,7 +360,7 @@ func (h *IndexHandler) DropVersions(ctx context.Context, cmd *command.DropIndexV
 		if err != nil {
 			return fmt.Errorf("loading manifest: %w", err)
 		}
-		current, err := h.currentEntryHashes(ctx, g)
+		current, err := h.currentEntryHashes(ctx, g, manifest.MaxRunes)
 		if err != nil {
 			return err
 		}

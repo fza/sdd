@@ -394,6 +394,32 @@ func (f *SearchFinder) newVersionFreshness() *versionFreshness {
 	}
 }
 
+// loadManifest reads the store's manifest once. Callers check indexDir first.
+func (v *versionFreshness) loadManifest() (*index.Manifest, error) {
+	if v.manifest == nil {
+		m, err := index.LoadManifest(v.indexDir)
+		if err != nil {
+			return nil, err
+		}
+		v.manifest = m
+	}
+	return v.manifest, nil
+}
+
+// maxRunes is the cap the store's rows were chunked under, read from the
+// manifest and never calibrated here. A store with no manifest (an in-memory
+// index) has no cap to read and compares uncapped hashes.
+func (v *versionFreshness) maxRunes() (int, error) {
+	if v.indexDir == "" {
+		return 0, nil
+	}
+	m, err := v.loadManifest()
+	if err != nil {
+		return 0, err
+	}
+	return m.MaxRunes, nil
+}
+
 func (v *versionFreshness) fresh(ctx context.Context, entry *model.Entry, hit index.Hit) (bool, error) {
 	version := hit.EntryHash
 	if version == "" {
@@ -401,14 +427,11 @@ func (v *versionFreshness) fresh(ctx context.Context, entry *model.Entry, hit in
 			// No manifest to resolve a legacy row's version — keep the hit.
 			return true, nil
 		}
-		if v.manifest == nil {
-			m, err := index.LoadManifest(v.indexDir)
-			if err != nil {
-				return false, err
-			}
-			v.manifest = m
+		m, err := v.loadManifest()
+		if err != nil {
+			return false, err
 		}
-		version = v.manifest.VersionHashForChunk(hit.EntryID, hit.ChunkID)
+		version = m.VersionHashForChunk(hit.EntryID, hit.ChunkID)
 		if version == "" {
 			// Unresolvable version — keep the hit rather than drop it blindly.
 			return true, nil
@@ -416,7 +439,11 @@ func (v *versionFreshness) fresh(ctx context.Context, entry *model.Entry, hit in
 	}
 	cur, ok := v.current[entry.ID]
 	if !ok {
-		h, err := chunking.EntryStateHash(ctx, entry, v.attachments)
+		maxRunes, err := v.maxRunes()
+		if err != nil {
+			return false, err
+		}
+		h, err := chunking.EntryStateHashCapped(ctx, entry, v.attachments, maxRunes)
 		if err != nil {
 			return false, err
 		}

@@ -21,6 +21,8 @@ type SearchEntryHandler struct {
 	Embedder    embed.Embedder
 	Entry       *model.Entry
 	Attachments chunking.AttachmentReader
+	// MaxRunes is the rune cap the descriptor's entry hash was computed under.
+	MaxRunes int
 }
 
 func (h SearchEntryHandler) Index(ctx context.Context, cmd command.IndexSearchEntryCmd) error {
@@ -33,7 +35,7 @@ func (h SearchEntryHandler) Index(ctx context.Context, cmd command.IndexSearchEn
 		return err
 	}
 	inputs := func(yield func(indexInput, error) bool) { yield(indexInput{entry: h.Entry, version: key}, nil) }
-	return indexStream(ctx, inputs, h.Embedder, h.Attachments, textsplitter.NewSplitter(), nil,
+	return indexStream(ctx, inputs, h.Embedder, h.Attachments, textsplitter.NewSplitter().WithMaxRunes(h.MaxRunes), nil,
 		eachEntry(func(ctx context.Context, entry *model.IndexWork) error {
 			if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {
 				return err

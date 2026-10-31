@@ -48,7 +48,12 @@ func (r *ProjectRuntime) DiscoverSearchEntries(ctx context.Context, q DiscoverSe
 			yield(SearchEntryRequirement{}, fmt.Errorf("sdd: entry publication capability is required"))
 			return
 		}
-		finder := finders.SearchEntriesFinder{Graph: q.Source.Snapshot.graph, Revision: q.Source.Snapshot.Revision(), Namespace: ns, Attachments: graphStoreAttachmentReader{store: q.Source.Attachments}, Store: store, EntryIDs: q.EntryIDs, ExcludeEmbedded: r.options.ExcludeEmbeddedFromIndex}
+		maxRunes, err := r.storedMaxRunes(ctx, ns)
+		if err != nil {
+			yield(SearchEntryRequirement{}, err)
+			return
+		}
+		finder := finders.SearchEntriesFinder{Graph: q.Source.Snapshot.graph, Revision: q.Source.Snapshot.Revision(), Namespace: ns, Attachments: graphStoreAttachmentReader{store: q.Source.Attachments}, Store: store, EntryIDs: q.EntryIDs, ExcludeEmbedded: r.options.ExcludeEmbeddedFromIndex, MaxRunes: maxRunes}
 		finder.Discover(ctx, q.Cursor)(yield)
 	}
 }
@@ -100,6 +105,10 @@ func (r *ProjectRuntime) indexSearchEntrySource(ctx context.Context, source *Acq
 	if entry == nil || !chunking.IncludeEntry(entry, r.options.ExcludeEmbeddedFromIndex) {
 		return fmt.Errorf("sdd: descriptor entry is absent or ineligible")
 	}
-	h := handlers.SearchEntryHandler{Store: store, Embedder: r.options.Embedder, Entry: entry, Attachments: graphStoreAttachmentReader{store: source.Attachments}}
+	maxRunes, err := r.storedMaxRunes(ctx, cmd.Entry.Version.Namespace)
+	if err != nil {
+		return err
+	}
+	h := handlers.SearchEntryHandler{Store: store, Embedder: r.options.Embedder, Entry: entry, Attachments: graphStoreAttachmentReader{store: source.Attachments}, MaxRunes: maxRunes}
 	return h.Index(ctx, cmd)
 }

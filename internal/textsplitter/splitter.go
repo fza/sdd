@@ -32,6 +32,11 @@ func (s *Splitter) WithMaxRunes(n int) *Splitter {
 	return &capped
 }
 
+// MaxRunes reports the cap set by WithMaxRunes, zero when uncapped.
+func (s *Splitter) MaxRunes() int {
+	return s.maxRunes
+}
+
 // SplitInput captures everything the splitter needs to produce per-chunk
 // output for a single source document.
 type SplitInput struct {

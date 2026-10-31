@@ -29,6 +29,8 @@ type SearchIndexHandler struct {
 	Hashes          map[string]string
 	Attachments     chunking.AttachmentReader
 	ExcludeEmbedded bool
+	// MaxRunes is the rune cap the Hashes and the rows were chunked under.
+	MaxRunes        int
 	cmd             command.ReconcileSearchIndexCmd
 	entries, chunks int
 }
@@ -40,7 +42,7 @@ func (h *SearchIndexHandler) complete(ctx context.Context, entries []*model.Entr
 		for _, entry := range entries {
 			version := types.SearchEntryVersion{Namespace: h.Namespace, EntryID: entry.ID, EntryHash: hashes[entry.ID]}
 			if version.EntryHash == "" {
-				hash, err := chunking.EntryStateHash(ctx, entry, h.Attachments)
+				hash, err := chunking.EntryStateHashCapped(ctx, entry, h.Attachments, h.MaxRunes)
 				if err != nil {
 					yield(indexInput{}, err)
 					return
@@ -65,7 +67,7 @@ func (h *SearchIndexHandler) complete(ctx context.Context, entries []*model.Entr
 	if complete {
 		skip = nil
 	}
-	err := indexStream(ctx, inputs, h.Embedder, h.Attachments, textsplitter.NewSplitter(), skip,
+	err := indexStream(ctx, inputs, h.Embedder, h.Attachments, textsplitter.NewSplitter().WithMaxRunes(h.MaxRunes), skip,
 		eachEntry(func(ctx context.Context, entry *model.IndexWork) error {
 			if complete {
 				if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {

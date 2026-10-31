@@ -41,7 +41,7 @@ func eachEntry(publish func(context.Context, *model.IndexWork) error) func(conte
 
 func prepareIndexEntry(ctx context.Context, input indexInput, reader chunking.AttachmentReader, splitter *textsplitter.Splitter, skip func(types.CanonicalChunk) bool) (*model.IndexWork, error) {
 	attachments := &chunking.CachedAttachments{Reader: reader}
-	hash, err := chunking.EntryStateHash(ctx, input.entry, attachments)
+	hash, err := chunking.EntryStateHashCapped(ctx, input.entry, attachments, splitter.MaxRunes())
 	if err != nil {
 		return nil, err
 	}

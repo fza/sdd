@@ -32,13 +32,17 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 		return nil, err
 	}
 
+	maxRunes, err := r.storedMaxRunes(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
 	var hashes map[string]string
 	if request.SyncMode != query.SearchSyncNone {
-		hashes, err = r.currentEntryHashes(ctx, snapshot.graph.Entries, attachments)
+		hashes, err = r.currentEntryHashes(ctx, snapshot.graph.Entries, attachments, maxRunes)
 		if err != nil {
 			return nil, err
 		}
-		if err := r.reconcileSearchSnapshot(ctx, snapshot, attachments, namespace, hashes, ReconcileSearchIndexCmd{}); err != nil {
+		if err := r.reconcileSearchSnapshot(ctx, snapshot, attachments, namespace, hashes, maxRunes, ReconcileSearchIndexCmd{}); err != nil {
 			return nil, err
 		}
 	}
@@ -72,7 +76,7 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 				delete(candidates, hit.EntryID)
 			}
 		}
-		hashes, err = r.currentEntryHashes(ctx, entries, attachments)
+		hashes, err = r.currentEntryHashes(ctx, entries, attachments, maxRunes)
 		if err != nil {
 			return nil, err
 		}
@@ -88,16 +92,26 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 	return hybridResult(text, vector, limit), nil
 }
 
+// storedMaxRunes is the rune cap the namespace's store was chunked under. A
+// store without the SearchIndexRunes capability chunks uncapped.
+func (r *ProjectRuntime) storedMaxRunes(ctx context.Context, namespace IndexNamespace) (int, error) {
+	runes, ok := r.options.SearchIndex.(SearchIndexRunes)
+	if !ok {
+		return 0, nil
+	}
+	return runes.MaxRunes(ctx, namespace)
+}
+
 // Reconciliation needs the full graph; no-sync search verifies only candidate
 // versions so unrelated attachments do not contribute to search I/O.
-func (r *ProjectRuntime) currentEntryHashes(ctx context.Context, entries []*model.Entry, store GraphStore) (map[string]string, error) {
+func (r *ProjectRuntime) currentEntryHashes(ctx context.Context, entries []*model.Entry, store GraphStore, maxRunes int) (map[string]string, error) {
 	attachments := graphStoreAttachmentReader{store: store}
 	hashes := make(map[string]string, len(entries))
 	for _, entry := range entries {
 		if !chunking.IncludeEntry(entry, r.options.ExcludeEmbeddedFromIndex) {
 			continue
 		}
-		hash, err := chunking.EntryStateHash(ctx, entry, attachments)
+		hash, err := chunking.EntryStateHashCapped(ctx, entry, attachments, maxRunes)
 		if err != nil {
 			return nil, err
 		}

@@ -23,6 +23,8 @@ type SearchEntriesFinder struct {
 	Store           EntryPublicationReader
 	ExcludeEmbedded bool
 	EntryIDs        []string
+	// MaxRunes is the store's recorded cap (its manifest's MaxRunes).
+	MaxRunes int
 }
 
 func (f SearchEntriesFinder) Discover(ctx context.Context, cursor query.SearchDiscoveryCursor) iter.Seq2[query.SearchEntryRequirement, error] {
@@ -53,7 +55,7 @@ func (f SearchEntriesFinder) Discover(ctx context.Context, cursor query.SearchDi
 			if !chunking.IncludeEntry(entry, f.ExcludeEmbedded) {
 				continue
 			}
-			hash, err := chunking.EntryStateHash(ctx, entry, f.Attachments)
+			hash, err := chunking.EntryStateHashCapped(ctx, entry, f.Attachments, f.MaxRunes)
 			if err != nil {
 				fail(err)
 				return

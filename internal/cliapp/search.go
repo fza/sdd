@@ -186,8 +186,17 @@ func newEmbedder(cfg model.EmbeddingConfig) (handlers.IndexEmbedder, error) {
 	if err != nil {
 		return handlers.IndexEmbedder{}, err
 	}
+	reg, _, err := defaultRepos()
+	if err != nil {
+		return handlers.IndexEmbedder{}, err
+	}
 	size := localembed.BatchSize(cfg)
-	return handlers.IndexEmbedder{Embedder: embed.Batched(embed.Observed(emb, statsSink()), size), BatchSize: size}, nil
+	return handlers.IndexEmbedder{
+		Embedder:       embed.Batched(embed.Observed(emb, statsSink()), size),
+		BatchSize:      size,
+		CalibrationDir: filepath.Join(reg.CacheRoot(), "calibration"),
+		CalibrationKey: emb.Fingerprint() + "\n" + cfg.Endpoint + "\n" + cfg.Path,
+	}, nil
 }
 
 func indexCmd() *cli.Command {

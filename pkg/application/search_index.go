@@ -31,11 +31,15 @@ func (r *ProjectRuntime) ReconcileSearchIndex(ctx context.Context, cmd Reconcile
 	}
 	defer selected.releaseInto(&err)
 	snapshot := selected.snapshot
-	hashes, err := r.currentEntryHashes(ctx, snapshot.graph.Entries, selected.store)
+	maxRunes, err := r.storedMaxRunes(ctx, namespace)
 	if err != nil {
 		return err
 	}
-	return r.reconcileSearchSnapshot(ctx, snapshot, selected.store, namespace, hashes, cmd)
+	hashes, err := r.currentEntryHashes(ctx, snapshot.graph.Entries, selected.store, maxRunes)
+	if err != nil {
+		return err
+	}
+	return r.reconcileSearchSnapshot(ctx, snapshot, selected.store, namespace, hashes, maxRunes, cmd)
 }
 
 func (r *ProjectRuntime) indexNamespace() (IndexNamespace, error) {
@@ -49,12 +53,13 @@ func (r *ProjectRuntime) indexNamespace() (IndexNamespace, error) {
 	return IndexNamespace{Project: r.options.Project.ID, Fingerprint: fingerprint, Metric: "cosine"}, nil
 }
 
-func (r *ProjectRuntime) reconcileSearchSnapshot(ctx context.Context, snapshot *Snapshot, store GraphStore, namespace IndexNamespace, hashes map[string]string, cmd ReconcileSearchIndexCmd) error {
+func (r *ProjectRuntime) reconcileSearchSnapshot(ctx context.Context, snapshot *Snapshot, store GraphStore, namespace IndexNamespace, hashes map[string]string, maxRunes int, cmd ReconcileSearchIndexCmd) error {
 	h := handlers.SearchIndexHandler{
 		Store: r.options.SearchIndex, Embedder: r.options.Embedder,
 		Graph: snapshot.graph, Revision: snapshot.revision, Namespace: namespace, Hashes: hashes,
 		Attachments:     graphStoreAttachmentReader{store: store},
 		ExcludeEmbedded: r.options.ExcludeEmbeddedFromIndex,
+		MaxRunes:        maxRunes,
 	}
 	return h.Reconcile(ctx, cmd)
 }

@@ -181,7 +181,14 @@ func TestCLIIndexPublishesBeforeProgressAndResumes(t *testing.T) {
 		}
 		return result, nil
 	}}
-	h := handlers.NewIndexHandler(handlers.IndexHandlerOptions{GraphDir: t.TempDir(), IndexDir: dir, Reader: streamGraphReader{graph: model.NewGraph(entries)}, Embedder: handlers.IndexEmbedder{Embedder: emb, BatchSize: 3}})
+	// Calibration runs before the fill and is not one of the batches the
+	// interruption counts, so it is stored and the counter restarts.
+	embedder := handlers.IndexEmbedder{Embedder: emb, BatchSize: 3, CalibrationDir: t.TempDir(), CalibrationKey: "test"}
+	if _, err := embedder.MaxRunes(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	calls = 0
+	h := handlers.NewIndexHandler(handlers.IndexHandlerOptions{GraphDir: t.TempDir(), IndexDir: dir, Reader: streamGraphReader{graph: model.NewGraph(entries)}, Embedder: embedder})
 	var planned, published int
 	cmd := &command.BuildIndexCmd{OnPlanned: func(n int) { planned = n }, OnEntryIndexed: func(id string, _ int) {
 		manifest, err := index.LoadManifest(dir)

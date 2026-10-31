@@ -19,20 +19,19 @@ func (f *Finder) IndexVersions(ctx context.Context, q query.IndexVersionsQuery) 
 		return nil, fmt.Errorf("loading graph: %w", err)
 	}
 	attachments := chunking.DiskAttachmentReader{GraphDir: q.GraphDir}
-	current := make(map[string]string, len(g.Entries))
-	for _, entry := range g.Entries {
-		if !chunking.IncludeEntry(entry, q.ExcludeEmbedded) {
-			continue
-		}
-		hash, err := chunking.EntryStateHash(ctx, entry, attachments)
-		if err != nil {
-			return nil, err
-		}
-		current[entry.ID] = hash
-	}
-
 	result := &query.IndexVersionsResult{Label: q.Label, IndexDir: q.IndexDir}
 	err = index.ReadManifestLocked(ctx, q.IndexDir, func(manifest *index.Manifest) error {
+		current := make(map[string]string, len(g.Entries))
+		for _, entry := range g.Entries {
+			if !chunking.IncludeEntry(entry, q.ExcludeEmbedded) {
+				continue
+			}
+			hash, err := chunking.EntryStateHashCapped(ctx, entry, attachments, manifest.MaxRunes)
+			if err != nil {
+				return err
+			}
+			current[entry.ID] = hash
+		}
 		total, err := index.StoreSize(q.IndexDir)
 		if err != nil {
 			return fmt.Errorf("sizing store %s: %w", q.IndexDir, err)
