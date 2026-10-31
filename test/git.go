@@ -7,13 +7,15 @@ import (
 )
 
 // GitRepo initialises a repository in a temporary directory with a local
-// identity and an empty first commit, and returns its path.
+// identity, unsigned commits whatever the developer's signing setup, and an
+// empty first commit, and returns its path.
 func GitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	Git(t, dir, "init", "-q")
 	Git(t, dir, "config", "user.email", "test@example.com")
 	Git(t, dir, "config", "user.name", "Test")
+	Git(t, dir, "config", "commit.gpgsign", "false")
 	Git(t, dir, "commit", "-q", "--allow-empty", "-m", "seed")
 	return dir
 }
