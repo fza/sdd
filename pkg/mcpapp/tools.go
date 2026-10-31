@@ -1232,8 +1232,10 @@ func (s *Server) registryDocs(ctx context.Context, req *mcp.CallToolRequest, arg
 // toolBoundary is where an error meets the agent: a coded application error
 // is rendered with its code leading the text, so a refusal is identified by
 // its code rather than its prose (d-cpt-s2i). Uncoded errors pass unchanged.
-func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
-	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+// The output type is erased to any so the SDK declares no outputSchema; the
+// structured content is still marshalled from the returned value.
+func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		slot := &syncNoticeSlot{}
 		res, out, err := handler(context.WithValue(ctx, syncNoticeKey{}, slot), req, in)
 		var coded *sdd.ApplicationError

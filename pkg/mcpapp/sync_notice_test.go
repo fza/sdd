@@ -178,24 +178,6 @@ func TestSyncNoticeIsPlainContent(t *testing.T) {
 	}
 }
 
-func TestEveryToolSchemaListsTheSyncNotice(t *testing.T) {
-	env := newTestServer(t, nil, "", "")
-	cs := connect(t, env.srv)
-	res, err := cs.ListTools(t.Context(), &mcp.ListToolsParams{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tool := range res.Tools {
-		encoded, err := json.Marshal(tool.OutputSchema)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(encoded), `"sync_notice"`) {
-			t.Errorf("tool %s should list sync_notice in its output schema", tool.Name)
-		}
-	}
-}
-
 func TestConcludingTheOwnerHandsTheFixOn(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	owner := connect(t, env.srv)
