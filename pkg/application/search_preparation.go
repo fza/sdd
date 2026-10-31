@@ -122,7 +122,7 @@ func (a *Application) prepareSearchTarget(ctx context.Context, target SearchTarg
 		if err != nil {
 			return err
 		}
-		maxRunes, err := member.runtime.storedMaxRunes(ctx, ns)
+		maxRunes, err := member.runtime.fillRunes(ctx, ns)
 		if err != nil {
 			return err
 		}

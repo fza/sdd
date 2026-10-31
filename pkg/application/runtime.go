@@ -37,8 +37,12 @@ type ProjectRuntimeOptions struct {
 	// alone holds: the Purpose and the prompts, or the texts.
 	Embedder    embed.Embedder
 	SearchIndex SearchIndexStore
-	LLM         llm.Runner
-	Finalizers  []MutationFinalizer
+	// RuneCap resolves the rune cap a fill chunks and hashes under: the
+	// embedding endpoint's calibrated cap, from the same calibration the CLI
+	// fill reads. A fill without it, or whose resolution fails, writes nothing.
+	RuneCap    func(context.Context) (int, error)
+	LLM        llm.Runner
+	Finalizers []MutationFinalizer
 	// Sync runs automatic graph sync before a session acts on a branch and
 	// serves what blocks it; nil leaves branches as they are.
 	Sync GraphSync

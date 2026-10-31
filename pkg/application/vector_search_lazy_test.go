@@ -55,7 +55,7 @@ func TestVectorSearchWithLazyDimensionEmbedder(t *testing.T) {
 	}}
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "example", DisplayName: "Example"},
-		Graph:   graph, Embedder: embeddings,
+		Graph:   graph, RuneCap: testRuneCap, Embedder: embeddings,
 		SearchIndex: localadapter.NewMemorySearchIndexStore(),
 		LLM: pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
 			return pkgllm.Result{Identity: pkgllm.Identity{Provider: "test", Model: "test"}}, nil

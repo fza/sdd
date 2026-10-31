@@ -48,7 +48,7 @@ func (r *ProjectRuntime) DiscoverSearchEntries(ctx context.Context, q DiscoverSe
 			yield(SearchEntryRequirement{}, fmt.Errorf("sdd: entry publication capability is required"))
 			return
 		}
-		maxRunes, err := r.storedMaxRunes(ctx, ns)
+		maxRunes, err := r.fillMaxRunes(ctx)
 		if err != nil {
 			yield(SearchEntryRequirement{}, err)
 			return
@@ -105,7 +105,7 @@ func (r *ProjectRuntime) indexSearchEntrySource(ctx context.Context, source *Acq
 	if entry == nil || !chunking.IncludeEntry(entry, r.options.ExcludeEmbeddedFromIndex) {
 		return fmt.Errorf("sdd: descriptor entry is absent or ineligible")
 	}
-	maxRunes, err := r.storedMaxRunes(ctx, cmd.Entry.Version.Namespace)
+	maxRunes, err := r.fillRunes(ctx, cmd.Entry.Version.Namespace)
 	if err != nil {
 		return err
 	}

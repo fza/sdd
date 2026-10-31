@@ -21,6 +21,8 @@ func (s *countingAttachmentStore) ReadAttachmentPage(ctx context.Context, id, na
 
 type candidateIndex struct {
 	sdd.SearchIndexStore
+	sdd.SearchIndexRunes
+	sdd.SearchIndexRunesRecorder
 	hits []sdd.ScoredChunkHit
 }
 
@@ -44,10 +46,10 @@ func TestNoSyncHashesOnlyReturnedEligibleEntries(t *testing.T) {
 	}
 	graph := &countingAttachmentStore{staticGraphStore: staticGraphStore{snapshot: snapshot, attachment: "Alpha attachment."}, reads: map[string]int{}}
 	memory := localadapter.NewMemorySearchIndexStore()
-	index := &candidateIndex{SearchIndexStore: memory}
+	index := &candidateIndex{SearchIndexStore: memory, SearchIndexRunes: memory, SearchIndexRunesRecorder: memory}
 	embeddings := &countingEmbeddings{}
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
-		Project: sdd.ProjectRef{ID: "base"}, Graph: graph, Embedder: embeddings, SearchIndex: index, ExcludeEmbeddedFromIndex: true,
+		Project: sdd.ProjectRef{ID: "base"}, Graph: graph, RuneCap: testRuneCap, Embedder: embeddings, SearchIndex: index, ExcludeEmbeddedFromIndex: true,
 		LLM: pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) { return pkgllm.Result{}, nil }),
 	})
 	if err != nil {
