@@ -413,8 +413,10 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	baseRepoKey := persistentIndexRepoKey(cfg, stableRepoRoot)
 	baseIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, baseRepoKey)
 	var embeddings embed.Embedder
+	var runeCap func(context.Context) (int, error)
 	if localEmbedder.Embedder != nil {
 		embeddings = localEmbedder
+		runeCap = localEmbedder.MaxRunes
 	}
 	serverCheckout := filepath.Dir(sddDir)
 	targets, err := localadapter.NewRepositoryTargets(project, serverCheckout, locations.ConfigPath, localConfigOverride)
@@ -427,7 +429,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Sync: targets, Branches: targets, Base: targets,
-		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
+		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
 		LLM: runner,
 	})
 	if err != nil {
@@ -438,8 +440,10 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	var memberEmbedder embed.Embedder
+	var memberRuneCap func(context.Context) (int, error)
 	if crossEmbedder.Embedder != nil {
 		memberEmbedder = crossEmbedder
+		memberRuneCap = crossEmbedder.MaxRunes
 	}
 	access := &localRuntimeAccess{
 		project: project, participant: participant, dialogue: dialogue, runtime: runtime,
@@ -463,7 +467,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 			return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 				Project: sdd.ProjectRef{ID: sdd.ProjectID(cache.RepoID), DisplayName: string(cache.RepoID)}, Graph: memberGraph,
 				Language: dependencyCfg.Language, Dependencies: dependencyCfg.Dependencies,
-				Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), LLM: runner,
+				Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), RuneCap: memberRuneCap, LLM: runner,
 				ExcludeEmbeddedFromIndex: true,
 			})
 		}},

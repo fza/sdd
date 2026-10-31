@@ -31,7 +31,7 @@ func (r *ProjectRuntime) ReconcileSearchIndex(ctx context.Context, cmd Reconcile
 	}
 	defer selected.releaseInto(&err)
 	snapshot := selected.snapshot
-	maxRunes, err := r.storedMaxRunes(ctx, namespace)
+	maxRunes, err := r.fillRunes(ctx, namespace)
 	if err != nil {
 		return err
 	}

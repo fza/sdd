@@ -32,6 +32,7 @@ func TestMCPUsesApplicationPreparationAndCoverage(t *testing.T) {
 			}
 			runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{Project: sdd.ProjectRef{ID: "root-test"}, Graph: graph, ExcludeEmbeddedFromIndex: true,
 				LLM: llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) { return llm.Result{}, nil }), SearchIndex: local.NewMemorySearchIndexStore(),
+				RuneCap: func(context.Context) (int, error) { return 512, nil },
 				Embedder: embed.EmbedderFunc{Space: "fixture", Run: func(_ context.Context, req embed.Request) (embed.Result, error) {
 					r := embed.Result{Vectors: make([][]float32, len(req.Texts))}
 					for i := range r.Vectors {

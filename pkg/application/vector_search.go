@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"sort"
@@ -32,7 +33,12 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 		return nil, err
 	}
 
-	maxRunes, err := r.storedMaxRunes(ctx, namespace)
+	var maxRunes int
+	if request.SyncMode != query.SearchSyncNone {
+		maxRunes, err = r.fillRunes(ctx, namespace)
+	} else {
+		maxRunes, err = r.storedMaxRunes(ctx, namespace)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -92,14 +98,55 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 	return hybridResult(text, vector, limit), nil
 }
 
-// storedMaxRunes is the rune cap the namespace's store was chunked under. A
-// store without the SearchIndexRunes capability chunks uncapped.
+// storedMaxRunes is the rune cap the namespace's store was chunked under, for
+// reads. A store without the SearchIndexRunes capability reports zero.
 func (r *ProjectRuntime) storedMaxRunes(ctx context.Context, namespace IndexNamespace) (int, error) {
 	runes, ok := r.options.SearchIndex.(SearchIndexRunes)
 	if !ok {
 		return 0, nil
 	}
 	return runes.MaxRunes(ctx, namespace)
+}
+
+// fillRunes is the rune cap a write chunks under, recorded on the store before
+// the write so later reads hash under the same cap.
+func (r *ProjectRuntime) fillRunes(ctx context.Context, namespace IndexNamespace) (int, error) {
+	maxRunes, err := r.fillMaxRunes(ctx)
+	if err != nil {
+		return 0, err
+	}
+	stored, err := r.storedMaxRunes(ctx, namespace)
+	if err != nil {
+		return 0, err
+	}
+	if stored == maxRunes {
+		return maxRunes, nil
+	}
+	recorder, ok := r.options.SearchIndex.(SearchIndexRunesRecorder)
+	if !ok {
+		return 0, errors.New("sdd: the search index store cannot record the rune cap its rows are chunked under")
+	}
+	if err := recorder.RecordMaxRunes(ctx, namespace, maxRunes); err != nil {
+		return 0, fmt.Errorf("sdd: recording the rune cap: %w", err)
+	}
+	return maxRunes, nil
+}
+
+// fillMaxRunes is the rune cap a fill chunks and hashes under. It refuses to
+// return zero: a fill that cannot resolve a cap fails before writing, so no
+// uncapped rows reach the store.
+func (r *ProjectRuntime) fillMaxRunes(ctx context.Context) (int, error) {
+	if r.options.RuneCap == nil {
+		return 0, errors.New("sdd: a search fill needs the embedding endpoint's rune cap, and the runtime has no RuneCap")
+	}
+	maxRunes, err := r.options.RuneCap(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("sdd: resolving the embedding endpoint's rune cap: %w", err)
+	}
+	if maxRunes <= 0 {
+		return 0, fmt.Errorf("sdd: embedding endpoint resolved rune cap %d, a fill refuses to write uncapped rows", maxRunes)
+	}
+	return maxRunes, nil
 }
 
 // Reconciliation needs the full graph; no-sync search verifies only candidate
