@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/handlers"
@@ -743,5 +745,111 @@ func TestNewEntry_ExplicitSummary_SkipsLLM(t *testing.T) {
 	}
 	if entry.Summary != custom {
 		t.Errorf("stored summary = %q, want %q", entry.Summary, custom)
+	}
+}
+
+func TestNewEntry_SameSecondCapturesNeverOverwrite(t *testing.T) {
+	tmp := t.TempDir()
+	sddDir := filepath.Join(tmp, ".sdd")
+	if err := os.MkdirAll(sddDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	frozen := time.Date(2026, 10, 31, 23, 0, 0, 0, time.Local)
+
+	h := handlers.New(handlers.Options{
+		GraphDir:  tmp,
+		SDDDir:    sddDir,
+		Reader:    &fakeReader{},
+		Committer: &recordingCommitter{},
+		Stderr:    &bytes.Buffer{},
+		Now:       func() time.Time { return frozen },
+	})
+
+	// 1000 captures over 46656 suffixes in one second collide with near
+	// certainty, so a write over a taken ID would lose an entry here.
+	const captures = 1000
+	ids := map[string]bool{}
+	for i := range captures {
+		cmd := &command.NewEntryCmd{
+			Type:          model.TypeSignal,
+			Layer:         model.LayerTactical,
+			Description:   fmt.Sprintf("capture %d in the same second", i),
+			Summary:       "same-second capture",
+			SkipPreflight: true,
+			OnNewEntry:    func(id, _ string) { ids[id] = true },
+		}
+		if err := h.NewEntry(context.Background(), cmd); err != nil {
+			t.Fatalf("NewEntry: %v", err)
+		}
+	}
+
+	if len(ids) != captures {
+		t.Errorf("every capture should report its own ID, got %d distinct", len(ids))
+	}
+	for id := range ids {
+		relPath, err := model.IDToRelPath(id)
+		if err != nil {
+			t.Fatalf("IDToRelPath(%s): %v", id, err)
+		}
+		if _, err := os.Stat(filepath.Join(tmp, relPath)); err != nil {
+			t.Errorf("every reported entry should exist on disk: %v", err)
+		}
+	}
+}
+
+func TestNewEntry_AttachmentNeverOverwritesAnotherAttachment(t *testing.T) {
+	tmp := t.TempDir()
+	sddDir := filepath.Join(tmp, ".sdd")
+	if err := os.MkdirAll(sddDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	first := filepath.Join(tmp, "first.md")
+	second := filepath.Join(tmp, "second.md")
+	if err := os.WriteFile(first, []byte("first record"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("second record"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := handlers.New(handlers.Options{
+		GraphDir:  tmp,
+		SDDDir:    sddDir,
+		Reader:    &fakeReader{},
+		Committer: &recordingCommitter{},
+		Stderr:    &bytes.Buffer{},
+	})
+	var id string
+	cmd := &command.NewEntryCmd{
+		Type:          model.TypeSignal,
+		Layer:         model.LayerTactical,
+		Description:   "two attachments naming one target",
+		Summary:       "duplicate attachment target",
+		SkipPreflight: true,
+		Attachments: []command.Attachment{
+			{Source: first, Target: "notes.md"},
+			{Source: second, Target: "notes.md"},
+		},
+		OnNewEntry: func(newID, _ string) { id = newID },
+	}
+
+	err := h.NewEntry(context.Background(), cmd)
+
+	if err == nil {
+		t.Fatal("a second attachment onto a written target should be refused")
+	}
+	entries, globErr := filepath.Glob(filepath.Join(tmp, "*", "*", "*", "notes.md"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("the first attachment should be on disk once, found %v (entry %q)", entries, id)
+	}
+	data, readErr := os.ReadFile(entries[0])
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "first record" {
+		t.Error("the written attachment should keep its content")
 	}
 }
