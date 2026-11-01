@@ -48,10 +48,7 @@ func (i *FactIndex) Validate() error {
 			return fmt.Errorf("index.title must not contain control or line-separator characters")
 		}
 	}
-	topic := i.Topic.String()
-	if topic == "" {
-		topic = i.topicRaw
-	}
+	topic := i.TopicText()
 	if topic == "" {
 		return fmt.Errorf("index.topic must be a valid, non-empty topic path")
 	}
@@ -103,15 +100,20 @@ func (i *FactIndex) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (i FactIndex) MarshalYAML() (any, error) {
-	topic := i.Topic.String()
-	if topic == "" {
-		topic = i.topicRaw
+// TopicText is the topic as written: the parsed path, else the raw text kept
+// for a topic that fails to parse.
+func (i FactIndex) TopicText() string {
+	if topic := i.Topic.String(); topic != "" {
+		return topic
 	}
+	return i.topicRaw
+}
+
+func (i FactIndex) MarshalYAML() (any, error) {
 	return struct {
 		Title string `yaml:"title"`
 		Topic string `yaml:"topic"`
-	}{Title: i.Title, Topic: topic}, nil
+	}{Title: i.Title, Topic: i.TopicText()}, nil
 }
 
 type FactIndexRow struct {

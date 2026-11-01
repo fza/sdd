@@ -669,20 +669,22 @@ func showCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			entries, err := result.ShownEntries()
+			if err != nil {
+				return err
+			}
 			opts := presenters.ShowOptions{WithSummary: cmd.Bool("with-summary")}
 
 			// Renderer selection: an explicit --format text, NO_COLOR, or a
 			// non-terminal stdout all take the plain markdown renderer; an
 			// interactive terminal gets the styled view (d-cpt-5f4 / d-cpt-mvb).
 			if cmd.String("format") == "text" || os.Getenv("NO_COLOR") != "" || !cliout.IsTerminalWriter(cmd.Writer) {
-				presenters.RenderShow(cmd.Writer, result, opts)
-				return nil
+				return presenters.RenderShow(cmd.Writer, entries, opts)
 			}
 			if w, _, err := term.GetSize(cmd.Writer.(interface{ Fd() uintptr }).Fd()); err == nil {
 				opts.Width = w
 			}
-			presenters.RenderShowStyled(cmd.Writer, result, opts)
-			return nil
+			return presenters.RenderShowStyled(cmd.Writer, entries, opts)
 		},
 	}
 }

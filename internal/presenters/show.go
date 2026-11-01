@@ -9,7 +9,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/mdcompose"
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // bodyHeadingLevel is where an embedded entry body starts: one level below the
@@ -28,72 +28,68 @@ type ShowOptions struct {
 	Width int
 }
 
-// RenderShow writes the plain-markdown show output for a ShowResult. Each group
-// renders as a YAML frontmatter envelope + raw markdown body for the primary,
-// followed by compact markdown trees for the upstream and downstream
-// neighborhoods (each present to the depth the query set; an empty direction is
-// omitted). Groups are separated by a blank line — each is a self-contained
-// frontmatter+body markdown document.
+// RenderShow writes the plain-markdown show output for the shown entries
+// (query.ShowResult.ShownEntries). Each entry renders as a YAML frontmatter
+// envelope + raw markdown body, followed by compact markdown trees for the
+// upstream and downstream neighborhoods (each present to the depth the query
+// set; an empty direction is omitted). Entries are separated by a blank line —
+// each is a self-contained frontmatter+body markdown document.
 //
 // This is the agent / pipe / `--format text` renderer; the styled terminal
-// renderer shares the same data model (see the styled renderer / slice 3).
-func RenderShow(w io.Writer, result *query.ShowResult, opts ShowOptions) {
-	for i, g := range result.Groups {
+// renderer (RenderShowStyled) reads the same data.
+func RenderShow(w io.Writer, entries []types.ShownEntry, opts ShowOptions) error {
+	for i, entry := range entries {
 		if i > 0 {
 			fmt.Fprintln(w)
 		}
-		renderShowGroup(w, g, opts)
+		if err := renderShowEntry(w, entry, opts); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func renderShowGroup(w io.Writer, g query.ShowGroup, opts ShowOptions) {
-	writeEnvelope(w, g, opts)
+func renderShowEntry(w io.Writer, entry types.ShownEntry, opts ShowOptions) error {
+	if err := writeEnvelope(w, entry, opts); err != nil {
+		return err
+	}
 	fmt.Fprintln(w)
 	// Top-level `# body` heading with the body demoted beneath it, so an
 	// embedded heading never sits level with the section containing it
 	// (d-cpt-5wv).
 	fmt.Fprintln(w, "# body")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, mdcompose.DemoteTo(g.Primary.Content, bodyHeadingLevel))
+	fmt.Fprintln(w, mdcompose.DemoteTo(entry.Body, bodyHeadingLevel))
 
-	if len(g.Upstream) > 0 || len(g.UpstreamTruncated) > 0 {
+	if len(entry.Upstream) > 0 || len(entry.UpstreamTruncated) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "# upstream")
 		fmt.Fprintln(w)
-		for _, item := range g.Upstream {
-			renderTreeItem(w, item, primaryDisplayID(g))
+		for _, item := range entry.Upstream {
+			renderTreeItem(w, item, entry.ID)
 		}
-		renderDirectionCut(w, g.UpstreamTruncated)
+		renderDirectionCut(w, entry.UpstreamTruncated)
 	}
 
-	if len(g.Downstream) > 0 || len(g.DownstreamTruncated) > 0 {
+	if len(entry.Downstream) > 0 || len(entry.DownstreamTruncated) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "# downstream")
 		fmt.Fprintln(w)
-		for _, item := range g.Downstream {
-			renderTreeItem(w, item, primaryDisplayID(g))
+		for _, item := range entry.Downstream {
+			renderTreeItem(w, item, entry.ID)
 		}
-		renderDirectionCut(w, g.DownstreamTruncated)
+		renderDirectionCut(w, entry.DownstreamTruncated)
 	}
+	return nil
 }
 
 // renderDirectionCut names the primary's own children a chain budget kept out
 // of the direction entirely — the direction-level honest frontier.
-func renderDirectionCut(w io.Writer, refs []model.TruncatedRef) {
-	if len(refs) == 0 {
+func renderDirectionCut(w io.Writer, ids []string) {
+	if len(ids) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "+%d more entries truncated (chain budget): %s\n", len(refs), truncatedIDs(refs))
-}
-
-// primaryDisplayID is the primary's display identity — the repo-prefixed
-// form for a cross-repo primary. Falls back to the bare entry ID for
-// callers that construct groups without setting PrimaryID.
-func primaryDisplayID(g query.ShowGroup) string {
-	if g.PrimaryID != "" {
-		return g.PrimaryID
-	}
-	return g.Primary.ID
+	fmt.Fprintf(w, "+%d more entries truncated (chain budget): %s\n", len(ids), strings.Join(ids, ", "))
 }
 
 // showEnvelope is the YAML frontmatter envelope for the primary entry. It
@@ -104,75 +100,122 @@ func primaryDisplayID(g query.ShowGroup) string {
 // renders after the scannable tail, and Summary last (and only with
 // --with-summary), so neither pushes the scannable fields down.
 type showEnvelope struct {
-	ID           string           `yaml:"id"`
-	Type         string           `yaml:"type"`
-	Kind         string           `yaml:"kind,omitempty"`
-	Layer        string           `yaml:"layer"`
-	Title        string           `yaml:"title,omitempty"`
-	Confidence   string           `yaml:"confidence,omitempty"`
-	Intent       string           `yaml:"intent,omitempty"`
-	Participants []string         `yaml:"participants,omitempty"`
-	Canonical    string           `yaml:"canonical,omitempty"`
-	Aliases      []string         `yaml:"aliases,omitempty"`
-	ActorKind    string           `yaml:"actor_kind,omitempty"`
-	Class        string           `yaml:"class,omitempty"`
-	Actor        string           `yaml:"actor,omitempty"`
-	Topics       []string         `yaml:"topics,omitempty"`
-	Index        *model.FactIndex `yaml:"index,omitempty"`
-	Refs         []model.Ref      `yaml:"refs,omitempty"`
-	Closes       []string         `yaml:"closes,omitempty"`
-	Supersedes   []string         `yaml:"supersedes,omitempty"`
-	Attachments  []string         `yaml:"attachments,omitempty"`
-	Preflight    string           `yaml:"preflight,omitempty"`
-	Status       string           `yaml:"status,omitempty"`
-	Time         string           `yaml:"time"`
-	Params       yaml.Node        `yaml:"params,omitempty"`
-	State        yaml.Node        `yaml:"state,omitempty"`
-	Steps        yaml.Node        `yaml:"steps,omitempty"`
-	Framing      yaml.Node        `yaml:"framing,omitempty"`
-	Summary      string           `yaml:"summary,omitempty"`
+	ID           string             `yaml:"id"`
+	Type         string             `yaml:"type"`
+	Kind         string             `yaml:"kind,omitempty"`
+	Layer        string             `yaml:"layer"`
+	Title        string             `yaml:"title,omitempty"`
+	Confidence   string             `yaml:"confidence,omitempty"`
+	Intent       string             `yaml:"intent,omitempty"`
+	Participants []string           `yaml:"participants,omitempty"`
+	Canonical    string             `yaml:"canonical,omitempty"`
+	Aliases      []string           `yaml:"aliases,omitempty"`
+	ActorKind    string             `yaml:"actor_kind,omitempty"`
+	Class        string             `yaml:"class,omitempty"`
+	Actor        string             `yaml:"actor,omitempty"`
+	Topics       []string           `yaml:"topics,omitempty"`
+	Index        *envelopeFactIndex `yaml:"index,omitempty"`
+	Refs         []model.Ref        `yaml:"refs,omitempty"`
+	Closes       []string           `yaml:"closes,omitempty"`
+	Supersedes   []string           `yaml:"supersedes,omitempty"`
+	Attachments  []string           `yaml:"attachments,omitempty"`
+	Preflight    string             `yaml:"preflight,omitempty"`
+	Status       string             `yaml:"status,omitempty"`
+	Time         string             `yaml:"time"`
+	Params       yaml.Node          `yaml:"params,omitempty"`
+	State        yaml.Node          `yaml:"state,omitempty"`
+	Steps        yaml.Node          `yaml:"steps,omitempty"`
+	Framing      yaml.Node          `yaml:"framing,omitempty"`
+	Summary      string             `yaml:"summary,omitempty"`
 }
 
-func writeEnvelope(w io.Writer, g query.ShowGroup, opts ShowOptions) {
-	e := g.Primary
+// envelopeFactIndex is the fact index in model.FactIndex's frontmatter shape.
+type envelopeFactIndex struct {
+	Title string `yaml:"title"`
+	Topic string `yaml:"topic"`
+}
+
+func writeEnvelope(w io.Writer, entry types.ShownEntry, opts ShowOptions) error {
 	env := showEnvelope{
-		ID:           primaryDisplayID(g),
-		Type:         e.TypeLabel(),
-		Layer:        e.LayerLabel(),
-		Kind:         string(e.Kind),
-		Title:        e.Title,
-		Confidence:   e.Confidence,
-		Intent:       string(e.Intent),
-		Participants: e.Participants,
-		Canonical:    e.Canonical,
-		Aliases:      e.Aliases,
-		ActorKind:    string(e.ActorKind),
-		Class:        string(e.Class),
-		Actor:        e.Actor,
-		Topics:       topicLabels(g.PrimaryTopics),
-		Index:        e.Index,
-		Refs:         e.Refs,
-		Closes:       e.Closes,
-		Supersedes:   e.Supersedes,
-		Attachments:  e.Attachments,
-		Preflight:    e.Preflight,
-		Status:       formatStatusTrailValue(g.PrimaryStatus, g.PrimarySupersedePath),
-		Time:         e.Time.Format("2006-01-02 15:04:05"),
+		ID:           entry.ID,
+		Type:         entry.Type,
+		Layer:        entry.Layer,
+		Kind:         entry.Kind,
+		Title:        entry.Title,
+		Confidence:   entry.Confidence,
+		Intent:       entry.Intent,
+		Participants: entry.Participants,
+		Canonical:    entry.Canonical,
+		Aliases:      entry.Aliases,
+		ActorKind:    entry.ActorKind,
+		Class:        entry.Class,
+		Actor:        entry.Actor,
+		Topics:       entry.Topics,
+		Refs:         envelopeRefs(entry.Refs),
+		Closes:       entry.Closes,
+		Supersedes:   entry.Supersedes,
+		Attachments:  entry.Attachments,
+		Preflight:    entry.Preflight,
+		Status:       formatStatusTrailValue(entry.DerivedStatus),
+		Time:         entry.Time.Format("2006-01-02 15:04:05"),
 	}
-	if e.ProcedureSpec != nil {
-		env.Params = e.ProcedureSpec.Params
-		env.State = e.ProcedureSpec.State
-		env.Steps = e.ProcedureSpec.Steps
-		env.Framing = e.ProcedureSpec.Framing
+	if entry.Index != nil {
+		env.Index = &envelopeFactIndex{Title: entry.Index.Title, Topic: entry.Index.Topic}
+	}
+	if spec := entry.Procedure; spec != nil {
+		for _, section := range []struct {
+			name   string
+			text   string
+			target *yaml.Node
+		}{
+			{"params", spec.Params, &env.Params},
+			{"state", spec.State, &env.State},
+			{"steps", spec.Steps, &env.Steps},
+			{"framing", spec.Framing, &env.Framing},
+		} {
+			node, err := procedureSection(section.text)
+			if err != nil {
+				return fmt.Errorf("procedure %s of %s: %w", section.name, entry.ID, err)
+			}
+			*section.target = node
+		}
 	}
 	if opts.WithSummary {
-		env.Summary = e.Summary
+		env.Summary = entry.Summary
 	}
 
-	data, _ := yaml.Marshal(&env)
+	data, err := yaml.Marshal(&env)
+	if err != nil {
+		return fmt.Errorf("encoding the envelope of %s: %w", entry.ID, err)
+	}
 	fmt.Fprint(w, "---\n")
 	fmt.Fprint(w, string(data))
 	fmt.Fprint(w, "---\n")
+	return nil
+}
+
+func envelopeRefs(refs []types.ShownRef) []model.Ref {
+	var out []model.Ref
+	for _, ref := range refs {
+		out = append(out, model.Ref{ID: ref.ID, Kind: model.RefKind(ref.Kind), Desc: ref.Desc})
+	}
+	return out
+}
+
+// procedureSection decodes a procedure section's YAML text back into the node
+// the envelope nests; an absent section stays the zero node omitempty drops.
+func procedureSection(text string) (yaml.Node, error) {
+	if text == "" {
+		return yaml.Node{}, nil
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(text), &document); err != nil {
+		return yaml.Node{}, err
+	}
+	if len(document.Content) == 0 {
+		return yaml.Node{}, nil
+	}
+	return *document.Content[0], nil
 }
 
 // renderTreeItem renders one neighborhood node as a markdown bullet. Indent
@@ -181,7 +224,7 @@ func writeEnvelope(w io.Writer, g query.ShowGroup, opts ShowOptions) {
 // sub-line follows when the ref carries a desc, and unexpanded children at the
 // depth boundary render as an indented child-level truncation line — never
 // inline on this node.
-func renderTreeItem(w io.Writer, item model.ShowTreeItem, primaryID string) {
+func renderTreeItem(w io.Writer, item types.ShownChainItem, primaryID string) {
 	bulletIndent := strings.Repeat("  ", item.Depth-1)
 	subIndent := strings.Repeat("  ", item.Depth)
 
@@ -190,7 +233,7 @@ func renderTreeItem(w io.Writer, item model.ShowTreeItem, primaryID string) {
 	line.WriteString("- ")
 	line.WriteString(treeVerb(item))
 	line.WriteString(" ")
-	line.WriteString(item.NodeID())
+	line.WriteString(item.ID)
 	if qual := treeQualifier(item); qual != "" {
 		line.WriteString(" ")
 		line.WriteString(qual)
@@ -201,26 +244,21 @@ func renderTreeItem(w io.Writer, item model.ShowTreeItem, primaryID string) {
 	}
 	fmt.Fprintln(w, line.String())
 
-	if item.RefDesc != "" {
-		fmt.Fprintf(w, "%s↳ %s\n", subIndent, item.RefDesc)
+	if item.Desc != "" {
+		fmt.Fprintf(w, "%s↳ %s\n", subIndent, item.Desc)
 	}
 
 	if len(item.Truncated) > 0 {
-		reason := fmt.Sprintf("depth %d", item.Depth)
-		if item.TruncatedReason != "" {
-			reason = item.TruncatedReason
-		}
-		fmt.Fprintf(w, "%s+%d more refs truncated (%s): %s\n",
-			subIndent, len(item.Truncated), reason, truncatedIDs(item.Truncated))
+		fmt.Fprintf(w, "%s%s\n", subIndent, truncationLine(item))
 	}
 }
 
-func truncatedIDs(refs []model.TruncatedRef) string {
-	ids := make([]string, len(refs))
-	for i, tr := range refs {
-		ids[i] = tr.ID
+func truncationLine(item types.ShownChainItem) string {
+	reason := fmt.Sprintf("depth %d", item.Depth)
+	if item.TruncatedReason != "" {
+		reason = item.TruncatedReason
 	}
-	return strings.Join(ids, ", ")
+	return fmt.Sprintf("+%d more refs truncated (%s): %s", len(item.Truncated), reason, strings.Join(item.Truncated, ", "))
 }
 
 // treeQualifier is the parenthesized `(<kind>, <status>)` slot for a tree
@@ -228,12 +266,12 @@ func truncatedIDs(refs []model.TruncatedRef) string {
 // `(<kind>)` and a legacy entry with neither renders no parens at all —
 // never a bare `()` or a leading-comma `(, …)`. An unresolved cross-repo
 // node takes the bracketed unresolved marker in this slot instead.
-func treeQualifier(item model.ShowTreeItem) string {
-	if repo := unresolvedRepo(item); repo != "" {
-		return "[unresolved: repo " + string(repo) + "]"
+func treeQualifier(item types.ShownChainItem) string {
+	if item.UnresolvedRepo != "" {
+		return "[unresolved: repo " + item.UnresolvedRepo + "]"
 	}
-	kind := entryKindLabel(item.Entry)
-	status := formatStatusTrailValue(item.Status, item.SupersedePath)
+	kind := item.KindLabel
+	status := formatStatusTrailValue(item.DerivedStatus)
 	switch {
 	case kind != "" && status != "":
 		return "(" + kind + ", " + status + ")"
@@ -249,30 +287,17 @@ func treeQualifier(item model.ShowTreeItem) string {
 // treeSentence is the trailing micro-summary for a node. Dedup markers take the
 // slot when the node was already shown (or is a later primary); otherwise it's
 // the entry's first sentence — from the stored summary when present, else the
-// body — derived at render time without touching the stored summary. An
-// unresolved cross-repo node has no entry to summarize.
-func treeSentence(item model.ShowTreeItem, primaryID string) string {
+// body. An unresolved cross-repo node has none.
+func treeSentence(item types.ShownChainItem, primaryID string) string {
 	switch {
-	case item.ShownAbove && item.NodeID() == primaryID:
+	case item.ShownAbove && item.ID == primaryID:
 		return "(this entry)"
 	case item.ShownAbove:
 		return "(see above)"
 	case item.ShownBelow:
 		return "(see below)"
-	case item.Entry == nil:
-		return ""
 	}
-	return item.Entry.FirstSummarySentence()
-}
-
-// unresolvedRepo returns the target repo-id when the node is a cross-repo
-// reference whose graph is not available locally, else "".
-func unresolvedRepo(item model.ShowTreeItem) model.RepoID {
-	if item.Entry != nil || item.CrossRepoID == "" {
-		return ""
-	}
-	repo, _, _ := model.SplitCrossRepoID(item.CrossRepoID)
-	return repo
+	return item.FirstSentence
 }
 
 // treeVerb is the leading relation word for a tree node. A refs/refd-by edge
@@ -281,50 +306,14 @@ func unresolvedRepo(item model.ShowTreeItem) model.RepoID {
 // closes/supersedes (and their downstream inverses) render verbatim — they
 // carry uniform meaning and never accept per-edge kinds. Combined relations
 // join with a comma.
-func treeVerb(item model.ShowTreeItem) string {
+func treeVerb(item types.ShownChainItem) string {
 	parts := make([]string, len(item.Relations))
 	for i, r := range item.Relations {
-		if (r == "refs" || r == "refd-by") && item.RefKind != "" && item.RefKind != model.RefKindUnknown {
-			parts[i] = string(item.RefKind)
+		if (r == "refs" || r == "refd-by") && item.RefKind != "" && item.RefKind != string(model.RefKindUnknown) {
+			parts[i] = item.RefKind
 		} else {
 			parts[i] = r
 		}
 	}
 	return strings.Join(parts, ",")
-}
-
-// entryKindLabel is the `<kind>` shown in a tree node's `(<kind>, <status>)`
-// slot: the display kind when set (directive for kindless decisions), falling
-// back to the type label for kindless signals.
-func entryKindLabel(e *model.Entry) string {
-	if k := kindForDisplay(e); k != "" {
-		return string(k)
-	}
-	return e.TypeLabel()
-}
-
-// kindForDisplay returns the kind to render for an entry. Decisions fall back
-// to "directive" when Kind is empty (legacy default); other types show kind
-// only when explicitly set.
-func kindForDisplay(e *model.Entry) model.Kind {
-	if e.Kind != "" {
-		return e.Kind
-	}
-	if e.Type == model.TypeDecision {
-		return model.KindDirective
-	}
-	return ""
-}
-
-// topicLabels renders an effective topic set as plain label strings for the
-// envelope's `topics:` field.
-func topicLabels(paths []model.TopicPath) []string {
-	if len(paths) == 0 {
-		return nil
-	}
-	labels := make([]string, len(paths))
-	for i, p := range paths {
-		labels[i] = p.String()
-	}
-	return labels
 }
