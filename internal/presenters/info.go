@@ -34,6 +34,7 @@ type infoJSON struct {
 	Capabilities *model.SchemaCapabilities `json:"capabilities"`
 	Contribution string                    `json:"contribution"`
 	SyncBlocked  *syncBlockedJSON          `json:"sync_blocked,omitempty"`
+	CachePrune   *cachePruneJSON           `json:"cache_prune,omitempty"`
 }
 
 type syncBlockedJSON struct {
@@ -51,7 +52,7 @@ type syncBlockedJSON struct {
 // that drive sdd (20261027-122627-d-tac-2cx), with what blocks automatic sync
 // when block is set. Its owner is named only while the lease is live, as in
 // RenderSyncBlocked.
-func RenderInfoJSON(w io.Writer, result *query.InfoResult, block *model.SyncBlocked, now time.Time) error {
+func RenderInfoJSON(w io.Writer, result *query.InfoResult, block *model.SyncBlocked, prune model.CachePruneStatus, now time.Time) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	info := infoJSON{
@@ -62,6 +63,7 @@ func RenderInfoJSON(w io.Writer, result *query.InfoResult, block *model.SyncBloc
 		BinarySchema: result.BinarySchema,
 		Capabilities: result.Capabilities,
 		Contribution: result.Contribution,
+		CachePrune:   cachePruneValue(prune),
 	}
 	if block != nil {
 		info.SyncBlocked = &syncBlockedJSON{

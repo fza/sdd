@@ -21,7 +21,7 @@ var version = "dev"
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	app := cliapp.New(cliapp.Options{Version: version, Reader: os.Stdin, Writer: os.Stdout, ErrWriter: os.Stderr})
+	app := cliapp.New(cliapp.Options{Version: version, Reader: os.Stdin, Writer: os.Stdout, ErrWriter: os.Stderr, LaunchCachePrune: launchCachePrune})
 	if err := app.Run(ctx, os.Args); err != nil {
 		var exit cli.ExitCoder
 		if errors.As(err, &exit) && exit.ExitCode() == 0 {

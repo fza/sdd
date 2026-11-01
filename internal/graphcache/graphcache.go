@@ -146,6 +146,73 @@ func (c *Cache) Save(dir string, stamps map[string]filestamp.Stamp, docs finders
 	return os.Rename(tempPath, path)
 }
 
+// Prune deletes the snapshots whose graph directory no longer exists, and
+// snapshots this binary cannot read that nothing rewrote for longer than
+// retention, returning how many went and the bytes freed
+// (20261101-131514-d-cpt-9ci).
+func (c *Cache) Prune(now time.Time, retention time.Duration) (removed int, freed int64, err error) {
+	entries, err := os.ReadDir(c.root)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".graph") {
+			continue
+		}
+		path := filepath.Join(c.root, entry.Name())
+		info, err := entry.Info()
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return removed, freed, err
+		}
+		dir, readable, err := snapshotDir(path)
+		if err != nil {
+			return removed, freed, err
+		}
+		var gone bool
+		if readable {
+			_, statErr := os.Stat(dir)
+			gone = errors.Is(statErr, os.ErrNotExist)
+		} else {
+			gone = now.Sub(info.ModTime()) > retention
+		}
+		if !gone {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return removed, freed, err
+		}
+		removed++
+		freed += info.Size()
+	}
+	return removed, freed, nil
+}
+
+// snapshotDir reads the graph directory a snapshot was saved for; readable is
+// false for a file in another format or a damaged one.
+func snapshotDir(path string) (dir string, readable bool, err error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if len(data) < headerSize || [8]byte(data[:8]) != magic || data[8] != format {
+		return "", false, nil
+	}
+	var saved struct{ Dir string }
+	if err := gob.NewDecoder(bytes.NewReader(data[headerSize:])).Decode(&saved); err != nil || saved.Dir == "" {
+		return "", false, nil
+	}
+	return saved.Dir, true, nil
+}
+
 func (c *Cache) removeStrayTemps() error {
 	entries, err := os.ReadDir(c.root)
 	if err != nil {

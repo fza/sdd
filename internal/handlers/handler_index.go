@@ -282,6 +282,17 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 // currentEntryHashes maps every indexable entry of the graph to its state hash
 // under maxRunes — the checkout's current versions, which the skip pass and
 // version grouping compare against.
+// CurrentHashes returns the state hash under maxRunes of every entry the
+// checkout's search reads, by entry ID: the versions cache pruning keeps
+// (CurrentHashSource).
+func (h *IndexHandler) CurrentHashes(ctx context.Context, maxRunes int) (map[string]string, error) {
+	g, err := h.reader.CurrentGraph(h.graphDir)
+	if err != nil {
+		return nil, fmt.Errorf("loading graph: %w", err)
+	}
+	return h.currentEntryHashes(ctx, g, maxRunes)
+}
+
 func (h *IndexHandler) currentEntryHashes(ctx context.Context, g *model.Graph, maxRunes int) (map[string]string, error) {
 	hashes := make(map[string]string, len(g.Entries))
 	for _, entry := range g.Entries {

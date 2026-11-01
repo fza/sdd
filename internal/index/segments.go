@@ -653,7 +653,7 @@ func readLockWithin(ctx context.Context, indexDir string, bound time.Duration) (
 	if indexDir == "" {
 		return nil, errors.New("index dir is required")
 	}
-	if err := ensureStoreDir(indexDir); err != nil {
+	if err := useStoreDir(indexDir); err != nil {
 		return nil, err
 	}
 	waitCtx, cancel := ctx, context.CancelFunc(func() {})

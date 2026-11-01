@@ -33,7 +33,7 @@ import (
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
-func serveCmd() *cli.Command {
+func serveCmd(launchCachePrune func(dir string) error) *cli.Command {
 	return &cli.Command{
 		Name:  "serve",
 		Usage: "Run the workflow MCP server: dialogue-loop tools over stdio or HTTP",
@@ -95,6 +95,11 @@ func serveCmd() *cli.Command {
 				stopTimer()
 				<-timerDone
 			}()
+			var cacheNotice func(context.Context) string
+			if launchCachePrune != nil {
+				go runCachePruneTimer(timerCtx, launchCachePrune)
+				cacheNotice = serveCacheNotice
+			}
 			retention, err := model.ResolveSessionRetention(cfg)
 			if err != nil {
 				return err
@@ -107,6 +112,7 @@ func serveCmd() *cli.Command {
 				LocalIdentity: identity,
 				LocalClient:   transport == "stdio",
 				Version:       cmd.Root().Version,
+				CacheNotice:   cacheNotice,
 			})
 			if err != nil {
 				return err

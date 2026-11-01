@@ -60,7 +60,7 @@ func TestRenderInfoJSONNamesOnlyALiveOwner(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
-			err := presenters.RenderInfoJSON(&out, &query.InfoResult{}, tc.block, now)
+			err := presenters.RenderInfoJSON(&out, &query.InfoResult{}, tc.block, model.CachePruneStatus{}, now)
 			if err != nil {
 				t.Fatal(err)
 			}

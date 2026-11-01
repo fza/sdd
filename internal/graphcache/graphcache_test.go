@@ -214,3 +214,48 @@ func TestCacheSkipsAGraphItsStampsCannotProve(t *testing.T) {
 		})
 	}
 }
+
+func TestPrune(t *testing.T) {
+	now := time.Now()
+	const retention = 90 * 24 * time.Hour
+	root := t.TempDir()
+	cache := graphcache.New(root)
+	kept, removed := t.TempDir(), filepath.Join(t.TempDir(), "graph")
+	for _, dir := range []string{kept, removed} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		docs := finders.GraphDocuments{Entries: []finders.EntryDocument{{ID: "20261020-100000-s-tac-aaa", Raw: []byte(entryContent("Alpha."))}}}
+		if err := cache.Save(dir, map[string]filestamp.Stamp{}, docs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.RemoveAll(removed); err != nil {
+		t.Fatal(err)
+	}
+	foreignOld := filepath.Join(root, "0000000000000001.graph")
+	foreignNew := filepath.Join(root, "0000000000000002.graph")
+	writeFile(t, foreignOld, "SDDGRAPH\x09 another format")
+	writeFile(t, foreignNew, "SDDGRAPH\x09 another format")
+	old := now.Add(-retention - time.Hour)
+	if err := os.Chtimes(foreignOld, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	count, freed, err := cache.Prune(now, retention)
+	if err != nil {
+		t.Fatalf("pruning: %v", err)
+	}
+	if count != 2 || freed == 0 {
+		t.Errorf("pruning should remove the vanished folder's snapshot and the old unreadable one, removed %d (%d bytes)", count, freed)
+	}
+	if _, ok, err := cache.Load(kept, map[string]filestamp.Stamp{}); err != nil || !ok {
+		t.Errorf("the snapshot of an existing folder should stay, load says %v, %v", ok, err)
+	}
+	if _, err := os.Stat(foreignNew); err != nil {
+		t.Errorf("an unreadable snapshot rewritten recently should stay, stat says %v", err)
+	}
+	if _, err := os.Stat(foreignOld); !os.IsNotExist(err) {
+		t.Errorf("an unreadable snapshot untouched past retention should go, stat says %v", err)
+	}
+}
