@@ -37,6 +37,34 @@ func TestResolveTokenSaving(t *testing.T) {
 	}
 }
 
+func TestEffectiveTokenSavingComesFromTheGlobalLayerOnly(t *testing.T) {
+	off := model.BaseConfig{Sessions: model.SessionsConfig{TokenSaving: "off"}}
+	cases := []struct {
+		name       string
+		global     model.BaseConfig
+		local      *model.PerRepoConfig
+		wantValue  string
+		wantSource model.ConfigValueSource
+	}{
+		{name: "local only", local: &model.PerRepoConfig{BaseConfig: off}, wantValue: "on", wantSource: model.ConfigSourceDefault},
+		{name: "global", global: off, wantValue: "off", wantSource: model.ConfigSourceGlobal},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, value := range model.EffectiveConfigValues(tc.global, nil, tc.local) {
+				if value.Key != "sessions.token_saving" {
+					continue
+				}
+				if value.Value != tc.wantValue || value.Source != tc.wantSource {
+					t.Errorf("the effective value should come from the user-global config or the default, got %+v", value)
+				}
+				return
+			}
+			t.Error("the effective config should list the key")
+		})
+	}
+}
+
 func TestTokenSavingIsReportedOnPerRepoLayers(t *testing.T) {
 	set := model.BaseConfig{Sessions: model.SessionsConfig{TokenSaving: "off"}}
 	ignored := model.PerRepoIgnoredSettings(set)
