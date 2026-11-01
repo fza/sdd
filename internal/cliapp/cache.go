@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/networkteam/slogutils"
@@ -83,7 +84,7 @@ func pruneDetail(c model.CachePruneCounts) string {
 // shows a failed pass once. Neither ever fails or delays the command: a
 // problem here is a warning, since pruning is the machine's upkeep, not the
 // command's work.
-func backgroundCachePrune(ctx context.Context, launch func(dir string) error, notify bool) {
+func backgroundCachePrune(ctx context.Context, launch func(dir, logPath string) error, notify bool) {
 	log := slogutils.FromContext(ctx)
 	loc, err := repos.DefaultLocations()
 	if err != nil {
@@ -104,7 +105,7 @@ func backgroundCachePrune(ctx context.Context, launch func(dir string) error, no
 		log.Warn("background cache pruning: getting working directory", "err", err)
 		return
 	}
-	if err := cacheprune.LaunchIfDue(ctx, loc.StateRoot, time.Now(), func() error { return launch(dir) }); err != nil {
+	if err := cacheprune.LaunchIfDue(ctx, loc.StateRoot, time.Now(), func() error { return launch(dir, filepath.Join(loc.StateRoot, cacheprune.LogFile)) }); err != nil {
 		log.Warn("background cache pruning", "err", err)
 	}
 }
@@ -115,7 +116,7 @@ const cachePruneCheckInterval = time.Hour
 
 // runCachePruneTimer keeps a long-running server launching the daily pass
 // until ctx ends; the launch at server start is the root command's.
-func runCachePruneTimer(ctx context.Context, launch func(dir string) error) {
+func runCachePruneTimer(ctx context.Context, launch func(dir, logPath string) error) {
 	ticker := time.NewTicker(cachePruneCheckInterval)
 	defer ticker.Stop()
 	for {

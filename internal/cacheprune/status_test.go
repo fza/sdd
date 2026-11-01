@@ -2,6 +2,9 @@ package cacheprune_test
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,8 +34,35 @@ func TestLaunchIfDue(t *testing.T) {
 	}
 
 	failing := func() error { return errors.New("fork failed") }
-	if err := cacheprune.LaunchIfDue(t.Context(), stateRoot, now.Add(3*model.CachePruneInterval), failing); err == nil {
-		t.Error("a launch that fails should be reported to the caller")
+	if err := cacheprune.LaunchIfDue(t.Context(), stateRoot, now.Add(3*model.CachePruneInterval), failing); err != nil {
+		t.Fatal(err)
+	}
+	notice, err := cacheprune.TakeFailureNotice(t.Context(), stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(notice, "fork failed") {
+		t.Errorf("a launch that fails should be reported once like a failed run, notice %q", notice)
+	}
+}
+
+func TestAnUnreadableRecordIsReportedAndReplaced(t *testing.T) {
+	stateRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stateRoot, "cache-prune.json"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status, err := cacheprune.Load(stateRoot)
+	if err != nil {
+		t.Fatalf("an unreadable record should not stop a run or sdd info: %v", err)
+	}
+	if status.FailureNotice() == "" {
+		t.Error("an unreadable record should be reported")
+	}
+	if err := cacheprune.Update(t.Context(), stateRoot, func(s *model.CachePruneStatus) { s.Error = "" }); err != nil {
+		t.Fatalf("an update should replace an unreadable record: %v", err)
+	}
+	if status, err := cacheprune.Load(stateRoot); err != nil || status.Error != "" {
+		t.Errorf("the replaced record should read cleanly, got %+v, %v", status, err)
 	}
 }
 

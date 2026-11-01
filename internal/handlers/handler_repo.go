@@ -114,15 +114,12 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	if err := os.MkdirAll(filepath.Dir(cacheDir), 0o755); err != nil {
 		return fmt.Errorf("creating cache dir: %w", err)
 	}
-	if err := os.RemoveAll(cacheDir); err != nil {
-		return fmt.Errorf("clearing stale cache at %s: %w", cacheDir, err)
+	unlock, err := h.repos.Registry().LockClones(ctx)
+	if err != nil {
+		return err
 	}
-	if err := os.Rename(cloneDir, cacheDir); err != nil {
-		return fmt.Errorf("moving clone into cache: %w", err)
-	}
-
-	repo.RepoID = declared
-	if err := h.connectRepo(repo); err != nil {
+	connectErr := h.placeAndConnect(cloneDir, cacheDir, repo, declared)
+	if err := errors.Join(connectErr, unlock()); err != nil {
 		return err
 	}
 	if _, err := h.declareDependency(ctx, declared, cmd); err != nil {
@@ -132,6 +129,20 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 		cmd.OnAdded(declared, cacheDir)
 	}
 	return nil
+}
+
+// placeAndConnect moves the clone into the cache and connects the repo, under
+// the clone lock the caller holds, so cache pruning never sees the clone
+// in place before its repo is connected.
+func (h *Handler) placeAndConnect(cloneDir, cacheDir string, repo repos.ConnectedRepo, declared model.RepoID) error {
+	if err := os.RemoveAll(cacheDir); err != nil {
+		return fmt.Errorf("clearing stale cache at %s: %w", cacheDir, err)
+	}
+	if err := os.Rename(cloneDir, cacheDir); err != nil {
+		return fmt.Errorf("moving clone into cache: %w", err)
+	}
+	repo.RepoID = declared
+	return h.connectRepo(repo)
 }
 
 // declareDependency ensures repoID is listed in the committed dependencies
