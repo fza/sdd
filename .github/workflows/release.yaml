@@ -11,6 +11,10 @@ permissions:
 
 jobs:
   release:
+    # A repository whose tags include ones it does not release (a fork carrying
+    # upstream tags) sets the Actions variable RELEASE_TAG_MARKER to a string
+    # only its own release tags contain.
+    if: vars.RELEASE_TAG_MARKER == '' || contains(github.ref_name, vars.RELEASE_TAG_MARKER)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
