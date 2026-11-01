@@ -174,6 +174,23 @@ func (h hashesByCap) CurrentHashes(_ context.Context, maxRunes int) (map[string]
 	return h[maxRunes], nil
 }
 
+func TestCacheHandlerPruneGoesOnPastADamagedStore(t *testing.T) {
+	f := newPruneFixture(t, "")
+	broken := filepath.Join(f.loc.CacheRoot, "index", "github.com", "acme", "broken", "ccc")
+	if err := os.MkdirAll(broken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(broken, "manifest.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.handler(fixedHashes{}).Prune(t.Context(), &command.PruneCacheCmd{}); err == nil {
+		t.Error("a damaged store should fail the run")
+	}
+	if index.DocumentsSize(f.usedStore, f.expiredRow) != 0 {
+		t.Error("the stores after a damaged one should still be pruned")
+	}
+}
+
 func TestCacheHandlerPruneHashesUnderEachStoresRuneCap(t *testing.T) {
 	f := newPruneFixture(t, "")
 	err := index.WriteStore(t.Context(), f.usedStore, func(*index.Index) error {

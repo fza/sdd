@@ -216,7 +216,8 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		}
 		keep, err := keepFor(dir)
 		if err != nil {
-			return counts, errors.Join(append(errs, err)...)
+			errs = append(errs, fmt.Errorf("pruning %s: %w", dir, err))
+			continue
 		}
 		pruned, err := index.PruneStore(ctx, dir, now, retention, keep)
 		counts.Versions += pruned.Versions
