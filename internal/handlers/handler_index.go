@@ -245,13 +245,9 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 				// The manifest must never name a row that is gone or not yet
 				// written, so it is saved after the batch's rows land and
 				// before the rows it replaced go (see DropVersions).
-				var stale []string
-				for _, entry := range entries {
-					replaced, err := h.publishIndexEntry(ctx, idx, manifest, entry, run.force)
-					if err != nil {
-						return err
-					}
-					stale = append(stale, replaced...)
+				stale, err := h.publishIndexEntries(ctx, idx, manifest, entries, run.force)
+				if err != nil {
+					return err
 				}
 				manifest.MaxRunes = maxRunes
 				if err := manifest.Save(h.indexDir); err != nil {
@@ -304,40 +300,49 @@ func (h *IndexHandler) currentEntryHashes(ctx context.Context, g *model.Graph, m
 	return hashes, nil
 }
 
-// publishIndexEntry writes one entry's rows and records its version in
-// manifest, returning the rows a forced version replaces.
-func (h *IndexHandler) publishIndexEntry(ctx context.Context, idx *index.Index, manifest *index.Manifest, entry *model.IndexWork, force bool) ([]string, error) {
-	if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {
+// publishIndexEntries writes the entries' rows in one upsert and records their
+// versions in manifest, returning the rows forced versions replace.
+func (h *IndexHandler) publishIndexEntries(ctx context.Context, idx *index.Index, manifest *index.Manifest, entries []*model.IndexWork, force bool) ([]string, error) {
+	upserts := make([]index.EntryUpsert, len(entries))
+	versions := make([]index.EntryVersion, len(entries))
+	for n, entry := range entries {
+		if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {
+			return nil, err
+		}
+		rows := make([]index.Row, len(entry.Rows))
+		ids := make([]string, len(rows))
+		for i, row := range entry.Rows {
+			c := row.Chunk
+			ids[i] = c.ID
+			rows[i] = index.Row{EntryID: c.EntryID, EntryHash: c.EntryHash, ChunkID: c.ID, Text: c.Text, Body: c.Body, Breadcrumb: c.Breadcrumb, Depth: c.Depth, IsSummary: c.IsSummary, IsAttachment: c.IsAttachment, SourceAttachmentPath: c.SourceAttachmentPath, ContentHash: c.ContentHash, ModelFingerprint: entry.Version.Namespace.Fingerprint, Embedding: row.Vector}
+		}
+		upserts[n] = index.EntryUpsert{EntryID: entry.Version.EntryID, Rows: rows}
+		versions[n] = index.EntryVersion{Hash: entry.Version.EntryHash, Fingerprint: entry.Version.Namespace.Fingerprint, Derivation: index.DerivationCurrent, ChunkIDs: ids, IndexedAt: h.now()}
+	}
+	if err := idx.UpsertEntries(ctx, upserts); err != nil {
 		return nil, err
 	}
-	rows := make([]index.Row, len(entry.Rows))
-	ids := make([]string, len(rows))
-	for i, row := range entry.Rows {
-		c := row.Chunk
-		ids[i] = c.ID
-		rows[i] = index.Row{EntryID: c.EntryID, EntryHash: c.EntryHash, ChunkID: c.ID, Text: c.Text, Body: c.Body, Breadcrumb: c.Breadcrumb, Depth: c.Depth, IsSummary: c.IsSummary, IsAttachment: c.IsAttachment, SourceAttachmentPath: c.SourceAttachmentPath, ContentHash: c.ContentHash, ModelFingerprint: entry.Version.Namespace.Fingerprint, Embedding: row.Vector}
-	}
-	if err := idx.UpsertEntry(ctx, entry.Version.EntryID, nil, rows); err != nil {
-		return nil, err
-	}
-	version := index.EntryVersion{Hash: entry.Version.EntryHash, Fingerprint: entry.Version.Namespace.Fingerprint, Derivation: index.DerivationCurrent, ChunkIDs: ids, IndexedAt: h.now()}
 	if !force {
-		manifest.AddVersion(entry.Version.EntryID, version)
+		for n, entry := range entries {
+			manifest.AddVersion(entry.Version.EntryID, versions[n])
+		}
 		return nil, nil
 	}
 	// Force replaces only this binary's own derivation rule: another rule's
 	// versions belong to another binary sharing the store (d-tac-c9c). Rows
 	// the new version reuses (same hash) are kept.
-	replaced := manifest.Entries[entry.Version.EntryID].ChunkIDsOf(index.DerivationCurrent)
-	manifest.SetDerivationVersion(entry.Version.EntryID, version)
-	kept := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		kept[id] = true
-	}
 	var stale []string
-	for _, id := range replaced {
-		if !kept[id] {
-			stale = append(stale, id)
+	for n, entry := range entries {
+		replaced := manifest.Entries[entry.Version.EntryID].ChunkIDsOf(index.DerivationCurrent)
+		manifest.SetDerivationVersion(entry.Version.EntryID, versions[n])
+		kept := make(map[string]bool, len(versions[n].ChunkIDs))
+		for _, id := range versions[n].ChunkIDs {
+			kept[id] = true
+		}
+		for _, id := range replaced {
+			if !kept[id] {
+				stale = append(stale, id)
+			}
 		}
 	}
 	return stale, nil

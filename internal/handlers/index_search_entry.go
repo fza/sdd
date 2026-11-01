@@ -49,3 +49,25 @@ func (h SearchEntryHandler) Index(ctx context.Context, cmd command.IndexSearchEn
 			return nil
 		}), nil)
 }
+
+// EntryBatchPublisher is the optional store capability publishing several
+// entry versions in one write.
+type EntryBatchPublisher interface {
+	PublishEntries(context.Context, []types.SearchEntryPublication) error
+}
+
+func publishEntries(ctx context.Context, store EntryPublisher, batch []*model.IndexWork) error {
+	publications := make([]types.SearchEntryPublication, len(batch))
+	for i, entry := range batch {
+		publications[i] = types.SearchEntryPublication{Version: entry.Version, Chunks: entry.Rows}
+	}
+	if batcher, ok := store.(EntryBatchPublisher); ok {
+		return batcher.PublishEntries(ctx, publications)
+	}
+	for _, publication := range publications {
+		if err := store.PublishEntry(ctx, publication.Version, publication.Chunks); err != nil {
+			return err
+		}
+	}
+	return nil
+}
