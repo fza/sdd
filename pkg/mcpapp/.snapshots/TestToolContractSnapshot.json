@@ -36,6 +36,29 @@
             "framing": {
               "type": "string"
             },
+            "framing_blocks": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "description": "stable name of the lane or block across calls",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
             "goal": {
               "type": "string"
             },
@@ -44,6 +67,29 @@
             },
             "instructions": {
               "type": "string"
+            },
+            "lanes": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "description": "stable name of the lane or block across calls",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
             },
             "open_threads": {
               "description": "this dialogue's own open threads; other dialogues are never listed here",
@@ -372,6 +418,29 @@
             "framing": {
               "type": "string"
             },
+            "framing_blocks": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "description": "stable name of the lane or block across calls",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
             "goal": {
               "type": "string"
             },
@@ -380,6 +449,29 @@
             },
             "instructions": {
               "type": "string"
+            },
+            "lanes": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "description": "stable name of the lane or block across calls",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
             },
             "open_threads": {
               "description": "this dialogue's own open threads; other dialogues are never listed here",
@@ -544,6 +636,30 @@
           "description": "session framing (aspirations, directives, focus, participants); served when its content is new to this connection, omitted while unchanged",
           "type": "string"
         },
+        "framing_blocks": {
+          "description": "set instead of framing when sessions.token_saving is off: each framing block as its own named object",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "stable name of the lane or block across calls",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "text"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "goal": {
           "description": "one line: what advances the instance from here",
           "type": "string"
@@ -553,6 +669,30 @@
         },
         "instructions": {
           "type": "string"
+        },
+        "lanes": {
+          "description": "set instead of instructions when sessions.token_saving is off: each instruction lane as its own named object",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "stable name of the lane or block across calls",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "text"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "missing": {
           "description": "required report fields not yet provided",
@@ -774,6 +914,29 @@
             "framing": {
               "type": "string"
             },
+            "framing_blocks": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "description": "stable name of the lane or block across calls",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
             "goal": {
               "type": "string"
             },
@@ -782,6 +945,29 @@
             },
             "instructions": {
               "type": "string"
+            },
+            "lanes": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "description": "stable name of the lane or block across calls",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
             },
             "open_threads": {
               "description": "this dialogue's own open threads; other dialogues are never listed here",
@@ -1145,12 +1331,58 @@
         "framing": {
           "type": "string"
         },
+        "framing_blocks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "stable name of the lane or block across calls",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "text"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "instructions": {
           "type": "string"
         },
         "label": {
           "description": "the session's subject label, when one was recorded",
           "type": "string"
+        },
+        "lanes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "stable name of the lane or block across calls",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "text"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "open_instances": {
           "description": "current serve for every running instance; the session shell's serve carries the open-threads block",
@@ -1167,6 +1399,29 @@
                   "framing": {
                     "type": "string"
                   },
+                  "framing_blocks": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "name": {
+                          "description": "stable name of the lane or block across calls",
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "text"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
                   "goal": {
                     "type": "string"
                   },
@@ -1175,6 +1430,29 @@
                   },
                   "instructions": {
                     "type": "string"
+                  },
+                  "lanes": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "name": {
+                          "description": "stable name of the lane or block across calls",
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "text"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
                   },
                   "open_threads": {
                     "description": "this dialogue's own open threads; other dialogues are never listed here",
@@ -1339,6 +1617,30 @@
                 "description": "session framing (aspirations, directives, focus, participants); served when its content is new to this connection, omitted while unchanged",
                 "type": "string"
               },
+              "framing_blocks": {
+                "description": "set instead of framing when sessions.token_saving is off: each framing block as its own named object",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "stable name of the lane or block across calls",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
               "goal": {
                 "description": "one line: what advances the instance from here",
                 "type": "string"
@@ -1348,6 +1650,30 @@
               },
               "instructions": {
                 "type": "string"
+              },
+              "lanes": {
+                "description": "set instead of instructions when sessions.token_saving is off: each instruction lane as its own named object",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "stable name of the lane or block across calls",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
               },
               "missing": {
                 "description": "required report fields not yet provided",
@@ -1718,6 +2044,49 @@
             "array"
           ]
         },
+        "hits": {
+          "description": "set instead of results when sessions.token_saving is off: one object per match",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "layer": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              },
+              "status": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "layer",
+              "score"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "notice": {
           "description": "readable incomplete-indexing notice",
           "type": "string"
@@ -1786,6 +2155,192 @@
       "properties": {
         "entries": {
           "type": "string"
+        },
+        "items": {
+          "description": "set instead of entries when sessions.token_saving is off: one object per shown entry with its chains",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "description": "the entry's full text",
+                "type": "string"
+              },
+              "downstream": {
+                "description": "downstream chain in preorder, as upstream",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "depth": {
+                      "description": "distance from the shown entry: 1 links to it directly, 2 to a depth-1 item above it in the list",
+                      "type": "integer"
+                    },
+                    "desc": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "description": "kind of the refs edge, empty when the edge has none",
+                      "type": "string"
+                    },
+                    "relation": {
+                      "description": "the edge: refs, closes, supersedes, refd-by and their inverses",
+                      "type": "string"
+                    },
+                    "seen_in_response": {
+                      "description": "the entry already appears elsewhere in this response",
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "truncated": {
+                      "description": "children of this item hidden at the depth or fan-out frontier; show them to expand",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": [
+                        "null",
+                        "array"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "depth"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "downstream_truncated": {
+                "description": "IDs cut from the downstream chain by its size budget",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "layer": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "upstream": {
+                "description": "upstream chain in preorder: each item followed by its descendants, depth 1 linking to this entry",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "depth": {
+                      "description": "distance from the shown entry: 1 links to it directly, 2 to a depth-1 item above it in the list",
+                      "type": "integer"
+                    },
+                    "desc": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "description": "kind of the refs edge, empty when the edge has none",
+                      "type": "string"
+                    },
+                    "relation": {
+                      "description": "the edge: refs, closes, supersedes, refd-by and their inverses",
+                      "type": "string"
+                    },
+                    "seen_in_response": {
+                      "description": "the entry already appears elsewhere in this response",
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "truncated": {
+                      "description": "children of this item hidden at the depth or fan-out frontier; show them to expand",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": [
+                        "null",
+                        "array"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "depth"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "upstream_truncated": {
+                "description": "IDs cut from the upstream chain by its size budget; show them to expand",
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "layer",
+              "body"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "sync_notice": {
           "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
@@ -1934,6 +2489,29 @@
             "framing": {
               "type": "string"
             },
+            "framing_blocks": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "description": "stable name of the lane or block across calls",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
             "goal": {
               "type": "string"
             },
@@ -1942,6 +2520,29 @@
             },
             "instructions": {
               "type": "string"
+            },
+            "lanes": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "description": "stable name of the lane or block across calls",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
             },
             "open_threads": {
               "description": "this dialogue's own open threads; other dialogues are never listed here",
@@ -2106,6 +2707,30 @@
           "description": "session framing (aspirations, directives, focus, participants); served when its content is new to this connection, omitted while unchanged",
           "type": "string"
         },
+        "framing_blocks": {
+          "description": "set instead of framing when sessions.token_saving is off: each framing block as its own named object",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "stable name of the lane or block across calls",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "text"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "goal": {
           "description": "one line: what advances the instance from here",
           "type": "string"
@@ -2115,6 +2740,30 @@
         },
         "instructions": {
           "type": "string"
+        },
+        "lanes": {
+          "description": "set instead of instructions when sessions.token_saving is off: each instruction lane as its own named object",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "stable name of the lane or block across calls",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "text"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "missing": {
           "description": "required report fields not yet provided",
@@ -2333,6 +2982,29 @@
             "framing": {
               "type": "string"
             },
+            "framing_blocks": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "description": "stable name of the lane or block across calls",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
             "goal": {
               "type": "string"
             },
@@ -2341,6 +3013,29 @@
             },
             "instructions": {
               "type": "string"
+            },
+            "lanes": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "description": "stable name of the lane or block across calls",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
             },
             "open_threads": {
               "description": "this dialogue's own open threads; other dialogues are never listed here",
@@ -2505,6 +3200,30 @@
           "description": "session framing (aspirations, directives, focus, participants); served when its content is new to this connection, omitted while unchanged",
           "type": "string"
         },
+        "framing_blocks": {
+          "description": "set instead of framing when sessions.token_saving is off: each framing block as its own named object",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "stable name of the lane or block across calls",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "text"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "goal": {
           "description": "one line: what advances the instance from here",
           "type": "string"
@@ -2514,6 +3233,30 @@
         },
         "instructions": {
           "type": "string"
+        },
+        "lanes": {
+          "description": "set instead of instructions when sessions.token_saving is off: each instruction lane as its own named object",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "stable name of the lane or block across calls",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "text"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "missing": {
           "description": "required report fields not yet provided",

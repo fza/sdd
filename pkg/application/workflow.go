@@ -955,6 +955,20 @@ func (w *WorkflowSession) LogRead(ctx context.Context, identity RequestIdentity,
 // directives (I6, A1). A shell with no declared lanes yields the info block
 // alone; there is no Go-constant fallback.
 func (w *WorkflowSession) Framing(ctx context.Context, identity RequestIdentity) ([]string, error) {
+	blocks, err := w.FramingBlocks(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	texts := make([]string, len(blocks))
+	for i, block := range blocks {
+		texts[i] = block.Text
+	}
+	return texts, nil
+}
+
+// FramingBlocks is Framing with each block named, stable across calls: info,
+// each shell lane's inject id (or its function), and health.
+func (w *WorkflowSession) FramingBlocks(ctx context.Context, identity RequestIdentity) ([]types.ServeLane, error) {
 	w.setOperation(ctx, identity)
 	info, err := w.readInfo()
 	if err != nil {
@@ -984,13 +998,13 @@ func (w *WorkflowSession) Framing(ctx context.Context, identity RequestIdentity)
 	if err != nil {
 		return nil, err
 	}
-	blocks := append([]string{infoBlock.String()}, lanes...)
+	blocks := append([]types.ServeLane{{Name: "info", Text: infoBlock.String()}}, lanes...)
 	health, err := w.graphHealthBlock()
 	if err != nil {
 		return nil, err
 	}
 	if health != "" {
-		blocks = append(blocks, health)
+		blocks = append(blocks, types.ServeLane{Name: "health", Text: health})
 	}
 	return blocks, nil
 }
@@ -1063,7 +1077,7 @@ func (w *WorkflowSession) graphHealthBlock() (string, error) {
 // engine's inject query mechanism, one block per lane (empty results omitted).
 // A lane whose query returns a non-string fails loud — a framing lane must
 // render to text, never be silently dropped.
-func (w *WorkflowSession) framingLanes() ([]string, error) {
+func (w *WorkflowSession) framingLanes() ([]types.ServeLane, error) {
 	if w.shell == "" {
 		return nil, nil
 	}
@@ -1071,7 +1085,7 @@ func (w *WorkflowSession) framingLanes() ([]string, error) {
 	if !ok {
 		return nil, nil
 	}
-	var lanes []string
+	var lanes []types.ServeLane
 	for _, call := range inst.Spec.Framing {
 		result, cut, err := w.session.Inject(w.shell, call)
 		if err != nil {
@@ -1085,7 +1099,11 @@ func (w *WorkflowSession) framingLanes() ([]string, error) {
 			text += "\n" + framingCutNotice(*cut)
 		}
 		if text = strings.TrimSpace(text); text != "" {
-			lanes = append(lanes, text)
+			name := call.Id
+			if name == "" {
+				name = call.Fn
+			}
+			lanes = append(lanes, types.ServeLane{Name: name, Text: text})
 		}
 	}
 	return lanes, nil

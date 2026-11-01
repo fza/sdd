@@ -77,6 +77,7 @@ type ShowRequest struct {
 type ShowResult struct {
 	Project    ProjectRef
 	Entries    string
+	Items      []ShownEntry
 	FullIDs    []string
 	SummaryIDs []string
 }
@@ -105,6 +106,7 @@ type SearchResult struct {
 	Notice   string
 	Project  ProjectRef
 	Results  string
+	Hits     []SearchHit
 	EntryIDs []string
 }
 

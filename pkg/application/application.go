@@ -325,7 +325,7 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 	}
 	var rendered bytes.Buffer
 	presenters.RenderShow(&rendered, showResult, presenters.ShowOptions{})
-	show := ShowResult{Project: runtime.options.Project, Entries: strings.TrimRight(rendered.String(), "\n")}
+	show := ShowResult{Project: runtime.options.Project, Entries: strings.TrimRight(rendered.String(), "\n"), Items: shownEntries(showResult)}
 	for _, group := range showResult.Groups {
 		if group.Primary != nil {
 			if group.PrimaryID != "" {
@@ -407,7 +407,7 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 	}
 	var rendered bytes.Buffer
 	presenters.RenderSearch(&rendered, searchResult, snapshot.graph)
-	search := SearchResult{Project: runtime.options.Project, Results: strings.TrimRight(rendered.String(), "\n"), Coverage: coverage}
+	search := SearchResult{Project: runtime.options.Project, Results: strings.TrimRight(rendered.String(), "\n"), Hits: searchHits(searchResult, snapshot.graph), Coverage: coverage}
 	if credentialNotice != "" {
 		search.Notice = credentialNotice
 		if search.Results != "" {
