@@ -796,3 +796,60 @@ func TestNewEntry_SameSecondCapturesNeverOverwrite(t *testing.T) {
 		}
 	}
 }
+
+func TestNewEntry_AttachmentNeverOverwritesAnotherAttachment(t *testing.T) {
+	tmp := t.TempDir()
+	sddDir := filepath.Join(tmp, ".sdd")
+	if err := os.MkdirAll(sddDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	first := filepath.Join(tmp, "first.md")
+	second := filepath.Join(tmp, "second.md")
+	if err := os.WriteFile(first, []byte("first record"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("second record"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := handlers.New(handlers.Options{
+		GraphDir:  tmp,
+		SDDDir:    sddDir,
+		Reader:    &fakeReader{},
+		Committer: &recordingCommitter{},
+		Stderr:    &bytes.Buffer{},
+	})
+	var id string
+	cmd := &command.NewEntryCmd{
+		Type:          model.TypeSignal,
+		Layer:         model.LayerTactical,
+		Description:   "two attachments naming one target",
+		Summary:       "duplicate attachment target",
+		SkipPreflight: true,
+		Attachments: []command.Attachment{
+			{Source: first, Target: "notes.md"},
+			{Source: second, Target: "notes.md"},
+		},
+		OnNewEntry: func(newID, _ string) { id = newID },
+	}
+
+	err := h.NewEntry(context.Background(), cmd)
+
+	if err == nil {
+		t.Fatal("a second attachment onto a written target should be refused")
+	}
+	entries, globErr := filepath.Glob(filepath.Join(tmp, "*", "*", "*", "notes.md"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("the first attachment should be on disk once, found %v (entry %q)", entries, id)
+	}
+	data, readErr := os.ReadFile(entries[0])
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "first record" {
+		t.Error("the written attachment should keep its content")
+	}
+}
