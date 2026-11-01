@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/networkteam/sdd/internal/cacheprune"
 	"github.com/networkteam/sdd/internal/cliout"
 	"github.com/networkteam/sdd/internal/cliout/tui"
 	"github.com/networkteam/sdd/internal/command"
@@ -41,6 +42,10 @@ type Options struct {
 	Reader    io.Reader
 	Writer    io.Writer
 	ErrWriter io.Writer
+	// LaunchCachePrune starts the daily background `sdd cache prune` detached
+	// from this process, working from dir. Nil leaves background pruning off,
+	// as for a host running commands in-process.
+	LaunchCachePrune func(dir string) error
 }
 
 // localConfigOverride carries --local-config: the file that stands in for
@@ -429,11 +434,18 @@ func New(options Options) *cli.Command {
 
 			warnUnknownConfigKeys(ctx)
 
+			if options.LaunchCachePrune != nil && cmd.Args().First() != cacheCommandName {
+				stopPrune := timing.Start(ctx, "cache-prune-check")
+				backgroundCachePrune(ctx, options.LaunchCachePrune, cmd.Args().First() != "serve")
+				stopPrune()
+			}
+
 			// Background sync check runs on every command except `sdd init`
 			// (bootstrap may precede remote configuration — sync would emit
-			// spurious warnings). Cooldown-bound and timeout-bound internally;
+			// spurious warnings) and `sdd cache`, which touches no graph.
+			// Cooldown-bound and timeout-bound internally;
 			// any failure logs at Debug and does not affect the command.
-			if cmd.Args().First() != "init" {
+			if first := cmd.Args().First(); first != "init" && first != cacheCommandName {
 				ctx = withSyncBanner(ctx, cmd.ErrWriter)
 				stopSync := timing.Start(ctx, "sync-check")
 				runSyncCheck(ctx)
@@ -464,8 +476,9 @@ func New(options Options) *cli.Command {
 			summarizeCmd(),
 			migrateCmd(),
 			indexCmd(),
+			cacheCmd(),
 			searchCmd(),
-			serveCmd(),
+			serveCmd(options.LaunchCachePrune),
 			sessionsCmd(),
 			syncCmd(),
 			mergeEntryCmd(),
@@ -534,11 +547,20 @@ func infoCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			loc, err := repos.DefaultLocations()
+			if err != nil {
+				return err
+			}
+			prune, err := cacheprune.Load(loc.StateRoot)
+			if err != nil {
+				return err
+			}
 			if format == "json" {
-				return presenters.RenderInfoJSON(cmd.Writer, result, block, time.Now())
+				return presenters.RenderInfoJSON(cmd.Writer, result, block, prune, time.Now())
 			}
 			presenters.RenderInfo(cmd.Writer, result)
 			presenters.RenderSyncBlocked(cmd.Writer, block, time.Now())
+			presenters.RenderCachePruneStatus(cmd.Writer, prune)
 			return nil
 		},
 	}

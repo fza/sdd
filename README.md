@@ -584,7 +584,7 @@ your-project/
     └── tmp/                      # scratch files (gitignored)
 ```
 
-The vector index and the connected-repo caches don't live in the project tree — they're per-machine derived state in a content-addressed store under your user cache directory (keyed by repo identity and embedder fingerprint), shared across a repo's checkouts and worktrees and rebuilt on demand. Nothing to commit or clean up by hand.
+The vector index and the connected-repo caches don't live in the project tree — they're per-machine derived state in a content-addressed store under your user cache directory (keyed by repo identity and embedder fingerprint), shared across a repo's checkouts and worktrees and rebuilt on demand. Nothing to commit or clean up by hand: once a day sdd starts `sdd cache prune` in the background, which deletes what nothing used for `cache.retention` (user-global config, default `90d`): replaced index versions, unused index stores, graph snapshots of removed folders, clones of disconnected repos. It never delays a command; a failed run is reported once, and `sdd info` shows the last one.
 
 The CLI also keeps each graph's entry files there, read back only while every graph file's size, timestamps and inode match what they were when it was saved, so a command on an unchanged graph reads one file instead of every entry. Set `SDD_GRAPH_CACHE=off` to read every graph from its files.
 

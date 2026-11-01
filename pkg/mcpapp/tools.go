@@ -74,7 +74,7 @@ type AbandonArgs struct {
 }
 
 type AbandonResult struct {
-	SyncNoticeField
+	ResultNotices
 	Abandoned bool   `json:"abandoned"`
 	Session   string `json:"session,omitempty" jsonschema:"the torn-down session, on teardown by handle"`
 	Label     string `json:"label,omitempty" jsonschema:"the torn-down session's subject label"`
@@ -93,7 +93,7 @@ type ParkArgs struct {
 }
 
 type ParkResult struct {
-	SyncNoticeField
+	ResultNotices
 	Parked       bool       `json:"parked"`
 	Instance     string     `json:"instance"`
 	Procedure    string     `json:"procedure"`
@@ -171,7 +171,7 @@ func cancellationResult(cancelled *sdd.WorkflowCancellation) *CancellationResult
 // ServeResult is the loop's uniform response shape: where the instance
 // stands, what advances it, and the material to work with.
 type ServeResult struct {
-	SyncNoticeField
+	ResultNotices
 	Session          string                  `json:"session,omitempty" jsonschema:"session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool"`
 	Project          string                  `json:"project,omitempty" jsonschema:"the project this instance works in — the session's home project unless the move was started in a dependency"`
 	Projects         []ProjectResult         `json:"projects,omitempty" jsonschema:"start_session only: the principal's accessible projects, served with status project-required when several exist and none was passed — no session opened yet"`
@@ -221,7 +221,7 @@ type ResumeSessionArgs struct {
 }
 
 type ResumeSessionResult struct {
-	SyncNoticeField
+	ResultNotices
 	Session          string                  `json:"session" jsonschema:"session handle (the session ID)"`
 	Project          string                  `json:"project,omitempty" jsonschema:"the project this session is bound to"`
 	Participant      string                  `json:"participant,omitempty"`
@@ -241,7 +241,7 @@ type BindBranchArgs struct {
 }
 
 type BindBranchResult struct {
-	SyncNoticeField
+	ResultNotices
 	Branch string `json:"branch,omitempty" jsonschema:"the now-effective branch binding; empty after clear"`
 	Status string `json:"status"`
 }
@@ -261,7 +261,7 @@ type SearchReplaceArg struct {
 }
 
 type StageAttachmentResult struct {
-	SyncNoticeField
+	ResultNotices
 	Handle string   `json:"handle" jsonschema:"attachment handle; pass it in a report's attachments field, or as bodyHandle when the file holds an entry body"`
 	SHA256 string   `json:"sha256" jsonschema:"sha256 of the staged file's raw bytes, as hex; a playback confirm binds to it when the file is a capture's bodyHandle"`
 	Bound  []string `json:"bound,omitempty" jsonschema:"captures taking their body from this handle, whose body and playback this staging replaced"`
@@ -286,7 +286,7 @@ type SearchArgs struct {
 }
 
 type SearchResult struct {
-	SyncNoticeField
+	ResultNotices
 	Coverage []sdd.SearchCoverage `json:"coverage,omitempty" jsonschema:"published entry coverage for each fixed search snapshot"`
 	Notice   string               `json:"notice,omitempty" jsonschema:"readable incomplete-indexing notice"`
 	Results  string               `json:"results" jsonschema:"matching entries with citations"`
@@ -301,7 +301,7 @@ type ViewArgs struct {
 }
 
 type ViewResult struct {
-	SyncNoticeField
+	ResultNotices
 	Sections string `json:"sections"`
 	Hint     string `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, served once per connection"`
 }
@@ -315,7 +315,7 @@ type ShowArgs struct {
 }
 
 type ShowResult struct {
-	SyncNoticeField
+	ResultNotices
 	Entries string `json:"entries"`
 }
 
@@ -330,7 +330,7 @@ type ReadAttachmentArgs struct {
 }
 
 type ReadAttachmentResult struct {
-	SyncNoticeField
+	ResultNotices
 	Name       string   `json:"name"`
 	Content    string   `json:"content"`
 	Offset     int64    `json:"offset"`
@@ -341,14 +341,17 @@ type ReadAttachmentResult struct {
 	Path       string   `json:"path,omitempty" jsonschema:"absolute filesystem path; present only for local (stdio) clients, which may read the file directly instead of paging"`
 }
 
-// SyncNoticeField carries, on every result, the blocked-sync notice while
+// ResultNotices carries, on every result, the blocked-sync notice while
 // automatic sync of the graph repository cannot proceed
-// (20261028-201909-d-tac-fxp).
-type SyncNoticeField struct {
-	SyncNotice string `json:"sync_notice,omitempty" jsonschema:"set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says"`
+// (20261028-201909-d-tac-fxp), and once the notice of a failed background
+// cache pruning run (20261101-131514-d-cpt-9ci).
+type ResultNotices struct {
+	SyncNotice  string `json:"sync_notice,omitempty" jsonschema:"set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says"`
+	CacheNotice string `json:"cache_notice,omitempty" jsonschema:"set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user"`
 }
 
-func (f *SyncNoticeField) setSyncNotice(notice string) { f.SyncNotice = notice }
+func (f *ResultNotices) setSyncNotice(notice string)  { f.SyncNotice = notice }
+func (f *ResultNotices) setCacheNotice(notice string) { f.CacheNotice = notice }
 
 // SyncBlockedResult is the blocked-sync record info shows.
 type SyncBlockedResult struct {
@@ -368,7 +371,7 @@ type InfoArgs struct {
 }
 
 type InfoResult struct {
-	SyncNoticeField
+	ResultNotices
 	SyncBlocked  *SyncBlockedResult `json:"sync_blocked,omitempty" jsonschema:"what blocks automatic sync of the graph repository; absent while sync proceeds"`
 	Project      string             `json:"project,omitempty" jsonschema:"the session's project ID"`
 	Participant  string             `json:"participant,omitempty" jsonschema:"configured local participant (canonical name)"`
@@ -394,7 +397,7 @@ type RegistryFuncResult struct {
 }
 
 type RegistryResult struct {
-	SyncNoticeField
+	ResultNotices
 	Functions []RegistryFuncResult `json:"functions"`
 }
 
@@ -409,7 +412,7 @@ func (s *Server) registerTools() {
 			"serves several; omitted, a sole accessible project is inferred, and with several the response " +
 			"lists them (status project-required) instead of opening a session. Every call opens a new " +
 			"dialogue under a new handle; to re-serve an existing one, present its handle to resume_session.",
-	}, toolBoundary(s.startSession))
+	}, toolBoundary(s, s.startSession))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "start_procedure",
@@ -417,7 +420,7 @@ func (s *Server) registerTools() {
 			"session (required). Returns the current step's instructions, the report schema to answer " +
 			"with, and the goal that advances it. This is the only path that leads to graph writes — " +
 			"writes happen inside procedure transitions, never through a direct tool.",
-	}, toolBoundary(s.startProcedure))
+	}, toolBoundary(s, s.startProcedure))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "next",
@@ -429,7 +432,7 @@ func (s *Server) registerTools() {
 			"Other transitions remain blocked until the operation is retried or cancelled. " +
 			"When a move ends, the response carries the session shell's serve — where the " +
 			"dialogue lands.",
-	}, toolBoundary(s.next))
+	}, toolBoundary(s, s.next))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "abandon",
@@ -438,7 +441,7 @@ func (s *Server) registerTools() {
 			"framing; the response names the label and discarded threads. Nothing is cleaned up " +
 			"implicitly: held WIP markers are surfaced and left standing for resume or grooming. The " +
 			"session shell concludes through its own junction, never through abandon.",
-	}, toolBoundary(s.abandon))
+	}, toolBoundary(s, s.abandon))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "park",
@@ -446,7 +449,7 @@ func (s *Server) registerTools() {
 			"position keep, the move lists as an open thread (at junctions and on conclude), and next " +
 			"resumes it. Use it when the user shelves work mid-dialogue — a seeded draft parks as a " +
 			"graph-visible thread instead of living in conversation memory as an agent promise.",
-	}, toolBoundary(s.park))
+	}, toolBoundary(s, s.park))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "resume_session",
@@ -457,14 +460,14 @@ func (s *Server) registerTools() {
 			"you need re-serving: the served-once memory resets, so the complete position serves in full. " +
 			"Only recorded session state resumes — step position, collected fields, staged files — never " +
 			"another conversation's context. A lost handle is the user's to recover, not yours to guess.",
-	}, toolBoundary(s.resumeSession))
+	}, toolBoundary(s, s.resumeSession))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "bind_branch",
 		Description: "Declare or clear the attached session's durable branch binding. Pass exactly one of " +
 			"branch or clear:true. Setting validates the live registered checkout before changing the " +
 			"session; clearing needs no branch capability.",
-	}, toolBoundary(s.bindBranch))
+	}, toolBoundary(s, s.bindBranch))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "stage_attachment",
@@ -474,44 +477,44 @@ func (s *Server) registerTools() {
 			"by name is edited in place through atomic search-replace pairs instead of re-staging it whole. " +
 			"A path is only read, never written. " +
 			"Never a graph write — the write gate materializes staged files with the entry.",
-	}, toolBoundary(s.stageAttachment))
+	}, toolBoundary(s, s.stageAttachment))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "search",
 		Description: "Search graph entries: terms (text/regex), query (semantic phrase), or both (hybrid). " +
 			"A free read within the session named by session (required): no move needed, never blocked " +
 			"by procedure state; it runs in that session's project and branch.",
-	}, toolBoundary(s.search))
+	}, toolBoundary(s, s.search))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "view",
 		Description: "Run an sdd view layout pipeline over the graph — overview sections, topic counts, " +
 			"ranked lists. A free read within the session named by session (required).",
-	}, toolBoundary(s.view))
+	}, toolBoundary(s, s.view))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "show",
 		Description: "Read entries in full with their upstream and downstream reference chains, within the " +
 			"session named by session (required). Use whenever the dialogue touches a specific entry — " +
 			"summaries are pointers, not facts.",
-	}, toolBoundary(s.show))
+	}, toolBoundary(s, s.show))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "read_attachment",
 		Description: "Read an attachment's content, paged, within the session named by session (required): " +
 			"an entry's by ID and filename, or a file staged in the session (before any entry carries it) " +
 			"by handle. Never derive storage paths.",
-	}, toolBoundary(s.readAttachment))
+	}, toolBoundary(s, s.readAttachment))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "info",
 		Description: "Session framing header for the session named by session (required): project, local participant, configured language, and available search modes.",
-	}, toolBoundary(s.info))
+	}, toolBoundary(s, s.info))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "registry",
 		Description: "Engine function contracts (predicates, queries, commands) — what procedure spec authors consult. Carries the session handle like every other tool.",
-	}, toolBoundary(s.registryDocs))
+	}, toolBoundary(s, s.registryDocs))
 }
 
 // attachedSession returns the named session locked and replayed from its ledger.
@@ -1232,7 +1235,7 @@ func (s *Server) registryDocs(ctx context.Context, req *mcp.CallToolRequest, arg
 // toolBoundary is where an error meets the agent: a coded application error
 // is rendered with its code leading the text, so a refusal is identified by
 // its code rather than its prose (d-cpt-s2i). Uncoded errors pass unchanged.
-func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
+func toolBoundary[In, Out any](s *Server, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		slot := &syncNoticeSlot{}
 		res, out, err := handler(context.WithValue(ctx, syncNoticeKey{}, slot), req, in)
@@ -1240,18 +1243,26 @@ func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolReques
 		if err != nil && errors.As(err, &coded) && coded.Code != "" {
 			err = fmt.Errorf("%s: %w", coded.Code, err)
 		}
-		if slot.claim == nil {
-			return res, out, err
+		var syncNotice, cacheNotice string
+		if slot.claim != nil {
+			syncNotice = slot.claim(ctx)
 		}
-		notice := slot.claim(ctx)
+		if s.cacheNotice != nil {
+			cacheNotice = s.cacheNotice(ctx)
+		}
 		if err != nil {
-			if notice != "" {
-				err = fmt.Errorf("%w\n\n%s", err, notice)
+			for _, notice := range []string{syncNotice, cacheNotice} {
+				if notice != "" {
+					err = fmt.Errorf("%w\n\n%s", err, notice)
+				}
 			}
 			return res, out, err
 		}
-		if carrier, ok := any(&out).(interface{ setSyncNotice(string) }); ok {
-			carrier.setSyncNotice(notice)
+		if carrier, ok := any(&out).(interface{ setSyncNotice(string) }); ok && slot.claim != nil {
+			carrier.setSyncNotice(syncNotice)
+		}
+		if carrier, ok := any(&out).(interface{ setCacheNotice(string) }); ok {
+			carrier.setCacheNotice(cacheNotice)
 		}
 		return res, out, err
 	}

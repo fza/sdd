@@ -31,6 +31,10 @@ type Options struct {
 	// (read_attachment) so they can read files directly instead of paging.
 	LocalClient bool
 	Version     string
+	// CacheNotice returns, once, the host's notice of a failed background
+	// cache pruning run; every tool result carries it as cache_notice. Nil
+	// when the host prunes nothing.
+	CacheNotice func(context.Context) string
 }
 
 // Server wires the MCP protocol surface to the engine and the SDD read and
@@ -42,6 +46,7 @@ type Server struct {
 	localIdentity  sdd.RequestIdentity
 	local          bool
 	version        string
+	cacheNotice    func(context.Context) string
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
 	// event acts on a session (d-cpt-aen).
@@ -69,6 +74,7 @@ func New(opts Options) (*Server, error) {
 		localIdentity:  opts.LocalIdentity,
 		local:          opts.LocalClient,
 		version:        opts.Version,
+		cacheNotice:    opts.CacheNotice,
 		sessions:       newSessionCache(),
 	}
 	s.mcp = mcp.NewServer(&mcp.Implementation{

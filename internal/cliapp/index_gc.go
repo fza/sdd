@@ -82,7 +82,7 @@ that version has stopped.`,
 					return presenters.RenderIndexVersionsJSON(cmd.Writer, results)
 				}
 				presenters.RenderIndexVersionsTable(cmd.Writer, results)
-				return nil
+				return renderCachePruneStatus(cmd.Writer)
 			}
 			for _, s := range stores {
 				h := handlers.NewIndexHandler(handlers.IndexHandlerOptions{

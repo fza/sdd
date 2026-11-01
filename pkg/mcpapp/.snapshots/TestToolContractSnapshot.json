@@ -124,6 +124,10 @@
             "object"
           ]
         },
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
+          "type": "string"
+        },
         "discarded_threads": {
           "description": "open moves discarded with the session (procedure at step)",
           "items": {
@@ -197,6 +201,10 @@
           "description": "the now-effective branch binding; empty after clear",
           "type": "string"
         },
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
+          "type": "string"
+        },
         "status": {
           "type": "string"
         },
@@ -234,6 +242,10 @@
         "binarySchema": {
           "description": "schema version this build writes by default",
           "type": "integer"
+        },
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
+          "type": "string"
         },
         "contribution": {
           "description": "upstream ref the checkout contributes to; set, graph writes are refused off a feature branch cut from it",
@@ -462,6 +474,10 @@
         },
         "branch": {
           "description": "the session's declared branch binding",
+          "type": "string"
+        },
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
           "type": "string"
         },
         "cancellation": {
@@ -862,6 +878,10 @@
             "object"
           ]
         },
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
+          "type": "string"
+        },
         "instance": {
           "type": "string"
         },
@@ -941,6 +961,10 @@
             "array"
           ]
         },
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
+          "type": "string"
+        },
         "content": {
           "type": "string"
         },
@@ -999,6 +1023,10 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
+          "type": "string"
+        },
         "functions": {
           "items": {
             "additionalProperties": false,
@@ -1075,6 +1103,10 @@
       "properties": {
         "branch": {
           "description": "the session's declared branch binding",
+          "type": "string"
+        },
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
           "type": "string"
         },
         "cancellation": {
@@ -1257,6 +1289,10 @@
               },
               "branch": {
                 "description": "the session's declared branch binding",
+                "type": "string"
+              },
+              "cache_notice": {
+                "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
                 "type": "string"
               },
               "cancellation": {
@@ -1683,6 +1719,10 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
+          "type": "string"
+        },
         "coverage": {
           "description": "published entry coverage for each fixed search snapshot",
           "items": {
@@ -1784,6 +1824,10 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
+          "type": "string"
+        },
         "entries": {
           "type": "string"
         },
@@ -1863,6 +1907,10 @@
             "null",
             "array"
           ]
+        },
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
+          "type": "string"
         },
         "handle": {
           "description": "attachment handle; pass it in a report's attachments field, or as bodyHandle when the file holds an entry body",
@@ -2024,6 +2072,10 @@
         },
         "branch": {
           "description": "the session's declared branch binding",
+          "type": "string"
+        },
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
           "type": "string"
         },
         "cancellation": {
@@ -2425,6 +2477,10 @@
           "description": "the session's declared branch binding",
           "type": "string"
         },
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
+          "type": "string"
+        },
         "cancellation": {
           "additionalProperties": false,
           "description": "recorded cancellation: return position and what the operation reports it left",
@@ -2739,6 +2795,10 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
+        "cache_notice": {
+          "description": "set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user",
+          "type": "string"
+        },
         "hint": {
           "description": "one-line pointer to the view layout grammar, served once per connection",
           "type": "string"
