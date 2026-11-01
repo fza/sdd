@@ -65,7 +65,7 @@ func Calibrate(ctx context.Context, emb pkgembed.Embedder) (Calibration, error) 
 	}
 	worst := math.Max(float64(latinTokens)/latinProbeRunes, float64(cjkTokens)/cjkProbeRunes)
 
-	method, limit, err := findLimit(ctx, emb, latinTokens, worst)
+	method, limit, err := findLimit(ctx, emb, latinTokens)
 	if err != nil {
 		return Calibration{}, err
 	}
@@ -76,7 +76,7 @@ func Calibrate(ctx context.Context, emb pkgembed.Embedder) (Calibration, error) 
 	return Calibration{Method: method, LimitTokens: limit, TokensPerRune: worst, MaxRunes: maxRunes}, nil
 }
 
-func findLimit(ctx context.Context, emb pkgembed.Embedder, latinTokens int, worst float64) (string, int, error) {
+func findLimit(ctx context.Context, emb pkgembed.Embedder, latinTokens int) (string, int, error) {
 	overflowTokens, err := probe(ctx, emb, repeatRunes("word ", overflowProbeRunes))
 	if err == nil {
 		expected := float64(overflowProbeRunes) * float64(latinTokens) / latinProbeRunes
