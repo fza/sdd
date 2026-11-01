@@ -35,6 +35,10 @@ type Options struct {
 	// cache pruning run; every tool result carries it as cache_notice. Nil
 	// when the host prunes nothing.
 	CacheNotice func(context.Context) string
+	// ServeInFull turns the served-once memory off: every serve carries its
+	// instruction lanes, framing, report schema and vocabulary in full, for
+	// a host whose client collapses repeats itself (20261101-164201-d-tac-sj4).
+	ServeInFull bool
 }
 
 // Server wires the MCP protocol surface to the engine and the SDD read and
@@ -47,6 +51,7 @@ type Server struct {
 	local          bool
 	version        string
 	cacheNotice    func(context.Context) string
+	serveInFull    bool
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
 	// event acts on a session (d-cpt-aen).
@@ -75,6 +80,7 @@ func New(opts Options) (*Server, error) {
 		local:          opts.LocalClient,
 		version:        opts.Version,
 		cacheNotice:    opts.CacheNotice,
+		serveInFull:    opts.ServeInFull,
 		sessions:       newSessionCache(),
 	}
 	s.mcp = mcp.NewServer(&mcp.Implementation{
