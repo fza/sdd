@@ -45,6 +45,10 @@ var configDefaults = map[string]string{
 	"sessions.token_saving": TokenSavingOn,
 }
 
+// globalOnlyKeys are read from the user-global layer alone; a per-repo value
+// is reported as ignored (PerRepoIgnoredSettings), never effective.
+var globalOnlyKeys = map[string]bool{"sessions.token_saving": true}
+
 // EffectiveConfigValues computes the effective config overlay with per-key
 // provenance: local wins over project wins over global, and keys no layer
 // sets fall back to a baked default where one exists. Keys are emitted in
@@ -70,7 +74,7 @@ func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []C
 			set := false
 			var val ConfigValue
 			for _, layer := range layers {
-				if layer.cfg == nil {
+				if layer.cfg == nil || (globalOnlyKeys[leaf.path] && layer.source != ConfigSourceGlobal) {
 					continue
 				}
 				v := leafValue(reflect.ValueOf(*layer.cfg), leaf.index)

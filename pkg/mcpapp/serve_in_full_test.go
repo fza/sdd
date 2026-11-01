@@ -1,6 +1,7 @@
 package mcpapp_test
 
 import (
+	"strings"
 	"testing"
 
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
@@ -18,10 +19,26 @@ func TestServeInFullServesRepeatsInFull(t *testing.T) {
 	var second mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &second)
 
-	requireInstructionsContain(t, second, captureIntroProse)
-	requireNoWithheldLanes(t, second)
+	if !laneTextContains(second.Lanes, captureIntroProse) {
+		t.Errorf("a second capture should serve its intro lane in full again, got %v", second.Lanes)
+	}
+	if laneTextContains(second.Lanes, withheldLanesPrefix) {
+		t.Errorf("no lane should be withheld, got %v", second.Lanes)
+	}
 	requireFullReportSchema(t, "second capture", second.ReportSchema)
-	if first.Framing != "" && second.Framing == "" {
+	if first.FramingBlocks != nil && len(*first.FramingBlocks) > 0 && (second.FramingBlocks == nil || len(*second.FramingBlocks) == 0) {
 		t.Error("a later serve should carry the framing again")
 	}
+}
+
+func laneTextContains(lanes *[]mcpserver.NamedText, text string) bool {
+	if lanes == nil {
+		return false
+	}
+	for _, lane := range *lanes {
+		if strings.Contains(lane.Text, text) {
+			return true
+		}
+	}
+	return false
 }
