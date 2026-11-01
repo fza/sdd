@@ -26,7 +26,7 @@ func syncedProject(t *testing.T, mode string) string {
 	gitIn(t, root, "remote", "add", "origin", remote)
 	gitIn(t, root, "push", "-q", "-u", "origin", "HEAD")
 	writeFile(t, filepath.Join(root, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/synced\nlanguage: en\n")
-	writeFile(t, filepath.Join(root, ".gitignore"), ".sdd/tmp/\n.sdd/config.local.yaml\n.sdd/index/\n.sdd/stats/\n.sdd/sessions/\n.sdd/staged-blobs/\n.sdd/graph/.sdd-runtime/\n")
+	writeFile(t, filepath.Join(root, ".gitignore"), ".sdd/tmp/\n.sdd/config.local.yaml\n.sdd/index/\n.sdd/stats/\n.sdd/sessions/\n.sdd/staged-blobs/\n.sdd/graph/.sdd-runtime/\nxdg-config/\nxdg-cache/\nxdg-state/\n")
 	gitIn(t, root, "add", ".gitignore", ".sdd/config.yaml")
 	gitIn(t, root, "commit", "-q", "-m", "sdd: init")
 	gitIn(t, root, "push", "-q")
