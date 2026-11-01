@@ -10,7 +10,7 @@ import (
 )
 
 // RenderSearch writes one section per ranked hit (query.SearchResult.Hits): a
-// header line in the shared EntryLine shape, then one citation line per
+// header line in the shared entry-line shape, then one citation line per
 // citation (capped by SearchQuery.MaxCitationsPerEntry on the finder side).
 //
 // Render format (single-citation case):
@@ -41,11 +41,27 @@ func RenderSearch(w io.Writer, hits []types.SearchHit) {
 
 	maxScore := globalMaxCitationScore(hits)
 	for _, hit := range hits {
-		writeEntryLine(w, hitEntryLine(hit), math.NaN())
+		writeEntryLine(w, hitEntry(hit), math.NaN())
 		for _, c := range hit.Citations {
 			renderCitation(w, c, maxScore)
 		}
 	}
+}
+
+// SearchText is the search text of the application and the MCP server:
+// RenderSearch without the trailing newline, each notice following as its own
+// paragraph.
+func SearchText(hits []types.SearchHit, notices []string) string {
+	var rendered strings.Builder
+	RenderSearch(&rendered, hits)
+	text := strings.TrimRight(rendered.String(), "\n")
+	for _, notice := range notices {
+		if text != "" {
+			text += "\n\n"
+		}
+		text += notice
+	}
+	return text
 }
 
 // FormatSearchCapability renders the capability suffix shown in

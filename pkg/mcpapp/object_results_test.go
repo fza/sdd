@@ -20,9 +20,10 @@ func TestObjectResultsReplaceTextOnlyWhenServedInFull(t *testing.T) {
 			var opened map[string]any
 			call(t, cs, "start_session", map[string]any{}, &opened)
 			session, _ := opened["session"].(string)
-			var shown, found, started, resumed map[string]any
+			var shown, found, viewed, started, resumed map[string]any
 			call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &shown)
 			call(t, cs, "search", map[string]any{"session": session, "terms": []string{"oscillation"}}, &found)
+			call(t, cs, "view", map[string]any{"session": session, "layout": "kind(gap):as-list"}, &viewed)
 			call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &started)
 			call(t, cs, "resume_session", map[string]any{"session": session}, &resumed)
 
@@ -34,6 +35,7 @@ func TestObjectResultsReplaceTextOnlyWhenServedInFull(t *testing.T) {
 				{opened, "framing", "framing_blocks"},
 				{shown, "entries", "items"},
 				{found, "results", "hits"},
+				{viewed, "sections", "view_sections"},
 				{started, "instructions", "lanes"},
 				{resumed, "instructions", "lanes"},
 				{resumed, "framing", "framing_blocks"},
@@ -72,6 +74,20 @@ func TestObjectResultsReplaceTextOnlyWhenServedInFull(t *testing.T) {
 			}
 			if hit, _ := hits[0].(map[string]any); hit["id"] != fixtureGapID || hit["summary"] == "" {
 				t.Errorf("a hit should name the entry and its summary, got %v", hit)
+			}
+			sections, _ := viewed["view_sections"].([]any)
+			if len(sections) != 1 {
+				t.Fatalf("view should carry one object per layout section, got %v", viewed["view_sections"])
+			}
+			section, _ := sections[0].(map[string]any)
+			list, _ := section["list"].(map[string]any)
+			listed, _ := list["items"].([]any)
+			if section["render"] != "as-list" || len(listed) == 0 {
+				t.Fatalf("the section should name its render and carry its entries as a list, got %v", section)
+			}
+			listItem, _ := listed[0].(map[string]any)
+			if entry, _ := listItem["entry"].(map[string]any); entry["id"] != fixtureGapID {
+				t.Errorf("a list item should name its entry, got %v", listItem)
 			}
 			requireNamedBlocks(t, opened["framing_blocks"], "info")
 			requireNamedBlocks(t, started["lanes"], "assemble", "diagnostics")

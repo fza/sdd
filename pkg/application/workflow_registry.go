@@ -6,6 +6,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/truncate"
@@ -115,7 +116,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if err != nil {
 				return nil, err
 			}
-			return result.Sections, nil
+			return presenters.ViewText(result.ViewSections), nil
 		},
 	}); err != nil {
 		return err
@@ -173,7 +174,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 				return nil, err
 			}
 			w.session.LogRead("inject:entryChains", result.FullIDs, result.SummaryIDs)
-			return result.Entries, nil
+			return presenters.ShowText(result.Items)
 		},
 	}); err != nil {
 		return err

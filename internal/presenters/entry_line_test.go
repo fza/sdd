@@ -7,6 +7,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
+	"github.com/networkteam/sdd/internal/query"
 )
 
 // Format contract (d-tac-3yi, refined during implementation dialogue):
@@ -150,8 +151,22 @@ func TestEntryLine_SupersededDecision(t *testing.T) {
 }
 
 func renderEntryLine(e *model.Entry, g *model.Graph) string {
+	return renderAsList(g, model.FlatList{Entries: []*model.Entry{e}}, false)
+}
+
+func renderScoredEntryLine(e *model.Entry, g *model.Graph, score float64) string {
+	return renderAsList(g, model.FlatList{Entries: []*model.Entry{e}, Scores: []float64{score}}, false)
+}
+
+func renderBriefEntryLine(e *model.Entry, g *model.Graph) string {
+	return renderAsList(g, model.FlatList{Entries: []*model.Entry{e}}, true)
+}
+
+// renderAsList renders the entries as the one as-list section of a view.
+func renderAsList(g *model.Graph, flat model.FlatList, brief bool) string {
+	result := &query.ViewResult{Graph: g, Sections: []query.SectionResult{{Render: "as-list", Data: flat, Brief: brief}}}
 	var buf bytes.Buffer
-	presenters.EntryLine(&buf, e, g)
+	presenters.RenderView(&buf, result.ViewSections(""))
 	return buf.String()
 }
 
@@ -166,9 +181,7 @@ func TestEntryLineWithScore(t *testing.T) {
 		withSummary("Add background sync awareness"))
 	g := model.NewGraph([]*model.Entry{e})
 
-	var buf bytes.Buffer
-	presenters.EntryLineWithScore(&buf, e, g, 4.572)
-	got := buf.String()
+	got := renderScoredEntryLine(e, g, 4.572)
 	want := "  20260416-151058-d-tac-n6y tactical plan decision [confidence: medium] (Christopher, Claude) {status: active} {score: 4.572} Add background sync awareness\n"
 	if got != want {
 		t.Errorf("EntryLineWithScore mismatch:\n  got:  %q\n  want: %q", got, want)
@@ -184,9 +197,7 @@ func TestEntryLineWithScore_Zero(t *testing.T) {
 		withSummary("zero score entry"))
 	g := model.NewGraph([]*model.Entry{e})
 
-	var buf bytes.Buffer
-	presenters.EntryLineWithScore(&buf, e, g, 0)
-	got := buf.String()
+	got := renderScoredEntryLine(e, g, 0)
 	want := "  20260101-100000-d-tac-zer tactical directive decision (Christopher) {status: active} {score: 0.000} zero score entry\n"
 	if got != want {
 		t.Errorf("EntryLineWithScore zero mismatch:\n  got:  %q\n  want: %q", got, want)
@@ -200,9 +211,7 @@ func TestEntryLineBrief_CapsTheTitle(t *testing.T) {
 	e := entry("20260410-100000-s-tac-aaa", withSummary(long))
 	g := model.NewGraph([]*model.Entry{e})
 
-	var buf bytes.Buffer
-	presenters.EntryLineBrief(&buf, e, g)
-	line := buf.String()
+	line := renderBriefEntryLine(e, g)
 
 	if !strings.Contains(line, "…") {
 		t.Errorf("a cut title should say it was cut: %q", line)
@@ -217,9 +226,7 @@ func TestEntryLineBrief_LeavesAShortTitleWhole(t *testing.T) {
 	e := entry("20260410-100000-s-tac-aaa", withSummary("Graph commits follow the graph's repository."))
 	g := model.NewGraph([]*model.Entry{e})
 
-	var buf bytes.Buffer
-	presenters.EntryLineBrief(&buf, e, g)
-	line := buf.String()
+	line := renderBriefEntryLine(e, g)
 
 	if !strings.Contains(line, "Graph commits follow the graph's repository.") {
 		t.Errorf("short title should render whole: %q", line)
@@ -234,9 +241,7 @@ func TestEntryLineBrief_NamesATitledEntryByItsTitle(t *testing.T) {
 	e.Title = "graph commit placement"
 	g := model.NewGraph([]*model.Entry{e})
 
-	var buf bytes.Buffer
-	presenters.EntryLineBrief(&buf, e, g)
-	line := buf.String()
+	line := renderBriefEntryLine(e, g)
 
 	if !strings.HasSuffix(line, " graph commit placement\n") || strings.Contains(line, "This gap observes") {
 		t.Errorf("a titled entry should be named by its title alone: %q", line)

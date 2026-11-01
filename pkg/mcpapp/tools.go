@@ -14,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/networkteam/sdd/internal/basefacts"
+	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/textpatch"
@@ -309,8 +310,10 @@ type ViewArgs struct {
 
 type ViewResult struct {
 	ResultNotices
-	Sections string `json:"sections"`
-	Hint     string `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, served once per connection"`
+	Sections          string               `json:"sections"`
+	ViewSections      *[]ViewSectionResult `json:"view_sections,omitempty" jsonschema:"set instead of sections when sessions.token_saving is off: one object per layout section, the local graph's first, then each queried repo's"`
+	KnownParticipants []string             `json:"known_participants,omitempty" jsonschema:"set beside view_sections when a participant filter matched nothing: the canonical participants the graph knows"`
+	Hint              string               `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, served once per connection"`
 }
 
 type ShowArgs struct {
@@ -952,7 +955,7 @@ func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, args Sear
 		hits := searchHitItems(result.Hits)
 		return nil, SearchResult{Hits: &hits, Coverage: result.Coverage, Notice: result.Notice}, nil
 	}
-	out := result.Results
+	out := presenters.SearchText(result.Hits, result.Notices)
 	if strings.TrimSpace(out) == "" {
 		out = "(no entries matched — try another phrasing, or proceed if the topic is genuinely new)"
 	}
@@ -979,7 +982,15 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, args ViewAr
 	if err != nil {
 		return nil, ViewResult{}, toolError("viewing: %v", err)
 	}
-	sections := result.Sections
+	hint := viewHint(ss)
+	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
+		return nil, ViewResult{}, err
+	}
+	if ss.inFull {
+		sections := viewSectionItems(result.ViewSections)
+		return nil, ViewResult{ViewSections: &sections, KnownParticipants: result.KnownParticipants, Hint: hint}, nil
+	}
+	sections := presenters.ViewText(result.ViewSections)
 	// An empty result must never reach an agent as a blank string — it cannot
 	// tell "matched nothing" from a broken call. Say so, and when a participant
 	// filter came up empty (exact-match miss), name the participants the graph
@@ -993,10 +1004,6 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, args ViewAr
 		}
 	}
 	sections = guardViewSize(sections)
-	hint := viewHint(ss)
-	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
-		return nil, ViewResult{}, err
-	}
 	return nil, ViewResult{Sections: sections, Hint: hint}, nil
 
 }
@@ -1154,7 +1161,11 @@ func (s *Server) show(ctx context.Context, req *mcp.CallToolRequest, args ShowAr
 		items := showItems(result.Items)
 		return nil, ShowResult{Items: &items}, nil
 	}
-	return nil, ShowResult{Entries: result.Entries}, nil
+	entries, err := presenters.ShowText(result.Items)
+	if err != nil {
+		return nil, ShowResult{}, err
+	}
+	return nil, ShowResult{Entries: entries}, nil
 
 }
 
