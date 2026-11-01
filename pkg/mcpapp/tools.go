@@ -527,7 +527,7 @@ func (s *Server) attachedSession(ctx context.Context, req *mcp.CallToolRequest, 
 		if err != nil {
 			return nil, err
 		}
-		candidate := &shellSession{root: workflow}
+		candidate := &shellSession{root: workflow, inFull: s.serveInFull}
 		candidate.mu.Lock()
 		ss = s.sessions.put(candidate)
 		fresh = ss == candidate
@@ -599,7 +599,7 @@ func (s *Server) startSession(ctx context.Context, req *mcp.CallToolRequest, arg
 		}
 		return nil, ServeResult{}, err
 	}
-	ss := s.sessions.put(&shellSession{root: workflow})
+	ss := s.sessions.put(&shellSession{root: workflow, inFull: s.serveInFull})
 	s.noteSyncSession(ctx, req, ss)
 	ss.mu.Lock()
 	defer ss.mu.Unlock()

@@ -22,6 +22,8 @@ type shellSession struct {
 	// composed; seen dedups within the call.
 	pending []string
 	seen    map[string]bool
+	// inFull consults only this call, never the ledger (Options.ServeInFull).
+	inFull bool
 }
 
 // servedBefore reports whether the session's consumer already holds a block
@@ -29,7 +31,7 @@ type shellSession struct {
 // marks it served when not.
 func (ss *shellSession) servedBefore(block string) bool {
 	hash := blockHash(block)
-	if ss.root.ServedBefore(hash) || ss.seen[hash] {
+	if ss.seen[hash] || (!ss.inFull && ss.root.ServedBefore(hash)) {
 		return true
 	}
 	if ss.seen == nil {

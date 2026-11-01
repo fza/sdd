@@ -94,7 +94,11 @@ func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.Unkno
 		if err := model.UnmarshalYAML(data, &settings); err != nil {
 			return nil, err
 		}
-		for _, ignored := range model.IgnoredSettings(settings, l.committed) {
+		ignored := model.IgnoredSettings(settings, l.committed)
+		if l.typ != reflect.TypeFor[repos.GlobalConfig]() {
+			ignored = append(ignored, model.PerRepoIgnoredSettings(settings)...)
+		}
+		for _, ignored := range ignored {
 			result.Ignored = append(result.Ignored, query.IgnoredConfigSetting{File: l.path, Key: ignored.Key, Reason: ignored.Reason})
 		}
 	}

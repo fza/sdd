@@ -41,7 +41,8 @@ var configDefaults = map[string]string{
 	"sync.mode":           string(SyncModeManual),
 	"dialogue.mode":       string(DialogueGuided),
 
-	"sessions.retention": DefaultSessionRetention,
+	"sessions.retention":    DefaultSessionRetention,
+	"sessions.token_saving": TokenSavingOn,
 }
 
 // EffectiveConfigValues computes the effective config overlay with per-key

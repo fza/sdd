@@ -100,6 +100,10 @@ func serveCmd() *cli.Command {
 				return err
 			}
 			collectSessions(ctx, application, retention)
+			tokenSaving, err := globalTokenSaving()
+			if err != nil {
+				return err
+			}
 
 			transport := cmd.String("transport")
 			srv, err := mcpserver.New(mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll,
@@ -107,6 +111,7 @@ func serveCmd() *cli.Command {
 				LocalIdentity: identity,
 				LocalClient:   transport == "stdio",
 				Version:       cmd.Root().Version,
+				ServeInFull:   !tokenSaving,
 			})
 			if err != nil {
 				return err
@@ -331,6 +336,20 @@ func (a *localRuntimeAccess) AuthorizeSession(ctx context.Context, request sdd.S
 
 func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principal, _ sdd.ProjectID, dependency sdd.RepoID) (*sdd.ProjectRuntime, error) {
 	return a.dependencies.resolve(dependency)
+}
+
+// globalTokenSaving reads sessions.token_saving from the user-global config,
+// the only layer that may set it.
+func globalTokenSaving() (bool, error) {
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		return false, err
+	}
+	global, err := repos.LoadConfigFrom(loc.ConfigPath)
+	if err != nil {
+		return false, err
+	}
+	return model.ResolveTokenSaving(global.Sessions)
 }
 
 // localDialogue reads dialogue.mode and the layer that sets it; the
