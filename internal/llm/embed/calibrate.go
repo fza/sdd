@@ -65,10 +65,7 @@ func Calibrate(ctx context.Context, emb pkgembed.Embedder) (Calibration, error) 
 	}
 	worst := math.Max(float64(latinTokens)/latinProbeRunes, float64(cjkTokens)/cjkProbeRunes)
 
-	method, limit, err := findLimit(ctx, emb, latinTokens)
-	if err != nil {
-		return Calibration{}, err
-	}
+	method, limit := findLimit(ctx, emb, latinTokens)
 	maxRunes := Quantise(int(math.Floor(float64(limit) * safetyMargin / worst)))
 	if maxRunes < CapQuantum {
 		return Calibration{}, fmt.Errorf("calibrated limit of %d tokens leaves no room for a %d-rune cap", limit, CapQuantum)
@@ -76,14 +73,14 @@ func Calibrate(ctx context.Context, emb pkgembed.Embedder) (Calibration, error) 
 	return Calibration{Method: method, LimitTokens: limit, TokensPerRune: worst, MaxRunes: maxRunes}, nil
 }
 
-func findLimit(ctx context.Context, emb pkgembed.Embedder, latinTokens int) (string, int, error) {
+func findLimit(ctx context.Context, emb pkgembed.Embedder, latinTokens int) (string, int) {
 	overflowTokens, err := probe(ctx, emb, repeatRunes("word ", overflowProbeRunes))
 	if err == nil {
 		expected := float64(overflowProbeRunes) * float64(latinTokens) / latinProbeRunes
 		if float64(overflowTokens) < plateauFraction*expected {
-			return "plateau", overflowTokens, nil
+			return "plateau", overflowTokens
 		}
-		return "unbounded", overflowTokens, nil
+		return "unbounded", overflowTokens
 	}
 	lo, loTokens, hi := latinProbeRunes, latinTokens, overflowProbeRunes
 	for hi-lo > bisectTolerance {
@@ -95,7 +92,7 @@ func findLimit(ctx context.Context, emb pkgembed.Embedder, latinTokens int) (str
 		}
 		lo, loTokens = mid, tokens
 	}
-	return "bisect", loTokens, nil
+	return "bisect", loTokens
 }
 
 func probe(ctx context.Context, emb pkgembed.Embedder, text string) (int, error) {
