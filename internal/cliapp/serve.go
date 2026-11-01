@@ -417,7 +417,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	// use still routes correctly. No process-local memory store in production.
 	cacheRoot := registry.CacheRoot()
 	baseRepoKey := persistentIndexRepoKey(cfg, stableRepoRoot)
-	baseIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, baseRepoKey)
+	baseIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, baseRepoKey).WithCheckout(graphDir)
 	var embeddings embed.Embedder
 	if localEmbedder.Embedder != nil {
 		embeddings = localEmbedder
@@ -465,7 +465,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 			// connected-repository storage contract) and exclude embedded entries,
 			// so binary-shipped base facts embed once per machine in the base
 			// store, not once per connected repo.
-			memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(cache.RepoID), cacheRoot, index.RepoKey(cache.RepoID, cache.Dir))
+			memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(cache.RepoID), cacheRoot, index.RepoKey(cache.RepoID, cache.Dir)).WithCheckout(graphDir)
 			return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 				Project: sdd.ProjectRef{ID: sdd.ProjectID(cache.RepoID), DisplayName: string(cache.RepoID)}, Graph: memberGraph,
 				Language: dependencyCfg.Language, Dependencies: dependencyCfg.Dependencies,

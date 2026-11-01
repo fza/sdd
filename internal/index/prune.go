@@ -42,11 +42,11 @@ const prunedSuffix = ".pruned"
 // their chunk IDs with the count removed, at most limit versions (no limit
 // when limit is zero). A current-rule version goes once a newer version of the
 // same entry under the same rule has been in the store for longer than
-// retention, unless keep names its hash as the entry's current state. Another
+// retention, unless keep names its hash as a current state of the entry. Another
 // rule's versions go once that rule's latest use, its stamp in ruleUses or its
 // newest write, is older than retention. Chunk IDs a kept version still names
 // are never returned. It performs no I/O.
-func (m *Manifest) PruneVersions(now time.Time, retention time.Duration, ruleUses map[string]time.Time, keep map[string]string, limit int) (chunkIDs []string, versions int) {
+func (m *Manifest) PruneVersions(now time.Time, retention time.Duration, ruleUses map[string]time.Time, keep KeepSet, limit int) (chunkIDs []string, versions int) {
 	ruleLast := map[string]time.Time{}
 	for _, state := range m.Entries {
 		for _, v := range state.Versions {
@@ -66,7 +66,7 @@ func (m *Manifest) PruneVersions(now time.Time, retention time.Duration, ruleUse
 		if d != DerivationCurrent {
 			return now.Sub(ruleLast[d]) > retention
 		}
-		if keep[id] == v.Hash {
+		if keep.Has(id, v.Hash) {
 			return false
 		}
 		var replacedAt time.Time
@@ -178,7 +178,11 @@ func pruneSession(ctx context.Context, indexDir string, now time.Time, retention
 	if err != nil {
 		return PrunedVersions{}, false, err
 	}
-	chunkIDs, versions := manifest.PruneVersions(now, retention, uses, keep, pruneBatch)
+	sessionKeep := NewKeepSet(keep)
+	if err := checkoutKeep(indexDir, now, retention, sessionKeep); err != nil {
+		return PrunedVersions{}, false, err
+	}
+	chunkIDs, versions := manifest.PruneVersions(now, retention, uses, sessionKeep, pruneBatch)
 	if versions == 0 {
 		return PrunedVersions{}, false, nil
 	}

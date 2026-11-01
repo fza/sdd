@@ -98,11 +98,31 @@ func (h *SearchIndexHandler) complete(ctx context.Context, entries []*model.Entr
 	}
 	return nil
 }
+
+// CheckoutRecorder is a search index store that records which versions the
+// reading checkout currently uses, so cache pruning keeps them
+// (20261101-153339-d-tac-pnl).
+type CheckoutRecorder interface {
+	RecordCheckout(ctx context.Context, namespace types.IndexNamespace, hashes map[string]string) error
+}
+
 func (h *SearchIndexHandler) Reconcile(ctx context.Context, cmd command.ReconcileSearchIndexCmd) error {
 	slogutils.FromContext(ctx).DebugContext(ctx, "reconciling search index", "project", h.Namespace.Project)
 	namespace, hashes := h.Namespace, h.Hashes
 	h.cmd = cmd
 	h.entries, h.chunks = 0, 0
+	if recorder, ok := h.Store.(CheckoutRecorder); ok {
+		if hashes == nil {
+			computed, err := h.currentHashes(ctx)
+			if err != nil {
+				return err
+			}
+			hashes = computed
+		}
+		if err := recorder.RecordCheckout(ctx, namespace, hashes); err != nil {
+			return err
+		}
+	}
 	if manifestCap, ok := h.Store.(SearchIndexEntryManifest); ok {
 		indexed, err := manifestCap.IndexedEntries(ctx, namespace)
 		if err != nil {
@@ -125,6 +145,21 @@ func (h *SearchIndexHandler) Reconcile(ctx context.Context, cmd command.Reconcil
 		return h.complete(ctx, absent, hashes, nil)
 	}
 	return h.reconcileByChunkIdentity(ctx, namespace, hashes)
+}
+
+func (h *SearchIndexHandler) currentHashes(ctx context.Context) (map[string]string, error) {
+	hashes := map[string]string{}
+	for _, entry := range h.Graph.Entries {
+		if !chunking.IncludeEntry(entry, h.ExcludeEmbedded) {
+			continue
+		}
+		hash, err := chunking.EntryStateHash(ctx, entry, h.Attachments)
+		if err != nil {
+			return nil, err
+		}
+		hashes[entry.ID] = hash
+	}
+	return hashes, nil
 }
 
 func (h *SearchIndexHandler) reconcileByChunkIdentity(ctx context.Context, namespace types.IndexNamespace, hashes map[string]string) error {
