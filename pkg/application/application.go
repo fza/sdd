@@ -1,7 +1,6 @@
 package application
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -248,8 +247,7 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	if err != nil {
 		return ViewResult{}, err
 	}
-	var rendered bytes.Buffer
-	presenters.RenderView(&rendered, viewResult)
+	sections := viewResult.ViewSections("")
 	// Matched count is a read-side fact owned by the finder; sum it across the
 	// local graph and every queried dependency so "empty" means nothing
 	// rendered anywhere, not just an empty rendered string (which is also false
@@ -273,8 +271,7 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 			return ViewResult{}, err
 		}
 		matched += memberResult.MatchedCount()
-		fmt.Fprintf(&rendered, "\n── repo: %s ──\n", repoID)
-		presenters.RenderView(&rendered, memberResult)
+		sections = append(sections, memberResult.ViewSections(repoID)...)
 	}
 	// When a participant filter matched nothing, name the participants the
 	// local graph knows: participant() is an exact canonical match, so an
@@ -286,7 +283,8 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	}
 	return ViewResult{
 		Project:           runtime.options.Project,
-		Sections:          strings.TrimRight(rendered.String(), "\n"),
+		Sections:          presenters.ViewText(sections),
+		ViewSections:      sections,
 		MatchedCount:      matched,
 		KnownParticipants: knownParticipants,
 	}, nil

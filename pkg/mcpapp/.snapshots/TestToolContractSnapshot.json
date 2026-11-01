@@ -3486,12 +3486,920 @@
           "description": "one-line pointer to the view layout grammar, served once per connection",
           "type": "string"
         },
+        "known_participants": {
+          "description": "set beside view_sections when a participant filter matched nothing: the canonical participants the graph knows",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "sections": {
           "type": "string"
         },
         "sync_notice": {
           "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
+        },
+        "view_sections": {
+          "description": "set instead of sections when sessions.token_saving is off: one object per layout section, the local graph's first, then each queried repo's",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "bodies": {
+                "additionalProperties": false,
+                "properties": {
+                  "dropped": {
+                    "description": "entries a serve budget kept out of the section",
+                    "type": "integer"
+                  },
+                  "entries": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "body": {
+                          "description": "the entry's full text, set only in a bodies section",
+                          "type": "string"
+                        },
+                        "canonical": {
+                          "description": "an actor's canonical name",
+                          "type": "string"
+                        },
+                        "confidence": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "intent": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string"
+                        },
+                        "layer": {
+                          "type": "string"
+                        },
+                        "participants": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": [
+                            "null",
+                            "array"
+                          ]
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "summary": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "topics": {
+                          "description": "effective topics: the entry's own merged with the topic annotations naming it",
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": [
+                            "null",
+                            "array"
+                          ]
+                        },
+                        "type": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "type",
+                        "layer"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "pull": {
+                    "description": "layout serving the complete section",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "entries"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "brief": {
+                "description": "the layout asked for compact entry lines",
+                "type": "boolean"
+              },
+              "counts": {
+                "additionalProperties": false,
+                "properties": {
+                  "rows": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "count": {
+                          "type": "integer"
+                        },
+                        "heat": {
+                          "type": "number"
+                        },
+                        "label": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "label",
+                        "count",
+                        "heat"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  }
+                },
+                "required": [
+                  "rows"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "focus": {
+                "additionalProperties": false,
+                "properties": {
+                  "dropped": {
+                    "description": "focuses a serve budget kept out of the section",
+                    "type": "integer"
+                  },
+                  "focuses": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "actors": {
+                          "description": "focus-level default actors",
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": [
+                            "null",
+                            "array"
+                          ]
+                        },
+                        "focus": {
+                          "additionalProperties": false,
+                          "description": "the focus decision; absent when it is missing from the graph",
+                          "properties": {
+                            "body": {
+                              "description": "the entry's full text, set only in a bodies section",
+                              "type": "string"
+                            },
+                            "canonical": {
+                              "description": "an actor's canonical name",
+                              "type": "string"
+                            },
+                            "confidence": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "intent": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "layer": {
+                              "type": "string"
+                            },
+                            "participants": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": [
+                                "null",
+                                "array"
+                              ]
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "summary": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "topics": {
+                              "description": "effective topics: the entry's own merged with the topic annotations naming it",
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": [
+                                "null",
+                                "array"
+                              ]
+                            },
+                            "type": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "type",
+                            "layer"
+                          ],
+                          "type": [
+                            "null",
+                            "object"
+                          ]
+                        },
+                        "targets": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "actors": {
+                                "description": "resolved actors: the involvement's own, else the focus defaults; empty means pull-available",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": [
+                                  "null",
+                                  "array"
+                                ]
+                              },
+                              "actors_explicit": {
+                                "description": "the involvement declared its actors",
+                                "type": "boolean"
+                              },
+                              "score": {
+                                "type": "number"
+                              },
+                              "state": {
+                                "description": "pull-available, stalled or driving",
+                                "type": "string"
+                              },
+                              "target": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "body": {
+                                    "description": "the entry's full text, set only in a bodies section",
+                                    "type": "string"
+                                  },
+                                  "canonical": {
+                                    "description": "an actor's canonical name",
+                                    "type": "string"
+                                  },
+                                  "confidence": {
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "intent": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "type": "string"
+                                  },
+                                  "layer": {
+                                    "type": "string"
+                                  },
+                                  "participants": {
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "type": [
+                                      "null",
+                                      "array"
+                                    ]
+                                  },
+                                  "status": {
+                                    "type": "string"
+                                  },
+                                  "summary": {
+                                    "type": "string"
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  },
+                                  "topics": {
+                                    "description": "effective topics: the entry's own merged with the topic annotations naming it",
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "type": [
+                                      "null",
+                                      "array"
+                                    ]
+                                  },
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "type",
+                                  "layer"
+                                ],
+                                "type": "object"
+                              },
+                              "when": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "from": {
+                                    "type": "string"
+                                  },
+                                  "to": {
+                                    "type": "string"
+                                  }
+                                },
+                                "type": [
+                                  "null",
+                                  "object"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "target",
+                              "score",
+                              "state"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "null",
+                            "array"
+                          ]
+                        },
+                        "when": {
+                          "additionalProperties": false,
+                          "description": "focus-level default temporal scope",
+                          "properties": {
+                            "from": {
+                              "type": "string"
+                            },
+                            "to": {
+                              "type": "string"
+                            }
+                          },
+                          "type": [
+                            "null",
+                            "object"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "targets"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "pull": {
+                    "description": "layout serving the complete section",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "focuses"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "grouped": {
+                "additionalProperties": false,
+                "properties": {
+                  "field": {
+                    "description": "the entry attribute the groups share a value of",
+                    "type": "string"
+                  },
+                  "groups": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "entries": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "body": {
+                                "description": "the entry's full text, set only in a bodies section",
+                                "type": "string"
+                              },
+                              "canonical": {
+                                "description": "an actor's canonical name",
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "string"
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "intent": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string"
+                              },
+                              "layer": {
+                                "type": "string"
+                              },
+                              "participants": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": [
+                                  "null",
+                                  "array"
+                                ]
+                              },
+                              "status": {
+                                "type": "string"
+                              },
+                              "summary": {
+                                "type": "string"
+                              },
+                              "title": {
+                                "type": "string"
+                              },
+                              "topics": {
+                                "description": "effective topics: the entry's own merged with the topic annotations naming it",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": [
+                                  "null",
+                                  "array"
+                                ]
+                              },
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "type",
+                              "layer"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "null",
+                            "array"
+                          ]
+                        },
+                        "key": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "entries"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  }
+                },
+                "required": [
+                  "field",
+                  "groups"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "list": {
+                "additionalProperties": false,
+                "properties": {
+                  "items": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "entry": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "body": {
+                              "description": "the entry's full text, set only in a bodies section",
+                              "type": "string"
+                            },
+                            "canonical": {
+                              "description": "an actor's canonical name",
+                              "type": "string"
+                            },
+                            "confidence": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "intent": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "layer": {
+                              "type": "string"
+                            },
+                            "participants": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": [
+                                "null",
+                                "array"
+                              ]
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "summary": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "topics": {
+                              "description": "effective topics: the entry's own merged with the topic annotations naming it",
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": [
+                                "null",
+                                "array"
+                              ]
+                            },
+                            "type": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "type",
+                            "layer"
+                          ],
+                          "type": "object"
+                        },
+                        "refs": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "desc": {
+                                "type": "string"
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "ref": {
+                                "description": "kind of the refs edge; unknown for a legacy bare-string ref",
+                                "type": "string"
+                              },
+                              "status": {
+                                "description": "the target's derived status; empty for a done signal or a dangling target",
+                                "type": "string"
+                              },
+                              "unresolved_repo": {
+                                "description": "connected repo of a cross-repo target whose graph is not available locally",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "ref",
+                              "id"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "null",
+                            "array"
+                          ]
+                        },
+                        "refs_dropped": {
+                          "description": "refs a serve budget kept off this item",
+                          "type": "integer"
+                        },
+                        "score": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "entry"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "ranked": {
+                    "description": "the section was ranked: every item carries its score",
+                    "type": "boolean"
+                  },
+                  "refs_expanded": {
+                    "description": "the section used expand(refs): every item carries its resolved outgoing refs",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "items"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "matched": {
+                "description": "primary units the section produced: entries, focuses, actors or WIP markers; for counts, the entries aggregated. 0 means it matched nothing",
+                "type": "integer"
+              },
+              "name": {
+                "description": "section header set by name(...)",
+                "type": "string"
+              },
+              "participants": {
+                "additionalProperties": false,
+                "properties": {
+                  "dropped": {
+                    "description": "actors a serve budget kept out of the section",
+                    "type": "integer"
+                  },
+                  "groups": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "actor": {
+                          "additionalProperties": false,
+                          "description": "the active actor; absent when it is missing from the graph",
+                          "properties": {
+                            "body": {
+                              "description": "the entry's full text, set only in a bodies section",
+                              "type": "string"
+                            },
+                            "canonical": {
+                              "description": "an actor's canonical name",
+                              "type": "string"
+                            },
+                            "confidence": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "intent": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "layer": {
+                              "type": "string"
+                            },
+                            "participants": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": [
+                                "null",
+                                "array"
+                              ]
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "summary": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "topics": {
+                              "description": "effective topics: the entry's own merged with the topic annotations naming it",
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": [
+                                "null",
+                                "array"
+                              ]
+                            },
+                            "type": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "type",
+                            "layer"
+                          ],
+                          "type": [
+                            "null",
+                            "object"
+                          ]
+                        },
+                        "roles": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "body": {
+                                "description": "the entry's full text, set only in a bodies section",
+                                "type": "string"
+                              },
+                              "canonical": {
+                                "description": "an actor's canonical name",
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "string"
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "intent": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string"
+                              },
+                              "layer": {
+                                "type": "string"
+                              },
+                              "participants": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": [
+                                  "null",
+                                  "array"
+                                ]
+                              },
+                              "status": {
+                                "type": "string"
+                              },
+                              "summary": {
+                                "type": "string"
+                              },
+                              "title": {
+                                "type": "string"
+                              },
+                              "topics": {
+                                "description": "effective topics: the entry's own merged with the topic annotations naming it",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": [
+                                  "null",
+                                  "array"
+                                ]
+                              },
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "type",
+                              "layer"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "null",
+                            "array"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "roles"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "pull": {
+                    "description": "layout serving the complete section",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "groups"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "render": {
+                "description": "the render terminating the section: as-list, as-grouped, as-counts, as-focus-block, as-participants-block, as-wip-list or as-bodies",
+                "type": "string"
+              },
+              "repo": {
+                "description": "connected repo whose graph produced the section; empty for the local graph",
+                "type": "string"
+              },
+              "wip": {
+                "additionalProperties": false,
+                "properties": {
+                  "dropped": {
+                    "description": "markers a serve budget kept out of the section",
+                    "type": "integer"
+                  },
+                  "markers": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "branch": {
+                          "type": "string"
+                        },
+                        "content": {
+                          "type": "string"
+                        },
+                        "entry": {
+                          "description": "ID of the entry being worked on",
+                          "type": "string"
+                        },
+                        "exclusive": {
+                          "type": "boolean"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "participant": {
+                          "type": "string"
+                        },
+                        "time": {
+                          "description": "when the marker was set, RFC 3339",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "entry",
+                        "participant",
+                        "content"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "null",
+                      "array"
+                    ]
+                  },
+                  "pull": {
+                    "description": "layout serving the complete section",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "markers"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              }
+            },
+            "required": [
+              "render",
+              "matched"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         }
       },
       "required": [

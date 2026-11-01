@@ -17,8 +17,8 @@ import (
 	"github.com/networkteam/sdd/pkg/application/types"
 )
 
-// EntryLine writes a single entry summary line — used by status, list, and
-// other surfaces that show entries in a flat list.
+// writeEntryLine writes the entry line every listing shares, view entries and
+// search hits alike; a NaN score omits the score segment.
 //
 // Format: `<id> <layer> <kind>? <type> [confidence: <conf>]? [intent: guiding]? (<participants>) {status: <status>}? {score: <score>}? <topics>? <summary>`
 // Kind renders as a qualifier alongside layer/type — it's identity, not an
@@ -31,114 +31,32 @@ import (
 // with annotation declarations). Participants are always present — empty is
 // rendered as `()`. Status is present for signals and decisions; omitted for
 // done signals (terminal). Topics are omitted entirely when the effective set
-// is empty. Score is per-rendering, computed by a rank algorithm; emitted
-// only via EntryLineWithScore (slice 3 — d-tac-uww).
-func EntryLine(w io.Writer, e *model.Entry, g *model.Graph) {
-	writeEntryLine(w, modelEntryLine(e, g), math.NaN())
-}
-
-// EntryLineWithScore is EntryLine plus a `{score: X.XXX}` segment after
-// status. Used by the as-list renderer when the section was ranked.
-func EntryLineWithScore(w io.Writer, e *model.Entry, g *model.Graph, score float64) {
-	writeEntryLine(w, modelEntryLine(e, g), score)
-}
-
-// EntryLineBrief writes the compact entry line the `brief` layout modifier
-// selects: identity qualifiers plus the first summary sentence, with every
-// attribute segment (confidence, intent, participants, status, score,
-// topics) dropped. Built for injection surfaces where full lines cost
-// context without informing the decision at hand.
-//
-// Format: `<id> <layer> <kind>? <type> <title>`
-// briefTitleWidth bounds the listing title on the brief line — for an untitled
-// entry its first summary sentence. The remaining columns are fixed-width identity, so an
-// unbounded sentence is the only thing that can push a line past a terminal.
-const briefTitleWidth = 110
-
-func EntryLineBrief(w io.Writer, e *model.Entry, g *model.Graph) {
+// is empty. Score is per-rendering, computed by a rank algorithm (slice 3 —
+// d-tac-uww). An entry with no summary shows its body excerpt.
+func writeEntryLine(w io.Writer, line types.ListedEntry, score float64) {
 	var sb strings.Builder
 	sb.WriteString("  ")
-	sb.WriteString(e.ID)
+	sb.WriteString(line.ID)
 	sb.WriteString(" ")
-	sb.WriteString(e.LayerLabel())
-	if e.Kind != "" {
+	sb.WriteString(line.Layer)
+	if line.Kind != "" {
 		sb.WriteString(" ")
-		sb.WriteString(string(e.Kind))
+		sb.WriteString(line.Kind)
 	}
 	sb.WriteString(" ")
-	sb.WriteString(e.TypeLabel())
-	sb.WriteString(" ")
-	sb.WriteString(model.ShortTitle(e.ListingTitle(), briefTitleWidth))
-	sb.WriteString("\n")
-	fmt.Fprint(w, sb.String())
-}
-
-// entryLine is what an entry line prints, whether read off a graph entry
-// (EntryLine) or a search hit (RenderSearch), so the line has one format.
-type entryLine struct {
-	id           string
-	layer        string
-	kind         string
-	typeLabel    string
-	confidence   string
-	intent       model.Intent
-	participants []string
-	status       model.Status
-	topics       []string
-	description  string
-}
-
-func modelEntryLine(e *model.Entry, g *model.Graph) entryLine {
-	desc := e.Summary
-	if desc == "" {
-		desc = e.ShortContent(200)
-	}
-	var topics []string
-	for _, topic := range g.EffectiveTopics(e) {
-		topics = append(topics, topic.String())
-	}
-	return entryLine{
-		id: e.ID, layer: e.LayerLabel(), kind: string(e.Kind), typeLabel: e.TypeLabel(), confidence: e.Confidence,
-		intent: e.Intent, participants: e.Participants, status: g.DerivedStatus(e), topics: topics, description: desc,
-	}
-}
-
-func hitEntryLine(hit types.SearchHit) entryLine {
-	desc := hit.Summary
-	if desc == "" {
-		desc = hit.BodyExcerpt
-	}
-	status := model.Status{Kind: model.StatusKind(hit.DerivedStatus.Kind), By: hit.DerivedStatus.By}
-	return entryLine{
-		id: hit.ID, layer: hit.Layer, kind: hit.Kind, typeLabel: hit.Type, confidence: hit.Confidence,
-		intent: model.Intent(hit.Intent), participants: hit.Participants, status: status, topics: hit.Topics, description: desc,
-	}
-}
-
-func writeEntryLine(w io.Writer, line entryLine, score float64) {
-	var sb strings.Builder
-	sb.WriteString("  ")
-	sb.WriteString(line.id)
-	sb.WriteString(" ")
-	sb.WriteString(line.layer)
-	if line.kind != "" {
+	sb.WriteString(line.Type)
+	if line.Confidence != "" {
 		sb.WriteString(" ")
-		sb.WriteString(line.kind)
+		sb.WriteString(FormatConfidence(line.Confidence))
 	}
-	sb.WriteString(" ")
-	sb.WriteString(line.typeLabel)
-	if line.confidence != "" {
-		sb.WriteString(" ")
-		sb.WriteString(FormatConfidence(line.confidence))
-	}
-	if in := FormatIntent(line.intent); in != "" {
+	if in := FormatIntent(model.Intent(line.Intent)); in != "" {
 		sb.WriteString(" ")
 		sb.WriteString(in)
 	}
 	sb.WriteString(" (")
-	sb.WriteString(strings.Join(line.participants, ", "))
+	sb.WriteString(strings.Join(line.Participants, ", "))
 	sb.WriteString(")")
-	if s := FormatStatus(line.status); s != "" {
+	if s := FormatStatus(model.Status{Kind: model.StatusKind(line.DerivedStatus.Kind), By: line.DerivedStatus.By}); s != "" {
 		sb.WriteString(" ")
 		sb.WriteString(s)
 	}
@@ -146,14 +64,66 @@ func writeEntryLine(w io.Writer, line entryLine, score float64) {
 		sb.WriteString(" ")
 		sb.WriteString(FormatScore(score))
 	}
-	if topics := formatTopics(line.topics); topics != "" {
+	if topics := formatTopics(line.Topics); topics != "" {
 		sb.WriteString(" ")
 		sb.WriteString(topics)
 	}
 	sb.WriteString(" ")
-	sb.WriteString(line.description)
+	if line.Summary != "" {
+		sb.WriteString(line.Summary)
+	} else {
+		sb.WriteString(line.BodyExcerpt)
+	}
 	sb.WriteString("\n")
 	fmt.Fprint(w, sb.String())
+}
+
+// briefTitleWidth bounds the listing title on the brief line — for an untitled
+// entry its first summary sentence. The remaining columns are fixed-width identity, so an
+// unbounded sentence is the only thing that can push a line past a terminal.
+const briefTitleWidth = 110
+
+// writeEntryLineBrief writes the compact entry line the `brief` layout
+// modifier selects: identity qualifiers plus the listing title, with every
+// attribute segment (confidence, intent, participants, status, score,
+// topics) dropped. Built for injection surfaces where full lines cost
+// context without informing the decision at hand.
+//
+// Format: `<id> <layer> <kind>? <type> <title>`
+func writeEntryLineBrief(w io.Writer, line types.ListedEntry) {
+	var sb strings.Builder
+	sb.WriteString("  ")
+	sb.WriteString(line.ID)
+	sb.WriteString(" ")
+	sb.WriteString(line.Layer)
+	if line.Kind != "" {
+		sb.WriteString(" ")
+		sb.WriteString(line.Kind)
+	}
+	sb.WriteString(" ")
+	sb.WriteString(line.Type)
+	sb.WriteString(" ")
+	sb.WriteString(model.ShortTitle(line.ListingTitle, briefTitleWidth))
+	sb.WriteString("\n")
+	fmt.Fprint(w, sb.String())
+}
+
+// writeListedEntry writes the brief or the full entry line, unscored.
+func writeListedEntry(w io.Writer, line types.ListedEntry, brief bool) {
+	if brief {
+		writeEntryLineBrief(w, line)
+	} else {
+		writeEntryLine(w, line, math.NaN())
+	}
+}
+
+// hitEntry is a search hit as the entry line reads it.
+func hitEntry(hit types.SearchHit) types.ListedEntry {
+	return types.ListedEntry{
+		ID: hit.ID, Title: hit.Title, Type: hit.Type, Kind: hit.Kind, Layer: hit.Layer, Status: hit.Status,
+		DerivedStatus: hit.DerivedStatus, Confidence: hit.Confidence, Intent: hit.Intent, Participants: hit.Participants,
+		Topics: hit.Topics, Summary: hit.Summary, BodyExcerpt: hit.BodyExcerpt,
+	}
 }
 
 // FormatScore renders a per-rendering rank score in curly-brace notation
@@ -206,17 +176,17 @@ func FormatStatus(s model.Status) string {
 	return "{status: " + string(s.Kind) + "}"
 }
 
-// FormatStatusTrail renders the status segment for a ref sub-line, expanding a
+// formatStatusTrail renders the status segment for a ref sub-line, expanding a
 // superseded target into its full supersede trail through to the live head:
-// `{status: superseded-by <hop1> → … → <head>}`. supersedePath is the resolved
+// `{status: superseded-by <hop1> → … → <head>}`. SupersedePath is the resolved
 // origin→head path (model.ResolveRef(...).Path()); its first element is the
 // origin (the sub-line's own entry) and is dropped, so the rendered hops are
 // the superseders ending at the head. When the target is not superseded
 // (path length ≤ 1) this is identical to FormatStatus — only ref sub-lines,
 // where a reader is traversing a reference, surface the intermediate hops;
 // flat surfaces keep the head-only form.
-func FormatStatusTrail(s model.Status, supersedePath []string) string {
-	v := formatStatusTrailValue(types.DerivedStatus{Kind: string(s.Kind), By: s.By, SupersedePath: supersedePath})
+func formatStatusTrail(s types.DerivedStatus) string {
+	v := formatStatusTrailValue(s)
 	if v == "" {
 		return ""
 	}
@@ -224,7 +194,7 @@ func FormatStatusTrail(s model.Status, supersedePath []string) string {
 }
 
 // formatStatusTrailValue is the brace-less status value shared by the
-// curly-brace flat surfaces (via FormatStatusTrail) and the bracket-less
+// curly-brace flat surfaces (via formatStatusTrail) and the bracket-less
 // contexts — the show envelope's `status:` field and the show tree's
 // `(<kind>, <status>)` slot. StatusNone (done signals) yields the empty
 // string so callers omit the segment. A superseded target with a multi-hop

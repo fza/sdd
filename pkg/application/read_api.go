@@ -49,8 +49,16 @@ type ViewRequest struct {
 }
 
 type ViewResult struct {
-	Project  ProjectRef
+	Project ProjectRef
+	// Sections is ViewSections rendered as text.
+	//
+	// Deprecated: use ViewSections, the same sections as data, and render
+	// them in the caller. Sections is removed in the release after the one
+	// that deprecates it (20261101-194502-d-tac-r3f).
 	Sections string
+	// ViewSections are the layout's sections as data, the local graph's
+	// first, then each queried dependency's, tagged with its repo.
+	ViewSections []ViewSection
 	// MatchedCount is the total primary units the layout produced across the
 	// local graph and any queried dependency repos. Zero means the pipeline
 	// matched nothing — surfaces distinguish an empty result from a failure

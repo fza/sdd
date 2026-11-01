@@ -92,7 +92,7 @@ func viewCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			presenters.RenderView(cmd.Writer, result)
+			presenters.RenderView(cmd.Writer, result.ViewSections(""))
 
 			// Selected repos render the same layout over their own graphs,
 			// each under a repo heading — entry IDs inside a repo section
@@ -113,8 +113,7 @@ func viewCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.Writer, "\n── repo: %s ──\n", repoID)
-				presenters.RenderView(cmd.Writer, mresult)
+				presenters.RenderView(cmd.Writer, mresult.ViewSections(repoID))
 			}
 			return nil
 		},

@@ -10,7 +10,7 @@ import (
 )
 
 // RenderSearch writes one section per ranked hit (query.SearchResult.Hits): a
-// header line in the shared EntryLine shape, then one citation line per
+// header line in the shared entry-line shape, then one citation line per
 // citation (capped by SearchQuery.MaxCitationsPerEntry on the finder side).
 //
 // Render format (single-citation case):
@@ -41,7 +41,7 @@ func RenderSearch(w io.Writer, hits []types.SearchHit) {
 
 	maxScore := globalMaxCitationScore(hits)
 	for _, hit := range hits {
-		writeEntryLine(w, hitEntryLine(hit), math.NaN())
+		writeEntryLine(w, hitEntry(hit), math.NaN())
 		for _, c := range hit.Citations {
 			renderCitation(w, c, maxScore)
 		}

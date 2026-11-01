@@ -116,7 +116,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if err != nil {
 				return nil, err
 			}
-			return result.Sections, nil
+			return presenters.ViewText(result.ViewSections), nil
 		},
 	}); err != nil {
 		return err
