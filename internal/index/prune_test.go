@@ -111,7 +111,7 @@ func TestPruneVersions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			m := &index.Manifest{Version: 1, Entries: tc.entries}
-			dropped, versions := m.PruneVersions(now, retention, tc.uses, tc.keep, tc.limit)
+			dropped, versions := m.PruneVersions(now, retention, tc.uses, index.NewKeepSet(tc.keep), tc.limit)
 			if !slices.Equal(dropped, tc.dropped) || versions != tc.versions {
 				t.Errorf("pruned %v (%d versions), want %v (%d versions)", dropped, versions, tc.dropped, tc.versions)
 			}
@@ -177,6 +177,69 @@ func TestPruneStoreRemovesExpiredRows(t *testing.T) {
 	if got := len(m.Entries["e"].Versions); got != 1 {
 		t.Errorf("the manifest should keep only the current version, holds %d", got)
 	}
+}
+
+func TestPruneStoreKeepsWhatAnotherCheckoutReads(t *testing.T) {
+	now := time.Now()
+	old := version("a", index.DerivationCurrent, now.Add(-retention-2*time.Hour), "e#v-a#summary")
+	current := version("b", index.DerivationCurrent, now.Add(-retention-time.Hour), "e#v-b#summary")
+
+	t.Run("a version a worktree still reads stays", func(t *testing.T) {
+		dir := storeWithVersions(t, old, current)
+		if err := index.RecordCheckout(dir, "/work/tree", map[string]string{"e": "a"}, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := index.PruneStore(t.Context(), dir, now, retention, nil); err != nil {
+			t.Fatal(err)
+		}
+		if index.DocumentsSize(dir, old.ChunkIDs) == 0 {
+			t.Error("a version another checkout read within the retention should stay")
+		}
+	})
+
+	t.Run("a version goes once that checkout's record expires", func(t *testing.T) {
+		dir := storeWithVersions(t, old, current)
+		long := now.Add(-retention - time.Hour)
+		if err := index.RecordCheckout(dir, "/work/tree", map[string]string{"e": "a"}, long); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := index.PruneStore(t.Context(), dir, now, retention, nil); err != nil {
+			t.Fatal(err)
+		}
+		if index.DocumentsSize(dir, old.ChunkIDs) != 0 {
+			t.Error("a version only a checkout untouched for the retention read should go")
+		}
+		records, err := os.ReadDir(filepath.Join(dir, "used", "checkouts"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(records) != 0 {
+			t.Errorf("an expired checkout record should be deleted, left %d", len(records))
+		}
+	})
+
+	t.Run("an unchanged record is refreshed once a day", func(t *testing.T) {
+		dir := storeWithVersions(t, current)
+		hashes := map[string]string{"e": "b"}
+		long := now.Add(-48 * time.Hour)
+		if err := index.RecordCheckout(dir, "/work/tree", hashes, long); err != nil {
+			t.Fatal(err)
+		}
+		if err := index.RecordCheckout(dir, "/work/tree", hashes, now); err != nil {
+			t.Fatal(err)
+		}
+		records, err := os.ReadDir(filepath.Join(dir, "used", "checkouts"))
+		if err != nil || len(records) != 1 {
+			t.Fatalf("one checkout should keep one record, got %d, %v", len(records), err)
+		}
+		info, err := records[0].Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if now.Sub(info.ModTime()) > time.Minute {
+			t.Error("reading the store a day later should refresh the checkout's record")
+		}
+	})
 }
 
 func TestPruneStoreSkipsALockedStore(t *testing.T) {

@@ -137,7 +137,7 @@ func newCounterApp(t *testing.T, graphDir, cacheRoot string, embeddings embed.Em
 		Graph:       graph,
 		RuneCap:     testRuneCap,
 		Embedder:    embeddings,
-		SearchIndex: localadapter.NewPersistentSearchIndexStore(counterProject, cacheRoot, "counter/repo"),
+		SearchIndex: localadapter.NewPersistentSearchIndexStore(counterProject, cacheRoot, "counter/repo").WithCheckout(graphDir),
 		LLM: pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
 			return pkgllm.Result{Identity: pkgllm.Identity{Provider: "test", Model: "test"}}, nil
 		}),
@@ -168,6 +168,25 @@ func seedCounterGraph(t *testing.T) (graphDir, cacheRoot string) {
 	writeCounterEntry(t, graphDir, "20260101-100000-s-tac-aaa", "Alpha topic summary", "## Section\nThe alpha entry is about alpha matters.")
 	writeCounterEntry(t, graphDir, "20260101-100001-s-tac-bbb", "Beta topic summary", "## Section\nThe beta entry is about beta matters.")
 	return graphDir, cacheRoot
+}
+
+func TestVectorSearchRecordsTheVersionsItsCheckoutReads(t *testing.T) {
+	graphDir, cacheRoot := seedCounterGraph(t)
+	counterSearch(t, newCounterApp(t, graphDir, cacheRoot, &countingEmbeddings{}), "alpha")
+	records, err := filepath.Glob(filepath.Join(cacheRoot, "index", "counter", "repo", "*", "used", "checkouts", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("a search should record the versions its checkout reads, found %d records", len(records))
+	}
+	data, err := os.ReadFile(records[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "20260101-100000-s-tac-aaa") || !strings.Contains(string(data), "20260101-100001-s-tac-bbb") {
+		t.Errorf("the record should name every entry the checkout reads, got %s", data)
+	}
 }
 
 func TestVectorSearchPreIndexedGraphEmbedsOnlyQuery(t *testing.T) {

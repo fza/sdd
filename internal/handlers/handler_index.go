@@ -192,13 +192,6 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 	}
 	defer func() { err = errors.Join(err, session.Close()) }()
 
-	stopManifest := timing.Start(ctx, "fill-manifest")
-	manifest, err := session.Manifest()
-	stopManifest()
-	if err != nil {
-		return fmt.Errorf("loading manifest: %w", err)
-	}
-	fingerprint := h.embedder.Fingerprint()
 	maxRunes, err := h.embedder.MaxRunes(ctx)
 	if err != nil {
 		return fmt.Errorf("calibrating embedding endpoint: %w", err)
@@ -210,6 +203,18 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 	if err != nil {
 		return err
 	}
+	// Recorded before the plan reads the manifest, so a pruning session that
+	// starts after this sees the versions the plan will skip (20261101-153339-d-tac-pnl).
+	if err := index.RecordCheckout(h.indexDir, h.graphDir, currentHashes, time.Now()); err != nil {
+		return err
+	}
+	stopManifest := timing.Start(ctx, "fill-manifest")
+	manifest, err := session.Manifest()
+	stopManifest()
+	if err != nil {
+		return fmt.Errorf("loading manifest: %w", err)
+	}
+	fingerprint := h.embedder.Fingerprint()
 	var work []indexInput
 	skipped := 0
 	for _, entry := range g.Entries {

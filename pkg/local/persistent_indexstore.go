@@ -35,6 +35,7 @@ type PersistentSearchIndexStore struct {
 	project   app.ProjectID
 	cacheRoot string
 	repoKey   string
+	checkout  string
 	now       func() time.Time
 
 	mu        sync.Mutex
@@ -97,6 +98,27 @@ func (s *PersistentSearchIndexStore) RecordMaxRunes(ctx context.Context, namespa
 		manifest.MaxRunes = maxRunes
 		return manifest.Save(dir)
 	})
+}
+
+// WithCheckout names the graph directory this adapter serves, so every
+// reconcile records the versions that checkout reads and cache pruning keeps
+// them. Without it nothing is recorded.
+func (s *PersistentSearchIndexStore) WithCheckout(graphDir string) *PersistentSearchIndexStore {
+	s.checkout = graphDir
+	return s
+}
+
+// RecordCheckout records hashes as the versions this adapter's checkout
+// currently reads from the namespace's store.
+func (s *PersistentSearchIndexStore) RecordCheckout(_ context.Context, namespace app.IndexNamespace, hashes map[string]string) error {
+	if s.checkout == "" {
+		return nil
+	}
+	dir, err := s.storeDir(namespace)
+	if err != nil {
+		return err
+	}
+	return index.RecordCheckout(dir, s.checkout, hashes, s.now())
 }
 
 // storeDir resolves the store directory for a namespace, validating that the
