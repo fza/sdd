@@ -641,7 +641,7 @@ func searchCmd() *cli.Command {
 			}
 
 			stopRender := timing.Start(ctx, "render")
-			presenters.RenderSearch(cmd.Writer, res, g)
+			presenters.RenderSearch(cmd.Writer, res.Hits(g))
 			stopRender()
 			return nil
 		},

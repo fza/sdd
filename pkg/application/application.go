@@ -323,9 +323,15 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 	if err != nil {
 		return ShowResult{}, err
 	}
+	items, err := showResult.ShownEntries()
+	if err != nil {
+		return ShowResult{}, err
+	}
 	var rendered bytes.Buffer
-	presenters.RenderShow(&rendered, showResult, presenters.ShowOptions{})
-	show := ShowResult{Project: runtime.options.Project, Entries: strings.TrimRight(rendered.String(), "\n"), Items: shownEntries(showResult)}
+	if err := presenters.RenderShow(&rendered, items, presenters.ShowOptions{}); err != nil {
+		return ShowResult{}, err
+	}
+	show := ShowResult{Project: runtime.options.Project, Entries: strings.TrimRight(rendered.String(), "\n"), Items: items}
 	for _, group := range showResult.Groups {
 		if group.Primary != nil {
 			if group.PrimaryID != "" {
@@ -405,9 +411,10 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 	if limit := q.EffectiveLimit(); len(searchResult.Entries) > limit {
 		searchResult.Entries = searchResult.Entries[:limit]
 	}
+	hits := searchResult.Hits(snapshot.graph)
 	var rendered bytes.Buffer
-	presenters.RenderSearch(&rendered, searchResult, snapshot.graph)
-	search := SearchResult{Project: runtime.options.Project, Results: strings.TrimRight(rendered.String(), "\n"), Hits: searchHits(searchResult, snapshot.graph), Coverage: coverage}
+	presenters.RenderSearch(&rendered, hits)
+	search := SearchResult{Project: runtime.options.Project, Results: strings.TrimRight(rendered.String(), "\n"), Hits: hits, Coverage: coverage}
 	if credentialNotice != "" {
 		search.Notice = credentialNotice
 		if search.Results != "" {
