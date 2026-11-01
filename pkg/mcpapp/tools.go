@@ -14,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/networkteam/sdd/internal/basefacts"
+	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/textpatch"
@@ -949,7 +950,7 @@ func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, args Sear
 		hits := searchHitItems(result.Hits)
 		return nil, SearchResult{Hits: &hits, Coverage: result.Coverage, Notice: result.Notice}, nil
 	}
-	out := result.Results
+	out := presenters.SearchText(result.Hits, result.Notices)
 	if strings.TrimSpace(out) == "" {
 		out = "(no entries matched — try another phrasing, or proceed if the topic is genuinely new)"
 	}
@@ -1151,7 +1152,11 @@ func (s *Server) show(ctx context.Context, req *mcp.CallToolRequest, args ShowAr
 		items := showItems(result.Items)
 		return nil, ShowResult{Items: &items}, nil
 	}
-	return nil, ShowResult{Entries: result.Entries}, nil
+	entries, err := presenters.ShowText(result.Items)
+	if err != nil {
+		return nil, ShowResult{}, err
+	}
+	return nil, ShowResult{Entries: entries}, nil
 
 }
 

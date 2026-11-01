@@ -327,11 +327,11 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 	if err != nil {
 		return ShowResult{}, err
 	}
-	var rendered bytes.Buffer
-	if err := presenters.RenderShow(&rendered, items, presenters.ShowOptions{}); err != nil {
+	entries, err := presenters.ShowText(items)
+	if err != nil {
 		return ShowResult{}, err
 	}
-	show := ShowResult{Project: runtime.options.Project, Entries: strings.TrimRight(rendered.String(), "\n"), Items: items}
+	show := ShowResult{Project: runtime.options.Project, Entries: entries, Items: items}
 	for _, group := range showResult.Groups {
 		if group.Primary != nil {
 			if group.PrimaryID != "" {
@@ -412,27 +412,20 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 		searchResult.Entries = searchResult.Entries[:limit]
 	}
 	hits := searchResult.Hits(snapshot.graph)
-	var rendered bytes.Buffer
-	presenters.RenderSearch(&rendered, hits)
-	search := SearchResult{Project: runtime.options.Project, Results: strings.TrimRight(rendered.String(), "\n"), Hits: hits, Coverage: coverage}
+	search := SearchResult{Project: runtime.options.Project, Hits: hits, Coverage: coverage}
 	if credentialNotice != "" {
 		search.Notice = credentialNotice
-		if search.Results != "" {
-			search.Results += "\n\n"
-		}
-		search.Results += credentialNotice
+		search.Notices = append(search.Notices, credentialNotice)
 	}
 	for _, member := range coverage {
 		if !member.Complete {
 			incomplete := "Search indexing is incomplete for the selected snapshots. Available matches are shown; retry later."
 			search.Notice = strings.TrimSpace(search.Notice + " " + incomplete)
-			if search.Results != "" {
-				search.Results += "\n\n"
-			}
-			search.Results += incomplete
+			search.Notices = append(search.Notices, incomplete)
 			break
 		}
 	}
+	search.Results = presenters.SearchText(hits, search.Notices)
 	for _, entry := range searchResult.Entries {
 		if entry.Entry != nil {
 			search.EntryIDs = append(search.EntryIDs, entry.DisplayID())

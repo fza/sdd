@@ -48,6 +48,22 @@ func RenderSearch(w io.Writer, hits []types.SearchHit) {
 	}
 }
 
+// SearchText is the search text of the application and the MCP server:
+// RenderSearch without the trailing newline, each notice following as its own
+// paragraph.
+func SearchText(hits []types.SearchHit, notices []string) string {
+	var rendered strings.Builder
+	RenderSearch(&rendered, hits)
+	text := strings.TrimRight(rendered.String(), "\n")
+	for _, notice := range notices {
+		if text != "" {
+			text += "\n\n"
+		}
+		text += notice
+	}
+	return text
+}
+
 // FormatSearchCapability renders the capability suffix shown in
 // `sdd info`'s header: `text` when only text mode is available;
 // `vector,text` when a vector embedder is configured. Used by callers

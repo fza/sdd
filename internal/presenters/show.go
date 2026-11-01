@@ -49,6 +49,16 @@ func RenderShow(w io.Writer, entries []types.ShownEntry, opts ShowOptions) error
 	return nil
 }
 
+// ShowText is the show text of the application and the MCP server: RenderShow
+// with default options, without the trailing newline.
+func ShowText(entries []types.ShownEntry) (string, error) {
+	var rendered strings.Builder
+	if err := RenderShow(&rendered, entries, ShowOptions{}); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(rendered.String(), "\n"), nil
+}
+
 func renderShowEntry(w io.Writer, entry types.ShownEntry, opts ShowOptions) error {
 	if err := writeEnvelope(w, entry, opts); err != nil {
 		return err

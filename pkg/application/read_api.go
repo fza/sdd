@@ -75,7 +75,12 @@ type ShowRequest struct {
 }
 
 type ShowResult struct {
-	Project    ProjectRef
+	Project ProjectRef
+	// Entries is Items rendered as text.
+	//
+	// Deprecated: use Items, the same entries as data, and render them in the
+	// caller. Entries is removed in the release after the one that deprecates
+	// it (20261101-192805-d-tac-ih7).
 	Entries    string
 	Items      []ShownEntry
 	FullIDs    []string
@@ -104,7 +109,15 @@ type SearchRequest struct {
 type SearchResult struct {
 	Coverage []SearchCoverage
 	Notice   string
-	Project  ProjectRef
+	// Notices are the notices Notice joins, each on its own: a credential
+	// found in the phrase, incomplete indexing.
+	Notices []string
+	Project ProjectRef
+	// Results is Hits rendered as text, Notices following.
+	//
+	// Deprecated: use Hits and Notices, the same result as data, and render
+	// them in the caller. Results is removed in the release after the one that
+	// deprecates it (20261101-192805-d-tac-ih7).
 	Results  string
 	Hits     []SearchHit
 	EntryIDs []string
