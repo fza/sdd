@@ -66,26 +66,31 @@ func (h *SearchIndexHandler) complete(ctx context.Context, entries []*model.Entr
 		skip = nil
 	}
 	err := indexStream(ctx, inputs, h.Embedder, h.Attachments, textsplitter.NewSplitter(), skip,
-		func(ctx context.Context, entry *model.IndexWork) error {
+		func(ctx context.Context, batch []*model.IndexWork) error {
 			if complete {
-				if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {
-					return err
-				}
-				if err := publisher.PublishEntry(ctx, entry.Version, entry.Rows); err != nil {
+				if err := publishEntries(ctx, publisher, batch); err != nil {
 					return err
 				}
 			} else {
-				if len(entry.Rows) == 0 {
-					return nil
+				var rows []types.IndexedChunk
+				for _, entry := range batch {
+					rows = append(rows, entry.Rows...)
 				}
-				if err := h.Store.Reconcile(ctx, h.Namespace, h.Revision, entry.Rows, nil); err != nil {
-					return err
+				if len(rows) > 0 {
+					if err := h.Store.Reconcile(ctx, h.Namespace, h.Revision, rows, nil); err != nil {
+						return err
+					}
 				}
 			}
-			h.entries++
-			h.chunks += len(entry.Rows)
-			if h.cmd.OnEntryIndexed != nil {
-				h.cmd.OnEntryIndexed(entry.Version.EntryID, len(entry.Rows))
+			for _, entry := range batch {
+				if !complete && len(entry.Rows) == 0 {
+					continue
+				}
+				h.entries++
+				h.chunks += len(entry.Rows)
+				if h.cmd.OnEntryIndexed != nil {
+					h.cmd.OnEntryIndexed(entry.Version.EntryID, len(entry.Rows))
+				}
 			}
 			return nil
 		}, nil)

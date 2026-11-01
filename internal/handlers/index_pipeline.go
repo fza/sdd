@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 
@@ -48,7 +49,38 @@ func prepareIndexEntry(ctx context.Context, input indexInput, reader chunking.At
 	return prepared, nil
 }
 
-func indexStream(ctx context.Context, inputs iter.Seq2[indexInput, error], emb embed.Embedder, reader chunking.AttachmentReader, splitter *textsplitter.Splitter, skip func(types.CanonicalChunk) bool, publish func(context.Context, *model.IndexWork) error, onBatch func([]string, int)) error {
+// entriesPerPublication bounds how many finished entries wait for one
+// publication. A store write reloads the whole store, so publishing per entry
+// makes a reindex quadratic (20261101-003415-s-tac-1fw); an interrupted run
+// redoes at most this many entries' embeddings.
+const entriesPerPublication = 64
+
+// indexStream derives, embeds and publishes the inputs. publish receives
+// finished entries in batches of up to entriesPerPublication, in input order;
+// entries finished before a failure are still published, and the failure is
+// returned beside any publication error.
+func indexStream(ctx context.Context, inputs iter.Seq2[indexInput, error], emb embed.Embedder, reader chunking.AttachmentReader, splitter *textsplitter.Splitter, skip func(types.CanonicalChunk) bool, publish func(context.Context, []*model.IndexWork) error, onBatch func([]string, int)) error {
+	var pending []*model.IndexWork
+	flush := func(ctx context.Context) error {
+		if len(pending) == 0 {
+			return nil
+		}
+		batch := pending
+		pending = nil
+		return publish(ctx, batch)
+	}
+	finish := func(ctx context.Context, entry *model.IndexWork) error {
+		pending = append(pending, entry)
+		if len(pending) < entriesPerPublication {
+			return nil
+		}
+		return flush(ctx)
+	}
+	err := embedStream(ctx, inputs, emb, reader, splitter, skip, finish, onBatch)
+	return errors.Join(err, flush(ctx))
+}
+
+func embedStream(ctx context.Context, inputs iter.Seq2[indexInput, error], emb embed.Embedder, reader chunking.AttachmentReader, splitter *textsplitter.Splitter, skip func(types.CanonicalChunk) bool, finish func(context.Context, *model.IndexWork) error, onBatch func([]string, int)) error {
 	items := func(yield func(model.IndexItem, error) bool) {
 		for input, err := range inputs {
 			if err == nil {
@@ -64,7 +96,7 @@ func indexStream(ctx context.Context, inputs iter.Seq2[indexInput, error], emb e
 				return
 			}
 			if len(entry.Rows) == 0 {
-				if err := publish(ctx, entry); err != nil {
+				if err := finish(ctx, entry); err != nil {
 					yield(model.IndexItem{}, err)
 					return
 				}
@@ -102,7 +134,7 @@ func indexStream(ctx context.Context, inputs iter.Seq2[indexInput, error], emb e
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := publish(ctx, entry); err != nil {
+			if err := finish(ctx, entry); err != nil {
 				return err
 			}
 		}

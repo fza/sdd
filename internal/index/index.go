@@ -182,85 +182,113 @@ func (i *Index) Path() string { return i.indexDir }
 func (i *Index) Count() int { return i.coll.Count() }
 
 // UpsertEntry replaces all rows for entryID with the given rows in a
-// single transaction-shaped pass. Old chunk IDs (from the manifest) are
-// deleted first; the new rows are added afterward. Caller is responsible
-// for updating the manifest with the new chunk IDs.
+// single transaction-shaped pass; see UpsertEntries.
+func (i *Index) UpsertEntry(ctx context.Context, entryID string, oldChunkIDs []string, rows []Row) error {
+	return i.UpsertEntries(ctx, []EntryUpsert{{EntryID: entryID, OldChunkIDs: oldChunkIDs, Rows: rows}})
+}
+
+// EntryUpsert is one entry's share of an UpsertEntries call: the chunk IDs
+// it drops and the rows it adds.
+type EntryUpsert struct {
+	EntryID     string
+	OldChunkIDs []string
+	Rows        []Row
+}
+
+// UpsertEntries replaces the rows of every listed entry in one pass. Old
+// chunk IDs (from the manifest) are deleted first; the new rows of all entries
+// are added afterward in one staged write, so the store is reloaded once per
+// call, not once per entry. Caller is responsible for updating the manifest
+// with the new chunk IDs.
 //
 // Pre-conditions:
 //   - Each row's Embedding is populated (the index does not embed).
-//   - row.EntryID == entryID (validated; mismatch is a programmer error).
-//   - row.ChunkID is unique within rows.
-func (i *Index) UpsertEntry(ctx context.Context, entryID string, oldChunkIDs []string, rows []Row) error {
-	if entryID == "" {
-		return errors.New("entryID is required")
+//   - row.EntryID == its upsert's EntryID (validated; mismatch is a programmer error).
+//   - row.ChunkID is unique within the call.
+func (i *Index) UpsertEntries(ctx context.Context, upserts []EntryUpsert) error {
+	dims, err := i.storedDimensions(ctx)
+	if err != nil {
+		return err
 	}
-	dims := 0
-	if i.indexDir != "" {
-		manifest, err := LoadManifest(i.indexDir)
-		if err != nil {
-			return err
+	for _, upsert := range upserts {
+		if upsert.EntryID == "" {
+			return errors.New("entryID is required")
 		}
-		for _, state := range manifest.Entries {
-			ids := state.AllChunkIDs()
-			if len(ids) == 0 {
-				continue
+		for j, r := range upsert.Rows {
+			if r.EntryID != upsert.EntryID {
+				return fmt.Errorf("row %d: entry id %q does not match %q", j, r.EntryID, upsert.EntryID)
 			}
-			doc, err := i.coll.GetByID(ctx, ids[0])
-			if err != nil {
-				return err
+			if len(r.Embedding) == 0 {
+				return fmt.Errorf("row %d (chunk %s): embedding is empty", j, r.ChunkID)
 			}
-			dims = len(doc.Embedding)
-			break
-		}
-	}
-	for j, r := range rows {
-		if r.EntryID != entryID {
-			return fmt.Errorf("row %d: entry id %q does not match %q", j, r.EntryID, entryID)
-		}
-		if len(r.Embedding) == 0 {
-			return fmt.Errorf("row %d (chunk %s): embedding is empty", j, r.ChunkID)
-		}
-		if dims == 0 {
-			dims = len(r.Embedding)
-		}
-		if len(r.Embedding) != dims {
-			return fmt.Errorf("inconsistent vector dimensions")
-		}
-		for _, v := range r.Embedding {
-			if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
-				return fmt.Errorf("non-finite vector")
+			if dims == 0 {
+				dims = len(r.Embedding)
+			}
+			if len(r.Embedding) != dims {
+				return fmt.Errorf("inconsistent vector dimensions")
+			}
+			for _, v := range r.Embedding {
+				if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+					return fmt.Errorf("non-finite vector")
+				}
 			}
 		}
-
 	}
 
-	if len(oldChunkIDs) > 0 {
-		if err := i.coll.Delete(ctx, nil, nil, oldChunkIDs...); err != nil {
-			return fmt.Errorf("delete old chunks for %s: %w", entryID, err)
+	var docs []chromem.Document
+	for _, upsert := range upserts {
+		if len(upsert.OldChunkIDs) > 0 {
+			if err := i.coll.Delete(ctx, nil, nil, upsert.OldChunkIDs...); err != nil {
+				return fmt.Errorf("delete old chunks for %s: %w", upsert.EntryID, err)
+			}
+			i.dirty = true
+			i.published = nil
 		}
-		i.dirty = true
-		i.published = nil
+		for _, r := range upsert.Rows {
+			docs = append(docs, chromem.Document{
+				ID:        r.ChunkID,
+				Metadata:  rowMetadata(r),
+				Embedding: r.Embedding,
+				Content:   r.Text,
+			})
+		}
 	}
-
-	if len(rows) == 0 {
+	if len(docs) == 0 {
 		return nil
 	}
-
-	docs := make([]chromem.Document, 0, len(rows))
-	for _, r := range rows {
-		docs = append(docs, chromem.Document{
-			ID:        r.ChunkID,
-			Metadata:  rowMetadata(r),
-			Embedding: r.Embedding,
-			Content:   r.Text,
-		})
-	}
 	if err := i.addDocuments(ctx, docs); err != nil {
-		return fmt.Errorf("add chunks for %s: %w", entryID, err)
+		if len(upserts) == 1 {
+			return fmt.Errorf("add chunks for %s: %w", upserts[0].EntryID, err)
+		}
+		return fmt.Errorf("add chunks for %d entries: %w", len(upserts), err)
 	}
 	i.dirty = true
 	i.published = nil
 	return nil
+}
+
+// storedDimensions reads the vector width of a row the manifest names, or 0
+// for a store without rows.
+func (i *Index) storedDimensions(ctx context.Context) (int, error) {
+	if i.indexDir == "" {
+		return 0, nil
+	}
+	manifest, err := LoadManifest(i.indexDir)
+	if err != nil {
+		return 0, err
+	}
+	for _, state := range manifest.Entries {
+		ids := state.AllChunkIDs()
+		if len(ids) == 0 {
+			continue
+		}
+		doc, err := i.coll.GetByID(ctx, ids[0])
+		if err != nil {
+			return 0, err
+		}
+		return len(doc.Embedding), nil
+	}
+	return 0, nil
 }
 
 // DeleteEntry removes all rows whose chunk IDs are listed. Called when an
