@@ -160,7 +160,7 @@ func (h *SearchIndexHandler) currentHashes(ctx context.Context) (map[string]stri
 		if !chunking.IncludeEntry(entry, h.ExcludeEmbedded) {
 			continue
 		}
-		hash, err := chunking.EntryStateHash(ctx, entry, h.Attachments)
+		hash, err := chunking.EntryStateHashCapped(ctx, entry, h.Attachments, h.MaxRunes)
 		if err != nil {
 			return nil, err
 		}
