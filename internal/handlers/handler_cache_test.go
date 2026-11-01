@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -136,8 +137,8 @@ func TestCacheHandlerPrune(t *testing.T) {
 	if got != want || counts.Bytes == 0 {
 		t.Errorf("the run should remove one of each kind and count the bytes, got %+v", counts)
 	}
-	if exists(t, f.unusedStore) {
-		t.Error("the unused store should be gone")
+	if exists(t, filepath.Join(f.unusedStore, "manifest.json")) || exists(t, filepath.Join(f.unusedStore, "chromem")) {
+		t.Error("the unused store's contents should be gone")
 	}
 	if index.DocumentsSize(f.usedStore, f.expiredRow) != 0 || index.DocumentsSize(f.usedStore, f.keptRow) == 0 {
 		t.Error("the used store should lose only its replaced version")
@@ -224,8 +225,11 @@ func TestCacheHandlerPruneLeavesARunningPassAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = held.Unlock() }()
-	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err != nil {
 		t.Fatal(err)
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); !errors.Is(err, handlers.ErrCachePruneRunning) {
+		t.Errorf("a run by hand while another runs should be refused, got %v", err)
 	}
 	if !exists(t, f.staleClone) {
 		t.Error("a second run while one holds the run lock should do nothing")

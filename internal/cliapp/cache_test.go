@@ -21,7 +21,7 @@ func (f *appFixture) runWithPrune(t *testing.T, launched *[]string, args ...stri
 	var stdout, stderr bytes.Buffer
 	command := cliapp.New(cliapp.Options{
 		Version: appVersion, Reader: strings.NewReader(""), Writer: &stdout, ErrWriter: &stderr,
-		LaunchCachePrune: func(dir string) error { *launched = append(*launched, dir); return nil },
+		LaunchCachePrune: func(dir, _ string) error { *launched = append(*launched, dir); return nil },
 	})
 	err := command.Run(t.Context(), append([]string{"sdd"}, args...))
 	return appResult{stdout: stdout.String(), stderr: stderr.String(), err: err}

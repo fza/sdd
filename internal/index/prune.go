@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/gofrs/flock"
 )
 
 // Background pruning of index stores (20261101-131514-d-cpt-9ci). A pass
@@ -199,45 +201,64 @@ func pruneSession(ctx context.Context, indexDir string, now time.Time, retention
 // longer than retention under its locks, and reports the bytes freed. It
 // returns ErrLockBusy when another process holds either lock, and zero when a
 // use arrived since the caller looked.
-func RemoveStore(indexDir string, now time.Time, retention time.Duration) (freed int64, err error) {
-	lock, fill := lockFile(indexDir), fillLockFile(indexDir)
-	for _, l := range []interface {
-		TryLock() (bool, error)
-		Unlock() error
-	}{lock, fill} {
-		locked, err := l.TryLock()
-		if err != nil {
-			return 0, fmt.Errorf("locking index store %s: %w", indexDir, err)
-		}
-		if !locked {
-			return 0, ErrLockBusy
-		}
-		defer func() { err = errors.Join(err, l.Unlock()) }()
-	}
-	last, err := StoreLastUse(indexDir)
-	if err != nil {
+func RemoveStore(indexDir string, now time.Time, retention time.Duration) (int64, error) {
+	doomed, err := retireStore(indexDir, now, retention)
+	if err != nil || doomed == "" {
 		return 0, err
 	}
-	if now.Sub(last) <= retention {
-		return 0, nil
-	}
-	size, err := StoreSize(indexDir)
+	size, err := StoreSize(doomed)
 	if err != nil {
 		return 0, err
-	}
-	doomed := filepath.Join(filepath.Dir(indexDir), "."+filepath.Base(indexDir)+prunedSuffix)
-	if err := os.RemoveAll(doomed); err != nil {
-		return 0, fmt.Errorf("removing %s: %w", doomed, err)
-	}
-	// Renamed under the locks, so a process arriving now finds no store and
-	// starts a fresh one instead of reading a half-deleted tree.
-	if err := os.Rename(indexDir, doomed); err != nil {
-		return 0, fmt.Errorf("retiring index store %s: %w", indexDir, err)
 	}
 	if err := os.RemoveAll(doomed); err != nil {
 		return 0, fmt.Errorf("removing %s: %w", doomed, err)
 	}
 	return size, nil
+}
+
+// retireStore moves the store's contents out under both locks and returns
+// where they went, or "" when a use arrived since the caller looked. The
+// directory and its lock files stay: a process waiting on a lock holds an
+// open path into it, and finds an empty store, which it fills afresh, instead
+// of a lock path whose directory is gone.
+func retireStore(indexDir string, now time.Time, retention time.Duration) (doomed string, err error) {
+	for _, l := range []*flock.Flock{lockFile(indexDir), fillLockFile(indexDir)} {
+		locked, lockErr := l.TryLock()
+		if lockErr != nil {
+			return "", fmt.Errorf("locking index store %s: %w", indexDir, lockErr)
+		}
+		if !locked {
+			return "", ErrLockBusy
+		}
+		defer func() { err = errors.Join(err, l.Unlock()) }()
+	}
+	last, err := StoreLastUse(indexDir)
+	if err != nil {
+		return "", err
+	}
+	if now.Sub(last) <= retention {
+		return "", nil
+	}
+	doomed = filepath.Join(filepath.Dir(indexDir), "."+filepath.Base(indexDir)+prunedSuffix)
+	if err := os.RemoveAll(doomed); err != nil {
+		return "", fmt.Errorf("removing %s: %w", doomed, err)
+	}
+	if err := os.Mkdir(doomed, 0o755); err != nil {
+		return "", fmt.Errorf("retiring index store %s: %w", indexDir, err)
+	}
+	entries, err := os.ReadDir(indexDir)
+	if err != nil {
+		return "", fmt.Errorf("retiring index store %s: %w", indexDir, err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == ".lock" || entry.Name() == ".fill.lock" {
+			continue
+		}
+		if err := os.Rename(filepath.Join(indexDir, entry.Name()), filepath.Join(doomed, entry.Name())); err != nil {
+			return "", fmt.Errorf("retiring index store %s: %w", indexDir, err)
+		}
+	}
+	return doomed, nil
 }
 
 // Stores lists the store directories under cacheRoot's index tree, and the

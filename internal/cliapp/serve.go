@@ -33,7 +33,7 @@ import (
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
-func serveCmd(launchCachePrune func(dir string) error) *cli.Command {
+func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 	return &cli.Command{
 		Name:  "serve",
 		Usage: "Run the workflow MCP server: dialogue-loop tools over stdio or HTTP",

@@ -54,6 +54,10 @@ func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
 	return h
 }
 
+// ErrCachePruneRunning refuses a pass asked for by hand while another
+// process runs one; a scheduled pass leaves quietly instead.
+var ErrCachePruneRunning = errors.New("another cache pruning run is in progress")
+
 // Prune runs one pruning pass over the whole cache and records its result in
 // the pruning status, failure included, so the next command can report it.
 func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (err error) {
@@ -66,8 +70,11 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 		return fmt.Errorf("locking cache pruning: %w", err)
 	}
 	if !locked {
-		slogutils.FromContext(ctx).Info("cache pruning already running in another process")
-		return nil
+		if cmd.Scheduled {
+			slogutils.FromContext(ctx).Info("cache pruning already running in another process")
+			return nil
+		}
+		return ErrCachePruneRunning
 	}
 	defer func() { err = errors.Join(err, run.Unlock()) }()
 
@@ -149,12 +156,23 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		errs = append(errs, err)
 	}
 	for _, dir := range clones {
-		size, err := dirSize(dir)
+		retired, err := h.registry.RetireUnconnectedClone(dir)
+		switch {
+		case errors.Is(err, repos.ErrClonesBusy):
+			log.Info("connected-repo clones in use, skipped")
+			continue
+		case err != nil:
+			errs = append(errs, err)
+			continue
+		case retired == "":
+			continue
+		}
+		size, err := dirSize(retired)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		if err := os.RemoveAll(dir); err != nil {
+		if err := os.RemoveAll(retired); err != nil {
 			errs = append(errs, fmt.Errorf("removing clone %s: %w", dir, err))
 			continue
 		}

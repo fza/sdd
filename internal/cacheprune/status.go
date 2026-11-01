@@ -25,6 +25,9 @@ const (
 	// RunLockFile admits one pruning run per machine.
 	RunLockFile = "cache-prune.lock"
 	updateLock  = "cache-prune.json.lock"
+	// LogFile receives the background run's output, for the failures it
+	// cannot record in the status file.
+	LogFile = "cache-prune.log"
 )
 
 // updateWait bounds how long a command waits for another process updating
@@ -49,6 +52,9 @@ type wireStatus struct {
 }
 
 // Load reads the record under stateRoot; a missing record is the zero status.
+// An unreadable record reads as a failure to report, never as an error: it
+// only caches run results, and refusing it would stop every later run and
+// `sdd info` until someone deleted it by hand. The next Update replaces it.
 func Load(stateRoot string) (model.CachePruneStatus, error) {
 	data, err := os.ReadFile(filepath.Join(stateRoot, statusFile))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -59,7 +65,11 @@ func Load(stateRoot string) (model.CachePruneStatus, error) {
 	}
 	var w wireStatus
 	if err := json.Unmarshal(data, &w); err != nil {
-		return model.CachePruneStatus{}, fmt.Errorf("parsing cache pruning status %s: %w", filepath.Join(stateRoot, statusFile), err)
+		unreadable := model.CachePruneStatus{Error: fmt.Sprintf("unreadable status record %s: %v", filepath.Join(stateRoot, statusFile), err)}
+		if info, statErr := os.Stat(filepath.Join(stateRoot, statusFile)); statErr == nil {
+			unreadable.FinishedAt = info.ModTime()
+		}
+		return unreadable, nil
 	}
 	return model.CachePruneStatus{
 		LaunchedAt: w.LaunchedAt, StartedAt: w.StartedAt, FinishedAt: w.FinishedAt,
@@ -107,7 +117,7 @@ func save(stateRoot string, s model.CachePruneStatus) error {
 	}
 	final := filepath.Join(stateRoot, statusFile)
 	temp := final + ".tmp"
-	if err := os.WriteFile(temp, append(data, '\n'), 0o644); err != nil {
+	if err := writeSynced(temp, append(data, '\n')); err != nil {
 		return fmt.Errorf("writing cache pruning status: %w", err)
 	}
 	if err := os.Rename(temp, final); err != nil {
@@ -116,9 +126,24 @@ func save(stateRoot string, s model.CachePruneStatus) error {
 	return nil
 }
 
+// writeSynced writes data to path and syncs it, so a crash before the rename
+// cannot leave the record empty.
+func writeSynced(path string, data []byte) (err error) {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, file.Close()) }()
+	if _, err := file.Write(data); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
 // LaunchIfDue starts a background run through launch when the last one is a
 // day or more ago, recording the launch first so the commands that follow do
-// not start another.
+// not start another. A launch that fails is recorded as the run's failure, so
+// it is reported once like any other.
 func LaunchIfDue(ctx context.Context, stateRoot string, now time.Time, launch func() error) error {
 	status, err := Load(stateRoot)
 	if err != nil {
@@ -130,10 +155,15 @@ func LaunchIfDue(ctx context.Context, stateRoot string, now time.Time, launch fu
 	if err := Update(ctx, stateRoot, func(s *model.CachePruneStatus) { s.LaunchedAt = now }); err != nil {
 		return err
 	}
-	if err := launch(); err != nil {
-		return fmt.Errorf("starting background cache pruning: %w", err)
+	launchErr := launch()
+	if launchErr == nil {
+		return nil
 	}
-	return nil
+	return Update(ctx, stateRoot, func(s *model.CachePruneStatus) {
+		s.FinishedAt = now
+		s.Error = fmt.Sprintf("starting the run: %v", launchErr)
+		s.Reported = false
+	})
 }
 
 // TakeFailureNotice returns the notice for a failed run no command has shown

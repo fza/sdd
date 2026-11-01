@@ -45,7 +45,7 @@ type Options struct {
 	// LaunchCachePrune starts the daily background `sdd cache prune` detached
 	// from this process, working from dir. Nil leaves background pruning off,
 	// as for a host running commands in-process.
-	LaunchCachePrune func(dir string) error
+	LaunchCachePrune func(dir, logPath string) error
 }
 
 // localConfigOverride carries --local-config: the file that stands in for

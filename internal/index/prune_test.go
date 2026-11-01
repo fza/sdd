@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
+
 	"github.com/networkteam/sdd/internal/index"
 )
 
@@ -232,8 +234,56 @@ func TestStoreUse(t *testing.T) {
 		if freed == 0 {
 			t.Error("removing a store should report the bytes freed")
 		}
-		if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("the unused store should be gone, stat says %v", err)
+		for _, part := range []string{"manifest.json", "chromem", "used"} {
+			if _, err := os.Stat(filepath.Join(dir, part)); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the unused store's %s should be gone, stat says %v", part, err)
+			}
+		}
+	})
+
+	t.Run("a reader waiting on a store being removed finds an empty one", func(t *testing.T) {
+		dir := storeWithVersions(t, version("a", index.DerivationCurrent, long, "e#v-a#summary"))
+		age(t, long, filepath.Join(dir, "used", index.DerivationCurrent+"@1"), filepath.Join(dir, "manifest.json"))
+		waiting := flock.New(filepath.Join(dir, ".lock"))
+		var before []os.FileInfo
+		for _, name := range []string{".lock", ".fill.lock"} {
+			file, err := os.OpenFile(filepath.Join(dir, name), os.O_RDONLY|os.O_CREATE, 0o644)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := file.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+			before = append(before, info)
+		}
+		if _, err := index.RemoveStore(dir, now, retention); err != nil {
+			t.Fatalf("removing: %v", err)
+		}
+		for i, name := range []string{".lock", ".fill.lock"} {
+			after, err := os.Stat(filepath.Join(dir, name))
+			if err != nil || !os.SameFile(before[i], after) {
+				t.Errorf("%s should stay the same file, so a process holding it open and one arriving later lock the same file", name)
+			}
+		}
+		if _, err := waiting.TryRLock(); err != nil {
+			t.Fatalf("a lock path opened before the removal should still lock: %v", err)
+		}
+		if err := waiting.Unlock(); err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := index.OpenSearchSnapshot(t.Context(), dir, time.Second)
+		if err != nil {
+			t.Fatalf("searching the removed store should start an empty one: %v", err)
+		}
+		if snapshot.Count() != 0 {
+			t.Error("a removed store should read as empty")
+		}
+		if err := snapshot.Close(); err != nil {
+			t.Fatal(err)
 		}
 	})
 
