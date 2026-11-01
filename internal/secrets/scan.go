@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 //go:embed rules.json
@@ -171,6 +172,9 @@ func (r *rule) find(path, text string, global []allowlist) []Finding {
 			continue
 		}
 		if r.Entropy != 0 && shannonEntropy(secret) <= r.Entropy {
+			continue
+		}
+		if r.ID == genericAPIKeyRule && !credentialShaped(secret) {
 			continue
 		}
 		line := linesAround(text, bounds[0], bounds[0]+len(match))
@@ -336,4 +340,24 @@ func shannonEntropy(data string) float64 {
 		entropy -= frequency * math.Log2(frequency)
 	}
 	return entropy
+}
+
+const genericAPIKeyRule = "generic-api-key"
+
+// credentialShaped reports whether a generic-api-key value carries a digit or
+// mixed-case letters; prose shaped like an assignment carries neither
+// (20261101-021050-d-tac-jac).
+func credentialShaped(value string) bool {
+	var lower, upper bool
+	for _, r := range value {
+		switch {
+		case unicode.IsDigit(r):
+			return true
+		case unicode.IsLower(r):
+			lower = true
+		case unicode.IsUpper(r):
+			upper = true
+		}
+	}
+	return lower && upper
 }

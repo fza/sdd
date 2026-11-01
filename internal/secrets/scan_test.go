@@ -214,3 +214,26 @@ func TestScanGitleaksSamples(t *testing.T) {
 		})
 	}
 }
+
+func TestGenericAPIKeyNeedsADigitOrMixedCase(t *testing.T) {
+	cases := []struct {
+		name    string
+		text    string
+		finding bool
+	}{
+		{name: "prose heading", text: "# Key questions: ownership/delegation\n", finding: false},
+		{name: "value with a digit", text: "# Key insight: zqvmeplurk/x7hdnwa\n", finding: true},
+		{name: "value with mixed case", text: "# Key questions: Ownership/delegation\n", finding: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings, err := secrets.Scan(tc.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if slices.Contains(ruleIDs(findings), "generic-api-key") != tc.finding {
+				t.Errorf("generic-api-key should judge the value by digits and letter case, raised %v", ruleIDs(findings))
+			}
+		})
+	}
+}
