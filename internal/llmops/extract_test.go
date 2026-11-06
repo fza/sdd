@@ -1,6 +1,7 @@
 package llmops_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -55,6 +56,9 @@ func TestPreflightExtractsAfterAnUnparseableSeverity(t *testing.T) {
 	}
 	if !strings.Contains(extract.UserPrompt, "no finding") {
 		t.Error("the extraction call must carry the unparseable output verbatim")
+	}
+	if !bytes.Equal(extract.ResponseSchema, runner.requests[0].ResponseSchema) || len(extract.ResponseSchema) == 0 {
+		t.Error("the extraction call must declare the schema the check it rescues declares")
 	}
 	if !strings.Contains(extract.SystemPrompt, "high") || !strings.Contains(extract.SystemPrompt, "medium") {
 		t.Error("the extraction call must carry the severity scale")
