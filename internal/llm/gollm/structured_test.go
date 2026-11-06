@@ -2,6 +2,7 @@ package gollm_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -15,25 +16,7 @@ import (
 	"github.com/networkteam/sdd/test"
 )
 
-var findingsSchema = map[string]any{
-	"type":                 "object",
-	"additionalProperties": false,
-	"required":             []any{"findings"},
-	"properties": map[string]any{
-		"findings": map[string]any{
-			"type": "array",
-			"items": map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"required":             []any{"observation", "severity"},
-				"properties": map[string]any{
-					"observation": map[string]any{"type": "string"},
-					"severity":    map[string]any{"type": "string", "enum": []any{"high", "medium", "low"}},
-				},
-			},
-		},
-	},
-}
+var findingsSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["observation","severity"],"properties":{"observation":{"type":"string"},"severity":{"type":"string","enum":["high","medium","low"]}}}}}}`)
 
 const validFindings = `{"findings":[{"observation":"o","severity":"low"}]}`
 
@@ -43,7 +26,7 @@ func newStructuredRunner(t *testing.T, endpoint, modelName string, mode model.St
 		Provider: "openai", Model: modelName, Endpoint: endpoint, StructuredOutput: mode,
 		APIKeys: map[string]string{"openai": "op-notarealkeyaaaaaaaaaa"},
 		Retry:   model.RetryConfig{MaxAttempts: 1},
-	}, gollmrunner.WithStructuredOutput("findings", findingsSchema))
+	})
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
 	}
@@ -65,7 +48,7 @@ func TestStructuredOutputModeSendsWhatItNames(t *testing.T) {
 			server := test.NewOpenAIServer(t, test.OpenAIBehaviour{Answer: validFindings})
 			runner := newStructuredRunner(t, server.URL, "m", tc.mode)
 
-			result, err := runner.Run(context.Background(), llm.Request{SystemPrompt: "SYSTEM", UserPrompt: "USER"})
+			result, err := runner.Run(context.Background(), llm.Request{SystemPrompt: "SYSTEM", UserPrompt: "USER", ResponseSchema: findingsSchema})
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -100,7 +83,7 @@ func TestAutoFallsBackWhenEndpointRefusesJSONSchema(t *testing.T) {
 	server := test.NewOpenAIServer(t, test.OpenAIBehaviour{RefuseJSONSchema: true, Answer: validFindings})
 	runner := newStructuredRunner(t, server.URL, "glm-5.3-flash", model.StructuredOutputAuto)
 
-	result, err := runner.Run(context.Background(), llm.Request{SystemPrompt: "SYSTEM", UserPrompt: "USER"})
+	result, err := runner.Run(context.Background(), llm.Request{SystemPrompt: "SYSTEM", UserPrompt: "USER", ResponseSchema: findingsSchema})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -111,11 +94,11 @@ func TestAutoFallsBackWhenEndpointRefusesJSONSchema(t *testing.T) {
 		t.Errorf("a refused json_schema request should be retried once in json_object mode, got %v", got)
 	}
 
-	if _, err := runner.Run(context.Background(), llm.Request{UserPrompt: "USER"}); err != nil {
+	if _, err := runner.Run(context.Background(), llm.Request{UserPrompt: "USER", ResponseSchema: findingsSchema}); err != nil {
 		t.Fatalf("second Run: %v", err)
 	}
 	fresh := newStructuredRunner(t, server.URL, "glm-5.3-flash", model.StructuredOutputAuto)
-	if _, err := fresh.Run(context.Background(), llm.Request{UserPrompt: "USER"}); err != nil {
+	if _, err := fresh.Run(context.Background(), llm.Request{UserPrompt: "USER", ResponseSchema: findingsSchema}); err != nil {
 		t.Fatalf("fresh runner Run: %v", err)
 	}
 	if got := server.ResponseFormats(); !slices.Equal(got, []string{"json_schema", "json_object", "json_object", "json_object"}) {
@@ -129,7 +112,7 @@ func TestAutoKeepsJSONSchemaOnUnrelatedBadRequest(t *testing.T) {
 	})
 	runner := newStructuredRunner(t, server.URL, "m", model.StructuredOutputAuto)
 
-	_, err := runner.Run(context.Background(), llm.Request{UserPrompt: "USER"})
+	_, err := runner.Run(context.Background(), llm.Request{UserPrompt: "USER", ResponseSchema: findingsSchema})
 	if err == nil {
 		t.Fatal("an unrelated 400 should fail the call")
 	}
@@ -157,7 +140,7 @@ func TestJSONObjectAnswerOutsideTheSchemaIsAResponseFault(t *testing.T) {
 			server := test.NewOpenAIServer(t, test.OpenAIBehaviour{Answer: tc.answer})
 			runner := newStructuredRunner(t, server.URL, "m", model.StructuredOutputJSONObject)
 
-			_, err := runner.Run(context.Background(), llm.Request{UserPrompt: "USER"})
+			_, err := runner.Run(context.Background(), llm.Request{UserPrompt: "USER", ResponseSchema: findingsSchema})
 			if err == nil {
 				t.Fatal("an answer outside the schema should not pass")
 			}

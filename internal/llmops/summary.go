@@ -48,7 +48,10 @@ func ParseSummaryResponse(output string) (*SummarizeResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading summary answer: %w", err)
 	}
-	var resp summaryResponse
+	var resp struct {
+		Title   string `json:"title"`
+		Summary string `json:"summary"`
+	}
 	if err := json.Unmarshal([]byte(jsonText), &resp); err != nil {
 		return nil, fmt.Errorf("parsing summary answer: %w", err)
 	}
@@ -84,7 +87,9 @@ func ParseTitleResponse(output string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("reading title answer: %w", err)
 	}
-	var resp titleResponse
+	var resp struct {
+		Title string `json:"title"`
+	}
 	if err := json.Unmarshal([]byte(jsonText), &resp); err != nil {
 		return "", fmt.Errorf("parsing title answer: %w", err)
 	}
@@ -118,7 +123,7 @@ type summaryContext struct {
 
 // RenderSummaryPrompt renders the paired title-and-summary prompt for an entry.
 func RenderSummaryPrompt(entry *model.Entry, graph *model.Graph, configuredLanguage string) (llm.Request, error) {
-	return renderSummaryTemplates(llm.PurposeSummarize, "summary", newSummaryContext(entry, graph, configuredLanguage))
+	return renderSummaryTemplates(llm.PurposeSummarize, "summary", summarySchema, newSummaryContext(entry, graph, configuredLanguage))
 }
 
 // RenderTitlePrompt renders the title-only prompt for an entry that already
@@ -126,7 +131,7 @@ func RenderSummaryPrompt(entry *model.Entry, graph *model.Graph, configuredLangu
 func RenderTitlePrompt(entry *model.Entry, graph *model.Graph, configuredLanguage string) (llm.Request, error) {
 	sctx := newSummaryContext(entry, graph, configuredLanguage)
 	sctx.StoredSummary = entry.Summary
-	return renderSummaryTemplates(llm.PurposeTitle, "title", sctx)
+	return renderSummaryTemplates(llm.PurposeTitle, "title", titleSchema, sctx)
 }
 
 func newSummaryContext(entry *model.Entry, graph *model.Graph, configuredLanguage string) *summaryContext {
@@ -181,7 +186,7 @@ func newSummaryContext(entry *model.Entry, graph *model.Graph, configuredLanguag
 	return sctx
 }
 
-func renderSummaryTemplates(purpose llm.Purpose, name string, sctx *summaryContext) (llm.Request, error) {
+func renderSummaryTemplates(purpose llm.Purpose, name string, schema json.RawMessage, sctx *summaryContext) (llm.Request, error) {
 	tmpl, err := template.ParseFS(summaryTemplates, "summary_templates/*.tmpl")
 	if err != nil {
 		return llm.Request{}, fmt.Errorf("parsing summary templates: %w", err)
@@ -196,9 +201,10 @@ func renderSummaryTemplates(purpose llm.Purpose, name string, sctx *summaryConte
 	}
 
 	return llm.Request{
-		Purpose:      purpose,
-		SystemPrompt: strings.TrimSpace(sysB.String()),
-		UserPrompt:   strings.TrimSpace(userB.String()),
+		Purpose:        purpose,
+		SystemPrompt:   strings.TrimSpace(sysB.String()),
+		UserPrompt:     strings.TrimSpace(userB.String()),
+		ResponseSchema: schema,
 	}, nil
 }
 
