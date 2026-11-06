@@ -26,27 +26,15 @@ const (
 	GuideMinor       GuideSeverity = "minor"
 )
 
-// GuideAxis is the closed set of writing-guide check axes (d-cpt-7zr rendered
-// for the guide; see writing_guide.tmpl). Closed on purpose: stable identifiers
-// are what the calibration corpus banks against — pre-flight's free-form
-// categories proved untrackable across runs.
-var guideAxes = map[string]bool{
-	"stranding":  true,
-	"dilution":   true,
-	"conflation": true,
-	"pointing":   true,
-	"form":       true,
-}
+// guideAxes is the closed set of writing-guide check axes (d-cpt-7zr rendered
+// for the guide; see writing_guide.tmpl), declared in the response schema.
+// Closed on purpose: stable identifiers are what the calibration corpus banks
+// against — pre-flight's free-form categories proved untrackable across runs.
+var guideAxes = findingEnum(writingGuideSchema, "axis")
 
 // guideRepairs is the closed set of repair directions — direction only,
 // never replacement text.
-var guideRepairs = map[string]bool{
-	"cut":      true,
-	"write-in": true,
-	"split":    true,
-	"point":    true,
-	"reword":   true,
-}
+var guideRepairs = findingEnum(writingGuideSchema, "repair")
 
 // GuideFinding is a single writing-guide observation. Reasoning leads —
 // it is the finding's work; axis, repair, and severity are its conclusions.
@@ -129,9 +117,6 @@ func renderWritingGuidePrompt(entry *model.Entry, closureTargets []model.Closure
 	if err != nil {
 		return llm.Request{}, fmt.Errorf("parsing writing-guide templates: %w", err)
 	}
-	if tmpl, err = tmpl.ParseFS(sharedPromptTemplates, "shared_templates/*.tmpl"); err != nil {
-		return llm.Request{}, fmt.Errorf("parsing shared prompt templates: %w", err)
-	}
 
 	sysData := struct{ TypeSystemFactID string }{TypeSystemFactID: refFacts.TypeSystemFactID}
 	userData := struct{ Draft, Kind, KindFactID string }{
@@ -149,9 +134,10 @@ func renderWritingGuidePrompt(entry *model.Entry, closureTargets []model.Closure
 	}
 
 	return llm.Request{
-		Purpose:      llm.PurposeWritingGuide,
-		SystemPrompt: strings.TrimSpace(sysB.String()),
-		UserPrompt:   strings.TrimSpace(userB.String()),
+		Purpose:        llm.PurposeWritingGuide,
+		SystemPrompt:   strings.TrimSpace(sysB.String()),
+		UserPrompt:     strings.TrimSpace(userB.String()),
+		ResponseSchema: writingGuideSchema,
 	}, nil
 }
 
@@ -207,12 +193,9 @@ func formatDraftForWritingGuide(e *model.Entry, closureTargets []model.ClosureTa
 	return b.String()
 }
 
-// parseWritingGuideResult parses the guide's JSON response. The LLM is asked
-// to respond with:
-//
-//	{"findings": [{"reasoning": "...", "axis": "...", "quote": "...", "repair": "...", "severity": "substantive|minor"}]}
-//
-// Empty findings array means the draft passed clean. Tolerates prose around
+// parseWritingGuideResult parses the guide's JSON response, shaped by
+// response_schemas/writing_guide.json. Empty findings array means the draft
+// passed clean. Tolerates prose around
 // the JSON object (shared extractJSONObject); malformed JSON, values outside
 // the closed axis/repair/severity sets, and empty required fields are errors,
 // so infrastructure failures stay distinct from findings.
@@ -222,7 +205,15 @@ func parseWritingGuideResult(output string) (*WritingGuideResult, error) {
 		return nil, err
 	}
 
-	var resp writingGuideResponse
+	var resp struct {
+		Findings []struct {
+			Reasoning string `json:"reasoning"`
+			Axis      string `json:"axis"`
+			Quote     string `json:"quote"`
+			Repair    string `json:"repair"`
+			Severity  string `json:"severity"`
+		} `json:"findings"`
+	}
 	if err := json.Unmarshal([]byte(jsonText), &resp); err != nil {
 		return nil, fmt.Errorf("parsing writing-guide JSON: %w", err)
 	}
