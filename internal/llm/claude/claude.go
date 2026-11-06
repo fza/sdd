@@ -32,12 +32,18 @@ func (r *Runner) identity() llm.Identity {
 // Run executes claude -p --output-format json and parses the JSON response.
 // The claude CLI accepts a single stdin payload, so SystemPrompt and
 // UserPrompt are concatenated — prompt caching is not available through this
-// transport. The calls are text reviews, so the CLI runs with no tools at
-// all: `--tools ""` removes the built-in ones and `--strict-mcp-config` the
-// configured MCP servers, whose tool definitions would otherwise load in full
-// into every prompt. A draft's text then has nothing to act through.
+// transport. A ResponseSchema goes to --json-schema, and the structured output
+// the CLI validated against it becomes the text. The calls are text reviews,
+// so the CLI runs with no tools at all: `--tools ""` removes the built-in ones
+// and `--strict-mcp-config` the configured MCP servers, whose tool definitions
+// would otherwise load in full into every prompt. A draft's text then has
+// nothing to act through.
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
-	cmd := exec.CommandContext(ctx, "claude", "-p", "--tools", "", "--strict-mcp-config", "--model", r.model, "--output-format", "json")
+	args := []string{"-p", "--tools", "", "--strict-mcp-config", "--model", r.model, "--output-format", "json"}
+	if len(req.ResponseSchema) > 0 {
+		args = append(args, "--json-schema", string(req.ResponseSchema))
+	}
+	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Stdin = strings.NewReader(req.Combined())
 	out, err := cmd.Output()
 	if err != nil {
@@ -52,6 +58,13 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	var resp claudeResponse
 	if err := json.Unmarshal(out, &resp); err != nil {
 		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("parsing claude JSON response: %w", err)}
+	}
+	text := resp.Result
+	if len(req.ResponseSchema) > 0 {
+		if len(resp.StructuredOutput) == 0 || string(resp.StructuredOutput) == "null" {
+			return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("claude -p returned no structured output for the response schema")}
+		}
+		text = string(resp.StructuredOutput)
 	}
 
 	// The CLI is the one transport reporting per-model usage (a call may span
@@ -72,7 +85,7 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	}
 
 	return llm.Result{
-		Text:     resp.Result,
+		Text:     text,
 		Identity: r.identity(),
 		Usage: llm.Usage{
 			InputTokens:       resp.Usage.InputTokens,
@@ -86,14 +99,15 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 
 // claudeResponse maps the JSON output of claude -p --output-format json.
 type claudeResponse struct {
-	Result        string                      `json:"result"`
-	TotalCostUSD  float64                     `json:"total_cost_usd"`
-	DurationMs    int64                       `json:"duration_ms"`
-	DurationAPIMs int64                       `json:"duration_api_ms"`
-	NumTurns      int                         `json:"num_turns"`
-	IsError       bool                        `json:"is_error"`
-	Usage         claudeUsage                 `json:"usage"`
-	ModelUsage    map[string]claudeModelUsage `json:"modelUsage"`
+	Result           string                      `json:"result"`
+	StructuredOutput json.RawMessage             `json:"structured_output"`
+	TotalCostUSD     float64                     `json:"total_cost_usd"`
+	DurationMs       int64                       `json:"duration_ms"`
+	DurationAPIMs    int64                       `json:"duration_api_ms"`
+	NumTurns         int                         `json:"num_turns"`
+	IsError          bool                        `json:"is_error"`
+	Usage            claudeUsage                 `json:"usage"`
+	ModelUsage       map[string]claudeModelUsage `json:"modelUsage"`
 }
 
 type claudeUsage struct {
