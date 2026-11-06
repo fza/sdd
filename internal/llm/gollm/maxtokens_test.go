@@ -38,8 +38,8 @@ func TestMaxTokensReachesTheRequest(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
-			if got := server.Requests()[0]["max_tokens"]; got != tc.want {
-				t.Errorf("max_tokens on the wire should follow the configured key, got %v", got)
+			if got := server.Requests()[0]["max_completion_tokens"]; got != tc.want {
+				t.Errorf("the cap on the wire should follow the configured value, got %v", got)
 			}
 		})
 	}
