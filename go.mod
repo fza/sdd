@@ -13,7 +13,6 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/gofrs/flock v0.13.0
 	github.com/google/jsonschema-go v0.4.3
-	github.com/invopop/jsonschema v0.13.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/networkteam/slogutils v0.4.0
 	github.com/philippgille/chromem-go v0.7.0
@@ -54,6 +53,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
+	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
@@ -97,4 +97,4 @@ require (
 // `go install pkg@version` (which sdd does not use) would break. Remove this
 // directive once the changes land upstream and bump the require above to the
 // released teilomillet/gollm version.
-replace github.com/teilomillet/gollm => github.com/fza/gollm v0.0.0-20261020094442-f406f9660768
+replace github.com/teilomillet/gollm => github.com/fza/gollm v0.0.0-20261106193424-4964191aafd4
