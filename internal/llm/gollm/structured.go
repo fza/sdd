@@ -33,52 +33,35 @@ var jsonObjectEndpoints sync.Map
 
 type clientFactory func(formatKey string, formatValue any) (upstream.LLM, error)
 
-// structuredOutput serves a schema-carrying runner in its configured mode.
+// structuredOutput serves a request carrying a ResponseSchema in the
+// configured mode. json_schema mode is gollm's own schema path; json_object
+// mode asks for any JSON object, states the schema in the system prompt and
+// validates the answer here.
 type structuredOutput struct {
 	mode        model.StructuredOutputMode
 	endpointKey string
+	provider    string
 	newClient   clientFactory
-	// instruction is appended to the system prompt in json_object mode.
-	instruction string
-	validator   *jsonschema.Resolved
 
 	mu           sync.Mutex
-	schemaClient upstream.LLM
 	objectClient upstream.LLM
+	validators   map[string]*jsonschema.Resolved
 }
 
-func newStructuredOutput(cfg model.LLMConfig, mode model.StructuredOutputMode, name string, schema map[string]any, newClient clientFactory) (*structuredOutput, error) {
-	raw, err := json.Marshal(schema)
-	if err != nil {
-		return nil, fmt.Errorf("gollm: encoding response schema %s: %w", name, err)
-	}
-	var parsed jsonschema.Schema
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, fmt.Errorf("gollm: decoding response schema %s: %w", name, err)
-	}
-	validator, err := parsed.Resolve(nil)
-	if err != nil {
-		return nil, fmt.Errorf("gollm: resolving response schema %s: %w", name, err)
-	}
-
+func newStructuredOutput(cfg model.LLMConfig, mode model.StructuredOutputMode, newClient clientFactory) (*structuredOutput, error) {
 	so := &structuredOutput{
 		mode:        mode,
 		endpointKey: strings.Join([]string{cfg.Provider, cfg.Endpoint, cfg.OllamaEndpoint, cfg.Model}, "\x00"),
+		provider:    cfg.Provider,
 		newClient:   newClient,
-		instruction: "Answer with one JSON object matching this JSON Schema, and nothing else:\n" + string(raw),
-		validator:   validator,
+		validators:  map[string]*jsonschema.Resolved{},
 	}
-
-	// The client a call starts on is built eagerly, so a misconfiguration
+	// A json_object runner builds its client eagerly, so a misconfiguration
 	// fails the command rather than its first call.
 	if mode == model.StructuredOutputJSONObject {
-		so.objectClient, err = newClient(jsonObjectOption(cfg.Provider))
-	} else {
-		key, value := structuredOutputOption(cfg.Provider, name, schema)
-		so.schemaClient, err = newClient(key, value)
-	}
-	if err != nil {
-		return nil, err
+		if _, err := so.jsonObjectClient(); err != nil {
+			return nil, err
+		}
 	}
 	return so, nil
 }
@@ -93,7 +76,7 @@ func (so *structuredOutput) run(ctx context.Context, r *Runner, req llm.Request)
 		}
 	}
 
-	result, err := r.generate(ctx, so.schemaClient, req)
+	result, err := r.generate(ctx, r.client, req, upstream.WithResponseSchema(req.ResponseSchema))
 	if err == nil || so.mode != model.StructuredOutputAuto || !refusesJSONSchema(err) {
 		return result, err
 	}
@@ -104,30 +87,35 @@ func (so *structuredOutput) run(ctx context.Context, r *Runner, req llm.Request)
 }
 
 func (so *structuredOutput) runJSONObject(ctx context.Context, r *Runner, req llm.Request) (llm.Result, error) {
-	client, err := so.jsonObjectClient(r.provider)
+	client, err := so.jsonObjectClient()
+	if err != nil {
+		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: err}
+	}
+	validator, err := so.validator(req.ResponseSchema)
 	if err != nil {
 		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: err}
 	}
 
-	req.SystemPrompt = strings.TrimSpace(req.SystemPrompt + "\n\n" + so.instruction)
+	instruction := "Answer with one JSON object matching this JSON Schema, and nothing else:\n" + string(req.ResponseSchema)
+	req.SystemPrompt = strings.TrimSpace(req.SystemPrompt + "\n\n" + instruction)
 	result, err := r.generate(ctx, client, req)
 	if err != nil {
 		return llm.Result{}, err
 	}
-	if err := so.validate(result.Text); err != nil {
+	if err := validate(validator, result.Text); err != nil {
 		fault := upstreamllm.NewLLMError(upstreamllm.ErrorTypeResponse, "failed to parse response", err)
 		return llm.Result{}, r.rejectedReply(ctx, &llm.MalformedAnswerError{Text: result.Text, Err: fault}, result.Usage, result.FinishReason)
 	}
 	return result, nil
 }
 
-func (so *structuredOutput) jsonObjectClient(provider string) (upstream.LLM, error) {
+func (so *structuredOutput) jsonObjectClient() (upstream.LLM, error) {
 	so.mu.Lock()
 	defer so.mu.Unlock()
 	if so.objectClient != nil {
 		return so.objectClient, nil
 	}
-	client, err := so.newClient(jsonObjectOption(provider))
+	client, err := so.newClient(jsonObjectOption(so.provider))
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +123,26 @@ func (so *structuredOutput) jsonObjectClient(provider string) (upstream.LLM, err
 	return client, nil
 }
 
-func (so *structuredOutput) validate(text string) error {
+// validator resolves a response schema once per distinct schema.
+func (so *structuredOutput) validator(schema json.RawMessage) (*jsonschema.Resolved, error) {
+	so.mu.Lock()
+	defer so.mu.Unlock()
+	if resolved, ok := so.validators[string(schema)]; ok {
+		return resolved, nil
+	}
+	var parsed jsonschema.Schema
+	if err := json.Unmarshal(schema, &parsed); err != nil {
+		return nil, fmt.Errorf("gollm: decoding response schema: %w", err)
+	}
+	resolved, err := parsed.Resolve(nil)
+	if err != nil {
+		return nil, fmt.Errorf("gollm: resolving response schema: %w", err)
+	}
+	so.validators[string(schema)] = resolved
+	return resolved, nil
+}
+
+func validate(validator *jsonschema.Resolved, text string) error {
 	var answer any
 	err := json.Unmarshal([]byte(strings.TrimSpace(text)), &answer)
 	if err != nil {
@@ -144,7 +151,7 @@ func (so *structuredOutput) validate(text string) error {
 	if _, isObject := answer.(map[string]any); !isObject {
 		return fmt.Errorf("%w: not a JSON object", ErrSchemaMismatch)
 	}
-	err = so.validator.Validate(answer)
+	err = validator.Validate(answer)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrSchemaMismatch, err)
 	}
