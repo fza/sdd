@@ -128,3 +128,34 @@ func TestTitlePromptsStateTheTitleRule(t *testing.T) {
 		})
 	}
 }
+
+// Each call constrains its answer to the fields its parser reads; the title-only
+// call must not be asked for a summary it would discard.
+func TestSummaryAndTitleRequestsDeclareTheirSchema(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		render  func(*model.Entry, *model.Graph, string) (llm.Request, error)
+		want    []string
+		without string
+	}{
+		{name: "summary", render: llmops.RenderSummaryPrompt, want: []string{`"title"`, `"summary"`}},
+		{name: "title", render: llmops.RenderTitlePrompt, want: []string{`"title"`}, without: `"summary"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, graph := titledFixture()
+			req, err := tc.render(entry, graph, "")
+			if err != nil {
+				t.Fatalf("rendering the %s prompt: %v", tc.name, err)
+			}
+			schema := string(req.ResponseSchema)
+			for _, field := range tc.want {
+				if !strings.Contains(schema, field) {
+					t.Errorf("the request schema should declare %s, got %s", field, schema)
+				}
+			}
+			if tc.without != "" && strings.Contains(schema, tc.without) {
+				t.Errorf("the request schema should not declare %s, got %s", tc.without, schema)
+			}
+		})
+	}
+}

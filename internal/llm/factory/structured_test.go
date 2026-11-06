@@ -2,6 +2,7 @@ package factory_test
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -94,7 +95,7 @@ func TestFallbackStaysWithinTheCallTimeout(t *testing.T) {
 			}
 
 			started := time.Now()
-			_, err = runner.Run(context.Background(), llm.Request{Purpose: purpose, UserPrompt: "x"})
+			_, err = runner.Run(context.Background(), llm.Request{Purpose: purpose, UserPrompt: "x", ResponseSchema: json.RawMessage(`{"type":"object","properties":{"findings":{"type":"array"}},"required":["findings"]}`)})
 			elapsed := time.Since(started)
 			if err == nil {
 				t.Fatal("refused request and fallback should share one timeout")

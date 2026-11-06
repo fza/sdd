@@ -2,6 +2,7 @@ package gollm_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -78,12 +79,12 @@ func TestMalformedAnswerCarriesWhatTheProviderMetered(t *testing.T) {
 		APIKeys:          map[string]string{"openai": "op-notarealkeyaaaaaaaaaa"},
 		Retry:            model.RetryConfig{MaxAttempts: 1},
 		StructuredOutput: model.StructuredOutputJSONObject,
-	}, gollmrunner.WithStructuredOutput("answer", map[string]any{"type": "object"}))
+	})
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
 	}
 
-	_, err = runner.Run(context.Background(), llm.Request{UserPrompt: "USER"})
+	_, err = runner.Run(context.Background(), llm.Request{UserPrompt: "USER", ResponseSchema: json.RawMessage(`{"type":"object"}`)})
 
 	attributed, ok := errors.AsType[*llm.Error](err)
 	if !ok {

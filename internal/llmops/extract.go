@@ -2,6 +2,7 @@ package llmops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,6 +18,8 @@ import (
 // rubric in hand the model can only reformat, never reach a different verdict.
 type extraction struct {
 	purpose llm.Purpose
+	// responseSchema constrains the reformat to the shape the check declares.
+	responseSchema json.RawMessage
 	// schema is the target shape, written as one compact example line.
 	schema string
 	// scaleTemplate names the severity partial the check scores on.
@@ -24,15 +27,17 @@ type extraction struct {
 }
 
 var preflightExtraction = extraction{
-	purpose:       llm.PurposePreflightExtract,
-	schema:        `{"findings":[{"observation":"...","category":"short-hyphenated-tag","severity":"high|medium|low"}]}`,
-	scaleTemplate: "severity_scale",
+	purpose:        llm.PurposePreflightExtract,
+	responseSchema: preflightSchema,
+	schema:         `{"findings":[{"observation":"...","category":"short-hyphenated-tag","severity":"high|medium|low"}]}`,
+	scaleTemplate:  "severity_scale",
 }
 
 var writingGuideExtraction = extraction{
-	purpose:       llm.PurposeWritingGuideExtract,
-	schema:        `{"findings":[{"reasoning":"...","axis":"stranding|dilution|conflation|pointing|form","quote":"...","repair":"cut|write-in|split|point|reword","severity":"substantive|minor"}]}`,
-	scaleTemplate: "guide_severity_scale",
+	purpose:        llm.PurposeWritingGuideExtract,
+	responseSchema: writingGuideSchema,
+	schema:         `{"findings":[{"reasoning":"...","axis":"stranding|dilution|conflation|pointing|form","quote":"...","repair":"cut|write-in|split|point|reword","severity":"substantive|minor"}]}`,
+	scaleTemplate:  "guide_severity_scale",
 }
 
 // runJSONCheck runs a JSON-shaped check and parses its response, falling back
@@ -102,9 +107,10 @@ func renderExtractPrompt(spec extraction, priorOutput string) (llm.Request, erro
 	}
 
 	return llm.Request{
-		Purpose:      spec.purpose,
-		SystemPrompt: strings.TrimSpace(system.String()),
-		UserPrompt:   strings.TrimSpace(priorOutput),
+		Purpose:        spec.purpose,
+		SystemPrompt:   strings.TrimSpace(system.String()),
+		UserPrompt:     strings.TrimSpace(priorOutput),
+		ResponseSchema: spec.responseSchema,
 	}, nil
 }
 
