@@ -49,39 +49,14 @@ type Runner struct {
 	host     string
 	useCache bool
 
-	// structured is nil for a runner carrying no schema.
 	structured *structuredOutput
-}
-
-// Option configures a Runner at construction.
-type Option func(*options)
-
-type options struct {
-	schemaName string
-	schema     map[string]any
-}
-
-// WithStructuredOutput constrains responses to schema where the provider has
-// a known wire key for it. Providers without one (anthropic, and any not
-// listed in structuredOutputOption) are left unconstrained rather than sent a
-// key they would echo into the prompt or reject.
-func WithStructuredOutput(name string, schema map[string]any) Option {
-	return func(o *options) {
-		o.schemaName = name
-		o.schema = schema
-	}
 }
 
 // NewRunner constructs a gollm-backed Runner from an LLMConfig. Provider
 // must be one of the gollm-supported providers (e.g. "anthropic", "openai",
 // "ollama"). Returns a typed error when required config is missing (API
 // key for remote providers).
-func NewRunner(cfg model.LLMConfig, opts ...Option) (*Runner, error) {
-	var o options
-	for _, apply := range opts {
-		apply(&o)
-	}
-
+func NewRunner(cfg model.LLMConfig) (*Runner, error) {
 	if cfg.Provider == "" {
 		return nil, fmt.Errorf("gollm: provider not configured")
 	}
@@ -139,8 +114,13 @@ func NewRunner(cfg model.LLMConfig, opts ...Option) (*Runner, error) {
 		}
 	}
 
-	if cfg.Provider == "openai" && cfg.Endpoint != "" {
-		cfgOpts = append(cfgOpts, upstream.SetOpenAIEndpoint(cfg.Endpoint))
+	if cfg.Endpoint != "" {
+		switch cfg.Provider {
+		case "openai":
+			cfgOpts = append(cfgOpts, upstream.SetOpenAIEndpoint(cfg.Endpoint))
+		case "anthropic":
+			cfgOpts = append(cfgOpts, upstream.SetAnthropicEndpoint(cfg.Endpoint))
+		}
 	}
 
 	// Enable Anthropic prompt caching — sends the anthropic-beta header so
@@ -199,15 +179,11 @@ func NewRunner(cfg model.LLMConfig, opts ...Option) (*Runner, error) {
 		useCache: useCache,
 	}
 
-	if o.schema == nil {
-		runner.client, err = newClient("", nil)
-		if err != nil {
-			return nil, err
-		}
-		return runner, nil
+	runner.client, err = newClient("", nil)
+	if err != nil {
+		return nil, err
 	}
-
-	runner.structured, err = newStructuredOutput(cfg, mode, o.schemaName, o.schema, newClient)
+	runner.structured, err = newStructuredOutput(cfg, mode, newClient)
 	if err != nil {
 		return nil, err
 	}
@@ -282,16 +258,18 @@ func (r *Runner) identity() llm.Identity {
 // Run sends the request to the underlying gollm client. When caching is
 // enabled (Anthropic), the SystemPrompt is tagged ephemeral so the server
 // caches the prefix. Other providers ignore the cache hint but still see
-// the split system/user message pair. Failures carry the identity through the
-// typed llm.Error so they measure like successes.
+// the split system/user message pair. A ResponseSchema goes to the provider's
+// native structured output, or to json_object mode as llm.structured_output
+// selects. Failures carry the identity through the typed llm.Error so they
+// measure like successes.
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
-	if r.structured != nil {
-		return r.structured.run(ctx, r, req)
+	if len(req.ResponseSchema) == 0 {
+		return r.generate(ctx, r.client, req)
 	}
-	return r.generate(ctx, r.client, req)
+	return r.structured.run(ctx, r, req)
 }
 
-func (r *Runner) generate(ctx context.Context, client upstream.LLM, req llm.Request) (llm.Result, error) {
+func (r *Runner) generate(ctx context.Context, client upstream.LLM, req llm.Request, genOpts ...upstreamllm.GenerateOption) (llm.Result, error) {
 	var opts []upstream.PromptOption
 	if req.SystemPrompt != "" {
 		cacheType := upstream.CacheType("")
@@ -303,7 +281,7 @@ func (r *Runner) generate(ctx context.Context, client upstream.LLM, req llm.Requ
 
 	prompt := upstream.NewPrompt(req.UserPrompt, opts...)
 
-	resp, err := client.GenerateWithUsage(ctx, prompt)
+	resp, err := client.GenerateWithUsage(ctx, prompt, genOpts...)
 	if err != nil {
 		var noAnswer *upstreamllm.NoAnswerError
 		if errors.As(err, &noAnswer) {
@@ -383,33 +361,13 @@ func usageFromResponse(u *upstream.Usage) llm.Usage {
 		CacheCreateTokens: u.CacheCreationInputTokens,
 		ReasoningTokens:   u.ReasoningTokens,
 		BillingCost:       string(u.BillingCost),
+		CostUSD:           u.CostUSD,
 	}
 }
 
-// structuredOutputOption maps a schema onto the request-body key the provider
-// reads it from in json_schema mode. The gollm option map is copied into the
-// body verbatim, so the key name is the whole contract. An empty key means the
-// provider has no structured-output channel and the schema is not sent.
-func structuredOutputOption(provider, name string, schema map[string]any) (string, any) {
-	switch provider {
-	case "openai":
-		return "response_format", map[string]any{
-			"type": "json_schema",
-			"json_schema": map[string]any{
-				"name":   name,
-				"strict": true,
-				"schema": schema,
-			},
-		}
-	case "ollama":
-		return "format", schema
-	default:
-		return "", nil
-	}
-}
-
-// jsonObjectOption is the json_object mode counterpart of
-// structuredOutputOption: the key asking for any JSON object.
+// jsonObjectOption is the request-body key asking the provider for any JSON
+// object, for json_object mode. An empty key means the provider has no such
+// mode and the instruction in the system prompt carries the request alone.
 func jsonObjectOption(provider string) (string, any) {
 	switch provider {
 	case "openai":
