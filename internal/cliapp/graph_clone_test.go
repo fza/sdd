@@ -3,10 +3,15 @@ package cliapp_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/syncstate"
 	"github.com/networkteam/sdd/test"
 )
 
@@ -155,5 +160,78 @@ func TestInitGraphRepoAndTheStockGuard(t *testing.T) {
 	}
 	if status := gitIn(t, code, "status", "--porcelain", "--untracked-files=all"); strings.TrimSpace(status) != "" {
 		t.Errorf("the failed capture should write nothing:\n%s", status)
+	}
+}
+
+// After an upstream force push, a set-aside entry refining one the rewrite
+// kept returns and is pushed on its own; a plain new entry, and one failing
+// the mechanical pre-flight, wait in the blocked-sync notice of the agent
+// that claims it, until they are discarded.
+func TestGraphRepoForcePushReaddsOnlyARefiningEntry(t *testing.T) {
+	code, remote := graphRepoCode(t)
+	remote.Commit(t, "a decision", map[string]string{test.ForcePushDecision: test.ForcePushFixture(t, "decision.md")})
+	runApp(t, code, "repo", "path", string(graphCloneRepoID))
+	clone := cloneDir(t)
+	repo := git.CLI{Dir: clone}
+	for path, fixture := range map[string]string{test.ForcePushRefines: "refines.md", test.ForcePushPlain: "plain.md", test.ForcePushUnchecked: "unchecked.md"} {
+		writeFile(t, filepath.Join(clone, filepath.FromSlash(path)), test.ForcePushFixture(t, fixture))
+		err := repo.Commit("sdd: capture "+fixture, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	remote.Rewrite(t, "rewritten history", map[string]string{
+		".sdd/config.yaml":      "graph_dir: .sdd/graph\nrepo_id: " + string(graphCloneRepoID) + "\ndefault_branch: main\nlanguage: en\n",
+		".gitignore":            ".sdd/tmp/\n.sdd/config.local.yaml\n",
+		test.ForcePushDecision:  test.ForcePushFixture(t, "decision.md"),
+		"src/rewritten-code.go": "package code\n",
+	})
+
+	runApp(t, code, "sync")
+
+	_, pushed := remote.Show(t, test.ForcePushRefines)
+	if !pushed {
+		t.Error("the refining entry should be re-added and pushed")
+	}
+	for _, waiting := range []string{test.ForcePushPlain, test.ForcePushUnchecked} {
+		_, pushed = remote.Show(t, waiting)
+		if pushed {
+			t.Errorf("%s should wait for an agent, not be pushed", waiting)
+		}
+	}
+	graphDir := filepath.Join(clone, ".sdd", "graph")
+	blocked, err := syncstate.ReadBlocked(t.Context(), graphDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked == nil || blocked.Kind != model.SyncBlockedSetAside || !slices.Equal(blocked.Paths, []string{test.ForcePushPlain, test.ForcePushUnchecked}) {
+		t.Fatalf("the plain entry and the one failing pre-flight should be recorded as set aside, got %+v", blocked)
+	}
+	opts, err := syncstate.HandlerOptions(t.Context(), graphDir, handlers.Options{GraphDir: graphDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notice string
+	err = handlers.New(opts).ClaimSyncNotice(t.Context(), &command.ClaimSyncNoticeCmd{Session: "s_1", OnNotice: func(text string) { notice = text }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(notice, "You own this block") || !strings.Contains(notice, test.ForcePushPlain) || !strings.Contains(notice, blocked.Detail) {
+		t.Errorf("the claiming agent's notice should name the set-aside entry and where it lies:\n%s", notice)
+	}
+
+	for _, discarded := range blocked.Paths {
+		err = os.Remove(filepath.Join(blocked.Detail, filepath.FromSlash(discarded)))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	runApp(t, code, "sync")
+	blocked, err = syncstate.ReadBlocked(t.Context(), graphDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked != nil {
+		t.Errorf("sync should clear the block once no set-aside entry is left, got %+v", blocked)
 	}
 }

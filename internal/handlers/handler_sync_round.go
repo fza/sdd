@@ -166,6 +166,10 @@ func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 	case model.SyncStateFetchFailed:
 		return h.recordBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedFetchFailed, Detail: reason})
 	}
+	setAside, err := h.settleSetAside(ctx)
+	if err != nil {
+		return err
+	}
 	blocked, err := h.pullUpstream(ctx)
 	if err != nil || blocked {
 		return err
@@ -173,6 +177,9 @@ func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 	blocked, err = h.publish(ctx)
 	if err != nil || blocked {
 		return err
+	}
+	if setAside != nil {
+		return h.recordBlocked(ctx, *setAside)
 	}
 	return h.clearRecord(func(model.SyncBlocked) bool { return true })
 }

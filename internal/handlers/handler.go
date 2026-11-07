@@ -134,6 +134,7 @@ type Handler struct {
 	syncRecord      SyncRecord
 	syncMode        model.SyncMode
 	graphClone      GraphCloneKeeper
+	setAsideJudge   SetAsideJudge
 	changes         ChangeReader
 	repos           *repos.Manager
 	graphClones     *repos.GraphClones
@@ -174,7 +175,10 @@ type Options struct {
 	// (20261106-202055-d-tac-eyl): every sync path keeps it first, and a pull
 	// merges every upstream commit.
 	GraphClone GraphCloneKeeper
-	Changes    ChangeReader
+	// SetAsideJudge decides which entries an upstream force push set aside
+	// return on their own. Nil leaves every one to an agent.
+	SetAsideJudge SetAsideJudge
+	Changes       ChangeReader
 	// Repos owns the connected-repos side effects (clone, pull, config
 	// writes). Nil means no connected-repos support — repo commands fail
 	// loud, and cross-repo cache freshening is skipped.
@@ -218,6 +222,7 @@ func New(opts Options) *Handler {
 		syncRecord:      opts.SyncRecord,
 		syncMode:        opts.SyncMode,
 		graphClone:      opts.GraphClone,
+		setAsideJudge:   opts.SetAsideJudge,
 		changes:         opts.Changes,
 		repos:           opts.Repos,
 		graphClones:     opts.GraphClones,

@@ -132,3 +132,26 @@ func (r *GraphRemote) Show(t *testing.T, name string) (string, bool) {
 	}
 	return string(out), true
 }
+
+// Rewrite replaces the remote's history by one commit holding files, as a
+// force push does, and returns that commit.
+func (r *GraphRemote) Rewrite(t *testing.T, message string, files map[string]string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "rewrite")
+	Git(t, r.home, "init", "-q", "-b", "main", dir)
+	for name, content := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		err := os.MkdirAll(filepath.Dir(path), 0o755)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = os.WriteFile(path, []byte(content), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	Git(t, dir, "add", "-A")
+	Git(t, dir, "commit", "-q", "-m", message)
+	Git(t, dir, "push", "-q", "--force", r.Bare, "HEAD:refs/heads/main")
+	return strings.TrimSpace(Git(t, dir, "rev-parse", "HEAD"))
+}

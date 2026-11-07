@@ -163,6 +163,9 @@ func (b SyncBlocked) reason() string {
 		return fmt.Sprintf("pushing to %s failed: %s", b.Upstream, b.Detail)
 	case SyncBlockedGraphMissing:
 		return fmt.Sprintf("the graph directory %s is not in a git repository or does not exist", strconv.Quote(b.Detail))
+	case SyncBlockedSetAside:
+		return fmt.Sprintf("the upstream was force-pushed from %s to %s, which set aside %d entries sdd had not pushed",
+			shortCommit(b.Source), shortCommit(b.Destination), len(b.Paths))
 	}
 	return string(b.Kind)
 }
@@ -191,6 +194,10 @@ func (b SyncBlocked) Steps() string {
 		fix = "Check the remote and its authentication with `git fetch`; a returning network clears it on the next round."
 	case SyncBlockedGraphMissing:
 		fix = "Restore the graph directory or correct graph_dir in the config."
+	case SyncBlockedSetAside:
+		fix = fmt.Sprintf("Each set-aside entry lies at its graph path under %s: %s. Re-capture it with the old entry as the draft, "+
+			"or discard it and tell the user why; then delete its file there. Sync clears this once none is left.",
+			strconv.Quote(b.Detail), quotedPaths(b.Paths))
 	}
 	return fmt.Sprintf("You own this block, in %s. %s Fix it yourself first and tell the user in one line once it is fixed. "+
 		"When you cannot, such as for commits you may not rewrite, an authentication failure or a missing repository, tell the user and ask how to proceed.",

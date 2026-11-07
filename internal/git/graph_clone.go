@@ -306,10 +306,18 @@ func (c CLI) withRemote(ctx context.Context, operation func(remote string) error
 
 // fetchClone fetches the clone's upstream over the working protocol.
 func (c CLI) fetchClone(ctx context.Context) error {
-	return c.withRemote(ctx, func(remote string) error {
+	previous, err := c.fetchedTip(ctx)
+	if err != nil {
+		return err
+	}
+	err = c.withRemote(ctx, func(remote string) error {
 		_, err := c.runRemote(ctx, "fetch", "--quiet", remote)
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	return c.followForcePush(ctx, previous)
 }
 
 // pullClone fetches and merges the clone's upstream.
@@ -346,10 +354,14 @@ func (c CLI) pushClone(ctx context.Context) error {
 	if merge == "" {
 		merge = "refs/heads/" + branch
 	}
-	return c.withRemote(ctx, func(remote string) error {
+	err = c.withRemote(ctx, func(remote string) error {
 		_, err := c.runRemote(ctx, "push", "--quiet", remote, "HEAD:"+merge)
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	return c.noteFetchedTip(ctx)
 }
 
 // KeepGraphClone restores the clone to what only sdd made: tracked files
@@ -406,6 +418,18 @@ func (c CLI) KeepGraphClone(ctx context.Context, routing []string) error {
 			return err
 		}
 		err = writeIfChanged(attributesPath, model.RouteMergeAttributes(attributes, routing))
+		if err != nil {
+			return err
+		}
+	}
+	// A force push fetched before an interrupted round is followed before
+	// the upkeep would replay every commit of sdd's onto it.
+	previous, err := readOptional(filepath.Join(gitDir, fetchedTipFile))
+	if err != nil {
+		return err
+	}
+	if previous = strings.TrimSpace(previous); previous != "" {
+		err = c.followForcePush(ctx, previous)
 		if err != nil {
 			return err
 		}

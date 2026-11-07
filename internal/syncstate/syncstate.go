@@ -15,8 +15,10 @@ import (
 
 	"github.com/gofrs/flock"
 
+	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -237,6 +239,14 @@ func HandlerOptions(ctx context.Context, graphDir string, opts handlers.Options)
 	opts.SyncLock, opts.SyncRecord = state, state
 	if git.IsGraphClone(repo.Dir) {
 		opts.GraphClone = repo
+		cfg, err := meta.ReadCommittedConfigFS(os.DirFS(repo.Dir))
+		if errors.Is(err, meta.ErrNotAnSDDProject) {
+			return opts, nil
+		}
+		if err != nil {
+			return opts, err
+		}
+		opts.SetAsideJudge = finders.New(finders.Options{Config: cfg})
 	}
 	return opts, nil
 }
