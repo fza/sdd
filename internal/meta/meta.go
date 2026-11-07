@@ -117,6 +117,7 @@ func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.P
 		if err != nil {
 			return nil, nil, err
 		}
+		local = model.HonoredLocal(local)
 	}
 	return committed, local, nil
 }

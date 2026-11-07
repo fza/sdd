@@ -132,6 +132,7 @@ func (h *Handler) runProjectInit(ctx context.Context, cmd *command.InitCmd, proj
 	projectCmd.RepoRoot = projectRoot
 	projectCmd.StableRepoRoot = stableRoot
 	projectCmd.ProjectDir = ""
+	projectCmd.GraphRepo = ""
 	projectCmd.SetUpProject = false
 	projectCmd.RemoteURL = h.projectRepos.RemoteURL(projectRoot)
 	adjust(&projectCmd)

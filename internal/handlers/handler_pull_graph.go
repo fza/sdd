@@ -73,6 +73,9 @@ func (h *Handler) mergeUpstream(ctx context.Context, cmd *command.PullGraphCmd) 
 	}
 
 	verdict := model.DecidePull(h.syncMode, upstream != "", incoming, clean)
+	if h.graphClone != nil {
+		verdict = model.DecideClonePull(upstream != "", incoming, clean)
+	}
 	switch verdict {
 	case model.PullReady:
 		conflicts, err := h.graphPuller.MergeTreePredict(ctx, "HEAD", upstream)

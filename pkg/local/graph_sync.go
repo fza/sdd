@@ -58,7 +58,7 @@ func (s MergeDriverSetup) Finalize(ctx context.Context, _ app.AppliedMutation) e
 // the cooldown; a timer round always fetches and stamps the marker.
 func (a *GitWorktreeAcquirer) SyncGraph(ctx context.Context, branch string, trigger app.SyncTrigger) error {
 	checkout, cfg, err := a.syncCheckout(ctx, branch)
-	if err != nil || model.ResolveSyncMode(cfg) != model.SyncModeAuto {
+	if err != nil || syncstate.Mode(cfg, checkout) != model.SyncModeAuto {
 		return err
 	}
 	opts, err := syncstate.HandlerOptions(ctx, meta.ResolveGraphDir(checkout, cfg), handlers.Options{
@@ -128,7 +128,7 @@ func (a *GitWorktreeAcquirer) SyncNotice(ctx context.Context, branch, session st
 	}
 	var notice string
 	err = handlers.New(opts).ClaimSyncNotice(ctx, &command.ClaimSyncNoticeCmd{
-		Session: session, TitlesOnly: model.ResolveSyncMode(cfg) != model.SyncModeAuto, OnNotice: func(text string) { notice = text },
+		Session: session, TitlesOnly: syncstate.Mode(cfg, checkout) != model.SyncModeAuto, OnNotice: func(text string) { notice = text },
 	})
 	return notice, err
 }
@@ -146,7 +146,7 @@ func (a *GitWorktreeAcquirer) ReleaseSyncOwner(ctx context.Context, branch, sess
 	}
 	var notice string
 	err = handlers.New(opts).ReleaseSyncOwner(ctx, &command.ReleaseSyncOwnerCmd{
-		Session: session, TitlesOnly: model.ResolveSyncMode(cfg) != model.SyncModeAuto, OnNotice: func(text string) { notice = text },
+		Session: session, TitlesOnly: syncstate.Mode(cfg, checkout) != model.SyncModeAuto, OnNotice: func(text string) { notice = text },
 	})
 	return notice, err
 }
@@ -188,7 +188,7 @@ func (a *GitWorktreeAcquirer) SyncBlocked(ctx context.Context, branch string) (*
 	if err != nil || block == nil {
 		return nil, err
 	}
-	if model.ResolveSyncMode(cfg) != model.SyncModeAuto && !block.TitlesFailed() {
+	if syncstate.Mode(cfg, checkout) != model.SyncModeAuto && !block.TitlesFailed() {
 		return nil, nil
 	}
 	return &app.SyncBlocked{

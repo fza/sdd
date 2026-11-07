@@ -15,8 +15,10 @@ import (
 
 	"github.com/gofrs/flock"
 
+	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -287,6 +289,17 @@ func HandlerOptions(ctx context.Context, graphDir string, opts handlers.Options)
 	opts.GraphDir = graphDir
 	opts.GraphFetcher, opts.GraphPuller, opts.Pusher = repo, repo, repo
 	opts.SyncLock, opts.SyncRecord = state, state
+	if git.IsGraphClone(repo.Dir) {
+		opts.GraphClone = repo
+		cfg, err := meta.ReadCommittedConfigFS(os.DirFS(repo.Dir))
+		if errors.Is(err, meta.ErrNotAnSDDProject) {
+			return opts, nil
+		}
+		if err != nil {
+			return opts, err
+		}
+		opts.SetAsideJudge = finders.New(finders.Options{Config: cfg})
+	}
 	return opts, nil
 }
 
@@ -302,4 +315,14 @@ func ReadBlocked(ctx context.Context, graphDir string) (*model.SyncBlocked, erro
 		return nil, err
 	}
 	return state.Load()
+}
+
+// Mode is the sync mode of the graph repository at root: automatic in the
+// sdd-owned graph clone, which only sdd works in, the configured one
+// elsewhere.
+func Mode(cfg *model.PerRepoConfig, root string) model.SyncMode {
+	if git.IsGraphClone(root) {
+		return model.SyncModeAuto
+	}
+	return model.ResolveSyncMode(cfg)
 }

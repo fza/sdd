@@ -141,9 +141,13 @@ func (h *Handler) SyncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 }
 
 func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) error {
+	err := h.keepGraphClone(ctx)
+	if err != nil {
+		return err
+	}
 	var state model.SyncState
 	var reason string
-	err := h.FetchGraph(ctx, &command.FetchGraphCmd{SDDDir: cmd.SDDDir, Cooldown: cmd.Cooldown, OnFetched: func(fetched model.SyncState, why string) {
+	err = h.FetchGraph(ctx, &command.FetchGraphCmd{SDDDir: cmd.SDDDir, Cooldown: cmd.Cooldown, OnFetched: func(fetched model.SyncState, why string) {
 		state, reason = fetched, why
 	}})
 	if err != nil {
@@ -162,6 +166,10 @@ func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 	case model.SyncStateFetchFailed:
 		return h.recordBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedFetchFailed, Detail: reason})
 	}
+	setAside, err := h.settleSetAside(ctx)
+	if err != nil {
+		return err
+	}
 	blocked, err := h.pullUpstream(ctx)
 	if err != nil || blocked {
 		return err
@@ -169,6 +177,9 @@ func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 	blocked, err = h.publish(ctx)
 	if err != nil || blocked {
 		return err
+	}
+	if setAside != nil {
+		return h.recordBlocked(ctx, *setAside)
 	}
 	// A failed title backfill is cleared only by a backfill that succeeds.
 	return h.clearRecord(func(recorded model.SyncBlocked) bool { return !recorded.TitlesFailed() })
@@ -276,6 +287,10 @@ func (h *Handler) publishGraph(ctx context.Context) error {
 		return err
 	}
 	if !paused {
+		err = h.keepGraphClone(ctx)
+		if err != nil {
+			return err
+		}
 		blocked, err := h.publish(ctx)
 		if err != nil {
 			return err
