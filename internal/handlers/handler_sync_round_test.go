@@ -583,3 +583,30 @@ func TestPushTransportFailureIsRetriedWithinTheCooldown(t *testing.T) {
 		t.Error("a push failing on the transport should be retried before its cooldown ends")
 	}
 }
+
+// Two processes on one machine share the gate's state: of two handlers, each
+// with its own gate over one state dir and its own clone of one remote, only
+// the first round fetches within the cooldown.
+func TestTwoHandlersOnOneStateDirFetchOnce(t *testing.T) {
+	stateDir := t.TempDir()
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	repos := []*synctest.Repo{{Upstream: "origin/main", URL: hostedURL}, {Upstream: "origin/main", URL: hostedURL}}
+	var deferred []time.Time
+	for _, repo := range repos {
+		handler := handlers.New(handlers.Options{
+			GraphFetcher: repo, GraphPuller: repo, Pusher: repo, SyncMode: model.SyncModeAuto, Now: clock,
+			Gate: synctest.Gate(stateDir, clock), SyncLock: &synctest.Lock{}, SyncRecord: &synctest.Record{},
+		})
+		err := handler.SyncRound(context.Background(), &command.SyncRoundCmd{OnDeferred: func(_ string, next time.Time) { deferred = append(deferred, next) }})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if repos[0].Count("fetch") != 1 || repos[1].Count("fetch") != 0 {
+		t.Errorf("exactly one fetch should run within the cooldown, got %d and %d", repos[0].Count("fetch"), repos[1].Count("fetch"))
+	}
+	if len(deferred) != 1 || !deferred[0].After(now) {
+		t.Errorf("the second round should be deferred until the cooldown ends, got %v", deferred)
+	}
+}
