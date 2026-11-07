@@ -270,7 +270,11 @@ func indexCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				connH = handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr})
+				round, err := cloneRound()
+				if err != nil {
+					return err
+				}
+				connH = handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr, CloneRound: round})
 				if err := connH.RefreshDependencyClosure(ctx, dependencyRefreshCmd(ctx)); err != nil {
 					return err
 				}
@@ -593,7 +597,11 @@ func searchCmd() *cli.Command {
 				if err != nil {
 					return nil, err
 				}
-				h := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr})
+				round, err := cloneRound()
+				if err != nil {
+					return nil, err
+				}
+				h := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr, CloneRound: round})
 				refresh := dependencyRefreshCmd(ctx)
 				var fill *command.BuildConnectedIndexesCmd
 				if prog != nil {

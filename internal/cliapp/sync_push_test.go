@@ -202,6 +202,7 @@ func TestServedSessionLeavesTheCodeRepositoryGraph(t *testing.T) {
 	t.Chdir(root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, ".sdd", "tmp", "xdg-config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, ".sdd", "tmp", "xdg-cache"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(root, ".sdd", "tmp", "xdg-data"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, ".sdd", "tmp", "xdg-state"))
 	fixture := &appFixture{root: root}
 

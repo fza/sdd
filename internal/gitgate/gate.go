@@ -158,6 +158,16 @@ func (g *Gate) Run(ctx context.Context, target Target, kind Kind, op func(ctx co
 	return errors.Join(opErr, traceErr, recordErr)
 }
 
+// Concurrency is how many operations may run against target's host at once,
+// at least one.
+func (g *Gate) Concurrency(target Target) (int, error) {
+	limits, err := g.limitsFor(target)
+	if err != nil {
+		return 0, err
+	}
+	return max(limits.Concurrency, 1), nil
+}
+
 func (g *Gate) limitsFor(target Target) (Limits, error) {
 	if g.limits == nil {
 		return Limits{}, errors.New("git gate has no limits")

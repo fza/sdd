@@ -29,6 +29,9 @@ const (
 	// ProtocolSSH / ProtocolHTTPS name the clone's two remotes.
 	ProtocolSSH   = "ssh"
 	ProtocolHTTPS = "https"
+	// SingleRemote names the one remote of a clone whose clone URL is
+	// neither of the forms GraphRemoteURLs derives.
+	SingleRemote = "origin"
 	// HTTPSRetryAfter is how long a clone stays on https before ssh is tried
 	// first once more.
 	HTTPSRetryAfter = 24 * time.Hour
@@ -83,10 +86,38 @@ func InitialProtocol(repoID RepoID, codeOrigin string) string {
 	return ProtocolSSH
 }
 
+// CloneSource is where a new sdd-owned clone fetches from: the two
+// protocol remotes GraphRemoteURLs derives, First tried first, or URL alone
+// with no protocol fallback.
+type CloneSource struct {
+	First string
+	URL   string
+}
+
+// ConnectedCloneSource is the source of a connected repository's clone. A
+// clone URL that is one of the two forms GraphRemoteURLs derives for repoID
+// picks the protocol tried first; any other URL (an ssh host alias, a
+// mirror, a local path) is the clone's one remote.
+func ConnectedCloneSource(repoID RepoID, cloneURL string) CloneSource {
+	sshURL, httpsURL, err := GraphRemoteURLs(repoID)
+	switch {
+	case err != nil:
+		return CloneSource{URL: cloneURL}
+	case cloneURL == sshURL:
+		return CloneSource{First: ProtocolSSH}
+	case cloneURL == httpsURL:
+		return CloneSource{First: ProtocolHTTPS}
+	}
+	return CloneSource{URL: cloneURL}
+}
+
 // ProtocolOrder is the order a clone tries its remotes in: the recorded one
 // first, the other after a failure; after HTTPSRetryAfter on https, ssh
-// first once.
+// first once. A clone with a single remote has no other to try.
 func ProtocolOrder(recorded string, since, now time.Time) []string {
+	if recorded == SingleRemote {
+		return []string{SingleRemote}
+	}
 	if recorded == ProtocolHTTPS && !since.IsZero() && now.Sub(since) >= HTTPSRetryAfter {
 		return []string{ProtocolSSH, ProtocolHTTPS}
 	}

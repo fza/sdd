@@ -136,7 +136,7 @@ func (b SyncBlocked) Banner() string {
 	if b.TitlesFailed() {
 		what = "title backfill failing"
 	}
-	return fmt.Sprintf("%s since %s: %s", what, b.Since.Local().Format("2006-01-02 15:04"), b.reason())
+	return fmt.Sprintf("%s since %s: %s", what, b.Since.Local().Format("2006-01-02 15:04"), b.Reason())
 }
 
 // NoticeFor is what an agent's response carries: the banner, plus the fix
@@ -149,7 +149,8 @@ func (b SyncBlocked) NoticeFor(session string) string {
 	return b.Banner() + ". Another agent owns the fix; leave it to that agent."
 }
 
-func (b SyncBlocked) reason() string {
+// Reason says what blocks sync, without since when.
+func (b SyncBlocked) Reason() string {
 	switch b.Kind {
 	case SyncBlockedConflict:
 		return fmt.Sprintf("merging %s would conflict in %s; automatic sync is paused", b.Upstream, quotedPaths(b.Paths))

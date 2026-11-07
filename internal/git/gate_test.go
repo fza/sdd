@@ -60,10 +60,11 @@ func TestNetworkCommandsRefuseAnUngatedContext(t *testing.T) {
 		{name: "fetch", run: func() error { return git.CLI{Dir: dir}.Fetch(ctx) }},
 		{name: "push", run: func() error { return git.CLI{Dir: dir}.Push(ctx) }},
 		{name: "merge pull", run: func() error { _, err := git.CLI{Dir: dir}.MergePull(ctx); return err }},
-		{name: "cache clone", run: func() error { return git.CLI{}.Clone(ctx, remote, filepath.Join(t.TempDir(), "cache")) }},
-		{name: "cache pull", run: func() error { return git.CLI{}.PullFFOnly(ctx, dir) }},
 		{name: "graph clone", run: func() error {
-			return git.CloneGraph(ctx, cloneRepoID, model.ProtocolHTTPS, filepath.Join(t.TempDir(), "clone"), model.GraphCloneCone(""))
+			return git.CloneGraph(ctx, cloneRepoID, model.CloneSource{First: model.ProtocolHTTPS}, filepath.Join(t.TempDir(), "clone"), model.GraphCloneCone(""))
+		}},
+		{name: "single-remote clone", run: func() error {
+			return git.CloneGraph(ctx, "", model.CloneSource{URL: remote}, filepath.Join(t.TempDir(), "clone"), model.GraphCloneCone(""))
 		}},
 		{name: "graph clone fetch", run: func() error { return git.CLI{Dir: clone}.Fetch(ctx) }},
 		{name: "graph clone push", run: func() error { return git.CLI{Dir: clone}.Push(ctx) }},

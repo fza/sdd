@@ -15,7 +15,6 @@ import (
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/repos"
 	"github.com/networkteam/sdd/internal/syncstate"
 	app "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/llm"
@@ -158,36 +157,11 @@ func (a *GitWorktreeAcquirer) SyncDue(ctx context.Context, branch string) (bool,
 	if err != nil || cfg == nil || syncstate.Mode(checkout) != model.SyncModeAuto {
 		return false, err
 	}
-	if a.gate == nil {
-		return false, repos.ErrNoGate
-	}
 	root, err := git.GraphRepoRoot(meta.ResolveGraphDir(checkout, cfg))
 	if err != nil {
 		return false, err
 	}
-	repo := git.CLI{Dir: root}
-	url, err := repo.UpstreamURL(ctx)
-	if err != nil {
-		return false, err
-	}
-	target, err := gitgate.TargetFromURL(url)
-	if err != nil {
-		return false, err
-	}
-	due, _, err := a.gate.Due(target, gitgate.Fetch)
-	if err != nil || due {
-		return due, err
-	}
-	upstream, err := repo.UpstreamRef(ctx)
-	if err != nil || upstream == "" {
-		return false, err
-	}
-	ahead, err := repo.CountCommits(ctx, "@{u}..HEAD", "")
-	if err != nil || ahead == 0 {
-		return false, err
-	}
-	due, _, err = a.gate.Due(target, gitgate.Push)
-	return due, err
+	return syncstate.RoundDue(ctx, a.gate, root)
 }
 
 func (a *GitWorktreeAcquirer) syncCheckout(ctx context.Context, branch string) (string, *model.PerRepoConfig, error) {

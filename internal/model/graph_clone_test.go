@@ -84,6 +84,35 @@ func TestProtocolOrder(t *testing.T) {
 	}
 }
 
+func TestProtocolOrderOfASingleRemote(t *testing.T) {
+	order := model.ProtocolOrder(model.SingleRemote, time.Time{}, time.Now())
+	if len(order) != 1 || order[0] != model.SingleRemote {
+		t.Errorf("a single-remote clone should try its one remote alone, got %v", order)
+	}
+}
+
+func TestConnectedCloneSource(t *testing.T) {
+	const repoID = model.RepoID("example.test/acme/other")
+	cases := []struct {
+		name string
+		url  string
+		want model.CloneSource
+	}{
+		{name: "the derived https form", url: "https://example.test/acme/other.git", want: model.CloneSource{First: model.ProtocolHTTPS}},
+		{name: "the derived ssh form", url: "git@example.test:acme/other.git", want: model.CloneSource{First: model.ProtocolSSH}},
+		{name: "https without .git", url: "https://example.test/acme/other", want: model.CloneSource{URL: "https://example.test/acme/other"}},
+		{name: "an ssh host alias", url: "work:acme/other.git", want: model.CloneSource{URL: "work:acme/other.git"}},
+		{name: "a local path", url: "/srv/git/other.git", want: model.CloneSource{URL: "/srv/git/other.git"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := model.ConnectedCloneSource(repoID, tc.url); got != tc.want {
+				t.Errorf("only the exact derived forms should pick a protocol, got %+v", got)
+			}
+		})
+	}
+}
+
 func TestRouteMergeAttributes(t *testing.T) {
 	existing := "*.md merge=binary\nold/[0-9]*.md merge=sdd-entry\n.sdd/config.yaml merge=sdd-config\n*.txt text\n"
 	routing := []string{".sdd/graph/x merge=sdd-entry", model.ConfigMergeAttributeLine}

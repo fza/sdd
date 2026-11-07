@@ -2,7 +2,6 @@ package command
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -19,8 +18,8 @@ type RepoAddCmd struct {
 	CloneURL string
 
 	// OnAdded fires after the connection is registered, carrying the
-	// verified repo identity and the cache location.
-	OnAdded func(repoID model.RepoID, cacheDir string)
+	// verified repo identity and where its sdd-owned clone lives.
+	OnAdded func(repoID model.RepoID, cloneDir string)
 
 	// OnDeclared fires when the dependency declaration is ensured in the
 	// current repo's committed config; alreadyDeclared reports whether it
@@ -34,12 +33,11 @@ type RepoAddCmd struct {
 	OnPhase func(phase model.Phase)
 }
 
-// EnsureReposFreshCmd freshens the caches of the named connected repos for a
-// read: lazy clone when absent, a pull otherwise, each as far as the git gate
-// admits it. OnPhase reports
-// connecting → cloning for a clone and syncing for a pull, so a text-only
-// cross-repo read shows a phase-true footer; it is never fired for a refresh
-// not due.
+// EnsureReposFreshCmd brings the sdd-owned clones of the named connected
+// repos up to date for a read: a clone on first use, else the clone's sync
+// round when the git gate has it due. OnPhase reports connecting → cloning
+// for a clone and syncing for a round, so a text-only cross-repo read shows a
+// phase-true footer; it is never fired for a round not due.
 type EnsureReposFreshCmd struct {
 	RepoIDs []model.RepoID
 
@@ -47,13 +45,13 @@ type EnsureReposFreshCmd struct {
 	OnPhase func(phase model.Phase)
 }
 
-// RefreshDependencyClosureCmd refreshes the caches of the local repo's
+// RefreshDependencyClosureCmd refreshes the clones of the local repo's
 // declared dependency closure ahead of a read, each repo before its
 // declarations are read. The refresh is optional to the read
 // (20261027-150208-d-tac-bg4): its failures are reported through the
-// callbacks, and the read uses the caches as they stand.
+// callbacks, and the read uses the clones as they stand.
 type RefreshDependencyClosureCmd struct {
-	// OnRefreshFailed reports a clone or pull that failed. Required.
+	// OnRefreshFailed reports a clone or sync round that failed. Required.
 	OnRefreshFailed func(repoID model.RepoID, err error)
 
 	// OnUnconnected reports a closure member with no connection on this
@@ -86,7 +84,7 @@ func (c *RepoAddCmd) Validate() error {
 // a referenced dependency is permanent, so removal is refused when any entry
 // in this graph still holds a cross-repo ref into the target — dropping the
 // declaration would strand those refs and retroactively break resolve-or-block.
-// The per-user global connection and its on-disk cache are left untouched;
+// The per-user global connection and its sdd-owned clone are left untouched;
 // machine-level teardown is a separate, future command surface.
 type RepoRemoveCmd struct {
 	RepoID model.RepoID
@@ -124,14 +122,27 @@ func (c *RepoRemoveCmd) Validate() error {
 	return nil
 }
 
-// RepoSyncCmd force-pulls connected repo caches: the named repos, or every
-// connected repo when RepoIDs is empty. Missing caches clone lazily.
+// RepoSyncCmd runs the sync round of connected repos through their
+// sdd-owned clones (20261107-095427-d-tac-yux): the named repos, or every
+// connected repo when RepoIDs is empty. A repo without a clone is cloned.
 type RepoSyncCmd struct {
 	RepoIDs []model.RepoID
 
-	// OnSynced fires per repo after its cache is fresh.
-	OnSynced func(repoID model.RepoID)
-	// OnDeferred fires per repo whose clone or pull the git gate deferred,
-	// with the time it may run.
-	OnDeferred func(repoID model.RepoID, next time.Time)
+	// Due selects instead every connected member of the local repo's
+	// dependency closure that has a clone and whose round the git gate has
+	// due, as a timer does: no clone is made, and a round another process is
+	// running is left to it.
+	Due bool
+
+	// OnOutcome receives each repo's outcome, in the order the repos were
+	// named or the closure lists them. Required.
+	OnOutcome func(outcome model.RepoSyncOutcome)
+}
+
+// Validate checks that no outcome goes unreported.
+func (c *RepoSyncCmd) Validate() error {
+	if c.OnOutcome == nil {
+		return fmt.Errorf("OnOutcome is required")
+	}
+	return nil
 }

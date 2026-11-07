@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -23,7 +21,8 @@ import (
 // connected-repos manager — a wiring gap, never a user state (fail loud).
 var errNoRepos = fmt.Errorf("connected-repos support is not wired (handler built without Repos)")
 
-// RepoAdd executes a RepoAddCmd with its two writes: clone the target,
+// RepoAdd executes a RepoAddCmd with its two writes: clone the target into
+// its sdd-owned clone,
 // establish its canonical identity from the repo_id it declares in its
 // committed config, register the connection in the user-global config (the
 // per-user resolution), and declare the dependency in the current repo's
@@ -68,28 +67,17 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	// so the footer shows connecting → cloning rather than a stuck spinner.
 	emitPhase(cmd.OnPhase, model.PhaseConnecting)
 
-	// Clone into a staging location under the cache root first — the
-	// canonical identity (and so the final cache path) is only known once
-	// the clone's declared config is readable.
-	root := h.repos.Registry().CacheRoot()
-	staging, err := os.MkdirTemp(root, ".adding-*")
-	if err != nil {
-		if mkErr := os.MkdirAll(root, 0o755); mkErr != nil {
-			return fmt.Errorf("creating cache root: %w", mkErr)
-		}
-		if staging, err = os.MkdirTemp(root, ".adding-*"); err != nil {
-			return err
-		}
-	}
-	defer func() { _ = os.RemoveAll(staging) }()
-	cloneDir := filepath.Join(staging, "clone")
-	repo := repos.ConnectedRepo{CloneURL: cmd.CloneURL}
+	// Clone into a staging location first: the canonical identity, and so
+	// where the clone lives, is only known once its declared config is
+	// readable.
 	emitPhase(cmd.OnPhase, model.PhaseCloning)
-	if _, err := h.repos.EnsureCloned(ctx, repo, cloneDir); err != nil {
+	staged, removeStaged, err := h.repos.Stage(ctx, cmd.CloneURL)
+	if err != nil {
 		return err
 	}
+	defer removeStaged()
 
-	cloneCfg, err := repos.Cache{Dir: cloneDir}.Config()
+	cloneCfg, err := repos.Clone{Dir: staged}.Config()
 	if err != nil && !errors.Is(err, meta.ErrNotAnSDDProject) {
 		return fmt.Errorf("repo at %s: %w", cmd.CloneURL, err)
 	}
@@ -107,21 +95,12 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 		return fmt.Errorf("repo %q is already connected", declared)
 	}
 
-	cacheDir, err := h.repos.Registry().CacheDir(declared)
+	repo := repos.ConnectedRepo{RepoID: declared, CloneURL: cmd.CloneURL}
+	cloneDir, err := h.repos.Place(ctx, staged, repo)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(cacheDir), 0o755); err != nil {
-		return fmt.Errorf("creating cache dir: %w", err)
-	}
-	if err := os.RemoveAll(cacheDir); err != nil {
-		return fmt.Errorf("clearing stale cache at %s: %w", cacheDir, err)
-	}
-	if err := os.Rename(cloneDir, cacheDir); err != nil {
-		return fmt.Errorf("moving clone into cache: %w", err)
-	}
 
-	repo.RepoID = declared
 	if err := h.connectRepo(repo); err != nil {
 		return err
 	}
@@ -129,7 +108,7 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 		return err
 	}
 	if cmd.OnAdded != nil {
-		cmd.OnAdded(declared, cacheDir)
+		cmd.OnAdded(declared, cloneDir)
 	}
 	return nil
 }
@@ -214,7 +193,7 @@ func (h *Handler) declareDependency(ctx context.Context, repoID model.RepoID, cm
 // declaration would strand those refs and retroactively break
 // resolve-or-block), unless Force is set, in which case the stranded refs are
 // named through OnStranded before the removal proceeds. The per-user global
-// connection and its cache are left untouched — machine-level teardown is a
+// connection and its clone are left untouched — machine-level teardown is a
 // separate command surface, out of scope here.
 func (h *Handler) RepoRemove(ctx context.Context, cmd *command.RepoRemoveCmd) error {
 	if err := cmd.Validate(); err != nil {
@@ -322,140 +301,6 @@ func pluralEntries(n int) string {
 	return "entries"
 }
 
-// RepoSync executes a RepoSyncCmd: pull the named connected repos' caches
-// (all of them when none are named), cloning lazily where absent, as far as
-// the git gate admits; a deferred repo is reported, not failed.
-func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error {
-	if h.repos == nil {
-		return errNoRepos
-	}
-	cfg, err := h.repos.Registry().Load()
-	if err != nil {
-		return err
-	}
-
-	targets := cmd.RepoIDs
-	if len(targets) == 0 {
-		for _, r := range cfg.Repos {
-			targets = append(targets, r.RepoID)
-		}
-	}
-	if len(targets) == 0 {
-		return fmt.Errorf("no connected repos — add one with `sdd repo add <clone-url>`")
-	}
-
-	for _, repoID := range targets {
-		repo, ok := cfg.Connected(repoID)
-		if !ok {
-			return fmt.Errorf("repo %q is not connected", repoID)
-		}
-		cacheDir, err := h.repos.Registry().CacheDir(repoID)
-		if err != nil {
-			return err
-		}
-		cloned, err := h.repos.EnsureCloned(ctx, repo, cacheDir)
-		if !cloned && err == nil {
-			err = h.repos.Pull(ctx, repo, cacheDir)
-		}
-		deferred, isDeferred := deferral(err)
-		if isDeferred {
-			if cmd.OnDeferred != nil {
-				cmd.OnDeferred(repoID, deferred.Next)
-			}
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if cmd.OnSynced != nil {
-			cmd.OnSynced(repoID)
-		}
-	}
-	return nil
-}
-
-// freshenReferencedRepos refreshes the caches of every repo a ref set
-// points into (lazy clone or pull, as far as the git gate admits) so capture-time resolution reads
-// live state. Unconnected repos are skipped — resolve-or-block reports them.
-// The refresh is optional (20261027-150208-d-tac-bg4): a failed one is a
-// warning, and resolution reads the caches as they stand.
-func (h *Handler) freshenReferencedRepos(ctx context.Context, refs []model.Ref) {
-	repoIDs := model.CrossRepoIDs(model.RefIDs(refs))
-	if len(repoIDs) == 0 {
-		return
-	}
-	if _, err := h.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: repoIDs}); err != nil {
-		slogutils.FromContext(ctx).Warn("could not refresh referenced dependencies; resolving against their caches as they stand", "repos", repoIDs, "err", err)
-	}
-}
-
-// fetchOnMiss pulls the cache of any connected repo whose referenced
-// backward-class target is absent from the loaded member graph, then
-// reloads the graph once so pre-flight judges the freshest state. A target
-// that is still absent after the fetch is genuinely missing — that block
-// stands, as does one whose pull the git gate defers. Forward-class refs are
-// exempt from resolve-or-block, so they trigger no fetch.
-func (h *Handler) fetchOnMiss(ctx context.Context, graph *model.Graph, refs []model.Ref) *model.Graph {
-	logger := slogutils.FromContext(ctx)
-	var stale []model.RepoID
-	for _, r := range refs {
-		repoID, entryID, ok := model.SplitCrossRepoID(r.ID)
-		if !ok || model.IsForwardClassRefKind(r.Kind) {
-			continue
-		}
-		member, err := graph.MemberGraph(repoID)
-		if err != nil || member == nil {
-			continue // unconnected or unloadable — resolve-or-block owns the finding
-		}
-		if _, found := member.ByID[entryID]; !found {
-			stale = append(stale, repoID)
-		}
-	}
-	if len(stale) == 0 {
-		return graph
-	}
-
-	if h.repos == nil {
-		return graph
-	}
-	cfg, err := h.repos.Registry().Load()
-	if err != nil {
-		logger.Warn("fetch-on-miss: loading global config failed", "err", err)
-		return graph
-	}
-	fetched := false
-	for _, repoID := range stale {
-		repo, ok := cfg.Connected(repoID)
-		if !ok {
-			continue
-		}
-		cacheDir, err := h.repos.Registry().CacheDir(repoID)
-		if err != nil {
-			continue
-		}
-		err = h.repos.Pull(ctx, repo, cacheDir)
-		_, isDeferred := deferral(err)
-		if isDeferred {
-			logger.Debug("fetch-on-miss pull deferred", "repo", repoID, "err", err)
-			continue
-		}
-		if err != nil {
-			logger.Warn("fetch-on-miss pull failed", "repo", repoID, "err", err)
-			continue
-		}
-		fetched = true
-	}
-	if !fetched {
-		return graph
-	}
-	reloaded, err := h.reader.CurrentGraph(h.graphDir)
-	if err != nil {
-		logger.Warn("fetch-on-miss reload failed", "err", err)
-		return graph
-	}
-	return reloaded
-}
-
 // PrepareCrossRepoSearch runs the side-effect half of a cross-graph search,
 // mirroring how the local lazy-fill precedes the search finder: refresh the
 // dependency closure, select the query's repos from it, and — when vector
@@ -479,9 +324,9 @@ func (h *Handler) PrepareCrossRepoSearch(ctx context.Context, q query.SearchQuer
 }
 
 // RefreshDependencyClosure walks the local repo's dependency closure,
-// refreshing each connected repo's cache (lazy clone or gated pull) before
-// reading what it declares, so a config repaired upstream is read after its
-// pull. What the refresh cannot do is reported through the command's
+// refreshing each connected repo's clone (made on first use, else its sync
+// round when due) before reading what it declares, so a config repaired
+// upstream is read after its round. What the refresh cannot do is reported through the command's
 // callbacks; only a failure to read the closure itself is returned.
 func (h *Handler) RefreshDependencyClosure(ctx context.Context, cmd command.RefreshDependencyClosureCmd) error {
 	_, err := h.refreshDependencyClosure(ctx, cmd)
@@ -504,7 +349,7 @@ func (h *Handler) refreshDependencyClosure(ctx context.Context, cmd command.Refr
 			return nil, err
 		}
 		if repoID != root {
-			if err := h.refreshCache(ctx, repoID, cmd); err != nil {
+			if err := h.refreshClone(ctx, repoID, cmd); err != nil {
 				return nil, err
 			}
 		}
@@ -520,10 +365,10 @@ func (h *Handler) refreshDependencyClosure(ctx context.Context, cmd command.Refr
 	return closure, nil
 }
 
-// refreshCache refreshes one closure member, reporting a missing connection
-// or a failed clone or pull instead of returning it.
-func (h *Handler) refreshCache(ctx context.Context, repoID model.RepoID, cmd command.RefreshDependencyClosureCmd) error {
-	_, connected, err := h.repos.Registry().Cache(repoID)
+// refreshClone refreshes one closure member, reporting a missing connection
+// or a failed clone or sync round instead of returning it.
+func (h *Handler) refreshClone(ctx context.Context, repoID model.RepoID, cmd command.RefreshDependencyClosureCmd) error {
+	_, connected, err := h.repos.Registry().Clone(repoID)
 	if err != nil {
 		return err
 	}
@@ -538,7 +383,7 @@ func (h *Handler) refreshCache(ctx context.Context, repoID model.RepoID, cmd com
 }
 
 // BuildConnectedIndexes fills each given repo's index under the shared
-// embedder, excluding embedded entries; callers refresh the caches first.
+// embedder, excluding embedded entries; callers refresh the clones first.
 // Entries indexed under a different fingerprint re-embed here rather than
 // excluding the repo, so one vector space holds across every selected index.
 // It is the shared spine for eager pre-indexing (`sdd index --repo`) and the
@@ -558,22 +403,22 @@ func (h *Handler) BuildConnectedIndexes(ctx context.Context, repoIDs []model.Rep
 		fill = &command.BuildConnectedIndexesCmd{}
 	}
 	for _, repoID := range repoIDs {
-		cacheDir, err := h.repos.Registry().CacheDir(repoID)
+		cloneDir, err := h.repos.Registry().CloneDir(repoID)
 		if err != nil {
 			return err
 		}
-		cache := repos.Cache{RepoID: repoID, Dir: cacheDir}
-		if !cache.Cloned() {
+		clone := repos.Clone{RepoID: repoID, Dir: cloneDir}
+		if !clone.Cloned() {
 			continue // unconnected or clone failed — the finder reports the skip
 		}
-		graphDir, err := cache.GraphDir()
+		graphDir, err := clone.GraphDir()
 		if err != nil {
 			return err
 		}
 		// One machine-global store per (repo-id, fingerprint): the same
 		// index the repo's own checkout would use, embedded once. The handler
 		// loads and locks the store itself at write time (index.FillSession).
-		idxDir := index.StoreDir(h.repos.Registry().CacheRoot(), index.RepoKey(repoID, cacheDir), embedder.Fingerprint())
+		idxDir := index.StoreDir(h.repos.Registry().CacheRoot(), index.RepoKey(repoID, cloneDir), embedder.Fingerprint())
 		ih := NewIndexHandler(IndexHandlerOptions{
 			GraphDir:        graphDir,
 			IndexDir:        idxDir,
@@ -606,67 +451,6 @@ func (h *Handler) BuildConnectedIndexes(ctx context.Context, repoIDs []model.Rep
 		}
 	}
 	return nil
-}
-
-// EnsureReposFresh brings the caches of the named connected repos up to date
-// for a read: lazy clone when absent, a pull otherwise, each when the git gate
-// admits it; a deferred one leaves the cache as it stands.
-// Unconnected repo IDs are skipped — the read side renders them unresolved,
-// which is that state's honest surface. Reports whether any cache changed so a
-// long-lived caller can invalidate its GraphSource. cmd.OnPhase (optional)
-// mirrors RepoAdd — connecting → cloning for a clone, syncing for a due pull,
-// nothing for a fresh-cache no-op — so a text-only cross-repo read shows a
-// phase-true label instead of "indexing".
-func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposFreshCmd) (changed bool, err error) {
-	if len(cmd.RepoIDs) == 0 {
-		return false, nil
-	}
-	if h.repos == nil {
-		return false, errNoRepos
-	}
-	cfg, err := h.repos.Registry().Load()
-	if err != nil {
-		return false, err
-	}
-	logger := slogutils.FromContext(ctx)
-	for _, repoID := range cmd.RepoIDs {
-		repo, ok := cfg.Connected(repoID)
-		if !ok {
-			logger.Debug("repo not connected; skipping cache refresh", "repo", repoID)
-			continue
-		}
-		cacheDir, err := h.repos.Registry().CacheDir(repoID)
-		if err != nil {
-			return changed, err
-		}
-		due, err := h.repos.FetchDue(ctx, repo)
-		if err != nil {
-			return changed, err
-		}
-		if !due {
-			logger.Debug("cache refresh not due", "repo", repoID)
-			continue
-		}
-		cloned := repos.IsCloned(cacheDir)
-		if cloned {
-			emitPhase(cmd.OnPhase, model.PhaseSyncing)
-			err = h.repos.Pull(ctx, repo, cacheDir)
-		} else {
-			emitPhase(cmd.OnPhase, model.PhaseConnecting)
-			emitPhase(cmd.OnPhase, model.PhaseCloning)
-			_, err = h.repos.EnsureCloned(ctx, repo, cacheDir)
-		}
-		_, isDeferred := deferral(err)
-		if isDeferred {
-			logger.Debug("cache refresh deferred", "repo", repoID, "err", err)
-			continue
-		}
-		if err != nil {
-			return changed, err
-		}
-		changed = true
-	}
-	return changed, nil
 }
 
 // emitPhase fires an optional phase callback, guarding the nil case at the one

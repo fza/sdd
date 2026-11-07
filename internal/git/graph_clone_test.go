@@ -43,7 +43,7 @@ func seededRemote(t *testing.T) *test.GraphRemote {
 func sddClone(t *testing.T, first string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
-	err := git.CloneGraph(admitted(t, context.Background()), cloneRepoID, first, dir, model.GraphCloneCone(""))
+	err := git.CloneGraph(admitted(t, context.Background()), cloneRepoID, model.CloneSource{First: first}, dir, model.GraphCloneCone(""))
 	if err != nil {
 		t.Fatalf("CloneGraph: %v", err)
 	}
@@ -109,6 +109,51 @@ func TestCloneGraphIsBloblessAndSparse(t *testing.T) {
 	}
 	if strings.TrimSpace(test.Git(t, dir, "config", "sdd.remote")) != model.ProtocolHTTPS {
 		t.Error("with ssh unreachable the clone should record https")
+	}
+}
+
+// A clone URL of neither derived form is the clone's one remote: the clone
+// fetches and pushes through it and never tries another protocol.
+func TestSingleRemoteClone(t *testing.T) {
+	remote := seededRemote(t)
+	dir := filepath.Join(t.TempDir(), "clone")
+	ctx := admitted(t, context.Background())
+	err := git.CloneGraph(ctx, "", model.CloneSource{URL: remote.Bare}, dir, model.GraphCloneCone(""))
+	if err != nil {
+		t.Fatalf("CloneGraph: %v", err)
+	}
+	if remotes := strings.Fields(test.Git(t, dir, "remote")); len(remotes) != 1 || remotes[0] != model.SingleRemote {
+		t.Errorf("the clone should have the one remote %q, got %v", model.SingleRemote, remotes)
+	}
+	if recorded := strings.TrimSpace(test.Git(t, dir, "config", "sdd.remote")); recorded != model.SingleRemote {
+		t.Errorf("the clone should record its one remote, got %q", recorded)
+	}
+	if !strings.Contains(readFile(t, dir, entryPath), "Base title") {
+		t.Error("the graph's entries should be checked out")
+	}
+
+	repo := git.CLI{Dir: dir}
+	sddEntry := ".sdd/graph/2026/11/07-130000-s-tac-one.md"
+	writeFile(t, dir, sddEntry, "---\ntype: signal\n---\nby sdd\n")
+	err = repo.Commit("sdd: capture by sdd", sddEntry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = repo.Push(ctx)
+	if err != nil {
+		t.Fatalf("the push should go through the one remote: %v", err)
+	}
+	if remote.Head(t) != strings.TrimSpace(test.Git(t, dir, "rev-parse", "HEAD")) {
+		t.Error("the push should reach the remote")
+	}
+
+	test.Git(t, dir, "config", "remote."+model.SingleRemote+".url", filepath.Join(t.TempDir(), "gone.git"))
+	err = repo.Fetch(ctx)
+	if err == nil {
+		t.Fatal("a fetch from an unreachable single remote should fail")
+	}
+	if strings.Contains(err.Error(), model.ProtocolSSH+":") || strings.Contains(err.Error(), model.ProtocolHTTPS+":") {
+		t.Errorf("a single-remote clone should try no protocol remote, got %v", err)
 	}
 }
 

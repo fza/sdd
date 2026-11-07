@@ -1,16 +1,12 @@
 package repos
 
 import (
-	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"testing"
 
-	"github.com/networkteam/sdd/internal/git"
-	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -69,6 +65,7 @@ func TestDefaultLocationsHonorXDG(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg-config")
 	t.Setenv("XDG_CACHE_HOME", "/tmp/xdg-cache")
 	t.Setenv("XDG_STATE_HOME", "/tmp/xdg-state")
+	t.Setenv("XDG_DATA_HOME", "/tmp/xdg-data")
 
 	loc, err := DefaultLocations()
 	if err != nil {
@@ -85,15 +82,15 @@ func TestDefaultLocationsHonorXDG(t *testing.T) {
 	}
 
 	reg := NewRegistry(loc)
-	dir, err := reg.CacheDir("github.com/networkteam/other")
+	dir, err := reg.CloneDir("github.com/networkteam/other")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dir != filepath.Join("/tmp/xdg-cache/sdd", "github.com", "networkteam", "other") {
-		t.Errorf("CacheDir = %q", dir)
+	if dir != filepath.Join("/tmp/xdg-data/sdd", "repos", "github.com", "networkteam", "other") {
+		t.Errorf("CloneDir = %q", dir)
 	}
-	if _, err := reg.CacheDir("not a repo id"); err == nil {
-		t.Error("CacheDir must validate the repo id")
+	if _, err := reg.CloneDir("not a repo id"); err == nil {
+		t.Error("CloneDir must validate the repo id")
 	}
 }
 
@@ -103,111 +100,6 @@ func TestDefaultLocationsRejectsRelativeStateHome(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", "relative/state")
 	if _, err := DefaultLocations(); err == nil {
 		t.Fatal("relative XDG_STATE_HOME accepted")
-	}
-}
-
-// initUpstream creates a local git repo that acts as the connected remote:
-// one committed graph entry plus a committed .sdd/config.yaml declaring
-// repo_id.
-func initUpstream(t *testing.T, repoID model.RepoID) string {
-	t.Helper()
-	dir := t.TempDir()
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@example.com",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@example.com")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	run("init", "--quiet", "--initial-branch=main")
-
-	if err := os.MkdirAll(filepath.Join(dir, ".sdd/graph/2026/06"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	entry := "---\ntype: signal\nlayer: tac\nkind: gap\n---\n\nA remote gap.\n"
-	if err := os.WriteFile(filepath.Join(dir, ".sdd/graph/2026/06/01-120000-s-tac-abc.md"), []byte(entry), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg := "graph_dir: .sdd/graph\nrepo_id: " + string(repoID) + "\n"
-	if err := os.WriteFile(filepath.Join(dir, ".sdd/config.yaml"), []byte(cfg), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run("add", ".sdd")
-	run("commit", "--quiet", "-m", "seed")
-	return dir
-}
-
-func TestCacheLifecycle(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	repoID := model.RepoID("example.com/team/other")
-	upstream := initUpstream(t, repoID)
-
-	loc := Locations{
-		ConfigPath: filepath.Join(t.TempDir(), "config.yaml"),
-		CacheRoot:  filepath.Join(t.TempDir(), "cache"),
-	}
-	mgr := NewManager(NewRegistry(loc), git.CLI{}, gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }}))
-	cacheDir := filepath.Join(loc.CacheRoot, filepath.FromSlash(string(repoID)))
-	repo := ConnectedRepo{RepoID: repoID, CloneURL: upstream}
-	ctx := context.Background()
-
-	cloned, err := mgr.EnsureCloned(ctx, repo, cacheDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cloned || !IsCloned(cacheDir) {
-		t.Fatal("expected a fresh clone")
-	}
-	if cloned, err = mgr.EnsureCloned(ctx, repo, cacheDir); err != nil || cloned {
-		t.Fatalf("second EnsureCloned must be a no-op, got cloned=%v err=%v", cloned, err)
-	}
-
-	// The declared identity and graph dir resolve from the cached config.
-	cache := Cache{RepoID: repoID, Dir: cacheDir}
-	cfg, err := cache.Config()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.RepoID != repoID {
-		t.Errorf("declared repo_id = %q, want %q", cfg.RepoID, repoID)
-	}
-	graphDir, err := cache.GraphDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(graphDir, "2026/06/01-120000-s-tac-abc.md")); err != nil {
-		t.Errorf("cached graph entry missing: %v", err)
-	}
-
-	// A pull picks up new upstream commits.
-	entry2 := "---\ntype: signal\nlayer: tac\nkind: gap\n---\n\nA second remote gap.\n"
-	if err := os.WriteFile(filepath.Join(upstream, ".sdd/graph/2026/06/02-130000-s-tac-def.md"), []byte(entry2), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("git", "-C", upstream, "add", ".sdd")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git add: %v\n%s", err, out)
-	}
-	cmd = exec.Command("git", "-C", upstream, "-c", "user.name=test", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "second")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git commit: %v\n%s", err, out)
-	}
-
-	err = mgr.Pull(ctx, repo, cacheDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(graphDir, "2026/06/02-130000-s-tac-def.md")); err != nil {
-		t.Errorf("pull did not fetch the new entry: %v", err)
-	}
-
-	if LegacyIndexDir(cacheDir) != filepath.Join(cacheDir, ".index") {
-		t.Errorf("LegacyIndexDir = %q", LegacyIndexDir(cacheDir))
 	}
 }
 

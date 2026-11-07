@@ -238,7 +238,17 @@ func defaultRepos() (*repos.Registry, *repos.Manager, error) {
 		return nil, nil, err
 	}
 	reg := repos.NewRegistry(loc)
-	return reg, repos.NewManager(reg, git.CLI{}, gate), nil
+	return reg, repos.NewManager(reg, repos.NewGraphClones(loc, git.GraphClones{}, gate)), nil
+}
+
+// cloneRound is the sync round connected repos refresh through, under the
+// invocation's git gate.
+func cloneRound() (handlers.CloneRound, error) {
+	gate, err := commandGate()
+	if err != nil {
+		return nil, err
+	}
+	return syncstate.CloneRounds{Gate: gate}, nil
 }
 
 // loadConfig resolves the effective config overlay: the user-global base
@@ -1029,6 +1039,10 @@ func newCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			round, err := cloneRound()
+			if err != nil {
+				return err
+			}
 			opts, err := graphSyncOptions(ctx, dir, handlers.Options{
 				Stderr:   cmd.ErrWriter,
 				GraphDir: dir,
@@ -1039,11 +1053,12 @@ func newCmd() *cli.Command {
 					Repos:             reg,
 					ProcedureRegistry: registry,
 				}),
-				LLMRunner: runner,
-				Committer: graphGit(dir),
-				SyncMode:  syncMode,
-				Repos:     mgr,
-				Language:  configLanguage(cfg),
+				LLMRunner:  runner,
+				Committer:  graphGit(dir),
+				SyncMode:   syncMode,
+				Repos:      mgr,
+				CloneRound: round,
+				Language:   configLanguage(cfg),
 			})
 			if err != nil {
 				return err

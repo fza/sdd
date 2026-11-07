@@ -7,10 +7,10 @@ import (
 )
 
 // Registry is the pure read surface over the connected-repos state: which
-// repos are connected and where their caches live. It is the dependency the
-// read side (finders) gets injected — it carries no way to clone, pull, or
-// save, so finder purity is enforced by the type, not by discipline. The
-// side-effectful lifecycle lives on Manager.
+// repos are connected and where their sdd-owned clones live. It is the
+// dependency the read side (finders) gets injected — it carries no way to
+// clone, sync, or save, so finder purity is enforced by the type, not by
+// discipline. The side-effectful lifecycle lives on Manager.
 type Registry struct {
 	loc Locations
 }
@@ -37,35 +37,42 @@ func (r *Registry) ConfigPath() string {
 	return r.loc.ConfigPath
 }
 
-// CacheRoot is the base directory for connected-repo clone caches.
+// CacheRoot is the base directory of the machine-global search index stores.
 func (r *Registry) CacheRoot() string {
 	return r.loc.CacheRoot
 }
 
-// CacheDir resolves a connected repo's clone location under the cache root.
-// The repo-id's host/path shape nests naturally under the root.
-func (r *Registry) CacheDir(repoID model.RepoID) (string, error) {
-	if err := model.ValidateRepoID(repoID); err != nil {
+// CloneDir resolves where the sdd-owned clone of repoID lives, one per
+// repository id under <DataRoot>/repos (20261107-095427-d-tac-yux).
+func (r *Registry) CloneDir(repoID model.RepoID) (string, error) {
+	return cloneDir(r.loc.DataRoot, repoID)
+}
+
+// LegacyCacheDir is where an earlier sdd kept the read-only cache clone of
+// repoID, for removing it and migrating the index it may still hold.
+func (r *Registry) LegacyCacheDir(repoID model.RepoID) (string, error) {
+	err := model.ValidateRepoID(repoID)
+	if err != nil {
 		return "", err
 	}
 	return filepath.Join(r.loc.CacheRoot, filepath.FromSlash(string(repoID))), nil
 }
 
-// Cache returns a connected repo's cache; ok is false when the repo is not
+// Clone returns a connected repo's clone; ok is false when the repo is not
 // connected on this machine.
-func (r *Registry) Cache(repoID model.RepoID) (c Cache, ok bool, err error) {
+func (r *Registry) Clone(repoID model.RepoID) (c Clone, ok bool, err error) {
 	cfg, err := r.Load()
 	if err != nil {
-		return Cache{}, false, err
+		return Clone{}, false, err
 	}
 	if _, connected := cfg.Connected(repoID); !connected {
-		return Cache{}, false, nil
+		return Clone{}, false, nil
 	}
-	dir, err := r.CacheDir(repoID)
+	dir, err := r.CloneDir(repoID)
 	if err != nil {
-		return Cache{}, false, err
+		return Clone{}, false, err
 	}
-	return Cache{RepoID: repoID, Dir: dir}, true, nil
+	return Clone{RepoID: repoID, Dir: dir}, true, nil
 }
 
 // SelectRepoIDs resolves a caller's repo selection against the connected
@@ -79,4 +86,12 @@ func (r *Registry) SelectRepoIDs(named []model.RepoID, all bool) ([]model.RepoID
 		return nil, err
 	}
 	return cfg.SelectRepoIDs(named, all)
+}
+
+func cloneDir(dataRoot string, repoID model.RepoID) (string, error) {
+	err := model.ValidateRepoID(repoID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataRoot, "repos", filepath.FromSlash(string(repoID))), nil
 }

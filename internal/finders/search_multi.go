@@ -82,7 +82,7 @@ func MultiSearch(ctx context.Context, local *SearchFinder, q query.SearchQuery) 
 // graph from the local finder's cross-graph assembly plus a finder over the
 // repo's cache graph dir and per-repo index (vector mode only), and the
 // function releasing that index once the member search ran. A nil finder means
-// the repo is not available — not connected or not cached — which the caller
+// the repo is not available — not connected or not cloned — which the caller
 // reports.
 func searchMember(ctx context.Context, q query.SearchQuery, repoID model.RepoID, local *SearchFinder) (*SearchFinder, func(), error) {
 	member, err := local.graph.MemberGraph(repoID)
@@ -92,11 +92,11 @@ func searchMember(ctx context.Context, q query.SearchQuery, repoID model.RepoID,
 	if member == nil {
 		return nil, nil, nil
 	}
-	cacheDir, err := local.repos.CacheDir(repoID)
+	cloneDir, err := local.repos.CloneDir(repoID)
 	if err != nil {
 		return nil, nil, err
 	}
-	graphDir, err := repos.Cache{RepoID: repoID, Dir: cacheDir}.GraphDir()
+	graphDir, err := repos.Clone{RepoID: repoID, Dir: cloneDir}.GraphDir()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -105,7 +105,7 @@ func searchMember(ctx context.Context, q query.SearchQuery, repoID model.RepoID,
 	if q.Phrase != "" && local.embedder != nil {
 		// The member index is the same machine-global store the repo's own
 		// checkout uses — keyed by (repo-id, fingerprint), embedded once.
-		storeDir := index.StoreDir(local.repos.CacheRoot(), index.RepoKey(repoID, cacheDir), local.embedder.Fingerprint())
+		storeDir := index.StoreDir(local.repos.CacheRoot(), index.RepoKey(repoID, cloneDir), local.embedder.Fingerprint())
 		snapshot, err := index.OpenSearchSnapshot(ctx, storeDir, 0)
 		if err != nil {
 			return nil, nil, fmt.Errorf("opening index for %s: %w", repoID, err)

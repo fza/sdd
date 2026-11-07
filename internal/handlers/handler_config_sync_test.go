@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/command"
-	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
@@ -24,7 +23,7 @@ func newConfigHandler(t *testing.T) (*handlers.Handler, string, string) {
 	}
 	globalPath := filepath.Join(dir, "global.yaml")
 	reg := repos.NewRegistry(repos.Locations{ConfigPath: globalPath, CacheRoot: filepath.Join(dir, "cache")})
-	return handlers.New(handlers.Options{SDDDir: sddDir, Repos: repos.NewManager(reg, git.CLI{}, nil)}), globalPath, sddDir
+	return handlers.New(handlers.Options{SDDDir: sddDir, Repos: repos.NewManager(reg, nil)}), globalPath, sddDir
 }
 
 func TestConfigSetRefusesRetiredSyncKeys(t *testing.T) {

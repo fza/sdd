@@ -30,6 +30,9 @@ type SyncRoundCmd struct {
 	// OnDeferred is invoked per operation the git gate deferred, with the
 	// time it may run.
 	OnDeferred func(operation string, next time.Time)
+	// OnPushed is invoked after a push with the number of commits it
+	// published.
+	OnPushed func(commits int)
 }
 
 // ReleaseSyncOwnerCmd captures intent to give up a session's ownership of the

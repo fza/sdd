@@ -962,7 +962,7 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 		return err
 	}
 	for _, r := range gcfg.Repos {
-		cacheDir, err := h.repos.Registry().CacheDir(r.RepoID)
+		cacheDir, err := h.repos.Registry().LegacyCacheDir(r.RepoID)
 		if err != nil {
 			continue
 		}

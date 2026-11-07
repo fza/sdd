@@ -142,6 +142,7 @@ type Handler struct {
 	setAsideJudge   SetAsideJudge
 	changes         ChangeReader
 	repos           *repos.Manager
+	cloneRound      CloneRound
 	graphClones     *repos.GraphClones
 	projectRepos    ProjectRepositories
 	repositoryAt    func(dir string) Repository
@@ -193,10 +194,13 @@ type Options struct {
 	// return on their own. Nil leaves every one to an agent.
 	SetAsideJudge SetAsideJudge
 	Changes       ChangeReader
-	// Repos owns the connected-repos side effects (clone, pull, config
-	// writes). Nil means no connected-repos support — repo commands fail
-	// loud, and cross-repo cache freshening is skipped.
+	// Repos owns the connected-repos side effects (the sdd-owned clones,
+	// config writes). Nil means no connected-repos support — repo commands
+	// fail loud, and cross-repo freshening is skipped.
 	Repos *repos.Manager
+	// CloneRound runs the sync round of a connected repo's clone; nil fails
+	// every refresh of a cloned repo loud.
+	CloneRound CloneRound
 	// GraphClones owns the sdd-owned graph clones. Nil refuses graph_repo.
 	GraphClones *repos.GraphClones
 	// ProjectRepositories and RepositoryAt let a work repository's init set up
@@ -242,6 +246,7 @@ func New(opts Options) *Handler {
 		setAsideJudge:   opts.SetAsideJudge,
 		changes:         opts.Changes,
 		repos:           opts.Repos,
+		cloneRound:      opts.CloneRound,
 		graphClones:     opts.GraphClones,
 		projectRepos:    opts.ProjectRepositories,
 		repositoryAt:    opts.RepositoryAt,

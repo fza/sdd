@@ -20,7 +20,7 @@ const (
 )
 
 // connectedWriteFixture serves a home project that declares and connects a
-// platform graph repository, with each side's gate as given.
+// platform graph repository by its path, with each side's gate as given.
 func connectedWriteFixture(t *testing.T, connectedWrite, inboundAccept bool) (*appFixture, *test.GraphRemote) {
 	t.Helper()
 	remote := test.NewGraphRemote(t, platformRepoID)
@@ -43,7 +43,7 @@ func connectedWriteFixture(t *testing.T, connectedWrite, inboundAccept bool) (*a
 	gitIn(t, home, "add", ".sdd", ".gitignore")
 	gitIn(t, home, "commit", "-q", "-m", "home project")
 	writeFile(t, filepath.Join(home, ".sdd", "config.local.yaml"), "participant: Ada\nllm:\n  provider: openai\n  model: fake\n  endpoint: "+llm.URL+"\n  api_keys:\n    openai: op-notarealkeyaaaaaaaaaa\n  retry:\n    max_attempts: 1\nconnected:\n  write: "+boolText(connectedWrite)+"\n")
-	writeFile(t, filepath.Join(home, "xdg-config", "sdd", "config.yaml"), "repos:\n  - repo_id: "+string(platformRepoID)+"\n    clone_url: https://example.test/acme/platform-sdd.git\n")
+	writeFile(t, filepath.Join(home, "xdg-config", "sdd", "config.yaml"), "repos:\n  - repo_id: "+string(platformRepoID)+"\n    clone_url: "+remote.Bare+"\n")
 	runApp(t, home, "repo", "sync")
 	return &appFixture{root: home}, remote
 }
@@ -116,16 +116,14 @@ func TestConnectedCaptureRefusedAtStart(t *testing.T) {
 			if remote.Head(t) != before {
 				t.Error("a refused capture should write nothing")
 			}
-			_, statErr := os.Stat(platformClone())
-			if statErr == nil {
-				t.Error("a capture the cached config already refuses should clone nothing")
-			}
 		})
 	}
 }
 
-// The receiving gate is read again from the fresh clone: an inbound.accept
-// withdrawn upstream since the cache last pulled still refuses.
+// The receiving gate is read from the clone after its due round: an
+// inbound.accept withdrawn upstream since the clone last synced still
+// refuses. The clone's one remote is a local path, which the git gate always
+// admits, so the round is due.
 func TestConnectedCaptureRefusedByAWithdrawnAccept(t *testing.T) {
 	fixture, remote := connectedWriteFixture(t, true, true)
 	remote.Commit(t, "withdraw inbound captures", map[string]string{

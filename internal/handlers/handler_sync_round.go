@@ -149,7 +149,7 @@ func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 	case model.SyncStateSkipped:
 		// Commits waiting still go out once the push is due: a rejection
 		// fetches within the push's own admission.
-		_, err = h.publish(ctx, cmd.OnDeferred)
+		_, err = h.publish(ctx, cmd)
 		return err
 	case model.SyncStateNoRepo:
 		h.reportBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedGraphMissing, Since: h.now(), Detail: h.graphDir})
@@ -169,7 +169,7 @@ func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 	if err != nil || blocked {
 		return err
 	}
-	blocked, err = h.publish(ctx, cmd.OnDeferred)
+	blocked, err = h.publish(ctx, cmd)
 	if err != nil || blocked {
 		return err
 	}
@@ -219,10 +219,17 @@ func (h *Handler) heldPull(ctx context.Context) *heldPull {
 // commits waiting the push, its retry and the fetch the retry needs are one
 // push admission of the git gate; a deferred push leaves them waiting,
 // unrecorded, and reports blocked so nothing is cleared.
-func (h *Handler) publish(ctx context.Context, onDeferred func(operation string, next time.Time)) (bool, error) {
+func (h *Handler) publish(ctx context.Context, round *command.SyncRoundCmd) (bool, error) {
 	var heldVerdict model.PushVerdict
 	var heldUpstream string
 	push := h.reportingPush(ctx)
+	if round != nil && round.OnPushed != nil {
+		logPushed := push.OnPushed
+		push.OnPushed = func(upstream string, commits int) {
+			logPushed(upstream, commits)
+			round.OnPushed(commits)
+		}
+	}
 	push.OnHeld = func(verdict model.PushVerdict, upstream string) {
 		heldVerdict, heldUpstream = verdict, upstream
 	}
@@ -259,8 +266,8 @@ func (h *Handler) publish(ctx context.Context, onDeferred func(operation string,
 	switch {
 	case isDeferred:
 		slogutils.FromContext(ctx).Debug("sync: push deferred", "repo", deferred.Target.Repo, "reason", deferred.Reason, "next", deferred.Next)
-		if onDeferred != nil {
-			onDeferred(string(gitgate.Push), deferred.Next)
+		if round != nil && round.OnDeferred != nil {
+			round.OnDeferred(string(gitgate.Push), deferred.Next)
 		}
 		return true, nil
 	case blocked && err == pushErr:

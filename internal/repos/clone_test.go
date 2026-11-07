@@ -12,7 +12,7 @@ import (
 	"github.com/networkteam/sdd/internal/repos"
 )
 
-func writeCacheConfig(t *testing.T, dir, content string) {
+func writeCloneConfig(t *testing.T, dir, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dir, ".sdd"), 0o755); err != nil {
 		t.Fatal(err)
@@ -22,7 +22,7 @@ func writeCacheConfig(t *testing.T, dir, content string) {
 	}
 }
 
-func TestCacheReadsCommittedConfig(t *testing.T) {
+func TestCloneReadsCommittedConfig(t *testing.T) {
 	const repoID = model.RepoID("example.test/dep")
 	tests := []struct {
 		name         string
@@ -38,16 +38,16 @@ func TestCacheReadsCommittedConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cache := repos.Cache{RepoID: repoID, Dir: t.TempDir()}
+			clone := repos.Clone{RepoID: repoID, Dir: t.TempDir()}
 			if tt.config != "" {
-				writeCacheConfig(t, cache.Dir, tt.config)
+				writeCloneConfig(t, clone.Dir, tt.config)
 			}
 
-			_, err := cache.Config()
+			_, err := clone.Config()
 			if got := errors.Is(err, meta.ErrNotAnSDDProject); got != tt.notSDD {
 				t.Errorf("Config error %v: not-an-SDD-project = %v, want %v", err, got, tt.notSDD)
 			}
-			graphDir, err := cache.GraphDir()
+			graphDir, err := clone.GraphDir()
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("GraphDir error = %v, want one naming %q", err, tt.wantErr)
@@ -57,32 +57,32 @@ func TestCacheReadsCommittedConfig(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if want := filepath.Join(cache.Dir, filepath.FromSlash(tt.wantGraphDir)); graphDir != want {
+			if want := filepath.Join(clone.Dir, filepath.FromSlash(tt.wantGraphDir)); graphDir != want {
 				t.Errorf("GraphDir = %q, want %q", graphDir, want)
 			}
 		})
 	}
 }
 
-func TestRegistryCacheOnlyForConnectedRepos(t *testing.T) {
-	loc := repos.Locations{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), CacheRoot: t.TempDir()}
+func TestRegistryCloneOnlyForConnectedRepos(t *testing.T) {
+	loc := repos.Locations{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), CacheRoot: t.TempDir(), DataRoot: t.TempDir()}
 	if err := os.WriteFile(loc.ConfigPath, []byte("repos:\n  - repo_id: example.test/dep\n    clone_url: https://example.test/dep.git\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	reg := repos.NewRegistry(loc)
 
-	cache, ok, err := reg.Cache("example.test/dep")
+	clone, ok, err := reg.Clone("example.test/dep")
 	if err != nil || !ok {
 		t.Fatalf("connected repo: ok=%v err=%v", ok, err)
 	}
-	if want := filepath.Join(loc.CacheRoot, "example.test", "dep"); cache.Dir != want || cache.RepoID != "example.test/dep" {
-		t.Errorf("Cache = %+v, want dir %q", cache, want)
+	if want := filepath.Join(loc.DataRoot, "repos", "example.test", "dep"); clone.Dir != want || clone.RepoID != "example.test/dep" {
+		t.Errorf("Clone = %+v, want dir %q", clone, want)
 	}
-	if cache.Cloned() {
-		t.Error("an empty cache dir reports cloned")
+	if clone.Cloned() {
+		t.Error("an empty clone dir reports cloned")
 	}
 
-	if _, ok, err := reg.Cache("example.test/other"); err != nil || ok {
+	if _, ok, err := reg.Clone("example.test/other"); err != nil || ok {
 		t.Errorf("unconnected repo: ok=%v err=%v, want not ok", ok, err)
 	}
 }

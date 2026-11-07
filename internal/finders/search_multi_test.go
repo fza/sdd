@@ -38,20 +38,21 @@ func TestMultiSearchTextAcrossRepos(t *testing.T) {
 	loc := repos.Locations{
 		ConfigPath: filepath.Join(t.TempDir(), "config.yaml"),
 		CacheRoot:  t.TempDir(),
+		DataRoot:   t.TempDir(),
 	}
 	reg := repos.NewRegistry(loc)
 
 	localDir := t.TempDir()
 	writeEntryFile(t, localDir, "20260601-120000-s-tac-loc", "A local gap about telemetry pipelines.")
 
-	cacheDir, err := reg.CacheDir(repoID)
+	cloneDir, err := reg.CloneDir(repoID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(cacheDir, ".git"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(cloneDir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	remoteGraphDir := filepath.Join(cacheDir, ".sdd/graph")
+	remoteGraphDir := filepath.Join(cloneDir, ".sdd/graph")
 	writeEntryFile(t, remoteGraphDir, "20260601-130000-s-tac-rem", "A remote gap about telemetry dashboards. telemetry telemetry")
 
 	cfg := &repos.GlobalConfig{}
