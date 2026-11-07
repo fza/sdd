@@ -151,11 +151,12 @@ func TestBackfillAndCaptureInOneCheckoutBothCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	capturedPath, _ := untitledEntry(created.EntryID)
 	subjects := repo.git("log", "-2", "--format=%s")
-	if !strings.Contains(subjects, "sdd: summarize 1 entries") || !strings.Contains(subjects, created.EntryID) {
+	captureCommits := repo.git("log", "--format=%h", "HEAD~2..HEAD", "--", capturedPath)
+	if !strings.Contains(subjects, "sdd: summarize 1 entries") || strings.TrimSpace(captureCommits) == "" {
 		t.Errorf("the capture and the backfill should each commit, got %q", subjects)
 	}
-	capturedPath, _ := untitledEntry(created.EntryID)
 	if !strings.Contains(repo.git("show", "HEAD:"+capturedPath), "Engine capture under sync.") {
 		t.Error("the capture's entry should stay committed")
 	}
