@@ -103,6 +103,9 @@ type BaseConfig struct {
 	// set once in the user-global config; a per-repo override covers a
 	// project where the same person deliberately uses another spelling.
 	Participant string `yaml:"participant,omitempty"`
+	// Connected is the writing side's gate on capturing into a connected
+	// graph (20261106-201216-d-cpt-aim).
+	Connected ConnectedConfig `yaml:"connected,omitempty"`
 }
 
 // IsZero reports whether no base setting is set. Resolution uses it to
@@ -165,6 +168,13 @@ type PerRepoConfig struct {
 	// A repository setting it carries no project settings of its own — see
 	// PointerKeys and LocalPointerKeys.
 	ProjectDir string `yaml:"project_dir,omitempty"`
+	// GraphRepo points a code repository at the repository holding its graph,
+	// which sdd reads and writes only through the clone it owns
+	// (20261106-201216-d-cpt-aim). Beside project_dir it wins.
+	GraphRepo RepoID `yaml:"graph_repo,omitempty"`
+	// Inbound is the receiving graph's gate on captures written from another
+	// project; only the committed .sdd/config.yaml sets it.
+	Inbound InboundConfig `yaml:"inbound,omitempty"`
 	// Contribution names the upstream ref (e.g. origin/main) a checkout's
 	// graph writes are contributed to; set, it turns on contribution mode
 	// (ContributionRefusal). Machine-local only: a checkout opts in, the
@@ -179,6 +189,11 @@ var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents"}
 // LocalPointerKeys are the keys a machine-local config may set beside
 // project_dir: only where this machine keeps the project's checkout.
 var LocalPointerKeys = []string{"project_dir"}
+
+// GraphRepoPointerKeys are the keys a committed config may set beside
+// graph_repo: the pointer keys, project_dir for older builds and graph_dir for
+// the stock guard (20261106-202055-d-tac-eyl).
+var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents"}
 
 // TopLevelKeys returns the top-level keys of a YAML mapping, in file order.
 // Empty input yields none.
@@ -629,6 +644,7 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	if overlay.Dialogue.Mode != "" {
 		out.Dialogue.Mode = overlay.Dialogue.Mode
 	}
+	out.Connected = mergeConnectedConfig(base.Connected, overlay.Connected)
 	return out
 }
 
@@ -669,6 +685,10 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	if overlay.ProjectDir != "" {
 		out.ProjectDir = overlay.ProjectDir
 	}
+	if overlay.GraphRepo != "" {
+		out.GraphRepo = overlay.GraphRepo
+	}
+	out.Inbound = mergeInboundConfig(base.Inbound, overlay.Inbound)
 	if overlay.Contribution != "" {
 		out.Contribution = overlay.Contribution
 	}
@@ -983,6 +1003,27 @@ func FormatPointerConfig(cfg PerRepoConfig) string {
 		"# .sdd/, relative to this repository's root. Every project setting lives\n" +
 		"# there; this file carries only project_dir, skill_scope and supported_agents.\n" +
 		"project_dir: " + cfg.ProjectDir + "\n" +
+		"\n" +
+		skillScopeBlock(cfg) +
+		"\n" +
+		supportedAgentsBlock(cfg)
+}
+
+// FormatGraphRepoPointerConfig returns the config of a code repository whose
+// graph lives in the graph repository cfg.GraphRepo: the pointer, the stock
+// guard as graph_dir, and the agent keys.
+func FormatGraphRepoPointerConfig(cfg PerRepoConfig) string {
+	return "# SDD configuration\n" +
+		"# See https://github.com/networkteam/sdd for documentation.\n" +
+		"\n" +
+		"# The repository holding this repository's graph. sdd reads and writes it\n" +
+		"# through a clone of its own; `sdd repo path " + string(cfg.GraphRepo) + "` prints where.\n" +
+		"graph_repo: " + string(cfg.GraphRepo) + "\n" +
+		"\n" +
+		"# Guard for sdd builds without graph_repo: graph_dir names a file, so their\n" +
+		"# captures fail here instead of starting a second graph. sdd with graph_repo\n" +
+		"# ignores it.\n" +
+		"graph_dir: " + GraphElsewhereFile + "\n" +
 		"\n" +
 		skillScopeBlock(cfg) +
 		"\n" +

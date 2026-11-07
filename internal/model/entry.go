@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -484,6 +485,23 @@ func TitleBackfill(entries []*Entry) (withSummary, titleOnly int) {
 		}
 	}
 	return withSummary, titleOnly
+}
+
+// TitleBackfillBatch is the most untitled entries one background backfill
+// titles (20261105-233807-d-tac-831); the rest wait for a later trigger.
+const TitleBackfillBatch = 10
+
+// UntitledNewestFirst returns up to limit entries without a title, newest
+// first. Embedded entries have no file to write and are left out.
+func UntitledNewestFirst(entries []*Entry, limit int) []*Entry {
+	var untitled []*Entry
+	for _, e := range entries {
+		if !e.Embedded && e.Title == "" {
+			untitled = append(untitled, e)
+		}
+	}
+	slices.SortFunc(untitled, func(a, b *Entry) int { return strings.Compare(b.ID, a.ID) })
+	return untitled[:min(len(untitled), limit)]
 }
 
 // FirstSentence returns the leading sentence of text. A sentence ends at the
