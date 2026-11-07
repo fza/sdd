@@ -95,6 +95,9 @@ type BaseConfig struct {
 	// set once in the user-global config; a per-repo override covers a
 	// project where the same person deliberately uses another spelling.
 	Participant string `yaml:"participant,omitempty"`
+	// Connected is the writing side's gate on capturing into a connected
+	// graph (20261106-201216-d-cpt-aim).
+	Connected ConnectedConfig `yaml:"connected,omitempty"`
 }
 
 // IsZero reports whether no base setting is set. Resolution uses it to
@@ -157,6 +160,13 @@ type PerRepoConfig struct {
 	// A repository setting it carries no project settings of its own — see
 	// PointerKeys and LocalPointerKeys.
 	ProjectDir string `yaml:"project_dir,omitempty"`
+	// GraphRepo points a code repository at the repository holding its graph,
+	// which sdd reads and writes only through the clone it owns
+	// (20261106-201216-d-cpt-aim). Beside project_dir it wins.
+	GraphRepo RepoID `yaml:"graph_repo,omitempty"`
+	// Inbound is the receiving graph's gate on captures written from another
+	// project; only the committed .sdd/config.yaml sets it.
+	Inbound InboundConfig `yaml:"inbound,omitempty"`
 	// Contribution names the upstream ref (e.g. origin/main) a checkout's
 	// graph writes are contributed to; set, it turns on contribution mode
 	// (ContributionRefusal). Machine-local only: a checkout opts in, the
@@ -569,6 +579,7 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	if overlay.Dialogue.Mode != "" {
 		out.Dialogue.Mode = overlay.Dialogue.Mode
 	}
+	out.Connected = mergeConnectedConfig(base.Connected, overlay.Connected)
 	return out
 }
 
@@ -609,6 +620,10 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	if overlay.ProjectDir != "" {
 		out.ProjectDir = overlay.ProjectDir
 	}
+	if overlay.GraphRepo != "" {
+		out.GraphRepo = overlay.GraphRepo
+	}
+	out.Inbound = mergeInboundConfig(base.Inbound, overlay.Inbound)
 	if overlay.Contribution != "" {
 		out.Contribution = overlay.Contribution
 	}

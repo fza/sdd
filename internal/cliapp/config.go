@@ -53,16 +53,21 @@ func configCmd() *cli.Command {
 						Name:  "local",
 						Usage: "Write to the machine-local layer (.sdd/config.local.yaml, or --local-config) instead of the user-global config",
 					},
+					&cli.StringFlag{
+						Name:  "repo",
+						Usage: "Set the key's override for one repository id, e.g. --repo github.com/org/graph connected.write true",
+					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					if cmd.Args().Len() != 2 {
-						return fmt.Errorf("usage: sdd config set [--local] <key> <value>")
+						return fmt.Errorf("usage: sdd config set [--local] [--repo <repo-id>] <key> <value>")
 					}
 					target := "global"
 					if cmd.Bool("local") {
 						target = "local"
 					}
-					return runConfigSet(ctx, cmd.Writer, cmd.ErrWriter, target, cmd.Args().Get(0), cmd.Args().Get(1))
+					set := &command.ConfigSetCmd{Target: target, Key: cmd.Args().Get(0), Value: cmd.Args().Get(1), Repo: cmd.String("repo")}
+					return runConfigSet(ctx, cmd.Writer, cmd.ErrWriter, set)
 				},
 			},
 			{
@@ -186,7 +191,7 @@ func printConfigEntries(writer io.Writer, entries []query.ConfigEntry) error {
 	return w.Flush()
 }
 
-func runConfigSet(ctx context.Context, writer, errWriter io.Writer, target, key, value string) error {
+func runConfigSet(ctx context.Context, writer, errWriter io.Writer, set *command.ConfigSetCmd) error {
 	// sddDir is optional for global writes — `sdd config set` must work
 	// outside any repo (that is the point of the global layer).
 	sddDir, err := optionalSDDDir()
@@ -203,10 +208,15 @@ func runConfigSet(ctx context.Context, writer, errWriter io.Writer, target, key,
 		LocalConfigPath: localConfigOverride,
 		Repos:           mgr,
 	})
-	if err := h.ConfigSet(ctx, &command.ConfigSetCmd{Target: target, Key: key, Value: value}); err != nil {
+	err = h.ConfigSet(ctx, set)
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(writer, "%s = %s (%s)\n", key, value, target)
+	if set.Repo != "" {
+		fmt.Fprintf(writer, "%s = %s for %s (%s)\n", set.Key, set.Value, set.Repo, set.Target)
+		return nil
+	}
+	fmt.Fprintf(writer, "%s = %s (%s)\n", set.Key, set.Value, set.Target)
 	return nil
 }
 
