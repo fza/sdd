@@ -482,13 +482,16 @@ func New(options Options) *cli.Command {
 
 			// Background sync check runs on every command except `sdd init`
 			// (bootstrap may precede remote configuration — sync would emit
-			// spurious warnings). Cooldown-bound and timeout-bound internally;
-			// any failure logs at Debug and does not affect the command.
+			// spurious warnings) and `sdd sync`, which runs the sync itself.
+			// Cooldown-bound and timeout-bound internally; any failure logs at
+			// Debug and does not affect the command.
 			if cmd.Args().First() != "init" {
 				ctx = withSyncBanner(ctx, cmd.ErrWriter)
-				stopSync := timing.Start(ctx, "sync-check")
-				runSyncCheck(ctx)
-				stopSync()
+				if cmd.Args().First() != "sync" {
+					stopSync := timing.Start(ctx, "sync-check")
+					runSyncCheck(ctx)
+					stopSync()
+				}
 				// Participant-missing nudge (AC 8): one-line stderr
 				// warning naming `sdd init` as the fix. Suppressed for
 				// `sdd init` itself (it's the resolution path) and

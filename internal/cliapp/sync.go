@@ -27,9 +27,10 @@ import (
 // alone can hang on unreachable remotes without this.
 const syncCheckTimeout = 30 * time.Second
 
-// syncCmd exposes graph synchronization: under automatic sync the bare
-// command runs a round even while a conflict pauses sync, and --pull performs
-// a merge-only pull so sync never rewrites the shared graph's history.
+// syncCmd exposes synchronization of the repository at hand: under automatic
+// sync the bare command runs a round even while a conflict pauses sync,
+// otherwise it fetches and prints the status, and --pull performs a
+// merge-only pull so sync never rewrites the shared graph's history.
 func syncCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "sync",
@@ -69,7 +70,7 @@ func syncCmd() *cli.Command {
 				return err
 			}
 			if syncMode != model.SyncModeAuto {
-				return errors.New("sync: specify --pull to merge upstream changes into the shared graph")
+				return fetchAndReport(ctx, cmd, dir)
 			}
 			opts, err := graphSyncOptions(ctx, dir, handlers.Options{SyncMode: syncMode})
 			if err != nil {
@@ -84,6 +85,47 @@ func syncCmd() *cli.Command {
 			return backfillTitles(ctx, cmd, dir)
 		},
 	}
+}
+
+// fetchAndReport fetches the upstream of the graph's repository as far as
+// the git gate admits it and prints where the graph stands against it,
+// leaving the merge to --pull.
+func fetchAndReport(ctx context.Context, cmd *cli.Command, graphDir string) error {
+	repo, err := git.GraphRepoRoot(graphDir)
+	if err != nil {
+		return fmt.Errorf("sync: finding the graph repository: %w", err)
+	}
+	graphRepo := git.CLI{Dir: repo}
+	gate, err := commandGate()
+	if err != nil {
+		return err
+	}
+	var state model.SyncState
+	var reason string
+	err = handlers.New(handlers.Options{GraphFetcher: graphRepo, Gate: gate}).FetchGraph(ctx, &command.FetchGraphCmd{
+		OnFetched:  func(fetched model.SyncState, why string) { state, reason = fetched, why },
+		OnDeferred: func(operation string, next time.Time) { printDeferred(cmd.Writer, operation, next) },
+	})
+	if err != nil {
+		return err
+	}
+	status := model.SyncStatus{State: state, Reason: reason}
+	if state == model.SyncStateFetched || state == model.SyncStateSkipped {
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		status, err = finders.New(finders.Options{Config: cfg, GitSyncer: graphRepo}).SyncStatus(ctx, query.SyncStatusQuery{})
+		if err != nil {
+			return err
+		}
+	}
+	line, _ := syncStatusLine(status)
+	if syncCannotRun(status.State) {
+		return errors.New(line)
+	}
+	fmt.Fprintln(cmd.Writer, line)
+	return nil
 }
 
 // printDeferred tells the user a commanded sync skipped an operation the git
@@ -215,31 +257,51 @@ func runSyncCheck(ctx context.Context) {
 	emitSyncStatus(logger, status)
 }
 
-// emitSyncStatus renders a SyncStatus as one slog line. The phrasing is
-// the skill's pattern-match surface — changes here must stay coordinated
-// with `internal/bundledskills/templates/sdd/SKILL.md.tmpl`.
+// emitSyncStatus renders a SyncStatus as one slog line, quiet while the
+// graph is level with its upstream or the fetch did not run.
 func emitSyncStatus(logger *slog.Logger, s model.SyncStatus) {
 	switch s.State {
 	case model.SyncStateUpToDate, model.SyncStateSkipped, model.SyncStateFetched:
-		// Quiet: nothing to tell the user or the skill.
-	case model.SyncStateFastForward:
-		logger.Info(fmt.Sprintf("sync: fast-forward available, %d commits behind", s.RemoteAhead))
-	case model.SyncStateCleanRebase:
-		logger.Info(fmt.Sprintf("sync: merge is clean, %d remote / %d local", s.RemoteAhead, s.LocalAhead))
-	case model.SyncStateConflictPredicted:
-		logger.Warn(fmt.Sprintf("sync: merge would conflict in %s, %d remote / %d local",
-			strings.Join(s.ConflictPaths, ", "), s.RemoteAhead, s.LocalAhead))
-	case model.SyncStateLocalAhead:
-		logger.Info(fmt.Sprintf("sync: local ahead by %d, consider push", s.LocalAhead))
-	case model.SyncStateNoRepo:
-		logger.Warn("sync: not a git repo")
-	case model.SyncStateNoRemote:
-		logger.Warn("sync: no remote configured")
-	case model.SyncStateNoUpstream:
-		logger.Warn("sync: no upstream for current branch — set with `git branch --set-upstream-to=origin/<branch>`")
-	case model.SyncStateFetchFailed:
-		logger.Warn(fmt.Sprintf("sync: fetch failed: %s", s.Reason))
+		return
 	}
+	line, level := syncStatusLine(s)
+	logger.Log(context.Background(), level, line)
+}
+
+// syncStatusLine phrases a SyncStatus at the level it is logged at. The
+// phrasing is the skill's pattern-match surface: changes here
+// must stay coordinated with `internal/bundledskills/templates/sdd/SKILL.md.tmpl`.
+func syncStatusLine(s model.SyncStatus) (string, slog.Level) {
+	switch s.State {
+	case model.SyncStateFastForward:
+		return fmt.Sprintf("sync: fast-forward available, %d commits behind", s.RemoteAhead), slog.LevelInfo
+	case model.SyncStateCleanRebase:
+		return fmt.Sprintf("sync: merge is clean, %d remote / %d local", s.RemoteAhead, s.LocalAhead), slog.LevelInfo
+	case model.SyncStateConflictPredicted:
+		return fmt.Sprintf("sync: merge would conflict in %s, %d remote / %d local",
+			strings.Join(s.ConflictPaths, ", "), s.RemoteAhead, s.LocalAhead), slog.LevelWarn
+	case model.SyncStateLocalAhead:
+		return fmt.Sprintf("sync: local ahead by %d, consider push", s.LocalAhead), slog.LevelInfo
+	case model.SyncStateNoRepo:
+		return "sync: not a git repo", slog.LevelWarn
+	case model.SyncStateNoRemote:
+		return "sync: no remote configured", slog.LevelWarn
+	case model.SyncStateNoUpstream:
+		return "sync: no upstream for current branch — set with `git branch --set-upstream-to=origin/<branch>`", slog.LevelWarn
+	case model.SyncStateFetchFailed:
+		return fmt.Sprintf("sync: fetch failed: %s", s.Reason), slog.LevelWarn
+	}
+	return "sync: up to date", slog.LevelInfo
+}
+
+// syncCannotRun reports whether state keeps a sync from reaching the
+// upstream at all.
+func syncCannotRun(state model.SyncState) bool {
+	switch state {
+	case model.SyncStateNoRepo, model.SyncStateNoRemote, model.SyncStateNoUpstream, model.SyncStateFetchFailed:
+		return true
+	}
+	return false
 }
 
 // syncBlocked reads what blocks automatic sync of the project's graph
