@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/model"
@@ -33,9 +34,19 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 	if err != nil {
 		return err
 	}
+	if cmd.Key == "inbound" || strings.HasPrefix(cmd.Key, "inbound.") {
+		return fmt.Errorf("%s is set only in the committed .sdd/config.yaml of the graph receiving captures, never in the %s config", cmd.Key, cmd.Target)
+	}
+	segments := strings.Split(cmd.Key, ".")
+	if cmd.Repo != "" {
+		segments, err = model.RepoOverrideKey(cmd.Key, model.RepoID(cmd.Repo))
+		if err != nil {
+			return err
+		}
+	}
 
 	return file.patch(func(existing []byte) ([]byte, error) {
-		patched, err := model.SetYAMLField(existing, cmd.Key, model.ParseConfigScalar(cmd.Value))
+		patched, err := model.SetYAMLFieldAt(existing, segments, model.ParseConfigScalar(cmd.Value))
 		if err != nil {
 			return nil, fmt.Errorf("setting %s: %w", cmd.Key, err)
 		}

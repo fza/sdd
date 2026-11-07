@@ -67,7 +67,7 @@ func (h *Handler) PushGraph(ctx context.Context, cmd *command.PushGraphCmd) erro
 // commit or its push, and its error names the commit as landed so the caller
 // does not repeat the write.
 func (h *Handler) commitGraph(ctx context.Context, message string, paths ...string) error {
-	err := h.committer.Commit(message, paths...)
+	err := h.commitUnderGraphLock(ctx, message, paths...)
 	if err != nil {
 		return err
 	}
@@ -84,6 +84,28 @@ func (h *Handler) commitGraph(ctx context.Context, message string, paths ...stri
 		return fmt.Errorf("commit %q landed, setting up the entry merge driver failed: %w", message, err)
 	}
 	return nil
+}
+
+// commitUnderGraphLock commits under the graph lock when one is configured,
+// releasing it before the publish, which takes it again.
+func (h *Handler) commitUnderGraphLock(ctx context.Context, message string, paths ...string) error {
+	release, err := h.lockGraph(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return h.committer.Commit(message, paths...)
+}
+
+func (h *Handler) lockGraph(ctx context.Context) (func(), error) {
+	if h.graphLock == nil {
+		return func() {}, nil
+	}
+	release, err := h.graphLock.LockGraph(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("taking the graph lock: %w", err)
+	}
+	return release, nil
 }
 
 func (h *Handler) reportingPush(ctx context.Context) *command.PushGraphCmd {

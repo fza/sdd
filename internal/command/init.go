@@ -34,6 +34,18 @@ type InitCmd struct {
 	// project those two are refused.
 	ProjectDir string
 
+	// GraphRepo, when set, makes RepoRoot a code repository whose graph lives
+	// in that graph repository, reached through sdd's own clone of it
+	// (20261106-202055-d-tac-eyl): init clones it, sets up .sdd/ there when
+	// it holds none and pushes, then commits graph_repo and the stock guard
+	// in RepoRoot. RemoteURL is RepoRoot's origin, which picks the protocol
+	// the clone tries first.
+	GraphRepo model.RepoID
+	// GraphOnly marks RepoRoot as a graph repository set up through sdd's
+	// clone of it: agents work in the code repository, so no skills, MCP
+	// registrations or instruction bridge are written there.
+	GraphOnly bool
+
 	// SyncMode and SyncInterval, when set, record the person's graph sync
 	// settings in config.local.yaml of the project holding the graph, which
 	// is RepoRoot unless ProjectDir names another (20261027-211908-d-tac-l8j).

@@ -21,6 +21,10 @@ const (
 	SyncBlockedFetchFailed  SyncBlockedKind = "fetch-failed"
 	SyncBlockedPushFailed   SyncBlockedKind = "push-failed"
 	SyncBlockedGraphMissing SyncBlockedKind = "graph-missing"
+	// SyncBlockedTitles records a failed background title backfill
+	// (20261105-233807-d-tac-831). It blocks no sync; the record only carries
+	// the failure to the sync notice.
+	SyncBlockedTitles SyncBlockedKind = "titles-failed"
 )
 
 // SyncBlocked records a blocked automatic sync: what blocks it, since when,
@@ -86,6 +90,10 @@ func (b SyncBlocked) ClearedByPush() bool {
 	return false
 }
 
+// TitlesFailed reports whether the record carries a failed title backfill
+// rather than a blocked sync.
+func (b SyncBlocked) TitlesFailed() bool { return b.Kind == SyncBlockedTitles }
+
 // Persisted reports whether the block can be recorded: a missing graph
 // repository has no git directory to record it in.
 func (b SyncBlocked) Persisted() bool { return b.Kind != SyncBlockedGraphMissing }
@@ -130,7 +138,11 @@ func (b SyncBlocked) LiveOwner(now time.Time) string {
 
 // Banner is the one line every response carries while the block lasts.
 func (b SyncBlocked) Banner() string {
-	return fmt.Sprintf("sync blocked since %s: %s", b.Since.Local().Format("2006-01-02 15:04"), b.reason())
+	what := "sync blocked"
+	if b.TitlesFailed() {
+		what = "title backfill failing"
+	}
+	return fmt.Sprintf("%s since %s: %s", what, b.Since.Local().Format("2006-01-02 15:04"), b.reason())
 }
 
 // NoticeFor is what an agent's response carries: the banner, plus the fix
@@ -163,6 +175,11 @@ func (b SyncBlocked) reason() string {
 		return fmt.Sprintf("pushing to %s failed: %s", b.Upstream, b.Detail)
 	case SyncBlockedGraphMissing:
 		return fmt.Sprintf("the graph directory %s is not in a git repository or does not exist", strconv.Quote(b.Detail))
+	case SyncBlockedTitles:
+		return fmt.Sprintf("titling untitled entries failed: %s; they stay untitled until the next try", b.Detail)
+	case SyncBlockedSetAside:
+		return fmt.Sprintf("the upstream was force-pushed from %s to %s, which set aside %d entries sdd had not pushed",
+			shortCommit(b.Source), shortCommit(b.Destination), len(b.Paths))
 	}
 	return string(b.Kind)
 }
@@ -191,6 +208,12 @@ func (b SyncBlocked) Steps() string {
 		fix = "Check the remote and its authentication with `git fetch`; a returning network clears it on the next round."
 	case SyncBlockedGraphMissing:
 		fix = "Restore the graph directory or correct graph_dir in the config."
+	case SyncBlockedTitles:
+		fix = "Check the LLM configuration with `sdd config`, then run `sdd summarize --all`, which titles them and shows the error; the next session start, sync round or timer round also retries."
+	case SyncBlockedSetAside:
+		fix = fmt.Sprintf("Each set-aside entry lies at its graph path under %s: %s. Re-capture it with the old entry as the draft, "+
+			"or discard it and tell the user why; then delete its file there. Sync clears this once none is left.",
+			strconv.Quote(b.Detail), quotedPaths(b.Paths))
 	}
 	return fmt.Sprintf("You own this block, in %s. %s Fix it yourself first and tell the user in one line once it is fixed. "+
 		"When you cannot, such as for commits you may not rewrite, an authentication failure or a missing repository, tell the user and ask how to proceed.",

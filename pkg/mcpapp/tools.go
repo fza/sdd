@@ -346,7 +346,7 @@ type ReadAttachmentResult struct {
 // (20261028-201909-d-tac-fxp), and once the notice of a failed background
 // cache pruning run (20261101-131514-d-cpt-9ci).
 type ResultNotices struct {
-	SyncNotice  string `json:"sync_notice,omitempty" jsonschema:"set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says"`
+	SyncNotice  string `json:"sync_notice,omitempty" jsonschema:"set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says"`
 	CacheNotice string `json:"cache_notice,omitempty" jsonschema:"set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user"`
 }
 

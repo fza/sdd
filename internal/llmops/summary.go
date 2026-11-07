@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"text/template"
@@ -15,74 +16,107 @@ import (
 //go:embed summary_templates/*.tmpl
 var summaryTemplates embed.FS
 
-// SummarizeResult holds the generated title and summary.
-type SummarizeResult struct {
+// ErrDescribed is returned by NewDescription for an entry that already holds
+// a title and a summary and is not to be regenerated.
+var ErrDescribed = errors.New("entry already holds a title and a summary")
+
+// DescriptionResult holds a generated title and, from the paired call, a
+// generated summary. A title-only answer leaves Summary empty: the stored
+// summary stays as it is, since it may have been corrected by hand.
+type DescriptionResult struct {
 	Title   string
 	Summary string
 }
 
-// Summarize generates a title and a summary for a single entry in one call.
-// Summaries are derived on demand with no staleness tracking (d-cpt-4qi), so
-// this always regenerates — the caller decides when to invoke it.
-// configuredLanguage is the graph's authoring language locale code from config
-// (empty = English default); the summary is written in it regardless of the
-// source material's language.
-func Summarize(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string) (*SummarizeResult, error) {
-	req, err := RenderSummaryPrompt(entry, graph, configuredLanguage)
-	if err != nil {
-		return nil, fmt.Errorf("rendering summary prompt: %w", err)
-	}
-
-	output, err := runner.Run(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("running summary generator: %w", err)
-	}
-	return ParseSummaryResponse(output.Text)
+// Description is the one call that writes an entry's title, and its summary
+// when the entry needs one (20261107-021219-d-tac-okg). Rendering it is
+// separate from running it so a caller can render under its graph lock and
+// run the call outside it.
+type Description struct {
+	Request   llm.Request
+	titleOnly bool
 }
 
-// ParseSummaryResponse reads a summary call's answer. Both fields are
+// NewDescription chooses the call an entry needs: with no summary, or with
+// regenerate set, the paired title-and-summary call over the full entry; with
+// a summary but no title, the title-only call over the stored summary.
+// configuredLanguage is the graph's authoring language locale code (empty =
+// English default).
+func NewDescription(entry *model.Entry, graph *model.Graph, configuredLanguage string, regenerate bool) (*Description, error) {
+	switch {
+	case regenerate || entry.Summary == "":
+		req, err := renderSummaryTemplates(llm.PurposeSummarize, "summary", summarySchema, newSummaryContext(entry, graph, configuredLanguage))
+		if err != nil {
+			return nil, fmt.Errorf("rendering summary prompt: %w", err)
+		}
+		return &Description{Request: req}, nil
+	case entry.Title == "":
+		req, err := renderSummaryTemplates(llm.PurposeTitle, "title", titleSchema, newTitleContext(entry, graph, configuredLanguage))
+		if err != nil {
+			return nil, fmt.Errorf("rendering title prompt: %w", err)
+		}
+		return &Description{Request: req, titleOnly: true}, nil
+	default:
+		return nil, fmt.Errorf("describing %s: %w", entry.ID, ErrDescribed)
+	}
+}
+
+// TitleOnly reports whether the call writes the title alone.
+func (d *Description) TitleOnly() bool {
+	return d.titleOnly
+}
+
+// Parse reads the call's answer.
+func (d *Description) Parse(output string) (DescriptionResult, error) {
+	if d.titleOnly {
+		title, err := parseTitleResponse(output)
+		return DescriptionResult{Title: title}, err
+	}
+	return parseSummaryResponse(output)
+}
+
+// Describe builds, runs and parses an entry's description in one step.
+// Summaries are derived on demand with no staleness tracking (d-cpt-4qi): the
+// caller decides when to regenerate.
+func Describe(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string, regenerate bool) (DescriptionResult, error) {
+	description, err := NewDescription(entry, graph, configuredLanguage, regenerate)
+	if err != nil {
+		return DescriptionResult{}, err
+	}
+	output, err := runner.Run(ctx, description.Request)
+	if err != nil {
+		return DescriptionResult{}, fmt.Errorf("running %s call: %w", description.Request.Purpose, err)
+	}
+	return description.Parse(output.Text)
+}
+
+// parseSummaryResponse reads a paired call's answer. Both fields are
 // required: a reply without a usable title is as broken as one without a
 // summary.
-func ParseSummaryResponse(output string) (*SummarizeResult, error) {
+func parseSummaryResponse(output string) (DescriptionResult, error) {
 	jsonText, err := extractJSONObject(output)
 	if err != nil {
-		return nil, fmt.Errorf("reading summary answer: %w", err)
+		return DescriptionResult{}, fmt.Errorf("reading summary answer: %w", err)
 	}
 	var resp struct {
 		Title   string `json:"title"`
 		Summary string `json:"summary"`
 	}
 	if err := json.Unmarshal([]byte(jsonText), &resp); err != nil {
-		return nil, fmt.Errorf("parsing summary answer: %w", err)
+		return DescriptionResult{}, fmt.Errorf("parsing summary answer: %w", err)
 	}
 	title, err := cleanTitle(resp.Title)
 	if err != nil {
-		return nil, err
+		return DescriptionResult{}, err
 	}
 	summary := strings.TrimSpace(resp.Summary)
 	if summary == "" {
-		return nil, fmt.Errorf("summary answer carries an empty summary")
+		return DescriptionResult{}, fmt.Errorf("summary answer carries an empty summary")
 	}
-	return &SummarizeResult{Title: title, Summary: summary}, nil
+	return DescriptionResult{Title: title, Summary: summary}, nil
 }
 
-// GenerateTitle writes a title for an entry that already holds a summary,
-// leaving the summary as stored: a summary may have been corrected by hand,
-// and nothing records which were.
-func GenerateTitle(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string) (string, error) {
-	req, err := RenderTitlePrompt(entry, graph, configuredLanguage)
-	if err != nil {
-		return "", fmt.Errorf("rendering title prompt: %w", err)
-	}
-	output, err := runner.Run(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("running title generator: %w", err)
-	}
-	return ParseTitleResponse(output.Text)
-}
-
-// ParseTitleResponse reads a title-only call's answer.
-func ParseTitleResponse(output string) (string, error) {
+func parseTitleResponse(output string) (string, error) {
 	jsonText, err := extractJSONObject(output)
 	if err != nil {
 		return "", fmt.Errorf("reading title answer: %w", err)
@@ -107,7 +141,8 @@ func cleanTitle(raw string) (string, error) {
 	return model.CapitalizeTitle(title), nil
 }
 
-// summaryContext holds all data needed to render the summary prompt template.
+// summaryContext holds all data needed to render the summary and title
+// prompt templates.
 type summaryContext struct {
 	EntryContent   string
 	RelatedEntries string
@@ -115,23 +150,8 @@ type summaryContext struct {
 	// config (empty = English default). Stable per repo, so the system-prompt
 	// prefix stays byte-stable across a graph's captures.
 	ConfiguredLanguage string
-	// StoredSummary is the entry's summary as stored, given to a title-only
-	// call so the title names what the summary already says.
-	StoredSummary string
-	TitleRule     string
-}
-
-// RenderSummaryPrompt renders the paired title-and-summary prompt for an entry.
-func RenderSummaryPrompt(entry *model.Entry, graph *model.Graph, configuredLanguage string) (llm.Request, error) {
-	return renderSummaryTemplates(llm.PurposeSummarize, "summary", summarySchema, newSummaryContext(entry, graph, configuredLanguage))
-}
-
-// RenderTitlePrompt renders the title-only prompt for an entry that already
-// holds a summary.
-func RenderTitlePrompt(entry *model.Entry, graph *model.Graph, configuredLanguage string) (llm.Request, error) {
-	sctx := newSummaryContext(entry, graph, configuredLanguage)
-	sctx.StoredSummary = entry.Summary
-	return renderSummaryTemplates(llm.PurposeTitle, "title", titleSchema, sctx)
+	StoredSummary      string
+	TitleRule          string
 }
 
 func newSummaryContext(entry *model.Entry, graph *model.Graph, configuredLanguage string) *summaryContext {
@@ -141,11 +161,59 @@ func newSummaryContext(entry *model.Entry, graph *model.Graph, configuredLanguag
 		TitleRule:          model.TitleRule,
 	}
 
-	// Collect direct refs, closes, and supersedes entries.
 	var parts []string
-	seen := make(map[string]bool)
+	forEachRelated(entry, graph, func(relation string, e *model.Entry) {
+		// Use summary if available, otherwise full content. Render the
+		// layer/kind/type triple (e.g. "strategic insight signal") so the
+		// LLM can route on kind — carrying only the bare type would hide
+		// whether a referenced signal is a gap, insight, question, etc.
+		if e.Summary == "" {
+			parts = append(parts, fmt.Sprintf("[%s] %s", relation, FormatEntryForPrompt(e)))
+			return
+		}
+		part := fmt.Sprintf("[%s] %s (ID: %s)\n", relation, entryTriple(e), e.ID)
+		if e.Title != "" {
+			part += "Title: " + e.Title + "\n"
+		}
+		parts = append(parts, part+"Summary: "+e.Summary)
+	})
+	if len(parts) > 0 {
+		sctx.RelatedEntries = strings.Join(parts, "\n\n---\n\n")
+	}
+	return sctx
+}
 
-	addRelated := func(ids []string, relation string) {
+// newTitleContext carries only what a title names: the entry's type, layer
+// and kind, its stored summary, and the titles of its direct refs, closes and
+// supersedes entries. Neither the body nor any related summary is sent
+// (20261107-021219-d-tac-okg).
+func newTitleContext(entry *model.Entry, graph *model.Graph, configuredLanguage string) *summaryContext {
+	var head strings.Builder
+	fmt.Fprintf(&head, "Type: %s\nLayer: %s\n", entry.Type, entry.Layer)
+	if entry.Kind != "" {
+		fmt.Fprintf(&head, "Kind: %s\n", entry.Kind)
+	}
+	sctx := &summaryContext{
+		EntryContent:       strings.TrimSpace(head.String()),
+		ConfiguredLanguage: configuredLanguage,
+		StoredSummary:      entry.Summary,
+		TitleRule:          model.TitleRule,
+	}
+
+	var lines []string
+	forEachRelated(entry, graph, func(relation string, e *model.Entry) {
+		if e.Title == "" {
+			return
+		}
+		lines = append(lines, fmt.Sprintf("[%s] %s (ID: %s): %s", relation, entryTriple(e), e.ID, e.Title))
+	})
+	sctx.RelatedEntries = strings.Join(lines, "\n")
+	return sctx
+}
+
+func forEachRelated(entry *model.Entry, graph *model.Graph, visit func(relation string, related *model.Entry)) {
+	seen := make(map[string]bool)
+	add := func(ids []string, relation string) {
 		for _, id := range ids {
 			if seen[id] {
 				continue
@@ -155,35 +223,20 @@ func newSummaryContext(entry *model.Entry, graph *model.Graph, configuredLanguag
 			if !ok {
 				continue
 			}
-			// Use summary if available, otherwise full content. Render the
-			// layer/kind/type triple (e.g. "strategic insight signal") so the
-			// LLM can route on kind — carrying only the bare type would hide
-			// whether a referenced signal is a gap, insight, question, etc.
-			if e.Summary != "" {
-				triple := e.LayerLabel()
-				if e.Kind != "" {
-					triple += " " + string(e.Kind)
-				}
-				triple += " " + e.TypeLabel()
-				part := fmt.Sprintf("[%s] %s (ID: %s)\n", relation, triple, e.ID)
-				if e.Title != "" {
-					part += "Title: " + e.Title + "\n"
-				}
-				parts = append(parts, part+"Summary: "+e.Summary)
-			} else {
-				parts = append(parts, fmt.Sprintf("[%s] %s", relation, FormatEntryForPrompt(e)))
-			}
+			visit(relation, e)
 		}
 	}
+	add(model.RefIDs(entry.Refs), "refs")
+	add(entry.Closes, "closes")
+	add(entry.Supersedes, "supersedes")
+}
 
-	addRelated(model.RefIDs(entry.Refs), "refs")
-	addRelated(entry.Closes, "closes")
-	addRelated(entry.Supersedes, "supersedes")
-
-	if len(parts) > 0 {
-		sctx.RelatedEntries = strings.Join(parts, "\n\n---\n\n")
+func entryTriple(e *model.Entry) string {
+	triple := e.LayerLabel()
+	if e.Kind != "" {
+		triple += " " + string(e.Kind)
 	}
-	return sctx
+	return triple + " " + e.TypeLabel()
 }
 
 func renderSummaryTemplates(purpose llm.Purpose, name string, schema json.RawMessage, sctx *summaryContext) (llm.Request, error) {

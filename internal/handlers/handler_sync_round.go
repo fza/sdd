@@ -141,9 +141,13 @@ func (h *Handler) SyncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 }
 
 func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) error {
+	err := h.keepGraphClone(ctx)
+	if err != nil {
+		return err
+	}
 	var state model.SyncState
 	var reason string
-	err := h.FetchGraph(ctx, &command.FetchGraphCmd{SDDDir: cmd.SDDDir, Cooldown: cmd.Cooldown, OnFetched: func(fetched model.SyncState, why string) {
+	err = h.FetchGraph(ctx, &command.FetchGraphCmd{SDDDir: cmd.SDDDir, Cooldown: cmd.Cooldown, OnFetched: func(fetched model.SyncState, why string) {
 		state, reason = fetched, why
 	}})
 	if err != nil {
@@ -162,6 +166,10 @@ func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 	case model.SyncStateFetchFailed:
 		return h.recordBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedFetchFailed, Detail: reason})
 	}
+	setAside, err := h.settleSetAside(ctx)
+	if err != nil {
+		return err
+	}
 	blocked, err := h.pullUpstream(ctx)
 	if err != nil || blocked {
 		return err
@@ -170,7 +178,11 @@ func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 	if err != nil || blocked {
 		return err
 	}
-	return h.clearRecord(func(model.SyncBlocked) bool { return true })
+	if setAside != nil {
+		return h.recordBlocked(ctx, *setAside)
+	}
+	// A failed title backfill is cleared only by a backfill that succeeds.
+	return h.clearRecord(func(recorded model.SyncBlocked) bool { return !recorded.TitlesFailed() })
 }
 
 // pullUpstream merges upstream graph commits by the pull rules and records a
@@ -275,6 +287,10 @@ func (h *Handler) publishGraph(ctx context.Context) error {
 		return err
 	}
 	if !paused {
+		err = h.keepGraphClone(ctx)
+		if err != nil {
+			return err
+		}
 		blocked, err := h.publish(ctx)
 		if err != nil {
 			return err
@@ -420,7 +436,7 @@ func (h *Handler) reportRecorded(ctx context.Context) error {
 // the fix when no session does yet.
 func (h *Handler) ClaimSyncNotice(_ context.Context, cmd *command.ClaimSyncNoticeCmd) error {
 	if h.syncRecord == nil {
-		if h.graphDir != "" && cmd.OnNotice != nil {
+		if h.graphDir != "" && !cmd.TitlesOnly && cmd.OnNotice != nil {
 			missing := model.SyncBlocked{Kind: model.SyncBlockedGraphMissing, Since: h.now(), Detail: h.graphDir}
 			cmd.OnNotice(missing.Banner())
 		}
@@ -428,8 +444,8 @@ func (h *Handler) ClaimSyncNotice(_ context.Context, cmd *command.ClaimSyncNotic
 	}
 	var notice string
 	err := h.syncRecord.Update(func(current *model.SyncBlocked) *model.SyncBlocked {
-		if current == nil {
-			return nil
+		if current == nil || (cmd.TitlesOnly && !current.TitlesFailed()) {
+			return current
 		}
 		claimed := current.Claim(cmd.Session, h.now())
 		notice = claimed.NoticeFor(cmd.Session)
@@ -452,8 +468,8 @@ func (h *Handler) ReleaseSyncOwner(_ context.Context, cmd *command.ReleaseSyncOw
 	}
 	var notice string
 	err := h.syncRecord.Update(func(current *model.SyncBlocked) *model.SyncBlocked {
-		if current == nil {
-			return nil
+		if current == nil || (cmd.TitlesOnly && !current.TitlesFailed()) {
+			return current
 		}
 		released := current.Release(cmd.Session)
 		notice = released.Banner()
