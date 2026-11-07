@@ -38,6 +38,9 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if err := cmd.Validate(); err != nil {
 		return fmt.Errorf("invalid command: %w", err)
 	}
+	if cmd.GraphRepo != "" {
+		return h.initGraphRepo(ctx, cmd)
+	}
 	if cmd.ProjectDir != "" {
 		return h.initPointer(ctx, cmd)
 	}
@@ -283,7 +286,11 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	// agent is in play and the files are absent. AGENTS.md is the cross-tool
 	// canonical instruction file; CLAUDE.md imports it via @AGENTS.md. Existing
 	// files are never overwritten — a project's own instructions are sacred.
-	if bridgePaths, err := scaffoldInstructionBridge(cmd.RepoRoot, effectiveAgents); err != nil {
+	bridgeAgents := effectiveAgents
+	if cmd.GraphOnly {
+		bridgeAgents = nil
+	}
+	if bridgePaths, err := scaffoldInstructionBridge(cmd.RepoRoot, bridgeAgents); err != nil {
 		return err
 	} else if len(bridgePaths) > 0 {
 		touched = append(touched, bridgePaths...)

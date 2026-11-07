@@ -19,6 +19,7 @@ type GraphCloneGit interface {
 	SparseCone(ctx context.Context, dir string) ([]string, error)
 	SetSparseCone(ctx context.Context, dir string, cone []string) error
 	KeepGraphClone(ctx context.Context, dir string, routing []string) error
+	PushGraphClone(ctx context.Context, dir string) error
 }
 
 // GraphClones owns the sdd-owned clone of every graph repository this
@@ -87,6 +88,19 @@ func (g *GraphClones) Ensure(ctx context.Context, repoID model.RepoID, codeOrigi
 		return "", false, fmt.Errorf("keeping the clone of %s: %w", repoID, err)
 	}
 	return dir, cloned, nil
+}
+
+// Publish pushes what sdd committed in the clone of repoID.
+func (g *GraphClones) Publish(ctx context.Context, repoID model.RepoID) error {
+	dir, err := g.Dir(repoID)
+	if err != nil {
+		return err
+	}
+	err = g.git.PushGraphClone(ctx, dir)
+	if err != nil {
+		return fmt.Errorf("publishing the clone of %s: %w", repoID, err)
+	}
+	return nil
 }
 
 // committedGraphDir is the graph directory the clone's committed config

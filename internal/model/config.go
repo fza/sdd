@@ -950,6 +950,27 @@ func FormatPointerConfig(cfg PerRepoConfig) string {
 		supportedAgentsBlock(cfg)
 }
 
+// FormatGraphRepoPointerConfig returns the config of a code repository whose
+// graph lives in the graph repository cfg.GraphRepo: the pointer, the stock
+// guard as graph_dir, and the agent keys.
+func FormatGraphRepoPointerConfig(cfg PerRepoConfig) string {
+	return "# SDD configuration\n" +
+		"# See https://github.com/networkteam/sdd for documentation.\n" +
+		"\n" +
+		"# The repository holding this repository's graph. sdd reads and writes it\n" +
+		"# through a clone of its own; `sdd repo path " + string(cfg.GraphRepo) + "` prints where.\n" +
+		"graph_repo: " + string(cfg.GraphRepo) + "\n" +
+		"\n" +
+		"# Guard for sdd builds without graph_repo: graph_dir names a file, so their\n" +
+		"# captures fail here instead of starting a second graph. sdd with graph_repo\n" +
+		"# ignores it.\n" +
+		"graph_dir: " + GraphElsewhereFile + "\n" +
+		"\n" +
+		skillScopeBlock(cfg) +
+		"\n" +
+		supportedAgentsBlock(cfg)
+}
+
 func skillScopeBlock(cfg PerRepoConfig) string {
 	block := "# Skill installation scope — where `sdd init` extracts the agent skill\n" +
 		"# bundle. `user` installs into the user-global directory (e.g.\n" +

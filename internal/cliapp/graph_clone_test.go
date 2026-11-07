@@ -103,3 +103,57 @@ func TestGraphRepoSyncMergesEveryUpstreamCommit(t *testing.T) {
 		t.Errorf("the upstream entry should arrive in the clone: %v", statErr)
 	}
 }
+
+// `sdd init --graph-repo` against an empty graph repository sets .sdd/ up in
+// sdd's clone and pushes it, then commits only the pointer, the guard and the
+// agent surfaces in the code repository. An sdd that knows no graph_repo then
+// reads the guard as graph_dir and fails every capture, writing nothing.
+func TestInitGraphRepoAndTheStockGuard(t *testing.T) {
+	remote := test.NewGraphRemote(t, graphCloneRepoID)
+	code := filepath.Join(canonicalTemp(t), "code")
+	err := os.MkdirAll(code, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initRepo(t, code)
+
+	runApp(t, code, "init", "--graph-repo", "https://example.test/acme/app-sdd.git", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	committed, found := remote.Show(t, ".sdd/config.yaml")
+	if !found || !strings.Contains(committed, "repo_id: "+string(graphCloneRepoID)) {
+		t.Fatalf("the graph repository should be set up and pushed:\n%s", committed)
+	}
+	pointer := readFile(t, filepath.Join(code, ".sdd", "config.yaml"))
+	if !strings.Contains(pointer, "graph_repo: "+string(graphCloneRepoID)) || !strings.Contains(pointer, "graph_dir: "+model.GraphElsewhereFile) {
+		t.Errorf("the code repository should point at the graph and carry the guard:\n%s", pointer)
+	}
+	if status := gitIn(t, code, "status", "--porcelain", "--untracked-files=all"); strings.TrimSpace(status) != "" {
+		t.Errorf("init should commit everything it wrote in the code repository:\n%s", status)
+	}
+	shipped := gitIn(t, code, "show", "--name-only", "--format=", "HEAD")
+	for _, path := range []string{".sdd/config.yaml", model.GraphElsewhereFile} {
+		if !strings.Contains(shipped, path) {
+			t.Errorf("the init commit should hold %s:\n%s", path, shipped)
+		}
+	}
+	if strings.Contains(shipped, ".sdd/graph/") {
+		t.Errorf("no graph should grow in the code repository:\n%s", shipped)
+	}
+
+	// An sdd without graph_repo support skips the key it does not know.
+	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), strings.Replace(pointer, "graph_repo: "+string(graphCloneRepoID)+"\n", "", 1))
+	gitIn(t, code, "commit", "-q", "-am", "read as stock sdd reads it")
+	head := headSubject(t, code)
+	out, err := runAppErr(t, code,
+		"new", "signal", "tactical", "A capture that must not land in the code repository.",
+		"--confidence", "high", "--skip-preflight", "--participants", "Ada", "--summary", "A stray capture.", "--title", "Stray capture")
+	if err == nil || !strings.Contains(err.Error()+out, "not a directory") {
+		t.Errorf("a capture should fail on the guard file, got %v:\n%s", err, out)
+	}
+	if headSubject(t, code) != head {
+		t.Error("the failed capture should commit nothing")
+	}
+	if status := gitIn(t, code, "status", "--porcelain", "--untracked-files=all"); strings.TrimSpace(status) != "" {
+		t.Errorf("the failed capture should write nothing:\n%s", status)
+	}
+}

@@ -77,6 +77,10 @@ func (GraphClones) KeepGraphClone(ctx context.Context, dir string, routing []str
 	return CLI{Dir: dir}.KeepGraphClone(ctx, routing)
 }
 
+func (GraphClones) PushGraphClone(ctx context.Context, dir string) error {
+	return CLI{Dir: dir}.Push(ctx)
+}
+
 // ErrGraphUnreachable reports a graph repository neither remote reached.
 var ErrGraphUnreachable = errors.New("graph repository unreachable over ssh and https")
 

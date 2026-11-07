@@ -1587,17 +1587,37 @@ func promptGraphDir(cmd *cli.Command, defaultValue string) (string, error) {
 	})
 }
 
-// promptGraphLocation asks whether the graph lives in this repository or in a
-// repository of its own, reporting true for its own.
-func promptGraphLocation(cmd *cli.Command) (bool, error) {
-	return tui.RunSelect(tui.SelectPrompt[bool]{
+// graphLocation is where a fresh init puts the graph.
+type graphLocation int
+
+const (
+	graphHere graphLocation = iota
+	graphRemote
+	graphFolder
+)
+
+// promptGraphLocation asks where the graph lives: this repository, a
+// repository of its own on a remote, or a local folder without a remote.
+func promptGraphLocation(cmd *cli.Command) (graphLocation, error) {
+	return tui.RunSelect(tui.SelectPrompt[graphLocation]{
 		Reader: cmd.Reader,
 		Writer: cmd.Writer,
 		Header: "Where should the graph live? (↑/↓ to navigate, enter to confirm)",
-		Options: []tui.SelectOption[bool]{
-			{Label: "this repository", Hint: "graph and settings committed beside the code", Value: false},
-			{Label: "a repository of its own", Hint: "this repository keeps only a pointer to it (project_dir)", Value: true},
+		Options: []tui.SelectOption[graphLocation]{
+			{Label: "this repository", Hint: "graph and settings committed beside the code", Value: graphHere},
+			{Label: "a repository of its own on a remote", Hint: "sdd keeps its own clone; this repository keeps only a pointer (graph_repo)", Value: graphRemote},
+			{Label: "a local folder without a remote", Hint: "this repository keeps only a pointer to it (project_dir)", Value: graphFolder},
 		},
+	})
+}
+
+// promptGraphRepoAddress asks for the clone address of the graph repository.
+func promptGraphRepoAddress(cmd *cli.Command) (string, error) {
+	return tui.RunTextPrompt(tui.TextPrompt{
+		Reader: cmd.Reader,
+		Writer: cmd.Writer,
+		Label:  "Graph repository address, e.g. git@github.com:org/app-sdd.git",
+		Width:  60,
 	})
 }
 
@@ -1776,6 +1796,10 @@ func initCmd() *cli.Command {
 				Usage: "Root of the sdd project holding this repository's graph, kept in a repository of its own and set up there when it holds none yet; this repository then carries only the pointer and the agent skills",
 			},
 			&cli.StringFlag{
+				Name:  "graph-repo",
+				Usage: "Address of a remote repository holding this repository's graph; sdd clones it into a clone of its own, sets up .sdd/ there when it is empty and pushes, and this repository carries only graph_repo and a guard",
+			},
+			&cli.StringFlag{
 				Name:  "participant",
 				Usage: "Canonical author name recorded in .sdd/config.local.yaml (prompted interactively with git user.name as default when unset)",
 			},
@@ -1855,27 +1879,59 @@ func initCmd() *cli.Command {
 			// Only a path typed or chosen here may name a project to set up; a
 			// recorded one names a shared project to clone (20261029-132422-d-tac-2sn).
 			setUpProject := cmd.IsSet("project-dir")
-			if projectDir == "" && !sddExists && cliout.IsTerminalReader(cmd.Reader) {
-				ownRepository, err := promptGraphLocation(cmd)
+			graphRepoAddress := strings.TrimSpace(cmd.String("graph-repo"))
+			var graphRepo model.RepoID
+			if graphRepoAddress == "" && !cmd.IsSet("project-dir") && recordedFiles != nil {
+				graphRepo = recordedFiles.GraphRepo
+			}
+			if projectDir == "" && graphRepo == "" && graphRepoAddress == "" && !sddExists && cliout.IsTerminalReader(cmd.Reader) {
+				location, err := promptGraphLocation(cmd)
 				if err != nil {
 					return fmt.Errorf("prompt: %w", err)
 				}
-				if ownRepository {
+				switch location {
+				case graphRemote:
+					graphRepoAddress, err = promptGraphRepoAddress(cmd)
+				case graphFolder:
 					projectDir, err = promptProjectDir(cmd, filepath.Join("..", filepath.Base(repoRoot)+"-sdd"))
-					if err != nil {
-						return fmt.Errorf("prompt: %w", err)
-					}
 					setUpProject = true
 				}
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
 			}
-			pointer := projectDir != ""
+			if graphRepoAddress != "" {
+				graphRepo, err = model.DeriveRepoID(graphRepoAddress)
+				if err != nil {
+					return fmt.Errorf("--graph-repo: %w", err)
+				}
+			}
+			if graphRepo != "" {
+				projectDir = ""
+			}
+			pointer := projectDir != "" || graphRepo != ""
 			// The participant is a setting of the project holding the graph,
 			// which a pointing repository is not.
 			projectSDDDir := sddDir
 			// A pointer at a folder holding no sdd project sets that project
 			// up first, asking what a fresh init asks (20261029-130154-d-tac-frl).
 			projectMissing := false
-			if pointer {
+			if graphRepo != "" {
+				locations, err := repos.DefaultLocations()
+				if err != nil {
+					return err
+				}
+				cloneDir, err := repos.NewGraphClones(locations, git.GraphClones{}).Dir(graphRepo)
+				if err != nil {
+					return err
+				}
+				projectSDDDir = meta.SDDDir(cloneDir)
+				cloneCommitted, _, err := meta.ReadConfigLayers(projectSDDDir, "")
+				if err != nil {
+					return fmt.Errorf("reading the graph repository's configuration before init: %w", err)
+				}
+				projectMissing = cloneCommitted == nil
+			} else if pointer {
 				projectRoot := projectDir
 				if !filepath.IsAbs(projectRoot) {
 					projectRoot = filepath.Join(repoRoot, projectRoot)
@@ -2064,6 +2120,7 @@ func initCmd() *cli.Command {
 				StableRepoRoot:  stableRepoRoot,
 				GraphDir:        graphDir,
 				ProjectDir:      projectDir,
+				GraphRepo:       graphRepo,
 				SetUpProject:    setUpProject,
 				SyncMode:        syncMode,
 				SyncInterval:    syncInterval,
@@ -2160,9 +2217,17 @@ func initCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			locations, err := repos.DefaultLocations()
+			if err != nil {
+				return err
+			}
+			if graphRepo != "" {
+				icmd.RemoteURL = git.RemoteURL(repoRoot)
+			}
 			handler := handlers.New(handlers.Options{
 				Stderr:              cmd.ErrWriter,
 				Reader:              reader,
+				GraphClones:         repos.NewGraphClones(locations, git.GraphClones{}),
 				Committer:           git.CLI{},
 				Tracker:             git.CLI{},
 				Repos:               mgr,
