@@ -81,6 +81,16 @@ func (GraphClones) PushGraphClone(ctx context.Context, dir string) error {
 	return CLI{Dir: dir}.Push(ctx)
 }
 
+// RemoteURL is the URL of the protocol remote the clone at dir uses.
+func (GraphClones) RemoteURL(ctx context.Context, dir string) (string, error) {
+	return CLI{Dir: dir}.UpstreamURL(ctx)
+}
+
+// ExpandURL is the package's ExpandURL, for the repos.GraphCloneGit surface.
+func (GraphClones) ExpandURL(ctx context.Context, url string) (string, error) {
+	return ExpandURL(ctx, url)
+}
+
 // ErrGraphUnreachable reports a graph repository neither remote reached.
 var ErrGraphUnreachable = errors.New("graph repository unreachable over ssh and https")
 
@@ -89,6 +99,10 @@ var ErrGraphUnreachable = errors.New("graph repository unreachable over ssh and 
 // before the other protocol. An empty remote leaves the branch unborn on
 // main. Nothing is left at dir when it fails.
 func CloneGraph(ctx context.Context, repoID model.RepoID, first, dir string, cone []string) error {
+	_, err := admittedEnv(ctx, "clone")
+	if err != nil {
+		return err
+	}
 	sshURL, httpsURL, err := model.GraphRemoteURLs(repoID)
 	if err != nil {
 		return err
@@ -249,11 +263,15 @@ func (c CLI) unsetConfig(ctx context.Context, key string) error {
 // runRemote runs a git command reaching a remote: detached from the
 // terminal, never prompting, ssh in batch mode with a connect timeout.
 func (c CLI) runRemote(ctx context.Context, args ...string) (string, error) {
+	env, err := admittedEnv(ctx, args[0], "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND="+sshCommand)
+	if err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", c.at(args...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND="+sshCommand)
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return string(out), fmt.Errorf("git %s: timed out after %s", args[0], detachedTimeout)

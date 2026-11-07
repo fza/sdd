@@ -322,8 +322,9 @@ func pluralEntries(n int) string {
 	return "entries"
 }
 
-// RepoSync executes a RepoSyncCmd: force-pull the named connected repos'
-// caches (all of them when none are named), cloning lazily where absent.
+// RepoSync executes a RepoSyncCmd: pull the named connected repos' caches
+// (all of them when none are named), cloning lazily where absent, as far as
+// the git gate admits; a deferred repo is reported, not failed.
 func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error {
 	if h.repos == nil {
 		return errNoRepos
@@ -353,13 +354,18 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 			return err
 		}
 		cloned, err := h.repos.EnsureCloned(ctx, repo, cacheDir)
+		if !cloned && err == nil {
+			err = h.repos.Pull(ctx, repo, cacheDir)
+		}
+		deferred, isDeferred := deferral(err)
+		if isDeferred {
+			if cmd.OnDeferred != nil {
+				cmd.OnDeferred(repoID, deferred.Next)
+			}
+			continue
+		}
 		if err != nil {
 			return err
-		}
-		if !cloned {
-			if err := h.repos.ForcePull(ctx, cacheDir); err != nil {
-				return err
-			}
 		}
 		if cmd.OnSynced != nil {
 			cmd.OnSynced(repoID)
@@ -369,7 +375,7 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 }
 
 // freshenReferencedRepos refreshes the caches of every repo a ref set
-// points into (lazy clone + cooldown pull) so capture-time resolution reads
+// points into (lazy clone or pull, as far as the git gate admits) so capture-time resolution reads
 // live state. Unconnected repos are skipped — resolve-or-block reports them.
 // The refresh is optional (20261027-150208-d-tac-bg4): a failed one is a
 // warning, and resolution reads the caches as they stand.
@@ -383,12 +389,12 @@ func (h *Handler) freshenReferencedRepos(ctx context.Context, refs []model.Ref) 
 	}
 }
 
-// fetchOnMiss force-pulls the cache of any connected repo whose referenced
+// fetchOnMiss pulls the cache of any connected repo whose referenced
 // backward-class target is absent from the loaded member graph, then
 // reloads the graph once so pre-flight judges the freshest state. A target
 // that is still absent after the fetch is genuinely missing — that block
-// stands. Forward-class refs are exempt from resolve-or-block, so they
-// trigger no fetch.
+// stands, as does one whose pull the git gate defers. Forward-class refs are
+// exempt from resolve-or-block, so they trigger no fetch.
 func (h *Handler) fetchOnMiss(ctx context.Context, graph *model.Graph, refs []model.Ref) *model.Graph {
 	logger := slogutils.FromContext(ctx)
 	var stale []model.RepoID
@@ -419,14 +425,21 @@ func (h *Handler) fetchOnMiss(ctx context.Context, graph *model.Graph, refs []mo
 	}
 	fetched := false
 	for _, repoID := range stale {
-		if _, ok := cfg.Connected(repoID); !ok {
+		repo, ok := cfg.Connected(repoID)
+		if !ok {
 			continue
 		}
 		cacheDir, err := h.repos.Registry().CacheDir(repoID)
 		if err != nil {
 			continue
 		}
-		if err := h.repos.ForcePull(ctx, cacheDir); err != nil {
+		err = h.repos.Pull(ctx, repo, cacheDir)
+		_, isDeferred := deferral(err)
+		if isDeferred {
+			logger.Debug("fetch-on-miss pull deferred", "repo", repoID, "err", err)
+			continue
+		}
+		if err != nil {
 			logger.Warn("fetch-on-miss pull failed", "repo", repoID, "err", err)
 			continue
 		}
@@ -466,7 +479,7 @@ func (h *Handler) PrepareCrossRepoSearch(ctx context.Context, q query.SearchQuer
 }
 
 // RefreshDependencyClosure walks the local repo's dependency closure,
-// refreshing each connected repo's cache (lazy clone, cooldown pull) before
+// refreshing each connected repo's cache (lazy clone or gated pull) before
 // reading what it declares, so a config repaired upstream is read after its
 // pull. What the refresh cannot do is reported through the command's
 // callbacks; only a failure to read the closure itself is returned.
@@ -596,7 +609,8 @@ func (h *Handler) BuildConnectedIndexes(ctx context.Context, repoIDs []model.Rep
 }
 
 // EnsureReposFresh brings the caches of the named connected repos up to date
-// for a read: lazy clone when absent, cooldown-gated pull otherwise.
+// for a read: lazy clone when absent, a pull otherwise, each when the git gate
+// admits it; a deferred one leaves the cache as it stands.
 // Unconnected repo IDs are skipped — the read side renders them unresolved,
 // which is that state's honest surface. Reports whether any cache changed so a
 // long-lived caller can invalidate its GraphSource. cmd.OnPhase (optional)
@@ -625,26 +639,32 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposF
 		if err != nil {
 			return changed, err
 		}
-		switch {
-		case !repos.IsCloned(cacheDir):
-			emitPhase(cmd.OnPhase, model.PhaseConnecting)
-			emitPhase(cmd.OnPhase, model.PhaseCloning)
-		case repos.PullDue(cacheDir, repos.DefaultPullCooldown):
-			emitPhase(cmd.OnPhase, model.PhaseSyncing)
-		}
-		cloned, err := h.repos.EnsureCloned(ctx, repo, cacheDir)
+		due, err := h.repos.FetchDue(ctx, repo)
 		if err != nil {
 			return changed, err
 		}
-		if cloned {
-			changed = true
+		if !due {
+			logger.Debug("cache refresh not due", "repo", repoID)
 			continue
 		}
-		pulled, err := h.repos.CooldownPull(ctx, cacheDir, repos.DefaultPullCooldown)
+		cloned := repos.IsCloned(cacheDir)
+		if cloned {
+			emitPhase(cmd.OnPhase, model.PhaseSyncing)
+			err = h.repos.Pull(ctx, repo, cacheDir)
+		} else {
+			emitPhase(cmd.OnPhase, model.PhaseConnecting)
+			emitPhase(cmd.OnPhase, model.PhaseCloning)
+			_, err = h.repos.EnsureCloned(ctx, repo, cacheDir)
+		}
+		_, isDeferred := deferral(err)
+		if isDeferred {
+			logger.Debug("cache refresh deferred", "repo", repoID, "err", err)
+			continue
+		}
 		if err != nil {
 			return changed, err
 		}
-		changed = changed || pulled
+		changed = true
 	}
 	return changed, nil
 }

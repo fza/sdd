@@ -33,7 +33,7 @@ func TestConfigSetJudgesTheDialogueModeValue(t *testing.T) {
 				t.Fatal(err)
 			}
 			reg := repos.NewRegistry(repos.Locations{ConfigPath: filepath.Join(dir, "global.yaml"), CacheRoot: filepath.Join(dir, "cache")})
-			h := handlers.New(handlers.Options{SDDDir: sddDir, Repos: repos.NewManager(reg, git.CLI{})})
+			h := handlers.New(handlers.Options{SDDDir: sddDir, Repos: repos.NewManager(reg, git.CLI{}, nil)})
 
 			err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: tc.target, Key: "dialogue.mode", Value: tc.value})
 			if tc.refused {

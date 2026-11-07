@@ -46,13 +46,18 @@ func syncCmd() *cli.Command {
 				return err
 			}
 			if cmd.Bool("pull") {
-				handler := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Puller: graphGit(dir)})
+				gate, err := commandGate()
+				if err != nil {
+					return err
+				}
+				handler := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Puller: graphGit(dir), Gate: gate})
 				err = handler.SyncPull(ctx, &command.SyncPullCmd{
 					OnPulled: func(output string) {
 						if output != "" {
 							fmt.Fprintln(cmd.Writer, output)
 						}
 					},
+					OnDeferred: func(next time.Time) { printDeferred(cmd.Writer, "pull", next) },
 				})
 				if err != nil {
 					return err
@@ -66,21 +71,25 @@ func syncCmd() *cli.Command {
 			if syncMode != model.SyncModeAuto {
 				return errors.New("sync: specify --pull to merge upstream changes into the shared graph")
 			}
-			sddDir, err := resolveSDDDir()
-			if err != nil {
-				return err
-			}
 			opts, err := graphSyncOptions(ctx, dir, handlers.Options{SyncMode: syncMode})
 			if err != nil {
 				return err
 			}
-			err = handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{SDDDir: sddDir, Explicit: true})
+			err = handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{Explicit: true, OnDeferred: func(operation string, next time.Time) {
+				printDeferred(cmd.Writer, operation, next)
+			}})
 			if err != nil {
 				return err
 			}
 			return backfillTitles(ctx, cmd, dir)
 		},
 	}
+}
+
+// printDeferred tells the user a commanded sync skipped an operation the git
+// gate deferred, and when it may run.
+func printDeferred(w io.Writer, operation string, next time.Time) {
+	fmt.Fprintf(w, "sync: %s skipped, next allowed at %s\n", operation, next.Local().Format("15:04"))
 }
 
 // backfillTitles titles the untitled entries of graphDir after an explicit
@@ -123,6 +132,11 @@ func graphSyncOptions(ctx context.Context, graphDir string, opts handlers.Option
 	if opts.SyncMode != model.SyncModeAuto {
 		return opts, nil
 	}
+	gate, err := commandGate()
+	if err != nil {
+		return opts, err
+	}
+	opts.Gate = gate
 	return syncstate.HandlerOptions(ctx, graphDir, opts)
 }
 
@@ -135,10 +149,11 @@ func withSyncBanner(ctx context.Context, w io.Writer) context.Context {
 	})
 }
 
-// runSyncCheck runs the background sync check of every command: under
-// automatic sync a round that skips when another process syncs, otherwise
-// a fetch and a status line. Bounded by syncCheckTimeout so network
-// pathologies cannot stall the CLI, and it never fails the command.
+// runSyncCheck runs the background sync check of every command: in an
+// sdd-owned graph clone a round that skips when another process syncs,
+// otherwise a fetch and a status line, each git operation only as far as the
+// git gate admits it, a deferral silent. Bounded by syncCheckTimeout so
+// network pathologies cannot stall the CLI, and it never fails the command.
 func runSyncCheck(ctx context.Context) {
 	logger := slogutils.FromContext(ctx)
 
@@ -158,11 +173,10 @@ func runSyncCheck(ctx context.Context) {
 	defer cancel()
 
 	graphDir := meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)
-	cooldown := model.ResolveSyncCooldown(cfg)
-	if syncstate.Mode(cfg, filepath.Dir(sddDir)) == model.SyncModeAuto {
+	if syncstate.Mode(filepath.Dir(sddDir)) == model.SyncModeAuto {
 		opts, err := graphSyncOptions(ctx, graphDir, handlers.Options{SyncMode: model.SyncModeAuto, GraphDir: graphDir})
 		if err == nil {
-			err = handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{SDDDir: sddDir, Cooldown: cooldown})
+			err = handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{})
 		}
 		if err != nil {
 			logger.Warn(fmt.Sprintf("sync: %v", err))
@@ -176,10 +190,14 @@ func runSyncCheck(ctx context.Context) {
 		return
 	}
 	graphRepo := git.CLI{Dir: repo}
+	gate, err := commandGate()
+	if err != nil {
+		logger.Debug("sync check: no git gate", "err", err)
+		return
+	}
 	var state model.SyncState
 	var reason string
-	err = handlers.New(handlers.Options{GraphFetcher: graphRepo}).FetchGraph(ctx, &command.FetchGraphCmd{
-		SDDDir: sddDir, Cooldown: cooldown,
+	err = handlers.New(handlers.Options{GraphFetcher: graphRepo, Gate: gate}).FetchGraph(ctx, &command.FetchGraphCmd{
 		OnFetched: func(fetched model.SyncState, why string) { state, reason = fetched, why },
 	})
 	if err != nil {
@@ -232,7 +250,7 @@ func syncBlocked(ctx context.Context) (*model.SyncBlocked, error) {
 		return nil, nil
 	}
 	cfg, err := loadConfig()
-	if err != nil || syncstate.Mode(cfg, filepath.Dir(sddDir)) != model.SyncModeAuto {
+	if err != nil || syncstate.Mode(filepath.Dir(sddDir)) != model.SyncModeAuto {
 		return nil, err
 	}
 	return syncstate.ReadBlocked(ctx, meta.ResolveGraphDir(filepath.Dir(sddDir), cfg))

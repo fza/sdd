@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -34,10 +35,11 @@ type RepoAddCmd struct {
 }
 
 // EnsureReposFreshCmd freshens the caches of the named connected repos for a
-// read: lazy clone when absent, cooldown-gated pull otherwise. OnPhase reports
+// read: lazy clone when absent, a pull otherwise, each as far as the git gate
+// admits it. OnPhase reports
 // connecting → cloning for a clone and syncing for a pull, so a text-only
-// cross-repo read shows a phase-true footer; it is never fired for a
-// fresh-cache no-op.
+// cross-repo read shows a phase-true footer; it is never fired for a refresh
+// not due.
 type EnsureReposFreshCmd struct {
 	RepoIDs []model.RepoID
 
@@ -129,4 +131,7 @@ type RepoSyncCmd struct {
 
 	// OnSynced fires per repo after its cache is fresh.
 	OnSynced func(repoID model.RepoID)
+	// OnDeferred fires per repo whose clone or pull the git gate deferred,
+	// with the time it may run.
+	OnDeferred func(repoID model.RepoID, next time.Time)
 }

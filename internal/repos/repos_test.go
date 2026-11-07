@@ -8,9 +8,9 @@ import (
 	"reflect"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -151,7 +151,7 @@ func TestCacheLifecycle(t *testing.T) {
 		ConfigPath: filepath.Join(t.TempDir(), "config.yaml"),
 		CacheRoot:  filepath.Join(t.TempDir(), "cache"),
 	}
-	mgr := NewManager(NewRegistry(loc), git.CLI{})
+	mgr := NewManager(NewRegistry(loc), git.CLI{}, gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }}))
 	cacheDir := filepath.Join(loc.CacheRoot, filepath.FromSlash(string(repoID)))
 	repo := ConnectedRepo{RepoID: repoID, CloneURL: upstream}
 	ctx := context.Background()
@@ -184,16 +184,7 @@ func TestCacheLifecycle(t *testing.T) {
 		t.Errorf("cached graph entry missing: %v", err)
 	}
 
-	// Within cooldown: no pull. After the marker ages out: pull runs and
-	// picks up new upstream commits.
-	pulled, err := mgr.CooldownPull(ctx, cacheDir, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pulled {
-		t.Error("pull ran inside the cooldown window")
-	}
-
+	// A pull picks up new upstream commits.
 	entry2 := "---\ntype: signal\nlayer: tac\nkind: gap\n---\n\nA second remote gap.\n"
 	if err := os.WriteFile(filepath.Join(upstream, ".sdd/graph/2026/06/02-130000-s-tac-def.md"), []byte(entry2), 0o644); err != nil {
 		t.Fatal(err)
@@ -207,12 +198,9 @@ func TestCacheLifecycle(t *testing.T) {
 		t.Fatalf("git commit: %v\n%s", err, out)
 	}
 
-	pulled, err = mgr.CooldownPull(ctx, cacheDir, 0)
+	err = mgr.Pull(ctx, repo, cacheDir)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !pulled {
-		t.Error("expected a pull after cooldown expiry")
 	}
 	if _, err := os.Stat(filepath.Join(graphDir, "2026/06/02-130000-s-tac-def.md")); err != nil {
 		t.Errorf("pull did not fetch the new entry: %v", err)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	"github.com/networkteam/slogutils"
 	"github.com/urfave/cli/v3"
@@ -40,7 +41,7 @@ func repoCmd() *cli.Command {
 					if err != nil {
 						return err
 					}
-					dir, err := repos.NewGraphClones(locations, git.GraphClones{}).Dir(model.RepoID(cmd.Args().First()))
+					dir, err := repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir(model.RepoID(cmd.Args().First()))
 					if err != nil {
 						return err
 					}
@@ -179,7 +180,7 @@ func repoCmd() *cli.Command {
 			},
 			{
 				Name:      "sync",
-				Usage:     "Force-pull connected repo caches (all, or the named repos)",
+				Usage:     "Pull connected repo caches (all, or the named repos) as far as the git limits allow",
 				ArgsUsage: "[repo-id ...]",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					h, err := repoHandler(cmd.ErrWriter)
@@ -190,6 +191,9 @@ func repoCmd() *cli.Command {
 						RepoIDs: repoIDArgs(cmd.Args().Slice()),
 						OnSynced: func(repoID model.RepoID) {
 							fmt.Fprintf(cmd.Writer, "synced %s\n", repoID)
+						},
+						OnDeferred: func(repoID model.RepoID, next time.Time) {
+							fmt.Fprintf(cmd.Writer, "skipped %s (next %s)\n", repoID, next.Local().Format("15:04"))
 						},
 					})
 				},
@@ -233,7 +237,12 @@ func repoHandler(errWriter io.Writer) (*handlers.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	gate, err := commandGate()
+	if err != nil {
+		return nil, err
+	}
 	return handlers.New(handlers.Options{
+		Gate:        gate,
 		Stderr:      errWriter,
 		Reader:      reader,
 		Repos:       mgr,

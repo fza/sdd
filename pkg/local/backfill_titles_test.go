@@ -49,11 +49,8 @@ func (r titleOnlyRunner) Run(ctx context.Context, request pkgllm.Request) (pkgll
 }
 
 func TestSyncRoundPullsUntitledEntriesAndTheBackfillTitlesThem(t *testing.T) {
-	repo, remote := syncedRepository(t, "auto")
 	existingPath, existing := untitledEntry("20261101-100000-s-tac-old")
-	repo.write(existingPath, existing)
-	repo.git("add", existingPath)
-	repo.git("commit", "-m", "sdd: signal tactical gap")
+	repo, remote := syncedClone(t, map[string]string{existingPath: existing})
 	pulledPath, pulled := untitledEntry("20261101-110000-s-tac-new")
 	pushUpstream(t, remote, pulledPath, pulled, "sdd: signal tactical gap")
 
@@ -179,7 +176,6 @@ func TestBackfillTitlesWaitsOutTheCooldownOnCallsOnly(t *testing.T) {
 	} {
 		t.Run(string(tc.trigger), func(t *testing.T) {
 			repo, _ := syncedRepository(t, "manual")
-			repo.write(".sdd/config.local.yaml", "sync:\n  mode: manual\n  cooldown: 1h\n")
 			repo.write(".sdd/tmp/last-titles", "")
 			path, content := untitledEntry("20261101-100000-s-tac-cdn")
 			repo.write(path, content)

@@ -318,11 +318,11 @@ func ReadBlocked(ctx context.Context, graphDir string) (*model.SyncBlocked, erro
 }
 
 // Mode is the sync mode of the graph repository at root: automatic in the
-// sdd-owned graph clone, which only sdd works in, the configured one
-// elsewhere.
-func Mode(cfg *model.PerRepoConfig, root string) model.SyncMode {
+// sdd-owned graph clone, which only sdd works in, manual for a graph inside
+// the code repository (20261107-095427-d-tac-yux).
+func Mode(root string) model.SyncMode {
 	if git.IsGraphClone(root) {
 		return model.SyncModeAuto
 	}
-	return model.ResolveSyncMode(cfg)
+	return model.SyncModeManual
 }

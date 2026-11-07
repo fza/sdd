@@ -897,53 +897,12 @@ func parseDaysOrDuration(raw string) (time.Duration, error) {
 	return time.ParseDuration(raw)
 }
 
-// ResolveSyncCooldown returns the effective cooldown duration from cfg,
-// falling back to DefaultSyncCooldown on empty or unparseable values.
-func ResolveSyncCooldown(cfg *PerRepoConfig) time.Duration {
-	raw := ""
-	if cfg != nil {
-		raw = cfg.Sync.Cooldown
-	}
-	return parsePositiveDuration(raw, DefaultSyncCooldown)
-}
-
 // ResolveDialogueMode returns the effective dialogue mode from cfg.
 func ResolveDialogueMode(cfg *PerRepoConfig) DialogueMode {
 	if cfg != nil && cfg.Dialogue.Mode == DialogueAutonomous {
 		return DialogueAutonomous
 	}
 	return DialogueGuided
-}
-
-// ResolveSyncMode returns the effective sync mode from cfg.
-func ResolveSyncMode(cfg *PerRepoConfig) SyncMode {
-	if cfg != nil && cfg.Sync.Mode == SyncModeAuto {
-		return SyncModeAuto
-	}
-	return SyncModeManual
-}
-
-// ResolveSyncInterval returns how often a running `sdd serve` syncs the
-// graph repository, and false when no timer runs: sync.mode is not auto, or
-// sync.interval is unset, malformed or below MinSyncInterval.
-func ResolveSyncInterval(cfg *PerRepoConfig) (time.Duration, bool) {
-	if ResolveSyncMode(cfg) != SyncModeAuto || cfg.Sync.Interval == "" || ignoredSyncInterval(cfg.Sync.Interval, false) != "" {
-		return 0, false
-	}
-	d, _ := time.ParseDuration(cfg.Sync.Interval)
-	return d, true
-}
-
-// parsePositiveDuration reads a configured duration, falling back to a baked
-// default when it is empty, malformed or not positive.
-func parsePositiveDuration(raw, fallback string) time.Duration {
-	if raw != "" {
-		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
-			return d
-		}
-	}
-	d, _ := time.ParseDuration(fallback)
-	return d
 }
 
 // FormatPointerConfig returns the config of a work repository whose graph

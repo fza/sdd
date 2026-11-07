@@ -10,7 +10,7 @@ import (
 	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/command"
-	"github.com/networkteam/sdd/internal/meta"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -38,10 +38,11 @@ type GraphFetcher interface {
 	HasRemote(ctx context.Context) bool
 	UpstreamRef(ctx context.Context) (string, error)
 	Fetch(ctx context.Context) error
+	UpstreamLocator
 }
 
-// FetchGraph fetches the graph repository's upstream unless the last fetch
-// lies within the cooldown, and stamps the last-fetch marker.
+// FetchGraph fetches the graph repository's upstream when the git gate
+// admits it.
 func (h *Handler) FetchGraph(ctx context.Context, cmd *command.FetchGraphCmd) error {
 	if h.fetcher == nil {
 		return errors.New("graph fetch is unavailable: no git surface configured")
@@ -55,33 +56,15 @@ func (h *Handler) FetchGraph(ctx context.Context, cmd *command.FetchGraphCmd) er
 		report(model.SyncStateNoRepo, "")
 		return nil
 	}
-	if cmd.Cooldown > 0 {
-		last, err := meta.ReadLastFetch(cmd.SDDDir)
-		if err != nil {
-			return fmt.Errorf("reading last-fetch: %w", err)
-		}
-		if !last.IsZero() && h.now().Sub(last) < cmd.Cooldown {
-			report(model.SyncStateSkipped, "")
-			return nil
-		}
-	}
-	state, reason, err := h.fetchUpstream(ctx)
+	state, reason, err := h.fetchUpstream(ctx, cmd)
 	if err != nil {
 		return err
-	}
-	// Stamped whatever the outcome: the cooldown bounds attempts, so an
-	// offline remote is not retried by every command.
-	if cmd.SDDDir != "" {
-		err = meta.TouchLastFetch(cmd.SDDDir)
-		if err != nil {
-			return fmt.Errorf("stamping last-fetch: %w", err)
-		}
 	}
 	report(state, reason)
 	return nil
 }
 
-func (h *Handler) fetchUpstream(ctx context.Context) (model.SyncState, string, error) {
+func (h *Handler) fetchUpstream(ctx context.Context, cmd *command.FetchGraphCmd) (model.SyncState, string, error) {
 	if !h.fetcher.HasRemote(ctx) {
 		return model.SyncStateNoRemote, "", nil
 	}
@@ -92,9 +75,23 @@ func (h *Handler) fetchUpstream(ctx context.Context) (model.SyncState, string, e
 	if upstream == "" {
 		return model.SyncStateNoUpstream, "", nil
 	}
-	err = h.fetcher.Fetch(ctx)
-	if err != nil {
-		return model.SyncStateFetchFailed, model.GitFailureDetail(err), nil
+	var fetchErr error
+	err = h.gated(ctx, gitgate.Fetch, h.fetcher, func(ctx context.Context) error {
+		fetchErr = h.fetcher.Fetch(ctx)
+		return fetchErr
+	})
+	deferred, isDeferred := deferral(err)
+	switch {
+	case isDeferred:
+		slogutils.FromContext(ctx).Debug("sync: fetch deferred", "repo", deferred.Target.Repo, "reason", deferred.Reason, "next", deferred.Next)
+		if cmd.OnDeferred != nil {
+			cmd.OnDeferred(string(gitgate.Fetch), deferred.Next)
+		}
+		return model.SyncStateSkipped, "", nil
+	case err != nil && err != fetchErr:
+		return "", "", err
+	case fetchErr != nil:
+		return model.SyncStateFetchFailed, model.GitFailureDetail(fetchErr), nil
 	}
 	return model.SyncStateFetched, "", nil
 }
@@ -122,17 +119,12 @@ func (h *Handler) SyncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 		return h.reportRecorded(ctx)
 	}
 	defer release()
-	paused, resumed, err := h.syncPaused(ctx)
+	paused, err := h.syncPaused(ctx)
 	if err != nil {
 		return err
 	}
-	round := *cmd
-	if resumed {
-		// The hand merge that resumed sync still has to reach the upstream.
-		round.Cooldown = 0
-	}
 	if !paused || cmd.Explicit {
-		err = h.syncRound(ctx, &round)
+		err = h.syncRound(ctx, cmd)
 		if err != nil {
 			return err
 		}
@@ -147,7 +139,7 @@ func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 	}
 	var state model.SyncState
 	var reason string
-	err = h.FetchGraph(ctx, &command.FetchGraphCmd{SDDDir: cmd.SDDDir, Cooldown: cmd.Cooldown, OnFetched: func(fetched model.SyncState, why string) {
+	err = h.FetchGraph(ctx, &command.FetchGraphCmd{OnDeferred: cmd.OnDeferred, OnFetched: func(fetched model.SyncState, why string) {
 		state, reason = fetched, why
 	}})
 	if err != nil {
@@ -155,7 +147,10 @@ func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 	}
 	switch state {
 	case model.SyncStateSkipped:
-		return nil
+		// Commits waiting still go out once the push is due: a rejection
+		// fetches within the push's own admission.
+		_, err = h.publish(ctx, cmd.OnDeferred)
+		return err
 	case model.SyncStateNoRepo:
 		h.reportBlocked(ctx, model.SyncBlocked{Kind: model.SyncBlockedGraphMissing, Since: h.now(), Detail: h.graphDir})
 		return nil
@@ -174,7 +169,7 @@ func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 	if err != nil || blocked {
 		return err
 	}
-	blocked, err = h.publish(ctx)
+	blocked, err = h.publish(ctx, cmd.OnDeferred)
 	if err != nil || blocked {
 		return err
 	}
@@ -221,20 +216,58 @@ func (h *Handler) heldPull(ctx context.Context) *heldPull {
 
 // publish pushes the graph commits ahead of upstream and records what holds
 // them back. A push the upstream rejects is retried once after merging what
-// upstream gained, by the pull rules (20261027-221041-d-tac-8b7).
-func (h *Handler) publish(ctx context.Context) (bool, error) {
+// upstream gained, by the pull rules (20261027-221041-d-tac-8b7). With
+// commits waiting the push, its retry and the fetch the retry needs are one
+// push admission of the git gate; a deferred push leaves them waiting,
+// unrecorded, and reports blocked so nothing is cleared.
+func (h *Handler) publish(ctx context.Context, onDeferred func(operation string, next time.Time)) (bool, error) {
 	var heldVerdict model.PushVerdict
 	var heldUpstream string
 	push := h.reportingPush(ctx)
 	push.OnHeld = func(verdict model.PushVerdict, upstream string) {
 		heldVerdict, heldUpstream = verdict, upstream
 	}
-	pushErr := h.PushGraph(ctx, push)
-	if pushErr != nil {
-		blocked, err := h.retryPush(ctx, push, pushErr)
-		if err != nil || blocked {
-			return blocked, err
+	if h.pusher == nil {
+		return false, errors.New("graph push is unavailable: no git surface configured")
+	}
+	verdict, _, _, err := h.pushVerdict(ctx)
+	if err != nil {
+		return false, err
+	}
+	var blocked bool
+	var pushErr error
+	attempt := func(ctx context.Context) error {
+		pushErr = h.PushGraph(ctx, push)
+		if pushErr == nil {
+			return nil
 		}
+		var retryErr error
+		blocked, retryErr = h.retryPush(ctx, push, pushErr)
+		if retryErr != nil {
+			return retryErr
+		}
+		if blocked {
+			return pushErr
+		}
+		return nil
+	}
+	if verdict == model.PushReady {
+		err = h.gated(ctx, gitgate.Push, h.pusher, attempt)
+	} else {
+		err = attempt(ctx)
+	}
+	deferred, isDeferred := deferral(err)
+	switch {
+	case isDeferred:
+		slogutils.FromContext(ctx).Debug("sync: push deferred", "repo", deferred.Target.Repo, "reason", deferred.Reason, "next", deferred.Next)
+		if onDeferred != nil {
+			onDeferred(string(gitgate.Push), deferred.Next)
+		}
+		return true, nil
+	case blocked && err == pushErr:
+		return true, nil
+	case err != nil:
+		return false, err
 	}
 	kind, blocked := model.HeldPushBlock(heldVerdict)
 	if !blocked {
@@ -282,7 +315,7 @@ func (h *Handler) publishGraph(ctx context.Context) error {
 		return err
 	}
 	defer release()
-	paused, _, err := h.syncPaused(ctx)
+	paused, err := h.syncPaused(ctx)
 	if err != nil {
 		return err
 	}
@@ -291,7 +324,7 @@ func (h *Handler) publishGraph(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		blocked, err := h.publish(ctx)
+		blocked, err := h.publish(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -331,26 +364,25 @@ func (h *Handler) takeSyncLock(ctx context.Context, wait bool) (func(), error) {
 }
 
 // syncPaused reports whether a recorded conflict still pauses automatic
-// sync, removing the record and reporting resumed once its source commit is
-// in the branch.
-func (h *Handler) syncPaused(ctx context.Context) (paused, resumed bool, err error) {
+// sync, removing the record once its source commit is in the branch.
+func (h *Handler) syncPaused(ctx context.Context) (bool, error) {
 	current, err := h.loadRecord()
 	if err != nil || current == nil || !current.Pauses() {
-		return false, false, err
+		return false, err
 	}
 	if h.graphPuller == nil {
-		return true, false, nil
+		return true, nil
 	}
 	merged, err := h.graphPuller.Contains(ctx, current.Source)
 	if err != nil {
-		return false, false, fmt.Errorf("checking whether the conflict was merged: %w", err)
+		return false, fmt.Errorf("checking whether the conflict was merged: %w", err)
 	}
-	if !merged {
-		return true, false, nil
+	if merged {
+		return false, h.clearRecord(func(recorded model.SyncBlocked) bool {
+			return recorded.Kind == current.Kind && recorded.Source == current.Source
+		})
 	}
-	return false, true, h.clearRecord(func(recorded model.SyncBlocked) bool {
-		return recorded.Kind == current.Kind && recorded.Source == current.Source
-	})
+	return true, nil
 }
 
 func (h *Handler) recordConflict(ctx context.Context, conflict model.MergeConflict) error {

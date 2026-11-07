@@ -5,9 +5,12 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/handlers/synctest"
+	"github.com/networkteam/sdd/internal/repos"
 )
 
 // fakePuller scripts the git surface the sync-pull handler consumes and
@@ -18,6 +21,14 @@ type fakePuller struct {
 	pullOut     string
 	pullErr     error
 	mergeCalled bool
+	url         string
+}
+
+func (f *fakePuller) UpstreamURL(context.Context) (string, error) {
+	if f.url == "" {
+		return "/fake/remote.git", nil
+	}
+	return f.url, nil
 }
 
 func (f *fakePuller) IsClean(context.Context) (bool, error) {
@@ -31,7 +42,7 @@ func (f *fakePuller) MergePull(context.Context) (string, error) {
 
 func TestSyncPull_CleanTreeMergesAndReports(t *testing.T) {
 	puller := &fakePuller{clean: true, pullOut: "Already up to date."}
-	h := handlers.New(handlers.Options{Puller: puller})
+	h := handlers.New(handlers.Options{Puller: puller, Gate: synctest.Gate(t.TempDir(), nil)})
 
 	var got string
 	cmd := &command.SyncPullCmd{OnPulled: func(output string) { got = output }}
@@ -49,7 +60,7 @@ func TestSyncPull_CleanTreeMergesAndReports(t *testing.T) {
 
 func TestSyncPull_DirtyTreeRefusesWithoutPulling(t *testing.T) {
 	puller := &fakePuller{clean: false}
-	h := handlers.New(handlers.Options{Puller: puller})
+	h := handlers.New(handlers.Options{Puller: puller, Gate: synctest.Gate(t.TempDir(), nil)})
 
 	called := false
 	cmd := &command.SyncPullCmd{OnPulled: func(string) { called = true }}
@@ -78,7 +89,7 @@ func TestSyncPull_NilPullerErrors(t *testing.T) {
 
 func TestSyncPull_PropagatesPullFailure(t *testing.T) {
 	puller := &fakePuller{clean: true, pullErr: errors.New("network down")}
-	h := handlers.New(handlers.Options{Puller: puller})
+	h := handlers.New(handlers.Options{Puller: puller, Gate: synctest.Gate(t.TempDir(), nil)})
 
 	err := h.SyncPull(context.Background(), &command.SyncPullCmd{})
 	if err == nil {
@@ -86,5 +97,42 @@ func TestSyncPull_PropagatesPullFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "network down") {
 		t.Errorf("error = %q, want it to wrap the pull failure", err.Error())
+	}
+}
+
+func TestSyncPull_DeferredWithinTheCooldown(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	puller := &fakePuller{clean: true, url: "git@example.test:acme/graph.git"}
+	h := handlers.New(handlers.Options{Puller: puller, Gate: synctest.Gate(t.TempDir(), func() time.Time { return now })})
+
+	err := h.SyncPull(context.Background(), &command.SyncPullCmd{})
+	if err != nil {
+		t.Fatalf("the first pull should run: %v", err)
+	}
+	puller.mergeCalled = false
+	var next time.Time
+	pulled := false
+	err = h.SyncPull(context.Background(), &command.SyncPullCmd{
+		OnPulled:   func(string) { pulled = true },
+		OnDeferred: func(at time.Time) { next = at },
+	})
+	if err != nil {
+		t.Fatalf("a deferred pull should be a skip, not a failure: %v", err)
+	}
+	if puller.mergeCalled || pulled {
+		t.Error("a pull within the fetch cooldown should not run")
+	}
+	if !next.After(now) {
+		t.Errorf("the deferral should name a later time it may run, got %v", next)
+	}
+}
+
+func TestSyncPull_WithoutGateRefuses(t *testing.T) {
+	puller := &fakePuller{clean: true}
+	h := handlers.New(handlers.Options{Puller: puller})
+
+	err := h.SyncPull(context.Background(), &command.SyncPullCmd{})
+	if !errors.Is(err, repos.ErrNoGate) || puller.mergeCalled {
+		t.Errorf("a pull without a gate should be refused, got %v", err)
 	}
 }

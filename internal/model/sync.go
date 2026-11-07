@@ -6,7 +6,12 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
+
+// TitleBackfillCooldown spaces the title backfills engine calls start, so a
+// failing LLM is not retried by every call.
+const TitleBackfillCooldown = 15 * time.Minute
 
 // GraphCommitSubjectPattern matches the subject every SDD-written commit
 // starts with; sync counts commits matching it on either side of the
@@ -39,11 +44,11 @@ const (
 	// SyncStateNoUpstream: current branch has no upstream tracking branch.
 	SyncStateNoUpstream SyncState = "no-upstream"
 	// SyncStateFetchFailed: git fetch was attempted and failed (network,
-	// authentication, etc.). The last-fetch timestamp is still updated so
-	// subsequent commands within the cooldown window do not retry.
+	// authentication, etc.). The git gate holds the next attempt back.
 	SyncStateFetchFailed SyncState = "fetch-failed"
-	// SyncStateSkipped: the sync check did not run (cooldown window active,
-	// command exempt, or environment unavailable). No slog output expected.
+	// SyncStateSkipped: the sync check did not run (the git gate deferred the
+	// fetch, command exempt, or environment unavailable). No slog output
+	// expected.
 	SyncStateSkipped SyncState = "skipped"
 	// SyncStateFetched: the upstream was fetched; the remote-tracking ref is
 	// fresh.

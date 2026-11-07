@@ -233,8 +233,12 @@ func defaultRepos() (*repos.Registry, *repos.Manager, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	gate, err := commandGate()
+	if err != nil {
+		return nil, nil, err
+	}
 	reg := repos.NewRegistry(loc)
-	return reg, repos.NewManager(reg, git.CLI{}), nil
+	return reg, repos.NewManager(reg, git.CLI{}, gate), nil
 }
 
 // loadConfig resolves the effective config overlay: the user-global base
@@ -272,7 +276,7 @@ func localConfigLayer() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	project, err := meta.ResolveProject(workRoot, repos.NewGraphClones(locations, git.GraphClones{}).Dir)
+	project, err := meta.ResolveProject(workRoot, repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir)
 	if err != nil {
 		return "", err
 	}
@@ -456,6 +460,7 @@ func New(options Options) *cli.Command {
 				Level: level,
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
+			currentGate = &invocationGate{ctx: ctx}
 			if cmd.Bool("timing") {
 				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
 			}
@@ -1510,7 +1515,7 @@ func graphSyncMode(graphDir string) (model.SyncMode, error) {
 	if filepath.Clean(graphDir) != filepath.Clean(meta.ResolveGraphDir(project.Root, cfg)) {
 		return model.SyncModeManual, nil
 	}
-	return syncstate.Mode(cfg, project.Root), nil
+	return syncstate.Mode(project.Root), nil
 }
 
 var errNoProject = errors.New("no .sdd/ directory found; run 'sdd init' first")
@@ -1548,7 +1553,11 @@ func resolveProject() (meta.Project, error) {
 	if err != nil {
 		return meta.Project{}, err
 	}
-	clones := repos.NewGraphClones(locations, git.GraphClones{})
+	gate, err := commandGate()
+	if err != nil {
+		return meta.Project{}, err
+	}
+	clones := repos.NewGraphClones(locations, git.GraphClones{}, gate)
 	project, err := meta.ResolveProject(workRoot, clones.Dir)
 	if err != nil {
 		return meta.Project{}, err
@@ -1923,7 +1932,7 @@ func initCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				cloneDir, err := repos.NewGraphClones(locations, git.GraphClones{}).Dir(graphRepo)
+				cloneDir, err := repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir(graphRepo)
 				if err != nil {
 					return err
 				}
@@ -2205,10 +2214,14 @@ func initCmd() *cli.Command {
 			if graphRepo != "" {
 				icmd.RemoteURL = git.RemoteURL(repoRoot)
 			}
+			gate, err := commandGate()
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
 				Stderr:              cmd.ErrWriter,
 				Reader:              reader,
-				GraphClones:         repos.NewGraphClones(locations, git.GraphClones{}),
+				GraphClones:         repos.NewGraphClones(locations, git.GraphClones{}, gate),
 				Committer:           git.CLI{},
 				Tracker:             git.CLI{},
 				Repos:               mgr,

@@ -24,7 +24,7 @@ func newConfigHandler(t *testing.T) (*handlers.Handler, string, string) {
 	}
 	globalPath := filepath.Join(dir, "global.yaml")
 	reg := repos.NewRegistry(repos.Locations{ConfigPath: globalPath, CacheRoot: filepath.Join(dir, "cache")})
-	return handlers.New(handlers.Options{SDDDir: sddDir, Repos: repos.NewManager(reg, git.CLI{})}), globalPath, sddDir
+	return handlers.New(handlers.Options{SDDDir: sddDir, Repos: repos.NewManager(reg, git.CLI{}, nil)}), globalPath, sddDir
 }
 
 func TestConfigSetRefusesRetiredSyncKeys(t *testing.T) {

@@ -43,7 +43,7 @@ func seededRemote(t *testing.T) *test.GraphRemote {
 func sddClone(t *testing.T, first string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
-	err := git.CloneGraph(context.Background(), cloneRepoID, first, dir, model.GraphCloneCone(""))
+	err := git.CloneGraph(admitted(t, context.Background()), cloneRepoID, first, dir, model.GraphCloneCone(""))
 	if err != nil {
 		t.Fatalf("CloneGraph: %v", err)
 	}
@@ -79,7 +79,7 @@ func readFile(t *testing.T, dir, name string) string {
 func capturedLog(t *testing.T) (context.Context, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
-	return slogutils.WithLogger(context.Background(), slog.New(slog.NewTextHandler(&buf, nil))), &buf
+	return admitted(t, slogutils.WithLogger(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))), &buf
 }
 
 func TestCloneGraphIsBloblessAndSparse(t *testing.T) {
@@ -115,7 +115,7 @@ func TestCloneGraphIsBloblessAndSparse(t *testing.T) {
 func TestKeepGraphCloneDiscardsWhatSddDidNotMake(t *testing.T) {
 	remote := seededRemote(t)
 	dir := sddClone(t, model.ProtocolHTTPS)
-	ctx := context.Background()
+	ctx := admitted(t, context.Background())
 	repo := git.CLI{Dir: dir}
 
 	sddEntry := ".sdd/graph/2026/11/07-130000-s-tac-sdd.md"
@@ -329,7 +329,7 @@ func TestCloneProtocolChoice(t *testing.T) {
 	remote := seededRemote(t)
 	dir := sddClone(t, model.ProtocolSSH)
 	repo := git.CLI{Dir: dir}
-	ctx := context.Background()
+	ctx := admitted(t, context.Background())
 	recorded := func() string { return strings.TrimSpace(test.Git(t, dir, "config", "sdd.remote")) }
 	since := func() string { return strings.TrimSpace(test.Git(t, dir, "config", "sdd.remoteSince")) }
 	if recorded() != model.ProtocolHTTPS {
@@ -366,7 +366,7 @@ func TestCloneRetriesBrokenSSHOncePerDay(t *testing.T) {
 	stale := time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339)
 	test.Git(t, dir, "config", "sdd.remoteSince", stale)
 
-	err := git.CLI{Dir: dir}.Fetch(context.Background())
+	err := git.CLI{Dir: dir}.Fetch(admitted(t, context.Background()))
 	if err != nil {
 		t.Fatal(err)
 	}

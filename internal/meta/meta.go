@@ -179,31 +179,8 @@ func TmpDir(sddDir string) string {
 	return filepath.Join(sddDir, "tmp")
 }
 
-// LastFetchPath returns the path to the background-sync last-fetch marker.
-// The file's mtime records the last time sdd attempted git fetch; its
-// presence short-circuits further fetches within the configured cooldown.
-func LastFetchPath(sddDir string) string {
-	return filepath.Join(TmpDir(sddDir), "last-fetch")
-}
-
-// ReadLastFetch returns the mtime of the last-fetch marker, or the zero
-// time if the marker does not exist. A zero result means "never fetched,"
-// treat as stale.
-func ReadLastFetch(sddDir string) (time.Time, error) {
-	return readMarker(LastFetchPath(sddDir))
-}
-
-// TouchLastFetch stamps the last-fetch marker with the current time,
-// creating the .sdd/tmp/ directory and the file itself as needed. Called
-// whether the fetch succeeded or failed — the cooldown applies to attempts,
-// not successes, so transient offline periods don't re-fetch per command.
-func TouchLastFetch(sddDir string) error {
-	return touchMarker(sddDir, LastFetchPath(sddDir))
-}
-
 // LastTitlesPath returns the path to the marker of the last background title
-// backfill, which bounds its retries by the sync cooldown as the last-fetch
-// marker bounds fetches.
+// backfill, which bounds its retries by model.TitleBackfillCooldown.
 func LastTitlesPath(sddDir string) string {
 	return filepath.Join(TmpDir(sddDir), "last-titles")
 }

@@ -123,7 +123,7 @@ func TestPushPublishesOnlyTheCurrentBranch(t *testing.T) {
 	gitRun(t, dir, "checkout", "-q", "main")
 	gitRun(t, dir, "commit", "-q", "--allow-empty", "-m", "sdd: capture")
 
-	if err := (git.CLI{Dir: dir}).Push(context.Background()); err != nil {
+	if err := (git.CLI{Dir: dir}).Push(admitted(t, context.Background())); err != nil {
 		t.Fatal(err)
 	}
 	if gitOut(t, remote, "rev-parse", "main") != gitOut(t, dir, "rev-parse", "HEAD") {

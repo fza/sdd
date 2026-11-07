@@ -25,7 +25,7 @@ func configRepoHandler(t *testing.T) (*handlers.Handler, string, string) {
 		t.Fatal(err)
 	}
 	registry := repos.NewRegistry(repos.Locations{ConfigPath: globalPath, CacheRoot: filepath.Join(dir, "cache")})
-	h := handlers.New(handlers.Options{SDDDir: sddDir, Repos: repos.NewManager(registry, git.CLI{})})
+	h := handlers.New(handlers.Options{SDDDir: sddDir, Repos: repos.NewManager(registry, git.CLI{}, nil)})
 	return h, globalPath, sddDir
 }
 

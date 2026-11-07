@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
@@ -109,6 +110,7 @@ type Puller interface {
 	// MergePull runs a merge-only pull (`git pull --no-rebase`) and returns
 	// git's combined output. A non-nil error means the pull failed.
 	MergePull(ctx context.Context) (string, error)
+	UpstreamLocator
 }
 
 // Handler holds injected dependencies shared across command methods.
@@ -130,6 +132,7 @@ type Handler struct {
 	pusher          Pusher
 	graphPuller     GraphPuller
 	fetcher         GraphFetcher
+	gate            *gitgate.Gate
 	syncLock        SyncLock
 	syncRecord      SyncRecord
 	syncMode        model.SyncMode
@@ -168,15 +171,19 @@ type Options struct {
 	// GraphFetcher, SyncLock and SyncRecord serve automatic sync rounds; a
 	// round without a GraphFetcher reports the graph repository missing.
 	GraphFetcher GraphFetcher
-	SyncLock     SyncLock
-	SyncRecord   SyncRecord
+	// Gate admits every git network operation the handler starts; nil
+	// refuses them.
+	Gate       *gitgate.Gate
+	SyncLock   SyncLock
+	SyncRecord SyncRecord
 	// GraphLock serializes the title backfill's writes and commit with every
 	// other writer of the graph; nil writes without it.
 	GraphLock GraphLock
 	// TitlesLock keeps one title backfill per checkout; nil runs every one.
 	TitlesLock TitlesLock
 	// SyncMode decides whether a graph commit is pushed before the command
-	// returns; empty means manual.
+	// returns; empty means manual. Only an sdd-owned graph clone syncs
+	// automatically (syncstate.Mode).
 	SyncMode model.SyncMode
 	// GraphClone, when set, is the sdd-owned clone the graph lives in
 	// (20261106-202055-d-tac-eyl): every sync path keeps it first, and a pull
@@ -225,6 +232,7 @@ func New(opts Options) *Handler {
 		pusher:          opts.Pusher,
 		graphPuller:     opts.GraphPuller,
 		fetcher:         opts.GraphFetcher,
+		gate:            opts.Gate,
 		syncLock:        opts.SyncLock,
 		syncRecord:      opts.SyncRecord,
 		syncMode:        opts.SyncMode,

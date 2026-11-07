@@ -26,7 +26,7 @@ func newConfigTestHandler(t *testing.T) (*Handler, string, string) {
 	})
 	h := New(Options{
 		SDDDir: sddDir,
-		Repos:  repos.NewManager(reg, git.CLI{}),
+		Repos:  repos.NewManager(reg, git.CLI{}, nil),
 	})
 	return h, globalPath, sddDir
 }
@@ -192,7 +192,7 @@ func TestConfigSet_LocalOverrideWritesOverrideFile(t *testing.T) {
 	h := New(Options{
 		SDDDir:          sddDir,
 		LocalConfigPath: override,
-		Repos:           repos.NewManager(reg, git.CLI{}),
+		Repos:           repos.NewManager(reg, git.CLI{}, nil),
 	})
 
 	if err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: "local", Key: "participant", Value: "Ada"}); err != nil {

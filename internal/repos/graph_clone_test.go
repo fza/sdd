@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 	"github.com/networkteam/sdd/test"
@@ -29,7 +30,7 @@ func TestGraphClonesEnsure(t *testing.T) {
 			remote := test.NewGraphRemote(t, "example.test/acme/app-sdd")
 			remote.Commit(t, "seed", map[string]string{".sdd/config.yaml": tc.config, tc.entry: "---\ntype: signal\n---\nx\n", "src/code.go": "package code\n"})
 			locations := repos.Locations{DataRoot: filepath.Join(t.TempDir(), "data")}
-			clones := repos.NewGraphClones(locations, git.GraphClones{})
+			clones := repos.NewGraphClones(locations, git.GraphClones{}, gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }}))
 
 			dir, cloned, err := clones.Ensure(context.Background(), remote.RepoID, "https://example.test/acme/app.git")
 			if err != nil {

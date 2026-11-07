@@ -20,31 +20,21 @@ type Pusher interface {
 	// subjectPattern; an empty pattern counts every commit.
 	CountCommits(ctx context.Context, rangeSpec, subjectPattern string) (int, error)
 	Push(ctx context.Context) error
+	UpstreamLocator
 }
 
 // PushGraph publishes the branch's commits ahead of its upstream when every
-// one of them is a graph commit, and holds them otherwise.
+// one of them is a graph commit, and holds them otherwise. Its push runs
+// within the push admission publish takes.
 func (h *Handler) PushGraph(ctx context.Context, cmd *command.PushGraphCmd) error {
 	if h.pusher == nil {
 		return errors.New("graph push is unavailable: no git surface configured")
 	}
-	upstream, err := h.pusher.UpstreamRef(ctx)
+	verdict, upstream, ahead, err := h.pushVerdict(ctx)
 	if err != nil {
-		return fmt.Errorf("resolving upstream: %w", err)
+		return err
 	}
-	var ahead, graphAhead int
-	if upstream != "" {
-		ahead, err = h.pusher.CountCommits(ctx, "@{u}..HEAD", "")
-		if err != nil {
-			return fmt.Errorf("counting commits ahead of %s: %w", upstream, err)
-		}
-		graphAhead, err = h.pusher.CountCommits(ctx, "@{u}..HEAD", model.GraphCommitSubjectPattern)
-		if err != nil {
-			return fmt.Errorf("counting graph commits ahead of %s: %w", upstream, err)
-		}
-	}
-
-	switch verdict := model.DecidePush(h.syncMode, upstream != "", ahead, graphAhead); verdict {
+	switch verdict {
 	case model.PushReady:
 		err = h.pusher.Push(ctx)
 		if err != nil {
@@ -59,6 +49,27 @@ func (h *Handler) PushGraph(ctx context.Context, cmd *command.PushGraphCmd) erro
 		}
 	}
 	return nil
+}
+
+// pushVerdict decides whether the branch's commits ahead of its upstream are
+// pushed, with the upstream and how many are ahead.
+func (h *Handler) pushVerdict(ctx context.Context) (model.PushVerdict, string, int, error) {
+	upstream, err := h.pusher.UpstreamRef(ctx)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("resolving upstream: %w", err)
+	}
+	var ahead, graphAhead int
+	if upstream != "" {
+		ahead, err = h.pusher.CountCommits(ctx, "@{u}..HEAD", "")
+		if err != nil {
+			return "", "", 0, fmt.Errorf("counting commits ahead of %s: %w", upstream, err)
+		}
+		graphAhead, err = h.pusher.CountCommits(ctx, "@{u}..HEAD", model.GraphCommitSubjectPattern)
+		if err != nil {
+			return "", "", 0, fmt.Errorf("counting graph commits ahead of %s: %w", upstream, err)
+		}
+	}
+	return model.DecidePush(h.syncMode, upstream != "", ahead, graphAhead), upstream, ahead, nil
 }
 
 // commitGraph commits paths and, under automatic sync, publishes the commit

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	sdd "github.com/networkteam/sdd/pkg/application"
@@ -21,7 +22,8 @@ type recordingGraphSync struct {
 	released []string
 	notice   string
 	err      error
-	interval time.Duration
+	due      bool
+	dueAsked int
 	blocked  *sdd.SyncBlocked
 	// backfills records each title backfill's trigger; hold, when set, keeps
 	// every backfill running until it is closed.
@@ -89,8 +91,17 @@ func (s *recordingGraphSync) ReleaseSyncOwner(_ context.Context, _, session stri
 	return s.notice, nil
 }
 
-func (s *recordingGraphSync) SyncInterval(context.Context, string) (time.Duration, bool, error) {
-	return s.interval, s.interval > 0, nil
+func (s *recordingGraphSync) SyncDue(context.Context, string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dueAsked++
+	return s.due, nil
+}
+
+func (s *recordingGraphSync) dueChecks() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dueAsked
 }
 
 func (s *recordingGraphSync) rounds() []sdd.SyncTrigger {
@@ -203,45 +214,54 @@ func TestSyncNoticeNamesTheSession(t *testing.T) {
 }
 
 func TestRunSyncTimer(t *testing.T) {
-	t.Run("no interval", func(t *testing.T) {
-		_, runtime := syncedApplication(t, &recordingGraphSync{})
-		if err := runtime.RunSyncTimer(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-	})
-	t.Run("ticking until stopped", func(t *testing.T) {
-		sync := &recordingGraphSync{interval: 5 * time.Millisecond}
-		_, runtime := syncedApplication(t, sync)
-		ctx, cancel := context.WithCancel(t.Context())
-		done := make(chan error)
-		go func() { done <- runtime.RunSyncTimer(ctx) }()
-		deadline := time.After(5 * time.Second)
-		for len(sync.rounds()) < 2 {
-			select {
-			case <-deadline:
-				t.Fatal("the timer should run rounds once per interval")
-			case <-time.After(time.Millisecond):
+	t.Run("a tick runs a due round", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			sync := &recordingGraphSync{due: true}
+			_, runtime := syncedApplication(t, sync)
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan error)
+			go func() { done <- runtime.RunSyncTimer(ctx) }()
+
+			time.Sleep(time.Minute + time.Second)
+			synctest.Wait()
+			if rounds := sync.rounds(); !slices.Equal(rounds, []sdd.SyncTrigger{sdd.SyncOnTimer}) {
+				t.Errorf("the first tick should run one timer round, got %v", rounds)
 			}
-		}
-		cancel()
-		select {
-		case err := <-done:
+			time.Sleep(time.Minute)
+			synctest.Wait()
+			if len(sync.rounds()) != 2 {
+				t.Errorf("every tick finding the round due should run it, got %v", sync.rounds())
+			}
+			cancel()
+			err := <-done
 			if err != nil {
 				t.Fatal(err)
 			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("stopping the server should stop its timer")
-		}
-		for _, trigger := range sync.rounds() {
-			if trigger != sdd.SyncOnTimer {
-				t.Errorf("a timer round should always fetch, got trigger %q", trigger)
+			stopped := len(sync.rounds())
+			time.Sleep(5 * time.Minute)
+			synctest.Wait()
+			if len(sync.rounds()) != stopped {
+				t.Error("no round should run after the timer stopped")
 			}
-		}
-		stopped := len(sync.rounds())
-		time.Sleep(20 * time.Millisecond)
-		if len(sync.rounds()) != stopped {
-			t.Error("no round should run after the timer stopped")
-		}
+		})
+	})
+	t.Run("a tick runs nothing not due", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			sync := &recordingGraphSync{}
+			_, runtime := syncedApplication(t, sync)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			go func() { _ = runtime.RunSyncTimer(ctx) }()
+
+			time.Sleep(3*time.Minute + time.Second)
+			synctest.Wait()
+			if sync.dueChecks() != 3 {
+				t.Errorf("each minute should ask whether the round is due, got %d asks", sync.dueChecks())
+			}
+			if len(sync.rounds()) != 0 || len(sync.backfillTriggers()) != 0 {
+				t.Error("a round not due should not run, nor its backfill")
+			}
+		})
 	})
 }
 
@@ -295,14 +315,23 @@ func TestRefreshWorkflowBackfillsTitlesAfterItsRound(t *testing.T) {
 }
 
 func TestSyncTimerBackfillsTitlesEachRound(t *testing.T) {
-	sync := &recordingGraphSync{interval: 5 * time.Millisecond}
-	_, runtime := syncedApplication(t, sync)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go func() { _ = runtime.RunSyncTimer(ctx) }()
-	for _, trigger := range awaitBackfills(t, sync, 2) {
-		if trigger != sdd.SyncOnTimer {
-			t.Errorf("a timer round should start a backfill that always runs, got %q", trigger)
+	synctest.Test(t, func(t *testing.T) {
+		sync := &recordingGraphSync{due: true}
+		_, runtime := syncedApplication(t, sync)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go func() { _ = runtime.RunSyncTimer(ctx) }()
+
+		time.Sleep(2*time.Minute + time.Second)
+		synctest.Wait()
+		triggers := sync.backfillTriggers()
+		if len(triggers) != 2 {
+			t.Fatalf("each due round should start a title backfill, got %v", triggers)
 		}
-	}
+		for _, trigger := range triggers {
+			if trigger != sdd.SyncOnTimer {
+				t.Errorf("a timer round should start a backfill that always runs, got %q", trigger)
+			}
+		}
+	})
 }

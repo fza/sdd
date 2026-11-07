@@ -56,7 +56,7 @@ func buildLocalStoreApplication(ctx context.Context, cmd *cli.Command) (*sdd.App
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
-	targets, err := localadapter.NewRepositoryTargets(project, filepath.Dir(sddDir), locations.ConfigPath, localLayer)
+	targets, err := localadapter.NewRepositoryTargets(ctx, project, filepath.Dir(sddDir), locations.ConfigPath, localLayer, locations.StateRoot)
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}

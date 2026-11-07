@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/networkteam/sdd/internal/model"
 )
 
 type Kind string
@@ -38,15 +40,8 @@ type Target struct {
 	Protocol Protocol
 }
 
-type Limits struct {
-	FetchCooldown               time.Duration
-	PushCooldown                time.Duration
-	Retries                     int
-	Concurrency                 int
-	SSHPerHour                  int
-	HTTPSPerHour                int
-	HTTPSUnauthenticatedPerHour int
-}
+// Limits are the limits of one host, as the global config resolves them.
+type Limits = model.GitLimits
 
 // LimitsFunc resolves the limits for one host.
 type LimitsFunc func(host string) Limits

@@ -11,6 +11,7 @@ import (
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/handlers/synctest"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
@@ -27,6 +28,8 @@ type scriptedGit struct {
 func (g scriptedGit) Clone(context.Context, string, string) error {
 	return errors.New("unexpected clone")
 }
+
+func (g scriptedGit) ExpandURL(_ context.Context, url string) (string, error) { return url, nil }
 
 func (g scriptedGit) PullFFOnly(_ context.Context, dir string) error {
 	if err := g.fail[dir]; err != nil {
@@ -86,7 +89,7 @@ func TestRefreshDependencyClosure(t *testing.T) {
 		RepoID:       "example.test/local",
 		Dependencies: []model.RepoID{"example.test/dep", "example.test/failing", "example.test/unconnected"},
 	}})
-	h := handlers.New(handlers.Options{Reader: reader, Repos: repos.NewManager(reg, git)})
+	h := handlers.New(handlers.Options{Reader: reader, Repos: repos.NewManager(reg, git, synctest.Gate(t.TempDir(), nil))})
 
 	var failed, unconnected []model.RepoID
 	err := h.RefreshDependencyClosure(t.Context(), command.RefreshDependencyClosureCmd{

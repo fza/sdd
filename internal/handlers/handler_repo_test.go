@@ -10,6 +10,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/handlers/synctest"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
@@ -28,8 +29,9 @@ func (c *countingCommitter) Commit(string, ...string) error { c.calls++; return 
 // invocations (the cooldown pull EnsureReposFresh performs on a fresh read).
 type fakeGit struct{ pulls int }
 
-func (f *fakeGit) Clone(context.Context, string, string) error { return nil }
-func (f *fakeGit) PullFFOnly(context.Context, string) error    { f.pulls++; return nil }
+func (f *fakeGit) Clone(context.Context, string, string) error             { return nil }
+func (f *fakeGit) PullFFOnly(context.Context, string) error                { f.pulls++; return nil }
+func (f *fakeGit) ExpandURL(_ context.Context, url string) (string, error) { return url, nil }
 
 // newRepoTestHandler seeds a handler whose global config already holds a
 // connection — the declaration-only path of RepoAdd (no clone involved).
@@ -55,7 +57,7 @@ func newRepoTestHandler(t *testing.T, repoConfig string) (*Handler, string) {
 		}
 	}
 	reg := repos.NewRegistry(loc)
-	return New(Options{SDDDir: sddDir, Repos: repos.NewManager(reg, git.CLI{})}), sddDir
+	return New(Options{SDDDir: sddDir, Repos: repos.NewManager(reg, git.CLI{}, synctest.Gate(t.TempDir(), nil))}), sddDir
 }
 
 // Re-running repo add against an already-connected URL is the upgrade path:
@@ -120,7 +122,7 @@ func TestEnsureReposFresh_ReportsPhaseNotIndexing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return New(Options{Repos: repos.NewManager(reg, &fakeGit{})}), cacheDir
+		return New(Options{Repos: repos.NewManager(reg, &fakeGit{}, synctest.Gate(t.TempDir(), nil))}), cacheDir
 	}
 
 	capture := func(t *testing.T, h *Handler) []model.Phase {
@@ -164,7 +166,7 @@ func TestRepoAdd_ClonePathReportsConnectingThenCloning(t *testing.T) {
 		CacheRoot:  filepath.Join(dir, "cache"),
 	}
 	repostest.WriteConfig(t, loc.ConfigPath, &repos.GlobalConfig{})
-	h := New(Options{Repos: repos.NewManager(repos.NewRegistry(loc), &fakeGit{})})
+	h := New(Options{Repos: repos.NewManager(repos.NewRegistry(loc), &fakeGit{}, synctest.Gate(t.TempDir(), nil))})
 
 	// The fake clone leaves no config to read, so RepoAdd errors after cloning;
 	// the phase sequence up to the clone is what we assert.
@@ -220,7 +222,7 @@ func TestBuildConnectedIndexes_Fills(t *testing.T) {
 		"20260101-100000-s-tac-aaa", "## A\nMember entry body.", "Member summary.")
 
 	fg := &fakeGit{}
-	h := New(Options{Reader: readFinderFor(t), Repos: repos.NewManager(reg, fg)})
+	h := New(Options{Reader: readFinderFor(t), Repos: repos.NewManager(reg, fg, synctest.Gate(t.TempDir(), nil))})
 
 	emb := &fakeEmbedder{}
 	var startedRepos []model.RepoID
@@ -294,7 +296,7 @@ func TestBuildConnectedIndexes_ForceRebuildsMembers(t *testing.T) {
 	writeEntry(t, filepath.Join(cacheDir, ".sdd", "graph"),
 		"20260101-100000-s-tac-aaa", "## A\nMember entry body.", "Member summary.")
 
-	h := New(Options{Reader: readFinderFor(t), Repos: repos.NewManager(reg, &fakeGit{})})
+	h := New(Options{Reader: readFinderFor(t), Repos: repos.NewManager(reg, &fakeGit{}, synctest.Gate(t.TempDir(), nil))})
 	emb := &fakeEmbedder{}
 
 	// First fill populates the member index + manifest.

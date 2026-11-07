@@ -57,9 +57,13 @@ func (c CLI) Fetch(ctx context.Context) error {
 	if c.graphClone() {
 		return c.fetchClone(ctx)
 	}
+	env, err := admittedEnv(ctx, "fetch")
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
 	defer cancel()
-	out, err := runDetached(ctx, c.at("fetch")...)
+	out, err := runDetachedEnv(ctx, env, c.at("fetch")...)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {

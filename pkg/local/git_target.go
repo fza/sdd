@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/model"
 	app "github.com/networkteam/sdd/pkg/application"
 )
@@ -33,7 +34,9 @@ type GitWorktreeAcquirer struct {
 	// resolveConfig reads a checkout's effective config; nil leaves SyncGraph
 	// without effect.
 	resolveConfig func(checkout string) (*model.PerRepoConfig, error)
-	runGit        func(context.Context, ...string) ([]byte, error)
+	// gate admits the git network operations sync starts; nil refuses them.
+	gate   *gitgate.Gate
+	runGit func(context.Context, ...string) ([]byte, error)
 }
 
 func NewGitWorktreeAcquirer(options GitWorktreeAcquirerOptions) (*GitWorktreeAcquirer, error) {

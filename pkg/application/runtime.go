@@ -63,8 +63,10 @@ type GraphSync interface {
 	// ReleaseSyncOwner gives up session's ownership of branch's blocked sync
 	// as the session ends, returning the banner while sync is blocked.
 	ReleaseSyncOwner(ctx context.Context, branch, session string) (string, error)
-	// SyncInterval is how often a timer syncs branch, false when none runs.
-	SyncInterval(ctx context.Context, branch string) (time.Duration, bool, error)
+	// SyncDue reports whether a sync round of branch has an operation due:
+	// automatic sync is on and the git gate would admit its fetch, or its
+	// push with commits waiting.
+	SyncDue(ctx context.Context, branch string) (bool, error)
 	// SyncBlocked reads what blocks sync of branch, nil while sync proceeds.
 	SyncBlocked(ctx context.Context, branch string) (*SyncBlocked, error)
 	// BackfillTitles titles the untitled entries of branch's graph through
@@ -95,10 +97,10 @@ type SyncBlocked struct {
 type SyncTrigger string
 
 const (
-	// SyncOnCall: an engine call; the round fetches once the cooldown has
-	// passed.
+	// SyncOnCall: an engine call; its title backfill waits out the backfill
+	// cooldown.
 	SyncOnCall SyncTrigger = "call"
-	// SyncOnTimer: the timer of a running server; the round always fetches.
+	// SyncOnTimer: the timer of a running server, once a round is due.
 	SyncOnTimer SyncTrigger = "timer"
 	// SyncOnSessionStart: a session opening; it starts the title backfill
 	// alone, which always runs.
@@ -207,8 +209,13 @@ func (r *ProjectRuntime) syncBranch(ctx context.Context, branch string) (string,
 	return target.Branch, true
 }
 
-// RunSyncTimer syncs the base branch's graph repository once per configured
-// sync.interval until ctx ends, and returns at once when no timer is set.
+// syncTick is how often a running server asks the git gate whether its
+// graph's sync round is due; the gate's cooldowns set the pace
+// (20261107-095427-d-tac-yux).
+const syncTick = time.Minute
+
+// RunSyncTimer runs the base branch's sync round, and its title backfill,
+// whenever a tick finds it due, until ctx ends.
 func (r *ProjectRuntime) RunSyncTimer(ctx context.Context) error {
 	if r.options.Sync == nil {
 		return nil
@@ -217,19 +224,22 @@ func (r *ProjectRuntime) RunSyncTimer(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	interval, on, err := r.options.Sync.SyncInterval(ctx, branch)
-	if err != nil || !on {
-		return err
-	}
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(syncTick)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			r.syncGraph(ctx, branch, SyncOnTimer)
-			r.backfillTitles(ctx, branch, SyncOnTimer)
+			due, err := r.options.Sync.SyncDue(ctx, branch)
+			if err != nil {
+				slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: %v", err), "branch", branch)
+				continue
+			}
+			if due {
+				r.syncGraph(ctx, branch, SyncOnTimer)
+				r.backfillTitles(ctx, branch, SyncOnTimer)
+			}
 		}
 	}
 }

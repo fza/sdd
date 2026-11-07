@@ -10,31 +10,6 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-func TestSyncModeAtConfigLoad(t *testing.T) {
-	cases := []struct {
-		name string
-		yaml string
-		want model.SyncMode
-	}{
-		{name: "unset", yaml: "sync:\n  cooldown: 5m\n", want: model.SyncModeManual},
-		{name: "manual", yaml: "sync:\n  mode: manual\n", want: model.SyncModeManual},
-		{name: "auto", yaml: "sync:\n  mode: auto\n", want: model.SyncModeAuto},
-		{name: "unknown value", yaml: "sync:\n  mode: always\n", want: model.SyncModeManual},
-		{name: "wrong case", yaml: "sync:\n  mode: Auto\n", want: model.SyncModeManual},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := model.ParseConfig([]byte(tc.yaml))
-			if err != nil {
-				t.Fatalf("any mode value should load: %v", err)
-			}
-			if got := model.ResolveSyncMode(cfg); got != tc.want {
-				t.Errorf("only auto should switch sync on, got %q", got)
-			}
-		})
-	}
-}
-
 func TestIgnoredSettings(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -76,29 +51,6 @@ func TestHonoredCommittedDropsTheMode(t *testing.T) {
 	}
 	if model.HonoredCommitted(nil) != nil {
 		t.Error("an absent committed layer should stay absent")
-	}
-}
-
-func TestSyncModeLayering(t *testing.T) {
-	auto := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Sync: model.SyncConfig{Mode: model.SyncModeAuto}}}
-	manual := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Sync: model.SyncConfig{Mode: model.SyncModeManual}}}
-	cases := []struct {
-		name    string
-		base    *model.PerRepoConfig
-		overlay *model.PerRepoConfig
-		want    model.SyncMode
-	}{
-		{name: "higher layer overrides", base: auto, overlay: manual, want: model.SyncModeManual},
-		{name: "higher layer turns it on", base: manual, overlay: auto, want: model.SyncModeAuto},
-		{name: "unset higher layer keeps lower", base: auto, overlay: &model.PerRepoConfig{}, want: model.SyncModeAuto},
-		{name: "unset everywhere", base: &model.PerRepoConfig{}, overlay: &model.PerRepoConfig{}, want: model.SyncModeManual},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := model.ResolveSyncMode(model.MergeConfig(tc.base, tc.overlay)); got != tc.want {
-				t.Errorf("the merged mode should come from the highest layer setting it, got %q", got)
-			}
-		})
 	}
 }
 

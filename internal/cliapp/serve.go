@@ -524,7 +524,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
-	targets, err := localadapter.NewRepositoryTargets(project, serverCheckout, locations.ConfigPath, localLayer)
+	targets, err := localadapter.NewRepositoryTargets(ctx, project, serverCheckout, locations.ConfigPath, localLayer, locations.StateRoot)
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
@@ -548,12 +548,16 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if crossEmbedder.Embedder != nil {
 		memberEmbedder = crossEmbedder
 	}
+	gate, err := commandGate()
+	if err != nil {
+		return nil, nil, sdd.RequestIdentity{}, err
+	}
 	access := &localRuntimeAccess{
 		project: project, participant: participant, dialogue: dialogue, runtime: runtime,
 		dependencies: &cachedDependencies{registry: registry, closure: finders.New(finders.Options{Config: cfg, Repos: registry}),
-			writer: sdd.RepoID(cfg.RepoID), connected: cfg.Connected, clones: repos.NewGraphClones(locations, git.GraphClones{}), codeOrigin: git.RemoteURL(serverCheckout),
+			writer: sdd.RepoID(cfg.RepoID), connected: cfg.Connected, clones: repos.NewGraphClones(locations, git.GraphClones{}, gate), codeOrigin: git.RemoteURL(serverCheckout),
 			buildWritable: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
-				return cloneRuntime(repoID, dir, dependencyCfg, locations.ConfigPath, runner, memberEmbedder, cacheRoot)
+				return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, memberEmbedder, cacheRoot)
 			},
 			build: func(cache repos.Cache, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
 				// The cache as a project of its own: its committed config supplies
@@ -593,7 +597,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 
 // cloneRuntime serves a dependency a capture writes into from its sdd-owned
 // clone at dir: its own config, default branch, graph and write targets.
-func cloneRuntime(repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, globalConfigPath string, runner pkgllm.Runner, embeddings embed.Embedder, cacheRoot string) (*sdd.ProjectRuntime, error) {
+func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, locations repos.Locations, runner pkgllm.Runner, embeddings embed.Embedder, cacheRoot string) (*sdd.ProjectRuntime, error) {
 	project := sdd.ProjectID(repoID)
 	defaultBranch := cfg.DefaultBranch
 	if defaultBranch == "" {
@@ -603,7 +607,7 @@ func cloneRuntime(repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, globa
 		}
 		defaultBranch = branch
 	}
-	targets, err := localadapter.NewRepositoryTargets(project, dir, globalConfigPath, "")
+	targets, err := localadapter.NewRepositoryTargets(ctx, project, dir, locations.ConfigPath, "", locations.StateRoot)
 	if err != nil {
 		return nil, err
 	}
