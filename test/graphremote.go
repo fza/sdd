@@ -45,7 +45,18 @@ func IsolatedHome(t *testing.T) string {
 // isolated home.
 func NewGraphRemote(t *testing.T, repoID model.RepoID) *GraphRemote {
 	t.Helper()
-	home := IsolatedHome(t)
+	return newGraphRemote(t, IsolatedHome(t), repoID)
+}
+
+// NewGraphRemoteBeside creates an empty bare repository for repoID in the
+// isolated home of other, both reachable at once.
+func NewGraphRemoteBeside(t *testing.T, other *GraphRemote, repoID model.RepoID) *GraphRemote {
+	t.Helper()
+	return newGraphRemote(t, other.home, repoID)
+}
+
+func newGraphRemote(t *testing.T, home string, repoID model.RepoID) *GraphRemote {
+	t.Helper()
 	bare := filepath.Join(home, "remotes", filepath.FromSlash(string(repoID))+".git")
 	Git(t, home, "init", "-q", "--bare", "-b", "main", bare)
 	Git(t, bare, "config", "uploadpack.allowFilter", "true")
@@ -74,9 +85,22 @@ func (r *GraphRemote) route(sshWorks bool) {
 	if err != nil {
 		panic(err)
 	}
-	base, _, _ := strings.Cut(string(config), "[url ")
+	var sections []string
+	for line := range strings.Lines(string(config)) {
+		if strings.HasPrefix(line, "[") || len(sections) == 0 {
+			sections = append(sections, "")
+		}
+		sections[len(sections)-1] += line
+	}
+	var base strings.Builder
+	for _, section := range sections {
+		if strings.Contains(section, "insteadOf = "+httpsURL+"\n") || strings.Contains(section, "insteadOf = "+sshURL+"\n") {
+			continue
+		}
+		base.WriteString(section)
+	}
 	rules := fmt.Sprintf("[url %q]\n\tinsteadOf = %s\n[url %q]\n\tinsteadOf = %s\n", "file://"+r.Bare, httpsURL, sshTarget, sshURL)
-	err = os.WriteFile(r.gitconfig, []byte(base+rules), 0o644)
+	err = os.WriteFile(r.gitconfig, []byte(base.String()+rules), 0o644)
 	if err != nil {
 		panic(err)
 	}

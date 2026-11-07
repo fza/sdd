@@ -30,6 +30,18 @@ func (p Project) SDDDir() string { return SDDDir(p.Root) }
 
 func (p Project) Pointed() bool { return p.Root != p.WorkRoot }
 
+// LocalConfigPath is the file of the project's machine-local config layer:
+// override (--local-config) when set, else, for a project reached through
+// graph_repo, WorkRoot's config.local.yaml, since the upkeep of sdd's clone
+// removes any local file there (20261106-202055-d-tac-eyl); empty resolves it
+// under SDDDir.
+func (p Project) LocalConfigPath(override string) string {
+	if override == "" && p.GraphRepo != "" {
+		return LocalConfigPath(SDDDir(p.WorkRoot), "")
+	}
+	return override
+}
+
 // ResolveProject follows workRoot's graph_repo, when its config sets one, to
 // the sdd-owned clone graphClone names, else its project_dir to the project
 // holding the graph. A pointing repository carries only the pointer keys, and
@@ -44,7 +56,7 @@ func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, erro
 	}
 	pointers := model.MergeConfig(committed, local)
 	if pointers.GraphRepo != "" {
-		return resolveGraphRepo(workRoot, pointers.GraphRepo, committedPath, localPath, graphClone)
+		return resolveGraphRepo(workRoot, pointers.GraphRepo, committedPath, graphClone)
 	}
 	projectDir := pointers.ProjectDir
 	if projectDir == "" {
@@ -76,16 +88,12 @@ func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, erro
 	return Project{Root: root, WorkRoot: workRoot}, nil
 }
 
-func resolveGraphRepo(workRoot string, repoID model.RepoID, committedPath, localPath string, graphClone func(model.RepoID) (string, error)) (Project, error) {
+func resolveGraphRepo(workRoot string, repoID model.RepoID, committedPath string, graphClone func(model.RepoID) (string, error)) (Project, error) {
 	err := model.ValidateRepoID(repoID)
 	if err != nil {
 		return Project{}, fmt.Errorf("graph_repo in %s: %w", SDDDir(workRoot), err)
 	}
 	err = requireOnlyKeys(committedPath, model.GraphRepoPointerKeys)
-	if err != nil {
-		return Project{}, err
-	}
-	err = requireOnlyKeys(localPath, model.LocalGraphRepoPointerKeys)
 	if err != nil {
 		return Project{}, err
 	}

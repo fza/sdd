@@ -399,3 +399,21 @@ func TestKeepGraphCloneRestoresAHandEditOnItsOwn(t *testing.T) {
 		t.Error("hand edits should be restored")
 	}
 }
+
+// A local config planted in the clone is ignored there, yet the upkeep removes
+// it: a graph_repo project's local layer is the code repository's.
+func TestKeepGraphCloneRemovesAPlantedLocalConfig(t *testing.T) {
+	seededRemote(t)
+	dir := sddClone(t, model.ProtocolHTTPS)
+	writeFile(t, dir, ".sdd/config.local.yaml", "connected:\n  write: true\n")
+
+	err := git.CLI{Dir: dir}.KeepGraphClone(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, statErr := os.Stat(filepath.Join(dir, ".sdd", "config.local.yaml"))
+	if statErr == nil {
+		t.Error("a local config in the clone should be removed")
+	}
+}

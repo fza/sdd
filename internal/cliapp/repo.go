@@ -221,7 +221,11 @@ func repoHandler(errWriter io.Writer) (*handlers.Handler, error) {
 	graphDir := ""
 	committer := git.CLI{}
 	if sddDir != "" {
-		cfg, _ := meta.ReadConfig(sddDir, localConfigOverride)
+		localLayer, err := localConfigLayer()
+		if err != nil {
+			return nil, err
+		}
+		cfg, _ := meta.ReadConfig(sddDir, localLayer)
 		graphDir = meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)
 		committer = git.CLI{Dir: filepath.Dir(sddDir)}
 	}

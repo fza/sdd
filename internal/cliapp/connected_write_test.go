@@ -187,3 +187,94 @@ func TestConnectedCaptureWritesThroughTheClone(t *testing.T) {
 		t.Error("the capture should be made in the dependency's sdd-owned clone")
 	}
 }
+
+const homeGraphRepoID = model.RepoID("example.test/acme/home-sdd")
+
+// graphRepoHomeFixture serves a code repository whose graph lives in the graph
+// repository homeGraphRepoID, which declares the platform graph repository
+// as a dependency that accepts inbound captures. localSettings extends the
+// code repository's config.local.yaml.
+func graphRepoHomeFixture(t *testing.T, localSettings string) (*appFixture, *test.GraphRemote, string) {
+	t.Helper()
+	homeRemote := test.NewGraphRemote(t, homeGraphRepoID)
+	homeRemote.Commit(t, "seed the home graph", map[string]string{
+		".sdd/config.yaml": "repo_id: " + string(homeGraphRepoID) + "\ngraph_dir: .sdd/graph\ndefault_branch: main\nlanguage: en\ndependencies: [" + string(platformRepoID) + "]\n",
+		".sdd/graph/.keep": "",
+		".gitignore":       ".sdd/tmp/\n.sdd/config.local.yaml\n",
+	})
+	platform := test.NewGraphRemoteBeside(t, homeRemote, platformRepoID)
+	platform.Commit(t, "seed the platform graph", map[string]string{
+		".sdd/config.yaml": "repo_id: " + string(platformRepoID) + "\ngraph_dir: .sdd/graph\ndefault_branch: main\nlanguage: en\ninbound:\n  accept: true\n",
+		".sdd/graph/.keep": "",
+		".gitignore":       ".sdd/tmp/\n.sdd/config.local.yaml\n",
+	})
+	llm := test.NewOpenAIServer(t, test.OpenAIBehaviour{Answer: `{"title": "Connected capture", "summary": "A gap captured from the home project.", "findings": []}`})
+
+	code := filepath.Join(canonicalTemp(t), "code")
+	err := os.MkdirAll(code, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initRepo(t, code)
+	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), "graph_repo: "+string(homeGraphRepoID)+"\ngraph_dir: "+model.GraphElsewhereFile+"\nskill_scope: project\n")
+	writeFile(t, filepath.Join(code, model.GraphElsewhereFile), model.GraphElsewhereText(homeGraphRepoID))
+	writeFile(t, filepath.Join(code, ".gitignore"), ".sdd/config.local.yaml\nxdg-*/\n")
+	gitIn(t, code, "add", ".sdd", ".gitignore")
+	gitIn(t, code, "commit", "-q", "-m", "point at the home graph repository")
+	writeFile(t, filepath.Join(code, ".sdd", "config.local.yaml"), "participant: Ada\nllm:\n  provider: openai\n  model: fake\n  endpoint: "+llm.URL+"\n  api_keys:\n    openai: op-notarealkeyaaaaaaaaaa\n  retry:\n    max_attempts: 1\n"+localSettings)
+	writeFile(t, filepath.Join(code, "xdg-config", "sdd", "config.yaml"), "repos:\n  - repo_id: "+string(platformRepoID)+"\n    clone_url: https://example.test/acme/platform-sdd.git\n")
+	runApp(t, code, "repo", "sync")
+	homeClone := filepath.Join(os.Getenv("XDG_DATA_HOME"), "sdd", "repos", filepath.FromSlash(string(homeGraphRepoID)))
+	return &appFixture{root: code}, platform, homeClone
+}
+
+func startConnectedCapture(t *testing.T, client *mcp.ClientSession) (session string, serve mcpserver.ServeResult, served string, failed bool) {
+	t.Helper()
+	opened, served, failed := callTool(t, client, "start_session", map[string]any{})
+	if failed {
+		t.Fatalf("start_session: %s", served)
+	}
+	serve, served, failed = callTool(t, client, "start_procedure", map[string]any{"session": opened.Session, "canonical": "capture", "project": string(platformRepoID)})
+	return opened.Session, serve, served, failed
+}
+
+// For a project reached through graph_repo, connected.write is read from the
+// code repository's config.local.yaml, the checkout the person works in.
+func TestGraphRepoConnectedWriteFromTheCodeRepository(t *testing.T) {
+	fixture, platform, _ := graphRepoHomeFixture(t, "connected:\n  write: true\n")
+	before := platform.Head(t)
+	fixture.serve(t, func(client *mcp.ClientSession) {
+		session, serve, served, failed := startConnectedCapture(t, client)
+		if failed {
+			t.Fatalf("the code repository's connected.write should allow the capture:\n%s", served)
+		}
+		serve, served, failed = callTool(t, client, "next", map[string]any{"session": session, "instance": serve.Instance, "report": captureReport()})
+		if failed || serve.Step != "playback" {
+			t.Fatalf("the capture should reach playback, got step %q:\n%s", serve.Step, served)
+		}
+		_, served, failed = callTool(t, client, "next", map[string]any{"session": session, "instance": serve.Instance,
+			"report": map[string]any{"chooser": "playback", "choice": "confirm", "userWords": "yes, capture it"}})
+		if failed {
+			t.Fatalf("the confirmed capture should write:\n%s", served)
+		}
+	})
+	if platform.Head(t) == before {
+		t.Error("the capture should be pushed to the dependency's graph repository")
+	}
+}
+
+// A connected.write planted in sdd's clone of the home graph never counts.
+func TestGraphRepoConnectedWritePlantedInTheCloneIsIgnored(t *testing.T) {
+	fixture, platform, homeClone := graphRepoHomeFixture(t, "")
+	writeFile(t, filepath.Join(homeClone, ".sdd", "config.local.yaml"), "connected:\n  write: true\n")
+	before := platform.Head(t)
+	fixture.serve(t, func(client *mcp.ClientSession) {
+		_, _, served, failed := startConnectedCapture(t, client)
+		if !failed || !strings.Contains(served, "connected.write") {
+			t.Errorf("a connected.write in the clone should not allow the capture:\n%s", served)
+		}
+	})
+	if platform.Head(t) != before {
+		t.Error("a refused capture should write nothing")
+	}
+}

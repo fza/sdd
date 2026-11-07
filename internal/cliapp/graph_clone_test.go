@@ -144,6 +144,9 @@ func TestInitGraphRepoAndTheStockGuard(t *testing.T) {
 	if strings.Contains(shipped, ".sdd/graph/") {
 		t.Errorf("no graph should grow in the code repository:\n%s", shipped)
 	}
+	if !strings.Contains(readFile(t, filepath.Join(code, ".sdd", "config.local.yaml")), "participant: Ada") {
+		t.Error("the participant should be recorded in the code repository's local layer")
+	}
 
 	// An sdd without graph_repo support skips the key it does not know.
 	writeFile(t, filepath.Join(code, ".sdd", "config.yaml"), strings.Replace(pointer, "graph_repo: "+string(graphCloneRepoID)+"\n", "", 1))
@@ -233,5 +236,27 @@ func TestGraphRepoForcePushReaddsOnlyARefiningEntry(t *testing.T) {
 	}
 	if blocked != nil {
 		t.Errorf("sync should clear the block once no set-aside entry is left, got %+v", blocked)
+	}
+}
+
+// `sdd config set --local` in a code repository pointing at a graph
+// repository writes the code repository's config.local.yaml, the layer every
+// command there reads; sdd's clone gets no local file.
+func TestGraphRepoConfigSetLocalWritesTheCodeRepository(t *testing.T) {
+	code, _ := graphRepoCode(t)
+
+	runApp(t, code, "config", "set", "--local", "connected.write", "true")
+
+	local := readFile(t, filepath.Join(code, ".sdd", "config.local.yaml"))
+	if !strings.Contains(local, "write: true") {
+		t.Errorf("the setting should land in the code repository's local file:\n%s", local)
+	}
+	_, statErr := os.Stat(filepath.Join(cloneDir(t), ".sdd", "config.local.yaml"))
+	if statErr == nil {
+		t.Error("sdd's clone should get no local file")
+	}
+	out, err := runAppErr(t, code, "config", "get", "connected.write")
+	if err != nil || !strings.Contains(out, "true") {
+		t.Errorf("reading the setting back should see the code repository's layer, got %v:\n%s", err, out)
 	}
 }

@@ -28,6 +28,10 @@ func TestResolveProjectFollowsGraphRepo(t *testing.T) {
 			work: map[string]string{"config.yaml": "skill_scope: project\n", "config.local.yaml": "graph_repo: example.test/acme/app-sdd\n"},
 		},
 		{
+			name: "the local file holds the person's own settings",
+			work: map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\n", "config.local.yaml": "participant: Ada\nconnected:\n  write: true\nsync:\n  mode: auto\n"},
+		},
+		{
 			name:      "a project setting beside graph_repo",
 			work:      map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\nlanguage: de\n"},
 			wantError: "sets language",
@@ -65,6 +69,30 @@ func TestResolveProjectFollowsGraphRepo(t *testing.T) {
 			}
 			if project.Root != filepath.Join(clones, "example.test/acme/app-sdd") || project.WorkRoot != work {
 				t.Errorf("the project should be the clone, worked on from the code repository, got %+v", project)
+			}
+			if project.LocalConfigPath("") != filepath.Join(work, ".sdd", "config.local.yaml") {
+				t.Errorf("the local layer should be the code repository's, got %q", project.LocalConfigPath(""))
+			}
+		})
+	}
+}
+
+func TestProjectLocalConfigPath(t *testing.T) {
+	cases := []struct {
+		name     string
+		project  meta.Project
+		override string
+		want     string
+	}{
+		{name: "graph_repo uses the code repository's file", project: meta.Project{Root: "/clone", WorkRoot: "/code", GraphRepo: "example.test/acme/app-sdd"}, want: "/code/.sdd/config.local.yaml"},
+		{name: "--local-config wins", project: meta.Project{Root: "/clone", WorkRoot: "/code", GraphRepo: "example.test/acme/app-sdd"}, override: "/elsewhere.yaml", want: "/elsewhere.yaml"},
+		{name: "a project of its own keeps the file under its .sdd", project: meta.Project{Root: "/code", WorkRoot: "/code"}},
+		{name: "project_dir keeps the project's file", project: meta.Project{Root: "/project", WorkRoot: "/code"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.project.LocalConfigPath(tc.override); got != tc.want {
+				t.Errorf("the local layer should come from the checkout a person works in, got %q", got)
 			}
 		})
 	}

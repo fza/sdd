@@ -187,10 +187,6 @@ var LocalPointerKeys = []string{"project_dir"}
 // the stock guard (20261106-202055-d-tac-eyl).
 var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents"}
 
-// LocalGraphRepoPointerKeys are the keys a machine-local config may set
-// beside graph_repo.
-var LocalGraphRepoPointerKeys = []string{"graph_repo", "project_dir"}
-
 // TopLevelKeys returns the top-level keys of a YAML mapping, in file order.
 // Empty input yields none.
 func TopLevelKeys(data []byte) ([]string, error) {

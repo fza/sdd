@@ -395,6 +395,12 @@ func (c CLI) KeepGraphClone(ctx context.Context, routing []string) error {
 	if err != nil {
 		return err
 	}
+	// The local layer of a graph_repo project is the code repository's; one
+	// left in the clone, ignored and so spared by the clean, never counts.
+	err = os.Remove(filepath.Join(c.Dir, model.SDDDirName, "config.local.yaml"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("removing the clone's local config: %w", err)
+	}
 	err = writeIfChanged(filepath.Join(c.Dir, model.GraphCloneMarker), model.GraphCloneMarkerText)
 	if err != nil {
 		return err

@@ -77,7 +77,13 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 			return err
 		}
 	}
+	localConfigPath := meta.LocalConfigPath(sddDir, cmd.LocalConfigPath)
+	err = os.MkdirAll(filepath.Dir(localConfigPath), 0o755)
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", filepath.Dir(localConfigPath), err)
+	}
 	err = h.runProjectInit(ctx, cmd, cloneDir, func(projectCmd *command.InitCmd) {
+		projectCmd.LocalConfigPath = localConfigPath
 		projectCmd.RemoteURL = httpsURL
 		projectCmd.GraphOnly = true
 		projectCmd.DefaultBranch = branch
@@ -144,6 +150,17 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 			if err != nil {
 				return err
 			}
+		}
+	}
+	gitignorePath := filepath.Join(cmd.RepoRoot, ".gitignore")
+	gitignoreAdded, err := ensureGitignoreEntries(gitignorePath, []string{".sdd/" + meta.LocalConfigFileName})
+	if err != nil {
+		return fmt.Errorf("updating %s: %w", gitignorePath, err)
+	}
+	if gitignoreAdded {
+		touched = append(touched, gitignorePath)
+		if cmd.OnGitignoreUpdated != nil {
+			cmd.OnGitignoreUpdated(gitignorePath)
 		}
 	}
 	guardPath := filepath.Join(cmd.RepoRoot, filepath.FromSlash(model.GraphElsewhereFile))

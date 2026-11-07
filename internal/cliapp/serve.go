@@ -443,13 +443,17 @@ func localDialogue(sddDir string) (sdd.Dialogue, error) {
 	if err != nil {
 		return sdd.Dialogue{}, err
 	}
-	committed, local, err := meta.ReadConfigLayers(sddDir, localConfigOverride)
+	localLayer, err := localConfigLayer()
+	if err != nil {
+		return sdd.Dialogue{}, err
+	}
+	committed, local, err := meta.ReadConfigLayers(sddDir, localLayer)
 	if err != nil {
 		return sdd.Dialogue{}, err
 	}
 	sources := map[model.ConfigValueSource]string{
 		model.ConfigSourceGlobal: loc.ConfigPath,
-		model.ConfigSourceLocal:  meta.LocalConfigPath(sddDir, localConfigOverride),
+		model.ConfigSourceLocal:  meta.LocalConfigPath(sddDir, localLayer),
 	}
 	for _, value := range model.EffectiveConfigValues(global.BaseConfig, committed, local) {
 		if value.Key == "dialogue.mode" {
@@ -516,7 +520,11 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		embeddings = localEmbedder
 	}
 	serverCheckout := filepath.Dir(sddDir)
-	targets, err := localadapter.NewRepositoryTargets(project, serverCheckout, locations.ConfigPath, localConfigOverride)
+	localLayer, err := localConfigLayer()
+	if err != nil {
+		return nil, nil, sdd.RequestIdentity{}, err
+	}
+	targets, err := localadapter.NewRepositoryTargets(project, serverCheckout, locations.ConfigPath, localLayer)
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}

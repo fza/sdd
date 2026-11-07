@@ -107,7 +107,11 @@ func effectiveConfigResult(key string) (*query.EffectiveConfigResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return f.EffectiveConfig(query.EffectiveConfigQuery{SDDDir: sddDir, LocalConfigPath: localConfigOverride, Key: key})
+	localLayer, err := localConfigLayer()
+	if err != nil {
+		return nil, err
+	}
+	return f.EffectiveConfig(query.EffectiveConfigQuery{SDDDir: sddDir, LocalConfigPath: localLayer, Key: key})
 }
 
 func runEffectiveConfig(cmd *cli.Command, key string) error {
@@ -140,7 +144,11 @@ func printUnknownConfigKeys(errWriter io.Writer) error {
 	if err != nil {
 		return err
 	}
-	result, err := f.UnknownConfigKeys(query.UnknownConfigKeysQuery{SDDDir: sddDir, LocalConfigPath: localConfigOverride})
+	localLayer, err := localConfigLayer()
+	if err != nil {
+		return err
+	}
+	result, err := f.UnknownConfigKeys(query.UnknownConfigKeysQuery{SDDDir: sddDir, LocalConfigPath: localLayer})
 	if err != nil {
 		return err
 	}
@@ -202,10 +210,14 @@ func runConfigSet(ctx context.Context, writer, errWriter io.Writer, set *command
 	if err != nil {
 		return err
 	}
+	localLayer, err := localConfigLayer()
+	if err != nil {
+		return err
+	}
 	h := handlers.New(handlers.Options{
 		Stderr:          errWriter,
 		SDDDir:          sddDir,
-		LocalConfigPath: localConfigOverride,
+		LocalConfigPath: localLayer,
 		Repos:           mgr,
 	})
 	err = h.ConfigSet(ctx, set)
@@ -230,10 +242,14 @@ func runConfigUnset(ctx context.Context, writer, errWriter io.Writer, target, ke
 	if err != nil {
 		return err
 	}
+	localLayer, err := localConfigLayer()
+	if err != nil {
+		return err
+	}
 	h := handlers.New(handlers.Options{
 		Stderr:          errWriter,
 		SDDDir:          sddDir,
-		LocalConfigPath: localConfigOverride,
+		LocalConfigPath: localLayer,
 		Repos:           mgr,
 	})
 	if err := h.ConfigUnset(ctx, &command.ConfigUnsetCmd{Target: target, Key: key}); err != nil {

@@ -253,6 +253,32 @@ func configLanguage(cfg *model.PerRepoConfig) string {
 	return cfg.Language
 }
 
+// localConfigLayer is the file of the machine-local config layer for the
+// project governing the working directory, empty for the one under its .sdd/
+// (meta.Project.LocalConfigPath).
+func localConfigLayer() (string, error) {
+	if localConfigOverride != "" {
+		return localConfigOverride, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("getting working directory: %w", err)
+	}
+	workRoot := meta.DiscoverRoot(cwd)
+	if workRoot == "" {
+		return "", nil
+	}
+	locations, err := repos.DefaultLocations()
+	if err != nil {
+		return "", err
+	}
+	project, err := meta.ResolveProject(workRoot, repos.NewGraphClones(locations, git.GraphClones{}).Dir)
+	if err != nil {
+		return "", err
+	}
+	return project.LocalConfigPath(""), nil
+}
+
 func loadConfig() (*model.PerRepoConfig, error) {
 	loc, err := repos.DefaultLocations()
 	if err != nil {
@@ -274,7 +300,11 @@ func loadConfig() (*model.PerRepoConfig, error) {
 		}
 		return &model.PerRepoConfig{BaseConfig: global.BaseConfig}, nil
 	}
-	return meta.ResolveConfig(global.BaseConfig, sddDir, localConfigOverride)
+	localLayer, err := localConfigLayer()
+	if err != nil {
+		return nil, err
+	}
+	return meta.ResolveConfig(global.BaseConfig, sddDir, localLayer)
 }
 
 // warnUnknownConfigKeys names every config key sdd read past — tolerated is
@@ -315,7 +345,11 @@ func resolveConfigAt(sddDir string) (*model.PerRepoConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return meta.ResolveConfig(global.BaseConfig, sddDir, localConfigOverride)
+	localLayer, err := localConfigLayer()
+	if err != nil {
+		return nil, err
+	}
+	return meta.ResolveConfig(global.BaseConfig, sddDir, localLayer)
 }
 
 // splitCSV returns the comma-split fields of s with each element trimmed of
@@ -1404,7 +1438,7 @@ func resolveGraphDir(cmd *cli.Command) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cfg, err := meta.ReadConfig(project.SDDDir(), localConfigOverride)
+	cfg, err := meta.ReadConfig(project.SDDDir(), project.LocalConfigPath(localConfigOverride))
 	if err != nil {
 		return "", fmt.Errorf("reading .sdd/config.yaml: %w", err)
 	}
@@ -1558,7 +1592,7 @@ func ensureGraphClone(clones *repos.GraphClones, project meta.Project) error {
 // the repository holding the project's .sdd/, so a graph kept apart is a
 // project of its own that the work repository names with project_dir.
 func requireGraphInsideRepository(project meta.Project) error {
-	cfg, err := meta.ReadConfig(project.SDDDir(), localConfigOverride)
+	cfg, err := meta.ReadConfig(project.SDDDir(), project.LocalConfigPath(localConfigOverride))
 	if err != nil {
 		return err
 	}
@@ -2250,7 +2284,11 @@ func initCmd() *cli.Command {
 // name what is missing and prompt for the URL. Informational like
 // warnIfParticipantMissing: errors here never fail an init that succeeded.
 func notifyUnconnectedDependencies(errWriter io.Writer, sddDir string) {
-	cfg, err := meta.ReadConfig(sddDir, localConfigOverride)
+	localLayer, err := localConfigLayer()
+	if err != nil {
+		return
+	}
+	cfg, err := meta.ReadConfig(sddDir, localLayer)
 	if err != nil || cfg == nil || len(cfg.Dependencies) == 0 {
 		return
 	}
