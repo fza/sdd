@@ -182,6 +182,15 @@ var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents"}
 // project_dir: only where this machine keeps the project's checkout.
 var LocalPointerKeys = []string{"project_dir"}
 
+// GraphRepoPointerKeys are the keys a committed config may set beside
+// graph_repo: the pointer keys, project_dir for older builds and graph_dir for
+// the stock guard (20261106-202055-d-tac-eyl).
+var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents"}
+
+// LocalGraphRepoPointerKeys are the keys a machine-local config may set
+// beside graph_repo.
+var LocalGraphRepoPointerKeys = []string{"graph_repo", "project_dir"}
+
 // TopLevelKeys returns the top-level keys of a YAML mapping, in file order.
 // Empty input yields none.
 func TopLevelKeys(data []byte) ([]string, error) {

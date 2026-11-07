@@ -56,7 +56,7 @@ func (s MergeDriverSetup) Finalize(ctx context.Context, _ app.AppliedMutation) e
 // the cooldown; a timer round always fetches and stamps the marker.
 func (a *GitWorktreeAcquirer) SyncGraph(ctx context.Context, branch string, trigger app.SyncTrigger) error {
 	checkout, cfg, err := a.syncCheckout(ctx, branch)
-	if err != nil || model.ResolveSyncMode(cfg) != model.SyncModeAuto {
+	if err != nil || syncstate.Mode(cfg, checkout) != model.SyncModeAuto {
 		return err
 	}
 	opts, err := syncstate.HandlerOptions(ctx, meta.ResolveGraphDir(checkout, cfg), handlers.Options{
@@ -82,7 +82,7 @@ func (a *GitWorktreeAcquirer) SyncGraph(ctx context.Context, branch string, trig
 // session.
 func (a *GitWorktreeAcquirer) SyncNotice(ctx context.Context, branch, session string) (string, error) {
 	checkout, cfg, err := a.syncCheckout(ctx, branch)
-	if err != nil || model.ResolveSyncMode(cfg) != model.SyncModeAuto {
+	if err != nil || syncstate.Mode(cfg, checkout) != model.SyncModeAuto {
 		return "", err
 	}
 	graphDir := meta.ResolveGraphDir(checkout, cfg)
@@ -99,7 +99,7 @@ func (a *GitWorktreeAcquirer) SyncNotice(ctx context.Context, branch, session st
 // branch's graph repository.
 func (a *GitWorktreeAcquirer) ReleaseSyncOwner(ctx context.Context, branch, session string) (string, error) {
 	checkout, cfg, err := a.syncCheckout(ctx, branch)
-	if err != nil || model.ResolveSyncMode(cfg) != model.SyncModeAuto {
+	if err != nil || syncstate.Mode(cfg, checkout) != model.SyncModeAuto {
 		return "", err
 	}
 	opts, err := syncstate.HandlerOptions(ctx, meta.ResolveGraphDir(checkout, cfg), handlers.Options{})
@@ -140,7 +140,7 @@ func (a *GitWorktreeAcquirer) syncCheckout(ctx context.Context, branch string) (
 // SyncBlocked reads what blocks sync of branch's graph repository.
 func (a *GitWorktreeAcquirer) SyncBlocked(ctx context.Context, branch string) (*app.SyncBlocked, error) {
 	checkout, cfg, err := a.syncCheckout(ctx, branch)
-	if err != nil || model.ResolveSyncMode(cfg) != model.SyncModeAuto {
+	if err != nil || syncstate.Mode(cfg, checkout) != model.SyncModeAuto {
 		return nil, err
 	}
 	block, err := syncstate.ReadBlocked(ctx, meta.ResolveGraphDir(checkout, cfg))

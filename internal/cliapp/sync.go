@@ -117,7 +117,7 @@ func runSyncCheck(ctx context.Context) {
 
 	graphDir := meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)
 	cooldown := model.ResolveSyncCooldown(cfg)
-	if model.ResolveSyncMode(cfg) == model.SyncModeAuto {
+	if syncstate.Mode(cfg, filepath.Dir(sddDir)) == model.SyncModeAuto {
 		opts, err := graphSyncOptions(ctx, graphDir, handlers.Options{SyncMode: model.SyncModeAuto, GraphDir: graphDir})
 		if err == nil {
 			err = handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{SDDDir: sddDir, Cooldown: cooldown})
@@ -190,7 +190,7 @@ func syncBlocked(ctx context.Context) (*model.SyncBlocked, error) {
 		return nil, nil
 	}
 	cfg, err := loadConfig()
-	if err != nil || model.ResolveSyncMode(cfg) != model.SyncModeAuto {
+	if err != nil || syncstate.Mode(cfg, filepath.Dir(sddDir)) != model.SyncModeAuto {
 		return nil, err
 	}
 	return syncstate.ReadBlocked(ctx, meta.ResolveGraphDir(filepath.Dir(sddDir), cfg))

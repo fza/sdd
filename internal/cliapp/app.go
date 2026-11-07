@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/x/term"
@@ -28,6 +29,7 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/syncstate"
 	"github.com/networkteam/sdd/internal/timing"
 	sddapp "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
@@ -423,7 +425,7 @@ func New(options Options) *cli.Command {
 			if cmd.Bool("timing") {
 				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
 			}
-			if cmd.Args().First() == mergeEntryCommandName {
+			if cmd.Args().First() == mergeEntryCommandName || cmd.Args().First() == mergeConfigCommandName {
 				return ctx, nil
 			}
 
@@ -469,6 +471,7 @@ func New(options Options) *cli.Command {
 			sessionsCmd(),
 			syncCmd(),
 			mergeEntryCmd(),
+			mergeConfigCmd(),
 			repoCmd(),
 			statsCmd(),
 		},
@@ -1473,7 +1476,7 @@ func graphSyncMode(graphDir string) (model.SyncMode, error) {
 	if filepath.Clean(graphDir) != filepath.Clean(meta.ResolveGraphDir(project.Root, cfg)) {
 		return model.SyncModeManual, nil
 	}
-	return model.ResolveSyncMode(cfg), nil
+	return syncstate.Mode(cfg, project.Root), nil
 }
 
 var errNoProject = errors.New("no .sdd/ directory found; run 'sdd init' first")
@@ -1507,15 +1510,47 @@ func resolveProject() (meta.Project, error) {
 	if workRoot == "" {
 		return meta.Project{}, errNoProject
 	}
-	project, err := meta.ResolveProject(workRoot)
+	locations, err := repos.DefaultLocations()
 	if err != nil {
 		return meta.Project{}, err
+	}
+	clones := repos.NewGraphClones(locations, git.GraphClones{})
+	project, err := meta.ResolveProject(workRoot, clones.Dir)
+	if err != nil {
+		return meta.Project{}, err
+	}
+	if project.GraphRepo != "" {
+		err = ensureGraphClone(clones, project)
+		if err != nil {
+			return meta.Project{}, err
+		}
 	}
 	err = requireGraphInsideRepository(project)
 	if err != nil {
 		return meta.Project{}, err
 	}
 	return project, nil
+}
+
+// keptGraphClones holds the clones this process already made ready: every
+// command resolves its project several times, and one upkeep per process is
+// what "before every operation" asks of a command.
+var keptGraphClones sync.Map
+
+// ensureGraphClone clones the graph repository project names when this
+// machine holds no clone yet and keeps it otherwise (20261106-202055-d-tac-eyl).
+func ensureGraphClone(clones *repos.GraphClones, project meta.Project) error {
+	_, kept := keptGraphClones.Load(project.Root)
+	if kept {
+		return nil
+	}
+	h := handlers.New(handlers.Options{GraphClones: clones})
+	err := h.EnsureGraphClone(context.Background(), &command.EnsureGraphCloneCmd{RepoID: project.GraphRepo, CodeOrigin: git.RemoteURL(project.WorkRoot)})
+	if err != nil {
+		return fmt.Errorf("graph_repo %s: %w", project.GraphRepo, err)
+	}
+	keptGraphClones.Store(project.Root, true)
+	return nil
 }
 
 // requireGraphInsideRepository refuses a graph_dir leading into another

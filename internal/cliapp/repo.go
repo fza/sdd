@@ -29,6 +29,26 @@ func repoCmd() *cli.Command {
 		Usage: "Manage connected repos for cross-repo references",
 		Commands: []*cli.Command{
 			{
+				Name:      "path",
+				Usage:     "Print where sdd keeps its own clone of a graph repository",
+				ArgsUsage: "<repo-id>",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					if cmd.Args().Len() != 1 {
+						return fmt.Errorf("usage: sdd repo path <repo-id>")
+					}
+					locations, err := repos.DefaultLocations()
+					if err != nil {
+						return err
+					}
+					dir, err := repos.NewGraphClones(locations, git.GraphClones{}).Dir(model.RepoID(cmd.Args().First()))
+					if err != nil {
+						return err
+					}
+					fmt.Fprintln(cmd.Writer, dir)
+					return nil
+				},
+			},
+			{
 				Name:      "add",
 				Usage:     "Connect a repo: clone its cache, verify its declared repo_id, register it",
 				ArgsUsage: "<clone-url>",
