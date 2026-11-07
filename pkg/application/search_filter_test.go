@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/test"
 )
 
 // The seeded graph holds gap signals on the tactical layer (see
@@ -36,8 +37,8 @@ func TestSearchFilterNormalizesTypeLayerAndKindAbbreviations(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Search: %v", err)
 			}
-			if !strings.Contains(res.Results, "s-tac-aaa") {
-				t.Fatalf("filtered search returned no matching signal: %q", res.Results)
+			if !strings.Contains(test.SearchText(res), "s-tac-aaa") {
+				t.Fatalf("filtered search returned no matching signal: %q", test.SearchText(res))
 			}
 		})
 	}
@@ -52,11 +53,11 @@ func TestSearchFilterTextModeFiltersByTypeAbbreviation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("text Search: %v", err)
 	}
-	if !strings.Contains(res.Results, "s-tac-aaa") {
-		t.Fatalf("text-mode type filter returned no matching signal: %q", res.Results)
+	if !strings.Contains(test.SearchText(res), "s-tac-aaa") {
+		t.Fatalf("text-mode type filter returned no matching signal: %q", test.SearchText(res))
 	}
-	if strings.Contains(res.Results, "s-tac-bbb") {
-		t.Errorf("text-mode search leaked the non-matching beta entry: %q", res.Results)
+	if strings.Contains(test.SearchText(res), "s-tac-bbb") {
+		t.Errorf("text-mode search leaked the non-matching beta entry: %q", test.SearchText(res))
 	}
 }
 

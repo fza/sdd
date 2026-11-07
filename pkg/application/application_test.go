@@ -12,6 +12,7 @@ import (
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 	localadapter "github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/test"
 )
 
 const applicationEntry = `---
@@ -135,24 +136,24 @@ func TestApplicationResolvesCurrentAccessAndOwnsReads(t *testing.T) {
 		t.Fatalf("Info = %+v, %v", info, err)
 	}
 	show, err := application.Show(t.Context(), identity, "example", sdd.ShowRequest{IDs: []string{"20260713-030000-s-tac-api"}, UpDepth: 1, DownDepth: 1})
-	if err != nil || !strings.Contains(show.Entries, "protocol-neutral runtime") {
-		t.Fatalf("Show = %q, %v", show.Entries, err)
+	if err != nil || !strings.Contains(test.ShowText(t, show), "protocol-neutral runtime") {
+		t.Fatalf("Show = %q, %v", test.ShowText(t, show), err)
 	}
 	view, err := application.View(t.Context(), identity, "example", sdd.ViewRequest{Layout: "kind(gap):as-list"})
-	if err != nil || !strings.Contains(view.Sections, "s-tac-api") {
-		t.Fatalf("View = %q, %v", view.Sections, err)
+	if err != nil || !strings.Contains(test.ViewText(view), "s-tac-api") {
+		t.Fatalf("View = %q, %v", test.ViewText(view), err)
 	}
 	wipView, err := application.View(t.Context(), identity, "example", sdd.ViewRequest{Layout: "source(wip):as-wip-list"})
-	if err != nil || !strings.Contains(wipView.Sections, "Protocol-neutral application work") {
-		t.Fatalf("WIP View = %q, %v", wipView.Sections, err)
+	if err != nil || !strings.Contains(test.ViewText(wipView), "Protocol-neutral application work") {
+		t.Fatalf("WIP View = %q, %v", test.ViewText(wipView), err)
 	}
 	text, err := application.Search(t.Context(), identity, "example", sdd.SearchRequest{SyncMode: sdd.SearchSyncAll, Terms: []string{"protocol-neutral"}, Limit: 5, MaxCitations: 1})
-	if err != nil || !strings.Contains(text.Results, "s-tac-api") {
-		t.Fatalf("text Search = %q, %v", text.Results, err)
+	if err != nil || !strings.Contains(test.SearchText(text), "s-tac-api") {
+		t.Fatalf("text Search = %q, %v", test.SearchText(text), err)
 	}
 	vector, err := application.Search(t.Context(), identity, "example", sdd.SearchRequest{SyncMode: sdd.SearchSyncAll, Phrase: "application runtime", Limit: 5, MaxCitations: 1})
-	if err != nil || !strings.Contains(vector.Results, "s-tac-api") {
-		t.Fatalf("vector Search = %q, %v", vector.Results, err)
+	if err != nil || !strings.Contains(test.SearchText(vector), "s-tac-api") {
+		t.Fatalf("vector Search = %q, %v", test.SearchText(vector), err)
 	}
 	procedures, err := application.Procedures(t.Context(), identity, "example", sdd.ProcedureListRequest{})
 	if err != nil || !strings.Contains(procedures.Procedures, "capture") {

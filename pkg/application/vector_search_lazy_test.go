@@ -11,6 +11,7 @@ import (
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 	localadapter "github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/test"
 )
 
 // Regression test for the 2026-07-13 root-runtime rebase: an embedding
@@ -75,14 +76,14 @@ func TestVectorSearchWithLazyDimensionEmbedder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vector Search with lazy-dimension embedder: %v", err)
 	}
-	if !strings.Contains(vector.Results, "s-tac-api") {
-		t.Fatalf("vector Search = %q, want hit for s-tac-api", vector.Results)
+	if !strings.Contains(test.SearchText(vector), "s-tac-api") {
+		t.Fatalf("vector Search = %q, want hit for s-tac-api", test.SearchText(vector))
 	}
 
 	// A second search must land in the same namespace — the first call
 	// discovering the dimensionality must not fork the index identity.
 	again, err := application.Search(t.Context(), identity, "example", sdd.SearchRequest{SyncMode: sdd.SearchSyncAll, Phrase: "application runtime", Limit: 5, MaxCitations: 1})
-	if err != nil || !strings.Contains(again.Results, "s-tac-api") {
-		t.Fatalf("repeated vector Search = %q, %v", again.Results, err)
+	if err != nil || !strings.Contains(test.SearchText(again), "s-tac-api") {
+		t.Fatalf("repeated vector Search = %q, %v", test.SearchText(again), err)
 	}
 }

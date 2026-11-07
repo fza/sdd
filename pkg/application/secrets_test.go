@@ -133,7 +133,7 @@ func TestSearchKeepsACredentialPhraseOffTheEmbeddingProvider(t *testing.T) {
 	if embeddings.queryEmbeds != 0 {
 		t.Error("the phrase must not be embedded")
 	}
-	if !strings.Contains(result.Notice, "searched for it literally") || !strings.Contains(result.Results, "searched for it literally") {
+	if !strings.Contains(result.Notice, "searched for it literally") || !strings.Contains(test.SearchText(result), "searched for it literally") {
 		t.Errorf("the response should say the phrase was searched literally: %+v", result)
 	}
 	if strings.Contains(result.Notice, credential) {

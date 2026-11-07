@@ -12,6 +12,7 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	localadapter "github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/test"
 )
 
 type compositionPermission struct {
@@ -174,7 +175,7 @@ Project B is readable as an authorized dependency.`), 0o644); err != nil {
 	}
 	qualified := "project-b:20260713-120000-s-tac-dep"
 	shown, err := application.Show(t.Context(), alice, "project-a", sdd.ShowRequest{IDs: []string{qualified}})
-	if err != nil || shown.Project.ID != "project-a" || !strings.Contains(shown.Entries, "authorized dependency") {
+	if err != nil || shown.Project.ID != "project-a" || !strings.Contains(test.ShowText(t, shown), "authorized dependency") {
 		t.Fatalf("authorized dependency show = %+v, %v", shown, err)
 	}
 

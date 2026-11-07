@@ -11,6 +11,7 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	localadapter "github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/test"
 )
 
 type staticGraphStore struct {
@@ -134,8 +135,8 @@ func TestApplicationLoadsDependencyPartiallyWithUnreadableEntry(t *testing.T) {
 	}
 	identity := sdd.RequestIdentity{Subject: "christopher"}
 	show, err := application.Show(t.Context(), identity, "base", sdd.ShowRequest{IDs: []string{"example.org/dep:20260713-040000-s-tac-dep"}})
-	if err != nil || !strings.Contains(show.Entries, "authorized dependency body") {
-		t.Fatalf("cross-project Show over a partially-loaded dependency = %q, %v", show.Entries, err)
+	if err != nil || !strings.Contains(test.ShowText(t, show), "authorized dependency body") {
+		t.Fatalf("cross-project Show over a partially-loaded dependency = %q, %v", test.ShowText(t, show), err)
 	}
 }
 
@@ -210,11 +211,11 @@ func TestUnreadableClosureMemberFailsOnlyReadsSelectingIt(t *testing.T) {
 		return application.Search(t.Context(), alice, "base", sdd.SearchRequest{SyncMode: sdd.SearchSyncNone, Terms: []string{"zebrafinch"}, Repos: repos, AllRepos: all})
 	}
 
-	if result, err := search([]sdd.RepoID{"dep.example/a"}, false); err != nil || !strings.Contains(result.Results, "20260713-040000-s-tac-dep") {
-		t.Errorf("search naming a = %q, %v", result.Results, err)
+	if result, err := search([]sdd.RepoID{"dep.example/a"}, false); err != nil || !strings.Contains(test.SearchText(result), "20260713-040000-s-tac-dep") {
+		t.Errorf("search naming a = %q, %v", test.SearchText(result), err)
 	}
-	if result, err := search([]sdd.RepoID{"dep.example/c"}, false); err != nil || !strings.Contains(result.Results, "20260712-040000-s-tac-dpe") {
-		t.Errorf("search naming c = %q, %v", result.Results, err)
+	if result, err := search([]sdd.RepoID{"dep.example/c"}, false); err != nil || !strings.Contains(test.SearchText(result), "20260712-040000-s-tac-dpe") {
+		t.Errorf("search naming c = %q, %v", test.SearchText(result), err)
 	}
 	workflow, _, err := application.OpenWorkflow(t.Context(), alice, "base", sdd.WorkflowOpenRequest{ClientName: "alice-mcp"})
 	if err != nil {
@@ -223,8 +224,8 @@ func TestUnreadableClosureMemberFailsOnlyReadsSelectingIt(t *testing.T) {
 	if project, _, _, err := workflow.ReadScope(t.Context(), alice, "dep.example/c"); err != nil || project != "dep.example/c" {
 		t.Errorf("read scope in c = %q, %v", project, err)
 	}
-	if result, err := application.View(t.Context(), alice, "base", sdd.ViewRequest{Layout: "top(5)", Repos: []sdd.RepoID{"dep.example/a"}}); err != nil || !strings.Contains(result.Sections, "repo: dep.example/a") {
-		t.Errorf("view naming a = %q, %v", result.Sections, err)
+	if result, err := application.View(t.Context(), alice, "base", sdd.ViewRequest{Layout: "top(5)", Repos: []sdd.RepoID{"dep.example/a"}}); err != nil || !strings.Contains(test.ViewText(result), "repo: dep.example/a") {
+		t.Errorf("view naming a = %q, %v", test.ViewText(result), err)
 	}
 	if page, err := application.ReadAttachment(t.Context(), alice, "base", sdd.ReadAttachmentRequest{EntryID: "dep.example/a:20260713-040000-s-tac-dep", Filename: "evidence.md", MaxBytes: 64}); err != nil || string(page.Page.Content) != "a attachment" {
 		t.Errorf("attachment of a = %+v, %v", page, err)
@@ -276,8 +277,8 @@ func TestApplicationResolvesAuthorizedDependenciesWithoutLeakingDenials(t *testi
 	identity := sdd.RequestIdentity{Subject: "christopher"}
 	qualified := "example.org/dep:20260713-040000-s-tac-dep"
 	show, err := application.Show(t.Context(), identity, "base", sdd.ShowRequest{IDs: []string{qualified}})
-	if err != nil || !strings.Contains(show.Entries, "authorized dependency body") {
-		t.Fatalf("cross-project Show = %q, %v", show.Entries, err)
+	if err != nil || !strings.Contains(test.ShowText(t, show), "authorized dependency body") {
+		t.Fatalf("cross-project Show = %q, %v", test.ShowText(t, show), err)
 	}
 	page, err := application.ReadAttachment(t.Context(), identity, "base", sdd.ReadAttachmentRequest{EntryID: qualified, Filename: "evidence.md", MaxBytes: 64})
 	if err != nil || string(page.Page.Content) != "foreign attachment" || page.Project.ID != "base" {
