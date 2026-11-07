@@ -301,6 +301,7 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err != nil {
 		return nil, nil, err
 	}
+	runtime.backfillTitles(ctx, created.Metadata.Branch, SyncOnSessionStart)
 	return w, public, nil
 }
 
@@ -340,6 +341,7 @@ func (a *Application) RefreshWorkflow(ctx context.Context, identity RequestIdent
 		return nil, endedSessionError(stored.Metadata, *end)
 	}
 	runtime.syncGraph(ctx, stored.Metadata.Branch, SyncOnCall)
+	runtime.backfillTitles(ctx, stored.Metadata.Branch, SyncOnCall)
 	return a.replayWorkflow(ctx, identity, runtime, stored)
 }
 
@@ -560,6 +562,14 @@ func (w *WorkflowSession) Start(ctx context.Context, identity RequestIdentity, r
 	project, err := w.startProjectFor(request.Project)
 	if err != nil {
 		return nil, err
+	}
+	// A move that publishes an entry into another project is refused at its
+	// start when it may not write there, not after the dialogue it costs.
+	if project != "" && publishesEntry(spec) {
+		err = w.authorizeTarget(project, AccessWrite)
+		if err != nil {
+			return nil, err
+		}
 	}
 	w.startProject = project
 	serve, err := w.session.Start(spec, request.Params, parent)
@@ -1792,4 +1802,13 @@ func newWorkflowSessionID(now time.Time) SessionID {
 		panic(fmt.Sprintf("sdd: reading session randomness: %v", err))
 	}
 	return SessionID("s_" + now.Format("20060102-150405") + "-" + hex.EncodeToString(buf))
+}
+
+func publishesEntry(spec *engine.Spec) bool {
+	for _, step := range spec.Steps {
+		if step.Op == "newEntry" {
+			return true
+		}
+	}
+	return false
 }

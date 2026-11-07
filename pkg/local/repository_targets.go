@@ -9,6 +9,7 @@ import (
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/syncstate"
 	app "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -78,7 +79,7 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 				return nil, nil, nil, err
 			}
 			finalizers := []app.MutationFinalizer{finalizer}
-			if model.ResolveSyncMode(cfg) == model.SyncModeAuto {
+			if syncstate.Mode(cfg, checkout) == model.SyncModeAuto {
 				finalizers = append(finalizers, GraphPublisher{GraphDir: meta.ResolveGraphDir(checkout, cfg)})
 			}
 			finalizers = append(finalizers, MergeDriverSetup{Checkout: checkout})

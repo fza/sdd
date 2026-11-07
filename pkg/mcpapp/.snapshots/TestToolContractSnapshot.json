@@ -202,7 +202,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -247,7 +247,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -353,7 +353,7 @@
           ]
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         },
         "version": {
@@ -862,7 +862,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         },
         "vocabulary": {
@@ -1064,7 +1064,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -1147,7 +1147,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         },
         "total_bytes": {
@@ -1230,7 +1230,7 @@
           ]
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -1843,7 +1843,7 @@
                 "type": "string"
               },
               "sync_notice": {
-                "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+                "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
                 "type": "string"
               },
               "vocabulary": {
@@ -1920,7 +1920,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -2096,7 +2096,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -2343,7 +2343,7 @@
           ]
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -2428,7 +2428,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -2933,7 +2933,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         },
         "vocabulary": {
@@ -3426,7 +3426,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         },
         "vocabulary": {
@@ -3500,7 +3500,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         },
         "view_sections": {

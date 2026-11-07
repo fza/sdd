@@ -255,6 +255,17 @@ func (h *Handler) persistSupportedAgents(ctx context.Context, cmd *command.InitC
 // bundle stopped shipping, registers the MCP server, and commits everything
 // touched inside cmd.RepoRoot.
 func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string, commitMessage string) error {
+	if !cmd.GraphOnly {
+		var err error
+		touched, err = h.installSkillsAndRegistrations(ctx, cmd, agents, scope, touched)
+		if err != nil {
+			return err
+		}
+	}
+	return h.commitInitPaths(ctx, cmd, touched, commitMessage)
+}
+
+func (h *Handler) installSkillsAndRegistrations(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string) ([]string, error) {
 	for _, target := range agents {
 		err := h.InstallSkills(ctx, &command.InstallSkillsCmd{
 			Target:          target,
@@ -274,7 +285,7 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("installing skills for %s: %w", target, err)
+			return nil, fmt.Errorf("installing skills for %s: %w", target, err)
 		}
 	}
 
@@ -282,7 +293,7 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 	// (s-tac-zaz).
 	err := h.pruneSkillOrphans(ctx, agents, scope, cmd, &touched)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Project scope only: the registration files live in the repo tree;
@@ -290,10 +301,14 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 	if scope == model.ScopeProject {
 		err = h.registerMCPServers(agents, cmd, &touched)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
+	return touched, nil
+}
 
+// commitInitPaths commits everything init touched inside cmd.RepoRoot.
+func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, touched []string, commitMessage string) error {
 	// Skill files installed under the user-global scope sit outside the repo's
 	// git tree.
 	if h.committer == nil {
