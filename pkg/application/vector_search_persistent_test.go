@@ -13,6 +13,7 @@ import (
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 	localadapter "github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/test"
 )
 
 // These tests pin the monotonic, entry-presence reconciliation of the
@@ -176,8 +177,8 @@ func TestVectorSearchPreIndexedGraphEmbedsOnlyQuery(t *testing.T) {
 
 	// First search warms the index — every entry's chunks embed once.
 	first := counterSearch(t, app, "alpha")
-	if !strings.Contains(first.Results, "s-tac-aaa") {
-		t.Fatalf("first search did not surface the alpha entry: %q", first.Results)
+	if !strings.Contains(test.SearchText(first), "s-tac-aaa") {
+		t.Fatalf("first search did not surface the alpha entry: %q", test.SearchText(first))
 	}
 	if emb.docEmbeds == 0 {
 		t.Fatal("first search embedded no documents — the graph was never indexed")
@@ -191,8 +192,8 @@ func TestVectorSearchPreIndexedGraphEmbedsOnlyQuery(t *testing.T) {
 	if emb.queryEmbeds != 1 {
 		t.Errorf("second search made %d query embeds; want exactly 1", emb.queryEmbeds)
 	}
-	if !strings.Contains(second.Results, "s-tac-aaa") {
-		t.Errorf("second search lost the alpha entry: %q", second.Results)
+	if !strings.Contains(test.SearchText(second), "s-tac-aaa") {
+		t.Errorf("second search lost the alpha entry: %q", test.SearchText(second))
 	}
 }
 
@@ -257,8 +258,8 @@ func TestVectorSearchRestartEmbedsNothing(t *testing.T) {
 	if emb.queryEmbeds != 1 {
 		t.Errorf("restart query embeds = %d; want 1", emb.queryEmbeds)
 	}
-	if !strings.Contains(res.Results, "s-tac-aaa") {
-		t.Errorf("restart lost the alpha entry: %q", res.Results)
+	if !strings.Contains(test.SearchText(res), "s-tac-aaa") {
+		t.Errorf("restart lost the alpha entry: %q", test.SearchText(res))
 	}
 }
 
@@ -300,8 +301,8 @@ func TestVectorSearchAttachmentHitPreservesCitation(t *testing.T) {
 
 	app := newCounterApp(t, graphDir, cacheRoot, &countingEmbeddings{})
 	res := counterSearch(t, app, "alpha")
-	if !strings.Contains(res.Results, "[attachment: ") || !strings.Contains(res.Results, "design.md") {
-		t.Errorf("attachment hit did not render a source citation: %q", res.Results)
+	if !strings.Contains(test.SearchText(res), "[attachment: ") || !strings.Contains(test.SearchText(res), "design.md") {
+		t.Errorf("attachment hit did not render a source citation: %q", test.SearchText(res))
 	}
 }
 
@@ -342,8 +343,8 @@ func TestBranchVectorAndHybridSearchUseSelectedAttachmentAuthorityAndRelease(t *
 		if err != nil {
 			t.Fatalf("%s search: %v", name, err)
 		}
-		if !strings.Contains(result.Results, "beta branch authority bytes") || strings.Contains(result.Results, "alpha runtime authority bytes") {
-			t.Fatalf("%s search used wrong attachment authority:\n%s", name, result.Results)
+		if !strings.Contains(test.SearchText(result), "beta branch authority bytes") || strings.Contains(test.SearchText(result), "alpha runtime authority bytes") {
+			t.Fatalf("%s search used wrong attachment authority:\n%s", name, test.SearchText(result))
 		}
 	}
 	targets.mu.Lock()
@@ -409,8 +410,8 @@ func TestVectorSearchIgnoresPersistedRowAbsentFromGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := counterSearch(t, app, "beta")
-	if strings.Contains(res.Results, "s-tac-bbb") {
-		t.Errorf("a stored hit whose entry no longer exists was surfaced: %q", res.Results)
+	if strings.Contains(test.SearchText(res), "s-tac-bbb") {
+		t.Errorf("a stored hit whose entry no longer exists was surfaced: %q", test.SearchText(res))
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	localadapter "github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/test"
 )
 
 type workflowBranchTargets struct{ graphs map[string]sdd.GraphStore }
@@ -337,15 +338,15 @@ This reference exists only on the bound work branch.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(currentRead.Results, anchorID) {
-		t.Fatalf("unbound read did not use runtime graph: %q", currentRead.Results)
+	if !strings.Contains(test.SearchText(currentRead), anchorID) {
+		t.Fatalf("unbound read did not use runtime graph: %q", test.SearchText(currentRead))
 	}
 	defaultRead, err := application.Search(t.Context(), identity, "example", sdd.SearchRequest{SyncMode: sdd.SearchSyncAll, Terms: []string{"default-target-only"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(defaultRead.Results, anchorID) {
-		t.Fatalf("unbound read leaked configured default target: %q", defaultRead.Results)
+	if strings.Contains(test.SearchText(defaultRead), anchorID) {
+		t.Fatalf("unbound read leaked configured default target: %q", test.SearchText(defaultRead))
 	}
 
 	bound, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "bound-capture"})

@@ -14,7 +14,6 @@ import (
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/application/types"
@@ -283,7 +282,6 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	}
 	return ViewResult{
 		Project:           runtime.options.Project,
-		Sections:          presenters.ViewText(sections),
 		ViewSections:      sections,
 		MatchedCount:      matched,
 		KnownParticipants: knownParticipants,
@@ -325,11 +323,7 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 	if err != nil {
 		return ShowResult{}, err
 	}
-	entries, err := presenters.ShowText(items)
-	if err != nil {
-		return ShowResult{}, err
-	}
-	show := ShowResult{Project: runtime.options.Project, Entries: entries, Items: items}
+	show := ShowResult{Project: runtime.options.Project, Items: items}
 	for _, group := range showResult.Groups {
 		if group.Primary != nil {
 			if group.PrimaryID != "" {
@@ -423,7 +417,6 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 			break
 		}
 	}
-	search.Results = presenters.SearchText(hits, search.Notices)
 	for _, entry := range searchResult.Entries {
 		if entry.Entry != nil {
 			search.EntryIDs = append(search.EntryIDs, entry.DisplayID())

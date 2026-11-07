@@ -12,6 +12,7 @@ import (
 	"testing/fstest"
 
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/test"
 )
 
 type snapshotOpenFS struct {
@@ -195,12 +196,12 @@ func TestLoadSnapshotFSPreservesAttachmentNamesWithoutOpeningBodies(t *testing.T
 			app := preparationApp(t, acquiredRuntime(t, "base", store), nil, nil)
 			identity := sdd.RequestIdentity{Subject: "reader"}
 			shown, err := app.Show(t.Context(), identity, "base", sdd.ShowRequest{IDs: []string{entryID}})
-			if err != nil || !strings.Contains(shown.Entries, "The protocol-neutral runtime owns graph reads") {
-				t.Fatalf("entry = %q, %v", shown.Entries, err)
+			if err != nil || !strings.Contains(test.ShowText(t, shown), "The protocol-neutral runtime owns graph reads") {
+				t.Fatalf("entry = %q, %v", test.ShowText(t, shown), err)
 			}
 			markers, err := app.View(t.Context(), identity, "base", sdd.ViewRequest{Layout: "source(wip):as-wip-list"})
-			if err != nil || !strings.Contains(markers.Sections, "Snapshot loader work.") {
-				t.Fatalf("WIP = %q, %v", markers.Sections, err)
+			if err != nil || !strings.Contains(test.ViewText(markers), "Snapshot loader work.") {
+				t.Fatalf("WIP = %q, %v", test.ViewText(markers), err)
 			}
 			attachments, err := app.ReadAttachment(t.Context(), identity, "base", sdd.ReadAttachmentRequest{EntryID: entryID, Filename: "evidence.md", MaxBytes: 1})
 			if err != nil || !slices.Equal(attachments.Available, []string{"evidence.md", "image.bin"}) {

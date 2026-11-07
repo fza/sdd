@@ -11,6 +11,7 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/test"
 )
 
 type acquiredReadStore struct {
@@ -74,7 +75,7 @@ func TestAcquiredReadsUseReadAuthorityAndRelease(t *testing.T) {
 	for name, run := range map[string]func() error{
 		"show": func() error {
 			r, e := app.Show(t.Context(), identity, "base", sdd.ShowRequest{Branch: "work", IDs: []string{"20260101-100000-s-tac-aaa"}})
-			if e == nil && !strings.Contains(r.Entries, "Selected source body") {
+			if e == nil && !strings.Contains(test.ShowText(t, r), "Selected source body") {
 				t.Error(r)
 			}
 			return e

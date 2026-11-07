@@ -9,6 +9,7 @@ import (
 	"github.com/networkteam/sdd/internal/chunking"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/test"
 )
 
 // These tests pin slice 2's version-aware freshness through the real public
@@ -106,8 +107,8 @@ func TestVectorSearchLegacyStoreAnswersAndAccumulates(t *testing.T) {
 	app := newCounterApp(t, graphDir, cacheRoot, emb)
 
 	res := counterSearch(t, app, "alpha")
-	if !strings.Contains(res.Results, "s-tac-aaa") {
-		t.Fatalf("legacy store did not answer the search: %q", res.Results)
+	if !strings.Contains(test.SearchText(res), "s-tac-aaa") {
+		t.Fatalf("legacy store did not answer the search: %q", test.SearchText(res))
 	}
 	// The legacy-seeded entry must be recognized as present and NOT re-embedded
 	// (the embedded base procedures the graph also carries are absent from this
@@ -117,8 +118,8 @@ func TestVectorSearchLegacyStoreAnswersAndAccumulates(t *testing.T) {
 		t.Errorf("legacy-seeded entry has %d versions after the first search, want 1; presence check must see its legacy version", got)
 	}
 	// The answer must come from the seeded legacy rows.
-	if !strings.Contains(res.Results, "legacy") {
-		t.Errorf("legacy citation not surfaced: %q", res.Results)
+	if !strings.Contains(test.SearchText(res), "legacy") {
+		t.Errorf("legacy citation not surfaced: %q", test.SearchText(res))
 	}
 
 	// Change the entry (regenerate its summary): its current hash no longer
@@ -138,8 +139,8 @@ func TestVectorSearchLegacyStoreAnswersAndAccumulates(t *testing.T) {
 	if got := entryVersionCount(t, cacheRoot, id); got != 2 {
 		t.Errorf("entry has %d versions after a change, want 2 (legacy kept + new added)", got)
 	}
-	if !strings.Contains(res.Results, "s-tac-aaa") {
-		t.Errorf("search lost the entry after the change: %q", res.Results)
+	if !strings.Contains(test.SearchText(res), "s-tac-aaa") {
+		t.Errorf("search lost the entry after the change: %q", test.SearchText(res))
 	}
 }
 
@@ -175,11 +176,11 @@ func TestVectorSearchSummaryRegenerationEmbedsOnceAndFiltersOldVersion(t *testin
 	}
 	// Read-time filtering: the current version's summary surfaces, the stale
 	// one does not — even though its rows are still in the store.
-	if !strings.Contains(res.Results, "NEWMARKER") {
-		t.Errorf("current version summary not surfaced: %q", res.Results)
+	if !strings.Contains(test.SearchText(res), "NEWMARKER") {
+		t.Errorf("current version summary not surfaced: %q", test.SearchText(res))
 	}
-	if strings.Contains(res.Results, "OLDMARKER") {
-		t.Errorf("stale version hit leaked past the read-time filter: %q", res.Results)
+	if strings.Contains(test.SearchText(res), "OLDMARKER") {
+		t.Errorf("stale version hit leaked past the read-time filter: %q", test.SearchText(res))
 	}
 }
 
@@ -215,11 +216,11 @@ func TestVectorSearchBranchDivergenceNoFlipFlop(t *testing.T) {
 	}
 
 	// Each branch sees its own version at read time.
-	if !strings.Contains(res1.Results, "BRANCHONE") || strings.Contains(res1.Results, "BRANCHTWO") {
-		t.Errorf("branch one saw the wrong version: %q", res1.Results)
+	if !strings.Contains(test.SearchText(res1), "BRANCHONE") || strings.Contains(test.SearchText(res1), "BRANCHTWO") {
+		t.Errorf("branch one saw the wrong version: %q", test.SearchText(res1))
 	}
-	if !strings.Contains(res2.Results, "BRANCHTWO") || strings.Contains(res2.Results, "BRANCHONE") {
-		t.Errorf("branch two saw the wrong version: %q", res2.Results)
+	if !strings.Contains(test.SearchText(res2), "BRANCHTWO") || strings.Contains(test.SearchText(res2), "BRANCHONE") {
+		t.Errorf("branch two saw the wrong version: %q", test.SearchText(res2))
 	}
 
 	// Alternating searches now re-embed nothing — each branch's version is

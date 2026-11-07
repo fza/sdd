@@ -50,12 +50,6 @@ type ViewRequest struct {
 
 type ViewResult struct {
 	Project ProjectRef
-	// Sections is ViewSections rendered as text.
-	//
-	// Deprecated: use ViewSections, the same sections as data, and render
-	// them in the caller. Sections is removed in the release after the one
-	// that deprecates it (20261101-194502-d-tac-r3f).
-	Sections string
 	// ViewSections are the layout's sections as data, the local graph's
 	// first, then each queried dependency's, tagged with its repo.
 	ViewSections []ViewSection
@@ -83,13 +77,7 @@ type ShowRequest struct {
 }
 
 type ShowResult struct {
-	Project ProjectRef
-	// Entries is Items rendered as text.
-	//
-	// Deprecated: use Items, the same entries as data, and render them in the
-	// caller. Entries is removed in the release after the one that deprecates
-	// it (20261101-192805-d-tac-ih7).
-	Entries    string
+	Project    ProjectRef
 	Items      []ShownEntry
 	FullIDs    []string
 	SummaryIDs []string
@@ -119,14 +107,8 @@ type SearchResult struct {
 	Notice   string
 	// Notices are the notices Notice joins, each on its own: a credential
 	// found in the phrase, incomplete indexing.
-	Notices []string
-	Project ProjectRef
-	// Results is Hits rendered as text, Notices following.
-	//
-	// Deprecated: use Hits and Notices, the same result as data, and render
-	// them in the caller. Results is removed in the release after the one that
-	// deprecates it (20261101-192805-d-tac-ih7).
-	Results  string
+	Notices  []string
+	Project  ProjectRef
 	Hits     []SearchHit
 	EntryIDs []string
 }

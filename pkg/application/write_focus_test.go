@@ -6,6 +6,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/test"
 )
 
 func TestCreateEntry_FocusPersistsInvolvementActorsAndWhen(t *testing.T) {
@@ -108,7 +109,7 @@ func TestCreateEntry_FocusRendersThroughAsFocusBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := view.Sections
+	out := test.ViewText(view)
 	if !strings.Contains(out, focus.EntryID) {
 		t.Errorf("focus block should render the focus, got %q", out)
 	}
