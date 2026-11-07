@@ -168,13 +168,11 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 }
 
 // writeLocalSettings records the per-person settings cmd carries, the
-// participant and graph sync, in sddDir's config.local.yaml, keeping every
-// other key in that file.
+// participant and the dialogue mode, in sddDir's config.local.yaml, keeping
+// every other key in that file.
 func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
 	settings := []struct{ key, value string }{
 		{"participant", cmd.Participant},
-		{"sync.mode", string(cmd.SyncMode)},
-		{"sync.interval", cmd.SyncInterval},
 		{"dialogue.mode", string(cmd.DialogueMode)},
 	}
 	configLocalPath := meta.LocalConfigPath(sddDir, cmd.LocalConfigPath)

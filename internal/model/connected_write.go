@@ -94,12 +94,13 @@ func RepoOverrideKey(key string, repoID RepoID) ([]string, error) {
 }
 
 // HonoredLocal returns the machine-local layer without inbound, which only
-// the committed config sets.
+// the committed config sets, and without the git limits, which only the
+// user-global config sets.
 func HonoredLocal(local *PerRepoConfig) *PerRepoConfig {
-	if local == nil || (local.Inbound.Accept == nil && len(local.Inbound.Repos) == 0) {
+	if local == nil || (local.Inbound.Accept == nil && len(local.Inbound.Repos) == 0 && len(misplacedGitLimits(local.Sync)) == 0) {
 		return local
 	}
-	honored := *local
+	honored := withoutGitLimits(*local)
 	honored.Inbound = InboundConfig{}
 	return &honored
 }

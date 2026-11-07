@@ -1667,19 +1667,6 @@ func promptProjectDir(cmd *cli.Command, defaultValue string) (string, error) {
 	})
 }
 
-// promptSyncMode asks how this person's graph changes sync with the remote.
-func promptSyncMode(cmd *cli.Command) (model.SyncMode, error) {
-	return tui.RunSelect(tui.SelectPrompt[model.SyncMode]{
-		Reader: cmd.Reader,
-		Writer: cmd.Writer,
-		Header: "How should your graph changes sync with the remote? (↑/↓ to navigate, enter to confirm)",
-		Options: []tui.SelectOption[model.SyncMode]{
-			{Label: string(model.SyncModeManual), Hint: "you push and pull the graph yourself", Value: model.SyncModeManual},
-			{Label: string(model.SyncModeAuto), Hint: "every graph commit is pushed, upstream graph commits pulled", Value: model.SyncModeAuto},
-		},
-	})
-}
-
 // promptDialogueMode asks whether this person's agents take the choices an
 // engine session otherwise puts to them.
 func promptDialogueMode(cmd *cli.Command) (model.DialogueMode, error) {
@@ -1691,17 +1678,6 @@ func promptDialogueMode(cmd *cli.Command) (model.DialogueMode, error) {
 			{Label: string(model.DialogueGuided), Hint: "you confirm entries, pick moves and end sessions", Value: model.DialogueGuided},
 			{Label: string(model.DialogueAutonomous), Hint: "your agent decides, except overriding a failed pre-flight", Value: model.DialogueAutonomous},
 		},
-	})
-}
-
-// promptSyncInterval asks how often a running `sdd serve` syncs. Empty input
-// keeps the timer off.
-func promptSyncInterval(cmd *cli.Command) (string, error) {
-	return tui.RunTextPrompt(tui.TextPrompt{
-		Reader: cmd.Reader,
-		Writer: cmd.Writer,
-		Label:  "Sync interval for `sdd serve`, e.g. 15m (empty: no timer)",
-		Width:  60,
 	})
 }
 
@@ -1859,14 +1835,6 @@ func initCmd() *cli.Command {
 				Usage: "Raise .sdd/meta.json minimum_version to this binary's version (released builds only)",
 			},
 			&cli.StringFlag{
-				Name:  "sync-mode",
-				Usage: "Your graph sync mode, manual or auto, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
-			},
-			&cli.StringFlag{
-				Name:  "sync-interval",
-				Usage: "How often a running `sdd serve` syncs under auto sync, e.g. 15m (prompted interactively when choosing auto)",
-			},
-			&cli.StringFlag{
 				Name:  "dialogue-mode",
 				Usage: "Your dialogue mode, guided or autonomous, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
 			},
@@ -1978,18 +1946,16 @@ func initCmd() *cli.Command {
 				projectMissing = projectCommitted == nil && setUpProject
 			}
 			freshGraph := !pointer && !sddExists || projectMissing
-			// Overlay-aware: a participant or sync mode configured globally
-			// counts as configured, so init does not ask for one.
+			// Overlay-aware: a participant or dialogue mode configured
+			// globally counts as configured, so init does not ask for one.
 			existingMerged, err := resolveConfigAt(projectSDDDir)
 			if err != nil {
 				return fmt.Errorf("resolving existing configuration before init: %w", err)
 			}
 			recordedParticipant := ""
-			var recordedSyncMode model.SyncMode
 			var recordedDialogueMode model.DialogueMode
 			if existingMerged != nil {
 				recordedParticipant = existingMerged.Participant
-				recordedSyncMode = existingMerged.Sync.Mode
 				recordedDialogueMode = existingMerged.Dialogue.Mode
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
@@ -2120,23 +2086,6 @@ func initCmd() *cli.Command {
 				targets = chosen
 			}
 
-			// Graph sync is set per person, so it is asked whenever no layer
-			// sets it, as the participant is (20261029-132422-d-tac-2sn).
-			syncMode := model.SyncMode(strings.TrimSpace(cmd.String("sync-mode")))
-			syncInterval := strings.TrimSpace(cmd.String("sync-interval"))
-			if syncMode == "" && recordedSyncMode == "" && cliout.IsTerminalReader(cmd.Reader) {
-				syncMode, err = promptSyncMode(cmd)
-				if err != nil {
-					return fmt.Errorf("prompt: %w", err)
-				}
-			}
-			if syncMode == model.SyncModeAuto && syncInterval == "" && (existingMerged == nil || existingMerged.Sync.Interval == "") && cliout.IsTerminalReader(cmd.Reader) {
-				syncInterval, err = promptSyncInterval(cmd)
-				if err != nil {
-					return fmt.Errorf("prompt: %w", err)
-				}
-			}
-
 			dialogueMode := model.DialogueMode(strings.TrimSpace(cmd.String("dialogue-mode")))
 			if dialogueMode == "" && recordedDialogueMode == "" && cliout.IsTerminalReader(cmd.Reader) {
 				dialogueMode, err = promptDialogueMode(cmd)
@@ -2156,8 +2105,6 @@ func initCmd() *cli.Command {
 				ProjectDir:      projectDir,
 				GraphRepo:       graphRepo,
 				SetUpProject:    setUpProject,
-				SyncMode:        syncMode,
-				SyncInterval:    syncInterval,
 				DialogueMode:    dialogueMode,
 				DefaultBranch:   defaultBranch,
 				Participant:     participant,

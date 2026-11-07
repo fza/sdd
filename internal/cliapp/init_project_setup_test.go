@@ -76,7 +76,7 @@ func TestInitSetsUpAMissingProject(t *testing.T) {
 				tc.prepare(t, project)
 			}
 
-			runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "de", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--sync-mode", "auto", "--sync-interval", "5m")
+			runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "de", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "autonomous")
 
 			projectConfig := readFile(t, filepath.Join(project, ".sdd", "config.yaml"))
 			for _, setting := range []string{"graph_dir: graph", "language: de", "skill_scope: project"} {
@@ -94,7 +94,7 @@ func TestInitSetsUpAMissingProject(t *testing.T) {
 				t.Errorf("the project should hold its meta.json: %v", statErr)
 			}
 			projectLocal := readFile(t, filepath.Join(project, ".sdd", "config.local.yaml"))
-			for _, setting := range []string{"participant: Ada", "mode: auto", "interval: 5m"} {
+			for _, setting := range []string{"participant: Ada", "mode: autonomous"} {
 				if !strings.Contains(projectLocal, setting) {
 					t.Errorf("the person's settings should be recorded with the project, missing %q:\n%s", setting, projectLocal)
 				}
@@ -212,10 +212,10 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 			mention:    "reads as more than one path",
 		},
 		{
-			name:       "unknown sync mode",
+			name:       "unknown dialogue mode",
 			projectDir: "../work-sdd",
-			args:       []string{"--language", "en", "--sync-mode", "sometimes"},
-			mention:    "sync.mode",
+			args:       []string{"--language", "en", "--dialogue-mode", "sometimes"},
+			mention:    "dialogue.mode",
 		},
 		{
 			name:       "folder inside another repository",
@@ -304,19 +304,21 @@ func TestInitRefreshesTheProjectFromTheWorkRepository(t *testing.T) {
 	}
 }
 
-// Graph sync is set per person, in the config.local.yaml of the repository
-// holding the graph (20261027-211908-d-tac-l8j).
-func TestInitRecordsGraphSyncSettings(t *testing.T) {
+// Git limits live in the user-global config only, so init asks nothing
+// about sync and writes no sync key (20261107-095427-d-tac-yux).
+func TestInitWritesNoSyncSettings(t *testing.T) {
 	work, _ := workRepository(t)
 
-	runApp(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--sync-mode", "manual")
+	runApp(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
 
-	local := readFile(t, filepath.Join(work, ".sdd", "config.local.yaml"))
-	if !strings.Contains(local, "mode: manual") {
-		t.Errorf("an explicit manual sync should be recorded so it is not asked again:\n%s", local)
+	for _, name := range []string{"config.yaml", "config.local.yaml"} {
+		if regexp.MustCompile(`(?m)^sync:`).MatchString(readFile(t, filepath.Join(work, ".sdd", name))) {
+			t.Errorf("init should write no sync key into %s", name)
+		}
 	}
-	if regexp.MustCompile(`(?m)^\s*mode:`).MatchString(readFile(t, filepath.Join(work, ".sdd", "config.yaml"))) {
-		t.Error("the sync mode should stay out of the committed config")
+	_, err := runAppErr(t, work, "init", "--sync-mode", "manual")
+	if err == nil || !strings.Contains(err.Error(), "sync-mode") {
+		t.Errorf("init should no longer take a sync mode: %v", err)
 	}
 }
 

@@ -58,19 +58,19 @@ func (f *Finder) EffectiveConfig(q query.EffectiveConfigQuery) (*query.Effective
 // than each deciding for itself what counts as unknown.
 func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.UnknownConfigKeysResult, error) {
 	type layer struct {
-		path      string
-		typ       reflect.Type
-		committed bool
+		path   string
+		typ    reflect.Type
+		source model.ConfigValueSource
 	}
 	var layers []layer
 	if f.repos != nil {
-		layers = append(layers, layer{path: f.repos.ConfigPath(), typ: reflect.TypeFor[repos.GlobalConfig]()})
+		layers = append(layers, layer{path: f.repos.ConfigPath(), typ: reflect.TypeFor[repos.GlobalConfig](), source: model.ConfigSourceGlobal})
 	}
 	if q.SDDDir != "" {
 		perRepo := reflect.TypeFor[model.PerRepoConfig]()
 		layers = append(layers,
-			layer{path: filepath.Join(q.SDDDir, "config.yaml"), typ: perRepo, committed: true},
-			layer{path: meta.LocalConfigPath(q.SDDDir, q.LocalConfigPath), typ: perRepo},
+			layer{path: filepath.Join(q.SDDDir, "config.yaml"), typ: perRepo, source: model.ConfigSourceProject},
+			layer{path: meta.LocalConfigPath(q.SDDDir, q.LocalConfigPath), typ: perRepo, source: model.ConfigSourceLocal},
 		)
 	}
 
@@ -94,7 +94,7 @@ func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.Unkno
 		if err := model.UnmarshalYAML(data, &settings); err != nil {
 			return nil, err
 		}
-		for _, ignored := range model.IgnoredSettings(settings, l.committed) {
+		for _, ignored := range model.IgnoredSettings(settings, l.source) {
 			result.Ignored = append(result.Ignored, query.IgnoredConfigSetting{File: l.path, Key: ignored.Key, Reason: ignored.Reason})
 		}
 	}
