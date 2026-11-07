@@ -1,6 +1,8 @@
 package model
 
 import (
+	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -271,4 +273,25 @@ func beforeTrailingComments(lines []string, first, end int) int {
 
 func isDelimiter(line string) bool {
 	return strings.TrimRight(line, " \t\r\n") == "---"
+}
+
+// EntryMergeAttributeLine is the .gitattributes line routing the entry files
+// under graphDir to the entry merge driver; other markdown files, a graph at
+// the repository root included, are left to git. Glob characters in graphDir
+// are escaped, and a pattern holding whitespace or opening with a quote is
+// written C-quoted, so the line matches the directory as named. A directory
+// outside the repository cannot be matched and is refused.
+func EntryMergeAttributeLine(graphDir string) (string, error) {
+	dir := filepath.ToSlash(filepath.Clean(graphDir))
+	if filepath.IsAbs(graphDir) || dir == ".." || strings.HasPrefix(dir, "../") {
+		return "", fmt.Errorf("%q cannot be named by a .gitattributes pattern inside the repository", graphDir)
+	}
+	pattern := EntryPathGlob
+	if dir != "." {
+		pattern = strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`).Replace(dir) + "/" + EntryPathGlob
+	}
+	if strings.ContainsAny(pattern, " \t") || strings.HasPrefix(pattern, `"`) {
+		pattern = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\t", `\t`).Replace(pattern) + `"`
+	}
+	return pattern + " merge=" + EntryMergeDriver, nil
 }

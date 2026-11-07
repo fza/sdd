@@ -23,6 +23,48 @@ type recordingGraphSync struct {
 	err      error
 	interval time.Duration
 	blocked  *sdd.SyncBlocked
+	// backfills records each title backfill's trigger; hold, when set, keeps
+	// every backfill running until it is closed.
+	backfills []sdd.SyncTrigger
+	hold      chan struct{}
+}
+
+func (s *recordingGraphSync) BackfillTitles(_ context.Context, _ string, trigger sdd.SyncTrigger, runner pkgllm.Runner) error {
+	s.mu.Lock()
+	s.backfills = append(s.backfills, trigger)
+	hold := s.hold
+	s.mu.Unlock()
+	if runner == nil {
+		return errors.New("the backfill should be handed the runtime's runner")
+	}
+	if hold != nil {
+		<-hold
+	}
+	return nil
+}
+
+func (s *recordingGraphSync) backfillTriggers() []sdd.SyncTrigger {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.backfills)
+}
+
+// awaitBackfills waits until the backfills started in the background number
+// want, and fails the test when they do not.
+func awaitBackfills(t *testing.T, sync *recordingGraphSync, want int) []sdd.SyncTrigger {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		triggers := sync.backfillTriggers()
+		if len(triggers) >= want {
+			return triggers
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("a title backfill should start in the background, got %v", triggers)
+		case <-time.After(time.Millisecond):
+		}
+	}
 }
 
 func (s *recordingGraphSync) SyncGraph(_ context.Context, branch string, trigger sdd.SyncTrigger) error {
@@ -205,4 +247,62 @@ func TestRunSyncTimer(t *testing.T) {
 
 func (s *recordingGraphSync) SyncBlocked(context.Context, string) (*sdd.SyncBlocked, error) {
 	return s.blocked, nil
+}
+
+func TestSessionStartBackfillsTitlesWithoutWaiting(t *testing.T) {
+	sync := &recordingGraphSync{hold: make(chan struct{})}
+	defer close(sync.hold)
+	application, _ := syncedApplication(t, sync)
+	identity := sdd.RequestIdentity{Subject: "christopher"}
+
+	opened := make(chan error, 1)
+	go func() {
+		_, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "test"})
+		opened <- err
+	}()
+	select {
+	case err := <-opened:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the session should be served while its title backfill still runs")
+	}
+	if triggers := awaitBackfills(t, sync, 1); !slices.Equal(triggers, []sdd.SyncTrigger{sdd.SyncOnSessionStart}) {
+		t.Errorf("a session start should start one backfill, got %v", triggers)
+	}
+	if len(sync.rounds()) != 0 {
+		t.Error("a session start should run no sync round of its own")
+	}
+}
+
+func TestRefreshWorkflowBackfillsTitlesAfterItsRound(t *testing.T) {
+	sync := &recordingGraphSync{}
+	application, _ := syncedApplication(t, sync)
+	identity := sdd.RequestIdentity{Subject: "christopher"}
+	workflow, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitBackfills(t, sync, 1)
+	_, err = application.RefreshWorkflow(t.Context(), identity, workflow.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if triggers := awaitBackfills(t, sync, 2); triggers[1] != sdd.SyncOnCall {
+		t.Errorf("an engine call should start a backfill bound by the sync cooldown, got %v", triggers)
+	}
+}
+
+func TestSyncTimerBackfillsTitlesEachRound(t *testing.T) {
+	sync := &recordingGraphSync{interval: 5 * time.Millisecond}
+	_, runtime := syncedApplication(t, sync)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = runtime.RunSyncTimer(ctx) }()
+	for _, trigger := range awaitBackfills(t, sync, 2) {
+		if trigger != sdd.SyncOnTimer {
+			t.Errorf("a timer round should start a backfill that always runs, got %q", trigger)
+		}
+	}
 }

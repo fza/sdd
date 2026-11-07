@@ -165,3 +165,44 @@ func (r *Record) Update(change func(*model.SyncBlocked) *model.SyncBlocked) erro
 	r.Current = change(current)
 	return nil
 }
+
+// CheckoutLocks stands in for a checkout's graph lock and title backfill
+// lock. TitlesHeld makes TryLockTitles find a backfill running; GraphTaken
+// counts the graph lock's acquisitions.
+type CheckoutLocks struct {
+	mu         sync.Mutex
+	TitlesHeld bool
+	GraphTaken int
+}
+
+func (l *CheckoutLocks) LockGraph(context.Context) (func(), error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.GraphTaken++
+	return func() {}, nil
+}
+
+func (l *CheckoutLocks) TryLockTitles(context.Context) (func(), error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.TitlesHeld {
+		return nil, nil
+	}
+	return func() {}, nil
+}
+
+// Committer records the commits a handler makes.
+type Committer struct {
+	mu       sync.Mutex
+	Messages []string
+	Paths    [][]string
+	Err      error
+}
+
+func (c *Committer) Commit(message string, paths ...string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Messages = append(c.Messages, message)
+	c.Paths = append(c.Paths, slices.Clone(paths))
+	return c.Err
+}
