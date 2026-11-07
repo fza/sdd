@@ -49,8 +49,8 @@ func (c CLI) graphClone() bool { return IsGraphClone(c.Dir) }
 // GraphClones is the repos.GraphCloneGit the clone owner works through.
 type GraphClones struct{}
 
-func (GraphClones) CloneGraph(ctx context.Context, repoID model.RepoID, first, dir string, cone []string) error {
-	return CloneGraph(ctx, repoID, first, dir, cone)
+func (GraphClones) CloneGraph(ctx context.Context, repoID model.RepoID, source model.CloneSource, dir string, cone []string) error {
+	return CloneGraph(ctx, repoID, source, dir, cone)
 }
 
 // SparseCone lists the directories the clone at dir checks out.
@@ -81,15 +81,30 @@ func (GraphClones) PushGraphClone(ctx context.Context, dir string) error {
 	return CLI{Dir: dir}.Push(ctx)
 }
 
-// ErrGraphUnreachable reports a graph repository neither remote reached.
-var ErrGraphUnreachable = errors.New("graph repository unreachable over ssh and https")
+// RemoteURL is the URL of the protocol remote the clone at dir uses.
+func (GraphClones) RemoteURL(ctx context.Context, dir string) (string, error) {
+	return CLI{Dir: dir}.UpstreamURL(ctx)
+}
+
+// ExpandURL is the package's ExpandURL, for the repos.GraphCloneGit surface.
+func (GraphClones) ExpandURL(ctx context.Context, url string) (string, error) {
+	return ExpandURL(ctx, url)
+}
+
+// ErrGraphUnreachable reports a graph repository none of its remotes reached.
+var ErrGraphUnreachable = errors.New("graph repository unreachable")
 
 // CloneGraph makes the sdd-owned clone of repoID at dir: blobless, sparse
-// with cone, remotes ssh and https sharing refs/remotes/origin, trying first
-// before the other protocol. An empty remote leaves the branch unborn on
-// main. Nothing is left at dir when it fails.
-func CloneGraph(ctx context.Context, repoID model.RepoID, first, dir string, cone []string) error {
-	sshURL, httpsURL, err := model.GraphRemoteURLs(repoID)
+// with cone, fetching from source. Its remotes share refs/remotes/origin: ssh
+// and https, source.First tried before the other protocol, or source.URL
+// alone. An empty remote leaves the branch unborn on main. Nothing is left at
+// dir when it fails.
+func CloneGraph(ctx context.Context, repoID model.RepoID, source model.CloneSource, dir string, cone []string) error {
+	_, err := admittedEnv(ctx, "clone")
+	if err != nil {
+		return err
+	}
+	remotes, err := cloneRemotes(repoID, source)
 	if err != nil {
 		return err
 	}
@@ -102,31 +117,55 @@ func CloneGraph(ctx context.Context, repoID model.RepoID, first, dir string, con
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(dir), err)
 	}
-	err = buildGraphClone(ctx, staging, first, sshURL, httpsURL, cone)
+	err = buildGraphClone(ctx, staging, remotes, cone)
 	if err != nil {
 		_ = os.RemoveAll(staging)
-		return fmt.Errorf("cloning %s: %w", repoID, err)
+		return fmt.Errorf("cloning %s: %w", cloneName(repoID, source), err)
 	}
 	err = os.Rename(staging, dir)
 	if err != nil {
 		_ = os.RemoveAll(staging)
-		return fmt.Errorf("placing the clone of %s: %w", repoID, err)
+		return fmt.Errorf("placing the clone of %s: %w", cloneName(repoID, source), err)
 	}
 	return nil
 }
 
-func buildGraphClone(ctx context.Context, dir, first, sshURL, httpsURL string, cone []string) error {
+func cloneName(repoID model.RepoID, source model.CloneSource) string {
+	if repoID != "" {
+		return string(repoID)
+	}
+	return source.URL
+}
+
+type cloneRemote struct{ name, url string }
+
+// cloneRemotes lists the remotes of a clone from source in the order its
+// first fetch tries them.
+func cloneRemotes(repoID model.RepoID, source model.CloneSource) ([]cloneRemote, error) {
+	if source.URL != "" {
+		return []cloneRemote{{name: model.SingleRemote, url: source.URL}}, nil
+	}
+	sshURL, httpsURL, err := model.GraphRemoteURLs(repoID)
+	if err != nil {
+		return nil, err
+	}
+	if source.First == model.ProtocolHTTPS {
+		return []cloneRemote{{model.ProtocolHTTPS, httpsURL}, {model.ProtocolSSH, sshURL}}, nil
+	}
+	return []cloneRemote{{model.ProtocolSSH, sshURL}, {model.ProtocolHTTPS, httpsURL}}, nil
+}
+
+func buildGraphClone(ctx context.Context, dir string, remotes []cloneRemote, cone []string) error {
 	err := run(ctx, "", "init", "--quiet", dir)
 	if err != nil {
 		return err
 	}
 	at := CLI{Dir: dir}
-	settings := [][2]string{
-		{"remote.ssh.url", sshURL},
-		{"remote.ssh.fetch", "+refs/heads/*:" + trackingPrefix + "*"},
-		{"remote.https.url", httpsURL},
-		{"remote.https.fetch", "+refs/heads/*:" + trackingPrefix + "*"},
-		{"core.sshCommand", sshCommand},
+	settings := [][2]string{{"core.sshCommand", sshCommand}}
+	for _, remote := range remotes {
+		settings = append(settings,
+			[2]string{"remote." + remote.name + ".url", remote.url},
+			[2]string{"remote." + remote.name + ".fetch", "+refs/heads/*:" + trackingPrefix + "*"})
 	}
 	for _, setting := range settings {
 		err = at.setConfig(ctx, setting[0], setting[1])
@@ -134,19 +173,15 @@ func buildGraphClone(ctx context.Context, dir, first, sshURL, httpsURL string, c
 			return err
 		}
 	}
-	order := []string{model.ProtocolSSH, model.ProtocolHTTPS}
-	if first == model.ProtocolHTTPS {
-		order = []string{model.ProtocolHTTPS, model.ProtocolSSH}
-	}
 	var failures []error
 	working := ""
-	for _, protocol := range order {
-		_, fetchErr := at.runRemote(ctx, "fetch", "--quiet", "--filter=blob:none", protocol)
+	for _, remote := range remotes {
+		_, fetchErr := at.runRemote(ctx, "fetch", "--quiet", "--filter=blob:none", remote.name)
 		if fetchErr == nil {
-			working = protocol
+			working = remote.name
 			break
 		}
-		failures = append(failures, fmt.Errorf("%s: %w", protocol, fetchErr))
+		failures = append(failures, fmt.Errorf("%s: %w", remote.name, fetchErr))
 	}
 	if working == "" {
 		return errors.Join(append([]error{ErrGraphUnreachable}, failures...)...)
@@ -249,11 +284,15 @@ func (c CLI) unsetConfig(ctx context.Context, key string) error {
 // runRemote runs a git command reaching a remote: detached from the
 // terminal, never prompting, ssh in batch mode with a connect timeout.
 func (c CLI) runRemote(ctx context.Context, args ...string) (string, error) {
+	env, err := admittedEnv(ctx, args[0], "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND="+sshCommand)
+	if err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", c.at(args...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND="+sshCommand)
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return string(out), fmt.Errorf("git %s: timed out after %s", args[0], detachedTimeout)

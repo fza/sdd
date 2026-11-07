@@ -298,28 +298,6 @@ func TestResolveSessionRetention(t *testing.T) {
 	}
 }
 
-func TestResolveSyncCooldown(t *testing.T) {
-	cases := []struct {
-		name   string
-		cfg    *PerRepoConfig
-		wantMS int64
-	}{
-		{"nil config uses default", nil, 15 * 60 * 1000},
-		{"empty value uses default", &PerRepoConfig{}, 15 * 60 * 1000},
-		{"valid override", &PerRepoConfig{BaseConfig: BaseConfig{Sync: SyncConfig{Cooldown: "2m"}}}, 2 * 60 * 1000},
-		{"garbage falls back to default", &PerRepoConfig{BaseConfig: BaseConfig{Sync: SyncConfig{Cooldown: "not-a-duration"}}}, 15 * 60 * 1000},
-		{"zero falls back to default", &PerRepoConfig{BaseConfig: BaseConfig{Sync: SyncConfig{Cooldown: "0s"}}}, 15 * 60 * 1000},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := ResolveSyncCooldown(tc.cfg).Milliseconds()
-			if got != tc.wantMS {
-				t.Errorf("got %d ms, want %d ms", got, tc.wantMS)
-			}
-		})
-	}
-}
-
 func TestMergeConfig_EmbeddingPath(t *testing.T) {
 	cases := []struct {
 		name    string

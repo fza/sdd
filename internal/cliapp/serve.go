@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -23,6 +22,7 @@ import (
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/meta"
@@ -225,43 +225,41 @@ func localBearerAuth(token string, next http.Handler) http.Handler {
 }
 
 // localRuntimeAccess serves one repository and every connected repo its
-// dependency closure reaches. A dependency resolves to one runtime built on
-// demand from its cache, both as a member of a horizon and as a project a
-// move may work in: its own declared dependencies, its own index namespace,
-// no write authority until the ephemeral clone of d-cpt-n8z exists
-// (d-cpt-yjc). ListProjects names the home alone, so a session still opens
-// there without choosing.
+// dependency closure reaches. A dependency resolves to one runtime over its
+// sdd-owned clone, both as a member of a horizon and as a project a move may
+// work in, reads and captures alike: its own declared dependencies, its own
+// index namespace, write authority only where both connected-write gates
+// allow it (20261106-201216-d-cpt-aim). ListProjects names the home alone, so
+// a session still opens there without choosing.
 type localRuntimeAccess struct {
 	project      sdd.ProjectID
 	participant  string
 	dialogue     sdd.Dialogue
 	runtime      *sdd.ProjectRuntime
-	dependencies *cachedDependencies
+	dependencies *connectedDependencies
 }
 
-// cachedDependencies builds a connected repo's runtime from its cache on
-// first use and keeps it; a repo that is not connected or not cached is
-// unavailable until it is. closure walks the served project's declarations
-// over the same caches.
-type cachedDependencies struct {
+// connectedDependencies builds a connected repo's runtime from its
+// sdd-owned clone on first use, making the clone when this machine holds
+// none, and keeps it; a repo that is not connected, or whose first clone the
+// git gate defers, is unavailable until it is. closure walks the served
+// project's declarations over the same clones.
+type connectedDependencies struct {
 	registry *repos.Registry
+	manager  *repos.Manager
 	closure  *finders.Finder
-	build    func(repos.Cache, *model.PerRepoConfig) (*sdd.ProjectRuntime, error)
-	// writer, connected and clones serve a capture into a dependency: the
-	// gates of 20261106-201216-d-cpt-aim decide, and the capture writes
-	// through the dependency's sdd-owned clone, built by buildWritable.
-	writer        sdd.RepoID
-	connected     model.ConnectedConfig
-	clones        *repos.GraphClones
-	codeOrigin    string
-	buildWritable func(repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error)
+	rounds   connectedRounds
+	build    func(repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error)
+	// writer and connected decide a capture into a dependency with the
+	// dependency's committed inbound.accept (20261106-201216-d-cpt-aim).
+	writer    sdd.RepoID
+	connected model.ConnectedConfig
 
 	mu       sync.Mutex
 	runtimes map[sdd.RepoID]*sdd.ProjectRuntime
-	writable map[sdd.RepoID]*sdd.ProjectRuntime
 }
 
-func (d *cachedDependencies) resolve(repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
+func (d *connectedDependencies) resolve(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
 	if d == nil {
 		return nil, dependencyUnavailable()
 	}
@@ -270,21 +268,30 @@ func (d *cachedDependencies) resolve(repoID sdd.RepoID) (*sdd.ProjectRuntime, er
 	if runtime := d.runtimes[repoID]; runtime != nil {
 		return runtime, nil
 	}
-	cache, connected, err := d.registry.Cache(repoID)
+	global, err := d.registry.Load()
 	if err != nil {
 		return nil, err
 	}
-	if !connected || !cache.Cloned() {
+	repo, connected := global.Connected(repoID)
+	if !connected {
 		return nil, dependencyUnavailable()
 	}
-	cfg, err := cache.Config()
+	dir, _, err := d.manager.Ensure(ctx, repo)
+	var deferred *gitgate.DeferredError
+	if errors.As(err, &deferred) {
+		return nil, dependencyUnavailable()
+	}
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := repos.Clone{RepoID: repoID, Dir: dir}.Config()
 	if errors.Is(err, meta.ErrNotAnSDDProject) {
 		cfg, err = &model.PerRepoConfig{}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	runtime, err := d.build(cache, cfg)
+	runtime, err := d.build(repoID, dir, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +305,7 @@ func (d *cachedDependencies) resolve(repoID sdd.RepoID) (*sdd.ProjectRuntime, er
 // resolveMember resolves a project this process serves beyond its home: a
 // member of the served project's closure (20261026-194528-d-cpt-gcq), never a
 // repo merely connected on this machine.
-func (d *cachedDependencies) resolveMember(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
+func (d *connectedDependencies) resolveMember(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
 	if d == nil {
 		return nil, dependencyUnavailable()
 	}
@@ -309,87 +316,62 @@ func (d *cachedDependencies) resolveMember(ctx context.Context, repoID sdd.RepoI
 	if !slices.Contains(closure, repoID) {
 		return nil, dependencyUnavailable()
 	}
-	return d.resolve(repoID)
+	return d.resolve(ctx, repoID)
 }
 
 // resolveWritable resolves a closure member a capture writes into: refused
 // unless the writer's connected.write and the member's committed
-// inbound.accept both allow the pair, else a runtime over the member's
-// sdd-owned clone, cloned on first need.
-func (d *cachedDependencies) resolveWritable(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
-	if d == nil || d.clones == nil {
-		return nil, dependencyUnavailable()
-	}
-	closure, err := d.closure.DependencyClosure(ctx, query.DependencyClosureQuery{})
+// inbound.accept both allow the pair. The member's round runs first while
+// due, so the gate reads inbound.accept as fresh as the git gate admits; a
+// failed round leaves the clone as it stands (20261027-150208-d-tac-bg4).
+func (d *connectedDependencies) resolveWritable(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
+	runtime, err := d.resolveMember(ctx, repoID)
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Contains(closure, repoID) {
-		return nil, dependencyUnavailable()
+	err = d.rounds.refresh(ctx, repoID)
+	if err != nil {
+		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: refreshing %s before a capture: %v", repoID, err))
 	}
-	cache, connected, err := d.registry.Cache(repoID)
+	dir, err := d.registry.CloneDir(repoID)
 	if err != nil {
 		return nil, err
 	}
-	if !connected || !cache.Cloned() {
-		return nil, dependencyUnavailable()
-	}
-	cached, err := cache.Config()
+	cfg, err := repos.Clone{RepoID: repoID, Dir: dir}.Config()
 	if err != nil {
 		return nil, err
 	}
-	err = d.refusal(repoID, cached)
+	err = model.ConnectedWriteRefusal(d.writer, d.connected, repoID, cfg.Inbound)
 	if err != nil {
-		return nil, err
+		return nil, &sdd.ApplicationError{Code: sdd.ErrorWriteDenied, Message: err.Error(), Cause: err}
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if runtime := d.writable[repoID]; runtime != nil {
-		return runtime, nil
-	}
-	ensure := handlers.New(handlers.Options{GraphClones: d.clones})
-	err = ensure.EnsureGraphClone(ctx, &command.EnsureGraphCloneCmd{RepoID: repoID, CodeOrigin: d.codeOrigin})
-	if err != nil {
-		return nil, err
-	}
-	dir, err := d.clones.Dir(repoID)
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := meta.ReadCommittedConfigFS(os.DirFS(dir))
-	if err != nil {
-		return nil, err
-	}
-	err = d.refusal(repoID, cfg)
-	if err != nil {
-		return nil, err
-	}
-	runtime, err := d.buildWritable(repoID, dir, cfg)
-	if err != nil {
-		return nil, err
-	}
-	if d.writable == nil {
-		d.writable = map[sdd.RepoID]*sdd.ProjectRuntime{}
-	}
-	d.writable[repoID] = runtime
 	return runtime, nil
 }
 
-func (d *cachedDependencies) writableRuntime(repoID sdd.RepoID) *sdd.ProjectRuntime {
-	if d == nil {
-		return nil
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.writable[repoID]
+// connectedRounds runs the sync rounds of the connected repos the served
+// project reaches.
+type connectedRounds struct {
+	handler *handlers.Handler
 }
 
-func (d *cachedDependencies) refusal(repoID sdd.RepoID, target *model.PerRepoConfig) error {
-	err := model.ConnectedWriteRefusal(d.writer, d.connected, repoID, target.Inbound)
-	if err != nil {
-		return &sdd.ApplicationError{Code: sdd.ErrorWriteDenied, Message: err.Error(), Cause: err}
+func (c connectedRounds) SyncRepos(ctx context.Context, request sdd.SyncReposRequest) ([]sdd.RepoSyncOutcome, error) {
+	var outcomes []sdd.RepoSyncOutcome
+	cmd := &command.RepoSyncCmd{Due: request.Due, OnOutcome: func(outcome model.RepoSyncOutcome) {
+		outcomes = append(outcomes, sdd.RepoSyncOutcome{Repo: sdd.RepoID(outcome.RepoID), State: sdd.RepoSyncState(outcome.State), Next: outcome.Next, Reason: outcome.Reason})
+	}}
+	for _, repo := range request.Repos {
+		cmd.RepoIDs = append(cmd.RepoIDs, model.RepoID(repo))
 	}
-	return nil
+	err := c.handler.RepoSync(ctx, cmd)
+	if err != nil {
+		return nil, err
+	}
+	return outcomes, nil
+}
+
+func (c connectedRounds) refresh(ctx context.Context, repoID sdd.RepoID) error {
+	_, err := c.handler.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: []model.RepoID{model.RepoID(repoID)}})
+	return err
 }
 
 func dependencyUnavailable() error {
@@ -427,11 +409,6 @@ func (a *localRuntimeAccess) ResolveProject(ctx context.Context, _ sdd.Principal
 	if access == sdd.AccessWrite {
 		return a.dependencies.resolveWritable(ctx, sdd.RepoID(project))
 	}
-	// A dependency a capture writes into is read from the clone it writes
-	// through, on the branch the capture chose.
-	if writable := a.dependencies.writableRuntime(sdd.RepoID(project)); writable != nil {
-		return writable, nil
-	}
 	return a.dependencies.resolveMember(ctx, sdd.RepoID(project))
 }
 
@@ -439,8 +416,8 @@ func (a *localRuntimeAccess) AuthorizeSession(ctx context.Context, request sdd.S
 	return sdd.OwnerOnly(ctx, request)
 }
 
-func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principal, _ sdd.ProjectID, dependency sdd.RepoID) (*sdd.ProjectRuntime, error) {
-	return a.dependencies.resolve(dependency)
+func (a *localRuntimeAccess) ResolveDependency(ctx context.Context, _ sdd.Principal, _ sdd.ProjectID, dependency sdd.RepoID) (*sdd.ProjectRuntime, error) {
+	return a.dependencies.resolve(ctx, dependency)
 }
 
 // globalTokenSaving reads sessions.token_saving from the user-global config,
@@ -551,17 +528,28 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
-	targets, err := localadapter.NewRepositoryTargets(project, serverCheckout, locations.ConfigPath, localLayer)
+	targets, err := localadapter.NewRepositoryTargets(ctx, project, serverCheckout, locations.ConfigPath, localLayer, locations.StateRoot)
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	if cfg == nil || cfg.DefaultBranch == "" {
 		return nil, nil, sdd.RequestIdentity{}, fmt.Errorf("default_branch is required in .sdd/config.yaml before serving mutation tools")
 	}
+	_, manager, err := defaultRepos()
+	if err != nil {
+		return nil, nil, sdd.RequestIdentity{}, err
+	}
+	round, err := cloneRound()
+	if err != nil {
+		return nil, nil, sdd.RequestIdentity{}, err
+	}
+	closure := finders.New(finders.Options{Config: cfg, Repos: registry})
+	rounds := connectedRounds{handler: handlers.New(handlers.Options{Reader: closure, Repos: manager, CloneRound: round})}
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Sync: targets, Branches: targets, Base: targets,
-		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
+		Connected: rounds,
+		Embedder:  embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
 		LLM: runner,
 	})
 	if err != nil {
@@ -579,34 +567,10 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	}
 	access := &localRuntimeAccess{
 		project: project, participant: participant, dialogue: dialogue, runtime: runtime,
-		dependencies: &cachedDependencies{registry: registry, closure: finders.New(finders.Options{Config: cfg, Repos: registry}),
-			writer: sdd.RepoID(cfg.RepoID), connected: cfg.Connected, clones: repos.NewGraphClones(locations, git.GraphClones{}), codeOrigin: git.RemoteURL(serverCheckout),
-			buildWritable: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
-				return cloneRuntime(repoID, dir, dependencyCfg, locations.ConfigPath, runner, memberEmbedder, memberRuneCap, cacheRoot)
-			},
-			build: func(cache repos.Cache, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
-				// The cache as a project of its own: its committed config supplies
-				// the graph layout, the language, and the dependencies its horizon
-				// is composed from.
-				graphDir, err := cache.GraphDir()
-				if err != nil {
-					return nil, err
-				}
-				memberGraph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: sdd.ProjectID(cache.RepoID), GraphDir: graphDir})
-				if err != nil {
-					return nil, err
-				}
-				// Connected stores are keyed by the connected repo's ID (the existing
-				// connected-repository storage contract) and exclude embedded entries,
-				// so binary-shipped base facts embed once per machine in the base
-				// store, not once per connected repo.
-				memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(cache.RepoID), cacheRoot, index.RepoKey(cache.RepoID, cache.Dir)).WithCheckout(graphDir)
-				return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
-					Project: sdd.ProjectRef{ID: sdd.ProjectID(cache.RepoID), DisplayName: string(cache.RepoID)}, Graph: memberGraph,
-					Language: dependencyCfg.Language, Dependencies: dependencyCfg.Dependencies,
-					Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), RuneCap: memberRuneCap, LLM: runner,
-					ExcludeEmbeddedFromIndex: true,
-				})
+		dependencies: &connectedDependencies{registry: registry, manager: manager, closure: closure, rounds: rounds,
+			writer: sdd.RepoID(cfg.RepoID), connected: cfg.Connected,
+			build: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
+				return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, memberEmbedder, memberRuneCap, cacheRoot)
 			}},
 	}
 	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: access, Sessions: sessions, StagedBlobs: blobs})
@@ -620,9 +584,11 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	return application, runtime, identity, nil
 }
 
-// cloneRuntime serves a dependency a capture writes into from its sdd-owned
-// clone at dir: its own config, default branch, graph and write targets.
-func cloneRuntime(repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, globalConfigPath string, runner pkgllm.Runner, embeddings embed.Embedder, runeCap func(context.Context) (int, error), cacheRoot string) (*sdd.ProjectRuntime, error) {
+// cloneRuntime serves a dependency from its sdd-owned clone at dir: its own
+// config, default branch, graph and write targets. Connected stores are keyed
+// by the dependency's repo ID and exclude embedded entries, so binary-shipped
+// base facts embed once per machine in the base store.
+func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, locations repos.Locations, runner pkgllm.Runner, embeddings embed.Embedder, runeCap func(context.Context) (int, error), cacheRoot string) (*sdd.ProjectRuntime, error) {
 	project := sdd.ProjectID(repoID)
 	defaultBranch := cfg.DefaultBranch
 	if defaultBranch == "" {
@@ -632,7 +598,7 @@ func cloneRuntime(repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, globa
 		}
 		defaultBranch = branch
 	}
-	targets, err := localadapter.NewRepositoryTargets(project, dir, globalConfigPath, "")
+	targets, err := localadapter.NewRepositoryTargets(ctx, project, dir, locations.ConfigPath, "", locations.StateRoot)
 	if err != nil {
 		return nil, err
 	}

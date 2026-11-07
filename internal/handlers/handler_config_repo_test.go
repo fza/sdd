@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/command"
-	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
@@ -25,7 +24,7 @@ func configRepoHandler(t *testing.T) (*handlers.Handler, string, string) {
 		t.Fatal(err)
 	}
 	registry := repos.NewRegistry(repos.Locations{ConfigPath: globalPath, CacheRoot: filepath.Join(dir, "cache")})
-	h := handlers.New(handlers.Options{SDDDir: sddDir, Repos: repos.NewManager(registry, git.CLI{})})
+	h := handlers.New(handlers.Options{SDDDir: sddDir, Repos: repos.NewManager(registry, nil)})
 	return h, globalPath, sddDir
 }
 

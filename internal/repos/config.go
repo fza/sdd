@@ -1,12 +1,11 @@
 // Package repos holds the connected-repos machinery for cross-repo
 // references: the user-global configuration naming which repositories this
-// user is connected to, and the managed read-only clone caches those
-// connections resolve against. The package reads no ambient state — the
-// config, cache, and state roots arrive as an explicit Locations value,
-// resolved once at the composition root (repos.DefaultLocations for the XDG
-// convention). Pure reads live on Registry; the side-effectful cache
-// lifecycle (clone, pull) lives on Manager, orchestrated by handlers that
-// invalidate the read side's GraphSource on completion. Config writes are not
+// user is connected to, and the sdd-owned clones those connections resolve
+// against. The package reads no ambient state — the config, cache, state and
+// data roots arrive as an explicit Locations value, resolved once at the
+// composition root (repos.DefaultLocations for the XDG convention). Pure
+// reads live on Registry; the side-effectful clone lifecycle lives on
+// GraphClones and Manager, orchestrated by handlers. Config writes are not
 // here at all — they are field-level patches owned by the handlers.
 package repos
 
@@ -20,21 +19,21 @@ import (
 )
 
 // Locations names the user-global places the connected-repos machinery works
-// against: the config file, cache root, and state root. Resolved once at the
+// against: the config file and the cache, state and data roots. Resolved once at the
 // composition root and passed down explicitly — tests point both at temp
 // dirs, no environment involved.
 type Locations struct {
 	// ConfigPath is the user-global config file
 	// (default $XDG_CONFIG_HOME/sdd/config.yaml).
 	ConfigPath string
-	// CacheRoot is the base directory for connected-repo clone caches
+	// CacheRoot is the base directory for the search index stores
 	// (default $XDG_CACHE_HOME/sdd).
 	CacheRoot string
 	// StateRoot is the base directory for durable machine-local state
 	// (default $XDG_STATE_HOME/sdd).
 	StateRoot string
-	// DataRoot is the base directory for the sdd-owned graph clones
-	// (default $XDG_DATA_HOME/sdd).
+	// DataRoot is the base directory for the sdd-owned clones of graph and
+	// connected repositories (default $XDG_DATA_HOME/sdd).
 	DataRoot string
 }
 

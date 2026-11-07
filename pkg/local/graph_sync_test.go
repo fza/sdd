@@ -3,6 +3,7 @@ package local_test
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,14 +12,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
+
+	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/gitgate"
+	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/repos"
 	"github.com/networkteam/sdd/internal/syncstate"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/test"
 )
 
 // syncedRepository is a checkout of main tracking a bare remote, its sync
 // mode set in config.local.yaml and every file committed but the ignored ones.
+// The mode no longer reaches sync: a graph inside the code repository never
+// syncs automatically.
 func syncedRepository(t *testing.T, mode string) (*gitRepository, string) {
 	t.Helper()
 	repo := newGitRepository(t)
@@ -34,6 +44,29 @@ func syncedRepository(t *testing.T, mode string) (*gitRepository, string) {
 	repo.git("remote", "add", "origin", remote)
 	repo.git("push", "-q", "-u", "origin", "main")
 	return repo, remote
+}
+
+const cloneRepoID = model.RepoID("example.test/acme/example-sdd")
+
+// syncedClone is the sdd-owned clone of a graph repository whose remote the
+// test stands in for, made the way sdd makes it: the one place sync runs
+// automatically. It returns the clone and the bare remote.
+func syncedClone(t *testing.T, files map[string]string) (*gitRepository, string) {
+	t.Helper()
+	remote := test.NewGraphRemote(t, cloneRepoID)
+	seed := map[string]string{
+		".sdd/config.yaml": "repo_id: example\ngraph_dir: .sdd/graph\ndefault_branch: main\n",
+		".sdd/graph/.keep": "",
+		".gitignore":       ".sdd/tmp/\n.sdd/config.local.yaml\n.sdd/graph/.sdd-runtime/\n",
+	}
+	maps.Copy(seed, files)
+	remote.Commit(t, "sdd: init", seed)
+	gate := gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }})
+	dir, _, err := repos.NewGraphClones(repos.Locations{DataRoot: canonicalTempDir(t)}, git.GraphClones{}, gate).Ensure(t.Context(), cloneRepoID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &gitRepository{t: t, root: dir}, remote.Bare
 }
 
 func gitIn(t *testing.T, dir string, args ...string) string {
@@ -74,16 +107,18 @@ func rejectPushes(t *testing.T, remote string) func() {
 	}
 }
 
-func TestEngineCapturePublishesUnderSyncMode(t *testing.T) {
+func TestEngineCapturePublishesOnlyFromAGraphClone(t *testing.T) {
 	for _, tc := range []struct {
-		mode      string
+		name      string
+		checkout  func(t *testing.T) (*gitRepository, string)
 		published bool
 	}{
-		{mode: "auto", published: true},
-		{mode: "manual"},
+		{name: "graph clone", checkout: func(t *testing.T) (*gitRepository, string) { return syncedClone(t, nil) }, published: true},
+		{name: "code repository set to auto", checkout: func(t *testing.T) (*gitRepository, string) { return syncedRepository(t, "auto") }},
+		{name: "code repository set to manual", checkout: func(t *testing.T) (*gitRepository, string) { return syncedRepository(t, "manual") }},
 	} {
-		t.Run(tc.mode, func(t *testing.T) {
-			repo, remote := syncedRepository(t, tc.mode)
+		t.Run(tc.name, func(t *testing.T) {
+			repo, remote := tc.checkout(t)
 			before := gitIn(t, "", "-C", remote, "rev-parse", "main")
 			application, identity, binding := repo.captureApplication(t, summaryRunner())
 			if _, err := application.CreateEntry(t.Context(), identity, "example", binding, captureDraft(binding, "20261027-200000-s-tac-syn")); err != nil {
@@ -94,14 +129,14 @@ func TestEngineCapturePublishesUnderSyncMode(t *testing.T) {
 				want = repo.git("rev-parse", "HEAD")
 			}
 			if got := gitIn(t, "", "-C", remote, "rev-parse", "main"); got != want {
-				t.Error("the capture commit should reach upstream exactly when sync is auto")
+				t.Error("the capture commit should reach upstream exactly from a graph clone")
 			}
 		})
 	}
 }
 
 func TestEngineCaptureRecordsARejectedPush(t *testing.T) {
-	repo, remote := syncedRepository(t, "auto")
+	repo, remote := syncedClone(t, nil)
 	application, identity, binding := repo.captureApplication(t, summaryRunner())
 
 	allowPushes := rejectPushes(t, remote)
@@ -148,66 +183,88 @@ func pushUpstream(t *testing.T, remote, path, content, subject string) string {
 	return gitIn(t, other, "rev-parse", "HEAD")
 }
 
-func TestSyncGraphPullsUpstreamGraphCommits(t *testing.T) {
+func TestSyncGraphPullsOnlyIntoAGraphClone(t *testing.T) {
 	for _, tc := range []struct {
-		mode   string
-		pulled bool
+		name     string
+		checkout func(t *testing.T) (*gitRepository, string)
+		pulled   bool
 	}{
-		{mode: "auto", pulled: true},
-		{mode: "manual"},
+		{name: "graph clone", checkout: func(t *testing.T) (*gitRepository, string) { return syncedClone(t, nil) }, pulled: true},
+		{name: "code repository set to auto", checkout: func(t *testing.T) (*gitRepository, string) { return syncedRepository(t, "auto") }},
 	} {
-		t.Run(tc.mode, func(t *testing.T) {
-			repo, remote := syncedRepository(t, tc.mode)
+		t.Run(tc.name, func(t *testing.T) {
+			repo, remote := tc.checkout(t)
 			upstream := pushUpstream(t, remote, ".sdd/graph/upstream.md", "upstream\n", "sdd: capture upstream")
 
 			if err := repo.targets().SyncGraph(t.Context(), "main", sdd.SyncOnCall); err != nil {
 				t.Fatal(err)
 			}
 			if pulled := repo.git("rev-parse", "HEAD") == upstream; pulled != tc.pulled {
-				t.Error("upstream graph commits should arrive exactly when sync is auto")
+				t.Error("upstream graph commits should arrive exactly in a graph clone")
 			}
 		})
 	}
 }
 
-func TestSyncGraphWaitsOutTheCooldownOnCallsOnly(t *testing.T) {
-	for _, tc := range []struct {
-		trigger sdd.SyncTrigger
-		pulled  bool
-	}{
-		{trigger: sdd.SyncOnCall},
-		{trigger: sdd.SyncOnTimer, pulled: true},
-	} {
-		t.Run(string(tc.trigger), func(t *testing.T) {
-			repo, remote := syncedRepository(t, "auto")
-			repo.write(".sdd/config.local.yaml", "sync:\n  mode: auto\n  cooldown: 1h\n")
-			repo.write(".sdd/tmp/last-fetch", "")
+func TestSyncGraphFetchesWhateverTheTrigger(t *testing.T) {
+	for _, trigger := range []sdd.SyncTrigger{sdd.SyncOnCall, sdd.SyncOnTimer} {
+		t.Run(string(trigger), func(t *testing.T) {
+			repo, remote := syncedClone(t, nil)
 			upstream := pushUpstream(t, remote, ".sdd/graph/upstream.md", "upstream\n", "sdd: capture upstream")
 
-			if err := repo.targets().SyncGraph(t.Context(), "main", tc.trigger); err != nil {
+			if err := repo.targets().SyncGraph(t.Context(), "main", trigger); err != nil {
 				t.Fatal(err)
 			}
-			if pulled := repo.git("rev-parse", "HEAD") == upstream; pulled != tc.pulled {
-				t.Error("a call inside the cooldown should not fetch, a timer round always should")
+			if repo.git("rev-parse", "HEAD") != upstream {
+				t.Error("the git gate, not the trigger, should decide whether a round fetches")
 			}
 		})
 	}
 }
 
-func TestSyncGraphPausesOnAConflictUntilMergedByHand(t *testing.T) {
-	repo, remote := syncedRepository(t, "auto")
-	source := pushUpstream(t, remote, ".sdd/graph/shared.md", "theirs\n", "sdd: edit elsewhere")
-	repo.write(".sdd/graph/shared.md", "ours\n")
-	repo.git("add", ".sdd/graph/shared.md")
-	repo.git("commit", "-m", "sdd: edit here")
-	destination := repo.git("rev-parse", "HEAD")
+func TestSyncDue(t *testing.T) {
+	repo, _ := syncedClone(t, nil)
+	due, err := repo.targets().SyncDue(t.Context(), "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !due {
+		t.Error("a graph clone on a remote the gate always admits should be due")
+	}
+	code, _ := syncedRepository(t, "auto")
+	due, err = code.targets().SyncDue(t.Context(), "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if due {
+		t.Error("a graph inside the code repository should never be due, whatever sync.mode says")
+	}
+}
 
-	if err := repo.targets().SyncGraph(t.Context(), "main", sdd.SyncOnCall); err != nil {
-		t.Fatalf("a conflict should be recorded, not fail the round: %v", err)
+// pauseOnConflict records a conflict with upstream commit source, as a round
+// meeting one would.
+func pauseOnConflict(t *testing.T, repo *gitRepository, source string) {
+	t.Helper()
+	_, state, err := syncstate.Open(t.Context(), filepath.Join(repo.root, ".sdd", "graph"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if repo.git("rev-parse", "HEAD") != destination || repo.git("status", "--porcelain") != "" {
-		t.Error("a conflict should leave the branch and the working tree as they were")
+	err = state.Update(func(*model.SyncBlocked) *model.SyncBlocked {
+		return &model.SyncBlocked{
+			Kind: model.SyncBlockedConflict, Since: time.Now(), Upstream: "origin/main", Paths: []string{".sdd/graph/shared.md"},
+			Source: source, Destination: repo.git("rev-parse", "HEAD"),
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+}
+
+func TestSyncGraphPausesOnAConflictUntilMerged(t *testing.T) {
+	repo, remote := syncedClone(t, nil)
+	source := pushUpstream(t, remote, ".sdd/graph/shared.md", "theirs\n", "sdd: edit elsewhere")
+	pauseOnConflict(t, repo, source)
+
 	owner, err := repo.targets().SyncNotice(t.Context(), "main", "s_owner")
 	if err != nil {
 		t.Fatal(err)
@@ -225,7 +282,6 @@ func TestSyncGraphPausesOnAConflictUntilMergedByHand(t *testing.T) {
 		t.Errorf("another session should get the banner alone, got %q", other)
 	}
 
-	pushUpstream(t, remote, ".sdd/graph/later.md", "later\n", "sdd: capture later")
 	tracked := repo.git("rev-parse", "origin/main")
 	if err := repo.targets().SyncGraph(t.Context(), "main", sdd.SyncOnTimer); err != nil {
 		t.Fatal(err)
@@ -234,27 +290,23 @@ func TestSyncGraphPausesOnAConflictUntilMergedByHand(t *testing.T) {
 		t.Error("a paused round should not fetch")
 	}
 
-	repo.git("merge", "--no-edit", "-m", "sdd: merge origin/main", "-X", "ours", "origin/main")
+	repo.git("fetch", "-q", "https")
+	repo.git("merge", "-q", "--no-edit", "-m", "sdd: merge origin/main", "origin/main")
+	later := pushUpstream(t, remote, ".sdd/graph/later.md", "later\n", "sdd: capture later")
 	if err := repo.targets().SyncGraph(t.Context(), "main", sdd.SyncOnTimer); err != nil {
 		t.Fatal(err)
 	}
 	if notice, _ := repo.targets().SyncNotice(t.Context(), "main", "s_owner"); notice != "" {
-		t.Errorf("the merge by hand should clear the record, got %q", notice)
+		t.Errorf("the merge should clear the record, got %q", notice)
 	}
-	if gitIn(t, "", "-C", remote, "rev-parse", "main") != repo.git("rev-parse", "HEAD") {
-		t.Error("sync should resume and publish once the conflict is merged")
+	if repo.git("rev-parse", "HEAD") != later || gitIn(t, "", "-C", remote, "rev-parse", "main") != later {
+		t.Error("sync should resume once the conflict's source is merged")
 	}
 }
 
 func TestEngineCaptureCommitsLocallyWhilePaused(t *testing.T) {
-	repo, remote := syncedRepository(t, "auto")
-	pushUpstream(t, remote, ".sdd/graph/shared.md", "theirs\n", "sdd: edit elsewhere")
-	repo.write(".sdd/graph/shared.md", "ours\n")
-	repo.git("add", ".sdd/graph/shared.md")
-	repo.git("commit", "-m", "sdd: edit here")
-	if err := repo.targets().SyncGraph(t.Context(), "main", sdd.SyncOnCall); err != nil {
-		t.Fatal(err)
-	}
+	repo, remote := syncedClone(t, nil)
+	pauseOnConflict(t, repo, pushUpstream(t, remote, ".sdd/graph/shared.md", "theirs\n", "sdd: edit elsewhere"))
 	published := gitIn(t, "", "-C", remote, "rev-parse", "main")
 
 	application, identity, binding := repo.captureApplication(t, summaryRunner())
@@ -270,7 +322,7 @@ func TestEngineCaptureCommitsLocallyWhilePaused(t *testing.T) {
 }
 
 func TestConcurrentSyncRoundsNeverOverlap(t *testing.T) {
-	repo, remote := syncedRepository(t, "auto")
+	repo, remote := syncedClone(t, nil)
 	for i := range 3 {
 		pushUpstream(t, remote, fmt.Sprintf(".sdd/graph/upstream-%d.md", i), "upstream\n", "sdd: capture upstream")
 	}
@@ -299,26 +351,8 @@ func TestConcurrentSyncRoundsNeverOverlap(t *testing.T) {
 	}
 }
 
-// sideWorktree checks branch side out beside repo's main checkout, tracking
-// its own upstream, with the same per-person sync config.
-func sideWorktree(t *testing.T, repo *gitRepository) string {
-	t.Helper()
-	side := filepath.Join(canonicalTempDir(t), "side")
-	repo.git("worktree", "add", "-q", "-b", "side", side)
-	gitIn(t, side, "push", "-q", "-u", "origin", "side")
-	config, err := os.ReadFile(filepath.Join(repo.root, ".sdd", "config.local.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(side, ".sdd", "config.local.yaml"), config, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return side
-}
-
-func TestHeldSyncLockKeepsAnotherWorktreeOut(t *testing.T) {
-	repo, remote := syncedRepository(t, "auto")
-	sideWorktree(t, repo)
+func TestHeldSyncLockKeepsARoundOut(t *testing.T) {
+	repo, remote := syncedClone(t, nil)
 	upstream := pushUpstream(t, remote, ".sdd/graph/upstream.md", "upstream\n", "sdd: capture upstream")
 	_, state, err := syncstate.Open(t.Context(), filepath.Join(repo.root, ".sdd", "graph"))
 	if err != nil {
@@ -328,35 +362,36 @@ func TestHeldSyncLockKeepsAnotherWorktreeOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.targets().SyncGraph(t.Context(), "side", sdd.SyncOnTimer); err != nil {
+	if err := repo.targets().SyncGraph(t.Context(), "main", sdd.SyncOnTimer); err != nil {
 		t.Fatal(err)
 	}
 	if repo.git("rev-parse", "origin/main") == upstream {
-		t.Error("a round in another worktree should not fetch while the sync lock is held")
+		t.Error("a round should not fetch while the sync lock is held")
 	}
 	release()
-	if err := repo.targets().SyncGraph(t.Context(), "side", sdd.SyncOnTimer); err != nil {
+	if err := repo.targets().SyncGraph(t.Context(), "main", sdd.SyncOnTimer); err != nil {
 		t.Fatal(err)
 	}
 	if repo.git("rev-parse", "origin/main") != upstream {
-		t.Error("once the lock is free the other worktree's round should fetch")
+		t.Error("once the lock is free the round should fetch")
 	}
 }
 
 func TestPublishWaitsForTheSyncLock(t *testing.T) {
-	repo, remote := syncedRepository(t, "auto")
-	side := sideWorktree(t, repo)
+	repo, remote := syncedClone(t, nil)
 	before := gitIn(t, "", "-C", remote, "rev-parse", "main")
-	// Held from the other worktree, so only the sync lock stands in the way,
-	// never this graph directory's own lock.
-	_, state, err := syncstate.Open(t.Context(), filepath.Join(side, ".sdd", "graph"))
+	// The sync lock alone, as another process's round holds it, never this
+	// graph directory's own lock.
+	syncLock := flock.New(filepath.Join(repo.root, ".git", "sdd", "sync.lock"))
+	err := os.MkdirAll(filepath.Dir(syncLock.Path()), 0o755)
 	if err != nil {
 		t.Fatal(err)
 	}
-	release, err := state.Lock(t.Context())
+	err = syncLock.Lock()
 	if err != nil {
 		t.Fatal(err)
 	}
+	release := func() { _ = syncLock.Unlock() }
 	application, identity, binding := repo.captureApplication(t, summaryRunner())
 	done := make(chan error, 1)
 	go func() {

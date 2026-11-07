@@ -67,6 +67,7 @@ func runApp(t *testing.T, dir string, args ...string) {
 	t.Chdir(dir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "xdg-cache"))
+	t.Setenv("XDG_DATA_HOME", dataHome(dir))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "xdg-state"))
 	var stdout, stderr bytes.Buffer
 	command := cliapp.New(cliapp.Options{Version: "test", Reader: strings.NewReader(""), Writer: &stdout, ErrWriter: &stderr})

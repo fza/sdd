@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/command"
@@ -15,19 +16,20 @@ import (
 // does not belong in that file before anything lands on disk.
 func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) error {
 	var (
-		file  configFile
-		probe any
-		typ   reflect.Type
-		layer string
-		err   error
+		file   configFile
+		probe  any
+		typ    reflect.Type
+		layer  string
+		source model.ConfigValueSource
+		err    error
 	)
 	switch cmd.Target {
 	case "global":
 		file, err = h.globalConfigFile()
-		probe, typ, layer = &repos.GlobalConfig{}, reflect.TypeFor[repos.GlobalConfig](), "global"
+		probe, typ, layer, source = &repos.GlobalConfig{}, reflect.TypeFor[repos.GlobalConfig](), "global", model.ConfigSourceGlobal
 	case "local":
 		file, err = h.localConfigFile()
-		probe, typ, layer = &model.PerRepoConfig{}, reflect.TypeFor[model.PerRepoConfig](), "per-repo"
+		probe, typ, layer, source = &model.PerRepoConfig{}, reflect.TypeFor[model.PerRepoConfig](), "per-repo", model.ConfigSourceLocal
 	default:
 		return fmt.Errorf("unknown config target %q (use global or local)", cmd.Target)
 	}
@@ -37,7 +39,17 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 	if cmd.Key == "inbound" || strings.HasPrefix(cmd.Key, "inbound.") {
 		return fmt.Errorf("%s is set only in the committed .sdd/config.yaml of the graph receiving captures, never in the %s config", cmd.Key, cmd.Target)
 	}
+	if slices.Contains(model.RetiredConfigKeys, cmd.Key) {
+		return fmt.Errorf("%s is no longer used: git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config", cmd.Key)
+	}
 	segments := strings.Split(cmd.Key, ".")
+	hostsPath, inHosts, err := model.SyncHostsKeyPath(cmd.Key)
+	if err != nil {
+		return err
+	}
+	if inHosts {
+		segments = hostsPath
+	}
 	if cmd.Repo != "" {
 		segments, err = model.RepoOverrideKey(cmd.Key, model.RepoID(cmd.Repo))
 		if err != nil {
@@ -67,12 +79,14 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 		if err := model.UnmarshalYAML(patched, &settings); err != nil {
 			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
 		}
-		ignored := model.IgnoredSettings(settings, false)
-		if cmd.Target == "local" {
-			ignored = append(ignored, model.PerRepoIgnoredSettings(settings)...)
+		ignoredSettings := model.IgnoredSettings(settings, source)
+		if source == model.ConfigSourceGlobal {
+			ignoredSettings = append(ignoredSettings, model.IgnoredGitLimits(settings.Sync)...)
+		} else {
+			ignoredSettings = append(ignoredSettings, model.PerRepoIgnoredSettings(settings)...)
 		}
-		for _, ignored := range ignored {
-			if ignored.Key == cmd.Key {
+		for _, ignored := range ignoredSettings {
+			if ignored.Key == cmd.Key || strings.HasPrefix(cmd.Key, ignored.Key+".") {
 				return nil, fmt.Errorf("%s = %s is not valid for the %s config: %s", cmd.Key, cmd.Value, layer, ignored.Reason)
 			}
 		}

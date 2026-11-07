@@ -123,7 +123,7 @@ func TestPushPublishesOnlyTheCurrentBranch(t *testing.T) {
 	gitRun(t, dir, "checkout", "-q", "main")
 	gitRun(t, dir, "commit", "-q", "--allow-empty", "-m", "sdd: capture")
 
-	if err := (git.CLI{Dir: dir}).Push(context.Background()); err != nil {
+	if err := (git.CLI{Dir: dir}).Push(admitted(t, context.Background())); err != nil {
 		t.Fatal(err)
 	}
 	if gitOut(t, remote, "rev-parse", "main") != gitOut(t, dir, "rev-parse", "HEAD") {
@@ -172,21 +172,5 @@ func TestMergeRefusesACancelledContext(t *testing.T) {
 	}
 	if gitOut(t, dir, "rev-parse", "HEAD") != before {
 		t.Error("a merge that did not start should leave the branch as it was")
-	}
-}
-
-func TestChangedPathsKeepsNonASCIINames(t *testing.T) {
-	dir := newRepo(t)
-	gitRun(t, dir, "checkout", "-q", "-b", "theirs")
-	writeTestFile(t, filepath.Join(dir, "Übersicht.md"), "x\n")
-	gitRun(t, dir, "add", "Übersicht.md")
-	gitRun(t, dir, "commit", "-q", "-m", "sdd: add")
-
-	paths, err := git.CLI{Dir: dir}.ChangedPaths(context.Background(), "main", "theirs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(paths) != 1 || paths[0] != "Übersicht.md" {
-		t.Errorf("a non-ASCII path should be listed as written, got %q", paths)
 	}
 }

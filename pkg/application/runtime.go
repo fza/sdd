@@ -16,6 +16,8 @@ import (
 // for one application operation.
 type ProjectRuntime struct {
 	options ProjectRuntimeOptions
+	// connected is shared by the copies a read takes of the runtime.
+	connected *connectedFailures
 }
 
 type ProjectRuntimeOptions struct {
@@ -46,6 +48,9 @@ type ProjectRuntimeOptions struct {
 	// Sync runs automatic graph sync before a session acts on a branch and
 	// serves what blocks it; nil leaves branches as they are.
 	Sync GraphSync
+	// Connected runs the sync rounds of the connected repositories the
+	// project reaches; nil syncs none.
+	Connected ConnectedSync
 	// ExcludeEmbeddedFromIndex mirrors the CLI's excludeEmbedded semantics for
 	// the vector index: connected-repo runtimes set it so binary-shipped base
 	// entries embed once per machine (in the base store) rather than once per
@@ -67,8 +72,10 @@ type GraphSync interface {
 	// ReleaseSyncOwner gives up session's ownership of branch's blocked sync
 	// as the session ends, returning the banner while sync is blocked.
 	ReleaseSyncOwner(ctx context.Context, branch, session string) (string, error)
-	// SyncInterval is how often a timer syncs branch, false when none runs.
-	SyncInterval(ctx context.Context, branch string) (time.Duration, bool, error)
+	// SyncDue reports whether a sync round of branch has an operation due:
+	// automatic sync is on and the git gate would admit its fetch, or its
+	// push with commits waiting.
+	SyncDue(ctx context.Context, branch string) (bool, error)
 	// SyncBlocked reads what blocks sync of branch, nil while sync proceeds.
 	SyncBlocked(ctx context.Context, branch string) (*SyncBlocked, error)
 	// BackfillTitles titles the untitled entries of branch's graph through
@@ -99,10 +106,10 @@ type SyncBlocked struct {
 type SyncTrigger string
 
 const (
-	// SyncOnCall: an engine call; the round fetches once the cooldown has
-	// passed.
+	// SyncOnCall: an engine call; its title backfill waits out the backfill
+	// cooldown.
 	SyncOnCall SyncTrigger = "call"
-	// SyncOnTimer: the timer of a running server; the round always fetches.
+	// SyncOnTimer: the timer of a running server, once a round is due.
 	SyncOnTimer SyncTrigger = "timer"
 	// SyncOnSessionStart: a session opening; it starts the title backfill
 	// alone, which always runs.
@@ -153,8 +160,19 @@ func (r *ProjectRuntime) backfillTitles(ctx context.Context, branch string, trig
 }
 
 // syncNotice returns the blocked-sync notice of branch's graph repository
-// for session.
+// for session, followed by the connected repositories whose last round
+// failed.
 func (r *ProjectRuntime) syncNotice(ctx context.Context, branch, session string) string {
+	notices := make([]string, 0, 2)
+	for _, notice := range []string{r.graphSyncNotice(ctx, branch, session), r.connected.notice()} {
+		if notice != "" {
+			notices = append(notices, notice)
+		}
+	}
+	return strings.Join(notices, "\n")
+}
+
+func (r *ProjectRuntime) graphSyncNotice(ctx context.Context, branch, session string) string {
 	if r.options.Sync == nil {
 		return ""
 	}
@@ -211,30 +229,46 @@ func (r *ProjectRuntime) syncBranch(ctx context.Context, branch string) (string,
 	return target.Branch, true
 }
 
-// RunSyncTimer syncs the base branch's graph repository once per configured
-// sync.interval until ctx ends, and returns at once when no timer is set.
+// syncTick is how often a running server asks the git gate whether its
+// graph's sync round is due; the gate's cooldowns set the pace
+// (20261107-095427-d-tac-yux).
+const syncTick = time.Minute
+
+// RunSyncTimer runs, whenever a tick finds it due, the base branch's sync
+// round with its title backfill and the round of every connected repository
+// the project reaches, until ctx ends.
 func (r *ProjectRuntime) RunSyncTimer(ctx context.Context) error {
-	if r.options.Sync == nil {
+	branch, own := "", false
+	if r.options.Sync != nil {
+		branch, own = r.syncBranch(ctx, "")
+	}
+	if !own && r.options.Connected == nil {
 		return nil
 	}
-	branch, ok := r.syncBranch(ctx, "")
-	if !ok {
-		return nil
-	}
-	interval, on, err := r.options.Sync.SyncInterval(ctx, branch)
-	if err != nil || !on {
-		return err
-	}
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(syncTick)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			r.syncGraph(ctx, branch, SyncOnTimer)
-			r.backfillTitles(ctx, branch, SyncOnTimer)
+			if own {
+				r.syncGraphWhenDue(ctx, branch)
+			}
+			r.syncDueRepos(ctx)
 		}
+	}
+}
+
+func (r *ProjectRuntime) syncGraphWhenDue(ctx context.Context, branch string) {
+	due, err := r.options.Sync.SyncDue(ctx, branch)
+	if err != nil {
+		slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: %v", err), "branch", branch)
+		return
+	}
+	if due {
+		r.syncGraph(ctx, branch, SyncOnTimer)
+		r.backfillTitles(ctx, branch, SyncOnTimer)
 	}
 }
 
@@ -257,7 +291,7 @@ func NewProjectRuntime(options ProjectRuntimeOptions) (*ProjectRuntime, error) {
 			Graph:  options.Graph, Finalizers: options.Finalizers,
 		}
 	}
-	return &ProjectRuntime{options: options}, nil
+	return &ProjectRuntime{options: options, connected: &connectedFailures{}}, nil
 }
 
 func (r *ProjectRuntime) Project() ProjectRef {

@@ -2,11 +2,14 @@ package model
 
 import (
 	"fmt"
-	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
+	"time"
 )
+
+// TitleBackfillCooldown spaces the title backfills engine calls start, so a
+// failing LLM is not retried by every call.
+const TitleBackfillCooldown = 15 * time.Minute
 
 // GraphCommitSubjectPattern matches the subject every SDD-written commit
 // starts with; sync counts commits matching it on either side of the
@@ -39,11 +42,11 @@ const (
 	// SyncStateNoUpstream: current branch has no upstream tracking branch.
 	SyncStateNoUpstream SyncState = "no-upstream"
 	// SyncStateFetchFailed: git fetch was attempted and failed (network,
-	// authentication, etc.). The last-fetch timestamp is still updated so
-	// subsequent commands within the cooldown window do not retry.
+	// authentication, etc.). The git gate holds the next attempt back.
 	SyncStateFetchFailed SyncState = "fetch-failed"
-	// SyncStateSkipped: the sync check did not run (cooldown window active,
-	// command exempt, or environment unavailable). No slog output expected.
+	// SyncStateSkipped: the sync check did not run (the git gate deferred the
+	// fetch, command exempt, or environment unavailable). No slog output
+	// expected.
 	SyncStateSkipped SyncState = "skipped"
 	// SyncStateFetched: the upstream was fetched; the remote-tracking ref is
 	// fresh.
@@ -147,70 +150,27 @@ func DecidePush(mode SyncMode, hasUpstream bool, ahead, graphAhead int) PushVerd
 type PullVerdict string
 
 const (
-	PullOff        PullVerdict = "off"
 	PullNoUpstream PullVerdict = "no-upstream"
 	PullNothing    PullVerdict = "nothing"
-	// PullForeign: an incoming commit was not written by sdd, so merging it
-	// would bring code changes into the working tree unasked.
-	PullForeign PullVerdict = "foreign"
-	// PullOutsideGraph: an incoming commit changes a path sdd never writes,
-	// whatever its subject says (20261027-222018-d-tac-ue8).
-	PullOutsideGraph PullVerdict = "outside-graph"
-	PullDirty        PullVerdict = "dirty"
-	PullReady        PullVerdict = "ready"
+	PullDirty      PullVerdict = "dirty"
+	PullReady      PullVerdict = "ready"
 )
 
-// IncomingCommits describes the commits upstream holds ahead of the branch.
-type IncomingCommits struct {
-	All   int
-	Graph int
-	// Outside lists the changed paths that lie outside the paths sdd writes.
-	Outside []string
-}
-
-// DecidePull judges a pull from the incoming commits and whether the working
-// tree is clean.
-func DecidePull(mode SyncMode, hasUpstream bool, incoming IncomingCommits, clean bool) PullVerdict {
+// DecidePull judges a pull into the sdd-owned clone from the count of
+// incoming commits and whether its working tree is clean. Every upstream
+// commit merges: nobody works in the clone, so a hand commit or a path
+// outside the graph upstream arrives one-sided.
+func DecidePull(hasUpstream bool, incoming int, clean bool) PullVerdict {
 	switch {
-	case mode != SyncModeAuto:
-		return PullOff
 	case !hasUpstream:
 		return PullNoUpstream
-	case incoming.All == 0:
+	case incoming == 0:
 		return PullNothing
-	case incoming.Graph < incoming.All:
-		return PullForeign
-	case len(incoming.Outside) > 0:
-		return PullOutsideGraph
 	case !clean:
 		return PullDirty
 	default:
 		return PullReady
 	}
-}
-
-// OutsideGraphPaths returns the paths, relative to the repository holding the
-// graph, that an automatic pull may not merge unreviewed: everything but
-// graphDir (also repository-relative; "." makes the whole repository the
-// graph), .sdd/meta.json, the rendered agent skills and .gitignore. Config
-// stays outside, since an incoming config change alters sdd itself
-// (20261027-235201-d-tac-hkq).
-func OutsideGraphPaths(paths []string, graphDir string) []string {
-	graphDir = strings.Trim(filepath.ToSlash(filepath.Clean(graphDir)), "/")
-	if graphDir == "." {
-		return nil
-	}
-	prefixes := []string{".claude/skills/", ".agents/skills/", graphDir + "/"}
-	var outside []string
-	for _, path := range paths {
-		if path == "" || path == ".gitignore" || path == ".sdd/meta.json" {
-			continue
-		}
-		if !slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(path, prefix) }) {
-			outside = append(outside, path)
-		}
-	}
-	return outside
 }
 
 // GraphMergeMessage is the message of the merge commit an automatic pull

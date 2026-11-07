@@ -18,11 +18,11 @@ import (
 // connected but not cached, or cached but not connected, stays in the closure
 // with nothing behind it.
 func TestDependencyClosureReadsCachedConfigs(t *testing.T) {
-	loc := repos.Locations{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), CacheRoot: t.TempDir()}
+	loc := repos.Locations{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), CacheRoot: t.TempDir(), DataRoot: t.TempDir()}
 	reg := repos.NewRegistry(loc)
 	cacheConfig := func(repoID model.RepoID, config string) {
 		t.Helper()
-		dir, err := reg.CacheDir(repoID)
+		dir, err := reg.CloneDir(repoID)
 		if err != nil {
 			t.Fatal(err)
 		}

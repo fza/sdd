@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/command"
-	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/repos"
 )
 
@@ -26,7 +25,7 @@ func newConfigTestHandler(t *testing.T) (*Handler, string, string) {
 	})
 	h := New(Options{
 		SDDDir: sddDir,
-		Repos:  repos.NewManager(reg, git.CLI{}),
+		Repos:  repos.NewManager(reg, nil),
 	})
 	return h, globalPath, sddDir
 }
@@ -192,7 +191,7 @@ func TestConfigSet_LocalOverrideWritesOverrideFile(t *testing.T) {
 	h := New(Options{
 		SDDDir:          sddDir,
 		LocalConfigPath: override,
-		Repos:           repos.NewManager(reg, git.CLI{}),
+		Repos:           repos.NewManager(reg, nil),
 	})
 
 	if err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: "local", Key: "participant", Value: "Ada"}); err != nil {

@@ -159,21 +159,21 @@ func selectIndexStores(cmd *cli.Command) ([]indexStore, handlers.IndexEmbedder, 
 		return nil, emb, nil, err
 	}
 	for _, repoID := range repoIDs {
-		cacheDir, err := reg.CacheDir(repoID)
+		cloneDir, err := reg.CloneDir(repoID)
 		if err != nil {
 			return nil, emb, nil, err
 		}
-		cache := repos.Cache{RepoID: repoID, Dir: cacheDir}
-		if !cache.Cloned() {
-			presenters.RenderResultLine(cmd.ErrWriter, "skipped "+string(repoID), "no local cache, so no index store; `sdd index --repo "+string(repoID)+"` creates one")
+		clone := repos.Clone{RepoID: repoID, Dir: cloneDir}
+		if !clone.Cloned() {
+			presenters.RenderResultLine(cmd.ErrWriter, "skipped "+string(repoID), "no local clone, so no index store; `sdd index --repo "+string(repoID)+"` creates one")
 			continue
 		}
-		cacheGraph, err := cache.GraphDir()
+		cloneGraph, err := clone.GraphDir()
 		if err != nil {
 			return nil, emb, nil, err
 		}
 		stores = append(stores, indexStore{
-			label: string(repoID), graphDir: cacheGraph, indexDir: index.StoreDir(reg.CacheRoot(), index.RepoKey(repoID, cacheDir), emb.Fingerprint()), excludeEmbedded: true,
+			label: string(repoID), graphDir: cloneGraph, indexDir: index.StoreDir(reg.CacheRoot(), index.RepoKey(repoID, cloneDir), emb.Fingerprint()), excludeEmbedded: true,
 		})
 	}
 	return stores, emb, reader, nil

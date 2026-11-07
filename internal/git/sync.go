@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -57,9 +56,13 @@ func (c CLI) Fetch(ctx context.Context) error {
 	if c.graphClone() {
 		return c.fetchClone(ctx)
 	}
+	env, err := admittedEnv(ctx, "fetch")
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
 	defer cancel()
-	out, err := runDetached(ctx, c.at("fetch")...)
+	out, err := runDetachedEnv(ctx, env, c.at("fetch")...)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -102,44 +105,6 @@ func (c CLI) CountCommits(ctx context.Context, rangeSpec, subjectPattern string)
 		return 0, fmt.Errorf("git log %s: %w", rangeSpec, err)
 	}
 	return model.CountMatchingSubjects(string(out), pattern), nil
-}
-
-// ChangedPaths lists the repository-relative paths tip changes against its
-// merge base with base: the net difference a merge of tip brings in,
-// including changes a merge commit makes on its own. Renames count as a
-// deletion and an addition, so both paths are listed.
-func (c CLI) ChangedPaths(ctx context.Context, base, tip string) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", base+"..."+tip)...).Output()
-	if err != nil {
-		return nil, fmt.Errorf("git diff --name-only %s...%s: %w", base, tip, err)
-	}
-	var paths []string
-	for line := range strings.SplitSeq(string(out), "\n") {
-		if line != "" {
-			paths = append(paths, line)
-		}
-	}
-	return paths, nil
-}
-
-// RepoPath returns path relative to the root of this adapter's repository.
-func (c CLI) RepoPath(ctx context.Context, path string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--show-toplevel")...).Output()
-	if err != nil {
-		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
-	}
-	root, err := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
-	if err != nil {
-		return "", err
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
-		abs = resolved
-	}
-	return filepath.Rel(root, abs)
 }
 
 // MergeTreePredict simulates a three-way merge in memory and returns the

@@ -15,11 +15,14 @@ import (
 
 	"github.com/gofrs/flock"
 
+	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/repos"
 )
 
 // lockRetryDelay is how often a waiting sync lock retries.
@@ -318,11 +321,67 @@ func ReadBlocked(ctx context.Context, graphDir string) (*model.SyncBlocked, erro
 }
 
 // Mode is the sync mode of the graph repository at root: automatic in the
-// sdd-owned graph clone, which only sdd works in, the configured one
-// elsewhere.
-func Mode(cfg *model.PerRepoConfig, root string) model.SyncMode {
+// sdd-owned graph clone, which only sdd works in, manual for a graph inside
+// the code repository (20261107-095427-d-tac-yux).
+func Mode(root string) model.SyncMode {
 	if git.IsGraphClone(root) {
 		return model.SyncModeAuto
 	}
-	return model.ResolveSyncMode(cfg)
+	return model.SyncModeManual
+}
+
+// RoundDue reports whether the sync round of the repository at root has an
+// operation the git gate admits now: its fetch, or its push with commits
+// waiting.
+func RoundDue(ctx context.Context, gate *gitgate.Gate, root string) (bool, error) {
+	if gate == nil {
+		return false, repos.ErrNoGate
+	}
+	repo := git.CLI{Dir: root}
+	url, err := repo.UpstreamURL(ctx)
+	if err != nil {
+		return false, err
+	}
+	target, err := gitgate.TargetFromURL(url)
+	if err != nil {
+		return false, err
+	}
+	due, _, err := gate.Due(target, gitgate.Fetch)
+	if err != nil || due {
+		return due, err
+	}
+	upstream, err := repo.UpstreamRef(ctx)
+	if err != nil || upstream == "" {
+		return false, err
+	}
+	ahead, err := repo.CountCommits(ctx, "@{u}..HEAD", "")
+	if err != nil || ahead == 0 {
+		return false, err
+	}
+	due, _, err = gate.Due(target, gitgate.Push)
+	return due, err
+}
+
+// CloneRounds runs the sync round of an sdd-owned clone through the git
+// gate, the round the project's own graph_repo clone runs
+// (20261107-095427-d-tac-yux).
+type CloneRounds struct {
+	Gate *gitgate.Gate
+}
+
+func (r CloneRounds) SyncClone(ctx context.Context, dir string, cmd *command.SyncRoundCmd) error {
+	cfg, err := meta.ReadCommittedConfigFS(os.DirFS(dir))
+	if err != nil && !errors.Is(err, meta.ErrNotAnSDDProject) {
+		return err
+	}
+	graphDir := meta.ResolveGraphDir(dir, cfg)
+	opts, err := HandlerOptions(ctx, graphDir, handlers.Options{GraphDir: graphDir, SyncMode: model.SyncModeAuto, Gate: r.Gate})
+	if err != nil {
+		return err
+	}
+	return handlers.New(opts).SyncRound(ctx, cmd)
+}
+
+func (r CloneRounds) Due(ctx context.Context, dir string) (bool, error) {
+	return RoundDue(ctx, r.Gate, dir)
 }

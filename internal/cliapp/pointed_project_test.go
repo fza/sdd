@@ -46,6 +46,7 @@ func runAppAs(t *testing.T, dir, version string, args ...string) (string, error)
 	t.Chdir(dir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "xdg-cache"))
+	t.Setenv("XDG_DATA_HOME", dataHome(dir))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "xdg-state"))
 	var output bytes.Buffer
 	command := cliapp.New(cliapp.Options{Version: version, Reader: strings.NewReader(""), Writer: &output, ErrWriter: &output})
@@ -280,6 +281,7 @@ func TestPointedServeTargetsTheProjectRepository(t *testing.T) {
 	t.Chdir(work)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(work, "xdg-config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(work, "xdg-cache"))
+	t.Setenv("XDG_DATA_HOME", dataHome(work))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(work, "xdg-state"))
 	fixture := &appFixture{root: work}
 

@@ -32,7 +32,7 @@ func forcePushedClone(t *testing.T) (dir, previous, rewritten string) {
 	remote.Commit(t, "an entry the rewrite drops", map[string]string{goneEntry: test.MergeEntryFixture(t, "base.md")})
 	dir = sddClone(t, model.ProtocolHTTPS)
 	repo := git.CLI{Dir: dir}
-	ctx := context.Background()
+	ctx := admitted(t, context.Background())
 	err := repo.Fetch(ctx)
 	if err != nil {
 		t.Fatal(err)

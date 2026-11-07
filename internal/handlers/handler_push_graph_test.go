@@ -40,7 +40,7 @@ func TestCommitGraphSetsUpTheMergeDriverAfterThePush(t *testing.T) {
 	h := handlers.New(handlers.Options{
 		GraphDir: graphDir, Reader: &graphReader{}, Committer: committer,
 		Pusher: repo, GraphFetcher: repo, GraphPuller: repo, SyncLock: &synctest.Lock{}, SyncRecord: &synctest.Record{},
-		SyncMode: model.SyncModeAuto,
+		SyncMode: model.SyncModeAuto, Gate: synctest.Gate(t.TempDir(), nil),
 	})
 
 	err := h.StartWIP(context.Background(), &command.StartWIPCmd{EntryID: summarizedEntry, Participant: "Ada", Description: "work"})

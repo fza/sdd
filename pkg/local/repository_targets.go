@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
@@ -16,8 +17,15 @@ import (
 // NewRepositoryTargets opens configured graph readers and Git-backed mutation
 // targets. Each acquisition rereads the global, committed and local config;
 // a non-empty localConfigPath stands in for every checkout's
-// .sdd/config.local.yaml.
-func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPath, localConfigPath string) (*GitWorktreeAcquirer, error) {
+// .sdd/config.local.yaml. The git network operations sync starts pass a gate
+// keeping its record in stateDir, under the limits the global config sets as
+// read now (20261107-095427-d-tac-yux).
+func NewRepositoryTargets(ctx context.Context, project app.ProjectID, serverCheckout, globalConfigPath, localConfigPath, stateDir string) (*GitWorktreeAcquirer, error) {
+	limitsConfig, err := repos.LoadConfigFrom(globalConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	gate := gitgate.New(gitgate.Options{StateDir: stateDir, Limits: repos.GitLimitsFunc(ctx, limitsConfig, globalConfigPath)})
 	resolveConfig := func(checkout string) (*model.PerRepoConfig, error) {
 		global, err := repos.LoadConfigFrom(globalConfigPath)
 		if err != nil {
@@ -79,8 +87,8 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 				return nil, nil, nil, err
 			}
 			finalizers := []app.MutationFinalizer{finalizer}
-			if syncstate.Mode(cfg, checkout) == model.SyncModeAuto {
-				finalizers = append(finalizers, GraphPublisher{GraphDir: meta.ResolveGraphDir(checkout, cfg)})
+			if syncstate.Mode(checkout) == model.SyncModeAuto {
+				finalizers = append(finalizers, GraphPublisher{GraphDir: meta.ResolveGraphDir(checkout, cfg), gate: gate})
 			}
 			finalizers = append(finalizers, MergeDriverSetup{Checkout: checkout})
 			return graph, finalizers, func() error { return nil }, nil
@@ -90,5 +98,6 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 		return nil, err
 	}
 	acquirer.resolveConfig = resolveConfig
+	acquirer.gate = gate
 	return acquirer, nil
 }

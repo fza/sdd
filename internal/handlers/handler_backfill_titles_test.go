@@ -329,7 +329,7 @@ func TestSyncRoundKeepsAFailedBackfillRecorded(t *testing.T) {
 	repo := &synctest.Repo{Upstream: "origin/main"}
 	h := handlers.New(handlers.Options{
 		GraphDir: t.TempDir(), SyncMode: model.SyncModeAuto, GraphFetcher: repo, GraphPuller: repo, Pusher: repo,
-		SyncLock: &synctest.Lock{}, SyncRecord: record,
+		SyncLock: &synctest.Lock{}, SyncRecord: record, Gate: synctest.Gate(t.TempDir(), nil),
 	})
 	err := h.SyncRound(context.Background(), &command.SyncRoundCmd{})
 	if err != nil {

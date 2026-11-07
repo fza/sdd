@@ -10,7 +10,7 @@ import (
 )
 
 // DependencyClosure lists the repos the local repo reaches through declared
-// dependencies, walking DeclaredDependencies. Refreshing the caches is the
+// dependencies, walking DeclaredDependencies. Refreshing the clones is the
 // handler's side effect (Handler.RefreshDependencyClosure), run before.
 func (f *Finder) DependencyClosure(ctx context.Context, _ query.DependencyClosureQuery) ([]model.RepoID, error) {
 	if f.cfg == nil {
@@ -26,10 +26,10 @@ func (f *Finder) DependencyClosure(ctx context.Context, _ query.DependencyClosur
 	return closure, nil
 }
 
-// DeclaredDependencies is one step of the dependency walk, as the caches
+// DeclaredDependencies is one step of the dependency walk, as the clones
 // stand: the local repo answers from its per-repo config, a connected repo
-// from the committed config in its cache. A repo that is not connected, not
-// cached or without a config declares nothing, so it stays in the closure
+// from the committed config in its sdd-owned clone. A repo that is not
+// connected, not cloned or without a config declares nothing, so it stays in the closure
 // with nothing reached behind it.
 func (f *Finder) DeclaredDependencies(_ context.Context, repoID model.RepoID) ([]model.RepoID, error) {
 	if f.cfg != nil && repoID == f.cfg.RepoID {
@@ -38,11 +38,11 @@ func (f *Finder) DeclaredDependencies(_ context.Context, repoID model.RepoID) ([
 	if f.repos == nil {
 		return nil, nil
 	}
-	cache, connected, err := f.repos.Cache(repoID)
+	clone, connected, err := f.repos.Clone(repoID)
 	if err != nil || !connected {
 		return nil, err
 	}
-	cfg, err := cache.Config()
+	cfg, err := clone.Config()
 	if errors.Is(err, meta.ErrNotAnSDDProject) {
 		return nil, nil
 	}

@@ -7,9 +7,17 @@ import (
 	"errors"
 	"slices"
 	"sync"
+	"time"
 
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/model"
 )
+
+// Gate is a git gate keeping its ledger in stateDir, with the built-in limits
+// and the clock now; a nil now is the wall clock.
+func Gate(stateDir string, now func() time.Time) *gitgate.Gate {
+	return gitgate.New(gitgate.Options{StateDir: stateDir, Now: now, Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }})
+}
 
 // ErrForbidden is what a Repo returns from an operation its test forbids.
 var ErrForbidden = errors.New("operation forbidden by the test")
@@ -21,12 +29,14 @@ type Repo struct {
 
 	NoRepo, NoRemote bool
 	Upstream         string
-	FetchErr         error
-	PushErr          error
+	// URL is the upstream's remote URL; empty is a local path, which the git
+	// gate always admits.
+	URL      string
+	FetchErr error
+	PushErr  error
 	// Ahead and GraphAhead count commits ahead of upstream; Behind and
 	// GraphBehind the ones upstream holds ahead.
 	Ahead, GraphAhead, Behind, GraphBehind int
-	Changed                                []string
 	Dirty                                  bool
 	Conflicts                              []string
 	Commits                                map[string]string
@@ -50,6 +60,26 @@ func (r *Repo) Called(name string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return slices.Contains(r.Calls, name)
+}
+
+// Count reports how often name ran.
+func (r *Repo) Count(name string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	count := 0
+	for _, call := range r.Calls {
+		if call == name {
+			count++
+		}
+	}
+	return count
+}
+
+func (r *Repo) UpstreamURL(context.Context) (string, error) {
+	if r.URL == "" {
+		return "/synctest/remote.git", nil
+	}
+	return r.URL, nil
 }
 
 func (r *Repo) InRepo(context.Context) bool    { return r.call("in-repo") == nil && !r.NoRepo }
@@ -80,14 +110,6 @@ func (r *Repo) CountCommits(_ context.Context, rangeSpec, pattern string) (int, 
 	default:
 		return r.GraphAhead, nil
 	}
-}
-
-func (r *Repo) ChangedPaths(context.Context, string, string) ([]string, error) {
-	return r.Changed, r.call("changed-paths")
-}
-
-func (r *Repo) RepoPath(_ context.Context, path string) (string, error) {
-	return path, r.call("repo-path")
 }
 
 func (r *Repo) IsClean(context.Context) (bool, error) { return !r.Dirty, r.call("is-clean") }

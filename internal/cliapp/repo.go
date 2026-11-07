@@ -21,8 +21,8 @@ import (
 )
 
 // repoCmd manages connected repos — the machine-level setup behind
-// cross-repo references. Deliberately CLI-only (no MCP surface): connecting
-// a repo is environment configuration, not dialogue.
+// cross-repo references. Connecting a repo is environment configuration,
+// not dialogue, so only its sync reaches MCP, as sync_repos.
 func repoCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "repo",
@@ -40,7 +40,7 @@ func repoCmd() *cli.Command {
 					if err != nil {
 						return err
 					}
-					dir, err := repos.NewGraphClones(locations, git.GraphClones{}).Dir(model.RepoID(cmd.Args().First()))
+					dir, err := repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir(model.RepoID(cmd.Args().First()))
 					if err != nil {
 						return err
 					}
@@ -50,7 +50,7 @@ func repoCmd() *cli.Command {
 			},
 			{
 				Name:      "add",
-				Usage:     "Connect a repo: clone its cache, verify its declared repo_id, register it",
+				Usage:     "Connect a repo: clone it, verify its declared repo_id, register it",
 				ArgsUsage: "<clone-url>",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					if cmd.Args().Len() != 1 {
@@ -65,7 +65,7 @@ func repoCmd() *cli.Command {
 					// after the transient view tears down — printing to stdout
 					// mid-view would corrupt the footer the coordinator owns.
 					var addedRepoID, declaredRepoID model.RepoID
-					var addedCacheDir string
+					var addedCloneDir string
 					var alreadyDeclared, haveAdded, haveDeclared bool
 					// A phase-only reporter (no chunk total) so the footer label
 					// tracks the reported stage — connecting → cloning — rather
@@ -73,8 +73,8 @@ func repoCmd() *cli.Command {
 					reporter := cliout.NewReporter()
 					addCmd := &command.RepoAddCmd{
 						CloneURL: cmd.Args().First(),
-						OnAdded: func(repoID model.RepoID, cacheDir string) {
-							addedRepoID, addedCacheDir, haveAdded = repoID, cacheDir, true
+						OnAdded: func(repoID model.RepoID, cloneDir string) {
+							addedRepoID, addedCloneDir, haveAdded = repoID, cloneDir, true
 						},
 						OnDeclared: func(repoID model.RepoID, already bool) {
 							declaredRepoID, alreadyDeclared, haveDeclared = repoID, already, true
@@ -103,7 +103,7 @@ func repoCmd() *cli.Command {
 					if haveAdded {
 						presenters.RenderResultLine(cmd.Writer,
 							fmt.Sprintf("connected %s", addedRepoID),
-							fmt.Sprintf("cache: %s", addedCacheDir))
+							fmt.Sprintf("clone: %s", addedCloneDir))
 					}
 					if haveDeclared {
 						if alreadyDeclared {
@@ -135,9 +135,10 @@ func repoCmd() *cli.Command {
 						return nil
 					}
 					for _, r := range cfg.Repos {
-						status := "not cached"
-						if dir, err := reg.CacheDir(r.RepoID); err == nil && repos.IsCloned(dir) {
-							status = "cached"
+						status := "not cloned"
+						dir, err := reg.CloneDir(r.RepoID)
+						if err == nil && repos.IsCloned(dir) {
+							status = "cloned"
 						}
 						fmt.Fprintf(cmd.Writer, "%s\n  clone_url: %s (%s)\n", r.RepoID, r.CloneURL, status)
 					}
@@ -179,23 +180,41 @@ func repoCmd() *cli.Command {
 			},
 			{
 				Name:      "sync",
-				Usage:     "Force-pull connected repo caches (all, or the named repos)",
+				Usage:     "Sync connected repos (all, or the named repos) as far as the git limits allow",
 				ArgsUsage: "[repo-id ...]",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					h, err := repoHandler(cmd.ErrWriter)
 					if err != nil {
 						return err
 					}
-					return h.RepoSync(ctx, &command.RepoSyncCmd{
+					unsynced := 0
+					err = h.RepoSync(ctx, &command.RepoSyncCmd{
 						RepoIDs: repoIDArgs(cmd.Args().Slice()),
-						OnSynced: func(repoID model.RepoID) {
-							fmt.Fprintf(cmd.Writer, "synced %s\n", repoID)
+						OnOutcome: func(outcome model.RepoSyncOutcome) {
+							fmt.Fprintln(cmd.Writer, presenters.RepoSyncOutcome(outcome))
+							if outcome.State == model.RepoFailed || outcome.State == model.RepoRefused {
+								unsynced++
+							}
 						},
 					})
+					if err != nil {
+						return err
+					}
+					if unsynced > 0 {
+						return fmt.Errorf("%d connected %s failed or refused", unsynced, pluralRepos(unsynced))
+					}
+					return nil
 				},
 			},
 		},
 	}
+}
+
+func pluralRepos(n int) string {
+	if n == 1 {
+		return "repo"
+	}
+	return "repos"
 }
 
 // repoHandler builds the handler for repo commands: a read finder for
@@ -233,7 +252,17 @@ func repoHandler(errWriter io.Writer) (*handlers.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	gate, err := commandGate()
+	if err != nil {
+		return nil, err
+	}
+	round, err := cloneRound()
+	if err != nil {
+		return nil, err
+	}
 	return handlers.New(handlers.Options{
+		Gate:        gate,
+		CloneRound:  round,
 		Stderr:      errWriter,
 		Reader:      reader,
 		Repos:       mgr,
@@ -258,7 +287,7 @@ func repoIDArgs(args []string) []model.RepoID {
 	return ids
 }
 
-// refreshDependencies refreshes the dependency closure's caches ahead of a
+// refreshDependencies refreshes the dependency closure's clones ahead of a
 // read that reaches beyond the local graph.
 func refreshDependencies(ctx context.Context, errWriter io.Writer) error {
 	h, err := repoHandler(errWriter)
@@ -274,7 +303,7 @@ func dependencyRefreshCmd(ctx context.Context) command.RefreshDependencyClosureC
 	logger := slogutils.FromContext(ctx)
 	return command.RefreshDependencyClosureCmd{
 		OnRefreshFailed: func(repoID model.RepoID, err error) {
-			logger.Warn("could not refresh dependency; reading its cache as it stands", "repo", repoID, "err", err)
+			logger.Warn("could not refresh dependency; reading its clone as it stands", "repo", repoID, "err", err)
 		},
 		OnUnconnected: func(repoID model.RepoID) {
 			logger.Warn("dependency is not connected on this machine; connect it with `sdd repo add <clone-url>`", "repo", repoID)

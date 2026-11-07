@@ -290,7 +290,7 @@ func TestMergePathsSetUpTheMergeDriver(t *testing.T) {
 		if out, err := exec.Command("git", "clone", "-q", upstream, clone).CombinedOutput(); err != nil {
 			t.Fatalf("git clone: %v\n%s", err, out)
 		}
-		if _, err := (git.CLI{Dir: clone}).MergePull(context.Background()); err != nil {
+		if _, err := (git.CLI{Dir: clone}).MergePull(admitted(t, context.Background())); err != nil {
 			t.Fatalf("MergePull: %v", err)
 		}
 		if got := driverConfig(t, clone); got != git.MergeDriverCommand {

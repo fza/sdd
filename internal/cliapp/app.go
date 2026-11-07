@@ -238,8 +238,22 @@ func defaultRepos() (*repos.Registry, *repos.Manager, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	gate, err := commandGate()
+	if err != nil {
+		return nil, nil, err
+	}
 	reg := repos.NewRegistry(loc)
-	return reg, repos.NewManager(reg, git.CLI{}), nil
+	return reg, repos.NewManager(reg, repos.NewGraphClones(loc, git.GraphClones{}, gate)), nil
+}
+
+// cloneRound is the sync round connected repos refresh through, under the
+// invocation's git gate.
+func cloneRound() (handlers.CloneRound, error) {
+	gate, err := commandGate()
+	if err != nil {
+		return nil, err
+	}
+	return syncstate.CloneRounds{Gate: gate}, nil
 }
 
 // loadConfig resolves the effective config overlay: the user-global base
@@ -277,7 +291,7 @@ func localConfigLayer() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	project, err := meta.ResolveProject(workRoot, repos.NewGraphClones(locations, git.GraphClones{}).Dir)
+	project, err := meta.ResolveProject(workRoot, repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir)
 	if err != nil {
 		return "", err
 	}
@@ -461,6 +475,7 @@ func New(options Options) *cli.Command {
 				Level: level,
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
+			currentGate = &invocationGate{ctx: ctx}
 			if cmd.Bool("timing") {
 				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
 			}
@@ -478,14 +493,17 @@ func New(options Options) *cli.Command {
 
 			// Background sync check runs on every command except `sdd init`
 			// (bootstrap may precede remote configuration — sync would emit
-			// spurious warnings) and `sdd cache`, which touches no graph.
-			// Cooldown-bound and timeout-bound internally;
-			// any failure logs at Debug and does not affect the command.
+			// spurious warnings), `sdd cache`, which touches no graph, and
+			// `sdd sync`, which runs the sync itself. Cooldown-bound and
+			// timeout-bound internally; any failure logs at Debug and does not
+			// affect the command.
 			if first := cmd.Args().First(); first != "init" && first != cacheCommandName {
 				ctx = withSyncBanner(ctx, cmd.ErrWriter)
-				stopSync := timing.Start(ctx, "sync-check")
-				runSyncCheck(ctx)
-				stopSync()
+				if first != "sync" {
+					stopSync := timing.Start(ctx, "sync-check")
+					runSyncCheck(ctx)
+					stopSync()
+				}
 				// Participant-missing nudge (AC 8): one-line stderr
 				// warning naming `sdd init` as the fix. Suppressed for
 				// `sdd init` itself (it's the resolution path) and
@@ -1048,6 +1066,10 @@ func newCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			round, err := cloneRound()
+			if err != nil {
+				return err
+			}
 			opts, err := graphSyncOptions(ctx, dir, handlers.Options{
 				Stderr:   cmd.ErrWriter,
 				GraphDir: dir,
@@ -1058,11 +1080,12 @@ func newCmd() *cli.Command {
 					Repos:             reg,
 					ProcedureRegistry: registry,
 				}),
-				LLMRunner: runner,
-				Committer: graphGit(dir),
-				SyncMode:  syncMode,
-				Repos:     mgr,
-				Language:  configLanguage(cfg),
+				LLMRunner:  runner,
+				Committer:  graphGit(dir),
+				SyncMode:   syncMode,
+				Repos:      mgr,
+				CloneRound: round,
+				Language:   configLanguage(cfg),
 			})
 			if err != nil {
 				return err
@@ -1534,7 +1557,7 @@ func graphSyncMode(graphDir string) (model.SyncMode, error) {
 	if filepath.Clean(graphDir) != filepath.Clean(meta.ResolveGraphDir(project.Root, cfg)) {
 		return model.SyncModeManual, nil
 	}
-	return syncstate.Mode(cfg, project.Root), nil
+	return syncstate.Mode(project.Root), nil
 }
 
 var errNoProject = errors.New("no .sdd/ directory found; run 'sdd init' first")
@@ -1572,7 +1595,11 @@ func resolveProject() (meta.Project, error) {
 	if err != nil {
 		return meta.Project{}, err
 	}
-	clones := repos.NewGraphClones(locations, git.GraphClones{})
+	gate, err := commandGate()
+	if err != nil {
+		return meta.Project{}, err
+	}
+	clones := repos.NewGraphClones(locations, git.GraphClones{}, gate)
 	project, err := meta.ResolveProject(workRoot, clones.Dir)
 	if err != nil {
 		return meta.Project{}, err
@@ -1691,19 +1718,6 @@ func promptProjectDir(cmd *cli.Command, defaultValue string) (string, error) {
 	})
 }
 
-// promptSyncMode asks how this person's graph changes sync with the remote.
-func promptSyncMode(cmd *cli.Command) (model.SyncMode, error) {
-	return tui.RunSelect(tui.SelectPrompt[model.SyncMode]{
-		Reader: cmd.Reader,
-		Writer: cmd.Writer,
-		Header: "How should your graph changes sync with the remote? (↑/↓ to navigate, enter to confirm)",
-		Options: []tui.SelectOption[model.SyncMode]{
-			{Label: string(model.SyncModeManual), Hint: "you push and pull the graph yourself", Value: model.SyncModeManual},
-			{Label: string(model.SyncModeAuto), Hint: "every graph commit is pushed, upstream graph commits pulled", Value: model.SyncModeAuto},
-		},
-	})
-}
-
 // promptDialogueMode asks whether this person's agents take the choices an
 // engine session otherwise puts to them.
 func promptDialogueMode(cmd *cli.Command) (model.DialogueMode, error) {
@@ -1715,17 +1729,6 @@ func promptDialogueMode(cmd *cli.Command) (model.DialogueMode, error) {
 			{Label: string(model.DialogueGuided), Hint: "you confirm entries, pick moves and end sessions", Value: model.DialogueGuided},
 			{Label: string(model.DialogueAutonomous), Hint: "your agent decides, except overriding a failed pre-flight", Value: model.DialogueAutonomous},
 		},
-	})
-}
-
-// promptSyncInterval asks how often a running `sdd serve` syncs. Empty input
-// keeps the timer off.
-func promptSyncInterval(cmd *cli.Command) (string, error) {
-	return tui.RunTextPrompt(tui.TextPrompt{
-		Reader: cmd.Reader,
-		Writer: cmd.Writer,
-		Label:  "Sync interval for `sdd serve`, e.g. 15m (empty: no timer)",
-		Width:  60,
 	})
 }
 
@@ -1883,14 +1886,6 @@ func initCmd() *cli.Command {
 				Usage: "Raise .sdd/meta.json minimum_version to this binary's version (released builds only)",
 			},
 			&cli.StringFlag{
-				Name:  "sync-mode",
-				Usage: "Your graph sync mode, manual or auto, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
-			},
-			&cli.StringFlag{
-				Name:  "sync-interval",
-				Usage: "How often a running `sdd serve` syncs under auto sync, e.g. 15m (prompted interactively when choosing auto)",
-			},
-			&cli.StringFlag{
 				Name:  "dialogue-mode",
 				Usage: "Your dialogue mode, guided or autonomous, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
 			},
@@ -1979,7 +1974,7 @@ func initCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				cloneDir, err := repos.NewGraphClones(locations, git.GraphClones{}).Dir(graphRepo)
+				cloneDir, err := repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir(graphRepo)
 				if err != nil {
 					return err
 				}
@@ -2002,18 +1997,16 @@ func initCmd() *cli.Command {
 				projectMissing = projectCommitted == nil && setUpProject
 			}
 			freshGraph := !pointer && !sddExists || projectMissing
-			// Overlay-aware: a participant or sync mode configured globally
-			// counts as configured, so init does not ask for one.
+			// Overlay-aware: a participant or dialogue mode configured
+			// globally counts as configured, so init does not ask for one.
 			existingMerged, err := resolveConfigAt(projectSDDDir)
 			if err != nil {
 				return fmt.Errorf("resolving existing configuration before init: %w", err)
 			}
 			recordedParticipant := ""
-			var recordedSyncMode model.SyncMode
 			var recordedDialogueMode model.DialogueMode
 			if existingMerged != nil {
 				recordedParticipant = existingMerged.Participant
-				recordedSyncMode = existingMerged.Sync.Mode
 				recordedDialogueMode = existingMerged.Dialogue.Mode
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
@@ -2144,23 +2137,6 @@ func initCmd() *cli.Command {
 				targets = chosen
 			}
 
-			// Graph sync is set per person, so it is asked whenever no layer
-			// sets it, as the participant is (20261029-132422-d-tac-2sn).
-			syncMode := model.SyncMode(strings.TrimSpace(cmd.String("sync-mode")))
-			syncInterval := strings.TrimSpace(cmd.String("sync-interval"))
-			if syncMode == "" && recordedSyncMode == "" && cliout.IsTerminalReader(cmd.Reader) {
-				syncMode, err = promptSyncMode(cmd)
-				if err != nil {
-					return fmt.Errorf("prompt: %w", err)
-				}
-			}
-			if syncMode == model.SyncModeAuto && syncInterval == "" && (existingMerged == nil || existingMerged.Sync.Interval == "") && cliout.IsTerminalReader(cmd.Reader) {
-				syncInterval, err = promptSyncInterval(cmd)
-				if err != nil {
-					return fmt.Errorf("prompt: %w", err)
-				}
-			}
-
 			dialogueMode := model.DialogueMode(strings.TrimSpace(cmd.String("dialogue-mode")))
 			if dialogueMode == "" && recordedDialogueMode == "" && cliout.IsTerminalReader(cmd.Reader) {
 				dialogueMode, err = promptDialogueMode(cmd)
@@ -2180,8 +2156,6 @@ func initCmd() *cli.Command {
 				ProjectDir:      projectDir,
 				GraphRepo:       graphRepo,
 				SetUpProject:    setUpProject,
-				SyncMode:        syncMode,
-				SyncInterval:    syncInterval,
 				DialogueMode:    dialogueMode,
 				DefaultBranch:   defaultBranch,
 				Participant:     participant,
@@ -2282,10 +2256,14 @@ func initCmd() *cli.Command {
 			if graphRepo != "" {
 				icmd.RemoteURL = git.RemoteURL(repoRoot)
 			}
+			gate, err := commandGate()
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
 				Stderr:              cmd.ErrWriter,
 				Reader:              reader,
-				GraphClones:         repos.NewGraphClones(locations, git.GraphClones{}),
+				GraphClones:         repos.NewGraphClones(locations, git.GraphClones{}, gate),
 				Committer:           git.CLI{},
 				Tracker:             git.CLI{},
 				Repos:               mgr,

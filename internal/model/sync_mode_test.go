@@ -3,37 +3,11 @@ package model_test
 import (
 	"fmt"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
 )
-
-func TestSyncModeAtConfigLoad(t *testing.T) {
-	cases := []struct {
-		name string
-		yaml string
-		want model.SyncMode
-	}{
-		{name: "unset", yaml: "sync:\n  cooldown: 5m\n", want: model.SyncModeManual},
-		{name: "manual", yaml: "sync:\n  mode: manual\n", want: model.SyncModeManual},
-		{name: "auto", yaml: "sync:\n  mode: auto\n", want: model.SyncModeAuto},
-		{name: "unknown value", yaml: "sync:\n  mode: always\n", want: model.SyncModeManual},
-		{name: "wrong case", yaml: "sync:\n  mode: Auto\n", want: model.SyncModeManual},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := model.ParseConfig([]byte(tc.yaml))
-			if err != nil {
-				t.Fatalf("any mode value should load: %v", err)
-			}
-			if got := model.ResolveSyncMode(cfg); got != tc.want {
-				t.Errorf("only auto should switch sync on, got %q", got)
-			}
-		})
-	}
-}
 
 func TestIgnoredSettings(t *testing.T) {
 	cases := []struct {
@@ -51,7 +25,7 @@ func TestIgnoredSettings(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := model.IgnoredSettings(model.BaseConfig{Sync: model.SyncConfig{Mode: tc.mode}}, tc.committed)
+			got := model.IgnoredSettings(model.BaseConfig{Sync: model.SyncConfig{Mode: tc.mode}}, layerOf(tc.committed))
 			if !tc.ignored {
 				if len(got) != 0 {
 					t.Errorf("a setting the layer may make should be honored, got %v", got)
@@ -76,29 +50,6 @@ func TestHonoredCommittedDropsTheMode(t *testing.T) {
 	}
 	if model.HonoredCommitted(nil) != nil {
 		t.Error("an absent committed layer should stay absent")
-	}
-}
-
-func TestSyncModeLayering(t *testing.T) {
-	auto := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Sync: model.SyncConfig{Mode: model.SyncModeAuto}}}
-	manual := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Sync: model.SyncConfig{Mode: model.SyncModeManual}}}
-	cases := []struct {
-		name    string
-		base    *model.PerRepoConfig
-		overlay *model.PerRepoConfig
-		want    model.SyncMode
-	}{
-		{name: "higher layer overrides", base: auto, overlay: manual, want: model.SyncModeManual},
-		{name: "higher layer turns it on", base: manual, overlay: auto, want: model.SyncModeAuto},
-		{name: "unset higher layer keeps lower", base: auto, overlay: &model.PerRepoConfig{}, want: model.SyncModeAuto},
-		{name: "unset everywhere", base: &model.PerRepoConfig{}, overlay: &model.PerRepoConfig{}, want: model.SyncModeManual},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := model.ResolveSyncMode(model.MergeConfig(tc.base, tc.overlay)); got != tc.want {
-				t.Errorf("the merged mode should come from the highest layer setting it, got %q", got)
-			}
-		})
 	}
 }
 
@@ -140,53 +91,22 @@ func TestDecidePush(t *testing.T) {
 }
 
 func TestDecidePull(t *testing.T) {
-	graphOnly := model.IncomingCommits{All: 2, Graph: 2}
 	cases := []struct {
 		name        string
-		mode        model.SyncMode
 		hasUpstream bool
-		incoming    model.IncomingCommits
+		incoming    int
 		clean       bool
 		want        model.PullVerdict
 	}{
-		{name: "manual never pulls", mode: model.SyncModeManual, hasUpstream: true, incoming: graphOnly, clean: true, want: model.PullOff},
-		{name: "no upstream", mode: model.SyncModeAuto, incoming: graphOnly, clean: true, want: model.PullNoUpstream},
-		{name: "nothing incoming", mode: model.SyncModeAuto, hasUpstream: true, clean: true, want: model.PullNothing},
-		{name: "a foreign commit incoming", mode: model.SyncModeAuto, hasUpstream: true, incoming: model.IncomingCommits{All: 2, Graph: 1}, clean: true, want: model.PullForeign},
-		{name: "a graph commit changing other paths", mode: model.SyncModeAuto, hasUpstream: true, incoming: model.IncomingCommits{All: 1, Graph: 1, Outside: []string{"main.go"}}, clean: true, want: model.PullOutsideGraph},
-		{name: "dirty tree", mode: model.SyncModeAuto, hasUpstream: true, incoming: graphOnly, want: model.PullDirty},
-		{name: "only graph commits on a clean tree", mode: model.SyncModeAuto, hasUpstream: true, incoming: graphOnly, clean: true, want: model.PullReady},
+		{name: "no upstream", incoming: 2, clean: true, want: model.PullNoUpstream},
+		{name: "nothing incoming", hasUpstream: true, clean: true, want: model.PullNothing},
+		{name: "dirty tree", hasUpstream: true, incoming: 2, want: model.PullDirty},
+		{name: "commits incoming on a clean tree", hasUpstream: true, incoming: 2, clean: true, want: model.PullReady},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := model.DecidePull(tc.mode, tc.hasUpstream, tc.incoming, tc.clean); got != tc.want {
-				t.Errorf("the pull verdict should follow mode, upstream, incoming commits and tree state, got %q", got)
-			}
-		})
-	}
-}
-
-func TestOutsideGraphPaths(t *testing.T) {
-	cases := []struct {
-		name     string
-		paths    []string
-		graphDir string
-		want     []string
-	}{
-		{name: "graph entries", paths: []string{".sdd/graph/2026/10/27-1-s-tac-a.md"}, graphDir: ".sdd/graph"},
-		{name: "graph directory outside .sdd", paths: []string{"decisions/2026/10/a.md"}, graphDir: "decisions"},
-		{name: "graph at the repository root", paths: []string{"2026/10/a.md", "notes.txt"}, graphDir: "."},
-		{name: "graph directory with a trailing slash", paths: []string{"decisions/a.md"}, graphDir: "decisions/"},
-		{name: "schema record, skills and gitignore", paths: []string{".sdd/meta.json", ".claude/skills/sdd/SKILL.md", ".agents/skills/sdd/SKILL.md", ".gitignore"}, graphDir: ".sdd/graph"},
-		{name: "sdd config and local state", paths: []string{".sdd/config.yaml", ".sdd/config.local.yaml", ".sdd/sessions/s.json", ".sdd/graph/a.md"}, graphDir: ".sdd/graph", want: []string{".sdd/config.yaml", ".sdd/config.local.yaml", ".sdd/sessions/s.json"}},
-		{name: "code", paths: []string{".sdd/graph/a.md", "main.go", ".claude/settings.json"}, graphDir: ".sdd/graph", want: []string{"main.go", ".claude/settings.json"}},
-		{name: "a prefix that is not a directory", paths: []string{"decisions-old/a.md"}, graphDir: "decisions", want: []string{"decisions-old/a.md"}},
-		{name: "a nested gitignore", paths: []string{"src/.gitignore"}, graphDir: ".sdd/graph", want: []string{"src/.gitignore"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := model.OutsideGraphPaths(tc.paths, tc.graphDir); !slices.Equal(got, tc.want) {
-				t.Errorf("only paths sdd never writes should be outside, got %v", got)
+			if got := model.DecidePull(tc.hasUpstream, tc.incoming, tc.clean); got != tc.want {
+				t.Errorf("the pull verdict should follow upstream, incoming commits and tree state, got %q", got)
 			}
 		})
 	}

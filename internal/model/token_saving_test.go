@@ -74,7 +74,7 @@ func TestTokenSavingIsReportedOnPerRepoLayers(t *testing.T) {
 	if got := model.PerRepoIgnoredSettings(model.BaseConfig{}); len(got) != 0 {
 		t.Errorf("a per-repo layer leaving it unset should report nothing, got %+v", got)
 	}
-	if got := model.IgnoredSettings(model.BaseConfig{Sessions: model.SessionsConfig{TokenSaving: "maybe"}}, false); len(got) != 1 {
+	if got := model.IgnoredSettings(model.BaseConfig{Sessions: model.SessionsConfig{TokenSaving: "maybe"}}, model.ConfigSourceProject); len(got) != 1 {
 		t.Errorf("an unknown value should be reported on any layer, got %+v", got)
 	}
 }

@@ -6,6 +6,7 @@ import "testing"
 // the package sees which cache a finder holds.
 func TestGraphCacheSwitchesOff(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Setenv("SDD_GRAPH_CACHE", "off")
 	cache, err := defaultGraphCache()
 	if err != nil {

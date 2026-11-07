@@ -80,139 +80,78 @@ func captureArgs() []string {
 	}
 }
 
-func TestCaptureReachesUpstreamUnderAutoSync(t *testing.T) {
-	root := syncedProject(t, "auto")
-	out, err := runAppErr(t, root, captureArgs()...)
-	if err != nil {
-		t.Fatalf("capture should succeed: %v\n%s", err, out)
+// A graph inside the code repository never syncs automatically, whatever
+// sync.mode says, so a capture stays local however the branch stands.
+func TestCaptureStaysLocalInTheCodeRepository(t *testing.T) {
+	cases := []struct {
+		name    string
+		mode    string
+		prepare func(t *testing.T, root string)
+	}{
+		{name: "mode unset"},
+		{name: "mode manual", mode: "manual"},
+		{name: "mode auto", mode: "auto"},
+		{name: "mode auto behind a foreign commit", mode: "auto", prepare: func(t *testing.T, root string) {
+			writeFile(t, filepath.Join(root, "code.go"), "package code\n")
+			gitIn(t, root, "add", "code.go")
+			gitIn(t, root, "commit", "-q", "-m", "feat: add code")
+		}},
+		{name: "mode auto without upstream", mode: "auto", prepare: func(t *testing.T, root string) {
+			gitIn(t, root, "branch", "--unset-upstream")
+		}},
+		{name: "mode auto with the remote gone", mode: "auto", prepare: func(t *testing.T, root string) {
+			gitIn(t, root, "remote", "set-url", "origin", filepath.Join(filepath.Dir(root), "missing.git"))
+		}},
 	}
-	if !strings.HasPrefix(remoteHead(t, root), localHead(t, root)) {
-		t.Error("the capture commit should reach the upstream before the command returns")
-	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := syncedProject(t, tc.mode)
+			bare := strings.TrimSpace(gitIn(t, root, "remote", "get-url", "origin"))
+			before := gitIn(t, root, "ls-remote", bare, "HEAD")
+			if tc.prepare != nil {
+				tc.prepare(t, root)
+			}
 
-func TestCaptureStaysLocalUnderManualSync(t *testing.T) {
-	for _, mode := range []string{"", "manual"} {
-		t.Run("mode "+mode, func(t *testing.T) {
-			root := syncedProject(t, mode)
-			before := remoteHead(t, root)
-			runApp(t, root, captureArgs()...)
-			if remoteHead(t, root) != before {
-				t.Error("manual sync should push nothing")
+			out, err := runAppErr(t, root, captureArgs()...)
+			if err != nil {
+				t.Fatalf("capture should succeed: %v\n%s", err, out)
+			}
+			if gitIn(t, root, "ls-remote", bare, "HEAD") != before {
+				t.Error("a capture in the code repository should push nothing")
+			}
+			if strings.Contains(out, "sync blocked") || strings.Contains(out, "graph commits stay unpublished") {
+				t.Errorf("a graph without automatic sync should report no blocked sync, got %q", out)
+			}
+			if !strings.HasPrefix(headSubject(t, root), "sdd: ") {
+				t.Error("the capture should commit locally")
 			}
 		})
 	}
 }
 
-func TestCaptureHeldBehindAForeignCommit(t *testing.T) {
-	root := syncedProject(t, "auto")
-	writeFile(t, filepath.Join(root, "code.go"), "package code\n")
-	gitIn(t, root, "add", "code.go")
-	gitIn(t, root, "commit", "-q", "-m", "feat: add code")
-	before := remoteHead(t, root)
-
-	out, err := runAppErr(t, root, captureArgs()...)
-	if err != nil {
-		t.Fatalf("capture should succeed: %v\n%s", err, out)
-	}
-	if remoteHead(t, root) != before {
-		t.Error("a commit not written by sdd ahead of upstream should keep everything local")
-	}
-	if !strings.Contains(out, "graph commits stay unpublished") {
-		t.Errorf("the held capture should be reported, got %q", out)
-	}
-}
-
-func TestCaptureWithoutUpstreamIsReported(t *testing.T) {
-	root := syncedProject(t, "auto")
-	gitIn(t, root, "branch", "--unset-upstream")
-
-	out, err := runAppErr(t, root, captureArgs()...)
-	if err != nil {
-		t.Fatalf("capture should succeed: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "graph commits stay unpublished") || !strings.Contains(out, "no upstream") {
-		t.Errorf("a branch without upstream should be reported, got %q", out)
-	}
-}
-
-func TestFailedPushIsReportedAndKeepsTheCommit(t *testing.T) {
-	root := syncedProject(t, "auto")
-	gitIn(t, root, "remote", "set-url", "origin", filepath.Join(filepath.Dir(root), "missing.git"))
-
-	out, err := runAppErr(t, root, captureArgs()...)
-	if err != nil {
-		t.Fatalf("a failed push should be reported, not fail the command: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "sync blocked since") {
-		t.Errorf("the failed push should be reported as a blocked sync, got %q", out)
-	}
-	if !strings.HasPrefix(headSubject(t, root), "sdd: ") {
-		t.Error("the capture commit should stay after a failed push")
-	}
-	if len(graphEntries(t, filepath.Join(root, ".sdd", "graph"))) != 1 {
-		t.Error("the entry file should stay after a failed push")
-	}
-}
-
-func TestUpstreamGraphCommitsArriveOnTheSyncCheck(t *testing.T) {
-	root := syncedProject(t, "auto")
-	theirs := upstreamCommit(t, root, "sdd: capture elsewhere", ".sdd/graph/elsewhere.md")
-
-	out, err := runAppErr(t, root, captureArgs()...)
-	if err != nil {
-		t.Fatalf("capture should succeed: %v\n%s", err, out)
-	}
-	if !contains(t, root, theirs) {
-		t.Error("the upstream graph commit should be merged before the command runs")
-	}
-	if !strings.HasPrefix(remoteHead(t, root), localHead(t, root)) {
-		t.Error("the capture after the pull should reach the upstream")
-	}
-}
-
-func TestDivergedGraphMergesWithAGraphCommit(t *testing.T) {
-	root := syncedProject(t, "auto")
-	writeFile(t, filepath.Join(root, ".sdd", "graph", "local.md"), "local\n")
-	gitIn(t, root, "add", ".sdd/graph/local.md")
-	gitIn(t, root, "commit", "-q", "-m", "sdd: capture here")
-	theirs := upstreamCommit(t, root, "sdd: capture elsewhere", ".sdd/graph/elsewhere.md")
-
-	out, err := runAppErr(t, root, "view", "--layout", "layer(tac):as-list")
-	if err != nil {
-		t.Fatalf("view should succeed: %v\n%s", err, out)
-	}
-	if !contains(t, root, theirs) {
-		t.Fatalf("the upstream graph commit should be merged, got %q", out)
-	}
-	if subject := headSubject(t, root); !strings.HasPrefix(subject, "sdd: merge") {
-		t.Errorf("the merge commit should carry a graph subject, got %q", subject)
-	}
-	if !strings.HasPrefix(remoteHead(t, root), localHead(t, root)) {
-		t.Error("the merge should be published")
-	}
-}
-
-func TestPullHeldAndReported(t *testing.T) {
+// The background check still fetches a graph inside the code repository and
+// reports what the upstream holds, but never merges it.
+func TestUpstreamGraphCommitsAreFetchedNeverMerged(t *testing.T) {
 	cases := []struct {
 		name    string
 		subject string
 		file    string
-		dirty   bool
-		report  string
+		local   bool
 	}{
-		{name: "a foreign commit upstream", subject: "feat: change code", file: "main.go", report: "not written by sdd"},
-		{name: "a dirty working tree", subject: "sdd: capture elsewhere", file: ".sdd/graph/elsewhere.md", dirty: true, report: "uncommitted changes"},
-		{name: "a graph commit changing code", subject: "sdd: capture elsewhere", file: "main.go", report: `changes "main.go", outside the graph`},
-		{name: "a graph commit changing the project config", subject: "sdd: widen the graph", file: ".sdd/config.yaml", report: `changes ".sdd/config.yaml", outside the graph`},
+		{name: "a graph commit", subject: "sdd: capture elsewhere", file: ".sdd/graph/elsewhere.md"},
+		{name: "a graph commit beside a local one", subject: "sdd: capture elsewhere", file: ".sdd/graph/elsewhere.md", local: true},
+		{name: "a foreign commit", subject: "feat: change code", file: "main.go"},
+		{name: "a graph commit changing code", subject: "sdd: capture elsewhere", file: "main.go"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := syncedProject(t, "auto")
-			theirs := upstreamCommit(t, root, tc.subject, tc.file)
-			if tc.dirty {
-				writeFile(t, filepath.Join(root, "seed.txt"), "edited\n")
+			if tc.local {
+				writeFile(t, filepath.Join(root, ".sdd", "graph", "local.md"), "local\n")
+				gitIn(t, root, "add", ".sdd/graph/local.md")
+				gitIn(t, root, "commit", "-q", "-m", "sdd: capture here")
 			}
+			theirs := upstreamCommit(t, root, tc.subject, tc.file)
 			before := localHead(t, root)
 
 			out, err := runAppErr(t, root, "view", "--layout", "layer(tac):as-list")
@@ -220,21 +159,12 @@ func TestPullHeldAndReported(t *testing.T) {
 				t.Fatalf("view should succeed: %v\n%s", err, out)
 			}
 			if localHead(t, root) != before || contains(t, root, theirs) {
-				t.Error("nothing should be merged")
+				t.Error("nothing upstream should be merged into the code repository")
 			}
-			if !strings.Contains(out, tc.report) {
-				t.Errorf("the held pull should be reported, got %q", out)
+			if !fetched(root, theirs) {
+				t.Error("the background check should still fetch the upstream")
 			}
 		})
-	}
-}
-
-func TestManualSyncNeverPulls(t *testing.T) {
-	root := syncedProject(t, "manual")
-	theirs := upstreamCommit(t, root, "sdd: capture elsewhere", ".sdd/graph/elsewhere.md")
-	runApp(t, root, "view", "--layout", "layer(tac):as-list")
-	if contains(t, root, theirs) {
-		t.Error("manual sync should merge nothing")
 	}
 }
 
@@ -253,93 +183,17 @@ func TestConflictingUpstreamIsReportedAndNothingMerged(t *testing.T) {
 	if localHead(t, root) != before || contains(t, root, theirs) {
 		t.Error("a conflicting upstream should leave the branch as it was")
 	}
-	if status := gitIn(t, root, "status", "--porcelain"); status != "" {
-		t.Errorf("the working tree should stay clean, got %q", status)
+	if !regexp.MustCompile(`sync: merge would conflict in \S*shared\.md`).MatchString(out) {
+		t.Errorf("the status line should name the conflicting path, got %q", out)
 	}
-	if !regexp.MustCompile(`merging origin/\S+ would conflict in "\S*shared\.md"; automatic sync is paused`).MatchString(out) {
-		t.Errorf("the pull should name the conflicting path and the pause, got %q", out)
-	}
-}
-
-// holdSyncCheck keeps the background check from fetching, so a push meets an
-// upstream this checkout has not seen.
-func holdSyncCheck(t *testing.T, root string) {
-	t.Helper()
-	writeFile(t, filepath.Join(root, ".sdd", "config.local.yaml"), "participant: Ada\nsync:\n  cooldown: 1h\n  mode: auto\n")
-	writeFile(t, filepath.Join(root, ".sdd", "tmp", "last-fetch"), "")
-}
-
-func TestRejectedPushMergesUpstreamAndPushesAgain(t *testing.T) {
-	root := syncedProject(t, "auto")
-	holdSyncCheck(t, root)
-	theirs := upstreamCommit(t, root, "sdd: capture elsewhere", ".sdd/graph/elsewhere.md")
-
-	out, err := runAppErr(t, root, captureArgs()...)
-	if err != nil {
-		t.Fatalf("a push rejected for upstream graph commits should be retried: %v\n%s", err, out)
-	}
-	if !contains(t, root, theirs) {
-		t.Error("the upstream graph commit should be merged by the retry")
-	}
-	if subject := headSubject(t, root); !strings.HasPrefix(subject, "sdd: merge") {
-		t.Errorf("the retry should merge with a graph subject, got %q", subject)
-	}
-	if !strings.HasPrefix(remoteHead(t, root), localHead(t, root)) {
-		t.Error("the capture should reach the upstream after the retry")
+	if strings.Contains(out, "automatic sync is paused") {
+		t.Errorf("a graph without automatic sync should record no pause, got %q", out)
 	}
 }
 
-func TestRejectedPushIsReportedWhenUpstreamCannotMerge(t *testing.T) {
-	root := syncedProject(t, "auto")
-	holdSyncCheck(t, root)
-	upstreamCommit(t, root, "feat: change code", "main.go")
-
-	out, err := runAppErr(t, root, captureArgs()...)
-	if err != nil {
-		t.Fatalf("a retry that cannot merge should be reported, not fail the command: %v\n%s", err, out)
-	}
-	if !strings.HasPrefix(headSubject(t, root), "sdd: signal") {
-		t.Error("the capture commit should stay after the failed retry")
-	}
-	if !strings.Contains(out, "not written by sdd") {
-		t.Errorf("the held merge should be reported, got %q", out)
-	}
-}
-
-func TestPullHeldForAMergeChangingCode(t *testing.T) {
-	root := syncedProject(t, "auto")
-	remote := strings.TrimSpace(gitIn(t, root, "remote", "get-url", "origin"))
-	other := filepath.Join(canonicalTemp(t), "other")
-	gitIn(t, filepath.Dir(other), "clone", "-q", remote, other)
-	gitIn(t, other, "config", "user.email", "other@example.com")
-	gitIn(t, other, "config", "user.name", "Other")
-	gitIn(t, other, "checkout", "-q", "-b", "side")
-	writeFile(t, filepath.Join(other, ".sdd", "graph", "side.md"), "side\n")
-	gitIn(t, other, "add", ".sdd/graph/side.md")
-	gitIn(t, other, "commit", "-q", "-m", "sdd: capture on a side branch")
-	gitIn(t, other, "checkout", "-q", "-")
-	gitIn(t, other, "merge", "-q", "--no-ff", "--no-commit", "side")
-	writeFile(t, filepath.Join(other, "main.go"), "package main\n")
-	gitIn(t, other, "add", "main.go")
-	gitIn(t, other, "commit", "-q", "-m", "sdd: merge side")
-	gitIn(t, other, "push", "-q")
-	before := localHead(t, root)
-
-	out, err := runAppErr(t, root, "view", "--layout", "layer(tac):as-list")
-	if err != nil {
-		t.Fatalf("view should succeed: %v\n%s", err, out)
-	}
-	if localHead(t, root) != before {
-		t.Error("a merge commit changing code should hold the pull")
-	}
-	if !strings.Contains(out, `changes "main.go", outside the graph`) {
-		t.Errorf("the held pull should name the path the merge changed, got %q", out)
-	}
-}
-
-// The server pulls upstream graph commits when a session acts, not only when
-// the server starts.
-func TestServedSessionPullsUpstreamGraphCommits(t *testing.T) {
+// A served session leaves a graph inside the code repository as it is: only a
+// graph clone syncs automatically.
+func TestServedSessionLeavesTheCodeRepositoryGraph(t *testing.T) {
 	root := syncedProject(t, "auto")
 	branch := strings.TrimSpace(gitIn(t, root, "rev-parse", "--abbrev-ref", "HEAD"))
 	writeFile(t, filepath.Join(root, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/synced\nlanguage: en\ndefault_branch: "+branch+"\n")
@@ -348,6 +202,7 @@ func TestServedSessionPullsUpstreamGraphCommits(t *testing.T) {
 	t.Chdir(root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, ".sdd", "tmp", "xdg-config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, ".sdd", "tmp", "xdg-cache"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(root, ".sdd", "tmp", "xdg-data"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, ".sdd", "tmp", "xdg-state"))
 	fixture := &appFixture{root: root}
 
@@ -362,8 +217,8 @@ func TestServedSessionPullsUpstreamGraphCommits(t *testing.T) {
 		if err != nil || info.IsError {
 			t.Fatalf("info: %v %+v", err, info)
 		}
-		if localHead(t, root) != theirs {
-			t.Error("a session call should bring upstream graph commits into the branch")
+		if contains(t, root, theirs) {
+			t.Error("a session call should merge nothing into a graph inside the code repository")
 		}
 	})
 }
@@ -377,7 +232,9 @@ func workRepoState(t *testing.T, work string) string {
 		gitIn(t, work, "ls-files", "--stage")
 }
 
-func TestPointedProjectSyncLeavesTheWorkRepositoryAlone(t *testing.T) {
+// A project kept in a repository of its own beside the work is no graph clone:
+// it never syncs automatically, and the work repository stays untouched.
+func TestPointedProjectNeverSyncsAutomatically(t *testing.T) {
 	work, project := pointedRepos(t)
 	base := filepath.Dir(work)
 	for _, repo := range []string{work, project} {
@@ -397,17 +254,18 @@ func TestPointedProjectSyncLeavesTheWorkRepositoryAlone(t *testing.T) {
 	upstreamCommit(t, work, "feat: work elsewhere", "elsewhere.go")
 	theirs := upstreamCommit(t, project, "sdd: capture elsewhere", ".sdd/graph/elsewhere.md")
 	before := workRepoState(t, work)
+	published := remoteHead(t, project)
 
 	out, err := runAppErr(t, work, captureArgs()...)
 	if err != nil {
 		t.Fatalf("capture: %v\n%s", err, out)
 	}
 
-	if !contains(t, project, theirs) {
-		t.Error("the graph repository should pull its upstream graph commits")
+	if contains(t, project, theirs) {
+		t.Error("the project repository should merge nothing on its own")
 	}
-	if !strings.HasPrefix(remoteHead(t, project), localHead(t, project)) {
-		t.Error("the graph repository should push the capture")
+	if remoteHead(t, project) != published {
+		t.Error("the project repository should push nothing on its own")
 	}
 	if workRepoState(t, work) != before {
 		t.Error("a sync should leave the work repository's HEAD, refs and index unchanged")
@@ -425,5 +283,40 @@ func TestCaptureIntoAnotherGraphStaysLocal(t *testing.T) {
 	}
 	if remoteHead(t, other) != before {
 		t.Error("a capture into a graph outside the project should not push under the project's sync mode")
+	}
+}
+
+// deferFetches makes the gate's record hold the next fetch of the code
+// repository's origin, moved to a host that is never reached.
+func deferFetches(t *testing.T, root string) {
+	t.Helper()
+	gitIn(t, root, "remote", "set-url", "origin", "https://example.invalid/acme/graph.git")
+	writeFile(t, filepath.Join(root, "xdg-state", "sdd", "remotes.json"),
+		`{"version":1,"buckets":{},"repos":{"example.invalid/acme/graph":{"protocol":"https","fetch":{"retries_used":0,"next":"2099-01-01T00:00:00Z"}}}}`)
+}
+
+func TestCommandedSyncReportsADeferredPull(t *testing.T) {
+	root := syncedProject(t, "")
+	deferFetches(t, root)
+
+	out, err := runAppErr(t, root, "sync", "--pull")
+	if err != nil {
+		t.Fatalf("a deferred pull should be a skip, not a failure: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "sync: pull skipped, next allowed at") {
+		t.Errorf("the commanded sync should say it skipped and when it may run, got %q", out)
+	}
+}
+
+func TestBackgroundCheckKeepsADeferralSilent(t *testing.T) {
+	root := syncedProject(t, "")
+	deferFetches(t, root)
+
+	out, err := runAppErr(t, root, "view", "--layout", "layer(tac):as-list")
+	if err != nil {
+		t.Fatalf("view should succeed: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "sync") {
+		t.Errorf("a deferred background fetch should print nothing, got %q", out)
 	}
 }

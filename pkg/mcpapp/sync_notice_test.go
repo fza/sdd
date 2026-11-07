@@ -59,8 +59,8 @@ func (s *testGraphSync) BackfillTitles(context.Context, string, sdd.SyncTrigger,
 	return nil
 }
 
-func (s *testGraphSync) SyncInterval(context.Context, string) (time.Duration, bool, error) {
-	return 0, false, nil
+func (s *testGraphSync) SyncDue(context.Context, string) (bool, error) {
+	return false, nil
 }
 
 func (s *testGraphSync) SyncBlocked(context.Context, string) (*sdd.SyncBlocked, error) {

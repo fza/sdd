@@ -10,6 +10,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/handlers/synctest"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
@@ -23,13 +24,38 @@ type countingCommitter struct{ calls int }
 
 func (c *countingCommitter) Commit(string, ...string) error { c.calls++; return nil }
 
-// fakeGit is a no-op git for cross-repo cache tests: the cache is seeded
-// pre-cloned on disk, so Clone is never reached and PullFFOnly just counts
-// invocations (the cooldown pull EnsureReposFresh performs on a fresh read).
-type fakeGit struct{ pulls int }
+// fakeGit is a no-op git for connected-clone tests: a clone creates .git
+// and nothing reaches a remote.
+type fakeGit struct{ clones int }
 
-func (f *fakeGit) Clone(context.Context, string, string) error { return nil }
-func (f *fakeGit) PullFFOnly(context.Context, string) error    { f.pulls++; return nil }
+func (f *fakeGit) CloneGraph(_ context.Context, _ model.RepoID, _ model.CloneSource, dir string, _ []string) error {
+	f.clones++
+	return os.MkdirAll(filepath.Join(dir, ".git"), 0o755)
+}
+func (f *fakeGit) SparseCone(context.Context, string) ([]string, error) {
+	return model.GraphCloneCone(""), nil
+}
+func (f *fakeGit) SetSparseCone(context.Context, string, []string) error  { return nil }
+func (f *fakeGit) KeepGraphClone(context.Context, string, []string) error { return nil }
+func (f *fakeGit) PushGraphClone(context.Context, string) error           { return nil }
+func (f *fakeGit) RemoteURL(context.Context, string) (string, error) {
+	return "git@github.com:networkteam/other.git", nil
+}
+func (f *fakeGit) ExpandURL(_ context.Context, url string) (string, error) { return url, nil }
+
+// fakeRound counts the rounds it runs, always due.
+type fakeRound struct{ rounds int }
+
+func (r *fakeRound) SyncClone(context.Context, string, *command.SyncRoundCmd) error {
+	r.rounds++
+	return nil
+}
+func (r *fakeRound) Due(context.Context, string) (bool, error) { return true, nil }
+
+func testManager(t *testing.T, loc repos.Locations, git repos.GraphCloneGit) *repos.Manager {
+	t.Helper()
+	return repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, synctest.Gate(t.TempDir(), nil)))
+}
 
 // newRepoTestHandler seeds a handler whose global config already holds a
 // connection — the declaration-only path of RepoAdd (no clone involved).
@@ -39,6 +65,7 @@ func newRepoTestHandler(t *testing.T, repoConfig string) (*Handler, string) {
 	loc := repos.Locations{
 		ConfigPath: filepath.Join(dir, "xdg", "sdd", "config.yaml"),
 		CacheRoot:  filepath.Join(dir, "cache"),
+		DataRoot:   filepath.Join(dir, "data"),
 	}
 	gcfg := &repos.GlobalConfig{}
 	if err := gcfg.AddRepo(repos.ConnectedRepo{RepoID: "github.com/networkteam/other", CloneURL: "git@github.com:networkteam/other.git"}); err != nil {
@@ -54,8 +81,7 @@ func newRepoTestHandler(t *testing.T, repoConfig string) (*Handler, string) {
 			t.Fatal(err)
 		}
 	}
-	reg := repos.NewRegistry(loc)
-	return New(Options{SDDDir: sddDir, Repos: repos.NewManager(reg, git.CLI{})}), sddDir
+	return New(Options{SDDDir: sddDir, Repos: testManager(t, loc, git.GraphClones{})}), sddDir
 }
 
 // Re-running repo add against an already-connected URL is the upgrade path:
@@ -98,8 +124,8 @@ func TestRepoAdd_DeclaresDependencyForExistingConnection(t *testing.T) {
 	}
 }
 
-// Freshening a cross-repo cache reports a phase-true stage — connecting then
-// cloning on a first clone (mirroring RepoAdd), syncing on a due pull — and
+// Freshening a connected repo reports a phase-true stage — connecting then
+// cloning on a first clone (mirroring RepoAdd), syncing on a due round — and
 // never indexing (that stage belongs to embedding, which text-only search does
 // not run). This is the s-tac-jbm fix at the layer that knows the transitions.
 func TestEnsureReposFresh_ReportsPhaseNotIndexing(t *testing.T) {
@@ -109,18 +135,18 @@ func TestEnsureReposFresh_ReportsPhaseNotIndexing(t *testing.T) {
 		loc := repos.Locations{
 			ConfigPath: filepath.Join(dir, "xdg", "sdd", "config.yaml"),
 			CacheRoot:  filepath.Join(dir, "cache"),
+			DataRoot:   filepath.Join(dir, "data"),
 		}
 		gcfg := &repos.GlobalConfig{}
 		if err := gcfg.AddRepo(repos.ConnectedRepo{RepoID: repoID, CloneURL: "git@github.com:networkteam/other.git"}); err != nil {
 			t.Fatal(err)
 		}
 		repostest.WriteConfig(t, loc.ConfigPath, gcfg)
-		reg := repos.NewRegistry(loc)
-		cacheDir, err := reg.CacheDir(repoID)
+		cloneDir, err := repos.NewRegistry(loc).CloneDir(repoID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return New(Options{Repos: repos.NewManager(reg, &fakeGit{})}), cacheDir
+		return New(Options{Repos: testManager(t, loc, &fakeGit{}), CloneRound: &fakeRound{}}), cloneDir
 	}
 
 	capture := func(t *testing.T, h *Handler) []model.Phase {
@@ -144,13 +170,13 @@ func TestEnsureReposFresh_ReportsPhaseNotIndexing(t *testing.T) {
 		}
 	})
 
-	t.Run("due pull reports syncing", func(t *testing.T) {
-		h, cacheDir := newHandler(t)
-		if err := os.MkdirAll(filepath.Join(cacheDir, ".git"), 0o755); err != nil {
+	t.Run("due round reports syncing", func(t *testing.T) {
+		h, cloneDir := newHandler(t)
+		if err := os.MkdirAll(filepath.Join(cloneDir, ".git"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		if phases := capture(t, h); !slices.Contains(phases, model.PhaseSyncing) {
-			t.Errorf("a due pull should report syncing; got %v", phases)
+			t.Errorf("a due round should report syncing; got %v", phases)
 		}
 	})
 }
@@ -162,9 +188,10 @@ func TestRepoAdd_ClonePathReportsConnectingThenCloning(t *testing.T) {
 	loc := repos.Locations{
 		ConfigPath: filepath.Join(dir, "xdg", "sdd", "config.yaml"),
 		CacheRoot:  filepath.Join(dir, "cache"),
+		DataRoot:   filepath.Join(dir, "data"),
 	}
 	repostest.WriteConfig(t, loc.ConfigPath, &repos.GlobalConfig{})
-	h := New(Options{Repos: repos.NewManager(repos.NewRegistry(loc), &fakeGit{})})
+	h := New(Options{Repos: testManager(t, loc, &fakeGit{})})
 
 	// The fake clone leaves no config to read, so RepoAdd errors after cloning;
 	// the phase sequence up to the clone is what we assert.
@@ -179,16 +206,16 @@ func TestRepoAdd_ClonePathReportsConnectingThenCloning(t *testing.T) {
 }
 
 // BuildConnectedIndexes is the shared spine behind `sdd index --repo` and a
-// cross-repo search's fill step: it freshens the connected caches and fills
-// each member's index under the shared embedder, forwarding progress. This
-// exercises a pre-cloned member end to end — the cooldown pull runs, the
-// member index is written under (repo-id, fingerprint), and the fill
-// callbacks report the repo and its chunks.
+// cross-repo search's fill step: it fills each member's index under the
+// shared embedder, forwarding progress. This exercises a pre-cloned member
+// end to end — no round runs, the member index is written under (repo-id,
+// fingerprint), and the fill callbacks report the repo and its chunks.
 func TestBuildConnectedIndexes_Fills(t *testing.T) {
 	dir := t.TempDir()
 	loc := repos.Locations{
 		ConfigPath: filepath.Join(dir, "xdg", "sdd", "config.yaml"),
 		CacheRoot:  filepath.Join(dir, "cache"),
+		DataRoot:   filepath.Join(dir, "data"),
 	}
 	const repoID = "github.com/networkteam/other"
 
@@ -199,16 +226,16 @@ func TestBuildConnectedIndexes_Fills(t *testing.T) {
 	repostest.WriteConfig(t, loc.ConfigPath, gcfg)
 
 	reg := repos.NewRegistry(loc)
-	cacheDir, err := reg.CacheDir(repoID)
+	cloneDir, err := reg.CloneDir(repoID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Seed a pre-cloned cache: a .git marker (so IsCloned is true), the
+	// Seed a pre-made clone: a .git marker (so IsCloned is true), the
 	// committed config declaring the identity + graph dir, and one entry.
-	if err := os.MkdirAll(filepath.Join(cacheDir, ".git"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(cloneDir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	memberSDD := filepath.Join(cacheDir, ".sdd")
+	memberSDD := filepath.Join(cloneDir, ".sdd")
 	if err := os.MkdirAll(memberSDD, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -216,11 +243,11 @@ func TestBuildConnectedIndexes_Fills(t *testing.T) {
 		[]byte("repo_id: "+repoID+"\ngraph_dir: .sdd/graph\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	writeEntry(t, filepath.Join(cacheDir, ".sdd", "graph"),
+	writeEntry(t, filepath.Join(cloneDir, ".sdd", "graph"),
 		"20260101-100000-s-tac-aaa", "## A\nMember entry body.", "Member summary.")
 
-	fg := &fakeGit{}
-	h := New(Options{Reader: readFinderFor(t), Repos: repos.NewManager(reg, fg)})
+	round := &fakeRound{}
+	h := New(Options{Reader: readFinderFor(t), Repos: testManager(t, loc, &fakeGit{}), CloneRound: round})
 
 	emb := &fakeEmbedder{}
 	var startedRepos []model.RepoID
@@ -234,8 +261,8 @@ func TestBuildConnectedIndexes_Fills(t *testing.T) {
 		t.Fatalf("BuildConnectedIndexes: %v", err)
 	}
 
-	if fg.pulls != 0 {
-		t.Errorf("BuildConnectedIndexes pulled %d time(s); its callers refresh first", fg.pulls)
+	if round.rounds != 0 {
+		t.Error("BuildConnectedIndexes should run no round; its callers refresh first")
 	}
 	if len(startedRepos) != 1 || startedRepos[0] != repoID {
 		t.Errorf("OnRepoStart calls = %v, want [%s]", startedRepos, repoID)
@@ -248,7 +275,7 @@ func TestBuildConnectedIndexes_Fills(t *testing.T) {
 	}
 
 	// The member index lives under the machine-global (repo-id, fingerprint)
-	// store, not inside the cache clone.
+	// store, not inside the clone.
 	idxDir := index.StoreDir(loc.CacheRoot, repoID, emb.Fingerprint())
 	manifest, err := index.LoadManifest(idxDir)
 	if err != nil {
@@ -267,6 +294,7 @@ func TestBuildConnectedIndexes_ForceRebuildsMembers(t *testing.T) {
 	loc := repos.Locations{
 		ConfigPath: filepath.Join(dir, "xdg", "sdd", "config.yaml"),
 		CacheRoot:  filepath.Join(dir, "cache"),
+		DataRoot:   filepath.Join(dir, "data"),
 	}
 	const repoID = "github.com/networkteam/other"
 
@@ -276,14 +304,14 @@ func TestBuildConnectedIndexes_ForceRebuildsMembers(t *testing.T) {
 	}
 	repostest.WriteConfig(t, loc.ConfigPath, gcfg)
 	reg := repos.NewRegistry(loc)
-	cacheDir, err := reg.CacheDir(repoID)
+	cloneDir, err := reg.CloneDir(repoID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(cacheDir, ".git"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(cloneDir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	memberSDD := filepath.Join(cacheDir, ".sdd")
+	memberSDD := filepath.Join(cloneDir, ".sdd")
 	if err := os.MkdirAll(memberSDD, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -291,10 +319,10 @@ func TestBuildConnectedIndexes_ForceRebuildsMembers(t *testing.T) {
 		[]byte("repo_id: "+repoID+"\ngraph_dir: .sdd/graph\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	writeEntry(t, filepath.Join(cacheDir, ".sdd", "graph"),
+	writeEntry(t, filepath.Join(cloneDir, ".sdd", "graph"),
 		"20260101-100000-s-tac-aaa", "## A\nMember entry body.", "Member summary.")
 
-	h := New(Options{Reader: readFinderFor(t), Repos: repos.NewManager(reg, &fakeGit{})})
+	h := New(Options{Reader: readFinderFor(t), Repos: testManager(t, loc, &fakeGit{})})
 	emb := &fakeEmbedder{}
 
 	// First fill populates the member index + manifest.

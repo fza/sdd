@@ -41,6 +41,14 @@ var configDefaults = map[string]string{
 	"sync.mode":           string(SyncModeManual),
 	"dialogue.mode":       string(DialogueGuided),
 
+	"sync.default.fetch_cooldown":                 DefaultGitFetchCooldown.String(),
+	"sync.default.push_cooldown":                  DefaultGitPushCooldown.String(),
+	"sync.default.retries":                        strconv.Itoa(DefaultGitRetries),
+	"sync.default.concurrency":                    strconv.Itoa(DefaultGitConcurrency),
+	"sync.default.ssh.per_hour":                   strconv.Itoa(DefaultGitSSHPerHour),
+	"sync.default.https.per_hour":                 strconv.Itoa(DefaultGitHTTPSPerHour),
+	"sync.default.https.per_hour_unauthenticated": strconv.Itoa(DefaultGitHTTPSUnauthenticatedPerHour),
+
 	"sessions.retention":    DefaultSessionRetention,
 	"sessions.token_saving": TokenSavingOn,
 }

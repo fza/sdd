@@ -438,6 +438,30 @@
     "name": "start_session"
   },
   {
+    "description": "Run the sync round of the connected repositories (session required): each repository's sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to name them; omitted, every connected repository syncs. Returns one outcome per repository.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "repos": {
+          "description": "connected repositories to sync, by repo ID; omitted, every repository connected on this machine",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "session": {
+          "description": "session handle this connection is attached to (from start_session or resume_session); required; the sync runs for that session's home project",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "sync_repos"
+  },
+  {
     "description": "Run an sdd view layout pipeline over the graph — overview sections, topic counts, ranked lists. A free read within the session named by session (required).",
     "inputSchema": {
       "additionalProperties": false,

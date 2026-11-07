@@ -179,6 +179,10 @@ func (c CLI) Push(ctx context.Context) error {
 	if c.graphClone() {
 		return c.pushClone(ctx)
 	}
+	env, err := admittedEnv(ctx, "push")
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
 	defer cancel()
 	branch, err := c.output(ctx, "symbolic-ref", "--short", "HEAD")
@@ -193,7 +197,7 @@ func (c CLI) Push(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("resolving the upstream branch of %s: %w", branch, err)
 	}
-	out, err := runDetached(ctx, c.at("push", remote, "HEAD:"+merge)...)
+	out, err := runDetachedEnv(ctx, env, c.at("push", remote, "HEAD:"+merge)...)
 	if err != nil {
 		return fmt.Errorf("git push: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
@@ -294,7 +298,14 @@ func (r RemovalCommitter) EnsureMergeDriver(ctx context.Context) error {
 // instead of suspending the backgrounded process on SIGTTIN. The context
 // timeout is a backstop for any other blocking helper.
 func runDetached(ctx context.Context, args ...string) ([]byte, error) {
+	return runDetachedEnv(ctx, nil, args...)
+}
+
+// runDetachedEnv is runDetached with env; nil inherits the process
+// environment.
+func runDetachedEnv(ctx context.Context, env []string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
@@ -436,10 +447,16 @@ func (c CLI) MergePull(ctx context.Context) (string, error) {
 	if c.graphClone() {
 		return c.pullClone(ctx)
 	}
+	env, err := admittedEnv(ctx, "pull")
+	if err != nil {
+		return "", err
+	}
 	if err := c.EnsureMergeDriver(ctx); err != nil {
 		return "", fmt.Errorf("setting up the entry merge driver: %w", err)
 	}
-	out, err := exec.CommandContext(ctx, "git", c.at("pull", "--no-rebase")...).CombinedOutput()
+	pull := exec.CommandContext(ctx, "git", c.at("pull", "--no-rebase")...)
+	pull.Env = env
+	out, err := pull.CombinedOutput()
 	msg := strings.TrimSpace(string(out))
 	if err != nil {
 		if msg == "" {

@@ -43,7 +43,7 @@ func seededRemote(t *testing.T) *test.GraphRemote {
 func sddClone(t *testing.T, first string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "clone")
-	err := git.CloneGraph(context.Background(), cloneRepoID, first, dir, model.GraphCloneCone(""))
+	err := git.CloneGraph(admitted(t, context.Background()), cloneRepoID, model.CloneSource{First: first}, dir, model.GraphCloneCone(""))
 	if err != nil {
 		t.Fatalf("CloneGraph: %v", err)
 	}
@@ -79,7 +79,7 @@ func readFile(t *testing.T, dir, name string) string {
 func capturedLog(t *testing.T) (context.Context, *bytes.Buffer) {
 	t.Helper()
 	var buf bytes.Buffer
-	return slogutils.WithLogger(context.Background(), slog.New(slog.NewTextHandler(&buf, nil))), &buf
+	return admitted(t, slogutils.WithLogger(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))), &buf
 }
 
 func TestCloneGraphIsBloblessAndSparse(t *testing.T) {
@@ -112,10 +112,55 @@ func TestCloneGraphIsBloblessAndSparse(t *testing.T) {
 	}
 }
 
+// A clone URL of neither derived form is the clone's one remote: the clone
+// fetches and pushes through it and never tries another protocol.
+func TestSingleRemoteClone(t *testing.T) {
+	remote := seededRemote(t)
+	dir := filepath.Join(t.TempDir(), "clone")
+	ctx := admitted(t, context.Background())
+	err := git.CloneGraph(ctx, "", model.CloneSource{URL: remote.Bare}, dir, model.GraphCloneCone(""))
+	if err != nil {
+		t.Fatalf("CloneGraph: %v", err)
+	}
+	if remotes := strings.Fields(test.Git(t, dir, "remote")); len(remotes) != 1 || remotes[0] != model.SingleRemote {
+		t.Errorf("the clone should have the one remote %q, got %v", model.SingleRemote, remotes)
+	}
+	if recorded := strings.TrimSpace(test.Git(t, dir, "config", "sdd.remote")); recorded != model.SingleRemote {
+		t.Errorf("the clone should record its one remote, got %q", recorded)
+	}
+	if !strings.Contains(readFile(t, dir, entryPath), "Base title") {
+		t.Error("the graph's entries should be checked out")
+	}
+
+	repo := git.CLI{Dir: dir}
+	sddEntry := ".sdd/graph/2026/11/07-130000-s-tac-one.md"
+	writeFile(t, dir, sddEntry, "---\ntype: signal\n---\nby sdd\n")
+	err = repo.Commit("sdd: capture by sdd", sddEntry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = repo.Push(ctx)
+	if err != nil {
+		t.Fatalf("the push should go through the one remote: %v", err)
+	}
+	if remote.Head(t) != strings.TrimSpace(test.Git(t, dir, "rev-parse", "HEAD")) {
+		t.Error("the push should reach the remote")
+	}
+
+	test.Git(t, dir, "config", "remote."+model.SingleRemote+".url", filepath.Join(t.TempDir(), "gone.git"))
+	err = repo.Fetch(ctx)
+	if err == nil {
+		t.Fatal("a fetch from an unreachable single remote should fail")
+	}
+	if strings.Contains(err.Error(), model.ProtocolSSH+":") || strings.Contains(err.Error(), model.ProtocolHTTPS+":") {
+		t.Errorf("a single-remote clone should try no protocol remote, got %v", err)
+	}
+}
+
 func TestKeepGraphCloneDiscardsWhatSddDidNotMake(t *testing.T) {
 	remote := seededRemote(t)
 	dir := sddClone(t, model.ProtocolHTTPS)
-	ctx := context.Background()
+	ctx := admitted(t, context.Background())
 	repo := git.CLI{Dir: dir}
 
 	sddEntry := ".sdd/graph/2026/11/07-130000-s-tac-sdd.md"
@@ -329,7 +374,7 @@ func TestCloneProtocolChoice(t *testing.T) {
 	remote := seededRemote(t)
 	dir := sddClone(t, model.ProtocolSSH)
 	repo := git.CLI{Dir: dir}
-	ctx := context.Background()
+	ctx := admitted(t, context.Background())
 	recorded := func() string { return strings.TrimSpace(test.Git(t, dir, "config", "sdd.remote")) }
 	since := func() string { return strings.TrimSpace(test.Git(t, dir, "config", "sdd.remoteSince")) }
 	if recorded() != model.ProtocolHTTPS {
@@ -366,7 +411,7 @@ func TestCloneRetriesBrokenSSHOncePerDay(t *testing.T) {
 	stale := time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339)
 	test.Git(t, dir, "config", "sdd.remoteSince", stale)
 
-	err := git.CLI{Dir: dir}.Fetch(context.Background())
+	err := git.CLI{Dir: dir}.Fetch(admitted(t, context.Background()))
 	if err != nil {
 		t.Fatal(err)
 	}

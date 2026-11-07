@@ -34,8 +34,8 @@ type GraphSource struct {
 //
 // The loaded graph is assembled into a model.MultiGraph here — the single
 // insertion point for cross-repo reads. Member graphs load lazily from the
-// caches of the dependency closure (pure reads; clone/pull side effects run
-// in handlers that invalidate this source), so a graph with no cross-repo
+// sdd-owned clones of the dependency closure (pure reads; clone and sync
+// side effects run in handlers that invalidate this source), so a graph with no cross-repo
 // touch pays nothing.
 func (f *Finder) NewGraphSource(dir string) *GraphSource {
 	return &GraphSource{load: func() (*model.Graph, error) {
@@ -52,16 +52,16 @@ func (f *Finder) NewGraphSource(dir string) *GraphSource {
 	}}
 }
 
-// memberGraphLoader is the lazy cache→graph read the MultiGraph resolves
-// members through: a repo in the dependency closure loads from its cache
-// clone. A repo outside the closure, not connected or not yet cached
+// memberGraphLoader is the lazy clone→graph read the MultiGraph resolves
+// members through: a repo in the dependency closure loads from its sdd-owned
+// clone. A repo outside the closure, not connected or not yet cloned
 // resolves to nil (the legitimate unresolved state — the refresh handler owns
-// clone/pull); a present cache that fails to load is an error, not a silent
+// clone and sync); a present clone that fails to load is an error, not a silent
 // gap. A Finder without a Registry resolves nothing — the same honest
 // unresolved state.
 func (f *Finder) memberGraphLoader() func(repoID model.RepoID) (*model.Graph, error) {
 	closure := sync.OnceValues(func() ([]model.RepoID, error) {
-		// The loader carries no context; the walk only reads cached configs.
+		// The loader carries no context; the walk only reads committed configs.
 		return f.DependencyClosure(context.Background(), query.DependencyClosureQuery{})
 	})
 	return func(repoID model.RepoID) (*model.Graph, error) {
@@ -72,17 +72,17 @@ func (f *Finder) memberGraphLoader() func(repoID model.RepoID) (*model.Graph, er
 		if err != nil || !slices.Contains(horizon, repoID) {
 			return nil, err
 		}
-		cache, connected, err := f.repos.Cache(repoID)
-		if err != nil || !connected || !cache.Cloned() {
+		clone, connected, err := f.repos.Clone(repoID)
+		if err != nil || !connected || !clone.Cloned() {
 			return nil, err
 		}
-		graphDir, err := cache.GraphDir()
+		graphDir, err := clone.GraphDir()
 		if err != nil {
 			return nil, err
 		}
 		g, err := f.LoadGraph(graphDir)
 		if err != nil {
-			return nil, fmt.Errorf("loading cached graph for %s: %w", repoID, err)
+			return nil, fmt.Errorf("loading the graph of %s: %w", repoID, err)
 		}
 		return g, nil
 	}

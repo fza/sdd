@@ -78,7 +78,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	}
 
 	// Cross-repo refs resolve against the live caches: refresh the
-	// referenced repos before the graph loads (lazy clone + cooldown pull),
+	// referenced repos before the graph loads (lazy clone or gated pull),
 	// then force-fetch once for any backward-class target still missing —
 	// so a just-pushed remote entry doesn't false-block resolve-or-block.
 	h.freshenReferencedRepos(ctx, entry.Refs)
