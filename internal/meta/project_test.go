@@ -84,7 +84,7 @@ func TestResolveProject(t *testing.T) {
 				writeConfig(t, filepath.Join(root, "project"), name, content)
 			}
 
-			project, err := meta.ResolveProject(work)
+			project, err := meta.ResolveProject(work, nil)
 
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
@@ -113,7 +113,7 @@ func TestResolveProjectReportsAMissingProject(t *testing.T) {
 	work := filepath.Join(root, "work")
 	writeConfig(t, work, "config.yaml", "project_dir: ../nowhere\n")
 
-	_, err := meta.ResolveProject(work)
+	_, err := meta.ResolveProject(work, nil)
 
 	if !errors.Is(err, meta.ErrNotAProject) {
 		t.Errorf("a missing project should be reported as not an sdd project: %v", err)

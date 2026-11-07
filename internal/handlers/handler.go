@@ -133,8 +133,13 @@ type Handler struct {
 	syncLock        SyncLock
 	syncRecord      SyncRecord
 	syncMode        model.SyncMode
+	graphLock       GraphLock
+	titlesLock      TitlesLock
+	graphClone      GraphCloneKeeper
+	setAsideJudge   SetAsideJudge
 	changes         ChangeReader
 	repos           *repos.Manager
+	graphClones     *repos.GraphClones
 	projectRepos    ProjectRepositories
 	repositoryAt    func(dir string) Repository
 	fileMerger      FileMerger
@@ -165,14 +170,28 @@ type Options struct {
 	GraphFetcher GraphFetcher
 	SyncLock     SyncLock
 	SyncRecord   SyncRecord
+	// GraphLock serializes the title backfill's writes and commit with every
+	// other writer of the graph; nil writes without it.
+	GraphLock GraphLock
+	// TitlesLock keeps one title backfill per checkout; nil runs every one.
+	TitlesLock TitlesLock
 	// SyncMode decides whether a graph commit is pushed before the command
 	// returns; empty means manual.
 	SyncMode model.SyncMode
-	Changes  ChangeReader
+	// GraphClone, when set, is the sdd-owned clone the graph lives in
+	// (20261106-202055-d-tac-eyl): every sync path keeps it first, and a pull
+	// merges every upstream commit.
+	GraphClone GraphCloneKeeper
+	// SetAsideJudge decides which entries an upstream force push set aside
+	// return on their own. Nil leaves every one to an agent.
+	SetAsideJudge SetAsideJudge
+	Changes       ChangeReader
 	// Repos owns the connected-repos side effects (clone, pull, config
 	// writes). Nil means no connected-repos support — repo commands fail
 	// loud, and cross-repo cache freshening is skipped.
 	Repos *repos.Manager
+	// GraphClones owns the sdd-owned graph clones. Nil refuses graph_repo.
+	GraphClones *repos.GraphClones
 	// ProjectRepositories and RepositoryAt let a work repository's init set up
 	// and refresh its project in a repository of its own. Nil refuses both.
 	ProjectRepositories ProjectRepositories
@@ -209,8 +228,13 @@ func New(opts Options) *Handler {
 		syncLock:        opts.SyncLock,
 		syncRecord:      opts.SyncRecord,
 		syncMode:        opts.SyncMode,
+		graphLock:       opts.GraphLock,
+		titlesLock:      opts.TitlesLock,
+		graphClone:      opts.GraphClone,
+		setAsideJudge:   opts.SetAsideJudge,
 		changes:         opts.Changes,
 		repos:           opts.Repos,
+		graphClones:     opts.GraphClones,
 		projectRepos:    opts.ProjectRepositories,
 		repositoryAt:    opts.RepositoryAt,
 		fileMerger:      opts.FileMerger,

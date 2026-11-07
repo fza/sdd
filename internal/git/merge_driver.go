@@ -31,6 +31,9 @@ const mergeDriverPrefix = "sdd merge-entry "
 // wrote. A driver someone configured otherwise is left as it is, and a
 // directory outside any repository has no config to write.
 func (c CLI) EnsureMergeDriver(ctx context.Context) error {
+	if c.graphClone() {
+		return nil
+	}
 	found, err := c.inWorkTree(ctx)
 	if err != nil || !found {
 		return err

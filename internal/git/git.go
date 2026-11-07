@@ -71,7 +71,7 @@ func (c CLI) Commit(message string, paths ...string) error {
 	if out, err := runDetachedPastIndexLock(ctx, commitArgs...); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
-	return nil
+	return c.RecordGraphCloneCommit(ctx)
 }
 
 // Committable returns paths without those git refuses to stage: untracked
@@ -176,6 +176,9 @@ func runDetachedPastIndexLock(ctx context.Context, args ...string) ([]byte, erro
 // setting from publishing other branches the push rule never counted.
 // Production handlers.Pusher.
 func (c CLI) Push(ctx context.Context) error {
+	if c.graphClone() {
+		return c.pushClone(ctx)
+	}
 	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
 	defer cancel()
 	branch, err := c.output(ctx, "symbolic-ref", "--short", "HEAD")
@@ -216,6 +219,9 @@ func (c CLI) Merge(ctx context.Context, ref, message string) error {
 	// index.lock, so once started it outlives the caller's cancellation.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachedTimeout)
 	defer cancel()
+	if c.graphClone() {
+		return c.mergeClone(ctx, ref, message)
+	}
 	if err := c.EnsureMergeDriver(ctx); err != nil {
 		return fmt.Errorf("setting up the entry merge driver: %w", err)
 	}
@@ -273,7 +279,7 @@ func (r RemovalCommitter) Commit(message string, paths ...string) error {
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
-	return nil
+	return CLI(r).RecordGraphCloneCommit(context.Background())
 }
 
 // EnsureMergeDriver sets up the entry merge driver in the repository at Dir.
@@ -427,6 +433,9 @@ func (c CLI) IsClean(ctx context.Context) (bool, error) {
 // regardless of the user's pull.rebase config, so background sync never
 // rewrites the shared graph's history.
 func (c CLI) MergePull(ctx context.Context) (string, error) {
+	if c.graphClone() {
+		return c.pullClone(ctx)
+	}
 	if err := c.EnsureMergeDriver(ctx); err != nil {
 		return "", fmt.Errorf("setting up the entry merge driver: %w", err)
 	}
