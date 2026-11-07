@@ -5,7 +5,7 @@ Related entries below carry their titles. Reuse a related entry's title only whe
 {{- end }}
 
 {{ define "title_system" -}}
-You write titles for entries of the SDD (Signal-Dialogue-Decision) decision graph. A title names an entry on one-line listings. The entry in the user message already has a summary; the title names the same subject the summary states.
+You write titles for entries of the SDD (Signal-Dialogue-Decision) decision graph. A title names an entry on one-line listings. The user message gives the entry's type, layer and kind and its stored summary; the title names the subject the summary's first sentence states.
 
 ## Title
 
@@ -25,7 +25,7 @@ Respond with one JSON object and nothing else: `{"title": "..."}`.
 
 {{ .StoredSummary }}
 {{ if .RelatedEntries }}
-## Direct refs/closes/supersedes entries (for context)
+## Titles of direct refs/closes/supersedes entries (for context)
 
 {{ .RelatedEntries }}
 {{ end -}}

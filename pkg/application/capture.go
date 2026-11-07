@@ -157,12 +157,14 @@ func (a *Application) CreateEntry(ctx context.Context, identity RequestIdentity,
 		if draft.SkipPreflight {
 			entry.Preflight = "skipped"
 		}
-		summary, err := llmops.Summarize(ctx, effective.options.LLM, entry, snapshot.graph, effective.options.Language)
+		described, err := llmops.Describe(ctx, effective.options.LLM, entry, snapshot.graph, effective.options.Language, false)
 		if err != nil {
 			return result, fmt.Errorf("generating summary: %w", err)
 		}
-		entry.Summary = summary.Summary
-		entry.Title = summary.Title
+		if described.Summary != "" {
+			entry.Summary = described.Summary
+		}
+		entry.Title = described.Title
 		err = secrets.CheckEntry(entry)
 		if err != nil {
 			return result, err

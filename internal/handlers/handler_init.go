@@ -38,6 +38,9 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if err := cmd.Validate(); err != nil {
 		return fmt.Errorf("invalid command: %w", err)
 	}
+	if cmd.GraphRepo != "" {
+		return h.initGraphRepo(ctx, cmd)
+	}
 	if cmd.ProjectDir != "" {
 		return h.initPointer(ctx, cmd)
 	}
@@ -49,7 +52,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if err != nil {
 		return fmt.Errorf("graph directory: %w", err)
 	}
-	entryAttribute, err := entryMergeAttributeLine(graphDir)
+	entryAttribute, err := model.EntryMergeAttributeLine(graphDir)
 	if err != nil {
 		return fmt.Errorf("graph directory: %w", err)
 	}
@@ -283,7 +286,11 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	// agent is in play and the files are absent. AGENTS.md is the cross-tool
 	// canonical instruction file; CLAUDE.md imports it via @AGENTS.md. Existing
 	// files are never overwritten — a project's own instructions are sacred.
-	if bridgePaths, err := scaffoldInstructionBridge(cmd.RepoRoot, effectiveAgents); err != nil {
+	bridgeAgents := effectiveAgents
+	if cmd.GraphOnly {
+		bridgeAgents = nil
+	}
+	if bridgePaths, err := scaffoldInstructionBridge(cmd.RepoRoot, bridgeAgents); err != nil {
 		return err
 	} else if len(bridgePaths) > 0 {
 		touched = append(touched, bridgePaths...)
@@ -836,27 +843,6 @@ func ensureGitignoreEntries(path string, entries []string) (bool, error) {
 		return false, fmt.Errorf("appending to %s: %w", path, err)
 	}
 	return true, nil
-}
-
-// entryMergeAttributeLine is the .gitattributes line routing the entry files
-// under graphDir to the entry merge driver; other markdown files, a graph at
-// the repository root included, are left to git. Glob characters in graphDir
-// are escaped, and a pattern holding whitespace or opening with a quote is
-// written C-quoted, so the line matches the directory as named. A directory
-// outside the repository cannot be matched and is refused.
-func entryMergeAttributeLine(graphDir string) (string, error) {
-	dir := filepath.ToSlash(filepath.Clean(graphDir))
-	if filepath.IsAbs(graphDir) || dir == ".." || strings.HasPrefix(dir, "../") {
-		return "", fmt.Errorf("%q cannot be named by a .gitattributes pattern inside the repository", graphDir)
-	}
-	pattern := model.EntryPathGlob
-	if dir != "." {
-		pattern = strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`).Replace(dir) + "/" + model.EntryPathGlob
-	}
-	if strings.ContainsAny(pattern, " \t") || strings.HasPrefix(pattern, `"`) {
-		pattern = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\t", `\t`).Replace(pattern) + `"`
-	}
-	return pattern + " merge=" + model.EntryMergeDriver, nil
 }
 
 // migrateOldTmpDir moves files from oldDir to newDir. Returns the count
