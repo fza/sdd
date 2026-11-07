@@ -10,7 +10,7 @@ import (
 // ConnectedConfig is `connected`: whether this project may capture into a
 // connected graph, as a catch-all and per target repository.
 type ConnectedConfig struct {
-	Write *bool                             `yaml:"write,omitempty"`
+	Write *bool                            `yaml:"write,omitempty"`
 	Repos map[RepoID]ConnectedRepoOverride `yaml:"repos,omitempty"`
 }
 
@@ -24,7 +24,7 @@ func (o ConnectedRepoOverride) String() string { return "write=" + formatOptiona
 // InboundConfig is `inbound`: whether a graph accepts captures written from
 // another project, as a catch-all and per writing repository.
 type InboundConfig struct {
-	Accept *bool                           `yaml:"accept,omitempty"`
+	Accept *bool                          `yaml:"accept,omitempty"`
 	Repos  map[RepoID]InboundRepoOverride `yaml:"repos,omitempty"`
 }
 
