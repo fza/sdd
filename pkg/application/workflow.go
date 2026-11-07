@@ -561,6 +561,14 @@ func (w *WorkflowSession) Start(ctx context.Context, identity RequestIdentity, r
 	if err != nil {
 		return nil, err
 	}
+	// A move that publishes an entry into another project is refused at its
+	// start when it may not write there, not after the dialogue it costs.
+	if project != "" && publishesEntry(spec) {
+		err = w.authorizeTarget(project, AccessWrite)
+		if err != nil {
+			return nil, err
+		}
+	}
 	w.startProject = project
 	serve, err := w.session.Start(spec, request.Params, parent)
 	w.startProject = ""
@@ -1774,4 +1782,13 @@ func newWorkflowSessionID(now time.Time) SessionID {
 		panic(fmt.Sprintf("sdd: reading session randomness: %v", err))
 	}
 	return SessionID("s_" + now.Format("20060102-150405") + "-" + hex.EncodeToString(buf))
+}
+
+func publishesEntry(spec *engine.Spec) bool {
+	for _, step := range spec.Steps {
+		if step.Op == "newEntry" {
+			return true
+		}
+	}
+	return false
 }
