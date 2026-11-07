@@ -33,8 +33,6 @@ type GraphPuller interface {
 	UpstreamRef(ctx context.Context) (string, error)
 	Fetch(ctx context.Context) error
 	CountCommits(ctx context.Context, rangeSpec, subjectPattern string) (int, error)
-	ChangedPaths(ctx context.Context, base, tip string) ([]string, error)
-	RepoPath(ctx context.Context, path string) (string, error)
 	IsClean(ctx context.Context) (bool, error)
 	MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]string, error)
 	Merge(ctx context.Context, ref, message string) error
@@ -59,12 +57,12 @@ func (h *Handler) mergeUpstream(ctx context.Context, cmd *command.PullGraphCmd) 
 	if err != nil {
 		return "", fmt.Errorf("resolving upstream: %w", err)
 	}
-	var incoming model.IncomingCommits
+	incoming := 0
 	clean := true
 	if upstream != "" {
-		incoming, err = h.incomingCommits(ctx, upstream)
+		incoming, err = h.graphPuller.CountCommits(ctx, "HEAD..@{u}", "")
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("counting commits behind %s: %w", upstream, err)
 		}
 		clean, err = h.graphPuller.IsClean(ctx)
 		if err != nil {
@@ -72,10 +70,7 @@ func (h *Handler) mergeUpstream(ctx context.Context, cmd *command.PullGraphCmd) 
 		}
 	}
 
-	verdict := model.DecidePull(h.syncMode, upstream != "", incoming, clean)
-	if h.graphClone != nil {
-		verdict = model.DecideClonePull(upstream != "", incoming, clean)
-	}
+	verdict := model.DecidePull(upstream != "", incoming, clean)
 	switch verdict {
 	case model.PullReady:
 		conflicts, err := h.graphPuller.MergeTreePredict(ctx, "HEAD", upstream)
@@ -90,41 +85,12 @@ func (h *Handler) mergeUpstream(ctx context.Context, cmd *command.PullGraphCmd) 
 			return "", fmt.Errorf("merging %s: %w", upstream, err)
 		}
 		if cmd.OnMerged != nil {
-			cmd.OnMerged(upstream, incoming.All)
+			cmd.OnMerged(upstream, incoming)
 		}
-	case model.PullForeign, model.PullOutsideGraph, model.PullDirty:
+	case model.PullDirty:
 		if cmd.OnHeld != nil {
-			cmd.OnHeld(verdict, upstream, incoming.Outside)
+			cmd.OnHeld(verdict, upstream)
 		}
 	}
 	return verdict, nil
-}
-
-func (h *Handler) incomingCommits(ctx context.Context, upstream string) (model.IncomingCommits, error) {
-	var incoming model.IncomingCommits
-	var err error
-	incoming.All, err = h.graphPuller.CountCommits(ctx, "HEAD..@{u}", "")
-	if err != nil {
-		return incoming, fmt.Errorf("counting commits behind %s: %w", upstream, err)
-	}
-	incoming.Graph, err = h.graphPuller.CountCommits(ctx, "HEAD..@{u}", model.GraphCommitSubjectPattern)
-	if err != nil {
-		return incoming, fmt.Errorf("counting graph commits behind %s: %w", upstream, err)
-	}
-	if incoming.All == 0 {
-		return incoming, nil
-	}
-	paths, err := h.graphPuller.ChangedPaths(ctx, "HEAD", "@{u}")
-	if err != nil {
-		return incoming, fmt.Errorf("listing paths changed on %s: %w", upstream, err)
-	}
-	graphDir := model.DefaultGraphDir
-	if h.graphDir != "" {
-		graphDir, err = h.graphPuller.RepoPath(ctx, h.graphDir)
-		if err != nil {
-			return incoming, fmt.Errorf("locating the graph directory: %w", err)
-		}
-	}
-	incoming.Outside = model.OutsideGraphPaths(paths, graphDir)
-	return incoming, nil
 }

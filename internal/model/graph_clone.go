@@ -213,15 +213,6 @@ func IsEntryPath(repoPath string) bool {
 	return err == nil && matched
 }
 
-// DecideClonePull is DecidePull for the sdd-owned clone, which merges every
-// upstream commit: nobody works in it, so a hand commit or a path outside
-// the graph upstream arrives one-sided.
-func DecideClonePull(hasUpstream bool, incoming IncomingCommits, clean bool) PullVerdict {
-	incoming.Graph = incoming.All
-	incoming.Outside = nil
-	return DecidePull(SyncModeAuto, hasUpstream, incoming, clean)
-}
-
 // IsUpstreamDeletion reports whether the index stages of an unmerged path
 // show it deleted on their side and changed on ours: base and ours present,
 // theirs missing.

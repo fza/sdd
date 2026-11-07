@@ -196,20 +196,19 @@ func (h *Handler) pullUpstream(ctx context.Context) (bool, error) {
 	if !blocked {
 		return false, nil
 	}
-	return true, h.recordBlocked(ctx, model.SyncBlocked{Kind: kind, Upstream: held.upstream, Paths: held.outside})
+	return true, h.recordBlocked(ctx, model.SyncBlocked{Kind: kind, Upstream: held.upstream})
 }
 
 type heldPull struct {
 	cmd      *command.PullGraphCmd
 	upstream string
-	outside  []string
 }
 
 func (h *Handler) heldPull(ctx context.Context) *heldPull {
 	held := &heldPull{}
 	held.cmd = h.reportingPull(ctx)
-	held.cmd.OnHeld = func(_ model.PullVerdict, upstream string, outside []string) {
-		held.upstream, held.outside = upstream, outside
+	held.cmd.OnHeld = func(_ model.PullVerdict, upstream string) {
+		held.upstream = upstream
 	}
 	return held
 }

@@ -129,11 +129,9 @@ func TestSyncRoundRecordsWhatBlocks(t *testing.T) {
 		{name: "no remote", repo: &synctest.Repo{NoRemote: true}, want: model.SyncBlockedNoUpstream},
 		{name: "no upstream", repo: &synctest.Repo{}, want: model.SyncBlockedNoUpstream},
 		{name: "failing fetch", repo: &synctest.Repo{Upstream: "origin/main", FetchErr: errors.New("offline")}, want: model.SyncBlockedFetchFailed},
-		{name: "foreign commit incoming", repo: &synctest.Repo{Upstream: "origin/main", Behind: 2, GraphBehind: 1}, want: model.SyncBlockedForeign},
-		{name: "incoming change outside the graph", repo: &synctest.Repo{Upstream: "origin/main", Behind: 1, GraphBehind: 1, Changed: []string{"main.go"}}, want: model.SyncBlockedOutsideGraph},
-		{name: "dirty tree", repo: &synctest.Repo{Upstream: "origin/main", Behind: 1, GraphBehind: 1, Changed: []string{"graph/a.md"}, Dirty: true}, want: model.SyncBlockedDirty},
+		{name: "dirty tree", repo: &synctest.Repo{Upstream: "origin/main", Behind: 1, Dirty: true}, want: model.SyncBlockedDirty},
 		{name: "foreign commit ahead", repo: &synctest.Repo{Upstream: "origin/main", Ahead: 2, GraphAhead: 1}, want: model.SyncBlockedUnpublished},
-		{name: "conflicting merge", repo: &synctest.Repo{Upstream: "origin/main", Behind: 1, GraphBehind: 1, Changed: []string{"graph/a.md"}, Conflicts: []string{"graph/a.md"}}, want: model.SyncBlockedConflict},
+		{name: "conflicting merge", repo: &synctest.Repo{Upstream: "origin/main", Behind: 1, Conflicts: []string{"graph/a.md"}}, want: model.SyncBlockedConflict},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -158,7 +156,7 @@ func TestSyncRoundRecordsWhatBlocks(t *testing.T) {
 
 func TestSyncRoundRecordsTheConflictCommits(t *testing.T) {
 	repo := &synctest.Repo{
-		Upstream: "origin/main", Behind: 1, GraphBehind: 1, Changed: []string{"graph/a.md"}, Conflicts: []string{"graph/a.md"},
+		Upstream: "origin/main", Behind: 1, Conflicts: []string{"graph/a.md"},
 		Commits: map[string]string{"origin/main": "upstream-commit", "HEAD": "local-commit"},
 	}
 	f := newSyncFixture(t, repo)
@@ -170,7 +168,7 @@ func TestSyncRoundRecordsTheConflictCommits(t *testing.T) {
 }
 
 func TestSyncRoundClearsTheRecordOnceNothingBlocks(t *testing.T) {
-	repo := &synctest.Repo{Upstream: "origin/main", Behind: 1, GraphBehind: 1, Changed: []string{"graph/a.md"}, Ahead: 1, GraphAhead: 1}
+	repo := &synctest.Repo{Upstream: "origin/main", Behind: 1, Ahead: 1, GraphAhead: 1}
 	f := newSyncFixture(t, repo)
 	f.record.Current = &model.SyncBlocked{Kind: model.SyncBlockedFetchFailed, Since: f.now.Add(-time.Hour)}
 	ctx, reported := collect(context.Background())
@@ -298,7 +296,7 @@ func TestPublishGraph(t *testing.T) {
 	t.Run("push rejected, upstream conflicting", func(t *testing.T) {
 		repo := &synctest.Repo{
 			Upstream: "origin/main", Ahead: 1, GraphAhead: 1, PushErr: errors.New("rejected"),
-			Behind: 1, GraphBehind: 1, Changed: []string{"graph/a.md"}, Conflicts: []string{"graph/a.md"},
+			Behind: 1, Conflicts: []string{"graph/a.md"},
 		}
 		f := newSyncFixture(t, repo)
 		err := f.handler.PublishGraph(context.Background())
@@ -324,7 +322,7 @@ func TestPublishGraph(t *testing.T) {
 	t.Run("pushed with a pull block left", func(t *testing.T) {
 		repo := &synctest.Repo{Upstream: "origin/main", Ahead: 1, GraphAhead: 1}
 		f := newSyncFixture(t, repo)
-		f.record.Current = &model.SyncBlocked{Kind: model.SyncBlockedForeign, Since: f.now}
+		f.record.Current = &model.SyncBlocked{Kind: model.SyncBlockedDirty, Since: f.now}
 		err := f.handler.PublishGraph(context.Background())
 		if err != nil {
 			t.Fatal(err)
@@ -469,7 +467,7 @@ func TestReleaseSyncOwner(t *testing.T) {
 }
 
 func TestSyncRoundWithTheFetchDeferred(t *testing.T) {
-	repo := &synctest.Repo{Upstream: "origin/main", URL: hostedURL, Behind: 1, GraphBehind: 1, Changed: []string{"graph/a.md"}, Ahead: 1, GraphAhead: 1}
+	repo := &synctest.Repo{Upstream: "origin/main", URL: hostedURL, Behind: 1, Ahead: 1, GraphAhead: 1}
 	f := newSyncFixture(t, repo)
 	f.fetchedJustNow(t)
 	var deferred []string
@@ -492,7 +490,7 @@ func TestSyncRoundWithTheFetchDeferred(t *testing.T) {
 func TestPublishIsOnePushAdmission(t *testing.T) {
 	repo := &synctest.Repo{
 		Upstream: "origin/main", URL: hostedURL, Ahead: 1, GraphAhead: 1, PushErr: errors.New("! [rejected] main -> main (fetch first)"),
-		Behind: 1, GraphBehind: 1, Changed: []string{"graph/a.md"},
+		Behind: 1,
 	}
 	f := newSyncFixture(t, repo)
 	f.fetchedJustNow(t)

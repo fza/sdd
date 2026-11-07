@@ -37,7 +37,6 @@ type Repo struct {
 	// Ahead and GraphAhead count commits ahead of upstream; Behind and
 	// GraphBehind the ones upstream holds ahead.
 	Ahead, GraphAhead, Behind, GraphBehind int
-	Changed                                []string
 	Dirty                                  bool
 	Conflicts                              []string
 	Commits                                map[string]string
@@ -111,14 +110,6 @@ func (r *Repo) CountCommits(_ context.Context, rangeSpec, pattern string) (int, 
 	default:
 		return r.GraphAhead, nil
 	}
-}
-
-func (r *Repo) ChangedPaths(context.Context, string, string) ([]string, error) {
-	return r.Changed, r.call("changed-paths")
-}
-
-func (r *Repo) RepoPath(_ context.Context, path string) (string, error) {
-	return path, r.call("repo-path")
 }
 
 func (r *Repo) IsClean(context.Context) (bool, error) { return !r.Dirty, r.call("is-clean") }

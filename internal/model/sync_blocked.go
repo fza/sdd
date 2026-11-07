@@ -13,8 +13,6 @@ type SyncBlockedKind string
 
 const (
 	SyncBlockedConflict     SyncBlockedKind = "conflict"
-	SyncBlockedForeign      SyncBlockedKind = "foreign-incoming"
-	SyncBlockedOutsideGraph SyncBlockedKind = "outside-graph-incoming"
 	SyncBlockedDirty        SyncBlockedKind = "dirty"
 	SyncBlockedUnpublished  SyncBlockedKind = "unpublished"
 	SyncBlockedNoUpstream   SyncBlockedKind = "no-upstream"
@@ -52,10 +50,6 @@ const OwnerLease = 15 * time.Minute
 // false for a verdict that blocks nothing.
 func HeldPullBlock(verdict PullVerdict) (SyncBlockedKind, bool) {
 	switch verdict {
-	case PullForeign:
-		return SyncBlockedForeign, true
-	case PullOutsideGraph:
-		return SyncBlockedOutsideGraph, true
 	case PullDirty:
 		return SyncBlockedDirty, true
 	case PullNoUpstream:
@@ -159,10 +153,6 @@ func (b SyncBlocked) reason() string {
 	switch b.Kind {
 	case SyncBlockedConflict:
 		return fmt.Sprintf("merging %s would conflict in %s; automatic sync is paused", b.Upstream, quotedPaths(b.Paths))
-	case SyncBlockedForeign:
-		return fmt.Sprintf("%s holds a commit not written by sdd, so nothing is pulled", b.Upstream)
-	case SyncBlockedOutsideGraph:
-		return fmt.Sprintf("%s changes %s, outside the graph, so nothing is pulled", b.Upstream, quotedPaths(b.Paths))
 	case SyncBlockedDirty:
 		return "the graph repository has uncommitted changes, so nothing is pulled"
 	case SyncBlockedUnpublished:
@@ -196,8 +186,6 @@ func (b SyncBlocked) Steps() string {
 	case SyncBlockedConflict:
 		fix = fmt.Sprintf("Run `git merge %s`, resolve the conflicts, and commit the merge as %q; sync resumes once %s is in the branch.",
 			b.Upstream, GraphMergeMessage(b.Upstream), shortCommit(b.Source))
-	case SyncBlockedForeign, SyncBlockedOutsideGraph:
-		fix = fmt.Sprintf("Review the incoming commits with `git log HEAD..%s`; sdd never merges them unreviewed. Ask the user before merging them.", b.Upstream)
 	case SyncBlockedDirty:
 		fix = "Commit or stash what `git status` lists."
 	case SyncBlockedUnpublished:

@@ -11,7 +11,7 @@ import (
 
 func TestSyncBlockedPauses(t *testing.T) {
 	kinds := []model.SyncBlockedKind{
-		model.SyncBlockedConflict, model.SyncBlockedForeign, model.SyncBlockedOutsideGraph, model.SyncBlockedDirty,
+		model.SyncBlockedConflict, model.SyncBlockedDirty,
 		model.SyncBlockedUnpublished, model.SyncBlockedNoUpstream, model.SyncBlockedFetchFailed, model.SyncBlockedPushFailed,
 		model.SyncBlockedGraphMissing,
 	}
@@ -109,8 +109,8 @@ func TestSyncBlockedConflictSteps(t *testing.T) {
 
 func TestHeldVerdictBlocks(t *testing.T) {
 	pulls := map[model.PullVerdict]bool{
-		model.PullForeign: true, model.PullOutsideGraph: true, model.PullDirty: true, model.PullNoUpstream: true,
-		model.PullReady: false, model.PullNothing: false, model.PullOff: false,
+		model.PullDirty: true, model.PullNoUpstream: true,
+		model.PullReady: false, model.PullNothing: false,
 	}
 	for verdict, blocks := range pulls {
 		if _, got := model.HeldPullBlock(verdict); got != blocks {
