@@ -133,6 +133,8 @@ type Handler struct {
 	syncLock        SyncLock
 	syncRecord      SyncRecord
 	syncMode        model.SyncMode
+	graphLock       GraphLock
+	titlesLock      TitlesLock
 	changes         ChangeReader
 	repos           *repos.Manager
 	projectRepos    ProjectRepositories
@@ -165,6 +167,11 @@ type Options struct {
 	GraphFetcher GraphFetcher
 	SyncLock     SyncLock
 	SyncRecord   SyncRecord
+	// GraphLock serializes the title backfill's writes and commit with every
+	// other writer of the graph; nil writes without it.
+	GraphLock GraphLock
+	// TitlesLock keeps one title backfill per checkout; nil runs every one.
+	TitlesLock TitlesLock
 	// SyncMode decides whether a graph commit is pushed before the command
 	// returns; empty means manual.
 	SyncMode model.SyncMode
@@ -209,6 +216,8 @@ func New(opts Options) *Handler {
 		syncLock:        opts.SyncLock,
 		syncRecord:      opts.SyncRecord,
 		syncMode:        opts.SyncMode,
+		graphLock:       opts.GraphLock,
+		titlesLock:      opts.TitlesLock,
 		changes:         opts.Changes,
 		repos:           opts.Repos,
 		projectRepos:    opts.ProjectRepositories,

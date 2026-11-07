@@ -12,6 +12,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
@@ -52,6 +53,10 @@ func (s *testGraphSync) ReleaseSyncOwner(_ context.Context, _, session string) (
 	released := s.blocked.Release(session)
 	s.blocked = &released
 	return released.Banner(), nil
+}
+
+func (s *testGraphSync) BackfillTitles(context.Context, string, sdd.SyncTrigger, pkgllm.Runner) error {
+	return nil
 }
 
 func (s *testGraphSync) SyncInterval(context.Context, string) (time.Duration, bool, error) {

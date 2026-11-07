@@ -221,6 +221,58 @@ func Unlock(lock *flock.Flock) {
 	}
 }
 
+// CheckoutLocks are the locks of one checkout's graph directory a title
+// backfill runs under: the graph lock every writer takes, and the lock that
+// keeps one backfill running per checkout.
+type CheckoutLocks struct {
+	GraphDir string
+}
+
+// LockGraph waits for the graph lock until ctx ends.
+func (l CheckoutLocks) LockGraph(ctx context.Context) (func(), error) {
+	lock, err := newGraphLock(l.GraphDir)
+	if err != nil {
+		return nil, err
+	}
+	taken, err := lock.TryLockContext(ctx, lockRetryDelay)
+	if err == nil && !taken {
+		err = errors.New("graph lock not taken")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return func() { Unlock(lock) }, nil
+}
+
+// TryLockTitles takes the backfill lock when no backfill holds it; release is
+// nil otherwise.
+func (l CheckoutLocks) TryLockTitles(context.Context) (func(), error) {
+	runtimeDir := filepath.Join(l.GraphDir, ".sdd-runtime")
+	err := os.MkdirAll(runtimeDir, 0o755)
+	if err != nil {
+		return nil, err
+	}
+	lock := flock.New(filepath.Join(runtimeDir, "titles.lock"))
+	taken, err := lock.TryLock()
+	if err != nil || !taken {
+		return nil, err
+	}
+	return func() { Unlock(lock) }, nil
+}
+
+// TitlesOptions returns opts with what a title backfill of graphDir runs on:
+// the sync state its failure is recorded in and the checkout's locks.
+func TitlesOptions(ctx context.Context, graphDir string, opts handlers.Options) (handlers.Options, error) {
+	opts, err := HandlerOptions(ctx, graphDir, opts)
+	if err != nil {
+		return opts, err
+	}
+	opts.GraphDir = graphDir
+	locks := CheckoutLocks{GraphDir: graphDir}
+	opts.GraphLock, opts.TitlesLock = locks, locks
+	return opts, nil
+}
+
 // HandlerOptions returns opts with the git surfaces and sync state automatic
 // sync of graphDir runs on. A graph directory in no repository leaves them
 // unset, which a sync round reports as the graph repository missing.

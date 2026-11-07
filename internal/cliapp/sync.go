@@ -47,13 +47,17 @@ func syncCmd() *cli.Command {
 			}
 			if cmd.Bool("pull") {
 				handler := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Puller: graphGit(dir)})
-				return handler.SyncPull(ctx, &command.SyncPullCmd{
+				err = handler.SyncPull(ctx, &command.SyncPullCmd{
 					OnPulled: func(output string) {
 						if output != "" {
 							fmt.Fprintln(cmd.Writer, output)
 						}
 					},
 				})
+				if err != nil {
+					return err
+				}
+				return backfillTitles(ctx, cmd, dir)
 			}
 			syncMode, err := graphSyncMode(dir)
 			if err != nil {
@@ -70,9 +74,47 @@ func syncCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			return handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{SDDDir: sddDir, Explicit: true})
+			err = handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{SDDDir: sddDir, Explicit: true})
+			if err != nil {
+				return err
+			}
+			return backfillTitles(ctx, cmd, dir)
 		},
 	}
+}
+
+// backfillTitles titles the untitled entries of graphDir after an explicit
+// sync, waiting for it (20261105-233807-d-tac-831). A failure is recorded and
+// printed as the sync banner, as a blocked sync is, and leaves the sync
+// itself successful.
+func backfillTitles(ctx context.Context, cmd *cli.Command, graphDir string) error {
+	sddDir, err := resolveSDDDir()
+	if err != nil {
+		return err
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	// A runner that cannot be built leaves none: the backfill records that no
+	// LLM is configured, as the background backfill does.
+	runner, err := newRunner(cmd, "")
+	if err != nil {
+		slogutils.FromContext(ctx).Warn("title backfill: building the LLM runner", "err", err)
+		runner = nil
+	}
+	opts, err := syncstate.TitlesOptions(ctx, graphDir, handlers.Options{
+		Stderr:    cmd.ErrWriter,
+		SDDDir:    sddDir,
+		Reader:    finders.New(finders.Options{Config: cfg}),
+		LLMRunner: runner,
+		Committer: graphGit(graphDir),
+		Language:  configLanguage(cfg),
+	})
+	if err != nil {
+		return err
+	}
+	return handlers.New(opts).BackfillTitles(ctx, &command.BackfillTitlesCmd{SDDDir: sddDir})
 }
 
 // graphSyncOptions adds the git surfaces and sync state of graphDir's
