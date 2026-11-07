@@ -119,34 +119,26 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 	}
 
 	for _, entry := range planned {
-		titleOnly := isAll && !cmd.Force && entry.Summary != ""
+		regenerate := !isAll || cmd.Force
 		g.Go(func() error {
 
 			// Render prompt under read lock — other workers may be writing
 			// their own entries' summaries concurrently, and those feed
 			// neighbor prose into this prompt.
 			graphMu.RLock()
-			render := llmops.RenderSummaryPrompt
-			if titleOnly {
-				render = llmops.RenderTitlePrompt
-			}
-			req, renderErr := render(entry, graph, h.language)
+			description, renderErr := llmops.NewDescription(entry, graph, h.language, regenerate)
 			graphMu.RUnlock()
 			if renderErr != nil {
 				return fmt.Errorf("rendering summary for %s: %w", entry.ID, renderErr)
 			}
+			titleOnly := description.TitleOnly()
 
 			// LLM call without the graph lock; the injected runner bounds it.
-			output, err := h.llmRunner.Run(ctx, req)
+			output, err := h.llmRunner.Run(ctx, description.Request)
 			if err != nil {
 				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
 			}
-			result := &llmops.SummarizeResult{}
-			if titleOnly {
-				result.Title, err = llmops.ParseTitleResponse(output.Text)
-			} else {
-				result, err = llmops.ParseSummaryResponse(output.Text)
-			}
+			result, err := description.Parse(output.Text)
 			if err != nil {
 				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
 			}
