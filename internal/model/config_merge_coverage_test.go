@@ -73,7 +73,9 @@ func setDistinctive(t *testing.T, f reflect.Value) {
 		f.SetFloat(1.5)
 	case reflect.Map:
 		m := reflect.MakeMap(f.Type())
-		m.SetMapIndex(reflect.ValueOf("k"), reflect.ValueOf("v"))
+		value := reflect.New(f.Type().Elem()).Elem()
+		setDistinctive(t, value)
+		m.SetMapIndex(reflect.ValueOf("k").Convert(f.Type().Key()), value)
 		f.Set(m)
 	case reflect.Pointer:
 		f.Set(reflect.New(f.Type().Elem()))

@@ -64,7 +64,7 @@ func syncCmd() *cli.Command {
 				return err
 			}
 			if syncMode != model.SyncModeAuto {
-				return errors.New("sync: specify --pull to merge upstream changes into the shared graph, or set sync.mode auto")
+				return errors.New("sync: specify --pull to merge upstream changes into the shared graph")
 			}
 			sddDir, err := resolveSDDDir()
 			if err != nil {

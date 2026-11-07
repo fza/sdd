@@ -46,13 +46,9 @@ type InitCmd struct {
 	// registrations or instruction bridge are written there.
 	GraphOnly bool
 
-	// SyncMode and SyncInterval, when set, record the person's graph sync
-	// settings in config.local.yaml of the project holding the graph, which
-	// is RepoRoot unless ProjectDir names another (20261027-211908-d-tac-l8j).
-	SyncMode     model.SyncMode
-	SyncInterval string
-	// DialogueMode, when set, records the person's dialogue.mode in the same
-	// file (20261029-150854-d-tac-b2f).
+	// DialogueMode, when set, records the person's dialogue.mode in
+	// config.local.yaml of the project holding the graph, which is RepoRoot
+	// unless ProjectDir names another (20261029-150854-d-tac-b2f).
 	DialogueMode model.DialogueMode
 
 	// SetUpProject allows init to set up a missing project at ProjectDir. Only
@@ -183,7 +179,7 @@ type InitCmd struct {
 	OnParticipantWritten func(path, name string)
 
 	// OnLocalSettingWritten fires when init records another per-person
-	// setting, such as sync.mode, in .sdd/config.local.yaml.
+	// setting, such as dialogue.mode, in .sdd/config.local.yaml.
 	OnLocalSettingWritten func(path, key, value string)
 
 	// OnRepoIDWritten fires when a derived repo_id is recorded in
@@ -242,8 +238,8 @@ func (c *InitCmd) Validate() error {
 	if c.RepoRoot == "" {
 		return fmt.Errorf("repo root is required")
 	}
-	settings := model.BaseConfig{Sync: model.SyncConfig{Mode: c.SyncMode, Interval: c.SyncInterval}, Dialogue: model.DialogueConfig{Mode: c.DialogueMode}}
-	ignored := model.IgnoredSettings(settings, false)
+	settings := model.BaseConfig{Dialogue: model.DialogueConfig{Mode: c.DialogueMode}}
+	ignored := model.IgnoredSettings(settings, model.ConfigSourceLocal)
 	if len(ignored) > 0 {
 		return fmt.Errorf("%s: %s", ignored[0].Key, ignored[0].Reason)
 	}

@@ -354,12 +354,12 @@ Results from every selected graph fuse into one ranked list. Cross-repo vector s
 
 SDD config is a layered overlay — each layer overrides the one below:
 
-1. **User-global** — `~/.config/sdd/config.yaml` (or `$XDG_CONFIG_HOME/sdd/config.yaml`). Your personal defaults across every SDD project: participant name, LLM and embedding provider, sync cooldown. Set once, apply everywhere.
+1. **User-global** — `~/.config/sdd/config.yaml` (or `$XDG_CONFIG_HOME/sdd/config.yaml`). Your personal defaults across every SDD project: participant name, LLM and embedding provider, and the limits on the git operations sdd starts. Set once, apply everywhere.
 2. **Committed project** — `.sdd/config.yaml`, in git. Properties of the repo itself that every contributor shares: graph directory, authoring language, skill scope, supported agents, the repo's own `repo_id`, and connected-repo [dependencies](#connected-repos). It may also carry safe project-wide defaults for the personal settings above.
 3. **Machine-local** — `.sdd/config.local.yaml`, gitignored. Per-machine overrides for this checkout: API keys, a local endpoint, a provider or participant override you don't want committed. The global `--local-config <path>` flag points this layer at another file for the whole invocation — reads resolve it and `--local` writes land in it, so a sandbox, a CI runner or a second identity can supply its own layer without touching the checkout.
 4. **CLI flags** — per-invocation, highest precedence.
 
-Later layers win: a provider set project-wide overrides your global default, and a machine-local override wins over both. The split is by *whose fact each setting is*: repo-identity fields (`repo_id`, `dependencies`, `graph_dir`, `language`, `supported_agents`) belong in the committed project file and can't be set globally; personal preferences (participant, LLM, embedding, sync) default best at the user-global layer, with the local file for machine-specific overrides. A key placed in the wrong file fails loud — naming the file and key — rather than being silently dropped.
+Later layers win: a provider set project-wide overrides your global default, and a machine-local override wins over both. The split is by *whose fact each setting is*: repo-identity fields (`repo_id`, `dependencies`, `graph_dir`, `language`, `supported_agents`) belong in the committed project file and can't be set globally; personal preferences (participant, LLM, embedding) default best at the user-global layer, with the local file for machine-specific overrides. The git limits (`sync.default`, and `sync.hosts.<host>` per remote host: `fetch_cooldown`, `push_cooldown`, `retries`, `concurrency`, `ssh.per_hour`, `https.per_hour`, `https.per_hour_unauthenticated`) are read from the user-global file only. A key placed in the wrong file fails loud — naming the file and key — rather than being silently dropped.
 
 ### A graph in its own repository
 

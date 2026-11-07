@@ -23,7 +23,7 @@ func TestIgnoredSyncInterval(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := model.IgnoredSettings(model.BaseConfig{Sync: model.SyncConfig{Interval: tc.interval}}, tc.committed)
+			got := model.IgnoredSettings(model.BaseConfig{Sync: model.SyncConfig{Interval: tc.interval}}, layerOf(tc.committed))
 			if !tc.ignored {
 				if len(got) != 0 {
 					t.Errorf("an interval the layer may set should be honored, got %v", got)
@@ -38,7 +38,7 @@ func TestIgnoredSyncInterval(t *testing.T) {
 }
 
 func TestIgnoredSettingsReportsEveryKey(t *testing.T) {
-	got := model.IgnoredSettings(model.BaseConfig{Sync: model.SyncConfig{Mode: model.SyncModeAuto, Interval: "5m"}}, true)
+	got := model.IgnoredSettings(model.BaseConfig{Sync: model.SyncConfig{Mode: model.SyncModeAuto, Interval: "5m"}}, model.ConfigSourceProject)
 	if len(got) != 2 {
 		t.Errorf("both personal-only keys in the committed layer should be reported, got %v", got)
 	}

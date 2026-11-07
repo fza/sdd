@@ -205,11 +205,15 @@ func TopLevelKeys(data []byte) ([]string, error) {
 	return keys, nil
 }
 
-// SyncConfig governs background sync awareness: the auto-fetch cooldown and
-// related behavior. Stored as a string Go duration (e.g. "15m") parsed at
-// use site so malformed values fall back to DefaultSyncCooldown rather than
-// failing at config load.
+// SyncConfig is the `sync` block. Default and Hosts are the git limits per
+// remote host and are read from the user-global config only
+// (20261107-095427-d-tac-yux). Cooldown, Mode and Interval are retired: they
+// stay declared so a file carrying them raises no unknown-key warning, and
+// `sdd config set` refuses them.
 type SyncConfig struct {
+	Default GitLimitsConfig            `yaml:"default,omitempty"`
+	Hosts   map[string]GitLimitsConfig `yaml:"hosts,omitempty"`
+
 	// Cooldown is the minimum interval between background git fetches. Go
 	// duration string (e.g. "15m", "1h"). Empty means DefaultSyncCooldown.
 	Cooldown string `yaml:"cooldown,omitempty"`
@@ -256,10 +260,19 @@ type IgnoredSetting struct {
 	Reason string
 }
 
+// RetiredConfigKeys are keys sdd no longer uses. Reading them stays
+// tolerant; `sdd config set` refuses them.
+var RetiredConfigKeys = []string{"sync.cooldown", "sync.mode", "sync.interval"}
+
 // IgnoredSettings returns the settings in one config layer that sdd reads
-// past. committed marks the shared .sdd/config.yaml.
-func IgnoredSettings(layer BaseConfig, committed bool) []IgnoredSetting {
+// past. source names the layer: global, project (the shared
+// .sdd/config.yaml) or local.
+func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSetting {
+	committed := source == ConfigSourceProject
 	var ignored []IgnoredSetting
+	if source != ConfigSourceGlobal {
+		ignored = append(ignored, misplacedGitLimits(layer.Sync)...)
+	}
 	if reason := ignoredSyncMode(layer.Sync.Mode, committed); reason != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "sync.mode", Reason: reason})
 	}
@@ -316,16 +329,24 @@ func ignoredSyncInterval(interval string, committed bool) string {
 }
 
 // HonoredCommitted returns the committed layer without the settings only a
-// person's own config may make.
+// person's own config, or only the user-global config, may make.
 func HonoredCommitted(committed *PerRepoConfig) *PerRepoConfig {
-	if committed == nil || (committed.Sync.Mode == "" && committed.Sync.Interval == "" && committed.Dialogue.Mode == "") {
+	if committed == nil || (committed.Sync.Mode == "" && committed.Sync.Interval == "" && committed.Dialogue.Mode == "" && len(misplacedGitLimits(committed.Sync)) == 0) {
 		return committed
 	}
-	honored := *committed
+	honored := withoutGitLimits(*committed)
 	honored.Sync.Mode = ""
 	honored.Sync.Interval = ""
 	honored.Dialogue.Mode = ""
 	return &honored
+}
+
+// withoutGitLimits drops the git limits, which only the user-global config
+// sets, from a project layer.
+func withoutGitLimits(cfg PerRepoConfig) PerRepoConfig {
+	cfg.Sync.Default = GitLimitsConfig{}
+	cfg.Sync.Hosts = nil
+	return cfg
 }
 
 // SessionsConfig holds settings for engine session lifetime.
@@ -682,6 +703,8 @@ func mergeEmbeddingConfig(base, overlay EmbeddingConfig) EmbeddingConfig {
 
 func mergeSyncConfig(base, overlay SyncConfig) SyncConfig {
 	out := base
+	out.Default = mergeGitLimitsConfig(base.Default, overlay.Default)
+	out.Hosts = mergeGitLimitsHosts(base.Hosts, overlay.Hosts)
 	if overlay.Cooldown != "" {
 		out.Cooldown = overlay.Cooldown
 	}
@@ -833,14 +856,8 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"#   timeout: 2m\n" +
 		"#   concurrency: 4\n" +
 		"\n" +
-		"# Background sync — controls how often the CLI auto-fetches to detect graph\n" +
-		"# changes from collaborators. Go duration string. mode: auto pushes every\n" +
-		"# graph commit and pulls upstream graph commits on that check; interval,\n" +
-		"# set per person, makes a running `sdd serve` sync on that timer too.\n" +
-		"# sync:\n" +
-		"#   cooldown: " + DefaultSyncCooldown + "\n" +
-		"#   mode: " + string(SyncModeManual) + "\n" +
-		"#   interval: 5m\n" +
+		"# Limits on the git operations sdd starts are set per remote host in the\n" +
+		"# user-global config, under sync.default and sync.hosts.\n" +
 		"\n" +
 		"# Dialogue, set per person: mode: autonomous lets the agent take the\n" +
 		"# choices an engine session otherwise puts to you.\n" +

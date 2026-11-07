@@ -158,12 +158,10 @@ func TestSyncIntervalIsPerPersonAndFloored(t *testing.T) {
 	if !strings.Contains(out, "ignoring config setting") || !strings.Contains(out, "sync.interval") || !strings.Contains(out, "config.yaml") {
 		t.Errorf("a committed interval should be reported naming file and key, got %q", out)
 	}
-	for _, value := range []string{"30s", "often"} {
-		if out, err := runAppErr(t, root, "config", "set", "--local", "sync.interval", value); err == nil {
-			t.Errorf("config set should refuse interval %q, got %q", value, out)
+	for _, value := range []string{"30s", "often", "2m"} {
+		out, err := runAppErr(t, root, "config", "set", "--local", "sync.interval", value)
+		if err == nil || !strings.Contains(err.Error(), "no longer used") {
+			t.Errorf("config set should refuse the retired sync.interval whatever its value, got %v\n%s", err, out)
 		}
-	}
-	if out, err := runAppErr(t, root, "config", "set", "--local", "sync.interval", "2m"); err != nil {
-		t.Errorf("config set should accept a valid interval: %v\n%s", err, out)
 	}
 }
