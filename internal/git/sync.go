@@ -54,6 +54,9 @@ func (c CLI) UpstreamRef(ctx context.Context) (string, error) {
 // like Push, so a stalled remote or a credential prompt cannot hold the sync
 // lock.
 func (c CLI) Fetch(ctx context.Context) error {
+	if c.graphClone() {
+		return c.fetchClone(ctx)
+	}
 	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
 	defer cancel()
 	out, err := runDetached(ctx, c.at("fetch")...)
@@ -142,6 +145,9 @@ func (c CLI) RepoPath(ctx context.Context, path string) (string, error) {
 // MergeTreePredict simulates a three-way merge in memory and returns the
 // paths that would conflict.
 func (c CLI) MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]string, error) {
+	if c.graphClone() {
+		return c.predictCloneMerge(ctx, ourRef, theirRef)
+	}
 	// --no-messages suppresses the trailing informational/conflict-message
 	// section so stdout after the OID is purely the conflicted path list.
 	// --merge-base is omitted so git computes the base internally (2.38

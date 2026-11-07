@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/slogutils"
 
+	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
@@ -234,9 +236,18 @@ type cachedDependencies struct {
 	registry *repos.Registry
 	closure  *finders.Finder
 	build    func(repos.Cache, *model.PerRepoConfig) (*sdd.ProjectRuntime, error)
+	// writer, connected and clones serve a capture into a dependency: the
+	// gates of 20261106-201216-d-cpt-aim decide, and the capture writes
+	// through the dependency's sdd-owned clone, built by buildWritable.
+	writer        sdd.RepoID
+	connected     model.ConnectedConfig
+	clones        *repos.GraphClones
+	codeOrigin    string
+	buildWritable func(repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error)
 
 	mu       sync.Mutex
 	runtimes map[sdd.RepoID]*sdd.ProjectRuntime
+	writable map[sdd.RepoID]*sdd.ProjectRuntime
 }
 
 func (d *cachedDependencies) resolve(repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
@@ -290,6 +301,86 @@ func (d *cachedDependencies) resolveMember(ctx context.Context, repoID sdd.RepoI
 	return d.resolve(repoID)
 }
 
+// resolveWritable resolves a closure member a capture writes into: refused
+// unless the writer's connected.write and the member's committed
+// inbound.accept both allow the pair, else a runtime over the member's
+// sdd-owned clone, cloned on first need.
+func (d *cachedDependencies) resolveWritable(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
+	if d == nil || d.clones == nil {
+		return nil, dependencyUnavailable()
+	}
+	closure, err := d.closure.DependencyClosure(ctx, query.DependencyClosureQuery{})
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(closure, repoID) {
+		return nil, dependencyUnavailable()
+	}
+	cache, connected, err := d.registry.Cache(repoID)
+	if err != nil {
+		return nil, err
+	}
+	if !connected || !cache.Cloned() {
+		return nil, dependencyUnavailable()
+	}
+	cached, err := cache.Config()
+	if err != nil {
+		return nil, err
+	}
+	err = d.refusal(repoID, cached)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if runtime := d.writable[repoID]; runtime != nil {
+		return runtime, nil
+	}
+	ensure := handlers.New(handlers.Options{GraphClones: d.clones})
+	err = ensure.EnsureGraphClone(ctx, &command.EnsureGraphCloneCmd{RepoID: repoID, CodeOrigin: d.codeOrigin})
+	if err != nil {
+		return nil, err
+	}
+	dir, err := d.clones.Dir(repoID)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := meta.ReadCommittedConfigFS(os.DirFS(dir))
+	if err != nil {
+		return nil, err
+	}
+	err = d.refusal(repoID, cfg)
+	if err != nil {
+		return nil, err
+	}
+	runtime, err := d.buildWritable(repoID, dir, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if d.writable == nil {
+		d.writable = map[sdd.RepoID]*sdd.ProjectRuntime{}
+	}
+	d.writable[repoID] = runtime
+	return runtime, nil
+}
+
+func (d *cachedDependencies) writableRuntime(repoID sdd.RepoID) *sdd.ProjectRuntime {
+	if d == nil {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.writable[repoID]
+}
+
+func (d *cachedDependencies) refusal(repoID sdd.RepoID, target *model.PerRepoConfig) error {
+	err := model.ConnectedWriteRefusal(d.writer, d.connected, repoID, target.Inbound)
+	if err != nil {
+		return &sdd.ApplicationError{Code: sdd.ErrorWriteDenied, Message: err.Error(), Cause: err}
+	}
+	return nil
+}
+
 func dependencyUnavailable() error {
 	return &sdd.ApplicationError{Code: sdd.ErrorProjectUnavailable, Message: "dependency unavailable"}
 }
@@ -317,11 +408,19 @@ func (a *localRuntimeAccess) ListProjects(context.Context, sdd.Principal) (sdd.P
 	return sdd.ProjectList{Projects: []sdd.ProjectSummary{{ProjectRef: a.runtime.Project(), CanRead: true, CanWrite: true, State: sdd.ProjectReady}}}, nil
 }
 
-func (a *localRuntimeAccess) ResolveProject(ctx context.Context, _ sdd.Principal, project sdd.ProjectID, _ sdd.Access) (*sdd.ProjectRuntime, error) {
+func (a *localRuntimeAccess) ResolveProject(ctx context.Context, _ sdd.Principal, project sdd.ProjectID, access sdd.Access) (*sdd.ProjectRuntime, error) {
 	if project == a.project {
 		return a.runtime, nil
 	}
 	// Locally a dependency's project ID is its repo ID.
+	if access == sdd.AccessWrite {
+		return a.dependencies.resolveWritable(ctx, sdd.RepoID(project))
+	}
+	// A dependency a capture writes into is read from the clone it writes
+	// through, on the branch the capture chose.
+	if writable := a.dependencies.writableRuntime(sdd.RepoID(project)); writable != nil {
+		return writable, nil
+	}
 	return a.dependencies.resolveMember(ctx, sdd.RepoID(project))
 }
 
@@ -344,13 +443,17 @@ func localDialogue(sddDir string) (sdd.Dialogue, error) {
 	if err != nil {
 		return sdd.Dialogue{}, err
 	}
-	committed, local, err := meta.ReadConfigLayers(sddDir, localConfigOverride)
+	localLayer, err := localConfigLayer()
+	if err != nil {
+		return sdd.Dialogue{}, err
+	}
+	committed, local, err := meta.ReadConfigLayers(sddDir, localLayer)
 	if err != nil {
 		return sdd.Dialogue{}, err
 	}
 	sources := map[model.ConfigValueSource]string{
 		model.ConfigSourceGlobal: loc.ConfigPath,
-		model.ConfigSourceLocal:  meta.LocalConfigPath(sddDir, localConfigOverride),
+		model.ConfigSourceLocal:  meta.LocalConfigPath(sddDir, localLayer),
 	}
 	for _, value := range model.EffectiveConfigValues(global.BaseConfig, committed, local) {
 		if value.Key == "dialogue.mode" {
@@ -417,7 +520,11 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		embeddings = localEmbedder
 	}
 	serverCheckout := filepath.Dir(sddDir)
-	targets, err := localadapter.NewRepositoryTargets(project, serverCheckout, locations.ConfigPath, localConfigOverride)
+	localLayer, err := localConfigLayer()
+	if err != nil {
+		return nil, nil, sdd.RequestIdentity{}, err
+	}
+	targets, err := localadapter.NewRepositoryTargets(project, serverCheckout, locations.ConfigPath, localLayer)
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
@@ -443,30 +550,35 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	}
 	access := &localRuntimeAccess{
 		project: project, participant: participant, dialogue: dialogue, runtime: runtime,
-		dependencies: &cachedDependencies{registry: registry, closure: finders.New(finders.Options{Config: cfg, Repos: registry}), build: func(cache repos.Cache, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
-			// The cache as a project of its own: its committed config supplies
-			// the graph layout, the language, and the dependencies its horizon
-			// is composed from.
-			graphDir, err := cache.GraphDir()
-			if err != nil {
-				return nil, err
-			}
-			memberGraph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: sdd.ProjectID(cache.RepoID), GraphDir: graphDir})
-			if err != nil {
-				return nil, err
-			}
-			// Connected stores are keyed by the connected repo's ID (the existing
-			// connected-repository storage contract) and exclude embedded entries,
-			// so binary-shipped base facts embed once per machine in the base
-			// store, not once per connected repo.
-			memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(cache.RepoID), cacheRoot, index.RepoKey(cache.RepoID, cache.Dir))
-			return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
-				Project: sdd.ProjectRef{ID: sdd.ProjectID(cache.RepoID), DisplayName: string(cache.RepoID)}, Graph: memberGraph,
-				Language: dependencyCfg.Language, Dependencies: dependencyCfg.Dependencies,
-				Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), LLM: runner,
-				ExcludeEmbeddedFromIndex: true,
-			})
-		}},
+		dependencies: &cachedDependencies{registry: registry, closure: finders.New(finders.Options{Config: cfg, Repos: registry}),
+			writer: sdd.RepoID(cfg.RepoID), connected: cfg.Connected, clones: repos.NewGraphClones(locations, git.GraphClones{}), codeOrigin: git.RemoteURL(serverCheckout),
+			buildWritable: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
+				return cloneRuntime(repoID, dir, dependencyCfg, locations.ConfigPath, runner, memberEmbedder, cacheRoot)
+			},
+			build: func(cache repos.Cache, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
+				// The cache as a project of its own: its committed config supplies
+				// the graph layout, the language, and the dependencies its horizon
+				// is composed from.
+				graphDir, err := cache.GraphDir()
+				if err != nil {
+					return nil, err
+				}
+				memberGraph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: sdd.ProjectID(cache.RepoID), GraphDir: graphDir})
+				if err != nil {
+					return nil, err
+				}
+				// Connected stores are keyed by the connected repo's ID (the existing
+				// connected-repository storage contract) and exclude embedded entries,
+				// so binary-shipped base facts embed once per machine in the base
+				// store, not once per connected repo.
+				memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(cache.RepoID), cacheRoot, index.RepoKey(cache.RepoID, cache.Dir))
+				return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
+					Project: sdd.ProjectRef{ID: sdd.ProjectID(cache.RepoID), DisplayName: string(cache.RepoID)}, Graph: memberGraph,
+					Language: dependencyCfg.Language, Dependencies: dependencyCfg.Dependencies,
+					Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), LLM: runner,
+					ExcludeEmbeddedFromIndex: true,
+				})
+			}},
 	}
 	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: access, Sessions: sessions, StagedBlobs: blobs})
 	if err != nil {
@@ -477,6 +589,36 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
 	return application, runtime, identity, nil
+}
+
+// cloneRuntime serves a dependency a capture writes into from its sdd-owned
+// clone at dir: its own config, default branch, graph and write targets.
+func cloneRuntime(repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, globalConfigPath string, runner pkgllm.Runner, embeddings embed.Embedder, cacheRoot string) (*sdd.ProjectRuntime, error) {
+	project := sdd.ProjectID(repoID)
+	defaultBranch := cfg.DefaultBranch
+	if defaultBranch == "" {
+		branch, err := git.CurrentBranch(dir)
+		if err != nil {
+			return nil, err
+		}
+		defaultBranch = branch
+	}
+	targets, err := localadapter.NewRepositoryTargets(project, dir, globalConfigPath, "")
+	if err != nil {
+		return nil, err
+	}
+	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: meta.ResolveGraphDir(dir, cfg), MetaPath: filepath.Join(dir, model.SDDDirName, model.SchemaMetaFileName)})
+	if err != nil {
+		return nil, err
+	}
+	searchIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, index.RepoKey(repoID, dir))
+	return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
+		Project: sdd.ProjectRef{ID: project, DisplayName: string(repoID)}, DefaultBranch: defaultBranch, Language: cfg.Language,
+		Dependencies: cfg.Dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: defaultBranch},
+		Targets: targets, Sync: targets, Branches: targets, Base: targets,
+		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, searchIndex), LLM: runner,
+		ExcludeEmbeddedFromIndex: true,
+	})
 }
 
 // collectSessions runs one reclamation pass at startup. This is the trigger

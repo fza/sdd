@@ -36,6 +36,8 @@ type SyncRoundCmd struct {
 // blocked sync, when that session ends.
 type ReleaseSyncOwnerCmd struct {
 	Session string
+	// TitlesOnly releases only a failed title backfill, under manual sync.
+	TitlesOnly bool
 	// OnNotice is invoked with the banner while sync is blocked.
 	OnNotice func(notice string)
 }
@@ -44,6 +46,8 @@ type ReleaseSyncOwnerCmd struct {
 // one agent session, making it the owner of the fix when nobody is.
 type ClaimSyncNoticeCmd struct {
 	Session string
+	// TitlesOnly serves only a failed title backfill, under manual sync.
+	TitlesOnly bool
 	// OnNotice is invoked with the notice while sync is blocked.
 	OnNotice func(notice string)
 }
