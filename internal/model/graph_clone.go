@@ -20,6 +20,9 @@ const (
 	// GraphCloneCommits names the file in the clone's git directory listing
 	// every commit sdd made there, one hash per line.
 	GraphCloneCommits = "sdd-commits"
+	// GraphCloneStagingSuffix marks the directory a clone is built in beside
+	// its place, until it is renamed there.
+	GraphCloneStagingSuffix = ".cloning"
 	// ConfigMergeDriver is the merge driver `.sdd/config.yaml` is routed to
 	// in the clone.
 	ConfigMergeDriver = "sdd-config"

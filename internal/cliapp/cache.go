@@ -18,6 +18,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/syncstate"
 )
 
 const (
@@ -31,7 +32,7 @@ func cacheCmd() *cli.Command {
 		Usage: "Manage the machine-global cache",
 		Commands: []*cli.Command{{
 			Name:  "prune",
-			Usage: "Delete unused cache data now: replaced and unused index versions, unused index stores, graph snapshots of vanished folders, clones of disconnected repos",
+			Usage: "Delete unused cache data now: replaced and unused index versions, unused index stores, graph snapshots of vanished folders, sdd-owned clones nothing uses",
 			Description: `sdd runs this in the background at most once a day. Data unused for
 cache.retention (user-global config, default ` + model.DefaultCacheRetention + `) goes; versions the
 current checkout searches always stay. sdd index gc removes more on request.`,
@@ -57,9 +58,14 @@ current checkout searches always stay. sdd index gc removes more on request.`,
 				} else if !errors.Is(err, errNoProject) {
 					return err
 				}
+				gate, err := commandGate()
+				if err != nil {
+					return err
+				}
 				scheduled := cmd.Bool(scheduledFlag)
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
-					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), Keep: keep,
+					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
+					OwnedClones: syncstate.OwnedClones{Gate: gate}, Keep: keep,
 				})
 				return h.Prune(ctx, &command.PruneCacheCmd{
 					Scheduled: scheduled,

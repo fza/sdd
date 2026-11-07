@@ -16,9 +16,11 @@ import (
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/graphcache"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/handlers/synctest"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/syncstate"
 )
 
 const pruneRetention = 90 * 24 * time.Hour
@@ -45,6 +47,7 @@ func newPruneFixture(t *testing.T, config string) pruneFixture {
 	root := t.TempDir()
 	f := pruneFixture{loc: repos.Locations{
 		ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"),
+		DataRoot: filepath.Join(root, "data"),
 	}}
 	if err := os.WriteFile(f.loc.ConfigPath, []byte("repos:\n  - repo_id: github.com/acme/kept\n    clone_url: git@github.com:acme/kept.git\n"+config), 0o600); err != nil {
 		t.Fatal(err)
@@ -111,7 +114,8 @@ func newPruneFixture(t *testing.T, config string) pruneFixture {
 
 func (f pruneFixture) handler(keep handlers.CurrentHashSource) *handlers.CacheHandler {
 	return handlers.NewCacheHandler(handlers.CacheHandlerOptions{
-		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc), Keep: keep,
+		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
+		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(f.loc.StateRoot, nil)}, Keep: keep,
 	})
 }
 

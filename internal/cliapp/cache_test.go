@@ -96,15 +96,25 @@ func TestCachePruneCommand(t *testing.T) {
 	if err := os.MkdirAll(clone, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	owned := filepath.Join(dataHome(f.root), "sdd", "repos", "github.com", "acme", "unused")
+	if err := os.MkdirAll(owned, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, owned, "init", "-q", "-b", "main")
+	runGit(t, owned, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-q", "--allow-empty", "-m", "sdd: first")
+	runGit(t, owned, "remote", "add", "origin", "git@github.com:acme/unused.git")
+	runGit(t, owned, "update-ref", "refs/remotes/origin/main", "HEAD")
 	r := f.run(t, "cache", "prune")
 	if r.err != nil {
 		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)
 	}
-	if !strings.Contains(r.stdout, "1 clones") {
+	if !strings.Contains(r.stdout, "2 clones") {
 		t.Errorf("the run should name what it removed, stdout:\n%s", r.stdout)
 	}
-	if _, err := os.Stat(clone); !os.IsNotExist(err) {
-		t.Errorf("the clone no connection names should be gone, stat says %v", err)
+	for _, dir := range []string{clone, owned} {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("the clone no connection names and nothing uses should be gone, stat of %s says %v", dir, err)
+		}
 	}
 	info := f.run(t, "info")
 	if !strings.Contains(info.stdout, "Cache pruning: last run") {

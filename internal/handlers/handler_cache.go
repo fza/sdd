@@ -26,28 +26,43 @@ type CurrentHashSource interface {
 	CurrentHashes(ctx context.Context, maxRunes int) (map[string]string, error)
 }
 
-// CacheHandlerOptions configures NewCacheHandler. CacheRoot, StateRoot and
-// Registry are required; Keep is nil outside an sdd checkout; Now defaults to
-// time.Now.
+// OwnedCloneProbe answers what pruning asks of an sdd-owned clone before it
+// removes one.
+type OwnedCloneProbe interface {
+	// TryLockSync takes the clone's sync lock; release is nil while another
+	// process holds it.
+	TryLockSync(ctx context.Context, dir string) (release func(), err error)
+	// Unpushed reports whether the clone holds commits its remote lacks.
+	Unpushed(ctx context.Context, dir string) (bool, error)
+	// LastAttempt is when the git gate last admitted a fetch or push of the
+	// clone's remote; zero when it never did.
+	LastAttempt(ctx context.Context, dir string) (time.Time, error)
+}
+
+// CacheHandlerOptions configures NewCacheHandler. CacheRoot, StateRoot,
+// Registry and OwnedClones are required; Keep is nil outside an sdd checkout;
+// Now defaults to time.Now.
 type CacheHandlerOptions struct {
-	CacheRoot string
-	StateRoot string
-	Registry  *repos.Registry
-	Keep      CurrentHashSource
-	Now       func() time.Time
+	CacheRoot   string
+	StateRoot   string
+	Registry    *repos.Registry
+	OwnedClones OwnedCloneProbe
+	Keep        CurrentHashSource
+	Now         func() time.Time
 }
 
 // CacheHandler runs the machine-global cache pruning.
 type CacheHandler struct {
-	cacheRoot string
-	stateRoot string
-	registry  *repos.Registry
-	keep      CurrentHashSource
-	now       func() time.Time
+	cacheRoot   string
+	stateRoot   string
+	registry    *repos.Registry
+	ownedClones OwnedCloneProbe
+	keep        CurrentHashSource
+	now         func() time.Time
 }
 
 func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
-	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, keep: opts.Keep, now: opts.Now}
+	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, ownedClones: opts.OwnedClones, keep: opts.Keep, now: opts.Now}
 	if h.now == nil {
 		h.now = time.Now
 	}
@@ -155,11 +170,15 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 	if err != nil {
 		errs = append(errs, err)
 	}
-	for _, dir := range clones {
-		retired, err := h.registry.RetireUnconnectedClone(dir)
+	for _, clone := range clones {
+		dir := clone.Dir
+		retired, err := h.registry.RetireUnconnectedClone(clone, h.holdUnused(ctx, now, retention))
 		switch {
 		case errors.Is(err, repos.ErrClonesBusy):
 			log.Info("connected-repo clones in use, skipped")
+			continue
+		case errors.Is(err, repos.ErrCloneInUse):
+			log.Info("clone kept", "clone", dir, "reason", err)
 			continue
 		case err != nil:
 			errs = append(errs, err)
@@ -234,6 +253,48 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		}
 	}
 	return counts, errors.Join(errs...)
+}
+
+// holdUnused lets an sdd-owned clone go only while nothing uses it: its sync
+// lock is free, it holds no unpushed commits, and the git gate admitted no
+// operation on its remote within retention, which keeps the graph_repo
+// clone of a project, never connected, while the project syncs it.
+func (h *CacheHandler) holdUnused(ctx context.Context, now time.Time, retention time.Duration) repos.CloneHold {
+	return func(dir string) (func(), error) {
+		if h.ownedClones == nil {
+			return nil, errors.New("cache pruning has no probe for sdd-owned clones")
+		}
+		release, err := h.ownedClones.TryLockSync(ctx, dir)
+		if err != nil {
+			return nil, fmt.Errorf("locking the sync of %s: %w", dir, err)
+		}
+		if release == nil {
+			return nil, fmt.Errorf("%w: a sync holds it", repos.ErrCloneInUse)
+		}
+		if err := h.cloneInUse(ctx, dir, now, retention); err != nil {
+			release()
+			return nil, err
+		}
+		return release, nil
+	}
+}
+
+func (h *CacheHandler) cloneInUse(ctx context.Context, dir string, now time.Time, retention time.Duration) error {
+	unpushed, err := h.ownedClones.Unpushed(ctx, dir)
+	if err != nil {
+		return err
+	}
+	if unpushed {
+		return fmt.Errorf("%w: it holds unpushed commits", repos.ErrCloneInUse)
+	}
+	last, err := h.ownedClones.LastAttempt(ctx, dir)
+	if err != nil {
+		return err
+	}
+	if !last.IsZero() && now.Sub(last) <= retention {
+		return fmt.Errorf("%w: git last reached its remote at %s", repos.ErrCloneInUse, last.Format(time.RFC3339))
+	}
+	return nil
 }
 
 func dirSize(dir string) (int64, error) {

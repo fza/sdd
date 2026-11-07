@@ -28,7 +28,7 @@ const (
 	remoteSinceKey  = "sdd.remoteSince"
 	defaultBranch   = "main"
 	trackingPrefix  = "refs/remotes/origin/"
-	cloneStagingExt = ".cloning"
+	cloneStagingExt = model.GraphCloneStagingSuffix
 )
 
 // cloneExcludeLines keep sdd's own files in the clone out of git and out of

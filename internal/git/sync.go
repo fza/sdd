@@ -139,6 +139,16 @@ func (c CLI) CommonDir(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// HoldsUnpushed reports whether a local branch holds a commit no
+// remote-tracking branch reaches.
+func (c CLI) HoldsUnpushed(ctx context.Context) (bool, error) {
+	out, err := exec.CommandContext(ctx, "git", c.at("rev-list", "--count", "--branches", "--not", "--remotes")...).Output()
+	if err != nil {
+		return false, fmt.Errorf("git rev-list --branches --not --remotes: %w", err)
+	}
+	return strings.TrimSpace(string(out)) != "0", nil
+}
+
 // RevParse returns the commit ref names.
 func (c CLI) RevParse(ctx context.Context, ref string) (string, error) {
 	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--verify", "--quiet", ref+"^{commit}")...).Output()

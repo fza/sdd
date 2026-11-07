@@ -168,6 +168,31 @@ func (g *Gate) Concurrency(target Target) (int, error) {
 	return max(limits.Concurrency, 1), nil
 }
 
+// LastAttempt is when the gate last admitted a fetch or push of target; zero
+// when it never did.
+func (g *Gate) LastAttempt(ctx context.Context, target Target) (time.Time, error) {
+	unlock, err := g.store.lock(ctx, true)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer unlock()
+	l, err := g.store.read()
+	if err != nil {
+		return time.Time{}, err
+	}
+	repo := l.Repos[target.Repo]
+	if repo == nil {
+		return time.Time{}, nil
+	}
+	var last time.Time
+	for _, record := range []*kindRecord{repo.Fetch, repo.Push} {
+		if record != nil && record.LastAttempt.After(last) {
+			last = record.LastAttempt
+		}
+	}
+	return last, nil
+}
+
 func (g *Gate) limitsFor(target Target) (Limits, error) {
 	if g.limits == nil {
 		return Limits{}, errors.New("git gate has no limits")
