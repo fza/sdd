@@ -156,7 +156,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -201,7 +201,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -307,7 +307,7 @@
           ]
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         },
         "version": {
@@ -722,7 +722,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         },
         "vocabulary": {
@@ -878,7 +878,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -961,7 +961,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         },
         "total_bytes": {
@@ -1044,7 +1044,7 @@
           ]
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -1517,7 +1517,7 @@
                 "type": "string"
               },
               "sync_notice": {
-                "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+                "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
                 "type": "string"
               },
               "vocabulary": {
@@ -1594,7 +1594,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -1727,7 +1727,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -1788,7 +1788,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -1873,7 +1873,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },
@@ -2284,7 +2284,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         },
         "vocabulary": {
@@ -2683,7 +2683,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         },
         "vocabulary": {
@@ -2694,6 +2694,73 @@
       "required": [
         "status",
         "goal"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Run the sync round of the connected repositories (session required): each repository's sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to name them; omitted, every connected repository syncs. Returns one outcome per repository.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "repos": {
+          "description": "connected repositories to sync, by repo ID; omitted, every repository connected on this machine",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "session": {
+          "description": "session handle this connection is attached to (from start_session or resume_session); required; the sync runs for that session's home project",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "sync_repos",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "repos": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "next": {
+                "description": "RFC 3339 time a skipped repository is due or a failed one is retried",
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              },
+              "state": {
+                "description": "synced, pushed (local commits published), skipped (the git gate holds it back; next says when it is due), failed (reason says why; next says when it is retried) or refused (reason says why, such as not connected on this machine)",
+                "type": "string"
+              }
+            },
+            "required": [
+              "repo",
+              "state"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repos"
       ],
       "type": "object"
     }
@@ -2747,7 +2814,7 @@
           "type": "string"
         },
         "sync_notice": {
-          "description": "set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
         }
       },

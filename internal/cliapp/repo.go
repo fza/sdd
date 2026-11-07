@@ -21,8 +21,8 @@ import (
 )
 
 // repoCmd manages connected repos — the machine-level setup behind
-// cross-repo references. Deliberately CLI-only (no MCP surface): connecting
-// a repo is environment configuration, not dialogue.
+// cross-repo references. Connecting a repo is environment configuration,
+// not dialogue, so only its sync reaches MCP, as sync_repos.
 func repoCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "repo",

@@ -345,7 +345,7 @@ type ReadAttachmentResult struct {
 // automatic sync of the graph repository cannot proceed
 // (20261028-201909-d-tac-fxp).
 type SyncNoticeField struct {
-	SyncNotice string `json:"sync_notice,omitempty" jsonschema:"set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says"`
+	SyncNotice string `json:"sync_notice,omitempty" jsonschema:"set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says"`
 }
 
 func (f *SyncNoticeField) setSyncNotice(notice string) { f.SyncNotice = notice }
@@ -512,6 +512,13 @@ func (s *Server) registerTools() {
 		Name:        "registry",
 		Description: "Engine function contracts (predicates, queries, commands) — what procedure spec authors consult. Carries the session handle like every other tool.",
 	}, toolBoundary(s.registryDocs))
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name: "sync_repos",
+		Description: "Run the sync round of the connected repositories (session required): each repository's " +
+			"sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to " +
+			"name them; omitted, every connected repository syncs. Returns one outcome per repository.",
+	}, toolBoundary(s.syncRepos))
 }
 
 // attachedSession returns the named session locked and replayed from its ledger.

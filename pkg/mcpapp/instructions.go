@@ -34,7 +34,7 @@ capability: it reaches you only by issuance (start_session minted it for you,
 or a dispatch carried it) or because the user handed it over, and presenting
 it is the whole authorization to continue that dialogue. Every other tool
 carries it as a required argument — the work tools (start_procedure, next,
-park, stage_attachment, bind_branch, abandon) and the reads (search, view,
+park, stage_attachment, bind_branch, abandon, sync_repos) and the reads (search, view,
 show, read_attachment, info, registry) alike; a read runs in the session's
 home project and branch unless it names another project. A project the
 home declares as a dependency, directly or through its dependencies, is

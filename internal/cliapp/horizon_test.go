@@ -97,6 +97,11 @@ func TestServeReachesTheDependencyClosure(t *testing.T) {
 			return text.String(), result.IsError
 		}
 
+		synced, isError := call("sync_repos", map[string]any{})
+		if isError || !strings.Contains(synced, `"repo":"example.test/deep"`) || strings.Contains(synced, `"state":"failed"`) {
+			t.Errorf("sync_repos should run the round of every connected repo: %s", synced)
+		}
+
 		results, isError := call("search", map[string]any{"terms": []string{"zebrafinch"}, "all_repos": true})
 		if isError {
 			t.Fatalf("search all_repos: %s", results)

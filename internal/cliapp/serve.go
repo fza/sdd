@@ -343,6 +343,21 @@ type connectedRounds struct {
 	handler *handlers.Handler
 }
 
+func (c connectedRounds) SyncRepos(ctx context.Context, request sdd.SyncReposRequest) ([]sdd.RepoSyncOutcome, error) {
+	var outcomes []sdd.RepoSyncOutcome
+	cmd := &command.RepoSyncCmd{Due: request.Due, OnOutcome: func(outcome model.RepoSyncOutcome) {
+		outcomes = append(outcomes, sdd.RepoSyncOutcome{Repo: sdd.RepoID(outcome.RepoID), State: sdd.RepoSyncState(outcome.State), Next: outcome.Next, Reason: outcome.Reason})
+	}}
+	for _, repo := range request.Repos {
+		cmd.RepoIDs = append(cmd.RepoIDs, model.RepoID(repo))
+	}
+	err := c.handler.RepoSync(ctx, cmd)
+	if err != nil {
+		return nil, err
+	}
+	return outcomes, nil
+}
+
 func (c connectedRounds) refresh(ctx context.Context, repoID sdd.RepoID) error {
 	_, err := c.handler.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: []model.RepoID{model.RepoID(repoID)}})
 	return err
@@ -506,6 +521,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Sync: targets, Branches: targets, Base: targets,
+		Connected: rounds,
 		Embedder:  embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
 		LLM: runner,
 	})

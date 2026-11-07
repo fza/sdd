@@ -267,6 +267,7 @@ type testEnv struct {
 	sessions    sdd.SessionStore
 	targets     *testBranchTargets
 	sync        *testGraphSync
+	connected   *testConnectedSync
 }
 
 type testBranchTargets struct {
@@ -362,13 +363,14 @@ func newTestServerConfig(t *testing.T, findings []query.Finding, graphDir, sessi
 	}
 	targets := &testBranchTargets{fallback: graph, graphs: map[string]sdd.GraphStore{"main": graph}}
 	graphSync := &testGraphSync{}
+	connected := &testConnectedSync{}
 	// The fixture clock stays after every embedded base fact's authoring
 	// stamp — the real world's invariant — so recency-sorted lanes rank
 	// test-written entries above the merged base facts.
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(testRuntimeGeneration.Add(1)) * time.Hour)
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "test", DisplayName: "Test"}, DefaultBranch: "main", Language: language,
-		Graph: testBranchReadStore{GraphStore: graph, targets: targets}, Targets: targets, Sync: graphSync,
+		Graph: testBranchReadStore{GraphStore: graph, targets: targets}, Targets: targets, Sync: graphSync, Connected: connected,
 		Branches: sdd.BranchValidatorFunc(func(_ context.Context, target sdd.MutationTarget) error {
 			if target.Project != "test" {
 				return fmt.Errorf("unexpected branch project %q", target.Project)
@@ -417,7 +419,7 @@ func newTestServerConfig(t *testing.T, findings []query.Finding, graphDir, sessi
 			t.Errorf("shutting down MCP server: %v", err)
 		}
 	})
-	return testEnv{srv: srv, graphDir: graphDir, sessionsDir: sessionsDir, sessions: opts.Application.Sessions, targets: targets, sync: graphSync}
+	return testEnv{srv: srv, graphDir: graphDir, sessionsDir: sessionsDir, sessions: opts.Application.Sessions, targets: targets, sync: graphSync, connected: connected}
 }
 
 // connect uses an in-memory connection unless the caller supplies a transport.
@@ -749,7 +751,7 @@ func TestToolSurfaceMatchesSpec(t *testing.T) {
 	want := []string{
 		"abandon", "bind_branch", "info", "next", "park", "read_attachment",
 		"registry", "resume_session", "search", "show", "stage_attachment",
-		"start_procedure", "start_session", "view",
+		"start_procedure", "start_session", "sync_repos", "view",
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("tool surface diverges from spec:\n got %v\nwant %v", got, want)
@@ -3021,6 +3023,7 @@ func TestFreeReads(t *testing.T) {
 		"search":          {"terms": []string{"oscillation"}},
 		"read_attachment": {"id": fixtureGapID},
 		"registry":        {"class": "command"},
+		"sync_repos":      {},
 	} {
 		msg := callExpectError(t, cs, name, args)
 		if !strings.Contains(msg, "no session handle") || !strings.Contains(msg, "start_session") {
