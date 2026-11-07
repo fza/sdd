@@ -345,7 +345,7 @@ type ReadAttachmentResult struct {
 // automatic sync of the graph repository cannot proceed
 // (20261028-201909-d-tac-fxp).
 type SyncNoticeField struct {
-	SyncNotice string `json:"sync_notice,omitempty" jsonschema:"set while automatic sync of the graph repository is blocked: one line naming the block and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says"`
+	SyncNotice string `json:"sync_notice,omitempty" jsonschema:"set while automatic sync of the graph repository is blocked or the background title backfill failed: one line naming which and since when, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says"`
 }
 
 func (f *SyncNoticeField) setSyncNotice(notice string) { f.SyncNotice = notice }

@@ -1,5 +1,7 @@
 package command
 
+import "time"
+
 // SummarizeCmd captures intent to generate or regenerate entry summaries and
 // titles, which one LLM call writes together.
 type SummarizeCmd struct {
@@ -33,4 +35,21 @@ type SummarizeCmd struct {
 	// OnSkipped is called for each --all entry skipped because it already has
 	// a summary and a title.
 	OnSkipped func(id string)
+	// Backfill titles only untitled entries, newest first and at most
+	// model.TitleBackfillBatch of them; each is re-read under the graph lock
+	// before it is written and skipped when it gained a title meanwhile
+	// (20261105-233807-d-tac-831).
+	Backfill bool
+}
+
+// BackfillTitlesCmd captures intent to title the graph's untitled entries in
+// the background and record a failure for the sync notice.
+type BackfillTitlesCmd struct {
+	SDDDir string
+	// Cooldown skips the backfill when the last one is more recent; zero
+	// always runs.
+	Cooldown time.Duration
+	// OnSkipped is invoked when the cooldown or a backfill already running
+	// in the checkout kept this one from running.
+	OnSkipped func()
 }

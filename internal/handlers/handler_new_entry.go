@@ -151,31 +151,21 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		})
 	}
 
-	var sumResult *llmops.SummarizeResult
-	var generatedTitle string
+	var described *llmops.DescriptionResult
 
 	// A caller-supplied summary is taken verbatim; only a missing title still
 	// costs a call.
-	if !cmd.DryRun && h.llmRunner != nil && cmd.Summary == "" {
+	if !cmd.DryRun && h.llmRunner != nil && (cmd.Summary == "" || cmd.Title == "") {
+		supplied := *entry
+		supplied.Summary = cmd.Summary
+		supplied.Title = cmd.Title
 		g.Go(func() error {
-			result, err := llmops.Summarize(gctx, h.llmRunner, entry, graph, h.language)
+			result, err := llmops.Describe(gctx, h.llmRunner, &supplied, graph, h.language, false)
 			if err != nil {
 				slogutils.FromContext(gctx).Warn("summary generation failed", "err", err)
-				return nil // non-fatal: entry is valid without a summary
+				return nil // non-fatal: entry is valid without a summary or title
 			}
-			sumResult = result
-			return nil
-		})
-	} else if !cmd.DryRun && h.llmRunner != nil && cmd.Title == "" {
-		summarized := *entry
-		summarized.Summary = cmd.Summary
-		g.Go(func() error {
-			title, err := llmops.GenerateTitle(gctx, h.llmRunner, &summarized, graph, h.language)
-			if err != nil {
-				slogutils.FromContext(gctx).Warn("title generation failed", "err", err)
-				return nil // non-fatal: entry is valid without a title
-			}
-			generatedTitle = title
+			described = &result
 			return nil
 		})
 	}
@@ -215,15 +205,15 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 
 	// Apply the caller-supplied summary, or the one from the concurrent
 	// generation goroutine.
-	if cmd.Summary != "" {
-		entry.Summary = cmd.Summary
-	} else if sumResult != nil {
-		entry.Summary = sumResult.Summary
-		generatedTitle = sumResult.Title
-	}
+	entry.Summary = cmd.Summary
 	entry.Title = model.CapitalizeTitle(cmd.Title)
-	if entry.Title == "" {
-		entry.Title = generatedTitle
+	if described != nil {
+		if entry.Summary == "" {
+			entry.Summary = described.Summary
+		}
+		if entry.Title == "" {
+			entry.Title = described.Title
+		}
 	}
 
 	// The generated summary and title are new text too.

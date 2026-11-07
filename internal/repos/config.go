@@ -33,6 +33,9 @@ type Locations struct {
 	// StateRoot is the base directory for durable machine-local state
 	// (default $XDG_STATE_HOME/sdd).
 	StateRoot string
+	// DataRoot is the base directory for the sdd-owned graph clones
+	// (default $XDG_DATA_HOME/sdd).
+	DataRoot string
 }
 
 // DefaultLocations resolves the conventional locations: the XDG base
@@ -45,7 +48,8 @@ func DefaultLocations() (Locations, error) {
 	cfgBase := os.Getenv("XDG_CONFIG_HOME")
 	cacheBase := os.Getenv("XDG_CACHE_HOME")
 	stateBase := os.Getenv("XDG_STATE_HOME")
-	if cfgBase == "" || cacheBase == "" || stateBase == "" {
+	dataBase := os.Getenv("XDG_DATA_HOME")
+	if cfgBase == "" || cacheBase == "" || stateBase == "" || dataBase == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return Locations{}, fmt.Errorf("resolving home dir: %w", err)
@@ -59,6 +63,9 @@ func DefaultLocations() (Locations, error) {
 		if stateBase == "" {
 			stateBase = filepath.Join(home, ".local", "state")
 		}
+		if dataBase == "" {
+			dataBase = filepath.Join(home, ".local", "share")
+		}
 	}
 	if !filepath.IsAbs(stateBase) {
 		return Locations{}, fmt.Errorf("XDG_STATE_HOME must be an absolute path: %q", stateBase)
@@ -67,6 +74,7 @@ func DefaultLocations() (Locations, error) {
 		ConfigPath: filepath.Join(cfgBase, "sdd", "config.yaml"),
 		CacheRoot:  filepath.Join(cacheBase, "sdd"),
 		StateRoot:  filepath.Join(stateBase, "sdd"),
+		DataRoot:   filepath.Join(dataBase, "sdd"),
 	}, nil
 }
 
