@@ -109,9 +109,14 @@ func (c CLI) Committable(ctx context.Context, paths []string) ([]string, error) 
 func (c CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) {
 	var out []string
 	for _, path := range paths {
-		status, err := c.command(ctx, "status", "--porcelain", "-z", "--untracked-files=all", "--", path).CombinedOutput()
+		// Only stdout lists changes: git warns on stderr about a path whose
+		// folder does not exist yet.
+		cmd := c.command(ctx, "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		status, err := cmd.Output()
 		if err != nil {
-			return nil, fmt.Errorf("git status: %s (%w)", status, err)
+			return nil, fmt.Errorf("git status: %s (%w)", stderr.Bytes(), err)
 		}
 		if len(status) > 0 {
 			out = append(out, path)
