@@ -123,9 +123,11 @@ func TestMoveMinimumVersion(t *testing.T) {
 		name, recorded, binary, want string
 	}{
 		{name: "dev build, no floor", binary: "dev", want: model.MoveRecordsMinimumVersion},
-		{name: "newer release", recorded: "v0.10.0", binary: "v9.0.0", want: model.MoveRecordsMinimumVersion},
-		{name: "higher floor kept", recorded: "v9.0.0", binary: "dev", want: "v9.0.0"},
-		{name: "older release making the move", recorded: "v0.1.0", binary: "v0.18.0-alpha.2.fza.43", want: "v0.18.0-alpha.2.fza.43"},
+		{name: "dev build, lower floor", recorded: "v0.10.0", binary: "dev", want: model.MoveRecordsMinimumVersion},
+		{name: "dev build, higher floor kept", recorded: "v9.0.0", binary: "dev", want: "v9.0.0"},
+		{name: "release writes its own version", recorded: "v0.10.0", binary: "v9.0.0", want: "v9.0.0"},
+		{name: "release below the first reading move records", recorded: "v0.1.0", binary: "v0.18.0-alpha.2.fza.43", want: "v0.18.0-alpha.2.fza.43"},
+		{name: "release, higher floor kept", recorded: "v9.1.0", binary: "v9.0.0", want: "v9.1.0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

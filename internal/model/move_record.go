@@ -320,11 +320,11 @@ func FormatULID(at time.Time, entropy [10]byte) string {
 const MoveRecordsMinimumVersion = "v0.18.0-alpha.4"
 
 // MoveMinimumVersion is the minimum_version a move leaves a graph with: the
-// recorded one when it is higher, else MoveRecordsMinimumVersion, but never
-// above the released build making the move.
+// released build making the move, which knows move records, or
+// MoveRecordsMinimumVersion from a dev build; a higher recorded one is kept.
 func MoveMinimumVersion(recorded, binaryVersion string) string {
 	floor := MoveRecordsMinimumVersion
-	if !IsDevVersion(binaryVersion) && !ShouldBumpMinimumVersion(floor, binaryVersion) && normalizeSemver(binaryVersion) != floor {
+	if !IsDevVersion(binaryVersion) {
 		floor = binaryVersion
 	}
 	if recorded != "" && !ShouldBumpMinimumVersion(recorded, floor) {
