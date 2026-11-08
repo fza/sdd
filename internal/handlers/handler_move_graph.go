@@ -15,6 +15,7 @@ import (
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/gitgate"
+	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
@@ -376,6 +377,10 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 	if err != nil || movedOn {
 		return movedOn, err
 	}
+	oldRepo, err := committedRepoID(meta.SDDDir(source.root))
+	if err != nil {
+		return false, err
+	}
 
 	for _, repo := range []*moveRepo{t, s, w} {
 		if repo.commit == "" {
@@ -406,7 +411,7 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 			return false, err
 		}
 	}
-	err = h.moveMachineLocal(cmd, project, source, target)
+	err = h.moveMachineLocal(cmd, project, source, target, oldRepo)
 	if err != nil {
 		return false, err
 	}
@@ -618,9 +623,10 @@ func (h *Handler) sourceMovedOn(ctx context.Context, s *moveRepo, revision strin
 
 // moveMachineLocal moves what this machine keeps beside the graph to where
 // the new layout reads it: the session and staging stores, the usage stats
-// and the machine-local config layer. The search index is not carried; it
-// is built again under the graph's new identity.
-func (h *Handler) moveMachineLocal(cmd *command.MoveGraphCmd, project meta.Project, source, target graphHome) error {
+// and the machine-local config layer. The search index store stays where it
+// is, reached under the new repo key through a link. oldRepo is the repo_id
+// the source recorded before the move.
+func (h *Handler) moveMachineLocal(cmd *command.MoveGraphCmd, project meta.Project, source, target graphHome, oldRepo model.RepoID) error {
 	oldSDD, newSDD := meta.SDDDir(source.root), meta.SDDDir(target.root)
 	if filepath.Clean(oldSDD) != filepath.Clean(newSDD) {
 		for _, name := range []string{"sessions", "staged-blobs", "stats"} {
@@ -630,10 +636,14 @@ func (h *Handler) moveMachineLocal(cmd *command.MoveGraphCmd, project meta.Proje
 			}
 		}
 		if h.sessionStores != nil {
-			err := h.moveSessionStores(oldSDD, newSDD)
+			err := h.moveSessionStores(oldSDD, newSDD, oldRepo)
 			if err != nil {
 				return err
 			}
+		}
+		err := h.linkIndexStore(source, target, oldRepo)
+		if err != nil {
+			return err
 		}
 	}
 	if cmd.LocalConfigOverride != "" {
@@ -676,11 +686,7 @@ func (h *Handler) moveMachineLocal(cmd *command.MoveGraphCmd, project meta.Proje
 	return os.Remove(oldLocal)
 }
 
-func (h *Handler) moveSessionStores(oldSDD, newSDD string) error {
-	oldRepo, err := committedRepoID(oldSDD)
-	if err != nil {
-		return err
-	}
+func (h *Handler) moveSessionStores(oldSDD, newSDD string, oldRepo model.RepoID) error {
 	newRepo, err := committedRepoID(newSDD)
 	if err != nil {
 		return err
@@ -704,6 +710,27 @@ func (h *Handler) moveSessionStores(oldSDD, newSDD string) error {
 		}
 	}
 	return nil
+}
+
+// linkIndexStore links the repo key the graph's search index is found under
+// after the move to the store it was found under before.
+func (h *Handler) linkIndexStore(source, target graphHome, oldRepo model.RepoID) error {
+	if h.indexCacheRoot == "" {
+		return nil
+	}
+	oldRoot, err := h.projectRepos.StableRoot(source.root)
+	if err != nil {
+		return err
+	}
+	newRepo, err := committedRepoID(meta.SDDDir(target.root))
+	if err != nil {
+		return err
+	}
+	newRoot, err := h.projectRepos.StableRoot(target.root)
+	if err != nil {
+		return err
+	}
+	return index.LinkKey(h.indexCacheRoot, index.RepoKey(newRepo, newRoot), index.RepoKey(oldRepo, oldRoot))
 }
 
 func committedRepoID(sddDir string) (model.RepoID, error) {

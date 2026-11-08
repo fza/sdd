@@ -105,7 +105,10 @@ func searchMember(ctx context.Context, q query.SearchQuery, repoID model.RepoID,
 	if q.Phrase != "" && local.embedder != nil {
 		// The member index is the same machine-global store the repo's own
 		// checkout uses — keyed by (repo-id, fingerprint), embedded once.
-		storeDir := index.StoreDir(local.repos.CacheRoot(), index.RepoKey(repoID, cloneDir), local.embedder.Fingerprint())
+		storeDir, err := index.OpenStoreDir(local.repos.CacheRoot(), index.RepoKey(repoID, cloneDir), local.embedder.Fingerprint())
+		if err != nil {
+			return nil, nil, err
+		}
 		snapshot, err := index.OpenSearchSnapshot(ctx, storeDir, 0)
 		if err != nil {
 			return nil, nil, fmt.Errorf("opening index for %s: %w", repoID, err)

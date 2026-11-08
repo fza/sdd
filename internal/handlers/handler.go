@@ -149,6 +149,7 @@ type Handler struct {
 	moverAt         func(dir string) GraphMover
 	strays          StrayFinder
 	sessionStores   func(sddDir string, repoID model.RepoID) (map[string]string, error)
+	indexCacheRoot  string
 	fileMerger      FileMerger
 	mergeDriverAt   func(dir string) MergeDriverInstaller
 	stderr          io.Writer
@@ -218,6 +219,9 @@ type Options struct {
 	// SessionStoreDirs names the machine-global session and staging stores
 	// of the project at sddDir, which a move carries to the new layout.
 	SessionStoreDirs func(sddDir string, repoID model.RepoID) (map[string]string, error)
+	// IndexCacheRoot is the cache root holding the machine-global search index
+	// stores, whose new repo key a move links to the store; empty links none.
+	IndexCacheRoot string
 	// FileMerger merges the rest of an entry file for MergeEntry.
 	FileMerger FileMerger
 	// MergeDriverAt sets up the entry merge driver in the repository at dir
@@ -264,6 +268,7 @@ func New(opts Options) *Handler {
 		moverAt:         opts.GraphMoverAt,
 		strays:          opts.Strays,
 		sessionStores:   opts.SessionStoreDirs,
+		indexCacheRoot:  opts.IndexCacheRoot,
 		fileMerger:      opts.FileMerger,
 		mergeDriverAt:   opts.MergeDriverAt,
 		stderr:          opts.Stderr,

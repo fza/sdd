@@ -74,6 +74,7 @@ func moveCmd() *cli.Command {
 				SessionStoreDirs: func(sddDir string, repoID model.RepoID) (map[string]string, error) {
 					return machineSessionStores(locations, sddDir, repoID)
 				},
+				IndexCacheRoot: locations.CacheRoot,
 			})
 			return handler.MoveGraph(ctx, &command.MoveGraphCmd{
 				WorkRoot: workRoot, Target: target, LocalConfigOverride: localConfigOverride,

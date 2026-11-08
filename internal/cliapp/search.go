@@ -138,7 +138,7 @@ func resolveIndexStore(emb embed.Embedder) (string, error) {
 		return "", err
 	}
 	key := index.RepoKey(repoID, stableRoot)
-	return index.StoreDir(loc.CacheRoot, key, emb.Fingerprint()), nil
+	return index.OpenStoreDir(loc.CacheRoot, key, emb.Fingerprint())
 }
 
 // crossRepoEmbedder builds the embedder for a cross-repo search: the
