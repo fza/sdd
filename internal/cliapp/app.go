@@ -533,6 +533,7 @@ func New(options Options) *cli.Command {
 			mergeConfigCmd(),
 			repoCmd(),
 			statsCmd(),
+			moveCmd(),
 		},
 	}
 

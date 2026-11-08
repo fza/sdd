@@ -146,6 +146,9 @@ type Handler struct {
 	graphClones     *repos.GraphClones
 	projectRepos    ProjectRepositories
 	repositoryAt    func(dir string) Repository
+	moverAt         func(dir string) GraphMover
+	strays          StrayFinder
+	sessionStores   func(sddDir string, repoID model.RepoID) (map[string]string, error)
 	fileMerger      FileMerger
 	mergeDriverAt   func(dir string) MergeDriverInstaller
 	stderr          io.Writer
@@ -207,6 +210,14 @@ type Options struct {
 	// and refresh its project in a repository of its own. Nil refuses both.
 	ProjectRepositories ProjectRepositories
 	RepositoryAt        func(dir string) Repository
+	// GraphMoverAt is the git work of a graph move in the repository at dir;
+	// nil refuses the move.
+	GraphMoverAt func(dir string) GraphMover
+	// Strays lists the entries former graph locations hold.
+	Strays StrayFinder
+	// SessionStoreDirs names the machine-global session and staging stores
+	// of the project at sddDir, which a move carries to the new layout.
+	SessionStoreDirs func(sddDir string, repoID model.RepoID) (map[string]string, error)
 	// FileMerger merges the rest of an entry file for MergeEntry.
 	FileMerger FileMerger
 	// MergeDriverAt sets up the entry merge driver in the repository at dir
@@ -250,6 +261,9 @@ func New(opts Options) *Handler {
 		graphClones:     opts.GraphClones,
 		projectRepos:    opts.ProjectRepositories,
 		repositoryAt:    opts.RepositoryAt,
+		moverAt:         opts.GraphMoverAt,
+		strays:          opts.Strays,
+		sessionStores:   opts.SessionStoreDirs,
 		fileMerger:      opts.FileMerger,
 		mergeDriverAt:   opts.MergeDriverAt,
 		stderr:          opts.Stderr,
