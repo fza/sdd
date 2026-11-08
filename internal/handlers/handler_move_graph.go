@@ -366,7 +366,7 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 	if err != nil {
 		return false, err
 	}
-	err = h.planConfigs(ctx, source, target, s, t, w, same)
+	err = h.planConfigs(ctx, target, s, t, w, same)
 	if err != nil {
 		return false, err
 	}
@@ -495,7 +495,7 @@ func (h *Handler) planMeta(cmd *command.MoveGraphCmd, s, t *moveRepo, same bool)
 	return nil
 }
 
-func (h *Handler) planConfigs(ctx context.Context, source, target graphHome, s, t, w *moveRepo, same bool) error {
+func (h *Handler) planConfigs(ctx context.Context, target graphHome, s, t, w *moveRepo, same bool) error {
 	configPath := filepath.Join(model.SDDDirName, "config.yaml")
 	sourceConfig, err := os.ReadFile(filepath.Join(s.root, configPath))
 	if err != nil {
