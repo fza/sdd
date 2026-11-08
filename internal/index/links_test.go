@@ -25,8 +25,11 @@ func realStore(t *testing.T, cacheRoot, key string) string {
 	return dir
 }
 
-func keyPath(cacheRoot, key string) string {
-	return filepath.Join(cacheRoot, "index", filepath.FromSlash(key))
+// linkKey is the repo key the tests link to a store.
+const linkKey = "local/0123456789ab"
+
+func linkPath(cacheRoot string) string {
+	return filepath.Join(cacheRoot, "index", filepath.FromSlash(linkKey))
 }
 
 func isLink(t *testing.T, path string) bool {
@@ -65,7 +68,7 @@ func TestLinkKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		link := keyPath(cache, "local/0123456789ab")
+		link := linkPath(cache)
 		target, err := os.Readlink(link)
 		if err != nil || filepath.IsAbs(target) {
 			t.Fatalf("the new key should be a relative symlink, got %q: %v", target, err)
@@ -92,7 +95,7 @@ func TestLinkKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		link := keyPath(cache, "local/0123456789ab")
+		link := linkPath(cache)
 		target, err := os.Readlink(link)
 		if err != nil {
 			t.Fatal(err)
@@ -109,7 +112,7 @@ func TestLinkKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if isLink(t, keyPath(cache, "local/0123456789ab")) {
+		if isLink(t, linkPath(cache)) {
 			t.Error("a real store directory should not become a link")
 		}
 		if _, err := os.Stat(filepath.Join(kept, "manifest.json")); err != nil {
@@ -122,7 +125,7 @@ func TestLinkKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := os.Lstat(keyPath(cache, "local/0123456789ab")); err == nil {
+		if _, err := os.Lstat(linkPath(cache)); err == nil {
 			t.Error("a key without a store should get no link")
 		}
 	})
@@ -147,7 +150,7 @@ func TestOpenStoreDirSweepsUnusedLinks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := os.Lstat(keyPath(cache, "local/0123456789ab")); err == nil {
+		if _, err := os.Lstat(linkPath(cache)); err == nil {
 			t.Error("the unused link should be swept")
 		}
 		if len(markers(t, cache)) != 0 {
@@ -164,7 +167,7 @@ func TestOpenStoreDirSweepsUnusedLinks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !isLink(t, keyPath(cache, "local/0123456789ab")) {
+		if !isLink(t, linkPath(cache)) {
 			t.Error("a link used within 30 days should stay")
 		}
 	})
@@ -183,14 +186,14 @@ func TestOpenStoreDirSweepsUnusedLinks(t *testing.T) {
 		if err != nil || time.Since(info.ModTime()) > time.Hour {
 			t.Errorf("the open should mark the link used: %v", err)
 		}
-		if !isLink(t, keyPath(cache, "local/0123456789ab")) {
+		if !isLink(t, linkPath(cache)) {
 			t.Error("a link just used should not be swept")
 		}
 	})
 	t.Run("a real directory behind a stale marker stays", func(t *testing.T) {
 		cache, _ := setUp(t)
 		marker := markers(t, cache)[0]
-		err := os.Remove(keyPath(cache, "local/0123456789ab"))
+		err := os.Remove(linkPath(cache))
 		if err != nil {
 			t.Fatal(err)
 		}
