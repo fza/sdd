@@ -88,6 +88,9 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 		projectCmd.GraphOnly = true
 		projectCmd.DefaultBranch = branch
 		if projectCfg == nil {
+			if projectCmd.GraphDir == "" {
+				projectCmd.GraphDir = model.DefaultGraphDirFor(true)
+			}
 			projectCmd.Scope = scope
 			projectCmd.ScopeExplicit = true
 			projectCmd.Targets = agents
