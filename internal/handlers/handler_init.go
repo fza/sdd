@@ -67,13 +67,6 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if err != nil {
 		return err
 	}
-	recordedGraphDir := ""
-	if sddExisted {
-		recordedGraphDir, err = recordedConfigGraphDir(configPath)
-		if err != nil {
-			return err
-		}
-	}
 
 	// Reconcile skill_scope before any filesystem mutation so a contradiction
 	// fails the run before partial state lands. recordedScope is read from
@@ -246,11 +239,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	legacyGraphDirs := []string{graphDir}
-	if recordedGraphDir != "" && recordedGraphDir != graphDir {
-		legacyGraphDirs = append(legacyGraphDirs, recordedGraphDir)
-	}
-	err = keepIgnoreFiles(cmd, graphDir, legacyGraphDirs, &touched)
+	err = keepIgnoreFiles(cmd, graphDir, []string{graphDir}, &touched)
 	if err != nil {
 		return err
 	}
@@ -1025,21 +1014,4 @@ func rewriteLines(path string, remove, add []string) (changed bool, err error) {
 		return false, fmt.Errorf("writing %s: %w", path, err)
 	}
 	return true, nil
-}
-
-// recordedConfigGraphDir is the graph_dir the committed config at
-// configPath records; empty when there is none.
-func recordedConfigGraphDir(configPath string) (string, error) {
-	data, err := os.ReadFile(configPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("reading %s: %w", configPath, err)
-	}
-	recorded, err := model.ParseConfig(data)
-	if err != nil {
-		return "", fmt.Errorf("parsing %s: %w", configPath, err)
-	}
-	return recorded.GraphDir, nil
 }

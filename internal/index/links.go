@@ -26,9 +26,6 @@ const (
 // chain. A newKey that is a real directory is left alone, and an oldKey with
 // no store links nothing.
 func LinkKey(cacheRoot, newKey, oldKey string) error {
-	if newKey == oldKey {
-		return nil
-	}
 	root := filepath.Join(cacheRoot, storeSubdir)
 	real, err := filepath.EvalSymlinks(filepath.Join(root, filepath.FromSlash(oldKey)))
 	if errors.Is(err, fs.ErrNotExist) {

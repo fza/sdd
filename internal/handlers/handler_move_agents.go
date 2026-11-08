@@ -23,12 +23,12 @@ func (h *Handler) installPlan(ctx context.Context, root string, scope model.Scop
 		return nil, errors.New("installing the agent surfaces needs the skill status reader")
 	}
 	var files []model.MoveFile
-	add := func(abs string, content []byte, remove bool) error {
+	add := func(abs string, content []byte) error {
 		rel, err := filepath.Rel(root, abs)
 		if err != nil {
 			return err
 		}
-		files = append(files, model.MoveFile{Path: rel, Content: content, Remove: remove})
+		files = append(files, model.MoveFile{Path: rel, Content: content})
 		return nil
 	}
 	for _, agent := range agents {
@@ -44,16 +44,7 @@ func (h *Handler) installPlan(ctx context.Context, root string, scope model.Scop
 			if err != nil {
 				return nil, fmt.Errorf("rendering %s: %w", entry.AbsPath, err)
 			}
-			err = add(entry.AbsPath, rendered, false)
-			if err != nil {
-				return nil, err
-			}
-		}
-		for _, orphan := range status.Orphans {
-			if orphan.Class != model.SkillOrphanUnmodified || model.SkillStampIsAhead(orphan.Installed.StoredVersion, binaryVersion) {
-				continue
-			}
-			err = add(orphan.AbsPath, nil, true)
+			err = add(entry.AbsPath, rendered)
 			if err != nil {
 				return nil, err
 			}
@@ -72,7 +63,7 @@ func (h *Handler) installPlan(ctx context.Context, root string, scope model.Scop
 				return nil, fmt.Errorf("registering the MCP server in %s: %w", target.Path, err)
 			}
 			if changed {
-				err = add(target.Path, merged, false)
+				err = add(target.Path, merged)
 				if err != nil {
 					return nil, err
 				}

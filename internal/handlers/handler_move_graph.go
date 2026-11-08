@@ -415,9 +415,6 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 	if err != nil {
 		return false, err
 	}
-	if vacated {
-		pruneEmptyDirs(meta.SDDDir(source.root))
-	}
 	if cmd.OnMoved != nil {
 		cmd.OnMoved(record)
 	}
