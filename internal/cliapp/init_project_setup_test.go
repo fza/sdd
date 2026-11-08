@@ -105,10 +105,10 @@ func TestInitSetsUpAMissingProject(t *testing.T) {
 			if _, statErr := os.Stat(filepath.Join(work, ".sdd", "config.local.yaml")); statErr == nil {
 				t.Error("the work repository should receive no per-person settings")
 			}
-			projectIgnore := readFile(t, filepath.Join(project, ".gitignore"))
-			workIgnore := readFile(t, filepath.Join(work, ".gitignore"))
-			if projectIgnore != workIgnore || !strings.Contains(workIgnore, "graph/.sdd-runtime/") {
-				t.Errorf("both repositories should ignore the same runtime paths:\nproject:\n%s\nwork:\n%s", projectIgnore, workIgnore)
+			projectIgnore := readFile(t, filepath.Join(project, ".sdd", ".gitignore"))
+			workIgnore := readFile(t, filepath.Join(work, ".sdd", ".gitignore"))
+			if projectIgnore != workIgnore || !strings.Contains(workIgnore, "sessions/") {
+				t.Errorf("both repositories should ignore the same machine-local paths below .sdd/:\nproject:\n%s\nwork:\n%s", projectIgnore, workIgnore)
 			}
 			if !strings.HasPrefix(headSubject(t, project), "sdd: ") {
 				t.Error("the project's setup should be committed in its own repository")
@@ -458,13 +458,9 @@ func TestInitDefaultsTheGraphDirToTheLayout(t *testing.T) {
 			if !hasLine(config, "graph_dir: "+tc.graphDir) {
 				t.Errorf("the graph project's config should record the graph directory fitting its layout:\n%s", config)
 			}
-			gitignore := readFile(t, filepath.Join(root, ".gitignore"))
-			if !hasLine(gitignore, tc.graphDir+"/.sdd-runtime/") {
-				t.Errorf("the graph project's .gitignore should keep that graph directory's runtime state out:\n%s", gitignore)
-			}
-			gitattributes := readFile(t, filepath.Join(root, ".gitattributes"))
-			if !hasLine(gitattributes, tc.graphDir+"/[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]-*.md merge=sdd-entry") {
-				t.Errorf("the graph project's .gitattributes should route that graph directory's entries to the merge driver:\n%s", gitattributes)
+			gitattributes := readFile(t, filepath.Join(root, filepath.FromSlash(tc.graphDir), ".gitattributes"))
+			if !hasLine(gitattributes, "[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]-*.md merge=sdd-entry") {
+				t.Errorf("that graph directory's .gitattributes should route its entries to the merge driver:\n%s", gitattributes)
 			}
 			if _, statErr := os.Stat(filepath.Join(root, filepath.FromSlash(tc.otherGraphDir))); statErr == nil {
 				t.Error("init should set up no graph directory beside the one fitting the layout")

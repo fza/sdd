@@ -66,43 +66,6 @@ func (g graphHome) same(other graphHome) bool {
 
 func path(dir string) string { return strings.Trim(filepath.ToSlash(filepath.Clean(dir)), "/") }
 
-// repoRole is what a repository is to a graph, which decides the lines init
-// keeps in its .gitignore and .gitattributes.
-type repoRole int
-
-const (
-	roleNone repoRole = iota
-	roleGraphHome
-	roleProjectPointer
-	roleGraphRepoPointer
-)
-
-func roleOf(location model.LocationRef) repoRole {
-	switch location.Kind {
-	case model.LocationGitPath:
-		return roleProjectPointer
-	case model.LocationGitRepo:
-		return roleGraphRepoPointer
-	}
-	return roleGraphHome
-}
-
-func roleLines(role repoRole, graphDir string) (ignore, attributes []string, err error) {
-	switch role {
-	case roleGraphHome:
-		attribute, err := model.EntryMergeAttributeLine(graphDir)
-		if err != nil {
-			return nil, nil, err
-		}
-		return initGitignoreEntries(graphDir), []string{attribute}, nil
-	case roleProjectPointer:
-		return initGitignoreEntries(graphDir), nil, nil
-	case roleGraphRepoPointer:
-		return []string{".sdd/" + meta.LocalConfigFileName}, nil, nil
-	}
-	return nil, nil, nil
-}
-
 // moveRepo collects what a move changes in one repository.
 type moveRepo struct {
 	root   string
@@ -370,7 +333,7 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 	if err != nil {
 		return false, err
 	}
-	err = h.planRoles(source, target, s, t, w)
+	err = h.planRepoFiles(source, target, s, t, w)
 	if err != nil {
 		return false, err
 	}
@@ -558,55 +521,47 @@ func (h *Handler) planConfigs(ctx context.Context, target graphHome, s, t, w *mo
 	return ctx.Err()
 }
 
-func (h *Handler) planRoles(source, target graphHome, s, t, w *moveRepo) error {
-	type change struct {
-		repo     *moveRepo
-		old, new repoRole
-		oldDir   string
+// planRepoFiles plans the files init keeps beside the config that the move
+// changes. Ignore and attribute files depend on no graph_dir, so only a
+// repository gaining or losing its .sdd/ changes its .sdd/.gitignore; the
+// graph directory's .gitattributes travels with the graph and is added when
+// a graph from an earlier build lacks it.
+func (h *Handler) planRepoFiles(source, target graphHome, s, t, w *moveRepo) error {
+	guard := filepath.FromSlash(model.GraphElsewhereFile)
+	switch {
+	case target.location.Kind == model.LocationGitRepo:
+		w.write(guard, []byte(model.GraphElsewhereText(target.clone)))
+	case source.location.Kind == model.LocationGitRepo:
+		w.remove(guard)
 	}
-	changes := []change{{repo: w, old: roleOf(source.location), new: roleOf(target.location), oldDir: source.graphDir}}
-	if s != w {
-		changes = append(changes, change{repo: s, old: roleGraphHome, new: roleNone, oldDir: source.graphDir})
-	}
+	sddIgnore := filepath.Join(model.SDDDirName, ".gitignore")
 	if t != w && t != s {
-		changes = append(changes, change{repo: t, old: roleNone, new: roleGraphHome})
+		current, err := readOptionalFile(filepath.Join(t.root, sddIgnore))
+		if err != nil {
+			return err
+		}
+		t.write(sddIgnore, model.RewriteLines(current, nil, model.SDDIgnoreLines))
 	}
-	for _, c := range changes {
-		oldIgnore, oldAttributes, err := roleLines(c.old, c.oldDir)
-		if err != nil {
-			return err
-		}
-		newIgnore, newAttributes, err := roleLines(c.new, target.graphDir)
-		if err != nil {
-			return err
-		}
-		for _, file := range []struct {
-			name     string
-			old, new []string
-		}{{".gitignore", oldIgnore, newIgnore}, {".gitattributes", oldAttributes, newAttributes}} {
-			current, err := os.ReadFile(filepath.Join(c.repo.root, file.name))
-			if err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
-			}
-			rewritten := model.RewriteLines(current, file.old, file.new)
-			if string(rewritten) == string(current) {
-				continue
-			}
-			if rewritten == nil {
-				c.repo.remove(file.name)
-				continue
-			}
-			c.repo.write(file.name, rewritten)
-		}
-		guard := filepath.FromSlash(model.GraphElsewhereFile)
-		switch {
-		case c.new == roleGraphRepoPointer:
-			c.repo.write(guard, []byte(model.GraphElsewhereText(target.clone)))
-		case c.old == roleGraphRepoPointer:
-			c.repo.remove(guard)
-		}
+	if s != w && s != t {
+		s.remove(sddIgnore)
+	}
+	graphAttributes, err := readOptionalFile(filepath.Join(source.root, source.graphDir, ".gitattributes"))
+	if err != nil {
+		return err
+	}
+	routed := model.RewriteLines(graphAttributes, nil, []string{model.GraphAttributesLine})
+	if string(routed) != string(graphAttributes) {
+		t.write(filepath.Join(target.graphDir, ".gitattributes"), routed)
 	}
 	return nil
+}
+
+func readOptionalFile(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return data, err
 }
 
 // sourceMovedOn fetches the source's upstream before anything is published

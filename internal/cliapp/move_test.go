@@ -38,14 +38,11 @@ func graphRepoToMove(t *testing.T) string {
 		t.Fatal(err)
 	}
 	initRepo(t, repo)
-	attribute, err := model.EntryMergeAttributeLine(model.DefaultGraphDir)
-	if err != nil {
-		t.Fatal(err)
-	}
 	writeFile(t, filepath.Join(repo, ".sdd", "config.yaml"), model.FormatConfig(model.PerRepoConfig{GraphDir: model.DefaultGraphDir, DefaultBranch: "main", SkillScope: model.ScopeProject, SupportedAgents: []model.AgentTarget{"claude"}}))
 	writeFile(t, filepath.Join(repo, ".sdd", "meta.json"), "{\n  \"graph_schema_version\": 1\n}\n")
-	writeFile(t, filepath.Join(repo, ".gitignore"), ".sdd/tmp/\n.sdd/config.local.yaml\n.sdd/stats/\n.sdd/sessions/\n.sdd/staged-blobs/\n.sdd/graph/.sdd-runtime/\nxdg-*/\n")
-	writeFile(t, filepath.Join(repo, ".gitattributes"), attribute+"\n")
+	writeFile(t, filepath.Join(repo, ".sdd", ".gitignore"), strings.Join(model.SDDIgnoreLines, "\n")+"\n")
+	writeFile(t, filepath.Join(repo, ".gitignore"), "xdg-*/\n")
+	writeFile(t, filepath.Join(repo, ".sdd", "graph", ".gitattributes"), model.GraphAttributesLine+"\n")
 	writeFile(t, entryPath(filepath.Join(repo, ".sdd", "graph"), movedFirst), movedEntry("The first entry."))
 	gitIn(t, repo, "add", ".")
 	gitIn(t, repo, "commit", "-q", "-m", "add the first entry")
@@ -99,13 +96,11 @@ func TestMoveTheGraphInsideTheRepository(t *testing.T) {
 	if config := readText(t, filepath.Join(repo, ".sdd", "config.yaml")); !strings.Contains(config, "graph_dir: graph\n") || !strings.Contains(config, "# SDD configuration") {
 		t.Errorf("the config should name the new folder and keep its comments:\n%s", config)
 	}
-	newAttribute, _ := model.EntryMergeAttributeLine("graph")
-	oldAttribute, _ := model.EntryMergeAttributeLine(model.DefaultGraphDir)
-	if attributes := readText(t, filepath.Join(repo, ".gitattributes")); !strings.Contains(attributes, newAttribute) || strings.Contains(attributes, oldAttribute) {
-		t.Errorf("the merge routing should follow the graph:\n%s", attributes)
+	if attributes := readText(t, filepath.Join(repo, "graph", ".gitattributes")); attributes != model.GraphAttributesLine+"\n" {
+		t.Errorf("the merge routing should travel with the graph:\n%s", attributes)
 	}
-	if ignore := readText(t, filepath.Join(repo, ".gitignore")); !strings.Contains(ignore, "graph/.sdd-runtime/\n") || strings.Contains(ignore, ".sdd/graph/.sdd-runtime/") || !strings.Contains(ignore, "xdg-*/") {
-		t.Errorf("the runtime ignore line should follow the graph, the rest stay:\n%s", ignore)
+	if ignore := readText(t, filepath.Join(repo, ".gitignore")); ignore != "xdg-*/\n" {
+		t.Errorf("the move should leave the root .gitignore alone:\n%s", ignore)
 	}
 	if meta := readText(t, filepath.Join(repo, ".sdd", "meta.json")); !strings.Contains(meta, `"minimum_version": "`+model.MoveRecordsMinimumVersion+`"`) {
 		t.Errorf("the move should raise minimum_version to the first build reading move records:\n%s", meta)
@@ -125,6 +120,25 @@ func TestMoveTheGraphInsideTheRepository(t *testing.T) {
 		t.Errorf("the move should leave nothing uncommitted:\n%s", status)
 	}
 	runApp(t, repo, "show", movedFirst)
+	if status := strings.TrimSpace(gitIn(t, repo, "status", "--porcelain")); status != "" {
+		t.Errorf("the graph's runtime folders, the former one included, should ignore themselves:\n%s", status)
+	}
+}
+
+// A graph from a build that wrote its merge routing into the root
+// .gitattributes gets the graph directory's own one where it lands.
+func TestMoveRoutesTheMergesOfAGraphFromAnEarlierBuild(t *testing.T) {
+	repo := graphRepoToMove(t)
+	gitIn(t, repo, "rm", "-q", ".sdd/graph/.gitattributes")
+	gitIn(t, repo, "commit", "-q", "-m", "a graph from an earlier build")
+	runApp(t, repo, "move", "--graph-dir", "graph")
+
+	if attributes := readText(t, filepath.Join(repo, "graph", ".gitattributes")); attributes != model.GraphAttributesLine+"\n" {
+		t.Errorf("the graph should get its own merge routing:\n%s", attributes)
+	}
+	if got := strings.TrimSpace(gitIn(t, repo, "check-attr", "merge", "--", filepath.ToSlash(entryPath("graph", movedFirst)))); !strings.HasSuffix(got, ": merge: "+model.EntryMergeDriver) {
+		t.Errorf("a moved entry should route to the entry merge driver, got %q", got)
+	}
 }
 
 // An entry written into the former folder after the move refuses every
@@ -309,8 +323,8 @@ func TestMoveTheGraphOutToAGraphRepoAndBack(t *testing.T) {
 	if guard := readText(t, filepath.Join(repo, model.GraphElsewhereFile)); guard != model.GraphElsewhereText(graphCloneRepoID) {
 		t.Errorf("the code repository should carry the stock guard:\n%s", guard)
 	}
-	if ignore := readText(t, filepath.Join(repo, ".gitignore")); strings.Contains(ignore, ".sdd/sessions/") || !strings.Contains(ignore, ".sdd/config.local.yaml") {
-		t.Errorf("the ignore lines should be those of a graph_repo pointer:\n%s", ignore)
+	if ignore := readText(t, filepath.Join(repo, ".gitignore")); ignore != "xdg-*/\n" {
+		t.Errorf("the move should leave the root .gitignore alone:\n%s", ignore)
 	}
 	if local := readText(t, filepath.Join(repo, ".sdd", "config.local.yaml")); !strings.Contains(local, "participant: Ada") {
 		t.Errorf("a graph_repo layout reads the machine-local config in the code repository:\n%s", local)

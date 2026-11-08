@@ -137,20 +137,13 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	gitignorePath := filepath.Join(cmd.RepoRoot, ".gitignore")
 	projectGraphDir := projectCfg.GraphDir
 	if projectGraphDir == "" {
 		projectGraphDir = model.DefaultGraphDir
 	}
-	gitignoreAdded, err := ensureGitignoreEntries(gitignorePath, initGitignoreEntries(projectGraphDir))
+	err = keepIgnoreFiles(cmd, "", []string{projectGraphDir}, &touched)
 	if err != nil {
-		return fmt.Errorf("updating %s: %w", gitignorePath, err)
-	}
-	if gitignoreAdded {
-		touched = append(touched, gitignorePath)
-		if cmd.OnGitignoreUpdated != nil {
-			cmd.OnGitignoreUpdated(gitignorePath)
-		}
+		return err
 	}
 
 	bridgePaths, err := scaffoldInstructionBridge(cmd.RepoRoot, effectiveAgents)
