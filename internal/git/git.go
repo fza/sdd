@@ -60,7 +60,7 @@ func (c CLI) Commit(message string, paths ...string) error {
 	defer cancel()
 
 	addArgs := c.at(append([]string{"add", "--all", "--"}, paths...)...)
-	if out, err := runDetachedPastIndexLock(ctx, addArgs...); err != nil {
+	if out, err := runDetachedPastIndexLock(ctx, c.localEnv(ctx), addArgs...); err != nil {
 		return fmt.Errorf("git add: %s (%w)", out, err)
 	}
 
@@ -68,7 +68,7 @@ func (c CLI) Commit(message string, paths ...string) error {
 	// Without `-- <paths>`, `git commit` records the whole index, sweeping any
 	// pre-staged unrelated work into the CLI's own commit.
 	commitArgs := c.at(append([]string{"commit", "-m", message, "--"}, paths...)...)
-	if out, err := runDetachedPastIndexLock(ctx, commitArgs...); err != nil {
+	if out, err := runDetachedPastIndexLock(ctx, c.localEnv(ctx), commitArgs...); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
 	return c.RecordGraphCloneCommit(ctx)
@@ -109,7 +109,7 @@ func (c CLI) Committable(ctx context.Context, paths []string) ([]string, error) 
 func (c CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) {
 	var out []string
 	for _, path := range paths {
-		status, err := exec.CommandContext(ctx, "git", c.at("status", "--porcelain", "-z", "--untracked-files=all", "--", path)...).CombinedOutput()
+		status, err := c.command(ctx, "status", "--porcelain", "-z", "--untracked-files=all", "--", path).CombinedOutput()
 		if err != nil {
 			return nil, fmt.Errorf("git status: %s (%w)", status, err)
 		}
@@ -121,7 +121,7 @@ func (c CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) 
 }
 
 func (c CLI) ignored(ctx context.Context, paths []string) (map[string]bool, error) {
-	cmd := exec.CommandContext(ctx, "git", c.at("check-ignore", "-z", "--stdin")...)
+	cmd := c.command(ctx, "check-ignore", "-z", "--stdin")
 	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00"))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -143,7 +143,7 @@ func (c CLI) ignored(ctx context.Context, paths []string) (map[string]bool, erro
 }
 
 func (c CLI) tracked(ctx context.Context, path string) (bool, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("ls-files", "-z", "--", path)...).CombinedOutput()
+	out, err := c.command(ctx, "ls-files", "-z", "--", path).CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("git ls-files: %s (%w)", out, err)
 	}
@@ -155,10 +155,10 @@ func (c CLI) tracked(ctx context.Context, path string) (bool, error) {
 // a graph written beside concurrent captures meets it routinely. Retries stop
 // with ctx, so the commit timeout bounds the wait. Any other failure returns
 // at once.
-func runDetachedPastIndexLock(ctx context.Context, args ...string) ([]byte, error) {
+func runDetachedPastIndexLock(ctx context.Context, env []string, args ...string) ([]byte, error) {
 	delay := 100 * time.Millisecond
 	for {
-		out, err := runDetached(ctx, args...)
+		out, err := runDetachedEnv(ctx, env, args...)
 		if err == nil || !strings.Contains(string(out), "index.lock") {
 			return out, err
 		}
@@ -205,7 +205,7 @@ func (c CLI) Push(ctx context.Context) error {
 }
 
 func (c CLI) output(ctx context.Context, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at(args...)...).Output()
+	out, err := c.command(ctx, args...).Output()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
@@ -234,7 +234,7 @@ func (c CLI) Merge(ctx context.Context, ref, message string) error {
 		return nil
 	}
 	mergeErr := fmt.Errorf("git merge %s: %s (%w)", ref, strings.TrimSpace(string(out)), err)
-	abortOut, abortErr := exec.Command("git", c.at("merge", "--abort")...).CombinedOutput()
+	abortOut, abortErr := c.command(context.Background(), "merge", "--abort").CombinedOutput()
 	if abortErr != nil && strings.Contains(string(abortOut), "MERGE_HEAD missing") {
 		return mergeErr
 	}
@@ -248,7 +248,7 @@ func (c CLI) Merge(ctx context.Context, ref, message string) error {
 // used by retryable post-apply finalizers to recognize a commit that landed
 // before its durable finalizer outcome could be recorded.
 func (c CLI) HasCommitMessage(ctx context.Context, text string) (bool, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("log", "--all", "--fixed-strings", "--grep="+text, "--format=%H", "-n", "1")...).CombinedOutput()
+	out, err := c.command(ctx, "log", "--all", "--fixed-strings", "--grep="+text, "--format=%H", "-n", "1").CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("git log: %s (%w)", out, err)
 	}
@@ -268,18 +268,18 @@ type RemovalCommitter struct {
 // Commit stages the deletion of the given paths and commits, scoped to those
 // paths so an unrelated staged index isn't swept into the removal commit.
 func (r RemovalCommitter) Commit(message string, paths ...string) error {
-	at := CLI(r).at
+	repo := CLI(r)
+	ctx := context.Background()
 	for _, p := range paths {
-		rm := exec.Command("git", at("rm", "--cached", "-f", p)...)
+		rm := repo.command(ctx, "rm", "--cached", "-f", p)
 		if out, err := rm.CombinedOutput(); err != nil {
-			add := exec.Command("git", at("add", p)...)
+			add := repo.command(ctx, "add", p)
 			if out2, err2 := add.CombinedOutput(); err2 != nil {
 				return fmt.Errorf("git stage: %s (%v); fallback %s (%w)", out, err, out2, err2)
 			}
 		}
 	}
-	commitArgs := at(append([]string{"commit", "-m", message, "--"}, paths...)...)
-	commit := exec.Command("git", commitArgs...)
+	commit := repo.command(ctx, append([]string{"commit", "-m", message, "--"}, paths...)...)
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
@@ -325,7 +325,7 @@ func (c CLI) ModifiedFiles(ctx context.Context, dir string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("locating %s in %s: %w", dir, root, err)
 	}
-	out, err := exec.CommandContext(ctx, "git", c.at("status", "--porcelain=v1", "-z", "--untracked-files=no", "--", rel)...).Output()
+	out, err := c.command(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=no", "--", rel).Output()
 	if err != nil {
 		return nil, fmt.Errorf("git status: %w", err)
 	}
@@ -359,7 +359,7 @@ func (c CLI) HeadContent(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("locating %s in %s: %w", path, root, err)
 	}
-	out, err := exec.CommandContext(ctx, "git", c.at("show", "HEAD:"+filepath.ToSlash(rel))...).Output()
+	out, err := c.command(ctx, "show", "HEAD:"+filepath.ToSlash(rel)).Output()
 	if err != nil {
 		return nil, fmt.Errorf("git show HEAD:%s: %w", rel, err)
 	}
@@ -367,7 +367,7 @@ func (c CLI) HeadContent(ctx context.Context, path string) ([]byte, error) {
 }
 
 func (c CLI) toplevel(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--show-toplevel")...).Output()
+	out, err := c.command(ctx, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
 	}
@@ -381,7 +381,7 @@ func (c CLI) Move(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("creating destination directory: %w", err)
 	}
-	if out, err := exec.Command("git", c.at("mv", src, dst)...).CombinedOutput(); err != nil {
+	if out, err := c.command(context.Background(), "mv", src, dst).CombinedOutput(); err != nil {
 		return fmt.Errorf("git mv %s %s: %s (%w)", src, dst, out, err)
 	}
 	return nil
@@ -395,7 +395,7 @@ func (c CLI) Checkout(branch string, create bool) error {
 		args = append(args, "-b")
 	}
 	args = append(args, branch)
-	if out, err := exec.Command("git", c.at(args...)...).CombinedOutput(); err != nil {
+	if out, err := c.command(context.Background(), args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("git checkout: %s (%w)", out, err)
 	}
 	return nil
@@ -403,7 +403,7 @@ func (c CLI) Checkout(branch string, create bool) error {
 
 // BranchMerged reports whether branch is merged into the current HEAD.
 func (c CLI) BranchMerged(branch string) bool {
-	out, err := exec.Command("git", c.at("branch", "--merged")...).Output()
+	out, err := c.command(context.Background(), "branch", "--merged").Output()
 	if err != nil {
 		return false
 	}
@@ -424,7 +424,7 @@ func (c CLI) DeleteBranch(branch string, force bool) error {
 	if force {
 		flag = "-D"
 	}
-	if out, err := exec.Command("git", c.at("branch", flag, branch)...).CombinedOutput(); err != nil {
+	if out, err := c.command(context.Background(), "branch", flag, branch).CombinedOutput(); err != nil {
 		return fmt.Errorf("git branch %s: %s (%w)", flag, out, err)
 	}
 	return nil
@@ -433,7 +433,7 @@ func (c CLI) DeleteBranch(branch string, force bool) error {
 // IsClean reports whether the working tree has no uncommitted changes.
 // Production handlers.Puller.
 func (c CLI) IsClean(ctx context.Context) (bool, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("status", "--porcelain")...).Output()
+	out, err := c.command(ctx, "status", "--porcelain").Output()
 	if err != nil {
 		return false, fmt.Errorf("git status --porcelain: %w", err)
 	}
@@ -454,7 +454,7 @@ func (c CLI) MergePull(ctx context.Context) (string, error) {
 	if err := c.EnsureMergeDriver(ctx); err != nil {
 		return "", fmt.Errorf("setting up the entry merge driver: %w", err)
 	}
-	pull := exec.CommandContext(ctx, "git", c.at("pull", "--no-rebase")...)
+	pull := c.command(ctx, "pull", "--no-rebase")
 	pull.Env = env
 	out, err := pull.CombinedOutput()
 	msg := strings.TrimSpace(string(out))

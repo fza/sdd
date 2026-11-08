@@ -18,11 +18,11 @@ func (c CLI) CheckContribution(ctx context.Context, ref, defaultBranch string) e
 	if err != nil {
 		return err
 	}
-	resolved, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--verify", "--quiet", ref+"^{commit}")...).Output()
+	resolved, err := c.command(ctx, "rev-parse", "--verify", "--quiet", ref+"^{commit}").Output()
 	if err != nil || strings.TrimSpace(string(resolved)) == "" {
 		return fmt.Errorf("%w: the contribution ref %s does not resolve; fetch it first", model.ErrContributionRefused, ref)
 	}
-	fullName, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--symbolic-full-name", ref)...).Output()
+	fullName, err := c.command(ctx, "rev-parse", "--symbolic-full-name", ref).Output()
 	if err != nil {
 		return fmt.Errorf("git rev-parse %s: %w", ref, err)
 	}
@@ -40,7 +40,7 @@ func (c CLI) CheckContribution(ctx context.Context, ref, defaultBranch string) e
 }
 
 func (c CLI) currentBranch(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("symbolic-ref", "--quiet", "--short", "HEAD")...).Output()
+	out, err := c.command(ctx, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 		return "", nil
@@ -52,7 +52,7 @@ func (c CLI) currentBranch(ctx context.Context) (string, error) {
 }
 
 func (c CLI) isAncestor(ctx context.Context, ancestor, descendant string) (bool, error) {
-	err := exec.CommandContext(ctx, "git", c.at("merge-base", "--is-ancestor", ancestor, descendant)...).Run()
+	err := c.command(ctx, "merge-base", "--is-ancestor", ancestor, descendant).Run()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 		return false, nil

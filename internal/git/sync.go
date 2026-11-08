@@ -18,7 +18,7 @@ import (
 
 // InRepo reports whether the process is inside a git working tree.
 func (c CLI) InRepo(ctx context.Context) bool {
-	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--is-inside-work-tree")...).Output()
+	out, err := c.command(ctx, "rev-parse", "--is-inside-work-tree").Output()
 	if err != nil {
 		return false
 	}
@@ -27,7 +27,7 @@ func (c CLI) InRepo(ctx context.Context) bool {
 
 // HasRemote reports whether the repository has at least one remote configured.
 func (c CLI) HasRemote(ctx context.Context) bool {
-	out, err := exec.CommandContext(ctx, "git", c.at("remote")...).Output()
+	out, err := c.command(ctx, "remote").Output()
 	if err != nil {
 		return false
 	}
@@ -36,7 +36,7 @@ func (c CLI) HasRemote(ctx context.Context) bool {
 
 // UpstreamRef returns the upstream ref name for the current branch.
 func (c CLI) UpstreamRef(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--abbrev-ref", "@{u}")...).Output()
+	out, err := c.command(ctx, "rev-parse", "--abbrev-ref", "@{u}").Output()
 	if err != nil {
 		// Non-zero exit (typically 128) means no upstream is configured;
 		// report as empty string rather than propagating so the finder can
@@ -75,7 +75,7 @@ func (c CLI) Fetch(ctx context.Context) error {
 
 // CurrentBranch is the branch HEAD has checked out, empty on a detached HEAD.
 func (c CLI) CurrentBranch(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("symbolic-ref", "--quiet", "--short", "HEAD")...).Output()
+	out, err := c.command(ctx, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() == 1 {
 		return "", nil
@@ -90,7 +90,7 @@ func (c CLI) CurrentBranch(ctx context.Context) (string, error) {
 // subjectPattern; an empty pattern counts every commit.
 func (c CLI) CountCommits(ctx context.Context, rangeSpec, subjectPattern string) (int, error) {
 	if subjectPattern == "" {
-		out, err := exec.CommandContext(ctx, "git", c.at("rev-list", "--count", rangeSpec)...).Output()
+		out, err := c.command(ctx, "rev-list", "--count", rangeSpec).Output()
 		if err != nil {
 			return 0, fmt.Errorf("git rev-list --count %s: %w", rangeSpec, err)
 		}
@@ -100,7 +100,7 @@ func (c CLI) CountCommits(ctx context.Context, rangeSpec, subjectPattern string)
 	if err != nil {
 		return 0, fmt.Errorf("compiling subject pattern: %w", err)
 	}
-	out, err := exec.CommandContext(ctx, "git", c.at("log", "--format=%s", rangeSpec)...).Output()
+	out, err := c.command(ctx, "log", "--format=%s", rangeSpec).Output()
 	if err != nil {
 		return 0, fmt.Errorf("git log %s: %w", rangeSpec, err)
 	}
@@ -117,7 +117,7 @@ func (c CLI) MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]s
 	// section so stdout after the OID is purely the conflicted path list.
 	// --merge-base is omitted so git computes the base internally (2.38
 	// compatibility — the explicit flag was added in 2.40).
-	cmd := exec.CommandContext(ctx, "git", c.at("-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", ourRef, theirRef)...)
+	cmd := c.command(ctx, "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", ourRef, theirRef)
 	out, err := cmd.Output()
 	if err != nil {
 		// Exit 1 is the documented conflict signal; parse stdout for paths.
@@ -132,7 +132,7 @@ func (c CLI) MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]s
 // CommonDir returns the repository's common git directory, the one every
 // worktree of it shares.
 func (c CLI) CommonDir(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--path-format=absolute", "--git-common-dir")...).Output()
+	out, err := c.command(ctx, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse --git-common-dir: %w", err)
 	}
@@ -151,7 +151,7 @@ func (c CLI) HoldsUnpushed(ctx context.Context) (bool, error) {
 
 // RevParse returns the commit ref names.
 func (c CLI) RevParse(ctx context.Context, ref string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--verify", "--quiet", ref+"^{commit}")...).Output()
+	out, err := c.command(ctx, "rev-parse", "--verify", "--quiet", ref+"^{commit}").Output()
 	if err != nil {
 		return "", fmt.Errorf("git rev-parse %s: %w", ref, err)
 	}
@@ -161,7 +161,7 @@ func (c CLI) RevParse(ctx context.Context, ref string) (string, error) {
 // Contains reports whether commit is reachable from HEAD. A commit the
 // repository does not know is not contained.
 func (c CLI) Contains(ctx context.Context, commit string) (bool, error) {
-	err := exec.CommandContext(ctx, "git", c.at("merge-base", "--is-ancestor", commit, "HEAD")...).Run()
+	err := c.command(ctx, "merge-base", "--is-ancestor", commit, "HEAD").Run()
 	if err == nil {
 		return true, nil
 	}

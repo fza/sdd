@@ -167,3 +167,29 @@ func TestPlanCloneReplay(t *testing.T) {
 		})
 	}
 }
+
+func TestGitSupportsLazyFetchBar(t *testing.T) {
+	cases := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{name: "first release with backfill over a range and its boundary", output: "git version 2.55.0\n", want: true},
+		{name: "later release", output: "git version 2.56.0\n", want: true},
+		{name: "release candidate", output: "git version 2.55.0.rc1\n", want: true},
+		{name: "vendor suffix", output: "git version 2.60.1 (Apple Git-160)\n", want: true},
+		{name: "next major", output: "git version 3.0.0\n", want: true},
+		{name: "older release", output: "git version 2.54.2\n", want: false},
+		{name: "older vendor release", output: "git version 2.39.5 (Apple Git-154)\n", want: false},
+		{name: "not git's version line", output: "hub version 2.14.2\n", want: false},
+		{name: "no output", output: "", want: false},
+		{name: "unreadable number", output: "git version two.fifty\n", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := model.GitSupportsLazyFetchBar(tc.output); got != tc.want {
+				t.Errorf("the bar support should follow the git release, got %v", got)
+			}
+		})
+	}
+}

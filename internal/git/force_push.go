@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -60,7 +59,7 @@ func (c CLI) followForcePush(ctx context.Context, previous string) error {
 	if err != nil || previous == "" || previous == upstream {
 		return c.noteFetchedTip(ctx)
 	}
-	err = exec.CommandContext(ctx, "git", c.at("merge-base", "--is-ancestor", previous, upstream)...).Run()
+	err = c.command(ctx, "merge-base", "--is-ancestor", previous, upstream).Run()
 	if err == nil {
 		return c.noteFetchedTip(ctx)
 	}
@@ -127,7 +126,7 @@ func (c CLI) recoverForcePush(ctx context.Context, previous, upstream string) er
 		unpushed[file] = content
 	}
 
-	err = run(ctx, c.Dir, "reset", "--quiet", "--hard", upstream)
+	err = c.run(ctx, "reset", "--quiet", "--hard", upstream)
 	if err != nil {
 		return err
 	}
@@ -165,14 +164,14 @@ func (c CLI) recoverForcePush(ctx context.Context, previous, upstream string) er
 
 // contentAt reads file as rev holds it, fs.ErrNotExist when rev holds none.
 func (c CLI) contentAt(ctx context.Context, rev, file string) (string, error) {
-	err := exec.CommandContext(ctx, "git", c.at("cat-file", "-e", rev+":"+file)...).Run()
+	err := c.command(ctx, "cat-file", "-e", rev+":"+file).Run()
 	if err != nil {
 		if errExitCode(err) == 128 {
 			return "", fs.ErrNotExist
 		}
 		return "", fmt.Errorf("git cat-file -e %s:%s: %w", rev, file, err)
 	}
-	out, err := exec.CommandContext(ctx, "git", c.at("show", rev+":"+file)...).Output()
+	out, err := c.command(ctx, "show", rev+":"+file).Output()
 	if err != nil {
 		return "", fmt.Errorf("git show %s:%s: %w", rev, file, err)
 	}

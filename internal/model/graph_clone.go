@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -252,4 +253,29 @@ func IsEntryPath(repoPath string) bool {
 // theirs missing.
 func IsUpstreamDeletion(stages []string) bool {
 	return slices.Contains(stages, "1") && slices.Contains(stages, "2") && !slices.Contains(stages, "3")
+}
+
+// GitSupportsLazyFetchBar reports whether the git printing versionOutput
+// (`git version`) runs `git backfill` over a revision range with the
+// boundary commits' contents, which git does from 2.55; only then can a clone
+// bar lazy fetches outside the gate (20261108-104247-d-tac-k6f). Unreadable
+// output reports false.
+func GitSupportsLazyFetchBar(versionOutput string) bool {
+	fields := strings.Fields(versionOutput)
+	if len(fields) < 3 || fields[0] != "git" || fields[1] != "version" {
+		return false
+	}
+	parts := strings.SplitN(fields[2], ".", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return false
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return false
+	}
+	return major > 2 || major == 2 && minor >= 55
 }
