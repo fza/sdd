@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
@@ -20,6 +21,7 @@ import (
 type servedProject struct {
 	access   *localRuntimeAccess
 	cfg      *model.PerRepoConfig
+	layout   meta.Project
 	sessions sdd.SessionStore
 	blobs    sdd.StagedBlobStore
 	graphDir string

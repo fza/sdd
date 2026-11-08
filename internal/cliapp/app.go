@@ -480,6 +480,13 @@ func New(options Options) *cli.Command {
 
 			warnUnknownConfigKeys(ctx)
 
+			if checksStrays(cmd.Args().First()) {
+				err := strayRefusal(ctx)
+				if err != nil {
+					return ctx, err
+				}
+			}
+
 			// Background sync check runs on every command except `sdd init`
 			// (bootstrap may precede remote configuration — sync would emit
 			// spurious warnings) and `sdd sync`, which runs the sync itself.

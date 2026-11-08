@@ -69,6 +69,7 @@ func serveCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			watch.guards = append(watch.guards, (&strayGuard{}).check)
 			application, identity, err := buildServedApplication(ctx, watch)
 			if err != nil {
 				return err
@@ -511,6 +512,10 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	if err != nil {
 		return nil, err
 	}
+	layout, err := resolveProject()
+	if err != nil {
+		return nil, err
+	}
 	layers, watched, err := servedConfigLayers(sddDir)
 	if err != nil {
 		return nil, err
@@ -619,7 +624,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 			}},
 	}
 	return &servedProject{
-		access: access, cfg: cfg, sessions: sessions, blobs: blobs,
+		access: access, cfg: cfg, layout: layout, sessions: sessions, blobs: blobs,
 		graphDir: graphDir, entries: graphFolderEntries(graphDir).Entries, layers: layers, watched: watched,
 	}, nil
 }
