@@ -24,6 +24,7 @@ type RepoSyncResult struct {
 
 type SyncReposResult struct {
 	SyncNoticeField
+	HostNoticeField
 	Repos []RepoSyncResult `json:"repos"`
 }
 

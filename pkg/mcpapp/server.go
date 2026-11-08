@@ -31,6 +31,10 @@ type Options struct {
 	// (read_attachment) so they can read files directly instead of paging.
 	LocalClient bool
 	Version     string
+
+	// BeforeCall, when set, runs before every tool call: an error refuses the
+	// call with it, a notice rides once on the call's result.
+	BeforeCall func(context.Context) (notice string, err error)
 }
 
 // Server wires the MCP protocol surface to the engine and the SDD read and
@@ -42,6 +46,7 @@ type Server struct {
 	localIdentity  sdd.RequestIdentity
 	local          bool
 	version        string
+	before         func(context.Context) (string, error)
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
 	// event acts on a session (d-cpt-aen).
@@ -69,6 +74,7 @@ func New(opts Options) (*Server, error) {
 		localIdentity:  opts.LocalIdentity,
 		local:          opts.LocalClient,
 		version:        opts.Version,
+		before:         opts.BeforeCall,
 		sessions:       newSessionCache(),
 	}
 	s.mcp = mcp.NewServer(&mcp.Implementation{
