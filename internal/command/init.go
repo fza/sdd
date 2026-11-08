@@ -23,7 +23,8 @@ type InitCmd struct {
 
 	// GraphDir is the graph directory path relative to RepoRoot, or to the
 	// project init sets up at ProjectDir. Empty defaults to
-	// model.DefaultGraphDir (".sdd/graph").
+	// model.DefaultGraphDirFor's choice: model.GraphOnlyGraphDir for a project
+	// set up through ProjectDir or GraphRepo, model.DefaultGraphDir otherwise.
 	GraphDir string
 
 	// ProjectDir, when set, makes RepoRoot a work repository whose graph lives
