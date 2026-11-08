@@ -124,16 +124,18 @@ func TestLinkKey(t *testing.T) {
 	t.Run("a real directory at the new key is left alone", func(t *testing.T) {
 		cache := t.TempDir()
 		realStore(t, cache, "example.test/acme/app")
-		kept := realStore(t, cache, "local/0123456789ab")
-		err := index.LinkKey(cache, "local/0123456789ab", "example.test/acme/app")
+		// Empty, so only the check keeps it: removing a directory holding
+		// files fails anyway.
+		err := os.MkdirAll(linkPath(cache), 0o755)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if isLink(t, linkPath(cache)) {
-			t.Error("a real store directory should not become a link")
+		err = index.LinkKey(cache, "local/0123456789ab", "example.test/acme/app")
+		if err != nil {
+			t.Fatal(err)
 		}
-		if _, err := os.Stat(filepath.Join(kept, "manifest.json")); err != nil {
-			t.Errorf("the real store should keep its content: %v", err)
+		if info, err := os.Lstat(linkPath(cache)); err != nil || !info.IsDir() {
+			t.Errorf("a real store directory should stay a directory, not become a link: %v", err)
 		}
 	})
 	t.Run("no store links nothing", func(t *testing.T) {
@@ -214,13 +216,18 @@ func TestOpenStoreDirSweepsUnusedLinks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		kept := realStore(t, cache, "local/0123456789ab")
+		// Empty, so only the check keeps it: removing a directory holding
+		// files fails anyway.
+		err = os.MkdirAll(linkPath(cache), 0o755)
+		if err != nil {
+			t.Fatal(err)
+		}
 		age(t, marker, idle)
 		_, err = index.OpenStoreDir(cache, "example.test/acme/app", linkFingerprint)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := os.Stat(filepath.Join(kept, "manifest.json")); err != nil {
+		if info, err := os.Lstat(linkPath(cache)); err != nil || !info.IsDir() {
 			t.Errorf("the sweep should never remove a real directory: %v", err)
 		}
 		if len(markers(t, cache)) != 0 {
