@@ -104,6 +104,23 @@ func TestLinkKey(t *testing.T) {
 			t.Errorf("links should never chain, got a link to %s", target)
 		}
 	})
+	t.Run("a link at the new key is pointed at the store", func(t *testing.T) {
+		cache := t.TempDir()
+		first := realStore(t, cache, "example.test/acme/first")
+		second := realStore(t, cache, "example.test/acme/second")
+		err := index.LinkKey(cache, "local/0123456789ab", "example.test/acme/first")
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = index.LinkKey(cache, "local/0123456789ab", "example.test/acme/second")
+		if err != nil {
+			t.Fatal(err)
+		}
+		linked := index.RealStoreDir(index.StoreDir(cache, "local/0123456789ab", linkFingerprint))
+		if linked != index.RealStoreDir(second) || linked == index.RealStoreDir(first) {
+			t.Error("an existing link should be pointed at the store linked last")
+		}
+	})
 	t.Run("a real directory at the new key is left alone", func(t *testing.T) {
 		cache := t.TempDir()
 		realStore(t, cache, "example.test/acme/app")

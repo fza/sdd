@@ -411,6 +411,26 @@ func TestInit_LeavesARootGitignoreWithoutDerivedLinesAlone(t *testing.T) {
 	}
 }
 
+// For a graph at the repository root, the root .gitattributes is the
+// graph's own: a repeat init finds its routing line in place and rewrites
+// nothing.
+func TestInit_KeepsTheRoutingOfAGraphAtTheRoot(t *testing.T) {
+	tmp := t.TempDir()
+	writeTestFile(t, filepath.Join(tmp, ".gitattributes"), model.GraphAttributesLine+"\n")
+	h := handlers.New(handlers.Options{Reader: finders.New(finders.Options{})})
+	var updated []string
+	err := h.Init(context.Background(), &command.InitCmd{
+		RepoRoot: tmp, GraphDir: ".", BinaryVersion: "v0.2.0", Scope: model.ScopeProject,
+		OnGitattributesUpdated: func(path string) { updated = append(updated, path) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated) != 0 {
+		t.Errorf("init should leave the routing in place, got updates of %v", updated)
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	err := os.MkdirAll(filepath.Dir(path), 0o755)
