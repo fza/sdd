@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -17,8 +18,12 @@ import (
 // network operations that reach it and clones by creating .git plus files.
 type countingGit struct {
 	clones, pushes int
-	sources        []model.CloneSource
-	files          map[string]string
+	// cone is the cone checked out, the default until set; coneSets
+	// counts the sets that ran inside a gate admission.
+	cone     []string
+	coneSets int
+	sources  []model.CloneSource
+	files    map[string]string
 	// remote is the URL a clone's remote has; empty is the graph repository
 	// of the graph clone tests.
 	remote string
@@ -48,10 +53,21 @@ func (g *countingGit) CloneGraph(_ context.Context, _ model.RepoID, source model
 }
 
 func (g *countingGit) SparseCone(context.Context, string) ([]string, error) {
+	if g.cone != nil {
+		return g.cone, nil
+	}
 	return model.GraphCloneCone(model.DefaultGraphDir), nil
 }
 
-func (g *countingGit) SetSparseCone(context.Context, string, []string) error { return nil }
+func (g *countingGit) SetSparseCone(ctx context.Context, _ string, cone []string) error {
+	_, admitted := gitgate.Env(ctx)
+	if !admitted {
+		return errors.New("a cone change outside a gate admission")
+	}
+	g.cone = cone
+	g.coneSets++
+	return nil
+}
 
 func (g *countingGit) KeepGraphClone(context.Context, string, []string) error { return nil }
 
@@ -158,5 +174,49 @@ func TestGraphClonesWithoutGateRefuseToClone(t *testing.T) {
 	_, _, err := clones.Ensure(t.Context(), "example.test/acme/app-sdd", "")
 	if !errors.Is(err, repos.ErrNoGate) || git.clones != 0 {
 		t.Errorf("graph clones without a gate should refuse the clone, got %v", err)
+	}
+}
+
+// A wider cone fetches contents, so it changes only inside a gate admission:
+// at the clone in the clone's own, later in a fetch the gate admits, and a
+// deferred one waits without failing the keep (20261107-224549-d-tac-r9q).
+func TestConeChangesRunInsideAGateAdmission(t *testing.T) {
+	git := &countingGit{files: map[string]string{".sdd/config.yaml": "graph_dir: decisions\n"}}
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	gate := gitgate.New(gitgate.Options{
+		StateDir: t.TempDir(),
+		Limits:   func(string) gitgate.Limits { return model.DefaultGitLimits() },
+		Now:      func() time.Time { return now },
+	})
+	clones := repos.NewGraphClones(testLocations(t), git, gate)
+	repoID := model.RepoID("example.test/acme/app-sdd")
+
+	dir, cloned, err := clones.Ensure(t.Context(), repoID, "")
+	if err != nil || !cloned {
+		t.Fatalf("the first use should clone, got %v %v", cloned, err)
+	}
+	if git.coneSets != 1 || !slices.Equal(git.cone, []string{".sdd", "decisions"}) {
+		t.Fatalf("the clone should take the graph_dir into its cone inside its admission, got %d sets of %v", git.coneSets, git.cone)
+	}
+
+	err = os.WriteFile(filepath.Join(dir, ".sdd", "config.yaml"), []byte("graph_dir: records\n"), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = clones.Ensure(t.Context(), repoID, "")
+	if err != nil {
+		t.Fatalf("a cone change the gate defers should not fail the keep: %v", err)
+	}
+	if git.coneSets != 1 {
+		t.Error("the cone should stay while the fetch cooldown runs")
+	}
+
+	now = now.Add(time.Hour)
+	_, _, err = clones.Ensure(t.Context(), repoID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if git.coneSets != 2 || !slices.Equal(git.cone, []string{".sdd", "records"}) {
+		t.Errorf("once the fetch is due the cone should follow the graph_dir, got %d sets of %v", git.coneSets, git.cone)
 	}
 }

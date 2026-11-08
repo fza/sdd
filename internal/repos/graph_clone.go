@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/networkteam/slogutils"
+
 	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
@@ -143,14 +145,20 @@ func (g *GraphClones) keep(ctx context.Context, repoID model.RepoID, dir string)
 	if err != nil {
 		return err
 	}
-	cone := model.GraphCloneCone(graphDir)
-	current, err := g.git.SparseCone(ctx, dir)
+	cone, changed, err := g.coneChange(ctx, dir, graphDir)
 	if err != nil {
 		return err
 	}
-	if !slices.Equal(current, cone) {
-		err = g.git.SetSparseCone(ctx, dir, cone)
-		if err != nil {
+	if changed {
+		// Checking out a wider cone fetches its contents, a fetch the gate
+		// admits; deferred, the clone keeps its cone until the next keep.
+		err = g.run(ctx, gitgate.Fetch, func(ctx context.Context) (string, error) { return g.git.RemoteURL(ctx, dir) }, func(ctx context.Context) error {
+			return g.git.SetSparseCone(ctx, dir, cone)
+		})
+		var deferred *gitgate.DeferredError
+		if errors.As(err, &deferred) {
+			slogutils.FromContext(ctx).Debug("clone: cone change deferred", "repo", repoID, "next", deferred.Next)
+		} else if err != nil {
 			return err
 		}
 	}
@@ -203,8 +211,31 @@ func (g *GraphClones) Target(ctx context.Context, repoID model.RepoID, cloneURL 
 // tried first.
 func (g *GraphClones) clone(ctx context.Context, repoID model.RepoID, source model.CloneSource, dir string) error {
 	return g.run(ctx, gitgate.Fetch, func(ctx context.Context) (string, error) { return g.sourceURL(ctx, repoID, source) }, func(ctx context.Context) error {
-		return g.git.CloneGraph(ctx, repoID, source, dir, model.GraphCloneCone(""))
+		err := g.git.CloneGraph(ctx, repoID, source, dir, model.GraphCloneCone(""))
+		if err != nil {
+			return err
+		}
+		graphDir, err := committedGraphDir(dir)
+		if err != nil {
+			return err
+		}
+		cone, changed, err := g.coneChange(ctx, dir, graphDir)
+		if err != nil || !changed {
+			return err
+		}
+		return g.git.SetSparseCone(ctx, dir, cone)
 	})
+}
+
+// coneChange is the cone the clone at dir needs, .sdd and graphDir, and
+// whether it differs from the one checked out.
+func (g *GraphClones) coneChange(ctx context.Context, dir, graphDir string) ([]string, bool, error) {
+	cone := model.GraphCloneCone(graphDir)
+	current, err := g.git.SparseCone(ctx, dir)
+	if err != nil {
+		return nil, false, err
+	}
+	return cone, !slices.Equal(current, cone), nil
 }
 
 // sourceURL is the URL a clone from source reaches first, rewrites applied.

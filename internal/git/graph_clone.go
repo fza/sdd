@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -70,7 +69,7 @@ func (GraphClones) SparseCone(ctx context.Context, dir string) ([]string, error)
 
 // SetSparseCone checks out exactly cone in the clone at dir.
 func (GraphClones) SetSparseCone(ctx context.Context, dir string, cone []string) error {
-	return run(ctx, dir, append([]string{"sparse-checkout", "set", "--cone"}, cone...)...)
+	return CLI{Dir: dir}.run(ctx, append([]string{"sparse-checkout", "set", "--cone"}, cone...)...)
 }
 
 func (GraphClones) KeepGraphClone(ctx context.Context, dir string, routing []string) error {
@@ -190,15 +189,17 @@ func buildGraphClone(ctx context.Context, dir string, remotes []cloneRemote, con
 	if err != nil {
 		return err
 	}
-	err = run(ctx, dir, append([]string{"sparse-checkout", "set", "--cone"}, cone...)...)
+	// The checkout fetches the cone's contents inside the clone's admission.
+	env := cloneEnv(ctx)
+	err = runEnv(ctx, env, dir, append([]string{"sparse-checkout", "set", "--cone"}, cone...)...)
 	if err != nil {
 		return err
 	}
 	if branch == "" {
 		branch = defaultBranch
-		err = run(ctx, dir, "symbolic-ref", "HEAD", "refs/heads/"+branch)
+		err = runEnv(ctx, env, dir, "symbolic-ref", "HEAD", "refs/heads/"+branch)
 	} else {
-		err = run(ctx, dir, "checkout", "--quiet", "--no-track", "-b", branch, trackingPrefix+branch)
+		err = runEnv(ctx, env, dir, "checkout", "--quiet", "--no-track", "-b", branch, trackingPrefix+branch)
 	}
 	if err != nil {
 		return err
@@ -266,7 +267,7 @@ func (c CLI) useProtocol(ctx context.Context, branch, protocol string, now time.
 }
 
 func (c CLI) setConfig(ctx context.Context, key, value string) error {
-	out, err := exec.CommandContext(ctx, "git", c.at("config", "--local", key, value)...).CombinedOutput()
+	out, err := c.command(ctx, "config", "--local", key, value).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git config %s: %s (%w)", key, strings.TrimSpace(string(out)), err)
 	}
@@ -274,7 +275,7 @@ func (c CLI) setConfig(ctx context.Context, key, value string) error {
 }
 
 func (c CLI) unsetConfig(ctx context.Context, key string) error {
-	out, err := exec.CommandContext(ctx, "git", c.at("config", "--local", "--unset-all", key)...).CombinedOutput()
+	out, err := c.command(ctx, "config", "--local", "--unset-all", key).CombinedOutput()
 	if err == nil || errExitCode(err) == 5 {
 		return nil
 	}
@@ -290,7 +291,7 @@ func (c CLI) runRemote(ctx context.Context, args ...string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", c.at(args...)...)
+	cmd := c.command(ctx, append([]string{"-c", "fetch.unpackLimit=1"}, args...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
@@ -343,20 +344,45 @@ func (c CLI) withRemote(ctx context.Context, operation func(remote string) error
 	return errors.Join(append([]error{ErrGraphUnreachable}, failures...)...)
 }
 
-// fetchClone fetches the clone's upstream over the working protocol.
+// fetchClone fetches the clone's upstream over the working protocol with the
+// full contents of the new commits, and backfills the contents a merge of the
+// upstream still lacks, so the merge runs without the remote
+// (20261107-224549-d-tac-r9q, 20261108-104247-d-tac-k6f).
 func (c CLI) fetchClone(ctx context.Context) error {
 	previous, err := c.fetchedTip(ctx)
 	if err != nil {
 		return err
 	}
 	err = c.withRemote(ctx, func(remote string) error {
-		_, err := c.runRemote(ctx, "fetch", "--quiet", remote)
+		_, err := c.runRemote(ctx, "fetch", "--quiet", "--no-filter", remote)
 		return err
 	})
 	if err != nil {
 		return err
 	}
-	return c.followForcePush(ctx, previous)
+	err = c.followForcePush(ctx, previous)
+	if err != nil {
+		return err
+	}
+	return c.backfillUpstream(ctx)
+}
+
+// backfillUpstream fetches the contents inside the sparse set that the
+// commits between HEAD and the upstream, and their boundary, lack. It opens
+// no connection when nothing is missing.
+func (c CLI) backfillUpstream(ctx context.Context) error {
+	if !lazyFetchBar() {
+		return nil
+	}
+	born, err := c.hasHead(ctx)
+	if err != nil || !born {
+		return err
+	}
+	upstream, err := c.UpstreamRef(ctx)
+	if err != nil || upstream == "" {
+		return err
+	}
+	return c.run(ctx, "backfill", "--sparse", "HEAD.."+upstream)
 }
 
 // pullClone fetches and merges the clone's upstream.
@@ -413,7 +439,7 @@ func (c CLI) KeepGraphClone(ctx context.Context, routing []string) error {
 	for _, state := range []struct{ head, abort string }{{"MERGE_HEAD", "merge"}, {"CHERRY_PICK_HEAD", "cherry-pick"}} {
 		_, statErr := os.Stat(filepath.Join(gitDir, state.head))
 		if statErr == nil {
-			_ = run(ctx, c.Dir, state.abort, "--abort")
+			_ = c.run(ctx, state.abort, "--abort")
 		}
 	}
 	_, statErr := os.Stat(filepath.Join(gitDir, "HEAD"))
@@ -425,12 +451,12 @@ func (c CLI) KeepGraphClone(ctx context.Context, routing []string) error {
 		return err
 	}
 	if born {
-		err = run(ctx, c.Dir, "reset", "--quiet", "--hard")
+		err = c.run(ctx, "reset", "--quiet", "--hard")
 		if err != nil {
 			return err
 		}
 	}
-	err = run(ctx, c.Dir, "clean", "-f", "-d", "--quiet")
+	err = c.run(ctx, "clean", "-f", "-d", "--quiet")
 	if err != nil {
 		return err
 	}
@@ -475,6 +501,13 @@ func (c CLI) KeepGraphClone(ctx context.Context, routing []string) error {
 	}
 	if previous = strings.TrimSpace(previous); previous != "" {
 		err = c.followForcePush(ctx, previous)
+		if lacksContents(err) {
+			// Fetched without contents and barred from fetching them here:
+			// the next fetch follows inside its admission, so the upkeep
+			// stops before replaying sdd's commits onto the rewrite.
+			slogutils.FromContext(ctx).Debug("clone: force push left to the next fetch", "dir", c.Dir)
+			return c.run(ctx, "reset", "--quiet", "--hard")
+		}
 		if err != nil {
 			return err
 		}
@@ -482,8 +515,14 @@ func (c CLI) KeepGraphClone(ctx context.Context, routing []string) error {
 	return c.dropUnrecordedCommits(ctx)
 }
 
+// lacksContents reports whether err is git refusing to fetch contents the
+// clone lacks, under the lazy fetch bar.
+func lacksContents(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "lazy fetching disabled")
+}
+
 func (c CLI) hasHead(ctx context.Context) (bool, error) {
-	err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--verify", "--quiet", "HEAD")...).Run()
+	err := c.command(ctx, "rev-parse", "--verify", "--quiet", "HEAD").Run()
 	if err == nil {
 		return true, nil
 	}
@@ -518,14 +557,14 @@ func (c CLI) dropUnrecordedCommits(ctx context.Context) error {
 	if !plan.Reset {
 		return nil
 	}
-	err = run(ctx, c.Dir, "reset", "--quiet", "--hard", upstream)
+	err = c.run(ctx, "reset", "--quiet", "--hard", upstream)
 	if err != nil {
 		return err
 	}
 	for _, hash := range plan.Replay {
 		err = c.runMerging(ctx, "cherry-pick", "--allow-empty", hash)
 		if err != nil {
-			_ = run(ctx, c.Dir, "cherry-pick", "--abort")
+			_ = c.run(ctx, "cherry-pick", "--abort")
 			return fmt.Errorf("replaying sdd's commit %s onto %s: %w", hash, upstream, err)
 		}
 		err = c.RecordGraphCloneCommit(ctx)
@@ -594,7 +633,7 @@ func (c CLI) runMerging(ctx context.Context, args ...string) error {
 		return err
 	}
 	full := c.at(append(drivers, args...)...)
-	out, err := runDetached(ctx, full...)
+	out, err := runDetachedEnv(ctx, c.localEnv(ctx), full...)
 	relayNotices(ctx, string(out))
 	if err != nil {
 		return fmt.Errorf("git %s: %s (%w)", args[0], strings.TrimSpace(string(out)), err)
@@ -620,16 +659,16 @@ func (c CLI) mergeClone(ctx context.Context, ref, message string) error {
 	if err != nil {
 		return err
 	}
-	mergeErr := c.runMerging(ctx, "merge", "--no-edit", "--no-overwrite-ignore", "-m", message, ref)
+	mergeErr := c.runMerging(ctx, "merge", "--no-stat", "--no-edit", "--no-overwrite-ignore", "-m", message, ref)
 	if mergeErr != nil {
 		resolved, err := c.resolveUpstreamDeletions(ctx, ref)
 		if err != nil || !resolved {
-			_ = run(context.WithoutCancel(ctx), c.Dir, "merge", "--abort")
+			_ = c.run(context.WithoutCancel(ctx), "merge", "--abort")
 			return errors.Join(mergeErr, err)
 		}
 		err = c.runMerging(ctx, "commit", "--no-edit", "--quiet")
 		if err != nil {
-			_ = run(context.WithoutCancel(ctx), c.Dir, "merge", "--abort")
+			_ = c.run(context.WithoutCancel(ctx), "merge", "--abort")
 			return err
 		}
 	}
@@ -684,7 +723,7 @@ func (c CLI) resolveUpstreamDeletions(ctx context.Context, ref string) (bool, er
 		}
 	}
 	for _, path := range order {
-		err = run(ctx, c.Dir, "rm", "--quiet", "--", path)
+		err = c.run(ctx, "rm", "--quiet", "--", path)
 		if err != nil {
 			return false, err
 		}
@@ -706,7 +745,7 @@ func (c CLI) predictCloneMerge(ctx context.Context, ourRef, theirRef string) ([]
 		return nil, err
 	}
 	args := append(drivers, "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", ourRef, theirRef)
-	out, err := exec.CommandContext(ctx, "git", c.at(args...)...).Output()
+	out, err := c.command(ctx, args...).Output()
 	if err != nil && errExitCode(err) != 1 {
 		return nil, fmt.Errorf("git merge-tree: %w", err)
 	}

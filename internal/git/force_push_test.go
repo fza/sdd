@@ -153,7 +153,7 @@ func TestCloneFollowsAForcePush(t *testing.T) {
 // upkeep that opens the next round sets aside instead of replaying.
 func TestKeepGraphCloneFollowsAForcePushFetchedBefore(t *testing.T) {
 	dir, _, rewritten := forcePushedClone(t)
-	test.Git(t, dir, "fetch", "-q", "https")
+	test.Git(t, dir, "fetch", "-q", "--no-filter", "https")
 
 	err := git.CLI{Dir: dir}.KeepGraphClone(context.Background(), nil)
 	if err != nil {
@@ -164,6 +164,43 @@ func TestKeepGraphCloneFollowsAForcePushFetchedBefore(t *testing.T) {
 		t.Error("the upkeep should move the clone onto the rewritten tip")
 	}
 	setAside, err := git.CLI{Dir: dir}.SetAside(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(setAside.Entries, []string{test.ForcePushPlain}) {
+		t.Errorf("the unpushed entry should be set aside rather than replayed, got %v", setAside.Entries)
+	}
+}
+
+// A rewrite fetched without its contents, as sdd fetched before the
+// full-content fetch, cannot be followed by the upkeep outside the gate: the
+// upkeep leaves the clone as it was, and the next fetch follows.
+func TestForcePushFetchedWithoutContentsIsFollowedByTheNextFetch(t *testing.T) {
+	requireLazyFetchBar(t)
+	dir, _, rewritten := forcePushedClone(t)
+	test.Git(t, dir, "fetch", "-q", "https")
+	head := strings.TrimSpace(test.Git(t, dir, "rev-parse", "HEAD"))
+	repo := git.CLI{Dir: dir}
+
+	err := repo.KeepGraphClone(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("the upkeep should leave the rewrite to the next fetch: %v", err)
+	}
+	if strings.TrimSpace(test.Git(t, dir, "rev-parse", "HEAD")) != head {
+		t.Error("the upkeep should neither follow nor replay onto the rewrite")
+	}
+	if strings.TrimSpace(test.Git(t, dir, "status", "--porcelain")) != "" {
+		t.Error("the upkeep should leave the working tree clean")
+	}
+
+	err = repo.Fetch(admitted(t, context.Background()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parent := strings.TrimSpace(test.Git(t, dir, "rev-parse", "HEAD^")); parent != rewritten {
+		t.Error("the fetch should move the clone onto the rewritten tip")
+	}
+	setAside, err := repo.SetAside(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

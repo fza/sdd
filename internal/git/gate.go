@@ -6,8 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/networkteam/sdd/internal/gitgate"
+	"github.com/networkteam/sdd/internal/model"
 )
 
 // admittedEnv is the environment of a git command reaching a remote. A ctx
@@ -21,6 +23,53 @@ func admittedEnv(ctx context.Context, verb string, extra ...string) ([]string, e
 	env := append(os.Environ(), extra...)
 	return append(env, gateEnv...), nil
 }
+
+// command is git run with args in the adapter's repository, with the
+// environment localEnv gives it.
+func (c CLI) command(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", c.at(args...)...)
+	cmd.Env = c.localEnv(ctx)
+	return cmd
+}
+
+// run is the package run in the adapter's repository, with the environment
+// localEnv gives it.
+func (c CLI) run(ctx context.Context, args ...string) error {
+	return runEnv(ctx, c.localEnv(ctx), c.Dir, args...)
+}
+
+// localEnv is the environment of a git command in the repository: nil, so
+// the process environment, outside an sdd-owned graph clone, and cloneEnv in
+// one.
+func (c CLI) localEnv(ctx context.Context) []string {
+	if !c.graphClone() {
+		return nil
+	}
+	return cloneEnv(ctx)
+}
+
+// cloneEnv lets a git command in an sdd-owned graph clone fetch file
+// contents on its own only inside a gate admission, which counts and bounds
+// the connection; outside one, a command that needs missing contents fails
+// instead of connecting (20261107-224549-d-tac-r9q, 20261108-104247-d-tac-k6f).
+func cloneEnv(ctx context.Context) []string {
+	gateEnv, admitted := gitgate.Env(ctx)
+	if admitted {
+		env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND="+sshCommand)
+		return append(env, gateEnv...)
+	}
+	if !lazyFetchBar() {
+		return nil
+	}
+	return append(os.Environ(), "GIT_NO_LAZY_FETCH=1")
+}
+
+// lazyFetchBar reports whether the installed git bars lazy fetches in a
+// clone: only one whose backfill can supply what a merge needs first.
+var lazyFetchBar = sync.OnceValue(func() bool {
+	out, err := exec.Command("git", "version").Output()
+	return err == nil && model.GitSupportsLazyFetchBar(string(out))
+})
 
 // ExpandURL applies the insteadOf rewrites git would apply to url, without
 // reaching the remote: the gate limits the host git connects to.

@@ -53,7 +53,7 @@ func (c CLI) EnsureMergeDriver(ctx context.Context) error {
 		{"merge." + model.EntryMergeDriver + ".name", "sdd entry title and summary merge"},
 	}
 	for _, setting := range settings {
-		out, writeErr := exec.CommandContext(ctx, "git", c.at("config", "--local", setting[0], setting[1])...).CombinedOutput()
+		out, writeErr := c.command(ctx, "config", "--local", setting[0], setting[1]).CombinedOutput()
 		if writeErr == nil {
 			continue
 		}
@@ -69,7 +69,7 @@ func (c CLI) EnsureMergeDriver(ctx context.Context) error {
 
 // localConfig returns the repository-local value of key, or "" when unset.
 func (c CLI) localConfig(ctx context.Context, key string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("config", "--local", "--get", key)...).CombinedOutput()
+	out, err := c.command(ctx, "config", "--local", "--get", key).CombinedOutput()
 	if err == nil {
 		return strings.TrimSpace(string(out)), nil
 	}
@@ -83,7 +83,7 @@ func (c CLI) localConfig(ctx context.Context, key string) (string, error) {
 // Only git's own "not a git repository" answer counts as outside one; any
 // other failure, such as an unsafe owner or a broken repository, is an error.
 func (c CLI) inWorkTree(ctx context.Context) (bool, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--is-inside-work-tree")...).CombinedOutput()
+	out, err := c.command(ctx, "rev-parse", "--is-inside-work-tree").CombinedOutput()
 	answer := strings.TrimSpace(string(out))
 	if err == nil {
 		return answer == "true", nil
