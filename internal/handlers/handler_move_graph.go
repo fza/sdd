@@ -415,6 +415,11 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 	if err != nil {
 		return false, err
 	}
+	if vacated {
+		// The machine-local folders moved out leave .sdd/ empty, which git
+		// keeps no record of.
+		pruneEmptyDirs(meta.SDDDir(source.root))
+	}
 	if cmd.OnMoved != nil {
 		cmd.OnMoved(record)
 	}
