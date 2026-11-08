@@ -130,7 +130,7 @@ func (s *PersistentSearchIndexStore) storeDir(namespace app.IndexNamespace) (str
 	if namespace.Fingerprint == "" {
 		return "", fmt.Errorf("sdd: namespace fingerprint is required")
 	}
-	return index.StoreDir(s.cacheRoot, s.repoKey, namespace.Fingerprint), nil
+	return index.OpenStoreDir(s.cacheRoot, s.repoKey, namespace.Fingerprint)
 }
 
 // IndexedEntries reads the manifest and returns one ref per stored (entry,

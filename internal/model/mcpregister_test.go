@@ -169,3 +169,66 @@ func TestMergeCodexConfigTOML_ExistingHeaderLeftUntouched(t *testing.T) {
 		t.Errorf("output should be byte-identical to input, got:\n%s", out)
 	}
 }
+
+// Removing a registration undoes what the merge added: a file holding only
+// the registration goes, one holding more keeps everything else.
+func TestRemoveMCPRegistration(t *testing.T) {
+	merges := []struct {
+		name   string
+		merge  func([]byte) ([]byte, bool, error)
+		remove func([]byte) ([]byte, bool, error)
+		other  string
+	}{
+		{name: ".mcp.json", merge: model.MergeClaudeMCPJSON, remove: model.RemoveClaudeMCPJSON, other: "{\n  \"mcpServers\": {\n    \"other\": {\n      \"command\": \"x\"\n    }\n  }\n}\n"},
+		{name: "settings.json", merge: model.MergeClaudeSettingsAllow, remove: model.RemoveClaudeSettingsAllow, other: "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(ls)\"\n    ]\n  }\n}\n"},
+		{name: "config.toml", merge: model.MergeCodexConfigTOML, remove: model.RemoveCodexConfigTOML, other: "[mcp_servers.other]\ncommand = \"x\"\n"},
+	}
+	for _, m := range merges {
+		t.Run(m.name+" holding only the registration", func(t *testing.T) {
+			registered, _, err := m.merge(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rest, changed, err := m.remove(registered)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !changed || rest != nil {
+				t.Errorf("the file should go with its only registration, got changed=%v:\n%s", changed, rest)
+			}
+		})
+		t.Run(m.name+" holding more", func(t *testing.T) {
+			registered, _, err := m.merge([]byte(m.other))
+			if err != nil {
+				t.Fatal(err)
+			}
+			rest, changed, err := m.remove(registered)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !changed || string(rest) != m.other {
+				t.Errorf("the rest of the file should stay as it was, got changed=%v:\n%s", changed, rest)
+			}
+		})
+		t.Run(m.name+" without the registration", func(t *testing.T) {
+			rest, changed, err := m.remove([]byte(m.other))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed || string(rest) != m.other {
+				t.Errorf("a file without the registration should stay untouched, got changed=%v:\n%s", changed, rest)
+			}
+		})
+	}
+}
+
+func TestRemoveCodexConfigTOML_KeepsTablesAfterTheBlock(t *testing.T) {
+	existing := "[a]\nx = 1\n\n[mcp_servers.sdd]\ncommand = \"sdd\"\n\n[b]\ny = 2\n"
+	rest, changed, err := model.RemoveCodexConfigTOML([]byte(existing))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || string(rest) != "[a]\nx = 1\n\n[b]\ny = 2\n" {
+		t.Errorf("only the sdd table should go, got:\n%s", rest)
+	}
+}

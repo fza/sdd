@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -346,8 +347,8 @@ func TestInitPointsTheWorkRepositoryAtTheProject(t *testing.T) {
 	if !strings.Contains(written, "project_dir: ../work-sdd") {
 		t.Errorf("the pointer config should name the project:\n%s", written)
 	}
-	if names := sddDirContents(t, work); len(names) != 1 || names[0] != "config.yaml" {
-		t.Errorf("init should create only the config in the work repository's .sdd/, found %v", names)
+	if names := sddDirContents(t, work); !slices.Equal(names, []string{".gitignore", "config.yaml"}) {
+		t.Errorf("init should create only the config and its .gitignore in the work repository's .sdd/, found %v", names)
 	}
 	if !strings.Contains(readFile(t, filepath.Join(work, ".mcp.json")), "serve") {
 		t.Error("init should register the MCP server in the work repository")

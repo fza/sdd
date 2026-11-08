@@ -39,6 +39,9 @@ type Options struct {
 	// instruction lanes, framing, report schema and vocabulary in full, for
 	// a host whose client collapses repeats itself (20261101-164201-d-tac-sj4).
 	ServeInFull bool
+	// BeforeCall, when set, runs before every tool call: an error refuses the
+	// call with it, a notice rides once on the call's result.
+	BeforeCall func(context.Context) (notice string, err error)
 }
 
 // Server wires the MCP protocol surface to the engine and the SDD read and
@@ -52,6 +55,7 @@ type Server struct {
 	version        string
 	cacheNotice    func(context.Context) string
 	serveInFull    bool
+	before         func(context.Context) (string, error)
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
 	// event acts on a session (d-cpt-aen).
@@ -81,6 +85,7 @@ func New(opts Options) (*Server, error) {
 		version:        opts.Version,
 		cacheNotice:    opts.CacheNotice,
 		serveInFull:    opts.ServeInFull,
+		before:         opts.BeforeCall,
 		sessions:       newSessionCache(),
 	}
 	s.mcp = mcp.NewServer(&mcp.Implementation{

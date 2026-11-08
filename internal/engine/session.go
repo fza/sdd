@@ -215,8 +215,8 @@ type Session struct {
 	// picks a parked dialogue by. Agent-supplied via SetLabel, updatable;
 	// empty until supplied.
 	Label string
-	// DialogueMode is fixed when the session opens and kept on resume;
-	// DialogueSource names the config layer that set it
+	// DialogueMode is the mode in force: opened from config, then followed
+	// through SetDialogue; DialogueSource names the config layer that set it
 	// (20261029-150854-d-tac-b2f).
 	DialogueMode   model.DialogueMode
 	DialogueSource string
@@ -254,6 +254,13 @@ func WithDialogue(mode model.DialogueMode, source string) SessionOption {
 		s.DialogueMode = mode
 		s.DialogueSource = source
 	}
+}
+
+// SetDialogue puts the session in mode from now on: steps served and answers
+// taken afterwards follow it, a gate already passed stays passed.
+func (s *Session) SetDialogue(mode model.DialogueMode, source string) {
+	s.DialogueMode = mode
+	s.DialogueSource = source
 }
 
 // WithClock injects the timestamp source (tests use a fixed clock).
@@ -758,9 +765,10 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	}
 
 	data := map[string]any{
-		"chooser": step.ID,
-		"choice":  choice,
-		"kind":    string(step.Chooser),
+		"chooser":  step.ID,
+		"choice":   choice,
+		"kind":     string(step.Chooser),
+		"dialogue": string(s.dialogueMode()),
 	}
 	if userWords != "" {
 		data["userWords"] = userWords

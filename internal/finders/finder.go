@@ -30,6 +30,7 @@ type Finder struct {
 	repos              *repos.Registry
 	procedureRegistry  *engine.Registry
 	graphCache         GraphCache
+	moveHistory        MoveHistory
 }
 
 // Options configures a new Finder. Zero-valued fields mean "not available"
@@ -54,6 +55,9 @@ type Options struct {
 	// GraphCache keeps loaded graph documents between processes. Nil loads
 	// every graph from its files.
 	GraphCache GraphCache
+	// MoveHistory reads the move records of a repository. Nil finds no
+	// strays.
+	MoveHistory MoveHistory
 }
 
 // New constructs a Finder with the given options.
@@ -67,6 +71,7 @@ func New(opts Options) *Finder {
 		repos:              opts.Repos,
 		procedureRegistry:  opts.ProcedureRegistry,
 		graphCache:         opts.GraphCache,
+		moveHistory:        opts.MoveHistory,
 	}
 }
 

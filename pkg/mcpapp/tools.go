@@ -355,14 +355,17 @@ type ReadAttachmentResult struct {
 // ResultNotices carries, on every result, the blocked-sync notice while
 // automatic sync of the graph repository cannot proceed
 // (20261028-201909-d-tac-fxp), and once the notice of a failed background
-// cache pruning run (20261101-131514-d-cpt-9ci).
+// cache pruning run (20261101-131514-d-cpt-9ci), and once the config keys
+// that changed since the previous call.
 type ResultNotices struct {
 	SyncNotice  string `json:"sync_notice,omitempty" jsonschema:"set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says"`
 	CacheNotice string `json:"cache_notice,omitempty" jsonschema:"set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user"`
+	HostNotice  string `json:"host_notice,omitempty" jsonschema:"set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values"`
 }
 
 func (f *ResultNotices) setSyncNotice(notice string)  { f.SyncNotice = notice }
 func (f *ResultNotices) setCacheNotice(notice string) { f.CacheNotice = notice }
+func (f *ResultNotices) setHostNotice(notice string)  { f.HostNotice = notice }
 
 // SyncBlockedResult is the blocked-sync record info shows.
 type SyncBlockedResult struct {
@@ -1273,6 +1276,10 @@ func (s *Server) registryDocs(ctx context.Context, req *mcp.CallToolRequest, arg
 // structured content is still marshalled from the returned value.
 func toolBoundary[In, Out any](s *Server, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
+		hostNotice, err := s.beforeCall(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
 		slot := &syncNoticeSlot{}
 		res, out, err := handler(context.WithValue(ctx, syncNoticeKey{}, slot), req, in)
 		var coded *sdd.ApplicationError
@@ -1287,7 +1294,7 @@ func toolBoundary[In, Out any](s *Server, handler func(context.Context, *mcp.Cal
 			cacheNotice = s.cacheNotice(ctx)
 		}
 		if err != nil {
-			for _, notice := range []string{syncNotice, cacheNotice} {
+			for _, notice := range []string{syncNotice, cacheNotice, hostNotice} {
 				if notice != "" {
 					err = fmt.Errorf("%w\n\n%s", err, notice)
 				}
@@ -1300,8 +1307,18 @@ func toolBoundary[In, Out any](s *Server, handler func(context.Context, *mcp.Cal
 		if carrier, ok := any(&out).(interface{ setCacheNotice(string) }); ok {
 			carrier.setCacheNotice(cacheNotice)
 		}
+		if carrier, ok := any(&out).(interface{ setHostNotice(string) }); ok {
+			carrier.setHostNotice(hostNotice)
+		}
 		return res, out, err
 	}
+}
+
+func (s *Server) beforeCall(ctx context.Context) (string, error) {
+	if s.before == nil {
+		return "", nil
+	}
+	return s.before(ctx)
 }
 
 type syncNoticeKey struct{}

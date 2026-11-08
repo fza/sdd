@@ -211,8 +211,7 @@ func LockGraph(dir string) (*flock.Flock, error) {
 }
 
 func newGraphLock(dir string) (*flock.Flock, error) {
-	runtimeDir := filepath.Join(dir, ".sdd-runtime")
-	err := os.MkdirAll(runtimeDir, 0o755)
+	runtimeDir, err := meta.EnsureRuntimeDir(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -252,8 +251,7 @@ func (l CheckoutLocks) LockGraph(ctx context.Context) (func(), error) {
 // TryLockTitles takes the backfill lock when no backfill holds it; release is
 // nil otherwise.
 func (l CheckoutLocks) TryLockTitles(context.Context) (func(), error) {
-	runtimeDir := filepath.Join(l.GraphDir, ".sdd-runtime")
-	err := os.MkdirAll(runtimeDir, 0o755)
+	runtimeDir, err := meta.EnsureRuntimeDir(l.GraphDir)
 	if err != nil {
 		return nil, err
 	}

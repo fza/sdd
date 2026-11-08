@@ -162,13 +162,32 @@ func (g *GraphClones) keep(ctx context.Context, repoID model.RepoID, dir string)
 			return err
 		}
 	}
-	entryRouting, err := model.EntryMergeAttributeLine(graphDir)
-	if err != nil {
-		return fmt.Errorf("graph_dir of %s: %w", repoID, err)
-	}
-	err = g.git.KeepGraphClone(ctx, dir, []string{entryRouting, model.ConfigMergeAttributeLine})
+	// Entry files route through the .gitattributes committed in the graph
+	// directory, which init writes and every move carries.
+	err = g.git.KeepGraphClone(ctx, dir, []string{model.ConfigMergeAttributeLine})
 	if err != nil {
 		return fmt.Errorf("keeping the clone of %s: %w", repoID, err)
+	}
+	return nil
+}
+
+// Widen sets the cone of the clone of repoID to hold graphDir, which its
+// committed config does not name yet: init commits the graph directory's
+// first files before that config reaches the clone's upstream.
+func (g *GraphClones) Widen(ctx context.Context, repoID model.RepoID, graphDir string) error {
+	dir, err := g.Dir(repoID)
+	if err != nil {
+		return err
+	}
+	cone, changed, err := g.coneChange(ctx, dir, graphDir)
+	if err != nil || !changed {
+		return err
+	}
+	err = g.run(ctx, gitgate.Fetch, func(ctx context.Context) (string, error) { return g.git.RemoteURL(ctx, dir) }, func(ctx context.Context) error {
+		return g.git.SetSparseCone(ctx, dir, cone)
+	})
+	if err != nil {
+		return fmt.Errorf("widening the clone of %s to %s: %w", repoID, graphDir, err)
 	}
 	return nil
 }

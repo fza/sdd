@@ -63,6 +63,10 @@ var globalOnlyKeys = map[string]bool{"sessions.token_saving": true}
 // schema declaration order; map-valued keys (api_keys) expand to one entry
 // per map key with per-key provenance. Nil layers are treated as empty.
 func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []ConfigValue {
+	return effectiveConfigValues(global, project, local, true)
+}
+
+func effectiveConfigValues(global BaseConfig, project, local *PerRepoConfig, mask bool) []ConfigValue {
 	layers := []struct {
 		cfg    *PerRepoConfig
 		source ConfigValueSource
@@ -77,7 +81,7 @@ func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []C
 	for _, leaf := range collectConfigLeaves(reflect.TypeFor[PerRepoConfig](), nil, nil) {
 		switch leaf.kind {
 		case leafMap:
-			out = append(out, effectiveMapEntries(leaf, layers)...)
+			out = append(out, effectiveMapEntries(leaf, mask, layers)...)
 		default:
 			set := false
 			var val ConfigValue
@@ -187,7 +191,7 @@ func leafValue(root reflect.Value, index []int) reflect.Value {
 // effectiveMapEntries expands a map-valued leaf into per-key entries with
 // per-key provenance — the same key-by-key overlay MergeConfig applies. Only a
 // leaf the field marked secret is masked.
-func effectiveMapEntries(leaf configLeaf, layers []struct {
+func effectiveMapEntries(leaf configLeaf, mask bool, layers []struct {
 	cfg    *PerRepoConfig
 	source ConfigValueSource
 }) []ConfigValue {
@@ -215,7 +219,7 @@ func effectiveMapEntries(leaf configLeaf, layers []struct {
 	out := make([]ConfigValue, 0, len(order))
 	for _, k := range order {
 		value := "••••••"
-		if !leaf.secret {
+		if !leaf.secret || !mask {
 			value = merged[k].value
 		}
 		out = append(out, ConfigValue{

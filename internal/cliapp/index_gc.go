@@ -172,9 +172,29 @@ func selectIndexStores(cmd *cli.Command) ([]indexStore, handlers.IndexEmbedder, 
 		if err != nil {
 			return nil, emb, nil, err
 		}
+		storeDir, err := index.OpenStoreDir(reg.CacheRoot(), index.RepoKey(repoID, cloneDir), emb.Fingerprint())
+		if err != nil {
+			return nil, emb, nil, err
+		}
 		stores = append(stores, indexStore{
-			label: string(repoID), graphDir: cloneGraph, indexDir: index.StoreDir(reg.CacheRoot(), index.RepoKey(repoID, cloneDir), emb.Fingerprint()), excludeEmbedded: true,
+			label: string(repoID), graphDir: cloneGraph, indexDir: storeDir, excludeEmbedded: true,
 		})
 	}
-	return stores, emb, reader, nil
+	return distinctStores(stores), emb, reader, nil
+}
+
+// distinctStores keeps the first of the stores resolving to one real store:
+// a moved graph's new repo key links to the store of its old one.
+func distinctStores(stores []indexStore) []indexStore {
+	seen := map[string]bool{}
+	var distinct []indexStore
+	for _, store := range stores {
+		real := index.RealStoreDir(store.indexDir)
+		if seen[real] {
+			continue
+		}
+		seen[real] = true
+		distinct = append(distinct, store)
+	}
+	return distinct
 }

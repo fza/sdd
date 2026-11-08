@@ -378,10 +378,33 @@ func (a *Application) replayWorkflow(ctx context.Context, identity RequestIdenti
 	if err != nil {
 		return nil, fmt.Errorf("replaying session %s: %w", stored.Metadata.ID, err)
 	}
+	if err := w.followDialogue(ctx, identity, runtime); err != nil {
+		return nil, err
+	}
 	if err := w.ensureShell(); err != nil {
 		return nil, err
 	}
 	return w, nil
+}
+
+// followDialogue puts a replayed session in the dialogue mode the config sets
+// now, so a running session follows a config change on its next call
+// (supersedes the bound-at-open rule of 20261029-150854-d-tac-b2f). A
+// composition without a dialogue resolver keeps the mode the log opened in.
+func (w *WorkflowSession) followDialogue(ctx context.Context, identity RequestIdentity, runtime *ProjectRuntime) error {
+	if _, ok := w.app.access.(DialogueResolver); !ok {
+		return nil
+	}
+	principal, err := w.app.resolvePrincipal(ctx, identity)
+	if err != nil {
+		return err
+	}
+	dialogue, err := w.app.dialogueFor(ctx, principal, runtime)
+	if err != nil {
+		return err
+	}
+	w.session.SetDialogue(model.DialogueMode(dialogue.Mode), dialogue.Source)
+	return nil
 }
 
 // ResumeWorkflow loads a session and serves its current position: every
@@ -515,7 +538,7 @@ func (w *WorkflowSession) IsShell(instance string) bool { return instance != "" 
 // Finished reports whether this dialogue is over: the shell has left running,
 // which is the act that wrote the terminal record. A finished session is spent —
 // the door opens a new one rather than re-serving it, and no move may carry it on.
-// Autonomous reports whether the session opened in the autonomous dialogue
+// Autonomous reports whether the session is in the autonomous dialogue
 // mode, where the agent takes the choices procedures hand over
 // (20261029-150854-d-tac-b2f).
 func (w *WorkflowSession) Autonomous() bool {

@@ -150,11 +150,13 @@ type InitCmd struct {
 	// OnMigrated fires after .sdd-tmp/ contents are migrated to .sdd/tmp/.
 	OnMigrated func(count int)
 
-	// OnGitignoreUpdated fires after .gitignore is updated with .sdd/tmp/.
+	// OnGitignoreUpdated fires after a .gitignore changes: .sdd/.gitignore
+	// written, or the root .gitignore rid of the lines earlier builds derived.
 	OnGitignoreUpdated func(gitignorePath string)
 
-	// OnGitattributesUpdated fires after .gitattributes gains the line routing
-	// graph entries to the entry merge driver.
+	// OnGitattributesUpdated fires after a .gitattributes changes: the graph
+	// directory's gaining the line routing entries to the entry merge driver,
+	// or the root one rid of the line earlier builds derived.
 	OnGitattributesUpdated func(gitattributesPath string)
 
 	// OnIndexMigrated fires per legacy index dir (in-tree .sdd/index or a

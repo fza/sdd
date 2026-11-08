@@ -485,6 +485,13 @@ func New(options Options) *cli.Command {
 
 			warnUnknownConfigKeys(ctx)
 
+			if checksStrays(cmd.Args().First()) {
+				err := strayRefusal(ctx)
+				if err != nil {
+					return ctx, err
+				}
+			}
+
 			if options.LaunchCachePrune != nil && cmd.Args().First() != cacheCommandName {
 				stopPrune := timing.Start(ctx, "cache-prune-check")
 				backgroundCachePrune(ctx, options.LaunchCachePrune, cmd.Args().First() != "serve")
@@ -539,6 +546,7 @@ func New(options Options) *cli.Command {
 			mergeConfigCmd(),
 			repoCmd(),
 			statsCmd(),
+			moveCmd(),
 		},
 	}
 
