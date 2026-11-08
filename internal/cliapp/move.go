@@ -62,13 +62,15 @@ func moveCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			reader := finders.New(finders.Options{MoveHistory: git.MoveHistory{}})
 			handler := handlers.New(handlers.Options{
 				Stderr:              cmd.ErrWriter,
 				Gate:                gate,
 				GraphClones:         repos.NewGraphClones(locations, git.GraphClones{}, gate),
 				ProjectRepositories: git.Repositories{},
 				GraphMoverAt:        func(dir string) handlers.GraphMover { return git.CLI{Dir: dir} },
-				Strays:              finders.New(finders.Options{MoveHistory: git.MoveHistory{}}),
+				Strays:              reader,
+				Reader:              reader,
 				SessionStoreDirs: func(sddDir string, repoID model.RepoID) (map[string]string, error) {
 					return machineSessionStores(locations, sddDir, repoID)
 				},

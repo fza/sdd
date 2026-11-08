@@ -278,6 +278,14 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 			return false, err
 		}
 	}
+	vacated := filepath.Clean(source.root) != filepath.Clean(cmd.WorkRoot) && !same
+	var vacate []model.MoveFile
+	if vacated {
+		vacate, err = h.vacatePlan(ctx, source.root)
+		if err != nil {
+			return false, err
+		}
+	}
 	err = h.prepareTarget(target, source, cmd)
 	if err != nil {
 		return false, err
@@ -337,6 +345,14 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 	if err != nil {
 		return false, err
 	}
+	s.plan.Files = append(s.plan.Files, vacate...)
+	if target.location.Kind == model.LocationGitPath && t != w {
+		install, err := h.workInstallPlan(ctx, w.root, t.root, cmd.BinaryVersion)
+		if err != nil {
+			return false, err
+		}
+		t.plan.Files = append(t.plan.Files, install...)
+	}
 
 	for _, repo := range order {
 		if len(repo.plan.Files) == 0 && len(repo.plan.Remove) == 0 && repo.plan.Graft == "" {
@@ -393,6 +409,9 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 	err = h.moveMachineLocal(cmd, project, source, target)
 	if err != nil {
 		return false, err
+	}
+	if vacated {
+		pruneEmptyDirs(meta.SDDDir(source.root))
 	}
 	if cmd.OnMoved != nil {
 		cmd.OnMoved(record)

@@ -215,6 +215,15 @@ func TestMoveTheGraphOutToAProjectDirAndBack(t *testing.T) {
 	if stats := readText(t, filepath.Join(project, ".sdd", "stats", "llm.jsonl")); stats != "{}\n" {
 		t.Errorf("the usage stats should move to the project, got %q", stats)
 	}
+	installed := gitIn(t, project, "show", "--name-only", "--format=", "HEAD")
+	for _, path := range []string{".sdd/.gitignore", "graph/.gitattributes", ".claude/skills/sdd/SKILL.md", ".mcp.json", ".claude/settings.json"} {
+		if !strings.Contains(installed, path+"\n") {
+			t.Errorf("the move commit should carry what a fresh init of the project writes, missing %s:\n%s", path, installed)
+		}
+	}
+	if status := strings.TrimSpace(gitIn(t, project, "status", "--porcelain")); status != "" {
+		t.Errorf("the move should leave the project clean:\n%s", status)
+	}
 	codeRecord, projectRecord := headRecord(t, repo), headRecord(t, project)
 	if codeRecord.ID != projectRecord.ID || codeRecord.To.String() != "git-path:../graph-home?dir=graph" {
 		t.Errorf("both repositories should carry the same record, got %+v and %+v", codeRecord, projectRecord)
@@ -232,7 +241,12 @@ func TestMoveTheGraphOutToAProjectDirAndBack(t *testing.T) {
 	if !strings.Contains(config, "graph_dir: .sdd/graph") || strings.Contains(config, "project_dir") || !strings.Contains(config, "default_branch: main") {
 		t.Errorf("the code repository should hold the project's settings again:\n%s", config)
 	}
-	assertMissing(t, filepath.Join(project, ".sdd", "config.yaml"), "the vacated repository is no sdd project any more")
+	for _, path := range []string{".sdd", ".claude", ".mcp.json"} {
+		assertMissing(t, filepath.Join(project, path), "the vacated checkout should keep no sdd file")
+	}
+	if status := strings.TrimSpace(gitIn(t, project, "status", "--porcelain")); status != "" {
+		t.Errorf("the move back should leave the vacated checkout clean:\n%s", status)
+	}
 	if local := readText(t, filepath.Join(repo, ".sdd", "config.local.yaml")); !strings.Contains(local, "participant: Ada") {
 		t.Errorf("the machine-local config should come back:\n%s", local)
 	}
@@ -263,6 +277,26 @@ func TestMoveRefuses(t *testing.T) {
 		err := runAppResult(t, repo, "move", "--project-dir", "../other")
 		if err == nil || !strings.Contains(err.Error(), "holds an sdd project already") {
 			t.Errorf("a target holding a graph should be refused, got %v", err)
+		}
+	})
+	t.Run("edited skill in the checkout the graph leaves", func(t *testing.T) {
+		repo := graphRepoToMove(t)
+		project := filepath.Join(filepath.Dir(repo), "graph-home")
+		runApp(t, repo, "move", "--project-dir", "../graph-home")
+		skill := filepath.Join(project, ".claude", "skills", "sdd", "SKILL.md")
+		writeFile(t, skill, readText(t, skill)+"\nAn edit of our own.\n")
+		gitIn(t, project, "commit", "-q", "-am", "edit the skill")
+		heads := gitIn(t, repo, "rev-parse", "HEAD") + gitIn(t, project, "rev-parse", "HEAD")
+
+		err := runAppResult(t, repo, "move", "--graph-dir", ".sdd/graph")
+		if err == nil || !strings.Contains(err.Error(), skill) || !strings.Contains(err.Error(), "sdd-content-hash") {
+			t.Fatalf("an edited skill in the vacated checkout should refuse the move, naming the file, got %v", err)
+		}
+		if now := gitIn(t, repo, "rev-parse", "HEAD") + gitIn(t, project, "rev-parse", "HEAD"); now != heads {
+			t.Error("a refused move should change nothing")
+		}
+		if _, err := os.Stat(entryPath(filepath.Join(project, "graph"), movedFirst)); err != nil {
+			t.Errorf("a refused move should leave the graph where it is: %v", err)
 		}
 	})
 	t.Run("target folder holding entries", func(t *testing.T) {
@@ -315,6 +349,11 @@ func TestMoveTheGraphOutToAGraphRepoAndBack(t *testing.T) {
 	for _, id := range []string{movedFirst, movedSecond} {
 		if _, found := remote.Show(t, filepath.ToSlash(entryPath("graph", id))); !found {
 			t.Errorf("entry %s should be published to the graph repository", id)
+		}
+	}
+	for _, path := range []string{".claude/skills/sdd/SKILL.md", ".mcp.json"} {
+		if _, found := remote.Show(t, path); found {
+			t.Errorf("nobody works inside sdd's own clone, so it should get no agent surfaces, found %s", path)
 		}
 	}
 	if pointer := readText(t, filepath.Join(repo, ".sdd", "config.yaml")); pointer != model.FormatGraphRepoPointerConfig(model.PerRepoConfig{GraphRepo: graphCloneRepoID, SkillScope: model.ScopeProject, SupportedAgents: []model.AgentTarget{"claude"}}) {
