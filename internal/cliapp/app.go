@@ -2037,7 +2037,7 @@ func initCmd() *cli.Command {
 
 			graphDir := cmd.String("graph-dir")
 			if graphDir == "" && freshGraph && cliout.IsTerminalReader(cmd.Reader) {
-				prompted, err := promptGraphDir(cmd, model.DefaultGraphDir)
+				prompted, err := promptGraphDir(cmd, model.DefaultGraphDirFor(pointer))
 				if err != nil {
 					return fmt.Errorf("prompt: %w", err)
 				}
