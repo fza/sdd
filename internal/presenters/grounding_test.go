@@ -17,3 +17,14 @@ func TestRenderShow_EnvelopeNamesAGroundingBypass(t *testing.T) {
 		t.Fatalf("the envelope should name the bypass:\n%s", got)
 	}
 }
+
+// An entry written without the deep verifier's verdict names the skip in the
+// show envelope (20261109-004729-d-cpt-xs5, V-D24).
+func TestRenderShow_EnvelopeNamesASkippedVerification(t *testing.T) {
+	e := entry("20260410-100000-s-tac-vsk", withContent("An unverified gap."), withConfidence("low"))
+	e.Verification = model.VerificationSkipped
+	g := model.NewGraph([]*model.Entry{e})
+	if got := renderShow(t, g, []string{e.ID}); !strings.Contains(got, "verification: skipped") {
+		t.Fatalf("the envelope should name the skipped verification:\n%s", got)
+	}
+}

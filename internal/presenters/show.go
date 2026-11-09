@@ -139,6 +139,7 @@ type showEnvelope struct {
 	Attachments  []string         `yaml:"attachments,omitempty"`
 	Preflight    string           `yaml:"preflight,omitempty"`
 	Grounding    string           `yaml:"grounding,omitempty"`
+	Verification string           `yaml:"verification,omitempty"`
 	Status       string           `yaml:"status,omitempty"`
 	Time         string           `yaml:"time"`
 	Params       yaml.Node        `yaml:"params,omitempty"`
@@ -172,6 +173,7 @@ func writeEnvelope(w io.Writer, g query.ShowGroup, opts ShowOptions) {
 		Attachments:  e.Attachments,
 		Preflight:    e.Preflight,
 		Grounding:    e.Grounding,
+		Verification: e.Verification,
 		Status:       formatStatusTrailValue(g.PrimaryStatus, g.PrimarySupersedePath),
 		Time:         e.Time.Format("2006-01-02 15:04:05"),
 	}

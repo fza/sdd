@@ -81,6 +81,10 @@ func setDistinctive(t *testing.T, f reflect.Value) {
 		setDistinctive(t, value)
 		m.SetMapIndex(reflect.ValueOf("k").Convert(f.Type().Key()), value)
 		f.Set(m)
+	case reflect.Slice:
+		item := reflect.New(f.Type().Elem()).Elem()
+		setDistinctive(t, item)
+		f.Set(reflect.Append(reflect.MakeSlice(f.Type(), 0, 1), item))
 	case reflect.Pointer:
 		f.Set(reflect.New(f.Type().Elem()))
 		setDistinctive(t, f.Elem())

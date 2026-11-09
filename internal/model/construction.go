@@ -28,13 +28,14 @@ type EntryConstruction struct {
 	Confidence   string
 	// Topics carries inline topic labels — valid on any non-annotation kind.
 	// Annotation topic assignments live on the Annotation block instead.
-	Topics      []TopicPath
-	Body        string
-	Time        time.Time
-	Preflight   string
-	Grounding   string
-	Summary     string
-	Attachments []string
+	Topics       []TopicPath
+	Body         string
+	Time         time.Time
+	Preflight    string
+	Grounding    string
+	Verification string
+	Summary      string
+	Attachments  []string
 
 	// Per-kind blocks. Only kinds with fields of their own have one; the
 	// remaining kinds' rules (done's anchor, plan's acceptance criteria) hold
@@ -217,6 +218,7 @@ func ConstructFromEntry(e *Entry) (*EntryConstruction, []Finding) {
 		Time:         e.Time,
 		Preflight:    e.Preflight,
 		Grounding:    e.Grounding,
+		Verification: e.Verification,
 		Summary:      e.Summary,
 		Attachments:  e.Attachments,
 	}
@@ -329,6 +331,7 @@ func (c *EntryConstruction) Entry() *Entry {
 		Time:         c.Time,
 		Preflight:    c.Preflight,
 		Grounding:    c.Grounding,
+		Verification: c.Verification,
 		Summary:      c.Summary,
 		Attachments:  c.Attachments,
 	}

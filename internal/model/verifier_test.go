@@ -131,3 +131,97 @@ func TestStrictnessSetsBothKeysAsAValidPair(t *testing.T) {
 		t.Fatal("an answer outside the set should be refused")
 	}
 }
+
+func TestCheckVerifierLayers_LaunchIsPersonal(t *testing.T) {
+	committed := verifierLayer(model.VerifierDeep, "", boolPtr(true))
+	committed.Verifier.Launch = model.VerifierLaunchClaude
+	local := &model.PerRepoConfig{}
+	local.Verifier.Launch = model.VerifierLaunchSubagent
+	err := model.CheckVerifierLayers(model.BaseConfig{}, committed, local, verifierFiles)
+	if err != nil {
+		t.Fatalf("a machine-local launch may differ from the committed one: %v", err)
+	}
+	merged := model.MergeConfig(committed, local)
+	if merged.Verifier.Policy().Launch != model.VerifierLaunchSubagent {
+		t.Fatalf("the machine-local launch should win, got %s", merged.Verifier.Policy().Launch)
+	}
+	if (model.VerifierConfig{}).Policy().Launch != model.VerifierLaunchSubagent {
+		t.Fatal("an unset launch should be the subagent")
+	}
+	local.Verifier.Launch = "remote"
+	err = model.CheckVerifierLayers(model.BaseConfig{}, committed, local, verifierFiles)
+	if err == nil || !strings.Contains(err.Error(), `.sdd/config.local.yaml: verifier.launch "remote"`) {
+		t.Fatalf("an unknown launch should be refused naming file and key, got %v", err)
+	}
+}
+
+func TestCheckVerifierLayers_DriverStaysOffTheCommittedConfig(t *testing.T) {
+	committed := verifierLayer(model.VerifierDeep, "", boolPtr(true))
+	committed.Verifier.Driver = model.VerifierDriver{Command: "/opt/driver"}
+	err := model.CheckVerifierLayers(model.BaseConfig{}, committed, nil, verifierFiles)
+	if err == nil || !strings.Contains(err.Error(), ".sdd/config.yaml: verifier.driver is refused in the committed config") {
+		t.Fatalf("a committed driver should be refused naming the key, got %v", err)
+	}
+
+	committed.Verifier.Driver = model.VerifierDriver{}
+	committed.Verifier.Launch = model.VerifierLaunchCustomDriver
+	err = model.CheckVerifierLayers(model.BaseConfig{}, committed, nil, verifierFiles)
+	if err == nil || !strings.Contains(err.Error(), "verifier.launch custom_driver needs verifier.driver.command") {
+		t.Fatalf("a custom_driver launch without a driver should be refused naming the key, got %v", err)
+	}
+
+	global := model.BaseConfig{}
+	global.Verifier.Driver = model.VerifierDriver{Command: "/opt/driver", Args: []string{"--round"}}
+	err = model.CheckVerifierLayers(global, committed, nil, verifierFiles)
+	if err != nil {
+		t.Fatalf("a driver from the user-global config serves a committed custom_driver launch: %v", err)
+	}
+	merged := model.MergeConfig(&model.PerRepoConfig{BaseConfig: global}, committed)
+	if driver := merged.Verifier.Policy().Driver; driver.Command != "/opt/driver" || len(driver.Args) != 1 {
+		t.Fatalf("the resolved policy should carry the driver, got %+v", driver)
+	}
+}
+
+func TestVerifierLaunchChoices_OfferOnlyWhatTheProjectRuns(t *testing.T) {
+	cases := map[string]struct {
+		agents []model.AgentTarget
+		driver model.VerifierDriver
+		want   string
+	}{
+		"subagent first, agents in order": {agents: []model.AgentTarget{model.AgentCodex, model.AgentClaude}, want: "subagent codex claude"},
+		"only named agents":               {agents: []model.AgentTarget{model.AgentClaude}, want: "subagent claude"},
+		"no headless cli":                 {agents: []model.AgentTarget{"gemini", model.AgentClaude}, want: "subagent claude"},
+		"driver once configured":          {agents: []model.AgentTarget{model.AgentClaude}, driver: model.VerifierDriver{Command: "/usr/local/bin/verify-driver"}, want: "subagent claude custom_driver"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var names []string
+			for _, choice := range model.VerifierLaunchChoices(tc.agents, tc.driver) {
+				names = append(names, string(choice))
+			}
+			if got := strings.Join(names, " "); got != tc.want {
+				t.Fatalf("init should offer the launches the project runs, in order, got %q", got)
+			}
+		})
+	}
+}
+
+func TestVerifierLaunchAsked_OnlyUnderDeepWhileUnset(t *testing.T) {
+	cases := map[string]struct {
+		mode     model.VerifierMode
+		recorded model.VerifierConfig
+		want     bool
+	}{
+		"deep, unset":    {mode: model.VerifierDeep, want: true},
+		"deep, set":      {mode: model.VerifierDeep, recorded: model.VerifierConfig{Launch: model.VerifierLaunchSubagent}},
+		"light":          {mode: model.VerifierLight},
+		"no mode at all": {},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := model.VerifierLaunchAsked(tc.mode, tc.recorded); got != tc.want {
+				t.Fatalf("init should ask for the launch only under deep while no layer sets one, got %v", got)
+			}
+		})
+	}
+}
