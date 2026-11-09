@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -165,13 +166,15 @@ func hasSDDMarker(f reflect.StructField, marker string) bool {
 }
 
 // concatenatedEntries lists a concatenated slice's items as MergeConfig
-// joins them, global first, one entry per item keyed by its position and
-// labelled with the layer that sets it.
+// joins them, global first, each item keyed by its position and labelled with
+// the layer that sets it. A struct item lists one entry per key it sets, by
+// the yaml keys a person writes.
 func concatenatedEntries(leaf configLeaf, layers []struct {
 	cfg    *PerRepoConfig
 	source ConfigValueSource
 }) []ConfigValue {
 	var out []ConfigValue
+	position := 0
 	for i := len(layers) - 1; i >= 0; i-- {
 		layer := layers[i]
 		if layer.cfg == nil {
@@ -179,7 +182,20 @@ func concatenatedEntries(leaf configLeaf, layers []struct {
 		}
 		items := leafValue(reflect.ValueOf(*layer.cfg), leaf.index)
 		for j := 0; j < items.Len(); j++ {
-			out = append(out, ConfigValue{Key: fmt.Sprintf("%s.%d", leaf.path, len(out)), Value: renderConfigValue(items.Index(j)), Source: layer.source})
+			key := fmt.Sprintf("%s.%d", leaf.path, position)
+			position++
+			item := items.Index(j)
+			if item.Kind() != reflect.Struct {
+				out = append(out, ConfigValue{Key: key, Value: renderConfigValue(item), Source: layer.source})
+				continue
+			}
+			for f := 0; f < item.NumField(); f++ {
+				tag := strings.Split(item.Type().Field(f).Tag.Get("yaml"), ",")
+				if tag[0] == "" || tag[0] == "-" || (item.Field(f).IsZero() && slices.Contains(tag[1:], "omitempty")) {
+					continue
+				}
+				out = append(out, ConfigValue{Key: key + "." + tag[0], Value: renderConfigValue(item.Field(f)), Source: layer.source})
+			}
 		}
 	}
 	return out
