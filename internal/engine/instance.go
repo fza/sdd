@@ -61,8 +61,7 @@ type Instance struct {
 	// retiredStep is the logged position when the log placed the instance on
 	// a step its procedure no longer has (see ReplaySession).
 	retiredStep string
-	// hookBase holds, per step, its findings channel before hooks joined
-	// it on this arrival. Reset on every transition.
+	// hookBase is keyed by step id.
 	hookBase map[string]hookBase
 }
 
@@ -493,7 +492,6 @@ func (s *Session) moveTo(inst *Instance, to string, reopen bool) error {
 		inst.Step = to
 		inst.opDone = false
 		inst.retiredStep = ""
-		inst.hookBase = nil
 		if _, err := s.fireStep(inst, inst.currentStep(), HookEntered, "", nil); err != nil {
 			return err
 		}

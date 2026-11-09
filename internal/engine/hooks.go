@@ -98,8 +98,9 @@ func HookEvents(specs []*Spec, reg *Registry) []model.HookEvent {
 	return events
 }
 
-// hookBase is a findings channel's value before hooks joined it, restored
-// before the step's gate runs again so a held step judges afresh.
+// hookBase is a findings channel's value before hooks last joined it,
+// restored before the step's gate runs again, on a held step or a later
+// arrival, so the hooks judge afresh.
 type hookBase struct {
 	value   any
 	present bool

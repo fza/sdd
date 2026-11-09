@@ -209,16 +209,18 @@ func TestHookHighFindingRedirectsATransitionReadingItsChannel(t *testing.T) {
 
 }
 
-func TestHookJoinIsForgottenOnMovingOn(t *testing.T) {
+func TestHookJoinIsDroppedOnALaterArrival(t *testing.T) {
+	mediumLint := []query.Finding{{Severity: query.SeverityMedium, Category: "lint", Observation: "long sentence"}}
 	for _, replay := range []bool{false, true} {
 		t.Run(map[bool]string{false: "live", true: "replayed"}[replay], func(t *testing.T) {
 			w := newHookWorld(t)
 			session, serve := w.start(t)
+			w.hooks.findings["lanesproc.draft.left"] = mediumLint
 			w.hooks.findings["lanesproc.check.left"] = highLint
 			if _, err := session.Report(serve.Instance, map[string]any{"body": "a draft"}); err != nil {
 				t.Fatal(err)
 			}
-			delete(w.hooks.findings, "lanesproc.check.left")
+			w.hooks.findings = map[string][]query.Finding{}
 			if replay {
 				resolve := func(string) (*engine.Spec, error) { return w.spec, nil }
 				var err error
@@ -227,7 +229,7 @@ func TestHookJoinIsForgottenOnMovingOn(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			logged := len(w.sink.events)
+			fired := len(w.hooks.points)
 			serve, err := session.Answer(serve.Instance, "review", "back", nil, "back")
 			if err != nil {
 				t.Fatal(err)
@@ -235,9 +237,9 @@ func TestHookJoinIsForgottenOnMovingOn(t *testing.T) {
 			if serve.Step != "pick" {
 				t.Fatalf("the run the hooks pass should reach pick, sits at %s", serve.Step)
 			}
-			for _, event := range w.sink.events[logged:] {
-				if fn, _ := event.Data["fn"].(string); fn == engine.HooksFn {
-					t.Errorf("a fresh arrival should restore no earlier join, logged %+v", event.Data)
+			for _, point := range w.hooks.points[fired:] {
+				if point.Event == "lanesproc.draft.left" && len(point.Findings) > 0 {
+					t.Errorf("a later arrival should judge without the findings joined on an earlier one, got %+v", point.Findings)
 				}
 			}
 		})
