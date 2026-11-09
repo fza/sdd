@@ -55,6 +55,12 @@ func groundingCmd() *cli.Command {
 // workingApplication builds the application over the project the working
 // directory belongs to.
 func workingApplication(ctx context.Context, cmd *cli.Command) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
+	return workingApplicationTimed(ctx, cmd, "")
+}
+
+// workingApplicationTimed is workingApplication with its LLM runner bounded
+// by the duration flag timeoutFlag names.
+func workingApplicationTimed(ctx context.Context, cmd *cli.Command, timeoutFlag string) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
 	dir, err := resolveGraphDir(cmd)
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
@@ -63,7 +69,7 @@ func workingApplication(ctx context.Context, cmd *cli.Command) (*sdd.Application
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
-	runner, err := newRunner(cmd, "")
+	runner, err := newRunner(cmd, timeoutFlag)
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}

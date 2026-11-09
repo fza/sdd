@@ -194,3 +194,14 @@ type Citation struct {
 	IsAttachment         bool
 	Score                float32
 }
+
+// ServedIDs returns the entries the result lists, each as a summary line.
+func (r SearchResult) ServedIDs() []string {
+	var ids []string
+	for _, entry := range r.Entries {
+		if entry.Entry != nil {
+			ids = append(ids, entry.DisplayID())
+		}
+	}
+	return ids
+}

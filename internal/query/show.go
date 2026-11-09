@@ -1,6 +1,10 @@
 package query
 
-import "github.com/networkteam/sdd/internal/model"
+import (
+	"cmp"
+
+	"github.com/networkteam/sdd/internal/model"
+)
 
 // ShowQuery captures intent to render a set of entries with their reference
 // chains. Upstream and downstream each expand to their own depth; a depth of 0
@@ -49,4 +53,22 @@ type ShowGroup struct {
 type ShowResult struct {
 	Graph  *model.Graph // needed to render derived attributes like status
 	Groups []ShowGroup
+}
+
+// ServedIDs returns the entries the groups serve: each primary in full, every
+// chain entry as a summary line.
+func (r ShowResult) ServedIDs() (full, summary []string) {
+	for _, group := range r.Groups {
+		if group.Primary != nil {
+			full = append(full, cmp.Or(group.PrimaryID, group.Primary.ID))
+		}
+		for _, items := range [][]model.ShowTreeItem{group.Upstream, group.Downstream} {
+			for _, item := range items {
+				if item.Entry != nil {
+					summary = append(summary, item.NodeID())
+				}
+			}
+		}
+	}
+	return full, summary
 }
