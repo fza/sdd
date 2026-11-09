@@ -170,6 +170,9 @@ type PerRepoConfig struct {
 	// Inbound is the receiving graph's gate on captures written from another
 	// project; only the committed .sdd/config.yaml sets it.
 	Inbound InboundConfig `yaml:"inbound,omitempty"`
+	// Events sets the sharing mode per event channel; only the committed
+	// .sdd/config.yaml sets it.
+	Events EventsConfig `yaml:"events,omitempty"`
 	// Contribution names the upstream ref (e.g. origin/main) a checkout's
 	// graph writes are contributed to; set, it turns on contribution mode
 	// (ContributionRefusal). Machine-local only: a checkout opts in, the
@@ -654,6 +657,7 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 		out.GraphRepo = overlay.GraphRepo
 	}
 	out.Inbound = mergeInboundConfig(base.Inbound, overlay.Inbound)
+	out.Events = mergeEventsConfig(base.Events, overlay.Events)
 	if overlay.Contribution != "" {
 		out.Contribution = overlay.Contribution
 	}
