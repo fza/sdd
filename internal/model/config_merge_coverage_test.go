@@ -20,6 +20,7 @@ func TestMergeConfigCarriesEveryField(t *testing.T) {
 		{"LLM", func(c *model.PerRepoConfig) any { return &c.LLM }},
 		{"Embedding", func(c *model.PerRepoConfig) any { return &c.Embedding }},
 		{"Sync", func(c *model.PerRepoConfig) any { return &c.Sync }},
+		{"Grounding", func(c *model.PerRepoConfig) any { return &c.Grounding }},
 	} {
 		t.Run(tc.section, func(t *testing.T) {
 			overlay := &model.PerRepoConfig{}
@@ -71,6 +72,8 @@ func setDistinctive(t *testing.T, f reflect.Value) {
 		f.SetInt(7)
 	case reflect.Float64:
 		f.SetFloat(1.5)
+	case reflect.Bool:
+		f.SetBool(true)
 	case reflect.Map:
 		m := reflect.MakeMap(f.Type())
 		value := reflect.New(f.Type().Elem()).Elem()

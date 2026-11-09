@@ -40,6 +40,25 @@ func (ss *shellSession) servedBefore(block string) bool {
 	return false
 }
 
+// heldEntryKey is the served-set key of an entry served in full: the
+// no-repeat rule's unit (20261109-004506-d-cpt-udz, R14). Bodies are
+// immutable, so the ID alone keys it.
+func heldEntryKey(id string) string { return "entry-full:" + id }
+
+// holdsEntry reports whether the consumer already holds the entry in full,
+// without marking it.
+func (ss *shellSession) holdsEntry(id string) bool {
+	hash := blockHash(heldEntryKey(id))
+	return ss.root.ServedBefore(hash) || ss.seen[hash]
+}
+
+// holdEntries marks entries served in full by the call in flight.
+func (ss *shellSession) holdEntries(ids []string) {
+	for _, id := range ids {
+		ss.servedBefore(heldEntryKey(id))
+	}
+}
+
 // flushServed records what this call served in full into the session ledger.
 func (ss *shellSession) flushServed(ctx context.Context, identity sdd.RequestIdentity) error {
 	hashes := ss.pending

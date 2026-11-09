@@ -53,6 +53,9 @@ type ProjectRuntimeOptions struct {
 	// connected repo. The base runtime leaves it false — its store includes
 	// embedded entries. The rule is applied identically at index and read time.
 	ExcludeEmbeddedFromIndex bool
+	// Grounding is the project's grounding policy; the zero value leaves
+	// grounding off with the default limits.
+	Grounding GroundingPolicy
 }
 
 // GraphSync runs automatic sync of the graph repository behind a branch's

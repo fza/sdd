@@ -749,7 +749,7 @@ func TestToolSurfaceMatchesSpec(t *testing.T) {
 	}
 	sort.Strings(got)
 	want := []string{
-		"abandon", "bind_branch", "info", "next", "park", "read_attachment",
+		"abandon", "bind_branch", "gather", "info", "next", "park", "read_attachment",
 		"registry", "resume_session", "search", "show", "stage_attachment",
 		"start_procedure", "start_session", "sync_repos", "view",
 	}

@@ -212,6 +212,65 @@
     }
   },
   {
+    "description": "Ground a draft before its capture, in one call, within the session named by session (required): on a small graph every live entry's brief; above it a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry already served in full prints as a pointer with its brief.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "draft": {
+          "description": "without instance: the draft text the searches are written from; credits nothing",
+          "type": "string"
+        },
+        "ids": {
+          "description": "entries to open in full; also the way back to an entry a pointer names",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "instance": {
+          "description": "the running capture this reading grounds: its reported draft writes the searches, and only reads made through gather inside it count for its grounding. Report the draft at assemble first",
+          "type": "string"
+        },
+        "session": {
+          "description": "session handle this connection is attached to (from start_session or resume_session); required",
+          "type": "string"
+        },
+        "topics": {
+          "description": "without instance: the draft's topic labels, each listed in full",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "gather",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "serve": {
+          "description": "the reads run, entries served in full, the entries to judge and the entries set aside; nothing is cut",
+          "type": "string"
+        },
+        "sync_notice": {
+          "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
+          "type": "string"
+        }
+      },
+      "required": [
+        "serve"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "description": "Session framing header for the session named by session (required): project, local participant, configured language, and available search modes.",
     "inputSchema": {
       "additionalProperties": false,

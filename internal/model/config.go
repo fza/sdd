@@ -90,6 +90,9 @@ type BaseConfig struct {
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
 	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
+	// Grounding makes captures read the graph before they are written
+	// (20261109-004506-d-cpt-udz); off unless a layer sets enforce.
+	Grounding GroundingConfig `yaml:"grounding,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
 	// set once in the user-global config; a per-repo override covers a
@@ -606,6 +609,7 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 		out.Dialogue.Mode = overlay.Dialogue.Mode
 	}
 	out.Connected = mergeConnectedConfig(base.Connected, overlay.Connected)
+	out.Grounding = mergeGroundingConfig(base.Grounding, overlay.Grounding)
 	return out
 }
 

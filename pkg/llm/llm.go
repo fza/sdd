@@ -28,6 +28,9 @@ const (
 	// summary.
 	PurposeTitle        Purpose = "title"
 	PurposeWritingGuide Purpose = "writing-guide"
+	// PurposeGatherQuery writes the semantic query and the keyword terms a
+	// grounding reading runs for a draft.
+	PurposeGatherQuery Purpose = "gather-query"
 	// The extract purposes name the second call a JSON-shaped check makes
 	// when its first response does not parse. They are their own purposes so
 	// a host can route and bound them apart, and so the stats sink separates

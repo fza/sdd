@@ -523,7 +523,8 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Sync: targets, Branches: targets, Base: targets,
 		Connected: rounds,
 		Embedder:  embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
-		LLM: runner,
+		LLM:       runner,
+		Grounding: groundingPolicy(cfg),
 	})
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err

@@ -71,10 +71,10 @@ func TestView_ActiveAsList(t *testing.T) {
 	}
 }
 
-func TestView_AsListAlone_IncludesAll(t *testing.T) {
-	// Without `active`, the as-list section returns every entry — closed
-	// and superseded too. Verifies the filter is genuinely opt-in, not the
-	// default behaviour.
+// A plain listing serves the live population; history opts into the closed
+// and superseded entries, and an id() selection names its entries outright
+// (20261109-004506-d-cpt-udz, D12).
+func TestView_PlainListingIsLiveHistoryIncludesAll(t *testing.T) {
 	a := entry("20260101-100000-d-tac-aaa", withKind(model.KindDirective))
 	b := entry("20260101-110000-d-tac-bbb", withKind(model.KindDirective))
 	closer := entry("20260101-120000-s-tac-clo",
@@ -82,18 +82,30 @@ func TestView_AsListAlone_IncludesAll(t *testing.T) {
 		withCloses(b.ID))
 
 	g := model.NewGraph([]*model.Entry{a, b, closer})
-
-	layout := mustParseLayout(t, "as-list")
 	f := New(Options{})
-	result, err := f.OnGraph(g).View(query.ViewQuery{Layout: layout})
-	if err != nil {
-		t.Fatalf("View: %v", err)
+
+	for _, tc := range []struct {
+		layout string
+		want   []string
+	}{
+		{"as-list", []string{a.ID, closer.ID}},
+		{"history:as-list", []string{a.ID, b.ID, closer.ID}},
+		{`id("` + b.ID + `"):as-list`, []string{b.ID}},
+	} {
+		t.Run(tc.layout, func(t *testing.T) {
+			result, err := f.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, tc.layout)})
+			if err != nil {
+				t.Fatalf("View: %v", err)
+			}
+			got := idsOf(result.Sections[0].Data.(model.FlatList).Entries)
+			if !equalIDs(got, tc.want) {
+				t.Errorf("entries:\n  got:  %v\n  want: %v", got, tc.want)
+			}
+		})
 	}
-	flat := result.Sections[0].Data.(model.FlatList)
-	want := []string{a.ID, b.ID, closer.ID}
-	got := idsOf(flat.Entries)
-	if !equalIDs(got, want) {
-		t.Errorf("entries:\n  got:  %v\n  want: %v", got, want)
+
+	if _, err := f.OnGraph(g).View(query.ViewQuery{Layout: mustParseLayout(t, "active:history:as-list")}); err == nil {
+		t.Error("active and history together should be refused")
 	}
 }
 

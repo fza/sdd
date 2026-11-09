@@ -519,6 +519,7 @@ func New(options Options) *cli.Command {
 			migrateCmd(),
 			indexCmd(),
 			searchCmd(),
+			gatherCmd(),
 			serveCmd(),
 			sessionsCmd(),
 			syncCmd(),

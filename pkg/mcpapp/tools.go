@@ -319,6 +319,19 @@ type ShowResult struct {
 	Entries string `json:"entries"`
 }
 
+type GatherArgs struct {
+	Session  string   `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required"`
+	Instance string   `json:"instance,omitempty" jsonschema:"the running capture this reading grounds: its reported draft writes the searches, and only reads made through gather inside it count for its grounding. Report the draft at assemble first"`
+	IDs      []string `json:"ids,omitempty" jsonschema:"entries to open in full; also the way back to an entry a pointer names"`
+	Draft    string   `json:"draft,omitempty" jsonschema:"without instance: the draft text the searches are written from; credits nothing"`
+	Topics   []string `json:"topics,omitempty" jsonschema:"without instance: the draft's topic labels, each listed in full"`
+}
+
+type GatherResult struct {
+	SyncNoticeField
+	Serve string `json:"serve" jsonschema:"the reads run, entries served in full, the entries to judge and the entries set aside; nothing is cut"`
+}
+
 type ReadAttachmentArgs struct {
 	Session  string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project, and a staged file is read from that session"`
 	Project  string `json:"project,omitempty" jsonschema:"project to read the entry's attachment in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
@@ -495,6 +508,15 @@ func (s *Server) registerTools() {
 			"session named by session (required). Use whenever the dialogue touches a specific entry — " +
 			"summaries are pointers, not facts.",
 	}, toolBoundary(s.show))
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name: "gather",
+		Description: "Ground a draft before its capture, in one call, within the session named by session " +
+			"(required): on a small graph every live entry's brief; above it a semantic search, keyword " +
+			"searches and the live listing of every draft topic, written from the draft. Name the running " +
+			"capture as instance: only reads made through gather inside it ground the capture. Pass ids to " +
+			"open entries in full. An entry already served in full prints as a pointer with its brief.",
+	}, toolBoundary(s.gather))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "read_attachment",
@@ -1147,6 +1169,26 @@ func (s *Server) show(ctx context.Context, req *mcp.CallToolRequest, args ShowAr
 	}
 	return nil, ShowResult{Entries: result.Entries}, nil
 
+}
+
+func (s *Server) gather(ctx context.Context, req *mcp.CallToolRequest, args GatherArgs) (*mcp.CallToolResult, GatherResult, error) {
+	ss, err := s.attachedSession(ctx, req, args.Session)
+	if err != nil {
+		return nil, GatherResult{}, err
+	}
+	defer ss.mu.Unlock()
+	result, err := ss.root.Gather(ctx, s.requestIdentity(req), sdd.WorkflowGatherRequest{
+		Instance: strings.TrimSpace(args.Instance), IDs: args.IDs, Draft: args.Draft, Topics: args.Topics,
+		SyncMode: s.searchSyncMode, Held: ss.holdsEntry,
+	})
+	if err != nil {
+		return nil, GatherResult{}, err
+	}
+	ss.holdEntries(result.FullIDs)
+	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
+		return nil, GatherResult{}, err
+	}
+	return nil, GatherResult{Serve: result.Text}, nil
 }
 
 func (s *Server) readAttachment(ctx context.Context, req *mcp.CallToolRequest, args ReadAttachmentArgs) (*mcp.CallToolResult, ReadAttachmentResult, error) {
