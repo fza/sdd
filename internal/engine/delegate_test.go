@@ -583,3 +583,22 @@ steps:
 		})
 	}
 }
+
+func TestEndedForkRefusesTheDelegatesDelivery(t *testing.T) {
+	f := newExchange(t)
+	if err := f.parent.EndFork(f.parentInst, engine.Link{Session: "s_child", Instance: f.childInst}, "released"); err != nil {
+		t.Fatal(err)
+	}
+	sv, err := f.child.Report(f.childInst, map[string]any{"plan": "f1"})
+	if err != nil {
+		t.Fatalf("a delivery to an ended fork is a refusal, not an error: %v", err)
+	}
+	last := f.childSink.events[len(f.childSink.events)-1]
+	if reason, _ := last.Data["reason"].(string); sv.Status != engine.StatusAbandoned || !strings.Contains(reason, "delegate fork of dispatcher has ended") {
+		t.Fatalf("a delegate whose fork ended concludes naming it, got %s %+v", sv.Status, last)
+	}
+	parent, _ := f.parent.Instance(f.parentInst)
+	if parent.Store.Has("synthesis") {
+		t.Fatal("an ended fork's delivery must not land")
+	}
+}
