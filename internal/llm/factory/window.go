@@ -95,10 +95,7 @@ func (d *WindowDetector) client() *http.Client {
 
 // anthropic reads the Models API's max_input_tokens and max_tokens.
 func (d *WindowDetector) anthropic(ctx context.Context, cfg model.LLMConfig, modelName string) (Window, error) {
-	base := strings.TrimRight(cfg.Endpoint, "/")
-	if base == "" {
-		base = anthropicAPIBase
-	}
+	base := versionedBase(cfg.Endpoint, anthropicAPIBase, "/messages")
 	headers := map[string]string{"anthropic-version": "2023-06-01"}
 	if key := cfg.APIKeys["anthropic"]; key != "" {
 		headers["x-api-key"] = key
@@ -107,7 +104,7 @@ func (d *WindowDetector) anthropic(ctx context.Context, cfg model.LLMConfig, mod
 		MaxInputTokens int `json:"max_input_tokens"`
 		MaxTokens      int `json:"max_tokens"`
 	}
-	err := d.fetch(ctx, http.MethodGet, base+"/v1/models/"+modelName, headers, nil, &answer)
+	err := d.fetch(ctx, http.MethodGet, base+"/models/"+modelName, headers, nil, &answer)
 	if err != nil {
 		return Window{}, err
 	}
@@ -117,10 +114,7 @@ func (d *WindowDetector) anthropic(ctx context.Context, cfg model.LLMConfig, mod
 // openAICompatible reads a models listing: OpenRouter's context_length or
 // vLLM's max_model_len for the configured model.
 func (d *WindowDetector) openAICompatible(ctx context.Context, cfg model.LLMConfig, modelName string) (Window, error) {
-	base := strings.TrimRight(cfg.Endpoint, "/")
-	if base == "" {
-		base = openAIAPIBase
-	}
+	base := versionedBase(cfg.Endpoint, openAIAPIBase, "/chat/completions")
 	headers := map[string]string{}
 	if key := cfg.APIKeys["openai"]; key != "" {
 		headers["Authorization"] = "Bearer " + key
@@ -152,6 +146,20 @@ func (d *WindowDetector) openAICompatible(ctx context.Context, cfg model.LLMConf
 		return Window{}, nil
 	}
 	return Window{}, fmt.Errorf("the models endpoint does not list %s", modelName)
+}
+
+// versionedBase reads endpoint the way gollm does for the chat call (a host,
+// a base URL ending in /v1, or the full callPath) and returns its /v1 base;
+// an empty endpoint means fallback.
+func versionedBase(endpoint, fallback, callPath string) string {
+	if endpoint == "" {
+		endpoint = fallback
+	}
+	base := strings.TrimSuffix(strings.TrimRight(endpoint, "/"), callPath)
+	if !strings.HasSuffix(base, "/v1") {
+		base += "/v1"
+	}
+	return base
 }
 
 var numCtxParameter = regexp.MustCompile(`(?m)^num_ctx\s+(\d+)`)
