@@ -108,6 +108,11 @@ func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.P
 		if committed != nil && committed.Contribution != "" {
 			return nil, nil, fmt.Errorf("%s: contribution is machine-local; set it in %s instead", committedPath, LocalConfigFileName)
 		}
+		// A hook runs code on the machine running sdd, so only that
+		// person's own layers choose it (20261109-005138-d-tac-i61).
+		if committed != nil && len(committed.Hooks) > 0 {
+			return nil, nil, fmt.Errorf("%s: hooks run commands on this machine; only the user-global config or %s may set them", committedPath, LocalConfigFileName)
+		}
 	}
 	committed = model.HonoredCommitted(committed)
 	// Without a .sdd/ directory only an explicit override names a local

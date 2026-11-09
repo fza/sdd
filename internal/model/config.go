@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -98,6 +99,10 @@ type BaseConfig struct {
 	// Connected is the writing side's gate on capturing into a connected
 	// graph (20261106-201216-d-cpt-aim).
 	Connected ConnectedConfig `yaml:"connected,omitempty"`
+	// Hooks are commands run at engine events (20261109-005138-d-tac-i61).
+	// Only the user-global config and config.local.yaml may set them; the
+	// layers concatenate, global first.
+	Hooks []HookConfig `yaml:"hooks,omitempty"`
 }
 
 // IsZero reports whether no base setting is set. Resolution uses it to
@@ -606,6 +611,9 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 		out.Dialogue.Mode = overlay.Dialogue.Mode
 	}
 	out.Connected = mergeConnectedConfig(base.Connected, overlay.Connected)
+	if len(overlay.Hooks) > 0 {
+		out.Hooks = append(slices.Clip(base.Hooks), overlay.Hooks...)
+	}
 	return out
 }
 
