@@ -46,6 +46,7 @@ type ViewRequest struct {
 	// Budget bounds the view's scaling parts on the serve path; the zero
 	// value is unbounded — explicit pulls arrive complete (d-tac-rzi).
 	Budget types.ViewBudget
+	Held   func(id string) bool // as ShowRequest.Held
 }
 
 type ViewResult struct {
@@ -76,6 +77,10 @@ type ShowRequest struct {
 	// Budget bounds each direction's chain expansion on the serve path; the
 	// zero value is unbounded — explicit pulls arrive complete (d-tac-rzi).
 	Budget types.ShowTreeBudget
+	// Held reports whether the consumer already holds an entry in full; such
+	// an entry serves as its pointer (20261109-004506-d-cpt-udz, R14). Nil
+	// serves everything in full, as the CLI does.
+	Held func(id string) bool
 }
 
 type ShowResult struct {
@@ -102,6 +107,7 @@ type SearchRequest struct {
 	MaxCitations      int
 	Repos             []RepoID
 	AllRepos          bool
+	Held              func(id string) bool // as ShowRequest.Held
 }
 
 type SearchResult struct {

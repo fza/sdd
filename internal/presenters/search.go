@@ -34,6 +34,12 @@ import (
 // cosine — but ALL citations within a single result set share whatever
 // scale the active mode uses).
 func RenderSearch(w io.Writer, result *query.SearchResult, g *model.Graph) {
+	RenderSearchRepeats(w, result, g, nil)
+}
+
+// RenderSearchRepeats is RenderSearch applying the no-repeat rule through r:
+// a held hit prints as its pointer, without its citations.
+func RenderSearchRepeats(w io.Writer, result *query.SearchResult, g *model.Graph, r *Repeats) {
 	if result == nil {
 		return
 	}
@@ -54,12 +60,17 @@ func RenderSearch(w io.Writer, result *query.SearchResult, g *model.Graph) {
 			}
 			EntryLineDisplay(w, se.Entry, owner, se.DisplayID())
 		} else {
+			if r.holds(se.Entry.ID) {
+				fmt.Fprintf(w, "  %s\n", GatherPointer(se.Entry))
+				continue
+			}
 			EntryLine(w, se.Entry, g)
 		}
 		for _, c := range se.Citations {
 			renderCitation(w, c, maxScore)
 		}
 	}
+	r.WriteWayBack(w)
 }
 
 // FormatSearchCapability renders the capability suffix shown in

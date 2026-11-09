@@ -19,18 +19,20 @@ import (
 // When the section used expand(refs) (FlatList.RefExpansions populated and
 // aligned), each entry's resolved outgoing refs render as indented sub-lines
 // beneath it.
-func renderAsList(w io.Writer, g *model.Graph, flat model.FlatList, brief bool) {
+func renderAsList(w io.Writer, g *model.Graph, flat model.FlatList, brief bool, r *Repeats) {
 	scored := len(flat.Scores) == len(flat.Entries) && len(flat.Scores) > 0
 	expanded := len(flat.RefExpansions) == len(flat.Entries)
 	for i, e := range flat.Entries {
-		switch {
-		case brief:
-			EntryLineBrief(w, e, g)
-		case scored:
-			EntryLineWithScore(w, e, g, flat.Scores[i])
-		default:
-			EntryLine(w, e, g)
-		}
+		r.entry(w, e, func() {
+			switch {
+			case brief:
+				EntryLineBrief(w, e, g)
+			case scored:
+				EntryLineWithScore(w, e, g, flat.Scores[i])
+			default:
+				EntryLine(w, e, g)
+			}
+		})
 		if expanded {
 			for _, ref := range flat.RefExpansions[i] {
 				writeRefExpansion(w, ref)

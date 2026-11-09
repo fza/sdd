@@ -958,7 +958,7 @@ func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, args Sear
 		SyncMode: s.searchSyncMode, IncludesRevision: args.IncludesRevision,
 		Terms: args.Terms, Phrase: args.Query, Type: args.Type, Layer: args.Layer, Kind: args.Kind,
 		IncludeSuperseded: args.IncludeSuperseded, Limit: limit, MaxCitations: maxCitations,
-		Branch: branch, BranchFromSession: branchFromSession, Repos: args.Repos, AllRepos: args.AllRepos,
+		Branch: branch, BranchFromSession: branchFromSession, Repos: args.Repos, AllRepos: args.AllRepos, Held: ss.holdsEntry,
 	})
 	if err != nil {
 		return nil, SearchResult{}, toolError("searching: %v", err)
@@ -988,11 +988,12 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, args ViewAr
 		return nil, ViewResult{}, err
 	}
 	result, err := s.app.View(ctx, s.requestIdentity(req), project, sdd.ViewRequest{
-		Layout: args.Layout, Branch: branch, BranchFromSession: branchFromSession, Repos: args.Repos, AllRepos: args.AllRepos,
+		Layout: args.Layout, Branch: branch, BranchFromSession: branchFromSession, Repos: args.Repos, AllRepos: args.AllRepos, Held: ss.holdsEntry,
 	})
 	if err != nil {
 		return nil, ViewResult{}, toolError("viewing: %v", err)
 	}
+	ss.holdEntries(result.FullIDs)
 	if err := s.logRootRead(ctx, req, ss, "view", result.FullIDs, result.SummaryIDs); err != nil {
 		return nil, ViewResult{}, err
 	}
@@ -1159,12 +1160,16 @@ func (s *Server) show(ctx context.Context, req *mcp.CallToolRequest, args ShowAr
 		return nil, ShowResult{}, err
 	}
 	result, err := s.app.Show(ctx, s.requestIdentity(req), project, sdd.ShowRequest{
-		IDs: args.IDs, UpDepth: up, DownDepth: down, Branch: branch, BranchFromSession: branchFromSession,
+		IDs: args.IDs, UpDepth: up, DownDepth: down, Branch: branch, BranchFromSession: branchFromSession, Held: ss.holdsEntry,
 	})
 	if err != nil {
 		return nil, ShowResult{}, err
 	}
 	if err := s.logRootRead(ctx, req, ss, "show", result.FullIDs, result.SummaryIDs); err != nil {
+		return nil, ShowResult{}, err
+	}
+	ss.holdEntries(result.FullIDs)
+	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, ShowResult{}, err
 	}
 	return nil, ShowResult{Entries: result.Entries}, nil
