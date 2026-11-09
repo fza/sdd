@@ -21,6 +21,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/llm"
+	"github.com/networkteam/sdd/pkg/llm/embed"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -54,8 +55,12 @@ type LLMScript struct {
 	// DuringPreflight runs inside every pre-flight call, before it answers:
 	// the point to land an entry between a capture's confirm and its write.
 	DuringPreflight func()
-	Title           string
-	Summary         string
+	// GatherQuery is the semantic query the gather query writer answers
+	// with, and its one keyword term.
+	GatherQuery string
+	GatherTerm  string
+	Title       string
+	Summary     string
 }
 
 // Calls returns how often the runner ran for the purpose.
@@ -84,6 +89,8 @@ func (s *LLMScript) Run(_ context.Context, request llm.Request) (llm.Result, err
 			s.DuringPreflight()
 		}
 		return marshalFindings(s.PreflightFindings)
+	case llm.PurposeGatherQuery:
+		return marshalGatherQuery(s.GatherQuery, s.GatherTerm)
 	case llm.PurposeWritingGuide:
 		return marshalFindings(s.GuideFindings)
 	default:
@@ -158,6 +165,7 @@ type config struct {
 	relevance   sdd.RelevanceStore
 	prefilter   sdd.Prefilter
 	events      sdd.EventStore
+	embedder    embed.Embedder
 }
 
 // Option configures NewWorld.
@@ -199,6 +207,12 @@ func WithRelevance(store sdd.RelevanceStore) Option {
 // WithEvents gives the world's project an event store.
 func WithEvents(store sdd.EventStore) Option {
 	return func(c *config) { c.events = store }
+}
+
+// WithEmbedder gives the world's project an embedding model over an
+// in-memory search index, so gather reads in search mode.
+func WithEmbedder(embedder embed.Embedder) Option {
+	return func(c *config) { c.embedder = embedder }
 }
 
 // WithPrefilter gives the world's project a relevance scorer.
@@ -363,6 +377,9 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
 		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Relevance: cfg.relevance, Prefilter: cfg.prefilter, Events: cfg.events,
+	}
+	if cfg.embedder != nil {
+		options.Embedder, options.SearchIndex = cfg.embedder, localadapter.NewMemorySearchIndexStore()
 	}
 	var dropped map[string]bool
 	if len(cfg.branchDirs) > 0 {
@@ -586,4 +603,9 @@ func LoadEntry(t *testing.T, graphDir, id string) *model.Entry {
 		t.Fatal(err)
 	}
 	return entry
+}
+
+func marshalGatherQuery(query, term string) (llm.Result, error) {
+	output, err := json.Marshal(map[string]any{"query": query, "terms": []string{term}})
+	return llm.Result{Text: string(output), Identity: scriptIdentity}, err
 }

@@ -96,11 +96,14 @@ type ReadPayload struct {
 	Corpus *CorpusMark     `json:"corpus,omitempty"`
 	// Prefilter carries the scores the prefilter gave in this read.
 	Prefilter *PrefilterPayload `json:"prefilter,omitempty"`
+	// Cosine carries the cosine stage's similarities in this read; publish
+	// keeps only those of pairs the reader labels.
+	Cosine *PrefilterPayload `json:"cosine,omitempty"`
 }
 
 // Empty reports whether the payload carries nothing to record.
 func (p ReadPayload) Empty() bool {
-	return len(p.Reads) == 0 && len(p.Full) == 0 && p.Corpus == nil && p.Prefilter == nil
+	return len(p.Reads) == 0 && len(p.Full) == 0 && p.Corpus == nil && p.Prefilter == nil && p.Cosine == nil
 }
 
 // Reading is the record of the grounding reads that credit one capture
@@ -136,6 +139,7 @@ func (r *Reading) Fold(p ReadPayload) {
 		}
 	}
 	r.foldPrefilter(p.Prefilter)
+	r.foldPrefilter(p.Cosine)
 	if r.Corpus == nil && p.Corpus != nil {
 		r.Corpus = p.Corpus
 	}

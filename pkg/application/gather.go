@@ -153,10 +153,12 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	}
 
 	var reads []model.GroundingRead
+	searchMode := false
 	switch {
 	case len(live) < policy.BriefAllBelow:
 		reads = append(reads, model.GroundingRead{Mode: model.GroundingBriefs, IDs: liveIDs})
 	case strings.TrimSpace(request.Draft) != "" || request.Query != "" || len(request.Terms) > 0:
+		searchMode = true
 		searched, err := a.gatherSearches(ctx, runtime, selected, request)
 		if err != nil {
 			return GatherResult{}, err
@@ -206,18 +208,38 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	if strings.TrimSpace(request.Draft) != "" {
 		subject = model.RelevanceText(request.Kind, request.Topics, "", request.Draft)
 	}
-	pass, err := runPrefilter(ctx, runtime, policy, subject, graph, split.Undecided, held)
+	undecided := split.Undecided
+	var cosine cosinePass
+	if searchMode && policy.Prefilter && len(undecided) >= policy.PrefilterFrom {
+		cosine, err = a.runCosine(ctx, runtime, selected, request.SyncMode, ledger, subject, undecided, len(live))
+		if err != nil {
+			return GatherResult{}, err
+		}
+		undecided = cosine.kept
+	}
+	pass, err := runPrefilter(ctx, runtime, policy, subject, graph, undecided, held)
 	if err != nil {
 		return GatherResult{}, err
 	}
-	placed := model.PlacePrefiltered(split.Undecided, pass.scores, thresholds)
+	placed := model.PlacePrefiltered(undecided, pass.scores, thresholds)
 	seed := model.NewCorpusMark(liveIDs).Hash
 	if request.since != nil {
 		seed = request.since.Hash
 	}
-	audit, kept := model.AuditSample(placed.SetAside, seed)
-	if len(kept) > 0 {
-		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFiltered, IDs: kept})
+	audit, kept := model.AuditSample(append(slices.Clone(placed.SetAside), cosine.setAside...), seed)
+	var filtered, cosined []string
+	for _, id := range kept {
+		if slices.Contains(cosine.setAside, id) {
+			cosined = append(cosined, id)
+		} else {
+			filtered = append(filtered, id)
+		}
+	}
+	if len(filtered) > 0 {
+		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFiltered, IDs: filtered})
+	}
+	if len(cosined) > 0 {
+		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideCosine, IDs: cosined})
 	}
 	var samples []model.GatherCandidate
 	for _, candidate := range split.Undecided {
@@ -264,6 +286,9 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Corpus: served.Corpus}
 	if len(pass.fresh) > 0 || len(audit) > 0 {
 		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: runtime.options.Prefilter.Scorer != nil && runtime.options.Prefilter.Scorer.Direction() == relevance.Forward, Scores: pass.fresh, Audit: audit}
+	}
+	if len(cosine.scores) > 0 {
+		result.payload.Cosine = &model.PrefilterPayload{Judge: cosine.judge, Scores: cosine.scores}
 	}
 	return result, nil
 }
