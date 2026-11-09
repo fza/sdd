@@ -21,7 +21,7 @@ import (
 // project owns every setting, the graph, meta.json and runtime state, so this
 // repository receives only the pointer config, the agents' skills and
 // registrations, and the project's gitignore entries.
-func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
+func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed *bool) error {
 	if cmd.Bump {
 		return fmt.Errorf("--bump raises the project's minimum_version; run it in %s", cmd.ProjectDir)
 	}
@@ -79,9 +79,9 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 	if projectCfg == nil {
-		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents)
+		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents, changed)
 	} else {
-		err = h.refreshProject(ctx, cmd, projectRoot, projectCfg)
+		err = h.refreshProject(ctx, cmd, projectRoot, projectCfg, changed)
 	}
 	if err != nil {
 		return err
@@ -158,13 +158,13 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(configExisted))
+	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(configExisted), changed)
 }
 
 // writeLocalSettings records the per-person settings cmd carries, the
 // participant, the dialogue mode and the verifier runner, in sddDir's
 // config.local.yaml, keeping every other key in that file.
-func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
+func writeLocalSettings(sddDir string, cmd *command.InitCmd, changed *bool) error {
 	settings := []struct{ key, value string }{
 		{"participant", cmd.Participant},
 		{"dialogue.mode", string(cmd.DialogueMode)},
@@ -190,6 +190,7 @@ func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
 		if err != nil {
 			return fmt.Errorf("writing %s: %w", configLocalPath, err)
 		}
+		*changed = true
 		// Not committed: config.local.yaml is gitignored, so staging it would
 		// fail the commit.
 		if setting.key == "participant" && cmd.OnParticipantWritten != nil {
@@ -246,8 +247,9 @@ func (h *Handler) persistSupportedAgents(ctx context.Context, cmd *command.InitC
 
 // installAgentSurfaces installs or refreshes the skill bundle, sweeps what the
 // bundle stopped shipping, registers the MCP server, and commits everything
-// touched inside cmd.RepoRoot.
-func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string, commitMessage string) error {
+// touched inside cmd.RepoRoot, setting *changed when it touched or committed
+// anything.
+func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string, commitMessage string, changed *bool) error {
 	if !cmd.GraphOnly {
 		var err error
 		touched, err = h.installSkillsAndRegistrations(ctx, cmd, agents, scope, touched)
@@ -255,7 +257,8 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 			return err
 		}
 	}
-	return h.commitInitPaths(ctx, cmd, touched, commitMessage)
+	*changed = *changed || len(touched) > 0
+	return h.commitInitPaths(ctx, cmd, touched, commitMessage, changed)
 }
 
 func (h *Handler) installSkillsAndRegistrations(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string) ([]string, error) {
@@ -301,7 +304,7 @@ func (h *Handler) installSkillsAndRegistrations(ctx context.Context, cmd *comman
 }
 
 // commitInitPaths commits everything init touched inside cmd.RepoRoot.
-func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, touched []string, commitMessage string) error {
+func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, touched []string, commitMessage string, changed *bool) error {
 	// Skill files installed under the user-global scope sit outside the repo's
 	// git tree.
 	if h.committer == nil {
@@ -335,6 +338,7 @@ func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, tou
 	if len(commitPaths) == 0 {
 		return record.clear()
 	}
+	*changed = true
 	err = h.commitGraph(ctx, commitMessage, commitPaths...)
 	if err != nil {
 		return errors.Join(fmt.Errorf("git commit, which the next sdd init retries: %w", err), record.write(commitPaths))

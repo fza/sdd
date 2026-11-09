@@ -226,6 +226,11 @@ type InitCmd struct {
 	// add-if-missing merge). Does not fire when an existing sdd entry is
 	// left untouched.
 	OnMCPRegistered func(target model.AgentTarget, path string)
+
+	// OnUnchanged fires once, after a run that wrote, removed and committed
+	// nothing, neither in RepoRoot nor in a project or graph repository it
+	// initialised.
+	OnUnchanged func()
 }
 
 // AgentPruneResult reports the outcome of a prune pass over one agent's

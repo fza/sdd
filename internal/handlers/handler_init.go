@@ -35,15 +35,29 @@ import (
 // commands (h.InstallSkills and h.WriteSchemaMeta), keeping each side
 // effect in its own handler method.
 func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
+	changed := false
+	err := h.initRepo(ctx, cmd, &changed)
+	if err != nil {
+		return err
+	}
+	if !changed && cmd.OnUnchanged != nil {
+		cmd.OnUnchanged()
+	}
+	return nil
+}
+
+// initRepo runs Init in cmd.RepoRoot, setting *changed when it writes, removes
+// or commits anything there or in a project it initialises.
+func (h *Handler) initRepo(ctx context.Context, cmd *command.InitCmd, changed *bool) error {
 	log := slogutils.FromContext(ctx)
 	if err := cmd.Validate(); err != nil {
 		return fmt.Errorf("invalid command: %w", err)
 	}
 	if cmd.GraphRepo != "" {
-		return h.initGraphRepo(ctx, cmd)
+		return h.initGraphRepo(ctx, cmd, changed)
 	}
 	if cmd.ProjectDir != "" {
-		return h.initPointer(ctx, cmd)
+		return h.initPointer(ctx, cmd, changed)
 	}
 	graphDir := cmd.GraphDir
 	if graphDir == "" {
@@ -266,7 +280,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	// it is (merging is deliberately out of scope) and the callback reports
 	// it as skippable. init is the post-clone / post-update contract, which
 	// makes it the migration surface.
-	if err := h.migrateLegacyIndexes(cmd, sddDir, configPath); err != nil {
+	if err := h.migrateLegacyIndexes(cmd, sddDir, configPath, changed); err != nil {
 		return err
 	}
 	// Scaffold the AGENTS.md / CLAUDE.md instruction bridge when a non-Claude
@@ -286,7 +300,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	if err := writeLocalSettings(sddDir, cmd); err != nil {
+	if err := writeLocalSettings(sddDir, cmd, changed); err != nil {
 		return err
 	}
 
@@ -346,7 +360,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(sddExisted))
+	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(sddExisted), changed)
 }
 
 // resolveSkillScope picks the scope `sdd init` should install under and
@@ -869,7 +883,7 @@ func cleanOldGraphDirGitignore(graphDir string) error {
 // its root path) and each connected repo's clone-cache .index (keyed by its
 // repo_id). Skipped silently when the handler has no connected-repos
 // manager (tests, minimal wiring) — there is no cache root to migrate into.
-func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath string) error {
+func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath string, changed *bool) error {
 	if h.repos == nil {
 		return nil
 	}
@@ -892,6 +906,7 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 		if err != nil {
 			return fmt.Errorf("migrating local index into the machine-global store: %w", err)
 		}
+		*changed = *changed || moved
 		if target != "" && cmd.OnIndexMigrated != nil {
 			cmd.OnIndexMigrated(legacyLocal, target, moved)
 		}
@@ -914,6 +929,7 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 		if err != nil {
 			return fmt.Errorf("migrating cache index for %s: %w", r.RepoID, err)
 		}
+		*changed = *changed || moved
 		if target != "" && cmd.OnIndexMigrated != nil {
 			cmd.OnIndexMigrated(legacy, target, moved)
 		}
