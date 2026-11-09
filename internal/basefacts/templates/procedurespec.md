@@ -83,11 +83,19 @@ Guards name checks, `inject` names queries, `op` and `call` name commands — an
 
 ## Dispatching another procedure
 
-A step never starts another procedure, and no command does. The handoff lives in the unit's prose: the instruction tells the running agent to start the named procedure as a sub-move of this run, and the product comes back the same way — the agent reports it into a field this spec declares, and the next gate holds on that field. Nothing else flows back: the child writes nothing into this run's store, so the reported field is the only bridge.
+A step never starts another procedure, and no command does. The handoff lives in the unit's prose: the instruction tells the running agent to start the named procedure as a sub-move of this run, and the product comes back the same way — the agent reports it into a field this spec declares, and the next gate holds on that field. Nothing else flows back from a child that declares no delivery: it writes nothing into this run's store, so the reported field is the only bridge.
 
 An option's `dispatch` block declares seeding for that handoff, never the start itself: `dispatch: {procedure: <canonical>, seed: {<child field>: <parent field>}}` on the answered option arms the mapping, and the next procedure started under this run receives each value into the *state* field it declares under the child name — a value passed explicitly at start wins, and an empty source seeds nothing.
 
 A delegate procedure (class `task`) is dispatched the same way, with its inputs resolved by the dispatching run; it asks the user nothing and is offered nowhere on its own, so the dispatching unit's prose is where it is discoverable.
+
+### Delegates that deliver
+
+A task whose gate declares `deliver: [<field>, …]` hands its product back through the engine rather than the agent's prose, and runs in a delegate session of its own, forked when it is started under the dispatching run: no user, its own reads, the dispatching run's branch and project. When one of that gate's transitions fires, the named fields are delivered into the dispatching run. A transition to `end(completed)` is the final delivery and completes the delegate; any other target is an interim delivery that leaves it running, so one delegate can exchange several rounds with the run that dispatched it. A task with an interim delivery declares `rounds: <n>` at its top level: once it has made that many interim deliveries, it concludes at its next waiting gate instead of waiting.
+
+Waiting is a gate that declares `await: [<field>, …]`: it holds until each field holds a delivery from the other side not yet taken, and passing takes it. On the delegate's side the dispatching run fills it; on the dispatching side the delegate does. Only a delivery fills an awaited field: no step collects one and no report writes it. A delivery never moves the receiving run's step; the receiver picks it up on its next call.
+
+The answered option's `dispatch` maps the names, so the task never depends on its dispatcher's: `receive: {<parent field>: <child field>}` lands each delivered child field in a parent field (also delivery-only), and `send: {<child field>: <parent field>}` delivers the parent field into the child field the delegate awaits every time the dispatching run writes it. Every field the task delivers must be received and every field it awaits must be sent; a dispatch that misses one is refused when the task starts. A delegate ends with the run that dispatched it: when that run completes or is abandoned, its delegates are abandoned too.
 
 ## Instruction units
 
