@@ -3168,8 +3168,10 @@ func TestEmbeddedEngageExploreProcedures(t *testing.T) {
 	if !strings.Contains(serve.Instructions, "overview: what surrounds the oscillation gap") {
 		t.Fatalf("inspect unit should carry the goal verbatim, got %q", serve.Instructions)
 	}
-	if !strings.Contains(serve.Instructions, "contradictory findings across runs on identical input") {
-		t.Fatalf("inspect unit should serve the target chains, got %q", serve.Instructions)
+	// The engage brief served the target in full, so the chain points at it
+	// (20261109-004506-d-cpt-udz, R14).
+	if !strings.Contains(serve.Instructions, fixtureGapID+" — ") || !strings.Contains(serve.Instructions, pointerMark) {
+		t.Fatalf("inspect unit should serve the target chains, pointing at the target engage served, got %q", serve.Instructions)
 	}
 	exploreInstance := serve.Instance
 

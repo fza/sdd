@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -247,6 +248,12 @@ type WorkflowSession struct {
 	// startProject is the project the instance being started targets, which
 	// the sink records in the same append as the engine's start event.
 	startProject ProjectID
+	// cutRepeats applies the no-repeat rule to the step serves (CutRepeats).
+	cutRepeats bool
+	// laneFull collects the entries the framing lane in render serves in full;
+	// framingFull keeps them per block of the last Framing call.
+	laneFull    []string
+	framingFull map[string][]string
 	// task is a delegate session's one task instance, whose end ends the
 	// session as the shell's does a dialogue's.
 	task string
@@ -963,7 +970,7 @@ func (w *WorkflowSession) BindBranch(ctx context.Context, identity RequestIdenti
 	if !errors.As(err, &appErr) || appErr.Code != ErrorSessionConflict {
 		return err
 	}
-	if err := w.resyncBindingVersion(); err != nil {
+	if err := w.catchUp(nil); err != nil {
 		return err
 	}
 	err = w.bindBranchOnce(branch, clear)
@@ -1177,7 +1184,10 @@ func (w *WorkflowSession) framingLanes() ([]types.ServeLane, error) {
 		return nil, nil
 	}
 	var lanes []types.ServeLane
+	w.framingFull = map[string][]string{}
+	defer func() { w.laneFull = nil }()
 	for _, call := range inst.Spec.Framing {
+		w.laneFull = nil
 		result, cut, err := w.session.Inject(w.shell, call)
 		if err != nil {
 			return nil, fmt.Errorf("framing lane %s: %w", call.Fn, err)
@@ -1195,9 +1205,44 @@ func (w *WorkflowSession) framingLanes() ([]types.ServeLane, error) {
 				name = call.Fn
 			}
 			lanes = append(lanes, types.ServeLane{Name: name, Text: text})
+			if cut == nil && len(w.laneFull) > 0 {
+				w.framingFull[text] = w.laneFull
+			}
 		}
 	}
 	return lanes, nil
+}
+
+// FramingFullIDs returns the entries a block of the last Framing call served
+// in full, whole: a lane cut for size names none.
+func (w *WorkflowSession) FramingFullIDs(block string) []string {
+	return w.framingFull[block]
+}
+
+// HeldEntryHash is the served-ledger hash of an entry served in full: the
+// no-repeat rule's unit (20261109-004506-d-cpt-udz, R14). Bodies are
+// immutable, so the ID alone keys it.
+func HeldEntryHash(id string) string {
+	sum := sha256.Sum256([]byte("entry-full:" + id))
+	return hex.EncodeToString(sum[:])
+}
+
+// CutRepeats applies the no-repeat rule to the step serves the session
+// renders, as the MCP surface serves them (R14): an injected entry chain
+// prints an entry the consumer already holds in full as its pointer, and
+// holds every entry it serves in full from then on. Off by default: the CLI
+// never cuts.
+func (w *WorkflowSession) CutRepeats() {
+	w.cutRepeats = true
+}
+
+// heldRepeats reports what the consumer holds in full while CutRepeats is on;
+// nil otherwise, which serves everything in full.
+func (w *WorkflowSession) heldRepeats() func(id string) bool {
+	if !w.cutRepeats {
+		return nil
+	}
+	return func(id string) bool { return w.session.ServedBefore(HeldEntryHash(id)) }
 }
 
 // framingCutNotice renders one framing lane's cut in this surface's register,
@@ -1651,46 +1696,59 @@ func (s *workflowSink) Append(event engine.Event) (uint64, error) {
 	if event.Event == engine.EventServed {
 		return 0, nil
 	}
-	payload, err := json.Marshal(event)
-	if err != nil {
-		return 0, err
-	}
-	events := []StoredEvent{{CodecVersion: SessionCodecVersion, Code: WorkflowEventCode, Payload: payload}}
+	w := s.workflow
 	// The started instance's target lands in the same append as its start, so
 	// no instance ever exists without the project it was started in.
-	w := s.workflow
-	position := w.binding.Version + 1
-	if event.Event == engine.EventStarted && w.startProject != "" {
-		project := w.startProject
+	var project ProjectID
+	if event.Event == engine.EventStarted {
+		project = w.startProject
 		w.startProject = ""
-		record, err := instanceProjectRecord(event.Instance, project)
-		if err != nil {
-			return 0, err
-		}
-		events = append(events, record)
-		if err := w.appendStoredEvents(events); err != nil {
-			return 0, err
-		}
-		w.instanceProjects[event.Instance] = project
-		return position, nil
 	}
-	err = w.appendStoredEvents(events)
-	var appErr *ApplicationError
-	if event.Event == engine.EventServedBlocks && errors.As(err, &appErr) && appErr.Code == ErrorSessionConflict {
-		// A served ledger entry depends on nothing another writer changed, such
-		// as a delegate a launcher drove delivering meanwhile, so it lands on
-		// the session as it now stands.
-		err = w.resyncBindingVersion()
-		if err != nil {
-			return 0, err
+	events, err := sinkEvents(event, project)
+	if err != nil {
+		return 0, err
+	}
+	err = w.appendStoredEventsOnce(events)
+	if isSessionConflict(err) {
+		err = w.catchUp(&event)
+		if err == nil {
+			events, err = sinkEvents(event, project)
 		}
-		position = w.binding.Version + 1
-		err = w.appendStoredEvents(events)
+		if err == nil {
+			err = w.appendStoredEventsOnce(events)
+		}
+	}
+	if isSessionConflict(err) {
+		return 0, fmt.Errorf("%w; %s", err, reorientSuffix)
 	}
 	if err != nil {
 		return 0, err
 	}
-	return position, nil
+	if project != "" {
+		w.instanceProjects[event.Instance] = project
+	}
+	return w.binding.Version - uint64(len(events)) + 1, nil
+}
+
+func sinkEvents(event engine.Event, project ProjectID) ([]StoredEvent, error) {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return nil, err
+	}
+	events := []StoredEvent{{CodecVersion: SessionCodecVersion, Code: WorkflowEventCode, Payload: payload}}
+	if project == "" {
+		return events, nil
+	}
+	record, err := instanceProjectRecord(event.Instance, project)
+	if err != nil {
+		return nil, err
+	}
+	return append(events, record), nil
+}
+
+func isSessionConflict(err error) bool {
+	var appErr *ApplicationError
+	return errors.As(err, &appErr) && appErr.Code == ErrorSessionConflict
 }
 
 // appendStoredEvent appends one of the session's own events with the activity
@@ -1699,26 +1757,70 @@ func (w *WorkflowSession) appendStoredEvent(code string, payload json.RawMessage
 	return w.appendStoredEvents([]StoredEvent{{CodecVersion: SessionCodecVersion, Code: code, Payload: payload}})
 }
 
-// appendStoredEvents refuses events computed before another writer changed the session.
+// appendStoredEvents appends events no engine state depends on, catching up
+// first when another attach of the session wrote meanwhile.
 func (w *WorkflowSession) appendStoredEvents(events []StoredEvent) error {
 	err := w.appendStoredEventsOnce(events)
-	var appErr *ApplicationError
-	if errors.As(err, &appErr) && appErr.Code == ErrorSessionConflict {
+	if isSessionConflict(err) {
+		err = w.catchUp(nil)
+		if err == nil {
+			err = w.appendStoredEventsOnce(events)
+		}
+	}
+	if isSessionConflict(err) {
 		return fmt.Errorf("%w; %s", err, reorientSuffix)
 	}
 	return err
 }
 
-// resyncBindingVersion reloads the session and advances the observed version to
-// the store's so a retried append passes the version CAS; an ended session
-// surfaces typed instead of being written on.
-func (w *WorkflowSession) resyncBindingVersion() error {
+// catchUp folds the events another attach of the session (a CLI call with
+// --session beside a serve, a delegate delivering) logged past the version
+// this holder saw, the way replay folds them, and moves the holder to the
+// stored version (20261109-055313-s-tac-7j7). pending is the engine event being
+// appended, already applied in memory: when a folded event names its instance,
+// the holder computed that instance on a state the other attach changed, and
+// catchUp refuses as the conflict it is. An ended session surfaces typed.
+func (w *WorkflowSession) catchUp(pending *engine.Event) error {
 	_, _, stored, err := w.app.resolveSession(w.ctx, w.identity, w.ID())
 	if err != nil {
 		return err
 	}
-	if err := verifyOwnership(stored, w.binding); err != nil {
+	err = verifyOwnership(stored, w.binding)
+	if err != nil {
 		return err
+	}
+	var newer []StoredEvent
+	for _, event := range stored.Events {
+		if event.Sequence > w.binding.Version {
+			newer = append(newer, event)
+		}
+	}
+	if len(newer) == 0 {
+		return &ApplicationError{Code: ErrorSessionConflict, Message: "session version changed"}
+	}
+	events, err := decodeWorkflowEvents(newer)
+	if err != nil {
+		return err
+	}
+	if pending != nil && pending.Instance != "" {
+		for _, event := range events {
+			if event.Instance == pending.Instance {
+				return &ApplicationError{Code: ErrorSessionConflict, Message: fmt.Sprintf("instance %s changed in another attach of the session", pending.Instance)}
+			}
+		}
+	}
+	err = w.restoreStagedBlobs(newer)
+	if err != nil {
+		return err
+	}
+	err = w.restoreInstanceProjects(newer)
+	if err != nil {
+		return err
+	}
+	resolve := func(canonical string) (*engine.Spec, error) { return w.loadProcedure(canonical) }
+	err = w.session.Fold(events, resolve, pending)
+	if err != nil {
+		return fmt.Errorf("folding session %s: %w", w.ID(), err)
 	}
 	w.binding.Version = stored.Version
 	w.setBranch(stored.Metadata.Branch)

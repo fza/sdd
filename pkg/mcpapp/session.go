@@ -31,7 +31,10 @@ type shellSession struct {
 // with these exact bytes — from the ledger, or earlier in this call — and
 // marks it served when not.
 func (ss *shellSession) servedBefore(block string) bool {
-	hash := blockHash(block)
+	return ss.servedHashBefore(blockHash(block))
+}
+
+func (ss *shellSession) servedHashBefore(hash string) bool {
 	if ss.seen[hash] || (!ss.inFull && ss.root.ServedBefore(hash)) {
 		return true
 	}
@@ -43,15 +46,10 @@ func (ss *shellSession) servedBefore(block string) bool {
 	return false
 }
 
-// heldEntryKey is the served-set key of an entry served in full: the
-// no-repeat rule's unit (20261109-004506-d-cpt-udz, R14). Bodies are
-// immutable, so the ID alone keys it.
-func heldEntryKey(id string) string { return "entry-full:" + id }
-
 // holdsEntry reports whether the consumer already holds the entry in full,
 // without marking it.
 func (ss *shellSession) holdsEntry(id string) bool {
-	hash := blockHash(heldEntryKey(id))
+	hash := sdd.HeldEntryHash(id)
 	return ss.root.ServedBefore(hash) || ss.seen[hash]
 }
 
@@ -63,7 +61,7 @@ func (ss *shellSession) repeats() *presenters.Repeats {
 // holdEntries marks entries served in full by the call in flight.
 func (ss *shellSession) holdEntries(ids []string) {
 	for _, id := range ids {
-		ss.servedBefore(heldEntryKey(id))
+		ss.servedHashBefore(sdd.HeldEntryHash(id))
 	}
 }
 

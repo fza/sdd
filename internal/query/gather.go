@@ -23,7 +23,8 @@ type GatherResult struct {
 	Overflow []*model.Entry
 	ToJudge  []model.GatherCandidate
 	SetAside []model.GatherSetAside
-	// Held names the candidates the consumer already holds in full: they
-	// print as a pointer with the brief and the way back (D34).
-	Held map[string]bool
+	// Held reports whether the consumer already holds an entry in full that
+	// the serve did not open by ID: it prints as a pointer with the brief and
+	// the way back (D34, R14). Nil holds nothing, as the CLI serves.
+	Held func(id string) bool
 }

@@ -136,6 +136,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if err != nil {
 				return nil, err
 			}
+			w.laneFull = append(w.laneFull, result.FullIDs...)
 			return presenters.ViewText(result.ViewSections, nil), nil
 		},
 	}); err != nil {
@@ -145,7 +146,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		// Not serve-safe: it calls LogRead, so it writes a read event. It may
 		// inject into a step unit, but never as a framing lane (a serve must not
 		// write — I7); the spec loader enforces that.
-		Doc:   engine.FuncDoc{Name: "entryChains", Doc: "Entries with upstream/downstream chains for an explicit id arg or the store's anchor/targets. Args up, down: expansion depths; onceFull: serve nothing when every entry was already served in full this session; requireBody: fail when a primary resolves to an empty body. An explicit id resolves to its live supersession head before serving, so a project override wins and the read logs under the same ID the dedup checks. Chains are bounded per direction by the engine's entry-list budget; the cut renders as the same honest frontier the depth limit uses.", Reads: []string{"anchor", "targets"}},
+		Doc:   engine.FuncDoc{Name: "entryChains", Doc: "Entries with upstream/downstream chains for an explicit id arg or the store's anchor/targets. Args up, down: expansion depths; onceFull: serve nothing when every entry was already served in full this session; requireBody: fail when a primary resolves to an empty body. An explicit id resolves to its live supersession head before serving, so a project override wins and the read logs under the same ID the dedup checks. Chains are bounded per direction by the engine's entry-list budget; the cut renders as the same honest frontier the depth limit uses. Served over MCP, an entry the consumer already holds in full prints as its pointer (R14).", Reads: []string{"anchor", "targets"}},
 		Bound: engine.QueryBound{Part: serveview.PartEntryList},
 		Fn: func(ctx *engine.Context, args map[string]any) (any, error) {
 			var ids []string
@@ -193,8 +194,19 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if err != nil {
 				return nil, err
 			}
+			text, err := presenters.ShowText(result.Items, &presenters.Repeats{Held: w.heldRepeats()})
+			if err != nil {
+				return nil, err
+			}
 			w.session.LogRead("inject:entryChains", result.FullIDs, result.SummaryIDs)
-			return presenters.ShowText(result.Items, nil)
+			if w.cutRepeats {
+				held := make([]string, len(result.FullIDs))
+				for i, id := range result.FullIDs {
+					held[i] = HeldEntryHash(id)
+				}
+				w.session.RecordServed(held)
+			}
+			return text, nil
 		},
 	}); err != nil {
 		return err

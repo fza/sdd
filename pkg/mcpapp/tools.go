@@ -575,6 +575,14 @@ func (s *Server) registerTools() {
 	}, toolBoundary(s, s.syncRepos))
 }
 
+// cutRepeats applies the no-repeat rule to the session's step serves, unless
+// every call serves in full (Options.ServeInFull).
+func (s *Server) cutRepeats(workflow *sdd.WorkflowSession) {
+	if !s.serveInFull {
+		workflow.CutRepeats()
+	}
+}
+
 // attachedSession returns the named session locked and replayed from its ledger.
 func (s *Server) attachedSession(ctx context.Context, req *mcp.CallToolRequest, session string) (*shellSession, error) {
 	id := sdd.SessionID(strings.TrimSpace(session))
@@ -588,6 +596,7 @@ func (s *Server) attachedSession(ctx context.Context, req *mcp.CallToolRequest, 
 		if err != nil {
 			return nil, err
 		}
+		s.cutRepeats(workflow)
 		candidate := &shellSession{root: workflow, inFull: s.serveInFull}
 		candidate.mu.Lock()
 		ss = s.sessions.put(candidate)
@@ -603,6 +612,7 @@ func (s *Server) attachedSession(ctx context.Context, req *mcp.CallToolRequest, 
 			ss.mu.Unlock()
 			return nil, err
 		}
+		s.cutRepeats(workflow)
 		ss.root = workflow
 	}
 	ss.pending, ss.seen = nil, nil
@@ -660,6 +670,7 @@ func (s *Server) startSession(ctx context.Context, req *mcp.CallToolRequest, arg
 		}
 		return nil, ServeResult{}, err
 	}
+	s.cutRepeats(workflow)
 	ss := s.sessions.put(&shellSession{root: workflow, inFull: s.serveInFull})
 	s.noteSyncSession(ctx, req, ss)
 	ss.mu.Lock()
@@ -1436,7 +1447,9 @@ func syncBlockedResult(block *sdd.SyncBlocked) *SyncBlockedResult {
 // content is new serve in full. A graph write that changes one lane (the
 // recent-moves lane) re-serves that lane alone, never the stable aspirations or
 // directives — the per-lane dedup that keeps a reorientation from exceeding the
-// original serve (I6).
+// original serve (I6). The entries a served block carries in full are held
+// from then on (R14); a block is never cut for them, so a held entry cannot
+// re-serve a lane the per-lane dedup already withholds.
 func composeFraming(ss *shellSession, blocks []string) string {
 	var served []string
 	for _, block := range blocks {
@@ -1444,6 +1457,7 @@ func composeFraming(ss *shellSession, blocks []string) string {
 			continue
 		}
 		served = append(served, block)
+		ss.holdEntries(ss.root.FramingFullIDs(block))
 	}
 	return strings.Join(served, "\n\n")
 }

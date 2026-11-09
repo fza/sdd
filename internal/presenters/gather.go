@@ -37,6 +37,8 @@ func RenderGather(w io.Writer, result *query.GatherResult) error {
 	}
 	fmt.Fprintf(w, "prefilter: %s\n", prefilter)
 
+	repeats := &Repeats{Held: result.Held}
+	wayBackShown := false
 	if result.Full != nil && len(result.Full.Groups) > 0 || len(result.Overflow) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "# relevant")
@@ -46,9 +48,11 @@ func RenderGather(w io.Writer, result *query.GatherResult) error {
 			if err != nil {
 				return err
 			}
-			if err := RenderShow(w, entries, ShowOptions{}); err != nil {
+			err = RenderShow(w, entries, ShowOptions{Repeats: repeats})
+			if err != nil {
 				return err
 			}
+			wayBackShown = repeats.Pointed()
 		}
 		if len(result.Overflow) > 0 {
 			ids := make([]string, len(result.Overflow))
@@ -58,7 +62,7 @@ func RenderGather(w io.Writer, result *query.GatherResult) error {
 			fmt.Fprintln(w)
 			fmt.Fprintf(w, "+%d opened entries past the full-serve cap of %d, open them with gather ids [%s]:\n", len(ids), query.GatherFullCap, strings.Join(ids, ", "))
 			for _, e := range result.Overflow {
-				fmt.Fprintln(w, gatherLine(g, model.GatherCandidate{Entry: e}, false))
+				fmt.Fprintln(w, gatherLine(g, model.GatherCandidate{Entry: e}, repeats.holds(e.ID, model.EntryBrief(e))))
 			}
 		}
 	}
@@ -67,16 +71,12 @@ func RenderGather(w io.Writer, result *query.GatherResult) error {
 	fmt.Fprintf(w, "# to judge (%d)\n", len(result.ToJudge))
 	if len(result.ToJudge) > 0 {
 		fmt.Fprintln(w)
-		held := false
 		for _, candidate := range result.ToJudge {
-			isHeld := result.Held[candidate.Entry.ID]
-			held = held || isHeld
-			fmt.Fprintln(w, gatherLine(g, candidate, isHeld))
+			fmt.Fprintln(w, gatherLine(g, candidate, repeats.holds(candidate.Entry.ID, model.EntryBrief(candidate.Entry))))
 		}
-		if held {
-			fmt.Fprintln(w)
-			fmt.Fprintf(w, "An entry marked served in full is not served again; to have it served in full, call %s.\n", GatherWayBack)
-		}
+	}
+	if !wayBackShown {
+		repeats.WriteWayBack(w)
 	}
 
 	if len(result.SetAside) > 0 {
@@ -100,11 +100,14 @@ func topicPathLabels(paths []model.TopicPath) []string {
 }
 
 // RenderLateEntries writes the entries that landed after the assemble check
-// as brief lines, one each, nothing cut (D37).
-func RenderLateEntries(w io.Writer, g *model.Graph, late []*model.Entry) {
+// as brief lines, one each, nothing cut (D37); an entry held reports in full
+// prints as its pointer (R14).
+func RenderLateEntries(w io.Writer, g *model.Graph, late []*model.Entry, held func(id string) bool) {
+	repeats := &Repeats{Held: held}
 	for _, e := range late {
-		fmt.Fprintln(w, gatherLine(g, model.GatherCandidate{Entry: e}, false))
+		fmt.Fprintln(w, gatherLine(g, model.GatherCandidate{Entry: e}, repeats.holds(e.ID, model.EntryBrief(e))))
 	}
+	repeats.WriteWayBack(w)
 }
 
 // GatherPointer is the pointer an already-served entry prints as.

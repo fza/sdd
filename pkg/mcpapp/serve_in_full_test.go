@@ -42,3 +42,20 @@ func laneTextContains(lanes *[]mcpserver.NamedText, text string) bool {
 	}
 	return false
 }
+
+// With ServeInFull an entry chain a step serves never prints a pointer, even
+// for an entry an earlier call served in full.
+func TestServeInFullServesHeldEntryChainsInFull(t *testing.T) {
+	env := newTestServer(t, nil, "", "", func(o *testServerOptions) { o.MCP.ServeInFull = true })
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+	call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &map[string]any{})
+
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "explore", "params": map[string]any{
+		"targets": []string{fixtureGapID}, "goal": "what surrounds the oscillation gap",
+	}}, &serve)
+	if !laneTextContains(serve.Lanes, "on identical input") || laneTextContains(serve.Lanes, pointerMark) {
+		t.Fatalf("the step should serve the target in full, got %v", serve.Lanes)
+	}
+}

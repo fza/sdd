@@ -250,7 +250,10 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	candidates = model.InsertBlind(placed.ToJudge, samples, seed)
 	served := &query.GatherResult{
 		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: pass.status, PrefilterNote: pass.note,
-		ToJudge: candidates, SetAside: setAside, Held: map[string]bool{},
+		ToJudge: candidates, SetAside: setAside,
+	}
+	if request.Held != nil {
+		served.Held = func(id string) bool { return !slices.Contains(opened, id) && request.Held(id) }
 	}
 	full := slices.Clone(opened)
 	for _, candidate := range append(split.Relevant, placed.Relevant...) {
@@ -271,11 +274,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	}
 	result := GatherResult{Project: runtime.options.Project, FullIDs: slices.Clone(full)}
 	for _, candidate := range candidates {
-		id := candidate.Entry.ID
-		result.SummaryIDs = append(result.SummaryIDs, id)
-		if request.Held != nil && request.Held(id) {
-			served.Held[id] = true
-		}
+		result.SummaryIDs = append(result.SummaryIDs, candidate.Entry.ID)
 	}
 	for _, e := range served.Overflow {
 		result.SummaryIDs = append(result.SummaryIDs, e.ID)

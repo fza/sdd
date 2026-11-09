@@ -1,8 +1,12 @@
 package mcpapp_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
@@ -16,13 +20,22 @@ import (
 //	show             envelope, body, chain lines    TestNoRepeat/show
 //	view             rows, bodies, focus, roles     TestNoRepeat/view as-list, view as-bodies
 //	search           result lines, citations        TestNoRepeat/search
-//	gather           brief lines (explicit ids full) TestGatherPointsAtAnEntryAlreadyServedInFull
+//	gather           brief lines, relevant bodies   TestGatherPointsAtAnEntryAlreadyServedInFull,
+//	                 (explicit ids full)            TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer (application)
 //	resume_session   resets the held set            TestNoRepeat/resume_session
 //	start_procedure, next: step units and framing lanes, deduplicated as blocks:
 //	                 TestCaptureLanesDedupAcrossInstances, TestReportSchemaDedup (serve_dedup_test.go)
+//	  entry chains   pointer for a held entry, holds what they serve:
+//	                 TestNoRepeatInjectedEntryChains, TestInjectedEntryChains* (application)
+//	  late entries   pointer for a held entry: TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer (proctest)
+//	  framing lanes  hold the entries they serve whole, never cut (per-lane dedup):
+//	                 TestNoRepeatAfterFramingServedInFull, TestNoRepeatFramingHoldsOnlyWhatItServed
 //	read_attachment  attachment pages, no entry metadata, out of scope
-//	info, registry, park, abandon, bind_branch, stage_attachment, sync_repos, start_session:
+//	info, registry, park, abandon, bind_branch, stage_attachment, sync_repos:
 //	                 no entry metadata, out of scope
+//
+// The CLI never cuts, with --session too: TestCLIReadsServeInFullEveryTime
+// (internal/cliapp).
 const pointerMark = "(served in full above)"
 
 func TestNoRepeat(t *testing.T) {
@@ -104,5 +117,91 @@ func TestNoRepeatIsPerSession(t *testing.T) {
 	call(t, cs, "show", map[string]any{"session": second, "ids": []string{fixtureGapID}}, &shown)
 	if !strings.Contains(shown.Entries, "# body") {
 		t.Fatalf("another session should be served the entry in full:\n%s", shown.Entries)
+	}
+}
+
+// An entry chain a step serves prints an entry the consumer already holds as
+// its pointer, and holds every entry it serves in full.
+func TestNoRepeatInjectedEntryChains(t *testing.T) {
+	explore := func(t *testing.T, cs *mcp.ClientSession, session string) mcpserver.ServeResult {
+		t.Helper()
+		var serve mcpserver.ServeResult
+		call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "explore", "params": map[string]any{
+			"targets": []string{fixtureGapID}, "goal": "what surrounds the oscillation gap",
+		}}, &serve)
+		return serve
+	}
+	t.Run("held before the serve", func(t *testing.T) {
+		env := newTestServer(t, nil, "", "")
+		cs := connect(t, env.srv)
+		session := openSession(t, cs).Session
+		var shown mcpserver.ShowResult
+		call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &shown)
+		serve := explore(t, cs, session)
+		if !strings.Contains(serve.Instructions, fixtureGapID+" — ") || !strings.Contains(serve.Instructions, pointerMark) || strings.Contains(serve.Instructions, "on identical input") {
+			t.Fatalf("the step should serve the held target as its pointer:\n%s", serve.Instructions)
+		}
+	})
+	t.Run("held after the serve", func(t *testing.T) {
+		env := newTestServer(t, nil, "", "")
+		cs := connect(t, env.srv)
+		session := openSession(t, cs).Session
+		serve := explore(t, cs, session)
+		if !strings.Contains(serve.Instructions, "on identical input") {
+			t.Fatalf("the step should serve the target in full:\n%s", serve.Instructions)
+		}
+		var shown mcpserver.ShowResult
+		call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &shown)
+		if !strings.Contains(shown.Entries, pointerMark) || strings.Contains(shown.Entries, "# body") {
+			t.Fatalf("a show after the step served the entry should serve the pointer:\n%s", shown.Entries)
+		}
+	})
+}
+
+// An entry a framing lane served in full is held: the working principles the
+// door serves print as their pointer on a later show.
+func TestNoRepeatAfterFramingServedInFull(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+	var shown mcpserver.ShowResult
+	call(t, cs, "show", map[string]any{"session": session, "ids": []string{principlesFactID}}, &shown)
+	if !strings.Contains(shown.Entries, principlesFactID+" — ") || !strings.Contains(shown.Entries, pointerMark) {
+		t.Fatalf("a show of the principles the door served should serve the pointer:\n%s", shown.Entries)
+	}
+}
+
+// A framing lane holds only the entries it served whole: one the lane's size
+// budget left to a pull serves in full on show.
+func TestNoRepeatFramingHoldsOnlyWhatItServed(t *testing.T) {
+	graphDir := writeFixtureGraph(t)
+	served, dropped := "20260811-090000-s-prc-ona", "20260811-090001-s-prc-onb"
+	for _, id := range []string{served, dropped} {
+		path := filepath.Join(graphDir, "2026/08/"+strings.TrimPrefix(id, "202608")+".md")
+		err := os.MkdirAll(filepath.Dir(path), 0o755)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := strings.Repeat("**Ask before assuming.** This project's own posture, authored locally at length.\n\n", 80)
+		fact := "---\ntype: signal\nlayer: process\nkind: fact\nconfidence: high\ntopics:\n    - principles/interactive\nsummary: A house rule of this project.\n---\n\n# House rules\n\n" + body
+		err = os.WriteFile(path, []byte(fact), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := newTestServer(t, nil, graphDir, "")
+	cs := connect(t, env.srv)
+	door := openSession(t, cs)
+	if !strings.Contains(door.Framing, "`"+served+"`") || strings.Contains(door.Framing, "`"+dropped+"`") || !strings.Contains(door.Framing, "and 1 more") {
+		t.Fatalf("the principles lane should serve one house rule and leave the other to a pull:\n%s", door.Framing)
+	}
+	var shown mcpserver.ShowResult
+	call(t, cs, "show", map[string]any{"session": door.Session, "ids": []string{served}}, &shown)
+	if !strings.Contains(shown.Entries, pointerMark) {
+		t.Fatalf("the house rule the lane served should serve the pointer:\n%s", shown.Entries)
+	}
+	call(t, cs, "show", map[string]any{"session": door.Session, "ids": []string{dropped}}, &shown)
+	if strings.Contains(shown.Entries, pointerMark) || !strings.Contains(shown.Entries, "Ask before assuming") {
+		t.Fatalf("the house rule the lane left out should serve in full:\n%s", shown.Entries)
 	}
 }

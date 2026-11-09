@@ -12,11 +12,16 @@ func TestCLIReadsServeInFullEveryTime(t *testing.T) {
 		name    string
 		args    []string
 		session bool
+		want    string
 	}{
-		{"show", []string{"show", appEntryID}, false},
-		{"view as-bodies", []string{"view", "--layout", `id("` + appEntryID + `"):as-bodies`}, false},
-		{"show in a session", []string{"show", appEntryID}, true},
-		{"view as-bodies in a session", []string{"view", "--layout", `id("` + appEntryID + `"):as-bodies`}, true},
+		{"show", []string{"show", appEntryID}, false, appBody},
+		{"view as-bodies", []string{"view", "--layout", `id("` + appEntryID + `"):as-bodies`}, false, appBody},
+		{"search", []string{"search", "--term", "configured graph directory"}, false, appEntryID},
+		{"gather", []string{"gather", appEntryID}, false, appBody},
+		{"show in a session", []string{"show", appEntryID}, true, appBody},
+		{"view as-bodies in a session", []string{"view", "--layout", `id("` + appEntryID + `"):as-bodies`}, true, appBody},
+		{"search in a session", []string{"search", "--term", "configured graph directory"}, true, appEntryID},
+		{"gather in a session", []string{"gather", appEntryID}, true, appBody},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -30,7 +35,7 @@ func TestCLIReadsServeInFullEveryTime(t *testing.T) {
 				if result.err != nil {
 					t.Fatalf("sdd %s: %v\n%s", tc.name, result.err, result.stderr)
 				}
-				assertContainsOutput(t, "stdout", result.stdout, appBody)
+				assertContainsOutput(t, "stdout", result.stdout, tc.want)
 				if strings.Contains(result.stdout, "served in full above") {
 					t.Fatalf("the CLI printed a pointer:\n%s", result.stdout)
 				}

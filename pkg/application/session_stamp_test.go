@@ -2,7 +2,6 @@ package application_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -219,12 +218,18 @@ func TestStaleWorkflowEventsAreNotResubmitted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, err := sessions.Load(t.Context(), w.ID())
+	// Another attach advancing the same instance makes the holder's events
+	// stale; one that only attached or read is folded instead
+	// (TestWorkflowHolderFoldsAnotherAttachsAppends).
+	other, _, err := application.ResumeWorkflow(t.Context(), identity, sdd.WorkflowResumeRequest{SessionID: w.ID(), ClientName: "mcp-2"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata := stored.Metadata
-	if _, err := sessions.Append(t.Context(), w.ID(), stored.Version, sdd.SessionAppend{Metadata: &metadata, Events: []sdd.StoredEvent{{CodecVersion: 1, Code: "session_attached", Payload: json.RawMessage(`{}`)}}}); err != nil {
+	if _, err := other.Advance(t.Context(), identity, sdd.WorkflowAdvanceRequest{Instance: serve.Instance, Report: map[string]any{"body": "other"}}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := sessions.Load(t.Context(), w.ID())
+	if err != nil {
 		t.Fatal(err)
 	}
 	before := sessions.appends.Load()
@@ -240,7 +245,7 @@ func TestStaleWorkflowEventsAreNotResubmitted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(after.Events) != len(stored.Events)+1 {
+	if len(after.Events) != len(stored.Events) {
 		t.Fatal("rejected events reached the ledger")
 	}
 	w, err = application.RefreshWorkflow(t.Context(), identity, w.ID())
@@ -252,7 +257,7 @@ func TestStaleWorkflowEventsAreNotResubmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, open := range position.Open {
-		if open.Instance == serve.Instance && open.Collected["body"] != nil {
+		if open.Instance == serve.Instance && open.Collected["body"] == "rejected" {
 			t.Fatalf("refresh kept rejected state: %+v", open.Collected)
 		}
 	}
