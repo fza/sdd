@@ -89,6 +89,8 @@ type WorkflowDispatch struct {
 	Prompt         string
 	ContinuePrompt string
 	Instructions   string
+	// Agent is the subagent definition a harness launches the delegate as.
+	Agent string
 	// Launch is the launch sdd runs the delegate's round with, when it launched
 	// the delegate itself.
 	Launch string
@@ -269,7 +271,7 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 	id := SessionID(child.Session)
 	dispatch := &WorkflowDispatch{
 		Session: id, Instance: child.Instance, Procedure: procedure,
-		Prompt: delegatePrompt(id, child.Instance), ContinuePrompt: delegateContinuePrompt(id, child.Instance),
+		Prompt: delegatePrompt(id, child.Instance), ContinuePrompt: delegateContinuePrompt(id, child.Instance), Agent: model.DelegateAgentName,
 	}
 	launch, err := w.delegateLaunch(parent, procedure)
 	if err != nil {
@@ -295,10 +297,10 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 		}
 	}
 	if first {
-		dispatch.Instructions = "This move dispatched a delegate into its own child session. Launch a fresh-context sub-agent whose prompt is exactly the dispatch prompt: it carries the child handles and nothing else, and this dialogue's own session handle never goes into it. The delegate works through the sdd MCP tools only. Its results arrive in this move, never through the sub-agent's reply: next with this instance and no report picks a delivery up once it has landed."
+		dispatch.Instructions = "This move dispatched a delegate into its own child session. Launch a fresh-context sub-agent, the " + dispatch.Agent + " subagent sdd init installs for your harness where it has one, whose prompt is exactly the dispatch prompt: the prompt carries the child handles and nothing else, and this dialogue's own session handle never goes into it. The delegate works through the sdd MCP tools only. Its results arrive in this move, never through the sub-agent's reply: next with this instance and no report picks a delivery up once it has landed."
 		return dispatch, nil
 	}
-	dispatch.Instructions = "This move sent the delegate its next input. Continue the same delegate through your harness's continue mechanism with the continue prompt; where the harness cannot continue it, launch a fresh-context sub-agent with the dispatch prompt instead, since the child's serve carries the full exchange. This dialogue's own session handle never goes into either prompt. Next with this instance and no report picks the delegate's next delivery up once it has landed."
+	dispatch.Instructions = "This move sent the delegate its next input. Continue the same delegate through your harness's continue mechanism with the continue prompt; where the harness cannot continue it, launch a fresh-context " + dispatch.Agent + " sub-agent with the dispatch prompt instead, since the child's serve carries the full exchange. This dialogue's own session handle never goes into either prompt. Next with this instance and no report picks the delegate's next delivery up once it has landed."
 	return dispatch, nil
 }
 

@@ -612,6 +612,10 @@
           "items": {
             "additionalProperties": false,
             "properties": {
+              "agent": {
+                "description": "the subagent definition sdd init installs per harness to launch the delegate as",
+                "type": "string"
+              },
               "continue_prompt": {
                 "description": "the prompt continuing a delegate that worked an earlier round",
                 "type": "string"
@@ -645,7 +649,8 @@
               "procedure",
               "prompt",
               "continue_prompt",
-              "instructions"
+              "instructions",
+              "agent"
             ],
             "type": "object"
           },
@@ -1474,6 +1479,10 @@
                 "items": {
                   "additionalProperties": false,
                   "properties": {
+                    "agent": {
+                      "description": "the subagent definition sdd init installs per harness to launch the delegate as",
+                      "type": "string"
+                    },
                     "continue_prompt": {
                       "description": "the prompt continuing a delegate that worked an earlier round",
                       "type": "string"
@@ -1507,7 +1516,8 @@
                     "procedure",
                     "prompt",
                     "continue_prompt",
-                    "instructions"
+                    "instructions",
+                    "agent"
                   ],
                   "type": "object"
                 },
@@ -2304,6 +2314,10 @@
           "items": {
             "additionalProperties": false,
             "properties": {
+              "agent": {
+                "description": "the subagent definition sdd init installs per harness to launch the delegate as",
+                "type": "string"
+              },
               "continue_prompt": {
                 "description": "the prompt continuing a delegate that worked an earlier round",
                 "type": "string"
@@ -2337,7 +2351,8 @@
               "procedure",
               "prompt",
               "continue_prompt",
-              "instructions"
+              "instructions",
+              "agent"
             ],
             "type": "object"
           },
@@ -2754,6 +2769,10 @@
           "items": {
             "additionalProperties": false,
             "properties": {
+              "agent": {
+                "description": "the subagent definition sdd init installs per harness to launch the delegate as",
+                "type": "string"
+              },
               "continue_prompt": {
                 "description": "the prompt continuing a delegate that worked an earlier round",
                 "type": "string"
@@ -2787,7 +2806,8 @@
               "procedure",
               "prompt",
               "continue_prompt",
-              "instructions"
+              "instructions",
+              "agent"
             ],
             "type": "object"
           },

@@ -238,6 +238,9 @@ func TestDispatchingADeliveringTaskForksADelegateSession(t *testing.T) {
 	if !strings.Contains(dispatch.Instructions, "fresh-context sub-agent") {
 		t.Fatalf("the first round should name the fresh-context launch, got %q", dispatch.Instructions)
 	}
+	if dispatch.Agent != "sdd_delegate" || !strings.Contains(dispatch.Instructions, "the sdd_delegate subagent sdd init installs") {
+		t.Fatalf("the dispatch should name the subagent definition a harness launches, got %q: %q", dispatch.Agent, dispatch.Instructions)
+	}
 	for _, prompt := range []string{dispatch.Prompt, dispatch.ContinuePrompt} {
 		if !strings.Contains(prompt, string(dispatch.Session)) || strings.Contains(prompt, string(f.parent)) {
 			t.Fatalf("a delegate prompt carries the child handle and never the dispatching one, got %q", prompt)

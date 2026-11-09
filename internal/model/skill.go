@@ -102,6 +102,9 @@ type SkillBundleEntry struct {
 type SkillBundle struct {
 	Target  AgentTarget
 	Entries []SkillBundleEntry
+	// Agents are the harness subagent definitions the target installs beside
+	// its skills, each RelPath a file name under AgentDefinitionDir.
+	Agents []SkillBundleEntry
 }
 
 // SkillFile is a parsed on-disk skill file, carrying the install stamps read
@@ -410,6 +413,9 @@ func splitFrontmatter(content []byte) (map[string]any, []byte) {
 // from the embedded entry content (which has no stamps) to populate the
 // sdd-content-hash stamp itself.
 func RenderSkillFile(entry SkillBundleEntry, target AgentTarget, version, contentHash string) ([]byte, error) {
+	if isTOML(entry.RelPath) {
+		return renderTOMLStamped(entry.Content, version, contentHash), nil
+	}
 	fm, body := splitFrontmatter(entry.Content)
 	if fm == nil {
 		fm = map[string]any{}
@@ -473,8 +479,13 @@ func SkillInstallDir(target AgentTarget, scope Scope, repoRoot, userHome string)
 }
 
 // ParseSkillFile reads an on-disk skill file's raw bytes and extracts its
-// install-time stamps.
+// install-time stamps. A TOML file carries them as comment lines, which its
+// Content leaves out.
 func ParseSkillFile(absPath string, content []byte) *SkillFile {
+	if isTOML(absPath) {
+		version, hash, rest := parseTOMLStamped(content)
+		return &SkillFile{AbsPath: absPath, Content: rest, StoredVersion: version, StoredHash: hash}
+	}
 	fm, _ := splitFrontmatter(content)
 	sf := &SkillFile{AbsPath: absPath, Content: content}
 	if fm == nil {

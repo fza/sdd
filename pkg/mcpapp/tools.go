@@ -210,6 +210,7 @@ type DispatchResult struct {
 	Prompt         string `json:"prompt" jsonschema:"the whole prompt of a fresh-context delegate"`
 	ContinuePrompt string `json:"continue_prompt" jsonschema:"the prompt continuing a delegate that worked an earlier round"`
 	Instructions   string `json:"instructions"`
+	Agent          string `json:"agent" jsonschema:"the subagent definition sdd init installs per harness to launch the delegate as"`
 	Launch         string `json:"launch,omitempty" jsonschema:"set when sdd launched the delegate itself: the launch its round runs with, in the background"`
 }
 
@@ -1445,7 +1446,7 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 	for _, dispatch := range serve.Dispatches {
 		res.Dispatches = append(res.Dispatches, DispatchResult{
 			Session: string(dispatch.Session), Instance: dispatch.Instance, Procedure: dispatch.Procedure,
-			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Launch: dispatch.Launch,
+			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Agent: dispatch.Agent, Launch: dispatch.Launch,
 		})
 	}
 	framing, err := ss.root.Framing(ctx, s.requestIdentity(req))
