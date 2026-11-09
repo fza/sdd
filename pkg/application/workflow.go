@@ -312,7 +312,7 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err != nil {
 		return nil, nil, err
 	}
-	runtime.backfillTitles(ctx, created.Metadata.Branch, SyncOnSessionStart)
+	a.background.start(func() { runtime.backfillTitles(ctx, created.Metadata.Branch, SyncOnSessionStart) })
 	return w, public, nil
 }
 
@@ -352,7 +352,7 @@ func (a *Application) RefreshWorkflow(ctx context.Context, identity RequestIdent
 		return nil, endedSessionError(stored.Metadata, *end)
 	}
 	runtime.syncGraph(ctx, stored.Metadata.Branch, SyncOnCall)
-	runtime.backfillTitles(ctx, stored.Metadata.Branch, SyncOnCall)
+	a.background.start(func() { runtime.backfillTitles(ctx, stored.Metadata.Branch, SyncOnCall) })
 	return a.replayWorkflow(ctx, identity, runtime, stored)
 }
 
