@@ -59,16 +59,16 @@ func (c CLI) Commit(message string, paths ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), detachedTimeout)
 	defer cancel()
 
-	addArgs := c.at(append([]string{"add", "--all", "--"}, paths...)...)
-	if out, err := runDetachedPastIndexLock(ctx, c.localEnv(ctx), addArgs...); err != nil {
+	out, err := c.RunPastIndexLock(ctx, append([]string{"add", "--all", "--"}, paths...)...)
+	if err != nil {
 		return fmt.Errorf("git add: %s (%w)", out, err)
 	}
 
 	// Scope the commit to exactly the staged paths with an explicit pathspec.
 	// Without `-- <paths>`, `git commit` records the whole index, sweeping any
 	// pre-staged unrelated work into the CLI's own commit.
-	commitArgs := c.at(append([]string{"commit", "-m", message, "--"}, paths...)...)
-	if out, err := runDetachedPastIndexLock(ctx, c.localEnv(ctx), commitArgs...); err != nil {
+	out, err = c.RunPastIndexLock(ctx, append([]string{"commit", "-m", message, "--"}, paths...)...)
+	if err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
 	return c.RecordGraphCloneCommit(ctx)
@@ -150,15 +150,17 @@ func (c CLI) tracked(ctx context.Context, path string) (bool, error) {
 	return len(out) > 0, nil
 }
 
-// runDetachedPastIndexLock retries a git subprocess while another process
-// holds the repository's index lock, which clears when that process finishes;
-// a graph written beside concurrent captures meets it routinely. Retries stop
-// with ctx, so the commit timeout bounds the wait. Any other failure returns
-// at once.
-func runDetachedPastIndexLock(ctx context.Context, env []string, args ...string) ([]byte, error) {
+// RunPastIndexLock runs git with args in the adapter's repository, detached
+// like Commit, and returns its combined output. It retries while another
+// process holds the repository's index lock, which clears when that process
+// finishes; a graph written beside concurrent captures meets it routinely.
+// Retries stop with ctx, so the caller's timeout bounds the wait. Any other
+// failure returns at once.
+func (c CLI) RunPastIndexLock(ctx context.Context, args ...string) ([]byte, error) {
+	env := c.localEnv(ctx)
 	delay := 100 * time.Millisecond
 	for {
-		out, err := runDetachedEnv(ctx, env, args...)
+		out, err := runDetachedEnv(ctx, env, c.at(args...)...)
 		if err == nil || !strings.Contains(string(out), "index.lock") {
 			return out, err
 		}
