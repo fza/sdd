@@ -388,10 +388,10 @@ func TestCaptureDeep_NoSubagentFallsBackToAHeadlessLaunch(t *testing.T) {
 	proctest.RequireStep(t, serve, "deepDispatch")
 	forked := session.Answer(t, instance, "deepDispatch", "noSubagent", nil, "")
 	launches := launcher.Launches()
-	if len(launches) != 1 || launches[0].Launch != sdd.DelegateLaunchFallback || launches[0].Project != "proctest" {
+	if len(launches) != 1 || launches[0].Runner != sdd.DelegateLaunchFallback || launches[0].Project != "proctest" {
 		t.Fatalf("a harness without a subagent tool should get the headless fallback, got %+v", launches)
 	}
-	if dispatch := forked.Dispatches[0]; dispatch.Launch != "claude" || !strings.Contains(dispatch.Instructions, "fell back to the headless claude launch") {
+	if dispatch := forked.Dispatches[0]; dispatch.Runner != "claude" || !strings.Contains(dispatch.Instructions, "fell back to the headless claude runner") {
 		t.Fatalf("the serve should name the launch it fell back to, got %+v", dispatch)
 	}
 	round := launcher.NextRound(t)
@@ -406,14 +406,14 @@ func TestCaptureDeep_NoSubagentFallsBackToAHeadlessLaunch(t *testing.T) {
 
 func TestCaptureDeep_ConfiguredHeadlessLaunchRunsThroughSdd(t *testing.T) {
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-headless", sdd.VerifierPolicy{Launch: "codex"}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-headless", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	forked := session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
-	if launches := launcher.Launches(); len(launches) != 1 || launches[0].Launch != "codex" {
+	if launches := launcher.Launches(); len(launches) != 1 || launches[0].Runner != "codex" {
 		t.Fatalf("a configured headless launch should go to sdd's launcher, got %+v", launches)
 	}
-	if dispatch := forked.Dispatches[0]; dispatch.Launch != "claude" || !strings.Contains(dispatch.Instructions, "sdd launched the delegate itself, so launch nothing") {
+	if dispatch := forked.Dispatches[0]; dispatch.Runner != "claude" || !strings.Contains(dispatch.Instructions, "sdd launched the delegate itself, so launch nothing") {
 		t.Fatalf("the serve should tell the harness to launch nothing, got %+v", dispatch)
 	}
 	round := launcher.NextRound(t)
@@ -427,7 +427,7 @@ func TestCaptureDeep_SubagentLaunchStaysWithTheHarness(t *testing.T) {
 	launcher := headlessLauncher(t)
 	world, session := newDeepWorld(t, "deep-subagent", sdd.VerifierPolicy{}, proctest.WithDelegateLauncher(launcher))
 	x := startDeep(t, world, session, captureDraft())
-	if len(launcher.Launches()) != 0 || x.dispatch.Launch != "" || !strings.Contains(x.dispatch.Instructions, "Launch a fresh-context sub-agent") {
+	if len(launcher.Launches()) != 0 || x.dispatch.Runner != "" || !strings.Contains(x.dispatch.Instructions, "Launch a fresh-context sub-agent") {
 		t.Fatalf("a subagent launch is the harness's, got %+v and %d launches", x.dispatch, len(launcher.Launches()))
 	}
 }
@@ -456,7 +456,7 @@ func TestCaptureDeep_EditAfterTheVerdictRunsADeltaExchange(t *testing.T) {
 
 func TestCaptureDeep_FailedRoundEndsItsDelegateAndRetries(t *testing.T) {
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-launch-failed", sdd.VerifierPolicy{Launch: "codex"}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-launch-failed", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	failed := session.Answer(t, instance, "deepDispatch", "delegate", nil, "").Dispatches[0].Session
@@ -490,11 +490,11 @@ func TestCaptureDeep_FailedRoundEndsItsDelegateAndRetries(t *testing.T) {
 }
 
 func TestCaptureDeep_HeadlessLaunchWithoutALauncherIsRefused(t *testing.T) {
-	_, session := newDeepWorld(t, "deep-no-launcher", sdd.VerifierPolicy{Launch: "claude"})
+	_, session := newDeepWorld(t, "deep-no-launcher", sdd.VerifierPolicy{Runner: "claude"})
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	_, err := session.AnswerErr(t, instance, "deepDispatch", "delegate", nil, "")
-	if err == nil || !strings.Contains(err.Error(), "verify.launch claude needs sdd to launch the delegate") {
+	if err == nil || !strings.Contains(err.Error(), "verify.runner claude needs sdd to launch the delegate") {
 		t.Fatalf("a headless launch on a server that launches nothing should be refused naming the key, got %v", err)
 	}
 }
@@ -541,7 +541,7 @@ func TestCaptureDeep_EveryContestedFindingGetsAResponse(t *testing.T) {
 // A dispatching answer whose fork failed still stands: started is refused
 // until a delegate was dispatched, so the drafter reports the failure.
 func TestCaptureDeep_StartedNeedsADispatchedDelegate(t *testing.T) {
-	_, session := newDeepWorld(t, "deep-no-fork", sdd.VerifierPolicy{Launch: "claude"})
+	_, session := newDeepWorld(t, "deep-no-fork", sdd.VerifierPolicy{Runner: "claude"})
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	if _, err := session.AnswerErr(t, instance, "deepDispatch", "delegate", nil, ""); err == nil {
@@ -554,28 +554,32 @@ func TestCaptureDeep_StartedNeedsADispatchedDelegate(t *testing.T) {
 	}
 }
 
-// verify.subagent reaches the harness: the dispatch names the model and
-// effort to launch the verify subagent with, in its fields and its
-// instructions. Unset, it names neither.
-func TestCaptureDeep_SubagentDispatchCarriesItsModelAndEffort(t *testing.T) {
+// A subagent dispatch takes the agent block matching the MCP client the
+// session attached through: verify.claude in Claude Code (claude-code),
+// verify.codex in Codex (codex-mcp-client), and neither in any other client.
+// The dispatch names the model and effort in its fields and its instructions.
+func TestCaptureDeep_SubagentDispatchTakesTheClientsAgentBlock(t *testing.T) {
+	set := sdd.VerifierPolicy{Claude: sdd.VerifierAgent{Model: "opus", Effort: "high"}, Codex: sdd.VerifierAgent{Model: "gpt-5.5", Effort: "low"}}
 	for _, tc := range []struct {
-		name        string
-		subagent    sdd.VerifierAgent
-		instruction string
+		name, client string
+		policy       sdd.VerifierPolicy
+		want         sdd.VerifierAgent
+		instruction  string
 	}{
-		{"both", sdd.VerifierAgent{Model: "opus", Effort: "high"}, "Launch it with model opus and effort high"},
-		{"model only", sdd.VerifierAgent{Model: "sonnet"}, "Launch it with model sonnet, the dispatch's model."},
-		{"effort only", sdd.VerifierAgent{Effort: "max"}, "Launch it with effort max, the dispatch's effort."},
-		{"neither", sdd.VerifierAgent{}, ""},
+		{"claude code", "claude-code", set, sdd.VerifierAgent{Model: "opus", Effort: "high"}, "Launch it with model opus and effort high"},
+		{"codex", "codex-mcp-client", set, sdd.VerifierAgent{Model: "gpt-5.5", Effort: "low"}, "Launch it with model gpt-5.5 and effort low"},
+		{"claude code defaults", "claude-code", sdd.VerifierPolicy{}, sdd.VerifierAgent{Model: "sonnet", Effort: "medium"}, "Launch it with model sonnet and effort medium"},
+		{"codex defaults", "codex-mcp-client", sdd.VerifierPolicy{}, sdd.VerifierAgent{Effort: "medium"}, "Launch it with effort medium, the dispatch's effort."},
+		{"another client", "cursor", set, sdd.VerifierAgent{}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			world, session := newDeepWorld(t, "deep-subagent-model", sdd.VerifierPolicy{Subagent: tc.subagent})
+			world, session := newDeepWorld(t, tc.client, tc.policy)
 			x := startDeep(t, world, session, captureDraft())
-			if x.dispatch.Model != tc.subagent.Model || x.dispatch.Effort != tc.subagent.Effort {
-				t.Fatalf("the dispatch should carry verify.subagent's model and effort, got %q and %q", x.dispatch.Model, x.dispatch.Effort)
+			if x.dispatch.Model != tc.want.Model || x.dispatch.Effort != tc.want.Effort {
+				t.Fatalf("the dispatch should carry %+v, got %q and %q", tc.want, x.dispatch.Model, x.dispatch.Effort)
 			}
 			if tc.instruction == "" && strings.Contains(x.dispatch.Instructions, "Launch it with") {
-				t.Fatalf("an unset block should add no model or effort to the instructions:\n%s", x.dispatch.Instructions)
+				t.Fatalf("another client should get no model or effort in the instructions:\n%s", x.dispatch.Instructions)
 			}
 			if tc.instruction != "" && !strings.Contains(x.dispatch.Instructions, tc.instruction) {
 				t.Fatalf("the instructions should name the model and effort to launch with:\n%s", x.dispatch.Instructions)

@@ -19,7 +19,7 @@ func contributionProject(t *testing.T) (project, feature string) {
 	writeFile(t, filepath.Join(project, ".gitignore"), ".sdd/config.local.yaml\nxdg-*/\n")
 	initRepo(t, project)
 	gitIn(t, project, "branch", "-M", "main")
-	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "repo_id: example.test/contrib\ngraph_dir: .sdd/graph\ndefault_branch: main\n")
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "repo_id: example.test/contrib\ngraph_dir: .sdd/graph\ndefault_branch: main\nverify:\n  mode: off\n")
 	writeFile(t, filepath.Join(project, ".sdd", "graph", ".gitkeep"), "")
 	gitIn(t, project, "add", ".gitignore", ".sdd/config.yaml", ".sdd/graph/.gitkeep")
 	gitIn(t, project, "commit", "-q", "-m", "sdd project")
@@ -79,7 +79,7 @@ func TestContributionModeLeavesOtherCheckoutsAlone(t *testing.T) {
 
 func TestContributionKeyIsRefusedInTheCommittedConfig(t *testing.T) {
 	project, _ := contributionProject(t)
-	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "repo_id: example.test/contrib\ngraph_dir: .sdd/graph\ndefault_branch: main\ncontribution: origin/main\n")
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "repo_id: example.test/contrib\ngraph_dir: .sdd/graph\ndefault_branch: main\ncontribution: origin/main\nverify:\n  mode: off\n")
 	output, err := captureGap(t, project)
 	if err == nil || !strings.Contains(err.Error()+output, "contribution is machine-local") {
 		t.Fatalf("a committed contribution key should be refused, got %v\n%s", err, output)

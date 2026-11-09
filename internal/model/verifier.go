@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // VerifyMode is how carefully a capture is checked against the graph before
@@ -18,6 +19,10 @@ const (
 	VerifyProse     VerifyMode = "prose"
 	VerifyDeep      VerifyMode = "deep"
 )
+
+// DefaultVerifyMode is the mode an unset verify.mode resolves to
+// (20261109-222220-d-tac-4ev).
+const DefaultVerifyMode = VerifyProse
 
 // VerifyModes lists the modes, loosest first.
 func VerifyModes() []VerifyMode {
@@ -69,86 +74,88 @@ const (
 
 var verifierSkips = []VerifierSkip{VerifierSkipWeighed, VerifierSkipFailure, VerifierSkipNever}
 
-// VerifierLaunch is how a deep verifier session is launched (V-D16, V-D19):
-// by the drafting agent's harness as a subagent, or by sdd through a headless
-// agent CLI or an external driver.
-type VerifierLaunch string
+// VerifierRunner is what runs a deep verifier session (V-D16, V-D19): the
+// drafting agent's harness as a subagent, or sdd through a headless agent CLI
+// or an external driver.
+type VerifierRunner string
 
 const (
-	VerifierLaunchSubagent     VerifierLaunch = "subagent"
-	VerifierLaunchClaude       VerifierLaunch = "claude"
-	VerifierLaunchCodex        VerifierLaunch = "codex"
-	VerifierLaunchCustomDriver VerifierLaunch = "custom_driver"
+	VerifierRunnerSubagent VerifierRunner = "subagent"
+	VerifierRunnerClaude   VerifierRunner = "claude"
+	VerifierRunnerCodex    VerifierRunner = "codex"
+	VerifierRunnerDriver   VerifierRunner = "driver"
 )
 
-var verifierLaunches = []VerifierLaunch{VerifierLaunchSubagent, VerifierLaunchClaude, VerifierLaunchCodex, VerifierLaunchCustomDriver}
+var verifierRunners = []VerifierRunner{VerifierRunnerSubagent, VerifierRunnerClaude, VerifierRunnerCodex, VerifierRunnerDriver}
 
-// VerifierDriver is the external command a custom_driver launch runs per
-// round.
+// VerifierDriver is the external command a driver runner runs per round.
 type VerifierDriver struct {
 	Command string   `yaml:"command,omitempty"`
 	Args    []string `yaml:"args,omitempty"`
 }
 
-// VerifierAgent is the model and effort one launch runs the deep verifier
-// with; an empty value leaves the launch's own default. Each launch names
-// models and efforts its own way, so every launch has its own pair, and a
-// custom_driver's command picks its own.
+// VerifierAgent is the model and effort the deep verifier runs with in one
+// agent family, passed to its CLI or subagent tool as written; an empty value
+// leaves the agent's own default. A driver's command picks its own.
 type VerifierAgent struct {
 	Model  string `yaml:"model,omitempty"`
 	Effort string `yaml:"effort,omitempty"`
 }
 
-// claudeEfforts are the levels the claude CLI's --effort takes. Codex and a
-// harness's subagent tool accept model-defined levels, so theirs pass as set.
+// Verifier agent defaults (20261109-222220-d-tac-4ev): the alias sonnet, which
+// every Claude harness accepts, and codex's own default model.
+var (
+	DefaultVerifierClaude = VerifierAgent{Model: "sonnet", Effort: "medium"}
+	DefaultVerifierCodex  = VerifierAgent{Effort: "medium"}
+)
+
+// claudeEfforts are the levels the claude CLI's --effort takes. Codex accepts
+// model-defined levels, so its own pass as set.
 var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
 // VerifyConfig is the `verify` block (20261109-004506-d-cpt-udz,
-// 20261109-004729-d-cpt-xs5). Mode and skip are policy: the user-global and
-// the committed config set them, the committed value wins, and the
-// machine-local config may only tighten them. Launch and the per-launch
-// model and effort describe the machine, so the machine-local value wins
-// (V-D20); the driver runs a command, so only the user-global and
-// machine-local layers set it (V-D19). Pointers tell an unset grounding key
-// from one a layer sets.
+// 20261109-004729-d-cpt-xs5, 20261109-222220-d-tac-4ev). Mode and skip are
+// policy: the user-global and the committed config set them, the committed
+// value wins, and the machine-local config may only tighten them. The runner
+// and the per-agent model and effort describe the machine, so the
+// machine-local value wins (V-D20); the driver runs a command, so only the
+// user-global and machine-local layers set it (V-D19). Pointers tell an unset
+// grounding key from one a layer sets.
 type VerifyConfig struct {
 	Mode          VerifyMode           `yaml:"mode,omitempty"`
 	Skip          VerifierSkip         `yaml:"skip,omitempty"`
-	Launch        VerifierLaunch       `yaml:"launch,omitempty"`
+	Runner        VerifierRunner       `yaml:"runner,omitempty"`
 	Driver        VerifierDriver       `yaml:"driver,omitempty"`
-	Subagent      VerifierAgent        `yaml:"subagent,omitempty"`
 	Claude        VerifierAgent        `yaml:"claude,omitempty"`
 	Codex         VerifierAgent        `yaml:"codex,omitempty"`
 	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
 	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
 	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
-	// Prefilter switches the prefilter on where llm_prefilter configures it
-	// (D7); off by default.
+	// Prefilter switches the prefilter on (D7); on by default.
 	Prefilter *bool `yaml:"prefilter,omitempty"`
 }
 
 // VerifierPolicy is the resolved verifier configuration of one project.
 type VerifierPolicy struct {
-	Mode     VerifierMode
-	Skip     VerifierSkip
-	Launch   VerifierLaunch
-	Driver   VerifierDriver
-	Subagent VerifierAgent
-	Claude   VerifierAgent
-	Codex    VerifierAgent
+	Mode   VerifierMode
+	Skip   VerifierSkip
+	Runner VerifierRunner
+	Driver VerifierDriver
+	Claude VerifierAgent
+	Codex  VerifierAgent
 }
 
 // VerifierPolicy resolves the block's verifier keys against the defaults.
 func (c VerifyConfig) VerifierPolicy() VerifierPolicy {
-	_, mode := c.Mode.Settings()
+	_, mode := c.ResolvedMode().Settings()
 	return VerifierPolicy{
-		Mode: mode, Skip: c.Skip, Launch: c.Launch, Driver: c.Driver,
-		Subagent: c.Subagent, Claude: c.Claude, Codex: c.Codex,
+		Mode: mode, Skip: c.Skip, Runner: c.Runner, Driver: c.Driver,
+		Claude: c.Claude, Codex: c.Codex,
 	}.WithDefaults()
 }
 
-// WithDefaults fills the unset values: off, skip on failure, and a subagent
-// launch.
+// WithDefaults fills the unset values: off, skip on failure, a subagent
+// runner, and the default model and effort of each agent family.
 func (p VerifierPolicy) WithDefaults() VerifierPolicy {
 	if p.Mode == "" {
 		p.Mode = VerifierOff
@@ -156,9 +163,11 @@ func (p VerifierPolicy) WithDefaults() VerifierPolicy {
 	if p.Skip == "" {
 		p.Skip = VerifierSkipFailure
 	}
-	if p.Launch == "" {
-		p.Launch = VerifierLaunchSubagent
+	if p.Runner == "" {
+		p.Runner = VerifierRunnerSubagent
 	}
+	p.Claude = mergeVerifierAgent(DefaultVerifierClaude, p.Claude)
+	p.Codex = mergeVerifierAgent(DefaultVerifierCodex, p.Codex)
 	return p
 }
 
@@ -170,13 +179,12 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 	if overlay.Skip != "" {
 		out.Skip = overlay.Skip
 	}
-	if overlay.Launch != "" {
-		out.Launch = overlay.Launch
+	if overlay.Runner != "" {
+		out.Runner = overlay.Runner
 	}
 	if overlay.Driver.Command != "" {
 		out.Driver = overlay.Driver
 	}
-	out.Subagent = mergeVerifierAgent(out.Subagent, overlay.Subagent)
 	out.Claude = mergeVerifierAgent(out.Claude, overlay.Claude)
 	out.Codex = mergeVerifierAgent(out.Codex, overlay.Codex)
 	if overlay.Depth.Down != nil {
@@ -209,8 +217,8 @@ func mergeVerifierAgent(base, overlay VerifierAgent) VerifierAgent {
 
 // CheckVerifyLayers refuses a verify configuration that cannot hold: an
 // unknown value, a machine-local value loosening what the user-global and
-// committed layers set, a driver in the committed config, or a custom_driver
-// launch no layer names a driver for (V-D19). files names the file behind
+// committed layers set, a driver in the committed config, or a driver
+// runner no layer names a command for (V-D19). files names the file behind
 // each layer; the refusal names the key, and the file of every layer it
 // judges.
 func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
@@ -240,8 +248,8 @@ func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files
 		if skip := layer.cfg.Verify.Skip; skip != "" && !slices.Contains(verifierSkips, skip) {
 			return fmt.Errorf("%s: verify.skip %q is not never, failure or weighed", layerFile(layer.source, files), skip)
 		}
-		if launch := layer.cfg.Verify.Launch; launch != "" && !slices.Contains(verifierLaunches, launch) {
-			return fmt.Errorf("%s: verify.launch %q is not subagent, claude, codex or custom_driver", layerFile(layer.source, files), launch)
+		if runner := layer.cfg.Verify.Runner; runner != "" && !slices.Contains(verifierRunners, runner) {
+			return fmt.Errorf("%s: verify.runner %q is not subagent, claude, codex or driver", layerFile(layer.source, files), runner)
 		}
 		if effort := layer.cfg.Verify.Claude.Effort; effort != "" && !slices.Contains(claudeEfforts, effort) {
 			return fmt.Errorf("%s: verify.claude.effort %q is not low, medium, high, xhigh or max", layerFile(layer.source, files), effort)
@@ -257,11 +265,11 @@ func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files
 	if local != nil {
 		lowerMode := shared.Verify.Mode
 		if lowerMode == "" {
-			lowerMode = VerifyOff
+			lowerMode = DefaultVerifyMode
 		}
 		lowerSkip := shared.Verify.VerifierPolicy().Skip
 		if mode := local.Verify.Mode; mode != "" && slices.Index(VerifyModes(), mode) < slices.Index(VerifyModes(), lowerMode) {
-			return fmt.Errorf("%s: verify.mode %s is refused in the machine-local config, which may only raise the %s the shared layers set; lower it in %s",
+			return fmt.Errorf("%s: verify.mode %s is refused in the machine-local config, which may only raise the %s the shared layers resolve to; lower it in %s",
 				layerFile(ConfigSourceLocal, files), mode, lowerMode, sharedVerifyFile(global, committed, "mode", files))
 		}
 		if skip := local.Verify.Skip; skip != "" && slices.Index(verifierSkips, skip) < slices.Index(verifierSkips, lowerSkip) {
@@ -273,8 +281,8 @@ func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files
 	if local != nil {
 		resolved = MergeBaseConfig(resolved, local.BaseConfig)
 	}
-	if policy := resolved.Verify.VerifierPolicy(); policy.Launch == VerifierLaunchCustomDriver && policy.Driver.Command == "" {
-		return fmt.Errorf("verify.launch custom_driver needs verify.driver.command, which neither the user-global nor the machine-local config sets; set it in %s", layerFile(ConfigSourceLocal, files))
+	if policy := resolved.Verify.VerifierPolicy(); policy.Runner == VerifierRunnerDriver && policy.Driver.Command == "" {
+		return fmt.Errorf("verify.runner driver needs verify.driver.command, which neither the user-global nor the machine-local config sets; set it in %s", layerFile(ConfigSourceLocal, files))
 	}
 	return nil
 }
@@ -300,26 +308,49 @@ func sharedVerifyFile(global BaseConfig, committed *PerRepoConfig, key string, f
 	return layerFile(ConfigSourceProject, files)
 }
 
-// VerifierLaunchChoices are the launches `sdd init` offers for the deep
+// VerifierRunnerChoices are the runners `sdd init` offers for the deep
 // verifier (V-D28): subagent first as the default, then claude and codex where
-// agents names them, in its order, and custom_driver only where a layer
-// already configures a driver.
-func VerifierLaunchChoices(agents []AgentTarget, driver VerifierDriver) []VerifierLaunch {
-	choices := []VerifierLaunch{VerifierLaunchSubagent}
+// agents names them, in its order, and driver only where a layer already
+// configures a driver command.
+func VerifierRunnerChoices(agents []AgentTarget, driver VerifierDriver) []VerifierRunner {
+	choices := []VerifierRunner{VerifierRunnerSubagent}
 	for _, agent := range agents {
-		launch := VerifierLaunch(agent)
-		if (launch == VerifierLaunchClaude || launch == VerifierLaunchCodex) && !slices.Contains(choices, launch) {
-			choices = append(choices, launch)
+		runner := VerifierRunner(agent)
+		if (runner == VerifierRunnerClaude || runner == VerifierRunnerCodex) && !slices.Contains(choices, runner) {
+			choices = append(choices, runner)
 		}
 	}
 	if driver.Command != "" {
-		choices = append(choices, VerifierLaunchCustomDriver)
+		choices = append(choices, VerifierRunnerDriver)
 	}
 	return choices
 }
 
-// VerifierLaunchAsked reports whether `sdd init` asks for the launch (V-D28):
+// VerifierRunnerAsked reports whether `sdd init` asks for the runner (V-D28):
 // only under mode deep, and only while no layer sets one.
-func VerifierLaunchAsked(mode VerifyMode, recorded VerifyConfig) bool {
-	return mode == VerifyDeep && recorded.Launch == ""
+func VerifierRunnerAsked(mode VerifyMode, recorded VerifyConfig) bool {
+	return mode == VerifyDeep && recorded.Runner == ""
+}
+
+// SubagentAgent is the agent block a subagent runner launches the deep
+// verifier with under the MCP client clientName: Claude's where the name holds
+// "claude", Codex's where it holds "codex", matched case-insensitively; none
+// for any other client, whose subagent tool takes the harness's own.
+func (p VerifierPolicy) SubagentAgent(clientName string) VerifierAgent {
+	name := strings.ToLower(clientName)
+	switch {
+	case strings.Contains(name, "claude"):
+		return p.Claude
+	case strings.Contains(name, "codex"):
+		return p.Codex
+	}
+	return VerifierAgent{}
+}
+
+// ResolvedMode is the block's mode, DefaultVerifyMode when unset.
+func (c VerifyConfig) ResolvedMode() VerifyMode {
+	if c.Mode == "" {
+		return DefaultVerifyMode
+	}
+	return c.Mode
 }

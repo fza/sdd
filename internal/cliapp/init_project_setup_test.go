@@ -79,7 +79,7 @@ func TestInitSetsUpAMissingProject(t *testing.T) {
 				tc.prepare(t, project)
 			}
 
-			runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "de", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "autonomous")
+			runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "de", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "autonomous", "--verify-mode", "off")
 
 			projectConfig := readFile(t, filepath.Join(project, ".sdd", "config.yaml"))
 			for _, setting := range []string{"graph_dir: graph", "language: de", "skill_scope: project"} {

@@ -15,23 +15,28 @@ type VerifierPolicy struct {
 	Mode string
 	// Skip is never, failure or weighed; empty means failure.
 	Skip string
-	// Launch is subagent, claude, codex or custom_driver; empty means
-	// subagent. The values other than subagent need the composition's
-	// DelegateLauncher.
-	Launch string
-	// Subagent is the model and effort the dispatch asks the harness to run a
-	// subagent-launched deep verifier with; empty leaves the harness's own.
-	Subagent VerifierAgent
+	// Runner is subagent, claude, codex or driver; empty means subagent. The
+	// values other than subagent need the composition's DelegateLauncher.
+	Runner string
+	// Claude and Codex are the model and effort the dispatch asks a Claude or
+	// a Codex harness to run a subagent deep verifier with, told apart by the
+	// MCP client name; an empty field takes model.DefaultVerifierClaude or
+	// model.DefaultVerifierCodex.
+	Claude VerifierAgent
+	Codex  VerifierAgent
 }
 
-// VerifierAgent is a model and effort a deep verifier launch runs with.
+// VerifierAgent is a model and effort a deep verifier runs with.
 type VerifierAgent struct {
 	Model  string
 	Effort string
 }
 
 func (p VerifierPolicy) resolved() model.VerifierPolicy {
-	return model.VerifierPolicy{Mode: model.VerifierMode(p.Mode), Skip: model.VerifierSkip(p.Skip), Launch: model.VerifierLaunch(p.Launch)}.WithDefaults()
+	return model.VerifierPolicy{
+		Mode: model.VerifierMode(p.Mode), Skip: model.VerifierSkip(p.Skip), Runner: model.VerifierRunner(p.Runner),
+		Claude: model.VerifierAgent(p.Claude), Codex: model.VerifierAgent(p.Codex),
+	}.WithDefaults()
 }
 
 func (p VerifierPolicy) mode() model.VerifierMode { return p.resolved().Mode }

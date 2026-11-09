@@ -161,13 +161,13 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 }
 
 // writeLocalSettings records the per-person settings cmd carries, the
-// participant, the dialogue mode and the verifier launch, in sddDir's
+// participant, the dialogue mode and the verifier runner, in sddDir's
 // config.local.yaml, keeping every other key in that file.
 func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
 	settings := []struct{ key, value string }{
 		{"participant", cmd.Participant},
 		{"dialogue.mode", string(cmd.DialogueMode)},
-		{"verify.launch", string(cmd.VerifierLaunch)},
+		{"verify.runner", string(cmd.VerifierRunner)},
 	}
 	configLocalPath := meta.LocalConfigPath(sddDir, cmd.LocalConfigPath)
 	for _, setting := range settings {

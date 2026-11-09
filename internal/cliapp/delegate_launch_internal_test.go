@@ -34,7 +34,7 @@ func TestHeadlessLauncher_LeavesAnUnconfiguredLaunchToTheHarness(t *testing.T) {
 func TestHeadlessLauncher_LaunchesOnlyInTheServedProject(t *testing.T) {
 	launcher := launcherServing(t, &model.PerRepoConfig{})
 
-	_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "dependency", Launch: "claude"})
+	_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "dependency", Runner: "claude"})
 
 	if err == nil || !strings.Contains(err.Error(), "only in the served project served, not in dependency") {
 		t.Fatalf("a launch in another project should be refused, got %v", err)
@@ -53,7 +53,7 @@ func TestHeadlessLauncher_FallsBackThroughTheProjectsAgents(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			launcher := launcherServing(t, &model.PerRepoConfig{SupportedAgents: tc.agents})
 
-			_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Launch: sdd.DelegateLaunchFallback})
+			_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Runner: sdd.DelegateLaunchFallback})
 
 			if err == nil || !strings.Contains(err.Error(), tc.refusal) {
 				t.Fatalf("the fallback should try the project's supported agents in order, got %v", err)
@@ -64,11 +64,11 @@ func TestHeadlessLauncher_FallsBackThroughTheProjectsAgents(t *testing.T) {
 
 func TestHeadlessLauncher_RunsTheConfiguredDriver(t *testing.T) {
 	driver := filepath.Join(t.TempDir(), "absent-driver")
-	launcher := launcherServing(t, &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Launch: model.VerifierLaunchCustomDriver, Driver: model.VerifierDriver{Command: driver}}}})
+	launcher := launcherServing(t, &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Runner: model.VerifierRunnerDriver, Driver: model.VerifierDriver{Command: driver}}}})
 
-	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Launch: "custom_driver"})
-	if err != nil || run.Launch != "custom_driver" {
-		t.Fatalf("the launcher should take the driver launch on at once, got %+v, %v", run, err)
+	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Runner: "driver"})
+	if err != nil || run.Runner != "driver" {
+		t.Fatalf("the launcher should take the driver runner on at once, got %+v, %v", run, err)
 	}
 	_, err = run.Round(context.Background(), sdd.DelegateRound{Number: 1})
 
@@ -81,7 +81,7 @@ func TestHeadlessLauncher_RunsTheConfiguredDriver(t *testing.T) {
 // claude runs with verify.claude, never with verify.codex.
 func TestHeadlessLauncher_PassesTheLaunchsModelAndEffort(t *testing.T) {
 	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{
-		Launch: model.VerifierLaunchClaude,
+		Runner: model.VerifierRunnerClaude,
 		Claude: model.VerifierAgent{Model: "opus", Effort: "xhigh"},
 		Codex:  model.VerifierAgent{Model: "gpt-5.5", Effort: "high"},
 	}}}
@@ -95,7 +95,7 @@ func TestHeadlessLauncher_PassesTheLaunchsModelAndEffort(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/bin:/usr/bin")
 
-	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Launch: "claude"})
+	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Runner: "claude"})
 	if err != nil {
 		t.Fatal(err)
 	}

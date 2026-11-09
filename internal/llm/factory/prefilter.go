@@ -29,8 +29,8 @@ type Prefilter struct {
 	Judge  string
 }
 
-// NewPrefilter composes the llm_prefilter block into a bounded, observed
-// scorer.
+// NewPrefilter composes a resolved llm_prefilter block
+// (model.BaseConfig.ResolvedPrefilter) into a bounded, observed scorer.
 func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, error) {
 	timeout := defaultPrefilterTimeout
 	if cfg.Timeout != "" {

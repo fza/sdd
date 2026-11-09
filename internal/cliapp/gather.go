@@ -102,7 +102,7 @@ func refuseUngroundedNew(cfg *model.PerRepoConfig, ncmd *command.NewEntryCmd) er
 	if !groundingPolicy(cfg).Enforce || ncmd.SkipGrounding || ncmd.DryRun || model.GroundingExemptKind(kind) {
 		return nil
 	}
-	return fmt.Errorf("verify.mode %s enforces grounding, so sdd new does not write a %s directly: capture it through the engine (start_procedure capture over the MCP server), whose gather reading the gate judges, write it into that capture with sdd new --session, or pass --skip-grounding to record a bypass", cfg.Verify.Mode, kind)
+	return fmt.Errorf("verify.mode %s enforces grounding, so sdd new does not write a %s directly: capture it through the engine (start_procedure capture over the MCP server), whose gather reading the gate judges, write it into that capture with sdd new --session, or pass --skip-grounding to record a bypass", resolvedVerifyMode(cfg), kind)
 }
 
 // groundingPolicy is the resolved grounding part of cfg's verify block.
@@ -121,12 +121,23 @@ func groundingPolicy(cfg *model.PerRepoConfig) sdd.GroundingPolicy {
 	}
 }
 
-func verifierPolicy(cfg *model.PerRepoConfig) sdd.VerifierPolicy {
+func resolvedVerifyMode(cfg *model.PerRepoConfig) model.VerifyMode {
 	if cfg == nil {
-		return sdd.VerifierPolicy{}
+		return model.DefaultVerifyMode
 	}
-	policy := cfg.Verify.VerifierPolicy()
-	return sdd.VerifierPolicy{Mode: string(policy.Mode), Skip: string(policy.Skip), Launch: string(policy.Launch), Subagent: sdd.VerifierAgent(policy.Subagent)}
+	return cfg.Verify.ResolvedMode()
+}
+
+func verifierPolicy(cfg *model.PerRepoConfig) sdd.VerifierPolicy {
+	var block model.VerifyConfig
+	if cfg != nil {
+		block = cfg.Verify
+	}
+	policy := block.VerifierPolicy()
+	return sdd.VerifierPolicy{
+		Mode: string(policy.Mode), Skip: string(policy.Skip), Runner: string(policy.Runner),
+		Claude: sdd.VerifierAgent(policy.Claude), Codex: sdd.VerifierAgent(policy.Codex),
+	}
 }
 
 // modelWindows detects each model's context window once per process.

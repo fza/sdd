@@ -27,6 +27,8 @@ func sessionFixture(t *testing.T, enforce bool) *appFixture {
 	config := "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\n"
 	if enforce {
 		config += "verify:\n  mode: grounding\n"
+	} else {
+		config += "verify:\n  mode: off\n"
 	}
 	f.write(t, ".sdd/config.yaml", config)
 	f.write(t, ".sdd/config.local.yaml", "participant: Local Author\nllm:\n  provider: openai\n  model: fake\n  endpoint: "+llm.URL+"\n  api_keys:\n    openai: op-notarealkeyaaaaaaaaaa\n  retry:\n    max_attempts: 1\n")

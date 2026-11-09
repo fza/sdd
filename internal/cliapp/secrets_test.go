@@ -14,7 +14,7 @@ import (
 func TestNewRefusesACredential(t *testing.T) {
 	project := canonicalTemp(t)
 	initRepo(t, project)
-	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\n")
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nverify:\n  mode: off\n")
 	writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
 	err := os.MkdirAll(filepath.Join(project, ".sdd", "graph"), 0o755)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestNewRefusesACredential(t *testing.T) {
 func TestSearchQueryWithACredentialSearchesLiterally(t *testing.T) {
 	project := canonicalTemp(t)
 	initRepo(t, project)
-	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\n")
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nverify:\n  mode: off\n")
 	content, err := fs.ReadFile(test.SecretFixtures(), "positive/gitlab-pat.txt")
 	if err != nil {
 		t.Fatal(err)

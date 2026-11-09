@@ -31,18 +31,23 @@ type ConfigValue struct {
 // layer sets a key — the values a run actually uses, so `sdd config` answers
 // "what will happen" rather than "what is written down".
 var configDefaults = map[string]string{
-	"graph_dir":           DefaultGraphDir,
-	"llm.provider":        DefaultLLMProvider,
-	"llm.model":           DefaultLLMModel,
-	"llm.max_tokens":      strconv.Itoa(DefaultLLMMaxTokens),
-	"llm.concurrency":     strconv.Itoa(DefaultLLMConcurrency),
-	"llm.extract_timeout": DefaultLLMExtractTimeout.String(),
-	"sync.cooldown":       DefaultSyncCooldown,
-	"sync.mode":           string(SyncModeManual),
-	"dialogue.mode":       string(DialogueGuided),
-	"verify.mode":         string(VerifyOff),
-	"verify.skip":         string(VerifierSkipFailure),
-	"verify.launch":       string(VerifierLaunchSubagent),
+	"graph_dir":            DefaultGraphDir,
+	"llm.provider":         DefaultLLMProvider,
+	"llm.model":            DefaultLLMModel,
+	"llm.effort":           DefaultLLMEffort,
+	"llm.max_tokens":       strconv.Itoa(DefaultLLMMaxTokens),
+	"llm.concurrency":      strconv.Itoa(DefaultLLMConcurrency),
+	"llm.extract_timeout":  DefaultLLMExtractTimeout.String(),
+	"sync.cooldown":        DefaultSyncCooldown,
+	"sync.mode":            string(SyncModeManual),
+	"dialogue.mode":        string(DialogueGuided),
+	"verify.mode":          string(DefaultVerifyMode),
+	"verify.skip":          string(VerifierSkipFailure),
+	"verify.runner":        string(VerifierRunnerSubagent),
+	"verify.prefilter":     strconv.FormatBool(DefaultGroundingPrefilter),
+	"verify.claude.model":  DefaultVerifierClaude.Model,
+	"verify.claude.effort": DefaultVerifierClaude.Effort,
+	"verify.codex.effort":  DefaultVerifierCodex.Effort,
 
 	"sync.default.fetch_cooldown":                 DefaultGitFetchCooldown.String(),
 	"sync.default.push_cooldown":                  DefaultGitPushCooldown.String(),
@@ -74,6 +79,14 @@ func effectiveConfigValues(global BaseConfig, project, local *PerRepoConfig, mas
 		{&PerRepoConfig{BaseConfig: global}, ConfigSourceGlobal},
 	}
 
+	provider := DefaultLLMProvider
+	for _, layer := range layers {
+		if layer.cfg != nil && layer.cfg.LLM.Provider != "" {
+			provider = layer.cfg.LLM.Provider
+			break
+		}
+	}
+
 	var out []ConfigValue
 	for _, leaf := range collectConfigLeaves(reflect.TypeFor[PerRepoConfig](), nil, nil) {
 		switch leaf.kind {
@@ -96,7 +109,7 @@ func effectiveConfigValues(global BaseConfig, project, local *PerRepoConfig, mas
 			}
 			if !set {
 				def, ok := configDefaults[leaf.path]
-				if !ok {
+				if !ok || !providerDefault(leaf.path, provider) {
 					continue
 				}
 				val = ConfigValue{Key: leaf.path, Value: def, Source: ConfigSourceDefault}
@@ -251,4 +264,17 @@ func ParseConfigScalar(s string) any {
 		return f
 	}
 	return s
+}
+
+// providerDefault reports whether the baked default of path applies under
+// provider: codex runs its own default model, and only the CLI providers take
+// llm.effort.
+func providerDefault(path, provider string) bool {
+	switch path {
+	case "llm.model":
+		return provider != LLMProviderCodex
+	case "llm.effort":
+		return provider == DefaultLLMProvider || provider == LLMProviderCodex
+	}
+	return true
 }

@@ -631,10 +631,6 @@
               "instructions": {
                 "type": "string"
               },
-              "launch": {
-                "description": "set when sdd launched the delegate itself: the launch its round runs with, in the background",
-                "type": "string"
-              },
               "model": {
                 "description": "the model the harness launches that subagent with; unset leaves the harness's own",
                 "type": "string"
@@ -644,6 +640,10 @@
               },
               "prompt": {
                 "description": "the whole prompt of a fresh-context delegate",
+                "type": "string"
+              },
+              "runner": {
+                "description": "set when sdd launched the delegate itself: the runner its round runs with, in the background",
                 "type": "string"
               },
               "session": {
@@ -1506,10 +1506,6 @@
                     "instructions": {
                       "type": "string"
                     },
-                    "launch": {
-                      "description": "set when sdd launched the delegate itself: the launch its round runs with, in the background",
-                      "type": "string"
-                    },
                     "model": {
                       "description": "the model the harness launches that subagent with; unset leaves the harness's own",
                       "type": "string"
@@ -1519,6 +1515,10 @@
                     },
                     "prompt": {
                       "description": "the whole prompt of a fresh-context delegate",
+                      "type": "string"
+                    },
+                    "runner": {
+                      "description": "set when sdd launched the delegate itself: the runner its round runs with, in the background",
                       "type": "string"
                     },
                     "session": {
@@ -2349,10 +2349,6 @@
               "instructions": {
                 "type": "string"
               },
-              "launch": {
-                "description": "set when sdd launched the delegate itself: the launch its round runs with, in the background",
-                "type": "string"
-              },
               "model": {
                 "description": "the model the harness launches that subagent with; unset leaves the harness's own",
                 "type": "string"
@@ -2362,6 +2358,10 @@
               },
               "prompt": {
                 "description": "the whole prompt of a fresh-context delegate",
+                "type": "string"
+              },
+              "runner": {
+                "description": "set when sdd launched the delegate itself: the runner its round runs with, in the background",
                 "type": "string"
               },
               "session": {
@@ -2812,10 +2812,6 @@
               "instructions": {
                 "type": "string"
               },
-              "launch": {
-                "description": "set when sdd launched the delegate itself: the launch its round runs with, in the background",
-                "type": "string"
-              },
               "model": {
                 "description": "the model the harness launches that subagent with; unset leaves the harness's own",
                 "type": "string"
@@ -2825,6 +2821,10 @@
               },
               "prompt": {
                 "description": "the whole prompt of a fresh-context delegate",
+                "type": "string"
+              },
+              "runner": {
+                "description": "set when sdd launched the delegate itself: the runner its round runs with, in the background",
                 "type": "string"
               },
               "session": {

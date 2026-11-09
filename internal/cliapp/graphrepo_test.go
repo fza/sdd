@@ -19,7 +19,7 @@ func TestGraphInsideTheProjectCommitsThere(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(project, ".sdd", "graph"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\n")
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nverify:\n  mode: off\n")
 	writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
 
 	runApp(t, project,

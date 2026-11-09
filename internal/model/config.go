@@ -107,10 +107,11 @@ type BaseConfig struct {
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
 	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
 	// Verify makes captures read the graph before they are written and checks
-	// every draft against that reading; off unless a layer sets its mode.
+	// every draft against that reading; DefaultVerifyMode unless a layer sets
+	// its mode.
 	Verify VerifyConfig `yaml:"verify,omitempty"`
-	// LLMPrefilter is the grounding prefilter's model, independent of LLM
-	// (20261109-004506-d-cpt-udz, D8); verify.prefilter switches it on.
+	// LLMPrefilter is the grounding prefilter's model (20261109-004506-d-cpt-udz,
+	// D8); verify.prefilter switches it on, and ResolvedPrefilter fills it from LLM.
 	LLMPrefilter LLMPrefilterConfig `yaml:"llm_prefilter,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically

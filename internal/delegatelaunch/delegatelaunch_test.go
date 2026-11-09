@@ -22,7 +22,7 @@ func settings(t *testing.T, launch string) delegatelaunch.Settings {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return delegatelaunch.Settings{Launch: launch, Agents: []string{"claude", "codex"}, WorkDir: workDir, SDD: "/opt/sdd/bin/sdd"}
+	return delegatelaunch.Settings{Runner: launch, Agents: []string{"claude", "codex"}, WorkDir: workDir, SDD: "/opt/sdd/bin/sdd"}
 }
 
 func firstRound() delegatelaunch.Round {
@@ -53,7 +53,7 @@ func TestRun_ClaudeRunsHeadlessWithTheReadOnlyToolSet(t *testing.T) {
 
 	launched := launch(t, launchSettings, firstRound())
 
-	if launched != (delegatelaunch.Launched{Session: "claude-7", Launch: "claude"}) {
+	if launched != (delegatelaunch.Launched{Session: "claude-7", Runner: "claude"}) {
 		t.Fatalf("the round should report claude's session, got %+v", launched)
 	}
 	call := test.LastAgentCall(t, agents, "claude")
@@ -121,7 +121,7 @@ func TestRun_CodexRunsInAReadOnlySandbox(t *testing.T) {
 
 	launched := launch(t, launchSettings, firstRound())
 
-	if launched != (delegatelaunch.Launched{Session: "codex-3", Launch: "codex"}) {
+	if launched != (delegatelaunch.Launched{Session: "codex-3", Runner: "codex"}) {
 		t.Fatalf("the round should report codex's thread, got %+v", launched)
 	}
 	call := test.LastAgentCall(t, agents, "codex")
@@ -167,14 +167,14 @@ func TestRun_CodexErrorEventFailsTheRound(t *testing.T) {
 func TestRun_CustomDriverContract(t *testing.T) {
 	agents := test.FakeAgents(t, "driver")
 	test.AgentAnswers(t, agents, "driver", "starting\n"+`{"driver_state":"pane-4"}`, "", 0)
-	launchSettings := settings(t, "custom_driver")
+	launchSettings := settings(t, "driver")
 	launchSettings.Driver = model.VerifierDriver{Command: filepath.Join(agents, "driver"), Args: []string{"--role", "verifier"}}
 	round := firstRound()
 	round.Number, round.Resume = 2, "pane-3"
 
 	launched := launch(t, launchSettings, round)
 
-	if launched != (delegatelaunch.Launched{Session: "pane-4", Launch: "custom_driver"}) {
+	if launched != (delegatelaunch.Launched{Session: "pane-4", Runner: "driver"}) {
 		t.Fatalf("the round should keep the driver's state, got %+v", launched)
 	}
 	call := test.LastAgentCall(t, agents, "driver")
@@ -205,7 +205,7 @@ func TestRun_CustomDriverFailures(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			agents := test.FakeAgents(t, "driver")
 			test.AgentAnswers(t, agents, "driver", tc.stdout, "", tc.exit)
-			launchSettings := settings(t, "custom_driver")
+			launchSettings := settings(t, "driver")
 			launchSettings.Driver = model.VerifierDriver{Command: filepath.Join(agents, "driver")}
 
 			refused(t, launchSettings, firstRound(), tc.refusal)
@@ -216,7 +216,7 @@ func TestRun_CustomDriverFailures(t *testing.T) {
 func TestRun_CustomDriverNeedsACommand(t *testing.T) {
 	test.FakeAgents(t)
 
-	refused(t, settings(t, "custom_driver"), firstRound(), "verify.launch custom_driver needs verify.driver.command")
+	refused(t, settings(t, "driver"), firstRound(), "verify.runner driver needs verify.driver.command")
 }
 
 func TestRun_ARoundPastItsTimeoutFails(t *testing.T) {
@@ -249,8 +249,8 @@ func TestRun_FallbackTakesTheFirstSupportedAgentFound(t *testing.T) {
 
 			launched := launch(t, launchSettings, firstRound())
 
-			if launched.Launch != tc.want {
-				t.Fatalf("the fallback should take the first supported agent whose CLI is found, got %q", launched.Launch)
+			if launched.Runner != tc.want {
+				t.Fatalf("the fallback should take the first supported agent whose CLI is found, got %q", launched.Runner)
 			}
 		})
 	}
@@ -261,13 +261,13 @@ func TestRun_FallbackWithNoSupportedCLIFoundIsRefused(t *testing.T) {
 	launchSettings := settings(t, delegatelaunch.Fallback)
 	launchSettings.Agents = []string{"claude", "codex"}
 
-	refused(t, launchSettings, firstRound(), "no CLI of supported_agents (claude, codex) is on PATH: set verify.launch")
+	refused(t, launchSettings, firstRound(), "no CLI of supported_agents (claude, codex) is on PATH: set verify.runner")
 }
 
 func TestRun_SubagentIsNoHeadlessLaunch(t *testing.T) {
 	test.FakeAgents(t)
 
-	refused(t, settings(t, "subagent"), firstRound(), `verify.launch "subagent" is no headless launch`)
+	refused(t, settings(t, "subagent"), firstRound(), `verify.runner "subagent" is no headless runner`)
 }
 
 func TestRun_CodexReportingNoSessionFailsTheFirstRound(t *testing.T) {

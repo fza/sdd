@@ -25,7 +25,7 @@ func connectedWriteFixture(t *testing.T, connectedWrite, inboundAccept bool) (*a
 	t.Helper()
 	remote := test.NewGraphRemote(t, platformRepoID)
 	remote.Commit(t, "seed the platform graph", map[string]string{
-		".sdd/config.yaml": "repo_id: " + string(platformRepoID) + "\ngraph_dir: .sdd/graph\ndefault_branch: main\nlanguage: en\ninbound:\n  accept: " + boolText(inboundAccept) + "\n",
+		".sdd/config.yaml": "repo_id: " + string(platformRepoID) + "\ngraph_dir: .sdd/graph\ndefault_branch: main\nlanguage: en\ninbound:\n  accept: " + boolText(inboundAccept) + "\nverify:\n  mode: off\n",
 		".sdd/graph/.keep": "",
 		".gitignore":       ".sdd/tmp/\n.sdd/config.local.yaml\n",
 	})
@@ -37,7 +37,7 @@ func connectedWriteFixture(t *testing.T, connectedWrite, inboundAccept bool) (*a
 		t.Fatal(err)
 	}
 	initRepo(t, home)
-	writeFile(t, filepath.Join(home, ".sdd", "config.yaml"), "repo_id: "+string(homeRepoID)+"\ngraph_dir: .sdd/graph\ndefault_branch: main\nlanguage: en\ndependencies: ["+string(platformRepoID)+"]\n")
+	writeFile(t, filepath.Join(home, ".sdd", "config.yaml"), "repo_id: "+string(homeRepoID)+"\ngraph_dir: .sdd/graph\ndefault_branch: main\nlanguage: en\ndependencies: ["+string(platformRepoID)+"]\nverify:\n  mode: off\n")
 	writeFile(t, filepath.Join(home, ".sdd", "graph", ".keep"), "")
 	writeFile(t, filepath.Join(home, ".gitignore"), ".sdd/tmp/\n.sdd/config.local.yaml\nxdg-*/\n")
 	gitIn(t, home, "add", ".sdd", ".gitignore")
@@ -127,7 +127,7 @@ func TestConnectedCaptureRefusedAtStart(t *testing.T) {
 func TestConnectedCaptureRefusedByAWithdrawnAccept(t *testing.T) {
 	fixture, remote := connectedWriteFixture(t, true, true)
 	remote.Commit(t, "withdraw inbound captures", map[string]string{
-		".sdd/config.yaml": "repo_id: " + string(platformRepoID) + "\ngraph_dir: .sdd/graph\ndefault_branch: main\nlanguage: en\ninbound:\n  accept: false\n",
+		".sdd/config.yaml": "repo_id: " + string(platformRepoID) + "\ngraph_dir: .sdd/graph\ndefault_branch: main\nlanguage: en\ninbound:\n  accept: false\nverify:\n  mode: off\n",
 	})
 	before := remote.Head(t)
 	fixture.serve(t, func(client *mcp.ClientSession) {
@@ -196,13 +196,13 @@ func graphRepoHomeFixture(t *testing.T, localSettings string) (*appFixture, *tes
 	t.Helper()
 	homeRemote := test.NewGraphRemote(t, homeGraphRepoID)
 	homeRemote.Commit(t, "seed the home graph", map[string]string{
-		".sdd/config.yaml": "repo_id: " + string(homeGraphRepoID) + "\ngraph_dir: .sdd/graph\ndefault_branch: main\nlanguage: en\ndependencies: [" + string(platformRepoID) + "]\n",
+		".sdd/config.yaml": "repo_id: " + string(homeGraphRepoID) + "\ngraph_dir: .sdd/graph\ndefault_branch: main\nlanguage: en\ndependencies: [" + string(platformRepoID) + "]\nverify:\n  mode: off\n",
 		".sdd/graph/.keep": "",
 		".gitignore":       ".sdd/tmp/\n.sdd/config.local.yaml\n",
 	})
 	platform := test.NewGraphRemoteBeside(t, homeRemote, platformRepoID)
 	platform.Commit(t, "seed the platform graph", map[string]string{
-		".sdd/config.yaml": "repo_id: " + string(platformRepoID) + "\ngraph_dir: .sdd/graph\ndefault_branch: main\nlanguage: en\ninbound:\n  accept: true\n",
+		".sdd/config.yaml": "repo_id: " + string(platformRepoID) + "\ngraph_dir: .sdd/graph\ndefault_branch: main\nlanguage: en\ninbound:\n  accept: true\nverify:\n  mode: off\n",
 		".sdd/graph/.keep": "",
 		".gitignore":       ".sdd/tmp/\n.sdd/config.local.yaml\n",
 	})

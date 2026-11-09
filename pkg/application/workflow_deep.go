@@ -60,7 +60,7 @@ type deepVerdict struct {
 	Outcome string `json:"outcome"`
 	Skip    string `json:"skip,omitempty"`
 	Rounds  int    `json:"rounds"`
-	Launch  string `json:"launch"`
+	Runner  string `json:"runner"`
 }
 
 func readDeepVerdict(store *engine.Store) (deepVerdict, bool) {
@@ -136,13 +136,13 @@ func (w *WorkflowSession) writeDeepVerdict(ctx *engine.Context, outcome, skip st
 	if err != nil {
 		return err
 	}
-	launch := string(policy.Launch)
+	runner := string(policy.Runner)
 	if fallback, _ := ctx.Store.Get(fieldDeepNoSubagent); fallback == true {
-		launch = DelegateLaunchFallback
+		runner = DelegateLaunchFallback
 	}
 	return ctx.Store.WriteEngine(fieldDeepVerdict, deepVerdict{
 		Fingerprint: w.deepFingerprint(ctx), Document: draftText(ctx.Store),
-		Outcome: outcome, Skip: skip, Rounds: int(count), Launch: launch,
+		Outcome: outcome, Skip: skip, Rounds: int(count), Runner: runner,
 	})
 }
 
