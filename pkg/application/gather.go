@@ -60,6 +60,10 @@ type GatherRequest struct {
 	// Answered names entries the capture already answered (its refs and
 	// verdicts), which gather sets aside instead of asking again.
 	Answered []string
+	// Subject names an existing entry the reading grounds: its body, kind
+	// and topics stand in for an empty draft, and the relevance ledger's
+	// stored verdicts against it answer repeat pairs without a new judgment.
+	Subject string
 	// Held reports whether the consumer already holds an entry in full; such
 	// a candidate prints as a pointer (D34). Nil serves every line in full,
 	// as the CLI does (R14).
@@ -119,6 +123,26 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		}
 	}
 
+	if request.Subject != "" {
+		resolved, err := graph.ResolveIDs([]string{request.Subject})
+		if err != nil {
+			return GatherResult{}, err
+		}
+		subject := graph.ByID[resolved[0]]
+		if subject == nil {
+			return GatherResult{}, fmt.Errorf("sdd: gather: subject %s does not resolve", request.Subject)
+		}
+		request.Subject = subject.ID
+		if strings.TrimSpace(request.Draft) == "" {
+			request.Draft, request.Kind = subject.Content, string(subject.Kind)
+			if len(request.Topics) == 0 {
+				for _, topic := range graph.EffectiveTopics(subject) {
+					request.Topics = append(request.Topics, topic.String())
+				}
+			}
+		}
+	}
+
 	var reads []model.GroundingRead
 	switch {
 	case len(live) < policy.BriefAllBelow:
@@ -154,11 +178,24 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	}
 
 	candidates, setAside := model.GatherCandidates(graph, live, reads, opened, request.Answered)
+	candidates = slices.DeleteFunc(candidates, func(c model.GatherCandidate) bool { return c.Entry.ID == request.Subject })
+	ledger, err := runtime.relevanceLedger(ctx)
+	if err != nil {
+		return GatherResult{}, err
+	}
+	split := model.SplitByLedger(candidates, request.Subject, ledger, "", model.RelevanceThresholds{})
+	candidates = split.Undecided
+	if len(split.NotRelevant) > 0 {
+		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideJudged, IDs: split.NotRelevant})
+	}
 	served := &query.GatherResult{
 		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: "off",
 		ToJudge: candidates, SetAside: setAside, Held: map[string]bool{},
 	}
-	full := opened
+	full := slices.Clone(opened)
+	for _, candidate := range split.Relevant {
+		full = append(full, candidate.Entry.ID)
+	}
 	if len(full) > query.GatherFullCap {
 		for _, id := range full[query.GatherFullCap:] {
 			served.Overflow = append(served.Overflow, graph.ByID[id])

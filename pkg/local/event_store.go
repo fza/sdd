@@ -99,27 +99,7 @@ func (s *FilesystemEventStore) writeSegment(channel string, records [][]byte) (e
 	if err != nil {
 		return err
 	}
-	name, err := segment.Name(time.Now())
-	if err != nil {
-		return err
-	}
-	temp := "." + name + ".tmp"
-	file, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		return err
-	}
-	_, err = file.Write(segment.Encode(eventSegmentKind, records))
-	if err == nil {
-		err = file.Sync()
-	}
-	err = errors.Join(err, file.Close())
-	if err == nil {
-		err = root.Rename(temp, name)
-	}
-	if err != nil {
-		return errors.Join(err, root.Remove(temp))
-	}
-	return nil
+	return writeSegmentFile(dir, segment.Encode(eventSegmentKind, records))
 }
 
 // markSharing writes the ignore file into a local channel's directory and

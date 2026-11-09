@@ -492,6 +492,9 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	if err := ctx.Store.WriteEngine("entryId", result.EntryID); err != nil {
 		return err
 	}
+	if err := w.storeCaptureRelevance(ctx, target.Project, result.EntryID); err != nil {
+		return fmt.Errorf("newEntry: entry %s is written: %w", result.EntryID, err)
+	}
 	w.session.LogRead("newEntry", []string{result.EntryID}, nil)
 	return w.session.SinkErr()
 }

@@ -170,3 +170,13 @@ func (r *Reader) String() (string, error) {
 	field, err := r.Bytes()
 	return string(field), err
 }
+
+// Byte reads one byte.
+func (r *Reader) Byte() (byte, error) {
+	if len(r.data) == 0 {
+		return 0, fmt.Errorf("%w: truncated byte", ErrCorrupt)
+	}
+	value := r.data[0]
+	r.data = r.data[1:]
+	return value, nil
+}

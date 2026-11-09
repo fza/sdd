@@ -43,6 +43,8 @@ type ProjectRuntimeOptions struct {
 	Finalizers  []MutationFinalizer
 	// Events is the project event store; nil leaves the project without one.
 	Events EventStore
+	// Relevance is the relevance verdict ledger; nil stores no verdicts.
+	Relevance RelevanceStore
 	// Sync runs automatic graph sync before a session acts on a branch and
 	// serves what blocks it; nil leaves branches as they are.
 	Sync GraphSync

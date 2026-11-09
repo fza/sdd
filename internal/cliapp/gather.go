@@ -26,6 +26,7 @@ func gatherCmd() *cli.Command {
 			&cli.StringSliceFlag{Name: "topic", Usage: "A draft topic label, listed in full (repeatable)"},
 			&cli.StringFlag{Name: "query", Aliases: []string{"q"}, Usage: "Semantic search phrase, instead of the query writer"},
 			&cli.StringSliceFlag{Name: "term", Aliases: []string{"t"}, Usage: "Keyword term, one search each, instead of the query writer (repeatable)"},
+			&cli.StringFlag{Name: "subject", Usage: "An existing entry the reading grounds: its text stands in for the draft, and stored verdicts against it answer repeat pairs"},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			draft := cmd.String("draft")
@@ -65,7 +66,7 @@ func gatherCmd() *cli.Command {
 			}
 			result, err := application.Gather(ctx, identity, runtime.Project().ID, sdd.GatherRequest{
 				SyncMode: sdd.SearchSyncAll, Draft: draft, Kind: cmd.String("kind"), Topics: cmd.StringSlice("topic"),
-				IDs: cmd.Args().Slice(), Query: cmd.String("query"), Terms: cmd.StringSlice("term"),
+				IDs: cmd.Args().Slice(), Query: cmd.String("query"), Terms: cmd.StringSlice("term"), Subject: cmd.String("subject"),
 			})
 			if err != nil {
 				return err

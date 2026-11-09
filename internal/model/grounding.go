@@ -149,6 +149,7 @@ const (
 	SetAsideAnswered = "answered in this capture (refs or verdicts)"
 	SetAsideExempt   = "actor and role records, never candidates"
 	SetAsideRetired  = "not live (closed, superseded or retired)"
+	SetAsideJudged   = "judged not relevant before (relevance ledger)"
 )
 
 // GatherCandidates folds the reads into the candidates to judge: each live

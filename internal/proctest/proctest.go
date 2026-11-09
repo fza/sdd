@@ -155,6 +155,7 @@ type config struct {
 	finalizers  []sdd.MutationFinalizer
 	dialogue    sdd.Dialogue
 	grounding   sdd.GroundingPolicy
+	relevance   sdd.RelevanceStore
 }
 
 // Option configures NewWorld.
@@ -186,6 +187,11 @@ func WithGroundingEnforced() Option {
 // WithGrounding sets the world project's whole grounding policy.
 func WithGrounding(policy sdd.GroundingPolicy) Option {
 	return func(c *config) { c.grounding = policy }
+}
+
+// WithRelevance gives the world's project a relevance verdict ledger.
+func WithRelevance(store sdd.RelevanceStore) Option {
+	return func(c *config) { c.relevance = store }
 }
 
 // WithFinalizers configures required completion after publication.
@@ -344,7 +350,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	script := &LLMScript{Title: "generated title", Summary: "A generated summary."}
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
-		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding,
+		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Relevance: cfg.relevance,
 	}
 	var dropped map[string]bool
 	if len(cfg.branchDirs) > 0 {

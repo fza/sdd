@@ -217,3 +217,20 @@ func storeVerdictIDs(store *engine.Store) []string {
 func contextGraph(ctx *engine.Context) func() (*model.Graph, error) {
 	return func() (*model.Graph, error) { return ctx.Graph, nil }
 }
+
+// storeCaptureRelevance writes the capture's reader records, keyed to the
+// entry it published, into the project's relevance ledger.
+func (w *WorkflowSession) storeCaptureRelevance(ctx *engine.Context, project ProjectID, entryID string) error {
+	if ctx.Reading == nil || ctx.Reading.Corpus == nil {
+		return nil
+	}
+	runtime, err := w.targetRuntime(project, AccessWrite)
+	if err != nil {
+		return err
+	}
+	batch, err := model.CaptureRelevance(entryID, ctx.Reading, captureAnswered(ctx.Store), storeVerdicts(ctx.Store))
+	if err != nil {
+		return err
+	}
+	return runtime.appendRelevance(w.ctx, batch)
+}

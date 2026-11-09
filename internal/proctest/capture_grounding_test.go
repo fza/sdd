@@ -10,7 +10,9 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
+	"github.com/networkteam/sdd/internal/relevance"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/local"
 )
 
 const groundingUnreadID = "20250101-000000-s-tac-zzz"
@@ -281,4 +283,38 @@ func TestCaptureGrounding_OwnCapturesNeverCountAsLanded(t *testing.T) {
 
 	serve = session.Report(t, first, captureDraft())
 	proctest.RequireStep(t, serve, "playback")
+}
+
+// A published capture writes its reader records, keyed to the new entry,
+// into the relevance ledger (5.7).
+func TestCaptureGrounding_PublishStoresTheReaderVerdicts(t *testing.T) {
+	store := local.NewMemoryRelevanceStore()
+	world, session := newCaptureWorld(t, "grounding-ledger", proctest.WithGroundingEnforced(), proctest.WithRelevance(store))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+
+	session.Gather(t, instance, captureRef2ID)
+	draft := captureDraft()
+	draft["verdicts"] = []any{map[string]any{"ids": []any{captureRef2ID}, "code": model.VerdictCovered}}
+	serve = session.Report(t, instance, draft)
+	proctest.RequireStep(t, serve, "playback")
+	entry := confirmCapture(t, world, session, instance)
+
+	segments, err := store.Segments(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := relevance.Fold(segments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	referenced, ok := ledger.Reader(model.NewRelevancePair(entry.ID, captureRefID))
+	if !ok || referenced.Code != model.ReaderReferenced {
+		t.Fatalf("the ref should be stored as referenced by the new entry, got %+v, %v", referenced, ok)
+	}
+	opened, ok := ledger.Reader(model.NewRelevancePair(entry.ID, captureRef2ID))
+	covered, _ := model.VerdictReasonByte(model.VerdictCovered)
+	if !ok || opened.Code != model.ReaderOpened || opened.Reason != covered {
+		t.Fatalf("the entry served in full and set aside should be stored as opened with its code, got %+v, %v", opened, ok)
+	}
 }

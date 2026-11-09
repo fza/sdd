@@ -518,6 +518,10 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	}
 	closure := finders.New(finders.Options{Config: cfg, Repos: registry})
 	rounds := connectedRounds{handler: handlers.New(handlers.Options{Reader: closure, Repos: manager, CloneRound: round})}
+	verdicts, err := projectRelevanceStore(locations.StateRoot, baseRepoKey)
+	if err != nil {
+		return nil, nil, sdd.RequestIdentity{}, err
+	}
 	events, err := projectEventStore(sddDir, cfg)
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
@@ -530,6 +534,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		LLM:       runner,
 		Grounding: groundingPolicy(cfg),
 		Events:    events,
+		Relevance: verdicts,
 	})
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
@@ -584,6 +589,10 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 		return nil, err
 	}
 	searchIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, index.RepoKey(repoID, dir))
+	verdicts, err := projectRelevanceStore(locations.StateRoot, index.RepoKey(repoID, dir))
+	if err != nil {
+		return nil, err
+	}
 	return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: string(repoID)}, DefaultBranch: defaultBranch, Language: cfg.Language,
 		Dependencies: cfg.Dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: defaultBranch},
@@ -591,6 +600,7 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, searchIndex), LLM: runner,
 		ExcludeEmbeddedFromIndex: true,
 		Grounding:                groundingPolicy(cfg),
+		Relevance:                verdicts,
 	})
 }
 
