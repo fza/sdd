@@ -99,8 +99,7 @@ type BaseConfig struct {
 	// Connected is the writing side's gate on capturing into a connected
 	// graph (20261106-201216-d-cpt-aim).
 	Connected ConnectedConfig `yaml:"connected,omitempty"`
-	// Hooks are commands run at engine events (20261109-005138-d-tac-i61).
-	// Only the user-global config and config.local.yaml may set them; the
+	// Hooks are files run at engine events (20261109-213250-d-tac-bve); the
 	// layers concatenate, global first.
 	Hooks []HookConfig `yaml:"hooks,omitempty" sdd:"concat"`
 }
@@ -180,17 +179,19 @@ type PerRepoConfig struct {
 }
 
 // PointerKeys are the keys a committed config may set beside project_dir:
-// what concerns the agents working in the repository, not the graph.
-var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents"}
+// what concerns the agents working in the repository, not the graph, and
+// the hooks the repository ships (20261109-213250-d-tac-bve).
+var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents", "hooks"}
 
 // LocalPointerKeys are the keys a machine-local config may set beside
-// project_dir: only where this machine keeps the project's checkout.
-var LocalPointerKeys = []string{"project_dir"}
+// project_dir: where this machine keeps the project's checkout, and its own
+// hooks.
+var LocalPointerKeys = []string{"project_dir", "hooks"}
 
 // GraphRepoPointerKeys are the keys a committed config may set beside
 // graph_repo: the pointer keys, project_dir for older builds and graph_dir for
 // the stock guard (20261106-202055-d-tac-eyl).
-var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents"}
+var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents", "hooks"}
 
 // TopLevelKeys returns the top-level keys of a YAML mapping, in file order.
 // Empty input yields none.
@@ -845,7 +846,7 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"# See https://github.com/networkteam/sdd for documentation.\n" +
 		"\n" +
 		"# Graph directory relative to repository root.\n" +
-		"graph_dir: " + graphDir + "\n" +
+		"graph_dir: " + yamlScalar(graphDir) + "\n" +
 		"\n" +
 		defaultBranchBlock +
 		"\n" +
@@ -976,4 +977,14 @@ func supportedAgentsBlock(cfg PerRepoConfig) string {
 		names[i] = string(a)
 	}
 	return block + "supported_agents: [" + strings.Join(names, ", ") + "]\n"
+}
+
+// yamlScalar renders s as a YAML scalar that reads back as s, quoted only
+// where YAML needs it.
+func yamlScalar(s string) string {
+	out, err := yaml.Marshal(s)
+	if err != nil {
+		return strconv.Quote(s)
+	}
+	return strings.TrimSuffix(string(out), "\n")
 }

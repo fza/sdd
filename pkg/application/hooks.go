@@ -14,29 +14,43 @@ import (
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
-// Hook is one configured hook (20261109-005138-d-tac-i61): a command run
-// with an event's JSON payload on stdin. Event is
-// `<procedure>.<step>.<entered|left|round>`, `*` standing for any procedure
-// or step, or a command's event such as `entry.written`. A zero Timeout
-// means 600 seconds. Findings declares that the hook may answer with
-// findings, which only leaving a step with a findings channel accepts.
-type Hook struct {
-	Event    string
-	Command  string
-	Timeout  time.Duration
-	Findings bool
-}
+// Hook is one declared hook resolved against its layer
+// (20261109-213250-d-tac-bve): a file run with an event's JSON payload on
+// stdin, its hash, and whether this machine confirmed it.
+type Hook = types.Hook
 
-// HookCommands is the composition's port to the hooks the person running
-// sdd configured. Hooks returns them as configured at the time of the call,
-// so a changed configuration reaches the next call. Run runs one hook with
-// stdin and returns what it wrote to stdout; it stops the command when ctx
-// ends, and a nonzero exit is an error.
+// HookReview is what the person sees before confirming a hook.
+type HookReview = types.HookReview
+
+// HookCommands is the composition's port to the declared hooks. Hooks
+// returns them as declared at the time of the call, each with its state, so
+// a changed configuration or file reaches the next call. Run runs one hook
+// with stdin and returns what it wrote to stdout; it stops the command when
+// ctx ends, and a nonzero exit is an error. Review describes a hook for the
+// person confirming it, and Confirm records its hash.
 type HookCommands interface {
 	Hooks(ctx context.Context) ([]Hook, error)
 	Run(ctx context.Context, hook Hook, stdin []byte) ([]byte, error)
+	Review(ctx context.Context, hook Hook) (HookReview, error)
+	Confirm(ctx context.Context, hook Hook) error
+}
+
+// HookConfirmer asks the person running sdd whether a hook not confirmed on
+// this machine may run, showing them review. An error means the person
+// could not be asked.
+type HookConfirmer interface {
+	ConfirmHook(ctx context.Context, review HookReview) (bool, error)
+}
+
+type hookConfirmerKey struct{}
+
+// WithHookConfirmer returns ctx carrying the confirmer a call reaching an
+// unconfirmed hook asks; without one such a call fails.
+func WithHookConfirmer(ctx context.Context, confirmer HookConfirmer) context.Context {
+	return context.WithValue(ctx, hookConfirmerKey{}, confirmer)
 }
 
 // workflowHooks runs a workflow session's hooks: every hook matching an
@@ -79,11 +93,7 @@ func (h *workflowHooks) resolve() error {
 		h.err = err
 		return err
 	}
-	configs := make([]model.HookConfig, 0, len(h.hooks))
-	for _, hook := range h.hooks {
-		configs = append(configs, model.HookConfig{Event: hook.Event, Command: hook.Command, Timeout: int(hook.Timeout / time.Second), Findings: hook.Findings})
-	}
-	if err := model.ValidateHooks(configs, events); err != nil {
+	if err := model.ValidateHooks(h.hooks, events); err != nil {
 		h.err = fmt.Errorf("configured hooks: %w", err)
 	}
 	return h.err
@@ -93,11 +103,23 @@ func (h *workflowHooks) Fire(point engine.HookPoint) ([]query.Finding, error) {
 	if err := h.resolve(); err != nil {
 		return nil, err
 	}
-	var matched []Hook
-	for _, hook := range h.hooks {
-		if model.MatchHookEvent(hook.Event, point.Event) {
-			matched = append(matched, hook)
+	event := point.HookEvent()
+	var (
+		matched    []Hook
+		unanswered []error
+	)
+	for i := range h.hooks {
+		if !model.MatchHookEvent(h.hooks[i].Event, event) {
+			continue
 		}
+		if err := h.confirm(&h.hooks[i]); err != nil {
+			unanswered = append(unanswered, err)
+			continue
+		}
+		matched = append(matched, h.hooks[i])
+	}
+	if err := errors.Join(unanswered...); err != nil {
+		return nil, err
 	}
 	if len(matched) == 0 {
 		return nil, nil
@@ -117,7 +139,7 @@ func (h *workflowHooks) Fire(point engine.HookPoint) ([]query.Finding, error) {
 		wg.Go(func() {
 			findings[i], errs[i] = runHook(h.workflow.ctx, h.commands, hook, payload)
 			if errs[i] != nil {
-				errs[i] = fmt.Errorf("hook %q: %w", hook.Command, errs[i])
+				errs[i] = fmt.Errorf("%s: %w", hook.Label(), errs[i])
 			}
 		})
 	}
@@ -132,11 +154,39 @@ func (h *workflowHooks) Fire(point engine.HookPoint) ([]query.Finding, error) {
 	return merged, nil
 }
 
-func runHook(ctx context.Context, commands HookCommands, hook Hook, payload []byte) ([]query.Finding, error) {
-	timeout := hook.Timeout
-	if timeout == 0 {
-		timeout = model.DefaultHookTimeout
+// confirm lets a hook this machine has not confirmed run once the person,
+// asked through the call's confirmer, accepts it; a decline, or a call
+// without a confirmer, fails naming `sdd hooks trust`.
+func (h *workflowHooks) confirm(hook *Hook) error {
+	if hook.State == model.HookConfirmed {
+		return nil
 	}
+	refusal := fmt.Errorf("%s is %s on this machine; review and confirm it with `sdd hooks trust`", hook.Label(), hook.State)
+	ctx := h.workflow.ctx
+	confirmer, _ := ctx.Value(hookConfirmerKey{}).(HookConfirmer)
+	if confirmer == nil {
+		return refusal
+	}
+	review, err := h.commands.Review(ctx, *hook)
+	if err != nil {
+		return errors.Join(refusal, err)
+	}
+	accepted, err := confirmer.ConfirmHook(ctx, review)
+	if err != nil {
+		return fmt.Errorf("%w (asking failed: %w)", refusal, err)
+	}
+	if !accepted {
+		return fmt.Errorf("%w (declined)", refusal)
+	}
+	if err := h.commands.Confirm(ctx, *hook); err != nil {
+		return err
+	}
+	hook.State = model.HookConfirmed
+	return nil
+}
+
+func runHook(ctx context.Context, commands HookCommands, hook Hook, payload []byte) ([]query.Finding, error) {
+	timeout := hook.TimeoutDuration()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	output, err := commands.Run(ctx, hook, payload)

@@ -16,6 +16,10 @@ const (
 	ConfigSourceGlobal  ConfigValueSource = "global"
 	ConfigSourceProject ConfigValueSource = "project"
 	ConfigSourceLocal   ConfigValueSource = "local"
+	// ConfigSourceWork and ConfigSourceWorkLocal are the work repository's
+	// layers in a project_dir layout, which contribute only hooks.
+	ConfigSourceWork      ConfigValueSource = "work"
+	ConfigSourceWorkLocal ConfigValueSource = "work local"
 )
 
 // ConfigValue is one effective config entry: a dotted key, its rendered
@@ -59,6 +63,19 @@ var configDefaults = map[string]string{
 // schema declaration order; map-valued keys (api_keys) expand to one entry
 // per map key with per-key provenance. Nil layers are treated as empty.
 func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []ConfigValue {
+	return EffectiveConfigValuesWithWork(global, WorkConfigLayers{}, project, local)
+}
+
+// WorkConfigLayers are the work repository's config layers in a project_dir
+// layout; nil layers are absent.
+type WorkConfigLayers struct {
+	Committed, Local *PerRepoConfig
+}
+
+// EffectiveConfigValuesWithWork is EffectiveConfigValues with a work
+// repository's layers, whose hooks list between the global and the
+// project's (20261109-213250-d-tac-bve).
+func EffectiveConfigValuesWithWork(global BaseConfig, work WorkConfigLayers, project, local *PerRepoConfig) []ConfigValue {
 	layers := []struct {
 		cfg    *PerRepoConfig
 		source ConfigValueSource
@@ -74,7 +91,7 @@ func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []C
 		case leafMap:
 			out = append(out, effectiveMapEntries(leaf, layers)...)
 		case leafConcat:
-			out = append(out, concatenatedEntries(leaf, layers)...)
+			out = append(out, concatenatedEntries(leaf, concatLayers(layers, work))...)
 		default:
 			set := false
 			var val ConfigValue
@@ -288,4 +305,21 @@ func ParseConfigScalar(s string) any {
 		return f
 	}
 	return s
+}
+
+// concatLayers places the work repository's layers between the global layer
+// and the project's, keeping the local-first order of layers.
+func concatLayers(layers []struct {
+	cfg    *PerRepoConfig
+	source ConfigValueSource
+}, work WorkConfigLayers) []struct {
+	cfg    *PerRepoConfig
+	source ConfigValueSource
+} {
+	last := len(layers) - 1
+	out := append(slices.Clone(layers[:last]), []struct {
+		cfg    *PerRepoConfig
+		source ConfigValueSource
+	}{{work.Local, ConfigSourceWorkLocal}, {work.Committed, ConfigSourceWork}}...)
+	return append(out, layers[last])
 }

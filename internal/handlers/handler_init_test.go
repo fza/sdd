@@ -100,7 +100,7 @@ func TestInit_FreshProjectEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .gitignore: %v", err)
 	}
-	for _, want := range []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/", ".sdd/graph/.sdd-runtime/"} {
+	for _, want := range []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/", ".sdd/hooks/local/", ".sdd/graph/.sdd-runtime/"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf(".gitignore missing %q, got:\n%s", want, data)
 		}
@@ -326,7 +326,7 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .gitignore: %v", err)
 	}
-	for _, entry := range []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/", ".sdd/graph/.sdd-runtime/"} {
+	for _, entry := range []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/", ".sdd/hooks/local/", ".sdd/graph/.sdd-runtime/"} {
 		count := strings.Count(string(data), entry)
 		if count != 1 {
 			t.Errorf("%q appears %d times in .gitignore; want exactly 1\n%s", entry, count, data)

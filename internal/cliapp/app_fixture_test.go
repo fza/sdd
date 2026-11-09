@@ -64,8 +64,14 @@ type appResult struct {
 
 func (f *appFixture) run(t *testing.T, args ...string) appResult {
 	t.Helper()
+	return f.runInput(t, "", args...)
+}
+
+// runInput is run with input on standard input.
+func (f *appFixture) runInput(t *testing.T, input string, args ...string) appResult {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
-	command := f.command(strings.NewReader(""), &stdout, &stderr)
+	command := f.command(strings.NewReader(input), &stdout, &stderr)
 	err := command.Run(t.Context(), append([]string{"sdd"}, args...))
 	return appResult{stdout: stdout.String(), stderr: stderr.String(), err: err}
 }
@@ -98,6 +104,12 @@ func assertContainsOutput(t *testing.T, stream, output string, expected ...strin
 
 func (f *appFixture) serve(t *testing.T, check func(*mcp.ClientSession)) {
 	t.Helper()
+	f.serveWith(t, nil, check)
+}
+
+// serveWith is serve with a client of the given options.
+func (f *appFixture) serveWith(t *testing.T, options *mcp.ClientOptions, check func(*mcp.ClientSession)) {
+	t.Helper()
 	serverInput, clientOutput := io.Pipe()
 	clientInput, serverOutput := io.Pipe()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -126,7 +138,7 @@ func (f *appFixture) serve(t *testing.T, check func(*mcp.ClientSession)) {
 		}
 	}()
 
-	client, err := mcp.NewClient(&mcp.Implementation{Name: "cli-test", Version: "test"}, nil).Connect(ctx, &mcp.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
+	client, err := mcp.NewClient(&mcp.Implementation{Name: "cli-test", Version: "test"}, options).Connect(ctx, &mcp.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
 	if err != nil {
 		t.Fatalf("initialize CLI MCP: %v", err)
 	}

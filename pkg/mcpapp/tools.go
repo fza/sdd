@@ -1242,7 +1242,12 @@ func (s *Server) registryDocs(ctx context.Context, req *mcp.CallToolRequest, arg
 func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		slot := &syncNoticeSlot{}
-		res, out, err := handler(context.WithValue(ctx, syncNoticeKey{}, slot), req, in)
+		confirmer := newElicitingConfirmer(req)
+		res, out, err := handler(sdd.WithHookConfirmer(context.WithValue(ctx, syncNoticeKey{}, slot), confirmer), req, in)
+		if asked, ok := confirmer.inputRequired(err); ok {
+			var none Out
+			return asked, none, nil
+		}
 		var coded *sdd.ApplicationError
 		if err != nil && errors.As(err, &coded) && coded.Code != "" {
 			err = fmt.Errorf("%s: %w", coded.Code, err)

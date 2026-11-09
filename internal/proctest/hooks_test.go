@@ -1,13 +1,17 @@
 // Configured hooks at the steps of the shipped procedures through the real
-// application (20261109-005138-d-tac-i61).
+// application (20261109-213250-d-tac-bve).
 package proctest_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/networkteam/sdd/pkg/llm"
+
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
@@ -31,8 +35,8 @@ func openErr(t *testing.T, hooks ...sdd.Hook) error {
 
 func TestHooks_PreflightFindingJoinsTheWriteGateAndRoutesToOverride(t *testing.T) {
 	world, session, scripted := newHookedCaptureWorld(t,
-		sdd.Hook{Event: "capture.preflight.left", Command: "lint", Findings: true},
-		sdd.Hook{Event: "entry.written", Command: "notify"},
+		sdd.Hook{HookConfig: model.HookConfig{Event: "capture.preflight", Command: "lint", Findings: true}},
+		sdd.Hook{HookConfig: model.HookConfig{Event: "entry.written", Command: "notify"}},
 	)
 	scripted.Scripts["lint"] = proctest.HookScript{Output: highFindingOutput}
 
@@ -62,7 +66,7 @@ func TestHooks_PreflightFindingJoinsTheWriteGateAndRoutesToOverride(t *testing.T
 }
 
 func TestHooks_AssembleHighFindingHoldsTheDraft(t *testing.T) {
-	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{Event: "capture.assemble.left", Command: "lint", Findings: true})
+	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.assemble", Command: "lint", Findings: true}})
 	scripted.Scripts["lint"] = proctest.HookScript{Output: highFindingOutput}
 
 	serve := session.Start(t, "capture", nil)
@@ -79,7 +83,7 @@ func TestHooks_AssembleHighFindingHoldsTheDraft(t *testing.T) {
 }
 
 func TestHooks_GuideHighFindingHoldsTheDraft(t *testing.T) {
-	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{Event: "capture.guide.left", Command: "lint", Findings: true})
+	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.guide", Command: "lint", Findings: true}})
 	scripted.Scripts["lint"] = proctest.HookScript{Output: highFindingOutput}
 
 	serve := session.Start(t, "capture", nil)
@@ -91,20 +95,20 @@ func TestHooks_GuideHighFindingHoldsTheDraft(t *testing.T) {
 }
 
 func TestHooks_PayloadCarriesTheStepTheDraftAndItsFindings(t *testing.T) {
-	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{Event: "capture.preflight.left", Command: "status"})
+	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.preflight", Command: "status"}})
 
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 	session.Report(t, instance, captureDraft())
 	session.Answer(t, instance, "playback", "confirm", nil, "capture it")
 
-	runs := scripted.RunsAt("capture.preflight.left")
+	runs := scripted.RunsAt("capture.preflight")
 	if len(runs) != 1 {
-		t.Fatalf("the hook should run once at capture.preflight.left, ran %d times", len(runs))
+		t.Fatalf("the hook should run once at capture.preflight, ran %d times", len(runs))
 	}
 	payload := runs[0].Payload
 	for field, want := range map[string]any{
-		"procedure": "capture", "instance": instance, "step": "preflight", "phase": "left",
+		"procedure": "capture", "instance": instance, "step": "preflight", "phase": "done",
 		"transition": "write", "project": "proctest", "branch": "main", "session": string(session.ID),
 	} {
 		if payload[field] != want {
@@ -125,29 +129,29 @@ func TestHooks_PayloadCarriesTheStepTheDraftAndItsFindings(t *testing.T) {
 }
 
 func TestHooks_WildcardMatchesEveryProcedureAndStep(t *testing.T) {
-	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{Event: "*.*.entered", Command: "status"})
+	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "*.*.start", Command: "status"}})
 	session.Start(t, "capture", nil)
-	for _, event := range []string{"user-dialogue.junction.entered", "capture.assemble.entered"} {
+	for _, event := range []string{"user-dialogue.junction.start", "capture.assemble.start"} {
 		if len(scripted.RunsAt(event)) != 1 {
-			t.Errorf("*.*.entered should match %s", event)
+			t.Errorf("*.*.start should match %s", event)
 		}
 	}
 }
 
 func TestHooks_RunInParallelAndFailTheCallOnceAllFinished(t *testing.T) {
 	_, session, scripted := newHookedCaptureWorld(t,
-		sdd.Hook{Event: "capture.assemble.entered", Command: "broken"},
-		sdd.Hook{Event: "capture.assemble.entered", Command: "slow"},
+		sdd.Hook{HookConfig: model.HookConfig{Event: "capture.assemble.start", Command: "broken"}},
+		sdd.Hook{HookConfig: model.HookConfig{Event: "capture.assemble.start", Command: "slow"}},
 	)
 	scripted.Scripts["broken"] = proctest.HookScript{Err: errors.New("exit status 2")}
 	scripted.Scripts["slow"] = proctest.HookScript{Delay: 300 * time.Millisecond}
 
 	_, err := session.StartErr(t, "capture", nil)
 	returned := time.Now()
-	if err == nil || !strings.Contains(err.Error(), `hook "broken": exit status 2`) {
+	if err == nil || !strings.Contains(err.Error(), "hook broken (") || !strings.Contains(err.Error(), "exit status 2") {
 		t.Fatalf("a failing hook should fail the call naming it, got %v", err)
 	}
-	slow := scripted.RunsAt("capture.assemble.entered")
+	slow := scripted.RunsAt("capture.assemble.start")
 	if len(slow) != 2 || slow[1].Hook.Command != "slow" || slow[1].Finished.After(returned) {
 		t.Fatalf("the sibling hook should run to completion before the call fails, runs %+v", slow)
 	}
@@ -161,10 +165,10 @@ func TestHooks_RunInParallelAndFailTheCallOnceAllFinished(t *testing.T) {
 }
 
 func TestHooks_TimeoutFailsTheCall(t *testing.T) {
-	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{Event: "capture.assemble.entered", Command: "hang", Timeout: 100 * time.Millisecond})
+	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.assemble.start", Command: "hang", Timeout: 1}})
 	scripted.Scripts["hang"] = proctest.HookScript{Block: true}
 	_, err := session.StartErr(t, "capture", nil)
-	if err == nil || !strings.Contains(err.Error(), `hook "hang": timed out after 100ms`) {
+	if err == nil || !strings.Contains(err.Error(), "hook hang (") || !strings.Contains(err.Error(), "timed out after 1s") {
 		t.Fatalf("a hook outliving its timeout should fail the call, got %v", err)
 	}
 }
@@ -179,7 +183,7 @@ func TestHooks_OutputMustBeEmptyOrDeclaredFindings(t *testing.T) {
 		{name: "unknown severity", output: `{"findings": [{"severity": "blocker", "category": "x", "observation": "y"}]}`, findings: true, want: `severity "blocker" is not high, medium or low`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{Event: "capture.assemble.left", Command: "lint", Findings: tc.findings})
+			_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.assemble", Command: "lint", Findings: tc.findings}})
 			scripted.Scripts["lint"] = proctest.HookScript{Output: tc.output}
 			serve := session.Start(t, "capture", nil)
 			_, err := session.ReportErr(t, serve.Instance, captureDraft())
@@ -191,20 +195,122 @@ func TestHooks_OutputMustBeEmptyOrDeclaredFindings(t *testing.T) {
 }
 
 func TestHooks_ConfigurationIsCheckedAgainstTheRunningProcedures(t *testing.T) {
-	err := openErr(t, sdd.Hook{Event: "capture.asemble.left", Command: "lint"})
-	if err == nil || !strings.Contains(err.Error(), `unknown event "capture.asemble.left"`) || !strings.Contains(err.Error(), "capture.assemble.left") {
+	err := openErr(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.asemble", Command: "lint"}})
+	if err == nil || !strings.Contains(err.Error(), `unknown event "capture.asemble"`) || !strings.Contains(err.Error(), "capture.assemble") {
 		t.Errorf("an unknown event should be refused listing the valid ones, got %v", err)
 	}
-	err = openErr(t, sdd.Hook{Event: "capture.playback.left", Command: "lint", Findings: true})
-	if err == nil || !strings.Contains(err.Error(), "capture.playback.left has no findings channel") {
+	err = openErr(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.playback", Command: "lint", Findings: true}})
+	if err == nil || !strings.Contains(err.Error(), "capture.playback has no findings channel") {
 		t.Errorf("findings on a step without a findings channel should be refused, got %v", err)
 	}
-	for _, event := range []string{"capture.assemble.left", "capture.guide.left", "capture.preflight.left"} {
-		if err := openErr(t, sdd.Hook{Event: event, Command: "lint", Findings: true}); err != nil {
+	for _, event := range []string{"capture.assemble", "capture.guide", "capture.preflight"} {
+		if err := openErr(t, sdd.Hook{HookConfig: model.HookConfig{Event: event, Command: "lint", Findings: true}}); err != nil {
 			t.Errorf("%s has a findings channel, refused: %v", event, err)
 		}
 	}
-	if err := openErr(t, sdd.Hook{Event: "capture.verify.round", Command: "status"}); err == nil {
+	if err := openErr(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.verify.round", Command: "status"}}); err == nil {
 		t.Error("capture has no verify step, so its round event should be refused")
+	}
+}
+
+func TestHooks_DoneAliasMatchesTheBareStepEvent(t *testing.T) {
+	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.assemble.done", Command: "lint", Findings: true}})
+	scripted.Scripts["lint"] = proctest.HookScript{Output: highFindingOutput}
+
+	serve := session.Start(t, "capture", nil)
+	serve = session.Report(t, serve.Instance, captureDraft())
+	proctest.RequireStep(t, serve, "assemble")
+	if !hasDiagnostic(serve, "the opening sentence is passive") {
+		t.Fatalf("a hook on capture.assemble.done should join capture.assemble's findings, diagnostics %v", serve.Diagnostics)
+	}
+}
+
+// A failing start hook on pre-flight keeps the pre-flight LLM call from
+// running on every retry (20261109-213250-d-tac-bve).
+func TestHooks_FailingStartHookKeepsThePreflightCallFromRunning(t *testing.T) {
+	world, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.preflight.start", Command: "gate"}})
+	scripted.Scripts["gate"] = proctest.HookScript{Err: errors.New("exit status 1")}
+
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Report(t, instance, captureDraft())
+	if _, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "capture it"); err == nil || !strings.Contains(err.Error(), "step preflight is held until its start hooks pass") {
+		t.Fatalf("a failing start hook should fail the call naming the held step, got %v", err)
+	}
+	if _, err := session.ReportErr(t, instance, captureDraft()); err == nil || !strings.Contains(err.Error(), "held") {
+		t.Fatalf("the retry should stay held, got %v", err)
+	}
+	if calls := world.LLM.Calls(llm.PurposePreflight); calls != 0 {
+		t.Fatalf("a held pre-flight should make no LLM call, made %d", calls)
+	}
+	if runs := len(scripted.RunsAt("capture.preflight.start")); runs != 2 {
+		t.Errorf("the start hook should run on every call, ran %d times", runs)
+	}
+
+	scripted.Scripts["gate"] = proctest.HookScript{}
+	serve = session.Report(t, instance, captureDraft())
+	proctest.RequireStep(t, serve, "verifySummary")
+	if calls := world.LLM.Calls(llm.PurposePreflight); calls != 1 {
+		t.Errorf("once the start hook passes pre-flight should run once, ran %d times", calls)
+	}
+}
+
+type answeringConfirmer struct {
+	accept  bool
+	err     error
+	reviews []sdd.HookReview
+}
+
+func (c *answeringConfirmer) ConfirmHook(_ context.Context, review sdd.HookReview) (bool, error) {
+	c.reviews = append(c.reviews, review)
+	return c.accept, c.err
+}
+
+func pendingHook(event, command string) sdd.Hook {
+	return sdd.Hook{HookConfig: model.HookConfig{Event: event, Command: command}, State: model.HookPending,
+		Origin: model.HookOrigin{Layer: model.HookLayerCommitted, ConfigPath: "/repo/.sdd/config.yaml"}}
+}
+
+// An unconfirmed hook runs only once the person confirms it through the
+// call's confirmer; without one, or declined, the call fails naming
+// `sdd hooks trust` (20261109-213250-d-tac-bve).
+func TestHooks_UnconfirmedHookAsksTheCallsConfirmer(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		confirmer *answeringConfirmer
+		want      string
+	}{
+		{name: "no confirmer", want: "is pending on this machine; review and confirm it with `sdd hooks trust`"},
+		{name: "declined", confirmer: &answeringConfirmer{}, want: "(declined)"},
+		{name: "cannot ask", confirmer: &answeringConfirmer{err: errors.New("client does not support elicitation")}, want: "client does not support elicitation"},
+		{name: "accepted", confirmer: &answeringConfirmer{accept: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, session, scripted := newHookedCaptureWorld(t, pendingHook("capture.assemble.start", "notify"))
+			ctx := t.Context()
+			if tc.confirmer != nil {
+				ctx = sdd.WithHookConfirmer(ctx, tc.confirmer)
+			}
+			_, err := session.WF.Start(ctx, session.World.Identity, sdd.WorkflowStartRequest{Canonical: "capture"})
+			runs := scripted.RunsAt("capture.assemble.start")
+			if tc.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "sdd hooks trust") || !strings.Contains(err.Error(), "/repo/.sdd/config.yaml") {
+					t.Fatalf("the call should fail naming the hook's file, the reason and `sdd hooks trust`, got %v", err)
+				}
+				if len(runs) != 0 || len(scripted.Confirmed()) != 0 {
+					t.Fatalf("an unconfirmed hook should neither run nor be confirmed, runs %d confirmations %d", len(runs), len(scripted.Confirmed()))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tc.confirmer.reviews) != 1 || tc.confirmer.reviews[0].Hook.Command != "notify" {
+				t.Errorf("the confirmer should be shown the hook once, got %+v", tc.confirmer.reviews)
+			}
+			if len(scripted.Confirmed()) != 1 || len(runs) != 1 {
+				t.Errorf("an accepted hook should be confirmed and run, confirmations %d runs %d", len(scripted.Confirmed()), len(runs))
+			}
+		})
 	}
 }

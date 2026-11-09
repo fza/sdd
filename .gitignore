@@ -13,6 +13,7 @@
 .sdd/stats/
 .sdd/sessions/
 .sdd/staged-blobs/
+.sdd/hooks/local/
 go.work
 go.work.sum
 .sdd/graph/.sdd-runtime/

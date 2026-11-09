@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -31,20 +32,53 @@ type HookRun struct {
 }
 
 // ScriptedHooks is a HookCommands whose commands run scripts instead of
-// processes, recording every run. Configured and Scripts may change between
-// calls; a changed configuration reaches the next call.
+// processes, recording every run and confirmation. Configured and Scripts
+// may change between calls; a changed configuration reaches the next call.
+// A configured hook without a state counts as confirmed.
 type ScriptedHooks struct {
 	mu         sync.Mutex
 	Configured []sdd.Hook
 	Scripts    map[string]HookScript
 	runs       []HookRun
+	confirmed  []sdd.Hook
 }
 
 // Hooks returns the configured hooks.
 func (s *ScriptedHooks) Hooks(context.Context) ([]sdd.Hook, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]sdd.Hook(nil), s.Configured...), nil
+	hooks := append([]sdd.Hook(nil), s.Configured...)
+	for i := range hooks {
+		if hooks[i].State == "" {
+			hooks[i].State = model.HookConfirmed
+		}
+	}
+	return hooks, nil
+}
+
+// Review describes the hook by itself.
+func (s *ScriptedHooks) Review(_ context.Context, hook sdd.Hook) (sdd.HookReview, error) {
+	return sdd.HookReview{Hook: hook}, nil
+}
+
+// Confirm records the confirmation and marks the configured hook confirmed.
+func (s *ScriptedHooks) Confirm(_ context.Context, hook sdd.Hook) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.confirmed = append(s.confirmed, hook)
+	for i := range s.Configured {
+		if s.Configured[i].Command == hook.Command && s.Configured[i].Event == hook.Event {
+			s.Configured[i].State = model.HookConfirmed
+		}
+	}
+	return nil
+}
+
+// Confirmed returns the recorded confirmations.
+func (s *ScriptedHooks) Confirmed() []sdd.Hook {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]sdd.Hook(nil), s.confirmed...)
 }
 
 // Run runs the hook command's script.

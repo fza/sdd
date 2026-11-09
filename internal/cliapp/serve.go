@@ -410,21 +410,6 @@ func (a *localRuntimeAccess) ResolveDependency(ctx context.Context, _ sdd.Princi
 	return a.dependencies.resolve(ctx, dependency)
 }
 
-// localHooks reads the hooks of the user-global config and the local layer
-// as they are now, so a changed configuration reaches a running serve on its
-// next call. Reading the layers refuses hooks in the committed one.
-func localHooks(globalPath, sddDir, localLayer string) ([]model.HookConfig, error) {
-	global, err := repos.LoadConfigFrom(globalPath)
-	if err != nil {
-		return nil, err
-	}
-	committed, local, err := meta.ReadConfigLayers(sddDir, localLayer)
-	if err != nil {
-		return nil, err
-	}
-	return model.MergeConfig(model.MergeConfig(&model.PerRepoConfig{BaseConfig: global.BaseConfig}, committed), local).Hooks, nil
-}
-
 // localDialogue reads dialogue.mode and the layer that sets it; the
 // committed layer arrives without it (20261029-150854-d-tac-b2f).
 func localDialogue(sddDir string) (sdd.Dialogue, error) {
@@ -532,6 +517,10 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
+	hookDeclarations, err := hookSources()
+	if err != nil {
+		return nil, nil, sdd.RequestIdentity{}, err
+	}
 	closure := finders.New(finders.Options{Config: cfg, Repos: registry})
 	rounds := connectedRounds{handler: handlers.New(handlers.Options{Reader: closure, Repos: manager, CloneRound: round})}
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
@@ -540,7 +529,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		Connected: rounds,
 		Embedder:  embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
 		LLM:   runner,
-		Hooks: hooks.New(func() ([]model.HookConfig, error) { return localHooks(locations.ConfigPath, sddDir, localLayer) }, serverCheckout),
+		Hooks: hooks.New(hookDeclarations, hooks.NewStore(locations.StateRoot)),
 	})
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err

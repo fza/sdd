@@ -508,6 +508,7 @@ func New(options Options) *cli.Command {
 			initCmd(),
 			infoCmd(),
 			configCmd(),
+			hooksCmd(),
 			showCmd(),
 			viewCmd(),
 			exportCmd(),
@@ -2251,7 +2252,7 @@ func initCmd() *cli.Command {
 				return err
 			}
 			notifyUnconnectedDependencies(cmd.ErrWriter, projectSDDDir)
-			return nil
+			return offerPendingHooks(ctx, cmd)
 		}),
 	}
 }

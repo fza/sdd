@@ -9,6 +9,11 @@ type EffectiveConfigQuery struct {
 	// LocalConfigPath replaces the in-repo machine-local layer file.
 	// Empty resolves it under SDDDir.
 	LocalConfigPath string
+	// WorkSDDDir is the work repository's .sdd/ in a project_dir layout,
+	// whose layers contribute hooks; WorkLocalConfigPath is its machine-local
+	// layer file, empty when that layer is the project's own.
+	WorkSDDDir          string
+	WorkLocalConfigPath string
 	// Key restricts the result to one dotted key (e.g. "llm.model").
 	// Empty returns every effective entry.
 	Key string

@@ -63,6 +63,8 @@ type Instance struct {
 	retiredStep string
 	// hookBase is keyed by step id.
 	hookBase map[string]hookBase
+	// startHeld marks the current step held by a failing start hook.
+	startHeld bool
 }
 
 // loggedStep is the instance's position as its log records it.
@@ -232,6 +234,9 @@ func (s *Session) cascade(inst *Instance) error {
 		step := inst.currentStep()
 		if step == nil {
 			return fmt.Errorf("instance %s: step %q not found", inst.ID, inst.Step)
+		}
+		if err := s.release(inst); err != nil {
+			return err
 		}
 		if step.Chooser != ChooserGate {
 			return nil // pending chooser — agent or user judgment
@@ -457,7 +462,7 @@ func (s *Session) transitionTo(inst *Instance, to string, reopen bool) error {
 }
 
 // moveTo logs the transition, moves the instance, and raises the target
-// step's entered event; the step's left event was raised before.
+// step's start event; the step's done event was raised before.
 func (s *Session) moveTo(inst *Instance, to string, reopen bool) error {
 	if err := s.checkSink(); err != nil {
 		return err
@@ -492,7 +497,7 @@ func (s *Session) moveTo(inst *Instance, to string, reopen bool) error {
 		inst.Step = to
 		inst.opDone = false
 		inst.retiredStep = ""
-		if _, err := s.fireStep(inst, inst.currentStep(), HookEntered, "", nil); err != nil {
+		if err := s.arrive(inst); err != nil {
 			return err
 		}
 	}
