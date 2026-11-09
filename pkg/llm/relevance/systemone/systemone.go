@@ -92,6 +92,7 @@ func New(options Options) (*Scorer, error) {
 func (s *Scorer) Direction() relevance.Direction { return relevance.Both }
 func (s *Scorer) MaxBatch() int                  { return 0 }
 func (s *Scorer) MaxInputTokens() int            { return MaxInputTokens - questionReserve }
+func (s *Scorer) MaxPairTokens() int             { return 0 }
 
 type question struct {
 	Type         string `json:"type"`

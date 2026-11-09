@@ -19,6 +19,7 @@ type fixedScorer struct {
 	mu        sync.Mutex
 	maxBatch  int
 	maxTokens int
+	maxPair   int
 	requests  []relevance.Request
 	err       error
 	block     bool
@@ -27,6 +28,7 @@ type fixedScorer struct {
 func (f *fixedScorer) Direction() relevance.Direction { return relevance.Both }
 func (f *fixedScorer) MaxBatch() int                  { return f.maxBatch }
 func (f *fixedScorer) MaxInputTokens() int            { return f.maxTokens }
+func (f *fixedScorer) MaxPairTokens() int             { return f.maxPair }
 
 func (f *fixedScorer) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
 	f.mu.Lock()
@@ -60,18 +62,20 @@ func TestPlan(t *testing.T) {
 		name      string
 		maxBatch  int
 		maxTokens int
+		maxPair   int
 		texts     []string
 		batches   [][]int
 		oversize  []int
 	}{
-		{"no limits take one call", 0, 0, []string{"a", "b", "c"}, [][]int{{0, 1, 2}}, nil},
-		{"the batch limit splits calls", 2, 0, []string{"a", "b", "c"}, [][]int{{0, 1}, {2}}, nil},
-		{"the token limit fills each call", 0, 110, []string{long, long, "a"}, [][]int{{0}, {1, 2}}, nil},
-		{"a candidate too long alone is left out, never cut", 0, 50, []string{"a", long, "b"}, [][]int{{0, 2}}, []int{1}},
+		{"no limits take one call", 0, 0, 0, []string{"a", "b", "c"}, [][]int{{0, 1, 2}}, nil},
+		{"the batch limit splits calls", 2, 0, 0, []string{"a", "b", "c"}, [][]int{{0, 1}, {2}}, nil},
+		{"the token limit fills each call", 0, 110, 0, []string{long, long, "a"}, [][]int{{0}, {1, 2}}, nil},
+		{"a candidate too long alone is left out, never cut", 0, 50, 0, []string{"a", long, "b"}, [][]int{{0, 2}}, []int{1}},
+		{"a pair past the pair window is left out, never cut", 0, 0, 50, []string{"a", long, "b"}, [][]int{{0, 2}}, []int{1}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			scorer := &fixedScorer{maxBatch: tc.maxBatch, maxTokens: tc.maxTokens}
+			scorer := &fixedScorer{maxBatch: tc.maxBatch, maxTokens: tc.maxTokens, maxPair: tc.maxPair}
 			batches, oversize := relevance.Plan(scorer, "subject", candidates(tc.texts...))
 			if !reflect.DeepEqual(batches, tc.batches) || !reflect.DeepEqual(oversize, tc.oversize) {
 				t.Fatalf("Plan = %v, oversize %v; want %v, oversize %v", batches, oversize, tc.batches, tc.oversize)
@@ -81,10 +85,10 @@ func TestPlan(t *testing.T) {
 }
 
 func TestPerItem_FansABatchOutOneCandidatePerCall(t *testing.T) {
-	inner := &fixedScorer{maxBatch: 1}
+	inner := &fixedScorer{maxBatch: 1, maxPair: 5}
 	scorer := relevance.PerItem(inner, 4)
-	if scorer.MaxBatch() != 0 {
-		t.Fatal("a per-item scorer should take a batch of any size")
+	if scorer.MaxBatch() != 0 || scorer.MaxPairTokens() != 5 {
+		t.Fatal("a per-item scorer should take a batch of any size and keep the pair window")
 	}
 	result, err := scorer.Score(t.Context(), relevance.Request{Subject: "s", Candidates: candidates("a", "bb", "ccc")})
 	if err != nil {
@@ -112,8 +116,8 @@ func TestPerItem_FansABatchOutOneCandidatePerCall(t *testing.T) {
 }
 
 func TestBounded_EndsACallAtItsDeadline(t *testing.T) {
-	scorer := relevance.Bounded(&fixedScorer{block: true, maxBatch: 3, maxTokens: 9}, 10*time.Millisecond)
-	if scorer.MaxBatch() != 3 || scorer.MaxInputTokens() != 9 {
+	scorer := relevance.Bounded(&fixedScorer{block: true, maxBatch: 3, maxTokens: 9, maxPair: 5}, 10*time.Millisecond)
+	if scorer.MaxBatch() != 3 || scorer.MaxInputTokens() != 9 || scorer.MaxPairTokens() != 5 {
 		t.Fatal("a decorator should keep the inner scorer's limits")
 	}
 	if _, err := scorer.Score(t.Context(), relevance.Request{Candidates: candidates("a")}); !errors.Is(err, context.DeadlineExceeded) {

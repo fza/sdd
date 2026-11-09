@@ -83,6 +83,7 @@ type perItem struct {
 func (p perItem) Direction() Direction { return p.inner.Direction() }
 func (p perItem) MaxBatch() int        { return 0 }
 func (p perItem) MaxInputTokens() int  { return p.inner.MaxInputTokens() }
+func (p perItem) MaxPairTokens() int   { return p.inner.MaxPairTokens() }
 
 func (p perItem) Score(ctx context.Context, request Request) (Result, error) {
 	results := make([]Result, len(request.Candidates))

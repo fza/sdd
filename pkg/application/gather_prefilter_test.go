@@ -35,6 +35,7 @@ type scriptedScorer struct {
 func (s *scriptedScorer) Direction() llmrelevance.Direction { return llmrelevance.Both }
 func (s *scriptedScorer) MaxBatch() int                     { return s.maxBatch }
 func (s *scriptedScorer) MaxInputTokens() int               { return 0 }
+func (s *scriptedScorer) MaxPairTokens() int                { return 0 }
 
 func (s *scriptedScorer) Score(_ context.Context, request llmrelevance.Request) (llmrelevance.Result, error) {
 	s.mu.Lock()

@@ -51,12 +51,15 @@ type Result struct {
 // Scorer is the port. MaxBatch bounds the candidates one call takes, 0 for
 // no bound; MaxInputTokens bounds the subject and candidates of one call
 // together, 0 for no bound, so a caller fills each call up to the
-// provider's limit without cutting any text.
+// provider's limit without cutting any text. MaxPairTokens bounds the
+// subject and one candidate together, 0 for no bound: a reranker reads each
+// document beside the query in a window of its own.
 type Scorer interface {
 	Score(ctx context.Context, request Request) (Result, error)
 	Direction() Direction
 	MaxBatch() int
 	MaxInputTokens() int
+	MaxPairTokens() int
 }
 
 // EstimateTokens is a conservative token estimate of text: three bytes per
@@ -79,16 +82,17 @@ func CheckResult(request Request, result Result) error {
 
 // Plan splits candidates into calls for scorer: each call within MaxBatch
 // and MaxInputTokens, counting the subject once per call. A candidate too
-// long for a call on its own lands in oversize instead, by index; nothing is
-// cut (D30). Batches hold candidate indexes in request order.
+// long for a call on its own, or beside the subject past MaxPairTokens, lands
+// in oversize instead, by index; nothing is cut (D30). Batches hold candidate
+// indexes in request order.
 func Plan(scorer Scorer, subject string, candidates []Candidate) (batches [][]int, oversize []int) {
-	maxBatch, maxTokens := scorer.MaxBatch(), scorer.MaxInputTokens()
+	maxBatch, maxTokens, maxPair := scorer.MaxBatch(), scorer.MaxInputTokens(), scorer.MaxPairTokens()
 	subjectTokens := EstimateTokens(subject)
 	var current []int
 	tokens := subjectTokens
 	for i, candidate := range candidates {
 		cost := EstimateTokens(candidate.Text)
-		if maxTokens > 0 && subjectTokens+cost > maxTokens {
+		if maxTokens > 0 && subjectTokens+cost > maxTokens || maxPair > 0 && subjectTokens+cost > maxPair {
 			oversize = append(oversize, i)
 			continue
 		}

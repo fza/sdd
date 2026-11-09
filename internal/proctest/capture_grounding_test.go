@@ -329,11 +329,19 @@ type countingScorer struct {
 	score  float64
 	fail   bool
 	scored int
+	// forward makes it a one-direction judge, as a reranker is.
+	forward bool
 }
 
-func (s *countingScorer) Direction() llmrelevance.Direction { return llmrelevance.Both }
-func (s *countingScorer) MaxBatch() int                     { return 0 }
-func (s *countingScorer) MaxInputTokens() int               { return 0 }
+func (s *countingScorer) Direction() llmrelevance.Direction {
+	if s.forward {
+		return llmrelevance.Forward
+	}
+	return llmrelevance.Both
+}
+func (s *countingScorer) MaxBatch() int       { return 0 }
+func (s *countingScorer) MaxInputTokens() int { return 0 }
+func (s *countingScorer) MaxPairTokens() int  { return 0 }
 
 func (s *countingScorer) Score(_ context.Context, request llmrelevance.Request) (llmrelevance.Result, error) {
 	s.scored += len(request.Candidates)
@@ -451,5 +459,45 @@ func TestCaptureGrounding_PublishRecordsAuditAndAppliesTheDriftRule(t *testing.T
 	steps := ledger.Steps()
 	if len(steps) != 1 || steps[0].Judge != judge {
 		t.Fatalf("steps %+v: three referenced samples in a hundred should step the threshold down once", steps)
+	}
+}
+
+// A one-direction judge, as the Cohere reranker is (D21), stores its scores
+// from the draft to each candidate: they answer that direction and leave the
+// reverse pair undecided unless they rate it relevant (5.7 item 4).
+func TestCaptureGrounding_OneDirectionScoresAnswerOnlyFromTheDraft(t *testing.T) {
+	store := local.NewMemoryRelevanceStore()
+	scorer := &countingScorer{score: 0.02, forward: true}
+	world, session := newCaptureWorld(t, "grounding-forward",
+		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
+		proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: "test:forward"}))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap"})
+	session.Gather(t, instance)
+	serve = session.Report(t, instance, captureDraft())
+	proctest.RequireStep(t, serve, "playback")
+	entry := confirmCapture(t, world, session, instance)
+
+	segments, err := store.Segments(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := relevance.Fold(segments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ledger.Score(model.NewRelevancePair(entry.ID, captureRef2ID), entry.ID, "test:forward"); !ok {
+		t.Fatal("the score should answer from the new entry to the candidate")
+	}
+	if _, ok := ledger.Score(model.NewRelevancePair(entry.ID, captureRef2ID), captureRef2ID, "test:forward"); ok {
+		t.Fatal("a one-direction score should not answer from the candidate to the new entry")
+	}
+	thresholds := model.RelevanceThresholds{Valid: true, SetAside: 0.1, Relevant: 0.9}
+	if got := ledger.Lookup(entry.ID, captureRef2ID, "test:forward", thresholds); got != model.RelevanceNotRelevant {
+		t.Fatalf("lookup from the draft = %v: its low score should set the pair aside", got)
+	}
+	if got := ledger.Lookup(captureRef2ID, entry.ID, "test:forward", thresholds); got != model.RelevanceUndecided {
+		t.Fatalf("lookup in reverse = %v: a low one-direction score should leave the reverse undecided", got)
 	}
 }

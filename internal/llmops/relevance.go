@@ -38,6 +38,7 @@ func NewRelevanceBridge(runner llm.Runner) (*RelevanceBridge, error) {
 func (b *RelevanceBridge) Direction() relevance.Direction { return relevance.Both }
 func (b *RelevanceBridge) MaxBatch() int                  { return 1 }
 func (b *RelevanceBridge) MaxInputTokens() int            { return 0 }
+func (b *RelevanceBridge) MaxPairTokens() int             { return 0 }
 
 // Score rates the one candidate of request.
 func (b *RelevanceBridge) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {

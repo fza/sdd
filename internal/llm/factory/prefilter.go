@@ -1,6 +1,7 @@
 package factory
 
 import (
+	"cmp"
 	"fmt"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
+	"github.com/networkteam/sdd/pkg/llm/relevance/cohere"
 	"github.com/networkteam/sdd/pkg/llm/relevance/systemone"
 )
 
@@ -48,19 +50,23 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 	var modelName string
 	switch cfg.Protocol {
 	case model.PrefilterSystemOne:
-		provider := cfg.Provider
-		if provider == "" {
-			provider = defaultPrefilterKeyProvider
-		}
-		modelName = cfg.Model
-		if modelName == "" {
-			modelName = systemone.DefaultModel
-		}
-		key := cfg.APIKeys[provider]
-		if key == "" {
-			return Prefilter{}, fmt.Errorf("llm_prefilter: protocol systemone needs llm_prefilter.api_keys.%s", provider)
+		modelName = cmp.Or(cfg.Model, systemone.DefaultModel)
+		provider, key, err := prefilterKey(cfg)
+		if err != nil {
+			return Prefilter{}, err
 		}
 		client, err := systemone.New(systemone.Options{Endpoint: cfg.Endpoint, Model: modelName, APIKey: key, Provider: provider})
+		if err != nil {
+			return Prefilter{}, fmt.Errorf("llm_prefilter: %w", err)
+		}
+		scorer = client
+	case model.PrefilterCohereRerank:
+		modelName = cmp.Or(cfg.Model, cohere.DefaultModel)
+		provider, key, err := prefilterKey(cfg)
+		if err != nil {
+			return Prefilter{}, err
+		}
+		client, err := cohere.New(cohere.Options{Endpoint: cfg.Endpoint, Model: modelName, APIKey: key, Provider: provider})
 		if err != nil {
 			return Prefilter{}, fmt.Errorf("llm_prefilter: %w", err)
 		}
@@ -89,4 +95,15 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 	}
 	scorer = relevance.Observed(relevance.Bounded(scorer, timeout), sink)
 	return Prefilter{Scorer: scorer, Judge: cfg.Protocol + ":" + modelName}, nil
+}
+
+// prefilterKey returns the key provider a direct protocol authenticates with,
+// opper unless llm_prefilter.provider names another, and its API key.
+func prefilterKey(cfg model.LLMPrefilterConfig) (string, string, error) {
+	provider := cmp.Or(cfg.Provider, defaultPrefilterKeyProvider)
+	key := cfg.APIKeys[provider]
+	if key == "" {
+		return "", "", fmt.Errorf("llm_prefilter: protocol %s needs llm_prefilter.api_keys.%s", cfg.Protocol, provider)
+	}
+	return provider, key, nil
 }
