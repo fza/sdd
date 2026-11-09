@@ -251,11 +251,16 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposF
 		return false, err
 	}
 	logger := slogutils.FromContext(ctx)
+	scope, _ := ctx.Value(refreshScopeKey{}).(*refreshScope)
 	var failures []error
 	for _, repoID := range cmd.RepoIDs {
 		repo, ok := cfg.Connected(repoID)
 		if !ok {
 			logger.Debug("repo not connected; skipping its refresh", "repo", repoID)
+			continue
+		}
+		if !scope.first(repoID) {
+			logger.Debug("refreshed earlier in this invocation", "repo", repoID)
 			continue
 		}
 		outcome, reported := h.syncConnected(ctx, repo, connectedSync{clone: true, onlyDue: true, onPhase: cmd.OnPhase})
@@ -271,6 +276,35 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposF
 		}
 	}
 	return changed, errors.Join(failures...)
+}
+
+type refreshScopeKey struct{}
+
+type refreshScope struct {
+	mu        sync.Mutex
+	refreshed map[model.RepoID]bool
+}
+
+// WithRefreshScope scopes clone refreshes to one invocation: EnsureReposFresh
+// tries each repo's round at most once within it, though the git gate admits
+// a local-path remote every time (20261107-095427-d-tac-yux).
+func WithRefreshScope(ctx context.Context) context.Context {
+	return context.WithValue(ctx, refreshScopeKey{}, &refreshScope{refreshed: map[model.RepoID]bool{}})
+}
+
+// first reports whether repoID is refreshed for the first time in the scope;
+// always true outside one.
+func (s *refreshScope) first(repoID model.RepoID) bool {
+	if s == nil {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refreshed[repoID] {
+		return false
+	}
+	s.refreshed[repoID] = true
+	return true
 }
 
 // freshenReferencedRepos refreshes the clones of every repo a ref set points

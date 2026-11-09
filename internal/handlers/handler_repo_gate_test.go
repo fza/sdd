@@ -230,6 +230,37 @@ func TestEnsureReposFreshLeavesADeferredCloneAsItStands(t *testing.T) {
 	}
 }
 
+// The git gate admits a local-path remote every time, so its round runs on
+// every refresh, except once one ran in the same refresh scope.
+func TestEnsureReposFreshRunsOneRoundPerScope(t *testing.T) {
+	const repoID = model.RepoID("example.test/acme/local")
+	c := newConnections(t, time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC), map[model.RepoID]*synctest.Repo{repoID: {Upstream: "origin/main"}})
+	c.repos[repoID].URL = "/srv/graphs/local.git"
+	refresh := func(ctx context.Context) {
+		t.Helper()
+		_, err := c.handler.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: []model.RepoID{repoID}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	refresh(t.Context())
+	refresh(t.Context())
+	if c.round.count() != 2 {
+		t.Fatalf("outside a scope, a local-path remote's round should run on every refresh, ran %d", c.round.count())
+	}
+	scoped := handlers.WithRefreshScope(t.Context())
+	refresh(scoped)
+	refresh(scoped)
+	if c.round.count() != 3 {
+		t.Errorf("within one scope, a repo's round should run once, ran %d in it", c.round.count()-2)
+	}
+	refresh(handlers.WithRefreshScope(t.Context()))
+	if c.round.count() != 4 {
+		t.Error("a new scope should run the round again")
+	}
+}
+
 // The timer of a running server syncs the cloned members of the dependency
 // closure whose round is due, and reports nothing for the rest: a repo not
 // due, one not cloned, one not connected, one connected outside the closure.

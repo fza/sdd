@@ -2,6 +2,7 @@ package cliapp_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -184,6 +185,47 @@ func TestConnectedCaptureWritesThroughTheClone(t *testing.T) {
 	if strings.TrimSpace(test.Git(t, platformClone(), "rev-parse", "HEAD")) != after {
 		t.Error("the capture should be made in the dependency's sdd-owned clone")
 	}
+}
+
+// One call syncs a dependency's clone at most once, though the git gate
+// admits a local-path remote every time and the confirm resolves the
+// dependency for writing several times (20261107-095427-d-tac-yux).
+func TestConnectedCaptureConfirmSyncsTheDependencyOnce(t *testing.T) {
+	fixture, _ := connectedWriteFixture(t, true, true)
+	trace := filepath.Join(t.TempDir(), "git-trace")
+	t.Setenv("GIT_TRACE", trace)
+	fixture.serve(t, func(client *mcp.ClientSession) {
+		session, serve, served, failed := startConnectedCapture(t, client)
+		if failed {
+			t.Fatalf("start_procedure: %s", served)
+		}
+		serve, served, failed = callTool(t, client, "next", map[string]any{"session": session, "instance": serve.Instance, "report": captureReport()})
+		if failed || serve.Step != "playback" {
+			t.Fatalf("the capture should reach playback, got step %q:\n%s", serve.Step, served)
+		}
+		before := gitFetches(t, trace)
+		_, served, failed = callTool(t, client, "next", map[string]any{"session": session, "instance": serve.Instance,
+			"report": map[string]any{"chooser": "playback", "choice": "confirm", "userWords": "yes, capture it"}})
+		if failed {
+			t.Fatalf("the confirmed capture should write:\n%s", served)
+		}
+		if rounds := gitFetches(t, trace) - before; rounds != 1 {
+			t.Errorf("the confirm should run one sync round of the dependency's clone, ran %d", rounds)
+		}
+	})
+}
+
+// gitFetches counts the fetches git traced to trace: one per sync round.
+func gitFetches(t *testing.T, trace string) int {
+	t.Helper()
+	data, err := os.ReadFile(trace)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Count(string(data), "built-in: git fetch")
 }
 
 const homeGraphRepoID = model.RepoID("example.test/acme/home-sdd")

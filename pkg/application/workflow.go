@@ -19,6 +19,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/basefacts"
 	"github.com/networkteam/sdd/internal/engine"
+	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/textpatch"
 	"github.com/networkteam/sdd/internal/truncate"
@@ -1340,8 +1341,10 @@ func (b *bufferSink) Append(event engine.Event) (uint64, error) {
 	return uint64(event.Seq), nil
 }
 
+// setOperation starts an operation: its resolves of one dependency share one
+// sync round of the dependency's clone.
 func (w *WorkflowSession) setOperation(ctx context.Context, identity RequestIdentity) {
-	w.ctx = ctx
+	w.ctx = handlers.WithRefreshScope(ctx)
 	w.identity = identity
 	if w.graphs != nil {
 		w.graphs.Invalidate()
