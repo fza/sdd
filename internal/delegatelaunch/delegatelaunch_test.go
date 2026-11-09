@@ -64,7 +64,7 @@ func TestRun_ClaudeRunsHeadlessWithTheReadOnlyToolSet(t *testing.T) {
 		t.Fatalf("the prompt should go on stdin, got %q", call.Stdin)
 	}
 	want := []string{
-		"-p", "--output-format", "json", "--safe-mode",
+		"-p", "--output-format", "json", "--setting-sources", "", "--disable-slash-commands",
 		"--tools", "Read,Grep,Glob,WebFetch,WebSearch,Bash",
 		"--allowedTools", "Read,Grep,Glob,WebFetch,WebSearch,mcp__sdd__*,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git blame:*)",
 		"--strict-mcp-config", "--mcp-config", `{"mcpServers":{"sdd":{"args":["serve"],"command":"/opt/sdd/bin/sdd","type":"stdio"}}}`,
@@ -130,6 +130,7 @@ func TestRun_CodexRunsInAReadOnlySandbox(t *testing.T) {
 	}
 	want := []string{
 		"exec", "--json", "--sandbox", "read-only",
+		"-c", "project_doc_max_bytes=0",
 		"-c", `mcp_servers.sdd.command="/opt/sdd/bin/sdd"`,
 		"-c", `mcp_servers.sdd.args=["serve"]`,
 		roundPrompt,
