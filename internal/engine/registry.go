@@ -52,6 +52,9 @@ type Context struct {
 	// Round raises the step's round event with fields added to its payload;
 	// set only for a command declaring Rounds.
 	Round func(fields map[string]any) error
+	// hooksJoined is whether the hooks joined findings into the current
+	// step's channel when it was last left.
+	hooksJoined bool
 }
 
 // PredicateFunc is a pure check over the store (and graph): no side effects,
