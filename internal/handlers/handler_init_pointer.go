@@ -141,7 +141,8 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 	if projectGraphDir == "" {
 		projectGraphDir = model.DefaultGraphDir
 	}
-	err = keepIgnoreFiles(cmd, "", []string{projectGraphDir}, &touched)
+	// The default dir covers the lines written while this repository still held its graph.
+	err = keepIgnoreFiles(cmd, "", []string{projectGraphDir, model.DefaultGraphDir}, &touched)
 	if err != nil {
 		return err
 	}

@@ -165,7 +165,7 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 			}
 		}
 	}
-	err = keepIgnoreFiles(cmd, "", nil, &touched)
+	err = keepIgnoreFiles(cmd, "", []string{model.DefaultGraphDir}, &touched)
 	if err != nil {
 		return err
 	}
