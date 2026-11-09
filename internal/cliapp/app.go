@@ -2248,6 +2248,9 @@ func initCmd() *cli.Command {
 			// Flushed before a prompt or a stderr line, which keeps the order.
 			var report bytes.Buffer
 			unchanged := false
+			// A kept user-edited skill differs from the bundle, so such a run
+			// is not up to date (20261110-004731-d-tac-0g9).
+			preserved := false
 			icmd := &command.InitCmd{
 				RepoRoot:        repoRoot,
 				StableRepoRoot:  stableRepoRoot,
@@ -2327,6 +2330,7 @@ func initCmd() *cli.Command {
 					// rather than the flag default — so it stays
 					// authoritative even when the CLI's local `scope`
 					// variable is just the fallback.
+					preserved = preserved || len(result.SkippedModified) > 0
 					presenters.RenderInitSkills(&report, result.InstallDir, result)
 				},
 				OnBridgeScaffolded: func(paths []string) {
@@ -2341,6 +2345,7 @@ func initCmd() *cli.Command {
 					presenters.RenderInitPrune(&report, result)
 				},
 				OnSkillOrphansPruned: func(result command.AgentPruneResult) {
+					preserved = preserved || len(result.KeptModified) > 0
 					presenters.RenderInitOrphans(&report, result)
 				},
 				OnIndexMigrated: func(legacyDir, storeDir string, moved bool) {
@@ -2383,7 +2388,8 @@ func initCmd() *cli.Command {
 				MergeDriverAt:       func(dir string) handlers.MergeDriverInstaller { return git.CLI{Dir: dir} },
 			})
 			initErr := handler.Init(ctx, icmd)
-			if !unchanged || cmd.Bool("verbose") {
+			upToDate := unchanged && !preserved
+			if !upToDate || cmd.Bool("verbose") {
 				_, err = report.WriteTo(cmd.Writer)
 				if err != nil {
 					return errors.Join(initErr, err)
@@ -2392,7 +2398,7 @@ func initCmd() *cli.Command {
 			if initErr != nil {
 				return initErr
 			}
-			if unchanged {
+			if upToDate {
 				fmt.Fprintln(cmd.Writer, "sdd: everything up to date, nothing changed")
 			}
 			notifyUnconnectedDependencies(cmd.ErrWriter, projectSDDDir)
