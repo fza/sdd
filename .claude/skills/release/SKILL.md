@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a new release of the SDD CLI: survey changes against the graph, propose the version bump, draft curated notes, and ship after explicit user confirmation. Invoke when the user wants to create a release or bump the version.
+description: 'Cut a new release of the SDD CLI: survey changes against the graph, propose the version bump, draft curated notes, and ship after explicit user confirmation. Invoke when the user wants to create a release or bump the version.'
 ---
 
 # Release the SDD CLI
