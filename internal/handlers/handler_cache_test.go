@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/networkteam/sdd/internal/graphcache"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/handlers/synctest"
+	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
@@ -169,6 +171,44 @@ func TestCacheHandlerPruneKeepsTheCheckoutsCurrentVersions(t *testing.T) {
 	}
 	if index.DocumentsSize(f.usedStore, f.expiredRow) == 0 {
 		t.Error("a version current for the checkout running the pass should stay")
+	}
+}
+
+// The pass drops the confirmations of hooks no config declares any more
+// (20261109-213250-d-tac-bve).
+func TestCacheHandlerPruneSweepsUndeclaredHookConfirmations(t *testing.T) {
+	f := newPruneFixture(t, "")
+	checkout := t.TempDir()
+	declared, undeclared := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	store := hooks.NewStore(f.loc.StateRoot)
+	for _, hash := range []string{declared, undeclared} {
+		hook := model.Hook{
+			HookConfig: model.HookConfig{Event: "capture.assemble", Command: "lint.sh"}, Hash: hash,
+			Origin: model.HookOrigin{Layer: model.HookLayerCommitted, Checkout: checkout, RepoKey: "example.test/acme"},
+		}
+		if err := store.Confirm(hook); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
+		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
+		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(f.loc.StateRoot, nil)},
+		DeclaredHooks: func(dir string) ([]string, error) {
+			if dir != checkout {
+				t.Errorf("only the recorded checkout should be asked, asked %s", dir)
+			}
+			return []string{declared}, nil
+		},
+	})
+	if err := h.Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(store.Path("example.test/acme"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), declared) || strings.Contains(string(raw), undeclared) {
+		t.Errorf("the pass should keep only the declared hook's confirmation, store holds %s", raw)
 	}
 }
 

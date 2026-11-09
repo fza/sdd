@@ -428,7 +428,8 @@ sdd hashes each hook on every run: its event, command, arguments, timeout, findi
 - `sdd init` offers the pending hooks when it runs in a terminal, and otherwise names how many wait.
 - Over MCP, every call that works on a session or opens one first checks all of the project's hooks. Before it does anything else, it shows you the prompt for each unconfirmed hook at once through your client, and goes on only once you accept them all. A decline, or a client that cannot ask, fails the call with nothing done and names `sdd hooks trust`. A hook that changes while the call runs fails the call the same way.
 
-Confirmations live in `~/.local/state/sdd/hooks/<repository>.json`, readable only by you, keyed by the project's `repo_id`, so clones of one repository share them.
+Confirmations live in `~/.local/state/sdd/hooks/<repository>.json`, readable only by you, keyed by the project's `repo_id`, so clones of one repository share them. The daily cache pruning drops the confirmations of hooks no config declares any more and of checkouts gone from disk.
+
 ### Events
 
 | Event | Fires | Accepts findings |

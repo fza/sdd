@@ -15,6 +15,7 @@ import (
 	"github.com/networkteam/sdd/internal/cacheprune"
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/graphcache"
+	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
@@ -48,21 +49,26 @@ type CacheHandlerOptions struct {
 	Registry    *repos.Registry
 	OwnedClones OwnedCloneProbe
 	Keep        CurrentHashSource
-	Now         func() time.Time
+	// DeclaredHooks returns the hashes of the hooks a checkout declares now
+	// (hooks.DeclaredIn); the pass drops every other hook confirmation under
+	// StateRoot. Nil leaves the confirmations alone.
+	DeclaredHooks func(checkout string) ([]string, error)
+	Now           func() time.Time
 }
 
 // CacheHandler runs the machine-global cache pruning.
 type CacheHandler struct {
-	cacheRoot   string
-	stateRoot   string
-	registry    *repos.Registry
-	ownedClones OwnedCloneProbe
-	keep        CurrentHashSource
-	now         func() time.Time
+	cacheRoot     string
+	stateRoot     string
+	registry      *repos.Registry
+	ownedClones   OwnedCloneProbe
+	keep          CurrentHashSource
+	declaredHooks func(checkout string) ([]string, error)
+	now           func() time.Time
 }
 
 func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
-	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, ownedClones: opts.OwnedClones, keep: opts.Keep, now: opts.Now}
+	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, ownedClones: opts.OwnedClones, keep: opts.Keep, declaredHooks: opts.DeclaredHooks, now: opts.Now}
 	if h.now == nil {
 		h.now = time.Now
 	}
@@ -164,6 +170,12 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 	counts.Bytes += freed
 	if err != nil {
 		errs = append(errs, fmt.Errorf("pruning graph snapshots: %w", err))
+	}
+
+	if h.declaredHooks != nil {
+		if err := hooks.NewStore(h.stateRoot).Sweep(h.declaredHooks); err != nil {
+			errs = append(errs, fmt.Errorf("sweeping hook confirmations: %w", err))
+		}
 	}
 
 	clones, err := h.registry.UnconnectedClones()
