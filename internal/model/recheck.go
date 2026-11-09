@@ -123,7 +123,8 @@ func RecheckItemFromEvent(id string, at time.Time, entries []string, payload []b
 
 // healed reports whether a later entry healed the item: one of its entries
 // is no longer live, or an entry written after the item, other than the one
-// that reported it, cites every one of them.
+// that reported it, cites every one of them. An entry time carries whole
+// seconds only, so one written in the second the item was reported counts.
 func (item RecheckItem) healed(g *Graph, live map[string]bool) bool {
 	for _, id := range item.Entries {
 		if !live[id] {
@@ -131,7 +132,7 @@ func (item RecheckItem) healed(g *Graph, live map[string]bool) bool {
 		}
 	}
 	for _, e := range g.Entries {
-		if e.Time.Before(item.At) || e.ID == item.ReportedBy || slices.Contains(item.Entries, e.ID) {
+		if e.Time.Before(item.At.Truncate(time.Second)) || e.ID == item.ReportedBy || slices.Contains(item.Entries, e.ID) {
 			continue
 		}
 		if citesAll(e, item.Entries) {
