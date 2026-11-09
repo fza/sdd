@@ -65,15 +65,20 @@ var claudeTools = []string{
 	"Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(git blame:*)",
 }
 
+// Resolve names the launch Run runs: settings.Launch, or for Fallback the
+// first agent of settings.Agents whose CLI is found.
+func Resolve(settings Settings) (string, error) {
+	if settings.Launch == Fallback {
+		return fallback(settings.Agents)
+	}
+	return settings.Launch, nil
+}
+
 // Run launches one round and waits for it to end.
 func Run(ctx context.Context, settings Settings, round Round) (Launched, error) {
-	launch := settings.Launch
-	if launch == Fallback {
-		found, err := fallback(settings.Agents)
-		if err != nil {
-			return Launched{}, err
-		}
-		launch = found
+	launch, err := Resolve(settings)
+	if err != nil {
+		return Launched{}, err
 	}
 	timeout := settings.Timeout
 	if timeout <= 0 {
@@ -115,15 +120,17 @@ func mcpConfig(sdd string) (string, error) {
 }
 
 // ClaudeArgs are the flags of a headless claude round (V-D18): print mode
-// with a JSON result, safe mode, the read-only tool set, and sdd as the only
-// MCP server. The prompt goes on stdin.
+// with a JSON result, no settings layer (so no project instructions, hooks or
+// plugins) and no skills, the read-only tool set, and sdd as the only MCP
+// server. The prompt goes on stdin. --safe-mode is no substitute: it drops the
+// server --mcp-config passes too.
 func ClaudeArgs(sdd, resume string) ([]string, error) {
 	config, err := mcpConfig(sdd)
 	if err != nil {
 		return nil, err
 	}
 	args := []string{
-		"-p", "--output-format", "json", "--safe-mode",
+		"-p", "--output-format", "json", "--setting-sources", "", "--disable-slash-commands",
 		"--tools", "Read,Grep,Glob,WebFetch,WebSearch,Bash",
 		"--allowedTools", strings.Join(claudeTools, ","),
 		"--strict-mcp-config", "--mcp-config", config,
@@ -162,11 +169,13 @@ func runClaude(ctx context.Context, settings Settings, round Round) (string, err
 }
 
 // CodexArgs are the flags of a headless codex round (V-D18): exec with JSON
-// events in a read-only sandbox, sdd as an MCP server, and the round's
-// prompt; a later round resumes the first round's session.
+// events in a read-only sandbox, no project instructions (a zero byte budget
+// for AGENTS.md), sdd as an MCP server, and the round's prompt; a later round
+// resumes the first round's session.
 func CodexArgs(sdd, resume, prompt string) []string {
 	args := []string{
 		"exec", "--json", "--sandbox", "read-only",
+		"-c", "project_doc_max_bytes=0",
 		"-c", "mcp_servers.sdd.command=" + strconv.Quote(sdd),
 		"-c", `mcp_servers.sdd.args=["serve"]`,
 	}

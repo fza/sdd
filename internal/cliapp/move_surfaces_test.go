@@ -62,7 +62,7 @@ func TestMoveRemovesTheOrphanedSkillsOfAVacatedCheckout(t *testing.T) {
 	orphan := func(t *testing.T) []byte {
 		t.Helper()
 		entry := model.SkillBundleEntry{Skill: "sdd", RelPath: "references/gone.md", Content: []byte("---\nname: gone\n---\nA reference the bundle dropped.\n")}
-		rendered, err := model.RenderSkillFile(entry, model.AgentClaude, "v0.1.0", model.ComputeSkillHash(entry.Content))
+		rendered, err := model.RenderSkillFile(entry, "v0.1.0", model.ComputeSkillHash(entry.Content))
 		if err != nil {
 			t.Fatal(err)
 		}

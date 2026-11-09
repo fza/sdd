@@ -2,7 +2,6 @@ package application_test
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,12 +179,11 @@ func newDelegateApplication(t *testing.T, launcher sdd.DelegateLauncher) *delega
 		t.Fatal(err)
 	}
 	f.dispatch = serve.Instance
-	answer := map[string]any{"chooser": "ask", "choice": "delegate", "fields": map[string]any{"goal": "the capture draft"}}
-	if _, err := workflow.Advance(t.Context(), f.identity, sdd.WorkflowAdvanceRequest{Instance: f.dispatch, Report: answer}); err != nil {
-		t.Fatal(err)
-	}
 	return f
 }
+
+// delegateAnswer is the dispatcher's answer that dispatches the review task.
+var delegateAnswer = map[string]any{"chooser": "ask", "choice": "delegate", "fields": map[string]any{"goal": "the capture draft"}}
 
 // session replays a session afresh, as every MCP call does.
 func (f *delegateFixture) session(t *testing.T, id sdd.SessionID) *sdd.WorkflowSession {
@@ -206,14 +204,16 @@ func (f *delegateFixture) advance(t *testing.T, id sdd.SessionID, instance strin
 	return serve
 }
 
+// fork answers the dispatcher's delegate option, which forks the review task
+// in that call.
 func (f *delegateFixture) fork(t *testing.T) (*sdd.WorkflowServe, *sdd.WorkflowDispatch) {
 	t.Helper()
-	serve, err := f.session(t, f.parent).Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "reviewtask", Parent: f.dispatch})
+	serve, err := f.session(t, f.parent).Advance(t.Context(), f.identity, sdd.WorkflowAdvanceRequest{Instance: f.dispatch, Report: delegateAnswer})
 	if err != nil {
 		t.Fatalf("dispatching the review task: %v", err)
 	}
 	if len(serve.Dispatches) != 1 {
-		t.Fatalf("a fork should owe exactly one dispatch handoff, got %+v", serve.Dispatches)
+		t.Fatalf("the dispatching answer should owe exactly one dispatch handoff, got %+v", serve.Dispatches)
 	}
 	return serve, serve.Dispatches[0]
 }
@@ -238,6 +238,9 @@ func TestDispatchingADeliveringTaskForksADelegateSession(t *testing.T) {
 	}
 	if !strings.Contains(dispatch.Instructions, "fresh-context sub-agent") {
 		t.Fatalf("the first round should name the fresh-context launch, got %q", dispatch.Instructions)
+	}
+	if dispatch.Agent != "sdd_delegate" || !strings.Contains(dispatch.Instructions, "the sdd_delegate subagent sdd init installs") {
+		t.Fatalf("the dispatch should name the subagent definition a harness launches, got %q: %q", dispatch.Agent, dispatch.Instructions)
 	}
 	for _, prompt := range []string{dispatch.Prompt, dispatch.ContinuePrompt} {
 		if !strings.Contains(prompt, string(dispatch.Session)) || strings.Contains(prompt, string(f.parent)) {
@@ -365,77 +368,6 @@ func TestDelegateLivesNoLongerThanItsDispatchingMove(t *testing.T) {
 	})
 }
 
-// scriptedLauncher records every launch and drives the first round's
-// delegate through the application, the way a headless CLI would through its
-// own sdd server.
-type scriptedLauncher struct {
-	t        *testing.T
-	fixture  *delegateFixture
-	launches []sdd.DelegateLaunch
-	fail     error
-}
-
-func (l *scriptedLauncher) LaunchDelegate(ctx context.Context, launch sdd.DelegateLaunch) (sdd.DelegateLaunched, error) {
-	l.launches = append(l.launches, launch)
-	if l.fail != nil {
-		return sdd.DelegateLaunched{}, l.fail
-	}
-	if launch.Round == 1 {
-		l.fixture.advance(l.t, launch.Session, launch.Instance, map[string]any{"plan": "f1 from the launched delegate"})
-	}
-	return sdd.DelegateLaunched{Session: "cli-" + string(rune('0'+launch.Round))}, nil
-}
-
-func TestLauncherKeepsItsSessionPerChildAndResumesEachRound(t *testing.T) {
-	launcher := &scriptedLauncher{t: t}
-	f := newDelegateApplication(t, launcher)
-	launcher.fixture = f
-	_, dispatch := f.fork(t)
-	if dispatch.Launched != "cli-1" || !strings.Contains(dispatch.Instructions, "launch nothing") {
-		t.Fatalf("a launched round says sdd launched it, got %+v", dispatch)
-	}
-	picked := f.advance(t, f.parent, f.dispatch, nil)
-	if picked.Step != "answer" {
-		t.Fatalf("the launched delegate's delivery lands in the dispatching move, at %s", picked.Step)
-	}
-	sent := f.advance(t, f.parent, f.dispatch, map[string]any{"chooser": "answer", "choice": "reply", "fields": map[string]any{"brief": "a1"}})
-	if len(sent.Dispatches) != 1 || sent.Dispatches[0].Launched != "cli-2" {
-		t.Fatalf("sending the next input launches the next round, got %+v", sent.Dispatches)
-	}
-	if len(launcher.launches) != 2 {
-		t.Fatalf("one launch per round, got %d", len(launcher.launches))
-	}
-	first, second := launcher.launches[0], launcher.launches[1]
-	if first.Round != 1 || first.Resume != "" || second.Round != 2 || second.Resume != "cli-1" {
-		t.Fatalf("each round resumes the launcher session of the one before, got %+v then %+v", first, second)
-	}
-	if first.Session != dispatch.Session || second.Session != dispatch.Session {
-		t.Fatalf("every launch names the child session, got %s and %s", first.Session, second.Session)
-	}
-	for _, launch := range launcher.launches {
-		if strings.Contains(launch.Prompt, string(f.parent)) || !strings.Contains(launch.Prompt, string(dispatch.Session)) {
-			t.Fatalf("a launched prompt carries the child handle and never the dispatching one, got %q", launch.Prompt)
-		}
-	}
-	kept, err := f.app.DelegateLaunches(t.Context(), f.identity, dispatch.Session)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(kept, ",") != "cli-1,cli-2" {
-		t.Fatalf("the launcher sessions are kept with the child session, got %v", kept)
-	}
-}
-
-func TestLauncherFailureFailsTheDispatchLoudly(t *testing.T) {
-	launcher := &scriptedLauncher{t: t, fail: errors.New("agent CLI not found")}
-	f := newDelegateApplication(t, launcher)
-	launcher.fixture = f
-	_, err := f.session(t, f.parent).Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "reviewtask", Parent: f.dispatch})
-	if err == nil || !strings.Contains(err.Error(), "agent CLI not found") {
-		t.Fatalf("a failed launch should surface, got %v", err)
-	}
-}
-
 func TestImmediateDeliveryReachesTheHeldDispatcher(t *testing.T) {
 	f := newDelegateApplication(t, nil)
 	workflow := f.session(t, f.parent)
@@ -444,15 +376,12 @@ func TestImmediateDeliveryReachesTheHeldDispatcher(t *testing.T) {
 		t.Fatal(err)
 	}
 	answer := map[string]any{"chooser": "ask", "choice": "echo", "fields": map[string]any{"goal": "echo me"}}
-	if _, err := workflow.Advance(t.Context(), f.identity, sdd.WorkflowAdvanceRequest{Instance: move.Instance, Report: answer}); err != nil {
-		t.Fatal(err)
-	}
-	forked, err := workflow.Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "echotask", Parent: move.Instance})
+	forked, err := workflow.Advance(t.Context(), f.identity, sdd.WorkflowAdvanceRequest{Instance: move.Instance, Report: answer})
 	if err != nil {
 		t.Fatalf("dispatching the echo task: %v", err)
 	}
-	if strings.Contains(strings.Join(forked.Diagnostics, "\n"), "waiting for the delegate") {
-		t.Fatalf("a delivery made while forking should land in the dispatching session the call holds, got %v", forked.Diagnostics)
+	if forked.Status != "completed" {
+		t.Fatalf("a delivery made while forking should land in the dispatching session the answering call holds and be picked up there, got %s at %s", forked.Status, forked.Step)
 	}
 	if err := workflow.RecordServed(t.Context(), f.identity, []string{"served-after-fork"}); err != nil {
 		t.Fatalf("the held dispatching session should stay writable after the fork: %v", err)
@@ -462,29 +391,10 @@ func TestImmediateDeliveryReachesTheHeldDispatcher(t *testing.T) {
 	}
 }
 
-func TestDelegateStartsInTheDispatchersProject(t *testing.T) {
+func TestDelegateIsNeverStartedByHand(t *testing.T) {
 	f := newDelegateApplication(t, nil)
-	_, err := f.session(t, f.parent).Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "reviewtask", Parent: f.dispatch, Project: "elsewhere"})
-	if err == nil || !strings.Contains(err.Error(), "a delegate works in the project of the move that dispatches it") {
-		t.Fatalf("a delegate pinned to another project should be refused, got %v", err)
-	}
-}
-
-func TestServedBlocksRecordAfterALaunchedRoundDelivered(t *testing.T) {
-	launcher := &scriptedLauncher{t: t}
-	f := newDelegateApplication(t, launcher)
-	launcher.fixture = f
-	workflow := f.session(t, f.parent)
-	if _, err := workflow.Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "reviewtask", Parent: f.dispatch}); err != nil {
-		t.Fatal(err)
-	}
-	if err := workflow.RecordServed(t.Context(), f.identity, []string{"served-while-the-delegate-delivered"}); err != nil {
-		t.Fatalf("the served blocks of the dispatching call should land although the delegate wrote the session meanwhile: %v", err)
-	}
-	if !f.session(t, f.parent).ServedBefore("served-while-the-delegate-delivered") {
-		t.Fatal("the served blocks should be in the session ledger")
-	}
-	if picked := f.advance(t, f.parent, f.dispatch, nil); picked.Step != "answer" {
-		t.Fatalf("the delegate's delivery should still land in the dispatching move, at %s", picked.Step)
+	_, err := f.session(t, f.parent).Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "reviewtask", Parent: f.dispatch})
+	if err == nil || !strings.Contains(err.Error(), "reviewtask runs as a delegate: answering the option whose dispatch names it forks it") {
+		t.Fatalf("starting a delegating task by hand should be refused, got %v", err)
 	}
 }

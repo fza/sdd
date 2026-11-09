@@ -45,7 +45,7 @@ func TestInstallSkills_FreshInstall(t *testing.T) {
 
 	// Spot-check one installed file was actually written with stamps.
 	for _, p := range got.Installed {
-		if !strings.HasPrefix(p, filepath.Join(tmp, ".claude", "skills")+string(os.PathSeparator)) {
+		if !strings.HasPrefix(p, filepath.Join(tmp, ".claude", "skills")+string(os.PathSeparator)) && p != filepath.Join(tmp, ".claude", "agents", "sdd_delegate.md") {
 			t.Errorf("installed path not under expected dir: %s", p)
 		}
 		data, err := os.ReadFile(p)

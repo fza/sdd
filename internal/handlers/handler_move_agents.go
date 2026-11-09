@@ -40,7 +40,7 @@ func (h *Handler) installPlan(ctx context.Context, root string, scope model.Scop
 			if entry.Status != model.SkillStatusMissing && entry.Status != model.SkillStatusPristine {
 				continue
 			}
-			rendered, err := model.RenderSkillFile(entry.Embedded, agent, binaryVersion, model.ComputeSkillHash(entry.Embedded.Content))
+			rendered, err := model.RenderSkillFile(entry.Embedded, binaryVersion, model.ComputeSkillHash(entry.Embedded.Content))
 			if err != nil {
 				return nil, fmt.Errorf("rendering %s: %w", entry.AbsPath, err)
 			}

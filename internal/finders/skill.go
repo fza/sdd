@@ -61,6 +61,25 @@ func (f *Finder) SkillStatus(ctx context.Context, q query.SkillStatusQuery) (*qu
 		})
 	}
 
+	agentDir, err := model.AgentDefinitionDir(target, scope, q.RepoRoot, q.UserHome)
+	if err != nil {
+		return nil, fmt.Errorf("resolving agent definition dir: %w", err)
+	}
+	for _, e := range bundle.Agents {
+		abs := filepath.Join(agentDir, e.RelPath)
+		installed, err := readSkillFile(abs)
+		if err != nil {
+			return nil, fmt.Errorf("reading installed agent definition %s: %w", abs, err)
+		}
+		result.Entries = append(result.Entries, query.SkillStatusEntry{
+			RelPath:   e.RelPath,
+			AbsPath:   abs,
+			Status:    model.ComputeSkillStatus(e, installed),
+			Embedded:  e,
+			Installed: installed,
+		})
+	}
+
 	orphans, err := findSkillOrphans(installDir, fromBundle)
 	if err != nil {
 		return nil, err

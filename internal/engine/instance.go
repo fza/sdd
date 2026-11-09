@@ -172,6 +172,10 @@ type Serve struct {
 	// Cancellation is the current cancellation this serve lands, rendered as
 	// its own lane; nil on every other serve.
 	Cancellation *CancellationServe
+	// Dispatches names the procedure the chooser answer this serve follows
+	// dispatches, so the shell forks a delegating task in the answering call
+	// (20260829-122157-d-cpt-zpe); empty on every other serve.
+	Dispatches string
 }
 
 // ServeLane is defined in pkg/application/types — the exported surface names
@@ -288,7 +292,7 @@ func (s *Session) cascade(inst *Instance) error {
 		}
 
 		if step.Op != "" && !inst.opDone {
-			if err := s.runCommand(inst, step.Op, ""); err != nil {
+			if err := s.runCommand(inst, step.Op, "", nil); err != nil {
 				return err
 			}
 			inst.opDone = true
@@ -388,8 +392,9 @@ func (s *Session) reopenStalePlayback(inst *Instance, failing []FailedPredicate)
 // runCommand executes a registry command at the instance's current step and
 // logs its engine writes as an op_result event. A non-empty to names the
 // transition the dispatching option owes after the command, recorded with the
-// intent so a retry completes it.
-func (s *Session) runCommand(inst *Instance, name, to string) error {
+// intent so a retry completes it. A non-nil beforeResult runs once the command
+// passed, right before its result is logged.
+func (s *Session) runCommand(inst *Instance, name, to string, beforeResult func() error) error {
 	if err := s.checkSink(); err != nil {
 		return err
 	}
@@ -446,6 +451,11 @@ func (s *Session) runCommand(inst *Instance, name, to string) error {
 		return s.commandError(ctx.Intent, fmt.Errorf("command %q at step %s: %w", name, inst.Step, err))
 	}
 	writes := candidate.drainJournal()
+	if beforeResult != nil {
+		if err := beforeResult(); err != nil {
+			return err
+		}
+	}
 	event := EventOpResult
 	if ctx.Intent != nil {
 		event = EventMutationOutcome
@@ -474,6 +484,12 @@ func (s *Session) runCommand(inst *Instance, name, to string) error {
 		return err
 	}
 	return nil
+}
+
+// prepares reports whether the named command records a mutation intent.
+func (s *Session) prepares(name string) bool {
+	cmd, ok := s.engine.Registry.Command(name)
+	return ok && cmd.Prepare != nil
 }
 
 // transitionTo moves the instance to a step or terminal target and logs the
