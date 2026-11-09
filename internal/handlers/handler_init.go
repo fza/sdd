@@ -244,8 +244,8 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	if cmd.Strictness != "" {
-		changed, err := writeStrictness(configPath, cmd.Strictness)
+	if cmd.VerifyMode != "" {
+		changed, err := writeVerifyMode(configPath, cmd.VerifyMode)
 		if err != nil {
 			return err
 		}
@@ -1042,20 +1042,14 @@ func rewriteLines(path string, remove, add []string) (changed bool, err error) {
 	return true, nil
 }
 
-// writeStrictness records grounding.enforce and verifier.mode together in the
-// committed config at configPath, keeping every other key, and reports
-// whether the file changed.
-func writeStrictness(configPath string, strictness model.Strictness) (bool, error) {
+// writeVerifyMode records verify.mode in the committed config at configPath,
+// keeping every other key, and reports whether the file changed.
+func writeVerifyMode(configPath string, mode model.VerifyMode) (bool, error) {
 	existing, err := os.ReadFile(configPath)
 	if err != nil {
 		return false, fmt.Errorf("reading %s: %w", configPath, err)
 	}
-	enforce, mode := strictness.Settings()
-	updated, err := model.SetYAMLField(existing, "grounding.enforce", enforce)
-	if err != nil {
-		return false, fmt.Errorf("updating %s: %w", configPath, err)
-	}
-	updated, err = model.SetYAMLField(updated, "verifier.mode", string(mode))
+	updated, err := model.SetYAMLField(existing, "verify.mode", string(mode))
 	if err != nil {
 		return false, fmt.Errorf("updating %s: %w", configPath, err)
 	}

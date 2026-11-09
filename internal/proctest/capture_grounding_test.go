@@ -1,4 +1,4 @@
-// Capture under grounding.enforce (20261109-004506-d-cpt-udz, slice 4): the
+// Capture under grounding enforcement (20261109-004506-d-cpt-udz, slice 4): the
 // assemble gate judges the capture's credited gather reading, the write step
 // answers entries that landed after it, and a recorded bypass writes the
 // entry with low confidence.
@@ -259,7 +259,7 @@ func TestCaptureGrounding_ReadingSurvivesResume(t *testing.T) {
 	proctest.RequireStep(t, serve, "playback")
 }
 
-// Above grounding.brief_all_below the reading owes the searches and the
+// Above verify.brief_all_below the reading owes the searches and the
 // listing of each draft topic; opening entries alone does not ground a draft.
 func TestCaptureGrounding_SearchModeOwesTheSearchesAndListings(t *testing.T) {
 	_, session := newCaptureWorld(t, "grounding-owed", proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, BriefAllBelow: 1}))

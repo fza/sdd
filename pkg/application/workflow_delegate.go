@@ -90,6 +90,10 @@ type WorkflowDispatch struct {
 	Instructions   string
 	// Agent is the subagent definition a harness launches the delegate as.
 	Agent string
+	// Model and Effort are what the harness launches that subagent with, from
+	// verify.subagent; empty leaves the harness's own.
+	Model  string
+	Effort string
 	// Launch is the launch sdd runs the delegate's round with, when it launched
 	// the delegate itself.
 	Launch string
@@ -279,7 +283,7 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 	}
 	if launch != "" || (w.app.launcher != nil && procedure != verifyProcedure) {
 		if w.app.launcher == nil {
-			return dispatch, fmt.Errorf("verifier.launch %s needs sdd to launch the delegate, and this server launches none: set verifier.launch: subagent", launch)
+			return dispatch, fmt.Errorf("verify.launch %s needs sdd to launch the delegate, and this server launches none: set verify.launch: subagent", launch)
 		}
 		launched, err := w.app.launchDelegate(ctx, identity, id, child.Instance, procedure, w.instanceProject(parent), launch)
 		switch {
@@ -296,12 +300,43 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 			return dispatch, nil
 		}
 	}
+	settings, err := w.subagentSettings(parent, procedure)
+	if err != nil {
+		return dispatch, err
+	}
+	dispatch.Model, dispatch.Effort = settings.Model, settings.Effort
 	if first {
-		dispatch.Instructions = "This move dispatched a delegate into its own child session. Launch a fresh-context sub-agent, the " + dispatch.Agent + " subagent sdd init installs for your harness where it has one, whose prompt is exactly the dispatch prompt: the prompt carries the child handles and nothing else, and this dialogue's own session handle never goes into it. The delegate works through the sdd MCP tools only. Its results arrive in this move, never through the sub-agent's reply: next with this instance and no report picks a delivery up once it has landed."
+		dispatch.Instructions = "This move dispatched a delegate into its own child session. Launch a fresh-context sub-agent, the " + dispatch.Agent + " subagent sdd init installs for your harness where it has one, whose prompt is exactly the dispatch prompt: the prompt carries the child handles and nothing else, and this dialogue's own session handle never goes into it." + subagentSettingsInstruction(settings) + " The delegate works through the sdd MCP tools only. Its results arrive in this move, never through the sub-agent's reply: next with this instance and no report picks a delivery up once it has landed."
 		return dispatch, nil
 	}
-	dispatch.Instructions = "This move sent the delegate its next input. Continue the same delegate through your harness's continue mechanism with the continue prompt; where the harness cannot continue it, launch a fresh-context " + dispatch.Agent + " sub-agent with the dispatch prompt instead, since the child's serve carries the full exchange. This dialogue's own session handle never goes into either prompt. Next with this instance and no report picks the delegate's next delivery up once it has landed."
+	dispatch.Instructions = "This move sent the delegate its next input. Continue the same delegate through your harness's continue mechanism with the continue prompt; where the harness cannot continue it, launch a fresh-context " + dispatch.Agent + " sub-agent with the dispatch prompt instead, since the child's serve carries the full exchange." + subagentSettingsInstruction(settings) + " This dialogue's own session handle never goes into either prompt. Next with this instance and no report picks the delegate's next delivery up once it has landed."
 	return dispatch, nil
+}
+
+// subagentSettings is the model and effort a harness launches the deep
+// verifier's subagent with, from verify.subagent; empty for every other
+// delegate.
+func (w *WorkflowSession) subagentSettings(parent, procedure string) (VerifierAgent, error) {
+	if procedure != verifyProcedure {
+		return VerifierAgent{}, nil
+	}
+	runtime, err := w.targetRuntime(w.instanceProject(parent), AccessRead)
+	if err != nil {
+		return VerifierAgent{}, err
+	}
+	return runtime.options.Verifier.Subagent, nil
+}
+
+func subagentSettingsInstruction(settings VerifierAgent) string {
+	switch {
+	case settings.Model != "" && settings.Effort != "":
+		return fmt.Sprintf(" Launch it with model %s and effort %s, the dispatch's model and effort.", settings.Model, settings.Effort)
+	case settings.Model != "":
+		return fmt.Sprintf(" Launch it with model %s, the dispatch's model.", settings.Model)
+	case settings.Effort != "":
+		return fmt.Sprintf(" Launch it with effort %s, the dispatch's effort.", settings.Effort)
+	}
+	return ""
 }
 
 // delegateLaunch is the launch a delegate of procedure takes: for the deep

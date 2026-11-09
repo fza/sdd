@@ -145,7 +145,7 @@ func TestPreflightLight_SlicesKeepTheSamePrefixAndMerge(t *testing.T) {
 			t.Error("a call carrying part of the reading should say so")
 		}
 	}
-	if len(result.Findings) != 1 || !strings.Contains(result.Findings[0].Observation, "raised by light call 1, 2, 3 of 3") {
+	if len(result.Findings) != 1 || !strings.Contains(result.Findings[0].Observation, "raised by prose verifier call 1, 2, 3 of 3") {
 		t.Fatalf("one finding raised by every call should collapse into one naming the calls, got %+v", result.Findings)
 	}
 }
@@ -180,7 +180,7 @@ func TestPreflightLight_ExcerptsAnOversizedEntry(t *testing.T) {
 
 func TestPreflightLight_RefusesADraftLargerThanTheCall(t *testing.T) {
 	_, err := llmops.PreflightLight(t.Context(), &lightRunner{}, lightDraft, lightGraph(t), "", llmops.LightReading{}, 1000)
-	if err == nil || !strings.Contains(err.Error(), "llm.context_tokens") || !strings.Contains(err.Error(), "verifier.mode: deep") {
+	if err == nil || !strings.Contains(err.Error(), "llm.context_tokens") || !strings.Contains(err.Error(), "verify.mode: deep") {
 		t.Fatalf("a draft larger than one call should be refused naming a larger window or deep, got %v", err)
 	}
 }

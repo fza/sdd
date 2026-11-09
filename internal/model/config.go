@@ -105,14 +105,11 @@ type BaseConfig struct {
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
 	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
-	// Grounding makes captures read the graph before they are written
-	// (20261109-004506-d-cpt-udz); off unless a layer sets enforce.
-	Grounding GroundingConfig `yaml:"grounding,omitempty"`
-	// Verifier checks every capture draft against its grounding reading
-	// before the write (20261109-004729-d-cpt-xs5); off unless a layer sets it.
-	Verifier VerifierConfig `yaml:"verifier,omitempty"`
+	// Verify makes captures read the graph before they are written and checks
+	// every draft against that reading; off unless a layer sets its mode.
+	Verify VerifyConfig `yaml:"verify,omitempty"`
 	// LLMPrefilter is the grounding prefilter's model, independent of LLM
-	// (20261109-004506-d-cpt-udz, D8); grounding.prefilter switches it on.
+	// (20261109-004506-d-cpt-udz, D8); verify.prefilter switches it on.
 	LLMPrefilter LLMPrefilterConfig `yaml:"llm_prefilter,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
@@ -543,7 +540,7 @@ type LLMConfig struct {
 	// model's own output limit in force where the provider allows that.
 	MaxTokens *int `yaml:"max_tokens,omitempty"`
 	// ContextTokens is the model's context window in tokens, which sizes the
-	// light verifier's pre-flight calls (20261109-004729-d-cpt-xs5). Zero means
+	// prose verifier's pre-flight calls (20261109-004729-d-cpt-xs5). Zero means
 	// the window the provider reports.
 	ContextTokens int `yaml:"context_tokens,omitempty"`
 	// Concurrency bounds the worker pool for batch operations. Zero means
@@ -698,8 +695,7 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 		out.Dialogue.Mode = overlay.Dialogue.Mode
 	}
 	out.Connected = mergeConnectedConfig(base.Connected, overlay.Connected)
-	out.Grounding = mergeGroundingConfig(base.Grounding, overlay.Grounding)
-	out.Verifier = mergeVerifierConfig(base.Verifier, overlay.Verifier)
+	out.Verify = mergeVerifyConfig(base.Verify, overlay.Verify)
 	if len(overlay.Hooks) > 0 {
 		out.Hooks = append(slices.Clip(base.Hooks), overlay.Hooks...)
 	}

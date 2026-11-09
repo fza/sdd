@@ -48,10 +48,10 @@ func projectRelevanceStore(sddDir, stateRoot, repoKey string, cfg *model.PerRepo
 	return localadapter.NewSplitRelevanceStore(committed, local)
 }
 
-// projectPrefilter composes the prefilter grounding.prefilter switches on;
+// projectPrefilter composes the prefilter verify.prefilter switches on;
 // the zero value while it is off (D7).
 func projectPrefilter(cfg *model.PerRepoConfig) (sdd.Prefilter, error) {
-	if cfg == nil || !cfg.Grounding.Policy().Prefilter {
+	if cfg == nil || !cfg.Verify.GroundingPolicy().Prefilter {
 		return sdd.Prefilter{}, nil
 	}
 	prefilter, err := factory.NewPrefilter(cfg.LLMPrefilter, statsSink())

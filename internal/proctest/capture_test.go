@@ -497,7 +497,7 @@ func TestCapture_WritingGuideRecheckRunsFreshOnReworkedDraft(t *testing.T) {
 // playback, since no dialogue edits follow (20261109-005108-d-cpt-wcj).
 func TestCapture_AutonomousRunsGuideAndVerifierBeforePlayback(t *testing.T) {
 	world, session := newCaptureWorld(t, "core-autonomous-checks", proctest.WithAutonomousDialogue(), proctest.WithGroundingEnforced(),
-		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "light"}, 200000, 4096))
+		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "prose"}, 200000, 4096))
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 	session.Gather(t, instance)

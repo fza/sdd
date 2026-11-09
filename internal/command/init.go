@@ -52,10 +52,10 @@ type InitCmd struct {
 	// unless ProjectDir names another (20261029-150854-d-tac-b2f).
 	DialogueMode model.DialogueMode
 
-	// Strictness, when set, records how strictly drafts are checked against
-	// the graph in the committed config.yaml: grounding.enforce and
-	// verifier.mode together (20261109-004729-d-cpt-xs5, V-D28).
-	Strictness model.Strictness
+	// VerifyMode, when set, records how carefully drafts are checked against
+	// the graph as verify.mode in the committed config.yaml
+	// (20261109-004729-d-cpt-xs5, V-D28).
+	VerifyMode model.VerifyMode
 
 	// VerifierLaunch, when set, records how the deep verifier runs on this
 	// machine in the local config (V-D20, V-D28).

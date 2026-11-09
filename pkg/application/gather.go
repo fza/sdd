@@ -33,7 +33,7 @@ type GroundingPolicy struct {
 }
 
 func (p GroundingPolicy) resolved() GroundingPolicy {
-	defaults := model.GroundingConfig{}.Policy()
+	defaults := model.VerifyConfig{}.GroundingPolicy()
 	for _, field := range []struct {
 		value    *int
 		fallback int
@@ -178,7 +178,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		}
 	case len(opened) == 0:
 		return GatherResult{}, &ApplicationError{Code: ErrorInvalidArgument, Message: fmt.Sprintf(
-			"sdd: gather needs the draft: the graph holds %d live entries, at or above grounding.brief_all_below (%d), so the reading searches from the draft's text", len(live), policy.BriefAllBelow)}
+			"sdd: gather needs the draft: the graph holds %d live entries, at or above verify.brief_all_below (%d), so the reading searches from the draft's text", len(live), policy.BriefAllBelow)}
 	}
 	landed := request.since.Since(liveIDs)
 	if len(landed) > 0 {

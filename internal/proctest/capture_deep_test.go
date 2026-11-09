@@ -300,8 +300,8 @@ func TestCaptureDeep_SkipNeverKeepsTheCaptureWaiting(t *testing.T) {
 		t.Fatalf("the failure should be served in full:\n%s", serve.Instructions)
 	}
 	_, err := session.AnswerErr(t, instance, "deepFailed", "skip", nil, "skip it")
-	if err == nil || !strings.Contains(err.Error(), "verifier.skip is never") {
-		t.Fatalf("a skip under verifier.skip: never should be refused, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "verify.skip is never") {
+		t.Fatalf("a skip under verify.skip: never should be refused, got %v", err)
 	}
 	_ = world
 }
@@ -495,7 +495,7 @@ func TestCaptureDeep_HeadlessLaunchWithoutALauncherIsRefused(t *testing.T) {
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	_, err := session.AnswerErr(t, instance, "deepDispatch", "delegate", nil, "")
-	if err == nil || !strings.Contains(err.Error(), "verifier.launch claude needs sdd to launch the delegate") {
+	if err == nil || !strings.Contains(err.Error(), "verify.launch claude needs sdd to launch the delegate") {
 		t.Fatalf("a headless launch on a server that launches nothing should be refused naming the key, got %v", err)
 	}
 }
@@ -595,6 +595,36 @@ func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
 			}
 			if held := workflow.TakeStepFullIDs(); len(held) != 0 {
 				t.Fatalf("the brief page should hand on nothing, got %v", held)
+			}
+		})
+	}
+}
+
+// verify.subagent reaches the harness: the dispatch names the model and
+// effort to launch the verify subagent with, in its fields and its
+// instructions. Unset, it names neither.
+func TestCaptureDeep_SubagentDispatchCarriesItsModelAndEffort(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		subagent    sdd.VerifierAgent
+		instruction string
+	}{
+		{"both", sdd.VerifierAgent{Model: "opus", Effort: "high"}, "Launch it with model opus and effort high"},
+		{"model only", sdd.VerifierAgent{Model: "sonnet"}, "Launch it with model sonnet, the dispatch's model."},
+		{"effort only", sdd.VerifierAgent{Effort: "max"}, "Launch it with effort max, the dispatch's effort."},
+		{"neither", sdd.VerifierAgent{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			world, session := newDeepWorld(t, "deep-subagent-model", sdd.VerifierPolicy{Subagent: tc.subagent})
+			x := startDeep(t, world, session, captureDraft())
+			if x.dispatch.Model != tc.subagent.Model || x.dispatch.Effort != tc.subagent.Effort {
+				t.Fatalf("the dispatch should carry verify.subagent's model and effort, got %q and %q", x.dispatch.Model, x.dispatch.Effort)
+			}
+			if tc.instruction == "" && strings.Contains(x.dispatch.Instructions, "Launch it with") {
+				t.Fatalf("an unset block should add no model or effort to the instructions:\n%s", x.dispatch.Instructions)
+			}
+			if tc.instruction != "" && !strings.Contains(x.dispatch.Instructions, tc.instruction) {
+				t.Fatalf("the instructions should name the model and effort to launch with:\n%s", x.dispatch.Instructions)
 			}
 		})
 	}

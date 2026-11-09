@@ -3,7 +3,9 @@ package cliapp
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -62,7 +64,7 @@ func TestHeadlessLauncher_FallsBackThroughTheProjectsAgents(t *testing.T) {
 
 func TestHeadlessLauncher_RunsTheConfiguredDriver(t *testing.T) {
 	driver := filepath.Join(t.TempDir(), "absent-driver")
-	launcher := launcherServing(t, &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verifier: model.VerifierConfig{Launch: model.VerifierLaunchCustomDriver, Driver: model.VerifierDriver{Command: driver}}}})
+	launcher := launcherServing(t, &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Launch: model.VerifierLaunchCustomDriver, Driver: model.VerifierDriver{Command: driver}}}})
 
 	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Launch: "custom_driver"})
 	if err != nil || run.Launch != "custom_driver" {
@@ -72,5 +74,42 @@ func TestHeadlessLauncher_RunsTheConfiguredDriver(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), driver+" failed") {
 		t.Fatalf("the launch should run the driver the config names, got %v", err)
+	}
+}
+
+// The launcher hands each headless launch its own block of the served config:
+// claude runs with verify.claude, never with verify.codex.
+func TestHeadlessLauncher_PassesTheLaunchsModelAndEffort(t *testing.T) {
+	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{
+		Launch: model.VerifierLaunchClaude,
+		Claude: model.VerifierAgent{Model: "opus", Effort: "xhigh"},
+		Codex:  model.VerifierAgent{Model: "gpt-5.5", Effort: "high"},
+	}}}
+	launcher := launcherServing(t, cfg)
+	bin := t.TempDir()
+	argsFile := filepath.Join(bin, "args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\ncat > /dev/null\necho '{\"type\":\"result\",\"is_error\":false,\"session_id\":\"claude-7\",\"result\":\"done\"}'\n"
+	err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/bin:/usr/bin")
+
+	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Launch: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = run.Round(context.Background(), sdd.DelegateRound{Number: 1, Prompt: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorded, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSpace(string(recorded)), "\n")
+	if !slices.Contains(args, "opus") || !slices.Contains(args, "xhigh") || slices.Contains(args, "gpt-5.5") {
+		t.Fatalf("claude should run with verify.claude's model and effort only, got %q", args)
 	}
 }

@@ -11,7 +11,7 @@ import (
 // VerifierPolicy is how far the draft verifier checks a capture against its
 // grounding reading (20261109-004729-d-cpt-xs5).
 type VerifierPolicy struct {
-	// Mode is off, light or deep; empty means off.
+	// Mode is off, prose or deep; empty means off.
 	Mode string
 	// Skip is never, failure or weighed; empty means failure.
 	Skip string
@@ -19,10 +19,19 @@ type VerifierPolicy struct {
 	// subagent. The values other than subagent need the composition's
 	// DelegateLauncher.
 	Launch string
+	// Subagent is the model and effort the dispatch asks the harness to run a
+	// subagent-launched deep verifier with; empty leaves the harness's own.
+	Subagent VerifierAgent
+}
+
+// VerifierAgent is a model and effort a deep verifier launch runs with.
+type VerifierAgent struct {
+	Model  string
+	Effort string
 }
 
 func (p VerifierPolicy) resolved() model.VerifierPolicy {
-	return model.VerifierConfig{Mode: model.VerifierMode(p.Mode), Skip: model.VerifierSkip(p.Skip), Launch: model.VerifierLaunch(p.Launch)}.Policy()
+	return model.VerifierPolicy{Mode: model.VerifierMode(p.Mode), Skip: model.VerifierSkip(p.Skip), Launch: model.VerifierLaunch(p.Launch)}.WithDefaults()
 }
 
 func (p VerifierPolicy) mode() model.VerifierMode { return p.resolved().Mode }
@@ -34,14 +43,14 @@ type ModelWindow struct {
 	OutputReserve int
 }
 
-// lightPreflight builds the light pre-flight over reading, sized by the
-// runtime's model window; nil when the verifier is off.
+// lightPreflight builds the prose verifier's pre-flight over reading, sized
+// by the runtime's model window; nil when the verifier is off.
 func (r *ProjectRuntime) lightPreflight(ctx context.Context, reading *captureReading) (*query.LightPreflight, error) {
 	if r.options.Verifier.mode() == model.VerifierOff || reading == nil {
 		return nil, nil
 	}
 	if r.options.Window == nil {
-		return nil, fmt.Errorf("the light verifier needs the model's context window: set llm.context_tokens")
+		return nil, fmt.Errorf("the prose verifier needs the model's context window: set llm.context_tokens")
 	}
 	window, err := r.options.Window(ctx)
 	if err != nil {

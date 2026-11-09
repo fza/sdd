@@ -127,6 +127,13 @@ type delegateFixture struct {
 
 func newDelegateApplication(t *testing.T, launcher sdd.DelegateLauncher) *delegateFixture {
 	t.Helper()
+	return newDelegateApplicationWithVerifier(t, launcher, sdd.VerifierPolicy{})
+}
+
+// newDelegateApplicationWithVerifier is newDelegateApplication over a project
+// with verifier configured.
+func newDelegateApplicationWithVerifier(t *testing.T, launcher sdd.DelegateLauncher, verifier sdd.VerifierPolicy) *delegateFixture {
+	t.Helper()
 	graphDir := t.TempDir()
 	for name, content := range map[string]string{
 		"13-060000-d-prc-dsp.md": delegateDispatcherProcedure,
@@ -154,7 +161,7 @@ func newDelegateApplication(t *testing.T, launcher sdd.DelegateLauncher) *delega
 		t.Fatal(err)
 	}
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
-		Project: sdd.ProjectRef{ID: "example"}, Graph: graph,
+		Project: sdd.ProjectRef{ID: "example"}, Graph: graph, Verifier: verifier,
 		LLM: pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
 			return pkgllm.Result{Identity: pkgllm.Identity{Provider: "test", Model: "test"}}, nil
 		}),
@@ -396,5 +403,15 @@ func TestDelegateIsNeverStartedByHand(t *testing.T) {
 	_, err := f.session(t, f.parent).Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "reviewtask", Parent: f.dispatch})
 	if err == nil || !strings.Contains(err.Error(), "reviewtask runs as a delegate: answering the option whose dispatch names it forks it") {
 		t.Fatalf("starting a delegating task by hand should be refused, got %v", err)
+	}
+}
+
+// verify.subagent is the deep verifier's: a delegate of any other task
+// carries no model or effort, whatever the project configures.
+func TestDispatchOfAnotherTaskCarriesNoVerifierModel(t *testing.T) {
+	f := newDelegateApplicationWithVerifier(t, nil, sdd.VerifierPolicy{Subagent: sdd.VerifierAgent{Model: "opus", Effort: "high"}})
+	_, dispatch := f.fork(t)
+	if dispatch.Model != "" || dispatch.Effort != "" || strings.Contains(dispatch.Instructions, "Launch it with") {
+		t.Fatalf("a delegate other than the verifier should carry no verifier model or effort, got %q %q: %q", dispatch.Model, dispatch.Effort, dispatch.Instructions)
 	}
 }
