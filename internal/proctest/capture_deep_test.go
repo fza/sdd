@@ -50,9 +50,9 @@ func confirmedDeepCapture(t *testing.T, session *proctest.Session, draft map[str
 }
 
 // dispatchDeep answers the dispatch and starts the verify delegate.
-func dispatchDeep(t *testing.T, world *proctest.World, session *proctest.Session, instance, choice string) *deepExchange {
+func dispatchDeep(t *testing.T, world *proctest.World, session *proctest.Session, instance string) *deepExchange {
 	t.Helper()
-	serve := session.Answer(t, instance, "deepDispatch", choice, nil, "")
+	serve := session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
 	proctest.RequireStep(t, serve, "deepLaunch")
 	forked := session.StartChild(t, "verify", nil, instance)
 	if len(forked.Dispatches) != 1 {
@@ -69,7 +69,7 @@ func startDeep(t *testing.T, world *proctest.World, session *proctest.Session, d
 	t.Helper()
 	instance, serve := confirmedDeepCapture(t, session, draft)
 	proctest.RequireStep(t, serve, "deepDispatch")
-	return dispatchDeep(t, world, session, instance, "delegate")
+	return dispatchDeep(t, world, session, instance)
 }
 
 // judge serves the delegate every page and reports its findings.
@@ -291,7 +291,9 @@ func TestCaptureDeep_RefusedRepairIsAVerifierFailure(t *testing.T) {
 func TestCaptureDeep_SkipNeverKeepsTheCaptureWaiting(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-never", sdd.VerifierPolicy{Skip: "never"})
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
 	serve = session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
+	proctest.RequireStep(t, serve, "deepLaunch")
 	serve = session.Answer(t, instance, "deepLaunch", "failed", map[string]any{"deepLaunchFailure": "no agent CLI answered"}, "")
 	proctest.RequireStep(t, serve, "deepFailed")
 	if !strings.Contains(serve.Instructions, "The launch failed: no agent CLI answered") {
@@ -341,7 +343,7 @@ func TestCaptureDeep_OverriddenHighFindingIsSettledForTheVerifier(t *testing.T) 
 	proctest.RequireStep(t, serve, "reviseOrOverride")
 	serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "it is no duplicate")
 	proctest.RequireStep(t, serve, "deepDispatch")
-	x := dispatchDeep(t, world, session, instance, "delegate")
+	x := dispatchDeep(t, world, session, instance)
 	_, resume := world.Resume(t, x.dispatch.Session, "verifier")
 	if page := resume.Open[0].Instructions; !strings.Contains(page, "duplicates: the draft repeats a live entry") || !strings.Contains(page, "The user overrode the high ones: they are settled.") {
 		t.Fatalf("the deep verifier should receive pre-flight's findings, the override as settled:\n%s", page)
@@ -355,7 +357,7 @@ func TestCaptureDeep_AutonomousVerifiesBeforePlayback(t *testing.T) {
 	session.Gather(t, instance)
 	serve = session.Report(t, instance, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
-	x := dispatchDeep(t, world, session, instance, "delegate")
+	x := dispatchDeep(t, world, session, instance)
 	x.judge(t, []any{})
 	serve = x.pickUp(t)
 	proctest.RequireStep(t, serve, "playback")
@@ -440,7 +442,7 @@ func TestCaptureDeep_EditAfterTheVerdictRunsADeltaExchange(t *testing.T) {
 	proctest.RequireStep(t, serve, "playback")
 	serve = session.Answer(t, x.instance, "playback", "confirm", nil, "now write it")
 	proctest.RequireStep(t, serve, "deepDispatch")
-	again := dispatchDeep(t, world, session, x.instance, "delegate")
+	again := dispatchDeep(t, world, session, x.instance)
 	_, resume := world.Resume(t, again.dispatch.Session, "verifier")
 	if page := resume.Open[0].Instructions; !strings.Contains(page, "## Changed since the last verdict") || !strings.Contains(page, "observes a subject twice.") {
 		t.Fatalf("an edit after the verdict should get a delta reading of the changed passage:\n%s", page)
@@ -507,12 +509,12 @@ func TestCaptureDeep_ARetriedExchangeReplacesTheWaitingDelegate(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-replace", sdd.VerifierPolicy{})
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
-	first := dispatchDeep(t, world, session, instance, "delegate")
+	first := dispatchDeep(t, world, session, instance)
 	serve = session.Answer(t, instance, "deepLaunch", "failed", map[string]any{"deepLaunchFailure": "the subagent tool errored"}, "")
 	proctest.RequireStep(t, serve, "deepFailed")
 	serve = session.Answer(t, instance, "deepFailed", "retry", nil, "try again")
 	proctest.RequireStep(t, serve, "deepDispatch")
-	second := dispatchDeep(t, world, session, instance, "delegate")
+	second := dispatchDeep(t, world, session, instance)
 	if second.dispatch.Session == first.dispatch.Session {
 		t.Fatal("a retried exchange should dispatch a new delegate")
 	}
