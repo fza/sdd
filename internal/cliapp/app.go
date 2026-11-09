@@ -2203,7 +2203,7 @@ func initCmd() *cli.Command {
 				if err != nil {
 					return fmt.Errorf("invalid --strictness: %w", err)
 				}
-			} else if !pointer && !strictnessRecorded && cliout.IsTerminalReader(cmd.Reader) {
+			} else if !strictnessRecorded && cliout.IsTerminalReader(cmd.Reader) {
 				strictness, err = promptStrictness(cmd)
 				if err != nil {
 					return fmt.Errorf("prompt: %w", err)
