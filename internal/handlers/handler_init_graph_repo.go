@@ -96,7 +96,7 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(localConfigPath), err)
 	}
-	err = h.runProjectInit(ctx, cmd, cloneDir, func(projectCmd *command.InitCmd) {
+	err = h.runProjectInit(ctx, cmd, cloneDir, skip, func(projectCmd *command.InitCmd) {
 		projectCmd.LocalConfigPath = localConfigPath
 		projectCmd.RemoteURL = httpsURL
 		projectCmd.GraphOnly = true

@@ -28,7 +28,7 @@ type ProjectRepositories interface {
 // setUpProject runs a plain init in projectRoot, which holds no sdd project
 // yet, giving it the repository of its own it needs (20261029-130154-d-tac-frl).
 // Every refusal comes before the first write.
-func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget) error {
+func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget, skip model.InitConfig) error {
 	if h.projectRepos == nil || h.repositoryAt == nil {
 		return fmt.Errorf("setting up the project at %s needs a git adapter for it", cmd.ProjectDir)
 	}
@@ -82,7 +82,7 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 	if err != nil {
 		return err
 	}
-	return h.runProjectInit(ctx, cmd, projectRoot, func(projectCmd *command.InitCmd) {
+	return h.runProjectInit(ctx, cmd, projectRoot, skip, func(projectCmd *command.InitCmd) {
 		projectCmd.DefaultBranch = branch
 		projectCmd.GraphDir = graphDir
 		projectCmd.Scope = scope
@@ -94,7 +94,7 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 // refreshProject runs the existing project's own init with the settings it
 // records, so the project stays as current as the work repository
 // (20261029-132740-d-tac-g32).
-func (h *Handler) refreshProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, projectCfg *model.PerRepoConfig) error {
+func (h *Handler) refreshProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, projectCfg *model.PerRepoConfig, skip model.InitConfig) error {
 	if h.projectRepos == nil || h.repositoryAt == nil {
 		return fmt.Errorf("refreshing the project at %s needs a git adapter for it", cmd.ProjectDir)
 	}
@@ -108,7 +108,7 @@ func (h *Handler) refreshProject(ctx context.Context, cmd *command.InitCmd, proj
 			return err
 		}
 	}
-	return h.runProjectInit(ctx, cmd, projectRoot, func(projectCmd *command.InitCmd) {
+	return h.runProjectInit(ctx, cmd, projectRoot, skip, func(projectCmd *command.InitCmd) {
 		projectCmd.DefaultBranch = branch
 		projectCmd.GraphDir = projectCfg.GraphDir
 		projectCmd.Scope = ""
@@ -120,7 +120,7 @@ func (h *Handler) refreshProject(ctx context.Context, cmd *command.InitCmd, proj
 // runProjectInit runs Init in projectRoot as its own repository, carrying the
 // run's per-person answers and flags; adjust sets what differs between a
 // set-up and a refresh.
-func (h *Handler) runProjectInit(ctx context.Context, cmd *command.InitCmd, projectRoot string, adjust func(*command.InitCmd)) error {
+func (h *Handler) runProjectInit(ctx context.Context, cmd *command.InitCmd, projectRoot string, skip model.InitConfig, adjust func(*command.InitCmd)) error {
 	stableRoot, err := h.projectRepos.StableRoot(projectRoot)
 	if err != nil {
 		return err
@@ -135,6 +135,7 @@ func (h *Handler) runProjectInit(ctx context.Context, cmd *command.InitCmd, proj
 	projectCmd.ProjectDir = ""
 	projectCmd.GraphRepo = ""
 	projectCmd.SetUpProject = false
+	projectCmd.InheritedSkip = skip
 	projectCmd.RemoteURL = h.projectRepos.RemoteURL(projectRoot)
 	adjust(&projectCmd)
 	err = project.Init(ctx, &projectCmd)

@@ -109,3 +109,20 @@ func TestFormatPointerConfigsCarryInitSkip(t *testing.T) {
 		t.Errorf("a pointer config without init.skip should write no init block:\n%s", without)
 	}
 }
+
+func TestInitConfigWithSkipsWhatEitherSkips(t *testing.T) {
+	own := model.InitConfig{Skip: []model.InitSurface{model.InitSurfaceMCP}}
+	inherited := model.InitConfig{Skip: []model.InitSurface{model.InitSurfaceMCP, model.InitSurfaceSkills}}
+
+	merged := own.With(inherited)
+
+	if !slices.Equal(merged.Skip, []model.InitSurface{model.InitSurfaceMCP, model.InitSurfaceSkills}) {
+		t.Errorf("the merge should hold each surface either list skips once, got %v", merged.Skip)
+	}
+	if len(own.Skip) != 1 {
+		t.Error("the merge should leave the receiver's list unchanged")
+	}
+	if merged := own.With(model.InitConfig{}); !slices.Equal(merged.Skip, own.Skip) {
+		t.Errorf("merging an empty list should keep the own list, got %v", merged.Skip)
+	}
+}

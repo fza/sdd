@@ -313,3 +313,44 @@ func TestInitCommitPassesAHookAdmittingSddOnlyUnderSddDir(t *testing.T) {
 		}
 	}
 }
+
+// The work repository's init.skip reaches the project its init refreshes, so a
+// project whose work repository manages its own agent setup never gets sdd's
+// copy beside it (20261109-153425-d-tac-5dh).
+func TestInitCarriesTheWorkRepositorysSkipIntoTheProject(t *testing.T) {
+	skills := filepath.Join(".claude", "skills")
+	settings := filepath.Join(".claude", "settings.json")
+	cases := []struct {
+		skip    string
+		missing []string
+		present []string
+	}{
+		{skip: "[mcp, permissions, skills]", missing: []string{skills, ".mcp.json", settings}},
+		{skip: "[skills]", missing: []string{skills}, present: []string{".mcp.json", settings}},
+	}
+	for _, c := range cases {
+		t.Run(c.skip, func(t *testing.T) {
+			work, project := workRepository(t)
+			runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
+			configPath := filepath.Join(work, ".sdd", "config.yaml")
+			writeFile(t, configPath, readText(t, configPath)+"\ninit:\n  skip: "+c.skip+"\n")
+			gitIn(t, work, "commit", "-q", "-am", "chore: skip agent surfaces")
+			gitIn(t, project, "rm", "-q", "-r", skills, ".mcp.json", settings)
+			gitIn(t, project, "commit", "-q", "-m", "chore: drop the agent surfaces")
+
+			runApp(t, work, "init")
+
+			for _, path := range c.missing {
+				assertMissing(t, filepath.Join(project, path), "the project refresh should leave a surface the work repository skips alone")
+			}
+			for _, path := range c.present {
+				if _, err := os.Stat(filepath.Join(project, path)); err != nil {
+					t.Errorf("the project refresh should still write a surface no repository skips: %v", err)
+				}
+			}
+			if config := readText(t, filepath.Join(project, ".sdd", "config.yaml")); strings.Contains(config, "skip:") {
+				t.Errorf("the project's config should not record the work repository's skip:\n%s", config)
+			}
+		})
+	}
+}

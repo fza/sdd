@@ -92,6 +92,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if err != nil {
 		return err
 	}
+	skip = skip.With(cmd.InheritedSkip)
 
 	// Tracks paths we touch so the final git commit covers exactly what
 	// changed. A repeat init that changes nothing yields no commit.
