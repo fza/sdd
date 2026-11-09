@@ -638,7 +638,7 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 		}
 	}
 	if request.Instance == "" || inputs > 1 {
-		return nil, fmt.Errorf("instance and at most one of report, retry_ref or cancel_ref are required — none picks up what was delivered")
+		return nil, fmt.Errorf("instance and at most one of report, retry_ref or cancel_ref are required; none picks up what was delivered")
 	}
 	if request.Report != nil && len(request.Report) == 0 {
 		return nil, fmt.Errorf("report must not be empty")

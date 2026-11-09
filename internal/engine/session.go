@@ -708,7 +708,7 @@ func seedValues(p *Instance, spec *Spec) (map[string]any, error) {
 			if _, isParam := spec.Params[childField]; isParam {
 				target = "declared under params, not state"
 			}
-			return nil, fmt.Errorf("dispatch seed %q ← parent %q cannot land: field %q is %s in %s — a seeded field must be declared state", childField, parentField, childField, target, spec.Canonical)
+			return nil, fmt.Errorf("dispatch seed %q ← parent %q cannot land: field %q is %s in %s; a seeded field must be declared state", childField, parentField, childField, target, spec.Canonical)
 		}
 		if !p.Store.Has(parentField) {
 			continue // the parent has no evidence to hand down under this name
