@@ -401,7 +401,7 @@ func (s *Session) runCommand(inst *Instance, name, to string) error {
 	if cmd.Rounds {
 		step := inst.currentStep()
 		ctx.Round = func(fields map[string]any) error {
-			_, err := s.fireStep(inst, step, HookRound, "", fields)
+			_, err := s.fireStep(inst, step, ctx.Store, HookRound, "", fields)
 			return err
 		}
 	}
@@ -531,7 +531,10 @@ func (s *Session) moveTo(inst *Instance, to string, reopen bool, consumed []stri
 		inst.Step = to
 		inst.opDone = false
 		inst.retiredStep = ""
-		if _, err := s.fireStep(inst, inst.currentStep(), HookEntered, "", nil); err != nil {
+		if withinStage(inst.Spec, inst.Spec.StepByID[from], to) {
+			return nil
+		}
+		if _, err := s.fireStep(inst, inst.currentStep(), inst.Store, HookEntered, "", nil); err != nil {
 			return err
 		}
 	}

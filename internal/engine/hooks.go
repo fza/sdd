@@ -64,18 +64,20 @@ func StepEvent(procedure, step string, phase HookPhase) string {
 // whose commands declare rounds, and each event a step's commands announce.
 // Leaving a step with a findings channel is the one event accepting findings.
 func HookEvents(specs []*Spec, reg *Registry) []model.HookEvent {
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	var events []model.HookEvent
 	add := func(name string, findings bool) {
-		if !seen[name] {
-			seen[name] = true
-			events = append(events, model.HookEvent{Name: name, Findings: findings})
+		if i, ok := seen[name]; ok {
+			events[i].Findings = events[i].Findings || findings
+			return
 		}
+		seen[name] = len(events)
+		events = append(events, model.HookEvent{Name: name, Findings: findings})
 	}
 	for _, spec := range specs {
 		for _, step := range spec.Steps {
-			add(StepEvent(spec.Canonical, step.ID, HookEntered), false)
-			add(StepEvent(spec.Canonical, step.ID, HookLeft), step.Findings != "")
+			add(StepEvent(spec.Canonical, hookStep(step), HookEntered), false)
+			add(StepEvent(spec.Canonical, hookStep(step), HookLeft), step.Findings != "")
 			names := []string{step.Op}
 			for _, option := range step.Options {
 				names = append(names, option.Call)
@@ -86,7 +88,7 @@ func HookEvents(specs []*Spec, reg *Registry) []model.HookEvent {
 					continue
 				}
 				if cmd.Rounds {
-					add(StepEvent(spec.Canonical, step.ID, HookRound), false)
+					add(StepEvent(spec.Canonical, hookStep(step), HookRound), false)
 				}
 				if cmd.Announces != "" {
 					add(cmd.Announces, false)
@@ -106,13 +108,29 @@ type hookBase struct {
 	present bool
 }
 
-func (s *Session) stepPoint(inst *Instance, step *Step, phase HookPhase, transition string) (HookPoint, error) {
+// hookStep is the step name a step's hook events carry: its stage, else its
+// id.
+func hookStep(step *Step) string {
+	if step.Stage != "" {
+		return step.Stage
+	}
+	return step.ID
+}
+
+// withinStage reports whether moving from step to the target stays inside
+// the step's stage, which raises no entered or left event.
+func withinStage(spec *Spec, step *Step, to string) bool {
+	target := spec.StepByID[to]
+	return step != nil && step.Stage != "" && target != nil && target.Stage == step.Stage
+}
+
+func (s *Session) stepPoint(inst *Instance, step *Step, store *Store, phase HookPhase, transition string) (HookPoint, error) {
 	point := HookPoint{
-		Event: StepEvent(inst.Spec.Canonical, step.ID, phase), Procedure: inst.Spec.Canonical,
-		Instance: inst.ID, Step: step.ID, Phase: phase, Transition: transition, Store: inst.Store,
+		Event: StepEvent(inst.Spec.Canonical, hookStep(step), phase), Procedure: inst.Spec.Canonical,
+		Instance: inst.ID, Step: hookStep(step), Phase: phase, Transition: transition, Store: store,
 	}
 	if step.Findings != "" {
-		findings, err := channelFindings(inst.Store, step.Findings)
+		findings, err := channelFindings(store, step.Findings)
 		if err != nil {
 			return HookPoint{}, err
 		}
@@ -135,11 +153,11 @@ func (s *Session) fire(point HookPoint) ([]query.Finding, error) {
 	return findings, nil
 }
 
-func (s *Session) fireStep(inst *Instance, step *Step, phase HookPhase, transition string, extra map[string]any) ([]query.Finding, error) {
+func (s *Session) fireStep(inst *Instance, step *Step, store *Store, phase HookPhase, transition string, extra map[string]any) ([]query.Finding, error) {
 	if s.hooks == nil {
 		return nil, nil
 	}
-	point, err := s.stepPoint(inst, step, phase, transition)
+	point, err := s.stepPoint(inst, step, store, phase, transition)
 	if err != nil {
 		return nil, err
 	}
@@ -151,10 +169,10 @@ func (s *Session) fireStep(inst *Instance, step *Step, phase HookPhase, transiti
 // hooks report into its channel, reporting whether any joined.
 func (s *Session) leave(inst *Instance, to string) (bool, error) {
 	step := inst.currentStep()
-	if step == nil {
+	if step == nil || withinStage(inst.Spec, step, to) {
 		return false, nil
 	}
-	findings, err := s.fireStep(inst, step, HookLeft, to, nil)
+	findings, err := s.fireStep(inst, step, inst.Store, HookLeft, to, nil)
 	if err != nil || len(findings) == 0 {
 		return false, err
 	}

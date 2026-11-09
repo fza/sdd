@@ -233,6 +233,11 @@ type Step struct {
 	// format, that is this gate's findings channel: findings the hooks on
 	// leaving the step report join it (20261109-005138-d-tac-i61).
 	Findings string
+	// Stage names the hook step the step's events are raised under. Steps
+	// sharing a stage raise one step's events: entered on moving into the
+	// stage, left on moving out of it, and its rounds. At most one of them
+	// holds the stage's findings channel.
+	Stage string
 }
 
 // Terminal transition targets. A procedure ends by transitioning to one of
@@ -331,6 +336,7 @@ type stepYAML struct {
 	Deliver     []string         `yaml:"deliver"`
 	Await       []string         `yaml:"await"`
 	Findings    string           `yaml:"findings"`
+	Stage       string           `yaml:"stage"`
 }
 
 // decodeStrict re-encodes a retained YAML node and decodes it with unknown
@@ -517,8 +523,19 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 	}
 
 	// Wiring checks over the assembled graph.
+	stageChannels := map[string]string{}
 	for _, step := range spec.Steps {
 		prefix := "steps." + step.ID
+		if step.Stage != "" {
+			if spec.StepByID[step.Stage] != nil {
+				addProblem("%s: stage %q is also a step id; a stage names its own hook step", prefix, step.Stage)
+			}
+			if channel, ok := stageChannels[step.Stage]; ok && step.Findings != "" {
+				addProblem("%s: stage %q already has its findings channel on step %s", prefix, step.Stage, channel)
+			} else if step.Findings != "" {
+				stageChannels[step.Stage] = step.ID
+			}
+		}
 		for _, t := range step.Transitions {
 			if !IsEndTarget(t.To) && spec.StepByID[t.To] == nil {
 				addProblem("%s: transition target %q is not a step or end(...)", prefix, t.To)
@@ -697,6 +714,7 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		Deliver:    sy.Deliver,
 		Await:      sy.Await,
 		Findings:   sy.Findings,
+		Stage:      sy.Stage,
 	}
 
 	switch sy.Chooser {
@@ -716,6 +734,9 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 	}
 	if sy.Findings != "" && !isValidFuncName(sy.Findings) {
 		addProblem("%s: findings names %q, not a field name (identifiers only)", prefix, sy.Findings)
+	}
+	if sy.Stage != "" && !isValidFuncName(sy.Stage) {
+		addProblem("%s: stage %q is not a step name (identifiers only)", prefix, sy.Stage)
 	}
 
 	for _, f := range sy.Collect {

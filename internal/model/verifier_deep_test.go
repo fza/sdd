@@ -68,6 +68,19 @@ func TestDeepChanges_FollowTheLatestResponse(t *testing.T) {
 	}
 }
 
+func TestDeepOpenFindings_FollowTheLatestResponse(t *testing.T) {
+	findings := []model.DeepFinding{deepFinding("contradicts"), deepFinding("ref-fit"), deepFinding("evidence"), deepFinding("strain")}
+	responses := []model.DeepResponse{
+		{Target: "f1", Outcome: model.DeepDropped},
+		{Target: "f2", Outcome: model.DeepConceded},
+		{Target: "f3", Outcome: model.DeepDropped},
+		{Target: "f3", Outcome: model.DeepHeld},
+	}
+	if open := model.DeepOpenFindings(findings, responses); open != 2 {
+		t.Fatalf("a finding stays open unless its latest response concedes or drops it, counted %d", open)
+	}
+}
+
 func TestCheckDeepFindings(t *testing.T) {
 	resolves := func(id string) bool { return id == "20261101-100000-s-tac-abc" }
 	for _, tc := range []struct {

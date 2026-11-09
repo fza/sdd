@@ -201,12 +201,17 @@ func TestHooks_ConfigurationIsCheckedAgainstTheRunningProcedures(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "capture.playback.left has no findings channel") {
 		t.Errorf("findings on a step without a findings channel should be refused, got %v", err)
 	}
-	for _, event := range []string{"capture.assemble.left", "capture.guide.left", "capture.preflight.left"} {
+	for _, event := range []string{"capture.assemble.left", "capture.guide.left", "capture.preflight.left", "capture.verify.left"} {
 		if err := openErr(t, sdd.Hook{Event: event, Command: "lint", Findings: true}); err != nil {
 			t.Errorf("%s has a findings channel, refused: %v", event, err)
 		}
 	}
-	if err := openErr(t, sdd.Hook{Event: "capture.verify.round", Command: "status"}); err == nil {
-		t.Error("capture has no verify step, so its round event should be refused")
+	for _, event := range []string{"capture.verify.entered", "capture.verify.round"} {
+		if err := openErr(t, sdd.Hook{Event: event, Command: "status"}); err != nil {
+			t.Errorf("%s is the verify step's event, refused: %v", event, err)
+		}
+	}
+	if err := openErr(t, sdd.Hook{Event: "capture.deepRead.round", Command: "status"}); err == nil {
+		t.Error("a step inside the verify stage raises no event of its own, so its name should be refused")
 	}
 }

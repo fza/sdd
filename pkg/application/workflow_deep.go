@@ -236,16 +236,18 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
-			Doc: engine.FuncDoc{Name: "readDeepFindings", Doc: "Lists the verifier's findings for the drafter to answer, and the problems still refusing them.", Reads: []string{fieldDeepFindings, fieldDeepBase}, Writes: []string{fieldDeepListed, fieldDeepProblems, fieldDeepRounds}},
-			Fn:  w.readDeepFindings,
+			Doc:    engine.FuncDoc{Name: "readDeepFindings", Doc: "Lists the verifier's findings for the drafter to answer, and the problems still refusing them.", Reads: []string{fieldDeepFindings, fieldDeepBase}, Writes: []string{fieldDeepListed, fieldDeepProblems, fieldDeepRounds}},
+			Fn:     w.readDeepFindings,
+			Rounds: true,
 		},
 		{
 			Doc: engine.FuncDoc{Name: "checkDeepContest", Doc: "Refuses a contest naming no open finding, an owner finding, or none at all, and one once the rounds are spent.", Reads: []string{fieldDeepContest, fieldDeepFindings, fieldDeepRounds}},
 			Fn:  w.checkDeepContest,
 		},
 		{
-			Doc: engine.FuncDoc{Name: "foldDeepResponses", Doc: "Adds the verifier's responses to the exchange and counts the round.", Reads: []string{fieldDeepResponses, fieldDeepHistory, fieldDeepRounds}, Writes: []string{fieldDeepHistory, fieldDeepRounds}},
-			Fn:  w.foldDeepResponses,
+			Doc:    engine.FuncDoc{Name: "foldDeepResponses", Doc: "Adds the verifier's responses to the exchange and counts the round.", Reads: []string{fieldDeepResponses, fieldDeepHistory, fieldDeepRounds}, Writes: []string{fieldDeepHistory, fieldDeepRounds}},
+			Fn:     w.foldDeepResponses,
+			Rounds: true,
 		},
 		{
 			Doc: engine.FuncDoc{Name: "buildDeepProposal", Doc: "Builds the proposal from the findings and the latest responses: the changed draft, its hunks labelled by finding, and the points open for the user.", Reads: []string{fieldDeepBase, fieldDeepFindings, fieldDeepHistory, fieldDeepContest}, Writes: []string{fieldDeepProposal, fieldDeepHunks, fieldDeepOpen}},
@@ -476,7 +478,7 @@ func (w *WorkflowSession) readDeepFindings(ctx *engine.Context) error {
 	if err != nil {
 		return err
 	}
-	return w.verifyRound(ctx, 1)
+	return ctx.Round(nil)
 }
 
 func (w *WorkflowSession) checkDeepContest(ctx *engine.Context) error {
@@ -549,14 +551,8 @@ func (w *WorkflowSession) foldDeepResponses(ctx *engine.Context) error {
 	if err != nil {
 		return err
 	}
-	return w.verifyRound(ctx, round)
+	return ctx.Round(nil)
 }
-
-// verifyRound is the point every deep verifier round passes once its
-// delivery landed in the capture: where procedure hooks observe a round of
-// the verify step, through its findings channel, the deepFindings and
-// deepResponses fields. No hook is attached yet.
-func (w *WorkflowSession) verifyRound(*engine.Context, int) error { return nil }
 
 func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 	base, _ := workflowStoreString(ctx.Store, fieldDeepBase)

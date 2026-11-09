@@ -644,7 +644,7 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 		data["seed"] = seed
 	}
 	s.appendEvent(inst.ID, EventStarted, data)
-	if _, err := s.fireStep(inst, inst.currentStep(), HookEntered, "", nil); err != nil {
+	if _, err := s.fireStep(inst, inst.currentStep(), inst.Store, HookEntered, "", nil); err != nil {
 		return nil, err
 	}
 

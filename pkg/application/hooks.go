@@ -237,6 +237,13 @@ func (w *WorkflowSession) hookPayload(point engine.HookPoint) (map[string]any, e
 	if point.Procedure == captureCanonical {
 		payload["draft"] = hookDraft(point.Store)
 	}
+	if point.Procedure == captureCanonical && point.Step == verifyStage {
+		verify, err := w.hookVerify(point)
+		if err != nil {
+			return nil, err
+		}
+		payload["verify"] = verify
+	}
 	if entryID, ok := workflowStoreString(point.Store, "entryId"); ok && point.Event == entryWrittenEvent {
 		payload["entry"] = entryID
 	}
@@ -246,7 +253,37 @@ func (w *WorkflowSession) hookPayload(point engine.HookPoint) (map[string]any, e
 const (
 	captureCanonical  = "capture"
 	entryWrittenEvent = "entry.written"
+	// verifyStage is the hook step the capture's deep exchange raises its
+	// events under.
+	verifyStage = "verify"
 )
+
+// hookVerify is the verification step's state: the verifier's mode and
+// launch, the rounds delivered, and the findings the verifier still stands
+// by.
+func (w *WorkflowSession) hookVerify(point engine.HookPoint) (map[string]any, error) {
+	policy, _, err := w.deepPolicy(point.Instance)
+	if err != nil {
+		return nil, err
+	}
+	launch := string(policy.Launch)
+	if fallback, _ := point.Store.Get(fieldDeepNoSubagent); fallback == true {
+		launch = DelegateLaunchFallback
+	}
+	findings, err := storeDeep[model.DeepFinding](point.Store, fieldDeepFindings)
+	if err != nil {
+		return nil, err
+	}
+	history, err := storeDeep[model.DeepResponse](point.Store, fieldDeepHistory)
+	if err != nil {
+		return nil, err
+	}
+	rounds, _ := point.Store.Get(fieldDeepRounds)
+	return map[string]any{
+		"mode": string(policy.Mode), "launch": launch,
+		"round": deepRoundCount(rounds), "open": model.DeepOpenFindings(findings, history),
+	}, nil
+}
 
 func hookDraft(store *engine.Store) map[string]any {
 	kind, _ := workflowStoreString(store, "entryKind")

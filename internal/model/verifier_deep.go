@@ -158,6 +158,24 @@ func (r DeepResponse) Validate() error {
 // DeepFindingID is the number sdd gives the finding at index i.
 func DeepFindingID(i int) string { return "f" + strconv.Itoa(i+1) }
 
+// DeepOpenFindings counts the findings the verifier still stands by: every
+// finding whose latest response neither concedes nor drops it.
+func DeepOpenFindings(findings []DeepFinding, responses []DeepResponse) int {
+	open := 0
+	for i := range findings {
+		outcome := ""
+		for _, response := range responses {
+			if response.Target == DeepFindingID(i) {
+				outcome = response.Outcome
+			}
+		}
+		if outcome != DeepConceded && outcome != DeepDropped {
+			open++
+		}
+	}
+	return open
+}
+
 // DeepChange is the edits one finding carries into the proposal.
 type DeepChange struct {
 	Finding string
