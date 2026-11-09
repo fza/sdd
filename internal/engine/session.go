@@ -221,7 +221,14 @@ type Session struct {
 	// (20261029-150854-d-tac-b2f).
 	DialogueMode   model.DialogueMode
 	DialogueSource string
+	// Lineage names the dispatching instance of a delegate child session; nil
+	// on every session a user dialogue opened.
+	Lineage *Link
 
+	courier Courier
+	// received holds the IDs of accepted deliveries, so a repeated one lands
+	// once.
+	received  map[string]bool
 	engine    *Engine
 	sink      EventSink
 	now       func() time.Time
@@ -273,12 +280,16 @@ func (e *Engine) NewSession(id, participant string, sink EventSink, opts ...Sess
 		instances:   map[string]*Instance{},
 		reads:       map[string]ReadDepth{},
 		served:      map[string]bool{},
+		received:    map[string]bool{},
 	}
 	for _, o := range opts {
 		o(s)
 	}
 	if sink != nil {
 		meta := map[string]any{"participant": participant}
+		if s.Lineage != nil {
+			meta["parent"] = linkData(*s.Lineage)
+		}
 		// A guided session's header stays as it always was; an absent mode
 		// reads back as guided.
 		if s.DialogueMode == model.DialogueAutonomous {
@@ -574,6 +585,9 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 	if len(spec.Steps) == 0 {
 		return nil, fmt.Errorf("procedure %s: no steps", spec.Canonical)
 	}
+	if err := s.startDelegateCheck(spec); err != nil {
+		return nil, err
+	}
 	if parent != "" {
 		if _, ok := s.instances[parent]; !ok {
 			return nil, fmt.Errorf("parent instance %q not found in session", parent)
@@ -655,23 +669,15 @@ func (s *Session) seedFromParent(inst *Instance, parent string) (map[string]any,
 		return nil, nil // the pending seed was declared for a different child procedure
 	}
 
+	values, err := seedValues(p, inst.Spec)
+	if err != nil {
+		return nil, err
+	}
 	seed := make(map[string]any)
-	for _, childField := range slices.Sorted(maps.Keys(p.dispatchSeed)) {
-		parentField := p.dispatchSeed[childField]
-		if _, declared := inst.Spec.State[childField]; !declared {
-			target := "not declared"
-			if _, isParam := inst.Spec.Params[childField]; isParam {
-				target = "declared under params, not state"
-			}
-			return nil, fmt.Errorf("dispatch seed %q ← parent %q cannot land: field %q is %s in %s — a seeded field must be declared state", childField, parentField, childField, target, inst.Spec.Canonical)
-		}
+	for childField, v := range values {
 		if inst.Store.Has(childField) {
 			continue // already set on this instance — never overwrite
 		}
-		if !p.Store.Has(parentField) {
-			continue // the parent has no evidence to hand down under this name
-		}
-		v, _ := p.Store.Get(parentField)
 		seed[childField] = v
 	}
 
@@ -682,6 +688,28 @@ func (s *Session) seedFromParent(inst *Instance, parent string) (map[string]any,
 		return nil, fmt.Errorf("seeding from parent %s: %w", parent, err)
 	}
 	return seed, nil
+}
+
+// seedValues reads the values the parent's armed dispatch seed hands to a
+// child of spec: one per seed mapping whose parent field holds a value.
+func seedValues(p *Instance, spec *Spec) (map[string]any, error) {
+	values := make(map[string]any)
+	for _, childField := range slices.Sorted(maps.Keys(p.dispatchSeed)) {
+		parentField := p.dispatchSeed[childField]
+		if _, declared := spec.State[childField]; !declared {
+			target := "not declared"
+			if _, isParam := spec.Params[childField]; isParam {
+				target = "declared under params, not state"
+			}
+			return nil, fmt.Errorf("dispatch seed %q ← parent %q cannot land: field %q is %s in %s — a seeded field must be declared state", childField, parentField, childField, target, spec.Canonical)
+		}
+		if !p.Store.Has(parentField) {
+			continue // the parent has no evidence to hand down under this name
+		}
+		v, _ := p.Store.Get(parentField)
+		values[childField] = v
+	}
+	return values, nil
 }
 
 // recordDispatchSeed sets the parent instance's dispatch context to exactly
@@ -695,12 +723,16 @@ func (s *Session) seedFromParent(inst *Instance, parent string) (map[string]any,
 // Not consume-once: a junction that fans out several children — evaluate
 // recording several findings — seeds each until another option changes it.
 func recordDispatchSeed(inst *Instance, opt *Option) {
-	if opt.Dispatch != nil && len(opt.Dispatch.Seed) > 0 {
+	if opt.Dispatch != nil {
 		inst.dispatchSeed = opt.Dispatch.Seed
+		inst.dispatchReceive = opt.Dispatch.Receive
+		inst.dispatchSend = opt.Dispatch.Send
 		inst.dispatchProcedure = opt.Dispatch.Procedure
 		return
 	}
 	inst.dispatchSeed = nil
+	inst.dispatchReceive = nil
+	inst.dispatchSend = nil
 	inst.dispatchProcedure = ""
 }
 
@@ -738,6 +770,9 @@ func (s *Session) report(instanceID string, fields map[string]any) (*Instance, e
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("empty report — send state fields or a chooser answer")
 	}
+	if err := rejectDeliveryOnly(inst.Spec, fields); err != nil {
+		return nil, err
+	}
 
 	written, err := inst.Store.WriteState(fields)
 	if err != nil {
@@ -753,6 +788,9 @@ func (s *Session) report(instanceID string, fields map[string]any) (*Instance, e
 		"fields": logged,
 	})
 	if err := s.checkSink(); err != nil {
+		return nil, err
+	}
+	if err := s.sendFills(inst, written); err != nil {
 		return nil, err
 	}
 	s.clearCancellation(inst.ID)
@@ -880,6 +918,9 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	}
 	s.appendEvent(inst.ID, EventChooserAnswer, data)
 	if err := s.checkSink(); err != nil {
+		return nil, err
+	}
+	if err := s.sendFills(inst, slices.Sorted(maps.Keys(fields))); err != nil {
 		return nil, err
 	}
 	s.clearCancellation(inst.ID)
@@ -1014,6 +1055,13 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			s.DialogueMode = model.DialogueAutonomous
 			s.DialogueSource, _ = ev.Data["dialogueSource"].(string)
 		}
+		if parent, ok := ev.Data["parent"].(map[string]any); ok {
+			lineage := linkFrom(parent)
+			s.Lineage = &lineage
+		}
+
+	case EventForked, EventForkEnded, EventDelivered, EventReceived:
+		return s.applyDeliveryEvent(ev)
 
 	case EventLabeled:
 		if l, ok := ev.Data["label"].(string); ok {
@@ -1152,6 +1200,12 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			return err
 		}
 		to, _ := ev.Data["to"].(string)
+		switch consumed := ev.Data["consumed"].(type) {
+		case []string:
+			inst.consume(consumed)
+		case []any:
+			inst.consume(asStrings(consumed))
+		}
 		switch {
 		case IsEndTarget(to):
 			// The paired completed/abandoned event carries the terminal

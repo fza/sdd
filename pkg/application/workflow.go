@@ -152,6 +152,9 @@ type WorkflowServe struct {
 	// reported judgments that persist across a handover (d-cpt-0tm). Empty on
 	// door, next, and base-junction serves, which stay unchanged.
 	Collected map[string]any
+	// Dispatches are the delegate handoffs this operation owes the harness:
+	// a fork, or a delegate sent its next input.
+	Dispatches []*WorkflowDispatch
 }
 
 // ReminderInstructions composes the short reminder used when a host has
@@ -244,6 +247,14 @@ type WorkflowSession struct {
 	// startProject is the project the instance being started targets, which
 	// the sink records in the same append as the engine's start event.
 	startProject ProjectID
+	// task is a delegate session's one task instance, whose end ends the
+	// session as the shell's does a dialogue's.
+	task string
+	// held are the sessions the current operation holds in memory, which its
+	// deliveries reach directly.
+	held map[SessionID]*WorkflowSession
+	// filled are the delegates the current operation sent their next input.
+	filled []engine.Link
 }
 
 func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity, project ProjectID, request WorkflowOpenRequest) (*WorkflowSession, *WorkflowServe, error) {
@@ -277,7 +288,7 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err != nil {
 		return nil, nil, err
 	}
-	w.session = w.engine.NewSession(string(id), info.Participant, w.sink, engine.WithDialogue(model.DialogueMode(dialogue.Mode), dialogue.Source))
+	w.session = w.engine.NewSession(string(id), info.Participant, w.sink, engine.WithDialogue(model.DialogueMode(dialogue.Mode), dialogue.Source), engine.WithCourier(&workflowCourier{workflow: w}))
 	canonical := strings.TrimSpace(request.Shell)
 	if canonical == "" {
 		canonical = DefaultShellCanonical
@@ -374,9 +385,15 @@ func (a *Application) replayWorkflow(ctx context.Context, identity RequestIdenti
 		return nil, err
 	}
 	resolve := func(canonical string) (*engine.Spec, error) { return w.loadProcedure(canonical) }
-	w.session, err = w.engine.ReplaySession(string(stored.Metadata.ID), stored.Metadata.Participant, events, resolve, w.sink)
+	w.session, err = w.engine.ReplaySession(string(stored.Metadata.ID), stored.Metadata.Participant, events, resolve, w.sink, engine.WithCourier(&workflowCourier{workflow: w}))
 	if err != nil {
 		return nil, fmt.Errorf("replaying session %s: %w", stored.Metadata.ID, err)
+	}
+	if w.session.NonInteractive() {
+		if instances := w.session.Instances(); len(instances) > 0 {
+			w.task = instances[0].ID
+		}
+		return w, nil
 	}
 	if err := w.ensureShell(); err != nil {
 		return nil, err
@@ -523,6 +540,10 @@ func (w *WorkflowSession) Autonomous() bool {
 }
 
 func (w *WorkflowSession) Finished() bool {
+	if w.task != "" {
+		inst, ok := w.session.Instance(w.task)
+		return ok && inst.Status != engine.StatusRunning
+	}
 	inst, ok := w.session.Instance(w.shell)
 	return ok && inst.Status != engine.StatusRunning
 }
@@ -555,6 +576,9 @@ func (w *WorkflowSession) Start(ctx context.Context, identity RequestIdentity, r
 	parent := request.Parent
 	if parent == "" {
 		parent = w.shell
+	}
+	if startsDelegate(spec) {
+		return w.forkDelegate(ctx, identity, spec, request, parent)
 	}
 	// The target is settled before the instance exists, so a project the
 	// session may not work in refuses the start rather than leaving an
@@ -590,8 +614,8 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 			inputs++
 		}
 	}
-	if request.Instance == "" || inputs != 1 {
-		return nil, fmt.Errorf("instance and exactly one of report, retry_ref or cancel_ref are required")
+	if request.Instance == "" || inputs > 1 {
+		return nil, fmt.Errorf("instance and at most one of report, retry_ref or cancel_ref are required — none picks up what was delivered")
 	}
 	if request.Report != nil && len(request.Report) == 0 {
 		return nil, fmt.Errorf("report must not be empty")
@@ -615,7 +639,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 			return nil, err
 		}
 	}
-	if request.CancelRef != 0 {
+	if inputs == 0 {
+		serve, err = w.session.Poll(request.Instance)
+	} else if request.CancelRef != 0 {
 		serve, err = w.session.Cancel(request.Instance, request.CancelRef)
 	} else if request.RetryRef != 0 {
 		serve, err = w.session.Retry(request.Instance, request.RetryRef)
@@ -647,11 +673,22 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	if err := w.session.SinkErr(); err != nil {
 		return nil, err
 	}
+	if err := w.concludeEndedForks(ctx, identity); err != nil {
+		return nil, err
+	}
 	result, err := w.publicServe(serve)
 	if err != nil {
 		return nil, err
 	}
+	result.Dispatches, err = w.filledDispatches(ctx, identity)
+	if err != nil {
+		return result, err
+	}
 	if serve.Status != engine.StatusRunning {
+		if serve.Instance == w.task {
+			result.Instructions = delegateEndNote(serve)
+			return result, nil
+		}
 		// The shell ending is the dialogue ending: its serve carries the way on
 		// rather than a spent position with nothing to do. Any other instance
 		// ending lands the dialogue back on the shell.
@@ -737,6 +774,9 @@ func (w *WorkflowSession) Abandon(ctx context.Context, identity RequestIdentity,
 		return WorkflowAbandonResult{}, codedRefusal(err)
 	}
 	if err := w.session.SinkErr(); err != nil {
+		return WorkflowAbandonResult{}, err
+	}
+	if err := w.concludeEndedForks(ctx, identity); err != nil {
 		return WorkflowAbandonResult{}, err
 	}
 	base, err := w.ServeShell(ctx, identity)
@@ -1181,6 +1221,13 @@ func (a *Application) ListWorkflowSessions(ctx context.Context, identity Request
 // Ending a session is a participant act, and holding the handle is what
 // authorizes it (d-cpt-aen).
 func (a *Application) AbandonWorkflowSession(ctx context.Context, identity RequestIdentity, request WorkflowResumeRequest, reason string) (WorkflowAbandonResult, error) {
+	return a.abandonSession(ctx, identity, request, reason, true)
+}
+
+// abandonSession is the teardown by handle. Every delegate the session still
+// has live goes down with it; a delegate session torn down by its own handle
+// releases its fork in the dispatching session when releaseParent is set.
+func (a *Application) abandonSession(ctx context.Context, identity RequestIdentity, request WorkflowResumeRequest, reason string, releaseParent bool) (WorkflowAbandonResult, error) {
 	if request.SessionID == "" {
 		return WorkflowAbandonResult{}, fmt.Errorf("sdd: session ID is required")
 	}
@@ -1240,6 +1287,19 @@ func (a *Application) AbandonWorkflowSession(ctx context.Context, identity Reque
 		return WorkflowAbandonResult{}, err
 	}
 	result.SyncNotice = runtime.releaseSyncOwner(ctx, w.branch, string(request.SessionID))
+	for _, live := range w.session.LiveForks() {
+		if err := a.endDelegate(ctx, identity, SessionID(live.Fork.Child.Session), "the dispatching session was abandoned"); err != nil {
+			return result, err
+		}
+	}
+	if lineage := w.session.Lineage; lineage != nil && releaseParent {
+		for _, inst := range w.session.Instances() {
+			child := engine.Link{Session: string(request.SessionID), Instance: inst.ID}
+			if err := a.releaseFork(ctx, identity, *lineage, child, "the delegate session was abandoned"); err != nil {
+				return result, err
+			}
+		}
+	}
 	return result, nil
 }
 
@@ -1625,7 +1685,8 @@ func (w *WorkflowSession) appendStoredEventsOnce(events []StoredEvent) error {
 			// dialogue — whether the user answered conclude or a quiescent session
 			// auto-concluded on leave — so the terminal record lands in the same
 			// append as the act it records (d-cpt-rw7). Written once, never revised.
-			if event.Instance == w.shell && metadata.Ended == nil {
+			ends := event.Instance == w.shell || (w.task != "" && event.Instance == w.task)
+			if ends && metadata.Ended == nil {
 				metadata.Ended = &SessionEnd{Act: SessionConcluded, EndedAt: now}
 			}
 		}

@@ -584,6 +584,7 @@ type frontmatter struct {
 	Steps        yaml.Node         `yaml:"steps,omitempty"`
 	Framing      yaml.Node         `yaml:"framing,omitempty"`
 	ServeBudget  int               `yaml:"serveBudget,omitempty"`
+	Rounds       int               `yaml:"rounds,omitempty"`
 	Preflight    string            `yaml:"preflight,omitempty"`
 	Grounding    string            `yaml:"grounding,omitempty"`
 	Title        string            `yaml:"title,omitempty"`
@@ -721,6 +722,7 @@ func ParseEntry(filename, content string) (*Entry, error) {
 			Steps:       fm.Steps,
 			Framing:     fm.Framing,
 			ServeBudget: fm.ServeBudget,
+			Rounds:      fm.Rounds,
 		}
 	}
 
@@ -952,6 +954,7 @@ func FormatFrontmatter(e *Entry) string {
 		fm.Steps = e.ProcedureSpec.Steps
 		fm.Framing = e.ProcedureSpec.Framing
 		fm.ServeBudget = e.ProcedureSpec.ServeBudget
+		fm.Rounds = e.ProcedureSpec.Rounds
 	}
 
 	data, _ := yaml.Marshal(&fm)
