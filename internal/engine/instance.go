@@ -61,7 +61,13 @@ type Instance struct {
 	// retiredStep is the logged position when the log placed the instance on
 	// a step its procedure no longer has (see ReplaySession).
 	retiredStep string
+	// reading folds the grounding reads credited to this instance (D28 of
+	// 20261109-004506-d-cpt-udz); replay restores it from the read events.
+	reading model.Reading
 }
+
+// Reading returns the instance's credited grounding reads.
+func (i *Instance) Reading() *model.Reading { return &i.reading }
 
 // loggedStep is the instance's position as its log records it.
 func (i *Instance) loggedStep() string {
@@ -218,7 +224,7 @@ func (s *Session) funcContext(inst *Instance) (*Context, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving current graph: %w", err)
 	}
-	return &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads}, nil
+	return &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads, Reading: &inst.reading}, nil
 }
 
 // cascade advances gate steps until something stops them — a failing
@@ -341,7 +347,7 @@ func (s *Session) runCommand(inst *Instance, name, to string) error {
 	if !ok {
 		return fmt.Errorf("instance %s: %q is not a registered command", inst.ID, name)
 	}
-	ctx := &Context{Instance: inst.ID, Store: inst.Store, Step: inst.Step, Reads: s.reads}
+	ctx := &Context{Instance: inst.ID, Store: inst.Store, Step: inst.Step, Reads: s.reads, Reading: &inst.reading}
 	if cmd.Prepare != nil {
 		if s.intent == nil || s.intentDone {
 			values, err := cmd.Prepare(ctx)

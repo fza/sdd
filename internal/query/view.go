@@ -29,6 +29,46 @@ type ViewResult struct {
 	Sections []SectionResult
 }
 
+// ServedIDs returns the entries the sections serve: bodies in full, every
+// other entry row as a summary line. Counts and WIP rows serve no entry.
+func (r ViewResult) ServedIDs() (full, summary []string) {
+	for _, s := range r.Sections {
+		switch data := s.Data.(type) {
+		case model.Bodies:
+			for _, e := range data.Entries {
+				full = append(full, e.ID)
+			}
+		case model.FlatList:
+			for _, e := range data.Entries {
+				summary = append(summary, e.ID)
+			}
+		case model.Grouped:
+			for _, group := range data.Groups {
+				for _, e := range group.Entries {
+					summary = append(summary, e.ID)
+				}
+			}
+		case model.FocusBlock:
+			for _, focus := range data.Focuses {
+				summary = append(summary, focus.Focus.ID)
+				for _, target := range focus.Targets {
+					if target.Target != nil {
+						summary = append(summary, target.Target.ID)
+					}
+				}
+			}
+		case model.ParticipantsBlock:
+			for _, group := range data.Groups {
+				summary = append(summary, group.Actor.ID)
+				for _, role := range group.Roles {
+					summary = append(summary, role.ID)
+				}
+			}
+		}
+	}
+	return full, summary
+}
+
 // MatchedCount sums the primary units across every section — the total the
 // pipeline produced. Zero means the layout matched nothing, which callers use
 // to render an explicit empty result instead of a blank string.

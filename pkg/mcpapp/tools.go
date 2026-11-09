@@ -971,6 +971,9 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, args ViewAr
 	if err != nil {
 		return nil, ViewResult{}, toolError("viewing: %v", err)
 	}
+	if err := s.logRootRead(ctx, req, ss, "view", result.FullIDs, result.SummaryIDs); err != nil {
+		return nil, ViewResult{}, err
+	}
 	sections := result.Sections
 	// An empty result must never reach an agent as a blank string — it cannot
 	// tell "matched nothing" from a broken call. Say so, and when a participant

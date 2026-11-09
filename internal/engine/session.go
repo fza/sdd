@@ -44,9 +44,10 @@ const (
 	EventAbandoned       EventType = "abandoned"
 	// EventRead records what a read surface served to the session: the tool,
 	// the entry IDs, and the depth — metadata only, never payloads. Reads stay
-	// free and ungated; tracking is logging, not gating (d-tac-dbk). No
-	// instance — the read set is session-level, so evidence inspected by a
-	// dispatching parent counts for its seeded children.
+	// free and ungated; tracking is logging, not gating (d-tac-dbk). The read
+	// set is session-level, so evidence inspected by a dispatching parent
+	// counts for its seeded children. A grounding read alone names an
+	// instance: the capture its payload credits.
 	EventRead EventType = "read"
 	// EventParked records that a running move was deliberately parked back to
 	// the session junction — state kept, resumable through next. Forensic
@@ -332,19 +333,94 @@ func (s *Session) SetLabel(label string) {
 // — re-reads are part of the forensic record — and folds into the session's
 // read set, where full depth never downgrades. Empty calls append nothing.
 func (s *Session) LogRead(tool string, full, summary []string) {
-	full = s.foldReads(full, ReadFull)
-	summary = s.foldReads(summary, ReadSummary)
-	if len(full) == 0 && len(summary) == 0 {
-		return
+	// A read naming no instance cannot fail.
+	_ = s.Record(Read{Tool: tool, Full: full, Summary: summary})
+}
+
+// Read is what one read surface served: the tool, the entry IDs at full and
+// summary depth, and, for a grounding read, the running instance it credits
+// with the reads as run (20261109-004506-d-cpt-udz).
+type Read struct {
+	Tool    string
+	Full    []string
+	Summary []string
+	// Instance names the running instance the grounding payload credits;
+	// empty records a session-level read that credits no instance.
+	Instance  string
+	Grounding model.ReadPayload
+}
+
+// Record logs a read: the IDs fold into the session's read set as LogRead
+// does, and a grounding payload folds into the named instance's reading.
+// Only a running instance takes credit — a read made outside it credits
+// nothing (D28). A read with nothing to record appends nothing.
+func (s *Session) Record(read Read) error {
+	var inst *Instance
+	if read.Instance != "" {
+		if err := s.checkSink(); err != nil {
+			return err
+		}
+		var ok bool
+		inst, ok = s.instances[read.Instance]
+		if !ok {
+			return fmt.Errorf("instance %q not found in session", read.Instance)
+		}
+		if inst.Status != StatusRunning {
+			return fmt.Errorf("instance %s has ended (%s) — a read credits only a running move", read.Instance, inst.Outcome)
+		}
+	} else if !read.Grounding.Empty() {
+		return fmt.Errorf("a grounding read must name the instance it credits")
 	}
-	data := map[string]any{"tool": tool}
+	full := s.foldReads(read.Full, ReadFull)
+	summary := s.foldReads(read.Summary, ReadSummary)
+	if len(full) == 0 && len(summary) == 0 && read.Grounding.Empty() {
+		return nil
+	}
+	data := map[string]any{"tool": read.Tool}
 	if len(full) > 0 {
 		data["full"] = full
 	}
 	if len(summary) > 0 {
 		data["summary"] = summary
 	}
+	if inst != nil && !read.Grounding.Empty() {
+		encoded, err := encodeReadPayload(read.Grounding)
+		if err != nil {
+			return err
+		}
+		data["grounding"] = encoded
+		inst.reading.Fold(read.Grounding)
+		s.appendEvent(inst.ID, EventRead, data)
+		return s.checkSink()
+	}
 	s.appendEvent("", EventRead, data)
+	return s.checkSink()
+}
+
+// encodeReadPayload renders a payload in the JSON-document form a replayed
+// log carries, so live and replayed events hold the same shape.
+func encodeReadPayload(p model.ReadPayload) (map[string]any, error) {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return nil, fmt.Errorf("encoding the grounding read: %w", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("encoding the grounding read: %w", err)
+	}
+	return doc, nil
+}
+
+func decodeReadPayload(v any) (model.ReadPayload, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return model.ReadPayload{}, err
+	}
+	var p model.ReadPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return model.ReadPayload{}, fmt.Errorf("decoding the grounding read: %w", err)
+	}
+	return p, nil
 }
 
 // foldReads folds IDs into the read set at depth (full wins over summary)
@@ -1093,6 +1169,17 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 					}
 				}
 			}
+		}
+		if grounding, ok := ev.Data["grounding"]; ok && ev.Instance != "" {
+			inst, err := s.replayInstance(ev)
+			if err != nil {
+				return err
+			}
+			payload, err := decodeReadPayload(grounding)
+			if err != nil {
+				return err
+			}
+			inst.reading.Fold(payload)
 		}
 
 	case EventServedBlocks:

@@ -284,11 +284,14 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	if matched == 0 && layout.UsesFunction("participant") {
 		knownParticipants = snapshot.graph.AllParticipants()
 	}
+	full, summary := viewResult.ServedIDs()
 	return ViewResult{
 		Project:           runtime.options.Project,
 		Sections:          strings.TrimRight(rendered.String(), "\n"),
 		MatchedCount:      matched,
 		KnownParticipants: knownParticipants,
+		FullIDs:           full,
+		SummaryIDs:        summary,
 	}, nil
 }
 

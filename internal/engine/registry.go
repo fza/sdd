@@ -46,6 +46,9 @@ type Context struct {
 	// was served at (refsInspected evaluates it). Nil means nothing was
 	// served; reading a nil map is safe.
 	Reads map[string]ReadDepth
+	// Reading is the running instance's credited grounding reads; nil only
+	// in contexts built outside an instance.
+	Reading *model.Reading
 }
 
 // PredicateFunc is a pure check over the store (and graph): no side effects,
