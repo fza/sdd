@@ -10,6 +10,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/urfave/cli/v3"
 )
@@ -111,7 +112,20 @@ func effectiveConfigResult(key string) (*query.EffectiveConfigResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return f.EffectiveConfig(query.EffectiveConfigQuery{SDDDir: sddDir, LocalConfigPath: localLayer, Key: key})
+	q := query.EffectiveConfigQuery{SDDDir: sddDir, LocalConfigPath: localLayer, Key: key}
+	if sddDir != "" {
+		project, err := resolveProject()
+		if err != nil {
+			return nil, err
+		}
+		if project.Pointed() {
+			q.WorkSDDDir = meta.SDDDir(project.WorkRoot)
+			if workLocal := meta.LocalConfigPath(q.WorkSDDDir, ""); workLocal != meta.LocalConfigPath(sddDir, localLayer) {
+				q.WorkLocalConfigPath = workLocal
+			}
+		}
+	}
+	return f.EffectiveConfig(q)
 }
 
 func runEffectiveConfig(cmd *cli.Command, key string) error {

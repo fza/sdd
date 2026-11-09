@@ -644,7 +644,7 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 		data["seed"] = seed
 	}
 	s.appendEvent(inst.ID, EventStarted, data)
-	if _, err := s.fireStep(inst, inst.currentStep(), inst.Store, HookEntered, "", nil); err != nil {
+	if err := s.arrive(inst); err != nil {
 		return nil, err
 	}
 
@@ -851,6 +851,9 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	}
 	if step.Chooser == ChooserGate {
 		return nil, fmt.Errorf("step %s is a gate — no chooser is pending", step.ID)
+	}
+	if err := s.release(inst); err != nil {
+		return nil, err
 	}
 	if chooser != step.ID {
 		return nil, fmt.Errorf("chooser %q is not pending — the pending chooser is %q (answers are validated: no early, late, or double answers)", chooser, step.ID)

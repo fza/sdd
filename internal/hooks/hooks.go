@@ -1,6 +1,3 @@
-// Package hooks runs the hooks the person running sdd configured
-// (20261109-005138-d-tac-i61): each command through `sh -c` in the project
-// directory, the event's JSON payload on stdin.
 package hooks
 
 import (
@@ -13,43 +10,58 @@ import (
 	"time"
 
 	"github.com/networkteam/sdd/internal/model"
-	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
 // waitDelay bounds how long a stopped hook's leftover children may hold its
 // output open.
 const waitDelay = time.Second
 
-// Commands implements the application's HookCommands port over a loader
-// that reads the configured hooks afresh on every call.
+// Commands implements the application's HookCommands port over the hooks
+// declared in sources, read afresh on every call, and the confirmations in
+// store.
 type Commands struct {
-	load func() ([]model.HookConfig, error)
-	dir  string
+	sources Sources
+	store   *Store
 }
 
-// New returns Commands reading hooks through load and running them in dir.
-func New(load func() ([]model.HookConfig, error), dir string) *Commands {
-	return &Commands{load: load, dir: dir}
+// New returns Commands over the hooks sources declares.
+func New(sources Sources, store *Store) *Commands {
+	return &Commands{sources: sources, store: store}
 }
 
-// Hooks returns the hooks as configured now.
-func (c *Commands) Hooks(context.Context) ([]sdd.Hook, error) {
-	configs, err := c.load()
+// Hooks returns the hooks as declared now, hashed, with their state.
+func (c *Commands) Hooks(context.Context) ([]model.Hook, error) {
+	declared, err := Declared(c.sources)
 	if err != nil {
 		return nil, err
 	}
-	hooks := make([]sdd.Hook, 0, len(configs))
-	for _, config := range configs {
-		hooks = append(hooks, sdd.Hook{Event: config.Event, Command: config.Command, Timeout: time.Duration(config.Timeout) * time.Second, Findings: config.Findings})
-	}
-	return hooks, nil
+	return c.store.Resolve(declared)
 }
 
-// Run runs hook with stdin and returns its stdout. When ctx ends, the
+// Review returns what the person sees before confirming hook.
+func (c *Commands) Review(_ context.Context, hook model.Hook) (model.HookReview, error) {
+	return Review(hook)
+}
+
+// Confirm records hook's hash as confirmed.
+func (c *Commands) Confirm(_ context.Context, hook model.Hook) error {
+	return c.store.Confirm(hook)
+}
+
+// Run runs hook's file with its args in its hooks folder, stdin on its
+// standard input, and returns its stdout. It hashes the hook again first and
+// refuses one whose files changed since its hash was read. When ctx ends, the
 // hook's whole process group is killed.
-func (c *Commands) Run(ctx context.Context, hook sdd.Hook, stdin []byte) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "sh", "-c", hook.Command)
-	cmd.Dir = c.dir
+func (c *Commands) Run(ctx context.Context, hook model.Hook, stdin []byte) ([]byte, error) {
+	hash, _, err := Hash(hook)
+	if err != nil {
+		return nil, err
+	}
+	if hash != hook.Hash {
+		return nil, fmt.Errorf("%s changed while the call ran; call again to resolve it anew", hook.Label())
+	}
+	cmd := exec.CommandContext(ctx, hook.Path, hook.Args...)
+	cmd.Dir = hook.Origin.Dir
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

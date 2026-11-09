@@ -66,8 +66,8 @@ func TestHookStageRaisesOneStepsEvents(t *testing.T) {
 		t.Fatalf("a clean run should pass the stage, sits at %s", serve.Step)
 	}
 	want := []string{
-		"lanesproc.draft.entered", "lanesproc.draft.left", "lanesproc.verify.entered",
-		"lanesproc.verify.round", "lanesproc.verify.left", "lanesproc.pick.entered",
+		"lanesproc.draft.start", "lanesproc.draft", "lanesproc.verify.start",
+		"lanesproc.verify.round", "lanesproc.verify", "lanesproc.pick.start",
 	}
 	if got := w.hooks.events(); !slices.Equal(got, want) {
 		t.Fatalf("the stage's steps should raise one step's events, fired %v", got)
@@ -75,11 +75,11 @@ func TestHookStageRaisesOneStepsEvents(t *testing.T) {
 	if round := w.hooks.point(t, "lanesproc.verify.round"); round.Step != "verify" || round.Phase != engine.HookRound {
 		t.Errorf("a round inside the stage should name the stage, got %+v", round)
 	}
-	left := w.hooks.point(t, "lanesproc.verify.left")
+	left := w.hooks.point(t, "lanesproc.verify")
 	if left.Step != "verify" || left.Transition != "pick" || !left.Channel {
 		t.Errorf("leaving the stage should name the stage, the target and carry its channel, got %+v", left)
 	}
-	if entered := w.hooks.point(t, "lanesproc.verify.entered"); entered.Step != "verify" || entered.Channel {
+	if entered := w.hooks.point(t, "lanesproc.verify.start"); entered.Step != "verify" || entered.Channel {
 		t.Errorf("entering the stage at a step without the channel should name the stage and carry no findings, got %+v", entered)
 	}
 }
@@ -117,7 +117,7 @@ func TestHookRoundReadsWhatItsCommandWroteBefore(t *testing.T) {
 func TestHookStageHighFindingHoldsItsChannelStep(t *testing.T) {
 	w := newStageWorld(t)
 	session, serve := w.start(t)
-	w.hooks.findings["lanesproc.verify.left"] = highLint
+	w.hooks.findings["lanesproc.verify"] = highLint
 	serve, err := session.Report(serve.Instance, map[string]any{"body": "a draft"})
 	if err != nil {
 		t.Fatal(err)
@@ -136,13 +136,13 @@ func TestHookEventsNameTheStage(t *testing.T) {
 	for _, event := range engine.HookEvents([]*engine.Spec{w.spec}, w.engine.Registry) {
 		byName[event.Name] = event.Findings
 	}
-	if !byName["lanesproc.verify.left"] {
+	if !byName["lanesproc.verify"] {
 		t.Error("leaving a stage holding a findings channel should accept findings")
 	}
 	if _, ok := byName["lanesproc.verify.round"]; !ok {
 		t.Error("a stage whose commands declare rounds should raise its round event")
 	}
-	for _, name := range []string{"lanesproc.first.entered", "lanesproc.second.left", "lanesproc.first.round"} {
+	for _, name := range []string{"lanesproc.first.start", "lanesproc.second", "lanesproc.first.round"} {
 		if _, ok := byName[name]; ok {
 			t.Errorf("a step inside a stage should raise no event of its own, listed %s", name)
 		}

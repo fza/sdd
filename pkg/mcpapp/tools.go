@@ -594,7 +594,7 @@ func (s *Server) attachedSession(ctx context.Context, req *mcp.CallToolRequest, 
 	ss := s.sessions.get(id)
 	var fresh bool
 	if ss == nil {
-		workflow, err := s.app.RefreshWorkflow(ctx, s.requestIdentity(req), id)
+		workflow, err := s.app.RefreshWorkflowConfirmingHooks(ctx, s.requestIdentity(req), id, newElicitingConfirmer(req))
 		if err != nil {
 			return nil, err
 		}
@@ -609,7 +609,7 @@ func (s *Server) attachedSession(ctx context.Context, req *mcp.CallToolRequest, 
 	}
 	if !fresh {
 		ss.mu.Lock()
-		workflow, err := s.app.RefreshWorkflow(ctx, s.requestIdentity(req), id)
+		workflow, err := s.app.RefreshWorkflowConfirmingHooks(ctx, s.requestIdentity(req), id, newElicitingConfirmer(req))
 		if err != nil {
 			ss.mu.Unlock()
 			return nil, err
@@ -660,10 +660,17 @@ func (s *Server) startSession(ctx context.Context, req *mcp.CallToolRequest, arg
 	// application infers a sole accessible project or reports the ambiguity,
 	// which becomes the project listing (d-tac-1z6).
 	project := sdd.ProjectID(strings.TrimSpace(args.Project))
-	workflow, serve, err := s.app.OpenWorkflow(ctx, identity, project, sdd.WorkflowOpenRequest{
-		ClientName: mcpClientName(req.Session), ClientVersion: mcpClientVersion(req.Session),
-		Shell: args.Shell, Label: args.Label,
-	})
+	var (
+		workflow *sdd.WorkflowSession
+		serve    *sdd.WorkflowServe
+	)
+	err := s.confirmHooks(ctx, req, project)
+	if err == nil {
+		workflow, serve, err = s.app.OpenWorkflow(ctx, identity, project, sdd.WorkflowOpenRequest{
+			ClientName: mcpClientName(req.Session), ClientVersion: mcpClientVersion(req.Session),
+			Shell: args.Shell, Label: args.Label,
+		})
+	}
 	if err != nil {
 		var appErr *sdd.ApplicationError
 		if project == "" && errors.As(err, &appErr) && appErr.Code == sdd.ErrorProjectRequired {
@@ -1365,6 +1372,10 @@ func toolBoundary[In, Out any](s *Server, handler func(context.Context, *mcp.Cal
 		}
 		slot := &syncNoticeSlot{}
 		res, out, err := handler(context.WithValue(ctx, syncNoticeKey{}, slot), req, in)
+		if asked, ok := inputRequired(err); ok {
+			var none Out
+			return asked, none, nil
+		}
 		var coded *sdd.ApplicationError
 		if err != nil && errors.As(err, &coded) && coded.Code != "" {
 			err = fmt.Errorf("%s: %w", coded.Code, err)

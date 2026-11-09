@@ -34,7 +34,20 @@ func (f *Finder) EffectiveConfig(q query.EffectiveConfigQuery) (*query.Effective
 		}
 	}
 
-	values := model.EffectiveConfigValues(global, project, local)
+	var work model.WorkConfigLayers
+	if q.WorkSDDDir != "" {
+		var err error
+		if work.Committed, _, err = meta.ReadConfigLayers(q.WorkSDDDir, ""); err != nil {
+			return nil, err
+		}
+		if q.WorkLocalConfigPath != "" {
+			if _, work.Local, err = meta.ReadConfigLayers("", q.WorkLocalConfigPath); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	values := model.EffectiveConfigValuesWithWork(global, work, project, local)
 	result := &query.EffectiveConfigResult{}
 	for _, v := range values {
 		// Key selects exactly, or as a dotted-path prefix ("llm" matches

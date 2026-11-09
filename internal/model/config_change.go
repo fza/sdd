@@ -47,10 +47,10 @@ func ConfigChanges(before, after ConfigLayers) []ConfigChange {
 		}
 		changes = append(changes, change)
 	}
-	for _, value := range effectiveConfigValues(before.Global, before.Project, before.Local, false) {
+	for _, value := range effectiveConfigValues(before.Global, WorkConfigLayers{}, before.Project, before.Local, false) {
 		add(value.Key)
 	}
-	for _, value := range effectiveConfigValues(after.Global, after.Project, after.Local, false) {
+	for _, value := range effectiveConfigValues(after.Global, WorkConfigLayers{}, after.Project, after.Local, false) {
 		add(value.Key)
 	}
 	for _, key := range []string{"graph_repo", "project_dir"} {
@@ -64,7 +64,7 @@ func ConfigChanges(before, after ConfigLayers) []ConfigChange {
 
 func effectiveByKey(layers ConfigLayers) map[string]ConfigValue {
 	out := map[string]ConfigValue{}
-	for _, value := range effectiveConfigValues(layers.Global, layers.Project, layers.Local, false) {
+	for _, value := range effectiveConfigValues(layers.Global, WorkConfigLayers{}, layers.Project, layers.Local, false) {
 		out[value.Key] = value
 	}
 	return out

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
@@ -24,7 +25,7 @@ func requireServedHookFinding(t *testing.T, serve *sdd.WorkflowServe, step strin
 }
 
 func TestHooks_AssembleMediumFindingIsServed(t *testing.T) {
-	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{Event: "capture.assemble.left", Command: "lint", Findings: true})
+	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.assemble", Command: "lint", Findings: true}})
 	scripted.Scripts["lint"] = proctest.HookScript{Output: mediumFindingOutput}
 
 	serve := session.Start(t, "capture", nil)
@@ -34,7 +35,7 @@ func TestHooks_AssembleMediumFindingIsServed(t *testing.T) {
 
 	serve = session.Answer(t, instance, "assembleHookReview", "proceed", nil, "")
 	proctest.RequireStep(t, serve, "playback")
-	if runs := scripted.RunsAt("capture.assemble.left"); len(runs) != 2 {
+	if runs := scripted.RunsAt("capture.assemble"); len(runs) != 2 {
 		t.Errorf("proceeding should leave assemble again through its hooks, ran %d times", len(runs))
 	}
 
@@ -47,7 +48,7 @@ func TestHooks_AssembleMediumFindingIsServed(t *testing.T) {
 }
 
 func TestHooks_GuideMediumFindingIsServedWithTheGuidesFindings(t *testing.T) {
-	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{Event: "capture.guide.left", Command: "lint", Findings: true})
+	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.guide", Command: "lint", Findings: true}})
 	scripted.Scripts["lint"] = proctest.HookScript{Output: mediumFindingOutput}
 
 	serve := session.Start(t, "capture", nil)
@@ -61,7 +62,7 @@ func TestHooks_GuideMediumFindingIsServedWithTheGuidesFindings(t *testing.T) {
 }
 
 func TestHooks_PreflightMediumFindingIsServedWithTheVerifierOff(t *testing.T) {
-	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{Event: "capture.preflight.left", Command: "lint", Findings: true})
+	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.preflight", Command: "lint", Findings: true}})
 	scripted.Scripts["lint"] = proctest.HookScript{Output: mediumFindingOutput}
 
 	serve := session.Start(t, "capture", nil)
@@ -78,7 +79,7 @@ func TestHooks_PreflightMediumFindingIsServedWithTheVerifierOff(t *testing.T) {
 }
 
 func TestHooks_VerifyMediumFindingIsServed(t *testing.T) {
-	world, session, scripted := newHookedDeepWorld(t, "hooks-verify-medium", sdd.Hook{Event: "capture.verify.left", Command: "lint", Findings: true})
+	world, session, scripted := newHookedDeepWorld(t, "hooks-verify-medium", sdd.Hook{HookConfig: model.HookConfig{Event: "capture.verify", Command: "lint", Findings: true}})
 	scripted.Scripts["lint"] = proctest.HookScript{Output: mediumFindingOutput}
 	x := startDeep(t, world, session, captureDraft())
 	x.judge(t, []any{})

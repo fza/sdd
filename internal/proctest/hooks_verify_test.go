@@ -5,6 +5,7 @@ package proctest_test
 import (
 	"testing"
 
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
@@ -18,9 +19,9 @@ func newHookedDeepWorld(t *testing.T, connID string, hooks ...sdd.Hook) (*procte
 
 func TestHooks_VerifyEventsFireAroundTheDeepExchange(t *testing.T) {
 	world, session, scripted := newHookedDeepWorld(t, "hooks-verify",
-		sdd.Hook{Event: "capture.verify.entered", Command: "status"},
-		sdd.Hook{Event: "capture.verify.round", Command: "status"},
-		sdd.Hook{Event: "capture.verify.left", Command: "status"},
+		sdd.Hook{HookConfig: model.HookConfig{Event: "capture.verify.start", Command: "status"}},
+		sdd.Hook{HookConfig: model.HookConfig{Event: "capture.verify.round", Command: "status"}},
+		sdd.Hook{HookConfig: model.HookConfig{Event: "capture.verify", Command: "status"}},
 	)
 	x := startDeep(t, world, session, captureDraft())
 	x.judge(t, []any{
@@ -29,12 +30,12 @@ func TestHooks_VerifyEventsFireAroundTheDeepExchange(t *testing.T) {
 	serve := x.pickUp(t)
 	proctest.RequireStep(t, serve, "deepAnswer")
 
-	for _, event := range []string{"capture.verify.entered", "capture.verify.round"} {
+	for _, event := range []string{"capture.verify.start", "capture.verify.round"} {
 		if runs := scripted.RunsAt(event); len(runs) != 1 {
 			t.Fatalf("%s should fire once by the first delivery, fired %d times", event, len(runs))
 		}
 	}
-	if runs := scripted.RunsAt("capture.verify.left"); len(runs) != 0 {
+	if runs := scripted.RunsAt("capture.verify"); len(runs) != 0 {
 		t.Fatalf("moving between the deep exchange's steps should not leave the verify step, left %d times", len(runs))
 	}
 	round := scripted.RunsAt("capture.verify.round")[0].Payload
@@ -46,7 +47,7 @@ func TestHooks_VerifyEventsFireAroundTheDeepExchange(t *testing.T) {
 	serve = session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
 	proctest.RequireStep(t, serve, "deepProposal")
 	session.Answer(t, x.instance, "deepProposal", "accept", map[string]any{"body": "A tactical gap: the fixture observes the attachment writer dropping a file."}, "")
-	left := scripted.RunsAt("capture.verify.left")
+	left := scripted.RunsAt("capture.verify")
 	if len(left) != 1 || left[0].Payload["transition"] != "assemble" {
 		t.Fatalf("accepting a changed draft should leave the verify step once, back to assemble, got %+v", left)
 	}
@@ -57,8 +58,8 @@ func TestHooks_VerifyEventsFireAroundTheDeepExchange(t *testing.T) {
 
 func TestHooks_VerifyHighFindingHoldsTheWrite(t *testing.T) {
 	world, session, scripted := newHookedDeepWorld(t, "hooks-verify-hold",
-		sdd.Hook{Event: "capture.verify.left", Command: "lint", Findings: true},
-		sdd.Hook{Event: "entry.written", Command: "notify"},
+		sdd.Hook{HookConfig: model.HookConfig{Event: "capture.verify", Command: "lint", Findings: true}},
+		sdd.Hook{HookConfig: model.HookConfig{Event: "entry.written", Command: "notify"}},
 	)
 	scripted.Scripts["lint"] = proctest.HookScript{Output: highFindingOutput}
 	x := startDeep(t, world, session, captureDraft())
@@ -68,7 +69,7 @@ func TestHooks_VerifyHighFindingHoldsTheWrite(t *testing.T) {
 	if !hasDiagnostic(serve, "the opening sentence is passive") {
 		t.Fatalf("the held verify step should name the hook's finding, diagnostics %v", serve.Diagnostics)
 	}
-	left := scripted.RunsAt("capture.verify.left")
+	left := scripted.RunsAt("capture.verify")
 	if len(left) != 1 || left[0].Payload["transition"] != "checked" || left[0].Payload["findings"] == nil {
 		t.Fatalf("leaving the verify step through its channel should name the transition and carry the findings so far, got %+v", left)
 	}

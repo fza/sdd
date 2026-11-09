@@ -429,21 +429,6 @@ func globalTokenSaving() (bool, error) {
 	return model.ResolveTokenSaving(global.Sessions)
 }
 
-// localHooks reads the hooks of the user-global config and the local layer
-// as they are now, so a changed configuration reaches a running serve on its
-// next call. Reading the layers refuses hooks in the committed one.
-func localHooks(globalPath, sddDir, localLayer string) ([]model.HookConfig, error) {
-	global, err := repos.LoadConfigFrom(globalPath)
-	if err != nil {
-		return nil, err
-	}
-	committed, local, err := meta.ReadConfigLayers(sddDir, localLayer)
-	if err != nil {
-		return nil, err
-	}
-	return model.MergeConfig(model.MergeConfig(&model.PerRepoConfig{BaseConfig: global.BaseConfig}, committed), local).Hooks, nil
-}
-
 // localDialogue reads dialogue.mode and the layer that sets it; the
 // committed layer arrives without it (20261029-150854-d-tac-b2f).
 func localDialogue(sddDir string) (sdd.Dialogue, error) {
@@ -660,7 +645,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 		LLM:       runner,
 		Grounding: groundingPolicy(cfg),
 		Verifier:  verifierPolicy(cfg), Window: modelWindow(cfg.LLM), Checkout: os.DirFS(layout.WorkRoot),
-		Hooks:     hooks.New(func() ([]model.HookConfig, error) { return localHooks(locations.ConfigPath, sddDir, localLayer) }, serverCheckout),
+		Hooks:     hooks.New(hooks.Sources{GlobalConfig: locations.ConfigPath, Project: layout, LocalConfig: localConfigOverride}, hooks.NewStore(locations.StateRoot)),
 		Events:    events,
 		HandEdits: localadapter.GitHandEdits{GraphDir: graphDir},
 		Relevance: verdicts,

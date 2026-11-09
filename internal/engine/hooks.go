@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -14,25 +15,26 @@ import (
 type HookPhase string
 
 const (
-	HookEntered HookPhase = "entered"
-	HookLeft    HookPhase = "left"
-	HookRound   HookPhase = "round"
+	HookStart HookPhase = model.HookPhaseStart
+	HookDone  HookPhase = model.HookPhaseDone
+	HookRound HookPhase = model.HookPhaseRound
 )
 
 // HooksFn is the op_result function name under which the engine logs what
-// hooks wrote into a findings channel.
+// hooks wrote into a findings channel, and a step held or released by its
+// start hooks.
 const HooksFn = "hooks"
 
 // HookPoint is one moment the engine runs the configured hooks at
-// (20261109-005138-d-tac-i61): a step event `<procedure>.<step>.<phase>`,
-// or an event a command announces, which carries no phase.
+// (20261109-213250-d-tac-bve): a step's event, or an event a command
+// announces, which carries no phase.
 type HookPoint struct {
 	Event     string
 	Procedure string
 	Instance  string
 	Step      string
 	Phase     HookPhase
-	// Transition is the target selected on leaving a step. A high finding
+	// Transition is the target selected as a step is done. A high finding
 	// the hooks report may still hold the step or redirect the move.
 	Transition string
 	// Channel marks a step with a findings channel; Findings holds the
@@ -57,28 +59,42 @@ func WithHooks(hooks Hooks) SessionOption {
 
 // StepEvent names a step's hook event.
 func StepEvent(procedure, step string, phase HookPhase) string {
-	return procedure + "." + step + "." + string(phase)
+	return model.StepHookEvent(procedure, step, string(phase))
+}
+
+// HookEvent returns the point's event in the form hook patterns match
+// against; a command's event names no step.
+func (p HookPoint) HookEvent() model.HookEvent {
+	if p.Phase == "" {
+		return model.HookEvent{Name: p.Event}
+	}
+	return model.HookEvent{Name: p.Event, Procedure: p.Procedure, Step: p.Step, Phase: string(p.Phase), Findings: p.Channel}
 }
 
 // HookEvents lists, sorted by name, every event the specs raise with the
-// registry's commands: entering and leaving each step, a round at a step
-// whose commands declare rounds, and each event a step's commands announce.
-// Leaving a step with a findings channel is the one event accepting findings.
+// registry's commands: arriving at each step and its being done, a round at
+// a step whose commands declare rounds, and each event a step's commands
+// announce. A step with a findings channel being done is the one event
+// accepting findings.
 func HookEvents(specs []*Spec, reg *Registry) []model.HookEvent {
 	seen := map[string]int{}
 	var events []model.HookEvent
-	add := func(name string, findings bool) {
-		if i, ok := seen[name]; ok {
-			events[i].Findings = events[i].Findings || findings
+	add := func(event model.HookEvent) {
+		if i, ok := seen[event.Name]; ok {
+			events[i].Findings = events[i].Findings || event.Findings
 			return
 		}
-		seen[name] = len(events)
-		events = append(events, model.HookEvent{Name: name, Findings: findings})
+		seen[event.Name] = len(events)
+		events = append(events, event)
+	}
+	addStep := func(spec *Spec, step *Step, phase HookPhase, findings bool) {
+		name := hookStep(step)
+		add(model.HookEvent{Name: StepEvent(spec.Canonical, name, phase), Procedure: spec.Canonical, Step: name, Phase: string(phase), Findings: findings})
 	}
 	for _, spec := range specs {
 		for _, step := range spec.Steps {
-			add(StepEvent(spec.Canonical, hookStep(step), HookEntered), false)
-			add(StepEvent(spec.Canonical, hookStep(step), HookLeft), step.Findings != "")
+			addStep(spec, step, HookStart, false)
+			addStep(spec, step, HookDone, step.Findings != "")
 			names := []string{step.Op}
 			for _, option := range step.Options {
 				names = append(names, option.Call)
@@ -89,10 +105,10 @@ func HookEvents(specs []*Spec, reg *Registry) []model.HookEvent {
 					continue
 				}
 				if cmd.Rounds {
-					add(StepEvent(spec.Canonical, hookStep(step), HookRound), false)
+					addStep(spec, step, HookRound, false)
 				}
 				if cmd.Announces != "" {
-					add(cmd.Announces, false)
+					add(model.HookEvent{Name: cmd.Announces})
 				}
 			}
 		}
@@ -119,7 +135,7 @@ func hookStep(step *Step) string {
 }
 
 // withinStage reports whether moving from step to the target stays inside
-// the step's stage, which raises no entered or left event.
+// the step's stage, which raises no start or done event.
 func withinStage(spec *Spec, step *Step, to string) bool {
 	target := spec.StepByID[to]
 	return step != nil && step.Stage != "" && target != nil && target.Stage == step.Stage
@@ -148,11 +164,43 @@ func (s *Session) fire(point HookPoint) ([]query.Finding, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hooks at %s: %w", point.Event, err)
 	}
-	if len(findings) > 0 && (point.Phase != HookLeft || !point.Channel) {
-		return nil, fmt.Errorf("hooks at %s returned findings, but only leaving a step with a findings channel accepts them", point.Event)
+	if len(findings) > 0 && (point.Phase != HookDone || !point.Channel) {
+		return nil, fmt.Errorf("hooks at %s returned findings, but only a step with a findings channel being done accepts them", point.Event)
 	}
 	return findings, nil
 }
+
+// arrive raises the current step's start event. A failing hook holds the
+// step, logged so a replayed session holds it too: every later call raises
+// the event again before the step's work runs (release).
+func (s *Session) arrive(inst *Instance) error {
+	_, err := s.fireStep(inst, inst.currentStep(), inst.Store, HookStart, "", nil)
+	if err == nil {
+		return nil
+	}
+	inst.startHeld = true
+	s.appendEvent(inst.ID, EventOpResult, map[string]any{"step": inst.Step, "fn": HooksFn, "start": hookStartHeld})
+	return errors.Join(fmt.Errorf("step %s is held until its start hooks pass: %w", inst.Step, err), s.checkSink())
+}
+
+// release raises a held step's start event again and lets the step's work
+// run once the hooks pass.
+func (s *Session) release(inst *Instance) error {
+	if !inst.startHeld {
+		return nil
+	}
+	if _, err := s.fireStep(inst, inst.currentStep(), inst.Store, HookStart, "", nil); err != nil {
+		return fmt.Errorf("step %s is held until its start hooks pass: %w", inst.Step, err)
+	}
+	inst.startHeld = false
+	s.appendEvent(inst.ID, EventOpResult, map[string]any{"step": inst.Step, "fn": HooksFn, "start": hookStartPassed})
+	return s.checkSink()
+}
+
+const (
+	hookStartHeld   = "held"
+	hookStartPassed = "passed"
+)
 
 func (s *Session) fireStep(inst *Instance, step *Step, store *Store, phase HookPhase, transition string, extra map[string]any) ([]query.Finding, error) {
 	if s.hooks == nil {
@@ -166,14 +214,14 @@ func (s *Session) fireStep(inst *Instance, step *Step, store *Store, phase HookP
 	return s.fire(point)
 }
 
-// leave raises the current step's left event and joins the findings the
+// leave raises the current step's done event and joins the findings the
 // hooks report into its channel, reporting whether any joined.
 func (s *Session) leave(inst *Instance, to string) (bool, error) {
 	step := inst.currentStep()
 	if step == nil || withinStage(inst.Spec, step, to) {
 		return false, nil
 	}
-	findings, err := s.fireStep(inst, step, inst.Store, HookLeft, to, nil)
+	findings, err := s.fireStep(inst, step, inst.Store, HookDone, to, nil)
 	if err != nil || len(findings) == 0 {
 		return false, err
 	}
@@ -216,9 +264,14 @@ func (s *Session) restoreHookFindings(inst *Instance, step *Step) error {
 	return s.checkSink()
 }
 
-// replayHookFindings restores the join bookkeeping from a logged hooks
-// op_result: a join records the base, a restore clears it.
+// replayHookFindings restores the bookkeeping of a logged hooks op_result:
+// a held or released start, or a join recording the base and a restore
+// clearing it.
 func replayHookFindings(inst *Instance, ev Event) {
+	if start, ok := ev.Data["start"].(string); ok {
+		inst.startHeld = start == hookStartHeld
+		return
+	}
 	step, _ := ev.Data["step"].(string)
 	if joined, _ := ev.Data["joined"].(bool); !joined {
 		delete(inst.hookBase, step)

@@ -80,6 +80,8 @@ type Instance struct {
 	reading model.Reading
 	// hookBase is keyed by step id.
 	hookBase map[string]hookBase
+	// startHeld marks the current step held by a failing start hook.
+	startHeld bool
 }
 
 // Reading returns the instance's credited grounding reads.
@@ -257,6 +259,9 @@ func (s *Session) cascade(inst *Instance) error {
 		step := inst.currentStep()
 		if step == nil {
 			return fmt.Errorf("instance %s: step %q not found", inst.ID, inst.Step)
+		}
+		if err := s.release(inst); err != nil {
+			return err
 		}
 		if step.Chooser != ChooserGate {
 			return nil // pending chooser — agent or user judgment
@@ -507,7 +512,7 @@ func (s *Session) transitionTo(inst *Instance, to string, reopen bool) error {
 }
 
 // moveTo logs the transition, moves the instance, and raises the target
-// step's entered event; the step's left event was raised before. Leaving an
+// step's start event; the step's done event was raised before. Leaving an
 // await gate passes the consumed deliveries, which the transition event
 // records for replay.
 func (s *Session) moveTo(inst *Instance, to string, reopen bool, consumed []string) error {
@@ -551,7 +556,7 @@ func (s *Session) moveTo(inst *Instance, to string, reopen bool, consumed []stri
 		if withinStage(inst.Spec, inst.Spec.StepByID[from], to) {
 			return nil
 		}
-		if _, err := s.fireStep(inst, inst.currentStep(), inst.Store, HookEntered, "", nil); err != nil {
+		if err := s.arrive(inst); err != nil {
 			return err
 		}
 	}
