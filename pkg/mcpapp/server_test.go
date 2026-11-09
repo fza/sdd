@@ -625,8 +625,11 @@ Downstream fixture.
 		}
 	}
 
+	// A fresh session holds nothing, so the no-repeat rule serves the entry
+	// in full again (20261109-004506-d-cpt-udz, R14).
+	fresh := openSession(t, cs).Session
 	call(t, cs, "show", map[string]any{
-		"session": session, "ids": []string{"20260820-100100-d-tac-mid"}, "up": 0, "down": 0,
+		"session": fresh, "ids": []string{"20260820-100100-d-tac-mid"}, "up": 0, "down": 0,
 	}, &shown)
 	for _, heading := range []string{"# upstream", "# downstream"} {
 		if strings.Contains(shown.Entries, heading) {
