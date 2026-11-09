@@ -1,6 +1,7 @@
 package cliapp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2242,6 +2243,11 @@ func initCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			// Held until the run shows whether it changed anything: a run that
+			// changed nothing prints one line in its place unless --verbose.
+			// Flushed before a prompt or a stderr line, which keeps the order.
+			var report bytes.Buffer
+			unchanged := false
 			icmd := &command.InitCmd{
 				RepoRoot:        repoRoot,
 				StableRepoRoot:  stableRepoRoot,
@@ -2266,44 +2272,54 @@ func initCmd() *cli.Command {
 				Bump:            cmd.Bool("bump"),
 				OnMinimumVersionBumped: func(previous, current string) {
 					if previous == "" {
-						fmt.Fprintf(cmd.Writer, "  minimum_version: → %s\n", current)
+						fmt.Fprintf(&report, "  minimum_version: → %s\n", current)
 					} else {
-						fmt.Fprintf(cmd.Writer, "  minimum_version: %s → %s\n", previous, current)
+						fmt.Fprintf(&report, "  minimum_version: %s → %s\n", previous, current)
 					}
 				},
 				OnMinimumVersionUnchanged: func(current string) {
-					fmt.Fprintf(cmd.Writer, "  minimum_version: %s (unchanged)\n", current)
+					fmt.Fprintf(&report, "  minimum_version: %s (unchanged)\n", current)
 				},
 				PromptOverwrite: func(path string) (bool, error) {
 					if !cliout.IsTerminalReader(cmd.Reader) {
 						return false, nil
 					}
+					_, err := report.WriteTo(cmd.Writer)
+					if err != nil {
+						return false, err
+					}
 					return promptOverwriteModified(cmd, path)
 				},
+				OnUnchanged: func() {
+					unchanged = true
+				},
 				OnCreated: func(sddDir, absGraphDir string) {
-					fmt.Fprintf(cmd.Writer, "created %s\n", sddDir)
-					fmt.Fprintf(cmd.Writer, "  graph: %s\n", absGraphDir)
+					fmt.Fprintf(&report, "created %s\n", sddDir)
+					fmt.Fprintf(&report, "  graph: %s\n", absGraphDir)
 				},
 				OnMigrated: func(count int) {
+					_, _ = report.WriteTo(cmd.Writer)
 					fmt.Fprintf(cmd.ErrWriter, "  migrated %d file(s) from .sdd-tmp/\n", count)
 				},
 				OnGitignoreUpdated: func(path string) {
+					_, _ = report.WriteTo(cmd.Writer)
 					fmt.Fprintf(cmd.ErrWriter, "  updated %s\n", path)
 				},
 				OnGitattributesUpdated: func(path string) {
+					_, _ = report.WriteTo(cmd.Writer)
 					fmt.Fprintf(cmd.ErrWriter, "  updated %s\n", path)
 				},
 				OnMetaWritten: func(path string) {
-					fmt.Fprintf(cmd.Writer, "  meta: %s\n", path)
+					fmt.Fprintf(&report, "  meta: %s\n", path)
 				},
 				OnParticipantWritten: func(path, name string) {
-					fmt.Fprintf(cmd.Writer, "  participant: %s → %s\n", name, path)
+					fmt.Fprintf(&report, "  participant: %s → %s\n", name, path)
 				},
 				OnLocalSettingWritten: func(path, key, value string) {
-					fmt.Fprintf(cmd.Writer, "  %s: %s → %s\n", key, value, path)
+					fmt.Fprintf(&report, "  %s: %s → %s\n", key, value, path)
 				},
 				OnRepoIDWritten: func(repoID model.RepoID) {
-					fmt.Fprintf(cmd.Writer, "  repo_id: %s\n", repoID)
+					fmt.Fprintf(&report, "  repo_id: %s\n", repoID)
 				},
 				OnSkillsInstalled: func(result command.SkillInstallResult) {
 					// result.InstallDir reflects the scope the handler
@@ -2311,28 +2327,28 @@ func initCmd() *cli.Command {
 					// rather than the flag default — so it stays
 					// authoritative even when the CLI's local `scope`
 					// variable is just the fallback.
-					presenters.RenderInitSkills(cmd.Writer, result.InstallDir, result)
+					presenters.RenderInitSkills(&report, result.InstallDir, result)
 				},
 				OnBridgeScaffolded: func(paths []string) {
 					for _, p := range paths {
-						fmt.Fprintf(cmd.Writer, "  bridge: %s\n", p)
+						fmt.Fprintf(&report, "  bridge: %s\n", p)
 					}
 				},
 				OnMCPRegistered: func(target model.AgentTarget, path string) {
-					fmt.Fprintf(cmd.Writer, "  mcp (%s): %s\n", target, path)
+					fmt.Fprintf(&report, "  mcp (%s): %s\n", target, path)
 				},
 				OnAgentSkillsPruned: func(result command.AgentPruneResult) {
-					presenters.RenderInitPrune(cmd.Writer, result)
+					presenters.RenderInitPrune(&report, result)
 				},
 				OnSkillOrphansPruned: func(result command.AgentPruneResult) {
-					presenters.RenderInitOrphans(cmd.Writer, result)
+					presenters.RenderInitOrphans(&report, result)
 				},
 				OnIndexMigrated: func(legacyDir, storeDir string, moved bool) {
 					if moved {
-						fmt.Fprintf(cmd.Writer, "  index migrated: %s → %s\n", legacyDir, storeDir)
+						fmt.Fprintf(&report, "  index migrated: %s → %s\n", legacyDir, storeDir)
 						return
 					}
-					fmt.Fprintf(cmd.Writer, "  index store already exists at %s — the legacy copy at %s is unused and can be removed\n", storeDir, legacyDir)
+					fmt.Fprintf(&report, "  index store already exists at %s — the legacy copy at %s is unused and can be removed\n", storeDir, legacyDir)
 				},
 			}
 
@@ -2366,8 +2382,18 @@ func initCmd() *cli.Command {
 				RepositoryAt:        func(dir string) handlers.Repository { return git.CLI{Dir: dir} },
 				MergeDriverAt:       func(dir string) handlers.MergeDriverInstaller { return git.CLI{Dir: dir} },
 			})
-			if err := handler.Init(ctx, icmd); err != nil {
-				return err
+			initErr := handler.Init(ctx, icmd)
+			if !unchanged || cmd.Bool("verbose") {
+				_, err = report.WriteTo(cmd.Writer)
+				if err != nil {
+					return errors.Join(initErr, err)
+				}
+			}
+			if initErr != nil {
+				return initErr
+			}
+			if unchanged {
+				fmt.Fprintln(cmd.Writer, "sdd: everything up to date, nothing changed")
 			}
 			notifyUnconnectedDependencies(cmd.ErrWriter, projectSDDDir)
 			return offerPendingHooks(ctx, cmd)

@@ -19,7 +19,7 @@ import (
 // into sdd's own clone, set up or refreshed there and pushed; the code
 // repository receives graph_repo, the stock guard and the agent surfaces in
 // one commit.
-func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error {
+func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd, changed *bool) error {
 	if cmd.Bump {
 		return fmt.Errorf("--bump raises the graph repository's minimum_version; run it where %s is checked out", cmd.GraphRepo)
 	}
@@ -110,7 +110,7 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 		projectCmd.Scope = ""
 		projectCmd.ScopeExplicit = false
 		projectCmd.Targets = nil
-	})
+	}, changed)
 	if err != nil {
 		return err
 	}
@@ -182,5 +182,5 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 		}
 		touched = append(touched, guardPath)
 	}
-	return h.installAgentSurfaces(ctx, cmd, agents, scope, touched, initCommitMessage(configExisted))
+	return h.installAgentSurfaces(ctx, cmd, agents, scope, touched, initCommitMessage(configExisted), changed)
 }

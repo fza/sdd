@@ -28,7 +28,7 @@ type ProjectRepositories interface {
 // setUpProject runs a plain init in projectRoot, which holds no sdd project
 // yet, giving it the repository of its own it needs (20261029-130154-d-tac-frl).
 // Every refusal comes before the first write.
-func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget) error {
+func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget, changed *bool) error {
 	if h.projectRepos == nil || h.repositoryAt == nil {
 		return fmt.Errorf("setting up the project at %s needs a git adapter for it", cmd.ProjectDir)
 	}
@@ -88,13 +88,13 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 		projectCmd.Scope = scope
 		projectCmd.ScopeExplicit = true
 		projectCmd.Targets = agents
-	})
+	}, changed)
 }
 
 // refreshProject runs the existing project's own init with the settings it
 // records, so the project stays as current as the work repository
 // (20261029-132740-d-tac-g32).
-func (h *Handler) refreshProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, projectCfg *model.PerRepoConfig) error {
+func (h *Handler) refreshProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, projectCfg *model.PerRepoConfig, changed *bool) error {
 	if h.projectRepos == nil || h.repositoryAt == nil {
 		return fmt.Errorf("refreshing the project at %s needs a git adapter for it", cmd.ProjectDir)
 	}
@@ -114,13 +114,13 @@ func (h *Handler) refreshProject(ctx context.Context, cmd *command.InitCmd, proj
 		projectCmd.Scope = ""
 		projectCmd.ScopeExplicit = false
 		projectCmd.Targets = nil
-	})
+	}, changed)
 }
 
 // runProjectInit runs Init in projectRoot as its own repository, carrying the
 // run's per-person answers and flags; adjust sets what differs between a
 // set-up and a refresh.
-func (h *Handler) runProjectInit(ctx context.Context, cmd *command.InitCmd, projectRoot string, adjust func(*command.InitCmd)) error {
+func (h *Handler) runProjectInit(ctx context.Context, cmd *command.InitCmd, projectRoot string, adjust func(*command.InitCmd), changed *bool) error {
 	stableRoot, err := h.projectRepos.StableRoot(projectRoot)
 	if err != nil {
 		return err
@@ -137,7 +137,7 @@ func (h *Handler) runProjectInit(ctx context.Context, cmd *command.InitCmd, proj
 	projectCmd.SetUpProject = false
 	projectCmd.RemoteURL = h.projectRepos.RemoteURL(projectRoot)
 	adjust(&projectCmd)
-	err = project.Init(ctx, &projectCmd)
+	err = project.initRepo(ctx, &projectCmd, changed)
 	if err != nil {
 		return fmt.Errorf("initializing the project in %s: %w", projectRoot, err)
 	}
