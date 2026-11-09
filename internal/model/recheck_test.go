@@ -50,7 +50,7 @@ func TestStrainItem_IsOneItemWhicheverWayItIsReported(t *testing.T) {
 
 func TestUnhealedRecheck(t *testing.T) {
 	at := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
-	strain := model.StrainItem(model.Strain{IDs: [2]string{strainA, strainB}, Relation: model.StrainContradicts}, other, at)
+	strain := model.StrainItem(model.Strain{IDs: [2]string{strainA, strainB}, Relation: model.StrainContradicts}, other, at.Add(400*time.Millisecond))
 	later := time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)
 	cases := []struct {
 		name   string
@@ -61,6 +61,7 @@ func TestUnhealedRecheck(t *testing.T) {
 		{"a later entry citing one", []*model.Entry{{ID: "20261105-000000-d-tac-ddd", Type: model.TypeDecision, Kind: model.KindDirective, Layer: model.LayerTactical, Time: later, Refs: []model.Ref{{ID: strainA}}}}, false},
 		{"a later entry citing both", []*model.Entry{{ID: "20261105-000000-d-tac-ddd", Type: model.TypeDecision, Kind: model.KindDirective, Layer: model.LayerTactical, Time: later, Refs: []model.Ref{{ID: strainA}, {ID: strainB}}}}, true},
 		{"an earlier entry citing both", []*model.Entry{{ID: "20261103-000000-d-tac-ddd", Type: model.TypeDecision, Kind: model.KindDirective, Layer: model.LayerTactical, Time: time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC), Refs: []model.Ref{{ID: strainA}, {ID: strainB}}}}, false},
+		{"an entry citing both in the second the item was reported", []*model.Entry{{ID: "20261104-000000-d-tac-ddd", Type: model.TypeDecision, Kind: model.KindDirective, Layer: model.LayerTactical, Time: at, Refs: []model.Ref{{ID: strainA}, {ID: strainB}}}}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
