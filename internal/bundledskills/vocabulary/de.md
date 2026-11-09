@@ -1,8 +1,3 @@
----
-name: vocabulary-de
-description: German vocabulary for SDD user-facing rendering. Read on demand when the configured graph language is `de`. Never translate YAML frontmatter, CLI tokens, or entry IDs — only the terms shown in user-facing narration.
----
-
 # SDD Vokabular — Deutsch (`de`)
 
 Diese Referenz übersetzt SDD-Begriffe ins Deutsche, wenn das Skill die Graph-Inhalte für Nutzer:innen rendert (Catch-up, Playback, Status-Erzählung, Grooming-Tabellen). Die kanonischen englischen Tokens bleiben in YAML-Frontmatter, CLI-Argumenten und CLI-Ausgaben unverändert — Übersetzung passiert ausschließlich in der konversationellen Darstellung.

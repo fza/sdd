@@ -42,7 +42,7 @@ func TestInitVerboseShowsTheDetailOfAnUnchangedRun(t *testing.T) {
 
 	out := runInit(t, repo, "--verbose")
 
-	skills := "skills: 2 file(s) at " + filepath.Join(repo, ".claude", "skills") + "\n  up to date\n"
+	skills := "skills: 1 file(s) at " + filepath.Join(repo, ".claude", "skills") + "\n  up to date\n"
 	if !strings.Contains(out, skills) || !strings.HasSuffix(out, nothingChanged) {
 		t.Errorf("--verbose should show the per-surface detail, then the summary line, got:\n%s", out)
 	}
@@ -54,7 +54,7 @@ func TestInitThatChangesSomethingKeepsItsReport(t *testing.T) {
 	out := runInit(t, repo, "--participant", "Bo")
 
 	local := filepath.Join(repo, ".sdd", "config.local.yaml")
-	if !strings.Contains(out, "  participant: Bo → "+local+"\n") || !strings.Contains(out, "skills: 2 file(s) at ") {
+	if !strings.Contains(out, "  participant: Bo → "+local+"\n") || !strings.Contains(out, "skills: 1 file(s) at ") {
 		t.Errorf("an init recording a participant should keep its full report, got:\n%s", out)
 	}
 	if strings.Contains(out, nothingChanged) {

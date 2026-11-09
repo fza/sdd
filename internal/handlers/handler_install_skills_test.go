@@ -111,45 +111,41 @@ func TestInstallSkills_PromptModified(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Tamper with two files — one the user will approve, one they'll reject.
-	installDir := filepath.Join(tmp, ".claude", "skills")
-	paths := []string{
-		filepath.Join(installDir, "sdd", "SKILL.md"),
-		filepath.Join(installDir, "sdd", "references", "vocabulary-de.md"),
-	}
-	for _, p := range paths {
-		data, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		data = append(data, []byte("\nuser edit\n")...)
-		if err := os.WriteFile(p, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	approvePath := paths[0]
-	rejectPath := paths[1]
-
-	var got command.SkillInstallResult
-	err = h.InstallSkills(context.Background(), &command.InstallSkillsCmd{
-		Target:        model.AgentClaude,
-		Scope:         model.ScopeProject,
-		RepoRoot:      tmp,
-		BinaryVersion: "v0.2.0",
-		PromptOverwrite: func(p string) (bool, error) {
-			return p == approvePath, nil
-		},
-		OnInstalled: func(r command.SkillInstallResult) { got = r },
-	})
+	edited := filepath.Join(tmp, ".claude", "skills", "sdd", "SKILL.md")
+	data, err := os.ReadFile(edited)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if !slices.Contains(got.Overwritten, approvePath) {
-		t.Errorf("expected %s in Overwritten, got: %+v", approvePath, got.Overwritten)
+	if err := os.WriteFile(edited, append(data, []byte("\nuser edit\n")...), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if !slices.Contains(got.SkippedModified, rejectPath) {
-		t.Errorf("expected %s in SkippedModified, got: %+v", rejectPath, got.SkippedModified)
+
+	// The user rejects first, then approves.
+	install := func(approve bool) command.SkillInstallResult {
+		t.Helper()
+		var got command.SkillInstallResult
+		err := h.InstallSkills(context.Background(), &command.InstallSkillsCmd{
+			Target:        model.AgentClaude,
+			Scope:         model.ScopeProject,
+			RepoRoot:      tmp,
+			BinaryVersion: "v0.2.0",
+			PromptOverwrite: func(p string) (bool, error) {
+				return approve && p == edited, nil
+			},
+			OnInstalled: func(r command.SkillInstallResult) { got = r },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	rejected := install(false)
+	if !slices.Contains(rejected.SkippedModified, edited) || len(rejected.Overwritten) != 0 {
+		t.Errorf("a rejected prompt should skip the edited file, got: %+v", rejected)
+	}
+	approved := install(true)
+	if !slices.Contains(approved.Overwritten, edited) {
+		t.Errorf("an approved prompt should overwrite the edited file, got: %+v", approved)
 	}
 }
