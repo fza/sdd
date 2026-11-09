@@ -518,12 +518,16 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	}
 	closure := finders.New(finders.Options{Config: cfg, Repos: registry})
 	rounds := connectedRounds{handler: handlers.New(handlers.Options{Reader: closure, Repos: manager, CloneRound: round})}
+	events, err := projectEventStore(sddDir, cfg)
+	if err != nil {
+		return nil, nil, sdd.RequestIdentity{}, err
+	}
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Sync: targets, Branches: targets, Base: targets,
 		Connected: rounds,
 		Embedder:  embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
-		LLM: runner,
+		LLM: runner, Events: events,
 	})
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
