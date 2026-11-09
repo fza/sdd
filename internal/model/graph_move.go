@@ -9,19 +9,19 @@ import (
 )
 
 // RewriteLines removes from content every line equal to one in remove and
-// appends each line of add it lacks, keeping every other line as it was.
+// appends each line of add it lacks, keeping every other line as it was. A
+// block (lines between blank lines) that loses a line and keeps only `#`
+// comments goes whole, with the blank line before it (20261109-235130-d-tac-0ai).
 func RewriteLines(content []byte, remove, add []string) []byte {
 	var kept []string
 	present := map[string]bool{}
 	text := string(content)
 	if text != "" {
-		for line := range strings.SplitSeq(strings.TrimSuffix(text, "\n"), "\n") {
-			trimmed := strings.TrimSpace(line)
-			if slices.Contains(remove, trimmed) && !slices.Contains(add, trimmed) {
-				continue
-			}
-			present[trimmed] = true
-			kept = append(kept, line)
+		kept = keptLines(strings.Split(strings.TrimSuffix(text, "\n"), "\n"), func(trimmed string) bool {
+			return slices.Contains(remove, trimmed) && !slices.Contains(add, trimmed)
+		})
+		for _, line := range kept {
+			present[strings.TrimSpace(line)] = true
 		}
 	}
 	for _, line := range add {
@@ -34,6 +34,62 @@ func RewriteLines(content []byte, remove, add []string) []byte {
 		return nil
 	}
 	return []byte(strings.Join(kept, "\n") + "\n")
+}
+
+func keptLines(lines []string, removed func(trimmed string) bool) []string {
+	type block struct {
+		gap  []string
+		kept []string
+		lost bool
+	}
+	var blocks []block
+	var gap []string
+	open := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			gap = append(gap, line)
+			open = false
+			continue
+		}
+		if !open {
+			blocks = append(blocks, block{gap: gap})
+			gap = nil
+			open = true
+		}
+		current := &blocks[len(blocks)-1]
+		if removed(trimmed) {
+			current.lost = true
+			continue
+		}
+		current.kept = append(current.kept, line)
+	}
+	var out []string
+	dropped := false
+	for _, b := range blocks {
+		if b.lost && onlyComments(b.kept) {
+			dropped = true
+			continue
+		}
+		// A dropped first block takes the leading blank lines with it.
+		if len(out) > 0 || !dropped {
+			out = append(out, b.gap...)
+		}
+		out = append(out, b.kept...)
+	}
+	if len(out) > 0 || !dropped {
+		out = append(out, gap...)
+	}
+	return out
+}
+
+func onlyComments(lines []string) bool {
+	for _, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			return false
+		}
+	}
+	return true
 }
 
 // MovedProjectConfig is the committed config of the project holding a graph
