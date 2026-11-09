@@ -101,6 +101,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `llm.retry.base_delay` | `2s` | Wait before the first retry. The wait grows with each further retry. |
 | `llm.retry.max_delay` | `60s` | Longest wait between two retries. |
 | `llm.concurrency` | `4` | Not applied in this version. `sdd summarize --all` takes its worker count from `--concurrency`, which defaults to 4. |
+| `llm.context_tokens` | What the provider reports | The model's context window in tokens, which sizes the light draft verifier's calls. sdd asks Anthropic, an OpenAI-compatible models listing (`context_length` or `max_model_len`) or Ollama when unset; set it where the provider reports none, such as `claude-cli`. |
 
 sdd retries a call that failed with a temporary error, such as a rate limit or a dropped connection, and waits as long as the provider asks when it names a time. `claude-cli` ignores the rate limit and retry keys, since the `claude` command retries on its own.
 
@@ -132,6 +133,17 @@ Default rate limits:
 | `embedding.rate_limit_rps` | `5` for `text-embedding-3` models, `3` for other `openai` models | Maximum requests per second to `openai`. `ollama` has no limit. |
 | `embedding.query_template` | None | Template for search queries. See [query and document templates](#query-and-document-templates). |
 | `embedding.document_template` | None | Template for entries when sdd indexes them. |
+
+### Draft verifier
+
+| Key | File | Default | Meaning |
+| --- | --- | --- | --- |
+| `verifier.mode` | User-global, project | `off` | How far a capture's draft is checked against the graph it was grounded in. `light` runs pre-flight over the grounding reading and adds the checks for duplicates, outdated claims, clashes between entries and set-aside entries that bear on the draft. Any mode but `off` requires `grounding.enforce: true`; sdd refuses the config otherwise. The project file wins over the user-global one, and `config.local.yaml` may only raise it. |
+| `verifier.skip` | User-global, project | `failure` | When the deep exchange may be skipped: `never`, `failure` or `weighed`. `config.local.yaml` may only tighten it toward `never`. |
+
+A light call fills half the context window left after the answer reserve (`llm.max_tokens`), counting 3 characters a token. A reading too large for one call is split into several calls, related entries kept together, and an entry too large on its own is sent as whole paragraphs with markers where text is left out. `sdd init` asks how strictly drafts are checked and writes `grounding.enforce` and `verifier.mode` together.
+
+In a guided dialogue the writing guide runs once on the content the user approved, then the verifier; a later adjust gets a check of the changed lines only. In an autonomous dialogue both run before playback.
 
 ### Sync and sessions
 
