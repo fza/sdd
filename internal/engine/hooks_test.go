@@ -409,6 +409,9 @@ func TestHookFailingAtStartHoldsTheStepUntilItPasses(t *testing.T) {
 			if fired := countEvents(w.hooks.events(), "lanesproc.check.start"); fired != 3 {
 				t.Errorf("the passing start hook should fire once more, fired %d times", fired)
 			}
+			if fired := countEvents(w.hooks.events(), "lanesproc.pick.start"); fired != 1 {
+				t.Errorf("a passed start hook should not fire again on the next step, pick.start fired %d times", fired)
+			}
 		})
 	}
 }
