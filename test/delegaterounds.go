@@ -17,9 +17,9 @@ const roundWait = 10 * time.Second
 // runs each round in the background, the round waits until the test takes it
 // with NextRound, and ends when the test calls Finish.
 type ScriptedLauncher struct {
-	// Reports is the launch every round reports it ran with.
+	// Reports is the runner every round reports it ran with.
 	Reports string
-	// LeaveUnconfigured leaves a delegate without a configured launch to the
+	// LeaveUnconfigured leaves a delegate without a configured runner to the
 	// harness, as the serve composition's launcher does.
 	LeaveUnconfigured bool
 
@@ -41,16 +41,16 @@ type roundEnd struct {
 	err     error
 }
 
-// NewScriptedLauncher returns a launcher reporting launch, whose rounds still
+// NewScriptedLauncher returns a launcher reporting runner, whose rounds still
 // waiting end when the test does.
-func NewScriptedLauncher(t testing.TB, launch string) *ScriptedLauncher {
-	l := &ScriptedLauncher{Reports: launch, rounds: make(chan *ScriptedRound, 8), stop: make(chan struct{})}
+func NewScriptedLauncher(t testing.TB, runner string) *ScriptedLauncher {
+	l := &ScriptedLauncher{Reports: runner, rounds: make(chan *ScriptedRound, 8), stop: make(chan struct{})}
 	t.Cleanup(func() { close(l.stop) })
 	return l
 }
 
 func (l *ScriptedLauncher) LaunchDelegate(_ context.Context, launch sdd.DelegateLaunch) (sdd.DelegateRun, error) {
-	if launch.Launch == "" && l.LeaveUnconfigured {
+	if launch.Runner == "" && l.LeaveUnconfigured {
 		return sdd.DelegateRun{}, sdd.ErrDelegateNotLaunched
 	}
 	l.mu.Lock()
@@ -72,7 +72,7 @@ func (l *ScriptedLauncher) LaunchDelegate(_ context.Context, launch sdd.Delegate
 			return "", ctx.Err()
 		}
 	}
-	return sdd.DelegateRun{Launch: l.Reports, Round: round}, nil
+	return sdd.DelegateRun{Runner: l.Reports, Round: round}, nil
 }
 
 // Launches lists every launch the launcher took on, in order.

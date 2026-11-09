@@ -18,7 +18,7 @@ type headlessLauncher struct {
 }
 
 func (l headlessLauncher) LaunchDelegate(_ context.Context, launch sdd.DelegateLaunch) (sdd.DelegateRun, error) {
-	if launch.Launch == "" {
+	if launch.Runner == "" {
 		return sdd.DelegateRun{}, sdd.ErrDelegateNotLaunched
 	}
 	served := l.watch.served()
@@ -29,19 +29,20 @@ func (l headlessLauncher) LaunchDelegate(_ context.Context, launch sdd.DelegateL
 	if err != nil {
 		return sdd.DelegateRun{}, fmt.Errorf("locating the sdd executable for the delegate's MCP server: %w", err)
 	}
-	settings := delegatelaunch.Settings{Launch: launch.Launch, WorkDir: served.layout.WorkRoot, SDD: executable}
+	settings := delegatelaunch.Settings{Runner: launch.Runner, WorkDir: served.layout.WorkRoot, SDD: executable}
 	agents := model.DefaultSupportedAgents
+	policy := model.VerifyConfig{}.VerifierPolicy()
 	if served.cfg != nil {
 		if len(served.cfg.SupportedAgents) > 0 {
 			agents = served.cfg.SupportedAgents
 		}
-		policy := served.cfg.Verify.VerifierPolicy()
-		settings.Driver, settings.Claude, settings.Codex = policy.Driver, policy.Claude, policy.Codex
+		policy = served.cfg.Verify.VerifierPolicy()
 	}
+	settings.Driver, settings.Claude, settings.Codex = policy.Driver, policy.Claude, policy.Codex
 	for _, agent := range agents {
 		settings.Agents = append(settings.Agents, string(agent))
 	}
-	settings.Launch, err = delegatelaunch.Resolve(settings)
+	settings.Runner, err = delegatelaunch.Resolve(settings)
 	if err != nil {
 		return sdd.DelegateRun{}, err
 	}
@@ -51,5 +52,5 @@ func (l headlessLauncher) LaunchDelegate(_ context.Context, launch sdd.DelegateL
 		})
 		return launched.Session, err
 	}
-	return sdd.DelegateRun{Launch: settings.Launch, Round: round}, nil
+	return sdd.DelegateRun{Runner: settings.Runner, Round: round}, nil
 }

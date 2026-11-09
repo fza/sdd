@@ -32,7 +32,7 @@ func newMigrateProject(t *testing.T) string {
 	project := canonicalTemp(t)
 	initRepo(t, project)
 	writeFile(t, filepath.Join(project, ".sdd", "meta.json"), "{\n  \"graph_schema_version\": 1\n}\n")
-	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nllm:\n  provider: ollama\n  model: m\n  ollama_endpoint: "+srv.URL+"\n")
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nllm:\n  provider: ollama\n  model: m\n  ollama_endpoint: "+srv.URL+"\nverify:\n  mode: off\n")
 	writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
 	writeFile(t, filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel)), "---\ntype: signal\nkind: gap\nlayer: tactical\nconfidence: high\nsummary: A stored summary that stays.\n---\n\nThe body.\n")
 	gitIn(t, project, "add", ".sdd")

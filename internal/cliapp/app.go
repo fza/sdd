@@ -911,7 +911,7 @@ func newCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "provider",
-				Usage: "LLM provider (claude-cli, anthropic, openai, ollama) — overrides config",
+				Usage: "LLM provider (claude-cli, codex, anthropic, openai, ollama) — overrides config",
 			},
 			&cli.StringFlag{
 				Name:  "model",
@@ -1356,7 +1356,7 @@ func summarizeCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "provider",
-				Usage: "LLM provider (claude-cli, anthropic, openai, ollama) — overrides config",
+				Usage: "LLM provider (claude-cli, codex, anthropic, openai, ollama) — overrides config",
 			},
 			&cli.StringFlag{
 				Name:  "model",
@@ -1936,8 +1936,8 @@ func initCmd() *cli.Command {
 				Usage: "How carefully drafts are checked against the graph: off, grounding, prose or deep, recorded as verify.mode in the committed .sdd/config.yaml (prompted interactively while unset)",
 			},
 			&cli.StringFlag{
-				Name:  "verifier-launch",
-				Usage: "How the deep verifier runs on this machine: subagent, claude, codex or custom_driver, recorded as verify.launch in the project's .sdd/config.local.yaml (prompted interactively under verify.mode deep while no layer sets it)",
+				Name:  "verify-runner",
+				Usage: "What runs the deep verifier on this machine: subagent, claude, codex or driver, recorded as verify.runner in the project's .sdd/config.local.yaml (prompted interactively under verify.mode deep while no layer sets it)",
 			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
@@ -2211,28 +2211,28 @@ func initCmd() *cli.Command {
 				}
 			}
 
-			launchAgents := targets
+			runnerAgents := targets
 			var recorded model.VerifyConfig
 			if existingMerged != nil {
 				recorded = existingMerged.Verify
-				if len(launchAgents) == 0 {
-					launchAgents = existingMerged.SupportedAgents
+				if len(runnerAgents) == 0 {
+					runnerAgents = existingMerged.SupportedAgents
 				}
 			}
-			if len(launchAgents) == 0 {
-				launchAgents = model.DefaultSupportedAgents
+			if len(runnerAgents) == 0 {
+				runnerAgents = model.DefaultSupportedAgents
 			}
-			launchChoices := model.VerifierLaunchChoices(launchAgents, recorded.Driver)
+			runnerChoices := model.VerifierRunnerChoices(runnerAgents, recorded.Driver)
 			resolvedMode := recorded.Mode
 			if verifyMode != "" {
 				resolvedMode = verifyMode
 			}
-			verifierLaunch := model.VerifierLaunch(strings.TrimSpace(cmd.String("verifier-launch")))
-			if verifierLaunch != "" && !slices.Contains(launchChoices, verifierLaunch) {
-				return fmt.Errorf("invalid --verifier-launch %q: this project offers %s (claude and codex only where supported_agents names them, custom_driver only once a layer sets verify.driver.command)", verifierLaunch, joinLaunches(launchChoices))
+			verifierRunner := model.VerifierRunner(strings.TrimSpace(cmd.String("verify-runner")))
+			if verifierRunner != "" && !slices.Contains(runnerChoices, verifierRunner) {
+				return fmt.Errorf("invalid --verify-runner %q: this project offers %s (claude and codex only where supported_agents names them, driver only once a layer sets verify.driver.command)", verifierRunner, joinRunners(runnerChoices))
 			}
-			if verifierLaunch == "" && model.VerifierLaunchAsked(resolvedMode, recorded) && cliout.IsTerminalReader(cmd.Reader) {
-				verifierLaunch, err = promptVerifierLaunch(cmd, launchChoices)
+			if verifierRunner == "" && model.VerifierRunnerAsked(resolvedMode, recorded) && cliout.IsTerminalReader(cmd.Reader) {
+				verifierRunner, err = promptVerifierRunner(cmd, runnerChoices)
 				if err != nil {
 					return fmt.Errorf("prompt: %w", err)
 				}
@@ -2251,7 +2251,7 @@ func initCmd() *cli.Command {
 				SetUpProject:    setUpProject,
 				DialogueMode:    dialogueMode,
 				VerifyMode:      verifyMode,
-				VerifierLaunch:  verifierLaunch,
+				VerifierRunner:  verifierRunner,
 				DefaultBranch:   defaultBranch,
 				Participant:     participant,
 				LocalConfigPath: localConfigOverride,
@@ -2828,6 +2828,7 @@ func promptVerifyMode(cmd *cli.Command) (model.VerifyMode, error) {
 		Reader: cmd.Reader,
 		Writer: cmd.Writer,
 		Header: "How carefully should sdd check a new entry before saving it? (↑/↓ to navigate, enter to confirm)",
+		Cursor: slices.Index(model.VerifyModes(), model.DefaultVerifyMode),
 		Options: []tui.SelectOption[model.VerifyMode]{
 			{Label: string(model.VerifyOff), Hint: "a quick check of the entry on its own", Value: model.VerifyOff},
 			{Label: string(model.VerifyGrounding), Hint: "your AI first reads related entries, no check after", Value: model.VerifyGrounding},
@@ -2837,20 +2838,20 @@ func promptVerifyMode(cmd *cli.Command) (model.VerifyMode, error) {
 	})
 }
 
-// promptVerifierLaunch asks how the deep verifier runs on this machine,
+// promptVerifierRunner asks what runs the deep verifier on this machine,
 // offering choices with subagent first as the default.
-func promptVerifierLaunch(cmd *cli.Command, choices []model.VerifierLaunch) (model.VerifierLaunch, error) {
-	hints := map[model.VerifierLaunch]string{
-		model.VerifierLaunchSubagent:     "inside your AI chat, you can watch it",
-		model.VerifierLaunchClaude:       "a separate Claude in the background, hidden",
-		model.VerifierLaunchCodex:        "a separate Codex in the background, hidden",
-		model.VerifierLaunchCustomDriver: "your own program, set up in the config",
+func promptVerifierRunner(cmd *cli.Command, choices []model.VerifierRunner) (model.VerifierRunner, error) {
+	hints := map[model.VerifierRunner]string{
+		model.VerifierRunnerSubagent: "inside your AI chat, you can watch it",
+		model.VerifierRunnerClaude:   "a separate Claude in the background, hidden",
+		model.VerifierRunnerCodex:    "a separate Codex in the background, hidden",
+		model.VerifierRunnerDriver:   "your own program, set up in the config",
 	}
-	options := make([]tui.SelectOption[model.VerifierLaunch], 0, len(choices))
+	options := make([]tui.SelectOption[model.VerifierRunner], 0, len(choices))
 	for _, choice := range choices {
-		options = append(options, tui.SelectOption[model.VerifierLaunch]{Label: string(choice), Hint: hints[choice], Value: choice})
+		options = append(options, tui.SelectOption[model.VerifierRunner]{Label: string(choice), Hint: hints[choice], Value: choice})
 	}
-	return tui.RunSelect(tui.SelectPrompt[model.VerifierLaunch]{
+	return tui.RunSelect(tui.SelectPrompt[model.VerifierRunner]{
 		Reader:  cmd.Reader,
 		Writer:  cmd.Writer,
 		Header:  "Where should the second AI run? (↑/↓ to navigate, enter to confirm)",
@@ -2858,10 +2859,10 @@ func promptVerifierLaunch(cmd *cli.Command, choices []model.VerifierLaunch) (mod
 	})
 }
 
-func joinLaunches(launches []model.VerifierLaunch) string {
-	names := make([]string, len(launches))
-	for i, launch := range launches {
-		names[i] = string(launch)
+func joinRunners(runners []model.VerifierRunner) string {
+	names := make([]string, len(runners))
+	for i, runner := range runners {
+		names[i] = string(runner)
 	}
 	return strings.Join(names, ", ")
 }

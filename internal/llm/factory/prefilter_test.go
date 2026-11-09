@@ -49,3 +49,14 @@ func TestNewPrefilter(t *testing.T) {
 		})
 	}
 }
+
+// A generate prefilter on codex's own default model judges as the provider.
+func TestNewPrefilter_GenerateOnCodexDefaultModel(t *testing.T) {
+	generate, err := factory.NewPrefilter(model.LLMPrefilterConfig{Protocol: "generate", LLMConfig: model.LLMConfig{Provider: "codex", Effort: "low"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generate.Judge != "generate:codex" {
+		t.Fatalf("judge %q: an empty codex model should judge as the provider, never as a Claude model", generate.Judge)
+	}
+}

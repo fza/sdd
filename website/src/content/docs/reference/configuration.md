@@ -88,23 +88,24 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `llm.provider` | `claude-cli` | `anthropic`, `openai`, `ollama` or `claude-cli`. See [language model providers](#language-model-providers). |
-| `llm.model` | `claude-sonnet-4-6` | Model name as the provider spells it. sdd uses the default with any provider, so set a model whenever you change the provider. |
+| `llm.provider` | `claude-cli` | `anthropic`, `openai`, `ollama`, `claude-cli` or `codex`. See [language model providers](#language-model-providers). |
+| `llm.model` | `claude-sonnet-4-6`, none for `codex` | Model name as the provider spells it. sdd uses the default with any provider but `codex`, so set a model whenever you change to another provider. Unset under `codex`, codex runs its own default model. |
+| `llm.effort` | `medium` | Reasoning effort of `claude-cli`, passed to `--effort`, and of `codex`, passed to `model_reasoning_effort`, as written. The other providers ignore it and take an effort through `llm.params`. |
 | `llm.api_keys.<provider>` | None | API key for a provider. Required for `anthropic` and `openai`. Optional for `ollama`, which receives it as a bearer token. |
 | `llm.endpoint` | The vendor's public API | Base URL of a gateway or compatible service, for `openai` and `anthropic` only. Accepts the host, a URL ending in `/v1`, or the full URL ending in `/chat/completions` for `openai` or `/messages` for `anthropic`. |
 | `llm.ollama_endpoint` | `http://localhost:11434` | Ollama server for the `ollama` provider. |
 | `llm.timeout` | `2m` | Time limit for one model call. |
 | `llm.extract_timeout` | `1m` | Time limit for the reformat call that follows a check response that does not parse. |
-| `llm.params.<name>` | None | Provider settings that sdd adds unchanged to every request body, such as `reasoning_effort` set to `low`. `claude-cli` ignores them. |
+| `llm.params.<name>` | None | Provider settings that sdd adds unchanged to every request body, such as `reasoning_effort` set to `low`. `claude-cli` and `codex` ignore them. |
 | `llm.structured_output` | `auto` | How the checks ask `openai` and `ollama` for JSON: `json_schema`, `json_object` or `auto`. See [structured output modes](#structured-output-modes). |
 | `llm.rate_limit_rps` | See below | Maximum requests per second to `anthropic` or `openai`. Raise it on a higher account tier or for a gateway that allows more. |
 | `llm.retry.max_attempts` | `5` | Attempts per call, counting the first. `1` turns retries off. |
 | `llm.retry.base_delay` | `2s` | Wait before the first retry. The wait grows with each further retry. |
 | `llm.retry.max_delay` | `60s` | Longest wait between two retries. |
 | `llm.concurrency` | `4` | Not applied in this version. `sdd summarize --all` takes its worker count from `--concurrency`, which defaults to 4. |
-| `llm.context_tokens` | What the provider reports | The model's context window in tokens, which sizes the prose draft verifier's calls. sdd asks Anthropic, an OpenAI-compatible models listing (`context_length` or `max_model_len`) or Ollama when unset; set it where the provider reports none, such as `claude-cli`. |
+| `llm.context_tokens` | What the provider reports | The model's context window in tokens, which sizes the prose draft verifier's calls. sdd asks Anthropic, an OpenAI-compatible models listing (`context_length` or `max_model_len`) or Ollama when unset, and for `claude-cli` reads the window one short `claude -p` call reports, once per process and model; set it where the provider reports none, such as `codex`. |
 
-sdd retries a call that failed with a temporary error, such as a rate limit or a dropped connection, and waits as long as the provider asks when it names a time. `claude-cli` ignores the rate limit and retry keys, since the `claude` command retries on its own.
+sdd retries a call that failed with a temporary error, such as a rate limit or a dropped connection, and waits as long as the provider asks when it names a time. `claude-cli` and `codex` ignore the rate limit and retry keys, since the `claude` and `codex` commands retry on their own.
 
 When a checker's response does not parse, sdd makes one more call carrying the unparseable text and asking for the JSON alone, so a model that writes its conclusion into the `severity` field does not cost you the capture. A response that parses costs one call. `llm.extract_timeout` bounds the second call separately from `llm.timeout`, so a slipping endpoint cannot spend twice the configured timeout on one check. Both responses failing is an error naming both attempts.
 
@@ -117,7 +118,7 @@ Default rate limits:
 | `anthropic` | anything else | 1 |
 | `openai` | `mini` or `nano` | 2 |
 | `openai` | anything else | 1 |
-| `ollama`, `claude-cli` | any | no limit |
+| `ollama`, `claude-cli`, `codex` | any | no limit |
 
 ### Embedding
 
@@ -139,17 +140,19 @@ Default rate limits:
 
 | Key | File | Default | Meaning |
 | --- | --- | --- | --- |
-| `verify.mode` | User-global, project | `off` | How carefully a capture's draft is checked against the graph before it is written. `off`: pre-flight checks the draft against the entries it references. `grounding`: the capture first reads the related entries, with no check after. `prose`: grounding, then pre-flight runs over the grounding reading and adds the checks for duplicates, outdated claims, clashes between entries and set-aside entries that bear on the draft. `deep`: prose, then a verifier agent. The project file wins over the user-global one, and `config.local.yaml` may only raise it, in the order `off`, `grounding`, `prose`, `deep`. |
+| `verify.mode` | User-global, project | `prose` | How carefully a capture's draft is checked against the graph before it is written. `off`: pre-flight checks the draft against the entries it references. `grounding`: the capture first reads the related entries, with no check after. `prose`: grounding, then pre-flight runs over the grounding reading and adds the checks for duplicates, outdated claims, clashes between entries and set-aside entries that bear on the draft. `deep`: prose, then a verifier agent. The project file wins over the user-global one, and `config.local.yaml` may only raise it, in the order `off`, `grounding`, `prose`, `deep`. |
 | `verify.skip` | User-global, project | `failure` | When the deep exchange may be skipped: `never`, `failure` or `weighed`. `config.local.yaml` may only tighten it toward `never`. |
-| `verify.launch` | User-global, project, local | `subagent` | How the `deep` verifier runs. `subagent`: the drafting agent's harness runs a fresh-context subagent, the `sdd_delegate` subagent `sdd init` installs. `claude` and `codex`: sdd runs the agent CLI headless in the project checkout, read-only, with sdd as its only MCP server, and resumes the same session each round. `custom_driver`: sdd runs `verify.driver` each round. sdd runs every round in the background, bounded to 30 minutes: the call that launches it returns at once, and the capture's next call picks the findings up, or fails with the round's error. The setting describes the machine, so `config.local.yaml` wins. |
-| `verify.driver.command`, `verify.driver.args` | User-global, local | None | The command a `custom_driver` launch runs each round. sdd refuses it in the committed config, since it would run on every contributor's machine. |
-| `verify.subagent`, `verify.claude`, `verify.codex` (each `.model`, `.effort`) | User-global, project, local | None | The model and effort the `deep` verifier runs with, per launch. `subagent`: the dispatch names them for the harness's subagent tool. `claude`: `--model` and `--effort` (`low`, `medium`, `high`, `xhigh` or `max`). `codex`: `-m` and `model_reasoning_effort`. Unset leaves the launch's own default. A `custom_driver` command picks its own. The setting describes the machine, so `config.local.yaml` wins. |
+| `verify.runner` | User-global, project, local | `subagent` | What runs the `deep` verifier. `subagent`: the drafting agent's harness runs a fresh-context subagent, the `sdd_delegate` subagent `sdd init` installs. `claude` and `codex`: sdd runs `claude -p` or `codex exec` headless in the project checkout, read-only, with sdd as its only MCP server, and resumes the same session each round. `driver`: sdd runs `verify.driver` each round. sdd runs every round in the background, bounded to 30 minutes: the call that launches it returns at once, and the capture's next call picks the findings up, or fails with the round's error. The setting describes the machine, so `config.local.yaml` wins. |
+| `verify.driver.command`, `verify.driver.args` | User-global, local | None | The command the `driver` runner runs each round. sdd refuses it in the committed config, since it would run on every contributor's machine. |
+| `verify.claude.model`, `verify.claude.effort` | User-global, project, local | `sonnet`, `medium` | The model and effort of a `deep` verifier in Claude: the `claude` runner passes them to `--model` and `--effort` (`low`, `medium`, `high`, `xhigh` or `max`), and a `subagent` dispatch names them when the MCP client is Claude Code. The setting describes the machine, so `config.local.yaml` wins. |
+| `verify.codex.model`, `verify.codex.effort` | User-global, project, local | None, `medium` | The same for Codex: the `codex` runner passes them to `-m` and `model_reasoning_effort`, and a `subagent` dispatch names them when the MCP client is Codex. Unset, the model is codex's own default. |
+| `verify.prefilter` | User-global, project, local | `true` | Rates the relevance of each listed entry before the reading judges it, and sets aside the ones below the calibrated threshold. Without an `llm_prefilter` block it runs the `generate` protocol on the `llm` provider and model at effort `low`; a value `llm_prefilter` sets wins. On `claude-cli` or `codex` each rated entry starts a process of its own. |
 
 A prose verifier call fills half the context window left after the answer reserve (`llm.max_tokens`), counting 3 characters a token. A reading too large for one call is split into several calls, related entries kept together, and an entry too large on its own is sent as whole paragraphs with markers where text is left out. `sdd init` asks how carefully drafts are checked and writes `verify.mode`.
 
-`deep` runs `prose` first, then a tool-using verifier agent in a child session that reads the draft and its grounding reading, checks claims against the code and its history, and exchanges findings with the drafting agent for at most 3 rounds. sdd turns the findings into edits of the draft and shows them as a diff; findings the agents settle are applied, and findings left open go to the user. A capture is written only under a deep verdict for its exact draft. A skipped exchange writes `verification: skipped` into the entry and lowers its confidence: to `low` after a verifier failure, and at most `medium` for a skip weighed as safe. Where the harness has no subagent tool, sdd falls back to the headless launch of the first agent `supported_agents` names whose CLI it finds. With `deep` and no launch set, `sdd init` also asks how the verifier runs and writes the answer to `config.local.yaml`.
+`deep` runs `prose` first, then a tool-using verifier agent in a child session that reads the draft and its grounding reading, checks claims against the code and its history, and exchanges findings with the drafting agent for at most 3 rounds. sdd turns the findings into edits of the draft and shows them as a diff; findings the agents settle are applied, and findings left open go to the user. A capture is written only under a deep verdict for its exact draft. A skipped exchange writes `verification: skipped` into the entry and lowers its confidence: to `low` after a verifier failure, and at most `medium` for a skip weighed as safe. Where the harness has no subagent tool, sdd falls back to the headless runner of the first agent `supported_agents` names whose CLI it finds. With `deep` and no runner set, `sdd init` also asks what runs the verifier and writes the answer to `config.local.yaml`. Model and effort values pass to the CLI or the subagent tool as written: sdd keeps no table translating model names between harnesses, so a subagent dispatch in a client other than Claude Code or Codex names neither.
 
-A `custom_driver` command reads one JSON request on stdin each round, `{"round": 1, "session": "<child session>", "instance": "<child instance>", "prompt": "<round prompt>", "driver_state": "<last round's state>"}`, starts or continues its agent with the prompt, and prints `{"driver_state": "<state for the next round>"}` once the round ends. The agent reports through the child session's `next` calls, never through the driver. A nonzero exit or a round longer than 30 minutes is a verifier failure.
+A `driver` command reads one JSON request on stdin each round, `{"round": 1, "session": "<child session>", "instance": "<child instance>", "prompt": "<round prompt>", "driver_state": "<last round's state>"}`, starts or continues its agent with the prompt, and prints `{"driver_state": "<state for the next round>"}` once the round ends. The agent reports through the child session's `next` calls, never through the driver. A nonzero exit or a round longer than 30 minutes is a verifier failure.
 
 In a guided dialogue the writing guide runs once on the content the user approved, then the verifier; a later adjust gets a check of the changed lines only. In an autonomous dialogue both run before playback.
 
@@ -201,6 +204,7 @@ The writing check and the pre-flight check ask the model for a fixed response fo
 | `openai` | OpenAI chat completions, or any compatible service at `llm.endpoint` | `response_format` of type `json_schema`, strict | `llm.api_keys.openai` |
 | `ollama` | The Ollama server at `llm.ollama_endpoint` | The `format` field | Optional |
 | `claude-cli` | The local `claude` command, run as `claude -p` | `--json-schema` | None, uses your Claude Code login |
+| `codex` | The local `codex` command, run as `codex exec` | `--output-schema` | None, uses your Codex login |
 
 A gateway or compatible service must honor the schema field in the third column for the checks to work, unless `llm.structured_output` is `json_object`.
 
@@ -212,7 +216,7 @@ A gateway or compatible service must honor the schema field in the third column 
 - `json_object` asks for any JSON object (`response_format: {"type": "json_object"}` on `openai`, `format: json` on `ollama`), states the schema in the system prompt and validates the answer against it locally. An answer that is not one JSON object matching the schema is never passed on: the check sends it to the reformat call described under [language model](#language-model), whose answer is validated the same way.
 - `auto`, the default, sends `json_schema`. When the endpoint answers 400 because the model does not support JSON schema mode (code `model_not_capable`, or a message naming `json_schema` or `json_object`), the call is retried once in `json_object` mode, and that endpoint and model stay on `json_object` for the rest of the process. Any other 400 fails the call. The retry runs inside the call's `llm.timeout` (or `llm.extract_timeout`).
 
-Some OpenAI-compatible services serve a model in `json_object` mode only, while another service accepts `json_schema` for the same model. `claude-cli` ignores the setting.
+Some OpenAI-compatible services serve a model in `json_object` mode only, while another service accepts `json_schema` for the same model. `claude-cli` and `codex` ignore the setting.
 
 ### Anthropic
 
@@ -302,6 +306,23 @@ llm:
 ```
 
 The `claude-cli` provider runs each call with `--safe-mode`, in a working directory of its own, and without `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` in its environment. Started inside a project tree the CLI would otherwise load that project's instruction files, skills, hooks and configured servers into a prompt that needs none of them, and an inherited key would answer on an API balance instead of the signed-in account. Authenticating by key belongs on `provider: anthropic`, which sends the key deliberately.
+
+### Codex CLI
+
+`codex` runs every call through `codex exec` with your Codex login, so a person who uses Codex alone needs no Claude login and no API key, only the `codex` command on your `PATH`. Like `claude-cli`, each call starts a new process. Without `llm.model`, codex runs its own default model.
+
+```bash
+sdd config set llm.provider codex
+sdd config set llm.effort low
+```
+
+```yaml
+llm:
+  provider: codex
+  effort: low
+```
+
+The `codex` provider runs each call with `--json`, a read-only sandbox, `--ephemeral`, `--ignore-user-config`, `--ignore-rules` and `project_doc_max_bytes=0`, in a working directory of its own. So no project's `AGENTS.md`, no MCP servers or profiles from `config.toml` and no execpolicy rules reach a prompt that needs none of them, and no session is kept. Your login still comes from `CODEX_HOME`.
 
 ## Embedding providers
 

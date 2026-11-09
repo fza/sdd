@@ -31,7 +31,7 @@ func pointedRepos(t *testing.T) (work, project string) {
 	}
 	initRepo(t, work)
 	initRepo(t, project)
-	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: "+pointedProjectID+"\ndefault_branch: main\nlanguage: en\nskill_scope: project\n")
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: "+pointedProjectID+"\ndefault_branch: main\nlanguage: en\nskill_scope: project\nverify:\n  mode: off\n")
 	writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
 	writeFile(t, filepath.Join(work, ".sdd", "config.yaml"), "project_dir: ../work-sdd\nskill_scope: project\nsupported_agents: [claude]\n")
 	return work, project

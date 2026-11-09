@@ -51,10 +51,14 @@ func projectRelevanceStore(sddDir, stateRoot, repoKey string, cfg *model.PerRepo
 // projectPrefilter composes the prefilter verify.prefilter switches on;
 // the zero value while it is off (D7).
 func projectPrefilter(cfg *model.PerRepoConfig) (sdd.Prefilter, error) {
-	if cfg == nil || !cfg.Verify.GroundingPolicy().Prefilter {
+	var base model.BaseConfig
+	if cfg != nil {
+		base = cfg.BaseConfig
+	}
+	if !base.Verify.GroundingPolicy().Prefilter {
 		return sdd.Prefilter{}, nil
 	}
-	prefilter, err := factory.NewPrefilter(cfg.LLMPrefilter, statsSink())
+	prefilter, err := factory.NewPrefilter(base.ResolvedPrefilter(), statsSink())
 	if err != nil {
 		return sdd.Prefilter{}, err
 	}

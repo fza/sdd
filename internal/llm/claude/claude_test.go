@@ -60,7 +60,7 @@ func TestRunWithResponseSchema(t *testing.T) {
 		UserPrompt:     "USER " + problemChars,
 		ResponseSchema: json.RawMessage(wireSchema),
 	}
-	res, err := claude.NewRunner("sonnet").Run(context.Background(), req)
+	res, err := claude.NewRunner("sonnet", "").Run(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestRunWithResponseSchema(t *testing.T) {
 // the free-text result.
 func TestRunWithResponseSchemaRequiresStructuredOutput(t *testing.T) {
 	fakeCLI(t, `{"type":"result","result":"{\"reasoning\":\"r\"}","usage":{}}`)
-	_, err := claude.NewRunner("sonnet").Run(context.Background(), llm.Request{UserPrompt: "U", ResponseSchema: json.RawMessage(wireSchema)})
+	_, err := claude.NewRunner("sonnet", "").Run(context.Background(), llm.Request{UserPrompt: "U", ResponseSchema: json.RawMessage(wireSchema)})
 	if err == nil || !strings.Contains(err.Error(), "no structured output") {
 		t.Fatalf("want a missing structured output error, got %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRunWithResponseSchemaRequiresStructuredOutput(t *testing.T) {
 // A free-text request passes no schema and returns the CLI's result.
 func TestRunWithoutResponseSchema(t *testing.T) {
 	dir := fakeCLI(t, `{"type":"result","result":"SERVED","usage":{}}`)
-	res, err := claude.NewRunner("sonnet").Run(context.Background(), llm.Request{UserPrompt: "U"})
+	res, err := claude.NewRunner("sonnet", "").Run(context.Background(), llm.Request{UserPrompt: "U"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -162,7 +162,7 @@ printf '{"result":"args=%s cwd=%s key=%s token=%s base=%s","usage":{"input_token
 		t.Fatalf("Getwd: %v", err)
 	}
 
-	res, err := claude.NewRunner("claude-sonnet-4-6").Run(context.Background(), llm.Request{UserPrompt: "x"})
+	res, err := claude.NewRunner("claude-sonnet-4-6", "").Run(context.Background(), llm.Request{UserPrompt: "x"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -213,4 +213,58 @@ func sameDir(t *testing.T, a, b string) bool {
 		rb = b
 	}
 	return ra == rb
+}
+
+// The effort reaches --effort as written; none leaves the flag out.
+func TestRunPassesEffort(t *testing.T) {
+	dir := fakeCLI(t, `{"type":"result","result":"SERVED","usage":{}}`)
+	if _, err := claude.NewRunner("sonnet", "high").Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	args := recordedArgs(t, dir)
+	if i := slices.Index(args, "--effort"); i < 0 || i+1 >= len(args) || args[i+1] != "high" {
+		t.Errorf("--effort high not passed: %q", args)
+	}
+	if _, err := claude.NewRunner("sonnet", "").Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if slices.Contains(recordedArgs(t, dir), "--effort") {
+		t.Errorf("an empty effort should pass no --effort: %q", recordedArgs(t, dir))
+	}
+}
+
+// Window reads the model's contextWindow and maxOutputTokens from modelUsage:
+// the entry named as the runner's model, else the one entry reporting a
+// window, as for an alias the CLI resolved.
+func TestWindow(t *testing.T) {
+	sonnet := `"claude-sonnet-4-6":{"inputTokens":9,"contextWindow":1000000,"maxOutputTokens":128000}`
+	haiku := `"claude-haiku-4-5":{"inputTokens":1,"contextWindow":200000,"maxOutputTokens":64000}`
+	for name, tc := range map[string]struct {
+		model, usage   string
+		tokens, maxOut int
+		refusal        string
+	}{
+		"named model":      {model: "claude-sonnet-4-6", usage: sonnet + "," + haiku, tokens: 1000000, maxOut: 128000},
+		"resolved alias":   {model: "sonnet", usage: sonnet + `,"claude-haiku-4-5":{"inputTokens":1}`, tokens: 1000000, maxOut: 128000},
+		"ambiguous alias":  {model: "sonnet", usage: sonnet + "," + haiku, refusal: "reported a context window for 2 models"},
+		"no window at all": {model: "sonnet", usage: `"claude-sonnet-4-6":{"inputTokens":9}`, refusal: "reported a context window for 0 models"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := fakeCLI(t, `{"type":"result","result":"OK","usage":{},"modelUsage":{`+tc.usage+`}}`)
+			tokens, maxOut, err := claude.NewRunner(tc.model, "low").Window(context.Background())
+			if tc.refusal != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.refusal) {
+					t.Fatalf("want a refusal naming %q, got %v", tc.refusal, err)
+				}
+				return
+			}
+			if err != nil || tokens != tc.tokens || maxOut != tc.maxOut {
+				t.Fatalf("Window = %d, %d, %v; want %d, %d", tokens, maxOut, err, tc.tokens, tc.maxOut)
+			}
+			args := recordedArgs(t, dir)
+			if !slices.Contains(args, "--safe-mode") || !slices.Contains(args, tc.model) {
+				t.Errorf("the probe should run isolated on the model, got %q", args)
+			}
+		})
+	}
 }

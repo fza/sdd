@@ -57,9 +57,9 @@ type InitCmd struct {
 	// (20261109-004729-d-cpt-xs5, V-D28).
 	VerifyMode model.VerifyMode
 
-	// VerifierLaunch, when set, records how the deep verifier runs on this
+	// VerifierRunner, when set, records what runs the deep verifier on this
 	// machine in the local config (V-D20, V-D28).
-	VerifierLaunch model.VerifierLaunch
+	VerifierRunner model.VerifierRunner
 
 	// SetUpProject allows init to set up a missing project at ProjectDir. Only
 	// a path the caller typed qualifies: a recorded project_dir names a shared

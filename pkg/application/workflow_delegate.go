@@ -44,18 +44,18 @@ type DelegateLaunch struct {
 	Procedure string
 	// Project is the project the delegate works in.
 	Project ProjectID
-	// Launch is the launch the project configures for this delegate: claude,
-	// codex or custom_driver, or DelegateLaunchFallback where the harness
-	// reported no subagent tool; empty leaves the launch to the composition.
-	Launch string
+	// Runner is the runner the project configures for this delegate: claude,
+	// codex or driver, or DelegateLaunchFallback where the harness reported
+	// no subagent tool; empty leaves the runner to the composition.
+	Runner string
 }
 
-// DelegateRun is a launch a launcher took on: the launch that runs, and Round,
+// DelegateRun is a launch a launcher took on: the runner that runs, and Round,
 // which runs one round to its end, bounded by the launcher, and reports the
 // launcher's own session for the next round to resume. sdd runs one round of
 // a child at a time.
 type DelegateRun struct {
-	Launch string
+	Runner string
 	Round  func(ctx context.Context, round DelegateRound) (string, error)
 }
 
@@ -67,7 +67,7 @@ type DelegateRound struct {
 	Resume string
 }
 
-// DelegateLaunchFallback asks the launcher for the first headless launch of
+// DelegateLaunchFallback asks the launcher for the first headless runner of
 // the agents the project's supported_agents name whose CLI is found
 // (20261109-004729-d-cpt-xs5, V-D20).
 const DelegateLaunchFallback = "fallback"
@@ -91,12 +91,13 @@ type WorkflowDispatch struct {
 	// Agent is the subagent definition a harness launches the delegate as.
 	Agent string
 	// Model and Effort are what the harness launches that subagent with, from
-	// verify.subagent; empty leaves the harness's own.
+	// verify.claude or verify.codex as the MCP client tells; empty leaves the
+	// harness's own.
 	Model  string
 	Effort string
-	// Launch is the launch sdd runs the delegate's round with, when it launched
+	// Runner is the runner sdd runs the delegate's round with, when it launched
 	// the delegate itself.
-	Launch string
+	Runner string
 }
 
 // delegateLaunchRecord is one launched round's outcome, kept with the child
@@ -105,7 +106,7 @@ type WorkflowDispatch struct {
 type delegateLaunchRecord struct {
 	Round   int    `json:"round"`
 	Session string `json:"session"`
-	Launch  string `json:"launch,omitempty"`
+	Runner  string `json:"runner,omitempty"`
 	Error   string `json:"error,omitempty"`
 }
 
@@ -277,30 +278,30 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 		Session: id, Instance: child.Instance, Procedure: procedure,
 		Prompt: delegatePrompt(id, child.Instance), ContinuePrompt: delegateContinuePrompt(id, child.Instance), Agent: model.DelegateAgentName,
 	}
-	launch, err := w.delegateLaunch(parent, procedure)
+	runner, err := w.delegateRunner(parent, procedure)
 	if err != nil {
 		return dispatch, err
 	}
-	if launch != "" || (w.app.launcher != nil && procedure != verifyProcedure) {
+	if runner != "" || (w.app.launcher != nil && procedure != verifyProcedure) {
 		if w.app.launcher == nil {
-			return dispatch, fmt.Errorf("verify.launch %s needs sdd to launch the delegate, and this server launches none: set verify.launch: subagent", launch)
+			return dispatch, fmt.Errorf("verify.runner %s needs sdd to launch the delegate, and this server launches none: set verify.runner: subagent", runner)
 		}
-		launched, err := w.app.launchDelegate(ctx, identity, id, child.Instance, procedure, w.instanceProject(parent), launch)
+		launched, err := w.app.launchDelegate(ctx, identity, id, child.Instance, procedure, w.instanceProject(parent), runner)
 		switch {
 		case errors.Is(err, ErrDelegateNotLaunched):
 		case err != nil:
 			return dispatch, err
 		default:
-			dispatch.Launch = launched
+			dispatch.Runner = launched
 			arrives := "The round runs in the background. Its results arrive in this move, never through a reply: next with this instance and no report picks a delivery up once it has landed, and fails with the round's error should the round fail."
 			dispatch.Instructions = "sdd launched the delegate itself, so launch nothing. " + arrives
-			if launch == DelegateLaunchFallback {
-				dispatch.Instructions = fmt.Sprintf("This harness has no subagent tool, so sdd fell back to the headless %s launch of the agents supported_agents names and launched the delegate itself: launch nothing. %s", launched, arrives)
+			if runner == DelegateLaunchFallback {
+				dispatch.Instructions = fmt.Sprintf("This harness has no subagent tool, so sdd fell back to the headless %s runner of the agents supported_agents names and launched the delegate itself: launch nothing. %s", launched, arrives)
 			}
 			return dispatch, nil
 		}
 	}
-	settings, err := w.subagentSettings(parent, procedure)
+	settings, err := w.subagentSettings(ctx, parent, procedure)
 	if err != nil {
 		return dispatch, err
 	}
@@ -314,9 +315,10 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 }
 
 // subagentSettings is the model and effort a harness launches the deep
-// verifier's subagent with, from verify.subagent; empty for every other
-// delegate.
-func (w *WorkflowSession) subagentSettings(parent, procedure string) (VerifierAgent, error) {
+// verifier's subagent with: the agent block matching the MCP client the
+// session last attached through (model.VerifierPolicy.SubagentAgent); empty
+// for every other delegate.
+func (w *WorkflowSession) subagentSettings(ctx context.Context, parent, procedure string) (VerifierAgent, error) {
 	if procedure != verifyProcedure {
 		return VerifierAgent{}, nil
 	}
@@ -324,25 +326,31 @@ func (w *WorkflowSession) subagentSettings(parent, procedure string) (VerifierAg
 	if err != nil {
 		return VerifierAgent{}, err
 	}
-	return runtime.options.Verifier.Subagent, nil
+	stored, err := w.app.sessions.Load(ctx, w.binding.SessionID)
+	if err != nil {
+		return VerifierAgent{}, err
+	}
+	client := ""
+	if attachment := stored.Metadata.Attachment; attachment != nil {
+		client = attachment.ClientName
+	}
+	return VerifierAgent(runtime.options.Verifier.resolved().SubagentAgent(client)), nil
 }
 
 func subagentSettingsInstruction(settings VerifierAgent) string {
 	switch {
 	case settings.Model != "" && settings.Effort != "":
 		return fmt.Sprintf(" Launch it with model %s and effort %s, the dispatch's model and effort.", settings.Model, settings.Effort)
-	case settings.Model != "":
-		return fmt.Sprintf(" Launch it with model %s, the dispatch's model.", settings.Model)
 	case settings.Effort != "":
 		return fmt.Sprintf(" Launch it with effort %s, the dispatch's effort.", settings.Effort)
 	}
 	return ""
 }
 
-// delegateLaunch is the launch a delegate of procedure takes: for the deep
-// verifier, the project's configured headless launch, or the fallback once
+// delegateRunner is the runner a delegate of procedure takes: for the deep
+// verifier, the project's configured headless runner, or the fallback once
 // the harness reported no subagent tool (V-D20); empty otherwise.
-func (w *WorkflowSession) delegateLaunch(parent, procedure string) (string, error) {
+func (w *WorkflowSession) delegateRunner(parent, procedure string) (string, error) {
 	if procedure != verifyProcedure {
 		return "", nil
 	}
@@ -350,9 +358,9 @@ func (w *WorkflowSession) delegateLaunch(parent, procedure string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	launch := runtime.options.Verifier.resolved().Launch
-	if launch != model.VerifierLaunchSubagent {
-		return string(launch), nil
+	runner := runtime.options.Verifier.resolved().Runner
+	if runner != model.VerifierRunnerSubagent {
+		return string(runner), nil
 	}
 	inst, ok := w.session.Instance(parent)
 	if !ok {
@@ -404,7 +412,7 @@ func delegateContinuePrompt(session SessionID, instance string) string {
 // launcher took it on, runs its round in the background, outliving the call
 // that launched it; it returns the launch that runs.
 func (a *Application) launchDelegate(ctx context.Context, identity RequestIdentity, child SessionID, instance, procedure string, project ProjectID, configured string) (string, error) {
-	run, err := a.launcher.LaunchDelegate(ctx, DelegateLaunch{Session: child, Instance: instance, Procedure: procedure, Project: project, Launch: configured})
+	run, err := a.launcher.LaunchDelegate(ctx, DelegateLaunch{Session: child, Instance: instance, Procedure: procedure, Project: project, Runner: configured})
 	if err != nil {
 		return "", fmt.Errorf("launching the delegate for %s: %w", child, err)
 	}
@@ -422,7 +430,7 @@ func (a *Application) launchDelegate(ctx context.Context, identity RequestIdenti
 			slogutils.FromContext(background).Error("recording a delegate round", "session", child, "error", err)
 		}
 	}()
-	return run.Launch, nil
+	return run.Runner, nil
 }
 
 // runDelegateRound runs one round and keeps its outcome with the child: the
@@ -444,9 +452,9 @@ func (a *Application) runDelegateRound(ctx context.Context, identity RequestIden
 		round.Prompt = delegateContinuePrompt(child, instance)
 	}
 	session, roundErr := run.Round(ctx, round)
-	record := delegateLaunchRecord{Round: round.Number, Session: session, Launch: run.Launch}
+	record := delegateLaunchRecord{Round: round.Number, Session: session, Runner: run.Runner}
 	if roundErr != nil {
-		record = delegateLaunchRecord{Round: round.Number, Launch: run.Launch, Error: fmt.Sprintf("the delegate's round %d (%s) failed: %v", round.Number, run.Launch, roundErr)}
+		record = delegateLaunchRecord{Round: round.Number, Runner: run.Runner, Error: fmt.Sprintf("the delegate's round %d (%s) failed: %v", round.Number, run.Runner, roundErr)}
 	}
 	ended, err := a.recordDelegateRound(ctx, identity, child, record)
 	if err != nil || ended || roundErr == nil {

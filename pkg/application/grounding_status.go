@@ -27,7 +27,7 @@ func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdent
 	}
 	judge := runtime.options.Prefilter.Judge
 	if judge == "" {
-		return GroundingStatus{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: no prefilter judge: set verify.prefilter and configure llm_prefilter"}
+		return GroundingStatus{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: no prefilter judge: verify.prefilter is off"}
 	}
 	ledger, err := runtime.relevanceLedger(ctx)
 	if err != nil {
@@ -57,7 +57,7 @@ func (a *Application) RescoreRelevance(ctx context.Context, identity RequestIden
 	}
 	prefilter := runtime.options.Prefilter
 	if prefilter.Scorer == nil {
-		return RescoreResult{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: no prefilter judge: set verify.prefilter and configure llm_prefilter"}
+		return RescoreResult{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "sdd: no prefilter judge: verify.prefilter is off"}
 	}
 	result.Judge = prefilter.Judge
 	ledger, err := runtime.relevanceLedger(ctx)

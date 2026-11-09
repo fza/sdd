@@ -343,16 +343,16 @@ const (
 )
 
 // hookVerify is the verification step's state: the verifier's mode and
-// launch, the rounds delivered, and the findings the verifier still stands
+// runner, the rounds delivered, and the findings the verifier still stands
 // by.
 func (w *WorkflowSession) hookVerify(point engine.HookPoint) (map[string]any, error) {
 	policy, _, err := w.deepPolicy(point.Instance)
 	if err != nil {
 		return nil, err
 	}
-	launch := string(policy.Launch)
+	runner := string(policy.Runner)
 	if fallback, _ := point.Store.Get(fieldDeepNoSubagent); fallback == true {
-		launch = DelegateLaunchFallback
+		runner = DelegateLaunchFallback
 	}
 	findings, err := storeDeep[model.DeepFinding](point.Store, fieldDeepFindings)
 	if err != nil {
@@ -364,7 +364,7 @@ func (w *WorkflowSession) hookVerify(point engine.HookPoint) (map[string]any, er
 	}
 	rounds, _ := point.Store.Get(fieldDeepRounds)
 	return map[string]any{
-		"mode": string(policy.Mode), "launch": launch,
+		"mode": string(policy.Mode), "runner": runner,
 		"round": deepRoundCount(rounds), "open": model.DeepOpenFindings(findings, history),
 	}, nil
 }

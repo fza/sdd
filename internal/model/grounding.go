@@ -5,12 +5,14 @@ import (
 	"strings"
 )
 
-// Grounding defaults (20261109-004506-d-cpt-udz, D25, D27, D31).
+// Grounding defaults (20261109-004506-d-cpt-udz, D25, D27, D31;
+// 20261109-222220-d-tac-4ev for the prefilter).
 const (
 	DefaultGroundingDepthDown     = 2
 	DefaultGroundingDepthUp       = 1
 	DefaultGroundingBriefAllBelow = 100
 	DefaultGroundingPrefilterFrom = 30
+	DefaultGroundingPrefilter     = true
 )
 
 // GroundingDepthConfig is the grounding depth: how far up and down a
@@ -33,14 +35,14 @@ type GroundingPolicy struct {
 // GroundingPolicy resolves the block's grounding keys against the defaults;
 // every mode but off enforces grounding.
 func (c VerifyConfig) GroundingPolicy() GroundingPolicy {
-	enforce, _ := c.Mode.Settings()
+	enforce, _ := c.ResolvedMode().Settings()
 	return GroundingPolicy{
 		Enforce:       enforce,
 		DepthDown:     intOr(c.Depth.Down, DefaultGroundingDepthDown),
 		DepthUp:       intOr(c.Depth.Up, DefaultGroundingDepthUp),
 		BriefAllBelow: intOr(c.BriefAllBelow, DefaultGroundingBriefAllBelow),
 		PrefilterFrom: intOr(c.PrefilterFrom, DefaultGroundingPrefilterFrom),
-		Prefilter:     c.Prefilter != nil && *c.Prefilter,
+		Prefilter:     boolOr(c.Prefilter, DefaultGroundingPrefilter),
 	}
 }
 
@@ -239,10 +241,43 @@ type LLMPrefilterConfig struct {
 	LLMConfig `yaml:",inline"`
 }
 
+// DefaultPrefilterEffort is the effort a prefilter on the llm provider runs
+// with: judging relevance needs no reasoning.
+const DefaultPrefilterEffort = "low"
+
+// ResolvedPrefilter is the prefilter block as it runs
+// (20261109-222220-d-tac-4ev): without a protocol, generate; under generate,
+// the llm block's provider, model and connection at DefaultPrefilterEffort,
+// each value llm_prefilter sets winning. The other protocols take the block as
+// set.
+func (b BaseConfig) ResolvedPrefilter() LLMPrefilterConfig {
+	out := b.LLMPrefilter
+	if out.Protocol == "" {
+		out.Protocol = PrefilterGenerate
+	}
+	if out.Protocol != PrefilterGenerate {
+		return out
+	}
+	base := LLMConfig{
+		Provider: b.LLM.Provider, Model: b.LLM.Model, Effort: DefaultPrefilterEffort,
+		Endpoint: b.LLM.Endpoint, OllamaEndpoint: b.LLM.OllamaEndpoint,
+		APIKeys: b.LLM.APIKeys, StructuredOutput: b.LLM.StructuredOutput,
+	}
+	out.LLMConfig = mergeLLMConfig(base, out.LLMConfig)
+	return out
+}
+
 func mergeLLMPrefilterConfig(base, overlay LLMPrefilterConfig) LLMPrefilterConfig {
 	out := LLMPrefilterConfig{Protocol: base.Protocol, LLMConfig: mergeLLMConfig(base.LLMConfig, overlay.LLMConfig)}
 	if overlay.Protocol != "" {
 		out.Protocol = overlay.Protocol
 	}
 	return out
+}
+
+func boolOr(v *bool, fallback bool) bool {
+	if v == nil {
+		return fallback
+	}
+	return *v
 }

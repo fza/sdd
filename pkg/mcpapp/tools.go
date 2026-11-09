@@ -213,7 +213,7 @@ type DispatchResult struct {
 	Agent          string `json:"agent" jsonschema:"the subagent definition sdd init installs per harness to launch the delegate as"`
 	Model          string `json:"model,omitempty" jsonschema:"the model the harness launches that subagent with; unset leaves the harness's own"`
 	Effort         string `json:"effort,omitempty" jsonschema:"the effort the harness launches that subagent with; unset leaves the harness's own"`
-	Launch         string `json:"launch,omitempty" jsonschema:"set when sdd launched the delegate itself: the launch its round runs with, in the background"`
+	Runner         string `json:"runner,omitempty" jsonschema:"set when sdd launched the delegate itself: the runner its round runs with, in the background"`
 }
 
 // BaseServe is the session shell's serve as nested into landing responses
@@ -1504,7 +1504,7 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 	for _, dispatch := range serve.Dispatches {
 		res.Dispatches = append(res.Dispatches, DispatchResult{
 			Session: string(dispatch.Session), Instance: dispatch.Instance, Procedure: dispatch.Procedure,
-			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Agent: dispatch.Agent, Model: dispatch.Model, Effort: dispatch.Effort, Launch: dispatch.Launch,
+			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Agent: dispatch.Agent, Model: dispatch.Model, Effort: dispatch.Effort, Runner: dispatch.Runner,
 		})
 	}
 	framing, err := ss.root.FramingBlocks(ctx, s.requestIdentity(req))

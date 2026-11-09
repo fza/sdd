@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/networkteam/sdd/internal/llm/claude"
+	"github.com/networkteam/sdd/internal/llm/codex"
 	gollmrunner "github.com/networkteam/sdd/internal/llm/gollm"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/secrets"
@@ -19,11 +20,13 @@ import (
 )
 
 // New builds a composed llm.Runner from config. Provider and model fall back
-// to model.DefaultLLMProvider / model.DefaultLLMModel when empty. Remote
-// providers (anthropic, openai) get wrapped with llm.RateLimited: an
+// to model.DefaultLLMProvider / model.DefaultLLMModel when empty (codex keeps
+// an empty model for its own default), and the CLI providers take
+// cfg.ResolvedEffort. Remote providers (anthropic, openai) get wrapped with
+// llm.RateLimited: an
 // explicit cfg.RateLimitRPS takes precedence, otherwise a conservative
 // tier-1-safe default is selected per provider/model family (see
-// providerDefaultRPS). Local providers (claude-cli, ollama) stay
+// providerDefaultRPS). Local providers (claude-cli, codex, ollama) stay
 // uncapped. Every runner is bounded by the configured cfg.Timeout (falling
 // back to model.DefaultLLMTimeoutFor the provider) — deadlines are
 // configuration, so they compose here rather than being defaulted by any
@@ -98,13 +101,8 @@ func namedTimeout(r llm.Runner, setting string, timeout time.Duration) llm.Runne
 // compose builds the provider adapter and its rate-limit wrap — everything
 // but the timeout bound New always adds.
 func compose(cfg model.LLMConfig) (llm.Runner, error) {
-	provider := cfg.Provider
-	if provider == "" {
-		provider = model.DefaultLLMProvider
-	}
-	if cfg.Model == "" {
-		cfg.Model = model.DefaultLLMModel
-	}
+	provider := cfg.ResolvedProvider()
+	cfg.Model = cfg.ResolvedModel()
 	cfg.Provider = provider
 
 	runner, err := buildProvider(cfg)
@@ -166,11 +164,13 @@ func providerDefaultRPS(provider, modelName string) float64 {
 func buildProvider(cfg model.LLMConfig) (llm.Runner, error) {
 	switch cfg.Provider {
 	case "claude-cli":
-		return claude.NewRunner(cfg.Model), nil
+		return claude.NewRunner(cfg.Model, cfg.ResolvedEffort()), nil
+	case model.LLMProviderCodex:
+		return codex.NewRunner(cfg.Model, cfg.ResolvedEffort()), nil
 	case "anthropic", "openai", "ollama":
 		return gollmrunner.NewRunner(cfg)
 	default:
-		return nil, fmt.Errorf("unknown llm provider %q (supported: claude-cli, anthropic, openai, ollama)", cfg.Provider)
+		return nil, fmt.Errorf("unknown llm provider %q (supported: claude-cli, codex, anthropic, openai, ollama)", cfg.Provider)
 	}
 }
 

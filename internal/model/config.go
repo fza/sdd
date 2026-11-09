@@ -33,6 +33,15 @@ const (
 	// no API key is required for first-run usage.
 	DefaultLLMProvider = "claude-cli"
 
+	// LLMProviderCodex runs sdd's LLM calls through `codex exec`, so a person
+	// signed in to Codex alone needs no Claude login or API key
+	// (20261109-222220-d-tac-4ev).
+	LLMProviderCodex = "codex"
+
+	// DefaultLLMEffort is the reasoning effort the claude-cli and codex
+	// providers run with when llm.effort is unset.
+	DefaultLLMEffort = "medium"
+
 	// DefaultLLMModel is the claude model used when none is configured.
 	// Sonnet-class, matching the model the pre-flight calibration eval
 	// measures — pre-flight is the highest-stakes LLM call, and a blocking
@@ -106,10 +115,11 @@ type BaseConfig struct {
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
 	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
 	// Verify makes captures read the graph before they are written and checks
-	// every draft against that reading; off unless a layer sets its mode.
+	// every draft against that reading; DefaultVerifyMode unless a layer sets
+	// its mode.
 	Verify VerifyConfig `yaml:"verify,omitempty"`
-	// LLMPrefilter is the grounding prefilter's model, independent of LLM
-	// (20261109-004506-d-cpt-udz, D8); verify.prefilter switches it on.
+	// LLMPrefilter is the grounding prefilter's model (20261109-004506-d-cpt-udz,
+	// D8); verify.prefilter switches it on, and ResolvedPrefilter fills it from LLM.
 	LLMPrefilter LLMPrefilterConfig `yaml:"llm_prefilter,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
@@ -520,6 +530,10 @@ type LLMConfig struct {
 	Provider string `yaml:"provider,omitempty"`
 	// Model is the provider-specific model identifier.
 	Model string `yaml:"model,omitempty"`
+	// Effort is the reasoning effort of the claude-cli (--effort) and codex
+	// (model_reasoning_effort) providers, passed as written; empty means
+	// DefaultLLMEffort. The API providers take theirs through Params.
+	Effort string `yaml:"effort,omitempty"`
 	// Timeout is a Go duration string (e.g. "2m") applied per LLM call.
 	Timeout string `yaml:"timeout,omitempty"`
 	// ExtractTimeout is a Go duration string bounding the extraction call a
@@ -596,6 +610,33 @@ func ParseStructuredOutputMode(value string) (StructuredOutputMode, error) {
 	default:
 		return "", fmt.Errorf("unknown structured_output %q (supported: json_schema, json_object, auto)", value)
 	}
+}
+
+// ResolvedProvider is the provider a call runs on: Provider, else
+// DefaultLLMProvider.
+func (c LLMConfig) ResolvedProvider() string {
+	if c.Provider == "" {
+		return DefaultLLMProvider
+	}
+	return c.Provider
+}
+
+// ResolvedModel is the model a call names: Model, else DefaultLLMModel, except
+// on codex, where an empty model leaves codex's own default.
+func (c LLMConfig) ResolvedModel() string {
+	if c.Model == "" && c.ResolvedProvider() != LLMProviderCodex {
+		return DefaultLLMModel
+	}
+	return c.Model
+}
+
+// ResolvedEffort is the effort the claude-cli and codex providers pass:
+// Effort, else DefaultLLMEffort.
+func (c LLMConfig) ResolvedEffort() string {
+	if c.Effort == "" {
+		return DefaultLLMEffort
+	}
+	return c.Effort
 }
 
 // ResolvedMaxTokens is the output cap a call carries: DefaultLLMMaxTokens when
@@ -824,6 +865,9 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 	}
 	if overlay.Model != "" {
 		out.Model = overlay.Model
+	}
+	if overlay.Effort != "" {
+		out.Effort = overlay.Effort
 	}
 	if overlay.Timeout != "" {
 		out.Timeout = overlay.Timeout

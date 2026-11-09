@@ -28,7 +28,7 @@ func graphRepoCode(t *testing.T) (code string, remote *test.GraphRemote) {
 	t.Helper()
 	remote = test.NewGraphRemote(t, graphCloneRepoID)
 	remote.Commit(t, "seed the graph", map[string]string{
-		".sdd/config.yaml":     "graph_dir: .sdd/graph\nrepo_id: " + string(graphCloneRepoID) + "\ndefault_branch: main\nlanguage: en\n",
+		".sdd/config.yaml":     "graph_dir: .sdd/graph\nrepo_id: " + string(graphCloneRepoID) + "\ndefault_branch: main\nlanguage: en\nverify:\n  mode: off\n",
 		".sdd/graph/.keep":     "",
 		".gitignore":           ".sdd/tmp/\n.sdd/config.local.yaml\n",
 		"src/never-checked.go": "package code\n",
@@ -154,7 +154,7 @@ func TestInitGraphRepoAndTheStockGuard(t *testing.T) {
 	head := headSubject(t, code)
 	out, err := runAppErr(t, code,
 		"new", "signal", "tactical", "A capture that must not land in the code repository.",
-		"--confidence", "high", "--skip-preflight", "--participants", "Ada", "--summary", "A stray capture.", "--title", "Stray capture")
+		"--confidence", "high", "--skip-preflight", "--skip-grounding", "--participants", "Ada", "--summary", "A stray capture.", "--title", "Stray capture")
 	if err == nil || !strings.Contains(err.Error()+out, "not a directory") {
 		t.Errorf("a capture should fail on the guard file, got %v:\n%s", err, out)
 	}
@@ -184,7 +184,7 @@ func TestGraphRepoForcePushReaddsOnlyARefiningEntry(t *testing.T) {
 		}
 	}
 	remote.Rewrite(t, "rewritten history", map[string]string{
-		".sdd/config.yaml":      "graph_dir: .sdd/graph\nrepo_id: " + string(graphCloneRepoID) + "\ndefault_branch: main\nlanguage: en\n",
+		".sdd/config.yaml":      "graph_dir: .sdd/graph\nrepo_id: " + string(graphCloneRepoID) + "\ndefault_branch: main\nlanguage: en\nverify:\n  mode: off\n",
 		".gitignore":            ".sdd/tmp/\n.sdd/config.local.yaml\n",
 		test.ForcePushDecision:  test.ForcePushFixture(t, "decision.md"),
 		"src/rewritten-code.go": "package code\n",

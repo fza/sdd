@@ -25,7 +25,7 @@ func syncedProject(t *testing.T, mode string) string {
 	gitIn(t, base, "init", "-q", "--bare", remote)
 	gitIn(t, root, "remote", "add", "origin", remote)
 	gitIn(t, root, "push", "-q", "-u", "origin", "HEAD")
-	writeFile(t, filepath.Join(root, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/synced\nlanguage: en\n")
+	writeFile(t, filepath.Join(root, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/synced\nlanguage: en\nverify:\n  mode: off\n")
 	writeFile(t, filepath.Join(root, ".gitignore"), ".sdd/tmp/\n.sdd/config.local.yaml\n.sdd/index/\n.sdd/stats/\n.sdd/sessions/\n.sdd/staged-blobs/\n.sdd/graph/.sdd-runtime/\nxdg-config/\nxdg-cache/\nxdg-state/\n")
 	gitIn(t, root, "add", ".gitignore", ".sdd/config.yaml")
 	gitIn(t, root, "commit", "-q", "-m", "sdd: init")
@@ -196,7 +196,7 @@ func TestConflictingUpstreamIsReportedAndNothingMerged(t *testing.T) {
 func TestServedSessionLeavesTheCodeRepositoryGraph(t *testing.T) {
 	root := syncedProject(t, "auto")
 	branch := strings.TrimSpace(gitIn(t, root, "rev-parse", "--abbrev-ref", "HEAD"))
-	writeFile(t, filepath.Join(root, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/synced\nlanguage: en\ndefault_branch: "+branch+"\n")
+	writeFile(t, filepath.Join(root, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/synced\nlanguage: en\ndefault_branch: "+branch+"\nverify:\n  mode: off\n")
 	gitIn(t, root, "commit", "-q", "-am", "sdd: name the default branch")
 	gitIn(t, root, "push", "-q")
 	t.Chdir(root)

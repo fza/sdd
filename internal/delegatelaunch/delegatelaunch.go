@@ -23,18 +23,18 @@ import (
 // RoundTimeout bounds one launched round.
 const RoundTimeout = 30 * time.Minute
 
-// Fallback asks for the first headless launch of Settings.Agents whose CLI
+// Fallback asks for the first headless runner of Settings.Agents whose CLI
 // is found.
 const Fallback = "fallback"
 
 // Settings is how one project launches its deep verifier.
 type Settings struct {
-	// Launch is claude, codex, custom_driver or Fallback.
-	Launch string
+	// Runner is claude, codex, driver or Fallback.
+	Runner string
 	// Agents are the project's supported_agents, in order, for Fallback.
 	Agents []string
 	Driver model.VerifierDriver
-	// Claude and Codex are the model and effort each headless launch runs
+	// Claude and Codex are the model and effort each headless runner runs
 	// with; empty values leave the CLI's own.
 	Claude model.VerifierAgent
 	Codex  model.VerifierAgent
@@ -56,10 +56,10 @@ type Round struct {
 }
 
 // Launched is what a round reports: the session to resume next round and
-// the launch that ran.
+// the runner that ran.
 type Launched struct {
 	Session string
-	Launch  string
+	Runner  string
 }
 
 // claudeTools are the tools a headless claude verifier may use (V-D18): read,
@@ -69,18 +69,18 @@ var claudeTools = []string{
 	"Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(git blame:*)",
 }
 
-// Resolve names the launch Run runs: settings.Launch, or for Fallback the
+// Resolve names the runner Run runs: settings.Runner, or for Fallback the
 // first agent of settings.Agents whose CLI is found.
 func Resolve(settings Settings) (string, error) {
-	if settings.Launch == Fallback {
+	if settings.Runner == Fallback {
 		return fallback(settings.Agents)
 	}
-	return settings.Launch, nil
+	return settings.Runner, nil
 }
 
 // Run launches one round and waits for it to end.
 func Run(ctx context.Context, settings Settings, round Round) (Launched, error) {
-	launch, err := Resolve(settings)
+	runner, err := Resolve(settings)
 	if err != nil {
 		return Launched{}, err
 	}
@@ -90,23 +90,23 @@ func Run(ctx context.Context, settings Settings, round Round) (Launched, error) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	switch launch {
-	case string(model.VerifierLaunchClaude):
+	switch runner {
+	case string(model.VerifierRunnerClaude):
 		session, err := runClaude(ctx, settings, round)
-		return Launched{Session: session, Launch: launch}, err
-	case string(model.VerifierLaunchCodex):
+		return Launched{Session: session, Runner: runner}, err
+	case string(model.VerifierRunnerCodex):
 		session, err := runCodex(ctx, settings, round)
-		return Launched{Session: session, Launch: launch}, err
-	case string(model.VerifierLaunchCustomDriver):
+		return Launched{Session: session, Runner: runner}, err
+	case string(model.VerifierRunnerDriver):
 		state, err := runDriver(ctx, settings, round)
-		return Launched{Session: state, Launch: launch}, err
+		return Launched{Session: state, Runner: runner}, err
 	}
-	return Launched{}, fmt.Errorf("verify.launch %q is no headless launch", launch)
+	return Launched{}, fmt.Errorf("verify.runner %q is no headless runner", runner)
 }
 
 func fallback(agents []string) (string, error) {
 	for _, agent := range agents {
-		if agent != string(model.VerifierLaunchClaude) && agent != string(model.VerifierLaunchCodex) {
+		if agent != string(model.VerifierRunnerClaude) && agent != string(model.VerifierRunnerCodex) {
 			continue
 		}
 		_, err := exec.LookPath(agent)
@@ -114,7 +114,7 @@ func fallback(agents []string) (string, error) {
 			return agent, nil
 		}
 	}
-	return "", fmt.Errorf("the harness has no subagent tool and no CLI of supported_agents (%s) is on PATH: set verify.launch to a launch this machine can run", strings.Join(agents, ", "))
+	return "", fmt.Errorf("the harness has no subagent tool and no CLI of supported_agents (%s) is on PATH: set verify.runner to a runner this machine can run", strings.Join(agents, ", "))
 }
 
 // mcpConfig is the one MCP server a headless verifier reaches: sdd's own.
@@ -239,7 +239,7 @@ func runCodex(ctx context.Context, settings Settings, round Round) (string, erro
 	return session, nil
 }
 
-// DriverRequest is what a custom driver reads on stdin per round (V-D19).
+// DriverRequest is what a driver reads on stdin per round (V-D19).
 type DriverRequest struct {
 	Round       int    `json:"round"`
 	Session     string `json:"session"`
@@ -250,7 +250,7 @@ type DriverRequest struct {
 
 func runDriver(ctx context.Context, settings Settings, round Round) (string, error) {
 	if settings.Driver.Command == "" {
-		return "", errors.New("verify.launch custom_driver needs verify.driver.command")
+		return "", errors.New("verify.runner driver needs verify.driver.command")
 	}
 	request, err := json.Marshal(DriverRequest{Round: round.Number, Session: round.Session, Instance: round.Instance, Prompt: round.Prompt, DriverState: round.Resume})
 	if err != nil {

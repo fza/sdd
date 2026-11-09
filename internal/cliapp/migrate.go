@@ -34,7 +34,7 @@ func migrateCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "provider",
-				Usage: "LLM provider (claude-cli, anthropic, openai, ollama) — overrides config",
+				Usage: "LLM provider (claude-cli, codex, anthropic, openai, ollama) — overrides config",
 			},
 			&cli.StringFlag{
 				Name:  "model",

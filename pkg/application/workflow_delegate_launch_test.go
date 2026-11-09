@@ -36,7 +36,7 @@ func TestLaunchedRoundRunsInTheBackground(t *testing.T) {
 	launcher := test.NewScriptedLauncher(t, "scripted")
 	f := newDelegateApplication(t, launcher)
 	_, dispatch := f.fork(t)
-	if dispatch.Launch != "scripted" || !strings.Contains(dispatch.Instructions, "launch nothing") || !strings.Contains(dispatch.Instructions, "runs in the background") {
+	if dispatch.Runner != "scripted" || !strings.Contains(dispatch.Instructions, "launch nothing") || !strings.Contains(dispatch.Instructions, "runs in the background") {
 		t.Fatalf("a launched round says sdd launched it in the background, got %+v", dispatch)
 	}
 	round := launcher.NextRound(t)
@@ -60,7 +60,7 @@ func TestLauncherKeepsItsSessionPerChildAndResumesEachRound(t *testing.T) {
 	f.deliverPlan(t, first)
 	f.advance(t, f.parent, f.dispatch, nil)
 	sent := f.advance(t, f.parent, f.dispatch, map[string]any{"chooser": "answer", "choice": "reply", "fields": map[string]any{"brief": "a1"}})
-	if len(sent.Dispatches) != 1 || sent.Dispatches[0].Launch != "scripted" {
+	if len(sent.Dispatches) != 1 || sent.Dispatches[0].Runner != "scripted" {
 		t.Fatalf("sending the next input launches the next round, got %+v", sent.Dispatches)
 	}
 	// The first round's agent still runs after it delivered: the next round

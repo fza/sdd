@@ -23,7 +23,8 @@ func TestVerifyModeLayers(t *testing.T) {
 		verifier  model.VerifierMode
 		refused   string
 	}{
-		{name: "unset stays off", verifier: model.VerifierOff},
+		{name: "unset resolves to prose", enforce: true, verifier: model.VerifierProse},
+		{name: "local below the default is refused", local: "verify:\n  mode: grounding\n", refused: "verify.mode grounding is refused in the machine-local config"},
 		{name: "global grounding", global: model.VerifyGrounding, enforce: true, verifier: model.VerifierOff},
 		{name: "committed wins over global", global: model.VerifyDeep, committed: "verify:\n  mode: off\n", verifier: model.VerifierOff},
 		{name: "local may raise it", committed: "verify:\n  mode: off\n", local: "verify:\n  mode: grounding\n", enforce: true, verifier: model.VerifierOff},
