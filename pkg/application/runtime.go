@@ -41,6 +41,8 @@ type ProjectRuntimeOptions struct {
 	SearchIndex SearchIndexStore
 	LLM         llm.Runner
 	Finalizers  []MutationFinalizer
+	// Events is the project event store; nil leaves the project without one.
+	Events EventStore
 	// Sync runs automatic graph sync before a session acts on a branch and
 	// serves what blocks it; nil leaves branches as they are.
 	Sync GraphSync
