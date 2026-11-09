@@ -212,6 +212,7 @@ func procedureSpecSchema() map[string]any {
 			"goal":        map[string]any{"type": "string"},
 			"serveDelta":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"delegable":   map[string]any{"type": "boolean"},
+			"findings":    map[string]any{"type": "string"},
 		},
 		"required":             []string{"id"},
 		"additionalProperties": false,
