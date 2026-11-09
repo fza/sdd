@@ -443,6 +443,86 @@ func TestInit_RepeatIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestInit_UpgradeFromTopLevelStamps covers an upgrade over installs whose
+// Claude render carries its stamps as top-level frontmatter keys and ships the
+// German vocabulary reference: init reads those stamps, refreshes the unedited
+// SKILL.md with stamps under metadata: without asking, keeps the Codex render
+// current, and prunes the vocabulary reference the bundle no longer ships.
+func TestInit_UpgradeFromTopLevelStamps(t *testing.T) {
+	tmp := t.TempDir()
+	h := initExistingWithAgents(t, tmp, model.AgentClaude, model.AgentCodex)
+
+	bundle, err := bundledskills.Load(model.AgentClaude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	embedded := bundle.Entries[0]
+	if embedded.RelPath != "SKILL.md" {
+		t.Fatalf("expected the bundle to open with SKILL.md, got %s", embedded.RelPath)
+	}
+	hash := model.ComputeSkillHash(embedded.Content)
+	topLevel := strings.Replace(string(embedded.Content), "\n---\n", "\nsdd-content-hash: "+hash+"\nsdd-version: v0.1.0\n---\n", 1)
+	claudeSkill := filepath.Join(tmp, ".claude/skills/sdd/SKILL.md")
+	if err := os.WriteFile(claudeSkill, []byte(topLevel), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vocabularies := []string{
+		filepath.Join(tmp, ".claude/skills/sdd/references/vocabulary-de.md"),
+		filepath.Join(tmp, ".agents/skills/sdd/references/vocabulary-de.md"),
+	}
+	for _, p := range vocabularies {
+		writeStampedOrphan(t, p, "# SDD Vokabular\n")
+	}
+
+	var installed []command.SkillInstallResult
+	var pruned []command.AgentPruneResult
+	if err := h.Init(context.Background(), &command.InitCmd{
+		RepoRoot:             tmp,
+		BinaryVersion:        "v0.2.0",
+		Scope:                model.ScopeProject,
+		OnSkillsInstalled:    func(r command.SkillInstallResult) { installed = append(installed, r) },
+		OnSkillOrphansPruned: func(r command.AgentPruneResult) { pruned = append(pruned, r) },
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	codexSkill := filepath.Join(tmp, ".agents/skills/sdd/SKILL.md")
+	var refreshed, current, modified []string
+	for _, r := range installed {
+		refreshed = append(refreshed, r.Refreshed...)
+		current = append(current, r.Current...)
+		modified = append(modified, r.SkippedModified...)
+		modified = append(modified, r.Overwritten...)
+	}
+	if !slices.Contains(refreshed, claudeSkill) {
+		t.Errorf("unedited top-level-stamped SKILL.md should be refreshed, got refreshed=%v", refreshed)
+	}
+	if len(modified) != 0 {
+		t.Errorf("no file should be treated as modified, got %v", modified)
+	}
+	if !slices.Contains(current, codexSkill) {
+		t.Errorf("codex SKILL.md should stay current, got current=%v", current)
+	}
+
+	data := readFile(t, claudeSkill)
+	sf := model.ParseSkillFile(claudeSkill, data)
+	if sf.StampsTopLevel || sf.StoredHash != hash || sf.StoredVersion != "v0.2.0" {
+		t.Errorf("refreshed SKILL.md should carry fresh stamps under metadata, got version=%q hash=%q topLevel=%v", sf.StoredVersion, sf.StoredHash, sf.StampsTopLevel)
+	}
+	if strings.Contains(string(data), "\nsdd-version:") || strings.Contains(string(data), "\nsdd-content-hash:") {
+		t.Errorf("refreshed SKILL.md still carries a top-level stamp:\n%.400s", data)
+	}
+
+	for _, p := range vocabularies {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("unedited vocabulary reference %s should be pruned, stat err = %v", p, err)
+		}
+	}
+	if len(pruned) != 2 {
+		t.Errorf("expected one orphan-prune callback per agent, got %+v", pruned)
+	}
+}
+
 // TestInit_PostUpgradeRefreshesDriftedPristine simulates a bundle content
 // change across binary versions: an installed file carries a stored hash
 // that matches its own content (user hasn't edited) but differs from the
@@ -460,7 +540,7 @@ func TestInit_PostUpgradeRefreshesDriftedPristine(t *testing.T) {
 
 	oldContent := []byte("---\nname: " + entry.Skill + "\n---\nprior bundle body\n")
 	oldHash := model.ComputeSkillHash(oldContent)
-	oldFile, err := model.RenderSkillFile(model.SkillBundleEntry{Content: oldContent}, model.AgentClaude, "v0.1.0", oldHash)
+	oldFile, err := model.RenderSkillFile(model.SkillBundleEntry{Content: oldContent}, "v0.1.0", oldHash)
 	if err != nil {
 		t.Fatal(err)
 	}

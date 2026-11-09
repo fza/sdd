@@ -3,8 +3,8 @@
 //
 // The source of truth is one neutral template tree under templates/ (files
 // named *.md.tmpl). "claude" is no longer a source directory — it is a render
-// profile: a model.AgentTarget value, the inject helper's per-agent output, and
-// (at install) the frontmatter stamp shape. Load executes the templates for a
+// profile: a model.AgentTarget value and the inject helper's per-agent output.
+// Load executes the templates for a
 // given target; per-agent deviations live in {{ if eq .Agent "..." }}
 // conditionals and the inject helper, never as duplicated files. //go:embed
 // compiles the templates into the binary; sdd init renders + stamps them into
