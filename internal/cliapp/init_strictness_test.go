@@ -77,3 +77,26 @@ func TestInitRefusesALaunchTheProjectDoesNotRun(t *testing.T) {
 		})
 	}
 }
+
+// The strictness is a project setting: an init in the work repository records
+// it in the project's committed config, never in the pointer.
+func TestInitInTheWorkRepositoryRecordsTheProjectsStrictness(t *testing.T) {
+	work, project := workRepository(t)
+	runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	runApp(t, work, "init", "--strictness", "deep", "--verifier-launch", "subagent")
+
+	cfg, err := model.ParseConfig([]byte(readFile(t, filepath.Join(project, ".sdd", "config.yaml"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Grounding.Enforce == nil || !*cfg.Grounding.Enforce || cfg.Verifier.Mode != model.VerifierDeep {
+		t.Fatalf("the project's committed config should carry the pair the answer sets, got enforce %v and mode %q", cfg.Grounding.Enforce, cfg.Verifier.Mode)
+	}
+	if pointer := readFile(t, filepath.Join(work, ".sdd", "config.yaml")); strings.Contains(pointer, "verifier") || strings.Contains(pointer, "grounding") {
+		t.Errorf("the pointer should carry no project setting:\n%s", pointer)
+	}
+	if status := gitIn(t, project, "status", "--porcelain"); status != "" {
+		t.Errorf("the project's strictness should be committed there:\n%s", status)
+	}
+}
