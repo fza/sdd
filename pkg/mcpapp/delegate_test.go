@@ -76,17 +76,18 @@ func TestDelegateDispatchOverTheTransport(t *testing.T) {
 
 	var move mcpserver.ServeResult
 	call(t, client, "start_procedure", map[string]any{"session": door.Session, "canonical": "relay"}, &move)
-	call(t, client, "next", map[string]any{"session": door.Session, "instance": move.Instance,
-		"report": map[string]any{"chooser": "ask", "choice": "delegate", "fields": map[string]any{"goal": "the open gaps"}}}, &move)
-
 	var forked mcpserver.ServeResult
-	call(t, client, "start_procedure", map[string]any{"session": door.Session, "canonical": "relaytask", "parent": move.Instance}, &forked)
+	call(t, client, "next", map[string]any{"session": door.Session, "instance": move.Instance,
+		"report": map[string]any{"chooser": "ask", "choice": "delegate", "fields": map[string]any{"goal": "the open gaps"}}}, &forked)
 	if forked.Session != door.Session || forked.Instance != move.Instance || len(forked.Dispatches) != 1 {
-		t.Fatalf("the dispatch should serve the waiting move with one handoff, got %+v", forked)
+		t.Fatalf("the dispatching answer should serve the waiting move with one handoff, got %+v", forked)
 	}
 	dispatch := forked.Dispatches[0]
-	if dispatch.Session == door.Session || strings.Contains(dispatch.Prompt, door.Session) {
-		t.Fatalf("the handoff carries the child handle alone, got %+v", dispatch)
+	if dispatch.Session == door.Session || strings.Contains(dispatch.Prompt, door.Session) || dispatch.Agent != "sdd_delegate" {
+		t.Fatalf("the handoff carries the child handle alone and names the subagent to launch, got %+v", dispatch)
+	}
+	if message := callExpectError(t, client, "start_procedure", map[string]any{"session": door.Session, "canonical": "relaytask", "parent": move.Instance}); !strings.Contains(message, "never started by hand") {
+		t.Fatalf("a delegating task is never started by hand, got %q", message)
 	}
 
 	var waiting mcpserver.ServeResult

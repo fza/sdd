@@ -179,12 +179,11 @@ func newDelegateApplication(t *testing.T, launcher sdd.DelegateLauncher) *delega
 		t.Fatal(err)
 	}
 	f.dispatch = serve.Instance
-	answer := map[string]any{"chooser": "ask", "choice": "delegate", "fields": map[string]any{"goal": "the capture draft"}}
-	if _, err := workflow.Advance(t.Context(), f.identity, sdd.WorkflowAdvanceRequest{Instance: f.dispatch, Report: answer}); err != nil {
-		t.Fatal(err)
-	}
 	return f
 }
+
+// delegateAnswer is the dispatcher's answer that dispatches the review task.
+var delegateAnswer = map[string]any{"chooser": "ask", "choice": "delegate", "fields": map[string]any{"goal": "the capture draft"}}
 
 // session replays a session afresh, as every MCP call does.
 func (f *delegateFixture) session(t *testing.T, id sdd.SessionID) *sdd.WorkflowSession {
@@ -205,14 +204,16 @@ func (f *delegateFixture) advance(t *testing.T, id sdd.SessionID, instance strin
 	return serve
 }
 
+// fork answers the dispatcher's delegate option, which forks the review task
+// in that call.
 func (f *delegateFixture) fork(t *testing.T) (*sdd.WorkflowServe, *sdd.WorkflowDispatch) {
 	t.Helper()
-	serve, err := f.session(t, f.parent).Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "reviewtask", Parent: f.dispatch})
+	serve, err := f.session(t, f.parent).Advance(t.Context(), f.identity, sdd.WorkflowAdvanceRequest{Instance: f.dispatch, Report: delegateAnswer})
 	if err != nil {
 		t.Fatalf("dispatching the review task: %v", err)
 	}
 	if len(serve.Dispatches) != 1 {
-		t.Fatalf("a fork should owe exactly one dispatch handoff, got %+v", serve.Dispatches)
+		t.Fatalf("the dispatching answer should owe exactly one dispatch handoff, got %+v", serve.Dispatches)
 	}
 	return serve, serve.Dispatches[0]
 }
@@ -375,15 +376,12 @@ func TestImmediateDeliveryReachesTheHeldDispatcher(t *testing.T) {
 		t.Fatal(err)
 	}
 	answer := map[string]any{"chooser": "ask", "choice": "echo", "fields": map[string]any{"goal": "echo me"}}
-	if _, err := workflow.Advance(t.Context(), f.identity, sdd.WorkflowAdvanceRequest{Instance: move.Instance, Report: answer}); err != nil {
-		t.Fatal(err)
-	}
-	forked, err := workflow.Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "echotask", Parent: move.Instance})
+	forked, err := workflow.Advance(t.Context(), f.identity, sdd.WorkflowAdvanceRequest{Instance: move.Instance, Report: answer})
 	if err != nil {
 		t.Fatalf("dispatching the echo task: %v", err)
 	}
-	if strings.Contains(strings.Join(forked.Diagnostics, "\n"), "waiting for the delegate") {
-		t.Fatalf("a delivery made while forking should land in the dispatching session the call holds, got %v", forked.Diagnostics)
+	if forked.Status != "completed" {
+		t.Fatalf("a delivery made while forking should land in the dispatching session the answering call holds and be picked up there, got %s at %s", forked.Status, forked.Step)
 	}
 	if err := workflow.RecordServed(t.Context(), f.identity, []string{"served-after-fork"}); err != nil {
 		t.Fatalf("the held dispatching session should stay writable after the fork: %v", err)
@@ -393,10 +391,10 @@ func TestImmediateDeliveryReachesTheHeldDispatcher(t *testing.T) {
 	}
 }
 
-func TestDelegateStartsInTheDispatchersProject(t *testing.T) {
+func TestDelegateIsNeverStartedByHand(t *testing.T) {
 	f := newDelegateApplication(t, nil)
-	_, err := f.session(t, f.parent).Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "reviewtask", Parent: f.dispatch, Project: "elsewhere"})
-	if err == nil || !strings.Contains(err.Error(), "a delegate works in the project of the move that dispatches it") {
-		t.Fatalf("a delegate pinned to another project should be refused, got %v", err)
+	_, err := f.session(t, f.parent).Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "reviewtask", Parent: f.dispatch})
+	if err == nil || !strings.Contains(err.Error(), "reviewtask runs as a delegate: answering the option whose dispatch names it forks it") {
+		t.Fatalf("starting a delegating task by hand should be refused, got %v", err)
 	}
 }

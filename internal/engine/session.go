@@ -978,7 +978,14 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	if err := s.cascade(inst); err != nil {
 		return nil, err
 	}
-	return s.serve(inst)
+	sv, err := s.serve(inst)
+	if err != nil {
+		return nil, err
+	}
+	if opt.Dispatch != nil {
+		sv.Dispatches = opt.Dispatch.Procedure
+	}
+	return sv, nil
 }
 
 // Serve re-serves the instance's current position without advancing it —

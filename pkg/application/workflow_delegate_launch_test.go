@@ -113,7 +113,7 @@ func TestServedBlocksRecordAfterALaunchedRoundDelivered(t *testing.T) {
 	launcher := test.NewScriptedLauncher(t, "scripted")
 	f := newDelegateApplication(t, launcher)
 	workflow := f.session(t, f.parent)
-	forked, err := workflow.Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "reviewtask", Parent: f.dispatch})
+	forked, err := workflow.Advance(t.Context(), f.identity, sdd.WorkflowAdvanceRequest{Instance: f.dispatch, Report: delegateAnswer})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"sync"
 	"time"
 
@@ -177,14 +176,29 @@ func (a *Application) loadLinked(ctx context.Context, identity RequestIdentity, 
 	return linked, "", err
 }
 
+// forkOnAnswer forks the delegate a chooser answer dispatches, in the call
+// that answers, so that call's serve carries the dispatch handoff
+// (20260829-122157-d-cpt-zpe). A dispatched procedure that is no delivering
+// task forks nothing.
+func (w *WorkflowSession) forkOnAnswer(ctx context.Context, identity RequestIdentity, parent, procedure string) (*WorkflowDispatch, error) {
+	if procedure == "" {
+		return nil, nil
+	}
+	spec, err := w.loadProcedure(procedure)
+	if err != nil {
+		return nil, err
+	}
+	if !startsDelegate(spec) {
+		return nil, nil
+	}
+	return w.forkDelegate(ctx, identity, spec, parent)
+}
+
 // forkDelegate starts a delivering task in its own child session: the fork is
 // recorded on the dispatching instance first, so the child's first delivery
 // finds it, then the child starts with the dispatch's seed under the
 // dispatching session's branch binding and project target.
-func (w *WorkflowSession) forkDelegate(ctx context.Context, identity RequestIdentity, spec *engine.Spec, request WorkflowStartRequest, parent string) (*WorkflowServe, error) {
-	if request.Project != "" && request.Project != w.instanceProject(parent) {
-		return nil, fmt.Errorf("a delegate works in the project of the move that dispatches it; %s targets %s", parent, w.instanceProject(parent))
-	}
+func (w *WorkflowSession) forkDelegate(ctx context.Context, identity RequestIdentity, spec *engine.Spec, parent string) (*WorkflowDispatch, error) {
 	if spec.Canonical == verifyProcedure {
 		// A capture's exchange has one verify delegate: a new exchange's
 		// delegate replaces the one an earlier exchange left waiting.
@@ -231,28 +245,15 @@ func (w *WorkflowSession) forkDelegate(ctx context.Context, identity RequestIden
 	if err != nil {
 		return nil, errors.Join(codedRefusal(err), w.app.endDelegate(ctx, identity, childID, "the fork was refused"))
 	}
-	params := maps.Clone(seed)
-	if params == nil {
-		params = map[string]any{}
-	}
-	maps.Copy(params, request.Params)
 	child.task = link.Instance
 	if project := w.instanceProject(parent); project != w.project {
 		child.startProject = project
 	}
-	if _, err := child.session.Start(spec, params, ""); err != nil {
+	if _, err := child.session.Start(spec, seed, ""); err != nil {
 		reason := "the delegate failed to start: " + err.Error()
 		return nil, errors.Join(err, w.session.EndFork(parent, link, reason), w.app.endDelegate(ctx, identity, childID, reason))
 	}
 	if err := child.session.SinkErr(); err != nil {
-		return nil, err
-	}
-	serve, err := w.session.Serve(parent)
-	if err != nil {
-		return nil, err
-	}
-	result, err := w.publicServe(serve)
-	if err != nil {
 		return nil, err
 	}
 	dispatch, err := w.dispatchFor(ctx, identity, parent, link, spec.Canonical, true)
@@ -261,8 +262,7 @@ func (w *WorkflowSession) forkDelegate(ctx context.Context, identity RequestIden
 		reason := "the delegate's launch failed: " + err.Error()
 		return nil, errors.Join(err, w.session.EndFork(parent, link, reason), w.app.endDelegate(ctx, identity, childID, reason))
 	}
-	result.Dispatches = append(result.Dispatches, dispatch)
-	return result, nil
+	return dispatch, nil
 }
 
 // dispatchFor composes the dispatch handoff for a child that has a round to

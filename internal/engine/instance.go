@@ -172,6 +172,10 @@ type Serve struct {
 	// Cancellation is the current cancellation this serve lands, rendered as
 	// its own lane; nil on every other serve.
 	Cancellation *CancellationServe
+	// Dispatches names the procedure the chooser answer this serve follows
+	// dispatches, so the shell forks a delegating task in the answering call
+	// (20260829-122157-d-cpt-zpe); empty on every other serve.
+	Dispatches string
 }
 
 // ServeLane is defined in pkg/application/types — the exported surface names

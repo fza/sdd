@@ -686,3 +686,31 @@ func TestForksListEndedForksBesideLiveOnes(t *testing.T) {
 		t.Fatalf("an ended fork should stay listed, no longer live, got %+v", forks)
 	}
 }
+
+// The answer to a dispatching option names the procedure it dispatches, so the
+// shell forks the delegate in the answering call; no other serve names one.
+func TestAnswerServeNamesTheProcedureItDispatches(t *testing.T) {
+	spec := delegateSpec(t, "dispatcher", "move", dispatcherMachine)
+	sess := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_parent", "tester", nopSink{})
+	sv, err := sess.Start(spec, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Dispatches != "" {
+		t.Fatalf("a start dispatches nothing, got %q", sv.Dispatches)
+	}
+	answered, err := sess.Answer(sv.Instance, "ask", "delegate", map[string]any{"goal": "g"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answered.Dispatches != "reviewtask" {
+		t.Fatalf("the dispatching answer should name its procedure, got %q", answered.Dispatches)
+	}
+	again, err := sess.Serve(sv.Instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Dispatches != "" {
+		t.Fatalf("a re-serve dispatches nothing, got %q", again.Dispatches)
+	}
+}

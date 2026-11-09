@@ -49,22 +49,21 @@ func confirmedDeepCapture(t *testing.T, session *proctest.Session, draft map[str
 	return instance, session.Answer(t, instance, "playback", "confirm", nil, "write it")
 }
 
-// dispatchDeep answers the dispatch and starts the verify delegate.
+// dispatchDeep answers the dispatch, which forks the verify delegate.
 func dispatchDeep(t *testing.T, world *proctest.World, session *proctest.Session, instance string) *deepExchange {
 	t.Helper()
 	serve := session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
 	proctest.RequireStep(t, serve, "deepLaunch")
-	forked := session.StartChild(t, "verify", nil, instance)
-	if len(forked.Dispatches) != 1 {
-		t.Fatalf("starting the verify procedure should owe one dispatch, got %+v", forked.Dispatches)
+	if len(serve.Dispatches) != 1 {
+		t.Fatalf("the dispatching answer should owe one dispatch, got %+v", serve.Dispatches)
 	}
-	x := &deepExchange{world: world, session: session, instance: instance, dispatch: forked.Dispatches[0]}
+	x := &deepExchange{world: world, session: session, instance: instance, dispatch: serve.Dispatches[0]}
 	x.delegate = world.Delegate(t, x.dispatch)
 	x.child = x.dispatch.Instance
 	return x
 }
 
-// startDeep reaches the dispatch and starts the verify delegate.
+// startDeep reaches the dispatch and answers it, forking the verify delegate.
 func startDeep(t *testing.T, world *proctest.World, session *proctest.Session, draft map[string]any) *deepExchange {
 	t.Helper()
 	instance, serve := confirmedDeepCapture(t, session, draft)
@@ -387,8 +386,7 @@ func TestCaptureDeep_NoSubagentFallsBackToAHeadlessLaunch(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-fallback", sdd.VerifierPolicy{}, proctest.WithDelegateLauncher(launcher))
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
-	session.Answer(t, instance, "deepDispatch", "noSubagent", nil, "")
-	forked := session.StartChild(t, "verify", nil, instance)
+	forked := session.Answer(t, instance, "deepDispatch", "noSubagent", nil, "")
 	launches := launcher.Launches()
 	if len(launches) != 1 || launches[0].Launch != sdd.DelegateLaunchFallback || launches[0].Project != "proctest" {
 		t.Fatalf("a harness without a subagent tool should get the headless fallback, got %+v", launches)
@@ -411,8 +409,7 @@ func TestCaptureDeep_ConfiguredHeadlessLaunchRunsThroughSdd(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-headless", sdd.VerifierPolicy{Launch: "codex"}, proctest.WithDelegateLauncher(launcher))
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
-	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
-	forked := session.StartChild(t, "verify", nil, instance)
+	forked := session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
 	if launches := launcher.Launches(); len(launches) != 1 || launches[0].Launch != "codex" {
 		t.Fatalf("a configured headless launch should go to sdd's launcher, got %+v", launches)
 	}
@@ -462,8 +459,7 @@ func TestCaptureDeep_FailedRoundEndsItsDelegateAndRetries(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-launch-failed", sdd.VerifierPolicy{Launch: "codex"}, proctest.WithDelegateLauncher(launcher))
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
-	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
-	failed := session.StartChild(t, "verify", nil, instance).Dispatches[0].Session
+	failed := session.Answer(t, instance, "deepDispatch", "delegate", nil, "").Dispatches[0].Session
 	launcher.NextRound(t).Finish("", errors.New("codex failed: exit status 1: not logged in"))
 	var err error
 	test.Eventually(t, "the failed round reaching the capture", func() bool {
@@ -487,7 +483,6 @@ func TestCaptureDeep_FailedRoundEndsItsDelegateAndRetries(t *testing.T) {
 	serve = session.Answer(t, instance, "deepFailed", "retry", nil, "try again")
 	proctest.RequireStep(t, serve, "deepDispatch")
 	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
-	session.StartChild(t, "verify", nil, instance)
 	driveRound(t, world, launcher.NextRound(t))
 	session.Refresh(t)
 	serve = session.Answer(t, instance, "deepLaunch", "started", nil, "")
@@ -498,8 +493,7 @@ func TestCaptureDeep_HeadlessLaunchWithoutALauncherIsRefused(t *testing.T) {
 	_, session := newDeepWorld(t, "deep-no-launcher", sdd.VerifierPolicy{Launch: "claude"})
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
-	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
-	_, err := session.StartChildErr(t, "verify", nil, instance)
+	_, err := session.AnswerErr(t, instance, "deepDispatch", "delegate", nil, "")
 	if err == nil || !strings.Contains(err.Error(), "verifier.launch claude needs sdd to launch the delegate") {
 		t.Fatalf("a headless launch on a server that launches nothing should be refused naming the key, got %v", err)
 	}
@@ -544,13 +538,18 @@ func TestCaptureDeep_EveryContestedFindingGetsAResponse(t *testing.T) {
 	}
 }
 
+// A dispatching answer whose fork failed still stands: started is refused
+// until a delegate was dispatched, so the drafter reports the failure.
 func TestCaptureDeep_StartedNeedsADispatchedDelegate(t *testing.T) {
-	_, session := newDeepWorld(t, "deep-no-fork", sdd.VerifierPolicy{})
+	_, session := newDeepWorld(t, "deep-no-fork", sdd.VerifierPolicy{Launch: "claude"})
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
-	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
+	if _, err := session.AnswerErr(t, instance, "deepDispatch", "delegate", nil, ""); err == nil {
+		t.Fatal("a headless launch without a launcher should fail the dispatching answer")
+	}
+	session.Refresh(t)
 	_, err := session.AnswerErr(t, instance, "deepLaunch", "started", nil, "")
-	if err == nil || !strings.Contains(err.Error(), "no verify delegate was dispatched for this exchange yet") {
+	if err == nil || !strings.Contains(err.Error(), "no verify delegate was dispatched for this exchange") {
 		t.Fatalf("started without a dispatched delegate should be refused, got %v", err)
 	}
 }

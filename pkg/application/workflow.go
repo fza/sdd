@@ -601,7 +601,7 @@ func (w *WorkflowSession) Start(ctx context.Context, identity RequestIdentity, r
 		parent = w.shell
 	}
 	if startsDelegate(spec) {
-		return w.forkDelegate(ctx, identity, spec, request, parent)
+		return nil, fmt.Errorf("%s runs as a delegate: answering the option whose dispatch names it forks it, so it is never started by hand", spec.Canonical)
 	}
 	// The target is settled before the instance exists, so a project the
 	// session may not work in refuses the start rather than leaving an
@@ -699,6 +699,18 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	if err := w.session.SinkErr(); err != nil {
 		return nil, err
 	}
+	exchanged := len(w.session.Exchange(request.Instance))
+	forked, err := w.forkOnAnswer(ctx, identity, request.Instance, serve.Dispatches)
+	if err != nil {
+		return nil, err
+	}
+	if forked != nil && len(w.session.Exchange(request.Instance)) > exchanged {
+		// The delegate delivered while it was forked: this call picks it up.
+		serve, err = w.session.Poll(request.Instance)
+		if err != nil {
+			return w.operationOutcome(err)
+		}
+	}
 	if err := w.concludeEndedForks(ctx, identity); err != nil {
 		return nil, err
 	}
@@ -707,6 +719,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 		return nil, err
 	}
 	result.Dispatches, err = w.filledDispatches(ctx, identity)
+	if forked != nil {
+		result.Dispatches = append([]*WorkflowDispatch{forked}, result.Dispatches...)
+	}
 	if err != nil {
 		return result, err
 	}

@@ -226,13 +226,13 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Fn:  func(ctx *engine.Context) error { return ctx.Store.WriteEngine(fieldDeepNoSubagent, true) },
 		},
 		{
-			Doc: engine.FuncDoc{Name: "requireDeepFork", Doc: "Refuses until a verify delegate was dispatched for the exchange prepareDeep opened.", Reads: []string{fieldDeepForkBase}},
+			Doc: engine.FuncDoc{Name: "requireDeepFork", Doc: "Refuses until a verify delegate was dispatched for the exchange prepareDeep opened and did not fail.", Reads: []string{fieldDeepForkBase}},
 			Fn: func(ctx *engine.Context) error {
 				opened, _ := ctx.Store.Get(fieldDeepForkBase)
-				if verifyForks(w.session, ctx.Instance) > deepRoundCount(opened) {
+				if dispatchedVerifier(w.session, ctx.Instance, deepRoundCount(opened)) {
 					return nil
 				}
-				return fmt.Errorf("no verify delegate was dispatched for this exchange yet: start_procedure verify with this instance (%s) as parent first, or report failed", ctx.Instance)
+				return fmt.Errorf("no verify delegate was dispatched for this exchange of %s: answering deepDispatch dispatches it, so report failed with the error that answer returned", ctx.Instance)
 			},
 		},
 		{
@@ -816,6 +816,23 @@ func (w *WorkflowSession) checkVerifyResponses(ctx *engine.Context) error {
 }
 
 // verifyForks counts the verify delegates instance dispatched, live or not.
+// dispatchedVerifier reports whether one of the instance's verify forks after
+// the first opened ones is live or completed: a fork that concluded, its
+// launch or round failed, dispatched nothing.
+func dispatchedVerifier(session *engine.Session, instance string, opened int) bool {
+	seen := 0
+	for _, fork := range session.Forks(instance) {
+		if fork.Procedure != verifyProcedure {
+			continue
+		}
+		seen++
+		if seen > opened && fork.Status != engine.ForkConcluded {
+			return true
+		}
+	}
+	return false
+}
+
 func verifyForks(session *engine.Session, instance string) int {
 	count := 0
 	for _, fork := range session.Forks(instance) {
