@@ -66,6 +66,11 @@ type InitCmd struct {
 	// project to clone, never one to create.
 	SetUpProject bool
 
+	// InheritedSkip is the init.skip of the work repository whose init runs
+	// this one in its project, added to the project's own: a surface the work
+	// repository leaves to itself reaches no repository of that project.
+	InheritedSkip model.InitConfig
+
 	// DefaultBranch is the concrete Git branch persisted for ordinary engine
 	// captures on fresh initialization or when upgrading an older config.
 	DefaultBranch string

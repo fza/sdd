@@ -1765,10 +1765,10 @@ func promptDialogueMode(cmd *cli.Command) (model.DialogueMode, error) {
 	return tui.RunSelect(tui.SelectPrompt[model.DialogueMode]{
 		Reader: cmd.Reader,
 		Writer: cmd.Writer,
-		Header: "Who takes the choices an sdd session puts to you? (↑/↓ to navigate, enter to confirm)",
+		Header: "Who makes the choices during a session? (↑/↓ to navigate, enter to confirm)",
 		Options: []tui.SelectOption[model.DialogueMode]{
-			{Label: string(model.DialogueGuided), Hint: "you confirm entries, pick moves and end sessions", Value: model.DialogueGuided},
-			{Label: string(model.DialogueAutonomous), Hint: "your agent decides, except overriding a failed pre-flight", Value: model.DialogueAutonomous},
+			{Label: string(model.DialogueGuided), Hint: "you confirm each step", Value: model.DialogueGuided},
+			{Label: string(model.DialogueAutonomous), Hint: "your AI decides, asks only when a check fails", Value: model.DialogueAutonomous},
 		},
 	})
 }
@@ -2827,12 +2827,12 @@ func promptStrictness(cmd *cli.Command) (model.Strictness, error) {
 	return tui.RunSelect(tui.SelectPrompt[model.Strictness]{
 		Reader: cmd.Reader,
 		Writer: cmd.Writer,
-		Header: "How strictly should drafts be checked against the graph? (↑/↓ to navigate, enter to confirm)",
+		Header: "How carefully should sdd check a new entry before saving it? (↑/↓ to navigate, enter to confirm)",
 		Options: []tui.SelectOption[model.Strictness]{
-			{Label: string(model.StrictnessOff), Hint: "pre-flight over the draft's refs, as before", Value: model.StrictnessOff},
-			{Label: string(model.StrictnessGrounding), Hint: "the agent reads the graph before every capture", Value: model.StrictnessGrounding},
-			{Label: string(model.StrictnessLight), Hint: "grounding, and pre-flight checks the draft against that reading", Value: model.StrictnessLight},
-			{Label: string(model.StrictnessDeep), Hint: "light, then a tool-using verifier agent exchanges findings with the drafter", Value: model.StrictnessDeep},
+			{Label: string(model.StrictnessOff), Hint: "a quick check of the entry on its own", Value: model.StrictnessOff},
+			{Label: string(model.StrictnessGrounding), Hint: "your AI first reads related entries, no check after", Value: model.StrictnessGrounding},
+			{Label: string(model.StrictnessLight), Hint: "your AI reads related entries, then checks the new one fits", Value: model.StrictnessLight},
+			{Label: string(model.StrictnessDeep), Hint: "like light, and a second AI double-checks it", Value: model.StrictnessDeep},
 		},
 	})
 }
@@ -2841,10 +2841,10 @@ func promptStrictness(cmd *cli.Command) (model.Strictness, error) {
 // offering choices with subagent first as the default.
 func promptVerifierLaunch(cmd *cli.Command, choices []model.VerifierLaunch) (model.VerifierLaunch, error) {
 	hints := map[model.VerifierLaunch]string{
-		model.VerifierLaunchSubagent:     "your agent's harness runs a fresh-context subagent you can watch",
-		model.VerifierLaunchClaude:       "sdd runs a headless claude, read-only, hidden from you",
-		model.VerifierLaunchCodex:        "sdd runs a headless codex in a read-only sandbox, hidden from you",
-		model.VerifierLaunchCustomDriver: "sdd runs the configured verifier.driver each round",
+		model.VerifierLaunchSubagent:     "inside your AI chat, you can watch it",
+		model.VerifierLaunchClaude:       "a separate Claude in the background, hidden",
+		model.VerifierLaunchCodex:        "a separate Codex in the background, hidden",
+		model.VerifierLaunchCustomDriver: "your own program, set up in the config",
 	}
 	options := make([]tui.SelectOption[model.VerifierLaunch], 0, len(choices))
 	for _, choice := range choices {
@@ -2853,7 +2853,7 @@ func promptVerifierLaunch(cmd *cli.Command, choices []model.VerifierLaunch) (mod
 	return tui.RunSelect(tui.SelectPrompt[model.VerifierLaunch]{
 		Reader:  cmd.Reader,
 		Writer:  cmd.Writer,
-		Header:  "How should the deep verifier run? (↑/↓ to navigate, enter to confirm)",
+		Header:  "Where should the second AI run? (↑/↓ to navigate, enter to confirm)",
 		Options: options,
 	})
 }

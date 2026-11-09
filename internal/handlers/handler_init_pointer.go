@@ -83,9 +83,9 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 	if projectCfg == nil {
-		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents)
+		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents, skip)
 	} else {
-		err = h.refreshProject(ctx, cmd, projectRoot, projectCfg)
+		err = h.refreshProject(ctx, cmd, projectRoot, projectCfg, skip)
 	}
 	if err != nil {
 		return err
@@ -145,7 +145,8 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 	if projectGraphDir == "" {
 		projectGraphDir = model.DefaultGraphDir
 	}
-	err = keepIgnoreFiles(cmd, "", []string{projectGraphDir}, &touched)
+	// The default dir covers the lines written while this repository still held its graph.
+	err = keepIgnoreFiles(cmd, "", []string{projectGraphDir, model.DefaultGraphDir}, &touched)
 	if err != nil {
 		return err
 	}

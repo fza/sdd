@@ -36,6 +36,17 @@ func (c InitConfig) Skips(surface InitSurface) bool {
 	return slices.Contains(c.Skip, surface)
 }
 
+// With returns c skipping every surface other skips as well.
+func (c InitConfig) With(other InitConfig) InitConfig {
+	merged := slices.Clone(c.Skip)
+	for _, surface := range other.Skip {
+		if !slices.Contains(merged, surface) {
+			merged = append(merged, surface)
+		}
+	}
+	return InitConfig{Skip: merged}
+}
+
 const committedOnlyReason = "only the committed .sdd/config.yaml may set it"
 
 // IgnoredInitSettings returns what sdd reads past in one layer's init block:
