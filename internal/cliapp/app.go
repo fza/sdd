@@ -1429,10 +1429,10 @@ func promptDialogueMode(cmd *cli.Command) (model.DialogueMode, error) {
 	return tui.RunSelect(tui.SelectPrompt[model.DialogueMode]{
 		Reader: cmd.Reader,
 		Writer: cmd.Writer,
-		Header: "Who takes the choices an sdd session puts to you? (↑/↓ to navigate, enter to confirm)",
+		Header: "Who makes the choices during a session? (↑/↓ to navigate, enter to confirm)",
 		Options: []tui.SelectOption[model.DialogueMode]{
-			{Label: string(model.DialogueGuided), Hint: "you confirm entries, pick moves and end sessions", Value: model.DialogueGuided},
-			{Label: string(model.DialogueAutonomous), Hint: "your agent decides, except overriding a failed pre-flight", Value: model.DialogueAutonomous},
+			{Label: string(model.DialogueGuided), Hint: "you confirm each step", Value: model.DialogueGuided},
+			{Label: string(model.DialogueAutonomous), Hint: "your AI decides, asks only when a check fails", Value: model.DialogueAutonomous},
 		},
 	})
 }
