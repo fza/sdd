@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/networkteam/sdd/internal/git"
 	app "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -76,7 +77,7 @@ func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation
 	}
 	if len(added) > 0 {
 		addArgs := append([]string{"-C", f.Checkout, "add", "--all", "--"}, added...)
-		if out, err := exec.CommandContext(ctx, "git", addArgs...).CombinedOutput(); err != nil {
+		if out, err := (git.CLI{}).RunPastIndexLock(ctx, addArgs...); err != nil {
 			return fmt.Errorf("git finalizer add: %s (%w)", strings.TrimSpace(string(out)), err)
 		}
 	}
@@ -84,7 +85,7 @@ func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation
 		// A removal may already be staged by an attempt whose commit failed;
 		// --ignore-unmatch keeps the retry from failing on the missing path.
 		rmArgs := append([]string{"-C", f.Checkout, "rm", "--quiet", "--cached", "--ignore-unmatch", "--"}, removed...)
-		if out, err := exec.CommandContext(ctx, "git", rmArgs...).CombinedOutput(); err != nil {
+		if out, err := (git.CLI{}).RunPastIndexLock(ctx, rmArgs...); err != nil {
 			return fmt.Errorf("git finalizer rm: %s (%w)", strings.TrimSpace(string(out)), err)
 		}
 	}
@@ -93,7 +94,7 @@ func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation
 		message = "sdd: apply " + mutation.BatchID
 	}
 	commitArgs := append([]string{"-C", f.Checkout, "commit", "-m", message + "\n\n" + trailer, "--"}, paths...)
-	if out, err := exec.CommandContext(ctx, "git", commitArgs...).CombinedOutput(); err != nil {
+	if out, err := (git.CLI{}).RunPastIndexLock(ctx, commitArgs...); err != nil {
 		return fmt.Errorf("git finalizer commit: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
 	return nil
