@@ -113,7 +113,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		return err
 	}
 	if err := registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes (line-boundary cut, honest notice; the cut's pull is the lane's own layout). A layout of only as-bodies sections is cut at whole bodies instead, naming each withheld entry."},
+		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes (line-boundary cut, honest notice; the cut's pull is the lane's own layout). A layout of only as-bodies sections is cut at whole bodies instead, naming each withheld entry. Injected into a step served over MCP, an entry the consumer already holds in full prints as its pointer (R14)."},
 		ServeSafe: true,
 		Bound: engine.QueryBound{
 			Part: serveview.PartText,
@@ -138,13 +138,25 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if err != nil {
 				return nil, err
 			}
-			w.laneFull = append(w.laneFull, result.FullIDs...)
-			text := presenters.ViewText(result.ViewSections, nil)
+			var repeats *presenters.Repeats
+			if w.framing {
+				w.laneFull = append(w.laneFull, result.FullIDs...)
+			} else {
+				repeats = &presenters.Repeats{Held: w.heldRepeats()}
+			}
+			text := presenters.ViewText(result.ViewSections, repeats)
 			if result.bodiesOnly {
+				if w.cutRepeats && !w.framing {
+					w.stepFull = append(w.stepFull, result.FullIDs...)
+				}
 				// Authored bodies are never split (d-tac-rzi): the view cut them
 				// whole and names what it withheld, so no line cut follows.
 				n := len(text)
 				return truncate.Text{Text: text, Cut: truncate.Cut{KeptBytes: n, TotalBytes: n}}, nil
+			}
+			_, cut := serveview.BoundValue(text, ctx.Cap)
+			if w.cutRepeats && !w.framing && cut == nil {
+				w.stepFull = append(w.stepFull, result.FullIDs...)
 			}
 			return text, nil
 		},

@@ -7,6 +7,7 @@ package proctest_test
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -551,5 +552,50 @@ func TestCaptureDeep_StartedNeedsADispatchedDelegate(t *testing.T) {
 	_, err := session.AnswerErr(t, instance, "deepLaunch", "started", nil, "")
 	if err == nil || !strings.Contains(err.Error(), "no verify delegate was dispatched for this exchange") {
 		t.Fatalf("started without a dispatched delegate should be refused, got %v", err)
+	}
+}
+
+// The reading pages hold what they serve in full once the no-repeat rule is
+// on, as the MCP surface serves them (20261109-004506-d-cpt-udz, R14): page 1
+// hands on the declared target it serves in full, the brief page hands on
+// nothing; with the rule off nothing is handed on.
+func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cut  bool
+	}{
+		{"cuts on", true},
+		{"cuts off", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			world, session := newDeepWorld(t, "deep-hold", sdd.VerifierPolicy{})
+			x := startDeep(t, world, session, captureDraft())
+			workflow, _, err := world.App.ResumeWorkflow(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: x.dispatch.Session, ClientName: "verifier"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.cut {
+				workflow.CutRepeats()
+			}
+			resumed, err := workflow.ServeAll(t.Context(), world.Identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(resumed.Open[0].Instructions, "Page 1 of 2.") {
+				t.Fatalf("the resume should serve page 1:\n%s", resumed.Open[0].Instructions)
+			}
+			held := workflow.TakeStepFullIDs()
+			if slices.Contains(held, captureRefID) != tc.cut || slices.Contains(held, captureRef2ID) {
+				t.Fatalf("page 1 should hand on the declared target it serves in full, and only with cuts on, got %v", held)
+			}
+			delegate := &proctest.Session{World: world, WF: workflow, ID: x.dispatch.Session}
+			serve := delegate.Answer(t, x.child, "read", "more", nil, "")
+			if !strings.Contains(serve.Instructions, "Page 2 of 2.") {
+				t.Fatalf("the next serve should be page 2:\n%s", serve.Instructions)
+			}
+			if held := workflow.TakeStepFullIDs(); len(held) != 0 {
+				t.Fatalf("the brief page should hand on nothing, got %v", held)
+			}
+		})
 	}
 }
