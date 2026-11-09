@@ -52,6 +52,11 @@ type InitCmd struct {
 	// unless ProjectDir names another (20261029-150854-d-tac-b2f).
 	DialogueMode model.DialogueMode
 
+	// Strictness, when set, records how strictly drafts are checked against
+	// the graph in the committed config.yaml: grounding.enforce and
+	// verifier.mode together (20261109-004729-d-cpt-xs5, V-D28).
+	Strictness model.Strictness
+
 	// SetUpProject allows init to set up a missing project at ProjectDir. Only
 	// a path the caller typed qualifies: a recorded project_dir names a shared
 	// project to clone, never one to create.

@@ -1883,6 +1883,10 @@ func initCmd() *cli.Command {
 				Name:  "dialogue-mode",
 				Usage: "Your dialogue mode, guided or autonomous, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
 			},
+			&cli.StringFlag{
+				Name:  "strictness",
+				Usage: "How strictly drafts are checked against the graph: off, grounding, light or deep, recorded as grounding.enforce and verifier.mode in the committed .sdd/config.yaml (prompted interactively while unset)",
+			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			// `--bump` cannot be honoured from a dev build — fail before
@@ -1999,9 +2003,11 @@ func initCmd() *cli.Command {
 			}
 			recordedParticipant := ""
 			var recordedDialogueMode model.DialogueMode
+			strictnessRecorded := false
 			if existingMerged != nil {
 				recordedParticipant = existingMerged.Participant
 				recordedDialogueMode = existingMerged.Dialogue.Mode
+				strictnessRecorded = existingMerged.Verifier.Mode != "" || existingMerged.Grounding.Enforce != nil
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
 			participantFlag := strings.TrimSpace(cmd.String("participant"))
@@ -2139,6 +2145,20 @@ func initCmd() *cli.Command {
 				}
 			}
 
+			var strictness model.Strictness
+			strictnessFlag := strings.TrimSpace(cmd.String("strictness"))
+			if strictnessFlag != "" {
+				strictness, err = model.ParseStrictness(strictnessFlag)
+				if err != nil {
+					return fmt.Errorf("invalid --strictness: %w", err)
+				}
+			} else if !pointer && !strictnessRecorded && cliout.IsTerminalReader(cmd.Reader) {
+				strictness, err = promptStrictness(cmd)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
+			}
+
 			stableRepoRoot, err := git.StableRepoRoot(repoRoot)
 			if err != nil {
 				return err
@@ -2151,6 +2171,7 @@ func initCmd() *cli.Command {
 				GraphRepo:       graphRepo,
 				SetUpProject:    setUpProject,
 				DialogueMode:    dialogueMode,
+				Strictness:      strictness,
 				DefaultBranch:   defaultBranch,
 				Participant:     participant,
 				LocalConfigPath: localConfigOverride,
@@ -2719,4 +2740,20 @@ func refKindsForUsage() string {
 		parts[i] = string(k)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// promptStrictness asks how strictly drafts are checked against the graph;
+// the one answer sets grounding enforcement and the verifier mode together.
+func promptStrictness(cmd *cli.Command) (model.Strictness, error) {
+	return tui.RunSelect(tui.SelectPrompt[model.Strictness]{
+		Reader: cmd.Reader,
+		Writer: cmd.Writer,
+		Header: "How strictly should drafts be checked against the graph? (↑/↓ to navigate, enter to confirm)",
+		Options: []tui.SelectOption[model.Strictness]{
+			{Label: string(model.StrictnessOff), Hint: "pre-flight over the draft's refs, as before", Value: model.StrictnessOff},
+			{Label: string(model.StrictnessGrounding), Hint: "the agent reads the graph before every capture", Value: model.StrictnessGrounding},
+			{Label: string(model.StrictnessLight), Hint: "grounding, and pre-flight checks the draft against that reading", Value: model.StrictnessLight},
+			{Label: string(model.StrictnessDeep), Hint: "light, then a tool-using verifier agent exchanges findings with the drafter", Value: model.StrictnessDeep},
+		},
+	})
 }
