@@ -928,9 +928,6 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	if err := s.checkSink(); err != nil {
 		return nil, err
 	}
-	if err := s.sendFills(inst, slices.Sorted(maps.Keys(fields))); err != nil {
-		return nil, err
-	}
 	s.clearCancellation(inst.ID)
 	inst.interactionStep = inst.Step
 
@@ -942,6 +939,11 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 		if err := s.runCommand(inst, opt.Call, opt.To); err != nil {
 			return nil, err
 		}
+	}
+	// The option's command judges the answer first, so a refused answer
+	// sends its delegate nothing.
+	if err := s.sendFills(inst, slices.Sorted(maps.Keys(fields))); err != nil {
+		return nil, err
 	}
 	if err := s.transitionTo(inst, opt.To, false); err != nil {
 		return nil, err

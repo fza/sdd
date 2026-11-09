@@ -644,3 +644,16 @@ func (s *Session) startDelegateCheck(spec *Spec) error {
 	}
 	return nil
 }
+
+// Forks lists every fork the instance made, live or not, oldest first.
+func (s *Session) Forks(instanceID string) []Fork {
+	inst, ok := s.instances[instanceID]
+	if !ok {
+		return nil
+	}
+	out := make([]Fork, 0, len(inst.forks))
+	for _, fork := range inst.forks {
+		out = append(out, *fork)
+	}
+	return out
+}

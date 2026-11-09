@@ -45,6 +45,9 @@ const (
 	TypeInvolvementWhen   BaseType = "involvement-when"
 	TypeSearchReplace     BaseType = "search-replace"
 	TypeVerdict           BaseType = "verdict"
+	TypeDeepFinding       BaseType = "deep-finding"
+	TypeDeepAnswer        BaseType = "deep-answer"
+	TypeDeepResponse      BaseType = "deep-response"
 	// TypeProse validates exactly like text; the distinct declaration tells
 	// serve-side rendering to treat changes as content diffs rather than
 	// whole-value re-serves (20260826-120330-d-tac-8f8).
@@ -57,7 +60,7 @@ var baseTypeOrder = []BaseType{
 	TypeText, TypeBool, TypeEntryID, TypeRef, TypeLabel, TypeParticipant,
 	TypeEntryKind, TypeLayer, TypeConfidence, TypeIntent, TypeActorKind, TypeAttachmentHandle,
 	TypeProcedureSpec, TypeFactIndex, TypePreflightFindings, TypeGuideFindings,
-	TypeInvolvement, TypeInvolvementWhen, TypeSearchReplace, TypeVerdict, TypeProse,
+	TypeInvolvement, TypeInvolvementWhen, TypeSearchReplace, TypeVerdict, TypeDeepFinding, TypeDeepAnswer, TypeDeepResponse, TypeProse,
 }
 
 var baseTypes = func() map[BaseType]bool {
@@ -99,6 +102,9 @@ var baseTypeDesc = map[BaseType]string{
 	TypeInvolvementWhen:   "a from/to date range",
 	TypeSearchReplace:     "one exact edit: old text that must match exactly once in the target, and the new text replacing it",
 	TypeVerdict:           "entries a capture's reading set aside instead of referencing, with the code naming why",
+	TypeDeepFinding:       "one finding of the deep draft verifier: the verdict in words, axis, severity, whether only the owner can settle it, pointers into the draft, basis entries, sources, and exact edits over the base draft",
+	TypeDeepAnswer:        "the drafter's answer to one deep finding: its number, accept or contest, and the reason of a contest",
+	TypeDeepResponse:      "the deep verifier's answer to one contested finding: its number, held, conceded, revised or dropped, a note, and the edits it now proposes",
 	TypeProse:             "long-form prose — like text, but serves render changes as content diffs instead of re-serving the whole value",
 }
 
@@ -259,6 +265,15 @@ func validateBaseValue(base BaseType, v any) (any, error) {
 			return nil, fmt.Errorf("new must be a string (empty deletes the old text)")
 		}
 		return m, nil
+
+	case TypeDeepFinding:
+		return deepValue(v, model.DeepFinding.Validate)
+
+	case TypeDeepAnswer:
+		return deepValue(v, model.DeepAnswer.Validate)
+
+	case TypeDeepResponse:
+		return deepValue(v, model.DeepResponse.Validate)
 
 	case TypeVerdict:
 		return verdictFromValue(v)
@@ -635,4 +650,31 @@ func actorKindAlternatives() string {
 		names = append(names, string(v))
 	}
 	return strings.Join(names, "|")
+}
+
+// deepValue decodes a deep exchange object strictly into its model type,
+// validates it there, and keeps the normalized object form.
+func deepValue[T any](v any, validate func(T) error) (map[string]any, error) {
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(encoded)))
+	decoder.DisallowUnknownFields()
+	var typed T
+	err = decoder.Decode(&typed)
+	if err != nil {
+		return nil, fmt.Errorf("expected %T object: %w", typed, err)
+	}
+	err = validate(typed)
+	if err != nil {
+		return nil, err
+	}
+	normalized, err := json.Marshal(typed)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	err = json.Unmarshal(normalized, &out)
+	return out, err
 }

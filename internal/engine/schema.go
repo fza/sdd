@@ -312,6 +312,12 @@ func schemaForType(t VarType, desc string) map[string]any {
 			"required":             []string{"old", "new"},
 			"additionalProperties": false,
 		}
+	case TypeDeepFinding:
+		schema = deepFindingSchema()
+	case TypeDeepAnswer:
+		schema = deepAnswerSchema()
+	case TypeDeepResponse:
+		schema = deepResponseSchema()
 	case TypeVerdict:
 		codes := model.GroundingVerdictCodes()
 		enum := make([]any, 0, len(codes))
@@ -412,6 +418,86 @@ func involvementWhenSchema() map[string]any {
 			"to":   map[string]any{"type": "string", "pattern": `^\d{4}-\d{2}-\d{2}$`},
 		},
 		"minProperties":        1,
+		"additionalProperties": false,
+	}
+}
+
+func deepEditsSchema() map[string]any {
+	return map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"old": map[string]any{"type": "string", "minLength": 1, "description": "exact text of the base draft document, matching it exactly once"},
+				"new": map[string]any{"type": "string", "description": "replacement text; empty deletes the old text"},
+			},
+			"required":             []string{"old", "new"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func enumOf(values []string) []any {
+	out := make([]any, 0, len(values))
+	for _, v := range values {
+		out = append(out, v)
+	}
+	return out
+}
+
+func deepFindingSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"verdict":  map[string]any{"type": "string", "minLength": 1, "description": "what is wrong, in words, reasoning first"},
+			"axis":     map[string]any{"type": "string", "enum": enumOf(model.DeepAxes())},
+			"severity": map[string]any{"type": "string", "enum": []any{"high", "medium", "low"}},
+			"owner":    map[string]any{"type": "boolean", "description": "true when only the user can settle it; such a finding carries no edits"},
+			"pointers": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"field": map[string]any{"type": "string", "description": "the draft field the finding judges"},
+						"quote": map[string]any{"type": "string", "description": "exact draft words"},
+						"id":    map[string]any{"type": "string", "pattern": entryIDSchemaPattern},
+					},
+					"required":             []string{"field"},
+					"additionalProperties": false,
+				},
+			},
+			"basis":   map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": entryIDSchemaPattern}},
+			"sources": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "files, commits or URLs an evidence finding cites"},
+			"edits":   deepEditsSchema(),
+		},
+		"required":             []string{"verdict", "axis", "severity"},
+		"additionalProperties": false,
+	}
+}
+
+func deepAnswerSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"target":  map[string]any{"type": "string", "pattern": "^f[1-9][0-9]*$"},
+			"verdict": map[string]any{"type": "string", "enum": []any{"accept", "contest"}},
+			"reason":  map[string]any{"type": "string", "description": "why the finding does not hold; required on a contest"},
+		},
+		"required":             []string{"target", "verdict"},
+		"additionalProperties": false,
+	}
+}
+
+func deepResponseSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"target":  map[string]any{"type": "string", "pattern": "^f[1-9][0-9]*$"},
+			"outcome": map[string]any{"type": "string", "enum": []any{model.DeepHeld, model.DeepConceded, model.DeepRevised, model.DeepDropped}},
+			"note":    map[string]any{"type": "string", "description": "why; required except on a revision"},
+			"edits":   deepEditsSchema(),
+		},
+		"required":             []string{"target", "outcome"},
 		"additionalProperties": false,
 	}
 }

@@ -602,3 +602,87 @@ func TestEndedForkRefusesTheDelegatesDelivery(t *testing.T) {
 		t.Fatal("an ended fork's delivery must not land")
 	}
 }
+
+// An option's command checks the answer before its send-mapped fields leave:
+// a refused answer sends nothing, so a delegate never works an answer the
+// dispatching move would not accept.
+func TestRefusedOptionCommandWithholdsTheSend(t *testing.T) {
+	registry := engine.NewRegistry()
+	err := registry.RegisterCommand(engine.Command{
+		Doc: engine.FuncDoc{Name: "checkBrief", Doc: "Refuses a brief that answers no finding.", Reads: []string{"brief"}},
+		Fn: func(ctx *engine.Context) error {
+			brief, _ := ctx.Store.Get("brief")
+			if text, _ := brief.(string); !strings.HasPrefix(text, "a1") {
+				return errors.New("the brief answers no finding")
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine := strings.Replace(dispatcherMachine, "{choice: reply, collect: [brief], to: wait}", "{choice: reply, collect: [brief], call: checkBrief, to: wait}", 1)
+	parentSpec, err := engine.LoadSpec(delegateEntry(t, "dispatcher", "move", machine), registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childSpec := delegateSpec(t, "reviewtask", "task", reviewTaskMachine)
+	courier := &sessionCourier{sessions: map[string]*engine.Session{}}
+	eng := engine.New(registry, engine.StaticGraphs{Graph: model.NewGraph(nil)})
+	parent := eng.NewSession("s_parent", "tester", &recordingSink{}, engine.WithCourier(courier))
+	courier.sessions["s_parent"] = parent
+	sv, err := parent.Start(parentSpec, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parent.Answer(sv.Instance, "ask", "delegate", map[string]any{"goal": "check the draft"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	child := eng.NewSession("s_child", "tester", &recordingSink{}, engine.WithLineage(engine.Link{Session: "s_parent", Instance: sv.Instance}), engine.WithCourier(courier))
+	courier.sessions["s_child"] = child
+	childInst := child.NextInstanceID()
+	seed, err := parent.Fork(sv.Instance, engine.Link{Session: "s_child", Instance: childInst}, childSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := child.Start(childSpec, seed, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := child.Report(childInst, map[string]any{"plan": "f1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parent.Poll(sv.Instance); err != nil {
+		t.Fatal(err)
+	}
+	_, err = parent.Answer(sv.Instance, "answer", "reply", map[string]any{"brief": "nothing"}, "")
+	if err == nil {
+		t.Fatal("the command should refuse the answer")
+	}
+	if len(courier.carried) != 1 {
+		t.Fatalf("a refused answer should send nothing, carried %d deliveries", len(courier.carried))
+	}
+	if _, err := parent.Answer(sv.Instance, "answer", "reply", map[string]any{"brief": "a1: the capture step"}, ""); err != nil {
+		t.Fatalf("an accepted answer: %v", err)
+	}
+	next, err := child.Poll(childInst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, _ := child.Instance(childInst)
+	if contract, _ := inst.Store.Get("contract"); next.Step != "respond" || contract != "a1: the capture step" {
+		t.Fatalf("the accepted answer should reach the child, child at %s holding %v", next.Step, contract)
+	}
+}
+
+func TestForksListEndedForksBesideLiveOnes(t *testing.T) {
+	f := newExchange(t)
+	if forks := f.parent.Forks(f.parentInst); len(forks) != 1 || forks[0].Status != engine.ForkLive || forks[0].Procedure != "reviewtask" {
+		t.Fatalf("the dispatching instance should list its live fork, got %+v", forks)
+	}
+	if err := f.parent.EndFork(f.parentInst, engine.Link{Session: "s_child", Instance: f.childInst}, "replaced"); err != nil {
+		t.Fatal(err)
+	}
+	if forks := f.parent.Forks(f.parentInst); len(forks) != 1 || forks[0].Status != engine.ForkConcluded || len(f.parent.LiveForks()) != 0 {
+		t.Fatalf("an ended fork should stay listed, no longer live, got %+v", forks)
+	}
+}
