@@ -80,9 +80,22 @@ func ReadConfig(sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
 // file exists — with global settings present, a repo without config files
 // still resolves to them.
 func ResolveConfig(global model.BaseConfig, sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
-	fileCfg, err := ReadConfig(sddDir, localConfigPath)
+	committed, local, err := ReadConfigLayers(sddDir, localConfigPath)
 	if err != nil {
 		return nil, err
+	}
+	files := map[model.ConfigValueSource]string{
+		model.ConfigSourceGlobal:  "the user-global config",
+		model.ConfigSourceProject: filepath.Join(sddDir, "config.yaml"),
+		model.ConfigSourceLocal:   LocalConfigPath(sddDir, localConfigPath),
+	}
+	err = model.CheckVerifierLayers(global, committed, local, files)
+	if err != nil {
+		return nil, err
+	}
+	var fileCfg *model.PerRepoConfig
+	if committed != nil || local != nil {
+		fileCfg = model.MergeConfig(committed, local)
 	}
 	if fileCfg == nil {
 		if global.IsZero() {

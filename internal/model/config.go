@@ -99,6 +99,9 @@ type BaseConfig struct {
 	// Grounding makes captures read the graph before they are written
 	// (20261109-004506-d-cpt-udz); off unless a layer sets enforce.
 	Grounding GroundingConfig `yaml:"grounding,omitempty"`
+	// Verifier checks every capture draft against its grounding reading
+	// before the write (20261109-004729-d-cpt-xs5); off unless a layer sets it.
+	Verifier VerifierConfig `yaml:"verifier,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
 	// set once in the user-global config; a per-repo override covers a
@@ -463,6 +466,10 @@ type LLMConfig struct {
 	// included. Unset means DefaultLLMMaxTokens; 0 sends no cap, leaving the
 	// model's own output limit in force where the provider allows that.
 	MaxTokens *int `yaml:"max_tokens,omitempty"`
+	// ContextTokens is the model's context window in tokens, which sizes the
+	// light verifier's pre-flight calls (20261109-004729-d-cpt-xs5). Zero means
+	// the window the provider reports.
+	ContextTokens int `yaml:"context_tokens,omitempty"`
 	// Concurrency bounds the worker pool for batch operations. Zero means
 	// "use DefaultLLMConcurrency".
 	Concurrency int `yaml:"concurrency,omitempty"`
@@ -616,6 +623,7 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	}
 	out.Connected = mergeConnectedConfig(base.Connected, overlay.Connected)
 	out.Grounding = mergeGroundingConfig(base.Grounding, overlay.Grounding)
+	out.Verifier = mergeVerifierConfig(base.Verifier, overlay.Verifier)
 	return out
 }
 
@@ -746,6 +754,9 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 	}
 	if overlay.MaxTokens != nil {
 		out.MaxTokens = overlay.MaxTokens
+	}
+	if overlay.ContextTokens != 0 {
+		out.ContextTokens = overlay.ContextTokens
 	}
 	if overlay.Concurrency != 0 {
 		out.Concurrency = overlay.Concurrency

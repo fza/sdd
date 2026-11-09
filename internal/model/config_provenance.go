@@ -40,6 +40,8 @@ var configDefaults = map[string]string{
 	"sync.cooldown":       DefaultSyncCooldown,
 	"sync.mode":           string(SyncModeManual),
 	"dialogue.mode":       string(DialogueGuided),
+	"verifier.mode":       string(VerifierOff),
+	"verifier.skip":       string(VerifierSkipFailure),
 
 	"sync.default.fetch_cooldown":                 DefaultGitFetchCooldown.String(),
 	"sync.default.push_cooldown":                  DefaultGitPushCooldown.String(),
