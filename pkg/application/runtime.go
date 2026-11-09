@@ -162,27 +162,24 @@ func (r *ProjectRuntime) syncGraph(ctx context.Context, branch string, trigger S
 	}
 }
 
-// backfillTitles starts the title backfill of branch's graph in the
-// background, the base branch when empty: the caller is served without
-// waiting for it. Its failures reach the sync notice through the record; only
-// a failure to run it at all is logged.
+// backfillTitles runs the title backfill of branch's graph, the base branch
+// when empty. It outlives ctx: a backfill commits, and a commit cut short
+// leaves the repository locked. Its failures reach the sync notice through
+// the record; only a failure to run it at all is logged.
 func (r *ProjectRuntime) backfillTitles(ctx context.Context, branch string, trigger SyncTrigger) {
 	if r.options.Sync == nil {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titleBackfillTimeout)
+	defer cancel()
 	branch, ok := r.syncBranch(ctx, branch)
 	if !ok {
 		return
 	}
-	ctx = context.WithoutCancel(ctx)
-	go func() {
-		ctx, cancel := context.WithTimeout(ctx, titleBackfillTimeout)
-		defer cancel()
-		err := r.options.Sync.BackfillTitles(ctx, branch, trigger, r.options.LLM)
-		if err != nil {
-			slogutils.FromContext(ctx).Warn(fmt.Sprintf("title backfill: %v", err), "branch", branch)
-		}
-	}()
+	err := r.options.Sync.BackfillTitles(ctx, branch, trigger, r.options.LLM)
+	if err != nil {
+		slogutils.FromContext(ctx).Warn(fmt.Sprintf("title backfill: %v", err), "branch", branch)
+	}
 }
 
 // syncNotice returns the blocked-sync notice of branch's graph repository

@@ -100,7 +100,9 @@ func (f *appFixture) serve(t *testing.T, check func(*mcp.ClientSession)) {
 	t.Helper()
 	serverInput, clientOutput := io.Pipe()
 	clientInput, serverOutput := io.Pipe()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	// No deadline bounds the serve: it runs until the client disconnects, and
+	// each call of check waits on its own response.
+	ctx, cancel := context.WithCancel(t.Context())
 	var stderr bytes.Buffer
 	command := f.command(serverInput, serverOutput, &stderr)
 	done := make(chan struct{})
@@ -139,7 +141,7 @@ func (f *appFixture) serve(t *testing.T, check func(*mcp.ClientSession)) {
 		if runErr != nil {
 			t.Fatalf("CLI Run after MCP disconnect: %v\n%s", runErr, stderr.String())
 		}
-	case <-ctx.Done():
+	case <-time.After(10 * time.Second):
 		t.Fatal("CLI Run did not return after MCP disconnect")
 	}
 }

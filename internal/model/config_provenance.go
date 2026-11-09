@@ -85,6 +85,8 @@ func effectiveConfigValues(global BaseConfig, project, local *PerRepoConfig, mas
 		switch leaf.kind {
 		case leafMap:
 			out = append(out, effectiveMapEntries(leaf, mask, layers)...)
+		case leafConcat:
+			out = append(out, concatenatedEntries(leaf, layers)...)
 		default:
 			set := false
 			var val ConfigValue
@@ -125,6 +127,9 @@ const (
 	leafScalar configLeafKind = iota
 	leafSlice
 	leafMap
+	// leafConcat is a slice whose layers MergeConfig concatenates, marked
+	// `sdd:"concat"` on the field.
+	leafConcat
 )
 
 type configLeaf struct {
@@ -156,7 +161,9 @@ func collectConfigLeaves(t reflect.Type, prefix []string, index []int) []configL
 		case f.Type.Kind() == reflect.Struct:
 			leaves = append(leaves, collectConfigLeaves(f.Type, append(append([]string{}, prefix...), tag), idx)...)
 		case f.Type.Kind() == reflect.Map:
-			leaves = append(leaves, configLeaf{path: joinPath(prefix, tag), index: idx, kind: leafMap, secret: isSecretField(f)})
+			leaves = append(leaves, configLeaf{path: joinPath(prefix, tag), index: idx, kind: leafMap, secret: hasSDDMarker(f, "secret")})
+		case f.Type.Kind() == reflect.Slice && hasSDDMarker(f, "concat"):
+			leaves = append(leaves, configLeaf{path: joinPath(prefix, tag), index: idx, kind: leafConcat})
 		case f.Type.Kind() == reflect.Slice:
 			leaves = append(leaves, configLeaf{path: joinPath(prefix, tag), index: idx, kind: leafSlice})
 		default:
@@ -166,14 +173,35 @@ func collectConfigLeaves(t reflect.Type, prefix []string, index []int) []configL
 	return leaves
 }
 
-// isSecretField reports whether a field carries the `sdd:"secret"` marker.
-func isSecretField(f reflect.StructField) bool {
+// hasSDDMarker reports whether a field's `sdd` tag carries marker.
+func hasSDDMarker(f reflect.StructField, marker string) bool {
 	for _, part := range strings.Split(f.Tag.Get("sdd"), ",") {
-		if strings.TrimSpace(part) == "secret" {
+		if strings.TrimSpace(part) == marker {
 			return true
 		}
 	}
 	return false
+}
+
+// concatenatedEntries lists a concatenated slice's items as MergeConfig
+// joins them, global first, one entry per item keyed by its position and
+// labelled with the layer that sets it.
+func concatenatedEntries(leaf configLeaf, layers []struct {
+	cfg    *PerRepoConfig
+	source ConfigValueSource
+}) []ConfigValue {
+	var out []ConfigValue
+	for i := len(layers) - 1; i >= 0; i-- {
+		layer := layers[i]
+		if layer.cfg == nil {
+			continue
+		}
+		items := leafValue(reflect.ValueOf(*layer.cfg), leaf.index)
+		for j := 0; j < items.Len(); j++ {
+			out = append(out, ConfigValue{Key: fmt.Sprintf("%s.%d", leaf.path, len(out)), Value: renderConfigValue(items.Index(j)), Source: layer.source})
+		}
+	}
+	return out
 }
 
 func joinPath(prefix []string, tag string) string {

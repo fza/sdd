@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -265,6 +266,64 @@ func highStepFindings(ctx *Context) ([]query.Finding, error) {
 		}
 	}
 	return high, nil
+}
+
+// fieldHookFindingsWeighed holds, per findings channel, the findings the
+// agent last weighed there (recordHookReview).
+const fieldHookFindingsWeighed = "hookFindingsWeighed"
+
+// noHookFindings passes unless the hooks joined findings into the current
+// step's channel when it was last left.
+func noHookFindings(ctx *Context) (bool, error) {
+	return !ctx.hooksJoined, nil
+}
+
+// hookFindingsWeighed passes when the current step's findings channel holds
+// exactly the findings the agent last weighed there.
+func hookFindingsWeighed(ctx *Context) (bool, error) {
+	step := ctx.Store.spec.StepByID[ctx.Step]
+	if step == nil || step.Findings == "" {
+		return false, nil
+	}
+	current, err := channelFindings(ctx.Store, step.Findings)
+	if err != nil {
+		return false, err
+	}
+	weighed, _ := ctx.Store.Get(fieldHookFindingsWeighed)
+	record, _ := weighed.(map[string]any)
+	recorded, ok := record[step.Findings]
+	if !ok {
+		return false, nil
+	}
+	return findingsJSON(current) == findingsJSON(recorded), nil
+}
+
+// recordHookReview records each findings channel's current findings as
+// weighed by the agent.
+func recordHookReview(ctx *Context) error {
+	record := map[string]any{}
+	for _, step := range ctx.Store.spec.Steps {
+		if step.Findings == "" {
+			continue
+		}
+		findings, err := channelFindings(ctx.Store, step.Findings)
+		if err != nil {
+			return err
+		}
+		if len(findings) > 0 {
+			record[step.Findings] = findings
+		}
+	}
+	return ctx.Store.WriteEngine(fieldHookFindingsWeighed, record)
+}
+
+func findingsJSON(findings any) string {
+	normalized, err := VarType{Base: TypePreflightFindings}.ValidateValue(findings)
+	if err != nil {
+		return ""
+	}
+	encoded, _ := json.Marshal(normalized)
+	return string(encoded)
 }
 
 func highStepFindingsDetail(ctx *Context) string {

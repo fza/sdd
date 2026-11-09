@@ -62,6 +62,7 @@ type Application struct {
 	entrySuffix   func(length int) (string, error)
 	launcher      DelegateLauncher
 	rounds        delegateRounds
+	background    background
 }
 
 func NewApplication(options ApplicationOptions) (*Application, error) {

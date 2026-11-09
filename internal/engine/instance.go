@@ -244,7 +244,8 @@ func (s *Session) funcContext(inst *Instance) (*Context, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving current graph: %w", err)
 	}
-	return &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads, Reading: &inst.reading}, nil
+	_, joined := inst.hookBase[inst.Step]
+	return &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads, Reading: &inst.reading, hooksJoined: joined}, nil
 }
 
 // cascade advances gate steps until something stops them — a failing

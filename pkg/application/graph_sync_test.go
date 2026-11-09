@@ -296,6 +296,60 @@ func TestSessionStartBackfillsTitlesWithoutWaiting(t *testing.T) {
 	}
 }
 
+// Shutdown waits for a running title backfill, gives up when its context
+// ends first, and starts no backfill after it began.
+func TestShutdownWaitsForTheTitleBackfill(t *testing.T) {
+	sync := &recordingGraphSync{hold: make(chan struct{})}
+	application, _ := syncedApplication(t, sync)
+	identity := sdd.RequestIdentity{Subject: "christopher"}
+	workflow, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitBackfills(t, sync, 1)
+
+	expired, cancel := context.WithCancelCause(t.Context())
+	cancel(errors.New("shutdown deadline"))
+	gaveUp := make(chan error, 1)
+	go func() { gaveUp <- application.Shutdown(expired) }()
+	select {
+	case err := <-gaveUp:
+		if err == nil || err.Error() != "shutdown deadline" {
+			t.Errorf("a shutdown whose context ends first should return its cause, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a shutdown whose context ended should not wait for the backfill")
+	}
+
+	stopped := make(chan error, 1)
+	go func() { stopped <- application.Shutdown(t.Context()) }()
+	select {
+	case err := <-stopped:
+		t.Fatalf("shutdown should wait for the running backfill, returned %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(sync.hold)
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown should return once the backfill finished")
+	}
+
+	_, err = application.RefreshWorkflow(t.Context(), identity, workflow.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := application.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if triggers := sync.backfillTriggers(); len(triggers) != 1 {
+		t.Errorf("no backfill should start after shutdown began, got %v", triggers)
+	}
+}
+
 func TestRefreshWorkflowBackfillsTitlesAfterItsRound(t *testing.T) {
 	sync := &recordingGraphSync{}
 	application, _ := syncedApplication(t, sync)
