@@ -50,7 +50,7 @@ func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) e
 			Reads: reads,
 		},
 		Fn: func(ctx *engine.Context) (bool, error) {
-			late, err := w.lateEntries(ctx, ctx.Graph)
+			late, err := w.lateEntries(ctx, contextGraph(ctx))
 			return len(late) == 0, err
 		},
 		FailMessage: "entries landed after the assemble check",
@@ -66,7 +66,7 @@ func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) e
 		},
 		Bound: engine.QueryBound{Part: serveview.PartEntryList},
 		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
-			late, err := w.lateEntries(ctx, ctx.Graph)
+			late, err := w.lateEntries(ctx, contextGraph(ctx))
 			if err != nil || len(late) == 0 {
 				return "", err
 			}
@@ -88,10 +88,11 @@ func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) e
 	})
 }
 
-// groundingEvidence returns the capture's grounding evidence over graph, and
+// groundingEvidence returns the capture's grounding evidence over the graph
+// loadGraph returns, loaded only once the gate applies, and
 // whether the gate applies: grounding.enforce on, no recorded bypass, a gated
 // kind.
-func (w *WorkflowSession) groundingEvidence(ctx *engine.Context, graph *model.Graph) (model.GroundingEvidence, bool, error) {
+func (w *WorkflowSession) groundingEvidence(ctx *engine.Context, loadGraph func() (*model.Graph, error)) (model.GroundingEvidence, bool, error) {
 	runtime, err := w.targetRuntime(w.instanceProject(ctx.Instance), AccessRead)
 	if err != nil {
 		return model.GroundingEvidence{}, false, err
@@ -118,6 +119,10 @@ func (w *WorkflowSession) groundingEvidence(ctx *engine.Context, graph *model.Gr
 			evidence.Topics = append(evidence.Topics, topic)
 		}
 	}
+	graph, err := loadGraph()
+	if err != nil {
+		return model.GroundingEvidence{}, false, err
+	}
 	for _, e := range model.GroundingPopulation(graph) {
 		evidence.Live = append(evidence.Live, e.ID)
 	}
@@ -127,7 +132,7 @@ func (w *WorkflowSession) groundingEvidence(ctx *engine.Context, graph *model.Gr
 // groundingRefusals names what holds the assemble gate, each with the one
 // call that clears it.
 func (w *WorkflowSession) groundingRefusals(ctx *engine.Context) ([]string, error) {
-	evidence, applies, err := w.groundingEvidence(ctx, ctx.Graph)
+	evidence, applies, err := w.groundingEvidence(ctx, contextGraph(ctx))
 	if err != nil || !applies {
 		return nil, err
 	}
@@ -160,8 +165,8 @@ func (w *WorkflowSession) groundingRefusals(ctx *engine.Context) ([]string, erro
 // lateEntries returns the entries graph holds that landed after the assemble
 // check and that the capture has not answered; none where the gate does not
 // apply.
-func (w *WorkflowSession) lateEntries(ctx *engine.Context, graph *model.Graph) ([]string, error) {
-	evidence, applies, err := w.groundingEvidence(ctx, graph)
+func (w *WorkflowSession) lateEntries(ctx *engine.Context, loadGraph func() (*model.Graph, error)) ([]string, error) {
+	evidence, applies, err := w.groundingEvidence(ctx, loadGraph)
 	if err != nil || !applies {
 		return nil, err
 	}
@@ -206,4 +211,9 @@ func storeVerdictIDs(store *engine.Store) []string {
 		ids = append(ids, verdict.IDs...)
 	}
 	return ids
+}
+
+// contextGraph loads the graph the engine resolved for ctx.
+func contextGraph(ctx *engine.Context) func() (*model.Graph, error) {
+	return func() (*model.Graph, error) { return ctx.Graph, nil }
 }
