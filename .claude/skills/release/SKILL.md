@@ -26,7 +26,7 @@ The git log is the authoritative scope of the release. Commit subjects in this p
 sdd show <id1> <id2> <id3> --up 0 --down 0
 ```
 
-Full bodies plus the envelope's immediate closes/refs context, no chain traversal, which is the right level for highlight prose. You see what plan closed what without walking the whole upstream history. Skip housekeeping commits (`sdd: init refresh: …` and the older `sdd: refresh installed skills`, `sdd: signal/decision/wip` graph entries, pure refactors with no user-visible effect).
+Full bodies plus the envelope's immediate closes/refs context, no chain traversal, which is the right level for highlight prose. You see what plan closed what without walking the whole upstream history. Skip housekeeping commits (`sdd: refresh installed skills`, `sdd: signal/decision/wip` graph entries, pure refactors with no user-visible effect).
 
 ### 2. Propose the version bump
 
