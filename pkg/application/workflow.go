@@ -251,9 +251,14 @@ type WorkflowSession struct {
 	// cutRepeats applies the no-repeat rule to the step serves (CutRepeats).
 	cutRepeats bool
 	// laneFull collects the entries the framing lane in render serves in full;
-	// framingFull keeps them per block of the last Framing call.
+	// framingFull keeps them per block of the last Framing call. framing is
+	// set while the lanes render.
 	laneFull    []string
 	framingFull map[string][]string
+	framing     bool
+	// stepFull collects the entries the step serves rendered whole, until
+	// TakeStepFullIDs hands them on.
+	stepFull []string
 	// task is a delegate session's one task instance, whose end ends the
 	// session as the shell's does a dialogue's.
 	task string
@@ -1153,7 +1158,8 @@ func (w *WorkflowSession) framingLanes() ([]string, error) {
 	}
 	var lanes []string
 	w.framingFull = map[string][]string{}
-	defer func() { w.laneFull = nil }()
+	w.framing = true
+	defer func() { w.laneFull, w.framing = nil, false }()
 	for _, call := range inst.Spec.Framing {
 		w.laneFull = nil
 		result, cut, err := w.session.Inject(w.shell, call)
@@ -1183,6 +1189,15 @@ func (w *WorkflowSession) FramingFullIDs(block string) []string {
 	return w.framingFull[block]
 }
 
+// TakeStepFullIDs returns the entries the step serves' injected views served
+// in full and whole since the last call, and forgets them: the MCP surface
+// holds them once the serve is composed (R14).
+func (w *WorkflowSession) TakeStepFullIDs() []string {
+	ids := w.stepFull
+	w.stepFull = nil
+	return ids
+}
+
 // HeldEntryHash is the served-ledger hash of an entry served in full: the
 // no-repeat rule's unit (20261109-004506-d-cpt-udz, R14). Bodies are
 // immutable, so the ID alone keys it.
@@ -1192,10 +1207,10 @@ func HeldEntryHash(id string) string {
 }
 
 // CutRepeats applies the no-repeat rule to the step serves the session
-// renders, as the MCP surface serves them (R14): an injected entry chain
-// prints an entry the consumer already holds in full as its pointer, and
-// holds every entry it serves in full from then on. Off by default: the CLI
-// never cuts.
+// renders, as the MCP surface serves them (R14): an injected entry chain or
+// view prints an entry the consumer already holds in full as its pointer, and
+// holds every entry it serves in full from then on. Framing lanes never cut
+// (composeFraming in the MCP surface). Off by default: the CLI never cuts.
 func (w *WorkflowSession) CutRepeats() {
 	w.cutRepeats = true
 }

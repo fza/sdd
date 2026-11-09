@@ -27,9 +27,15 @@ import (
 //	                 TestCaptureLanesDedupAcrossInstances, TestReportSchemaDedup (serve_dedup_test.go)
 //	  entry chains   pointer for a held entry, holds what they serve:
 //	                 TestNoRepeatInjectedEntryChains, TestInjectedEntryChains* (application)
+//	  views          pointer for a held entry, hold what they serve whole:
+//	                 TestNoRepeatInjectedViews, TestInjectedView* (application)
 //	  late entries   pointer for a held entry: TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer (proctest)
 //	  framing lanes  hold the entries they serve whole, never cut (per-lane dedup):
-//	                 TestNoRepeatAfterFramingServedInFull, TestNoRepeatFramingHoldsOnlyWhatItServed
+//	                 TestNoRepeatAfterFramingServedInFull, TestNoRepeatFramingHoldsOnlyWhatItServed,
+//	                 TestFramingServesHeldEntriesInFull (application)
+//	  fact index, procedure list, recheck items: ID and title or brief rows, no
+//	                 more than a pointer carries, deduplicated as lanes; not cut
+//	  generated summary and title: the entry the capture just wrote, never served before
 //	read_attachment  attachment pages, no entry metadata, out of scope
 //	info, registry, park, abandon, bind_branch, stage_attachment, sync_repos:
 //	                 no entry metadata, out of scope
@@ -204,4 +210,70 @@ func TestNoRepeatFramingHoldsOnlyWhatItServed(t *testing.T) {
 	if strings.Contains(shown.Entries, pointerMark) || !strings.Contains(shown.Entries, "Ask before assuming") {
 		t.Fatalf("the house rule the lane left out should serve in full:\n%s", shown.Entries)
 	}
+}
+
+// viewStepProcedure serves the fixture gap's body through a view its one step
+// injects.
+const viewStepProcedure = `---
+type: decision
+kind: procedure
+layer: process
+canonical: view-step
+confidence: high
+summary: A workflow whose step serves the fixture gap through a view.
+state:
+    body: {type: text, desc: what the view showed}
+steps:
+    - id: look
+      inject:
+          - {fn: viewLayout, args: {layout: 'id("` + fixtureGapID + `"):as-bodies'}}
+      collect: [body]
+      transitions:
+          - when: hasBody
+            to: end(completed)
+---
+
+Serves the fixture gap through a view.
+
+## unit: look
+
+{{.viewLayout}}
+`
+
+// A view a step injects prints an entry the consumer already holds in full as
+// its pointer, and holds every entry it serves in full.
+func TestNoRepeatInjectedViews(t *testing.T) {
+	t.Run("held before the serve", func(t *testing.T) {
+		env := newTestServer(t, nil, "", "")
+		cs := connect(t, env.srv)
+		session := openSession(t, cs).Session
+		var shown mcpserver.ShowResult
+		call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &shown)
+		var serve mcpserver.ServeResult
+		call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "catch-up"}, &serve)
+		if !strings.Contains(serve.Instructions, fixtureGapID+" — Pre-flight verdict oscillation produces contradictory findings across runs. "+pointerMark) {
+			t.Fatalf("the catch-up listings should serve the held gap as its pointer:\n%s", serve.Instructions)
+		}
+	})
+	t.Run("held after the serve", func(t *testing.T) {
+		graphDir := writeFixtureGraph(t)
+		path := filepath.Join(graphDir, "2026/07/04-120001-d-prc-vws.md")
+		err := os.WriteFile(path, []byte(viewStepProcedure), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := newTestServer(t, nil, graphDir, "")
+		cs := connect(t, env.srv)
+		session := openSession(t, cs).Session
+		var serve mcpserver.ServeResult
+		call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "view-step"}, &serve)
+		if !strings.Contains(serve.Instructions, "on identical input") {
+			t.Fatalf("the step should serve the gap in full:\n%s", serve.Instructions)
+		}
+		var shown mcpserver.ShowResult
+		call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &shown)
+		if !strings.Contains(shown.Entries, pointerMark) || strings.Contains(shown.Entries, "# body") {
+			t.Fatalf("a show after the step served the gap should serve the pointer:\n%s", shown.Entries)
+		}
+	})
 }

@@ -57,8 +57,10 @@ func (ss *shellSession) holdEntries(ids []string) {
 	}
 }
 
-// flushServed records what this call served in full into the session ledger.
+// flushServed records what this call served in full into the session ledger,
+// the entries its step serves' views served whole among them.
 func (ss *shellSession) flushServed(ctx context.Context, identity sdd.RequestIdentity) error {
+	ss.holdEntries(ss.root.TakeStepFullIDs())
 	hashes := ss.pending
 	ss.pending, ss.seen = nil, nil
 	return ss.root.RecordServed(ctx, identity, hashes)
