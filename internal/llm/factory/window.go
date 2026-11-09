@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/networkteam/sdd/internal/llm/claude"
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -64,6 +65,8 @@ func (d *WindowDetector) Detect(ctx context.Context, cfg model.LLMConfig) (Windo
 		window, err = d.openAICompatible(ctx, cfg, modelName)
 	case "ollama":
 		window, err = d.ollama(ctx, cfg, modelName)
+	case model.DefaultLLMProvider:
+		window, err = claudeCLIWindow(ctx, modelName)
 	}
 	if err != nil {
 		return Window{}, fmt.Errorf("detecting the context window of %s model %s: %w; set llm.context_tokens to the model's window", provider, modelName, err)
@@ -82,6 +85,16 @@ func (d *WindowDetector) Detect(ctx context.Context, cfg model.LLMConfig) (Windo
 	d.known[key] = window
 	d.mu.Unlock()
 	return window, nil
+}
+
+// claudeCLIWindow reads the window a short claude -p probe reports for the
+// model; the probe runs at effort low, since the window does not depend on it.
+func claudeCLIWindow(ctx context.Context, modelName string) (Window, error) {
+	tokens, maxOutput, err := claude.NewRunner(modelName, "low").Window(ctx)
+	if err != nil {
+		return Window{}, err
+	}
+	return Window{Tokens: tokens, MaxOutput: maxOutput, Source: "the claude CLI's modelUsage"}, nil
 }
 
 func (d *WindowDetector) client() *http.Client {

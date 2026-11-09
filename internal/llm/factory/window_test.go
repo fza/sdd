@@ -123,7 +123,6 @@ func TestWindowDetect_RefusesNamingTheKey(t *testing.T) {
 		name string
 		cfg  model.LLMConfig
 	}{
-		{"claude-cli reports nothing", model.LLMConfig{Provider: "claude-cli", Model: "claude-sonnet-4-6"}},
 		{"codex reports nothing", model.LLMConfig{Provider: "codex", Model: "gpt-5.5"}},
 		{"plain endpoint fails", model.LLMConfig{Provider: "openai", Model: "gpt-x", Endpoint: failing.URL}},
 		{"model not listed", model.LLMConfig{Provider: "openai", Model: "gpt-x", Endpoint: unlisted.URL + "/v1"}},

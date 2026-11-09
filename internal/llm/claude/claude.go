@@ -58,36 +58,13 @@ var scrubbedEnvVars = []string{
 // servers, and every one of them counts against a prompt that needs none of
 // them.
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
-	workDir, err := os.MkdirTemp("", "sdd-claude-")
-	if err != nil {
-		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("creating working directory: %w", err)}
-	}
-	defer func() { _ = os.RemoveAll(workDir) }()
-
-	args := []string{"-p", "--safe-mode", "--model", r.model, "--output-format", "json"}
-	if r.effort != "" {
-		args = append(args, "--effort", r.effort)
-	}
+	var extra []string
 	if len(req.ResponseSchema) > 0 {
-		args = append(args, "--json-schema", string(req.ResponseSchema))
+		extra = append(extra, "--json-schema", string(req.ResponseSchema))
 	}
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = workDir
-	cmd.Env = scrubbedEnv(os.Environ())
-	cmd.Stdin = strings.NewReader(req.Combined())
-	out, err := cmd.Output()
+	resp, err := r.invoke(ctx, req.Combined(), extra...)
 	if err != nil {
-		if ctx.Err() != nil {
-			err = fmt.Errorf("claude -p: %w", ctx.Err())
-		} else {
-			err = fmt.Errorf("claude -p: %w", err)
-		}
-		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: err}
-	}
-
-	var resp claudeResponse
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("parsing claude JSON response: %w", err)}
+		return llm.Result{}, err
 	}
 	text := resp.Result
 	if len(req.ResponseSchema) > 0 {
@@ -125,6 +102,71 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 			CostUSD:           resp.TotalCostUSD,
 		},
 	}, nil
+}
+
+// invoke runs one isolated claude -p call with prompt on stdin and the
+// runner's model and effort, and parses its JSON response.
+func (r *Runner) invoke(ctx context.Context, prompt string, extra ...string) (claudeResponse, error) {
+	workDir, err := os.MkdirTemp("", "sdd-claude-")
+	if err != nil {
+		return claudeResponse{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("creating working directory: %w", err)}
+	}
+	defer func() { _ = os.RemoveAll(workDir) }()
+
+	args := []string{"-p", "--safe-mode", "--model", r.model, "--output-format", "json"}
+	if r.effort != "" {
+		args = append(args, "--effort", r.effort)
+	}
+	cmd := exec.CommandContext(ctx, "claude", append(args, extra...)...)
+	cmd.Dir = workDir
+	cmd.Env = scrubbedEnv(os.Environ())
+	cmd.Stdin = strings.NewReader(prompt)
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			err = fmt.Errorf("claude -p: %w", ctx.Err())
+		} else {
+			err = fmt.Errorf("claude -p: %w", err)
+		}
+		return claudeResponse{}, &llm.Error{Identity: r.identity(), Err: err}
+	}
+	var resp claudeResponse
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return claudeResponse{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("parsing claude JSON response: %w", err)}
+	}
+	return resp, nil
+}
+
+// windowProbePrompt is the shortest prompt that makes the CLI report its
+// model's usage.
+const windowProbePrompt = "Reply with OK."
+
+// Window reports the context window and the largest output of the runner's
+// model, read from the modelUsage of one short probe call. The CLI keys
+// modelUsage by the model it resolved, so an alias such as sonnet matches the
+// one entry reporting a window; a call spanning several such models without
+// one named as the runner's is refused.
+func (r *Runner) Window(ctx context.Context) (contextWindow, maxOutput int, err error) {
+	resp, err := r.invoke(ctx, windowProbePrompt)
+	if err != nil {
+		return 0, 0, err
+	}
+	if usage, ok := resp.ModelUsage[r.model]; ok && usage.ContextWindow > 0 {
+		return usage.ContextWindow, usage.MaxOutputTokens, nil
+	}
+	var found []claudeModelUsage
+	var names []string
+	for name, usage := range resp.ModelUsage {
+		if usage.ContextWindow > 0 {
+			found = append(found, usage)
+			names = append(names, name)
+		}
+	}
+	if len(found) != 1 {
+		slices.Sort(names)
+		return 0, 0, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("claude -p reported a context window for %d models (%s), not one for %s", len(found), strings.Join(names, ", "), r.model)}
+	}
+	return found[0].ContextWindow, found[0].MaxOutputTokens, nil
 }
 
 // scrubbedEnv returns env without the credential variables, matched by name so
@@ -167,4 +209,6 @@ type claudeModelUsage struct {
 	CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
 	CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
 	CostUSD                  float64 `json:"costUSD"`
+	ContextWindow            int     `json:"contextWindow"`
+	MaxOutputTokens          int     `json:"maxOutputTokens"`
 }

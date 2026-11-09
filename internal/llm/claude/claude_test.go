@@ -232,3 +232,39 @@ func TestRunPassesEffort(t *testing.T) {
 		t.Errorf("an empty effort should pass no --effort: %q", recordedArgs(t, dir))
 	}
 }
+
+// Window reads the model's contextWindow and maxOutputTokens from modelUsage:
+// the entry named as the runner's model, else the one entry reporting a
+// window, as for an alias the CLI resolved.
+func TestWindow(t *testing.T) {
+	sonnet := `"claude-sonnet-4-6":{"inputTokens":9,"contextWindow":1000000,"maxOutputTokens":128000}`
+	haiku := `"claude-haiku-4-5":{"inputTokens":1,"contextWindow":200000,"maxOutputTokens":64000}`
+	for name, tc := range map[string]struct {
+		model, usage   string
+		tokens, maxOut int
+		refusal        string
+	}{
+		"named model":      {model: "claude-sonnet-4-6", usage: sonnet + "," + haiku, tokens: 1000000, maxOut: 128000},
+		"resolved alias":   {model: "sonnet", usage: sonnet + `,"claude-haiku-4-5":{"inputTokens":1}`, tokens: 1000000, maxOut: 128000},
+		"ambiguous alias":  {model: "sonnet", usage: sonnet + "," + haiku, refusal: "reported a context window for 2 models"},
+		"no window at all": {model: "sonnet", usage: `"claude-sonnet-4-6":{"inputTokens":9}`, refusal: "reported a context window for 0 models"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := fakeCLI(t, `{"type":"result","result":"OK","usage":{},"modelUsage":{`+tc.usage+`}}`)
+			tokens, maxOut, err := claude.NewRunner(tc.model, "low").Window(context.Background())
+			if tc.refusal != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.refusal) {
+					t.Fatalf("want a refusal naming %q, got %v", tc.refusal, err)
+				}
+				return
+			}
+			if err != nil || tokens != tc.tokens || maxOut != tc.maxOut {
+				t.Fatalf("Window = %d, %d, %v; want %d, %d", tokens, maxOut, err, tc.tokens, tc.maxOut)
+			}
+			args := recordedArgs(t, dir)
+			if !slices.Contains(args, "--safe-mode") || !slices.Contains(args, tc.model) {
+				t.Errorf("the probe should run isolated on the model, got %q", args)
+			}
+		})
+	}
+}

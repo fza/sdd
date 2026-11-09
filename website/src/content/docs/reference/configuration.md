@@ -102,7 +102,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `llm.retry.base_delay` | `2s` | Wait before the first retry. The wait grows with each further retry. |
 | `llm.retry.max_delay` | `60s` | Longest wait between two retries. |
 | `llm.concurrency` | `4` | Not applied in this version. `sdd summarize --all` takes its worker count from `--concurrency`, which defaults to 4. |
-| `llm.context_tokens` | What the provider reports | The model's context window in tokens, which sizes the prose draft verifier's calls. sdd asks Anthropic, an OpenAI-compatible models listing (`context_length` or `max_model_len`) or Ollama when unset; set it where the provider reports none, such as `claude-cli` and `codex`. |
+| `llm.context_tokens` | What the provider reports | The model's context window in tokens, which sizes the prose draft verifier's calls. sdd asks Anthropic, an OpenAI-compatible models listing (`context_length` or `max_model_len`) or Ollama when unset, and for `claude-cli` reads the window one short `claude -p` call reports, once per process and model; set it where the provider reports none, such as `codex`. |
 
 sdd retries a call that failed with a temporary error, such as a rate limit or a dropped connection, and waits as long as the provider asks when it names a time. `claude-cli` and `codex` ignore the rate limit and retry keys, since the `claude` and `codex` commands retry on their own.
 
