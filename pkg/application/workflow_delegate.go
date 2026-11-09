@@ -540,12 +540,19 @@ func (w *WorkflowSession) concludeEndedForks(ctx context.Context, identity Reque
 // endDelegate tears a delegate child session down; one already ended is left
 // as it is.
 func (a *Application) endDelegate(ctx context.Context, identity RequestIdentity, child SessionID, reason string) error {
-	_, err := a.abandonSession(ctx, identity, WorkflowResumeRequest{SessionID: child}, reason, false)
-	var appErr *ApplicationError
-	if errors.As(err, &appErr) && appErr.Code == ErrorSessionEnded {
-		return nil
+	for attempt := 0; ; attempt++ {
+		_, err := a.abandonSession(ctx, identity, WorkflowResumeRequest{SessionID: child}, reason, false)
+		var appErr *ApplicationError
+		if errors.As(err, &appErr) && appErr.Code == ErrorSessionEnded {
+			return nil
+		}
+		// The delegate may write its session meanwhile, as a background
+		// round's agent does.
+		if attempt == 0 && errors.As(err, &appErr) && appErr.Code == ErrorSessionConflict {
+			continue
+		}
+		return err
 	}
-	return err
 }
 
 // releaseFork tells the dispatching session that a delegate torn down by
