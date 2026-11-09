@@ -620,6 +620,10 @@
                 "description": "the prompt continuing a delegate that worked an earlier round",
                 "type": "string"
               },
+              "effort": {
+                "description": "the effort the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
               "instance": {
                 "description": "the delegate's task instance in its child session",
                 "type": "string"
@@ -629,6 +633,10 @@
               },
               "launch": {
                 "description": "set when sdd launched the delegate itself: the launch its round runs with, in the background",
+                "type": "string"
+              },
+              "model": {
+                "description": "the model the harness launches that subagent with; unset leaves the harness's own",
                 "type": "string"
               },
               "procedure": {
@@ -1487,6 +1495,10 @@
                       "description": "the prompt continuing a delegate that worked an earlier round",
                       "type": "string"
                     },
+                    "effort": {
+                      "description": "the effort the harness launches that subagent with; unset leaves the harness's own",
+                      "type": "string"
+                    },
                     "instance": {
                       "description": "the delegate's task instance in its child session",
                       "type": "string"
@@ -1496,6 +1508,10 @@
                     },
                     "launch": {
                       "description": "set when sdd launched the delegate itself: the launch its round runs with, in the background",
+                      "type": "string"
+                    },
+                    "model": {
+                      "description": "the model the harness launches that subagent with; unset leaves the harness's own",
                       "type": "string"
                     },
                     "procedure": {
@@ -2322,6 +2338,10 @@
                 "description": "the prompt continuing a delegate that worked an earlier round",
                 "type": "string"
               },
+              "effort": {
+                "description": "the effort the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
               "instance": {
                 "description": "the delegate's task instance in its child session",
                 "type": "string"
@@ -2331,6 +2351,10 @@
               },
               "launch": {
                 "description": "set when sdd launched the delegate itself: the launch its round runs with, in the background",
+                "type": "string"
+              },
+              "model": {
+                "description": "the model the harness launches that subagent with; unset leaves the harness's own",
                 "type": "string"
               },
               "procedure": {
@@ -2777,6 +2801,10 @@
                 "description": "the prompt continuing a delegate that worked an earlier round",
                 "type": "string"
               },
+              "effort": {
+                "description": "the effort the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
               "instance": {
                 "description": "the delegate's task instance in its child session",
                 "type": "string"
@@ -2786,6 +2814,10 @@
               },
               "launch": {
                 "description": "set when sdd launched the delegate itself: the launch its round runs with, in the background",
+                "type": "string"
+              },
+              "model": {
+                "description": "the model the harness launches that subagent with; unset leaves the harness's own",
                 "type": "string"
               },
               "procedure": {
