@@ -75,23 +75,24 @@ func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation
 	if len(paths) == 0 {
 		return fmt.Errorf("git finalizer: mutation %s has no paths", mutation.BatchID)
 	}
-	segments, err := git.CLI{Dir: f.Checkout}.PendingSegments(ctx)
+	repository := git.CLI{Dir: f.Checkout}
+	segments, err := repository.PendingSegments(ctx)
 	if err != nil {
 		return err
 	}
 	paths = append(paths, segments...)
 	added = append(added, segments...)
 	if len(added) > 0 {
-		addArgs := append([]string{"-C", f.Checkout, "add", "--all", "--"}, added...)
-		if out, err := exec.CommandContext(ctx, "git", addArgs...).CombinedOutput(); err != nil {
+		out, err := repository.RunPastIndexLock(ctx, append([]string{"add", "--all", "--"}, added...)...)
+		if err != nil {
 			return fmt.Errorf("git finalizer add: %s (%w)", strings.TrimSpace(string(out)), err)
 		}
 	}
 	if len(removed) > 0 {
 		// A removal may already be staged by an attempt whose commit failed;
 		// --ignore-unmatch keeps the retry from failing on the missing path.
-		rmArgs := append([]string{"-C", f.Checkout, "rm", "--quiet", "--cached", "--ignore-unmatch", "--"}, removed...)
-		if out, err := exec.CommandContext(ctx, "git", rmArgs...).CombinedOutput(); err != nil {
+		out, err := repository.RunPastIndexLock(ctx, append([]string{"rm", "--quiet", "--cached", "--ignore-unmatch", "--"}, removed...)...)
+		if err != nil {
 			return fmt.Errorf("git finalizer rm: %s (%w)", strings.TrimSpace(string(out)), err)
 		}
 	}
@@ -99,11 +100,11 @@ func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation
 	if message == "" {
 		message = "sdd: apply " + mutation.BatchID
 	}
-	commitArgs := append([]string{"-C", f.Checkout, "commit", "-m", message + "\n\n" + trailer, "--"}, paths...)
-	if out, err := exec.CommandContext(ctx, "git", commitArgs...).CombinedOutput(); err != nil {
+	out, err := repository.RunPastIndexLock(ctx, append([]string{"commit", "-m", message + "\n\n" + trailer, "--"}, paths...)...)
+	if err != nil {
 		return fmt.Errorf("git finalizer commit: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
-	return git.CLI{Dir: f.Checkout}.RecordGraphCloneCommit(ctx)
+	return repository.RecordGraphCloneCommit(ctx)
 }
 
 // lookupTrailer returns the newest commit on the branch carrying the trailer
