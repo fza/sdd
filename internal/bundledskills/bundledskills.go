@@ -119,7 +119,7 @@ func skillDirs() ([]string, error) {
 // renderSkill parses every template file under one skill into a shared template
 // set (so `{{ template }}` includes resolve across files), then executes each
 // file with data. Templates are named by their skill-relative output path
-// (`.tmpl` stripped), e.g. "SKILL.md", "references/vocabulary-de.md". Parsing all
+// (`.tmpl` stripped), e.g. "SKILL.md", "references/topic.md". Parsing all
 // files before executing any lets a file include another regardless of order.
 func renderSkill(skill string, funcs template.FuncMap, data renderData) ([]model.SkillBundleEntry, error) {
 	skillRoot := path.Join(templatesRoot, skill)
@@ -168,18 +168,21 @@ func renderSkill(skill string, funcs template.FuncMap, data renderData) ([]model
 	return entries, nil
 }
 
-// ReadReference returns the body (frontmatter stripped) of a reference template
-// in the embedded bundle. The engine serves the locale vocabulary from here
-// until it moves into the graph (d-cpt-xob). The reference is read raw rather
-// than executed — it is agent-neutral and carries no template directives, so
-// its source bytes equal its rendered output.
-func ReadReference(skill, relPath string) ([]byte, error) {
-	full := path.Join(templatesRoot, skill, relPath+templateExt)
-	data, err := templatesFS.ReadFile(full)
+// vocabularyFS holds the per-locale SDD vocabulary the engine serves at session
+// open until it moves into the graph (d-cpt-xob). It is engine data, not skill
+// content, so it sits outside templates/ and is never installed with a skill.
+//
+//go:embed vocabulary
+var vocabularyFS embed.FS
+
+// Vocabulary returns the bundled vocabulary for locale (e.g. "de").
+func Vocabulary(locale string) ([]byte, error) {
+	full := path.Join("vocabulary", locale+".md")
+	data, err := vocabularyFS.ReadFile(full)
 	if err != nil {
-		return nil, fmt.Errorf("reading bundled reference %s: %w", full, err)
+		return nil, fmt.Errorf("reading bundled vocabulary %s: %w", full, err)
 	}
-	return model.SkillFileBody(data), nil
+	return data, nil
 }
 
 // relUnder returns full expressed relative to root, with leading separators

@@ -1036,6 +1036,8 @@ func TestInit_PrunePreservesModifiedSkill(t *testing.T) {
 	// from the stored stamp, so it classifies as Modified.
 	modified := filepath.Join(tmp, ".agents/skills/sdd/SKILL.md")
 	appendToFile(t, modified, "\n<!-- local edit, must survive prune -->\n")
+	pristine := filepath.Join(tmp, ".agents/skills/sdd/references/topic.md")
+	writeStampedOrphan(t, pristine, "A reference sdd wrote and nobody edited.\n")
 
 	var pruned []command.AgentPruneResult
 	if err := h.Init(context.Background(), &command.InitCmd{
@@ -1052,7 +1054,7 @@ func TestInit_PrunePreservesModifiedSkill(t *testing.T) {
 		t.Errorf("modified file must be preserved without --force: %v", err)
 	}
 	// A pristine sibling in the same render is gone.
-	if _, err := os.Stat(filepath.Join(tmp, ".agents/skills/sdd/references/vocabulary-de.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(pristine); !os.IsNotExist(err) {
 		t.Errorf("pristine codex reference should be pruned, stat err = %v", err)
 	}
 	// The parent dir survives because it still holds the modified file.
