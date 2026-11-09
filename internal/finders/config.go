@@ -94,17 +94,8 @@ func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.Unkno
 		if err := model.UnmarshalYAML(data, &settings); err != nil {
 			return nil, err
 		}
-		ignored := model.IgnoredSettings(settings, l.source)
-		if l.source != model.ConfigSourceGlobal {
-			var perRepo model.PerRepoConfig
-			err = model.UnmarshalYAML(data, &perRepo)
-			if err != nil {
-				return nil, err
-			}
-			ignored = append(ignored, model.IgnoredInitSettings(perRepo.Init, l.source)...)
-		}
-		for _, setting := range ignored {
-			result.Ignored = append(result.Ignored, query.IgnoredConfigSetting{File: l.path, Key: setting.Key, Reason: setting.Reason})
+		for _, ignored := range model.IgnoredSettings(settings, l.source) {
+			result.Ignored = append(result.Ignored, query.IgnoredConfigSetting{File: l.path, Key: ignored.Key, Reason: ignored.Reason})
 		}
 	}
 	return result, nil

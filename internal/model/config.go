@@ -173,7 +173,6 @@ type PerRepoConfig struct {
 	// Inbound is the receiving graph's gate on captures written from another
 	// project; only the committed .sdd/config.yaml sets it.
 	Inbound InboundConfig `yaml:"inbound,omitempty"`
-	Init    InitConfig    `yaml:"init,omitempty"`
 	// Contribution names the upstream ref (e.g. origin/main) a checkout's
 	// graph writes are contributed to; set, it turns on contribution mode
 	// (ContributionRefusal). Machine-local only: a checkout opts in, the
@@ -183,7 +182,7 @@ type PerRepoConfig struct {
 
 // PointerKeys are the keys a committed config may set beside project_dir:
 // what concerns the agents working in the repository, not the graph.
-var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents", "init"}
+var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents"}
 
 // LocalPointerKeys are the keys a machine-local config may set beside
 // project_dir: only where this machine keeps the project's checkout.
@@ -192,7 +191,7 @@ var LocalPointerKeys = []string{"project_dir"}
 // GraphRepoPointerKeys are the keys a committed config may set beside
 // graph_repo: the pointer keys, project_dir for older builds and graph_dir for
 // the stock guard (20261106-202055-d-tac-eyl).
-var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents", "init"}
+var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents"}
 
 // TopLevelKeys returns the top-level keys of a YAML mapping, in file order.
 // Empty input yields none.
@@ -657,9 +656,6 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 		out.GraphRepo = overlay.GraphRepo
 	}
 	out.Inbound = mergeInboundConfig(base.Inbound, overlay.Inbound)
-	if len(overlay.Init.Skip) > 0 {
-		out.Init = overlay.Init
-	}
 	if overlay.Contribution != "" {
 		out.Contribution = overlay.Contribution
 	}
@@ -934,14 +930,12 @@ func FormatPointerConfig(cfg PerRepoConfig) string {
 		"\n" +
 		"# The sdd project holding this repository's graph: the folder holding its\n" +
 		"# .sdd/, relative to this repository's root. Every project setting lives\n" +
-		"# there; this file carries only project_dir, skill_scope, supported_agents\n" +
-		"# and init.\n" +
+		"# there; this file carries only project_dir, skill_scope and supported_agents.\n" +
 		"project_dir: " + cfg.ProjectDir + "\n" +
 		"\n" +
 		skillScopeBlock(cfg) +
 		"\n" +
-		supportedAgentsBlock(cfg) +
-		initSkipBlock(cfg)
+		supportedAgentsBlock(cfg)
 }
 
 // FormatGraphRepoPointerConfig returns the config of a code repository whose
@@ -962,8 +956,7 @@ func FormatGraphRepoPointerConfig(cfg PerRepoConfig) string {
 		"\n" +
 		skillScopeBlock(cfg) +
 		"\n" +
-		supportedAgentsBlock(cfg) +
-		initSkipBlock(cfg)
+		supportedAgentsBlock(cfg)
 }
 
 func skillScopeBlock(cfg PerRepoConfig) string {

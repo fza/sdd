@@ -88,11 +88,6 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if err != nil {
 		return err
 	}
-	skip, err := resolveInitSkip(configPath)
-	if err != nil {
-		return err
-	}
-	skip = skip.With(cmd.InheritedSkip)
 
 	// Tracks paths we touch so the final git commit covers exactly what
 	// changed. A repeat init that changes nothing yields no commit.
@@ -238,7 +233,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		// retries the drop rather than orphaning files under a config that
 		// already claims they're gone.
 		if persistAgents {
-			if err := h.persistSupportedAgents(ctx, cmd, configPath, recordedAgents, effectiveAgents, effectiveScope, skip, &touched); err != nil {
+			if err := h.persistSupportedAgents(ctx, cmd, configPath, recordedAgents, effectiveAgents, effectiveScope, &touched); err != nil {
 				return err
 			}
 		}
@@ -341,7 +336,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, skip, touched, initCommitMessage(sddExisted))
+	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(sddExisted))
 }
 
 // resolveSkillScope picks the scope `sdd init` should install under and
@@ -477,16 +472,13 @@ func agentsDiff(a, b []model.AgentTarget) []model.AgentTarget {
 // add-if-missing — an existing sdd entry is left untouched — so re-running
 // init is idempotent and never clobbers a user's customization. Every written
 // file is appended to touched so the init commit records it.
-func (h *Handler) registerMCPServers(agents []model.AgentTarget, skip model.InitConfig, cmd *command.InitCmd, touched *[]string) error {
+func (h *Handler) registerMCPServers(agents []model.AgentTarget, cmd *command.InitCmd, touched *[]string) error {
 	for _, target := range agents {
 		targets, err := model.MCPRegistrationTargets(target, cmd.RepoRoot)
 		if err != nil {
 			return fmt.Errorf("resolving MCP registration for %s: %w", target, err)
 		}
 		for _, rt := range targets {
-			if skip.Skips(rt.Surface) {
-				continue
-			}
 			existing, readErr := os.ReadFile(rt.Path)
 			if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
 				return fmt.Errorf("reading %s: %w", rt.Path, readErr)
