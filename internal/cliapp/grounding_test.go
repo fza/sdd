@@ -15,7 +15,7 @@ func TestCLIGroundingStatusNeedsAJudge(t *testing.T) {
 
 func TestCLIGroundingStatusReportsTheConfiguredJudge(t *testing.T) {
 	f := newAppFixture(t)
-	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\ngrounding:\n  prefilter: true\n")
+	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\nverify:\n  prefilter: true\n")
 	f.write(t, "config/sdd/config.yaml", "participant: Global Author\nllm_prefilter:\n  protocol: systemone\n  api_keys:\n    opper: test-key\n")
 	result := f.run(t, "grounding", "status")
 	if result.err != nil {

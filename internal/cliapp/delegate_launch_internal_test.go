@@ -64,7 +64,7 @@ func TestHeadlessLauncher_FallsBackThroughTheProjectsAgents(t *testing.T) {
 
 func TestHeadlessLauncher_RunsTheConfiguredDriver(t *testing.T) {
 	driver := filepath.Join(t.TempDir(), "absent-driver")
-	launcher := launcherServing(t, &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verifier: model.VerifierConfig{Launch: model.VerifierLaunchCustomDriver, Driver: model.VerifierDriver{Command: driver}}}})
+	launcher := launcherServing(t, &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Launch: model.VerifierLaunchCustomDriver, Driver: model.VerifierDriver{Command: driver}}}})
 
 	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Launch: "custom_driver"})
 	if err != nil || run.Launch != "custom_driver" {
@@ -78,9 +78,9 @@ func TestHeadlessLauncher_RunsTheConfiguredDriver(t *testing.T) {
 }
 
 // The launcher hands each headless launch its own block of the served config:
-// claude runs with verifier.claude, never with verifier.codex.
+// claude runs with verify.claude, never with verify.codex.
 func TestHeadlessLauncher_PassesTheLaunchsModelAndEffort(t *testing.T) {
-	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verifier: model.VerifierConfig{
+	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{
 		Launch: model.VerifierLaunchClaude,
 		Claude: model.VerifierAgent{Model: "opus", Effort: "xhigh"},
 		Codex:  model.VerifierAgent{Model: "gpt-5.5", Effort: "high"},
@@ -110,6 +110,6 @@ func TestHeadlessLauncher_PassesTheLaunchsModelAndEffort(t *testing.T) {
 	}
 	args := strings.Split(strings.TrimSpace(string(recorded)), "\n")
 	if !slices.Contains(args, "opus") || !slices.Contains(args, "xhigh") || slices.Contains(args, "gpt-5.5") {
-		t.Fatalf("claude should run with verifier.claude's model and effort only, got %q", args)
+		t.Fatalf("claude should run with verify.claude's model and effort only, got %q", args)
 	}
 }

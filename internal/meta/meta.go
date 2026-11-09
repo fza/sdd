@@ -89,7 +89,7 @@ func ResolveConfig(global model.BaseConfig, sddDir, localConfigPath string) (*mo
 		model.ConfigSourceProject: filepath.Join(sddDir, "config.yaml"),
 		model.ConfigSourceLocal:   LocalConfigPath(sddDir, localConfigPath),
 	}
-	err = model.CheckVerifierLayers(global, committed, local, files)
+	err = model.CheckVerifyLayers(global, committed, local, files)
 	if err != nil {
 		return nil, err
 	}
@@ -135,12 +135,6 @@ func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.P
 		local, err = readConfigFile(localPath)
 		if err != nil {
 			return nil, nil, err
-		}
-		// A machine-local layer may only turn grounding enforcement on
-		// (20261109-004506-d-cpt-udz, D2).
-		if local != nil && local.Grounding.Enforce != nil && !*local.Grounding.Enforce {
-			return nil, nil, fmt.Errorf("%s: grounding.enforce: false is refused in the machine-local config, which may only set true; turn enforcement off in the committed %s",
-				localPath, filepath.Join(sddDir, "config.yaml"))
 		}
 		local = model.HonoredLocal(local)
 	}

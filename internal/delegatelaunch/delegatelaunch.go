@@ -101,7 +101,7 @@ func Run(ctx context.Context, settings Settings, round Round) (Launched, error) 
 		state, err := runDriver(ctx, settings, round)
 		return Launched{Session: state, Launch: launch}, err
 	}
-	return Launched{}, fmt.Errorf("verifier.launch %q is no headless launch", launch)
+	return Launched{}, fmt.Errorf("verify.launch %q is no headless launch", launch)
 }
 
 func fallback(agents []string) (string, error) {
@@ -114,7 +114,7 @@ func fallback(agents []string) (string, error) {
 			return agent, nil
 		}
 	}
-	return "", fmt.Errorf("the harness has no subagent tool and no CLI of supported_agents (%s) is on PATH: set verifier.launch to a launch this machine can run", strings.Join(agents, ", "))
+	return "", fmt.Errorf("the harness has no subagent tool and no CLI of supported_agents (%s) is on PATH: set verify.launch to a launch this machine can run", strings.Join(agents, ", "))
 }
 
 // mcpConfig is the one MCP server a headless verifier reaches: sdd's own.
@@ -250,7 +250,7 @@ type DriverRequest struct {
 
 func runDriver(ctx context.Context, settings Settings, round Round) (string, error) {
 	if settings.Driver.Command == "" {
-		return "", errors.New("verifier.launch custom_driver needs verifier.driver.command")
+		return "", errors.New("verify.launch custom_driver needs verify.driver.command")
 	}
 	request, err := json.Marshal(DriverRequest{Round: round.Number, Session: round.Session, Instance: round.Instance, Prompt: round.Prompt, DriverState: round.Resume})
 	if err != nil {

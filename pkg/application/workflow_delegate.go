@@ -91,7 +91,7 @@ type WorkflowDispatch struct {
 	// Agent is the subagent definition a harness launches the delegate as.
 	Agent string
 	// Model and Effort are what the harness launches that subagent with, from
-	// verifier.subagent; empty leaves the harness's own.
+	// verify.subagent; empty leaves the harness's own.
 	Model  string
 	Effort string
 	// Launch is the launch sdd runs the delegate's round with, when it launched
@@ -283,7 +283,7 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 	}
 	if launch != "" || (w.app.launcher != nil && procedure != verifyProcedure) {
 		if w.app.launcher == nil {
-			return dispatch, fmt.Errorf("verifier.launch %s needs sdd to launch the delegate, and this server launches none: set verifier.launch: subagent", launch)
+			return dispatch, fmt.Errorf("verify.launch %s needs sdd to launch the delegate, and this server launches none: set verify.launch: subagent", launch)
 		}
 		launched, err := w.app.launchDelegate(ctx, identity, id, child.Instance, procedure, w.instanceProject(parent), launch)
 		switch {
@@ -314,7 +314,7 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 }
 
 // subagentSettings is the model and effort a harness launches the deep
-// verifier's subagent with, from verifier.subagent; empty for every other
+// verifier's subagent with, from verify.subagent; empty for every other
 // delegate.
 func (w *WorkflowSession) subagentSettings(parent, procedure string) (VerifierAgent, error) {
 	if procedure != verifyProcedure {

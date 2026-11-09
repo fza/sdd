@@ -859,7 +859,7 @@ func newCmd() *cli.Command {
 			},
 			&cli.BoolFlag{
 				Name:  "skip-grounding",
-				Usage: "Record a bypass of the grounding gate under grounding.enforce (entry is annotated with grounding: skipped and written with confidence low)",
+				Usage: "Record a bypass of the grounding gate where verify.mode enforces grounding (entry is annotated with grounding: skipped and written with confidence low)",
 			},
 			&cli.BoolFlag{
 				Name:  "preflight-verified",
@@ -1902,12 +1902,12 @@ func initCmd() *cli.Command {
 				Usage: "Your dialogue mode, guided or autonomous, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
 			},
 			&cli.StringFlag{
-				Name:  "strictness",
-				Usage: "How strictly drafts are checked against the graph: off, grounding, light or deep, recorded as grounding.enforce and verifier.mode in the committed .sdd/config.yaml (prompted interactively while unset)",
+				Name:  "verify-mode",
+				Usage: "How carefully drafts are checked against the graph: off, grounding, prose or deep, recorded as verify.mode in the committed .sdd/config.yaml (prompted interactively while unset)",
 			},
 			&cli.StringFlag{
 				Name:  "verifier-launch",
-				Usage: "How the deep verifier runs on this machine: subagent, claude, codex or custom_driver, recorded as verifier.launch in the project's .sdd/config.local.yaml (prompted interactively under verifier.mode deep while no layer sets it)",
+				Usage: "How the deep verifier runs on this machine: subagent, claude, codex or custom_driver, recorded as verify.launch in the project's .sdd/config.local.yaml (prompted interactively under verify.mode deep while no layer sets it)",
 			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
@@ -2025,11 +2025,11 @@ func initCmd() *cli.Command {
 			}
 			recordedParticipant := ""
 			var recordedDialogueMode model.DialogueMode
-			strictnessRecorded := false
+			verifyModeRecorded := false
 			if existingMerged != nil {
 				recordedParticipant = existingMerged.Participant
 				recordedDialogueMode = existingMerged.Dialogue.Mode
-				strictnessRecorded = existingMerged.Verifier.Mode != "" || existingMerged.Grounding.Enforce != nil
+				verifyModeRecorded = existingMerged.Verify.Mode != ""
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
 			participantFlag := strings.TrimSpace(cmd.String("participant"))
@@ -2167,24 +2167,24 @@ func initCmd() *cli.Command {
 				}
 			}
 
-			var strictness model.Strictness
-			strictnessFlag := strings.TrimSpace(cmd.String("strictness"))
-			if strictnessFlag != "" {
-				strictness, err = model.ParseStrictness(strictnessFlag)
+			var verifyMode model.VerifyMode
+			verifyModeFlag := strings.TrimSpace(cmd.String("verify-mode"))
+			if verifyModeFlag != "" {
+				verifyMode, err = model.ParseVerifyMode(verifyModeFlag)
 				if err != nil {
-					return fmt.Errorf("invalid --strictness: %w", err)
+					return fmt.Errorf("invalid --verify-mode: %w", err)
 				}
-			} else if !strictnessRecorded && cliout.IsTerminalReader(cmd.Reader) {
-				strictness, err = promptStrictness(cmd)
+			} else if !verifyModeRecorded && cliout.IsTerminalReader(cmd.Reader) {
+				verifyMode, err = promptVerifyMode(cmd)
 				if err != nil {
 					return fmt.Errorf("prompt: %w", err)
 				}
 			}
 
 			launchAgents := targets
-			var recorded model.VerifierConfig
+			var recorded model.VerifyConfig
 			if existingMerged != nil {
-				recorded = existingMerged.Verifier
+				recorded = existingMerged.Verify
 				if len(launchAgents) == 0 {
 					launchAgents = existingMerged.SupportedAgents
 				}
@@ -2194,12 +2194,12 @@ func initCmd() *cli.Command {
 			}
 			launchChoices := model.VerifierLaunchChoices(launchAgents, recorded.Driver)
 			resolvedMode := recorded.Mode
-			if strictness != "" {
-				_, resolvedMode = strictness.Settings()
+			if verifyMode != "" {
+				resolvedMode = verifyMode
 			}
 			verifierLaunch := model.VerifierLaunch(strings.TrimSpace(cmd.String("verifier-launch")))
 			if verifierLaunch != "" && !slices.Contains(launchChoices, verifierLaunch) {
-				return fmt.Errorf("invalid --verifier-launch %q: this project offers %s (claude and codex only where supported_agents names them, custom_driver only once a layer sets verifier.driver.command)", verifierLaunch, joinLaunches(launchChoices))
+				return fmt.Errorf("invalid --verifier-launch %q: this project offers %s (claude and codex only where supported_agents names them, custom_driver only once a layer sets verify.driver.command)", verifierLaunch, joinLaunches(launchChoices))
 			}
 			if verifierLaunch == "" && model.VerifierLaunchAsked(resolvedMode, recorded) && cliout.IsTerminalReader(cmd.Reader) {
 				verifierLaunch, err = promptVerifierLaunch(cmd, launchChoices)
@@ -2220,7 +2220,7 @@ func initCmd() *cli.Command {
 				GraphRepo:       graphRepo,
 				SetUpProject:    setUpProject,
 				DialogueMode:    dialogueMode,
-				Strictness:      strictness,
+				VerifyMode:      verifyMode,
 				VerifierLaunch:  verifierLaunch,
 				DefaultBranch:   defaultBranch,
 				Participant:     participant,
@@ -2792,18 +2792,17 @@ func refKindsForUsage() string {
 	return strings.Join(parts, ", ")
 }
 
-// promptStrictness asks how strictly drafts are checked against the graph;
-// the one answer sets grounding enforcement and the verifier mode together.
-func promptStrictness(cmd *cli.Command) (model.Strictness, error) {
-	return tui.RunSelect(tui.SelectPrompt[model.Strictness]{
+// promptVerifyMode asks how carefully drafts are checked against the graph.
+func promptVerifyMode(cmd *cli.Command) (model.VerifyMode, error) {
+	return tui.RunSelect(tui.SelectPrompt[model.VerifyMode]{
 		Reader: cmd.Reader,
 		Writer: cmd.Writer,
 		Header: "How carefully should sdd check a new entry before saving it? (↑/↓ to navigate, enter to confirm)",
-		Options: []tui.SelectOption[model.Strictness]{
-			{Label: string(model.StrictnessOff), Hint: "a quick check of the entry on its own", Value: model.StrictnessOff},
-			{Label: string(model.StrictnessGrounding), Hint: "your AI first reads related entries, no check after", Value: model.StrictnessGrounding},
-			{Label: string(model.StrictnessLight), Hint: "your AI reads related entries, then checks the new one fits", Value: model.StrictnessLight},
-			{Label: string(model.StrictnessDeep), Hint: "like light, and a second AI double-checks it", Value: model.StrictnessDeep},
+		Options: []tui.SelectOption[model.VerifyMode]{
+			{Label: string(model.VerifyOff), Hint: "a quick check of the entry on its own", Value: model.VerifyOff},
+			{Label: string(model.VerifyGrounding), Hint: "your AI first reads related entries, no check after", Value: model.VerifyGrounding},
+			{Label: string(model.VerifyProse), Hint: "your AI reads related entries, then checks the new one fits", Value: model.VerifyProse},
+			{Label: string(model.VerifyDeep), Hint: "like prose, and a second AI double-checks it", Value: model.VerifyDeep},
 		},
 	})
 }

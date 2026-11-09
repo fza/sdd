@@ -167,7 +167,7 @@ func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
 	settings := []struct{ key, value string }{
 		{"participant", cmd.Participant},
 		{"dialogue.mode", string(cmd.DialogueMode)},
-		{"verifier.launch", string(cmd.VerifierLaunch)},
+		{"verify.launch", string(cmd.VerifierLaunch)},
 	}
 	configLocalPath := meta.LocalConfigPath(sddDir, cmd.LocalConfigPath)
 	for _, setting := range settings {

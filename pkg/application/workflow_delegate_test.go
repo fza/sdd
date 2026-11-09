@@ -406,7 +406,7 @@ func TestDelegateIsNeverStartedByHand(t *testing.T) {
 	}
 }
 
-// verifier.subagent is the deep verifier's: a delegate of any other task
+// verify.subagent is the deep verifier's: a delegate of any other task
 // carries no model or effort, whatever the project configures.
 func TestDispatchOfAnotherTaskCarriesNoVerifierModel(t *testing.T) {
 	f := newDelegateApplicationWithVerifier(t, nil, sdd.VerifierPolicy{Subagent: sdd.VerifierAgent{Model: "opus", Effort: "high"}})

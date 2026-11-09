@@ -207,7 +207,7 @@ func WithAutonomousDialogue() Option {
 	return func(c *config) { c.dialogue = sdd.Dialogue{Mode: "autonomous", Source: "config.local.yaml"} }
 }
 
-// WithGroundingEnforced turns grounding.enforce on for the world's project.
+// WithGroundingEnforced turns grounding enforcement on for the world's project.
 func WithGroundingEnforced() Option {
 	return func(c *config) { c.grounding.Enforce = true }
 }

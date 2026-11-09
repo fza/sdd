@@ -163,7 +163,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Fn:  w.deepVerdictCurrent,
 		},
 		{
-			Doc: engine.FuncDoc{Name: "deepSkipWeighed", Doc: "The project sets verifier.skip: weighed, so the user weighs running the deep exchange first."},
+			Doc: engine.FuncDoc{Name: "deepSkipWeighed", Doc: "The project sets verify.skip: weighed, so the user weighs running the deep exchange first."},
 			Fn: func(ctx *engine.Context) (bool, error) {
 				policy, _, err := w.deepPolicy(ctx.Instance)
 				return policy.Skip == model.VerifierSkipWeighed, err
@@ -277,14 +277,14 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Fn:  func(ctx *engine.Context) error { return w.writeDeepVerdict(ctx, "skipped", model.DeepSkipWeighed) },
 		},
 		{
-			Doc: engine.FuncDoc{Name: "recordDeepFailureSkip", Doc: "Records the user's skip after the verifier could not run: the entry carries verification: skipped and confidence low. Refused under verifier.skip: never.", Reads: captureDraftFields, Writes: []string{fieldDeepVerdict}},
+			Doc: engine.FuncDoc{Name: "recordDeepFailureSkip", Doc: "Records the user's skip after the verifier could not run: the entry carries verification: skipped and confidence low. Refused under verify.skip: never.", Reads: captureDraftFields, Writes: []string{fieldDeepVerdict}},
 			Fn: func(ctx *engine.Context) error {
 				policy, _, err := w.deepPolicy(ctx.Instance)
 				if err != nil {
 					return err
 				}
 				if policy.Skip == model.VerifierSkipNever {
-					return errors.New("verifier.skip is never, so the capture waits until the verifier runs: retry once it can")
+					return errors.New("verify.skip is never, so the capture waits until the verifier runs: retry once it can")
 				}
 				return w.writeDeepVerdict(ctx, "skipped", model.DeepSkipFailure)
 			},

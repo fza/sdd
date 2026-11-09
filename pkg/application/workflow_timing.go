@@ -92,7 +92,7 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 			Fn:  func(*engine.Context) (bool, error) { return w.Autonomous(), nil },
 		},
 		{
-			Doc: engine.FuncDoc{Name: "verifierOn", Doc: "The capture's project sets verifier.mode light or deep, so pre-flight is the light verifier over the grounding reading."},
+			Doc: engine.FuncDoc{Name: "verifierOn", Doc: "The capture's project sets verify.mode prose or deep, so pre-flight is the prose verifier over the grounding reading."},
 			Fn: func(ctx *engine.Context) (bool, error) {
 				mode, err := w.verifierMode(ctx.Instance)
 				return mode != model.VerifierOff, err

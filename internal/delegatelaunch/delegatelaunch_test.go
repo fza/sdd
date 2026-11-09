@@ -216,7 +216,7 @@ func TestRun_CustomDriverFailures(t *testing.T) {
 func TestRun_CustomDriverNeedsACommand(t *testing.T) {
 	test.FakeAgents(t)
 
-	refused(t, settings(t, "custom_driver"), firstRound(), "verifier.launch custom_driver needs verifier.driver.command")
+	refused(t, settings(t, "custom_driver"), firstRound(), "verify.launch custom_driver needs verify.driver.command")
 }
 
 func TestRun_ARoundPastItsTimeoutFails(t *testing.T) {
@@ -261,13 +261,13 @@ func TestRun_FallbackWithNoSupportedCLIFoundIsRefused(t *testing.T) {
 	launchSettings := settings(t, delegatelaunch.Fallback)
 	launchSettings.Agents = []string{"claude", "codex"}
 
-	refused(t, launchSettings, firstRound(), "no CLI of supported_agents (claude, codex) is on PATH: set verifier.launch")
+	refused(t, launchSettings, firstRound(), "no CLI of supported_agents (claude, codex) is on PATH: set verify.launch")
 }
 
 func TestRun_SubagentIsNoHeadlessLaunch(t *testing.T) {
 	test.FakeAgents(t)
 
-	refused(t, settings(t, "subagent"), firstRound(), `verifier.launch "subagent" is no headless launch`)
+	refused(t, settings(t, "subagent"), firstRound(), `verify.launch "subagent" is no headless launch`)
 }
 
 func TestRun_CodexReportingNoSessionFailsTheFirstRound(t *testing.T) {
@@ -278,7 +278,7 @@ func TestRun_CodexReportingNoSessionFailsTheFirstRound(t *testing.T) {
 }
 
 // Each headless launch runs with the model and effort its own block sets
-// (verifier.claude, verifier.codex), in the CLI's own flags, and a resumed
+// (verify.claude, verify.codex), in the CLI's own flags, and a resumed
 // round keeps them.
 func TestRun_HeadlessLaunchesTakeTheirModelAndEffort(t *testing.T) {
 	codexEvents := `{"type":"thread.started","thread_id":"codex-3"}` + "\n" + `{"type":"turn.completed"}`

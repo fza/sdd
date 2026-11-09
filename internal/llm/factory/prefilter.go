@@ -86,7 +86,7 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 		}
 		scorer = relevance.PerItem(bridge, concurrency)
 	case "":
-		return Prefilter{}, fmt.Errorf("grounding.prefilter is on but llm_prefilter.protocol is not set (supported: %s, %s, %s)", model.PrefilterSystemOne, model.PrefilterCohereRerank, model.PrefilterGenerate)
+		return Prefilter{}, fmt.Errorf("verify.prefilter is on but llm_prefilter.protocol is not set (supported: %s, %s, %s)", model.PrefilterSystemOne, model.PrefilterCohereRerank, model.PrefilterGenerate)
 	default:
 		return Prefilter{}, fmt.Errorf("unknown llm_prefilter.protocol %q (supported: %s, %s, %s)", cfg.Protocol, model.PrefilterSystemOne, model.PrefilterCohereRerank, model.PrefilterGenerate)
 	}

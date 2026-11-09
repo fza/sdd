@@ -84,9 +84,9 @@ func TestGather_PrefilterBelowItsThresholdRunsNoCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	if scorer.calls() != 0 {
-		t.Fatalf("%d prefilter calls: below grounding.prefilter_from the agent judges the briefs", scorer.calls())
+		t.Fatalf("%d prefilter calls: below verify.prefilter_from the agent judges the briefs", scorer.calls())
 	}
-	if !strings.Contains(result.Text, "pairs to judge, below grounding.prefilter_from (100): judge the briefs") || !strings.Contains(result.Text, "prefilter: off: ") {
+	if !strings.Contains(result.Text, "pairs to judge, below verify.prefilter_from (100): judge the briefs") || !strings.Contains(result.Text, "prefilter: off: ") {
 		t.Fatalf("the header should say why the prefilter did not run:\n%s", result.Text)
 	}
 }

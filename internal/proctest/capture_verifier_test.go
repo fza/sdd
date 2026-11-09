@@ -1,4 +1,4 @@
-// Capture with the light draft verifier (20261109-004729-d-cpt-xs5, slice 1):
+// Capture with the prose draft verifier (20261109-004729-d-cpt-xs5, slice 1):
 // pre-flight runs over the grounding reading, adds the graph-fit axes, blocks
 // on high findings as before and serves its one verdict otherwise.
 package proctest_test
@@ -16,7 +16,7 @@ import (
 func newLightWorld(t *testing.T, connID string, options ...proctest.Option) (*proctest.World, *proctest.Session) {
 	t.Helper()
 	return newCaptureWorld(t, connID, append([]proctest.Option{proctest.WithGroundingEnforced(),
-		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "light"}, 200000, 4096)}, options...)...)
+		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "prose"}, 200000, 4096)}, options...)...)
 }
 
 // confirmedLightCapture gathers, opens the unread fixture signal in full and
@@ -99,7 +99,7 @@ func TestCaptureVerifier_LightServesOneVerdictThenWrites(t *testing.T) {
 }
 
 func TestCaptureVerifier_LightWithoutAWindowNamesTheKey(t *testing.T) {
-	_, session := newCaptureWorld(t, "light-window", proctest.WithGroundingEnforced(), proctest.WithVerifier(sdd.VerifierPolicy{Mode: "light"}, 0, 0))
+	_, session := newCaptureWorld(t, "light-window", proctest.WithGroundingEnforced(), proctest.WithVerifier(sdd.VerifierPolicy{Mode: "prose"}, 0, 0))
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
 	session.Gather(t, instance)

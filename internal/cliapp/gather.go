@@ -90,7 +90,7 @@ func sessionGather(ctx context.Context, cmd *cli.Command, session *cliSession, d
 	})
 }
 
-// refuseUngroundedNew refuses a direct `sdd new` under grounding.enforce: the
+// refuseUngroundedNew refuses a direct `sdd new` under grounding enforcement: the
 // CLI holds no capture whose reading the gate could judge, so the write goes
 // through the engine capture, or records its bypass (D3, D4). A dry run
 // writes nothing and actor and role drafts are exempt (D38).
@@ -102,18 +102,18 @@ func refuseUngroundedNew(cfg *model.PerRepoConfig, ncmd *command.NewEntryCmd) er
 	if !groundingPolicy(cfg).Enforce || ncmd.SkipGrounding || ncmd.DryRun || model.GroundingExemptKind(kind) {
 		return nil
 	}
-	return fmt.Errorf("grounding.enforce is on, so sdd new does not write a %s directly: capture it through the engine (start_procedure capture over the MCP server), whose gather reading the gate judges, write it into that capture with sdd new --session, or pass --skip-grounding to record a bypass", kind)
+	return fmt.Errorf("verify.mode %s enforces grounding, so sdd new does not write a %s directly: capture it through the engine (start_procedure capture over the MCP server), whose gather reading the gate judges, write it into that capture with sdd new --session, or pass --skip-grounding to record a bypass", cfg.Verify.Mode, kind)
 }
 
-// groundingPolicy is the resolved grounding block of cfg.
+// groundingPolicy is the resolved grounding part of cfg's verify block.
 func groundingPolicy(cfg *model.PerRepoConfig) sdd.GroundingPolicy {
-	var block model.GroundingConfig
+	var block model.VerifyConfig
 	var recheck model.RecheckConfig
 	if cfg != nil {
-		block = cfg.Grounding
+		block = cfg.Verify
 		recheck = cfg.Recheck
 	}
-	policy := block.Policy()
+	policy := block.GroundingPolicy()
 	return sdd.GroundingPolicy{
 		Enforce: policy.Enforce, DepthDown: policy.DepthDown, DepthUp: policy.DepthUp,
 		BriefAllBelow: policy.BriefAllBelow, PrefilterFrom: policy.PrefilterFrom, Prefilter: policy.Prefilter,
@@ -125,14 +125,14 @@ func verifierPolicy(cfg *model.PerRepoConfig) sdd.VerifierPolicy {
 	if cfg == nil {
 		return sdd.VerifierPolicy{}
 	}
-	policy := cfg.Verifier.Policy()
+	policy := cfg.Verify.VerifierPolicy()
 	return sdd.VerifierPolicy{Mode: string(policy.Mode), Skip: string(policy.Skip), Launch: string(policy.Launch), Subagent: sdd.VerifierAgent(policy.Subagent)}
 }
 
 // modelWindows detects each model's context window once per process.
 var modelWindows = &factory.WindowDetector{}
 
-// modelWindow sizes a light verifier call for the runner cfg configures: the
+// modelWindow sizes a prose verifier call for the runner cfg configures: the
 // window llm.context_tokens sets or the provider reports, and the answer
 // reserve llm.max_tokens sets, else the model's reported output limit,
 // capped (20261109-004729-d-cpt-xs5, V-D12).

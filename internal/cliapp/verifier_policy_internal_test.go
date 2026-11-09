@@ -8,11 +8,11 @@ import (
 )
 
 func TestVerifierPolicyCarriesTheSubagentBlock(t *testing.T) {
-	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verifier: model.VerifierConfig{Subagent: model.VerifierAgent{Model: "opus", Effort: "high"}}}}
+	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Subagent: model.VerifierAgent{Model: "opus", Effort: "high"}}}}
 
 	policy := verifierPolicy(cfg)
 
 	if policy.Subagent != (sdd.VerifierAgent{Model: "opus", Effort: "high"}) {
-		t.Fatalf("the application policy should carry verifier.subagent, got %+v", policy.Subagent)
+		t.Fatalf("the application policy should carry verify.subagent, got %+v", policy.Subagent)
 	}
 }

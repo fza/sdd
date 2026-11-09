@@ -69,17 +69,17 @@ func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, 
 	}
 	rules, err := axes(true)
 	if err != nil {
-		return nil, fmt.Errorf("rendering the light axes: %w", err)
+		return nil, fmt.Errorf("rendering the prose verifier axes: %w", err)
 	}
 	room := budgetChars - len(base.SystemPrompt) - len(base.UserPrompt) - len(rules) - len("\n\n## Reading\n\n")*2
 	if room <= 0 {
-		return nil, fmt.Errorf("the draft with its rules and referenced entries needs %d characters, more than the %d one light call holds: raise llm.context_tokens to a larger window, or set verifier.mode: deep",
+		return nil, fmt.Errorf("the draft with its rules and referenced entries needs %d characters, more than the %d one prose verifier call holds: raise llm.context_tokens to a larger window, or set verify.mode: deep",
 			len(base.SystemPrompt)+len(base.UserPrompt)+len(rules), budgetChars)
 	}
 	items := lightItems(entry, graph, reading)
 	calls, err := model.PlanLightCalls(room, items, overlapRank(entry.Content))
 	if err != nil {
-		return nil, fmt.Errorf("sizing the light pre-flight: %w; raise llm.context_tokens to a larger window, or set verifier.mode: deep", err)
+		return nil, fmt.Errorf("sizing the prose verifier's pre-flight: %w; raise llm.context_tokens to a larger window, or set verify.mode: deep", err)
 	}
 	if len(calls) == 0 {
 		calls = []model.LightCall{{}}
@@ -87,7 +87,7 @@ func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, 
 	if len(calls) == 1 {
 		rules, err = axes(false)
 		if err != nil {
-			return nil, fmt.Errorf("rendering the light axes: %w", err)
+			return nil, fmt.Errorf("rendering the prose verifier axes: %w", err)
 		}
 	}
 	allowed := map[string]bool{}
@@ -118,7 +118,7 @@ func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, 
 	wg.Wait()
 	for i, err := range errs {
 		if err != nil {
-			return nil, fmt.Errorf("running light pre-flight call %d of %d: %w", i+1, len(calls), err)
+			return nil, fmt.Errorf("running prose verifier pre-flight call %d of %d: %w", i+1, len(calls), err)
 		}
 	}
 	merged := mergeLightResults(results)
@@ -353,7 +353,7 @@ func mergeLightResults(results []*PreflightResult) *PreflightResult {
 		m := byKey[key]
 		finding := m.finding
 		if len(results) > 1 {
-			finding.Observation += fmt.Sprintf(" (raised by light call %s of %d)", joinInts(m.calls), len(results))
+			finding.Observation += fmt.Sprintf(" (raised by prose verifier call %s of %d)", joinInts(m.calls), len(results))
 		}
 		out.Findings = append(out.Findings, finding)
 	}

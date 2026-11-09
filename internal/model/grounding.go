@@ -13,20 +13,6 @@ const (
 	DefaultGroundingPrefilterFrom = 30
 )
 
-// GroundingConfig is the `grounding` block. Pointers tell an unset key from
-// one a layer sets, because enforce resolves asymmetrically (D2): the
-// user-global and the committed config may set true or false, the
-// machine-local config only true.
-type GroundingConfig struct {
-	Enforce       *bool                `yaml:"enforce,omitempty"`
-	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
-	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
-	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
-	// Prefilter switches the prefilter on where llm_prefilter configures it
-	// (D7); off by default.
-	Prefilter *bool `yaml:"prefilter,omitempty"`
-}
-
 // GroundingDepthConfig is the grounding depth: how far up and down a
 // candidate's chain the reading scopes candidates.
 type GroundingDepthConfig struct {
@@ -44,10 +30,12 @@ type GroundingPolicy struct {
 	Prefilter     bool
 }
 
-// Policy resolves the block against the defaults.
-func (c GroundingConfig) Policy() GroundingPolicy {
+// GroundingPolicy resolves the block's grounding keys against the defaults;
+// every mode but off enforces grounding.
+func (c VerifyConfig) GroundingPolicy() GroundingPolicy {
+	enforce, _ := c.Mode.Settings()
 	return GroundingPolicy{
-		Enforce:       c.Enforce != nil && *c.Enforce,
+		Enforce:       enforce,
 		DepthDown:     intOr(c.Depth.Down, DefaultGroundingDepthDown),
 		DepthUp:       intOr(c.Depth.Up, DefaultGroundingDepthUp),
 		BriefAllBelow: intOr(c.BriefAllBelow, DefaultGroundingBriefAllBelow),
@@ -61,29 +49,6 @@ func intOr(v *int, fallback int) int {
 		return fallback
 	}
 	return *v
-}
-
-func mergeGroundingConfig(base, overlay GroundingConfig) GroundingConfig {
-	out := base
-	if overlay.Enforce != nil {
-		out.Enforce = overlay.Enforce
-	}
-	if overlay.Depth.Down != nil {
-		out.Depth.Down = overlay.Depth.Down
-	}
-	if overlay.Depth.Up != nil {
-		out.Depth.Up = overlay.Depth.Up
-	}
-	if overlay.BriefAllBelow != nil {
-		out.BriefAllBelow = overlay.BriefAllBelow
-	}
-	if overlay.Prefilter != nil {
-		out.Prefilter = overlay.Prefilter
-	}
-	if overlay.PrefilterFrom != nil {
-		out.PrefilterFrom = overlay.PrefilterFrom
-	}
-	return out
 }
 
 // GroundingExemptKind reports whether drafts of kind skip the grounding gate

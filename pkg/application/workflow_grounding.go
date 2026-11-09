@@ -19,14 +19,14 @@ import (
 var groundingVerdictFields = []string{"verdicts", "lateVerdicts"}
 
 // registerWorkflowGrounding registers the capture's grounding gate under
-// grounding.enforce (20261109-004506-d-cpt-udz): the assemble predicate, the
+// grounding enforcement (20261109-004506-d-cpt-udz): the assemble predicate, the
 // write step's late-entries check and the late-entries listing.
 func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) error {
 	reads := []string{"entryKind", "topics", "refs", "supersedes", "closes", "verdicts", "lateVerdicts", "strains", "skipGrounding"}
 	if err := registry.RegisterPredicate(engine.Predicate{
 		Doc: engine.FuncDoc{
 			Name: "groundingRead",
-			Doc: "Under grounding.enforce, the capture's credited reading is complete: the reads it owes ran through gather inside the capture, " +
+			Doc: "Where verify.mode enforces grounding, the capture's credited reading is complete: the reads it owes ran through gather inside the capture, " +
 				"every entry that landed since the reading began is listed, every entry served in full ends in refs or verdicts, every verdict and strain names a listed entry, and the draft cites no single entry of an unhealed strain. " +
 				"Passes without enforcement, with skipGrounding, and for actor and role drafts.",
 			Reads: reads,
@@ -49,7 +49,7 @@ func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) e
 	if err := registry.RegisterPredicate(engine.Predicate{
 		Doc: engine.FuncDoc{
 			Name:  "noLateEntries",
-			Doc:   "Under grounding.enforce, no entry landed since the reading began that the capture has not listed or answered; passes where groundingRead passes vacuously.",
+			Doc:   "Where verify.mode enforces grounding, no entry landed since the reading began that the capture has not listed or answered; passes where groundingRead passes vacuously.",
 			Reads: reads,
 		},
 		Fn: func(ctx *engine.Context) (bool, error) {
@@ -93,7 +93,7 @@ func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) e
 
 // groundingEvidence returns the capture's grounding evidence over the graph
 // loadGraph returns, loaded only once the gate applies, and
-// whether the gate applies: grounding.enforce on, no recorded bypass, a gated
+// whether the gate applies: grounding enforced, no recorded bypass, a gated
 // kind.
 func (w *WorkflowSession) groundingEvidence(ctx *engine.Context, loadGraph func() (*model.Graph, error)) (model.GroundingEvidence, bool, error) {
 	runtime, err := w.targetRuntime(w.instanceProject(ctx.Instance), AccessRead)

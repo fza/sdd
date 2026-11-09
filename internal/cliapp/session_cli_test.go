@@ -26,7 +26,7 @@ func sessionFixture(t *testing.T, enforce bool) *appFixture {
 	llm := test.NewOpenAIServer(t, test.OpenAIBehaviour{Answer: `{"title": "Session capture", "summary": "A gap written into a session's capture.", "findings": []}`})
 	config := "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\n"
 	if enforce {
-		config += "grounding:\n  enforce: true\n"
+		config += "verify:\n  mode: grounding\n"
 	}
 	f.write(t, ".sdd/config.yaml", config)
 	f.write(t, ".sdd/config.local.yaml", "participant: Local Author\nllm:\n  provider: openai\n  model: fake\n  endpoint: "+llm.URL+"\n  api_keys:\n    openai: op-notarealkeyaaaaaaaaaa\n  retry:\n    max_attempts: 1\n")
@@ -159,8 +159,8 @@ func TestCLISessionShowInspectsARefForTheCapture(t *testing.T) {
 	assertContainsOutput(t, "stdout", result.stdout, "-s-tac-", "Summary: A gap written into a session's capture.")
 }
 
-// Under grounding.enforce, sdd new --session passes the gate the engine
-// capture passes: it holds the draft until a gather inside the capture read
+// Where verify.mode enforces grounding, sdd new --session passes the gate the
+// engine capture passes: it holds the draft until a gather inside the capture read
 // the graph and every entry it served in full is referenced or dismissed
 // (D3, D9, D39).
 func TestCLISessionNewPassesTheCaptureGate(t *testing.T) {
