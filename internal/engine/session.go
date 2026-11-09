@@ -352,7 +352,7 @@ type Read struct {
 
 // Record logs a read: the IDs fold into the session's read set as LogRead
 // does, and a grounding payload folds into the named instance's reading.
-// Only a running instance takes credit — a read made outside it credits
+// Only a running instance takes credit; a read made outside it credits
 // nothing (D28). A read with nothing to record appends nothing.
 func (s *Session) Record(read Read) error {
 	var inst *Instance
@@ -366,7 +366,7 @@ func (s *Session) Record(read Read) error {
 			return fmt.Errorf("instance %q not found in session", read.Instance)
 		}
 		if inst.Status != StatusRunning {
-			return fmt.Errorf("instance %s has ended (%s) — a read credits only a running move", read.Instance, inst.Outcome)
+			return fmt.Errorf("instance %s has ended (%s): a read credits only a running move", read.Instance, inst.Outcome)
 		}
 	} else if !read.Grounding.Empty() {
 		return fmt.Errorf("a grounding read must name the instance it credits")
