@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -1887,6 +1888,10 @@ func initCmd() *cli.Command {
 				Name:  "strictness",
 				Usage: "How strictly drafts are checked against the graph: off, grounding, light or deep, recorded as grounding.enforce and verifier.mode in the committed .sdd/config.yaml (prompted interactively while unset)",
 			},
+			&cli.StringFlag{
+				Name:  "verifier-launch",
+				Usage: "How the deep verifier runs on this machine: subagent, claude, codex or custom_driver, recorded as verifier.launch in the project's .sdd/config.local.yaml (prompted interactively under verifier.mode deep while no layer sets it)",
+			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			// `--bump` cannot be honoured from a dev build — fail before
@@ -2159,6 +2164,33 @@ func initCmd() *cli.Command {
 				}
 			}
 
+			launchAgents := targets
+			var recorded model.VerifierConfig
+			if existingMerged != nil {
+				recorded = existingMerged.Verifier
+				if len(launchAgents) == 0 {
+					launchAgents = existingMerged.SupportedAgents
+				}
+			}
+			if len(launchAgents) == 0 {
+				launchAgents = model.DefaultSupportedAgents
+			}
+			launchChoices := model.VerifierLaunchChoices(launchAgents, recorded.Driver)
+			resolvedMode := recorded.Mode
+			if strictness != "" {
+				_, resolvedMode = strictness.Settings()
+			}
+			verifierLaunch := model.VerifierLaunch(strings.TrimSpace(cmd.String("verifier-launch")))
+			if verifierLaunch != "" && !slices.Contains(launchChoices, verifierLaunch) {
+				return fmt.Errorf("invalid --verifier-launch %q: this project offers %s (claude and codex only where supported_agents names them, custom_driver only once a layer sets verifier.driver.command)", verifierLaunch, joinLaunches(launchChoices))
+			}
+			if verifierLaunch == "" && model.VerifierLaunchAsked(resolvedMode, recorded) && cliout.IsTerminalReader(cmd.Reader) {
+				verifierLaunch, err = promptVerifierLaunch(cmd, launchChoices)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
+			}
+
 			stableRepoRoot, err := git.StableRepoRoot(repoRoot)
 			if err != nil {
 				return err
@@ -2172,6 +2204,7 @@ func initCmd() *cli.Command {
 				SetUpProject:    setUpProject,
 				DialogueMode:    dialogueMode,
 				Strictness:      strictness,
+				VerifierLaunch:  verifierLaunch,
 				DefaultBranch:   defaultBranch,
 				Participant:     participant,
 				LocalConfigPath: localConfigOverride,
@@ -2756,4 +2789,33 @@ func promptStrictness(cmd *cli.Command) (model.Strictness, error) {
 			{Label: string(model.StrictnessDeep), Hint: "light, then a tool-using verifier agent exchanges findings with the drafter", Value: model.StrictnessDeep},
 		},
 	})
+}
+
+// promptVerifierLaunch asks how the deep verifier runs on this machine,
+// offering choices with subagent first as the default.
+func promptVerifierLaunch(cmd *cli.Command, choices []model.VerifierLaunch) (model.VerifierLaunch, error) {
+	hints := map[model.VerifierLaunch]string{
+		model.VerifierLaunchSubagent:     "your agent's harness runs a fresh-context subagent you can watch",
+		model.VerifierLaunchClaude:       "sdd runs a headless claude, read-only, hidden from you",
+		model.VerifierLaunchCodex:        "sdd runs a headless codex in a read-only sandbox, hidden from you",
+		model.VerifierLaunchCustomDriver: "sdd runs the configured verifier.driver each round",
+	}
+	options := make([]tui.SelectOption[model.VerifierLaunch], 0, len(choices))
+	for _, choice := range choices {
+		options = append(options, tui.SelectOption[model.VerifierLaunch]{Label: string(choice), Hint: hints[choice], Value: choice})
+	}
+	return tui.RunSelect(tui.SelectPrompt[model.VerifierLaunch]{
+		Reader:  cmd.Reader,
+		Writer:  cmd.Writer,
+		Header:  "How should the deep verifier run? (↑/↓ to navigate, enter to confirm)",
+		Options: options,
+	})
+}
+
+func joinLaunches(launches []model.VerifierLaunch) string {
+	names := make([]string, len(launches))
+	for i, launch := range launches {
+		names[i] = string(launch)
+	}
+	return strings.Join(names, ", ")
 }

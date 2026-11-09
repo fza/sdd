@@ -57,6 +57,10 @@ type InitCmd struct {
 	// verifier.mode together (20261109-004729-d-cpt-xs5, V-D28).
 	Strictness model.Strictness
 
+	// VerifierLaunch, when set, records how the deep verifier runs on this
+	// machine in the local config (V-D20, V-D28).
+	VerifierLaunch model.VerifierLaunch
+
 	// SetUpProject allows init to set up a missing project at ProjectDir. Only
 	// a path the caller typed qualifies: a recorded project_dir names a shared
 	// project to clone, never one to create.

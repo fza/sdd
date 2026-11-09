@@ -43,3 +43,37 @@ func TestInitRefusesAnUnknownStrictness(t *testing.T) {
 		t.Fatalf("an unknown strictness should be refused naming the flag, got %v", err)
 	}
 }
+
+// The deep verifier's launch is personal: init records it in the local
+// config, and offers only the agents supported_agents names (V-D28).
+func TestInitRecordsTheVerifierLaunchLocally(t *testing.T) {
+	work, _ := workRepository(t)
+	runApp(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--strictness", "deep", "--verifier-launch", "claude")
+
+	local, err := model.ParseConfig([]byte(readFile(t, filepath.Join(work, ".sdd", "config.local.yaml"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local.Verifier.Launch != model.VerifierLaunchClaude {
+		t.Fatalf("the local config should carry the launch, got %q", local.Verifier.Launch)
+	}
+	if strings.Contains(readFile(t, filepath.Join(work, ".sdd", "config.yaml")), "launch") {
+		t.Fatal("the committed config should not carry the personal launch")
+	}
+}
+
+func TestInitRefusesALaunchTheProjectDoesNotRun(t *testing.T) {
+	for _, tc := range []struct{ launch, refusal string }{
+		{"codex", `invalid --verifier-launch "codex": this project offers subagent, claude`},
+		{"custom_driver", `invalid --verifier-launch "custom_driver": this project offers subagent, claude`},
+		{"helper", `invalid --verifier-launch "helper"`},
+	} {
+		t.Run(tc.launch, func(t *testing.T) {
+			work, _ := workRepository(t)
+			_, err := runAppErr(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--strictness", "deep", "--verifier-launch", tc.launch)
+			if err == nil || !strings.Contains(err.Error(), tc.refusal) {
+				t.Fatalf("a launch outside the offered set should be refused naming the flag, got %v", err)
+			}
+		})
+	}
+}
