@@ -623,8 +623,8 @@
               "instructions": {
                 "type": "string"
               },
-              "launched": {
-                "description": "set when sdd launched the delegate itself: the launcher's own session",
+              "launch": {
+                "description": "set when sdd launched the delegate itself: the launch its round runs with, in the background",
                 "type": "string"
               },
               "procedure": {
@@ -1485,8 +1485,8 @@
                     "instructions": {
                       "type": "string"
                     },
-                    "launched": {
-                      "description": "set when sdd launched the delegate itself: the launcher's own session",
+                    "launch": {
+                      "description": "set when sdd launched the delegate itself: the launch its round runs with, in the background",
                       "type": "string"
                     },
                     "procedure": {
@@ -2315,8 +2315,8 @@
               "instructions": {
                 "type": "string"
               },
-              "launched": {
-                "description": "set when sdd launched the delegate itself: the launcher's own session",
+              "launch": {
+                "description": "set when sdd launched the delegate itself: the launch its round runs with, in the background",
                 "type": "string"
               },
               "procedure": {
@@ -2765,8 +2765,8 @@
               "instructions": {
                 "type": "string"
               },
-              "launched": {
-                "description": "set when sdd launched the delegate itself: the launcher's own session",
+              "launch": {
+                "description": "set when sdd launched the delegate itself: the launch its round runs with, in the background",
                 "type": "string"
               },
               "procedure": {

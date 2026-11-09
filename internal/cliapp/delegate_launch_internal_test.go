@@ -22,7 +22,7 @@ func launcherServing(t *testing.T, cfg *model.PerRepoConfig) headlessLauncher {
 func TestHeadlessLauncher_LeavesAnUnconfiguredLaunchToTheHarness(t *testing.T) {
 	launcher := launcherServing(t, &model.PerRepoConfig{})
 
-	_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Round: 1})
+	_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served"})
 
 	if !errors.Is(err, sdd.ErrDelegateNotLaunched) {
 		t.Fatalf("a delegate without a configured launch should go back to the harness, got %v", err)
@@ -32,7 +32,7 @@ func TestHeadlessLauncher_LeavesAnUnconfiguredLaunchToTheHarness(t *testing.T) {
 func TestHeadlessLauncher_LaunchesOnlyInTheServedProject(t *testing.T) {
 	launcher := launcherServing(t, &model.PerRepoConfig{})
 
-	_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "dependency", Launch: "claude", Round: 1})
+	_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "dependency", Launch: "claude"})
 
 	if err == nil || !strings.Contains(err.Error(), "only in the served project served, not in dependency") {
 		t.Fatalf("a launch in another project should be refused, got %v", err)
@@ -51,7 +51,7 @@ func TestHeadlessLauncher_FallsBackThroughTheProjectsAgents(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			launcher := launcherServing(t, &model.PerRepoConfig{SupportedAgents: tc.agents})
 
-			_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Launch: sdd.DelegateLaunchFallback, Round: 1})
+			_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Launch: sdd.DelegateLaunchFallback})
 
 			if err == nil || !strings.Contains(err.Error(), tc.refusal) {
 				t.Fatalf("the fallback should try the project's supported agents in order, got %v", err)
@@ -64,7 +64,11 @@ func TestHeadlessLauncher_RunsTheConfiguredDriver(t *testing.T) {
 	driver := filepath.Join(t.TempDir(), "absent-driver")
 	launcher := launcherServing(t, &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verifier: model.VerifierConfig{Launch: model.VerifierLaunchCustomDriver, Driver: model.VerifierDriver{Command: driver}}}})
 
-	_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Launch: "custom_driver", Round: 1})
+	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Launch: "custom_driver"})
+	if err != nil || run.Launch != "custom_driver" {
+		t.Fatalf("the launcher should take the driver launch on at once, got %+v, %v", run, err)
+	}
+	_, err = run.Round(context.Background(), sdd.DelegateRound{Number: 1})
 
 	if err == nil || !strings.Contains(err.Error(), driver+" failed") {
 		t.Fatalf("the launch should run the driver the config names, got %v", err)

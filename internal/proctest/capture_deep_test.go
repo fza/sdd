@@ -6,7 +6,6 @@
 package proctest_test
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -15,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/test"
 )
 
 const deepBody = "A tactical gap: the fixture observes something."
@@ -363,70 +363,75 @@ func TestCaptureDeep_AutonomousVerifiesBeforePlayback(t *testing.T) {
 	proctest.RequireStep(t, serve, "playback")
 }
 
-// fallbackLauncher stands in for the headless launches: it reports the CLI
-// it ran and drives the delegate's first round the way that CLI would.
-type fallbackLauncher struct {
-	t        *testing.T
-	world    *proctest.World
-	launches []sdd.DelegateLaunch
+// headlessLauncher stands in for the headless launches: it reports the claude
+// CLI, leaves a delegate without a configured launch to the harness, and
+// runs each round in the background until the test ends it.
+func headlessLauncher(t *testing.T) *test.ScriptedLauncher {
+	launcher := test.NewScriptedLauncher(t, "claude")
+	launcher.LeaveUnconfigured = true
+	return launcher
 }
 
-func (l *fallbackLauncher) LaunchDelegate(_ context.Context, launch sdd.DelegateLaunch) (sdd.DelegateLaunched, error) {
-	if launch.Launch == "" {
-		return sdd.DelegateLaunched{}, sdd.ErrDelegateNotLaunched
-	}
-	l.launches = append(l.launches, launch)
-	delegate := l.world.Delegate(l.t, &sdd.WorkflowDispatch{Session: launch.Session})
-	delegate.Answer(l.t, launch.Instance, "read", "more", nil, "")
-	delegate.Answer(l.t, launch.Instance, "read", "judge", map[string]any{"findings": []any{}}, "")
-	return sdd.DelegateLaunched{Session: "cli-session", Launch: "claude"}, nil
+// driveRound drives a launched round's verify delegate the way the CLI would,
+// judging the draft clean, and ends the round.
+func driveRound(t *testing.T, world *proctest.World, round *test.ScriptedRound) {
+	t.Helper()
+	delegate := world.Delegate(t, &sdd.WorkflowDispatch{Session: round.Launch.Session})
+	delegate.Answer(t, round.Launch.Instance, "read", "more", nil, "")
+	delegate.Answer(t, round.Launch.Instance, "read", "judge", map[string]any{"findings": []any{}}, "")
+	round.Finish("cli-session", nil)
 }
 
 func TestCaptureDeep_NoSubagentFallsBackToAHeadlessLaunch(t *testing.T) {
-	launcher := &fallbackLauncher{t: t}
+	launcher := headlessLauncher(t)
 	world, session := newDeepWorld(t, "deep-fallback", sdd.VerifierPolicy{}, proctest.WithDelegateLauncher(launcher))
-	launcher.world = world
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	session.Answer(t, instance, "deepDispatch", "noSubagent", nil, "")
 	forked := session.StartChild(t, "verify", nil, instance)
-	if len(launcher.launches) != 1 || launcher.launches[0].Launch != sdd.DelegateLaunchFallback || launcher.launches[0].Project != "proctest" {
-		t.Fatalf("a harness without a subagent tool should get the headless fallback, got %+v", launcher.launches)
+	launches := launcher.Launches()
+	if len(launches) != 1 || launches[0].Launch != sdd.DelegateLaunchFallback || launches[0].Project != "proctest" {
+		t.Fatalf("a harness without a subagent tool should get the headless fallback, got %+v", launches)
 	}
-	if strings.Contains(launcher.launches[0].Prompt, string(session.ID)) {
-		t.Fatal("the launched prompt never carries the capture's session handle")
-	}
-	if dispatch := forked.Dispatches[0]; dispatch.Launched != "cli-session" || !strings.Contains(dispatch.Instructions, "fell back to the headless claude launch") {
+	if dispatch := forked.Dispatches[0]; dispatch.Launch != "claude" || !strings.Contains(dispatch.Instructions, "fell back to the headless claude launch") {
 		t.Fatalf("the serve should name the launch it fell back to, got %+v", dispatch)
 	}
+	round := launcher.NextRound(t)
+	if strings.Contains(round.Round.Prompt, string(session.ID)) {
+		t.Fatal("the launched prompt never carries the capture's session handle")
+	}
+	driveRound(t, world, round)
 	session.Refresh(t)
 	serve = session.Answer(t, instance, "deepLaunch", "started", nil, "")
 	proctest.RequireStep(t, serve, "verifySummary")
 }
 
 func TestCaptureDeep_ConfiguredHeadlessLaunchRunsThroughSdd(t *testing.T) {
-	launcher := &fallbackLauncher{t: t}
+	launcher := headlessLauncher(t)
 	world, session := newDeepWorld(t, "deep-headless", sdd.VerifierPolicy{Launch: "codex"}, proctest.WithDelegateLauncher(launcher))
-	launcher.world = world
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
 	forked := session.StartChild(t, "verify", nil, instance)
-	if len(launcher.launches) != 1 || launcher.launches[0].Launch != "codex" || launcher.launches[0].Round != 1 {
-		t.Fatalf("a configured headless launch should go to sdd's launcher, got %+v", launcher.launches)
+	if launches := launcher.Launches(); len(launches) != 1 || launches[0].Launch != "codex" {
+		t.Fatalf("a configured headless launch should go to sdd's launcher, got %+v", launches)
 	}
-	if dispatch := forked.Dispatches[0]; dispatch.Launched != "cli-session" || !strings.Contains(dispatch.Instructions, "sdd launched the delegate itself, so launch nothing") {
+	if dispatch := forked.Dispatches[0]; dispatch.Launch != "claude" || !strings.Contains(dispatch.Instructions, "sdd launched the delegate itself, so launch nothing") {
 		t.Fatalf("the serve should tell the harness to launch nothing, got %+v", dispatch)
 	}
+	round := launcher.NextRound(t)
+	if round.Round.Number != 1 {
+		t.Fatalf("the fork launches the first round, got %+v", round.Round)
+	}
+	driveRound(t, world, round)
 }
 
 func TestCaptureDeep_SubagentLaunchStaysWithTheHarness(t *testing.T) {
-	launcher := &fallbackLauncher{t: t}
+	launcher := headlessLauncher(t)
 	world, session := newDeepWorld(t, "deep-subagent", sdd.VerifierPolicy{}, proctest.WithDelegateLauncher(launcher))
-	launcher.world = world
 	x := startDeep(t, world, session, captureDraft())
-	if len(launcher.launches) != 0 || x.dispatch.Launched != "" || !strings.Contains(x.dispatch.Instructions, "Launch a fresh-context sub-agent") {
-		t.Fatalf("a subagent launch is the harness's, got %+v and %d launches", x.dispatch, len(launcher.launches))
+	if len(launcher.Launches()) != 0 || x.dispatch.Launch != "" || !strings.Contains(x.dispatch.Instructions, "Launch a fresh-context sub-agent") {
+		t.Fatalf("a subagent launch is the harness's, got %+v and %d launches", x.dispatch, len(launcher.Launches()))
 	}
 }
 
@@ -452,36 +457,30 @@ func TestCaptureDeep_EditAfterTheVerdictRunsADeltaExchange(t *testing.T) {
 	}
 }
 
-// failingLauncher refuses its first headless launch, then drives the
-// delegate like fallbackLauncher.
-type failingLauncher struct {
-	fallbackLauncher
-	failed []sdd.SessionID
-}
-
-func (l *failingLauncher) LaunchDelegate(ctx context.Context, launch sdd.DelegateLaunch) (sdd.DelegateLaunched, error) {
-	if launch.Launch != "" && len(l.failed) == 0 {
-		l.failed = append(l.failed, launch.Session)
-		return sdd.DelegateLaunched{}, errors.New("codex failed: exit status 1: not logged in")
-	}
-	return l.fallbackLauncher.LaunchDelegate(ctx, launch)
-}
-
-func TestCaptureDeep_FailedLaunchEndsItsDelegateAndRetries(t *testing.T) {
-	launcher := &failingLauncher{fallbackLauncher: fallbackLauncher{t: t}}
+func TestCaptureDeep_FailedRoundEndsItsDelegateAndRetries(t *testing.T) {
+	launcher := headlessLauncher(t)
 	world, session := newDeepWorld(t, "deep-launch-failed", sdd.VerifierPolicy{Launch: "codex"}, proctest.WithDelegateLauncher(launcher))
-	launcher.world = world
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
-	_, err := session.StartChildErr(t, "verify", nil, instance)
-	if err == nil || !strings.Contains(err.Error(), "not logged in") {
-		t.Fatalf("a failed launch should fail the start with the launcher's error, got %v", err)
+	failed := session.StartChild(t, "verify", nil, instance).Dispatches[0].Session
+	launcher.NextRound(t).Finish("", errors.New("codex failed: exit status 1: not logged in"))
+	var err error
+	test.Eventually(t, "the failed round reaching the capture", func() bool {
+		workflow, refreshErr := world.App.RefreshWorkflow(t.Context(), world.Identity, session.ID)
+		if refreshErr != nil {
+			t.Fatal(refreshErr)
+		}
+		_, err = workflow.Advance(t.Context(), world.Identity, sdd.WorkflowAdvanceRequest{Instance: instance})
+		return err != nil
+	})
+	if !strings.Contains(err.Error(), "not logged in") {
+		t.Fatalf("the capture's next call should fail with the round's error, got %v", err)
 	}
-	_, _, err = world.App.ResumeWorkflow(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: launcher.failed[0], ClientName: "verifier"})
-	if err == nil || !strings.Contains(err.Error(), "the delegate's launch failed") {
-		t.Fatalf("the delegate of a failed launch should be torn down, got %v", err)
-	}
+	test.Eventually(t, "ending the failed round's delegate", func() bool {
+		_, _, resumeErr := world.App.ResumeWorkflow(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: failed, ClientName: "verifier"})
+		return resumeErr != nil && strings.Contains(resumeErr.Error(), "round 1 (claude) failed")
+	})
 	session.Refresh(t)
 	serve = session.Answer(t, instance, "deepLaunch", "failed", map[string]any{"deepLaunchFailure": err.Error()}, "")
 	proctest.RequireStep(t, serve, "deepFailed")
@@ -489,6 +488,7 @@ func TestCaptureDeep_FailedLaunchEndsItsDelegateAndRetries(t *testing.T) {
 	proctest.RequireStep(t, serve, "deepDispatch")
 	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
 	session.StartChild(t, "verify", nil, instance)
+	driveRound(t, world, launcher.NextRound(t))
 	session.Refresh(t)
 	serve = session.Answer(t, instance, "deepLaunch", "started", nil, "")
 	proctest.RequireStep(t, serve, "verifySummary")

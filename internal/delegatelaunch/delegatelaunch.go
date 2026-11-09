@@ -65,15 +65,20 @@ var claudeTools = []string{
 	"Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(git blame:*)",
 }
 
+// Resolve names the launch Run runs: settings.Launch, or for Fallback the
+// first agent of settings.Agents whose CLI is found.
+func Resolve(settings Settings) (string, error) {
+	if settings.Launch == Fallback {
+		return fallback(settings.Agents)
+	}
+	return settings.Launch, nil
+}
+
 // Run launches one round and waits for it to end.
 func Run(ctx context.Context, settings Settings, round Round) (Launched, error) {
-	launch := settings.Launch
-	if launch == Fallback {
-		found, err := fallback(settings.Agents)
-		if err != nil {
-			return Launched{}, err
-		}
-		launch = found
+	launch, err := Resolve(settings)
+	if err != nil {
+		return Launched{}, err
 	}
 	timeout := settings.Timeout
 	if timeout <= 0 {

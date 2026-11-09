@@ -63,6 +63,7 @@ type Application struct {
 	prepareSearch func(context.Context, SearchTarget) error
 	entrySuffix   func(length int) (string, error)
 	launcher      DelegateLauncher
+	rounds        delegateRounds
 }
 
 func NewApplication(options ApplicationOptions) (*Application, error) {

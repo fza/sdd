@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"sync"
 	"time"
+
+	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
@@ -25,16 +28,17 @@ const workflowDelegateLaunchCode = "workflow_delegate_launch"
 // session, for a composition where sdd itself launches delegates instead of
 // the harness. It is called once the dispatching operation's own writes are
 // done: on the fork, and each time the dispatching move sends the delegate its
-// next input. A launcher that waits for the round to end leaves the caller's
-// view of the dispatching session behind the deliveries the delegate made;
-// that session's next call reads them.
+// next input. It answers at once, taking the launch on or leaving it to the
+// harness, and sdd runs the round it returns in the background, so the
+// dispatching call never waits for a round: that move's next call picks the
+// delegate's deliveries up, and fails with the round's error when the round
+// failed.
 type DelegateLauncher interface {
-	LaunchDelegate(ctx context.Context, launch DelegateLaunch) (DelegateLaunched, error)
+	LaunchDelegate(ctx context.Context, launch DelegateLaunch) (DelegateRun, error)
 }
 
-// DelegateLaunch is one round's launch: the child handles, the prompt, and
-// the launcher's own session from the previous round. It carries nothing of
-// the dispatching session.
+// DelegateLaunch is the launch a delegate takes: the child handles and the
+// project's launch. It carries nothing of the dispatching session.
 type DelegateLaunch struct {
 	Session   SessionID
 	Instance  string
@@ -45,11 +49,22 @@ type DelegateLaunch struct {
 	// codex or custom_driver, or DelegateLaunchFallback where the harness
 	// reported no subagent tool; empty leaves the launch to the composition.
 	Launch string
-	// Round counts this child's launches, from 1.
-	Round  int
+}
+
+// DelegateRun is a launch a launcher took on: the launch that runs, and Round,
+// which runs one round to its end, bounded by the launcher, and reports the
+// launcher's own session for the next round to resume. sdd runs one round of
+// a child at a time.
+type DelegateRun struct {
+	Launch string
+	Round  func(ctx context.Context, round DelegateRound) (string, error)
+}
+
+// DelegateRound is one round's input: its number from 1, its prompt, and the
+// session the launcher reported for the previous round, empty on the first.
+type DelegateRound struct {
+	Number int
 	Prompt string
-	// Resume is the session the launcher reported for the previous round;
-	// empty on the first.
 	Resume string
 }
 
@@ -61,14 +76,6 @@ const DelegateLaunchFallback = "fallback"
 // ErrDelegateNotLaunched is what a launcher returns for a delegate it leaves
 // to the harness: the dispatch then serves the harness's launch instructions.
 var ErrDelegateNotLaunched = errors.New("the delegate is left to the harness to launch")
-
-// DelegateLaunched is what a launch reports back: the launcher's own session
-// identity, kept with the child session to resume it next round, and the
-// launch that ran.
-type DelegateLaunched struct {
-	Session string
-	Launch  string
-}
 
 // WorkflowDispatch is the dispatch handoff served to the dispatching move: the
 // child handles, the prompts a harness launches the delegate with, and the
@@ -82,14 +89,48 @@ type WorkflowDispatch struct {
 	Prompt         string
 	ContinuePrompt string
 	Instructions   string
-	// Launched is the launcher's session when sdd launched the delegate itself.
-	Launched string
+	// Launch is the launch sdd runs the delegate's round with, when it launched
+	// the delegate itself.
+	Launch string
 }
 
+// delegateLaunchRecord is one launched round's outcome, kept with the child
+// session: the launcher's session to resume, or the error the round failed
+// with.
 type delegateLaunchRecord struct {
 	Round   int    `json:"round"`
 	Session string `json:"session"`
 	Launch  string `json:"launch,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// delegateRounds orders the background rounds of each child: a round starts
+// once the child's previous round ended, so it resumes that round's session.
+type delegateRounds struct {
+	mu   sync.Mutex
+	last map[SessionID]chan struct{}
+}
+
+// follow registers done as the child's latest round and returns the round it
+// waits for, nil when none.
+func (r *delegateRounds) follow(child SessionID, done chan struct{}) chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.last == nil {
+		r.last = map[SessionID]chan struct{}{}
+	}
+	previous := r.last[child]
+	r.last[child] = done
+	return previous
+}
+
+// settle forgets the child's rounds once done is still its latest.
+func (r *delegateRounds) settle(child SessionID, done chan struct{}) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.last[child] == done {
+		delete(r.last, child)
+	}
 }
 
 // workflowCourier carries the engine's deliveries to the other session of a
@@ -244,11 +285,11 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 		case err != nil:
 			return dispatch, err
 		default:
-			dispatch.Launched = launched.Session
-			arrives := "Its results arrive in this move, never through a reply: next with this instance and no report picks a delivery up once it has landed."
+			dispatch.Launch = launched
+			arrives := "The round runs in the background. Its results arrive in this move, never through a reply: next with this instance and no report picks a delivery up once it has landed, and fails with the round's error should the round fail."
 			dispatch.Instructions = "sdd launched the delegate itself, so launch nothing. " + arrives
 			if launch == DelegateLaunchFallback {
-				dispatch.Instructions = fmt.Sprintf("This harness has no subagent tool, so sdd fell back to the headless %s launch of the agents supported_agents names and launched the delegate itself: launch nothing. %s", launched.Launch, arrives)
+				dispatch.Instructions = fmt.Sprintf("This harness has no subagent tool, so sdd fell back to the headless %s launch of the agents supported_agents names and launched the delegate itself: launch nothing. %s", launched, arrives)
 			}
 			return dispatch, nil
 		}
@@ -322,38 +363,75 @@ func delegateContinuePrompt(session SessionID, instance string) string {
 	return fmt.Sprintf("The dispatching move has sent its next input. Call next with session %s, instance %s and no report to pick it up, then continue the task.", session, instance)
 }
 
-// launchDelegate runs one round's launch and keeps the launcher's session with
-// the child, so the next round resumes it. A child that ended during the
-// launch keeps nothing: it has no round left to resume.
-func (a *Application) launchDelegate(ctx context.Context, identity RequestIdentity, child SessionID, instance, procedure string, project ProjectID, configured string) (DelegateLaunched, error) {
+// launchDelegate hands the delegate's launch to the launcher and, once the
+// launcher took it on, runs its round in the background, outliving the call
+// that launched it; it returns the launch that runs.
+func (a *Application) launchDelegate(ctx context.Context, identity RequestIdentity, child SessionID, instance, procedure string, project ProjectID, configured string) (string, error) {
+	run, err := a.launcher.LaunchDelegate(ctx, DelegateLaunch{Session: child, Instance: instance, Procedure: procedure, Project: project, Launch: configured})
+	if err != nil {
+		return "", fmt.Errorf("launching the delegate for %s: %w", child, err)
+	}
+	done := make(chan struct{})
+	previous := a.rounds.follow(child, done)
+	background := context.WithoutCancel(ctx)
+	go func() {
+		defer close(done)
+		defer a.rounds.settle(child, done)
+		if previous != nil {
+			<-previous
+		}
+		err := a.runDelegateRound(background, identity, child, instance, run)
+		if err != nil {
+			slogutils.FromContext(background).Error("recording a delegate round", "session", child, "error", err)
+		}
+	}()
+	return run.Launch, nil
+}
+
+// runDelegateRound runs one round and keeps its outcome with the child: the
+// launcher's session, so the next round resumes it, or the error, which the
+// dispatching move's next call fails with. A failed round ends the child. A
+// child that ended during the round keeps nothing: it has no round left.
+func (a *Application) runDelegateRound(ctx context.Context, identity RequestIdentity, child SessionID, instance string, run DelegateRun) error {
 	_, _, stored, err := a.resolveSession(ctx, identity, child)
 	if err != nil {
-		return DelegateLaunched{}, err
+		return err
 	}
 	records, err := delegateLaunches(stored.Events)
 	if err != nil {
-		return DelegateLaunched{}, err
+		return err
 	}
-	launch := DelegateLaunch{Session: child, Instance: instance, Procedure: procedure, Project: project, Launch: configured, Round: len(records) + 1, Prompt: delegatePrompt(child, instance)}
+	round := DelegateRound{Number: len(records) + 1, Prompt: delegatePrompt(child, instance)}
 	if n := len(records); n > 0 && records[n-1].Session != "" {
-		launch.Resume = records[n-1].Session
-		launch.Prompt = delegateContinuePrompt(child, instance)
+		round.Resume = records[n-1].Session
+		round.Prompt = delegateContinuePrompt(child, instance)
 	}
-	launched, err := a.launcher.LaunchDelegate(ctx, launch)
-	if err != nil {
-		return DelegateLaunched{}, fmt.Errorf("launching the delegate for %s (round %d): %w", child, launch.Round, err)
+	session, roundErr := run.Round(ctx, round)
+	record := delegateLaunchRecord{Round: round.Number, Session: session, Launch: run.Launch}
+	if roundErr != nil {
+		record = delegateLaunchRecord{Round: round.Number, Launch: run.Launch, Error: fmt.Sprintf("the delegate's round %d (%s) failed: %v", round.Number, run.Launch, roundErr)}
 	}
-	payload, err := json.Marshal(delegateLaunchRecord{Round: launch.Round, Session: launched.Session, Launch: launched.Launch})
+	ended, err := a.recordDelegateRound(ctx, identity, child, record)
+	if err != nil || ended || roundErr == nil {
+		return err
+	}
+	return a.endDelegate(ctx, identity, child, record.Error)
+}
+
+// recordDelegateRound appends a round's outcome to the child session,
+// reporting whether the child had ended already.
+func (a *Application) recordDelegateRound(ctx context.Context, identity RequestIdentity, child SessionID, record delegateLaunchRecord) (bool, error) {
+	payload, err := json.Marshal(record)
 	if err != nil {
-		return DelegateLaunched{}, err
+		return false, err
 	}
 	for attempt := 0; ; attempt++ {
-		_, _, stored, err = a.resolveSession(ctx, identity, child)
+		_, _, stored, err := a.resolveSession(ctx, identity, child)
 		if err != nil {
-			return DelegateLaunched{}, err
+			return false, err
 		}
 		if stored.Metadata.Ended != nil {
-			return launched, nil
+			return true, nil
 		}
 		metadata := stored.Metadata
 		metadata.UpdatedAt = a.now().UTC().Round(0)
@@ -362,8 +440,37 @@ func (a *Application) launchDelegate(ctx context.Context, identity RequestIdenti
 		if err != nil && attempt == 0 && errors.As(err, &appErr) && appErr.Code == ErrorSessionConflict {
 			continue
 		}
-		return launched, err
+		return false, err
 	}
+}
+
+// failedRounds fails the call when a background round of a delegate the
+// instance dispatched failed: the fork ends, so the move can report the
+// failure and dispatch afresh.
+func (w *WorkflowSession) failedRounds(ctx context.Context, identity RequestIdentity, instance string) error {
+	var failures []error
+	for _, live := range w.session.LiveForks() {
+		if live.Instance != instance {
+			continue
+		}
+		_, _, stored, err := w.app.resolveSession(ctx, identity, SessionID(live.Fork.Child.Session))
+		if err != nil {
+			return err
+		}
+		records, err := delegateLaunches(stored.Events)
+		if err != nil {
+			return err
+		}
+		n := len(records)
+		if n == 0 || records[n-1].Error == "" {
+			continue
+		}
+		if err := w.session.EndFork(instance, live.Fork.Child, records[n-1].Error); err != nil {
+			return err
+		}
+		failures = append(failures, errors.New(records[n-1].Error))
+	}
+	return errors.Join(failures...)
 }
 
 func delegateLaunches(events []StoredEvent) ([]delegateLaunchRecord, error) {

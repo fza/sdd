@@ -651,6 +651,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	if err := w.setLabel(request.Label); err != nil {
 		return nil, err
 	}
+	if err := w.failedRounds(ctx, identity, request.Instance); err != nil {
+		return nil, err
+	}
 	var (
 		serve *engine.Serve
 		err   error
