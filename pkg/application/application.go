@@ -45,6 +45,10 @@ type ApplicationOptions struct {
 	// EntrySuffix supplies the random part of a new entry ID; nil draws it
 	// from the system's randomness (d-cpt-t8i).
 	EntrySuffix func(length int) (string, error)
+	// DelegateLauncher, when set, makes sdd itself launch and resume the agent
+	// driving each delegate child session; nil leaves the launch to the harness
+	// the dispatch handoff instructs (20261109-004924-d-cpt-cxw).
+	DelegateLauncher DelegateLauncher
 }
 
 // Application resolves current access and dispatches protocol-neutral SDD
@@ -58,6 +62,7 @@ type Application struct {
 	clock         Clock
 	prepareSearch func(context.Context, SearchTarget) error
 	entrySuffix   func(length int) (string, error)
+	launcher      DelegateLauncher
 }
 
 func NewApplication(options ApplicationOptions) (*Application, error) {
@@ -85,6 +90,7 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		clock:         clock,
 		prepareSearch: options.PrepareSearch,
 		entrySuffix:   suffix,
+		launcher:      options.DelegateLauncher,
 	}, nil
 }
 

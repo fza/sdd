@@ -63,7 +63,7 @@ type NextArgs struct {
 	Instance  string `json:"instance" jsonschema:"instance handle from start_procedure"`
 	// Report carries either state fields for the current step (per the served
 	// report_schema) or a chooser answer {chooser, choice, userWords?, reason?, fields?}.
-	Report map[string]any `json:"report,omitempty" jsonschema:"state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}"`
+	Report map[string]any `json:"report,omitempty" jsonschema:"state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}. Omit report, retry_ref and cancel_ref together to pick up a delivery a waiting step was served as awaiting"`
 	Label  string         `json:"label,omitempty" jsonschema:"update the session's subject label when the dialogue's subject has sharpened"`
 }
 
@@ -194,6 +194,20 @@ type ServeResult struct {
 	OpenThreads      string                  `json:"open_threads,omitempty" jsonschema:"this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here"`
 	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve — where the dialogue lands now that this move has ended"`
 	Collected        map[string]string       `json:"collected,omitempty" jsonschema:"state already collected by this instance — values persist across handover; do not re-derive them"`
+	Dispatches       []DispatchResult        `json:"dispatches,omitempty" jsonschema:"delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions"`
+}
+
+// DispatchResult is one delegate handoff: the child handles a delegate
+// receives, the prompts that carry them, and what to do this round. The
+// dispatching session's own handle is never part of it.
+type DispatchResult struct {
+	Session        string `json:"session" jsonschema:"the delegate's child session handle"`
+	Instance       string `json:"instance" jsonschema:"the delegate's task instance in its child session"`
+	Procedure      string `json:"procedure"`
+	Prompt         string `json:"prompt" jsonschema:"the whole prompt of a fresh-context delegate"`
+	ContinuePrompt string `json:"continue_prompt" jsonschema:"the prompt continuing a delegate that worked an earlier round"`
+	Instructions   string `json:"instructions"`
+	Launched       string `json:"launched,omitempty" jsonschema:"set when sdd launched the delegate itself: the launcher's own session"`
 }
 
 // BaseServe is the session shell's serve as nested into landing responses
@@ -1340,6 +1354,12 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 			chooser.Options = append(chooser.Options, ChooserOptionResult{Choice: option.Choice, Collect: option.Collect})
 		}
 		res.PendingChooser = chooser
+	}
+	for _, dispatch := range serve.Dispatches {
+		res.Dispatches = append(res.Dispatches, DispatchResult{
+			Session: string(dispatch.Session), Instance: dispatch.Instance, Procedure: dispatch.Procedure,
+			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Launched: dispatch.Launched,
+		})
 	}
 	framing, err := ss.root.Framing(ctx, s.requestIdentity(req))
 	if err != nil {

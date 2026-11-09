@@ -340,7 +340,7 @@
         },
         "report": {
           "additionalProperties": true,
-          "description": "state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}",
+          "description": "state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}. Omit report, retry_ref and cancel_ref together to pick up a delivery a waiting step was served as awaiting",
           "type": "object"
         },
         "retry_ref": {
@@ -535,6 +535,53 @@
           },
           "description": "state already collected by this instance — values persist across handover; do not re-derive them",
           "type": "object"
+        },
+        "dispatches": {
+          "description": "delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "continue_prompt": {
+                "description": "the prompt continuing a delegate that worked an earlier round",
+                "type": "string"
+              },
+              "instance": {
+                "description": "the delegate's task instance in its child session",
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string"
+              },
+              "launched": {
+                "description": "set when sdd launched the delegate itself: the launcher's own session",
+                "type": "string"
+              },
+              "procedure": {
+                "type": "string"
+              },
+              "prompt": {
+                "description": "the whole prompt of a fresh-context delegate",
+                "type": "string"
+              },
+              "session": {
+                "description": "the delegate's child session handle",
+                "type": "string"
+              }
+            },
+            "required": [
+              "session",
+              "instance",
+              "procedure",
+              "prompt",
+              "continue_prompt",
+              "instructions"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "execution": {
           "description": "execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context",
@@ -1331,6 +1378,53 @@
                 "description": "state already collected by this instance — values persist across handover; do not re-derive them",
                 "type": "object"
               },
+              "dispatches": {
+                "description": "delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "continue_prompt": {
+                      "description": "the prompt continuing a delegate that worked an earlier round",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "description": "the delegate's task instance in its child session",
+                      "type": "string"
+                    },
+                    "instructions": {
+                      "type": "string"
+                    },
+                    "launched": {
+                      "description": "set when sdd launched the delegate itself: the launcher's own session",
+                      "type": "string"
+                    },
+                    "procedure": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "description": "the whole prompt of a fresh-context delegate",
+                      "type": "string"
+                    },
+                    "session": {
+                      "description": "the delegate's child session handle",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "session",
+                    "instance",
+                    "procedure",
+                    "prompt",
+                    "continue_prompt",
+                    "instructions"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
               "execution": {
                 "description": "execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context",
                 "type": "string"
@@ -2098,6 +2192,53 @@
           "description": "state already collected by this instance — values persist across handover; do not re-derive them",
           "type": "object"
         },
+        "dispatches": {
+          "description": "delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "continue_prompt": {
+                "description": "the prompt continuing a delegate that worked an earlier round",
+                "type": "string"
+              },
+              "instance": {
+                "description": "the delegate's task instance in its child session",
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string"
+              },
+              "launched": {
+                "description": "set when sdd launched the delegate itself: the launcher's own session",
+                "type": "string"
+              },
+              "procedure": {
+                "type": "string"
+              },
+              "prompt": {
+                "description": "the whole prompt of a fresh-context delegate",
+                "type": "string"
+              },
+              "session": {
+                "description": "the delegate's child session handle",
+                "type": "string"
+              }
+            },
+            "required": [
+              "session",
+              "instance",
+              "procedure",
+              "prompt",
+              "continue_prompt",
+              "instructions"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "execution": {
           "description": "execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context",
           "type": "string"
@@ -2496,6 +2637,53 @@
           },
           "description": "state already collected by this instance — values persist across handover; do not re-derive them",
           "type": "object"
+        },
+        "dispatches": {
+          "description": "delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "continue_prompt": {
+                "description": "the prompt continuing a delegate that worked an earlier round",
+                "type": "string"
+              },
+              "instance": {
+                "description": "the delegate's task instance in its child session",
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string"
+              },
+              "launched": {
+                "description": "set when sdd launched the delegate itself: the launcher's own session",
+                "type": "string"
+              },
+              "procedure": {
+                "type": "string"
+              },
+              "prompt": {
+                "description": "the whole prompt of a fresh-context delegate",
+                "type": "string"
+              },
+              "session": {
+                "description": "the delegate's child session handle",
+                "type": "string"
+              }
+            },
+            "required": [
+              "session",
+              "instance",
+              "procedure",
+              "prompt",
+              "continue_prompt",
+              "instructions"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "execution": {
           "description": "execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context",
