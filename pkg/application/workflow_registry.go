@@ -307,6 +307,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 		Prepare:          w.prepareWorkflowNewEntry,
 		Fn:               w.runWorkflowNewEntry,
 		Effects:          w.reportWorkflowNewEntryEffects,
+		Announces:        entryWrittenEvent,
 	}); err != nil {
 		return err
 	}

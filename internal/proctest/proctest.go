@@ -148,6 +148,7 @@ type config struct {
 	branchDirs  map[string]string
 	finalizers  []sdd.MutationFinalizer
 	dialogue    sdd.Dialogue
+	hooks       sdd.HookCommands
 }
 
 // Option configures NewWorld.
@@ -327,7 +328,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	script := &LLMScript{Title: "generated title", Summary: "A generated summary."}
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
-		Graph: graph, LLM: script, Finalizers: cfg.finalizers,
+		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Hooks: cfg.hooks,
 	}
 	var dropped map[string]bool
 	if len(cfg.branchDirs) > 0 {
