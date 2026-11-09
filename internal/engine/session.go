@@ -1044,19 +1044,44 @@ type SpecResolver func(canonical string) (*Spec, error)
 // it on.
 func (e *Engine) ReplaySession(id, participant string, events []Event, resolve SpecResolver, sink EventSink, opts ...SessionOption) (*Session, error) {
 	s := e.NewSession(id, participant, nil, opts...)
+	err := s.fold(events, resolve)
+	if err != nil {
+		return nil, err
+	}
+	s.sink = sink
+	return s, nil
+}
+
+// Fold applies events another writer logged past the position the session
+// holds, as replay applies them, so a long-lived holder continues on the log
+// as it now stands. pending, when not nil, is the event being appended:
+// already applied in memory, it takes the sequence after the folded events.
+func (s *Session) Fold(events []Event, resolve SpecResolver, pending *Event) error {
+	err := s.fold(events, resolve)
+	if err != nil {
+		return err
+	}
+	if pending != nil {
+		s.seq++
+		pending.Seq = s.seq
+	}
+	return nil
+}
+
+func (s *Session) fold(events []Event, resolve SpecResolver) error {
 	for _, ev := range events {
 		if ev.V != LogVersion {
-			return nil, fmt.Errorf("session log event seq %d has version %d, this sdd speaks version %d — sessions do not survive an sdd upgrade mid-flight", ev.Seq, ev.V, LogVersion)
+			return fmt.Errorf("session log event seq %d has version %d, this sdd speaks version %d — sessions do not survive an sdd upgrade mid-flight", ev.Seq, ev.V, LogVersion)
 		}
 		if ev.Seq > s.seq {
 			s.seq = ev.Seq
 		}
-		if err := s.applyEvent(ev, resolve); err != nil {
-			return nil, fmt.Errorf("replaying seq %d (%s): %w", ev.Seq, ev.Event, err)
+		err := s.applyEvent(ev, resolve)
+		if err != nil {
+			return fmt.Errorf("replaying seq %d (%s): %w", ev.Seq, ev.Event, err)
 		}
 	}
-	s.sink = sink
-	return s, nil
+	return nil
 }
 
 func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {

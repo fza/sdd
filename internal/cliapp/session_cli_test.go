@@ -243,3 +243,27 @@ func TestCLISessionCommandsNeedASession(t *testing.T) {
 		t.Error("an unknown session should be refused")
 	}
 }
+
+// A CLI call with --session beside a running serve leaves the serve able to
+// continue the session (20261109-055313-s-tac-7j7).
+func TestCLISessionCallLeavesTheServeAbleToContinue(t *testing.T) {
+	f := sessionFixture(t, false)
+	f.serve(t, func(client *mcp.ClientSession) {
+		opened, served, failed := callTool(t, client, "start_session", map[string]any{})
+		if failed {
+			t.Fatalf("start_session: %s", served)
+		}
+		capture, served, failed := callTool(t, client, "start_procedure", map[string]any{"session": opened.Session, "canonical": "capture"})
+		if failed {
+			t.Fatalf("start_procedure: %s", served)
+		}
+		result := f.run(t, "show", appEntryID, "--session", opened.Session)
+		if result.err != nil {
+			t.Fatalf("sdd show --session: %v\n%s", result.err, result.stderr)
+		}
+		_, served, failed = callTool(t, client, "park", map[string]any{"session": opened.Session, "instance": capture.Instance})
+		if failed {
+			t.Fatalf("the serve should continue the session after the CLI call:\n%s", served)
+		}
+	})
+}
