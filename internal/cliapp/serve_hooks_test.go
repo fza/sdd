@@ -296,7 +296,7 @@ func TestInitConfirmsThePendingHooksOnATerminal(t *testing.T) {
 		t.Fatalf("sdd init: %v\n%s", err, output)
 	}
 	fixture := &appFixture{root: work}
-	result := fixture.runTerminal(t, "[y/N]", "y", "init", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "guided")
+	result := fixture.runTerminal(t, "[y/N]", "y", "init", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "guided", "--verify-mode", "off")
 	if result.err != nil || !strings.Contains(result.stdout, "Run this capture.assemble hook on this machine?") || !strings.Contains(result.stdout, "confirmed") {
 		t.Fatalf("sdd init on a terminal should ask and confirm:\n%s%s%v", result.stdout, result.stderr, result.err)
 	}
