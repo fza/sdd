@@ -784,7 +784,7 @@ func filterRepoPaths(repoRoot string, paths []string) []string {
 
 func initCommitMessage(sddExisted bool) string {
 	if sddExisted {
-		return "sdd: refresh installed skills and metadata"
+		return "sdd: refresh sdd setup"
 	}
 	return "sdd: init .sdd/ metadata directory"
 }
