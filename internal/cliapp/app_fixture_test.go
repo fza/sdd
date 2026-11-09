@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -64,16 +65,73 @@ type appResult struct {
 
 func (f *appFixture) run(t *testing.T, args ...string) appResult {
 	t.Helper()
-	return f.runInput(t, "", args...)
-}
-
-// runInput is run with input on standard input.
-func (f *appFixture) runInput(t *testing.T, input string, args ...string) appResult {
-	t.Helper()
 	var stdout, stderr bytes.Buffer
-	command := f.command(strings.NewReader(input), &stdout, &stderr)
+	command := f.command(strings.NewReader(""), &stdout, &stderr)
 	err := command.Run(t.Context(), append([]string{"sdd"}, args...))
 	return appResult{stdout: stdout.String(), stderr: stderr.String(), err: err}
+}
+
+// runTerminal is run on a pseudo-terminal as standard input and output: once
+// the output shows prompt, it types answer and enter.
+func (f *appFixture) runTerminal(t *testing.T, prompt, answer string, args ...string) appResult {
+	t.Helper()
+	controller, terminal := openTerminal(t)
+	var stdout, stderr lockedBuffer
+	copied := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&stdout, controller)
+		close(copied)
+	}()
+	done := make(chan error, 1)
+	go func() {
+		done <- f.command(terminal, terminal, &stderr).Run(t.Context(), append([]string{"sdd"}, args...))
+	}()
+	deadline := time.After(20 * time.Second)
+	finish := func(err error) appResult {
+		_ = terminal.Close()
+		select {
+		case <-copied:
+		case <-deadline:
+			t.Fatalf("terminal output did not end within 20s:\n%s", stdout.String())
+		}
+		return appResult{stdout: stdout.String(), stderr: stderr.String(), err: err}
+	}
+	for !strings.Contains(stdout.String(), prompt) {
+		select {
+		case err := <-done:
+			return finish(err)
+		case <-deadline:
+			t.Fatalf("no prompt %q within 20s:\n%s", prompt, stdout.String())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if _, err := controller.WriteString(answer + "\r"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		return finish(err)
+	case <-deadline:
+		t.Fatalf("no exit within 20s after answering:\n%s", stdout.String())
+		return appResult{}
+	}
+}
+
+type lockedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
 }
 
 func (f *appFixture) command(reader io.Reader, writer, errWriter io.Writer) *cli.Command {

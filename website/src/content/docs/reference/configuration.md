@@ -403,9 +403,9 @@ A hook from a `.sdd/` file runs only after you confirm it on your machine. Hooks
 sdd hashes each hook on every run: its event, command, arguments, timeout, findings and files, the contents of its script, of every argument naming a file, and of every file `files` matches. Any change asks again. Scripts a hook loads without listing them in `files` change unnoticed.
 
 - `sdd hooks` lists every hook as `confirmed`, `pending`, or `changed` since you confirmed it.
-- `sdd hooks trust` shows each pending hook with its event, command, arguments, the hashed files with their SHA-256 digests and the first 20 lines of its script, and asks y/N.
+- `sdd hooks trust` shows each pending hook with its event, command, arguments, the hashed files with their SHA-256 digests and the first 20 lines of its script, and asks y/N. It runs only in a terminal: you confirm each hook yourself, so without a terminal it confirms nothing and fails.
 - `sdd init` offers the pending hooks when it runs in a terminal, and otherwise names how many wait.
-- Over MCP, the call reaching an unconfirmed hook shows you the same prompt through your client, and continues once you accept. A decline, or a client that cannot ask, fails the call and names `sdd hooks trust`.
+- Over MCP, every call that works on a session or opens one first checks all of the project's hooks. Before it does anything else, it shows you the prompt for each unconfirmed hook at once through your client, and goes on only once you accept them all. A decline, or a client that cannot ask, fails the call with nothing done and names `sdd hooks trust`. A hook that changes while the call runs fails the call the same way.
 
 Confirmations live in `~/.local/state/sdd/hooks/<repository>.json`, readable only by you, keyed by the project's `repo_id`, so clones of one repository share them.
 

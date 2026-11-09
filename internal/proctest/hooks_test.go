@@ -256,13 +256,13 @@ func TestHooks_FailingStartHookKeepsThePreflightCallFromRunning(t *testing.T) {
 }
 
 type answeringConfirmer struct {
-	accept  bool
-	err     error
-	reviews []sdd.HookReview
+	accept bool
+	err    error
+	asked  [][]sdd.HookReview
 }
 
-func (c *answeringConfirmer) ConfirmHook(_ context.Context, review sdd.HookReview) (bool, error) {
-	c.reviews = append(c.reviews, review)
+func (c *answeringConfirmer) ConfirmHooks(_ context.Context, reviews []sdd.HookReview) (bool, error) {
+	c.asked = append(c.asked, reviews)
 	return c.accept, c.err
 }
 
@@ -271,46 +271,81 @@ func pendingHook(event, command string) sdd.Hook {
 		Origin: model.HookOrigin{Layer: model.HookLayerCommitted, ConfigPath: "/repo/.sdd/config.yaml"}}
 }
 
-// An unconfirmed hook runs only once the person confirms it through the
-// call's confirmer; without one, or declined, the call fails naming
-// `sdd hooks trust` (20261109-213250-d-tac-bve).
-func TestHooks_UnconfirmedHookAsksTheCallsConfirmer(t *testing.T) {
+// ConfirmHooks, and the session refresh that asks first, ask about every
+// pending hook of the project in one question and confirm them all only once
+// the person accepts; without a confirmer, declined or not askable they fail
+// naming `sdd hooks trust` and confirm nothing (20261109-213250-d-tac-bve).
+func TestHooks_ConfirmHooksAsksAboutEveryPendingHookAtOnce(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		confirmer *answeringConfirmer
+		bySession bool
 		want      string
 	}{
-		{name: "no confirmer", want: "is pending on this machine; review and confirm it with `sdd hooks trust`"},
+		{name: "no confirmer", want: "is pending on this machine; review and confirm with `sdd hooks trust`"},
 		{name: "declined", confirmer: &answeringConfirmer{}, want: "(declined)"},
 		{name: "cannot ask", confirmer: &answeringConfirmer{err: errors.New("client does not support elicitation")}, want: "client does not support elicitation"},
 		{name: "accepted", confirmer: &answeringConfirmer{accept: true}},
+		{name: "declined by session refresh", confirmer: &answeringConfirmer{}, bySession: true, want: "(declined)"},
+		{name: "accepted by session refresh", confirmer: &answeringConfirmer{accept: true}, bySession: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, session, scripted := newHookedCaptureWorld(t, pendingHook("capture.assemble.start", "notify"))
-			ctx := t.Context()
+			world, session, scripted := newHookedCaptureWorld(t,
+				pendingHook("capture.assemble.start", "notify"),
+				pendingHook("entry.written", "announce"),
+				sdd.Hook{HookConfig: model.HookConfig{Event: "capture.assemble.start", Command: "known"}},
+			)
+			var confirmer sdd.HookConfirmer
 			if tc.confirmer != nil {
-				ctx = sdd.WithHookConfirmer(ctx, tc.confirmer)
+				confirmer = tc.confirmer
 			}
-			_, err := session.WF.Start(ctx, session.World.Identity, sdd.WorkflowStartRequest{Canonical: "capture"})
-			runs := scripted.RunsAt("capture.assemble.start")
+			var err error
+			if tc.bySession {
+				_, err = world.App.RefreshWorkflowConfirmingHooks(t.Context(), world.Identity, session.ID, confirmer)
+			} else {
+				err = world.App.ConfirmHooks(t.Context(), world.Identity, "", confirmer)
+			}
 			if tc.want != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "sdd hooks trust") || !strings.Contains(err.Error(), "/repo/.sdd/config.yaml") {
-					t.Fatalf("the call should fail naming the hook's file, the reason and `sdd hooks trust`, got %v", err)
+				if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "sdd hooks trust") || !strings.Contains(err.Error(), "notify") || !strings.Contains(err.Error(), "announce") {
+					t.Fatalf("the check should fail naming both pending hooks, the reason and `sdd hooks trust`, got %v", err)
 				}
-				if len(runs) != 0 || len(scripted.Confirmed()) != 0 {
-					t.Fatalf("an unconfirmed hook should neither run nor be confirmed, runs %d confirmations %d", len(runs), len(scripted.Confirmed()))
+				if len(scripted.Confirmed()) != 0 {
+					t.Fatalf("a refused check should confirm nothing, confirmed %d", len(scripted.Confirmed()))
 				}
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(tc.confirmer.reviews) != 1 || tc.confirmer.reviews[0].Hook.Command != "notify" {
-				t.Errorf("the confirmer should be shown the hook once, got %+v", tc.confirmer.reviews)
+			if len(tc.confirmer.asked) != 1 || len(tc.confirmer.asked[0]) != 2 || tc.confirmer.asked[0][0].Hook.Command != "notify" || tc.confirmer.asked[0][1].Hook.Command != "announce" {
+				t.Fatalf("the person should be asked once about both pending hooks, got %+v", tc.confirmer.asked)
 			}
-			if len(scripted.Confirmed()) != 1 || len(runs) != 1 {
-				t.Errorf("an accepted hook should be confirmed and run, confirmations %d runs %d", len(scripted.Confirmed()), len(runs))
+			if len(scripted.Confirmed()) != 2 {
+				t.Fatalf("both accepted hooks should be confirmed, confirmed %d", len(scripted.Confirmed()))
+			}
+			reloaded, err := world.App.RefreshWorkflow(t.Context(), world.Identity, session.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := reloaded.Start(t.Context(), world.Identity, sdd.WorkflowStartRequest{Canonical: "capture"}); err != nil {
+				t.Fatal(err)
+			}
+			if runs := scripted.RunsAt("capture.assemble.start"); len(runs) != 2 {
+				t.Errorf("the confirmed hooks should run, ran %d", len(runs))
 			}
 		})
+	}
+}
+
+// A hook still unconfirmed when the call fires it, because it changed after
+// the call's check, fails the call naming `sdd hooks trust` and does not run.
+func TestHooks_UnconfirmedHookAtItsEventFailsTheCall(t *testing.T) {
+	_, session, scripted := newHookedCaptureWorld(t, pendingHook("capture.assemble.start", "notify"))
+	_, err := session.WF.Start(t.Context(), session.World.Identity, sdd.WorkflowStartRequest{Canonical: "capture"})
+	if err == nil || !strings.Contains(err.Error(), "is pending on this machine; review and confirm it with `sdd hooks trust`") || !strings.Contains(err.Error(), "/repo/.sdd/config.yaml") {
+		t.Fatalf("the call should fail naming the hook's file and `sdd hooks trust`, got %v", err)
+	}
+	if runs := scripted.RunsAt("capture.assemble.start"); len(runs) != 0 {
+		t.Fatalf("an unconfirmed hook should not run, ran %d", len(runs))
 	}
 }

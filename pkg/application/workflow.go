@@ -333,12 +333,31 @@ func (a *Application) LoadWorkflow(ctx context.Context, identity RequestIdentity
 
 // RefreshWorkflow replays an authorized session without changing its attachment stamp.
 func (a *Application) RefreshWorkflow(ctx context.Context, identity RequestIdentity, id SessionID) (*WorkflowSession, error) {
+	return a.refreshWorkflow(ctx, identity, id, nil)
+}
+
+// RefreshWorkflowConfirmingHooks is RefreshWorkflow that first asks
+// confirmer about the unconfirmed hooks of the session's home project, as
+// ConfirmHooks does, and stops before any work unless the person accepts
+// them all: replaying can start the session's shell, which fires hooks.
+func (a *Application) RefreshWorkflowConfirmingHooks(ctx context.Context, identity RequestIdentity, id SessionID, confirmer HookConfirmer) (*WorkflowSession, error) {
+	return a.refreshWorkflow(ctx, identity, id, func(runtime *ProjectRuntime) error {
+		return confirmPendingHooks(ctx, runtime.options.Hooks, confirmer)
+	})
+}
+
+func (a *Application) refreshWorkflow(ctx context.Context, identity RequestIdentity, id SessionID, confirmHooks func(*ProjectRuntime) error) (*WorkflowSession, error) {
 	_, runtime, stored, err := a.resolveSession(ctx, identity, id)
 	if err != nil {
 		return nil, err
 	}
 	if end := stored.Metadata.Ended; end != nil {
 		return nil, endedSessionError(stored.Metadata, *end)
+	}
+	if confirmHooks != nil {
+		if err := confirmHooks(runtime); err != nil {
+			return nil, err
+		}
 	}
 	runtime.syncGraph(ctx, stored.Metadata.Branch, SyncOnCall)
 	runtime.backfillTitles(ctx, stored.Metadata.Branch, SyncOnCall)

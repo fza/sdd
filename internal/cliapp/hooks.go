@@ -1,12 +1,9 @@
 package cliapp
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"strings"
 
 	"github.com/urfave/cli/v3"
 
@@ -46,7 +43,7 @@ func hooksCmd() *cli.Command {
 						fmt.Fprintln(cmd.Writer, "no hooks wait for confirmation")
 						return nil
 					}
-					err = trustHooks(ctx, cmd, result.Hooks)
+					err = trustHooks(ctx, cmd, pendingHooks(result.Hooks))
 					return err
 				},
 			},
@@ -102,13 +99,15 @@ func pendingHooks(all []model.Hook) []model.Hook {
 	return pending
 }
 
-// trustHooks shows each pending hook's review and confirms the ones the
-// person accepts: a terminal through the confirm prompt, other input line
-// by line, y or yes accepting.
-func trustHooks(ctx context.Context, cmd *cli.Command, all []model.Hook) error {
-	pending := pendingHooks(all)
-	if len(pending) == 0 {
-		return nil
+// errTrustNeedsTerminal refuses confirming hooks without a person at a
+// terminal to answer for each one.
+var errTrustNeedsTerminal = errors.New("sdd hooks trust confirms only on a terminal: a person reviews and confirms each hook; run it in a terminal")
+
+// trustHooks shows each pending hook's review on the terminal and confirms
+// the ones the person accepts. Without a terminal it confirms nothing.
+func trustHooks(ctx context.Context, cmd *cli.Command, pending []model.Hook) error {
+	if !cliout.IsTerminalReader(cmd.Reader) {
+		return errTrustNeedsTerminal
 	}
 	locations, err := repos.DefaultLocations()
 	if err != nil {
@@ -119,17 +118,13 @@ func trustHooks(ctx context.Context, cmd *cli.Command, all []model.Hook) error {
 		return err
 	}
 	handler := handlers.New(handlers.Options{})
-	ask := lineConfirmation(cmd.Reader, cmd.Writer)
-	if cliout.IsTerminalReader(cmd.Reader) {
-		ask = func(prompt string) (bool, error) { return promptConfirmation(cmd, prompt) }
-	}
 	for _, hook := range pending {
 		review, err := finder.HookReview(query.HookReviewQuery{Hook: hook})
 		if err != nil {
 			return err
 		}
 		fmt.Fprintln(cmd.Writer, presenters.HookReviewText(review))
-		accepted, err := ask(fmt.Sprintf("Run this %s hook on this machine?", hook.Event))
+		accepted, err := promptConfirmation(cmd, fmt.Sprintf("Run this %s hook on this machine?", hook.Event))
 		if err != nil {
 			return err
 		}
@@ -145,21 +140,6 @@ func trustHooks(ctx context.Context, cmd *cli.Command, all []model.Hook) error {
 	return nil
 }
 
-// lineConfirmation asks on a plain stream: the prompt with [y/N], then one
-// line, y or yes accepting; end of input declines.
-func lineConfirmation(reader io.Reader, writer io.Writer) func(string) (bool, error) {
-	lines := bufio.NewScanner(reader)
-	return func(prompt string) (bool, error) {
-		fmt.Fprintf(writer, "%s [y/N] ", prompt)
-		if !lines.Scan() {
-			fmt.Fprintln(writer)
-			return false, lines.Err()
-		}
-		answer := strings.ToLower(strings.TrimSpace(lines.Text()))
-		return answer == "y" || answer == "yes", nil
-	}
-}
-
 // offerPendingHooks lets `sdd init` confirm the project's pending hooks on a
 // terminal, and elsewhere names how many wait for `sdd hooks trust`.
 func offerPendingHooks(ctx context.Context, cmd *cli.Command) error {
@@ -172,9 +152,8 @@ func offerPendingHooks(ctx context.Context, cmd *cli.Command) error {
 		return nil
 	}
 	if !cliout.IsTerminalReader(cmd.Reader) {
-		fmt.Fprintf(cmd.ErrWriter, "%d hook(s) of this project wait for confirmation; review them with `sdd hooks trust`\n", len(pending))
+		fmt.Fprintf(cmd.ErrWriter, "%d hook(s) of this project wait for confirmation; review them with `sdd hooks trust` in a terminal\n", len(pending))
 		return nil
 	}
-	err = trustHooks(ctx, cmd, pending)
-	return err
+	return trustHooks(ctx, cmd, pending)
 }

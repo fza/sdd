@@ -530,7 +530,7 @@ func (s *Server) attachedSession(ctx context.Context, req *mcp.CallToolRequest, 
 	ss := s.sessions.get(id)
 	var fresh bool
 	if ss == nil {
-		workflow, err := s.app.RefreshWorkflow(ctx, s.requestIdentity(req), id)
+		workflow, err := s.app.RefreshWorkflowConfirmingHooks(ctx, s.requestIdentity(req), id, newElicitingConfirmer(req))
 		if err != nil {
 			return nil, err
 		}
@@ -544,7 +544,7 @@ func (s *Server) attachedSession(ctx context.Context, req *mcp.CallToolRequest, 
 	}
 	if !fresh {
 		ss.mu.Lock()
-		workflow, err := s.app.RefreshWorkflow(ctx, s.requestIdentity(req), id)
+		workflow, err := s.app.RefreshWorkflowConfirmingHooks(ctx, s.requestIdentity(req), id, newElicitingConfirmer(req))
 		if err != nil {
 			ss.mu.Unlock()
 			return nil, err
@@ -594,10 +594,17 @@ func (s *Server) startSession(ctx context.Context, req *mcp.CallToolRequest, arg
 	// application infers a sole accessible project or reports the ambiguity,
 	// which becomes the project listing (d-tac-1z6).
 	project := sdd.ProjectID(strings.TrimSpace(args.Project))
-	workflow, serve, err := s.app.OpenWorkflow(ctx, identity, project, sdd.WorkflowOpenRequest{
-		ClientName: mcpClientName(req.Session), ClientVersion: mcpClientVersion(req.Session),
-		Shell: args.Shell, Label: args.Label,
-	})
+	var (
+		workflow *sdd.WorkflowSession
+		serve    *sdd.WorkflowServe
+	)
+	err := s.confirmHooks(ctx, req, project)
+	if err == nil {
+		workflow, serve, err = s.app.OpenWorkflow(ctx, identity, project, sdd.WorkflowOpenRequest{
+			ClientName: mcpClientName(req.Session), ClientVersion: mcpClientVersion(req.Session),
+			Shell: args.Shell, Label: args.Label,
+		})
+	}
 	if err != nil {
 		var appErr *sdd.ApplicationError
 		if project == "" && errors.As(err, &appErr) && appErr.Code == sdd.ErrorProjectRequired {
@@ -1242,9 +1249,8 @@ func (s *Server) registryDocs(ctx context.Context, req *mcp.CallToolRequest, arg
 func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		slot := &syncNoticeSlot{}
-		confirmer := newElicitingConfirmer(req)
-		res, out, err := handler(sdd.WithHookConfirmer(context.WithValue(ctx, syncNoticeKey{}, slot), confirmer), req, in)
-		if asked, ok := confirmer.inputRequired(err); ok {
+		res, out, err := handler(context.WithValue(ctx, syncNoticeKey{}, slot), req, in)
+		if asked, ok := inputRequired(err); ok {
 			var none Out
 			return asked, none, nil
 		}
