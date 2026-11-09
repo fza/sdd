@@ -133,7 +133,7 @@ func (s *Session) Fork(instanceID string, child Link, spec *Spec) (map[string]an
 		return nil, fmt.Errorf("no parent instance %q", instanceID)
 	}
 	if p.Status != StatusRunning {
-		return nil, fmt.Errorf("instance %s has ended (%s) — an ended move dispatches no delegate", instanceID, p.Outcome)
+		return nil, fmt.Errorf("instance %s has ended (%s): an ended move dispatches no delegate", instanceID, p.Outcome)
 	}
 	if p.dispatchProcedure != "" && p.dispatchProcedure != spec.Canonical {
 		return nil, fmt.Errorf("the option %s last answered dispatches %s, not %s", instanceID, p.dispatchProcedure, spec.Canonical)
@@ -144,13 +144,13 @@ func (s *Session) Fork(instanceID string, child Link, spec *Spec) (map[string]an
 	}
 	for _, f := range spec.DeliveredFields() {
 		if !received[f] {
-			return nil, fmt.Errorf("%s delivers %q, which the option %s last answered does not receive — declare it under the option's dispatch receive", spec.Canonical, f, instanceID)
+			return nil, fmt.Errorf("%s delivers %q, which the option %s last answered does not receive; declare it under the option's dispatch receive", spec.Canonical, f, instanceID)
 		}
 	}
 	awaited := spec.AwaitedFields()
 	for _, f := range awaited {
 		if _, ok := p.dispatchSend[f]; !ok {
-			return nil, fmt.Errorf("%s awaits %q, which the option %s last answered never sends — declare it under the option's dispatch send", spec.Canonical, f, instanceID)
+			return nil, fmt.Errorf("%s awaits %q, which the option %s last answered never sends; declare it under the option's dispatch send", spec.Canonical, f, instanceID)
 		}
 	}
 	for childField := range p.dispatchSend {
@@ -268,7 +268,7 @@ func (s *Session) Receive(d Delivery) (string, error) {
 		awaited := inst.Spec.AwaitedFields()
 		for name, v := range d.Fields {
 			if !slices.Contains(awaited, name) {
-				return "", fmt.Errorf("%s does not await %q — the dispatching move sent a field no gate waits for", inst.Spec.Canonical, name)
+				return "", fmt.Errorf("%s does not await %q: the dispatching move sent a field no gate waits for", inst.Spec.Canonical, name)
 			}
 			fields[name] = v
 		}
@@ -476,7 +476,7 @@ func rejectDeliveryOnly(spec *Spec, fields map[string]any) error {
 			target = decl.PatchOf
 		}
 		if spec.DeliveryOnly(target) {
-			return fmt.Errorf("field %q is filled only by a delivery from the linked session — it cannot be reported", target)
+			return fmt.Errorf("field %q is filled only by a delivery from the linked session, so it cannot be reported", target)
 		}
 	}
 	return nil
@@ -492,9 +492,9 @@ func (s *Session) awaitDiagnostic(inst *Instance, step *Step) string {
 		}
 	}
 	if s.Lineage != nil {
-		return "waiting for the dispatching move to send " + strings.Join(waiting, ", ") + " — end your turn; you are continued or relaunched with these same handles once it has, and next with this instance and no report then picks it up"
+		return "waiting for the dispatching move to send " + strings.Join(waiting, ", ") + ": end your turn; you are continued or relaunched with these same handles once it has, and next with this instance and no report then picks it up"
 	}
-	return "waiting for the delegate to deliver " + strings.Join(waiting, ", ") + " — next with this instance and no report picks the delivery up once it has landed"
+	return "waiting for the delegate to deliver " + strings.Join(waiting, ", ") + "; next with this instance and no report picks the delivery up once it has landed"
 }
 
 // exchangeLane renders the full exchange a delegate instance took part in, so
