@@ -41,7 +41,7 @@ func TestHooks_VerifyEventsFireAroundTheDeepExchange(t *testing.T) {
 	round := scripted.RunsAt("capture.verify.round")[0].Payload
 	verify, _ := round["verify"].(map[string]any)
 	if round["step"] != "verify" || round["phase"] != "round" || verify["mode"] != "deep" || verify["runner"] != "subagent" || verify["round"] != float64(1) || verify["open"] != float64(1) {
-		t.Fatalf("a round should name the verify step and carry the verifier's mode, launch, round and open findings, got %v", round)
+		t.Fatalf("a round should name the verify step and carry the verifier's mode, runner, round and open findings, got %v", round)
 	}
 
 	serve = session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
