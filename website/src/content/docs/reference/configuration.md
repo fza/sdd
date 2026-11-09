@@ -366,7 +366,9 @@ A changed `query_template` applies to the next search. A changed `document_templ
 
 The index lives in `~/.cache/sdd/index/`, or `$XDG_CACHE_HOME/sdd/index/` when that variable is set, with one directory per project and embedding setup. A project's directory is named after its `repo_id`, or after a hash of the repository path when it has none.
 
-The index only grows. It keeps every embedded version of every entry, so sdd versions that share it do not remove each other's work. `sdd index gc` lists the stored versions by group, `sdd index gc --drop <group>` deletes one group, and `--drop stale` deletes every version this checkout does not search.
+The index keeps every embedded version of every entry until the cache prune removes it, so sdd versions that share it do not remove each other's work. `sdd index gc` lists the stored versions by group, `sdd index gc --drop <group>` deletes one group, and `--drop stale` deletes every version this checkout does not search.
+
+Once a day sdd starts `sdd cache prune` in the background, which deletes what nothing used for `cache.retention` (user-global config, default `90d`): replaced index versions, unused index stores, graph snapshots of removed folders, clones of disconnected repos. It never delays a command; a failed run is reported once, and `sdd info` shows the last one.
 
 ## Environment variables
 
