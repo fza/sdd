@@ -17,6 +17,33 @@ func TestRewriteLines(t *testing.T) {
 	}
 }
 
+func TestRewriteLinesCommentBlocks(t *testing.T) {
+	remove := []string{".sdd/tmp/", ".sdd/stats/"}
+	cases := []struct {
+		name, content, want string
+	}{
+		{"an emptied block's heading goes with its blank line", "node_modules/\n\n# sdd\n.sdd/tmp/\n.sdd/stats/\n\n# backend\n/Data/\n", "node_modules/\n\n# backend\n/Data/\n"},
+		{"an emptied first block takes the leading blank line", "# sdd\n.sdd/tmp/\n\n# backend\n/Data/\n", "# backend\n/Data/\n"},
+		{"an emptied last block leaves no trailing heading", "node_modules/\n\n# sdd\n.sdd/tmp/\n", "node_modules/\n"},
+		{"a block with no heading leaves no doubled blank line", "a\n\n.sdd/tmp/\n\nb\n", "a\n\nb\n"},
+		{"an untouched comment-only block stays", "# notes\n\n# sdd\n.sdd/tmp/\n\nb\n", "# notes\n\nb\n"},
+		{"a block keeping a pattern keeps its comments", "# sdd\n.sdd/tmp/\n.sdd/graph/x/\n\nb\n", "# sdd\n.sdd/graph/x/\n\nb\n"},
+		{"a rewrite removing nothing keeps the content", "\n# notes\n\n\na\n\n", "\n# notes\n\n\na\n\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := string(model.RewriteLines([]byte(c.content), remove, nil)); got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+	for _, content := range []string{"# sdd\n.sdd/tmp/\n", "\n# sdd\n.sdd/tmp/\n\n"} {
+		if got := model.RewriteLines([]byte(content), remove, nil); got != nil {
+			t.Errorf("a file left with only an emptied block and blank lines should be empty, got %q", got)
+		}
+	}
+}
+
 func TestMovedProjectConfig(t *testing.T) {
 	source := []byte("# kept comment\ngraph_dir: .sdd/graph\ndefault_branch: main\nrepo_id: example.com/code\nproject_dir: ../x\nlanguage: de\nskill_scope: user\n")
 	got, err := model.MovedProjectConfig(source, "graph", "trunk", "", &model.PerRepoConfig{SkillScope: model.ScopeProject, SupportedAgents: []model.AgentTarget{"claude", "codex"}})

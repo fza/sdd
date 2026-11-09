@@ -348,13 +348,15 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 
 // Init removes from the root .gitignore and .gitattributes exactly the
 // lines earlier builds derived for the graph_dir, keeps the lines added by
-// hand, and gives a runtime folder an earlier build made its own .gitignore.
+// hand, drops a comment left heading none of them, and gives a runtime folder
+// an earlier build made its own .gitignore.
 func TestInit_RemovesTheRootLinesEarlierBuildsDerived(t *testing.T) {
 	cases := []struct {
-		name, graphDir, handIgnore, handAttributes, wantAttributes string
+		name, graphDir, handIgnore, heading, handAttributes, wantAttributes string
 	}{
 		{name: "lines added by hand stay", graphDir: "decisions", handIgnore: "node_modules/\n", handAttributes: "*.png binary\n", wantAttributes: "*.png binary\n"},
 		{name: "files left empty go", graphDir: "decisions"},
+		{name: "a heading over the derived lines goes with them", graphDir: "decisions", handIgnore: "node_modules/\n", heading: "\n# sdd\n"},
 		{name: "a graph at the root keeps its routing", graphDir: ".", handIgnore: "node_modules/\n", wantAttributes: model.GraphAttributesLine + "\n"},
 	}
 	for _, tc := range cases {
@@ -364,7 +366,7 @@ func TestInit_RemovesTheRootLinesEarlierBuildsDerived(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeTestFile(t, filepath.Join(tmp, ".gitignore"), tc.handIgnore+strings.Join(model.LegacyRootIgnoreLines(tc.graphDir), "\n")+"\n")
+			writeTestFile(t, filepath.Join(tmp, ".gitignore"), tc.handIgnore+tc.heading+strings.Join(model.LegacyRootIgnoreLines(tc.graphDir), "\n")+"\n")
 			writeTestFile(t, filepath.Join(tmp, ".gitattributes"), legacyAttribute+"\n"+tc.handAttributes)
 			writeTestFile(t, filepath.Join(tmp, tc.graphDir, model.GraphRuntimeDir, "graph.lock"), "")
 			h := handlers.New(handlers.Options{Reader: finders.New(finders.Options{})})
