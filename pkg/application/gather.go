@@ -64,6 +64,9 @@ type GatherRequest struct {
 	// a candidate prints as a pointer (D34). Nil serves every line in full,
 	// as the CLI does (R14).
 	Held func(id string) bool
+	// since is the corpus mark of the capture's reading; the live entries it
+	// lacks are listed as landed since the reading began (D13).
+	since *model.CorpusMark
 }
 
 // GatherResult is the rendered serve and the entries it served.
@@ -141,6 +144,10 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	case len(opened) == 0:
 		return GatherResult{}, &ApplicationError{Code: ErrorInvalidArgument, Message: fmt.Sprintf(
 			"sdd: gather needs the draft: the graph holds %d live entries, at or above grounding.brief_all_below (%d), so the reading searches from the draft's text", len(live), policy.BriefAllBelow)}
+	}
+	landed := request.since.Since(liveIDs)
+	if len(landed) > 0 {
+		reads = append(reads, model.GroundingRead{Mode: model.GroundingNew, IDs: landed})
 	}
 	if len(opened) > 0 {
 		reads = append(reads, model.GroundingRead{Mode: model.GroundingOpened, IDs: opened})

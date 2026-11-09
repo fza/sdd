@@ -51,8 +51,11 @@ type LLMScript struct {
 	calls             map[llm.Purpose]int
 	PreflightFindings []PreflightFinding
 	GuideFindings     []GuideFinding
-	Title             string
-	Summary           string
+	// DuringPreflight runs inside every pre-flight call, before it answers:
+	// the point to land an entry between a capture's confirm and its write.
+	DuringPreflight func()
+	Title           string
+	Summary         string
 }
 
 // Calls returns how often the runner ran for the purpose.
@@ -77,6 +80,9 @@ func (s *LLMScript) Run(_ context.Context, request llm.Request) (llm.Result, err
 	case llm.PurposeTitle:
 		return marshalAnswer(map[string]string{"title": s.Title})
 	case llm.PurposePreflight:
+		if s.DuringPreflight != nil {
+			s.DuringPreflight()
+		}
 		return marshalFindings(s.PreflightFindings)
 	case llm.PurposeWritingGuide:
 		return marshalFindings(s.GuideFindings)
@@ -148,6 +154,7 @@ type config struct {
 	branchDirs  map[string]string
 	finalizers  []sdd.MutationFinalizer
 	dialogue    sdd.Dialogue
+	grounding   sdd.GroundingPolicy
 }
 
 // Option configures NewWorld.
@@ -169,6 +176,16 @@ func WithParticipant(name string) Option { return func(c *config) { c.participan
 // dialogue mode.
 func WithAutonomousDialogue() Option {
 	return func(c *config) { c.dialogue = sdd.Dialogue{Mode: "autonomous", Source: "config.local.yaml"} }
+}
+
+// WithGroundingEnforced turns grounding.enforce on for the world's project.
+func WithGroundingEnforced() Option {
+	return func(c *config) { c.grounding.Enforce = true }
+}
+
+// WithGrounding sets the world project's whole grounding policy.
+func WithGrounding(policy sdd.GroundingPolicy) Option {
+	return func(c *config) { c.grounding = policy }
 }
 
 // WithFinalizers configures required completion after publication.
@@ -327,7 +344,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	script := &LLMScript{Title: "generated title", Summary: "A generated summary."}
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
-		Graph: graph, LLM: script, Finalizers: cfg.finalizers,
+		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding,
 	}
 	var dropped map[string]bool
 	if len(cfg.branchDirs) > 0 {
@@ -495,6 +512,17 @@ func (s *Session) DecideErr(t *testing.T, instance, chooser, choice string, fiel
 		report["fields"] = fields
 	}
 	return s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: report})
+}
+
+// Gather runs the grounding read inside instance, opening ids in full, as the
+// MCP gather tool does.
+func (s *Session) Gather(t *testing.T, instance string, ids ...string) sdd.GatherResult {
+	t.Helper()
+	result, err := s.WF.Gather(t.Context(), s.World.Identity, sdd.WorkflowGatherRequest{Instance: instance, IDs: ids, SyncMode: sdd.SearchSyncNone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 // LogRead records a read into the session ledger, as the host's read tools do.

@@ -70,6 +70,10 @@ type EntryDraft struct {
 	FocusWhen     *types.FocusWhen
 	Involvement   []types.Involvement
 	SkipPreflight bool
+	// SkipGrounding records a bypass of the grounding gate: the entry is
+	// written with grounding: skipped and low confidence
+	// (20261109-004506-d-cpt-udz, D4).
+	SkipGrounding bool
 }
 
 type StagedAttachment struct {
@@ -231,6 +235,10 @@ func entryFromDraft(draft EntryDraft, id string, now time.Time) (*model.Entry, [
 	}
 	entry.Closes = append([]string(nil), draft.Closes...)
 	entry.Supersedes = append([]string(nil), draft.Supersedes...)
+	if draft.SkipGrounding {
+		entry.Grounding = model.GroundingSkipped
+		entry.Confidence = "low"
+	}
 	return entry, findings
 }
 

@@ -75,7 +75,19 @@ type VarDecl struct {
 	// patch field itself is never stored (20260826-120330-d-tac-8f8). Requires
 	// an optional list<search-replace> declaration; validated at load.
 	PatchOf string
+	// ConfirmExempt keeps the field out of the playback confirmation's state
+	// snapshot: a report of it after the confirm leaves the confirmation
+	// current. For answers that are not entry content (a capture's verdicts,
+	// 20261109-004506-d-cpt-udz, D9).
+	ConfirmExempt bool
+	// Seed names what the engine writes into the field: SeedReading renders
+	// the instance's credited reading into it on every grounding read,
+	// keeping the text around the seed (D32). State text fields only.
+	Seed string
 }
+
+// SeedReading is the Seed value of a field the instance's reading seeds.
+const SeedReading = "reading"
 
 // ChooserKind classifies who advances a step: the engine (gate,
 // auto-advance on guards), the agent (advisory pick, logged with evidence),
@@ -214,11 +226,13 @@ func IsEndTarget(to string) bool {
 // --- YAML intermediate shapes -------------------------------------------
 
 type varDeclYAML struct {
-	Type     string `yaml:"type"`
-	Optional bool   `yaml:"optional"`
-	Desc     string `yaml:"desc"`
-	Default  any    `yaml:"default"`
-	PatchOf  string `yaml:"patchOf"`
+	Type          string `yaml:"type"`
+	Optional      bool   `yaml:"optional"`
+	Desc          string `yaml:"desc"`
+	Default       any    `yaml:"default"`
+	PatchOf       string `yaml:"patchOf"`
+	ConfirmExempt bool   `yaml:"confirmExempt"`
+	Seed          string `yaml:"seed"`
 }
 
 type injectYAML struct {
@@ -418,8 +432,21 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 		}
 		spec.State[name] = decl
 	}
+	for _, name := range slices.Sorted(maps.Keys(paramsYAML)) {
+		d := paramsYAML[name]
+		if d.ConfirmExempt || d.Seed != "" {
+			addProblem("params.%s: confirmExempt and seed apply to state fields only", name)
+		}
+	}
 	for _, name := range slices.Sorted(maps.Keys(spec.State)) {
 		decl := spec.State[name]
+		switch {
+		case decl.Seed == "":
+		case decl.Seed != SeedReading:
+			addProblem("state.%s: unknown seed %q (%s)", name, decl.Seed, SeedReading)
+		case decl.Type.List || (decl.Type.Base != TypeText && decl.Type.Base != TypeProse):
+			addProblem("state.%s: seed requires a text state field, got %s", name, decl.Type)
+		}
 		if decl.PatchOf == "" {
 			continue
 		}
@@ -547,7 +574,7 @@ func parseVarDecl(name string, d varDeclYAML) (VarDecl, error) {
 	if err != nil {
 		return VarDecl{}, err
 	}
-	decl := VarDecl{Type: t, Optional: d.Optional, Desc: d.Desc, PatchOf: d.PatchOf}
+	decl := VarDecl{Type: t, Optional: d.Optional, Desc: d.Desc, PatchOf: d.PatchOf, ConfirmExempt: d.ConfirmExempt, Seed: d.Seed}
 	if d.Default != nil {
 		dv, err := t.ValidateValue(d.Default)
 		if err != nil {

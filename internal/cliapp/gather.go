@@ -7,6 +7,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
@@ -73,6 +74,21 @@ func gatherCmd() *cli.Command {
 			return err
 		},
 	}
+}
+
+// refuseUngroundedNew refuses a direct `sdd new` under grounding.enforce: the
+// CLI holds no capture whose reading the gate could judge, so the write goes
+// through the engine capture, or records its bypass (D3, D4). A dry run
+// writes nothing and actor and role drafts are exempt (D38).
+func refuseUngroundedNew(cfg *model.PerRepoConfig, ncmd *command.NewEntryCmd) error {
+	kind := ncmd.Kind
+	if kind == "" {
+		kind = model.DefaultKindForType(ncmd.Type)
+	}
+	if !groundingPolicy(cfg).Enforce || ncmd.SkipGrounding || ncmd.DryRun || model.GroundingExemptKind(kind) {
+		return nil
+	}
+	return fmt.Errorf("grounding.enforce is on, so sdd new does not write a %s directly: capture it through the engine (start_procedure capture over the MCP server), whose gather reading the gate judges, or pass --skip-grounding to record a bypass", kind)
 }
 
 // groundingPolicy is the resolved grounding block of cfg.

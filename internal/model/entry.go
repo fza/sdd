@@ -30,6 +30,10 @@ const (
 	PreflightDryRunVerified = "dry-run-verified"
 )
 
+// GroundingSkipped marks an entry whose capture bypassed the grounding gate;
+// it is written with low confidence (20261109-004506-d-cpt-udz, D4).
+const GroundingSkipped = "skipped"
+
 type Layer string
 
 const (
@@ -312,6 +316,7 @@ type Entry struct {
 	// (resolved) when scope.
 	Involvement []Involvement
 	Preflight   string    // PreflightSkipped or PreflightDryRunVerified; empty when a checker validated this entry
+	Grounding   string    // GroundingSkipped when the capture bypassed the grounding gate (20261109-004506-d-cpt-udz, D4); empty otherwise
 	Attachments []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
 	Title       string    // short headline naming the entry's subject, generated with the summary; optional at graph schema 1 (20261028-005411-d-tac-tit)
 	Summary     string    // LLM-generated summary: this entry + direct relationships
@@ -580,6 +585,7 @@ type frontmatter struct {
 	Framing      yaml.Node         `yaml:"framing,omitempty"`
 	ServeBudget  int               `yaml:"serveBudget,omitempty"`
 	Preflight    string            `yaml:"preflight,omitempty"`
+	Grounding    string            `yaml:"grounding,omitempty"`
 	Title        string            `yaml:"title,omitempty"`
 	Summary      string            `yaml:"summary,omitempty"`
 }
@@ -668,6 +674,7 @@ func ParseEntry(filename, content string) (*Entry, error) {
 		FocusActors:  fm.FocusActors,
 		FocusWhen:    fm.FocusWhen,
 		Preflight:    fm.Preflight,
+		Grounding:    fm.Grounding,
 		Title:        fm.Title,
 		Summary:      fm.Summary,
 		Content:      strings.TrimSpace(body),
@@ -905,6 +912,7 @@ func FormatFrontmatter(e *Entry) string {
 		FocusActors:  e.FocusActors,
 		FocusWhen:    e.FocusWhen,
 		Preflight:    e.Preflight,
+		Grounding:    e.Grounding,
 		Title:        e.Title,
 		Summary:      e.Summary,
 	}

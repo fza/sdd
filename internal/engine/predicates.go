@@ -54,6 +54,7 @@ var presenceFields = map[string]string{
 	"hasEntryKind":   "entryKind",
 	"hasLayer":       "layer",
 	"hasWidenReport": "widenReport",
+	"hasEntryId":     "entryId",
 	// Identity-kind capture fields (bootstrap's actor/role captures): canonical
 	// on an actor, the bound actor canonical on a role. Presence only —
 	// resolution is roleActorResolves' job, shape is aliasesWellFormed's.

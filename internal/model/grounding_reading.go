@@ -23,6 +23,12 @@ const (
 	GroundingBriefs GroundingReadMode = "briefs"
 	// GroundingOpened is entries opened in full by ID.
 	GroundingOpened GroundingReadMode = "opened"
+	// GroundingNew is the live entries that landed after the reading began,
+	// listed by a later gather (D13).
+	GroundingNew GroundingReadMode = "new"
+	// GroundingLate is the entries that landed after the assemble check,
+	// listed at the write step (D37).
+	GroundingLate GroundingReadMode = "late"
 )
 
 // GroundingRead is one read as it ran: its mode, its query text, term or
@@ -149,6 +155,23 @@ func (r *Reading) Full() []string {
 // IsListed reports whether a credited read surfaced id.
 func (r *Reading) IsListed(id string) bool {
 	return r != nil && r.listed[id]
+}
+
+// ListedOutside reports whether a credited read of another mode than mode
+// surfaced id.
+func (r *Reading) ListedOutside(id string, mode GroundingReadMode) bool {
+	if r == nil {
+		return false
+	}
+	if r.full[id] {
+		return true
+	}
+	for _, read := range r.Reads {
+		if read.Mode != mode && slices.Contains(read.IDs, id) {
+			return true
+		}
+	}
+	return false
 }
 
 // Ran reports whether the reading holds a read of mode.

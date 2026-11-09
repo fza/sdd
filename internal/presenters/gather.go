@@ -80,6 +80,14 @@ func RenderGather(w io.Writer, result *query.GatherResult) {
 	}
 }
 
+// RenderLateEntries writes the entries that landed after the assemble check
+// as brief lines, one each, nothing cut (D37).
+func RenderLateEntries(w io.Writer, g *model.Graph, late []*model.Entry) {
+	for _, e := range late {
+		fmt.Fprintln(w, gatherLine(g, model.GatherCandidate{Entry: e}, false))
+	}
+}
+
 // GatherPointer is the pointer an already-served entry prints as: its ID, its
 // brief, never cut, and a marker naming the way back.
 func GatherPointer(e *model.Entry) string {
@@ -124,6 +132,8 @@ func gatherReadLabel(read model.GroundingRead) string {
 		return "every live brief, no search"
 	case model.GroundingOpened:
 		return "opened " + strings.Join(read.IDs, ", ")
+	case model.GroundingNew:
+		return "new since the reading began"
 	}
 	return string(read.Mode)
 }

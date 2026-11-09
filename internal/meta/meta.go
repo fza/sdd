@@ -113,9 +113,16 @@ func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.P
 	// Without a .sdd/ directory only an explicit override names a local
 	// layer — joining an empty dir would read a path relative to the cwd.
 	if sddDir != "" || localConfigPath != "" {
-		local, err = readConfigFile(LocalConfigPath(sddDir, localConfigPath))
+		localPath := LocalConfigPath(sddDir, localConfigPath)
+		local, err = readConfigFile(localPath)
 		if err != nil {
 			return nil, nil, err
+		}
+		// A machine-local layer may only turn grounding enforcement on
+		// (20261109-004506-d-cpt-udz, D2).
+		if local != nil && local.Grounding.Enforce != nil && !*local.Grounding.Enforce {
+			return nil, nil, fmt.Errorf("%s: grounding.enforce: false is refused in the machine-local config, which may only set true; turn enforcement off in the committed %s",
+				localPath, filepath.Join(sddDir, "config.yaml"))
 		}
 		local = model.HonoredLocal(local)
 	}

@@ -10,6 +10,8 @@ import (
 	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/truncate"
 	"github.com/networkteam/sdd/pkg/application/types"
+
+	"github.com/networkteam/slogutils"
 )
 
 // serveChainBudget bounds each direction of a served entry chain: the
@@ -37,6 +39,7 @@ func (w *WorkflowSession) buildRegistry() (*engine.Registry, error) {
 		w.registerWorkflowPredicates,
 		w.registerWorkflowWrites,
 		w.registerWorkflowWIP,
+		w.registerWorkflowGrounding,
 	} {
 		if err := register(registry); err != nil {
 			return nil, err
@@ -300,7 +303,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "newEntry", Doc: "Publishes the recorded entry identity from accepted capture state and immutable staged references.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride", "skipGrounding"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
 		},
 		MutatesGraph:     true,
 		GraphIndependent: true,
@@ -402,6 +405,8 @@ func (w *WorkflowSession) draftFromStore(store *engine.Store) EntryDraft {
 	draft.Body, _ = workflowStoreString(store, "body")
 	draft.Confidence, _ = workflowStoreString(store, "confidence")
 	draft.Intent, _ = workflowStoreString(store, "intent")
+	skip, _ := store.Get("skipGrounding")
+	draft.SkipGrounding, _ = skip.(bool)
 	if index, ok := workflowStoreDocument(store, "index"); ok {
 		title, _ := index["title"].(string)
 		topic, _ := index["topic"].(string)
@@ -464,6 +469,22 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	}
 	if override, ok := ctx.Store.Get("preflightOverride"); ok {
 		draft.SkipPreflight, _ = override.(bool)
+	}
+	// The write step's late-entries check, once more on a fresh graph right
+	// before the write (20261109-004506-d-cpt-udz, 7.2): an entry landing in
+	// between leaves the capture unwritten, and publish routes to lateEntries.
+	w.graphs.Invalidate()
+	graph, err := w.graphs.CurrentFor(ctx.Store)
+	if err != nil {
+		return err
+	}
+	late, err := w.lateEntries(ctx, graph)
+	if err != nil {
+		return err
+	}
+	if len(late) > 0 {
+		slogutils.FromContext(w.ctx).Info("entries landed before the capture write", "entries", late)
+		return nil
 	}
 	result, err := w.app.CreateEntry(w.ctx, w.identity, target.Project, w.binding, draft)
 	if err != nil {

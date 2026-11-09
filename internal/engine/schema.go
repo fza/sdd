@@ -305,6 +305,25 @@ func schemaForType(t VarType, desc string) map[string]any {
 			"required":             []string{"old", "new"},
 			"additionalProperties": false,
 		}
+	case TypeVerdict:
+		codes := model.GroundingVerdictCodes()
+		enum := make([]any, 0, len(codes))
+		for _, code := range codes {
+			enum = append(enum, code)
+		}
+		schema = map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"ids": map[string]any{
+					"type":     "array",
+					"minItems": 1,
+					"items":    map[string]any{"type": "string", "pattern": entryIDSchemaPattern},
+				},
+				"code": map[string]any{"type": "string", "enum": enum},
+			},
+			"required":             []string{"ids", "code"},
+			"additionalProperties": false,
+		}
 	case TypeEntryKind:
 		kinds := append(model.SignalKindValues(), model.DecisionKindValues()...)
 		enum := make([]any, 0, len(kinds))

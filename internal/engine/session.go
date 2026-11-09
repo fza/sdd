@@ -390,11 +390,39 @@ func (s *Session) Record(read Read) error {
 		}
 		data["grounding"] = encoded
 		inst.reading.Fold(read.Grounding)
+		writes, err := s.seedReading(inst)
+		if err != nil {
+			return err
+		}
+		if len(writes) > 0 {
+			data["writes"] = writes
+		}
 		s.appendEvent(inst.ID, EventRead, data)
 		return s.checkSink()
 	}
 	s.appendEvent("", EventRead, data)
 	return s.checkSink()
+}
+
+// seedReading writes the instance's reading into every state field declared
+// with SeedReading and returns the writes for the read event, so replay
+// restores them without re-rendering.
+func (s *Session) seedReading(inst *Instance) (map[string]any, error) {
+	writes := map[string]any{}
+	for _, name := range slices.Sorted(maps.Keys(inst.Spec.State)) {
+		if inst.Spec.State[name].Seed != SeedReading {
+			continue
+		}
+		current, _ := inst.Store.Get(name)
+		text, _ := current.(string)
+		seeded := model.WithReadingSeed(text, &inst.reading)
+		err := inst.Store.WriteEngine(name, seeded)
+		if err != nil {
+			return nil, err
+		}
+		writes[name] = seeded
+	}
+	return writes, nil
 }
 
 // encodeReadPayload renders a payload in the JSON-document form a replayed
@@ -1180,6 +1208,13 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 				return err
 			}
 			inst.reading.Fold(payload)
+			writes, _ := ev.Data["writes"].(map[string]any)
+			for name, v := range writes {
+				err := inst.Store.importValue(name, ExportedValue{Value: v, Provenance: ProvenanceEngine})
+				if err != nil {
+					return err
+				}
+			}
 		}
 
 	case EventServedBlocks:

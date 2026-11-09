@@ -44,6 +44,7 @@ const (
 	TypeInvolvement       BaseType = "involvement"
 	TypeInvolvementWhen   BaseType = "involvement-when"
 	TypeSearchReplace     BaseType = "search-replace"
+	TypeVerdict           BaseType = "verdict"
 	// TypeProse validates exactly like text; the distinct declaration tells
 	// serve-side rendering to treat changes as content diffs rather than
 	// whole-value re-serves (20260826-120330-d-tac-8f8).
@@ -56,7 +57,7 @@ var baseTypeOrder = []BaseType{
 	TypeText, TypeBool, TypeEntryID, TypeRef, TypeLabel, TypeParticipant,
 	TypeEntryKind, TypeLayer, TypeConfidence, TypeIntent, TypeActorKind, TypeAttachmentHandle,
 	TypeProcedureSpec, TypeFactIndex, TypePreflightFindings, TypeGuideFindings,
-	TypeInvolvement, TypeInvolvementWhen, TypeSearchReplace, TypeProse,
+	TypeInvolvement, TypeInvolvementWhen, TypeSearchReplace, TypeVerdict, TypeProse,
 }
 
 var baseTypes = func() map[BaseType]bool {
@@ -97,6 +98,7 @@ var baseTypeDesc = map[BaseType]string{
 	TypeInvolvement:       "a focus involvement: target entry, optional actors, optional time range",
 	TypeInvolvementWhen:   "a from/to date range",
 	TypeSearchReplace:     "one exact edit: old text that must match exactly once in the target, and the new text replacing it",
+	TypeVerdict:           "entries a capture's reading set aside instead of referencing, with the code naming why",
 	TypeProse:             "long-form prose — like text, but serves render changes as content diffs instead of re-serving the whole value",
 }
 
@@ -257,6 +259,9 @@ func validateBaseValue(base BaseType, v any) (any, error) {
 			return nil, fmt.Errorf("new must be a string (empty deletes the old text)")
 		}
 		return m, nil
+
+	case TypeVerdict:
+		return verdictFromValue(v)
 
 	case TypeLabel:
 		s, ok := v.(string)
@@ -533,6 +538,41 @@ func (i Involvement) MarshalJSON() ([]byte, error) {
 		m["when"] = i.When
 	}
 	return json.Marshal(m)
+}
+
+// verdictFromValue normalizes a verdict to {ids, code}: at least one full
+// entry ID and a code from model.GroundingVerdictCodes.
+func verdictFromValue(v any) (map[string]any, error) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("expected verdict object {ids, code}")
+	}
+	for key := range m {
+		if key != "ids" && key != "code" {
+			return nil, fmt.Errorf("unknown verdict key %q (ids, code)", key)
+		}
+	}
+	code, _ := m["code"].(string)
+	if !model.ValidGroundingVerdictCode(code) {
+		return nil, fmt.Errorf("verdict code must be one of %s", strings.Join(model.GroundingVerdictCodes(), ", "))
+	}
+	raw, ok := m["ids"].([]any)
+	if !ok || len(raw) == 0 {
+		return nil, fmt.Errorf("verdict ids must list at least one entry ID")
+	}
+	ids := make([]any, 0, len(raw))
+	for _, item := range raw {
+		id, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("verdict ids must be entry IDs (strings)")
+		}
+		_, err := model.ParseID(id)
+		if err != nil {
+			return nil, fmt.Errorf("verdict id %q is not a full entry ID: %w", id, err)
+		}
+		ids = append(ids, id)
+	}
+	return map[string]any{"ids": ids, "code": code}, nil
 }
 
 func involvementFromMap(m map[string]any) (Involvement, error) {

@@ -585,6 +585,7 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 		Targets: targets, Sync: targets, Branches: targets, Base: targets,
 		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, searchIndex), LLM: runner,
 		ExcludeEmbeddedFromIndex: true,
+		Grounding:                groundingPolicy(cfg),
 	})
 }
 

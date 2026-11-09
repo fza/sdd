@@ -237,6 +237,10 @@ func readTag(read GroundingRead) string {
 		return "topic(" + read.Text + ")"
 	case GroundingBriefs:
 		return "all live"
+	case GroundingNew:
+		return "new since the reading began"
+	case GroundingLate:
+		return "landed after the assemble check"
 	}
 	return string(read.Mode)
 }

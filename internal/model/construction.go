@@ -32,6 +32,7 @@ type EntryConstruction struct {
 	Body        string
 	Time        time.Time
 	Preflight   string
+	Grounding   string
 	Summary     string
 	Attachments []string
 
@@ -215,6 +216,7 @@ func ConstructFromEntry(e *Entry) (*EntryConstruction, []Finding) {
 		Body:         e.Content,
 		Time:         e.Time,
 		Preflight:    e.Preflight,
+		Grounding:    e.Grounding,
 		Summary:      e.Summary,
 		Attachments:  e.Attachments,
 	}
@@ -326,6 +328,7 @@ func (c *EntryConstruction) Entry() *Entry {
 		Content:      c.Body,
 		Time:         c.Time,
 		Preflight:    c.Preflight,
+		Grounding:    c.Grounding,
 		Summary:      c.Summary,
 		Attachments:  c.Attachments,
 	}

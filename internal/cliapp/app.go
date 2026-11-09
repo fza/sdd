@@ -835,6 +835,10 @@ func newCmd() *cli.Command {
 				Usage: "Skip pre-flight validation (entry is annotated with preflight: skipped)",
 			},
 			&cli.BoolFlag{
+				Name:  "skip-grounding",
+				Usage: "Record a bypass of the grounding gate under grounding.enforce (entry is annotated with grounding: skipped and written with confidence low)",
+			},
+			&cli.BoolFlag{
 				Name:  "preflight-verified",
 				Usage: "Skip pre-flight validation, annotating the entry preflight: dry-run-verified — for a capture whose findings were already settled via --dry-run",
 			},
@@ -1007,6 +1011,7 @@ func newCmd() *cli.Command {
 				Involvement:       involvement,
 				Attachments:       atts,
 				SkipPreflight:     cmd.Bool("skip-preflight"),
+				SkipGrounding:     cmd.Bool("skip-grounding"),
 				PreflightVerified: cmd.Bool("preflight-verified"),
 				Summary:           strings.TrimSpace(cmd.String("summary")),
 				Title:             strings.TrimSpace(cmd.String("title")),
@@ -1028,6 +1033,10 @@ func newCmd() *cli.Command {
 				return err
 			}
 			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			err = refuseUngroundedNew(cfg, ncmd)
 			if err != nil {
 				return err
 			}

@@ -68,6 +68,7 @@ type exportEntryJSON struct {
 	FocusWhen        *focusWhenJSON         `json:"focus_when,omitempty"`
 	Involvement      []involvementJSON      `json:"involvement,omitempty"`
 	Preflight        string                 `json:"preflight,omitempty"`
+	Grounding        string                 `json:"grounding,omitempty"`
 	Warnings         []warningJSON          `json:"warnings,omitempty"`
 	Attachments      []exportAttachmentJSON `json:"attachments,omitempty"`
 }
@@ -184,7 +185,7 @@ func exportEntryJSONFrom(x query.ExportEntry) exportEntryJSON {
 		ClosedBy: x.ClosedBy, SupersededBy: x.SupersededBy, Closes: e.Closes, Supersedes: e.Supersedes,
 		Heat: x.Heat, InDegree: x.InDegree, Title: e.Title, Summary: e.Summary, Body: e.Content,
 		Canonical: e.Canonical, Aliases: e.Aliases, Class: e.Class, Actor: e.Actor, Override: e.Override,
-		FocusActors: e.FocusActors, FocusWhen: focusWhenJSONFrom(e.FocusWhen), Preflight: e.Preflight,
+		FocusActors: e.FocusActors, FocusWhen: focusWhenJSONFrom(e.FocusWhen), Preflight: e.Preflight, Grounding: e.Grounding,
 	}
 	if p, err := model.ParseID(e.ID); err == nil {
 		ej.ShortID = p.TypeCode + "-" + p.LayerCode + "-" + p.Suffix
