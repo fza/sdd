@@ -50,10 +50,6 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 	if err != nil {
 		return err
 	}
-	skip, err := resolveInitSkip(configPath)
-	if err != nil {
-		return err
-	}
 
 	err = h.EnsureGraphClone(ctx, &command.EnsureGraphCloneCmd{RepoID: cmd.GraphRepo, CodeOrigin: cmd.RemoteURL})
 	if err != nil {
@@ -96,7 +92,7 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(localConfigPath), err)
 	}
-	err = h.runProjectInit(ctx, cmd, cloneDir, skip, func(projectCmd *command.InitCmd) {
+	err = h.runProjectInit(ctx, cmd, cloneDir, func(projectCmd *command.InitCmd) {
 		projectCmd.LocalConfigPath = localConfigPath
 		projectCmd.RemoteURL = httpsURL
 		projectCmd.GraphOnly = true
@@ -163,7 +159,7 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 			touched = append(touched, configPath)
 		}
 		if persistAgents {
-			err = h.persistSupportedAgents(ctx, cmd, configPath, recordedAgents, agents, scope, skip, &touched)
+			err = h.persistSupportedAgents(ctx, cmd, configPath, recordedAgents, agents, scope, &touched)
 			if err != nil {
 				return err
 			}
@@ -186,5 +182,5 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 		}
 		touched = append(touched, guardPath)
 	}
-	return h.installAgentSurfaces(ctx, cmd, agents, scope, skip, touched, initCommitMessage(configExisted))
+	return h.installAgentSurfaces(ctx, cmd, agents, scope, touched, initCommitMessage(configExisted))
 }

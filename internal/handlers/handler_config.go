@@ -39,10 +39,6 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 	if cmd.Key == "inbound" || strings.HasPrefix(cmd.Key, "inbound.") {
 		return fmt.Errorf("%s is set only in the committed .sdd/config.yaml of the graph receiving captures, never in the %s config", cmd.Key, cmd.Target)
 	}
-	err = model.InitSettingRefusal(cmd.Key, cmd.Value, cmd.Target)
-	if err != nil {
-		return err
-	}
 	if slices.Contains(model.RetiredConfigKeys, cmd.Key) {
 		return fmt.Errorf("%s is no longer used: git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config", cmd.Key)
 	}

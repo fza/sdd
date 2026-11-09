@@ -14,8 +14,6 @@ import (
 type MCPRegTarget struct {
 	// Path is the absolute path of the config file.
 	Path string
-	// Surface is what init.skip calls the part of the file this target owns.
-	Surface InitSurface
 	// Merge takes the file's current bytes (nil/empty when absent) and
 	// returns the bytes to write, whether anything changed, and any parse
 	// error. It adds the sdd registration when absent and leaves an existing
@@ -42,12 +40,12 @@ func MCPRegistrationTargets(target AgentTarget, repoRoot string) ([]MCPRegTarget
 	switch target {
 	case AgentClaude:
 		return []MCPRegTarget{
-			{Path: filepath.Join(repoRoot, ".mcp.json"), Surface: InitSurfaceMCP, Merge: MergeClaudeMCPJSON, Remove: RemoveClaudeMCPJSON},
-			{Path: filepath.Join(repoRoot, ".claude", "settings.json"), Surface: InitSurfacePermissions, Merge: MergeClaudeSettingsAllow, Remove: RemoveClaudeSettingsAllow},
+			{Path: filepath.Join(repoRoot, ".mcp.json"), Merge: MergeClaudeMCPJSON, Remove: RemoveClaudeMCPJSON},
+			{Path: filepath.Join(repoRoot, ".claude", "settings.json"), Merge: MergeClaudeSettingsAllow, Remove: RemoveClaudeSettingsAllow},
 		}, nil
 	case AgentCodex:
 		return []MCPRegTarget{
-			{Path: filepath.Join(repoRoot, ".codex", "config.toml"), Surface: InitSurfaceMCP, Merge: MergeCodexConfigTOML, Remove: RemoveCodexConfigTOML},
+			{Path: filepath.Join(repoRoot, ".codex", "config.toml"), Merge: MergeCodexConfigTOML, Remove: RemoveCodexConfigTOML},
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported agent target: %q", target)

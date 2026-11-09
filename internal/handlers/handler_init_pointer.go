@@ -59,7 +59,7 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 			return fmt.Errorf("parsing %s: %w", configPath, parseErr)
 		}
 		if recorded.ProjectDir == "" {
-			return fmt.Errorf("%s configures a project of its own; reduce it to project_dir, skill_scope, supported_agents and init before pointing it at %s", configPath, cmd.ProjectDir)
+			return fmt.Errorf("%s configures a project of its own; reduce it to project_dir, skill_scope and supported_agents before pointing it at %s", configPath, cmd.ProjectDir)
 		}
 	}
 
@@ -71,10 +71,6 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 	if err != nil {
 		return err
 	}
-	skip, err := resolveInitSkip(configPath)
-	if err != nil {
-		return err
-	}
 
 	if projectCfg != nil {
 		err = gitignoreLine(projectCfg.GraphDir)
@@ -83,9 +79,9 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 	if projectCfg == nil {
-		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents, skip)
+		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents)
 	} else {
-		err = h.refreshProject(ctx, cmd, projectRoot, projectCfg, skip)
+		err = h.refreshProject(ctx, cmd, projectRoot, projectCfg)
 	}
 	if err != nil {
 		return err
@@ -134,7 +130,7 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 			touched = append(touched, configPath)
 		}
 		if persistAgents {
-			err = h.persistSupportedAgents(ctx, cmd, configPath, recordedAgents, effectiveAgents, effectiveScope, skip, &touched)
+			err = h.persistSupportedAgents(ctx, cmd, configPath, recordedAgents, effectiveAgents, effectiveScope, &touched)
 			if err != nil {
 				return err
 			}
@@ -162,7 +158,7 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, skip, touched, initCommitMessage(configExisted))
+	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(configExisted))
 }
 
 // writeLocalSettings records the per-person settings cmd carries, the
@@ -211,12 +207,12 @@ func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
 // write: a failed prune then leaves supported_agents still recording the
 // dropped agent, so a re-run retries the drop rather than orphaning files under
 // a config that already claims they're gone.
-func (h *Handler) persistSupportedAgents(ctx context.Context, cmd *command.InitCmd, configPath string, recorded, effective []model.AgentTarget, scope model.Scope, skip model.InitConfig, touched *[]string) error {
+func (h *Handler) persistSupportedAgents(ctx context.Context, cmd *command.InitCmd, configPath string, recorded, effective []model.AgentTarget, scope model.Scope, touched *[]string) error {
 	// Prune only under project scope, where renders are per-project and
 	// committed. Under user scope the skill dirs are shared across every
 	// project on the machine, so a per-project drop must not delete a render
 	// another project relies on.
-	if scope == model.ScopeProject && !skip.Skips(model.InitSurfaceSkills) {
+	if scope == model.ScopeProject {
 		dropped := agentsDiff(recorded, effective)
 		if len(dropped) > 0 {
 			err := h.pruneAgentSkills(ctx, dropped, scope, cmd, touched)
@@ -250,11 +246,11 @@ func (h *Handler) persistSupportedAgents(ctx context.Context, cmd *command.InitC
 
 // installAgentSurfaces installs or refreshes the skill bundle, sweeps what the
 // bundle stopped shipping, registers the MCP server, and commits everything
-// touched inside cmd.RepoRoot. A surface skip lists is left alone.
-func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, skip model.InitConfig, touched []string, commitMessage string) error {
+// touched inside cmd.RepoRoot.
+func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string, commitMessage string) error {
 	if !cmd.GraphOnly {
 		var err error
-		touched, err = h.installSkillsAndRegistrations(ctx, cmd, agents, scope, skip, touched)
+		touched, err = h.installSkillsAndRegistrations(ctx, cmd, agents, scope, touched)
 		if err != nil {
 			return err
 		}
@@ -262,41 +258,7 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 	return h.commitInitPaths(ctx, cmd, touched, commitMessage)
 }
 
-// resolveInitSkip reads the init block of the committed config at configPath
-// before init writes it: a config init writes fresh carries none, and its
-// graph_dir need not parse as YAML. An absent file skips nothing.
-func resolveInitSkip(configPath string) (model.InitConfig, error) {
-	data, err := readOptionalFile(configPath)
-	if err != nil {
-		return model.InitConfig{}, fmt.Errorf("reading %s: %w", configPath, err)
-	}
-	cfg, err := model.ParseConfig(data)
-	if err != nil {
-		return model.InitConfig{}, fmt.Errorf("parsing %s: %w", configPath, err)
-	}
-	return cfg.Init, nil
-}
-
-func (h *Handler) installSkillsAndRegistrations(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, skip model.InitConfig, touched []string) ([]string, error) {
-	if !skip.Skips(model.InitSurfaceSkills) {
-		var err error
-		touched, err = h.installSkills(ctx, cmd, agents, scope, touched)
-		if err != nil {
-			return nil, err
-		}
-	}
-	// Project scope only: the registration files live in the repo tree;
-	// user-scope registration (home-dir config) is deferred (d-tac-wfl).
-	if scope == model.ScopeProject {
-		err := h.registerMCPServers(agents, skip, cmd, &touched)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return touched, nil
-}
-
-func (h *Handler) installSkills(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string) ([]string, error) {
+func (h *Handler) installSkillsAndRegistrations(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string) ([]string, error) {
 	for _, target := range agents {
 		err := h.InstallSkills(ctx, &command.InstallSkillsCmd{
 			Target:          target,
@@ -325,6 +287,15 @@ func (h *Handler) installSkills(ctx context.Context, cmd *command.InitCmd, agent
 	err := h.pruneSkillOrphans(ctx, agents, scope, cmd, &touched)
 	if err != nil {
 		return nil, err
+	}
+
+	// Project scope only: the registration files live in the repo tree;
+	// user-scope registration (home-dir config) is deferred (d-tac-wfl).
+	if scope == model.ScopeProject {
+		err = h.registerMCPServers(agents, cmd, &touched)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return touched, nil
 }
