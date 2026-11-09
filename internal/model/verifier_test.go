@@ -225,3 +225,45 @@ func TestVerifierLaunchAsked_OnlyUnderDeepWhileUnset(t *testing.T) {
 		})
 	}
 }
+
+// Each launch's model and effort describe the machine like the launch: the
+// machine-local value wins field by field, and the blocks stay apart.
+func TestVerifierAgentsLayerPerLaunch(t *testing.T) {
+	committed := verifierLayer(model.VerifierDeep, "", boolPtr(true))
+	committed.Verifier.Claude = model.VerifierAgent{Model: "sonnet", Effort: "high"}
+	committed.Verifier.Codex = model.VerifierAgent{Model: "gpt-5.5"}
+	local := &model.PerRepoConfig{}
+	local.Verifier.Claude = model.VerifierAgent{Effort: "max"}
+	local.Verifier.Subagent = model.VerifierAgent{Model: "opus"}
+	err := model.CheckVerifierLayers(model.BaseConfig{}, committed, local, verifierFiles)
+	if err != nil {
+		t.Fatalf("machine-local model and effort may differ from the committed ones: %v", err)
+	}
+
+	policy := model.MergeConfig(committed, local).Verifier.Policy()
+
+	if policy.Claude != (model.VerifierAgent{Model: "sonnet", Effort: "max"}) {
+		t.Errorf("the machine-local effort should win and the committed model stay, got %+v", policy.Claude)
+	}
+	if policy.Codex != (model.VerifierAgent{Model: "gpt-5.5"}) || policy.Subagent != (model.VerifierAgent{Model: "opus"}) {
+		t.Errorf("each launch should keep its own block, got codex %+v and subagent %+v", policy.Codex, policy.Subagent)
+	}
+}
+
+// Only claude's effort is a closed set; codex and the subagent tool accept
+// model-defined levels.
+func TestCheckVerifierLayers_RefusesAnUnknownClaudeEffort(t *testing.T) {
+	local := &model.PerRepoConfig{}
+	local.Verifier.Claude.Effort = "ultra"
+	err := model.CheckVerifierLayers(model.BaseConfig{}, nil, local, verifierFiles)
+	if err == nil || !strings.Contains(err.Error(), `.sdd/config.local.yaml: verifier.claude.effort "ultra"`) {
+		t.Fatalf("an effort the claude CLI does not take should be refused naming file and key, got %v", err)
+	}
+	local.Verifier.Claude.Effort = ""
+	local.Verifier.Codex.Effort = "ultra"
+	local.Verifier.Subagent.Effort = "ultra"
+	err = model.CheckVerifierLayers(model.BaseConfig{}, nil, local, verifierFiles)
+	if err != nil {
+		t.Fatalf("a model-defined effort should pass for codex and the subagent: %v", err)
+	}
+}

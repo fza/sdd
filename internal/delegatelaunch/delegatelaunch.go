@@ -34,6 +34,10 @@ type Settings struct {
 	// Agents are the project's supported_agents, in order, for Fallback.
 	Agents []string
 	Driver model.VerifierDriver
+	// Claude and Codex are the model and effort each headless launch runs
+	// with; empty values leave the CLI's own.
+	Claude model.VerifierAgent
+	Codex  model.VerifierAgent
 	// WorkDir is the project checkout the agent works in.
 	WorkDir string
 	// SDD is the sdd executable the agent's MCP server runs.
@@ -124,7 +128,7 @@ func mcpConfig(sdd string) (string, error) {
 // plugins) and no skills, the read-only tool set, and sdd as the only MCP
 // server. The prompt goes on stdin. --safe-mode is no substitute: it drops the
 // server --mcp-config passes too.
-func ClaudeArgs(sdd, resume string) ([]string, error) {
+func ClaudeArgs(sdd, resume string, agent model.VerifierAgent) ([]string, error) {
 	config, err := mcpConfig(sdd)
 	if err != nil {
 		return nil, err
@@ -135,6 +139,12 @@ func ClaudeArgs(sdd, resume string) ([]string, error) {
 		"--allowedTools", strings.Join(claudeTools, ","),
 		"--strict-mcp-config", "--mcp-config", config,
 	}
+	if agent.Model != "" {
+		args = append(args, "--model", agent.Model)
+	}
+	if agent.Effort != "" {
+		args = append(args, "--effort", agent.Effort)
+	}
 	if resume != "" {
 		args = append(args, "--resume", resume)
 	}
@@ -142,7 +152,7 @@ func ClaudeArgs(sdd, resume string) ([]string, error) {
 }
 
 func runClaude(ctx context.Context, settings Settings, round Round) (string, error) {
-	args, err := ClaudeArgs(settings.SDD, round.Resume)
+	args, err := ClaudeArgs(settings.SDD, round.Resume, settings.Claude)
 	if err != nil {
 		return "", err
 	}
@@ -172,12 +182,18 @@ func runClaude(ctx context.Context, settings Settings, round Round) (string, err
 // events in a read-only sandbox, no project instructions (a zero byte budget
 // for AGENTS.md), sdd as an MCP server, and the round's prompt; a later round
 // resumes the first round's session.
-func CodexArgs(sdd, resume, prompt string) []string {
+func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
 	args := []string{
 		"exec", "--json", "--sandbox", "read-only",
 		"-c", "project_doc_max_bytes=0",
 		"-c", "mcp_servers.sdd.command=" + strconv.Quote(sdd),
 		"-c", `mcp_servers.sdd.args=["serve"]`,
+	}
+	if agent.Model != "" {
+		args = append(args, "-m", agent.Model)
+	}
+	if agent.Effort != "" {
+		args = append(args, "-c", "model_reasoning_effort="+strconv.Quote(agent.Effort))
 	}
 	if resume != "" {
 		args = append(args, "resume", resume)
@@ -186,7 +202,7 @@ func CodexArgs(sdd, resume, prompt string) []string {
 }
 
 func runCodex(ctx context.Context, settings Settings, round Round) (string, error) {
-	out, err := run(ctx, settings.WorkDir, "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt), "")
+	out, err := run(ctx, settings.WorkDir, "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "")
 	if err != nil {
 		return "", err
 	}

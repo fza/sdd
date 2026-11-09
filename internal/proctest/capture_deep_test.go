@@ -553,3 +553,33 @@ func TestCaptureDeep_StartedNeedsADispatchedDelegate(t *testing.T) {
 		t.Fatalf("started without a dispatched delegate should be refused, got %v", err)
 	}
 }
+
+// verifier.subagent reaches the harness: the dispatch names the model and
+// effort to launch the verify subagent with, in its fields and its
+// instructions. Unset, it names neither.
+func TestCaptureDeep_SubagentDispatchCarriesItsModelAndEffort(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		subagent    sdd.VerifierAgent
+		instruction string
+	}{
+		{"both", sdd.VerifierAgent{Model: "opus", Effort: "high"}, "Launch it with model opus and effort high"},
+		{"model only", sdd.VerifierAgent{Model: "sonnet"}, "Launch it with model sonnet, the dispatch's model."},
+		{"effort only", sdd.VerifierAgent{Effort: "max"}, "Launch it with effort max, the dispatch's effort."},
+		{"neither", sdd.VerifierAgent{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			world, session := newDeepWorld(t, "deep-subagent-model", sdd.VerifierPolicy{Subagent: tc.subagent})
+			x := startDeep(t, world, session, captureDraft())
+			if x.dispatch.Model != tc.subagent.Model || x.dispatch.Effort != tc.subagent.Effort {
+				t.Fatalf("the dispatch should carry verifier.subagent's model and effort, got %q and %q", x.dispatch.Model, x.dispatch.Effort)
+			}
+			if tc.instruction == "" && strings.Contains(x.dispatch.Instructions, "Launch it with") {
+				t.Fatalf("an unset block should add no model or effort to the instructions:\n%s", x.dispatch.Instructions)
+			}
+			if tc.instruction != "" && !strings.Contains(x.dispatch.Instructions, tc.instruction) {
+				t.Fatalf("the instructions should name the model and effort to launch with:\n%s", x.dispatch.Instructions)
+			}
+		})
+	}
+}

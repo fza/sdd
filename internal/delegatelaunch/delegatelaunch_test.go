@@ -276,3 +276,63 @@ func TestRun_CodexReportingNoSessionFailsTheFirstRound(t *testing.T) {
 
 	refused(t, settings(t, "codex"), firstRound(), "codex reported no session to resume")
 }
+
+// Each headless launch runs with the model and effort its own block sets
+// (verifier.claude, verifier.codex), in the CLI's own flags, and a resumed
+// round keeps them.
+func TestRun_HeadlessLaunchesTakeTheirModelAndEffort(t *testing.T) {
+	codexEvents := `{"type":"thread.started","thread_id":"codex-3"}` + "\n" + `{"type":"turn.completed"}`
+	for _, tc := range []struct {
+		launch string
+		answer string
+		want   []string
+	}{
+		{"claude", `{"type":"result","is_error":false,"session_id":"claude-7","result":"done"}`, []string{"--model", "opus", "--effort", "xhigh", "--resume", "claude-6"}},
+		{"codex", codexEvents, []string{"-m", "gpt-5.5", "-c", `model_reasoning_effort="high"`, "resume", "codex-2", roundPrompt}},
+	} {
+		t.Run(tc.launch, func(t *testing.T) {
+			agents := test.FakeAgents(t, tc.launch)
+			test.AgentAnswers(t, agents, tc.launch, tc.answer, "", 0)
+			launchSettings := settings(t, tc.launch)
+			launchSettings.Claude = model.VerifierAgent{Model: "opus", Effort: "xhigh"}
+			launchSettings.Codex = model.VerifierAgent{Model: "gpt-5.5", Effort: "high"}
+			round := firstRound()
+			round.Resume = map[string]string{"claude": "claude-6", "codex": "codex-2"}[tc.launch]
+
+			launch(t, launchSettings, round)
+
+			args := test.LastAgentCall(t, agents, tc.launch).Args
+			if !slices.Equal(args[len(args)-len(tc.want):], tc.want) {
+				t.Fatalf("the launch should pass its own model and effort before the resume, got %q", args)
+			}
+		})
+	}
+}
+
+// A launch whose block sets nothing runs with the CLI's own model and effort.
+func TestRun_HeadlessLaunchesWithoutABlockPassNoModel(t *testing.T) {
+	for _, launchName := range []string{"claude", "codex"} {
+		t.Run(launchName, func(t *testing.T) {
+			agents := test.FakeAgents(t, launchName)
+			answer := `{"type":"result","is_error":false,"session_id":"claude-7","result":"done"}`
+			if launchName == "codex" {
+				answer = `{"type":"thread.started","thread_id":"codex-3"}`
+			}
+			test.AgentAnswers(t, agents, launchName, answer, "", 0)
+			launchSettings := settings(t, launchName)
+			launchSettings.Claude = model.VerifierAgent{Model: "opus"}
+			if launchName == "claude" {
+				launchSettings.Claude = model.VerifierAgent{}
+				launchSettings.Codex = model.VerifierAgent{Model: "gpt-5.5"}
+			}
+
+			launch(t, launchSettings, firstRound())
+
+			for _, arg := range test.LastAgentCall(t, agents, launchName).Args {
+				if arg == "--model" || arg == "-m" || arg == "--effort" || strings.HasPrefix(arg, "model_reasoning_effort") {
+					t.Fatalf("a launch should not take another launch's model or effort, got %q", test.LastAgentCall(t, agents, launchName).Args)
+				}
+			}
+		})
+	}
+}

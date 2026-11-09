@@ -19,6 +19,15 @@ type VerifierPolicy struct {
 	// subagent. The values other than subagent need the composition's
 	// DelegateLauncher.
 	Launch string
+	// Subagent is the model and effort the dispatch asks the harness to run a
+	// subagent-launched deep verifier with; empty leaves the harness's own.
+	Subagent VerifierAgent
+}
+
+// VerifierAgent is a model and effort a deep verifier launch runs with.
+type VerifierAgent struct {
+	Model  string
+	Effort string
 }
 
 func (p VerifierPolicy) resolved() model.VerifierPolicy {

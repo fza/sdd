@@ -52,25 +52,44 @@ type VerifierDriver struct {
 	Args    []string `yaml:"args,omitempty"`
 }
 
+// VerifierAgent is the model and effort one launch runs the deep verifier
+// with; an empty value leaves the launch's own default. Each launch names
+// models and efforts its own way, so every launch has its own pair, and a
+// custom_driver's command picks its own.
+type VerifierAgent struct {
+	Model  string `yaml:"model,omitempty"`
+	Effort string `yaml:"effort,omitempty"`
+}
+
+// claudeEfforts are the levels the claude CLI's --effort takes. Codex and a
+// harness's subagent tool accept model-defined levels, so theirs pass as set.
+var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+
 // VerifierConfig is the `verifier` block. Mode and skip layer like
 // grounding.enforce: the user-global and the committed config set them, the
 // committed value wins, and the machine-local config may only tighten them.
-// Launch describes the machine, so the machine-local value wins (V-D20); the
-// driver runs a command, so only the user-global and machine-local layers set
-// it (V-D19).
+// Launch and the per-launch model and effort describe the machine, so the
+// machine-local value wins (V-D20); the driver runs a command, so only the
+// user-global and machine-local layers set it (V-D19).
 type VerifierConfig struct {
-	Mode   VerifierMode   `yaml:"mode,omitempty"`
-	Skip   VerifierSkip   `yaml:"skip,omitempty"`
-	Launch VerifierLaunch `yaml:"launch,omitempty"`
-	Driver VerifierDriver `yaml:"driver,omitempty"`
+	Mode     VerifierMode   `yaml:"mode,omitempty"`
+	Skip     VerifierSkip   `yaml:"skip,omitempty"`
+	Launch   VerifierLaunch `yaml:"launch,omitempty"`
+	Driver   VerifierDriver `yaml:"driver,omitempty"`
+	Subagent VerifierAgent  `yaml:"subagent,omitempty"`
+	Claude   VerifierAgent  `yaml:"claude,omitempty"`
+	Codex    VerifierAgent  `yaml:"codex,omitempty"`
 }
 
 // VerifierPolicy is the resolved verifier configuration of one project.
 type VerifierPolicy struct {
-	Mode   VerifierMode
-	Skip   VerifierSkip
-	Launch VerifierLaunch
-	Driver VerifierDriver
+	Mode     VerifierMode
+	Skip     VerifierSkip
+	Launch   VerifierLaunch
+	Driver   VerifierDriver
+	Subagent VerifierAgent
+	Claude   VerifierAgent
+	Codex    VerifierAgent
 }
 
 // Policy resolves the block against the defaults: off, skip on failure, and
@@ -103,7 +122,20 @@ func mergeVerifierConfig(base, overlay VerifierConfig) VerifierConfig {
 	if overlay.Driver.Command != "" {
 		out.Driver = overlay.Driver
 	}
+	out.Subagent = mergeVerifierAgent(out.Subagent, overlay.Subagent)
+	out.Claude = mergeVerifierAgent(out.Claude, overlay.Claude)
+	out.Codex = mergeVerifierAgent(out.Codex, overlay.Codex)
 	return out
+}
+
+func mergeVerifierAgent(base, overlay VerifierAgent) VerifierAgent {
+	if overlay.Model != "" {
+		base.Model = overlay.Model
+	}
+	if overlay.Effort != "" {
+		base.Effort = overlay.Effort
+	}
+	return base
 }
 
 // CheckVerifierLayers refuses a verifier configuration that cannot hold:
@@ -139,6 +171,9 @@ func CheckVerifierLayers(global BaseConfig, committed, local *PerRepoConfig, fil
 		}
 		if launch := layer.cfg.Verifier.Launch; launch != "" && !slices.Contains(verifierLaunches, launch) {
 			return fmt.Errorf("%s: verifier.launch %q is not subagent, claude, codex or custom_driver", layerFile(layer.source, files), launch)
+		}
+		if effort := layer.cfg.Verifier.Claude.Effort; effort != "" && !slices.Contains(claudeEfforts, effort) {
+			return fmt.Errorf("%s: verifier.claude.effort %q is not low, medium, high, xhigh or max", layerFile(layer.source, files), effort)
 		}
 		if layer.source == ConfigSourceProject && layer.cfg.Verifier.Driver.Command != "" {
 			return fmt.Errorf("%s: verifier.driver is refused in the committed config, since its command would run on every contributor's machine; set it in the user-global or the machine-local config", layerFile(layer.source, files))
