@@ -501,3 +501,46 @@ func TestCaptureGrounding_OneDirectionScoresAnswerOnlyFromTheDraft(t *testing.T)
 		t.Fatalf("lookup in reverse = %v: a low one-direction score should leave the reverse undecided", got)
 	}
 }
+
+// A late entry the consumer already holds in full lists as its pointer while
+// the session cuts repeats, as the MCP surface serves (R14), and as its brief
+// line otherwise.
+func TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cut  bool
+	}{
+		{"cuts on", true},
+		{"cuts off", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			world, session := newGroundingWorld(t, "grounding-late-held")
+			if tc.cut {
+				session.WF.CutRepeats()
+			}
+			world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "high", Category: "grounding", Observation: "the draft names no evidence"}}
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+			session.Gather(t, instance)
+			serve = session.Report(t, instance, captureDraft())
+			proctest.RequireStep(t, serve, "playback")
+			serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+			proctest.RequireStep(t, serve, "reviseOrOverride")
+
+			late := &model.Entry{ID: "20260603-090000-s-tac-lat", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
+				Summary: "A gap that landed after the confirm.", Content: "A gap that landed after the confirm."}
+			proctest.WriteEntry(t, world.GraphDir, late)
+			err := session.WF.RecordServed(t.Context(), world.Identity, []string{sdd.HeldEntryHash(late.ID)})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "write it anyway")
+			proctest.RequireStep(t, serve, "lateEntries")
+			pointed := strings.Contains(serve.Instructions, late.ID+" — A gap that landed after the confirm. (served in full above)")
+			if pointed != tc.cut {
+				t.Fatalf("the held late entry should list as its pointer only while cuts are on:\n%s", serve.Instructions)
+			}
+		})
+	}
+}

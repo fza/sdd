@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -247,6 +248,12 @@ type WorkflowSession struct {
 	// startProject is the project the instance being started targets, which
 	// the sink records in the same append as the engine's start event.
 	startProject ProjectID
+	// cutRepeats applies the no-repeat rule to the step serves (CutRepeats).
+	cutRepeats bool
+	// laneFull collects the entries the framing lane in render serves in full;
+	// framingFull keeps them per block of the last Framing call.
+	laneFull    []string
+	framingFull map[string][]string
 	// task is a delegate session's one task instance, whose end ends the
 	// session as the shell's does a dialogue's.
 	task string
@@ -1145,7 +1152,10 @@ func (w *WorkflowSession) framingLanes() ([]string, error) {
 		return nil, nil
 	}
 	var lanes []string
+	w.framingFull = map[string][]string{}
+	defer func() { w.laneFull = nil }()
 	for _, call := range inst.Spec.Framing {
+		w.laneFull = nil
 		result, cut, err := w.session.Inject(w.shell, call)
 		if err != nil {
 			return nil, fmt.Errorf("framing lane %s: %w", call.Fn, err)
@@ -1159,9 +1169,44 @@ func (w *WorkflowSession) framingLanes() ([]string, error) {
 		}
 		if text = strings.TrimSpace(text); text != "" {
 			lanes = append(lanes, text)
+			if cut == nil && len(w.laneFull) > 0 {
+				w.framingFull[text] = w.laneFull
+			}
 		}
 	}
 	return lanes, nil
+}
+
+// FramingFullIDs returns the entries a block of the last Framing call served
+// in full, whole: a lane cut for size names none.
+func (w *WorkflowSession) FramingFullIDs(block string) []string {
+	return w.framingFull[block]
+}
+
+// HeldEntryHash is the served-ledger hash of an entry served in full: the
+// no-repeat rule's unit (20261109-004506-d-cpt-udz, R14). Bodies are
+// immutable, so the ID alone keys it.
+func HeldEntryHash(id string) string {
+	sum := sha256.Sum256([]byte("entry-full:" + id))
+	return hex.EncodeToString(sum[:])
+}
+
+// CutRepeats applies the no-repeat rule to the step serves the session
+// renders, as the MCP surface serves them (R14): an injected entry chain
+// prints an entry the consumer already holds in full as its pointer, and
+// holds every entry it serves in full from then on. Off by default: the CLI
+// never cuts.
+func (w *WorkflowSession) CutRepeats() {
+	w.cutRepeats = true
+}
+
+// heldRepeats reports what the consumer holds in full while CutRepeats is on;
+// nil otherwise, which serves everything in full.
+func (w *WorkflowSession) heldRepeats() func(id string) bool {
+	if !w.cutRepeats {
+		return nil
+	}
+	return func(id string) bool { return w.session.ServedBefore(HeldEntryHash(id)) }
 }
 
 // framingCutNotice renders one framing lane's cut in this surface's register,

@@ -335,3 +335,37 @@ func TestRescoreRelevance_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
 		t.Fatalf("after one pass the new judge should hold its bound:\n%s", after.Text)
 	}
 }
+
+// An entry the prefilter serves in full that the consumer already holds prints
+// as its pointer, and still counts as read; opened by ID it is the way back
+// and serves in full (20261109-004506-d-cpt-udz, R14, D34).
+func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
+	scorer := &scriptedScorer{scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.01}}
+	f := prefilterFixture(t, scorer)
+	f.relevance = calibratedLedger(t)
+	application := f.app(t, prefilterPolicy(1), nil)
+	held := func(id string) bool { return id == gatherAlpha }
+	pointer := gatherAlpha + " — The alpha entry is about alpha matters. (served in full above)"
+
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", Held: held})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, pointer) || strings.Contains(result.Text, "id: "+gatherAlpha) {
+		t.Fatalf("a relevant entry the consumer holds should print as its pointer:\n%s", result.Text)
+	}
+	if !strings.Contains(result.Text, "gather with its ids, or resume_session") {
+		t.Fatalf("the pointer should name the way back:\n%s", result.Text)
+	}
+	if !slices.Contains(result.FullIDs, gatherAlpha) {
+		t.Fatalf("the pointed entry should still count as read in full: %v", result.FullIDs)
+	}
+
+	opened, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", IDs: []string{gatherAlpha}, Held: held})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(opened.Text, "id: "+gatherAlpha) || strings.Contains(opened.Text, pointer) {
+		t.Fatalf("an entry opened by ID should serve in full though held:\n%s", opened.Text)
+	}
+}
