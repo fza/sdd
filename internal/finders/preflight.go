@@ -35,7 +35,16 @@ func (gf *GraphFinder) Preflight(ctx context.Context, q query.PreflightQuery) (*
 	if err != nil {
 		return nil, fmt.Errorf("pre-flight: %w", err)
 	}
-	llmResult, err := llmops.Preflight(ctx, f.preflightRunner, q.Entry, gf.graph, language)
+	var llmResult *llmops.PreflightResult
+	if q.Light != nil {
+		reading := llmops.LightReading{Full: q.Light.Full, Listed: q.Light.Listed}
+		for _, verdict := range q.Light.SetAside {
+			reading.SetAside = append(reading.SetAside, llmops.LightSetAside{IDs: verdict.IDs, Code: verdict.Code})
+		}
+		llmResult, err = llmops.PreflightLight(ctx, f.preflightRunner, q.Entry, gf.graph, language, reading, q.Light.BudgetChars)
+	} else {
+		llmResult, err = llmops.Preflight(ctx, f.preflightRunner, q.Entry, gf.graph, language)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -44,9 +53,10 @@ func (gf *GraphFinder) Preflight(ctx context.Context, q query.PreflightQuery) (*
 			Severity:    query.Severity(fd.Severity),
 			Category:    fd.Category,
 			Observation: fd.Observation,
+			Basis:       fd.Basis,
 		})
 	}
-	return &query.PreflightResult{Findings: findings}, nil
+	return &query.PreflightResult{Findings: findings, Calls: llmResult.Calls, Excerpted: llmResult.Excerpted}, nil
 }
 
 // Preflight validates an entry against the given graph. It is the explicit-

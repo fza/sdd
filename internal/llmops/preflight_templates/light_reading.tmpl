@@ -1,0 +1,16 @@
+{{ define "light_axes" -}}
+## Graph fit against the grounding reading
+
+Before writing this draft, its author read the graph. The reading follows below: every entry its reads served, each opening with a header that is always whole (ID, type, kind, layer, status, time, topics, refs, summary, and its role in the reading). Its text is the body for an entry read in full, the brief for an entry only listed, and for an entry the author set aside, the brief and the reason code given. {{ if .Partial }}This call carries one part of a reading too large for one call; other calls judge the rest, so judge only what this part shows. {{ end }}A text cut to fit carries markers such as `[… 3 paragraphs left out …]` where text was left out, at its start, between the passages kept and at its end: the text goes on past every marker, so never read a marker as the entry's end, nor two passages around a marker as one continuous passage.
+
+Beside the checks above, judge the draft against the reading on four more axes, each reported as its own category:
+
+- `duplicates`: the draft records what a live entry of the reading already records, so the capture adds a second entry for one claim instead of referencing or superseding the first.
+- `outdated`: the draft states as current what a live entry has since changed or retired, or leans on an entry whose status is superseded or closed without naming the entry that replaced or closed it.
+- `strain`: two entries of the reading contradict each other on a point the draft depends on. This is about the reading, not the draft; report it so the conflict can be resolved, and never block the draft for it alone.
+- `dismissal`: an entry the author set aside bears on the draft after all: its reason code does not hold, and the entry belongs in the refs, or the draft should supersede or close it.
+
+Each finding also carries `basis`, placed after its `observation`: the IDs of the entries in this prompt it rests on, from the reading or the referenced entries, and an empty list for a finding about the draft alone. Name only IDs that appear in this prompt.
+
+Severity on these axes: `high` when the draft outright duplicates a live entry, or states as current what a live entry retired; `medium` when the overlap or the staleness is partial, or a set-aside entry plainly bears on the draft; `low` for a `strain` between two reading entries and for a weak overlap. An entry that is merely related to the draft is no finding.
+{{- end }}

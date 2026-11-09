@@ -34,12 +34,18 @@ type Finding struct {
 	Severity    Severity
 	Category    string
 	Observation string
+	// Basis lists the entries a light finding rests on; empty outside light.
+	Basis []string
 }
 
 // PreflightResult holds the parsed findings from a pre-flight validator run.
 // An empty Findings slice means the validator reported no findings.
 type PreflightResult struct {
 	Findings []Finding
+	// Calls is how many light calls the reading took; zero outside light.
+	Calls int
+	// Excerpted names the reading entries a light call judged on excerpts.
+	Excerpted []string
 }
 
 // HasBlocking reports whether any finding blocks entry creation. Currently
