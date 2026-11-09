@@ -100,7 +100,7 @@ func verifierPolicy(cfg *model.PerRepoConfig) sdd.VerifierPolicy {
 		return sdd.VerifierPolicy{}
 	}
 	policy := cfg.Verifier.Policy()
-	return sdd.VerifierPolicy{Mode: string(policy.Mode), Skip: string(policy.Skip)}
+	return sdd.VerifierPolicy{Mode: string(policy.Mode), Skip: string(policy.Skip), Launch: string(policy.Launch)}
 }
 
 // modelWindows detects each model's context window once per process.

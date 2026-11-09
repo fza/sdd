@@ -480,7 +480,7 @@ func servedConfigLayers(sddDir string) (model.ConfigLayers, []string, error) {
 // buildServedApplication composes the application whose every call resolves
 // against the project watch serves at that moment.
 func buildServedApplication(ctx context.Context, watch *configWatch) (*sdd.Application, sdd.RequestIdentity, error) {
-	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: servedAccess{watch}, Sessions: servedSessions{watch}, StagedBlobs: servedBlobs{watch}})
+	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: servedAccess{watch}, Sessions: servedSessions{watch}, StagedBlobs: servedBlobs{watch}, DelegateLauncher: headlessLauncher{watch: watch}})
 	if err != nil {
 		return nil, sdd.RequestIdentity{}, err
 	}
@@ -604,7 +604,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 		Embedder:  embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
 		LLM:       runner,
 		Grounding: groundingPolicy(cfg),
-		Verifier:  verifierPolicy(cfg), Window: modelWindow(cfg.LLM),
+		Verifier:  verifierPolicy(cfg), Window: modelWindow(cfg.LLM), Checkout: os.DirFS(layout.WorkRoot),
 	})
 	if err != nil {
 		return nil, err
