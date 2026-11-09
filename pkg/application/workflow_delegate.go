@@ -39,6 +39,12 @@ type DelegateLaunch struct {
 	Session   SessionID
 	Instance  string
 	Procedure string
+	// Project is the project the delegate works in.
+	Project ProjectID
+	// Launch is the launch the project configures for this delegate: claude,
+	// codex or custom_driver, or DelegateLaunchFallback where the harness
+	// reported no subagent tool; empty leaves the launch to the composition.
+	Launch string
 	// Round counts this child's launches, from 1.
 	Round  int
 	Prompt string
@@ -47,10 +53,21 @@ type DelegateLaunch struct {
 	Resume string
 }
 
+// DelegateLaunchFallback asks the launcher for the first headless launch of
+// the agents the project's supported_agents name whose CLI is found
+// (20261109-004729-d-cpt-xs5, V-D20).
+const DelegateLaunchFallback = "fallback"
+
+// ErrDelegateNotLaunched is what a launcher returns for a delegate it leaves
+// to the harness: the dispatch then serves the harness's launch instructions.
+var ErrDelegateNotLaunched = errors.New("the delegate is left to the harness to launch")
+
 // DelegateLaunched is what a launch reports back: the launcher's own session
-// identity, kept with the child session to resume it next round.
+// identity, kept with the child session to resume it next round, and the
+// launch that ran.
 type DelegateLaunched struct {
 	Session string
+	Launch  string
 }
 
 // WorkflowDispatch is the dispatch handoff served to the dispatching move: the
@@ -72,6 +89,7 @@ type WorkflowDispatch struct {
 type delegateLaunchRecord struct {
 	Round   int    `json:"round"`
 	Session string `json:"session"`
+	Launch  string `json:"launch,omitempty"`
 }
 
 // workflowCourier carries the engine's deliveries to the other session of a
@@ -123,6 +141,24 @@ func (a *Application) loadLinked(ctx context.Context, identity RequestIdentity, 
 func (w *WorkflowSession) forkDelegate(ctx context.Context, identity RequestIdentity, spec *engine.Spec, request WorkflowStartRequest, parent string) (*WorkflowServe, error) {
 	if request.Project != "" && request.Project != w.instanceProject(parent) {
 		return nil, fmt.Errorf("a delegate works in the project of the move that dispatches it; %s targets %s", parent, w.instanceProject(parent))
+	}
+	if spec.Canonical == verifyProcedure {
+		// A capture's exchange has one verify delegate: a new exchange's
+		// delegate replaces the one an earlier exchange left waiting.
+		for _, live := range w.session.LiveForks() {
+			if live.Instance != parent || live.Fork.Procedure != spec.Canonical {
+				continue
+			}
+			reason := "a new deep exchange replaced it"
+			err := w.session.EndFork(parent, live.Fork.Child, reason)
+			if err != nil {
+				return nil, err
+			}
+			err = w.app.endDelegate(ctx, identity, SessionID(live.Fork.Child.Session), reason)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	principal, err := w.app.resolvePrincipal(ctx, identity)
 	if err != nil {
@@ -176,33 +212,78 @@ func (w *WorkflowSession) forkDelegate(ctx context.Context, identity RequestIden
 	if err != nil {
 		return nil, err
 	}
-	dispatch, err := w.dispatchFor(ctx, identity, link, spec.Canonical, true)
+	dispatch, err := w.dispatchFor(ctx, identity, parent, link, spec.Canonical, true)
+	if err != nil {
+		// A delegate nobody drives would leave the move waiting on it.
+		reason := "the delegate's launch failed: " + err.Error()
+		return nil, errors.Join(err, w.session.EndFork(parent, link, reason), w.app.endDelegate(ctx, identity, childID, reason))
+	}
 	result.Dispatches = append(result.Dispatches, dispatch)
-	return result, err
+	return result, nil
 }
 
 // dispatchFor composes the dispatch handoff for a child that has a round to
 // work, launching the delegate when the composition has a launcher.
-func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdentity, child engine.Link, procedure string, first bool) (*WorkflowDispatch, error) {
+func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdentity, parent string, child engine.Link, procedure string, first bool) (*WorkflowDispatch, error) {
 	id := SessionID(child.Session)
 	dispatch := &WorkflowDispatch{
 		Session: id, Instance: child.Instance, Procedure: procedure,
 		Prompt: delegatePrompt(id, child.Instance), ContinuePrompt: delegateContinuePrompt(id, child.Instance),
 	}
-	switch {
-	case w.app.launcher != nil:
-		launched, err := w.app.launchDelegate(ctx, identity, id, child.Instance, procedure)
-		if err != nil {
-			return dispatch, err
-		}
-		dispatch.Launched = launched
-		dispatch.Instructions = "sdd launched the delegate itself, so launch nothing. Its results arrive in this move, never through a reply: next with this instance and no report picks a delivery up once it has landed."
-	case first:
-		dispatch.Instructions = "This move dispatched a delegate into its own child session. Launch a fresh-context sub-agent whose prompt is exactly the dispatch prompt: it carries the child handles and nothing else, and this dialogue's own session handle never goes into it. The delegate works through the sdd MCP tools only. Its results arrive in this move, never through the sub-agent's reply: next with this instance and no report picks a delivery up once it has landed."
-	default:
-		dispatch.Instructions = "This move sent the delegate its next input. Continue the same delegate through your harness's continue mechanism with the continue prompt; where the harness cannot continue it, launch a fresh-context sub-agent with the dispatch prompt instead, since the child's serve carries the full exchange. This dialogue's own session handle never goes into either prompt. Next with this instance and no report picks the delegate's next delivery up once it has landed."
+	launch, err := w.delegateLaunch(parent, procedure)
+	if err != nil {
+		return dispatch, err
 	}
+	if launch != "" || (w.app.launcher != nil && procedure != verifyProcedure) {
+		if w.app.launcher == nil {
+			return dispatch, fmt.Errorf("verifier.launch %s needs sdd to launch the delegate, and this server launches none: set verifier.launch: subagent", launch)
+		}
+		launched, err := w.app.launchDelegate(ctx, identity, id, child.Instance, procedure, w.instanceProject(parent), launch)
+		switch {
+		case errors.Is(err, ErrDelegateNotLaunched):
+		case err != nil:
+			return dispatch, err
+		default:
+			dispatch.Launched = launched.Session
+			arrives := "Its results arrive in this move, never through a reply: next with this instance and no report picks a delivery up once it has landed."
+			dispatch.Instructions = "sdd launched the delegate itself, so launch nothing. " + arrives
+			if launch == DelegateLaunchFallback {
+				dispatch.Instructions = fmt.Sprintf("This harness has no subagent tool, so sdd fell back to the headless %s launch of the agents supported_agents names and launched the delegate itself: launch nothing. %s", launched.Launch, arrives)
+			}
+			return dispatch, nil
+		}
+	}
+	if first {
+		dispatch.Instructions = "This move dispatched a delegate into its own child session. Launch a fresh-context sub-agent whose prompt is exactly the dispatch prompt: it carries the child handles and nothing else, and this dialogue's own session handle never goes into it. The delegate works through the sdd MCP tools only. Its results arrive in this move, never through the sub-agent's reply: next with this instance and no report picks a delivery up once it has landed."
+		return dispatch, nil
+	}
+	dispatch.Instructions = "This move sent the delegate its next input. Continue the same delegate through your harness's continue mechanism with the continue prompt; where the harness cannot continue it, launch a fresh-context sub-agent with the dispatch prompt instead, since the child's serve carries the full exchange. This dialogue's own session handle never goes into either prompt. Next with this instance and no report picks the delegate's next delivery up once it has landed."
 	return dispatch, nil
+}
+
+// delegateLaunch is the launch a delegate of procedure takes: for the deep
+// verifier, the project's configured headless launch, or the fallback once
+// the harness reported no subagent tool (V-D20); empty otherwise.
+func (w *WorkflowSession) delegateLaunch(parent, procedure string) (string, error) {
+	if procedure != verifyProcedure {
+		return "", nil
+	}
+	runtime, err := w.targetRuntime(w.instanceProject(parent), AccessRead)
+	if err != nil {
+		return "", err
+	}
+	launch := runtime.options.Verifier.resolved().Launch
+	if launch != model.VerifierLaunchSubagent {
+		return string(launch), nil
+	}
+	inst, ok := w.session.Instance(parent)
+	if !ok {
+		return "", nil
+	}
+	if fallback, _ := inst.Store.Get(fieldDeepNoSubagent); fallback == true {
+		return DelegateLaunchFallback, nil
+	}
+	return "", nil
 }
 
 // filledDispatches composes the handoff for every delegate the current
@@ -212,13 +293,13 @@ func (w *WorkflowSession) filledDispatches(ctx context.Context, identity Request
 	w.filled = nil
 	var out []*WorkflowDispatch
 	for _, child := range filled {
-		procedure := ""
+		procedure, parent := "", ""
 		for _, live := range w.session.LiveForks() {
 			if live.Fork.Child == child {
-				procedure = live.Fork.Procedure
+				procedure, parent = live.Fork.Procedure, live.Instance
 			}
 		}
-		dispatch, err := w.dispatchFor(ctx, identity, child, procedure, false)
+		dispatch, err := w.dispatchFor(ctx, identity, parent, child, procedure, false)
 		if dispatch != nil {
 			out = append(out, dispatch)
 		}
@@ -244,35 +325,35 @@ func delegateContinuePrompt(session SessionID, instance string) string {
 // launchDelegate runs one round's launch and keeps the launcher's session with
 // the child, so the next round resumes it. A child that ended during the
 // launch keeps nothing: it has no round left to resume.
-func (a *Application) launchDelegate(ctx context.Context, identity RequestIdentity, child SessionID, instance, procedure string) (string, error) {
+func (a *Application) launchDelegate(ctx context.Context, identity RequestIdentity, child SessionID, instance, procedure string, project ProjectID, configured string) (DelegateLaunched, error) {
 	_, _, stored, err := a.resolveSession(ctx, identity, child)
 	if err != nil {
-		return "", err
+		return DelegateLaunched{}, err
 	}
 	records, err := delegateLaunches(stored.Events)
 	if err != nil {
-		return "", err
+		return DelegateLaunched{}, err
 	}
-	launch := DelegateLaunch{Session: child, Instance: instance, Procedure: procedure, Round: len(records) + 1, Prompt: delegatePrompt(child, instance)}
+	launch := DelegateLaunch{Session: child, Instance: instance, Procedure: procedure, Project: project, Launch: configured, Round: len(records) + 1, Prompt: delegatePrompt(child, instance)}
 	if n := len(records); n > 0 && records[n-1].Session != "" {
 		launch.Resume = records[n-1].Session
 		launch.Prompt = delegateContinuePrompt(child, instance)
 	}
 	launched, err := a.launcher.LaunchDelegate(ctx, launch)
 	if err != nil {
-		return "", fmt.Errorf("launching the delegate for %s (round %d): %w", child, launch.Round, err)
+		return DelegateLaunched{}, fmt.Errorf("launching the delegate for %s (round %d): %w", child, launch.Round, err)
 	}
-	payload, err := json.Marshal(delegateLaunchRecord{Round: launch.Round, Session: launched.Session})
+	payload, err := json.Marshal(delegateLaunchRecord{Round: launch.Round, Session: launched.Session, Launch: launched.Launch})
 	if err != nil {
-		return "", err
+		return DelegateLaunched{}, err
 	}
 	for attempt := 0; ; attempt++ {
 		_, _, stored, err = a.resolveSession(ctx, identity, child)
 		if err != nil {
-			return "", err
+			return DelegateLaunched{}, err
 		}
 		if stored.Metadata.Ended != nil {
-			return launched.Session, nil
+			return launched, nil
 		}
 		metadata := stored.Metadata
 		metadata.UpdatedAt = a.now().UTC().Round(0)
@@ -281,7 +362,7 @@ func (a *Application) launchDelegate(ctx context.Context, identity RequestIdenti
 		if err != nil && attempt == 0 && errors.As(err, &appErr) && appErr.Code == ErrorSessionConflict {
 			continue
 		}
-		return launched.Session, err
+		return launched, err
 	}
 }
 

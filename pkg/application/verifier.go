@@ -15,11 +15,17 @@ type VerifierPolicy struct {
 	Mode string
 	// Skip is never, failure or weighed; empty means failure.
 	Skip string
+	// Launch is subagent, claude, codex or custom_driver; empty means
+	// subagent. The values other than subagent need the composition's
+	// DelegateLauncher.
+	Launch string
 }
 
-func (p VerifierPolicy) mode() model.VerifierMode {
-	return model.VerifierConfig{Mode: model.VerifierMode(p.Mode)}.Policy().Mode
+func (p VerifierPolicy) resolved() model.VerifierPolicy {
+	return model.VerifierConfig{Mode: model.VerifierMode(p.Mode), Skip: model.VerifierSkip(p.Skip), Launch: model.VerifierLaunch(p.Launch)}.Policy()
 }
+
+func (p VerifierPolicy) mode() model.VerifierMode { return p.resolved().Mode }
 
 // ModelWindow is a model's context window in tokens and the answer reserve
 // each call keeps in it.

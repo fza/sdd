@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -169,6 +170,8 @@ type config struct {
 	grounding   sdd.GroundingPolicy
 	verifier    sdd.VerifierPolicy
 	window      *sdd.ModelWindow
+	launcher    sdd.DelegateLauncher
+	checkout    fs.FS
 }
 
 // Option configures NewWorld.
@@ -207,6 +210,18 @@ func WithVerifier(policy sdd.VerifierPolicy, window, reserve int) Option {
 			c.window = &sdd.ModelWindow{Tokens: window, OutputReserve: reserve}
 		}
 	}
+}
+
+// WithDelegateLauncher makes the world's application launch delegates
+// through launcher, as a composition with headless launches does.
+func WithDelegateLauncher(launcher sdd.DelegateLauncher) Option {
+	return func(c *config) { c.launcher = launcher }
+}
+
+// WithCheckout gives the world's project a checkout the deep verifier's
+// weighing rule looks cited paths up in.
+func WithCheckout(checkout fs.FS) Option {
+	return func(c *config) { c.checkout = checkout }
 }
 
 // WithGrounding sets the world project's whole grounding policy.
@@ -370,7 +385,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	script := &LLMScript{Title: "generated title", Summary: "A generated summary."}
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
-		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Verifier: cfg.verifier,
+		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Verifier: cfg.verifier, Checkout: cfg.checkout,
 	}
 	if cfg.window != nil {
 		window := *cfg.window
@@ -396,7 +411,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 		t.Fatal(err)
 	}
 	application, err := sdd.NewApplication(sdd.ApplicationOptions{
-		Access: &accessResolver{runtime: runtime, participant: cfg.participant, dialogue: cfg.dialogue}, Sessions: sessions, StagedBlobs: blobs,
+		Access: &accessResolver{runtime: runtime, participant: cfg.participant, dialogue: cfg.dialogue}, Sessions: sessions, StagedBlobs: blobs, DelegateLauncher: cfg.launcher,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -482,6 +497,13 @@ func (s *Session) StartChild(t *testing.T, canonical string, params map[string]a
 		t.Fatal(err)
 	}
 	return serve
+}
+
+// StartChildErr starts a procedure under a spawning parent and returns the
+// error a refused start or launch gives.
+func (s *Session) StartChildErr(t *testing.T, canonical string, params map[string]any, parent string) (*sdd.WorkflowServe, error) {
+	t.Helper()
+	return s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params, Parent: parent})
 }
 
 // Report sends state fields to the instance's current step.
@@ -598,4 +620,26 @@ func LoadEntry(t *testing.T, graphDir, id string) *model.Entry {
 		t.Fatal(err)
 	}
 	return entry
+}
+
+// Refresh replays the session from its store, as every MCP call does, so a
+// delegate's deliveries made through another replay are in view.
+func (s *Session) Refresh(t *testing.T) {
+	t.Helper()
+	workflow, err := s.World.App.RefreshWorkflow(t.Context(), s.World.Identity, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.WF = workflow
+}
+
+// Delegate opens a delegate child session by the handle its dispatch
+// carried, as the launched delegate does.
+func (w *World) Delegate(t *testing.T, dispatch *sdd.WorkflowDispatch) *Session {
+	t.Helper()
+	workflow, err := w.App.RefreshWorkflow(t.Context(), w.Identity, dispatch.Session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Session{World: w, WF: workflow, ID: dispatch.Session}
 }

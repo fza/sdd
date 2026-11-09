@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"time"
 
@@ -62,6 +63,9 @@ type ProjectRuntimeOptions struct {
 	// Window reports the context window of LLM's model and the answer reserve
 	// a call keeps, which size a light verifier call; nil refuses light.
 	Window func(context.Context) (ModelWindow, error)
+	// Checkout is the project checkout the deep verifier's weighing rule looks
+	// a cited path up in; nil finds none.
+	Checkout fs.FS
 }
 
 // GraphSync runs automatic sync of the graph repository behind a branch's

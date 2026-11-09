@@ -173,7 +173,7 @@ func lightItems(entry *model.Entry, graph *model.Graph, reading LightReading) []
 			topics = append(topics, topic.String())
 		}
 		items = append(items, model.LightItem{
-			ID: id, Header: lightHeader(graph, e, role, codes[id]), Text: text,
+			ID: id, Header: ReadingHeader(graph, e, role, codes[id]), Text: text,
 			Related: model.RefIDs(e.Refs), Topics: topics,
 		})
 	}
@@ -191,9 +191,9 @@ func lightItems(entry *model.Entry, graph *model.Graph, reading LightReading) []
 	return items
 }
 
-// lightHeader is the fixed header of one reading entry (V-D13): never cut,
+// ReadingHeader is the fixed header of one reading entry (V-D13): never cut,
 // since status and refs are what outdated and inconsistent findings rest on.
-func lightHeader(graph *model.Graph, e *model.Entry, role model.LightRole, code string) string {
+func ReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole, code string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "ID: %s\n", e.ID)
 	fmt.Fprintf(&b, "Type: %s, kind: %s, layer: %s\n", e.Type, e.Kind, e.Layer)

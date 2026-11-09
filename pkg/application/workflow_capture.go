@@ -74,6 +74,13 @@ func (w *WorkflowSession) prepareWorkflowNewEntry(ctx *engine.Context) (map[stri
 	if err := w.verifyCapturePreflight(ctx); err != nil {
 		return nil, err
 	}
+	current, err := w.deepVerdictCurrent(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !current {
+		return nil, fmt.Errorf("capture requires a current deep verdict or skip for its current input")
+	}
 	branch, _ := workflowStoreString(ctx.Store, "resolvedCaptureBranch")
 	if branch == "" {
 		return nil, fmt.Errorf("capture has no preflight-resolved branch")

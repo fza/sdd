@@ -76,6 +76,11 @@ type EntryDraft struct {
 	// written with grounding: skipped and low confidence
 	// (20261109-004506-d-cpt-udz, D4).
 	SkipGrounding bool
+	// VerificationSkip records that the user skipped the deep verifier: after a
+	// verifier failure ("failure") the entry is written with confidence low,
+	// after the weighed rule's skip ("weighed") with confidence at most medium;
+	// either way it carries verification: skipped (20261109-004729-d-cpt-xs5).
+	VerificationSkip string
 }
 
 type StagedAttachment struct {
@@ -245,6 +250,12 @@ func entryFromDraft(draft EntryDraft, id string, now time.Time) (*model.Entry, [
 	if draft.SkipGrounding {
 		entry.Grounding = model.GroundingSkipped
 		entry.Confidence = "low"
+	}
+	if draft.VerificationSkip != "" {
+		err := model.MarkVerificationSkipped(entry, draft.VerificationSkip)
+		if err != nil {
+			findings = append(findings, model.Finding{Field: "verification", Message: err.Error()})
+		}
 	}
 	return entry, findings
 }
