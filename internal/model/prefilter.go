@@ -33,6 +33,9 @@ type PrefilterPayload struct {
 	Judge   string           `json:"judge"`
 	Forward bool             `json:"forward,omitempty"`
 	Scores  map[string]uint8 `json:"scores,omitempty"`
+	// Audit names the set-aside candidates shown blind as lines to judge
+	// (D36).
+	Audit []string `json:"audit,omitempty"`
 }
 
 // readingScores is the reading's fold of prefilter scores per judge.
@@ -52,7 +55,7 @@ func (r *Reading) Scores(judge string) (map[string]uint8, bool) {
 }
 
 func (r *Reading) foldPrefilter(p *PrefilterPayload) {
-	if p == nil || p.Judge == "" || len(p.Scores) == 0 {
+	if p == nil || p.Judge == "" {
 		return
 	}
 	if r.scores == nil {
@@ -62,6 +65,12 @@ func (r *Reading) foldPrefilter(p *PrefilterPayload) {
 	if held == nil {
 		held = &readingScores{forward: p.Forward, scores: map[string]uint8{}}
 		r.scores[p.Judge] = held
+	}
+	if r.audit == nil {
+		r.audit = map[string]bool{}
+	}
+	for _, id := range p.Audit {
+		r.audit[id] = true
 	}
 	for id, score := range p.Scores {
 		if current, ok := held.scores[id]; !ok || score > current {

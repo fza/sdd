@@ -109,7 +109,7 @@ func runPrefilter(ctx context.Context, runtime *ProjectRuntime, policy Grounding
 	}
 	_ = group.Wait()
 	var notes []string
-	notes = append(notes, fmt.Sprintf("judge %s scored %d of %d pairs", prefilter.Judge, len(pass.fresh), len(pending)))
+	notes = append(notes, fmt.Sprintf("judge %s scored %d of %d pairs; lines to judge run by falling score", prefilter.Judge, len(pass.fresh), len(pending)))
 	if len(oversize) > 0 {
 		notes = append(notes, fmt.Sprintf("%d too long for one call, left to judge uncut", len(oversize)))
 	}

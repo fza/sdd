@@ -146,7 +146,7 @@ func TestGather_PrefilterOnlySortsUntilTheRecallBoundHolds(t *testing.T) {
 	if !slices.Contains(result.SummaryIDs, gatherBeta) || result.SummaryIDs[0] != gatherAlpha || result.SummaryIDs[len(result.SummaryIDs)-1] != gatherBeta {
 		t.Fatalf("to judge %v should hold every candidate by falling score", result.SummaryIDs)
 	}
-	if !strings.Contains(result.Text, "prefilter: ok: judge "+gatherJudge+" scored ") || !strings.Contains(result.Text, "score 0.90") {
+	if !strings.Contains(result.Text, "prefilter: ok: judge "+gatherJudge+" scored ") {
 		t.Fatalf("the header and the lines should show the pass and its scores:\n%s", result.Text)
 	}
 }
@@ -154,7 +154,7 @@ func TestGather_PrefilterOnlySortsUntilTheRecallBoundHolds(t *testing.T) {
 func TestGather_CalibratedPrefilterSetsAsideAndServesInFull(t *testing.T) {
 	scorer := &scriptedScorer{scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.01}}
 	f := prefilterFixture(t, scorer)
-	f.relevance = calibratedLedger(t, 200)
+	f.relevance = calibratedLedger(t)
 	application := f.app(t, prefilterPolicy(1), nil)
 	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
 	if err != nil {
@@ -163,8 +163,10 @@ func TestGather_CalibratedPrefilterSetsAsideAndServesInFull(t *testing.T) {
 	if len(result.FullIDs) != 1 || result.FullIDs[0] != gatherAlpha {
 		t.Fatalf("full %v: a score above the relevant threshold should be served in full", result.FullIDs)
 	}
-	if line := setAsideLine(result.Text, model.SetAsideFiltered); !strings.Contains(line, gatherBeta) || !strings.Contains(line, gatherUnrelated) || strings.Contains(line, gatherAlpha) {
-		t.Fatalf("scores below the calibrated threshold should be set aside:\n%s", result.Text)
+	line := setAsideLine(result.Text, model.SetAsideFiltered)
+	lowSetAside := (strings.Contains(line, gatherBeta) || slices.Contains(result.SummaryIDs, gatherBeta)) && (strings.Contains(line, gatherUnrelated) || slices.Contains(result.SummaryIDs, gatherUnrelated))
+	if !lowSetAside || strings.Contains(line, gatherAlpha) || len(result.SummaryIDs) != 2 {
+		t.Fatalf("scores below the calibrated threshold should be set aside, but for the audit lines:\n%s", result.Text)
 	}
 }
 
@@ -183,7 +185,7 @@ func TestGather_PrefilterFailureLeavesEveryAffectedCandidateToJudge(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			scorer := &scriptedScorer{fail: tc.fail, failAll: tc.all, short: tc.short, maxBatch: 1, scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.0}}
 			f := prefilterFixture(t, scorer)
-			f.relevance = calibratedLedger(t, 200)
+			f.relevance = calibratedLedger(t)
 			application := f.app(t, prefilterPolicy(1), nil)
 			result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
 			if err != nil {
@@ -203,14 +205,14 @@ func TestGather_PrefilterFailureLeavesEveryAffectedCandidateToJudge(t *testing.T
 }
 
 // calibratedLedger holds enough referenced labels by gatherJudge, all scored
-// at score, for the recall bound to hold.
-func calibratedLedger(t *testing.T, score uint8) *localadapter.MemoryRelevanceStore {
+// at 200, for the recall bound to hold.
+func calibratedLedger(t *testing.T) *localadapter.MemoryRelevanceStore {
 	t.Helper()
 	var batch model.RelevanceBatch
 	for i := range 189 {
 		pair := model.NewRelevancePair(fmt.Sprintf("20250101-%06d-s-tac-pos", i), "20250601-000000-d-tac-sub")
 		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}})
-		batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: gatherJudge, Score: score}})
+		batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: gatherJudge, Score: 200}})
 	}
 	store := localadapter.NewMemoryRelevanceStore()
 	if err := store.Append(t.Context(), relevance.Encode(batch)); err != nil {
@@ -235,4 +237,100 @@ func setAsideLine(text, reason string) string {
 		}
 	}
 	return ""
+}
+
+func TestGather_ShowsAShareOfTheSetAsidesBlind(t *testing.T) {
+	scorer := &scriptedScorer{scores: map[string]float64{gatherAlpha: 0.95}}
+	f := prefilterFixture(t, scorer)
+	f.relevance = calibratedLedger(t)
+	application := f.app(t, prefilterPolicy(1), nil)
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setAside := setAsideLine(result.Text, model.SetAsideFiltered)
+	var audited []string
+	for _, id := range result.SummaryIDs {
+		if line := lineOf(result.Text, id); line != "" && !strings.Contains(setAside, id) {
+			audited = append(audited, id)
+		}
+	}
+	if len(audited) != 2 {
+		t.Fatalf("audited %v: ceil(3%%) of the 34 set-asides should be shown blind to judge:\n%s", audited, result.Text)
+	}
+	if strings.Contains(result.Text, "· score") {
+		t.Fatalf("no line should show a score that tells a sample apart:\n%s", result.Text)
+	}
+	again, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(again.SummaryIDs, result.SummaryIDs) {
+		t.Fatal("a repeated gather of one graph should audit the same entries")
+	}
+}
+
+func TestGroundingStatus_ReportsTheJudgesCalibration(t *testing.T) {
+	f := prefilterFixture(t, &scriptedScorer{})
+	f.relevance = calibratedLedger(t)
+	application := f.app(t, prefilterPolicy(1), nil)
+	status, err := application.GroundingStatus(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"judge: " + gatherJudge, "labels: 189 referenced", "thresholds: set aside below 0.784", "audit: 3% of set-asides shown blind", "precision: 189 of 189 pairs passed in full were referenced"} {
+		if !strings.Contains(status.Text, want) {
+			t.Errorf("status lacks %q:\n%s", want, status.Text)
+		}
+	}
+}
+
+// A judge change computes its recall bound from the stored labelled pairs
+// once the new judge has scored them (D36).
+func TestRescoreRelevance_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
+	f := newGatherFixture(t)
+	var batch model.RelevanceBatch
+	subject := "20260201-000000-d-tac-sub"
+	f.write(t, subject, "directive", "The subject decision.", "intent: pending\n")
+	for i := range 189 {
+		id := fmt.Sprintf("20260101-%02d%02d00-s-tac-pos", i/60, i%60)
+		f.write(t, id, "gap", fmt.Sprintf("Referenced gap %d.", i), "")
+		pair := model.NewRelevancePair(id, subject)
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}})
+		batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: "old:judge", Score: 220}})
+	}
+	store := localadapter.NewMemoryRelevanceStore()
+	if err := store.Append(t.Context(), relevance.Encode(batch)); err != nil {
+		t.Fatal(err)
+	}
+	f.relevance = store
+	scorer := &scriptedScorer{scores: map[string]float64{}}
+	f.prefilter = sdd.Prefilter{Scorer: scorer, Judge: "new:judge"}
+	application := f.app(t, prefilterPolicy(1), nil)
+	identity := sdd.RequestIdentity{Subject: "tester"}
+
+	before, err := application.GroundingStatus(t.Context(), identity, gatherProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(before.Text, "unscored: 189 labelled pairs") || !strings.Contains(before.Text, "thresholds: none yet") {
+		t.Fatalf("a new judge should start without thresholds and name the unscored pairs:\n%s", before.Text)
+	}
+	result, err := application.RescoreRelevance(t.Context(), identity, gatherProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Scored != 189 || scorer.calls() != 1 {
+		t.Fatalf("result %+v after %d calls: one pass should score every labelled pair", result, scorer.calls())
+	}
+	if !strings.Contains(scorer.requests[0].Subject, "The subject decision.") {
+		t.Fatal("each pair should be scored from its later entry, the one that judged it")
+	}
+	after, err := application.GroundingStatus(t.Context(), identity, gatherProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(after.Text, "thresholds: set aside below") || strings.Contains(after.Text, "unscored:") {
+		t.Fatalf("after one pass the new judge should hold its bound:\n%s", after.Text)
+	}
 }

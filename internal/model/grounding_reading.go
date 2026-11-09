@@ -111,6 +111,7 @@ type Reading struct {
 	listed map[string]bool
 	full   map[string]bool
 	scores map[string]*readingScores
+	audit  map[string]bool
 }
 
 // Fold adds one credited read. The first corpus mark stands; later marks are

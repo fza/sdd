@@ -7,6 +7,7 @@ package proctest_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -390,5 +391,65 @@ func TestCaptureGrounding_PrefilterScoresRideTheReadingToTheLedger(t *testing.T)
 				t.Fatalf("score stored = %v: a successful pass should store its scores, a failed one none", scored)
 			}
 		})
+	}
+}
+
+// An audit sample answered in the capture carries the audit bit into the
+// ledger, and a publish whose audit labels show drift steps the judge's
+// threshold down (D36).
+func TestCaptureGrounding_PublishRecordsAuditAndAppliesTheDriftRule(t *testing.T) {
+	const judge = "test:counting"
+	var seed model.RelevanceBatch
+	for i := range 189 {
+		pair := model.NewRelevancePair(fmt.Sprintf("20250101-%02d%02d00-s-tac-pos", i/60, i%60), "20250601-000000-d-tac-sub")
+		seed.Readers = append(seed.Readers, model.ReaderRecord{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}})
+		seed.Scores = append(seed.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 200}})
+	}
+	topicOnly, _ := model.VerdictReasonByte(model.VerdictTopicOnly)
+	for i := range 100 {
+		pair := model.NewRelevancePair(fmt.Sprintf("20250201-%02d%02d00-s-tac-aud", i/60, i%60), fmt.Sprintf("20250701-%02d%02d00-d-tac-sub", i/60, i%60))
+		verdict := model.ReaderVerdict{Code: model.ReaderDismissed, Reason: topicOnly, Audit: true}
+		if i < 3 {
+			verdict = model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true}
+		}
+		seed.Readers = append(seed.Readers, model.ReaderRecord{Pair: pair, Verdict: verdict})
+		seed.Scores = append(seed.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 220}})
+	}
+	store := local.NewMemoryRelevanceStore()
+	if err := store.Append(t.Context(), relevance.Encode(seed)); err != nil {
+		t.Fatal(err)
+	}
+	scorer := &countingScorer{score: 0}
+	world, session := newCaptureWorld(t, "grounding-audit",
+		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
+		proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: judge}))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap"})
+	gathered := session.Gather(t, instance)
+	if len(gathered.SummaryIDs) == 0 {
+		t.Fatalf("every candidate scored low, so the lines to judge should be audit samples:\n%s", gathered.Text)
+	}
+	sample := gathered.SummaryIDs[0]
+	draft := captureDraft()
+	draft["verdicts"] = []any{map[string]any{"ids": []any{sample}, "code": model.VerdictTopicOnly}}
+	serve = session.Report(t, instance, draft)
+	proctest.RequireStep(t, serve, "playback")
+	entry := confirmCapture(t, world, session, instance)
+
+	segments, err := store.Segments(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := relevance.Fold(segments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict, ok := ledger.Reader(model.NewRelevancePair(entry.ID, sample)); !ok || !verdict.Audit {
+		t.Fatalf("the answered sample should carry the audit bit, got %+v, %v", verdict, ok)
+	}
+	steps := ledger.Steps()
+	if len(steps) != 1 || steps[0].Judge != judge {
+		t.Fatalf("steps %+v: three referenced samples in a hundred should step the threshold down once", steps)
 	}
 }

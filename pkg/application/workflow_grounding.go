@@ -2,8 +2,10 @@ package application
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
@@ -232,5 +234,26 @@ func (w *WorkflowSession) storeCaptureRelevance(ctx *engine.Context, project Pro
 	if err != nil {
 		return err
 	}
-	return runtime.appendRelevance(w.ctx, batch)
+	if err := runtime.appendRelevance(w.ctx, batch); err != nil {
+		return err
+	}
+	return applyDriftRule(w.ctx, runtime, w.app.clock.Now())
+}
+
+// applyDriftRule steps the current judge's set-aside threshold down when
+// the latest audit labels show too many misses (D36).
+func applyDriftRule(ctx context.Context, runtime *ProjectRuntime, now time.Time) error {
+	judge := runtime.options.Prefilter.Judge
+	if judge == "" {
+		return nil
+	}
+	ledger, err := runtime.relevanceLedger(ctx)
+	if err != nil {
+		return err
+	}
+	step, due := model.DriftStepDue(ledger.Labels(judge), ledger.Steps(), judge, now)
+	if !due {
+		return nil
+	}
+	return runtime.appendRelevance(ctx, model.RelevanceBatch{Steps: []model.DriftStep{step}})
 }

@@ -20,10 +20,10 @@ func TestWilsonLower_ReachesTheRecallFloorAtTheNamedCounts(t *testing.T) {
 	}
 }
 
-func labelsWith(positives int, positiveScore uint8, negatives int, negativeScore uint8) []model.RelevanceLabel {
+func labelsWith(positives int, negatives int, negativeScore uint8) []model.RelevanceLabel {
 	var labels []model.RelevanceLabel
 	for i := range positives {
-		labels = append(labels, model.RelevanceLabel{Pair: model.NewRelevancePair("a", fmt.Sprintf("p%04d", i)), Score: positiveScore, Kind: model.LabelPositive})
+		labels = append(labels, model.RelevanceLabel{Pair: model.NewRelevancePair("a", fmt.Sprintf("p%04d", i)), Score: 200, Kind: model.LabelPositive})
 	}
 	for i := range negatives {
 		labels = append(labels, model.RelevanceLabel{Pair: model.NewRelevancePair("a", fmt.Sprintf("n%04d", i)), Score: negativeScore, Kind: model.LabelNegative})
@@ -32,17 +32,17 @@ func labelsWith(positives int, positiveScore uint8, negatives int, negativeScore
 }
 
 func TestCalibrate(t *testing.T) {
-	if got := model.Calibrate(labelsWith(188, 200, 500, 10), nil, "j"); got.Valid {
+	if got := model.Calibrate(labelsWith(188, 500, 10), nil, "j"); got.Valid {
 		t.Fatalf("thresholds %+v: below the recall bound the prefilter should only sort", got)
 	}
-	got := model.Calibrate(labelsWith(189, 200, 500, 10), nil, "j")
+	got := model.Calibrate(labelsWith(189, 500, 10), nil, "j")
 	if !got.Valid || got.SetAside != model.ScoreValue(200) {
 		t.Fatalf("thresholds %+v: at the bound the set-aside threshold should sit at the lowest referenced score", got)
 	}
 	if got.Relevant != model.ScoreValue(200) {
 		t.Fatalf("thresholds %+v: the relevant threshold should sit where referenced pairs dominate", got)
 	}
-	stepped := model.Calibrate(labelsWith(189, 200, 500, 10), []model.DriftStep{{Judge: "j", SetAside: 50}, {Judge: "other", SetAside: 1}}, "j")
+	stepped := model.Calibrate(labelsWith(189, 500, 10), []model.DriftStep{{Judge: "j", SetAside: 50}, {Judge: "other", SetAside: 1}}, "j")
 	if stepped.SetAside != model.ScoreValue(50) {
 		t.Fatalf("thresholds %+v: the judge's drift step should cap the set-aside threshold", stepped)
 	}

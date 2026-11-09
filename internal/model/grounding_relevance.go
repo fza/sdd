@@ -8,7 +8,8 @@ import (
 // CaptureRelevance returns the records a published capture adds to
 // the relevance ledger, keyed to the entry it wrote (5.7): every ref,
 // supersede and close is referenced; every verdict sets its entries aside
-// with its code, as opened when the reading served them in full; every
+// with its code, as opened when the reading served them in full; an audit
+// sample carries the audit bit; every
 // prefilter score the reading holds is kept with its judge.
 func CaptureRelevance(entryID string, reading *Reading, answered []string, verdicts []GroundingVerdict) (RelevanceBatch, error) {
 	var batch RelevanceBatch
@@ -21,7 +22,7 @@ func CaptureRelevance(entryID string, reading *Reading, answered []string, verdi
 			continue
 		}
 		seen[id] = true
-		batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: ReaderReferenced}})
+		batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: ReaderReferenced, Audit: reading.audit[id]}})
 	}
 	for _, verdict := range verdicts {
 		reason, err := VerdictReasonByte(verdict.Code)
@@ -37,7 +38,7 @@ func CaptureRelevance(entryID string, reading *Reading, answered []string, verdi
 			if reading.full[id] {
 				code = ReaderOpened
 			}
-			batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: code, Reason: reason}})
+			batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: code, Reason: reason, Audit: reading.audit[id]}})
 		}
 	}
 	for _, judge := range slices.Sorted(maps.Keys(reading.scores)) {

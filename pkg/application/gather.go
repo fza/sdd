@@ -208,10 +208,21 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		return GatherResult{}, err
 	}
 	placed := model.PlacePrefiltered(split.Undecided, pass.scores, thresholds)
-	if len(placed.SetAside) > 0 {
-		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFiltered, IDs: placed.SetAside})
+	seed := model.NewCorpusMark(liveIDs).Hash
+	if request.since != nil {
+		seed = request.since.Hash
 	}
-	candidates = placed.ToJudge
+	audit, kept := model.AuditSample(placed.SetAside, seed)
+	if len(kept) > 0 {
+		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFiltered, IDs: kept})
+	}
+	var samples []model.GatherCandidate
+	for _, candidate := range split.Undecided {
+		if slices.Contains(audit, candidate.Entry.ID) {
+			samples = append(samples, candidate)
+		}
+	}
+	candidates = model.InsertBlind(placed.ToJudge, samples, seed)
 	served := &query.GatherResult{
 		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: pass.status, PrefilterNote: pass.note,
 		ToJudge: candidates, SetAside: setAside, Held: map[string]bool{},
@@ -248,8 +259,8 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	presenters.RenderGather(&rendered, served)
 	result.Text = strings.TrimRight(rendered.String(), "\n")
 	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Corpus: served.Corpus}
-	if len(pass.fresh) > 0 {
-		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: runtime.options.Prefilter.Scorer.Direction() == relevance.Forward, Scores: pass.fresh}
+	if len(pass.fresh) > 0 || len(audit) > 0 {
+		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: runtime.options.Prefilter.Scorer != nil && runtime.options.Prefilter.Scorer.Direction() == relevance.Forward, Scores: pass.fresh, Audit: audit}
 	}
 	return result, nil
 }

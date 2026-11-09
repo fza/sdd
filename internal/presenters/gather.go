@@ -116,9 +116,6 @@ func gatherLine(g *model.Graph, candidate model.GatherCandidate, held bool) stri
 			line.WriteString(topics)
 		}
 	}
-	if candidate.Score != nil {
-		fmt.Fprintf(&line, " · score %.2f", *candidate.Score)
-	}
 	if len(candidate.FoundBy) > 0 {
 		line.WriteString(" · found by ")
 		line.WriteString(strings.Join(candidate.FoundBy, ", "))

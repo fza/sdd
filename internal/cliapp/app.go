@@ -520,6 +520,7 @@ func New(options Options) *cli.Command {
 			indexCmd(),
 			searchCmd(),
 			gatherCmd(),
+			groundingCmd(),
 			serveCmd(),
 			sessionsCmd(),
 			eventsCmd(),
