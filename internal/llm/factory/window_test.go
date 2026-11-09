@@ -124,6 +124,7 @@ func TestWindowDetect_RefusesNamingTheKey(t *testing.T) {
 		cfg  model.LLMConfig
 	}{
 		{"claude-cli reports nothing", model.LLMConfig{Provider: "claude-cli", Model: "claude-sonnet-4-6"}},
+		{"codex reports nothing", model.LLMConfig{Provider: "codex", Model: "gpt-5.5"}},
 		{"plain endpoint fails", model.LLMConfig{Provider: "openai", Model: "gpt-x", Endpoint: failing.URL}},
 		{"model not listed", model.LLMConfig{Provider: "openai", Model: "gpt-x", Endpoint: unlisted.URL + "/v1"}},
 	} {
@@ -166,5 +167,14 @@ func TestWindowDetect_AcceptsEveryEndpointForm(t *testing.T) {
 				t.Fatalf("the window should be read from the models URL the endpoint leads to, got %+v after %d calls", window, calls.Load())
 			}
 		})
+	}
+}
+
+// codex without llm.model runs its own default, so the refusal names no Claude
+// model in its place.
+func TestWindowDetect_CodexDefaultModelNamesNoClaudeModel(t *testing.T) {
+	_, err := (&factory.WindowDetector{}).Detect(t.Context(), model.LLMConfig{Provider: "codex"})
+	if err == nil || !strings.Contains(err.Error(), "codex reports no context window for its default model: set llm.context_tokens") {
+		t.Fatalf("codex's default model should be refused as such, got %v", err)
 	}
 }

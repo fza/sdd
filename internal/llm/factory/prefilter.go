@@ -80,10 +80,7 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 		if err != nil {
 			return Prefilter{}, err
 		}
-		modelName = cfg.Model
-		if modelName == "" {
-			modelName = model.DefaultLLMModel
-		}
+		modelName = cmp.Or(cfg.ResolvedModel(), cfg.ResolvedProvider())
 		scorer = relevance.PerItem(bridge, concurrency)
 	case "":
 		return Prefilter{}, fmt.Errorf("verify.prefilter is on but llm_prefilter.protocol is not set (supported: %s, %s, %s)", model.PrefilterSystemOne, model.PrefilterCohereRerank, model.PrefilterGenerate)

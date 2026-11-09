@@ -60,7 +60,7 @@ func TestRunWithResponseSchema(t *testing.T) {
 		UserPrompt:     "USER " + problemChars,
 		ResponseSchema: json.RawMessage(wireSchema),
 	}
-	res, err := claude.NewRunner("sonnet").Run(context.Background(), req)
+	res, err := claude.NewRunner("sonnet", "").Run(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestRunWithResponseSchema(t *testing.T) {
 // the free-text result.
 func TestRunWithResponseSchemaRequiresStructuredOutput(t *testing.T) {
 	fakeCLI(t, `{"type":"result","result":"{\"reasoning\":\"r\"}","usage":{}}`)
-	_, err := claude.NewRunner("sonnet").Run(context.Background(), llm.Request{UserPrompt: "U", ResponseSchema: json.RawMessage(wireSchema)})
+	_, err := claude.NewRunner("sonnet", "").Run(context.Background(), llm.Request{UserPrompt: "U", ResponseSchema: json.RawMessage(wireSchema)})
 	if err == nil || !strings.Contains(err.Error(), "no structured output") {
 		t.Fatalf("want a missing structured output error, got %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRunWithResponseSchemaRequiresStructuredOutput(t *testing.T) {
 // A free-text request passes no schema and returns the CLI's result.
 func TestRunWithoutResponseSchema(t *testing.T) {
 	dir := fakeCLI(t, `{"type":"result","result":"SERVED","usage":{}}`)
-	res, err := claude.NewRunner("sonnet").Run(context.Background(), llm.Request{UserPrompt: "U"})
+	res, err := claude.NewRunner("sonnet", "").Run(context.Background(), llm.Request{UserPrompt: "U"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -162,7 +162,7 @@ printf '{"result":"args=%s cwd=%s key=%s token=%s base=%s","usage":{"input_token
 		t.Fatalf("Getwd: %v", err)
 	}
 
-	res, err := claude.NewRunner("claude-sonnet-4-6").Run(context.Background(), llm.Request{UserPrompt: "x"})
+	res, err := claude.NewRunner("claude-sonnet-4-6", "").Run(context.Background(), llm.Request{UserPrompt: "x"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -213,4 +213,22 @@ func sameDir(t *testing.T, a, b string) bool {
 		rb = b
 	}
 	return ra == rb
+}
+
+// The effort reaches --effort as written; none leaves the flag out.
+func TestRunPassesEffort(t *testing.T) {
+	dir := fakeCLI(t, `{"type":"result","result":"SERVED","usage":{}}`)
+	if _, err := claude.NewRunner("sonnet", "high").Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	args := recordedArgs(t, dir)
+	if i := slices.Index(args, "--effort"); i < 0 || i+1 >= len(args) || args[i+1] != "high" {
+		t.Errorf("--effort high not passed: %q", args)
+	}
+	if _, err := claude.NewRunner("sonnet", "").Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if slices.Contains(recordedArgs(t, dir), "--effort") {
+		t.Errorf("an empty effort should pass no --effort: %q", recordedArgs(t, dir))
+	}
 }

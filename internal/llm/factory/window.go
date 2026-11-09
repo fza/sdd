@@ -47,14 +47,8 @@ func (d *WindowDetector) Detect(ctx context.Context, cfg model.LLMConfig) (Windo
 	if cfg.ContextTokens > 0 {
 		return Window{Tokens: cfg.ContextTokens, Source: "llm.context_tokens"}, nil
 	}
-	provider := cfg.Provider
-	if provider == "" {
-		provider = model.DefaultLLMProvider
-	}
-	modelName := cfg.Model
-	if modelName == "" {
-		modelName = model.DefaultLLMModel
-	}
+	provider := cfg.ResolvedProvider()
+	modelName := cfg.ResolvedModel()
 	key := provider + "\x00" + modelName + "\x00" + cfg.Endpoint + "\x00" + cfg.OllamaEndpoint
 	d.mu.Lock()
 	window, ok := d.known[key]
@@ -75,7 +69,11 @@ func (d *WindowDetector) Detect(ctx context.Context, cfg model.LLMConfig) (Windo
 		return Window{}, fmt.Errorf("detecting the context window of %s model %s: %w; set llm.context_tokens to the model's window", provider, modelName, err)
 	}
 	if window.Tokens <= 0 {
-		return Window{}, fmt.Errorf("%s reports no context window for model %s: set llm.context_tokens to the model's window", provider, modelName)
+		named := "model " + modelName
+		if modelName == "" {
+			named = "its default model"
+		}
+		return Window{}, fmt.Errorf("%s reports no context window for %s: set llm.context_tokens to the model's window", provider, named)
 	}
 	d.mu.Lock()
 	if d.known == nil {
