@@ -117,7 +117,7 @@ type BaseConfig struct {
 	// Hooks are commands run at engine events (20261109-005138-d-tac-i61).
 	// Only the user-global config and config.local.yaml may set them; the
 	// layers concatenate, global first.
-	Hooks []HookConfig `yaml:"hooks,omitempty"`
+	Hooks []HookConfig `yaml:"hooks,omitempty" sdd:"concat"`
 }
 
 // IsZero reports whether no base setting is set. Resolution uses it to
