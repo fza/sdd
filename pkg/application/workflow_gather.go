@@ -50,6 +50,7 @@ func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, 
 		gather.Kind = draft.Kind
 		gather.Answered = append(captureAnswered(inst.Store), storeVerdictIDs(inst.Store)...)
 		gather.since = inst.Reading().Corpus
+		gather.reading = inst.Reading()
 	}
 	result, err := w.app.Gather(ctx, identity, project, gather)
 	if err != nil {

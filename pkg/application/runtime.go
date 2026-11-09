@@ -43,6 +43,9 @@ type ProjectRuntimeOptions struct {
 	Finalizers  []MutationFinalizer
 	// Events is the project event store; nil leaves the project without one.
 	Events EventStore
+	// Prefilter is the relevance scorer gather runs under
+	// grounding.prefilter; the zero value leaves it off.
+	Prefilter Prefilter
 	// Relevance is the relevance verdict ledger; nil stores no verdicts.
 	Relevance RelevanceStore
 	// Sync runs automatic graph sync before a session acts on a branch and

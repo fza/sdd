@@ -101,6 +101,6 @@ func groundingPolicy(cfg *model.PerRepoConfig) sdd.GroundingPolicy {
 	policy := block.Policy()
 	return sdd.GroundingPolicy{
 		Enforce: policy.Enforce, DepthDown: policy.DepthDown, DepthUp: policy.DepthUp,
-		BriefAllBelow: policy.BriefAllBelow, PrefilterFrom: policy.PrefilterFrom,
+		BriefAllBelow: policy.BriefAllBelow, PrefilterFrom: policy.PrefilterFrom, Prefilter: policy.Prefilter,
 	}
 }

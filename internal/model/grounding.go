@@ -22,6 +22,9 @@ type GroundingConfig struct {
 	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
 	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
 	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
+	// Prefilter switches the prefilter on where llm_prefilter configures it
+	// (D7); off by default.
+	Prefilter *bool `yaml:"prefilter,omitempty"`
 }
 
 // GroundingDepthConfig is the grounding depth: how far up and down a
@@ -38,6 +41,7 @@ type GroundingPolicy struct {
 	DepthUp       int
 	BriefAllBelow int
 	PrefilterFrom int
+	Prefilter     bool
 }
 
 // Policy resolves the block against the defaults.
@@ -48,6 +52,7 @@ func (c GroundingConfig) Policy() GroundingPolicy {
 		DepthUp:       intOr(c.Depth.Up, DefaultGroundingDepthUp),
 		BriefAllBelow: intOr(c.BriefAllBelow, DefaultGroundingBriefAllBelow),
 		PrefilterFrom: intOr(c.PrefilterFrom, DefaultGroundingPrefilterFrom),
+		Prefilter:     c.Prefilter != nil && *c.Prefilter,
 	}
 }
 
@@ -71,6 +76,9 @@ func mergeGroundingConfig(base, overlay GroundingConfig) GroundingConfig {
 	}
 	if overlay.BriefAllBelow != nil {
 		out.BriefAllBelow = overlay.BriefAllBelow
+	}
+	if overlay.Prefilter != nil {
+		out.Prefilter = overlay.Prefilter
 	}
 	if overlay.PrefilterFrom != nil {
 		out.PrefilterFrom = overlay.PrefilterFrom
@@ -135,6 +143,8 @@ func TopicListing(g *Graph, live []*Entry, label TopicPath) []*Entry {
 type GatherCandidate struct {
 	Entry   *Entry
 	FoundBy []string
+	// Score is the prefilter's score, nil when it rated none.
+	Score *float64
 }
 
 // GatherSetAside is a group of listed entries a reading does not ask to judge,
@@ -150,6 +160,7 @@ const (
 	SetAsideExempt   = "actor and role records, never candidates"
 	SetAsideRetired  = "not live (closed, superseded or retired)"
 	SetAsideJudged   = "judged not relevant before (relevance ledger)"
+	SetAsideFiltered = "set aside by the prefilter (score below its calibrated threshold)"
 )
 
 // GatherCandidates folds the reads into the candidates to judge: each live
@@ -244,4 +255,28 @@ func readTag(read GroundingRead) string {
 		return "landed after the assemble check"
 	}
 	return string(read.Mode)
+}
+
+// Prefilter protocols (D23).
+const (
+	PrefilterSystemOne    = "systemone"
+	PrefilterCohereRerank = "cohere-rerank"
+	PrefilterGenerate     = "generate"
+)
+
+// LLMPrefilterConfig is the `llm_prefilter` block: the shape of `llm` plus
+// the protocol that rates relevance. For systemone and cohere-rerank,
+// Provider names the API key's entry in api_keys (default opper); for
+// generate, Provider and Model select the chat model as in `llm`.
+type LLMPrefilterConfig struct {
+	Protocol  string `yaml:"protocol,omitempty"`
+	LLMConfig `yaml:",inline"`
+}
+
+func mergeLLMPrefilterConfig(base, overlay LLMPrefilterConfig) LLMPrefilterConfig {
+	out := LLMPrefilterConfig{Protocol: base.Protocol, LLMConfig: mergeLLMConfig(base.LLMConfig, overlay.LLMConfig)}
+	if overlay.Protocol != "" {
+		out.Protocol = overlay.Protocol
+	}
+	return out
 }

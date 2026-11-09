@@ -94,11 +94,13 @@ type ReadPayload struct {
 	Reads  []GroundingRead `json:"reads,omitempty"`
 	Full   []string        `json:"full,omitempty"`
 	Corpus *CorpusMark     `json:"corpus,omitempty"`
+	// Prefilter carries the scores the prefilter gave in this read.
+	Prefilter *PrefilterPayload `json:"prefilter,omitempty"`
 }
 
 // Empty reports whether the payload carries nothing to record.
 func (p ReadPayload) Empty() bool {
-	return len(p.Reads) == 0 && len(p.Full) == 0 && p.Corpus == nil
+	return len(p.Reads) == 0 && len(p.Full) == 0 && p.Corpus == nil && p.Prefilter == nil
 }
 
 // Reading is the record of the grounding reads that credit one capture
@@ -108,6 +110,7 @@ type Reading struct {
 	Corpus *CorpusMark
 	listed map[string]bool
 	full   map[string]bool
+	scores map[string]*readingScores
 }
 
 // Fold adds one credited read. The first corpus mark stands; later marks are
@@ -131,6 +134,7 @@ func (r *Reading) Fold(p ReadPayload) {
 			r.listed[id] = true
 		}
 	}
+	r.foldPrefilter(p.Prefilter)
 	if r.Corpus == nil && p.Corpus != nil {
 		r.Corpus = p.Corpus
 	}

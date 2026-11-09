@@ -417,3 +417,10 @@ func compareDriftSteps(x, y DriftStep) int {
 	}
 	return int(x.SetAside) - int(y.SetAside)
 }
+
+// Steps returns the drift steps the ledger holds, sorted.
+func (l *RelevanceLedger) Steps() []DriftStep {
+	steps := slices.Clone(l.steps)
+	slices.SortFunc(steps, compareDriftSteps)
+	return steps
+}

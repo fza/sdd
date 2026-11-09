@@ -5,6 +5,8 @@
 package proctest_test
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/proctest"
 	"github.com/networkteam/sdd/internal/relevance"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	llmrelevance "github.com/networkteam/sdd/pkg/llm/relevance"
 	"github.com/networkteam/sdd/pkg/local"
 )
 
@@ -316,5 +319,76 @@ func TestCaptureGrounding_PublishStoresTheReaderVerdicts(t *testing.T) {
 	covered, _ := model.VerdictReasonByte(model.VerdictCovered)
 	if !ok || opened.Code != model.ReaderOpened || opened.Reason != covered {
 		t.Fatalf("the entry served in full and set aside should be stored as opened with its code, got %+v, %v", opened, ok)
+	}
+}
+
+// countingScorer scores every candidate the same, or fails, and counts the
+// candidates it was asked about.
+type countingScorer struct {
+	score  float64
+	fail   bool
+	scored int
+}
+
+func (s *countingScorer) Direction() llmrelevance.Direction { return llmrelevance.Both }
+func (s *countingScorer) MaxBatch() int                     { return 0 }
+func (s *countingScorer) MaxInputTokens() int               { return 0 }
+
+func (s *countingScorer) Score(_ context.Context, request llmrelevance.Request) (llmrelevance.Result, error) {
+	s.scored += len(request.Candidates)
+	if s.fail {
+		return llmrelevance.Result{}, errors.New("provider unavailable")
+	}
+	result := llmrelevance.Result{}
+	for range request.Candidates {
+		result.Scores = append(result.Scores, s.score)
+	}
+	return result, nil
+}
+
+// The prefilter's scores ride the capture's reading: a later gather reuses
+// them instead of scoring again, and publish stores them keyed to the new
+// entry; a failed pass stores none (5.8).
+func TestCaptureGrounding_PrefilterScoresRideTheReadingToTheLedger(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		fail   bool
+		stored bool
+	}{{"scored", false, true}, {"provider down", true, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := local.NewMemoryRelevanceStore()
+			scorer := &countingScorer{score: 0.25, fail: tc.fail}
+			world, session := newCaptureWorld(t, "grounding-prefilter",
+				proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
+				proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: "test:counting"}))
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+			session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap"})
+			session.Gather(t, instance)
+			first := scorer.scored
+			if first == 0 {
+				t.Fatal("the prefilter should rate the reading's candidates")
+			}
+			session.Gather(t, instance)
+			if !tc.fail && scorer.scored != first {
+				t.Fatalf("a second gather scored %d more candidates: the reading's scores should be reused", scorer.scored-first)
+			}
+			serve = session.Report(t, instance, captureDraft())
+			proctest.RequireStep(t, serve, "playback")
+			entry := confirmCapture(t, world, session, instance)
+
+			segments, err := store.Segments(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ledger, err := relevance.Fold(segments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, scored := ledger.Score(model.NewRelevancePair(entry.ID, captureRef2ID), entry.ID, "test:counting")
+			if scored != tc.stored {
+				t.Fatalf("score stored = %v: a successful pass should store its scores, a failed one none", scored)
+			}
+		})
 	}
 }

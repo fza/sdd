@@ -1,11 +1,15 @@
 package model
 
-import "slices"
+import (
+	"maps"
+	"slices"
+)
 
-// CaptureRelevance returns the reader records a published capture adds to
+// CaptureRelevance returns the records a published capture adds to
 // the relevance ledger, keyed to the entry it wrote (5.7): every ref,
 // supersede and close is referenced; every verdict sets its entries aside
-// with its code, as opened when the reading served them in full.
+// with its code, as opened when the reading served them in full; every
+// prefilter score the reading holds is kept with its judge.
 func CaptureRelevance(entryID string, reading *Reading, answered []string, verdicts []GroundingVerdict) (RelevanceBatch, error) {
 	var batch RelevanceBatch
 	if reading == nil {
@@ -34,6 +38,17 @@ func CaptureRelevance(entryID string, reading *Reading, answered []string, verdi
 				code = ReaderOpened
 			}
 			batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: code, Reason: reason}})
+		}
+	}
+	for _, judge := range slices.Sorted(maps.Keys(reading.scores)) {
+		held := reading.scores[judge]
+		for _, id := range slices.Sorted(maps.Keys(held.scores)) {
+			pair := NewRelevancePair(entryID, id)
+			direction := DirectionBoth
+			if held.forward {
+				direction = DirectionFrom(pair, entryID)
+			}
+			batch.Scores = append(batch.Scores, ScoreRecord{Pair: pair, Score: FilterScore{Judge: judge, Direction: direction, Score: held.scores[id]}})
 		}
 	}
 	return batch, nil

@@ -14,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm/embed"
+	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
 // GroundingPolicy is a project's grounding configuration
@@ -24,6 +25,8 @@ type GroundingPolicy struct {
 	DepthUp       int
 	BriefAllBelow int
 	PrefilterFrom int
+	// Prefilter switches the prefilter on where the runtime has one (D7).
+	Prefilter bool
 }
 
 func (p GroundingPolicy) resolved() GroundingPolicy {
@@ -71,6 +74,9 @@ type GatherRequest struct {
 	// since is the corpus mark of the capture's reading; the live entries it
 	// lacks are listed as landed since the reading began (D13).
 	since *model.CorpusMark
+	// reading is the capture's reading, whose prefilter scores a later gather
+	// reuses instead of scoring again.
+	reading *model.Reading
 }
 
 // GatherResult is the rendered serve and the entries it served.
@@ -183,17 +189,35 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	if err != nil {
 		return GatherResult{}, err
 	}
-	split := model.SplitByLedger(candidates, request.Subject, ledger, "", model.RelevanceThresholds{})
-	candidates = split.Undecided
+	judge := runtime.options.Prefilter.Judge
+	var thresholds model.RelevanceThresholds
+	if judge != "" {
+		thresholds = model.Calibrate(ledger.Labels(judge), ledger.Steps(), judge)
+	}
+	split := model.SplitByLedger(candidates, request.Subject, ledger, judge, thresholds)
 	if len(split.NotRelevant) > 0 {
 		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideJudged, IDs: split.NotRelevant})
 	}
+	held, _ := request.reading.Scores(judge)
+	subject := ""
+	if strings.TrimSpace(request.Draft) != "" {
+		subject = model.RelevanceText(request.Kind, request.Topics, "", request.Draft)
+	}
+	pass, err := runPrefilter(ctx, runtime, policy, subject, graph, split.Undecided, held)
+	if err != nil {
+		return GatherResult{}, err
+	}
+	placed := model.PlacePrefiltered(split.Undecided, pass.scores, thresholds)
+	if len(placed.SetAside) > 0 {
+		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFiltered, IDs: placed.SetAside})
+	}
+	candidates = placed.ToJudge
 	served := &query.GatherResult{
-		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: "off",
+		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: pass.status, PrefilterNote: pass.note,
 		ToJudge: candidates, SetAside: setAside, Held: map[string]bool{},
 	}
 	full := slices.Clone(opened)
-	for _, candidate := range split.Relevant {
+	for _, candidate := range append(split.Relevant, placed.Relevant...) {
 		full = append(full, candidate.Entry.ID)
 	}
 	if len(full) > query.GatherFullCap {
@@ -224,6 +248,9 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	presenters.RenderGather(&rendered, served)
 	result.Text = strings.TrimRight(rendered.String(), "\n")
 	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Corpus: served.Corpus}
+	if len(pass.fresh) > 0 {
+		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: runtime.options.Prefilter.Scorer.Direction() == relevance.Forward, Scores: pass.fresh}
+	}
 	return result, nil
 }
 

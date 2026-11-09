@@ -518,6 +518,10 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	}
 	closure := finders.New(finders.Options{Config: cfg, Repos: registry})
 	rounds := connectedRounds{handler: handlers.New(handlers.Options{Reader: closure, Repos: manager, CloneRound: round})}
+	prefilter, err := projectPrefilter(cfg)
+	if err != nil {
+		return nil, nil, sdd.RequestIdentity{}, err
+	}
 	verdicts, err := projectRelevanceStore(locations.StateRoot, baseRepoKey)
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
@@ -535,6 +539,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		Grounding: groundingPolicy(cfg),
 		Events:    events,
 		Relevance: verdicts,
+		Prefilter: prefilter,
 	})
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err

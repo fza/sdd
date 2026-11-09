@@ -93,6 +93,9 @@ type BaseConfig struct {
 	// Grounding makes captures read the graph before they are written
 	// (20261109-004506-d-cpt-udz); off unless a layer sets enforce.
 	Grounding GroundingConfig `yaml:"grounding,omitempty"`
+	// LLMPrefilter is the grounding prefilter's model, independent of LLM
+	// (20261109-004506-d-cpt-udz, D8); grounding.prefilter switches it on.
+	LLMPrefilter LLMPrefilterConfig `yaml:"llm_prefilter,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
 	// set once in the user-global config; a per-repo override covers a
@@ -613,6 +616,7 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	}
 	out.Connected = mergeConnectedConfig(base.Connected, overlay.Connected)
 	out.Grounding = mergeGroundingConfig(base.Grounding, overlay.Grounding)
+	out.LLMPrefilter = mergeLLMPrefilterConfig(base.LLMPrefilter, overlay.LLMPrefilter)
 	return out
 }
 
