@@ -182,5 +182,5 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd, chang
 		}
 		touched = append(touched, guardPath)
 	}
-	return h.installAgentSurfaces(ctx, cmd, agents, scope, touched, configExisted, changed)
+	return h.installAgentSurfaces(ctx, cmd, agents, scope, touched, initCommitMessage(configExisted), changed)
 }

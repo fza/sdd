@@ -158,7 +158,7 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		}
 	}
 
-	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, configExisted, changed)
+	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(configExisted), changed)
 }
 
 // writeLocalSettings records the per-person settings cmd carries, the
@@ -249,7 +249,7 @@ func (h *Handler) persistSupportedAgents(ctx context.Context, cmd *command.InitC
 // bundle stopped shipping, registers the MCP server, and commits everything
 // touched inside cmd.RepoRoot, setting *changed when it touched or committed
 // anything.
-func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string, refresh bool, changed *bool) error {
+func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string, commitMessage string, changed *bool) error {
 	if !cmd.GraphOnly {
 		var err error
 		touched, err = h.installSkillsAndRegistrations(ctx, cmd, agents, scope, touched)
@@ -258,7 +258,7 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 		}
 	}
 	*changed = *changed || len(touched) > 0
-	return h.commitInitPaths(ctx, cmd, touched, refresh, changed)
+	return h.commitInitPaths(ctx, cmd, touched, commitMessage, changed)
 }
 
 func (h *Handler) installSkillsAndRegistrations(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string) ([]string, error) {
@@ -304,7 +304,7 @@ func (h *Handler) installSkillsAndRegistrations(ctx context.Context, cmd *comman
 }
 
 // commitInitPaths commits everything init touched inside cmd.RepoRoot.
-func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, touched []string, refresh bool, changed *bool) error {
+func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, touched []string, commitMessage string, changed *bool) error {
 	// Skill files installed under the user-global scope sit outside the repo's
 	// git tree.
 	if h.committer == nil {
@@ -339,7 +339,7 @@ func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, tou
 		return record.clear()
 	}
 	*changed = true
-	err = h.commitGraph(ctx, initCommitMessage(refresh, repoRoot, commitPaths), commitPaths...)
+	err = h.commitGraph(ctx, commitMessage, commitPaths...)
 	if err != nil {
 		return errors.Join(fmt.Errorf("git commit, which the next sdd init retries: %w", err), record.write(commitPaths))
 	}

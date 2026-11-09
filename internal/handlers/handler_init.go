@@ -360,7 +360,7 @@ func (h *Handler) initRepo(ctx context.Context, cmd *command.InitCmd, changed *b
 		}
 	}
 
-	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, sddExisted, changed)
+	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(sddExisted), changed)
 }
 
 // resolveSkillScope picks the scope `sdd init` should install under and
@@ -782,17 +782,11 @@ func filterRepoPaths(repoRoot string, paths []string) []string {
 	return out
 }
 
-// initCommitMessage names a refresh by the surfaces of the paths it commits,
-// absolute paths under repoRoot.
-func initCommitMessage(refresh bool, repoRoot string, paths []string) string {
-	if !refresh {
-		return "sdd: init .sdd/ metadata directory"
+func initCommitMessage(sddExisted bool) string {
+	if sddExisted {
+		return "sdd: refresh sdd setup"
 	}
-	rel := make([]string, 0, len(paths))
-	for _, p := range paths {
-		rel = append(rel, filepath.ToSlash(strings.TrimPrefix(p, repoRoot+string(filepath.Separator))))
-	}
-	return "sdd: init refresh: " + strings.Join(model.InitSurfaces(rel), ", ")
+	return "sdd: init .sdd/ metadata directory"
 }
 
 // gitignoreLine refuses an entry that would read as more than the one path it
