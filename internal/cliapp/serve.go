@@ -24,6 +24,7 @@ import (
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
@@ -409,6 +410,21 @@ func (a *localRuntimeAccess) ResolveDependency(ctx context.Context, _ sdd.Princi
 	return a.dependencies.resolve(ctx, dependency)
 }
 
+// localHooks reads the hooks of the user-global config and the local layer
+// as they are now, so a changed configuration reaches a running serve on its
+// next call. Reading the layers refuses hooks in the committed one.
+func localHooks(globalPath, sddDir, localLayer string) ([]model.HookConfig, error) {
+	global, err := repos.LoadConfigFrom(globalPath)
+	if err != nil {
+		return nil, err
+	}
+	committed, local, err := meta.ReadConfigLayers(sddDir, localLayer)
+	if err != nil {
+		return nil, err
+	}
+	return model.MergeConfig(model.MergeConfig(&model.PerRepoConfig{BaseConfig: global.BaseConfig}, committed), local).Hooks, nil
+}
+
 // localDialogue reads dialogue.mode and the layer that sets it; the
 // committed layer arrives without it (20261029-150854-d-tac-b2f).
 func localDialogue(sddDir string) (sdd.Dialogue, error) {
@@ -523,7 +539,8 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Sync: targets, Branches: targets, Base: targets,
 		Connected: rounds,
 		Embedder:  embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
-		LLM: runner,
+		LLM:   runner,
+		Hooks: hooks.New(func() ([]model.HookConfig, error) { return localHooks(locations.ConfigPath, sddDir, localLayer) }, serverCheckout),
 	})
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
