@@ -25,12 +25,12 @@ var serveChainBudget = types.ShowTreeBudget{
 }
 
 // servedViewBudget bounds a pushed view's scaling shapes at whole units:
-// focus and participant groups, WIP markers, whole bodies, per-entry ref
-// sub-lines. Explicit pulls (the view tool, the CLI) pass no budget.
+// focus and participant groups, WIP markers, per-entry ref sub-lines. Whole
+// bodies take the inject's effective cap. Explicit pulls (the view tool, the
+// CLI) pass no budget.
 var servedViewBudget = types.ViewBudget{
 	GroupItems:   12,
 	RefsPerEntry: 6,
-	BodyBytes:    serveview.Default().Cap(serveview.PartText).MaxBytes,
 }
 
 func (w *WorkflowSession) buildRegistry() (*engine.Registry, error) {
@@ -113,7 +113,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		return err
 	}
 	if err := registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes (line-boundary cut, honest notice; the cut's pull is the lane's own layout)."},
+		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes (line-boundary cut, honest notice; the cut's pull is the lane's own layout). A layout of only as-bodies sections is cut at whole bodies instead, naming each withheld entry."},
 		ServeSafe: true,
 		Bound: engine.QueryBound{
 			Part: serveview.PartText,
@@ -132,12 +132,21 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if err != nil {
 				return nil, err
 			}
-			result, err := w.app.viewFromSnapshot(w.ctx, w.identity, view.runtime, view.snapshot, ViewRequest{Layout: layout, Budget: servedViewBudget})
+			budget := servedViewBudget
+			budget.BodyBytes = ctx.Cap.MaxBytes
+			result, err := w.app.viewFromSnapshot(w.ctx, w.identity, view.runtime, view.snapshot, ViewRequest{Layout: layout, Budget: budget})
 			if err != nil {
 				return nil, err
 			}
 			w.laneFull = append(w.laneFull, result.FullIDs...)
-			return presenters.ViewText(result.ViewSections, nil), nil
+			text := presenters.ViewText(result.ViewSections, nil)
+			if result.bodiesOnly {
+				// Authored bodies are never split (d-tac-rzi): the view cut them
+				// whole and names what it withheld, so no line cut follows.
+				n := len(text)
+				return truncate.Text{Text: text, Cut: truncate.Cut{KeptBytes: n, TotalBytes: n}}, nil
+			}
+			return text, nil
 		},
 	}); err != nil {
 		return err

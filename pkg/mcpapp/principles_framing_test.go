@@ -1,6 +1,7 @@
 package mcpapp_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,4 +184,60 @@ func laneOf(t *testing.T, framing string) string {
 	}
 	lane, _, _ := strings.Cut(framing[start:], "\n\n## Aspirations")
 	return lane
+}
+
+// TestDoorNeverSplitsPrinciplesBody pins the serve bounds (d-tac-rzi) on the
+// principles lane: a body is served whole or withheld whole, never cut inside
+// its text, and a withheld body still leaves the lane naming it and its pull.
+func TestDoorNeverSplitsPrinciplesBody(t *testing.T) {
+	const ownID = "20260811-090000-s-prc-own"
+	cases := []struct {
+		name      string
+		bodyBytes int
+		served    bool
+	}{
+		{name: "body under the cap whose rendered lane passes it", bodyBytes: 11950, served: true},
+		{name: "body past the cap", bodyBytes: 14500, served: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			graphDir := writeFixtureGraph(t)
+			path := filepath.Join(graphDir, "2026/08/11-090000-s-prc-own.md")
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				t.Fatal(err)
+			}
+			var body strings.Builder
+			body.WriteString("# House rules\n\n")
+			for rule := 0; body.Len() < tc.bodyBytes-len("END OF RULES\n"); rule++ {
+				fmt.Fprintf(&body, "Rule %04d.\n\n", rule)
+			}
+			body.WriteString("END OF RULES\n")
+			fact := "---\ntype: signal\nlayer: process\nkind: fact\nconfidence: high\n" +
+				"topics:\n    - principles/interactive\nsupersedes:\n    - " + principlesFactID + "\n" +
+				"summary: This project's own working principles, written at length.\n---\n\n" + body.String()
+			if err := os.WriteFile(path, []byte(fact), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			env := newTestServer(t, nil, graphDir, "")
+			door := openSession(t, connect(t, env.srv))
+			lane := laneOf(t, door.Framing)
+
+			if strings.Contains(door.Framing, "cut for size") {
+				t.Errorf("no line cut may land in the principles lane:\n%s", lane)
+			}
+			opened, closed := strings.Contains(lane, "Rule 0000."), strings.Contains(lane, "END OF RULES")
+			if opened != closed {
+				t.Errorf("the body must serve whole or not at all (opening served %v, end served %v)", opened, closed)
+			}
+			if opened != tc.served {
+				t.Errorf("body served = %v, want %v", opened, tc.served)
+			}
+			withheld := strings.Contains(lane, "withheld for size") && strings.Contains(lane, ownID) &&
+				strings.Contains(lane, `pull: active:kind(fact):topic("principles/interactive"):as-bodies`)
+			if withheld == tc.served {
+				t.Errorf("a withheld body must be named with its pull, and a served one must not be (withheld notice %v):\n%s", withheld, lane)
+			}
+		})
+	}
 }

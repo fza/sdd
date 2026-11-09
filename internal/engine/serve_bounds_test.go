@@ -166,3 +166,49 @@ func TestRegistrationDefaultCapAppliesWhenSpecIsSilent(t *testing.T) {
 		t.Errorf("data lane = %dB, want the registration default applied", len(data))
 	}
 }
+
+// TestQuerySeesItsEffectiveCap pins the cap a query reads off its context:
+// the spec's declaration over the registration default, on a step inject and
+// on a shell's framing inject alike, so a query cutting at whole units sizes
+// its cut from the bound the engine would apply.
+func TestQuerySeesItsEffectiveCap(t *testing.T) {
+	cases := []struct {
+		name   string
+		inject string
+		want   int
+	}{
+		{name: "registration default", inject: "          - {fn: capQuery}", want: 300},
+		{name: "spec declaration", inject: "          - {fn: capQuery, maxBytes: 700}", want: 700},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := engine.NewRegistry()
+			var seen []int
+			if err := reg.RegisterQuery(engine.Query{
+				Doc:   engine.FuncDoc{Name: "capQuery", Doc: "test cap view"},
+				Bound: engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: 300}},
+				Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
+					seen = append(seen, ctx.Cap.MaxBytes)
+					return "ok", nil
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			spec, err := engine.LoadSpec(laneEntry(t, injectMachine(tc.inject), "## unit: draft\n\n{{.capQuery}}\n"), reg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session := engine.New(reg, engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_cap", "tester", nopSink{})
+			sv, err := session.Start(spec, nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := session.Inject(sv.Instance, spec.Steps[0].Inject[0]); err != nil {
+				t.Fatal(err)
+			}
+			if len(seen) != 2 || seen[0] != tc.want || seen[1] != tc.want {
+				t.Errorf("the step inject and the framing inject must both see the effective cap, saw %v", seen)
+			}
+		})
+	}
+}

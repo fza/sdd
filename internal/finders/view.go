@@ -366,7 +366,7 @@ func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model
 				total += n
 			}
 			if kept < len(entries) {
-				bodies.Dropped = len(entries) - kept
+				bodies.Withheld = entries[kept:]
 				bodies.Entries = entries[:kept]
 				bodies.Pull = section.Expr()
 			}

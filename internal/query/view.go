@@ -69,6 +69,17 @@ func (r ViewResult) ServedIDs() (full, summary []string) {
 	return full, summary
 }
 
+// BodiesOnly reports whether every section serves as-bodies, so a serve
+// budget cut the whole result at body boundaries.
+func (r ViewResult) BodiesOnly() bool {
+	for _, s := range r.Sections {
+		if s.Render != "as-bodies" {
+			return false
+		}
+	}
+	return len(r.Sections) > 0
+}
+
 // MatchedCount sums the primary units across every section — the total the
 // pipeline produced. Zero means the layout matched nothing, which callers use
 // to render an explicit empty result instead of a blank string.

@@ -2230,8 +2230,8 @@ func TestView_ServeBudgetCutsShapesAtWholeUnits(t *testing.T) {
 		t.Fatalf("View: %v", err)
 	}
 	bodies := bounded.Sections[0].Data.(model.Bodies)
-	if len(bodies.Entries) != 0 || bodies.Dropped != 9 {
-		t.Fatalf("bodies cut = %d kept, %d dropped; want whole-body cut accounting", len(bodies.Entries), bodies.Dropped)
+	if len(bodies.Entries) != 0 || len(bodies.Withheld) != 9 {
+		t.Fatalf("bodies cut = %d kept, %d dropped; want whole-body cut accounting", len(bodies.Entries), len(bodies.Withheld))
 	}
 	if bodies.Pull != `kind(directive):as-bodies:name("Bodies")` {
 		t.Fatalf("bodies pull = %q, want the section's own source", bodies.Pull)
@@ -2242,7 +2242,7 @@ func TestView_ServeBudgetCutsShapesAtWholeUnits(t *testing.T) {
 		t.Fatalf("View: %v", err)
 	}
 	full := unbounded.Sections[0].Data.(model.Bodies)
-	if full.Dropped != 0 || len(full.Entries) != 9 {
-		t.Fatalf("explicit pulls must arrive complete: %d kept, %d dropped", len(full.Entries), full.Dropped)
+	if len(full.Withheld) != 0 || len(full.Entries) != 9 {
+		t.Fatalf("explicit pulls must arrive complete: %d kept, %d dropped", len(full.Entries), len(full.Withheld))
 	}
 }

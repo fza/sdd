@@ -864,6 +864,7 @@ func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSiz
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("step %s: inject %s: %w", step.ID, inj.Fn, err)
 			}
+			fctx.Cap = effectiveCap(q, inj)
 			result, err := q.Fn(fctx, args)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("step %s: inject %s: %w", step.ID, inj.Fn, err)
@@ -898,7 +899,7 @@ func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSiz
 // over the query's registration default — and stamps the cut with the part
 // name and, when the query knows how, the pull for the remainder.
 func boundInject(q *Query, inj InjectCall, args map[string]any, result any) (any, *truncate.Cut) {
-	value, cut := serveview.BoundValue(result, serveview.Effective(inj.Cap, q.Bound.Cap))
+	value, cut := serveview.BoundValue(result, effectiveCap(q, inj))
 	if cut == nil {
 		return value, nil
 	}
@@ -907,6 +908,10 @@ func boundInject(q *Query, inj InjectCall, args map[string]any, result any) (any
 		cut.Pull = q.Bound.Pull(args, *cut)
 	}
 	return value, cut
+}
+
+func effectiveCap(q *Query, inj InjectCall) serveview.Cap {
+	return serveview.Effective(inj.Cap, q.Bound.Cap)
 }
 
 // renderInjectArgs renders string args as Go templates against the store
