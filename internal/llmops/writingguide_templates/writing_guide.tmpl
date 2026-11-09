@@ -67,4 +67,15 @@ The framework's definition of the drafted kind — meaning to judge against, not
 ## Draft entry
 
 {{ .Draft }}
+{{- if .Changed }}
+
+## Changed since the last check
+
+This draft was judged before; since then only the passages below changed. Judge these passages alone, read in the context of the whole draft above, and report nothing on text outside them: the rest already stood the check.
+{{ range .Changed }}
+````
+{{ . }}
+````
+{{ end -}}
+{{- end }}
 {{- end }}

@@ -81,7 +81,15 @@ type ReferenceFacts struct {
 // reference facts tell that reader what the draft's kind means (s-tac-fu8).
 // Returns an error only for infrastructure failures.
 func WritingGuide(ctx context.Context, runner llm.Runner, entry *model.Entry, closureTargets []model.ClosureTarget, refFacts ReferenceFacts) (*WritingGuideResult, error) {
-	req, err := renderWritingGuidePrompt(entry, closureTargets, refFacts)
+	return WritingGuideDelta(ctx, runner, entry, closureTargets, refFacts, nil)
+}
+
+// WritingGuideDelta is WritingGuide confined to the passages changed since
+// the guide last judged the draft (20261109-005108-d-cpt-wcj): the whole
+// draft is context, only the changed passages are judged. Without changed
+// passages it judges the whole draft.
+func WritingGuideDelta(ctx context.Context, runner llm.Runner, entry *model.Entry, closureTargets []model.ClosureTarget, refFacts ReferenceFacts, changed []string) (*WritingGuideResult, error) {
+	req, err := renderWritingGuideRequest(entry, closureTargets, refFacts, changed)
 	if err != nil {
 		return nil, fmt.Errorf("rendering writing-guide prompt: %w", err)
 	}
@@ -93,14 +101,15 @@ func WritingGuide(ctx context.Context, runner llm.Runner, entry *model.Entry, cl
 	return result, nil
 }
 
-// renderWritingGuidePrompt renders the two-part request. The system block
+// renderWritingGuideRequest renders the two-part request. The system block
 // carries the guide text and the type-system overview — byte-stable across
 // sequential captures while the graph's facts are unchanged (the cacheable
 // prefix, same invariant as pre-flight's universal preamble). The user block
 // carries the drafted kind's authoring fact, when one exists, and the
 // formatted draft last. Templates parse per render because factBody closes
-// over the per-call fact source.
-func renderWritingGuidePrompt(entry *model.Entry, closureTargets []model.ClosureTarget, refFacts ReferenceFacts) (llm.Request, error) {
+// over the per-call fact source. Changed passages confine the judgment to
+// them.
+func renderWritingGuideRequest(entry *model.Entry, closureTargets []model.ClosureTarget, refFacts ReferenceFacts, changed []string) (llm.Request, error) {
 	if refFacts.Source == nil || refFacts.TypeSystemFactID == "" {
 		return llm.Request{}, fmt.Errorf("no type-system reference fact configured")
 	}
@@ -119,7 +128,11 @@ func renderWritingGuidePrompt(entry *model.Entry, closureTargets []model.Closure
 	}
 
 	sysData := struct{ TypeSystemFactID string }{TypeSystemFactID: refFacts.TypeSystemFactID}
-	userData := struct{ Draft, Kind, KindFactID string }{
+	userData := struct {
+		Draft, Kind, KindFactID string
+		Changed                 []string
+	}{
+		Changed:    changed,
 		Draft:      formatDraftForWritingGuide(entry, closureTargets),
 		Kind:       string(entry.Kind),
 		KindFactID: refFacts.KindFactID,
