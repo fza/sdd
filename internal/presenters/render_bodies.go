@@ -39,9 +39,14 @@ func renderAsBodies(w io.Writer, bodies model.Bodies, entryLevel int, r *Repeats
 			fmt.Fprintf(w, "\n%s\n", body)
 		}
 	}
-	if bodies.Dropped > 0 {
-		fmt.Fprintln(w)
-		writeSectionCut(w, bodies.Dropped, bodies.Pull)
+	if len(bodies.Withheld) > 0 {
+		if len(bodies.Entries) > 0 {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintf(w, "(withheld for size, %d whole — pull: %s)\n", len(bodies.Withheld), bodies.Pull)
+		for _, e := range bodies.Withheld {
+			fmt.Fprintf(w, "- %s — %s\n", e.ID, model.EntryBrief(e))
+		}
 	}
 }
 

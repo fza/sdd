@@ -996,6 +996,7 @@ func (s *Session) Inject(instanceID string, call InjectCall) (any, *truncate.Cut
 	if err != nil {
 		return nil, nil, err
 	}
+	ctx.Cap = effectiveCap(q, call)
 	result, err := q.Fn(ctx, args)
 	if err != nil {
 		return nil, nil, err

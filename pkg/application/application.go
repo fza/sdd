@@ -298,6 +298,7 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 		KnownParticipants: knownParticipants,
 		FullIDs:           full,
 		SummaryIDs:        summary,
+		bodiesOnly:        viewResult.BodiesOnly(),
 	}, nil
 }
 

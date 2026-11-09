@@ -52,6 +52,11 @@ type Context struct {
 	// Round raises the step's round event with fields added to its payload;
 	// set only for a command declaring Rounds.
 	Round func(fields map[string]any) error
+	// Cap is the effective bound on the running inject's result: the spec's
+	// declaration over the query's registered default. A query that cuts its
+	// result at whole units sizes that cut from Cap and returns a
+	// truncate.Carrier, so the engine's line cut never splits a unit.
+	Cap serveview.Cap
 }
 
 // PredicateFunc is a pure check over the store (and graph): no side effects,
