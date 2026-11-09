@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -104,6 +105,15 @@ type BaseConfig struct {
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
 	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
+	// Grounding makes captures read the graph before they are written
+	// (20261109-004506-d-cpt-udz); off unless a layer sets enforce.
+	Grounding GroundingConfig `yaml:"grounding,omitempty"`
+	// Verifier checks every capture draft against its grounding reading
+	// before the write (20261109-004729-d-cpt-xs5); off unless a layer sets it.
+	Verifier VerifierConfig `yaml:"verifier,omitempty"`
+	// LLMPrefilter is the grounding prefilter's model, independent of LLM
+	// (20261109-004506-d-cpt-udz, D8); grounding.prefilter switches it on.
+	LLMPrefilter LLMPrefilterConfig `yaml:"llm_prefilter,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
 	// set once in the user-global config; a per-repo override covers a
@@ -112,6 +122,10 @@ type BaseConfig struct {
 	// Connected is the writing side's gate on capturing into a connected
 	// graph (20261106-201216-d-cpt-aim).
 	Connected ConnectedConfig `yaml:"connected,omitempty"`
+	// Hooks are commands run at engine events (20261109-005138-d-tac-i61).
+	// Only the user-global config and config.local.yaml may set them; the
+	// layers concatenate, global first.
+	Hooks []HookConfig `yaml:"hooks,omitempty"`
 }
 
 // IsZero reports whether no base setting is set. Resolution uses it to
@@ -181,6 +195,15 @@ type PerRepoConfig struct {
 	// Inbound is the receiving graph's gate on captures written from another
 	// project; only the committed .sdd/config.yaml sets it.
 	Inbound InboundConfig `yaml:"inbound,omitempty"`
+	// Events sets the sharing mode per event channel; only the committed
+	// .sdd/config.yaml sets it.
+	Events EventsConfig `yaml:"events,omitempty"`
+	// Relevance sets where the relevance ledger lives and what a committed
+	// copy holds; only the committed .sdd/config.yaml sets it.
+	Relevance RelevanceConfig `yaml:"relevance,omitempty"`
+	// Recheck names who runs the recheck work; only the committed
+	// .sdd/config.yaml sets it.
+	Recheck RecheckConfig `yaml:"recheck,omitempty"`
 	// Contribution names the upstream ref (e.g. origin/main) a checkout's
 	// graph writes are contributed to; set, it turns on contribution mode
 	// (ContributionRefusal). Machine-local only: a checkout opts in, the
@@ -518,6 +541,10 @@ type LLMConfig struct {
 	// included. Unset means DefaultLLMMaxTokens; 0 sends no cap, leaving the
 	// model's own output limit in force where the provider allows that.
 	MaxTokens *int `yaml:"max_tokens,omitempty"`
+	// ContextTokens is the model's context window in tokens, which sizes the
+	// light verifier's pre-flight calls (20261109-004729-d-cpt-xs5). Zero means
+	// the window the provider reports.
+	ContextTokens int `yaml:"context_tokens,omitempty"`
 	// Concurrency bounds the worker pool for batch operations. Zero means
 	// "use DefaultLLMConcurrency".
 	Concurrency int `yaml:"concurrency,omitempty"`
@@ -670,6 +697,12 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 		out.Dialogue.Mode = overlay.Dialogue.Mode
 	}
 	out.Connected = mergeConnectedConfig(base.Connected, overlay.Connected)
+	out.Grounding = mergeGroundingConfig(base.Grounding, overlay.Grounding)
+	out.Verifier = mergeVerifierConfig(base.Verifier, overlay.Verifier)
+	if len(overlay.Hooks) > 0 {
+		out.Hooks = append(slices.Clip(base.Hooks), overlay.Hooks...)
+	}
+	out.LLMPrefilter = mergeLLMPrefilterConfig(base.LLMPrefilter, overlay.LLMPrefilter)
 	return out
 }
 
@@ -714,6 +747,9 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 		out.GraphRepo = overlay.GraphRepo
 	}
 	out.Inbound = mergeInboundConfig(base.Inbound, overlay.Inbound)
+	out.Events = mergeEventsConfig(base.Events, overlay.Events)
+	out.Relevance = mergeRelevanceConfig(base.Relevance, overlay.Relevance)
+	out.Recheck = mergeRecheckConfig(base.Recheck, overlay.Recheck)
 	if overlay.Contribution != "" {
 		out.Contribution = overlay.Contribution
 	}
@@ -803,6 +839,9 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 	}
 	if overlay.MaxTokens != nil {
 		out.MaxTokens = overlay.MaxTokens
+	}
+	if overlay.ContextTokens != 0 {
+		out.ContextTokens = overlay.ContextTokens
 	}
 	if overlay.Concurrency != 0 {
 		out.Concurrency = overlay.Concurrency

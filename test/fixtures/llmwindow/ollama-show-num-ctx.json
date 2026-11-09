@@ -1,0 +1,10 @@
+{
+  "modelfile": "FROM qwen3:8b\nPARAMETER num_ctx 16384\n",
+  "parameters": "num_ctx                        16384\ntemperature                    0.6",
+  "template": "{{ .Prompt }}",
+  "details": {"format": "gguf", "family": "qwen3", "parameter_size": "8.2B", "quantization_level": "Q4_K_M"},
+  "model_info": {
+    "general.architecture": "qwen3",
+    "qwen3.context_length": 40960
+  }
+}

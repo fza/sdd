@@ -20,7 +20,7 @@ import (
 // `actors:` lines, then per-target entry lines with state and score.
 // The `name(...)` modifier (handled by RenderView) supplies an outer
 // `## <title>` header when present.
-func renderAsFocusBlock(w io.Writer, block types.ViewFocusBlock, brief bool) {
+func renderAsFocusBlock(w io.Writer, block types.ViewFocusBlock, brief bool, r *Repeats) {
 	for i, focus := range block.Focuses {
 		if i > 0 {
 			fmt.Fprintln(w)
@@ -28,10 +28,10 @@ func renderAsFocusBlock(w io.Writer, block types.ViewFocusBlock, brief bool) {
 		// Focus header: `###` followed by the focus's own entry line so
 		// the reader gets identity + status + summary without ceremony.
 		fmt.Fprint(w, "### ")
-		fmt.Fprint(w, focusHeaderLine(focus.Focus, brief))
+		fmt.Fprint(w, focusHeaderLine(focus.Focus, brief, r))
 		writeFocusDefaults(w, focus)
 		for _, target := range focus.Targets {
-			writeFocusTarget(w, target, brief)
+			writeFocusTarget(w, target, brief, r)
 		}
 	}
 	if block.Dropped > 0 {
@@ -43,12 +43,12 @@ func renderAsFocusBlock(w io.Writer, block types.ViewFocusBlock, brief bool) {
 // focusHeaderLine renders the focus entry as a single line — same shape
 // as the entry line but without the leading two-space indent so it can sit
 // after the `### ` marker.
-func focusHeaderLine(focus *types.ListedEntry, brief bool) string {
+func focusHeaderLine(focus *types.ListedEntry, brief bool, r *Repeats) string {
 	if focus == nil {
 		return "<missing focus>\n"
 	}
 	var sb strings.Builder
-	writeListedEntry(&sb, *focus, brief)
+	r.entry(&sb, focus.ID, focus.Brief, func() { writeListedEntry(&sb, *focus, brief) })
 	// The entry line writes "  <id> ... \n"; strip the leading spaces — the
 	// `### ` marker provides visual offset already.
 	return strings.TrimLeft(sb.String(), " ")
@@ -69,7 +69,7 @@ func writeFocusDefaults(w io.Writer, focus types.ViewFocus) {
 // writeFocusTarget renders one involvement target with state + score
 // segments. Indented four spaces under the focus header so the visual
 // nesting is unambiguous when several focuses sit in the same block.
-func writeFocusTarget(w io.Writer, target types.ViewFocusTarget, brief bool) {
+func writeFocusTarget(w io.Writer, target types.ViewFocusTarget, brief bool, r *Repeats) {
 	fmt.Fprint(w, "  - ")
 	fmt.Fprintf(w, "{state: %s} ", target.State)
 	// Inline a trimmed scored entry line — same shape as the as-list
@@ -78,11 +78,13 @@ func writeFocusTarget(w io.Writer, target types.ViewFocusTarget, brief bool) {
 	// Brief keeps the state segment (it is what the block is for) and
 	// compacts the entry line itself.
 	var sb strings.Builder
-	if brief {
-		writeEntryLineBrief(&sb, target.Target)
-	} else {
-		writeEntryLine(&sb, target.Target, target.Score)
-	}
+	r.entry(&sb, target.Target.ID, target.Target.Brief, func() {
+		if brief {
+			writeEntryLineBrief(&sb, target.Target)
+		} else {
+			writeEntryLine(&sb, target.Target, target.Score)
+		}
+	})
 	fmt.Fprint(w, strings.TrimLeft(sb.String(), " "))
 }
 

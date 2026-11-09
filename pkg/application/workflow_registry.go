@@ -11,6 +11,8 @@ import (
 	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/truncate"
 	"github.com/networkteam/sdd/pkg/application/types"
+
+	"github.com/networkteam/slogutils"
 )
 
 // serveChainBudget bounds each direction of a served entry chain: the
@@ -38,6 +40,10 @@ func (w *WorkflowSession) buildRegistry() (*engine.Registry, error) {
 		w.registerWorkflowPredicates,
 		w.registerWorkflowWrites,
 		w.registerWorkflowWIP,
+		w.registerWorkflowGrounding,
+		w.registerWorkflowTiming,
+		w.registerWorkflowDeep,
+		w.registerWorkflowRecheck,
 	} {
 		if err := register(registry); err != nil {
 			return nil, err
@@ -130,7 +136,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if err != nil {
 				return nil, err
 			}
-			return presenters.ViewText(result.ViewSections), nil
+			return presenters.ViewText(result.ViewSections, nil), nil
 		},
 	}); err != nil {
 		return err
@@ -188,7 +194,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 				return nil, err
 			}
 			w.session.LogRead("inject:entryChains", result.FullIDs, result.SummaryIDs)
-			return presenters.ShowText(result.Items)
+			return presenters.ShowText(result.Items, nil)
 		},
 	}); err != nil {
 		return err
@@ -292,7 +298,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	}
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{Name: "preflightEntry", Doc: "Checks the current capture draft before publication and records its findings.",
-			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride"}},
+			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride", "preflightCalls", "preflightExcerpted"}},
 		GraphIndependent: true,
 		Fn:               w.runWorkflowPreflight,
 	}); err != nil {
@@ -301,20 +307,21 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "newEntry", Doc: "Publishes the recorded entry identity from accepted capture state and immutable staged references.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "preflightOverride", "skipGrounding"}, Writes: []string{"resolvedCaptureBranch", "entryId", "findings"},
 		},
 		MutatesGraph:     true,
 		GraphIndependent: true,
 		Prepare:          w.prepareWorkflowNewEntry,
 		Fn:               w.runWorkflowNewEntry,
 		Effects:          w.reportWorkflowNewEntryEffects,
+		Announces:        entryWrittenEvent,
 	}); err != nil {
 		return err
 	}
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "writingGuide", Doc: "Runs the writing guide against the draft in isolation (d-cpt-20r); findings are drafting input, never a gate. Runs once per capture — a recorded run is never repeated implicitly; requestGuideRecheck clears it for an explicit re-run.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "intent", "attachments", "closes", "supersedes"}, Writes: []string{"guideFindings"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "intent", "attachments", "closes", "supersedes"}, Writes: []string{"guideFindings", fieldGuideBase},
 		},
 		Fn: w.runWorkflowWritingGuide,
 	}); err != nil {
@@ -361,13 +368,15 @@ func (w *WorkflowSession) registerWorkflowWIP(registry *engine.Registry) error {
 	})
 }
 
-// runWorkflowWritingGuide runs the writing guide op between assemble and
-// playback — once per capture. A recorded run (guideFindings present) is
-// never repeated implicitly: revises and adjusts pass through, because a
-// second pass judges the repairs instead of the draft and drifts toward
-// find-something escalation; re-running is the agent's explicit choice
-// (requestGuideRecheck). An LLM infrastructure failure returns loudly — the
-// op re-runs on the next report rather than degrading to a silent pass.
+// runWorkflowWritingGuide runs the writing guide op once per capture, where
+// the dialogue mode places it (20261109-005108-d-cpt-wcj). A recorded run
+// (guideFindings present) is never repeated implicitly: revises and adjusts
+// pass through, because a second pass judges the repairs instead of the draft
+// and drifts toward find-something escalation; a later adjust gets the delta
+// check of its changed lines only (writingGuideDelta), and a full re-run is
+// the agent's explicit choice (requestGuideRecheck). An LLM infrastructure
+// failure returns loudly: the op re-runs on the next report rather than
+// degrading to a silent pass.
 func (w *WorkflowSession) runWorkflowWritingGuide(ctx *engine.Context) error {
 	// A nil value is a cleared run (requestGuideRecheck), not a recorded one.
 	if v, ok := ctx.Store.Get("guideFindings"); ok && v != nil {
@@ -389,7 +398,7 @@ func (w *WorkflowSession) runWorkflowWritingGuide(ctx *engine.Context) error {
 	if err := ctx.Store.WriteEngine("guideFindings", guideFindings); err != nil {
 		return fmt.Errorf("writingGuide: %w", err)
 	}
-	return nil
+	return writeGuideBase(ctx.Store)
 }
 
 func (w *WorkflowSession) draftFromStore(store *engine.Store) EntryDraft {
@@ -403,6 +412,9 @@ func (w *WorkflowSession) draftFromStore(store *engine.Store) EntryDraft {
 	draft.Body, _ = workflowStoreString(store, "body")
 	draft.Confidence, _ = workflowStoreString(store, "confidence")
 	draft.Intent, _ = workflowStoreString(store, "intent")
+	skip, _ := store.Get("skipGrounding")
+	draft.SkipGrounding, _ = skip.(bool)
+	draft.VerificationSkip = deepSkipCause(store)
 	if index, ok := workflowStoreDocument(store, "index"); ok {
 		title, _ := index["title"].(string)
 		topic, _ := index["topic"].(string)
@@ -466,6 +478,20 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	if override, ok := ctx.Store.Get("preflightOverride"); ok {
 		draft.SkipPreflight, _ = override.(bool)
 	}
+	// The write step's late-entries check, once more on a fresh graph right
+	// before the write (20261109-004506-d-cpt-udz, 7.2): an entry landing in
+	// between leaves the capture unwritten, and publish routes to lateEntries.
+	late, err := w.lateEntries(ctx, func() (*model.Graph, error) {
+		w.graphs.Invalidate()
+		return w.graphs.CurrentFor(ctx.Store)
+	})
+	if err != nil {
+		return err
+	}
+	if len(late) > 0 {
+		slogutils.FromContext(w.ctx).Info("entries landed before the capture write", "entries", late)
+		return nil
+	}
 	result, err := w.app.CreateEntry(w.ctx, w.identity, target.Project, w.binding, draft)
 	if err != nil {
 		return fmt.Errorf("newEntry: %w", withTargetRemedy(ctx.Intent, err))
@@ -473,6 +499,12 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	w.binding = result.Binding
 	if err := ctx.Store.WriteEngine("entryId", result.EntryID); err != nil {
 		return err
+	}
+	if err := w.storeCaptureRecheck(ctx, target.Project, result.EntryID); err != nil {
+		return fmt.Errorf("newEntry: entry %s is written: %w", result.EntryID, err)
+	}
+	if err := w.storeCaptureRelevance(ctx, target.Project, result.EntryID); err != nil {
+		return fmt.Errorf("newEntry: entry %s is written: %w", result.EntryID, err)
 	}
 	w.session.LogRead("newEntry", []string{result.EntryID}, nil)
 	return w.session.SinkErr()

@@ -53,6 +53,20 @@ type Instance struct {
 	// answered option declared one; empty means the seed applies to whatever is
 	// dispatched next (a generic junction like engage's move).
 	dispatchProcedure string
+	// dispatchReceive and dispatchSend are the delegate mappings the same
+	// answered option declared, recorded on the fork its next task starts.
+	dispatchReceive map[string]string
+	dispatchSend    map[string]string
+	// forks are the delegate child sessions this instance dispatched.
+	forks []*Fork
+	// unconsumed marks the fields holding a delivery no await gate has taken
+	// yet.
+	unconsumed map[string]bool
+	// sent counts the deliveries this instance sent, interim the delegate's
+	// accepted interim ones, which the round cap bounds.
+	sent     int
+	interim  int
+	exchange []ExchangeItem
 	// draftServed holds, per step, the serveDelta snapshot last served to this
 	// instance — the engine-owned base later serves diff against. In-memory
 	// only, deliberately: a process restart or resume forgets it, so those
@@ -61,7 +75,15 @@ type Instance struct {
 	// retiredStep is the logged position when the log placed the instance on
 	// a step its procedure no longer has (see ReplaySession).
 	retiredStep string
+	// reading folds the grounding reads credited to this instance (D28 of
+	// 20261109-004506-d-cpt-udz); replay restores it from the read events.
+	reading model.Reading
+	// hookBase is keyed by step id.
+	hookBase map[string]hookBase
 }
+
+// Reading returns the instance's credited grounding reads.
+func (i *Instance) Reading() *model.Reading { return &i.reading }
 
 // loggedStep is the instance's position as its log records it.
 func (i *Instance) loggedStep() string {
@@ -218,7 +240,7 @@ func (s *Session) funcContext(inst *Instance) (*Context, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving current graph: %w", err)
 	}
-	return &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads}, nil
+	return &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads, Reading: &inst.reading}, nil
 }
 
 // cascade advances gate steps until something stops them — a failing
@@ -233,6 +255,9 @@ func (s *Session) cascade(inst *Instance) error {
 		}
 		if step.Chooser != ChooserGate {
 			return nil // pending chooser — agent or user judgment
+		}
+		if err := s.restoreHookFindings(inst, step); err != nil {
+			return err
 		}
 
 		if step.Guard != nil {
@@ -254,6 +279,13 @@ func (s *Session) cascade(inst *Instance) error {
 				return nil // stalled: guard holds the gate
 			}
 		}
+		if s.roundCapReached(inst, step) {
+			s.endInstance(inst, fmt.Sprintf("round cap %d reached", inst.Spec.Rounds))
+			return s.checkSink()
+		}
+		if len(step.Await) > 0 && inst.awaitHeld(step) {
+			return nil // stalled: the linked session has not delivered yet
+		}
 
 		if step.Op != "" && !inst.opDone {
 			if err := s.runCommand(inst, step.Op, ""); err != nil {
@@ -262,32 +294,56 @@ func (s *Session) cascade(inst *Instance) error {
 			inst.opDone = true
 		}
 
-		fired := false
-		for _, t := range step.Transitions {
-			if t.Otherwise {
-				if err := s.transitionTo(inst, t.To, false); err != nil {
+		target, err := s.selectTransition(inst, step)
+		if err != nil || target == "" {
+			return err // stalled: the serve names what's missing
+		}
+		joined, err := s.leave(inst, target)
+		if err != nil {
+			return err
+		}
+		if joined {
+			// Joined findings run the gate again: a guard reading the
+			// channel holds the step, a transition reading it redirects.
+			if step.Guard != nil {
+				ok, _, err := s.evalGuard(inst, step.Guard)
+				if err != nil || !ok {
 					return err
 				}
-				fired = true
-				break
 			}
-			ok, _, err := s.evalGuard(inst, t.When)
-			if err != nil {
+			if target, err = s.selectTransition(inst, step); err != nil || target == "" {
 				return err
 			}
-			if ok {
-				if err := s.transitionTo(inst, t.To, false); err != nil {
-					return err
-				}
-				fired = true
-				break
+		}
+		if len(step.Deliver) > 0 {
+			proceed, err := s.deliver(inst, step, target)
+			if err != nil || !proceed {
+				return err
 			}
 		}
-		if !fired {
-			return nil // stalled: the serve names what's missing
+		if err := s.moveTo(inst, target, false, step.Await); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// selectTransition returns the target of the gate's first transition that
+// fires, empty when none does.
+func (s *Session) selectTransition(inst *Instance, step *Step) (string, error) {
+	for _, t := range step.Transitions {
+		if t.Otherwise {
+			return t.To, nil
+		}
+		ok, _, err := s.evalGuard(inst, t.When)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return t.To, nil
+		}
+	}
+	return "", nil
 }
 
 // reopenStalePlayback implements edit-after-confirm: if the failing
@@ -341,7 +397,14 @@ func (s *Session) runCommand(inst *Instance, name, to string) error {
 	if !ok {
 		return fmt.Errorf("instance %s: %q is not a registered command", inst.ID, name)
 	}
-	ctx := &Context{Instance: inst.ID, Store: inst.Store, Step: inst.Step, Reads: s.reads}
+	ctx := &Context{Instance: inst.ID, Store: inst.Store, Step: inst.Step, Reads: s.reads, Reading: &inst.reading}
+	if cmd.Rounds {
+		step := inst.currentStep()
+		ctx.Round = func(fields map[string]any) error {
+			_, err := s.fireStep(inst, step, ctx.Store, HookRound, "", fields)
+			return err
+		}
+	}
 	if cmd.Prepare != nil {
 		if s.intent == nil || s.intentDone {
 			values, err := cmd.Prepare(ctx)
@@ -402,6 +465,14 @@ func (s *Session) runCommand(inst *Instance, name, to string) error {
 	if cmd.MutatesGraph {
 		s.engine.Graphs.Invalidate()
 	}
+	if cmd.Announces != "" {
+		// The outcome is committed: a failing hook must not re-run the op.
+		if step := inst.currentStep(); step != nil && step.Op == name {
+			inst.opDone = true
+		}
+		_, err := s.fire(HookPoint{Event: cmd.Announces, Procedure: inst.Spec.Canonical, Instance: inst.ID, Step: inst.Step, Store: inst.Store})
+		return err
+	}
 	return nil
 }
 
@@ -412,15 +483,33 @@ func (s *Session) transitionTo(inst *Instance, to string, reopen bool) error {
 	if err := s.checkSink(); err != nil {
 		return err
 	}
+	if _, err := s.leave(inst, to); err != nil {
+		return err
+	}
+	return s.moveTo(inst, to, reopen, nil)
+}
+
+// moveTo logs the transition, moves the instance, and raises the target
+// step's entered event; the step's left event was raised before. Leaving an
+// await gate passes the consumed deliveries, which the transition event
+// records for replay.
+func (s *Session) moveTo(inst *Instance, to string, reopen bool, consumed []string) error {
+	if err := s.checkSink(); err != nil {
+		return err
+	}
 	from := inst.Step
 	data := map[string]any{"from": from, "to": to}
 	if reopen {
 		data["reopen"] = true
 	}
+	if len(consumed) > 0 {
+		data["consumed"] = consumed
+	}
 	s.appendEvent(inst.ID, EventTransition, data)
 	if err := s.checkSink(); err != nil {
 		return err
 	}
+	inst.consume(consumed)
 
 	switch to {
 	case EndCompleted:
@@ -442,6 +531,12 @@ func (s *Session) transitionTo(inst *Instance, to string, reopen bool) error {
 		inst.Step = to
 		inst.opDone = false
 		inst.retiredStep = ""
+		if withinStage(inst.Spec, inst.Spec.StepByID[from], to) {
+			return nil
+		}
+		if _, err := s.fireStep(inst, inst.currentStep(), inst.Store, HookEntered, "", nil); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -533,6 +628,10 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 	if err != nil {
 		return nil, err
 	}
+	if lane, exchangeCuts := s.exchangeLane(inst); lane != nil {
+		lanes = append(lanes, *lane)
+		cuts = append(cuts, exchangeCuts...)
+	}
 	if len(step.ServeDelta) > 0 {
 		cur := draftSnapshot(inst, step.ServeDelta)
 		var prev map[string]string
@@ -584,7 +683,11 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 				sv.Failing = failing
 			}
 		}
-		if len(sv.Failing) == 0 && len(sv.Missing) == 0 && len(step.Transitions) > 0 {
+		awaiting := len(step.Await) > 0 && inst.awaitHeld(step)
+		if awaiting {
+			sv.Failing = append(sv.Failing, FailedPredicate{Name: "await", Message: s.awaitDiagnostic(inst, step)})
+		}
+		if !awaiting && len(sv.Failing) == 0 && len(sv.Missing) == 0 && len(step.Transitions) > 0 {
 			// The gate didn't cascade, its guard holds, and no collect field
 			// is missing — the transitions' own predicates hold it. Name
 			// those.

@@ -54,6 +54,7 @@ var presenceFields = map[string]string{
 	"hasEntryKind":   "entryKind",
 	"hasLayer":       "layer",
 	"hasWidenReport": "widenReport",
+	"hasEntryId":     "entryId",
 	// Identity-kind capture fields (bootstrap's actor/role captures): canonical
 	// on an actor, the bound actor canonical on a role. Presence only —
 	// resolution is roleActorResolves' job, shape is aliasesWellFormed's.
@@ -397,6 +398,16 @@ func registerBuiltinPredicates(r *Registry) {
 		},
 		Fn:          noGuideFindings,
 		FailMessage: "the writing guide returned findings",
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
+			Name: "noHighStepFindings",
+			Doc:  "The current step's findings channel holds no high-severity finding.",
+		},
+		Fn:          noHighStepFindings,
+		FailMessage: "the step's findings channel holds high findings",
+		FailDetail:  highStepFindingsDetail,
 	})
 
 	mustRegisterPredicate(r, Predicate{

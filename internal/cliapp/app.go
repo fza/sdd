@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -539,8 +540,14 @@ func New(options Options) *cli.Command {
 			indexCmd(),
 			cacheCmd(),
 			searchCmd(),
+			gatherCmd(),
+			dismissCmd(),
+			groundingCmd(),
 			serveCmd(options.LaunchCachePrune),
 			sessionsCmd(),
+			eventsCmd(),
+			relevanceCmd(),
+			recheckCmd(),
 			syncCmd(),
 			mergeEntryCmd(),
 			mergeConfigCmd(),
@@ -704,7 +711,7 @@ func showCmd() *cli.Command {
 		Name:      "show",
 		Usage:     "Show entry with upstream and downstream summary chains",
 		ArgsUsage: "<id> [id2 id3 ...]",
-		Flags: []cli.Flag{
+		Flags: append(sessionFlags(),
 			&cli.IntFlag{
 				Name:  "up",
 				Value: query.DefaultUpDepth,
@@ -723,11 +730,15 @@ func showCmd() *cli.Command {
 				Name:  "format",
 				Usage: "Output format: auto (default — styled on a TTY, plain markdown otherwise) or text",
 			},
-		},
+		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			ids := cmd.Args().Slice()
 			if len(ids) == 0 {
 				return fmt.Errorf("usage: sdd show <id> [id2 id3 ...]")
+			}
+			session, err := joinSession(ctx, cmd, "")
+			if err != nil {
+				return err
 			}
 
 			// Cross-repo IDs read through the dependency caches; refresh them first.
@@ -764,12 +775,18 @@ func showCmd() *cli.Command {
 			// non-terminal stdout all take the plain markdown renderer; an
 			// interactive terminal gets the styled view (d-cpt-5f4 / d-cpt-mvb).
 			if cmd.String("format") == "text" || os.Getenv("NO_COLOR") != "" || !cliout.IsTerminalWriter(cmd.Writer) {
-				return presenters.RenderShow(cmd.Writer, entries, opts)
+				err = presenters.RenderShow(cmd.Writer, entries, opts)
+			} else {
+				if w, _, err := term.GetSize(cmd.Writer.(interface{ Fd() uintptr }).Fd()); err == nil {
+					opts.Width = w
+				}
+				err = presenters.RenderShowStyled(cmd.Writer, entries, opts)
 			}
-			if w, _, err := term.GetSize(cmd.Writer.(interface{ Fd() uintptr }).Fd()); err == nil {
-				opts.Width = w
+			if err != nil {
+				return err
 			}
-			return presenters.RenderShowStyled(cmd.Writer, entries, opts)
+			full, summary := result.ServedIDs()
+			return session.logRead(ctx, "show", full, summary)
 		},
 	}
 }
@@ -783,7 +800,11 @@ func newCmd() *cli.Command {
 		// the root toggle does not propagate to subcommands in v3, and our
 		// JSON-bearing flags (--involvement, --topic) live here.
 		DisableSliceFlagSeparator: true,
-		Flags: []cli.Flag{
+		Flags: append(sessionFlags(),
+			&cli.StringFlag{
+				Name:  "widen-report",
+				Usage: "With --session: the searches run and entries inspected before drafting; sdd gather --session seeds the capture's own reads",
+			},
 			&cli.StringSliceFlag{
 				Name:  "refs",
 				Usage: "Reference (repeatable) — JSON object {\"id\":\"<id>\",\"kind\":\"<kind>\",\"desc\":\"<optional>\"}. Kind is one of: grounded-in, builds-on, refines, addresses, surfaces, surfaced-by, depends-on, required-by, related.",
@@ -866,6 +887,10 @@ func newCmd() *cli.Command {
 				Usage: "Skip pre-flight validation (entry is annotated with preflight: skipped)",
 			},
 			&cli.BoolFlag{
+				Name:  "skip-grounding",
+				Usage: "Record a bypass of the grounding gate under grounding.enforce (entry is annotated with grounding: skipped and written with confidence low)",
+			},
+			&cli.BoolFlag{
 				Name:  "preflight-verified",
 				Usage: "Skip pre-flight validation, annotating the entry preflight: dry-run-verified — for a capture whose findings were already settled via --dry-run",
 			},
@@ -905,7 +930,7 @@ func newCmd() *cli.Command {
 				Usage: "Timeout for the extraction call a pre-flight response falls back to (e.g. 60s)",
 				Value: model.DefaultLLMExtractTimeout,
 			},
-		},
+		),
 		Action: withWriteGate(withContributionGuard(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = slogutils.WithLogger(ctx, slogutils.FromContext(ctx).With("command", "new"))
 
@@ -1038,6 +1063,7 @@ func newCmd() *cli.Command {
 				Involvement:       involvement,
 				Attachments:       atts,
 				SkipPreflight:     cmd.Bool("skip-preflight"),
+				SkipGrounding:     cmd.Bool("skip-grounding"),
 				PreflightVerified: cmd.Bool("preflight-verified"),
 				Summary:           strings.TrimSpace(cmd.String("summary")),
 				Title:             strings.TrimSpace(cmd.String("title")),
@@ -1053,12 +1079,19 @@ func newCmd() *cli.Command {
 					}
 				},
 			}
+			if sessionRequested(cmd) {
+				return newInSession(ctx, cmd, ncmd)
+			}
 
 			runner, err := newRunner(cmd, "preflight-timeout")
 			if err != nil {
 				return err
 			}
 			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			err = refuseUngroundedNew(cfg, ncmd)
 			if err != nil {
 				return err
 			}
@@ -1897,6 +1930,14 @@ func initCmd() *cli.Command {
 				Name:  "dialogue-mode",
 				Usage: "Your dialogue mode, guided or autonomous, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
 			},
+			&cli.StringFlag{
+				Name:  "strictness",
+				Usage: "How strictly drafts are checked against the graph: off, grounding, light or deep, recorded as grounding.enforce and verifier.mode in the committed .sdd/config.yaml (prompted interactively while unset)",
+			},
+			&cli.StringFlag{
+				Name:  "verifier-launch",
+				Usage: "How the deep verifier runs on this machine: subagent, claude, codex or custom_driver, recorded as verifier.launch in the project's .sdd/config.local.yaml (prompted interactively under verifier.mode deep while no layer sets it)",
+			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			// `--bump` cannot be honoured from a dev build — fail before
@@ -2013,9 +2054,11 @@ func initCmd() *cli.Command {
 			}
 			recordedParticipant := ""
 			var recordedDialogueMode model.DialogueMode
+			strictnessRecorded := false
 			if existingMerged != nil {
 				recordedParticipant = existingMerged.Participant
 				recordedDialogueMode = existingMerged.Dialogue.Mode
+				strictnessRecorded = existingMerged.Verifier.Mode != "" || existingMerged.Grounding.Enforce != nil
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
 			participantFlag := strings.TrimSpace(cmd.String("participant"))
@@ -2153,6 +2196,47 @@ func initCmd() *cli.Command {
 				}
 			}
 
+			var strictness model.Strictness
+			strictnessFlag := strings.TrimSpace(cmd.String("strictness"))
+			if strictnessFlag != "" {
+				strictness, err = model.ParseStrictness(strictnessFlag)
+				if err != nil {
+					return fmt.Errorf("invalid --strictness: %w", err)
+				}
+			} else if !pointer && !strictnessRecorded && cliout.IsTerminalReader(cmd.Reader) {
+				strictness, err = promptStrictness(cmd)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
+			}
+
+			launchAgents := targets
+			var recorded model.VerifierConfig
+			if existingMerged != nil {
+				recorded = existingMerged.Verifier
+				if len(launchAgents) == 0 {
+					launchAgents = existingMerged.SupportedAgents
+				}
+			}
+			if len(launchAgents) == 0 {
+				launchAgents = model.DefaultSupportedAgents
+			}
+			launchChoices := model.VerifierLaunchChoices(launchAgents, recorded.Driver)
+			resolvedMode := recorded.Mode
+			if strictness != "" {
+				_, resolvedMode = strictness.Settings()
+			}
+			verifierLaunch := model.VerifierLaunch(strings.TrimSpace(cmd.String("verifier-launch")))
+			if verifierLaunch != "" && !slices.Contains(launchChoices, verifierLaunch) {
+				return fmt.Errorf("invalid --verifier-launch %q: this project offers %s (claude and codex only where supported_agents names them, custom_driver only once a layer sets verifier.driver.command)", verifierLaunch, joinLaunches(launchChoices))
+			}
+			if verifierLaunch == "" && model.VerifierLaunchAsked(resolvedMode, recorded) && cliout.IsTerminalReader(cmd.Reader) {
+				verifierLaunch, err = promptVerifierLaunch(cmd, launchChoices)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
+			}
+
 			stableRepoRoot, err := git.StableRepoRoot(repoRoot)
 			if err != nil {
 				return err
@@ -2165,6 +2249,8 @@ func initCmd() *cli.Command {
 				GraphRepo:       graphRepo,
 				SetUpProject:    setUpProject,
 				DialogueMode:    dialogueMode,
+				Strictness:      strictness,
+				VerifierLaunch:  verifierLaunch,
 				DefaultBranch:   defaultBranch,
 				Participant:     participant,
 				LocalConfigPath: localConfigOverride,
@@ -2733,4 +2819,49 @@ func refKindsForUsage() string {
 		parts[i] = string(k)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// promptStrictness asks how strictly drafts are checked against the graph;
+// the one answer sets grounding enforcement and the verifier mode together.
+func promptStrictness(cmd *cli.Command) (model.Strictness, error) {
+	return tui.RunSelect(tui.SelectPrompt[model.Strictness]{
+		Reader: cmd.Reader,
+		Writer: cmd.Writer,
+		Header: "How strictly should drafts be checked against the graph? (↑/↓ to navigate, enter to confirm)",
+		Options: []tui.SelectOption[model.Strictness]{
+			{Label: string(model.StrictnessOff), Hint: "pre-flight over the draft's refs, as before", Value: model.StrictnessOff},
+			{Label: string(model.StrictnessGrounding), Hint: "the agent reads the graph before every capture", Value: model.StrictnessGrounding},
+			{Label: string(model.StrictnessLight), Hint: "grounding, and pre-flight checks the draft against that reading", Value: model.StrictnessLight},
+			{Label: string(model.StrictnessDeep), Hint: "light, then a tool-using verifier agent exchanges findings with the drafter", Value: model.StrictnessDeep},
+		},
+	})
+}
+
+// promptVerifierLaunch asks how the deep verifier runs on this machine,
+// offering choices with subagent first as the default.
+func promptVerifierLaunch(cmd *cli.Command, choices []model.VerifierLaunch) (model.VerifierLaunch, error) {
+	hints := map[model.VerifierLaunch]string{
+		model.VerifierLaunchSubagent:     "your agent's harness runs a fresh-context subagent you can watch",
+		model.VerifierLaunchClaude:       "sdd runs a headless claude, read-only, hidden from you",
+		model.VerifierLaunchCodex:        "sdd runs a headless codex in a read-only sandbox, hidden from you",
+		model.VerifierLaunchCustomDriver: "sdd runs the configured verifier.driver each round",
+	}
+	options := make([]tui.SelectOption[model.VerifierLaunch], 0, len(choices))
+	for _, choice := range choices {
+		options = append(options, tui.SelectOption[model.VerifierLaunch]{Label: string(choice), Hint: hints[choice], Value: choice})
+	}
+	return tui.RunSelect(tui.SelectPrompt[model.VerifierLaunch]{
+		Reader:  cmd.Reader,
+		Writer:  cmd.Writer,
+		Header:  "How should the deep verifier run? (↑/↓ to navigate, enter to confirm)",
+		Options: options,
+	})
+}
+
+func joinLaunches(launches []model.VerifierLaunch) string {
+	names := make([]string, len(launches))
+	for i, launch := range launches {
+		names[i] = string(launch)
+	}
+	return strings.Join(names, ", ")
 }

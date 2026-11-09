@@ -63,6 +63,10 @@ type ViewResult struct {
 	// filter — so an empty participant() view can say what names exist rather
 	// than leaving an exact-match miss indistinguishable from no data.
 	KnownParticipants []string
+	// FullIDs and SummaryIDs name the local entries the sections served:
+	// bodies in full, entry rows as summary lines.
+	FullIDs    []string
+	SummaryIDs []string
 }
 
 type ShowRequest struct {

@@ -11,7 +11,7 @@ import (
 // MCP server and the CLI print it, for assertions on the text a reader sees.
 func ShowText(t testing.TB, result application.ShowResult) string {
 	t.Helper()
-	text, err := presenters.ShowText(result.Items)
+	text, err := presenters.ShowText(result.Items, nil)
 	if err != nil {
 		t.Fatalf("rendering show text: %v", err)
 	}
@@ -19,9 +19,9 @@ func ShowText(t testing.TB, result application.ShowResult) string {
 }
 
 func SearchText(result application.SearchResult) string {
-	return presenters.SearchText(result.Hits, result.Notices)
+	return presenters.SearchText(result.Hits, result.Notices, nil)
 }
 
 func ViewText(result application.ViewResult) string {
-	return presenters.ViewText(result.ViewSections)
+	return presenters.ViewText(result.ViewSections, nil)
 }

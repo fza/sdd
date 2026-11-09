@@ -101,7 +101,7 @@ func TestShowResult_ShownEntriesChainItems(t *testing.T) {
 			want: types.ShownChainItem{
 				ID: gap.ID, Title: "Slow reindex", Kind: "gap", Status: "open", Summary: "Reindexing is slow. It blocks.",
 				Relation: "refs", RefKind: "addresses", Desc: "what it answers", Depth: 1,
-				Relations: []string{"refs", "closes"}, KindLabel: "gap", FirstSentence: "Reindexing is slow.",
+				Relations: []string{"refs", "closes"}, KindLabel: "gap", FirstSentence: "Reindexing is slow.", Brief: "Slow reindex",
 				DerivedStatus: types.DerivedStatus{Kind: "open"},
 			},
 		},
@@ -110,7 +110,7 @@ func TestShowResult_ShownEntriesChainItems(t *testing.T) {
 			item: model.ShowTreeItem{Entry: kindlessDecision, Depth: 2, Relations: []string{"supersedes"}},
 			want: types.ShownChainItem{
 				ID: kindlessDecision.ID, Relation: "supersedes", Depth: 2, Relations: []string{"supersedes"},
-				KindLabel: "directive", FirstSentence: "Legacy decision.",
+				KindLabel: "directive", FirstSentence: "Legacy decision.", Brief: "Legacy decision.",
 			},
 		},
 		{
@@ -118,7 +118,7 @@ func TestShowResult_ShownEntriesChainItems(t *testing.T) {
 			item: model.ShowTreeItem{Entry: kindlessSignal, Depth: 1, Relations: []string{"refd-by"}},
 			want: types.ShownChainItem{
 				ID: kindlessSignal.ID, Relation: "refd-by", Depth: 1, Relations: []string{"refd-by"},
-				KindLabel: "signal", FirstSentence: "Legacy signal.",
+				KindLabel: "signal", FirstSentence: "Legacy signal.", Brief: "Legacy signal.",
 			},
 		},
 		{
@@ -141,7 +141,7 @@ func TestShowResult_ShownEntriesChainItems(t *testing.T) {
 			item: model.ShowTreeItem{Entry: gap, Depth: 1, ShownAbove: true},
 			want: types.ShownChainItem{
 				ID: gap.ID, Title: "Slow reindex", Kind: "gap", Summary: "Reindexing is slow. It blocks.", Depth: 1,
-				SeenInResponse: true, ShownAbove: true, KindLabel: "gap", FirstSentence: "Reindexing is slow.",
+				SeenInResponse: true, ShownAbove: true, KindLabel: "gap", FirstSentence: "Reindexing is slow.", Brief: "Slow reindex",
 			},
 		},
 		{
@@ -155,7 +155,7 @@ func TestShowResult_ShownEntriesChainItems(t *testing.T) {
 			want: types.ShownChainItem{
 				ID: kindlessDecision.ID, Status: "superseded-by 20261101-140000-d-tac-hed", Depth: 3, SeenInResponse: true, ShownBelow: true,
 				Truncated: []string{"20261101-090000-s-tac-one", "20261101-080000-s-tac-two"}, TruncatedReason: "fan-out cap",
-				KindLabel: "directive", FirstSentence: "Legacy decision.",
+				KindLabel: "directive", FirstSentence: "Legacy decision.", Brief: "Legacy decision.",
 				DerivedStatus: types.DerivedStatus{
 					Kind: "superseded-by", By: "20261101-140000-d-tac-hed",
 					SupersedePath: []string{kindlessDecision.ID, "20261101-140000-d-tac-hed"},
@@ -217,7 +217,7 @@ func TestSearchResult_Hits(t *testing.T) {
 			want: []types.SearchHit{{
 				ID: gap.ID, Title: "Slow reindex", Type: "signal", Kind: "gap", Layer: "tactical", Status: "closed-by " + done.ID, Score: 0.9,
 				Confidence: "high", Participants: []string{"Christopher"}, Topics: []string{"search"},
-				DerivedStatus: types.DerivedStatus{Kind: "closed-by", By: done.ID}, BodyExcerpt: "Reindexing a large graph is slow.",
+				DerivedStatus: types.DerivedStatus{Kind: "closed-by", By: done.ID}, BodyExcerpt: "Reindexing a large graph is slow.", Brief: "Slow reindex",
 				Citations: []types.SearchCitation{
 					{Snippet: "slow", IsSummary: true, Score: 0.9},
 					{Snippet: "notes", Breadcrumb: []string{"Approach", "Storage"}, AttachmentPath: "notes.md", IsAttachment: true, Score: 0.5},

@@ -166,7 +166,7 @@ func renderBriefEntryLine(e *model.Entry, g *model.Graph) string {
 func renderAsList(g *model.Graph, flat model.FlatList, brief bool) string {
 	result := &query.ViewResult{Graph: g, Sections: []query.SectionResult{{Render: "as-list", Data: flat, Brief: brief}}}
 	var buf bytes.Buffer
-	presenters.RenderView(&buf, result.ViewSections(""))
+	presenters.RenderView(&buf, result.ViewSections(""), nil)
 	return buf.String()
 }
 

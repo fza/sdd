@@ -46,6 +46,12 @@ type Context struct {
 	// was served at (refsInspected evaluates it). Nil means nothing was
 	// served; reading a nil map is safe.
 	Reads map[string]ReadDepth
+	// Reading is the running instance's credited grounding reads; nil only
+	// in contexts built outside an instance.
+	Reading *model.Reading
+	// Round raises the step's round event with fields added to its payload;
+	// set only for a command declaring Rounds.
+	Round func(fields map[string]any) error
 }
 
 // PredicateFunc is a pure check over the store (and graph): no side effects,
@@ -117,6 +123,12 @@ type Command struct {
 	// and see the write — post-write freshness driven by the command's own
 	// declaration, replacing the shell's hand-maintained refresh calls.
 	MutatesGraph bool
+	// Announces names the hook event raised once the command's outcome is
+	// committed, such as `entry.written` after a publish.
+	Announces string
+	// Rounds lets the command raise `<procedure>.<step>.round` through
+	// Context.Round once per round of its work.
+	Rounds bool
 }
 
 // Registry is the closed set of Go functions a procedure spec may name. All

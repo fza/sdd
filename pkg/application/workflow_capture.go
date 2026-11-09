@@ -13,7 +13,7 @@ import (
 	"github.com/networkteam/sdd/internal/query"
 )
 
-var captureDraftFields = []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch"}
+var captureDraftFields = []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch", "skipGrounding"}
 
 func captureAttachments(draft *EntryDraft, staged map[string]string) error {
 	for _, filename := range draft.AttachmentHandles {
@@ -36,7 +36,7 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 	if err := captureAttachments(&draft, w.staged); err != nil {
 		return err
 	}
-	result, err := w.app.PreflightEntry(w.ctx, w.identity, target.Project, w.binding, draft)
+	result, err := w.app.preflightEntry(w.ctx, w.identity, target.Project, draft, instanceReading(ctx))
 	err = w.withSessionBindingTargetError(err, fromBinding)
 	if target.Branch == "" {
 		err = withBaseTargetError("", err)
@@ -51,9 +51,17 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 	}
 	findings := make([]query.Finding, 0, len(result.Findings))
 	for _, finding := range result.Findings {
-		findings = append(findings, query.Finding{Severity: query.Severity(finding.Severity), Category: finding.Category, Observation: finding.Observation})
+		findings = append(findings, query.Finding{Severity: query.Severity(finding.Severity), Category: finding.Category, Observation: finding.Observation, Basis: finding.Basis})
 	}
 	if err := ctx.Store.WriteEngine("findings", findings); err != nil {
+		return err
+	}
+	err = ctx.Store.WriteEngine("preflightCalls", result.Calls)
+	if err != nil {
+		return err
+	}
+	err = ctx.Store.WriteEngine("preflightExcerpted", result.Excerpted)
+	if err != nil {
 		return err
 	}
 	if err := ctx.Store.WriteEngine("preflightOverride", nil); err != nil {
@@ -65,6 +73,13 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 func (w *WorkflowSession) prepareWorkflowNewEntry(ctx *engine.Context) (map[string]string, error) {
 	if err := w.verifyCapturePreflight(ctx); err != nil {
 		return nil, err
+	}
+	current, err := w.deepVerdictCurrent(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !current {
+		return nil, fmt.Errorf("capture requires a current deep verdict or skip for its current input")
 	}
 	branch, _ := workflowStoreString(ctx.Store, "resolvedCaptureBranch")
 	if branch == "" {
@@ -243,4 +258,25 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 		return false, false, nil
 	}
 	return current, accepted, nil
+}
+
+// instanceReading is the capture's credited grounding reading as the light
+// verifier judges it: entries served in full, entries listed in the order
+// the reads listed them, and the drafter's verdicts.
+func instanceReading(ctx *engine.Context) *captureReading {
+	reading := &captureReading{setAside: storeVerdicts(ctx.Store)}
+	if ctx.Reading == nil {
+		return reading
+	}
+	reading.full = ctx.Reading.Full()
+	seen := map[string]bool{}
+	for _, read := range ctx.Reading.Reads {
+		for _, id := range read.IDs {
+			if id != "" && !seen[id] {
+				seen[id] = true
+				reading.listed = append(reading.listed, id)
+			}
+		}
+	}
+	return reading
 }

@@ -47,6 +47,48 @@
     "name": "bind_branch"
   },
   {
+    "description": "Ground a draft before its capture, in one call, within the session named by session (required): on a small graph every live entry's brief; above it a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry already served in full prints as a pointer with its brief.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "draft": {
+          "description": "without instance: the draft text the searches are written from; credits nothing",
+          "type": "string"
+        },
+        "ids": {
+          "description": "entries to open in full; also the way back to an entry a pointer names",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "instance": {
+          "description": "the running capture this reading grounds: its reported draft writes the searches, and only reads made through gather inside it count for its grounding. Report the draft at assemble first",
+          "type": "string"
+        },
+        "session": {
+          "description": "session handle this connection is attached to (from start_session or resume_session); required",
+          "type": "string"
+        },
+        "topics": {
+          "description": "without instance: the draft's topic labels, each listed in full",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "gather"
+  },
+  {
     "description": "Session framing header for the session named by session (required): project, local participant, configured language, and available search modes.",
     "inputSchema": {
       "additionalProperties": false,
@@ -84,7 +126,7 @@
         },
         "report": {
           "additionalProperties": true,
-          "description": "state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}",
+          "description": "state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}. Omit report, retry_ref and cancel_ref together to pick up a delivery a waiting step was served as awaiting",
           "type": "object"
         },
         "retry_ref": {

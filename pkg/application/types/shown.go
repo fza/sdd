@@ -33,16 +33,24 @@ type ShownEntry struct {
 	Actor        string
 	// Topics is the effective topic set: the entry's own topics merged with
 	// the topic annotations naming it.
-	Topics        []string
-	Index         *ShownFactIndex
-	Refs          []ShownRef
-	Closes        []string
-	Supersedes    []string
-	Attachments   []string
-	Preflight     string
+	Topics      []string
+	Index       *ShownFactIndex
+	Refs        []ShownRef
+	Closes      []string
+	Supersedes  []string
+	Attachments []string
+	Preflight   string
+	// Grounding and Verification record a skipped grounding reading and a
+	// skipped deep verification.
+	Grounding     string
+	Verification  string
 	DerivedStatus DerivedStatus
 	Time          time.Time
 	Procedure     *ShownProcedureSpec
+	// Brief is the pointer text the no-repeat rule prints for an entry the
+	// consumer already holds in full (20261109-004506-d-cpt-udz, R14); empty
+	// for an entry of a connected repo's graph.
+	Brief string
 }
 
 // ShownChainItem is one entry in a show chain. Relation is the edge
@@ -79,6 +87,9 @@ type ShownChainItem struct {
 	// UnresolvedRepo names the connected repo of a cross-repo item whose
 	// graph is not available locally.
 	UnresolvedRepo string
+	// Brief is the no-repeat pointer text, as ShownEntry.Brief; empty for an
+	// unresolved or cross-repo item.
+	Brief string
 }
 
 // SearchHit is one search match as data.
@@ -100,6 +111,9 @@ type SearchHit struct {
 	// BodyExcerpt is the body's first line, cut at a sentence boundary near
 	// 200 characters: what a listing shows for an entry with no summary.
 	BodyExcerpt string
+	// Brief is the no-repeat pointer text, as ShownEntry.Brief; empty for a
+	// hit from a connected repo's graph.
+	Brief string
 	// Citations are the matching chunks, best first.
 	Citations []SearchCitation
 }

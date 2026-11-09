@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -59,6 +60,11 @@ func (c CLI) Commit(message string, paths ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), detachedTimeout)
 	defer cancel()
 
+	segments, err := c.PendingSegments(ctx)
+	if err != nil {
+		return err
+	}
+	paths = slices.Concat(paths, segments)
 	addArgs := c.at(append([]string{"add", "--all", "--"}, paths...)...)
 	if out, err := runDetachedPastIndexLock(ctx, c.localEnv(ctx), addArgs...); err != nil {
 		return fmt.Errorf("git add: %s (%w)", out, err)
@@ -284,7 +290,17 @@ func (r RemovalCommitter) Commit(message string, paths ...string) error {
 			}
 		}
 	}
-	commit := repo.command(ctx, append([]string{"commit", "-m", message, "--"}, paths...)...)
+	segments, err := repo.PendingSegments(ctx)
+	if err != nil {
+		return err
+	}
+	if len(segments) > 0 {
+		out, err := repo.command(ctx, append([]string{"add", "--all", "--"}, segments...)...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("git add shared segments: %s (%w)", out, err)
+		}
+	}
+	commit := repo.command(ctx, append(append([]string{"commit", "-m", message, "--"}, paths...), segments...)...)
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}

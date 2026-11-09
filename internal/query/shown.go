@@ -44,7 +44,11 @@ func shownEntry(group ShowGroup) (types.ShownEntry, error) {
 		ActorKind: string(entry.ActorKind), Class: string(entry.Class), Actor: entry.Actor,
 		Topics: topicLabels(group.PrimaryTopics), Refs: shownRefs(entry.Refs),
 		Closes: slices.Clone(entry.Closes), Supersedes: slices.Clone(entry.Supersedes), Attachments: slices.Clone(entry.Attachments),
-		Preflight: entry.Preflight, DerivedStatus: derivedStatus(group.PrimaryStatus, group.PrimarySupersedePath), Time: entry.Time,
+		Preflight: entry.Preflight, Grounding: entry.Grounding, Verification: entry.Verification,
+		DerivedStatus: derivedStatus(group.PrimaryStatus, group.PrimarySupersedePath), Time: entry.Time,
+	}
+	if id == entry.ID {
+		shown.Brief = model.EntryBrief(entry)
 	}
 	if entry.Index != nil {
 		shown.Index = &types.ShownFactIndex{Title: entry.Index.Title, Topic: entry.Index.TopicText()}
@@ -104,6 +108,9 @@ func shownChainItem(item model.ShowTreeItem) types.ShownChainItem {
 	if entry := item.Entry; entry != nil {
 		shown.Title, shown.Kind, shown.Summary = entry.Title, string(entry.Kind), entry.Summary
 		shown.KindLabel, shown.FirstSentence = kindLabel(entry), entry.FirstSummarySentence()
+		if item.NodeID() == entry.ID {
+			shown.Brief = model.EntryBrief(entry)
+		}
 	} else if item.CrossRepoID != "" {
 		repo, _, _ := model.SplitCrossRepoID(item.CrossRepoID)
 		shown.UnresolvedRepo = string(repo)
@@ -141,12 +148,16 @@ func (r *SearchResult) Hits(graph *model.Graph) []types.SearchHit {
 			}
 		}
 		status := owner.DerivedStatus(entry)
+		brief := ""
+		if found.RepoID == "" {
+			brief = model.EntryBrief(entry)
+		}
 		hits = append(hits, types.SearchHit{
 			ID: found.DisplayID(), Title: entry.Title, Type: string(entry.Type), Kind: string(entry.Kind), Layer: string(entry.Layer),
 			Status: statusText(status), Summary: entry.Summary, Score: found.Score,
 			Confidence: entry.Confidence, Intent: string(entry.Intent), Participants: slices.Clone(entry.Participants),
 			Topics: topicLabels(owner.EffectiveTopics(entry)), DerivedStatus: derivedStatus(status, nil),
-			BodyExcerpt: entry.ShortContent(200), Citations: shownCitations(found.Citations),
+			BodyExcerpt: entry.ShortContent(200), Brief: brief, Citations: shownCitations(found.Citations),
 		})
 	}
 	return hits

@@ -251,3 +251,27 @@ func TestBuildEntry_ResolvesAttachmentPaths(t *testing.T) {
 		t.Error("Content should have attachment links resolved")
 	}
 }
+
+// A recorded grounding bypass writes the entry with grounding: skipped and
+// low confidence, whatever confidence the command asked for
+// (20261109-004506-d-cpt-udz, D4).
+func TestBuildEntry_SkipGroundingRecordsTheBypass(t *testing.T) {
+	cmd := &command.NewEntryCmd{
+		Type: model.TypeSignal, Layer: model.LayerTactical, Kind: model.KindGap,
+		Confidence: "high", Description: "A gap.", SkipGrounding: true,
+	}
+	entry, err := cmd.BuildEntry("20260101-100000-s-tac-skp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Grounding != model.GroundingSkipped || entry.Confidence != "low" {
+		t.Fatalf("a bypassed entry should carry grounding: skipped and confidence low, got %q and %q", entry.Grounding, entry.Confidence)
+	}
+	parsed, err := model.ParseEntry("20260101-100000-s-tac-skp.md", model.FormatFrontmatter(entry)+"\n"+entry.Content+"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Grounding != model.GroundingSkipped {
+		t.Fatal("grounding: skipped should round-trip through the frontmatter")
+	}
+}

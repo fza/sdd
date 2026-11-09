@@ -101,6 +101,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `llm.retry.base_delay` | `2s` | Wait before the first retry. The wait grows with each further retry. |
 | `llm.retry.max_delay` | `60s` | Longest wait between two retries. |
 | `llm.concurrency` | `4` | Not applied in this version. `sdd summarize --all` takes its worker count from `--concurrency`, which defaults to 4. |
+| `llm.context_tokens` | What the provider reports | The model's context window in tokens, which sizes the light draft verifier's calls. sdd asks Anthropic, an OpenAI-compatible models listing (`context_length` or `max_model_len`) or Ollama when unset; set it where the provider reports none, such as `claude-cli`. |
 
 sdd retries a call that failed with a temporary error, such as a rate limit or a dropped connection, and waits as long as the provider asks when it names a time. `claude-cli` ignores the rate limit and retry keys, since the `claude` command retries on its own.
 
@@ -132,6 +133,23 @@ Default rate limits:
 | `embedding.rate_limit_rps` | `5` for `text-embedding-3` models, `3` for other `openai` models | Maximum requests per second to `openai`. `ollama` has no limit. |
 | `embedding.query_template` | None | Template for search queries. See [query and document templates](#query-and-document-templates). |
 | `embedding.document_template` | None | Template for entries when sdd indexes them. |
+
+### Draft verifier
+
+| Key | File | Default | Meaning |
+| --- | --- | --- | --- |
+| `verifier.mode` | User-global, project | `off` | How far a capture's draft is checked against the graph it was grounded in. `light` runs pre-flight over the grounding reading and adds the checks for duplicates, outdated claims, clashes between entries and set-aside entries that bear on the draft. Any mode but `off` requires `grounding.enforce: true`; sdd refuses the config otherwise. The project file wins over the user-global one, and `config.local.yaml` may only raise it. |
+| `verifier.skip` | User-global, project | `failure` | When the deep exchange may be skipped: `never`, `failure` or `weighed`. `config.local.yaml` may only tighten it toward `never`. |
+| `verifier.launch` | User-global, project, local | `subagent` | How the `deep` verifier runs. `subagent`: the drafting agent's harness runs a fresh-context subagent. `claude` and `codex`: sdd runs the agent CLI headless in the project checkout, read-only, with sdd as its only MCP server, and resumes the same session each round. `custom_driver`: sdd runs `verifier.driver` each round. The setting describes the machine, so `config.local.yaml` wins. |
+| `verifier.driver.command`, `verifier.driver.args` | User-global, local | None | The command a `custom_driver` launch runs each round. sdd refuses it in the committed config, since it would run on every contributor's machine. |
+
+A light call fills half the context window left after the answer reserve (`llm.max_tokens`), counting 3 characters a token. A reading too large for one call is split into several calls, related entries kept together, and an entry too large on its own is sent as whole paragraphs with markers where text is left out. `sdd init` asks how strictly drafts are checked and writes `grounding.enforce` and `verifier.mode` together.
+
+`deep` runs `light` first, then a tool-using verifier agent in a child session that reads the draft and its grounding reading, checks claims against the code and its history, and exchanges findings with the drafting agent for at most 3 rounds. sdd turns the findings into edits of the draft and shows them as a diff; findings the agents settle are applied, and findings left open go to the user. A capture is written only under a deep verdict for its exact draft. A skipped exchange writes `verification: skipped` into the entry and lowers its confidence: to `low` after a verifier failure, and at most `medium` for a skip weighed as safe. Where the harness has no subagent tool, sdd falls back to the headless launch of the first agent `supported_agents` names whose CLI it finds. With `deep` and no launch set, `sdd init` also asks how the verifier runs and writes the answer to `config.local.yaml`.
+
+A `custom_driver` command reads one JSON request on stdin each round, `{"round": 1, "session": "<child session>", "instance": "<child instance>", "prompt": "<round prompt>", "driver_state": "<last round's state>"}`, starts or continues its agent with the prompt, and prints `{"driver_state": "<state for the next round>"}` once the round ends. The agent reports through the child session's `next` calls, never through the driver. A nonzero exit or a round longer than 30 minutes is a verifier failure.
+
+In a guided dialogue the writing guide runs once on the content the user approved, then the verifier; a later adjust gets a check of the changed lines only. In an autonomous dialogue both run before playback.
 
 ### Sync and sessions
 

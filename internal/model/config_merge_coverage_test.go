@@ -20,6 +20,11 @@ func TestMergeConfigCarriesEveryField(t *testing.T) {
 		{"LLM", func(c *model.PerRepoConfig) any { return &c.LLM }},
 		{"Embedding", func(c *model.PerRepoConfig) any { return &c.Embedding }},
 		{"Sync", func(c *model.PerRepoConfig) any { return &c.Sync }},
+		{"Grounding", func(c *model.PerRepoConfig) any { return &c.Grounding }},
+		{"Verifier", func(c *model.PerRepoConfig) any { return &c.Verifier }},
+		{"LLMPrefilter", func(c *model.PerRepoConfig) any { return &c.LLMPrefilter }},
+		{"Relevance", func(c *model.PerRepoConfig) any { return &c.Relevance }},
+		{"Recheck", func(c *model.PerRepoConfig) any { return &c.Recheck }},
 	} {
 		t.Run(tc.section, func(t *testing.T) {
 			overlay := &model.PerRepoConfig{}
@@ -71,12 +76,18 @@ func setDistinctive(t *testing.T, f reflect.Value) {
 		f.SetInt(7)
 	case reflect.Float64:
 		f.SetFloat(1.5)
+	case reflect.Bool:
+		f.SetBool(true)
 	case reflect.Map:
 		m := reflect.MakeMap(f.Type())
 		value := reflect.New(f.Type().Elem()).Elem()
 		setDistinctive(t, value)
 		m.SetMapIndex(reflect.ValueOf("k").Convert(f.Type().Key()), value)
 		f.Set(m)
+	case reflect.Slice:
+		item := reflect.New(f.Type().Elem()).Elem()
+		setDistinctive(t, item)
+		f.Set(reflect.Append(reflect.MakeSlice(f.Type(), 0, 1), item))
 	case reflect.Pointer:
 		f.Set(reflect.New(f.Type().Elem()))
 		setDistinctive(t, f.Elem())

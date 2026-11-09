@@ -30,6 +30,14 @@ const (
 	PreflightDryRunVerified = "dry-run-verified"
 )
 
+// GroundingSkipped marks an entry whose capture bypassed the grounding gate;
+// it is written with low confidence (20261109-004506-d-cpt-udz, D4).
+const GroundingSkipped = "skipped"
+
+// VerificationSkipped marks an entry written without the deep verifier's
+// verdict: the user skipped it (20261109-004729-d-cpt-xs5, V-D4, V-D24).
+const VerificationSkipped = "skipped"
+
 type Layer string
 
 const (
@@ -310,12 +318,14 @@ type Entry struct {
 	// Involvement is the list of involvement triples on a kind: focus
 	// decision. Each triple binds a target entry to (resolved) actors and
 	// (resolved) when scope.
-	Involvement []Involvement
-	Preflight   string    // PreflightSkipped or PreflightDryRunVerified; empty when a checker validated this entry
-	Attachments []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
-	Title       string    // short headline naming the entry's subject, generated with the summary; optional at graph schema 1 (20261028-005411-d-tac-tit)
-	Summary     string    // LLM-generated summary: this entry + direct relationships
-	Warnings    []Warning // validation issues found during graph construction
+	Involvement  []Involvement
+	Preflight    string    // PreflightSkipped or PreflightDryRunVerified; empty when a checker validated this entry
+	Grounding    string    // GroundingSkipped when the capture bypassed the grounding gate (20261109-004506-d-cpt-udz, D4); empty otherwise
+	Verification string    // VerificationSkipped when the user skipped the deep verifier; empty otherwise
+	Attachments  []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
+	Title        string    // short headline naming the entry's subject, generated with the summary; optional at graph schema 1 (20261028-005411-d-tac-tit)
+	Summary      string    // LLM-generated summary: this entry + direct relationships
+	Warnings     []Warning // validation issues found during graph construction
 	// Embedded marks a base entry compiled into the sdd binary (base
 	// procedures) rather than loaded from the graph directory. Set by the
 	// loader, never serialized. Write-side surfaces (summary regeneration,
@@ -579,7 +589,10 @@ type frontmatter struct {
 	Steps        yaml.Node         `yaml:"steps,omitempty"`
 	Framing      yaml.Node         `yaml:"framing,omitempty"`
 	ServeBudget  int               `yaml:"serveBudget,omitempty"`
+	Rounds       int               `yaml:"rounds,omitempty"`
 	Preflight    string            `yaml:"preflight,omitempty"`
+	Grounding    string            `yaml:"grounding,omitempty"`
+	Verification string            `yaml:"verification,omitempty"`
 	Title        string            `yaml:"title,omitempty"`
 	Summary      string            `yaml:"summary,omitempty"`
 }
@@ -668,6 +681,8 @@ func ParseEntry(filename, content string) (*Entry, error) {
 		FocusActors:  fm.FocusActors,
 		FocusWhen:    fm.FocusWhen,
 		Preflight:    fm.Preflight,
+		Grounding:    fm.Grounding,
+		Verification: fm.Verification,
 		Title:        fm.Title,
 		Summary:      fm.Summary,
 		Content:      strings.TrimSpace(body),
@@ -714,6 +729,7 @@ func ParseEntry(filename, content string) (*Entry, error) {
 			Steps:       fm.Steps,
 			Framing:     fm.Framing,
 			ServeBudget: fm.ServeBudget,
+			Rounds:      fm.Rounds,
 		}
 	}
 
@@ -905,6 +921,8 @@ func FormatFrontmatter(e *Entry) string {
 		FocusActors:  e.FocusActors,
 		FocusWhen:    e.FocusWhen,
 		Preflight:    e.Preflight,
+		Grounding:    e.Grounding,
+		Verification: e.Verification,
 		Title:        e.Title,
 		Summary:      e.Summary,
 	}
@@ -944,6 +962,7 @@ func FormatFrontmatter(e *Entry) string {
 		fm.Steps = e.ProcedureSpec.Steps
 		fm.Framing = e.ProcedureSpec.Framing
 		fm.ServeBudget = e.ProcedureSpec.ServeBudget
+		fm.Rounds = e.ProcedureSpec.Rounds
 	}
 
 	data, _ := yaml.Marshal(&fm)

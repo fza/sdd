@@ -27,7 +27,9 @@ import (
 // for that section. The finder validates the pipeline shape before reaching
 // here, so either implies a programmer-side mistake (a layout produced by some
 // path other than the parser+executor) rather than a user-facing error.
-func RenderView(w io.Writer, sections []types.ViewSection) {
+//
+// r applies the no-repeat rule; nil serves everything in full.
+func RenderView(w io.Writer, sections []types.ViewSection, r *Repeats) {
 	written := 0
 	repo := ""
 	for _, section := range sections {
@@ -45,16 +47,17 @@ func RenderView(w io.Writer, sections []types.ViewSection) {
 		if section.Name != "" {
 			fmt.Fprintf(w, "## %s\n\n", section.Name)
 		}
-		renderSection(w, section)
+		renderSection(w, section, r)
 		written++
 	}
+	r.WriteWayBack(w)
 }
 
 // ViewText is the view text of the application, the engine and the MCP
 // server: RenderView without the trailing newline.
-func ViewText(sections []types.ViewSection) string {
+func ViewText(sections []types.ViewSection, r *Repeats) string {
 	var rendered strings.Builder
-	RenderView(&rendered, sections)
+	RenderView(&rendered, sections, r)
 	return strings.TrimRight(rendered.String(), "\n")
 }
 
@@ -68,7 +71,7 @@ const sectionHeadingLevel = 2
 // nothing, so its section is dropped whole.
 var rendersWhenEmpty = map[string]bool{"as-wip-list": true}
 
-func renderSection(w io.Writer, section types.ViewSection) {
+func renderSection(w io.Writer, section types.ViewSection, r *Repeats) {
 	switch section.Render {
 	case "as-bodies":
 		if section.Bodies == nil {
@@ -78,17 +81,17 @@ func renderSection(w io.Writer, section types.ViewSection) {
 		if section.Name == "" {
 			entryLevel = sectionHeadingLevel
 		}
-		renderAsBodies(w, *section.Bodies, entryLevel)
+		renderAsBodies(w, *section.Bodies, entryLevel, r)
 	case "as-list":
 		if section.List == nil {
 			return
 		}
-		renderAsList(w, *section.List, section.Brief)
+		renderAsList(w, *section.List, section.Brief, r)
 	case "as-grouped":
 		if section.Grouped == nil {
 			return
 		}
-		renderAsGrouped(w, *section.Grouped, section.Brief)
+		renderAsGrouped(w, *section.Grouped, section.Brief, r)
 	case "as-counts":
 		if section.Counts == nil {
 			return
@@ -98,12 +101,12 @@ func renderSection(w io.Writer, section types.ViewSection) {
 		if section.Focus == nil {
 			return
 		}
-		renderAsFocusBlock(w, *section.Focus, section.Brief)
+		renderAsFocusBlock(w, *section.Focus, section.Brief, r)
 	case "as-participants-block":
 		if section.Participants == nil {
 			return
 		}
-		renderAsParticipantsBlock(w, *section.Participants, section.Brief)
+		renderAsParticipantsBlock(w, *section.Participants, section.Brief, r)
 	case "as-wip-list":
 		if section.Wip == nil {
 			return

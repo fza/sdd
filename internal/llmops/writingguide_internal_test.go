@@ -88,13 +88,13 @@ func TestRenderWritingGuidePrompt_SystemByteStableAcrossDrafts(t *testing.T) {
 	b := &model.Entry{Type: model.TypeDecision, Kind: model.KindDirective, Layer: model.LayerProcess, Intent: model.IntentGuiding, Content: "A different body entirely.",
 		Refs: []model.Ref{{ID: "20260601-120000-d-tac-ref", Kind: model.RefKind("refines"), Desc: "target"}}}
 
-	reqA, err := renderWritingGuidePrompt(a, nil, testReferenceFacts(""))
+	reqA, err := renderWritingGuideRequest(a, nil, testReferenceFacts(""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqB, err := renderWritingGuidePrompt(b, []model.ClosureTarget{
+	reqB, err := renderWritingGuideRequest(b, []model.ClosureTarget{
 		{Relation: "closes", ID: "20260601-120000-d-tac-old", Type: model.TypeDecision, Kind: model.KindDirective, Summary: "The commitment this draft retires."},
-	}, testReferenceFacts(""))
+	}, testReferenceFacts(""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestRenderWritingGuidePrompt_SystemByteStableAcrossDrafts(t *testing.T) {
 func TestRenderWritingGuidePrompt_ReferenceFacts(t *testing.T) {
 	done := &model.Entry{Type: model.TypeSignal, Kind: model.KindDone, Layer: model.LayerTactical, Content: "Draft done body."}
 
-	req, err := renderWritingGuidePrompt(done, nil, testReferenceFacts("20260812-170000-s-prc-dnk"))
+	req, err := renderWritingGuideRequest(done, nil, testReferenceFacts("20260812-170000-s-prc-dnk"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestRenderWritingGuidePrompt_ReferenceFacts(t *testing.T) {
 	}
 
 	gap := &model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Content: "Draft gap body."}
-	reqGap, err := renderWritingGuidePrompt(gap, nil, testReferenceFacts(""))
+	reqGap, err := renderWritingGuideRequest(gap, nil, testReferenceFacts(""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,10 +169,10 @@ func TestRenderWritingGuidePrompt_ReferenceFacts(t *testing.T) {
 		t.Error("a kind without an authoring fact must not carry the kind-fact section")
 	}
 
-	if _, err := renderWritingGuidePrompt(done, nil, testReferenceFacts("20260101-000000-s-prc-mis")); err == nil {
+	if _, err := renderWritingGuideRequest(done, nil, testReferenceFacts("20260101-000000-s-prc-mis"), nil); err == nil {
 		t.Error("a configured kind fact that does not resolve must fail loud")
 	}
-	if _, err := renderWritingGuidePrompt(done, nil, ReferenceFacts{}); err == nil {
+	if _, err := renderWritingGuideRequest(done, nil, ReferenceFacts{}, nil); err == nil {
 		t.Error("a missing fact source must fail loud")
 	}
 }

@@ -355,7 +355,7 @@ func (s *Store) TemplateContext() map[string]any {
 func (s *Store) StateSnapshot() string {
 	names := make([]string, 0, len(s.values))
 	for name, sv := range s.values {
-		if sv.Provenance == ProvenanceState {
+		if sv.Provenance == ProvenanceState && !s.spec.State[name].ConfirmExempt {
 			names = append(names, name)
 		}
 	}

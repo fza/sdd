@@ -64,7 +64,7 @@ type NextArgs struct {
 	Instance  string `json:"instance" jsonschema:"instance handle from start_procedure"`
 	// Report carries either state fields for the current step (per the served
 	// report_schema) or a chooser answer {chooser, choice, userWords?, reason?, fields?}.
-	Report map[string]any `json:"report,omitempty" jsonschema:"state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}"`
+	Report map[string]any `json:"report,omitempty" jsonschema:"state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}. Omit report, retry_ref and cancel_ref together to pick up a delivery a waiting step was served as awaiting"`
 	Label  string         `json:"label,omitempty" jsonschema:"update the session's subject label when the dialogue's subject has sharpened"`
 }
 
@@ -197,6 +197,20 @@ type ServeResult struct {
 	OpenThreads      string                  `json:"open_threads,omitempty" jsonschema:"this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here"`
 	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve — where the dialogue lands now that this move has ended"`
 	Collected        map[string]string       `json:"collected,omitempty" jsonschema:"state already collected by this instance — values persist across handover; do not re-derive them"`
+	Dispatches       []DispatchResult        `json:"dispatches,omitempty" jsonschema:"delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions"`
+}
+
+// DispatchResult is one delegate handoff: the child handles a delegate
+// receives, the prompts that carry them, and what to do this round. The
+// dispatching session's own handle is never part of it.
+type DispatchResult struct {
+	Session        string `json:"session" jsonschema:"the delegate's child session handle"`
+	Instance       string `json:"instance" jsonschema:"the delegate's task instance in its child session"`
+	Procedure      string `json:"procedure"`
+	Prompt         string `json:"prompt" jsonschema:"the whole prompt of a fresh-context delegate"`
+	ContinuePrompt string `json:"continue_prompt" jsonschema:"the prompt continuing a delegate that worked an earlier round"`
+	Instructions   string `json:"instructions"`
+	Launched       string `json:"launched,omitempty" jsonschema:"set when sdd launched the delegate itself: the launcher's own session"`
 }
 
 // BaseServe is the session shell's serve as nested into landing responses
@@ -328,6 +342,19 @@ type ShowResult struct {
 	ResultNotices
 	Entries string            `json:"entries"`
 	Items   *[]ShowItemResult `json:"items,omitempty" jsonschema:"set instead of entries when sessions.token_saving is off: one object per shown entry with its chains"`
+}
+
+type GatherArgs struct {
+	Session  string   `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required"`
+	Instance string   `json:"instance,omitempty" jsonschema:"the running capture this reading grounds: its reported draft writes the searches, and only reads made through gather inside it count for its grounding. Report the draft at assemble first"`
+	IDs      []string `json:"ids,omitempty" jsonschema:"entries to open in full; also the way back to an entry a pointer names"`
+	Draft    string   `json:"draft,omitempty" jsonschema:"without instance: the draft text the searches are written from; credits nothing"`
+	Topics   []string `json:"topics,omitempty" jsonschema:"without instance: the draft's topic labels, each listed in full"`
+}
+
+type GatherResult struct {
+	ResultNotices
+	Serve string `json:"serve" jsonschema:"the reads run, entries served in full, the entries to judge and the entries set aside; nothing is cut"`
 }
 
 type ReadAttachmentArgs struct {
@@ -512,6 +539,15 @@ func (s *Server) registerTools() {
 			"session named by session (required). Use whenever the dialogue touches a specific entry — " +
 			"summaries are pointers, not facts.",
 	}, toolBoundary(s, s.show))
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name: "gather",
+		Description: "Ground a draft before its capture, in one call, within the session named by session " +
+			"(required): on a small graph every live entry's brief; above it a semantic search, keyword " +
+			"searches and the live listing of every draft topic, written from the draft. Name the running " +
+			"capture as instance: only reads made through gather inside it ground the capture. Pass ids to " +
+			"open entries in full. An entry already served in full prints as a pointer with its brief.",
+	}, toolBoundary(s, s.gather))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "read_attachment",
@@ -965,7 +1001,7 @@ func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, args Sear
 		hits := searchHitItems(result.Hits)
 		return nil, SearchResult{Hits: &hits, Coverage: result.Coverage, Notice: result.Notice}, nil
 	}
-	out := presenters.SearchText(result.Hits, result.Notices)
+	out := presenters.SearchText(result.Hits, result.Notices, ss.repeats())
 	if strings.TrimSpace(out) == "" {
 		out = "(no entries matched — try another phrasing, or proceed if the topic is genuinely new)"
 	}
@@ -993,14 +1029,21 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, args ViewAr
 		return nil, ViewResult{}, toolError("viewing: %v", err)
 	}
 	hint := viewHint(ss)
+	var sections string
+	if !ss.inFull {
+		sections = presenters.ViewText(result.ViewSections, ss.repeats())
+	}
+	ss.holdEntries(result.FullIDs)
+	if err := s.logRootRead(ctx, req, ss, "view", result.FullIDs, result.SummaryIDs); err != nil {
+		return nil, ViewResult{}, err
+	}
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, ViewResult{}, err
 	}
 	if ss.inFull {
-		sections := viewSectionItems(result.ViewSections)
-		return nil, ViewResult{ViewSections: &sections, KnownParticipants: result.KnownParticipants, Hint: hint}, nil
+		items := viewSectionItems(result.ViewSections)
+		return nil, ViewResult{ViewSections: &items, KnownParticipants: result.KnownParticipants, Hint: hint}, nil
 	}
-	sections := presenters.ViewText(result.ViewSections)
 	// An empty result must never reach an agent as a blank string — it cannot
 	// tell "matched nothing" from a broken call. Say so, and when a participant
 	// filter came up empty (exact-match miss), name the participants the graph
@@ -1167,16 +1210,42 @@ func (s *Server) show(ctx context.Context, req *mcp.CallToolRequest, args ShowAr
 	if err := s.logRootRead(ctx, req, ss, "show", result.FullIDs, result.SummaryIDs); err != nil {
 		return nil, ShowResult{}, err
 	}
+	var entries string
+	if !ss.inFull {
+		entries, err = presenters.ShowText(result.Items, ss.repeats())
+		if err != nil {
+			return nil, ShowResult{}, err
+		}
+	}
+	ss.holdEntries(result.FullIDs)
+	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
+		return nil, ShowResult{}, err
+	}
 	if ss.inFull {
 		items := showItems(result.Items)
 		return nil, ShowResult{Items: &items}, nil
 	}
-	entries, err := presenters.ShowText(result.Items)
-	if err != nil {
-		return nil, ShowResult{}, err
-	}
 	return nil, ShowResult{Entries: entries}, nil
+}
 
+func (s *Server) gather(ctx context.Context, req *mcp.CallToolRequest, args GatherArgs) (*mcp.CallToolResult, GatherResult, error) {
+	ss, err := s.attachedSession(ctx, req, args.Session)
+	if err != nil {
+		return nil, GatherResult{}, err
+	}
+	defer ss.mu.Unlock()
+	result, err := ss.root.Gather(ctx, s.requestIdentity(req), sdd.WorkflowGatherRequest{
+		Instance: strings.TrimSpace(args.Instance), IDs: args.IDs, Draft: args.Draft, Topics: args.Topics,
+		SyncMode: s.searchSyncMode, Held: ss.holdsEntry,
+	})
+	if err != nil {
+		return nil, GatherResult{}, err
+	}
+	ss.holdEntries(result.FullIDs)
+	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
+		return nil, GatherResult{}, err
+	}
+	return nil, GatherResult{Serve: result.Text}, nil
 }
 
 func (s *Server) readAttachment(ctx context.Context, req *mcp.CallToolRequest, args ReadAttachmentArgs) (*mcp.CallToolResult, ReadAttachmentResult, error) {
@@ -1403,6 +1472,12 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 			chooser.Options = append(chooser.Options, ChooserOptionResult{Choice: option.Choice, Collect: option.Collect})
 		}
 		res.PendingChooser = chooser
+	}
+	for _, dispatch := range serve.Dispatches {
+		res.Dispatches = append(res.Dispatches, DispatchResult{
+			Session: string(dispatch.Session), Instance: dispatch.Instance, Procedure: dispatch.Procedure,
+			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Launched: dispatch.Launched,
+		})
 	}
 	framing, err := ss.root.FramingBlocks(ctx, s.requestIdentity(req))
 	if err != nil {

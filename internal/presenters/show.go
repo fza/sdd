@@ -22,6 +22,8 @@ type ShowOptions struct {
 	// Off by default — the body renders right after the envelope, and the
 	// summary is only needed for human drift-review.
 	WithSummary bool
+	// Repeats applies the no-repeat rule; nil serves everything in full.
+	Repeats *Repeats
 	// Width is the target wrap width for the styled renderer's glamour body
 	// (terminal columns). Zero falls back to a sensible default. Ignored by
 	// the plain renderer, which never reflows the body.
@@ -46,20 +48,26 @@ func RenderShow(w io.Writer, entries []types.ShownEntry, opts ShowOptions) error
 			return err
 		}
 	}
+	opts.Repeats.WriteWayBack(w)
 	return nil
 }
 
 // ShowText is the show text of the application and the MCP server: RenderShow
-// with default options, without the trailing newline.
-func ShowText(entries []types.ShownEntry) (string, error) {
+// with default options under r's no-repeat rule, without the trailing newline.
+func ShowText(entries []types.ShownEntry, r *Repeats) (string, error) {
 	var rendered strings.Builder
-	if err := RenderShow(&rendered, entries, ShowOptions{}); err != nil {
+	if err := RenderShow(&rendered, entries, ShowOptions{Repeats: r}); err != nil {
 		return "", err
 	}
 	return strings.TrimRight(rendered.String(), "\n"), nil
 }
 
 func renderShowEntry(w io.Writer, entry types.ShownEntry, opts ShowOptions) error {
+	if opts.Repeats.holds(entry.ID, entry.Brief) {
+		fmt.Fprintln(w, pointerText(entry.ID, entry.Brief))
+		renderShowChains(w, entry, opts)
+		return nil
+	}
 	if err := writeEnvelope(w, entry, opts); err != nil {
 		return err
 	}
@@ -70,13 +78,17 @@ func renderShowEntry(w io.Writer, entry types.ShownEntry, opts ShowOptions) erro
 	fmt.Fprintln(w, "# body")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, mdcompose.DemoteTo(entry.Body, bodyHeadingLevel))
+	renderShowChains(w, entry, opts)
+	return nil
+}
 
+func renderShowChains(w io.Writer, entry types.ShownEntry, opts ShowOptions) {
 	if len(entry.Upstream) > 0 || len(entry.UpstreamTruncated) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "# upstream")
 		fmt.Fprintln(w)
 		for _, item := range entry.Upstream {
-			renderTreeItem(w, item, entry.ID)
+			renderTreeItem(w, item, entry.ID, opts.Repeats)
 		}
 		renderDirectionCut(w, entry.UpstreamTruncated)
 	}
@@ -86,11 +98,10 @@ func renderShowEntry(w io.Writer, entry types.ShownEntry, opts ShowOptions) erro
 		fmt.Fprintln(w, "# downstream")
 		fmt.Fprintln(w)
 		for _, item := range entry.Downstream {
-			renderTreeItem(w, item, entry.ID)
+			renderTreeItem(w, item, entry.ID, opts.Repeats)
 		}
 		renderDirectionCut(w, entry.DownstreamTruncated)
 	}
-	return nil
 }
 
 // renderDirectionCut names the primary's own children a chain budget kept out
@@ -130,6 +141,8 @@ type showEnvelope struct {
 	Supersedes   []string           `yaml:"supersedes,omitempty"`
 	Attachments  []string           `yaml:"attachments,omitempty"`
 	Preflight    string             `yaml:"preflight,omitempty"`
+	Grounding    string             `yaml:"grounding,omitempty"`
+	Verification string             `yaml:"verification,omitempty"`
 	Status       string             `yaml:"status,omitempty"`
 	Time         string             `yaml:"time"`
 	Params       yaml.Node          `yaml:"params,omitempty"`
@@ -166,6 +179,8 @@ func writeEnvelope(w io.Writer, entry types.ShownEntry, opts ShowOptions) error 
 		Supersedes:   entry.Supersedes,
 		Attachments:  entry.Attachments,
 		Preflight:    entry.Preflight,
+		Grounding:    entry.Grounding,
+		Verification: entry.Verification,
 		Status:       formatStatusTrailValue(entry.DerivedStatus),
 		Time:         entry.Time.Format("2006-01-02 15:04:05"),
 	}
@@ -234,7 +249,7 @@ func procedureSection(text string) (yaml.Node, error) {
 // sub-line follows when the ref carries a desc, and unexpanded children at the
 // depth boundary render as an indented child-level truncation line — never
 // inline on this node.
-func renderTreeItem(w io.Writer, item types.ShownChainItem, primaryID string) {
+func renderTreeItem(w io.Writer, item types.ShownChainItem, primaryID string, r *Repeats) {
 	bulletIndent := strings.Repeat("  ", item.Depth-1)
 	subIndent := strings.Repeat("  ", item.Depth)
 
@@ -243,14 +258,19 @@ func renderTreeItem(w io.Writer, item types.ShownChainItem, primaryID string) {
 	line.WriteString("- ")
 	line.WriteString(treeVerb(item))
 	line.WriteString(" ")
-	line.WriteString(item.ID)
-	if qual := treeQualifier(item); qual != "" {
-		line.WriteString(" ")
-		line.WriteString(qual)
-	}
-	if sentence := treeSentence(item, primaryID); sentence != "" {
-		line.WriteString(" — ")
-		line.WriteString(sentence)
+	switch {
+	case !item.ShownAbove && !item.ShownBelow && r.holds(item.ID, item.Brief):
+		line.WriteString(pointerText(item.ID, item.Brief))
+	default:
+		line.WriteString(item.ID)
+		if qual := treeQualifier(item); qual != "" {
+			line.WriteString(" ")
+			line.WriteString(qual)
+		}
+		if sentence := treeSentence(item, primaryID); sentence != "" {
+			line.WriteString(" — ")
+			line.WriteString(sentence)
+		}
 	}
 	fmt.Fprintln(w, line.String())
 

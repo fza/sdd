@@ -33,7 +33,10 @@ import (
 // match counts and hybrid RRF scores live on different scales than
 // cosine — but ALL citations within a single result set share whatever
 // scale the active mode uses).
-func RenderSearch(w io.Writer, hits []types.SearchHit) {
+//
+// r applies the no-repeat rule: a held hit prints as its pointer, without its
+// citations. nil serves everything in full.
+func RenderSearch(w io.Writer, hits []types.SearchHit, r *Repeats) {
 	if len(hits) == 0 {
 		fmt.Fprintln(w, "  (no matches)")
 		return
@@ -41,19 +44,24 @@ func RenderSearch(w io.Writer, hits []types.SearchHit) {
 
 	maxScore := globalMaxCitationScore(hits)
 	for _, hit := range hits {
+		if r.holds(hit.ID, hit.Brief) {
+			fmt.Fprintf(w, "  %s\n", pointerText(hit.ID, hit.Brief))
+			continue
+		}
 		writeEntryLine(w, hitEntry(hit), math.NaN())
 		for _, c := range hit.Citations {
 			renderCitation(w, c, maxScore)
 		}
 	}
+	r.WriteWayBack(w)
 }
 
 // SearchText is the search text of the application and the MCP server:
 // RenderSearch without the trailing newline, each notice following as its own
 // paragraph.
-func SearchText(hits []types.SearchHit, notices []string) string {
+func SearchText(hits []types.SearchHit, notices []string, r *Repeats) string {
 	var rendered strings.Builder
-	RenderSearch(&rendered, hits)
+	RenderSearch(&rendered, hits, r)
 	text := strings.TrimRight(rendered.String(), "\n")
 	for _, notice := range notices {
 		if text != "" {

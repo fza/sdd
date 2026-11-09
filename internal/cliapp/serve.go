@@ -25,6 +25,7 @@ import (
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
@@ -428,6 +429,21 @@ func globalTokenSaving() (bool, error) {
 	return model.ResolveTokenSaving(global.Sessions)
 }
 
+// localHooks reads the hooks of the user-global config and the local layer
+// as they are now, so a changed configuration reaches a running serve on its
+// next call. Reading the layers refuses hooks in the committed one.
+func localHooks(globalPath, sddDir, localLayer string) ([]model.HookConfig, error) {
+	global, err := repos.LoadConfigFrom(globalPath)
+	if err != nil {
+		return nil, err
+	}
+	committed, local, err := meta.ReadConfigLayers(sddDir, localLayer)
+	if err != nil {
+		return nil, err
+	}
+	return model.MergeConfig(model.MergeConfig(&model.PerRepoConfig{BaseConfig: global.BaseConfig}, committed), local).Hooks, nil
+}
+
 // localDialogue reads dialogue.mode and the layer that sets it; the
 // committed layer arrives without it (20261029-150854-d-tac-b2f).
 func localDialogue(sddDir string) (sdd.Dialogue, error) {
@@ -505,7 +521,7 @@ func servedConfigLayers(sddDir string) (model.ConfigLayers, []string, error) {
 // buildServedApplication composes the application whose every call resolves
 // against the project watch serves at that moment.
 func buildServedApplication(ctx context.Context, watch *configWatch) (*sdd.Application, sdd.RequestIdentity, error) {
-	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: servedAccess{watch}, Sessions: servedSessions{watch}, StagedBlobs: servedBlobs{watch}})
+	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: servedAccess{watch}, Sessions: servedSessions{watch}, StagedBlobs: servedBlobs{watch}, DelegateLauncher: headlessLauncher{watch: watch}})
 	if err != nil {
 		return nil, sdd.RequestIdentity{}, err
 	}
@@ -624,12 +640,31 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	}
 	closure := finders.New(finders.Options{Config: cfg, Repos: registry})
 	rounds := connectedRounds{handler: handlers.New(handlers.Options{Reader: closure, Repos: manager, CloneRound: round})}
+	prefilter, err := projectPrefilter(cfg)
+	if err != nil {
+		return nil, err
+	}
+	verdicts, err := projectRelevanceStore(sddDir, locations.StateRoot, baseRepoKey, cfg)
+	if err != nil {
+		return nil, err
+	}
+	events, err := projectEventStore(sddDir, graphDir, cfg)
+	if err != nil {
+		return nil, err
+	}
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Sync: targets, Branches: targets, Base: targets,
 		Connected: rounds,
 		Embedder:  embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
-		LLM: runner,
+		LLM:       runner,
+		Grounding: groundingPolicy(cfg),
+		Verifier:  verifierPolicy(cfg), Window: modelWindow(cfg.LLM), Checkout: os.DirFS(layout.WorkRoot),
+		Hooks:     hooks.New(func() ([]model.HookConfig, error) { return localHooks(locations.ConfigPath, sddDir, localLayer) }, serverCheckout),
+		Events:    events,
+		HandEdits: localadapter.GitHandEdits{GraphDir: graphDir},
+		Relevance: verdicts,
+		Prefilter: prefilter,
 	})
 	if err != nil {
 		return nil, err
@@ -649,7 +684,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 		dependencies: &connectedDependencies{registry: registry, manager: manager, closure: closure, rounds: rounds,
 			writer: sdd.RepoID(cfg.RepoID), connected: cfg.Connected,
 			build: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
-				return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, memberEmbedder, memberRuneCap, cacheRoot)
+				return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, modelWindow(cfg.LLM), memberEmbedder, memberRuneCap, cacheRoot)
 			}},
 	}
 	return &servedProject{
@@ -662,7 +697,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 // config, default branch, graph and write targets. Connected stores are keyed
 // by the dependency's repo ID and exclude embedded entries, so binary-shipped
 // base facts embed once per machine in the base store.
-func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, locations repos.Locations, runner pkgllm.Runner, embeddings embed.Embedder, runeCap func(context.Context) (int, error), cacheRoot string) (*sdd.ProjectRuntime, error) {
+func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, locations repos.Locations, runner pkgllm.Runner, window func(context.Context) (sdd.ModelWindow, error), embeddings embed.Embedder, runeCap func(context.Context) (int, error), cacheRoot string) (*sdd.ProjectRuntime, error) {
 	project := sdd.ProjectID(repoID)
 	defaultBranch := cfg.DefaultBranch
 	if defaultBranch == "" {
@@ -676,17 +711,32 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 	if err != nil {
 		return nil, err
 	}
-	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: meta.ResolveGraphDir(dir, cfg), MetaPath: filepath.Join(dir, model.SDDDirName, model.SchemaMetaFileName)})
+	cloneGraphDir := meta.ResolveGraphDir(dir, cfg)
+	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: cloneGraphDir, MetaPath: filepath.Join(dir, model.SDDDirName, model.SchemaMetaFileName)})
 	if err != nil {
 		return nil, err
 	}
 	searchIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, index.RepoKey(repoID, dir)).WithCheckout(meta.ResolveGraphDir(dir, cfg))
+	verdicts, err := projectRelevanceStore(filepath.Join(dir, model.SDDDirName), locations.StateRoot, index.RepoKey(repoID, dir), cfg)
+	if err != nil {
+		return nil, err
+	}
+	events, err := projectEventStore(filepath.Join(dir, model.SDDDirName), cloneGraphDir, cfg)
+	if err != nil {
+		return nil, err
+	}
 	return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: string(repoID)}, DefaultBranch: defaultBranch, Language: cfg.Language,
 		Dependencies: cfg.Dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: defaultBranch},
 		Targets: targets, Sync: targets, Branches: targets, Base: targets,
 		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, searchIndex), RuneCap: runeCap, LLM: runner,
 		ExcludeEmbeddedFromIndex: true,
+		Grounding:                groundingPolicy(cfg),
+		Verifier:                 verifierPolicy(cfg),
+		Window:                   window,
+		Relevance:                verdicts,
+		Events:                   events,
+		HandEdits:                localadapter.GitHandEdits{GraphDir: cloneGraphDir},
 	})
 }
 

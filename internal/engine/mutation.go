@@ -66,7 +66,7 @@ func (s *Session) OperationEffects(intent MutationIntent) ([]Effect, error) {
 		return nil, fmt.Errorf("instance %q not found", intent.Instance)
 	}
 	intent.Values = maps.Clone(intent.Values)
-	return cmd.Effects(&Context{Instance: inst.ID, Intent: &intent, Store: inst.Store, Step: intent.Step, Reads: s.reads})
+	return cmd.Effects(&Context{Instance: inst.ID, Intent: &intent, Store: inst.Store, Step: intent.Step, Reads: s.reads, Reading: &inst.reading})
 }
 
 // The pending-operation serve's goal and its only prose, fixed by d-tac-qws and d-tac-ft4.

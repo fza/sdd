@@ -360,7 +360,7 @@ func searchCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "search",
 		Usage: "Search the graph by keyword (--term), semantic phrase (--query), or both (hybrid)",
-		Flags: append(embeddingFlags(),
+		Flags: append(append(embeddingFlags(),
 			&cli.StringSliceFlag{
 				Name:    "term",
 				Aliases: []string{"t"},
@@ -404,12 +404,16 @@ func searchCmd() *cli.Command {
 				Name:  "all-repos",
 				Usage: "Also search every repo in the declared dependency closure",
 			},
-		),
+		), sessionFlags()...),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			terms := cmd.StringSlice("term")
 			phrase := cmd.String("query")
 			if len(terms) == 0 && phrase == "" {
 				return fmt.Errorf("at least one of --term or --query is required")
+			}
+			session, err := joinSession(ctx, cmd, "")
+			if err != nil {
+				return err
 			}
 			literal, notice, err := secrets.SearchPhrase(phrase)
 			if err != nil {
@@ -649,9 +653,9 @@ func searchCmd() *cli.Command {
 			}
 
 			stopRender := timing.Start(ctx, "render")
-			presenters.RenderSearch(cmd.Writer, res.Hits(g))
+			presenters.RenderSearch(cmd.Writer, res.Hits(g), nil)
 			stopRender()
-			return nil
+			return session.logRead(ctx, "search", nil, res.ServedIDs())
 		},
 	}
 }

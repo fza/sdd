@@ -108,7 +108,7 @@ var renderFunctions = map[string]model.RenderShape{
 
 // knownFunctions lists every function name the executor recognizes. Used
 // in the unknown-function error message so users see what's available.
-var knownFunctions = []string{"source", "active", "indexed", "kind", "intent", "type", "layer", "since", "topic", "participant", "untagged", "id", "not", "n", "skip", "rank", "group", "expand", "name", "name-prefix", "stalled", "brief", "as-list", "as-grouped", "as-counts", "as-focus-block", "as-participants-block", "as-wip-list", "as-bodies"}
+var knownFunctions = []string{"source", "active", "history", "indexed", "kind", "intent", "type", "layer", "since", "topic", "participant", "untagged", "id", "not", "n", "skip", "rank", "group", "expand", "name", "name-prefix", "stalled", "brief", "as-list", "as-grouped", "as-counts", "as-focus-block", "as-participants-block", "as-wip-list", "as-bodies"}
 
 // ViewFunctionNames returns the function names accepted by the layout
 // executor. Reference surfaces use this instead of maintaining their own
@@ -233,6 +233,12 @@ func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model
 
 	if err := spec.validateMutualExclusion(); err != nil {
 		return query.SectionResult{}, err
+	}
+	// A plain listing serves the live population; history opts into
+	// closed, superseded and retired entries, and an id() selection names
+	// its entries outright (20261109-004506-d-cpt-udz, D12).
+	if !spec.history && len(spec.idFilter) == 0 {
+		spec.filter.OpenOnly = true
 	}
 	if err := spec.validateRenderShape(); err != nil {
 		return query.SectionResult{}, err
@@ -450,6 +456,12 @@ func parseSectionFunction(spec *sectionSpec, fn model.Function) error {
 			return fmt.Errorf("active takes no arguments")
 		}
 		spec.filter.OpenOnly = true
+
+	case fn.Name == "history":
+		if len(fn.Args) > 0 {
+			return fmt.Errorf("history takes no arguments")
+		}
+		spec.history = true
 
 	case fn.Name == "indexed":
 		if len(fn.Args) > 0 {

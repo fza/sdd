@@ -19,16 +19,18 @@ import (
 //
 // When the section used expand(refs) (ViewList.RefsExpanded), each entry's
 // resolved outgoing refs render as indented sub-lines beneath it.
-func renderAsList(w io.Writer, list types.ViewList, brief bool) {
+func renderAsList(w io.Writer, list types.ViewList, brief bool, r *Repeats) {
 	for _, item := range list.Items {
-		switch {
-		case brief:
-			writeEntryLineBrief(w, item.Entry)
-		case list.Ranked:
-			writeEntryLine(w, item.Entry, item.Score)
-		default:
-			writeEntryLine(w, item.Entry, math.NaN())
-		}
+		r.entry(w, item.Entry.ID, item.Entry.Brief, func() {
+			switch {
+			case brief:
+				writeEntryLineBrief(w, item.Entry)
+			case list.Ranked:
+				writeEntryLine(w, item.Entry, item.Score)
+			default:
+				writeEntryLine(w, item.Entry, math.NaN())
+			}
+		})
 		if list.RefsExpanded {
 			for _, ref := range item.Refs {
 				writeRefExpansion(w, ref)

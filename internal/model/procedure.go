@@ -24,10 +24,14 @@ type ProcedureSpecRaw struct {
 	// silences the authoring-arithmetic finding and records the trade
 	// (d-tac-rzi). Advisory only — never enforced at load or runtime.
 	ServeBudget int
+	// Rounds is a task procedure's round cap: the most interim deliveries its
+	// delegate child session makes (20261109-004845-d-cpt-ldx). Zero declares
+	// none; the engine validates it.
+	Rounds int
 }
 
 // ProcedureSpecFromDocument converts a workflow declaration reported as one
-// structured value — {params?, state?, steps, framing?, serveBudget?}, as the
+// structured value — {params?, state?, steps, framing?, serveBudget?, rounds?}, as the
 // report schema advertises it — into the raw spec the entry carries. The
 // write-side counterpart of the frontmatter routing in ParseEntry: unknown
 // sections are rejected so a typo'd key fails the capture instead of being
@@ -41,8 +45,9 @@ func ProcedureSpecFromDocument(doc map[string]any) (*ProcedureSpecRaw, error) {
 		"steps":   &spec.Steps,
 		"framing": &spec.Framing,
 	}
+	counts := map[string]*int{"serveBudget": &spec.ServeBudget, "rounds": &spec.Rounds}
 	for key, value := range doc {
-		if key == "serveBudget" {
+		if target, isCount := counts[key]; isCount {
 			n, ok := value.(int)
 			if !ok {
 				if f, isFloat := value.(float64); isFloat && f == float64(int(f)) {
@@ -50,14 +55,14 @@ func ProcedureSpecFromDocument(doc map[string]any) (*ProcedureSpecRaw, error) {
 				}
 			}
 			if !ok || n < 0 {
-				return nil, fmt.Errorf("serveBudget must be a non-negative integer, got %v", value)
+				return nil, fmt.Errorf("%s must be a non-negative integer, got %v", key, value)
 			}
-			spec.ServeBudget = n
+			*target = n
 			continue
 		}
 		node, ok := sections[key]
 		if !ok {
-			return nil, fmt.Errorf("unknown workflow section %q (params, state, steps, framing, serveBudget)", key)
+			return nil, fmt.Errorf("unknown workflow section %q (params, state, steps, framing, serveBudget, rounds)", key)
 		}
 		if value == nil {
 			continue

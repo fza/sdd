@@ -37,20 +37,20 @@ func TestViewResult_ViewSectionsCarriesEveryShape(t *testing.T) {
 	planListed := types.ListedEntry{
 		ID: plan.ID, Title: "Ship sections", ListingTitle: "Ship sections", Type: "decision", Kind: "plan", Layer: "tactical",
 		Status: "active", DerivedStatus: types.DerivedStatus{Kind: "active"}, Confidence: "high", Intent: "guiding",
-		Participants: []string{"Alice"}, Topics: []string{"cli/view"}, Summary: "Ship it.", BodyExcerpt: "Ship the sections.",
+		Participants: []string{"Alice"}, Topics: []string{"cli/view"}, Summary: "Ship it.", BodyExcerpt: "Ship the sections.", Brief: "Ship sections",
 	}
 	gapListed := types.ListedEntry{
 		ID: gap.ID, ListingTitle: "The view has no data form.", Type: "signal", Kind: "gap", Layer: "tactical",
 		Status: "closed-by " + done.ID, DerivedStatus: types.DerivedStatus{Kind: "closed-by", By: done.ID},
-		BodyExcerpt: "The view has no data form. Callers parse text.",
+		BodyExcerpt: "The view has no data form. Callers parse text.", Brief: "The view has no data form.",
 	}
 	actorListed := types.ListedEntry{
 		ID: actor.ID, Title: "Alice", ListingTitle: "Alice", Type: "signal", Kind: "actor", Layer: "process",
-		Status: "open", DerivedStatus: types.DerivedStatus{Kind: "open"}, BodyExcerpt: "Alice works here.", Canonical: "Alice",
+		Status: "open", DerivedStatus: types.DerivedStatus{Kind: "open"}, BodyExcerpt: "Alice works here.", Canonical: "Alice", Brief: "Alice",
 	}
 	focusListed := types.ListedEntry{
 		ID: focus.ID, Title: "View work", ListingTitle: "View work", Type: "decision", Kind: "focus", Layer: "tactical",
-		Status: "active", DerivedStatus: types.DerivedStatus{Kind: "active"}, BodyExcerpt: "Focus on the view.",
+		Status: "active", DerivedStatus: types.DerivedStatus{Kind: "active"}, BodyExcerpt: "Focus on the view.", Brief: "View work",
 	}
 	planBody := planListed
 	planBody.Body = plan.Content

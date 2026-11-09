@@ -28,6 +28,12 @@ type GuideFinding struct {
 // see it misreads correct entries (s-tac-fu8). Findings are drafting input for
 // the dialogue, never a gate.
 func (a *Application) WritingGuideCheck(ctx context.Context, identity RequestIdentity, project ProjectID, draft EntryDraft) ([]GuideFinding, error) {
+	return a.writingGuideCheck(ctx, identity, project, draft, nil)
+}
+
+// writingGuideCheck runs the guide, confined to the changed passages when
+// there are any.
+func (a *Application) writingGuideCheck(ctx context.Context, identity RequestIdentity, project ProjectID, draft EntryDraft, changed []string) ([]GuideFinding, error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
 		return nil, err
@@ -78,7 +84,7 @@ func (a *Application) WritingGuideCheck(ctx context.Context, identity RequestIde
 		return nil, err
 	}
 	finder := finders.New(finders.Options{WritingGuideRunner: runtime.options.LLM})
-	result, err := finder.WritingGuide(ctx, snapshot.graph, query.WritingGuideQuery{Entry: entry, ClosureTargets: closureTargets})
+	result, err := finder.WritingGuide(ctx, snapshot.graph, query.WritingGuideQuery{Entry: entry, ClosureTargets: closureTargets, Changed: changed})
 	if err != nil {
 		return nil, fmt.Errorf("writing guide: %w", err)
 	}

@@ -47,7 +47,7 @@ func listedEntry(e *model.Entry, g *model.Graph) types.ListedEntry {
 		ID: e.ID, Title: e.Title, ListingTitle: e.ListingTitle(), Type: string(e.Type), Kind: string(e.Kind), Layer: string(e.Layer),
 		Status: statusText(status), DerivedStatus: derivedStatus(status, nil), Confidence: e.Confidence, Intent: string(e.Intent),
 		Participants: slices.Clone(e.Participants), Topics: topicLabels(g.EffectiveTopics(e)), Summary: e.Summary,
-		BodyExcerpt: e.ShortContent(200), Canonical: e.Canonical,
+		BodyExcerpt: e.ShortContent(200), Canonical: e.Canonical, Brief: model.EntryBrief(e),
 	}
 }
 

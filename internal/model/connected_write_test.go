@@ -107,3 +107,14 @@ func TestHonoredLocalDropsInbound(t *testing.T) {
 		t.Error("the layer read should not be mutated")
 	}
 }
+
+func TestHonoredLocalDropsRelevanceAndRecheck(t *testing.T) {
+	local := parseLayer(t, "relevance:\n  commit: true\n  content: reader\nrecheck:\n  responsible: [x]\nparticipant: x\n")
+	honored := model.HonoredLocal(local)
+	if honored.Relevance != (model.RelevanceConfig{}) || len(honored.Recheck.Responsible) != 0 {
+		t.Error("relevance and recheck set outside the committed config should not be honored")
+	}
+	if honored.Participant != "x" {
+		t.Error("the rest of the local layer should stay")
+	}
+}

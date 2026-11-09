@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"time"
 
@@ -45,18 +46,43 @@ type ProjectRuntimeOptions struct {
 	RuneCap    func(context.Context) (int, error)
 	LLM        llm.Runner
 	Finalizers []MutationFinalizer
+	// Events is the project event store; nil leaves the project without one.
+	Events EventStore
+	// Prefilter is the relevance scorer gather runs under
+	// grounding.prefilter; the zero value leaves it off.
+	Prefilter Prefilter
+	// Relevance is the relevance verdict ledger; nil stores no verdicts.
+	Relevance RelevanceStore
+	// HandEdits finds hand edits of committed entries for the recheck list;
+	// nil finds none.
+	HandEdits HandEditScanner
 	// Sync runs automatic graph sync before a session acts on a branch and
 	// serves what blocks it; nil leaves branches as they are.
 	Sync GraphSync
 	// Connected runs the sync rounds of the connected repositories the
 	// project reaches; nil syncs none.
 	Connected ConnectedSync
+	// Hooks runs the hooks configured for the person running sdd at the
+	// engine's events in this project's sessions; nil runs none.
+	Hooks HookCommands
 	// ExcludeEmbeddedFromIndex mirrors the CLI's excludeEmbedded semantics for
 	// the vector index: connected-repo runtimes set it so binary-shipped base
 	// entries embed once per machine (in the base store) rather than once per
 	// connected repo. The base runtime leaves it false — its store includes
 	// embedded entries. The rule is applied identically at index and read time.
 	ExcludeEmbeddedFromIndex bool
+	// Grounding is the project's grounding policy; the zero value leaves
+	// grounding off with the default limits.
+	Grounding GroundingPolicy
+	// Verifier is the project's draft verifier policy; the zero value leaves
+	// it off.
+	Verifier VerifierPolicy
+	// Window reports the context window of LLM's model and the answer reserve
+	// a call keeps, which size a light verifier call; nil refuses light.
+	Window func(context.Context) (ModelWindow, error)
+	// Checkout is the project checkout the deep verifier's weighing rule looks
+	// a cited path up in; nil finds none.
+	Checkout fs.FS
 }
 
 // GraphSync runs automatic sync of the graph repository behind a branch's

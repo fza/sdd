@@ -189,8 +189,9 @@ func procedureSpecSchema() map[string]any {
 				"properties": map[string]any{
 					"procedure": map[string]any{"type": "string"},
 					"seed":      map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+					"receive":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+					"send":      map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
 				},
-				"required":             []string{"seed"},
 				"additionalProperties": false,
 			},
 		},
@@ -212,6 +213,10 @@ func procedureSpecSchema() map[string]any {
 			"goal":        map[string]any{"type": "string"},
 			"serveDelta":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"delegable":   map[string]any{"type": "boolean"},
+			"deliver":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"await":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"findings":    map[string]any{"type": "string"},
+			"stage":       map[string]any{"type": "string"},
 		},
 		"required":             []string{"id"},
 		"additionalProperties": false,
@@ -226,6 +231,10 @@ func procedureSpecSchema() map[string]any {
 			"serveBudget": map[string]any{
 				"type": "integer", "minimum": 0,
 				"description": "declared worst-case serve total in bytes; a larger total than the engine default silences the authoring-arithmetic finding and records the trade",
+			},
+			"rounds": map[string]any{
+				"type": "integer", "minimum": 0,
+				"description": "a task's round cap: the most interim deliveries its delegate session makes before it concludes; required on a task with an interim delivery",
 			},
 		},
 		"required":             []string{"steps"},
@@ -303,6 +312,51 @@ func schemaForType(t VarType, desc string) map[string]any {
 				"new": map[string]any{"type": "string", "description": "replacement text; empty deletes the old text"},
 			},
 			"required":             []string{"old", "new"},
+			"additionalProperties": false,
+		}
+	case TypeDeepFinding:
+		schema = deepFindingSchema()
+	case TypeDeepAnswer:
+		schema = deepAnswerSchema()
+	case TypeDeepResponse:
+		schema = deepResponseSchema()
+	case TypeVerdict:
+		codes := model.GroundingVerdictCodes()
+		enum := make([]any, 0, len(codes))
+		for _, code := range codes {
+			enum = append(enum, code)
+		}
+		schema = map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"ids": map[string]any{
+					"type":     "array",
+					"minItems": 1,
+					"items":    map[string]any{"type": "string", "pattern": entryIDSchemaPattern},
+				},
+				"code": map[string]any{"type": "string", "enum": enum},
+			},
+			"required":             []string{"ids", "code"},
+			"additionalProperties": false,
+		}
+	case TypeStrain:
+		relations := model.StrainRelations()
+		enum := make([]any, 0, len(relations))
+		for _, relation := range relations {
+			enum = append(enum, relation)
+		}
+		schema = map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"ids": map[string]any{
+					"type":     "array",
+					"minItems": 2,
+					"maxItems": 2,
+					"items":    map[string]any{"type": "string", "pattern": entryIDSchemaPattern},
+				},
+				"relation": map[string]any{"type": "string", "enum": enum},
+			},
+			"required":             []string{"ids", "relation"},
 			"additionalProperties": false,
 		}
 	case TypeEntryKind:
@@ -386,6 +440,86 @@ func involvementWhenSchema() map[string]any {
 			"to":   map[string]any{"type": "string", "pattern": `^\d{4}-\d{2}-\d{2}$`},
 		},
 		"minProperties":        1,
+		"additionalProperties": false,
+	}
+}
+
+func deepEditsSchema() map[string]any {
+	return map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"old": map[string]any{"type": "string", "minLength": 1, "description": "exact text of the base draft document, matching it exactly once"},
+				"new": map[string]any{"type": "string", "description": "replacement text; empty deletes the old text"},
+			},
+			"required":             []string{"old", "new"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func enumOf(values []string) []any {
+	out := make([]any, 0, len(values))
+	for _, v := range values {
+		out = append(out, v)
+	}
+	return out
+}
+
+func deepFindingSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"verdict":  map[string]any{"type": "string", "minLength": 1, "description": "what is wrong, in words, reasoning first"},
+			"axis":     map[string]any{"type": "string", "enum": enumOf(model.DeepAxes())},
+			"severity": map[string]any{"type": "string", "enum": []any{"high", "medium", "low"}},
+			"owner":    map[string]any{"type": "boolean", "description": "true when only the user can settle it; such a finding carries no edits"},
+			"pointers": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"field": map[string]any{"type": "string", "description": "the draft field the finding judges"},
+						"quote": map[string]any{"type": "string", "description": "exact draft words"},
+						"id":    map[string]any{"type": "string", "pattern": entryIDSchemaPattern},
+					},
+					"required":             []string{"field"},
+					"additionalProperties": false,
+				},
+			},
+			"basis":   map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": entryIDSchemaPattern}},
+			"sources": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "files, commits or URLs an evidence finding cites"},
+			"edits":   deepEditsSchema(),
+		},
+		"required":             []string{"verdict", "axis", "severity"},
+		"additionalProperties": false,
+	}
+}
+
+func deepAnswerSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"target":  map[string]any{"type": "string", "pattern": "^f[1-9][0-9]*$"},
+			"verdict": map[string]any{"type": "string", "enum": []any{"accept", "contest"}},
+			"reason":  map[string]any{"type": "string", "description": "why the finding does not hold; required on a contest"},
+		},
+		"required":             []string{"target", "verdict"},
+		"additionalProperties": false,
+	}
+}
+
+func deepResponseSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"target":  map[string]any{"type": "string", "pattern": "^f[1-9][0-9]*$"},
+			"outcome": map[string]any{"type": "string", "enum": []any{model.DeepHeld, model.DeepConceded, model.DeepRevised, model.DeepDropped}},
+			"note":    map[string]any{"type": "string", "description": "why; required except on a revision"},
+			"edits":   deepEditsSchema(),
+		},
+		"required":             []string{"target", "outcome"},
 		"additionalProperties": false,
 	}
 }

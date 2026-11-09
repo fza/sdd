@@ -43,6 +43,10 @@ type ApplicationOptions struct {
 	// EntrySuffix supplies the random part of a new entry ID; nil draws it
 	// from the system's randomness (d-cpt-t8i).
 	EntrySuffix func(length int) (string, error)
+	// DelegateLauncher, when set, makes sdd itself launch and resume the agent
+	// driving each delegate child session; nil leaves the launch to the harness
+	// the dispatch handoff instructs (20261109-004924-d-cpt-cxw).
+	DelegateLauncher DelegateLauncher
 }
 
 // Application resolves current access and dispatches protocol-neutral SDD
@@ -56,6 +60,7 @@ type Application struct {
 	clock         Clock
 	prepareSearch func(context.Context, SearchTarget) error
 	entrySuffix   func(length int) (string, error)
+	launcher      DelegateLauncher
 }
 
 func NewApplication(options ApplicationOptions) (*Application, error) {
@@ -83,6 +88,7 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		clock:         clock,
 		prepareSearch: options.PrepareSearch,
 		entrySuffix:   suffix,
+		launcher:      options.DelegateLauncher,
 	}, nil
 }
 
@@ -280,11 +286,14 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	if matched == 0 && layout.UsesFunction("participant") {
 		knownParticipants = snapshot.graph.AllParticipants()
 	}
+	full, summary := viewResult.ServedIDs()
 	return ViewResult{
 		Project:           runtime.options.Project,
 		ViewSections:      sections,
 		MatchedCount:      matched,
 		KnownParticipants: knownParticipants,
+		FullIDs:           full,
+		SummaryIDs:        summary,
 	}, nil
 }
 
@@ -324,22 +333,7 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 		return ShowResult{}, err
 	}
 	show := ShowResult{Project: runtime.options.Project, Items: items}
-	for _, group := range showResult.Groups {
-		if group.Primary != nil {
-			if group.PrimaryID != "" {
-				show.FullIDs = append(show.FullIDs, group.PrimaryID)
-			} else {
-				show.FullIDs = append(show.FullIDs, group.Primary.ID)
-			}
-		}
-		for _, items := range [][]model.ShowTreeItem{group.Upstream, group.Downstream} {
-			for _, item := range items {
-				if item.Entry != nil {
-					show.SummaryIDs = append(show.SummaryIDs, item.NodeID())
-				}
-			}
-		}
-	}
+	show.FullIDs, show.SummaryIDs = showResult.ServedIDs()
 	return show, nil
 }
 
@@ -417,11 +411,7 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 			break
 		}
 	}
-	for _, entry := range searchResult.Entries {
-		if entry.Entry != nil {
-			search.EntryIDs = append(search.EntryIDs, entry.DisplayID())
-		}
-	}
+	search.EntryIDs = searchResult.ServedIDs()
 	return search, nil
 }
 

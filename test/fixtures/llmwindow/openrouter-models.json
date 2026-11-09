@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "id": "z-ai/glm-4.6",
+      "name": "Z.AI: GLM 4.6",
+      "context_length": 202752,
+      "top_provider": {"context_length": 202752, "max_completion_tokens": 131072, "is_moderated": false}
+    },
+    {
+      "id": "qwen/qwen3-coder",
+      "name": "Qwen: Qwen3 Coder",
+      "context_length": 262144,
+      "top_provider": {"context_length": 262144, "max_completion_tokens": null, "is_moderated": false}
+    }
+  ]
+}

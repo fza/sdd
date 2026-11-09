@@ -80,9 +80,22 @@ func ReadConfig(sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
 // file exists — with global settings present, a repo without config files
 // still resolves to them.
 func ResolveConfig(global model.BaseConfig, sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
-	fileCfg, err := ReadConfig(sddDir, localConfigPath)
+	committed, local, err := ReadConfigLayers(sddDir, localConfigPath)
 	if err != nil {
 		return nil, err
+	}
+	files := map[model.ConfigValueSource]string{
+		model.ConfigSourceGlobal:  "the user-global config",
+		model.ConfigSourceProject: filepath.Join(sddDir, "config.yaml"),
+		model.ConfigSourceLocal:   LocalConfigPath(sddDir, localConfigPath),
+	}
+	err = model.CheckVerifierLayers(global, committed, local, files)
+	if err != nil {
+		return nil, err
+	}
+	var fileCfg *model.PerRepoConfig
+	if committed != nil || local != nil {
+		fileCfg = model.MergeConfig(committed, local)
 	}
 	if fileCfg == nil {
 		if global.IsZero() {
@@ -108,14 +121,26 @@ func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.P
 		if committed != nil && committed.Contribution != "" {
 			return nil, nil, fmt.Errorf("%s: contribution is machine-local; set it in %s instead", committedPath, LocalConfigFileName)
 		}
+		// A hook runs code on the machine running sdd, so only that
+		// person's own layers choose it (20261109-005138-d-tac-i61).
+		if committed != nil && len(committed.Hooks) > 0 {
+			return nil, nil, fmt.Errorf("%s: hooks run commands on this machine; only the user-global config or %s may set them", committedPath, LocalConfigFileName)
+		}
 	}
 	committed = model.HonoredCommitted(committed)
 	// Without a .sdd/ directory only an explicit override names a local
 	// layer — joining an empty dir would read a path relative to the cwd.
 	if sddDir != "" || localConfigPath != "" {
-		local, err = readConfigFile(LocalConfigPath(sddDir, localConfigPath))
+		localPath := LocalConfigPath(sddDir, localConfigPath)
+		local, err = readConfigFile(localPath)
 		if err != nil {
 			return nil, nil, err
+		}
+		// A machine-local layer may only turn grounding enforcement on
+		// (20261109-004506-d-cpt-udz, D2).
+		if local != nil && local.Grounding.Enforce != nil && !*local.Grounding.Enforce {
+			return nil, nil, fmt.Errorf("%s: grounding.enforce: false is refused in the machine-local config, which may only set true; turn enforcement off in the committed %s",
+				localPath, filepath.Join(sddDir, "config.yaml"))
 		}
 		local = model.HonoredLocal(local)
 	}

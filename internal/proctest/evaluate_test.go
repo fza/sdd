@@ -207,12 +207,15 @@ func TestEvaluateRecordDispatchesRealCapture(t *testing.T) {
 		"confidence": "medium",
 	})
 	proctest.RequireStep(t, serve, "playback")
-	if world.LLM.Calls("writing-guide") != 1 {
-		t.Fatalf("writing guide ran %d times, want 1", world.LLM.Calls("writing-guide"))
+	if world.LLM.Calls("writing-guide") != 0 {
+		t.Fatalf("a guided capture runs the writing guide after the user approves, not before playback; it ran %d times", world.LLM.Calls("writing-guide"))
 	}
 
 	serve = session.Answer(t, capture.Instance, "playback", "confirm", nil, "record it")
 	proctest.RequireStep(t, serve, "verifySummary")
+	if world.LLM.Calls("writing-guide") != 1 {
+		t.Fatalf("the writing guide should run once on the approved content, ran %d times", world.LLM.Calls("writing-guide"))
+	}
 	serve = session.Answer(t, capture.Instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
 	proctest.RequireStatus(t, serve, "completed")
 

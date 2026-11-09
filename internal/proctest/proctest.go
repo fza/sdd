@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/llm"
+	"github.com/networkteam/sdd/pkg/llm/embed"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -49,10 +51,25 @@ type GuideFinding struct {
 type LLMScript struct {
 	mu                sync.Mutex
 	calls             map[llm.Purpose]int
+	prompts           map[llm.Purpose][]llm.Request
 	PreflightFindings []PreflightFinding
 	GuideFindings     []GuideFinding
-	Title             string
-	Summary           string
+	// DuringPreflight runs inside every pre-flight call, before it answers:
+	// the point to land an entry between a capture's confirm and its write.
+	DuringPreflight func()
+	// GatherQuery is the semantic query the gather query writer answers
+	// with, and its one keyword term.
+	GatherQuery string
+	GatherTerm  string
+	Title       string
+	Summary     string
+}
+
+// Prompts returns the requests the runner ran for the purpose, in order.
+func (s *LLMScript) Prompts(purpose llm.Purpose) []llm.Request {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]llm.Request(nil), s.prompts[purpose]...)
 }
 
 // Calls returns how often the runner ran for the purpose.
@@ -71,13 +88,22 @@ func (s *LLMScript) Run(_ context.Context, request llm.Request) (llm.Result, err
 		s.calls = map[llm.Purpose]int{}
 	}
 	s.calls[request.Purpose]++
+	if s.prompts == nil {
+		s.prompts = map[llm.Purpose][]llm.Request{}
+	}
+	s.prompts[request.Purpose] = append(s.prompts[request.Purpose], request)
 	switch request.Purpose {
 	case llm.PurposeSummarize:
 		return marshalAnswer(map[string]string{"title": s.Title, "summary": s.Summary})
 	case llm.PurposeTitle:
 		return marshalAnswer(map[string]string{"title": s.Title})
 	case llm.PurposePreflight:
+		if s.DuringPreflight != nil {
+			s.DuringPreflight()
+		}
 		return marshalFindings(s.PreflightFindings)
+	case llm.PurposeGatherQuery:
+		return marshalGatherQuery(s.GatherQuery, s.GatherTerm)
 	case llm.PurposeWritingGuide:
 		return marshalFindings(s.GuideFindings)
 	default:
@@ -148,6 +174,16 @@ type config struct {
 	branchDirs  map[string]string
 	finalizers  []sdd.MutationFinalizer
 	dialogue    sdd.Dialogue
+	grounding   sdd.GroundingPolicy
+	verifier    sdd.VerifierPolicy
+	window      *sdd.ModelWindow
+	launcher    sdd.DelegateLauncher
+	checkout    fs.FS
+	hooks       sdd.HookCommands
+	relevance   sdd.RelevanceStore
+	prefilter   sdd.Prefilter
+	events      sdd.EventStore
+	embedder    embed.Embedder
 }
 
 // Option configures NewWorld.
@@ -169,6 +205,61 @@ func WithParticipant(name string) Option { return func(c *config) { c.participan
 // dialogue mode.
 func WithAutonomousDialogue() Option {
 	return func(c *config) { c.dialogue = sdd.Dialogue{Mode: "autonomous", Source: "config.local.yaml"} }
+}
+
+// WithGroundingEnforced turns grounding.enforce on for the world's project.
+func WithGroundingEnforced() Option {
+	return func(c *config) { c.grounding.Enforce = true }
+}
+
+// WithVerifier sets the world project's draft verifier policy, with a model
+// window of window tokens and an answer reserve of reserve; a zero window
+// leaves the runtime without one.
+func WithVerifier(policy sdd.VerifierPolicy, window, reserve int) Option {
+	return func(c *config) {
+		c.verifier = policy
+		if window > 0 {
+			c.window = &sdd.ModelWindow{Tokens: window, OutputReserve: reserve}
+		}
+	}
+}
+
+// WithDelegateLauncher makes the world's application launch delegates
+// through launcher, as a composition with headless launches does.
+func WithDelegateLauncher(launcher sdd.DelegateLauncher) Option {
+	return func(c *config) { c.launcher = launcher }
+}
+
+// WithCheckout gives the world's project a checkout the deep verifier's
+// weighing rule looks cited paths up in.
+func WithCheckout(checkout fs.FS) Option {
+	return func(c *config) { c.checkout = checkout }
+}
+
+// WithGrounding sets the world project's whole grounding policy.
+func WithGrounding(policy sdd.GroundingPolicy) Option {
+	return func(c *config) { c.grounding = policy }
+}
+
+// WithRelevance gives the world's project a relevance verdict ledger.
+func WithRelevance(store sdd.RelevanceStore) Option {
+	return func(c *config) { c.relevance = store }
+}
+
+// WithEvents gives the world's project an event store.
+func WithEvents(store sdd.EventStore) Option {
+	return func(c *config) { c.events = store }
+}
+
+// WithEmbedder gives the world's project an embedding model over an
+// in-memory search index, so gather reads in search mode.
+func WithEmbedder(embedder embed.Embedder) Option {
+	return func(c *config) { c.embedder = embedder }
+}
+
+// WithPrefilter gives the world's project a relevance scorer.
+func WithPrefilter(prefilter sdd.Prefilter) Option {
+	return func(c *config) { c.prefilter = prefilter }
 }
 
 // WithFinalizers configures required completion after publication.
@@ -327,7 +418,16 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	script := &LLMScript{Title: "generated title", Summary: "A generated summary."}
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
-		Graph: graph, LLM: script, Finalizers: cfg.finalizers,
+		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Verifier: cfg.verifier, Checkout: cfg.checkout,
+		Hooks: cfg.hooks, Relevance: cfg.relevance, Prefilter: cfg.prefilter, Events: cfg.events,
+	}
+	if cfg.window != nil {
+		window := *cfg.window
+		options.Window = func(context.Context) (sdd.ModelWindow, error) { return window, nil }
+	}
+	if cfg.embedder != nil {
+		options.Embedder, options.SearchIndex = cfg.embedder, localadapter.NewMemorySearchIndexStore()
+		options.RuneCap = func(context.Context) (int, error) { return 512, nil }
 	}
 	var dropped map[string]bool
 	if len(cfg.branchDirs) > 0 {
@@ -349,7 +449,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 		t.Fatal(err)
 	}
 	application, err := sdd.NewApplication(sdd.ApplicationOptions{
-		Access: &accessResolver{runtime: runtime, participant: cfg.participant, dialogue: cfg.dialogue}, Sessions: sessions, StagedBlobs: blobs,
+		Access: &accessResolver{runtime: runtime, participant: cfg.participant, dialogue: cfg.dialogue}, Sessions: sessions, StagedBlobs: blobs, DelegateLauncher: cfg.launcher,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -437,6 +537,13 @@ func (s *Session) StartChild(t *testing.T, canonical string, params map[string]a
 	return serve
 }
 
+// StartChildErr starts a procedure under a spawning parent and returns the
+// error a refused start or launch gives.
+func (s *Session) StartChildErr(t *testing.T, canonical string, params map[string]any, parent string) (*sdd.WorkflowServe, error) {
+	t.Helper()
+	return s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params, Parent: parent})
+}
+
 // Report sends state fields to the instance's current step.
 func (s *Session) Report(t *testing.T, instance string, fields map[string]any) *sdd.WorkflowServe {
 	t.Helper()
@@ -497,6 +604,17 @@ func (s *Session) DecideErr(t *testing.T, instance, chooser, choice string, fiel
 	return s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: report})
 }
 
+// Gather runs the grounding read inside instance, opening ids in full, as the
+// MCP gather tool does.
+func (s *Session) Gather(t *testing.T, instance string, ids ...string) sdd.GatherResult {
+	t.Helper()
+	result, err := s.WF.Gather(t.Context(), s.World.Identity, sdd.WorkflowGatherRequest{Instance: instance, IDs: ids, SyncMode: sdd.SearchSyncNone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
 // LogRead records a read into the session ledger, as the host's read tools do.
 func (s *Session) LogRead(t *testing.T, tool string, full, summary []string) {
 	t.Helper()
@@ -540,4 +658,31 @@ func LoadEntry(t *testing.T, graphDir, id string) *model.Entry {
 		t.Fatal(err)
 	}
 	return entry
+}
+
+// Refresh replays the session from its store, as every MCP call does, so a
+// delegate's deliveries made through another replay are in view.
+func (s *Session) Refresh(t *testing.T) {
+	t.Helper()
+	workflow, err := s.World.App.RefreshWorkflow(t.Context(), s.World.Identity, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.WF = workflow
+}
+
+// Delegate opens a delegate child session by the handle its dispatch
+// carried, as the launched delegate does.
+func (w *World) Delegate(t *testing.T, dispatch *sdd.WorkflowDispatch) *Session {
+	t.Helper()
+	workflow, err := w.App.RefreshWorkflow(t.Context(), w.Identity, dispatch.Session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Session{World: w, WF: workflow, ID: dispatch.Session}
+}
+
+func marshalGatherQuery(query, term string) (llm.Result, error) {
+	output, err := json.Marshal(map[string]any{"query": query, "terms": []string{term}})
+	return llm.Result{Text: string(output), Identity: scriptIdentity}, err
 }

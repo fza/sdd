@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -48,6 +49,13 @@ type Runner struct {
 	variant  string
 	host     string
 	useCache bool
+
+	// ollama sizes num_ctx per call: Ollama cuts a prompt longer than its
+	// context without an error (20261109-004729-d-cpt-xs5, V-D12). The
+	// option lives on the shared client, so calls take turns setting it.
+	ollama       bool
+	ollamaMu     sync.Mutex
+	outputTokens int
 
 	structured *structuredOutput
 }
@@ -172,11 +180,13 @@ func NewRunner(cfg model.LLMConfig) (*Runner, error) {
 	}
 
 	runner := &Runner{
-		provider: cfg.Provider,
-		model:    cfg.Model,
-		variant:  canonicalVariant(cfg.Params),
-		host:     endpointHost(cfg.Provider, cfg.Model, cfgOpts),
-		useCache: useCache,
+		provider:     cfg.Provider,
+		model:        cfg.Model,
+		variant:      canonicalVariant(cfg.Params),
+		host:         endpointHost(cfg.Provider, cfg.Model, cfgOpts),
+		useCache:     useCache,
+		ollama:       cfg.Provider == "ollama",
+		outputTokens: maxTokens,
 	}
 
 	runner.client, err = newClient("", nil)
@@ -281,6 +291,11 @@ func (r *Runner) generate(ctx context.Context, client upstream.LLM, req llm.Requ
 
 	prompt := upstream.NewPrompt(req.UserPrompt, opts...)
 
+	if r.ollama {
+		r.ollamaMu.Lock()
+		defer r.ollamaMu.Unlock()
+		client.SetOption("options", map[string]any{"num_ctx": ollamaContextSize(req, r.outputTokens)})
+	}
 	resp, err := client.GenerateWithUsage(ctx, prompt, genOpts...)
 	if err != nil {
 		var noAnswer *upstreamllm.NoAnswerError
@@ -388,4 +403,17 @@ func needsAPIKey(provider string) bool {
 	default:
 		return true
 	}
+}
+
+// ollamaUncappedOutput is the answer reserve an uncapped Ollama call is sized
+// with.
+const ollamaUncappedOutput = 8192
+
+// ollamaContextSize is the num_ctx an Ollama call carries: the prompt at 3
+// characters a token, plus the output reserve.
+func ollamaContextSize(req llm.Request, outputTokens int) int {
+	if outputTokens <= 0 {
+		outputTokens = ollamaUncappedOutput
+	}
+	return (len(req.SystemPrompt)+len(req.UserPrompt))/3 + 1 + outputTokens
 }

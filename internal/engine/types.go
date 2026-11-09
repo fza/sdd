@@ -44,6 +44,11 @@ const (
 	TypeInvolvement       BaseType = "involvement"
 	TypeInvolvementWhen   BaseType = "involvement-when"
 	TypeSearchReplace     BaseType = "search-replace"
+	TypeVerdict           BaseType = "verdict"
+	TypeDeepFinding       BaseType = "deep-finding"
+	TypeDeepAnswer        BaseType = "deep-answer"
+	TypeDeepResponse      BaseType = "deep-response"
+	TypeStrain            BaseType = "strain"
 	// TypeProse validates exactly like text; the distinct declaration tells
 	// serve-side rendering to treat changes as content diffs rather than
 	// whole-value re-serves (20260826-120330-d-tac-8f8).
@@ -56,7 +61,7 @@ var baseTypeOrder = []BaseType{
 	TypeText, TypeBool, TypeEntryID, TypeRef, TypeLabel, TypeParticipant,
 	TypeEntryKind, TypeLayer, TypeConfidence, TypeIntent, TypeActorKind, TypeAttachmentHandle,
 	TypeProcedureSpec, TypeFactIndex, TypePreflightFindings, TypeGuideFindings,
-	TypeInvolvement, TypeInvolvementWhen, TypeSearchReplace, TypeProse,
+	TypeInvolvement, TypeInvolvementWhen, TypeSearchReplace, TypeVerdict, TypeDeepFinding, TypeDeepAnswer, TypeDeepResponse, TypeStrain, TypeProse,
 }
 
 var baseTypes = func() map[BaseType]bool {
@@ -97,6 +102,11 @@ var baseTypeDesc = map[BaseType]string{
 	TypeInvolvement:       "a focus involvement: target entry, optional actors, optional time range",
 	TypeInvolvementWhen:   "a from/to date range",
 	TypeSearchReplace:     "one exact edit: old text that must match exactly once in the target, and the new text replacing it",
+	TypeVerdict:           "entries a capture's reading set aside instead of referencing, with the code naming why",
+	TypeDeepFinding:       "one finding of the deep draft verifier: the verdict in words, axis, severity, whether only the owner can settle it, pointers into the draft, basis entries, sources, and exact edits over the base draft",
+	TypeDeepAnswer:        "the drafter's answer to one deep finding: its number, accept or contest, and the reason of a contest",
+	TypeDeepResponse:      "the deep verifier's answer to one contested finding: its number, held, conceded, revised or dropped, a note, and the edits it now proposes",
+	TypeStrain:            "a clash between two existing entries the capture found: which two, and whether one contradicts, duplicates or outdates the other",
 	TypeProse:             "long-form prose — like text, but serves render changes as content diffs instead of re-serving the whole value",
 }
 
@@ -257,6 +267,21 @@ func validateBaseValue(base BaseType, v any) (any, error) {
 			return nil, fmt.Errorf("new must be a string (empty deletes the old text)")
 		}
 		return m, nil
+
+	case TypeDeepFinding:
+		return deepValue(v, model.DeepFinding.Validate)
+
+	case TypeDeepAnswer:
+		return deepValue(v, model.DeepAnswer.Validate)
+
+	case TypeDeepResponse:
+		return deepValue(v, model.DeepResponse.Validate)
+
+	case TypeVerdict:
+		return verdictFromValue(v)
+
+	case TypeStrain:
+		return strainFromValue(v)
 
 	case TypeLabel:
 		s, ok := v.(string)
@@ -535,6 +560,41 @@ func (i Involvement) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
+// verdictFromValue normalizes a verdict to {ids, code}: at least one full
+// entry ID and a code from model.GroundingVerdictCodes.
+func verdictFromValue(v any) (map[string]any, error) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("expected verdict object {ids, code}")
+	}
+	for key := range m {
+		if key != "ids" && key != "code" {
+			return nil, fmt.Errorf("unknown verdict key %q (ids, code)", key)
+		}
+	}
+	code, _ := m["code"].(string)
+	if !model.ValidGroundingVerdictCode(code) {
+		return nil, fmt.Errorf("verdict code must be one of %s", strings.Join(model.GroundingVerdictCodes(), ", "))
+	}
+	raw, ok := m["ids"].([]any)
+	if !ok || len(raw) == 0 {
+		return nil, fmt.Errorf("verdict ids must list at least one entry ID")
+	}
+	ids := make([]any, 0, len(raw))
+	for _, item := range raw {
+		id, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("verdict ids must be entry IDs (strings)")
+		}
+		_, err := model.ParseID(id)
+		if err != nil {
+			return nil, fmt.Errorf("verdict id %q is not a full entry ID: %w", id, err)
+		}
+		ids = append(ids, id)
+	}
+	return map[string]any{"ids": ids, "code": code}, nil
+}
+
 func involvementFromMap(m map[string]any) (Involvement, error) {
 	target, _ := m["target"].(string)
 	if _, err := model.ParseID(target); err != nil {
@@ -595,4 +655,68 @@ func actorKindAlternatives() string {
 		names = append(names, string(v))
 	}
 	return strings.Join(names, "|")
+}
+
+// deepValue decodes a deep exchange object strictly into its model type,
+// validates it there, and keeps the normalized object form.
+func deepValue[T any](v any, validate func(T) error) (map[string]any, error) {
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(encoded)))
+	decoder.DisallowUnknownFields()
+	var typed T
+	err = decoder.Decode(&typed)
+	if err != nil {
+		return nil, fmt.Errorf("expected %T object: %w", typed, err)
+	}
+	err = validate(typed)
+	if err != nil {
+		return nil, err
+	}
+	normalized, err := json.Marshal(typed)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	err = json.Unmarshal(normalized, &out)
+	return out, err
+}
+
+// strainFromValue normalizes a strain to {ids, relation}: two distinct full
+// entry IDs and a relation from model.StrainRelations.
+func strainFromValue(v any) (map[string]any, error) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("expected strain object {ids, relation}")
+	}
+	for key := range m {
+		if key != "ids" && key != "relation" {
+			return nil, fmt.Errorf("unknown strain key %q (ids, relation)", key)
+		}
+	}
+	relation, _ := m["relation"].(string)
+	if _, err := model.StrainRelationBit(relation); err != nil {
+		return nil, err
+	}
+	raw, ok := m["ids"].([]any)
+	if !ok || len(raw) != 2 {
+		return nil, fmt.Errorf("strain ids must name exactly two entries")
+	}
+	ids := make([]any, 0, 2)
+	for _, item := range raw {
+		id, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("strain ids must be entry IDs (strings)")
+		}
+		if _, err := model.ParseID(id); err != nil {
+			return nil, fmt.Errorf("strain id %q is not a full entry ID: %w", id, err)
+		}
+		ids = append(ids, id)
+	}
+	if ids[0] == ids[1] {
+		return nil, fmt.Errorf("a strain names two different entries")
+	}
+	return map[string]any{"ids": ids, "relation": relation}, nil
 }
