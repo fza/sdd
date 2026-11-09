@@ -14,8 +14,9 @@ import (
 // installPlan is what init's install step writes in the repository at root
 // for agents under scope: the skills it renders and the MCP registrations,
 // as files of a move commit. Only project scope keeps them in the
-// repository. A skill edited since sdd wrote it is left as init leaves it.
-func (h *Handler) installPlan(ctx context.Context, root string, scope model.Scope, agents []model.AgentTarget, binaryVersion string) ([]model.MoveFile, error) {
+// repository. A skill edited since sdd wrote it is left as init leaves it, and
+// a surface skip lists is left alone.
+func (h *Handler) installPlan(ctx context.Context, root string, scope model.Scope, agents []model.AgentTarget, skip model.InitConfig, binaryVersion string) ([]model.MoveFile, error) {
 	if scope != model.ScopeProject {
 		return nil, nil
 	}
@@ -32,21 +33,23 @@ func (h *Handler) installPlan(ctx context.Context, root string, scope model.Scop
 		return nil
 	}
 	for _, agent := range agents {
-		status, err := h.reader.SkillStatus(ctx, query.SkillStatusQuery{Target: agent, Scope: scope, RepoRoot: root})
-		if err != nil {
-			return nil, fmt.Errorf("reading the %s skills in %s: %w", agent, root, err)
-		}
-		for _, entry := range status.Entries {
-			if entry.Status != model.SkillStatusMissing && entry.Status != model.SkillStatusPristine {
-				continue
-			}
-			rendered, err := model.RenderSkillFile(entry.Embedded, binaryVersion, model.ComputeSkillHash(entry.Embedded.Content))
+		if !skip.Skips(model.InitSurfaceSkills) {
+			status, err := h.reader.SkillStatus(ctx, query.SkillStatusQuery{Target: agent, Scope: scope, RepoRoot: root})
 			if err != nil {
-				return nil, fmt.Errorf("rendering %s: %w", entry.AbsPath, err)
+				return nil, fmt.Errorf("reading the %s skills in %s: %w", agent, root, err)
 			}
-			err = add(entry.AbsPath, rendered)
-			if err != nil {
-				return nil, err
+			for _, entry := range status.Entries {
+				if entry.Status != model.SkillStatusMissing && entry.Status != model.SkillStatusPristine {
+					continue
+				}
+				rendered, err := model.RenderSkillFile(entry.Embedded, binaryVersion, model.ComputeSkillHash(entry.Embedded.Content))
+				if err != nil {
+					return nil, fmt.Errorf("rendering %s: %w", entry.AbsPath, err)
+				}
+				err = add(entry.AbsPath, rendered)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 		targets, err := model.MCPRegistrationTargets(agent, root)
@@ -54,6 +57,9 @@ func (h *Handler) installPlan(ctx context.Context, root string, scope model.Scop
 			return nil, err
 		}
 		for _, target := range targets {
+			if skip.Skips(target.Surface) {
+				continue
+			}
 			existing, err := readOptionalFile(target.Path)
 			if err != nil {
 				return nil, err
@@ -92,7 +98,7 @@ func (h *Handler) workInstallPlan(ctx context.Context, workRoot, root, binaryVer
 	if len(agents) == 0 {
 		agents = model.DefaultSupportedAgents
 	}
-	return h.installPlan(ctx, root, scope, agents, binaryVersion)
+	return h.installPlan(ctx, root, scope, agents, recorded.Init, binaryVersion)
 }
 
 // vacatePlan is what removes from the repository at root the agent surfaces

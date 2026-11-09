@@ -530,7 +530,7 @@ func (h *Handler) planConfigs(ctx context.Context, target graphHome, s, t, w *mo
 	}
 	t.write(configPath, projectConfig)
 	if t != w {
-		pointer := model.PerRepoConfig{SkillScope: agents.SkillScope, SupportedAgents: agents.SupportedAgents}
+		pointer := model.PerRepoConfig{SkillScope: agents.SkillScope, SupportedAgents: agents.SupportedAgents, Init: agents.Init}
 		var formatted string
 		if target.clone != "" {
 			pointer.GraphRepo = target.clone
