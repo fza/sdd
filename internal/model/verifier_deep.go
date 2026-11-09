@@ -391,29 +391,48 @@ func WeighDeep(draft DeepDraft, found func(path string) bool) DeepWeighing {
 	return DeepWeighing{Run: true, Reasons: reasons}
 }
 
+// DeepReadingBlock is one entry's block of the deep verifier's reading.
+type DeepReadingBlock struct {
+	ID   string
+	Text string
+}
+
+// DeepReadingPage is one page of the deep verifier's reading with the entries
+// it serves in full, which the consumer holds once it is served (R14 of
+// 20261109-004506-d-cpt-udz).
+type DeepReadingPage struct {
+	Text    string
+	FullIDs []string
+}
+
 // DeepReadingPages pages the deep verifier's reading (V-D8): the first page
 // opens with lead (the draft and what pre-flight raised) and the blocks of
 // first (the declared targets and the entries read in full), later pages hold
 // rest (the briefs) in order. A page holds whole blocks of at most
 // DeepPageChars; a block larger than a page has a page of its own, never cut.
-func DeepReadingPages(lead string, first, rest []string) []string {
-	pages := []string{lead}
-	add := func(block string, newPage bool) {
+// The blocks of first are served in full, those of rest as briefs.
+func DeepReadingPages(lead string, first, rest []DeepReadingBlock) []DeepReadingPage {
+	pages := []DeepReadingPage{{Text: lead}}
+	add := func(block DeepReadingBlock, full, newPage bool) {
 		current := &pages[len(pages)-1]
-		if newPage || (*current != "" && len(*current)+2+len(block) > DeepPageChars) {
-			pages = append(pages, block)
-			return
+		if newPage || (current.Text != "" && len(current.Text)+2+len(block.Text) > DeepPageChars) {
+			pages = append(pages, DeepReadingPage{Text: block.Text})
+			current = &pages[len(pages)-1]
+		} else {
+			if current.Text != "" {
+				current.Text += "\n\n"
+			}
+			current.Text += block.Text
 		}
-		if *current != "" {
-			*current += "\n\n"
+		if full {
+			current.FullIDs = append(current.FullIDs, block.ID)
 		}
-		*current += block
 	}
 	for _, block := range first {
-		add(block, false)
+		add(block, true, false)
 	}
 	for i, block := range rest {
-		add(block, i == 0)
+		add(block, false, i == 0)
 	}
 	return pages
 }

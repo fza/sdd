@@ -256,8 +256,8 @@ type WorkflowSession struct {
 	laneFull    []string
 	framingFull map[string][]string
 	framing     bool
-	// stepFull collects the entries the step serves rendered whole, until
-	// TakeStepFullIDs hands them on.
+	// stepFull collects the entries the step serves rendered whole (injected
+	// views, the verify reading page), until TakeStepFullIDs hands them on.
 	stepFull []string
 	// task is a delegate session's one task instance, whose end ends the
 	// session as the shell's does a dialogue's.
@@ -1189,9 +1189,9 @@ func (w *WorkflowSession) FramingFullIDs(block string) []string {
 	return w.framingFull[block]
 }
 
-// TakeStepFullIDs returns the entries the step serves' injected views served
-// in full and whole since the last call, and forgets them: the MCP surface
-// holds them once the serve is composed (R14).
+// TakeStepFullIDs returns the entries the step serves (injected views, the
+// verify reading page) served in full and whole since the last call, and
+// forgets them: the MCP surface holds them once the serve is composed (R14).
 func (w *WorkflowSession) TakeStepFullIDs() []string {
 	ids := w.stepFull
 	w.stepFull = nil
@@ -1556,8 +1556,16 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		}
 		result.PendingChooser = chooser
 	}
-	if inst, ok := w.session.Instance(serve.Instance); ok && inst.Spec.Class == model.ProcedureClassTask {
+	inst, ok := w.session.Instance(serve.Instance)
+	if ok && inst.Spec.Class == model.ProcedureClassTask {
 		result.Execution = ExecutionForkPreferred
+	}
+	if ok && w.cutRepeats && inst.Spec.Canonical == verifyProcedure && serve.Step == verifyReadStep {
+		full, err := verifyPageFullIDs(inst.Store)
+		if err != nil {
+			return nil, err
+		}
+		w.stepFull = append(w.stepFull, full...)
 	}
 	return result, nil
 }

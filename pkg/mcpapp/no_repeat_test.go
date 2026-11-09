@@ -30,6 +30,8 @@ import (
 //	  views          pointer for a held entry, hold what they serve whole:
 //	                 TestNoRepeatInjectedViews, TestInjectedView* (application)
 //	  late entries   pointer for a held entry: TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer (proctest)
+//	  verify pages   the deep verifier's reading holds what each page serves in full:
+//	                 TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull (proctest)
 //	  framing lanes  hold the entries they serve whole, never cut (per-lane dedup):
 //	                 TestNoRepeatAfterFramingServedInFull, TestNoRepeatFramingHoldsOnlyWhatItServed,
 //	                 TestFramingServesHeldEntriesInFull (application)
