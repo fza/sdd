@@ -28,7 +28,7 @@ sdd --local-config ~/ci-local.yaml config get participant
 | `participant`, `llm.*`, `embedding.*` | User-global | Any file works. Use the local file to override a value for one project. A value in the project file applies to everyone on the project and overrides their user-global value. |
 | `sessions.retention` | User-global | sdd currently ignores it in the project files. |
 | `sync.default.*`, `sync.hosts.*` | User-global | The git limits. sdd reads them from the user-global file only. |
-| `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
+| `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies`, `init.skip` | Project | These describe the repository. sdd ignores them in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
 
 :::caution[Keep API keys out of the project file]
@@ -76,6 +76,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `supported_agents` | `[claude]` | The agents `sdd init` installs the skill for: `claude`, `codex` or both. |
 | `dependencies` | None | The `repo_id`s of other graphs this graph references. See [connected repositories](#connected-repositories). |
 | `project_dir` | None | Set in a work repository only: the folder holding the sdd project's `.sdd/`, relative to the repository root or absolute. See [a graph in its own repository](/sdd/guides/graph-repository/). |
+| `init.skip` | None | Agent surfaces `sdd init` leaves alone, for a project that manages its own agent setup: `mcp` (the sdd server in `.mcp.json` and `.codex/config.toml`), `permissions` (the `mcp__sdd__*` allow rule in `.claude/settings.json`), `skills` (the skill files at `skill_scope`). Init neither writes, refreshes nor deletes a listed surface, and `sdd move --project-dir` installs none. Set it in `.sdd/config.yaml` only: sdd ignores it in the other files and reports an unknown value. |
 
 ### Participant
 

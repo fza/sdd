@@ -20,6 +20,10 @@ func TestResolveProjectFollowsGraphRepo(t *testing.T) {
 			work: map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\ngraph_dir: .sdd/GRAPH-ELSEWHERE.md\nskill_scope: project\n"},
 		},
 		{
+			name: "init.skip beside graph_repo for the agent surfaces of the code repository",
+			work: map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\ninit:\n  skip: [mcp]\n"},
+		},
+		{
 			name: "with both pointers set the clone wins",
 			work: map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\nproject_dir: ../project\n"},
 		},
