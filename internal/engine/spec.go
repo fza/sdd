@@ -229,6 +229,10 @@ type Step struct {
 	// it holds until each holds a delivery not yet consumed, and passing
 	// consumes them. Only a delivery fills an awaited field.
 	Await []string
+	// Findings names the engine-written field, in pre-flight's finding
+	// format, that is this gate's findings channel: findings the hooks on
+	// leaving the step report join it (20261109-005138-d-tac-i61).
+	Findings string
 }
 
 // Terminal transition targets. A procedure ends by transitioning to one of
@@ -326,6 +330,7 @@ type stepYAML struct {
 	Delegable   bool             `yaml:"delegable"`
 	Deliver     []string         `yaml:"deliver"`
 	Await       []string         `yaml:"await"`
+	Findings    string           `yaml:"findings"`
 }
 
 // decodeStrict re-encodes a retained YAML node and decodes it with unknown
@@ -524,6 +529,9 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 				addProblem("%s: serveDelta names %q, which is not declared in state", prefix, f)
 			}
 		}
+		if _, declared := spec.State[step.Findings]; declared {
+			addProblem("%s: findings names %q, which is declared state; a findings channel is engine-written", prefix, step.Findings)
+		}
 		for _, o := range step.Options {
 			if !IsEndTarget(o.To) && spec.StepByID[o.To] == nil {
 				addProblem("%s: option %q target %q is not a step or end(...)", prefix, o.Choice, o.To)
@@ -688,6 +696,7 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		Delegable:  sy.Delegable,
 		Deliver:    sy.Deliver,
 		Await:      sy.Await,
+		Findings:   sy.Findings,
 	}
 
 	switch sy.Chooser {
@@ -701,6 +710,12 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 	}
 	if sy.Delegable && step.Chooser != ChooserUser {
 		addProblem("%s: delegable applies only to a user chooser", prefix)
+	}
+	if sy.Findings != "" && step.Chooser != ChooserGate {
+		addProblem("%s: findings applies only to a gate", prefix)
+	}
+	if sy.Findings != "" && !isValidFuncName(sy.Findings) {
+		addProblem("%s: findings names %q, not a field name (identifiers only)", prefix, sy.Findings)
 	}
 
 	for _, f := range sy.Collect {

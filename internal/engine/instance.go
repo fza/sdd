@@ -78,6 +78,8 @@ type Instance struct {
 	// reading folds the grounding reads credited to this instance (D28 of
 	// 20261109-004506-d-cpt-udz); replay restores it from the read events.
 	reading model.Reading
+	// hookBase is keyed by step id.
+	hookBase map[string]hookBase
 }
 
 // Reading returns the instance's credited grounding reads.
@@ -254,6 +256,9 @@ func (s *Session) cascade(inst *Instance) error {
 		if step.Chooser != ChooserGate {
 			return nil // pending chooser — agent or user judgment
 		}
+		if err := s.restoreHookFindings(inst, step); err != nil {
+			return err
+		}
 
 		if step.Guard != nil {
 			ok, failing, err := s.evalGuard(inst, step.Guard)
@@ -289,35 +294,56 @@ func (s *Session) cascade(inst *Instance) error {
 			inst.opDone = true
 		}
 
-		to := ""
-		for _, t := range step.Transitions {
-			if t.Otherwise {
-				to = t.To
-				break
+		target, err := s.selectTransition(inst, step)
+		if err != nil || target == "" {
+			return err // stalled: the serve names what's missing
+		}
+		joined, err := s.leave(inst, target)
+		if err != nil {
+			return err
+		}
+		if joined {
+			// Joined findings run the gate again: a guard reading the
+			// channel holds the step, a transition reading it redirects.
+			if step.Guard != nil {
+				ok, _, err := s.evalGuard(inst, step.Guard)
+				if err != nil || !ok {
+					return err
+				}
 			}
-			ok, _, err := s.evalGuard(inst, t.When)
-			if err != nil {
+			if target, err = s.selectTransition(inst, step); err != nil || target == "" {
 				return err
 			}
-			if ok {
-				to = t.To
-				break
-			}
-		}
-		if to == "" {
-			return nil // stalled: the serve names what's missing
 		}
 		if len(step.Deliver) > 0 {
-			proceed, err := s.deliver(inst, step, to)
+			proceed, err := s.deliver(inst, step, target)
 			if err != nil || !proceed {
 				return err
 			}
 		}
-		if err := s.transitionWith(inst, to, false, step.Await); err != nil {
+		if err := s.moveTo(inst, target, false, step.Await); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// selectTransition returns the target of the gate's first transition that
+// fires, empty when none does.
+func (s *Session) selectTransition(inst *Instance, step *Step) (string, error) {
+	for _, t := range step.Transitions {
+		if t.Otherwise {
+			return t.To, nil
+		}
+		ok, _, err := s.evalGuard(inst, t.When)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return t.To, nil
+		}
+	}
+	return "", nil
 }
 
 // reopenStalePlayback implements edit-after-confirm: if the failing
@@ -372,6 +398,13 @@ func (s *Session) runCommand(inst *Instance, name, to string) error {
 		return fmt.Errorf("instance %s: %q is not a registered command", inst.ID, name)
 	}
 	ctx := &Context{Instance: inst.ID, Store: inst.Store, Step: inst.Step, Reads: s.reads, Reading: &inst.reading}
+	if cmd.Rounds {
+		step := inst.currentStep()
+		ctx.Round = func(fields map[string]any) error {
+			_, err := s.fireStep(inst, step, HookRound, "", fields)
+			return err
+		}
+	}
 	if cmd.Prepare != nil {
 		if s.intent == nil || s.intentDone {
 			values, err := cmd.Prepare(ctx)
@@ -432,6 +465,14 @@ func (s *Session) runCommand(inst *Instance, name, to string) error {
 	if cmd.MutatesGraph {
 		s.engine.Graphs.Invalidate()
 	}
+	if cmd.Announces != "" {
+		// The outcome is committed: a failing hook must not re-run the op.
+		if step := inst.currentStep(); step != nil && step.Op == name {
+			inst.opDone = true
+		}
+		_, err := s.fire(HookPoint{Event: cmd.Announces, Procedure: inst.Spec.Canonical, Instance: inst.ID, Step: inst.Step, Store: inst.Store})
+		return err
+	}
 	return nil
 }
 
@@ -439,12 +480,20 @@ func (s *Session) runCommand(inst *Instance, name, to string) error {
 // transition. The reopen flag marks the edit-after-confirm return to a
 // chooser.
 func (s *Session) transitionTo(inst *Instance, to string, reopen bool) error {
-	return s.transitionWith(inst, to, reopen, nil)
+	if err := s.checkSink(); err != nil {
+		return err
+	}
+	if _, err := s.leave(inst, to); err != nil {
+		return err
+	}
+	return s.moveTo(inst, to, reopen, nil)
 }
 
-// transitionWith is transitionTo leaving an await gate, whose consumed
-// deliveries the transition event records for replay.
-func (s *Session) transitionWith(inst *Instance, to string, reopen bool, consumed []string) error {
+// moveTo logs the transition, moves the instance, and raises the target
+// step's entered event; the step's left event was raised before. Leaving an
+// await gate passes the consumed deliveries, which the transition event
+// records for replay.
+func (s *Session) moveTo(inst *Instance, to string, reopen bool, consumed []string) error {
 	if err := s.checkSink(); err != nil {
 		return err
 	}
@@ -482,6 +531,9 @@ func (s *Session) transitionWith(inst *Instance, to string, reopen bool, consume
 		inst.Step = to
 		inst.opDone = false
 		inst.retiredStep = ""
+		if _, err := s.fireStep(inst, inst.currentStep(), HookEntered, "", nil); err != nil {
+			return err
+		}
 	}
 	return nil
 }

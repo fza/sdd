@@ -172,6 +172,7 @@ type config struct {
 	window      *sdd.ModelWindow
 	launcher    sdd.DelegateLauncher
 	checkout    fs.FS
+	hooks       sdd.HookCommands
 }
 
 // Option configures NewWorld.
@@ -386,6 +387,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
 		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Verifier: cfg.verifier, Checkout: cfg.checkout,
+		Hooks: cfg.hooks,
 	}
 	if cfg.window != nil {
 		window := *cfg.window

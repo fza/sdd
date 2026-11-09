@@ -251,6 +251,7 @@ type Session struct {
 	intentStore *Store
 	intentDone  bool
 	cancelled   *MutationCancellation
+	hooks       Hooks
 }
 
 // SessionOption configures a session.
@@ -643,6 +644,9 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 		data["seed"] = seed
 	}
 	s.appendEvent(inst.ID, EventStarted, data)
+	if _, err := s.fireStep(inst, inst.currentStep(), HookEntered, "", nil); err != nil {
+		return nil, err
+	}
 
 	if err := s.cascade(inst); err != nil {
 		return nil, err
@@ -1193,6 +1197,10 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			if err := inst.Store.importValue(name, ExportedValue{Value: v, Provenance: ProvenanceEngine}); err != nil {
 				return err
 			}
+		}
+		if name, _ := ev.Data["fn"].(string); ev.Event == EventOpResult && name == HooksFn {
+			replayHookFindings(inst, ev)
+			return nil
 		}
 
 		if step, _ := ev.Data["step"].(string); step == inst.Step {

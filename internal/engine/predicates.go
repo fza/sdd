@@ -402,6 +402,16 @@ func registerBuiltinPredicates(r *Registry) {
 
 	mustRegisterPredicate(r, Predicate{
 		Doc: FuncDoc{
+			Name: "noHighStepFindings",
+			Doc:  "The current step's findings channel holds no high-severity finding.",
+		},
+		Fn:          noHighStepFindings,
+		FailMessage: "the step's findings channel holds high findings",
+		FailDetail:  highStepFindingsDetail,
+	})
+
+	mustRegisterPredicate(r, Predicate{
+		Doc: FuncDoc{
 			Name:  "guideReviewed",
 			Doc:   "The agent has judged the current guide findings (recorded by recordGuideReview).",
 			Reads: []string{fieldGuideReviewed},
