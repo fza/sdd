@@ -519,8 +519,9 @@ func (h *Handler) registerMCPServers(agents []model.AgentTarget, cmd *command.In
 // symmetric with install's overwrite protection: only files sdd produced and
 // the user hasn't modified (Current or Pristine) are removed, while
 // user-modified files are preserved and reported, deleted only under --force.
-// Non-sdd files sharing the directory aren't bundle entries, so SkillStatus
-// never classifies them and they're left untouched. Skill subdirectories left
+// Files sdd wrote that the bundle no longer carries go the same way. Non-sdd
+// files sharing the directory carry no stamp, so SkillStatus never classifies
+// them and they're left untouched. Skill subdirectories left
 // empty by the removals, and the now-empty parent skills dir, are cleaned up.
 // Removed paths are appended to touched so the commit records the deletions.
 func (h *Handler) pruneAgentSkills(ctx context.Context, dropped []model.AgentTarget, scope model.Scope, cmd *command.InitCmd, touched *[]string) error {
@@ -546,6 +547,7 @@ func (h *Handler) pruneAgentSkills(ctx context.Context, dropped []model.AgentTar
 				modified: e.Status == model.SkillStatusModified,
 			})
 		}
+		files = append(files, orphanPrunables(status.Orphans, cmd.BinaryVersion)...)
 
 		result, err := removePrunable(files, target, status.InstallDir, cmd.Force, touched)
 		if err != nil {
@@ -617,21 +619,7 @@ func (h *Handler) pruneSkillOrphans(ctx context.Context, targets []model.AgentTa
 			return fmt.Errorf("classifying %s skills for orphan prune: %w", target, err)
 		}
 
-		var files []prunable
-		for _, o := range status.Orphans {
-			// A file stamped by a later sdd is not an orphan, it is the
-			// future: an older binary running here must not delete what a
-			// newer one installed just because its own bundle lacks it.
-			if model.SkillStampIsAhead(o.Installed.StoredVersion, cmd.BinaryVersion) {
-				continue
-			}
-			files = append(files, prunable{
-				absPath:  o.AbsPath,
-				skill:    o.Skill,
-				modified: o.Class == model.SkillOrphanModified,
-			})
-		}
-
+		files := orphanPrunables(status.Orphans, cmd.BinaryVersion)
 		result, err := removePrunable(files, target, status.InstallDir, cmd.Force, touched)
 		if err != nil {
 			return err
@@ -641,6 +629,26 @@ func (h *Handler) pruneSkillOrphans(ctx context.Context, targets []model.AgentTa
 		}
 	}
 	return nil
+}
+
+// orphanPrunables turns installed files the bundle no longer carries into
+// prune candidates.
+func orphanPrunables(orphans []query.SkillOrphanEntry, binaryVersion string) []prunable {
+	var files []prunable
+	for _, o := range orphans {
+		// A file stamped by a later sdd is not an orphan, it is the
+		// future: an older binary running here must not delete what a
+		// newer one installed just because its own bundle lacks it.
+		if model.SkillStampIsAhead(o.Installed.StoredVersion, binaryVersion) {
+			continue
+		}
+		files = append(files, prunable{
+			absPath:  o.AbsPath,
+			skill:    o.Skill,
+			modified: o.Class == model.SkillOrphanModified,
+		})
+	}
+	return files
 }
 
 // pruneEmptyDirs removes dir and its empty subdirectories bottom-up. A dir

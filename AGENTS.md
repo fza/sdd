@@ -28,7 +28,7 @@ The `sdd` binary lives at `./bin/sdd` (gitignored — rebuild locally with `devb
 - `go test -tags=eval -run 'Eval_Specimens' -parallel 4 ./internal/llmops/...` — the specimens in `internal/llmops/testdata/eval/specimens`: drafts with problem characters whose expected finding must fire with a quote that locates its passage (live, paid; provider via `SDD_EVAL_PROVIDER`/`SDD_EVAL_MODEL`/`SDD_EVAL_CONFIG`, summarize's judge via `SDD_EVAL_JUDGE_*`). Every eval call appends raw to `$SDD_EVAL_RESPONSES_DIR/responses.jsonl` for later scoring. The `evals` workflow runs the pre-flight, writing-guide and summarize evals against Opper on manual dispatch or the `eval` label on a pull request from this repository.
 - `go fmt ./...` — format code
 - `devbox run lint` — lint (must be clean; CI enforces). Convention findings print as warnings without failing the run — see `scripts/lint.sh` for the mechanism. Use the wrapper, not bare `golangci-lint run`, which fails on warnings too.
-- `devbox run validate-skills` — validate the rendered Codex skills under `.agents/skills/` against the Agent Skills standard (`uvx skills-ref@0.1.1 agentskills validate`, managed via the devbox `uv` package). Requires a Codex render present (i.e. `codex` in `supported_agents`).
+- `devbox run validate-skills` — validate the rendered skills under `.agents/skills/` and `.claude/skills/` against the Agent Skills standard (`uvx skills-ref@0.1.1 agentskills validate`, managed via the devbox `uv` package).
 - `sdd view` — smoke-test the binary against the graph at `.sdd/graph/`
 - `goreleaser check` — validate `.goreleaser.yaml`
 - `devbox run gen-installer` — regenerate the curl installer (`install.sh`) from `.config/binstaller.yml`. Run this whenever `.goreleaser.yaml` changes its platform or asset surface, then commit the updated `install.sh`. Install binstaller separately (`go install github.com/binary-install/binstaller/cmd/binst@latest`) — it isn't in devbox's nixpkgs.
@@ -96,7 +96,8 @@ sdd/
 │   ├── engine/             # Workflow engine: procedure specs, typed store, choosers, session event log
 │   ├── proctest/           # Integration harness + per-procedure behavior suites over the real application
 │   └── bundledskills/      # Skill source of truth (agent-neutral templates), embedded via //go:embed
-│       └── templates/      # Neutral *.md.tmpl skill tree, rendered per agent (sdd, plus the interim vocabulary reference)
+│       ├── templates/      # Neutral *.md.tmpl skill tree, rendered per agent (sdd)
+│       └── vocabulary/     # Per-locale SDD vocabulary the engine serves, never installed (interim home until d-cpt-xob)
 ├── pkg/                    # Exported packages — the only public Go surface (d-tac-zhc)
 │   ├── llm/                # Public LLM contract: Runner over Request/Result/Identity/Usage (d-cpt-q6n)
 │   ├── application/        # Protocol-neutral runtime + composition root (CLI and MCP are shells over it)
@@ -132,7 +133,7 @@ Skills are **source-of-truth as agent-neutral templates in `internal/bundledskil
 
 - **Never edit the installed renders (`.claude/skills/`, `.agents/skills/`) directly.** Changes made there will be overwritten (or flagged as "modified") the next time `sdd init` runs.
 - Edit the templates in `internal/bundledskills/templates/<skill>/` → rebuild (`devbox run build`) → reinstall (`sdd init --scope project`). The installed copies pick up the new render and refresh with fresh `sdd-version` + `sdd-content-hash` stamps. Per-agent deviations are `{{ if eq .Agent "claude" }}…{{ else }}…{{ end }}` conditionals and the `inject` helper — never duplicated files. Literal `{{ }}` in skill prose (e.g. the attachments placeholder) must be escaped as `{{"{{...}}"}}`.
-- Codex skills must conform to the Agent Skills standard (stamps under `metadata:`, `compatibility:` set, no Claude-only frontmatter keys). After changing a SKILL.md template, run `devbox run validate-skills` to confirm the Codex render still validates.
+- Both renders must conform to the Agent Skills standard: stamps under `metadata:`, which Claude Code accepts too, and no Claude-only frontmatter keys; the Codex render also sets `compatibility:`. After changing a SKILL.md template, run `devbox run validate-skills` to confirm both renders still validate.
 - Skill changes include both template source and installed renders. Commit template-source changes before running `sdd init`, which auto-commits the installed renders.
 
 ## Git rules

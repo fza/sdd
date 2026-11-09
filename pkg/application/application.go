@@ -187,7 +187,7 @@ func (a *Application) Vocabulary(ctx context.Context, identity RequestIdentity, 
 		return "", nil
 	}
 	for _, candidate := range []string{locale, base} {
-		body, readErr := bundledskills.ReadReference("sdd", "references/vocabulary-"+candidate+".md")
+		body, readErr := bundledskills.Vocabulary(candidate)
 		if readErr == nil {
 			return strings.TrimSpace(string(body)), nil
 		}
@@ -195,7 +195,7 @@ func (a *Application) Vocabulary(ctx context.Context, identity RequestIdentity, 
 			break
 		}
 	}
-	return fmt.Sprintf("(configured graph language %q has no bundled vocabulary reference — render user-facing terms in English canonical form; adding references/vocabulary-%s.md is a framework-level contribution)", info.Language, base), nil
+	return fmt.Sprintf("(configured graph language %q has no bundled vocabulary — render user-facing terms in English canonical form; adding vocabulary/%s.md to the bundle is a framework-level contribution)", info.Language, base), nil
 }
 
 // Lint runs the categorized lint providers over the project's graph — the

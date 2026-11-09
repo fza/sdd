@@ -731,7 +731,7 @@ func TestVocabularyBlockMissingLocaleNote(t *testing.T) {
 	env := newTestServerConfig(t, nil, "", "", "fr")
 	cs := connect(t, env.srv)
 	door := openSession(t, cs)
-	if !strings.Contains(door.Vocabulary, "no bundled vocabulary") || !strings.Contains(door.Vocabulary, "vocabulary-fr.md") {
+	if !strings.Contains(door.Vocabulary, "no bundled vocabulary") || !strings.Contains(door.Vocabulary, "vocabulary/fr.md") {
 		t.Fatalf("a locale without a bundled reference should serve the explicit note, got %q", door.Vocabulary)
 	}
 }

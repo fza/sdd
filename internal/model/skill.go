@@ -15,8 +15,7 @@ import (
 
 // AgentTarget identifies which agent a skill bundle renders and installs for.
 // Each target is a render profile over the one neutral template tree — the
-// value drives {{ if eq .Agent "..." }} conditionals, the install directory,
-// and (eventually) the frontmatter shape.
+// value drives {{ if eq .Agent "..." }} conditionals and the install directory.
 type AgentTarget string
 
 const (
@@ -120,6 +119,12 @@ type SkillFile struct {
 	// StoredHash is the value of the sdd-content-hash frontmatter stamp, or
 	// empty if absent.
 	StoredHash string
+
+	// StampsTopLevel reports stamps found as top-level frontmatter keys
+	// rather than under metadata:. The Agent Skills standard rejects such
+	// keys, so a file stamped this way is refreshed even when its content is
+	// current.
+	StampsTopLevel bool
 }
 
 // SkillInstallStatus describes the install state of a single skill file
@@ -170,7 +175,7 @@ func ComputeSkillStatus(embedded SkillBundleEntry, installed *SkillFile) SkillIn
 	if installedComputed != installed.StoredHash {
 		return SkillStatusModified
 	}
-	if installed.StoredHash == embeddedHash {
+	if installed.StoredHash == embeddedHash && !installed.StampsTopLevel {
 		return SkillStatusCurrent
 	}
 	return SkillStatusPristine
@@ -256,10 +261,10 @@ func normalizeForJSON(v any) any {
 // to exclude sdd-version and sdd-content-hash from the hash input so the hash
 // is stable under re-stamping.
 //
-// Stamps are stripped wherever they live — top level (Claude) or nested under
-// metadata: (Codex). A metadata map emptied by the strip is dropped entirely
-// so a stamped Codex file hashes identically to its unstamped embedded source
-// (which carries no metadata key).
+// Stamps are stripped wherever they live, nested under metadata: or at the
+// top level (see SkillFile.StampsTopLevel). A metadata map emptied by the
+// strip is dropped entirely so a stamped file hashes identically to its
+// unstamped embedded source (which carries no metadata key).
 func stripStampKeys(fm map[string]any) map[string]any {
 	out := make(map[string]any, len(fm))
 	for k, v := range fm {
@@ -285,50 +290,33 @@ func stripStampKeys(fm map[string]any) map[string]any {
 	return out
 }
 
-// setStamps injects the install-time version and content-hash stamps into fm.
-// Claude keeps them at the top level; Codex nests them under metadata: so the
-// rendered SKILL.md conforms to the Agent Skills standard. Stamps merge into
-// any metadata the template already authored rather than replacing it.
-func setStamps(fm map[string]any, target AgentTarget, version, contentHash string) {
-	if target == AgentCodex {
-		meta, ok := asStringMap(fm["metadata"])
-		if !ok {
-			meta = map[string]any{}
-		}
-		meta[SkillStampVersion] = version
-		meta[SkillStampHash] = contentHash
-		fm["metadata"] = meta
-		return
+// setStamps nests the install-time version and content-hash stamps under
+// metadata:, the one place the Agent Skills standard admits client keys and
+// Claude Code accepts too. Stamps merge into any metadata the template already
+// authored rather than replacing it.
+func setStamps(fm map[string]any, version, contentHash string) {
+	meta, ok := asStringMap(fm["metadata"])
+	if !ok {
+		meta = map[string]any{}
 	}
-	fm[SkillStampVersion] = version
-	fm[SkillStampHash] = contentHash
+	meta[SkillStampVersion] = version
+	meta[SkillStampHash] = contentHash
+	fm["metadata"] = meta
 }
 
-// readStamps extracts the install-time stamps from fm, accepting either the
-// top-level placement (Claude) or the metadata-nested placement (Codex).
-func readStamps(fm map[string]any) (version, hash string) {
-	if v, ok := fm[SkillStampVersion].(string); ok {
-		version = v
-	}
-	if h, ok := fm[SkillStampHash].(string); ok {
-		hash = h
-	}
-	if version != "" && hash != "" {
-		return version, hash
-	}
+// readStamps extracts the install-time stamps from fm, nested under metadata:
+// or, failing that, at the top level.
+func readStamps(fm map[string]any) (version, hash string, topLevel bool) {
 	if meta, ok := asStringMap(fm["metadata"]); ok {
-		if version == "" {
-			if v, ok := meta[SkillStampVersion].(string); ok {
-				version = v
-			}
-		}
-		if hash == "" {
-			if h, ok := meta[SkillStampHash].(string); ok {
-				hash = h
-			}
-		}
+		version, _ = meta[SkillStampVersion].(string)
+		hash, _ = meta[SkillStampHash].(string)
 	}
-	return version, hash
+	if version != "" || hash != "" {
+		return version, hash, false
+	}
+	version, _ = fm[SkillStampVersion].(string)
+	hash, _ = fm[SkillStampHash].(string)
+	return version, hash, version != "" || hash != ""
 }
 
 // asStringMap coerces a frontmatter value into a map[string]any, tolerating the
@@ -399,22 +387,19 @@ func splitFrontmatter(content []byte) (map[string]any, []byte) {
 // given install-time stamps injected. If the entry has no original
 // frontmatter, a fresh block with just the stamps is written.
 //
-// Stamp placement is target-aware: Claude keeps them at the top level (its
-// historical shape), while Codex nests them under metadata: so the rendered
-// SKILL.md conforms to the Agent Skills standard, which rejects unknown
-// top-level keys. The read (ParseSkillFile) and hash (stripStampKeys) paths
-// accept either placement, so they stay target-agnostic.
+// Stamps go under metadata: for every agent target, since the Agent Skills
+// standard rejects unknown top-level keys.
 //
 // The returned bytes are what gets hashed by ComputeSkillHash once the stamps
 // are stripped — callers writing new installations should compute the hash
 // from the embedded entry content (which has no stamps) to populate the
 // sdd-content-hash stamp itself.
-func RenderSkillFile(entry SkillBundleEntry, target AgentTarget, version, contentHash string) ([]byte, error) {
+func RenderSkillFile(entry SkillBundleEntry, version, contentHash string) ([]byte, error) {
 	fm, body := splitFrontmatter(entry.Content)
 	if fm == nil {
 		fm = map[string]any{}
 	}
-	setStamps(fm, target, version, contentHash)
+	setStamps(fm, version, contentHash)
 
 	yamlBytes, err := yaml.Marshal(fm)
 	if err != nil {
@@ -427,14 +412,6 @@ func RenderSkillFile(entry SkillBundleEntry, target AgentTarget, version, conten
 	buf.WriteString("---\n")
 	buf.Write(body)
 	return buf.Bytes(), nil
-}
-
-// SkillFileBody returns the body of a skill file (frontmatter stripped). Bundle
-// sources carry no install stamps, so this is usually the whole content; the
-// strip keeps it correct if a fragment ever grows frontmatter.
-func SkillFileBody(content []byte) []byte {
-	_, body := splitFrontmatter(content)
-	return body
 }
 
 // SkillInstallDir returns the absolute directory where skills install for a
@@ -480,7 +457,7 @@ func ParseSkillFile(absPath string, content []byte) *SkillFile {
 	if fm == nil {
 		return sf
 	}
-	sf.StoredVersion, sf.StoredHash = readStamps(fm)
+	sf.StoredVersion, sf.StoredHash, sf.StampsTopLevel = readStamps(fm)
 	return sf
 }
 
