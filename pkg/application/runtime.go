@@ -48,6 +48,9 @@ type ProjectRuntimeOptions struct {
 	Prefilter Prefilter
 	// Relevance is the relevance verdict ledger; nil stores no verdicts.
 	Relevance RelevanceStore
+	// HandEdits finds hand edits of committed entries for the recheck list;
+	// nil finds none.
+	HandEdits HandEditScanner
 	// Sync runs automatic graph sync before a session acts on a branch and
 	// serves what blocks it; nil leaves branches as they are.
 	Sync GraphSync

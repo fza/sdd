@@ -45,6 +45,7 @@ const (
 	TypeInvolvementWhen   BaseType = "involvement-when"
 	TypeSearchReplace     BaseType = "search-replace"
 	TypeVerdict           BaseType = "verdict"
+	TypeStrain            BaseType = "strain"
 	// TypeProse validates exactly like text; the distinct declaration tells
 	// serve-side rendering to treat changes as content diffs rather than
 	// whole-value re-serves (20260826-120330-d-tac-8f8).
@@ -57,7 +58,7 @@ var baseTypeOrder = []BaseType{
 	TypeText, TypeBool, TypeEntryID, TypeRef, TypeLabel, TypeParticipant,
 	TypeEntryKind, TypeLayer, TypeConfidence, TypeIntent, TypeActorKind, TypeAttachmentHandle,
 	TypeProcedureSpec, TypeFactIndex, TypePreflightFindings, TypeGuideFindings,
-	TypeInvolvement, TypeInvolvementWhen, TypeSearchReplace, TypeVerdict, TypeProse,
+	TypeInvolvement, TypeInvolvementWhen, TypeSearchReplace, TypeVerdict, TypeStrain, TypeProse,
 }
 
 var baseTypes = func() map[BaseType]bool {
@@ -99,6 +100,7 @@ var baseTypeDesc = map[BaseType]string{
 	TypeInvolvementWhen:   "a from/to date range",
 	TypeSearchReplace:     "one exact edit: old text that must match exactly once in the target, and the new text replacing it",
 	TypeVerdict:           "entries a capture's reading set aside instead of referencing, with the code naming why",
+	TypeStrain:            "a clash between two existing entries the capture found: which two, and whether one contradicts, duplicates or outdates the other",
 	TypeProse:             "long-form prose — like text, but serves render changes as content diffs instead of re-serving the whole value",
 }
 
@@ -262,6 +264,9 @@ func validateBaseValue(base BaseType, v any) (any, error) {
 
 	case TypeVerdict:
 		return verdictFromValue(v)
+
+	case TypeStrain:
+		return strainFromValue(v)
 
 	case TypeLabel:
 		s, ok := v.(string)
@@ -635,4 +640,41 @@ func actorKindAlternatives() string {
 		names = append(names, string(v))
 	}
 	return strings.Join(names, "|")
+}
+
+// strainFromValue normalizes a strain to {ids, relation}: two distinct full
+// entry IDs and a relation from model.StrainRelations.
+func strainFromValue(v any) (map[string]any, error) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("expected strain object {ids, relation}")
+	}
+	for key := range m {
+		if key != "ids" && key != "relation" {
+			return nil, fmt.Errorf("unknown strain key %q (ids, relation)", key)
+		}
+	}
+	relation, _ := m["relation"].(string)
+	if _, err := model.StrainRelationBit(relation); err != nil {
+		return nil, err
+	}
+	raw, ok := m["ids"].([]any)
+	if !ok || len(raw) != 2 {
+		return nil, fmt.Errorf("strain ids must name exactly two entries")
+	}
+	ids := make([]any, 0, 2)
+	for _, item := range raw {
+		id, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("strain ids must be entry IDs (strings)")
+		}
+		if _, err := model.ParseID(id); err != nil {
+			return nil, fmt.Errorf("strain id %q is not a full entry ID: %w", id, err)
+		}
+		ids = append(ids, id)
+	}
+	if ids[0] == ids[1] {
+		return nil, fmt.Errorf("a strain names two different entries")
+	}
+	return map[string]any{"ids": ids, "relation": relation}, nil
 }

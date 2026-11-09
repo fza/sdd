@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,12 +22,12 @@ var groundingVerdictFields = []string{"verdicts", "lateVerdicts"}
 // grounding.enforce (20261109-004506-d-cpt-udz): the assemble predicate, the
 // write step's late-entries check and the late-entries listing.
 func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) error {
-	reads := []string{"entryKind", "topics", "refs", "supersedes", "closes", "verdicts", "lateVerdicts", "skipGrounding"}
+	reads := []string{"entryKind", "topics", "refs", "supersedes", "closes", "verdicts", "lateVerdicts", "strains", "skipGrounding"}
 	if err := registry.RegisterPredicate(engine.Predicate{
 		Doc: engine.FuncDoc{
 			Name: "groundingRead",
 			Doc: "Under grounding.enforce, the capture's credited reading is complete: the reads it owes ran through gather inside the capture, " +
-				"every entry that landed since the reading began is listed, every entry served in full ends in refs or verdicts, and every verdict names a listed entry. " +
+				"every entry that landed since the reading began is listed, every entry served in full ends in refs or verdicts, every verdict and strain names a listed entry, and the draft cites no single entry of an unhealed strain. " +
 				"Passes without enforcement, with skipGrounding, and for actor and role drafts.",
 			Reads: reads,
 		},
@@ -161,7 +162,27 @@ func (w *WorkflowSession) groundingRefusals(ctx *engine.Context) ([]string, erro
 		refusals = append(refusals, "verdicts name entries the reading never listed: "+strings.Join(unlistedVerdicts, ", ")+
 			": "+gather+" and ids ["+strings.Join(unlistedVerdicts, ", ")+"] to open them, then report again")
 	}
-	return refusals, nil
+	var unlistedStrains []string
+	for _, strain := range storeStrains(ctx.Store) {
+		for _, id := range strain.IDs {
+			if !evidence.Reading.IsListed(id) && !slices.Contains(unlistedStrains, id) {
+				unlistedStrains = append(unlistedStrains, id)
+			}
+		}
+	}
+	if len(unlistedStrains) > 0 {
+		refusals = append(refusals, "strains name entries the reading never listed: "+strings.Join(unlistedStrains, ", ")+
+			": "+gather+" and ids ["+strings.Join(unlistedStrains, ", ")+"] to open them, then report again")
+	}
+	runtime, err := w.targetRuntime(w.instanceProject(ctx.Instance), AccessRead)
+	if err != nil {
+		return nil, err
+	}
+	strained, err := w.strainRefusals(ctx, runtime, evidence.Answered)
+	if err != nil {
+		return nil, err
+	}
+	return append(refusals, strained...), nil
 }
 
 // lateEntries returns the entries graph holds that landed after the assemble

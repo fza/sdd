@@ -57,6 +57,8 @@ type gatherFixture struct {
 	// relevance is the ledger the runtime reads; nil runs without one.
 	relevance sdd.RelevanceStore
 	prefilter sdd.Prefilter
+	events    sdd.EventStore
+	handEdits sdd.HandEditScanner
 }
 
 func newGatherFixture(t *testing.T) *gatherFixture {
@@ -96,6 +98,7 @@ func (f *gatherFixture) app(t *testing.T, policy sdd.GroundingPolicy, embeddings
 	}
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: gatherProject}, Graph: graph, LLM: f.llm, Grounding: policy, Relevance: f.relevance, Prefilter: f.prefilter,
+		Events: f.events, HandEdits: f.handEdits,
 	}
 	if embeddings != nil {
 		options.Embedder = embeddings

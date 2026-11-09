@@ -27,6 +27,9 @@ type GroundingPolicy struct {
 	PrefilterFrom int
 	// Prefilter switches the prefilter on where the runtime has one (D7).
 	Prefilter bool
+	// RecheckResponsible names the participants catch-up shows the recheck
+	// list to; empty shows it to everyone (D5).
+	RecheckResponsible []string
 }
 
 func (p GroundingPolicy) resolved() GroundingPolicy {

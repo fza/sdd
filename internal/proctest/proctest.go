@@ -157,6 +157,7 @@ type config struct {
 	grounding   sdd.GroundingPolicy
 	relevance   sdd.RelevanceStore
 	prefilter   sdd.Prefilter
+	events      sdd.EventStore
 }
 
 // Option configures NewWorld.
@@ -193,6 +194,11 @@ func WithGrounding(policy sdd.GroundingPolicy) Option {
 // WithRelevance gives the world's project a relevance verdict ledger.
 func WithRelevance(store sdd.RelevanceStore) Option {
 	return func(c *config) { c.relevance = store }
+}
+
+// WithEvents gives the world's project an event store.
+func WithEvents(store sdd.EventStore) Option {
+	return func(c *config) { c.events = store }
 }
 
 // WithPrefilter gives the world's project a relevance scorer.
@@ -356,7 +362,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	script := &LLMScript{Title: "generated title", Summary: "A generated summary."}
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
-		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Relevance: cfg.relevance, Prefilter: cfg.prefilter,
+		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Relevance: cfg.relevance, Prefilter: cfg.prefilter, Events: cfg.events,
 	}
 	var dropped map[string]bool
 	if len(cfg.branchDirs) > 0 {

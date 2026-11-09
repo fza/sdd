@@ -98,3 +98,31 @@ func TestEventsCompact_MergesEachChannel(t *testing.T) {
 		t.Fatalf("export after compact = %q, %v", exported.stdout, exported.err)
 	}
 }
+
+// Compaction drops the recheck items a later entry healed and keeps the
+// open ones (D17).
+func TestEventsCompact_DropsHealedRecheckItems(t *testing.T) {
+	f := newAppFixture(t)
+	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n")
+	entry := func(id, refs string) {
+		f.write(t, "decisions/"+id[:4]+"/"+id[4:6]+"/"+id[6:]+".md",
+			"---\ntype: decision\nkind: directive\nlayer: tactical\nintent: pending\nconfidence: high\n"+refs+"summary: Entry "+id+".\n---\n\nEntry "+id+".\n")
+	}
+	entry("20261101-120000-d-tac-aaa", "")
+	entry("20261102-120000-d-tac-bbb", "")
+	entry("20261103-120000-d-tac-ccc", "")
+	entry("20261105-120000-d-tac-hea", "refs:\n  - id: 20261101-120000-d-tac-aaa\n    kind: addresses\n  - id: 20261102-120000-d-tac-bbb\n    kind: addresses\n")
+	f.write(t, "in.jsonl", `{"id":"recheck-healed","channel":"recheck","type":"sdd.recheck","time":"2026-11-04T00:00:00Z","writer":"sdd","subject":{"entries":["20261101-120000-d-tac-aaa","20261102-120000-d-tac-bbb"]},"payload":{"kind":"strain","relation":"contradicts"}}
+{"id":"recheck-open","channel":"recheck","type":"sdd.recheck","time":"2026-11-04T00:00:00Z","writer":"sdd","subject":{"entries":["20261101-120000-d-tac-aaa","20261103-120000-d-tac-ccc"]},"payload":{"kind":"strain","relation":"outdates"}}
+`)
+	if imported := f.run(t, "events", "import", "in.jsonl"); imported.err != nil {
+		t.Fatal(imported.err)
+	}
+	if compacted := f.run(t, "events", "compact"); compacted.err != nil {
+		t.Fatal(compacted.err)
+	}
+	exported := f.run(t, "events", "export")
+	if exported.err != nil || strings.Contains(exported.stdout, "recheck-healed") || !strings.Contains(exported.stdout, "recheck-open") {
+		t.Fatalf("export after compact = %q, %v: the healed item should go, the open one stay", exported.stdout, exported.err)
+	}
+}

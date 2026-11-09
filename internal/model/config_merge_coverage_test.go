@@ -23,6 +23,7 @@ func TestMergeConfigCarriesEveryField(t *testing.T) {
 		{"Grounding", func(c *model.PerRepoConfig) any { return &c.Grounding }},
 		{"LLMPrefilter", func(c *model.PerRepoConfig) any { return &c.LLMPrefilter }},
 		{"Relevance", func(c *model.PerRepoConfig) any { return &c.Relevance }},
+		{"Recheck", func(c *model.PerRepoConfig) any { return &c.Recheck }},
 	} {
 		t.Run(tc.section, func(t *testing.T) {
 			overlay := &model.PerRepoConfig{}
@@ -82,6 +83,10 @@ func setDistinctive(t *testing.T, f reflect.Value) {
 		setDistinctive(t, value)
 		m.SetMapIndex(reflect.ValueOf("k").Convert(f.Type().Key()), value)
 		f.Set(m)
+	case reflect.Slice:
+		value := reflect.New(f.Type().Elem()).Elem()
+		setDistinctive(t, value)
+		f.Set(reflect.Append(reflect.MakeSlice(f.Type(), 0, 1), value))
 	case reflect.Pointer:
 		f.Set(reflect.New(f.Type().Elem()))
 		setDistinctive(t, f.Elem())

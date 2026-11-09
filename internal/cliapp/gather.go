@@ -95,12 +95,15 @@ func refuseUngroundedNew(cfg *model.PerRepoConfig, ncmd *command.NewEntryCmd) er
 // groundingPolicy is the resolved grounding block of cfg.
 func groundingPolicy(cfg *model.PerRepoConfig) sdd.GroundingPolicy {
 	var block model.GroundingConfig
+	var recheck model.RecheckConfig
 	if cfg != nil {
 		block = cfg.Grounding
+		recheck = cfg.Recheck
 	}
 	policy := block.Policy()
 	return sdd.GroundingPolicy{
 		Enforce: policy.Enforce, DepthDown: policy.DepthDown, DepthUp: policy.DepthUp,
 		BriefAllBelow: policy.BriefAllBelow, PrefilterFrom: policy.PrefilterFrom, Prefilter: policy.Prefilter,
+		RecheckResponsible: recheck.Responsible,
 	}
 }

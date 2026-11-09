@@ -93,17 +93,18 @@ func RepoOverrideKey(key string, repoID RepoID) ([]string, error) {
 	return nil, fmt.Errorf("%q takes no per-repository override; --repo serves connected.write", key)
 }
 
-// HonoredLocal returns the machine-local layer without inbound, events and
-// relevance, which only the committed config sets, and without the git
-// limits, which only the user-global config sets.
+// HonoredLocal returns the machine-local layer without inbound, events,
+// relevance and recheck, which only the committed config sets, and without
+// the git limits, which only the user-global config sets.
 func HonoredLocal(local *PerRepoConfig) *PerRepoConfig {
-	if local == nil || (local.Inbound.Accept == nil && len(local.Inbound.Repos) == 0 && len(local.Events.Channels) == 0 && local.Relevance == (RelevanceConfig{}) && len(misplacedGitLimits(local.Sync)) == 0) {
+	if local == nil || (local.Inbound.Accept == nil && len(local.Inbound.Repos) == 0 && len(local.Events.Channels) == 0 && local.Relevance == (RelevanceConfig{}) && len(local.Recheck.Responsible) == 0 && len(misplacedGitLimits(local.Sync)) == 0) {
 		return local
 	}
 	honored := withoutGitLimits(*local)
 	honored.Inbound = InboundConfig{}
 	honored.Events = EventsConfig{}
 	honored.Relevance = RelevanceConfig{}
+	honored.Recheck = RecheckConfig{}
 	return &honored
 }
 

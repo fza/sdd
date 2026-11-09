@@ -40,6 +40,7 @@ func (w *WorkflowSession) buildRegistry() (*engine.Registry, error) {
 		w.registerWorkflowWrites,
 		w.registerWorkflowWIP,
 		w.registerWorkflowGrounding,
+		w.registerWorkflowRecheck,
 	} {
 		if err := register(registry); err != nil {
 			return nil, err
@@ -491,6 +492,9 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	w.binding = result.Binding
 	if err := ctx.Store.WriteEngine("entryId", result.EntryID); err != nil {
 		return err
+	}
+	if err := w.storeCaptureRecheck(ctx, target.Project, result.EntryID); err != nil {
+		return fmt.Errorf("newEntry: entry %s is written: %w", result.EntryID, err)
 	}
 	if err := w.storeCaptureRelevance(ctx, target.Project, result.EntryID); err != nil {
 		return fmt.Errorf("newEntry: entry %s is written: %w", result.EntryID, err)

@@ -526,7 +526,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
-	events, err := projectEventStore(sddDir, cfg)
+	events, err := projectEventStore(sddDir, graphDir, cfg)
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
@@ -538,6 +538,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		LLM:       runner,
 		Grounding: groundingPolicy(cfg),
 		Events:    events,
+		HandEdits: localadapter.GitHandEdits{GraphDir: graphDir},
 		Relevance: verdicts,
 		Prefilter: prefilter,
 	})
@@ -589,12 +590,17 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 	if err != nil {
 		return nil, err
 	}
-	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: meta.ResolveGraphDir(dir, cfg), MetaPath: filepath.Join(dir, model.SDDDirName, model.SchemaMetaFileName)})
+	cloneGraphDir := meta.ResolveGraphDir(dir, cfg)
+	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: cloneGraphDir, MetaPath: filepath.Join(dir, model.SDDDirName, model.SchemaMetaFileName)})
 	if err != nil {
 		return nil, err
 	}
 	searchIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, index.RepoKey(repoID, dir))
 	verdicts, err := projectRelevanceStore(filepath.Join(dir, model.SDDDirName), locations.StateRoot, index.RepoKey(repoID, dir), cfg)
+	if err != nil {
+		return nil, err
+	}
+	events, err := projectEventStore(filepath.Join(dir, model.SDDDirName), cloneGraphDir, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -606,6 +612,8 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 		ExcludeEmbeddedFromIndex: true,
 		Grounding:                groundingPolicy(cfg),
 		Relevance:                verdicts,
+		Events:                   events,
+		HandEdits:                localadapter.GitHandEdits{GraphDir: cloneGraphDir},
 	})
 }
 
