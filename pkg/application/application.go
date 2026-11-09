@@ -335,22 +335,7 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 	var rendered bytes.Buffer
 	presenters.RenderShow(&rendered, showResult, presenters.ShowOptions{Repeats: repeatsFor(request.Held)})
 	show := ShowResult{Project: runtime.options.Project, Entries: strings.TrimRight(rendered.String(), "\n")}
-	for _, group := range showResult.Groups {
-		if group.Primary != nil {
-			if group.PrimaryID != "" {
-				show.FullIDs = append(show.FullIDs, group.PrimaryID)
-			} else {
-				show.FullIDs = append(show.FullIDs, group.Primary.ID)
-			}
-		}
-		for _, items := range [][]model.ShowTreeItem{group.Upstream, group.Downstream} {
-			for _, item := range items {
-				if item.Entry != nil {
-					show.SummaryIDs = append(show.SummaryIDs, item.NodeID())
-				}
-			}
-		}
-	}
+	show.FullIDs, show.SummaryIDs = showResult.ServedIDs()
 	return show, nil
 }
 
@@ -435,11 +420,7 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 			break
 		}
 	}
-	for _, entry := range searchResult.Entries {
-		if entry.Entry != nil {
-			search.EntryIDs = append(search.EntryIDs, entry.DisplayID())
-		}
-	}
+	search.EntryIDs = searchResult.ServedIDs()
 	return search, nil
 }
 

@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/relevance"
+	"github.com/networkteam/sdd/internal/segment"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
@@ -50,6 +54,11 @@ func (s *gatherScript) count() int {
 type gatherFixture struct {
 	graphDir string
 	llm      *gatherScript
+	// relevance is the ledger the runtime reads; nil runs without one.
+	relevance sdd.RelevanceStore
+	prefilter sdd.Prefilter
+	events    sdd.EventStore
+	handEdits sdd.HandEditScanner
 }
 
 func newGatherFixture(t *testing.T) *gatherFixture {
@@ -88,7 +97,8 @@ func (f *gatherFixture) app(t *testing.T, policy sdd.GroundingPolicy, embeddings
 		t.Fatal(err)
 	}
 	options := sdd.ProjectRuntimeOptions{
-		Project: sdd.ProjectRef{ID: gatherProject}, Graph: graph, LLM: f.llm, Grounding: policy,
+		Project: sdd.ProjectRef{ID: gatherProject}, Graph: graph, LLM: f.llm, Grounding: policy, Relevance: f.relevance, Prefilter: f.prefilter,
+		Events: f.events, HandEdits: f.handEdits,
 	}
 	if embeddings != nil {
 		options.Embedder = embeddings
@@ -256,5 +266,51 @@ func TestGather_HeldEntryPrintsAsPointer(t *testing.T) {
 	}
 	if strings.Contains(result.Text, gatherAlpha+" — The alpha entry is about alpha matters. (served in full above)") {
 		t.Errorf("an entry not held printed as a pointer:\n%s", result.Text)
+	}
+}
+
+func TestGather_StoredVerdictsAnswerRepeatPairs(t *testing.T) {
+	f := newGatherFixture(t)
+	f.seed(t)
+	store := localadapter.NewMemoryRelevanceStore()
+	err := store.Append(t.Context(), relevance.Encode(model.RelevanceBatch{Readers: []model.ReaderRecord{
+		{Pair: model.NewRelevancePair(gatherAlpha, gatherBeta), Verdict: model.ReaderVerdict{Code: model.ReaderDismissed, Reason: 1}},
+		{Pair: model.NewRelevancePair(gatherTopicOnly, gatherAlpha), Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}},
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.relevance = store
+	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: 10_000}, nil)
+
+	result, err := gather(t, application, sdd.GatherRequest{Subject: gatherAlpha})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, model.SetAsideJudged+": 1: "+gatherBeta) {
+		t.Errorf("a stored dismissal should set its pair aside without a new judgment:\n%s", result.Text)
+	}
+	if !slices.Contains(result.FullIDs, gatherTopicOnly) {
+		t.Errorf("a stored reference should serve its pair in full: full %v", result.FullIDs)
+	}
+	if slices.Contains(result.SummaryIDs, gatherBeta) || slices.Contains(result.SummaryIDs, gatherAlpha) {
+		t.Errorf("neither the subject nor a decided pair stays to judge: %v", result.SummaryIDs)
+	}
+	if !slices.Contains(result.SummaryIDs, gatherUnrelated) {
+		t.Errorf("an undecided pair stays to judge: %v", result.SummaryIDs)
+	}
+}
+
+func TestGather_CorruptLedgerSegmentFailsLoud(t *testing.T) {
+	f := newGatherFixture(t)
+	f.seed(t)
+	store := localadapter.NewMemoryRelevanceStore()
+	if err := store.Append(t.Context(), []byte("garbage")); err != nil {
+		t.Fatal(err)
+	}
+	f.relevance = store
+	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: 10_000}, nil)
+	if _, err := gather(t, application, sdd.GatherRequest{Draft: "A draft."}); !errors.Is(err, segment.ErrCorrupt) {
+		t.Fatalf("gather = %v: a corrupt ledger segment should fail the read", err)
 	}
 }

@@ -32,6 +32,9 @@ func RenderGather(w io.Writer, result *query.GatherResult) {
 	if prefilter == "" {
 		prefilter = "off"
 	}
+	if result.PrefilterNote != "" {
+		prefilter += ": " + result.PrefilterNote
+	}
 	fmt.Fprintf(w, "prefilter: %s\n", prefilter)
 
 	if result.Full != nil && len(result.Full.Groups) > 0 || len(result.Overflow) > 0 {

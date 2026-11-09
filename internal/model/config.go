@@ -103,6 +103,9 @@ type BaseConfig struct {
 	// Verifier checks every capture draft against its grounding reading
 	// before the write (20261109-004729-d-cpt-xs5); off unless a layer sets it.
 	Verifier VerifierConfig `yaml:"verifier,omitempty"`
+	// LLMPrefilter is the grounding prefilter's model, independent of LLM
+	// (20261109-004506-d-cpt-udz, D8); grounding.prefilter switches it on.
+	LLMPrefilter LLMPrefilterConfig `yaml:"llm_prefilter,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
 	// set once in the user-global config; a per-repo override covers a
@@ -184,6 +187,15 @@ type PerRepoConfig struct {
 	// Inbound is the receiving graph's gate on captures written from another
 	// project; only the committed .sdd/config.yaml sets it.
 	Inbound InboundConfig `yaml:"inbound,omitempty"`
+	// Events sets the sharing mode per event channel; only the committed
+	// .sdd/config.yaml sets it.
+	Events EventsConfig `yaml:"events,omitempty"`
+	// Relevance sets where the relevance ledger lives and what a committed
+	// copy holds; only the committed .sdd/config.yaml sets it.
+	Relevance RelevanceConfig `yaml:"relevance,omitempty"`
+	// Recheck names who runs the recheck work; only the committed
+	// .sdd/config.yaml sets it.
+	Recheck RecheckConfig `yaml:"recheck,omitempty"`
 	// Contribution names the upstream ref (e.g. origin/main) a checkout's
 	// graph writes are contributed to; set, it turns on contribution mode
 	// (ContributionRefusal). Machine-local only: a checkout opts in, the
@@ -632,6 +644,7 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	if len(overlay.Hooks) > 0 {
 		out.Hooks = append(slices.Clip(base.Hooks), overlay.Hooks...)
 	}
+	out.LLMPrefilter = mergeLLMPrefilterConfig(base.LLMPrefilter, overlay.LLMPrefilter)
 	return out
 }
 
@@ -676,6 +689,9 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 		out.GraphRepo = overlay.GraphRepo
 	}
 	out.Inbound = mergeInboundConfig(base.Inbound, overlay.Inbound)
+	out.Events = mergeEventsConfig(base.Events, overlay.Events)
+	out.Relevance = mergeRelevanceConfig(base.Relevance, overlay.Relevance)
+	out.Recheck = mergeRecheckConfig(base.Recheck, overlay.Recheck)
 	if overlay.Contribution != "" {
 		out.Contribution = overlay.Contribution
 	}

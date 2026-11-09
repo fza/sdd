@@ -15,6 +15,8 @@ type GatherResult struct {
 	Corpus *model.CorpusMark
 	// Prefilter is the prefilter status: off until a prefilter runs.
 	Prefilter string
+	// PrefilterNote says what the prefilter did or why it did not run.
+	PrefilterNote string
 	// Full holds the entries served in full, at most GatherFullCap; Overflow
 	// the opened entries past the cap.
 	Full     *ShowResult

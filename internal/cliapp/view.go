@@ -17,7 +17,7 @@ func viewCmd() *cli.Command {
 		Name:               "view",
 		Usage:              "Compose custom graph views with filters, ranking, transforms, and renderers",
 		CustomHelpTemplate: cli.CommandHelpTemplate + "\nLAYOUT REFERENCE:\n\n" + viewlayout.Reference(finders.LiveViewVocabulary()),
-		Flags: []cli.Flag{
+		Flags: append(sessionFlags(),
 			&cli.StringFlag{
 				Name:  "layout",
 				Usage: "Pipeline spec: section[:func]*[,section]*. Render terminates each section.",
@@ -30,7 +30,7 @@ func viewCmd() *cli.Command {
 				Name:  "all-repos",
 				Usage: "Also render the layout over every repo in the declared dependency closure",
 			},
-		},
+		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			// A layout is always explicit. The full grammar and vocabulary live
 			// on the conventional --help surface so a missing layout remains an
@@ -53,6 +53,11 @@ func viewCmd() *cli.Command {
 			// pipelines like `top(N)` and `decisions` with their canonical
 			// primitive sequences. User-supplied modifiers append.
 			layout, err = query.ExpandMacros(layout)
+			if err != nil {
+				return err
+			}
+
+			session, err := joinSession(ctx, cmd, "")
 			if err != nil {
 				return err
 			}
@@ -93,6 +98,11 @@ func viewCmd() *cli.Command {
 				return err
 			}
 			presenters.RenderView(cmd.Writer, result)
+			full, summary := result.ServedIDs()
+			err = session.logRead(ctx, "view", full, summary)
+			if err != nil {
+				return err
+			}
 
 			// Selected repos render the same layout over their own graphs,
 			// each under a repo heading — entry IDs inside a repo section

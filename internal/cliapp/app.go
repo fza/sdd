@@ -528,8 +528,13 @@ func New(options Options) *cli.Command {
 			indexCmd(),
 			searchCmd(),
 			gatherCmd(),
+			dismissCmd(),
+			groundingCmd(),
 			serveCmd(),
 			sessionsCmd(),
+			eventsCmd(),
+			relevanceCmd(),
+			recheckCmd(),
 			syncCmd(),
 			mergeEntryCmd(),
 			mergeConfigCmd(),
@@ -684,7 +689,7 @@ func showCmd() *cli.Command {
 		Name:      "show",
 		Usage:     "Show entry with upstream and downstream summary chains",
 		ArgsUsage: "<id> [id2 id3 ...]",
-		Flags: []cli.Flag{
+		Flags: append(sessionFlags(),
 			&cli.IntFlag{
 				Name:  "up",
 				Value: query.DefaultUpDepth,
@@ -703,11 +708,15 @@ func showCmd() *cli.Command {
 				Name:  "format",
 				Usage: "Output format: auto (default — styled on a TTY, plain markdown otherwise) or text",
 			},
-		},
+		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			ids := cmd.Args().Slice()
 			if len(ids) == 0 {
 				return fmt.Errorf("usage: sdd show <id> [id2 id3 ...]")
+			}
+			session, err := joinSession(ctx, cmd, "")
+			if err != nil {
+				return err
 			}
 
 			// Cross-repo IDs read through the dependency caches; refresh them first.
@@ -741,13 +750,14 @@ func showCmd() *cli.Command {
 			// interactive terminal gets the styled view (d-cpt-5f4 / d-cpt-mvb).
 			if cmd.String("format") == "text" || os.Getenv("NO_COLOR") != "" || !cliout.IsTerminalWriter(cmd.Writer) {
 				presenters.RenderShow(cmd.Writer, result, opts)
-				return nil
+			} else {
+				if w, _, err := term.GetSize(cmd.Writer.(interface{ Fd() uintptr }).Fd()); err == nil {
+					opts.Width = w
+				}
+				presenters.RenderShowStyled(cmd.Writer, result, opts)
 			}
-			if w, _, err := term.GetSize(cmd.Writer.(interface{ Fd() uintptr }).Fd()); err == nil {
-				opts.Width = w
-			}
-			presenters.RenderShowStyled(cmd.Writer, result, opts)
-			return nil
+			full, summary := result.ServedIDs()
+			return session.logRead(ctx, "show", full, summary)
 		},
 	}
 }
@@ -761,7 +771,11 @@ func newCmd() *cli.Command {
 		// the root toggle does not propagate to subcommands in v3, and our
 		// JSON-bearing flags (--involvement, --topic) live here.
 		DisableSliceFlagSeparator: true,
-		Flags: []cli.Flag{
+		Flags: append(sessionFlags(),
+			&cli.StringFlag{
+				Name:  "widen-report",
+				Usage: "With --session: the searches run and entries inspected before drafting; sdd gather --session seeds the capture's own reads",
+			},
 			&cli.StringSliceFlag{
 				Name:  "refs",
 				Usage: "Reference (repeatable) — JSON object {\"id\":\"<id>\",\"kind\":\"<kind>\",\"desc\":\"<optional>\"}. Kind is one of: grounded-in, builds-on, refines, addresses, surfaces, surfaced-by, depends-on, required-by, related.",
@@ -887,7 +901,7 @@ func newCmd() *cli.Command {
 				Usage: "Timeout for the extraction call a pre-flight response falls back to (e.g. 60s)",
 				Value: model.DefaultLLMExtractTimeout,
 			},
-		},
+		),
 		Action: withWriteGate(withContributionGuard(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = slogutils.WithLogger(ctx, slogutils.FromContext(ctx).With("command", "new"))
 
@@ -1035,6 +1049,9 @@ func newCmd() *cli.Command {
 						fmt.Fprintf(cmd.Writer, "  Summary: %s\n", summary)
 					}
 				},
+			}
+			if sessionRequested(cmd) {
+				return newInSession(ctx, cmd, ncmd)
 			}
 
 			runner, err := newRunner(cmd, "preflight-timeout")

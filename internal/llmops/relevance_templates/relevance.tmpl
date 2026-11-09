@@ -1,0 +1,17 @@
+{{define "relevance_system"}}
+You judge whether an existing entry of a decision graph is relevant to a draft entry before the draft is captured. The graph holds signals (things noticed) and decisions (things committed to).
+
+The entry is relevant when it decides, constrains, contradicts, supersedes, renames, refines, or is required by anything the draft commits to, or already owns part of the question the draft answers. Sharing only a topic area or a word is not relevant. When unsure, rate it relevant.
+
+Answer with `score`: the probability, from 0 to 1, that the entry is relevant. Answer with the JSON object only.
+{{end}}
+
+{{define "relevance_user"}}
+Draft:
+
+{{.Subject}}
+
+Existing entry:
+
+{{.Candidate}}
+{{end}}

@@ -14,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm/embed"
+	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
 // GroundingPolicy is a project's grounding configuration
@@ -24,6 +25,11 @@ type GroundingPolicy struct {
 	DepthUp       int
 	BriefAllBelow int
 	PrefilterFrom int
+	// Prefilter switches the prefilter on where the runtime has one (D7).
+	Prefilter bool
+	// RecheckResponsible names the participants catch-up shows the recheck
+	// list to; empty shows it to everyone (D5).
+	RecheckResponsible []string
 }
 
 func (p GroundingPolicy) resolved() GroundingPolicy {
@@ -60,6 +66,10 @@ type GatherRequest struct {
 	// Answered names entries the capture already answered (its refs and
 	// verdicts), which gather sets aside instead of asking again.
 	Answered []string
+	// Subject names an existing entry the reading grounds: its body, kind
+	// and topics stand in for an empty draft, and the relevance ledger's
+	// stored verdicts against it answer repeat pairs without a new judgment.
+	Subject string
 	// Held reports whether the consumer already holds an entry in full; such
 	// a candidate prints as a pointer (D34). Nil serves every line in full,
 	// as the CLI does (R14).
@@ -67,6 +77,9 @@ type GatherRequest struct {
 	// since is the corpus mark of the capture's reading; the live entries it
 	// lacks are listed as landed since the reading began (D13).
 	since *model.CorpusMark
+	// reading is the capture's reading, whose prefilter scores a later gather
+	// reuses instead of scoring again.
+	reading *model.Reading
 }
 
 // GatherResult is the rendered serve and the entries it served.
@@ -119,11 +132,33 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		}
 	}
 
+	if request.Subject != "" {
+		resolved, err := graph.ResolveIDs([]string{request.Subject})
+		if err != nil {
+			return GatherResult{}, err
+		}
+		subject := graph.ByID[resolved[0]]
+		if subject == nil {
+			return GatherResult{}, fmt.Errorf("sdd: gather: subject %s does not resolve", request.Subject)
+		}
+		request.Subject = subject.ID
+		if strings.TrimSpace(request.Draft) == "" {
+			request.Draft, request.Kind = subject.Content, string(subject.Kind)
+			if len(request.Topics) == 0 {
+				for _, topic := range graph.EffectiveTopics(subject) {
+					request.Topics = append(request.Topics, topic.String())
+				}
+			}
+		}
+	}
+
 	var reads []model.GroundingRead
+	searchMode := false
 	switch {
 	case len(live) < policy.BriefAllBelow:
 		reads = append(reads, model.GroundingRead{Mode: model.GroundingBriefs, IDs: liveIDs})
 	case strings.TrimSpace(request.Draft) != "" || request.Query != "" || len(request.Terms) > 0:
+		searchMode = true
 		searched, err := a.gatherSearches(ctx, runtime, selected, request)
 		if err != nil {
 			return GatherResult{}, err
@@ -154,11 +189,73 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	}
 
 	candidates, setAside := model.GatherCandidates(graph, live, reads, opened, request.Answered)
+	candidates = slices.DeleteFunc(candidates, func(c model.GatherCandidate) bool { return c.Entry.ID == request.Subject })
+	ledger, err := runtime.relevanceLedger(ctx)
+	if err != nil {
+		return GatherResult{}, err
+	}
+	judge := runtime.options.Prefilter.Judge
+	var thresholds model.RelevanceThresholds
+	if judge != "" {
+		thresholds = model.Calibrate(ledger.Labels(judge), ledger.Steps(), judge)
+	}
+	split := model.SplitByLedger(candidates, request.Subject, ledger, judge, thresholds)
+	if len(split.NotRelevant) > 0 {
+		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideJudged, IDs: split.NotRelevant})
+	}
+	held, _ := request.reading.Scores(judge)
+	subject := ""
+	if strings.TrimSpace(request.Draft) != "" {
+		subject = model.RelevanceText(request.Kind, request.Topics, "", request.Draft)
+	}
+	undecided := split.Undecided
+	var cosine cosinePass
+	if searchMode && policy.Prefilter && len(undecided) >= policy.PrefilterFrom {
+		cosine, err = a.runCosine(ctx, runtime, selected, request.SyncMode, ledger, subject, undecided, len(live))
+		if err != nil {
+			return GatherResult{}, err
+		}
+		undecided = cosine.kept
+	}
+	pass, err := runPrefilter(ctx, runtime, policy, subject, graph, undecided, held)
+	if err != nil {
+		return GatherResult{}, err
+	}
+	placed := model.PlacePrefiltered(undecided, pass.scores, thresholds)
+	seed := model.NewCorpusMark(liveIDs).Hash
+	if request.since != nil {
+		seed = request.since.Hash
+	}
+	audit, kept := model.AuditSample(append(slices.Clone(placed.SetAside), cosine.setAside...), seed)
+	var filtered, cosined []string
+	for _, id := range kept {
+		if slices.Contains(cosine.setAside, id) {
+			cosined = append(cosined, id)
+		} else {
+			filtered = append(filtered, id)
+		}
+	}
+	if len(filtered) > 0 {
+		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideFiltered, IDs: filtered})
+	}
+	if len(cosined) > 0 {
+		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideCosine, IDs: cosined})
+	}
+	var samples []model.GatherCandidate
+	for _, candidate := range split.Undecided {
+		if slices.Contains(audit, candidate.Entry.ID) {
+			samples = append(samples, candidate)
+		}
+	}
+	candidates = model.InsertBlind(placed.ToJudge, samples, seed)
 	served := &query.GatherResult{
-		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: "off",
+		Graph: graph, Reads: reads, Corpus: model.NewCorpusMark(liveIDs), Prefilter: pass.status, PrefilterNote: pass.note,
 		ToJudge: candidates, SetAside: setAside, Held: map[string]bool{},
 	}
-	full := opened
+	full := slices.Clone(opened)
+	for _, candidate := range append(split.Relevant, placed.Relevant...) {
+		full = append(full, candidate.Entry.ID)
+	}
 	if len(full) > query.GatherFullCap {
 		for _, id := range full[query.GatherFullCap:] {
 			served.Overflow = append(served.Overflow, graph.ByID[id])
@@ -187,6 +284,12 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	presenters.RenderGather(&rendered, served)
 	result.Text = strings.TrimRight(rendered.String(), "\n")
 	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Corpus: served.Corpus}
+	if len(pass.fresh) > 0 || len(audit) > 0 {
+		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: runtime.options.Prefilter.Scorer != nil && runtime.options.Prefilter.Scorer.Direction() == relevance.Forward, Scores: pass.fresh, Audit: audit}
+	}
+	if len(cosine.scores) > 0 {
+		result.payload.Cosine = &model.PrefilterPayload{Judge: cosine.judge, Scores: cosine.scores}
+	}
 	return result, nil
 }
 

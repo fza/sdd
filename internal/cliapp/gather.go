@@ -14,20 +14,22 @@ import (
 )
 
 // gatherCmd prints the grounding serve of a draft (20261109-004506-d-cpt-udz,
-// 5.3). The CLI credits no capture and never cuts or points (R14).
+// 5.3). It never cuts or points (R14); only with --session does the reading
+// credit a capture (D3).
 func gatherCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "gather",
 		Usage:     "Print the grounding reading of a draft: every live brief on a small graph, else its searches and topic listings",
 		ArgsUsage: "[entry-id...]",
-		Flags: append(embeddingFlags(),
+		Flags: append(append(embeddingFlags(),
 			&cli.StringFlag{Name: "draft", Usage: "Draft text the searches are written from"},
 			&cli.StringFlag{Name: "draft-file", Usage: "File holding the draft text"},
 			&cli.StringFlag{Name: "kind", Usage: "The draft's entry kind"},
 			&cli.StringSliceFlag{Name: "topic", Usage: "A draft topic label, listed in full (repeatable)"},
 			&cli.StringFlag{Name: "query", Aliases: []string{"q"}, Usage: "Semantic search phrase, instead of the query writer"},
 			&cli.StringSliceFlag{Name: "term", Aliases: []string{"t"}, Usage: "Keyword term, one search each, instead of the query writer (repeatable)"},
-		),
+			&cli.StringFlag{Name: "subject", Usage: "An existing entry the reading grounds: its text stands in for the draft, and stored verdicts against it answer repeat pairs"},
+		), sessionFlags()...),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			draft := cmd.String("draft")
 			if path := cmd.String("draft-file"); path != "" {
@@ -40,24 +42,23 @@ func gatherCmd() *cli.Command {
 				}
 				draft = string(content)
 			}
-			runner, err := newRunner(cmd, "")
+			application, project, identity, err := workingApplication(ctx, cmd)
 			if err != nil {
 				return err
 			}
-			served, err := buildServedProject(ctx, cmd, runner)
+			session, err := joinSessionOn(ctx, cmd, application, identity)
 			if err != nil {
 				return err
 			}
-			application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: served.access, Sessions: served.sessions, StagedBlobs: served.blobs})
-			if err != nil {
-				return err
+			var result sdd.GatherResult
+			if session != nil {
+				result, err = sessionGather(ctx, cmd, session, draft)
+			} else {
+				result, err = application.Gather(ctx, identity, project, sdd.GatherRequest{
+					SyncMode: sdd.SearchSyncAll, Draft: draft, Kind: cmd.String("kind"), Topics: cmd.StringSlice("topic"),
+					IDs: cmd.Args().Slice(), Query: cmd.String("query"), Terms: cmd.StringSlice("term"), Subject: cmd.String("subject"),
+				})
 			}
-			identity := sdd.RequestIdentity{Subject: "local"}
-			runtime := served.access.runtime
-			result, err := application.Gather(ctx, identity, runtime.Project().ID, sdd.GatherRequest{
-				SyncMode: sdd.SearchSyncAll, Draft: draft, Kind: cmd.String("kind"), Topics: cmd.StringSlice("topic"),
-				IDs: cmd.Args().Slice(), Query: cmd.String("query"), Terms: cmd.StringSlice("term"),
-			})
 			if err != nil {
 				return err
 			}
@@ -65,6 +66,28 @@ func gatherCmd() *cli.Command {
 			return err
 		},
 	}
+}
+
+// sessionGatherUnsupported are the gather flags a session reading takes from
+// its capture's draft instead.
+var sessionGatherUnsupported = []string{"kind", "query", "term", "subject"}
+
+// sessionGather runs the reading inside the session: naming its capture, the
+// reading credits that capture as the MCP gather does; without one it only
+// logs.
+func sessionGather(ctx context.Context, cmd *cli.Command, session *cliSession, draft string) (sdd.GatherResult, error) {
+	for _, name := range sessionGatherUnsupported {
+		if cmd.IsSet(name) {
+			return sdd.GatherResult{}, fmt.Errorf("--%s does not apply with --session: the capture's draft writes the searches", name)
+		}
+	}
+	instance, err := session.capture(cmd, false)
+	if err != nil {
+		return sdd.GatherResult{}, err
+	}
+	return session.workflow.Gather(ctx, session.identity, sdd.WorkflowGatherRequest{
+		Instance: instance, IDs: cmd.Args().Slice(), Draft: draft, Topics: cmd.StringSlice("topic"), SyncMode: sdd.SearchSyncAll,
+	})
 }
 
 // refuseUngroundedNew refuses a direct `sdd new` under grounding.enforce: the
@@ -79,19 +102,22 @@ func refuseUngroundedNew(cfg *model.PerRepoConfig, ncmd *command.NewEntryCmd) er
 	if !groundingPolicy(cfg).Enforce || ncmd.SkipGrounding || ncmd.DryRun || model.GroundingExemptKind(kind) {
 		return nil
 	}
-	return fmt.Errorf("grounding.enforce is on, so sdd new does not write a %s directly: capture it through the engine (start_procedure capture over the MCP server), whose gather reading the gate judges, or pass --skip-grounding to record a bypass", kind)
+	return fmt.Errorf("grounding.enforce is on, so sdd new does not write a %s directly: capture it through the engine (start_procedure capture over the MCP server), whose gather reading the gate judges, write it into that capture with sdd new --session, or pass --skip-grounding to record a bypass", kind)
 }
 
 // groundingPolicy is the resolved grounding block of cfg.
 func groundingPolicy(cfg *model.PerRepoConfig) sdd.GroundingPolicy {
 	var block model.GroundingConfig
+	var recheck model.RecheckConfig
 	if cfg != nil {
 		block = cfg.Grounding
+		recheck = cfg.Recheck
 	}
 	policy := block.Policy()
 	return sdd.GroundingPolicy{
 		Enforce: policy.Enforce, DepthDown: policy.DepthDown, DepthUp: policy.DepthUp,
-		BriefAllBelow: policy.BriefAllBelow, PrefilterFrom: policy.PrefilterFrom,
+		BriefAllBelow: policy.BriefAllBelow, PrefilterFrom: policy.PrefilterFrom, Prefilter: policy.Prefilter,
+		RecheckResponsible: recheck.Responsible,
 	}
 }
 

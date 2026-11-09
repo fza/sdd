@@ -22,6 +22,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/llm"
+	"github.com/networkteam/sdd/pkg/llm/embed"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -56,8 +57,12 @@ type LLMScript struct {
 	// DuringPreflight runs inside every pre-flight call, before it answers:
 	// the point to land an entry between a capture's confirm and its write.
 	DuringPreflight func()
-	Title           string
-	Summary         string
+	// GatherQuery is the semantic query the gather query writer answers
+	// with, and its one keyword term.
+	GatherQuery string
+	GatherTerm  string
+	Title       string
+	Summary     string
 }
 
 // Prompts returns the requests the runner ran for the purpose, in order.
@@ -97,6 +102,8 @@ func (s *LLMScript) Run(_ context.Context, request llm.Request) (llm.Result, err
 			s.DuringPreflight()
 		}
 		return marshalFindings(s.PreflightFindings)
+	case llm.PurposeGatherQuery:
+		return marshalGatherQuery(s.GatherQuery, s.GatherTerm)
 	case llm.PurposeWritingGuide:
 		return marshalFindings(s.GuideFindings)
 	default:
@@ -173,6 +180,10 @@ type config struct {
 	launcher    sdd.DelegateLauncher
 	checkout    fs.FS
 	hooks       sdd.HookCommands
+	relevance   sdd.RelevanceStore
+	prefilter   sdd.Prefilter
+	events      sdd.EventStore
+	embedder    embed.Embedder
 }
 
 // Option configures NewWorld.
@@ -228,6 +239,27 @@ func WithCheckout(checkout fs.FS) Option {
 // WithGrounding sets the world project's whole grounding policy.
 func WithGrounding(policy sdd.GroundingPolicy) Option {
 	return func(c *config) { c.grounding = policy }
+}
+
+// WithRelevance gives the world's project a relevance verdict ledger.
+func WithRelevance(store sdd.RelevanceStore) Option {
+	return func(c *config) { c.relevance = store }
+}
+
+// WithEvents gives the world's project an event store.
+func WithEvents(store sdd.EventStore) Option {
+	return func(c *config) { c.events = store }
+}
+
+// WithEmbedder gives the world's project an embedding model over an
+// in-memory search index, so gather reads in search mode.
+func WithEmbedder(embedder embed.Embedder) Option {
+	return func(c *config) { c.embedder = embedder }
+}
+
+// WithPrefilter gives the world's project a relevance scorer.
+func WithPrefilter(prefilter sdd.Prefilter) Option {
+	return func(c *config) { c.prefilter = prefilter }
 }
 
 // WithFinalizers configures required completion after publication.
@@ -387,11 +419,14 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
 		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Verifier: cfg.verifier, Checkout: cfg.checkout,
-		Hooks: cfg.hooks,
+		Hooks: cfg.hooks, Relevance: cfg.relevance, Prefilter: cfg.prefilter, Events: cfg.events,
 	}
 	if cfg.window != nil {
 		window := *cfg.window
 		options.Window = func(context.Context) (sdd.ModelWindow, error) { return window, nil }
+	}
+	if cfg.embedder != nil {
+		options.Embedder, options.SearchIndex = cfg.embedder, localadapter.NewMemorySearchIndexStore()
 	}
 	var dropped map[string]bool
 	if len(cfg.branchDirs) > 0 {
@@ -644,4 +679,9 @@ func (w *World) Delegate(t *testing.T, dispatch *sdd.WorkflowDispatch) *Session 
 		t.Fatal(err)
 	}
 	return &Session{World: w, WF: workflow, ID: dispatch.Session}
+}
+
+func marshalGatherQuery(query, term string) (llm.Result, error) {
+	output, err := json.Marshal(map[string]any{"query": query, "terms": []string{term}})
+	return llm.Result{Text: string(output), Identity: scriptIdentity}, err
 }

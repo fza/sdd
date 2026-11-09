@@ -5,12 +5,18 @@
 package proctest_test
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
+	"github.com/networkteam/sdd/internal/relevance"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	llmrelevance "github.com/networkteam/sdd/pkg/llm/relevance"
+	"github.com/networkteam/sdd/pkg/local"
 )
 
 const groundingUnreadID = "20250101-000000-s-tac-zzz"
@@ -281,4 +287,217 @@ func TestCaptureGrounding_OwnCapturesNeverCountAsLanded(t *testing.T) {
 
 	serve = session.Report(t, first, captureDraft())
 	proctest.RequireStep(t, serve, "playback")
+}
+
+// A published capture writes its reader records, keyed to the new entry,
+// into the relevance ledger (5.7).
+func TestCaptureGrounding_PublishStoresTheReaderVerdicts(t *testing.T) {
+	store := local.NewMemoryRelevanceStore()
+	world, session := newCaptureWorld(t, "grounding-ledger", proctest.WithGroundingEnforced(), proctest.WithRelevance(store))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+
+	session.Gather(t, instance, captureRef2ID)
+	draft := captureDraft()
+	draft["verdicts"] = []any{map[string]any{"ids": []any{captureRef2ID}, "code": model.VerdictCovered}}
+	serve = session.Report(t, instance, draft)
+	proctest.RequireStep(t, serve, "playback")
+	entry := confirmCapture(t, world, session, instance)
+
+	segments, err := store.Segments(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := relevance.Fold(segments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	referenced, ok := ledger.Reader(model.NewRelevancePair(entry.ID, captureRefID))
+	if !ok || referenced.Code != model.ReaderReferenced {
+		t.Fatalf("the ref should be stored as referenced by the new entry, got %+v, %v", referenced, ok)
+	}
+	opened, ok := ledger.Reader(model.NewRelevancePair(entry.ID, captureRef2ID))
+	covered, _ := model.VerdictReasonByte(model.VerdictCovered)
+	if !ok || opened.Code != model.ReaderOpened || opened.Reason != covered {
+		t.Fatalf("the entry served in full and set aside should be stored as opened with its code, got %+v, %v", opened, ok)
+	}
+}
+
+// countingScorer scores every candidate the same, or fails, and counts the
+// candidates it was asked about.
+type countingScorer struct {
+	score  float64
+	fail   bool
+	scored int
+	// forward makes it a one-direction judge, as a reranker is.
+	forward bool
+}
+
+func (s *countingScorer) Direction() llmrelevance.Direction {
+	if s.forward {
+		return llmrelevance.Forward
+	}
+	return llmrelevance.Both
+}
+func (s *countingScorer) MaxBatch() int       { return 0 }
+func (s *countingScorer) MaxInputTokens() int { return 0 }
+func (s *countingScorer) MaxPairTokens() int  { return 0 }
+
+func (s *countingScorer) Score(_ context.Context, request llmrelevance.Request) (llmrelevance.Result, error) {
+	s.scored += len(request.Candidates)
+	if s.fail {
+		return llmrelevance.Result{}, errors.New("provider unavailable")
+	}
+	result := llmrelevance.Result{}
+	for range request.Candidates {
+		result.Scores = append(result.Scores, s.score)
+	}
+	return result, nil
+}
+
+// The prefilter's scores ride the capture's reading: a later gather reuses
+// them instead of scoring again, and publish stores them keyed to the new
+// entry; a failed pass stores none (5.8).
+func TestCaptureGrounding_PrefilterScoresRideTheReadingToTheLedger(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		fail   bool
+		stored bool
+	}{{"scored", false, true}, {"provider down", true, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := local.NewMemoryRelevanceStore()
+			scorer := &countingScorer{score: 0.25, fail: tc.fail}
+			world, session := newCaptureWorld(t, "grounding-prefilter",
+				proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
+				proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: "test:counting"}))
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+			session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap"})
+			session.Gather(t, instance)
+			first := scorer.scored
+			if first == 0 {
+				t.Fatal("the prefilter should rate the reading's candidates")
+			}
+			session.Gather(t, instance)
+			if !tc.fail && scorer.scored != first {
+				t.Fatalf("a second gather scored %d more candidates: the reading's scores should be reused", scorer.scored-first)
+			}
+			serve = session.Report(t, instance, captureDraft())
+			proctest.RequireStep(t, serve, "playback")
+			entry := confirmCapture(t, world, session, instance)
+
+			segments, err := store.Segments(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ledger, err := relevance.Fold(segments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, scored := ledger.Score(model.NewRelevancePair(entry.ID, captureRef2ID), entry.ID, "test:counting")
+			if scored != tc.stored {
+				t.Fatalf("score stored = %v: a successful pass should store its scores, a failed one none", scored)
+			}
+		})
+	}
+}
+
+// An audit sample answered in the capture carries the audit bit into the
+// ledger, and a publish whose audit labels show drift steps the judge's
+// threshold down (D36).
+func TestCaptureGrounding_PublishRecordsAuditAndAppliesTheDriftRule(t *testing.T) {
+	const judge = "test:counting"
+	var seed model.RelevanceBatch
+	for i := range 189 {
+		pair := model.NewRelevancePair(fmt.Sprintf("20250101-%02d%02d00-s-tac-pos", i/60, i%60), "20250601-000000-d-tac-sub")
+		seed.Readers = append(seed.Readers, model.ReaderRecord{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}})
+		seed.Scores = append(seed.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 200}})
+	}
+	topicOnly, _ := model.VerdictReasonByte(model.VerdictTopicOnly)
+	for i := range 100 {
+		pair := model.NewRelevancePair(fmt.Sprintf("20250201-%02d%02d00-s-tac-aud", i/60, i%60), fmt.Sprintf("20250701-%02d%02d00-d-tac-sub", i/60, i%60))
+		verdict := model.ReaderVerdict{Code: model.ReaderDismissed, Reason: topicOnly, Audit: true}
+		if i < 3 {
+			verdict = model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true}
+		}
+		seed.Readers = append(seed.Readers, model.ReaderRecord{Pair: pair, Verdict: verdict})
+		seed.Scores = append(seed.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 220}})
+	}
+	store := local.NewMemoryRelevanceStore()
+	if err := store.Append(t.Context(), relevance.Encode(seed)); err != nil {
+		t.Fatal(err)
+	}
+	scorer := &countingScorer{score: 0}
+	world, session := newCaptureWorld(t, "grounding-audit",
+		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
+		proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: judge}))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap"})
+	gathered := session.Gather(t, instance)
+	if len(gathered.SummaryIDs) == 0 {
+		t.Fatalf("every candidate scored low, so the lines to judge should be audit samples:\n%s", gathered.Text)
+	}
+	sample := gathered.SummaryIDs[0]
+	draft := captureDraft()
+	draft["verdicts"] = []any{map[string]any{"ids": []any{sample}, "code": model.VerdictTopicOnly}}
+	serve = session.Report(t, instance, draft)
+	proctest.RequireStep(t, serve, "playback")
+	entry := confirmCapture(t, world, session, instance)
+
+	segments, err := store.Segments(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := relevance.Fold(segments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict, ok := ledger.Reader(model.NewRelevancePair(entry.ID, sample)); !ok || !verdict.Audit {
+		t.Fatalf("the answered sample should carry the audit bit, got %+v, %v", verdict, ok)
+	}
+	steps := ledger.Steps()
+	if len(steps) != 1 || steps[0].Judge != judge {
+		t.Fatalf("steps %+v: three referenced samples in a hundred should step the threshold down once", steps)
+	}
+}
+
+// A one-direction judge, as the Cohere reranker is (D21), stores its scores
+// from the draft to each candidate: they answer that direction and leave the
+// reverse pair undecided unless they rate it relevant (5.7 item 4).
+func TestCaptureGrounding_OneDirectionScoresAnswerOnlyFromTheDraft(t *testing.T) {
+	store := local.NewMemoryRelevanceStore()
+	scorer := &countingScorer{score: 0.02, forward: true}
+	world, session := newCaptureWorld(t, "grounding-forward",
+		proctest.WithGrounding(sdd.GroundingPolicy{Enforce: true, Prefilter: true, PrefilterFrom: 1}),
+		proctest.WithRelevance(store), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: "test:forward"}))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Report(t, instance, map[string]any{"body": "A tactical gap: the fixture observes something.", "entryKind": "gap"})
+	session.Gather(t, instance)
+	serve = session.Report(t, instance, captureDraft())
+	proctest.RequireStep(t, serve, "playback")
+	entry := confirmCapture(t, world, session, instance)
+
+	segments, err := store.Segments(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := relevance.Fold(segments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ledger.Score(model.NewRelevancePair(entry.ID, captureRef2ID), entry.ID, "test:forward"); !ok {
+		t.Fatal("the score should answer from the new entry to the candidate")
+	}
+	if _, ok := ledger.Score(model.NewRelevancePair(entry.ID, captureRef2ID), captureRef2ID, "test:forward"); ok {
+		t.Fatal("a one-direction score should not answer from the candidate to the new entry")
+	}
+	thresholds := model.RelevanceThresholds{Valid: true, SetAside: 0.1, Relevant: 0.9}
+	if got := ledger.Lookup(entry.ID, captureRef2ID, "test:forward", thresholds); got != model.RelevanceNotRelevant {
+		t.Fatalf("lookup from the draft = %v: its low score should set the pair aside", got)
+	}
+	if got := ledger.Lookup(captureRef2ID, entry.ID, "test:forward", thresholds); got != model.RelevanceUndecided {
+		t.Fatalf("lookup in reverse = %v: a low one-direction score should leave the reverse undecided", got)
+	}
 }

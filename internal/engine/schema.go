@@ -339,6 +339,26 @@ func schemaForType(t VarType, desc string) map[string]any {
 			"required":             []string{"ids", "code"},
 			"additionalProperties": false,
 		}
+	case TypeStrain:
+		relations := model.StrainRelations()
+		enum := make([]any, 0, len(relations))
+		for _, relation := range relations {
+			enum = append(enum, relation)
+		}
+		schema = map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"ids": map[string]any{
+					"type":     "array",
+					"minItems": 2,
+					"maxItems": 2,
+					"items":    map[string]any{"type": "string", "pattern": entryIDSchemaPattern},
+				},
+				"relation": map[string]any{"type": "string", "enum": enum},
+			},
+			"required":             []string{"ids", "relation"},
+			"additionalProperties": false,
+		}
 	case TypeEntryKind:
 		kinds := append(model.SignalKindValues(), model.DecisionKindValues()...)
 		enum := make([]any, 0, len(kinds))

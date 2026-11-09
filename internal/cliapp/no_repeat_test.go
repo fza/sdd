@@ -6,20 +6,27 @@ import (
 )
 
 // The no-repeat rule cuts only in MCP mode: the same CLI read prints in full
-// every time (20261109-004506-d-cpt-udz, R14).
+// every time, with and without --session (20261109-004506-d-cpt-udz, R14).
 func TestCLIReadsServeInFullEveryTime(t *testing.T) {
 	cases := []struct {
-		name string
-		args []string
+		name    string
+		args    []string
+		session bool
 	}{
-		{"show", []string{"show", appEntryID}},
-		{"view as-bodies", []string{"view", "--layout", `id("` + appEntryID + `"):as-bodies`}},
+		{"show", []string{"show", appEntryID}, false},
+		{"view as-bodies", []string{"view", "--layout", `id("` + appEntryID + `"):as-bodies`}, false},
+		{"show in a session", []string{"show", appEntryID}, true},
+		{"view as-bodies in a session", []string{"view", "--layout", `id("` + appEntryID + `"):as-bodies`}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newAppFixture(t)
+			args := tc.args
+			if tc.session {
+				args = append(args, "--session", openFixtureSession(t, f))
+			}
 			for range 2 {
-				result := f.run(t, tc.args...)
+				result := f.run(t, args...)
 				if result.err != nil {
 					t.Fatalf("sdd %s: %v\n%s", tc.name, result.err, result.stderr)
 				}
