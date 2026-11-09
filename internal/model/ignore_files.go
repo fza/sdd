@@ -14,7 +14,7 @@ const GraphRuntimeIgnore = "*\n"
 // SDDIgnoreLines are the lines of the committed .sdd/.gitignore: the
 // machine-local state below .sdd/ that git never tracks, the same in every
 // repository holding a .sdd/.
-var SDDIgnoreLines = []string{"tmp/", "config.local.yaml", "index/", "stats/", "sessions/", "staged-blobs/"}
+var SDDIgnoreLines = []string{"tmp/", "config.local.yaml", "index/", "stats/", "sessions/", "staged-blobs/", "hooks/local/"}
 
 // GraphAttributesLine is the line of the .gitattributes inside the graph
 // directory routing its entry files to the entry merge driver. Its pattern

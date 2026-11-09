@@ -413,7 +413,7 @@ Every config file may declare `hooks`: the user-global file, and both `.sdd/conf
 | --- | --- |
 | User-global config | `~/.config/sdd/hooks/` |
 | `.sdd/config.yaml` | `.sdd/hooks/`, committed with the project |
-| `.sdd/config.local.yaml` | `.sdd/hooks/`, its scripts in `local/` there, which `sdd init` adds to `.gitignore` |
+| `.sdd/config.local.yaml` | `.sdd/hooks/`, its scripts in `local/` there, which `sdd init` adds to `.sdd/.gitignore` |
 
 sdd refuses an absolute path, `..`, a name it would have to look up on `PATH`, and anything a shell would interpret. A hook runs without a shell, with the hooks folder as its working directory, so `args` and `files` resolve from there too. Put an interpreter in the script's shebang and make the script executable. A hook in the committed file may not run a script from `local/`, which only your machine has.
 
@@ -429,7 +429,6 @@ sdd hashes each hook on every run: its event, command, arguments, timeout, findi
 - Over MCP, every call that works on a session or opens one first checks all of the project's hooks. Before it does anything else, it shows you the prompt for each unconfirmed hook at once through your client, and goes on only once you accept them all. A decline, or a client that cannot ask, fails the call with nothing done and names `sdd hooks trust`. A hook that changes while the call runs fails the call the same way.
 
 Confirmations live in `~/.local/state/sdd/hooks/<repository>.json`, readable only by you, keyed by the project's `repo_id`, so clones of one repository share them.
-
 ### Events
 
 | Event | Fires | Accepts findings |
