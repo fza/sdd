@@ -1638,7 +1638,20 @@ func (s *workflowSink) Append(event engine.Event) (uint64, error) {
 		w.instanceProjects[event.Instance] = project
 		return position, nil
 	}
-	if err := w.appendStoredEvents(events); err != nil {
+	err = w.appendStoredEvents(events)
+	var appErr *ApplicationError
+	if event.Event == engine.EventServedBlocks && errors.As(err, &appErr) && appErr.Code == ErrorSessionConflict {
+		// A served ledger entry depends on nothing another writer changed, such
+		// as a delegate a launcher drove delivering meanwhile, so it lands on
+		// the session as it now stands.
+		err = w.resyncBindingVersion()
+		if err != nil {
+			return 0, err
+		}
+		position = w.binding.Version + 1
+		err = w.appendStoredEvents(events)
+	}
+	if err != nil {
 		return 0, err
 	}
 	return position, nil

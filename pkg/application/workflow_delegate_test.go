@@ -469,3 +469,22 @@ func TestDelegateStartsInTheDispatchersProject(t *testing.T) {
 		t.Fatalf("a delegate pinned to another project should be refused, got %v", err)
 	}
 }
+
+func TestServedBlocksRecordAfterALaunchedRoundDelivered(t *testing.T) {
+	launcher := &scriptedLauncher{t: t}
+	f := newDelegateApplication(t, launcher)
+	launcher.fixture = f
+	workflow := f.session(t, f.parent)
+	if _, err := workflow.Start(t.Context(), f.identity, sdd.WorkflowStartRequest{Canonical: "reviewtask", Parent: f.dispatch}); err != nil {
+		t.Fatal(err)
+	}
+	if err := workflow.RecordServed(t.Context(), f.identity, []string{"served-while-the-delegate-delivered"}); err != nil {
+		t.Fatalf("the served blocks of the dispatching call should land although the delegate wrote the session meanwhile: %v", err)
+	}
+	if !f.session(t, f.parent).ServedBefore("served-while-the-delegate-delivered") {
+		t.Fatal("the served blocks should be in the session ledger")
+	}
+	if picked := f.advance(t, f.parent, f.dispatch, nil); picked.Step != "answer" {
+		t.Fatalf("the delegate's delivery should still land in the dispatching move, at %s", picked.Step)
+	}
+}
