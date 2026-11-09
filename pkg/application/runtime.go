@@ -259,6 +259,33 @@ func (r *ProjectRuntime) RunSyncTimer(ctx context.Context) error {
 	}
 }
 
+// RunSyncTimerOf is RunSyncTimer for a host that rebuilds its runtime while it
+// serves: before each tick it asks current for the runtime in force, and a
+// tick current refuses syncs nothing.
+func RunSyncTimerOf(ctx context.Context, current func(context.Context) (*ProjectRuntime, error)) error {
+	ticker := time.NewTicker(syncTick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			r, err := current(ctx)
+			if err != nil {
+				slogutils.FromContext(ctx).Warn(fmt.Sprintf("sync: %v", err))
+				continue
+			}
+			if r.options.Sync != nil {
+				branch, own := r.syncBranch(ctx, "")
+				if own {
+					r.syncGraphWhenDue(ctx, branch)
+				}
+			}
+			r.syncDueRepos(ctx)
+		}
+	}
+}
+
 func (r *ProjectRuntime) syncGraphWhenDue(ctx context.Context, branch string) {
 	due, err := r.options.Sync.SyncDue(ctx, branch)
 	if err != nil {

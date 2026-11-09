@@ -39,30 +39,20 @@ func gatherCmd() *cli.Command {
 				}
 				draft = string(content)
 			}
-			dir, err := resolveGraphDir(cmd)
-			if err != nil {
-				return err
-			}
-			sddDir, err := resolveSDDDir()
-			if err != nil {
-				return err
-			}
 			runner, err := newRunner(cmd, "")
 			if err != nil {
 				return err
 			}
-			cfg, err := loadConfig()
+			served, err := buildServedProject(ctx, cmd, runner)
 			if err != nil {
 				return err
 			}
-			reg, _, err := defaultRepos()
+			application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: served.access, Sessions: served.sessions, StagedBlobs: served.blobs})
 			if err != nil {
 				return err
 			}
-			application, runtime, identity, err := buildLocalApplication(ctx, cmd, dir, sddDir, cfg, reg, runner)
-			if err != nil {
-				return err
-			}
+			identity := sdd.RequestIdentity{Subject: "local"}
+			runtime := served.access.runtime
 			result, err := application.Gather(ctx, identity, runtime.Project().ID, sdd.GatherRequest{
 				SyncMode: sdd.SearchSyncAll, Draft: draft, Kind: cmd.String("kind"), Topics: cmd.StringSlice("topic"),
 				IDs: cmd.Args().Slice(), Query: cmd.String("query"), Terms: cmd.StringSlice("term"),

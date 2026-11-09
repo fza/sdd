@@ -23,7 +23,8 @@ type InitCmd struct {
 
 	// GraphDir is the graph directory path relative to RepoRoot, or to the
 	// project init sets up at ProjectDir. Empty defaults to
-	// model.DefaultGraphDir (".sdd/graph").
+	// model.DefaultGraphDirFor's choice: model.GraphOnlyGraphDir for a project
+	// set up through ProjectDir or GraphRepo, model.DefaultGraphDir otherwise.
 	GraphDir string
 
 	// ProjectDir, when set, makes RepoRoot a work repository whose graph lives
@@ -149,11 +150,13 @@ type InitCmd struct {
 	// OnMigrated fires after .sdd-tmp/ contents are migrated to .sdd/tmp/.
 	OnMigrated func(count int)
 
-	// OnGitignoreUpdated fires after .gitignore is updated with .sdd/tmp/.
+	// OnGitignoreUpdated fires after a .gitignore changes: .sdd/.gitignore
+	// written, or the root .gitignore rid of the lines earlier builds derived.
 	OnGitignoreUpdated func(gitignorePath string)
 
-	// OnGitattributesUpdated fires after .gitattributes gains the line routing
-	// graph entries to the entry merge driver.
+	// OnGitattributesUpdated fires after a .gitattributes changes: the graph
+	// directory's gaining the line routing entries to the entry merge driver,
+	// or the root one rid of the line earlier builds derived.
 	OnGitattributesUpdated func(gitattributesPath string)
 
 	// OnIndexMigrated fires per legacy index dir (in-tree .sdd/index or a

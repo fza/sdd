@@ -14,7 +14,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const entryAttribute = ".sdd/graph/[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]-*.md merge=sdd-entry"
+const entryAttribute = "[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]-*.md merge=sdd-entry"
 
 func TestInitSetsUpTheEntryMergeDriver(t *testing.T) {
 	repo := canonicalTemp(t)
@@ -22,12 +22,13 @@ func TestInitSetsUpTheEntryMergeDriver(t *testing.T) {
 
 	runApp(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada")
 
-	attributes := readFile(t, filepath.Join(repo, ".gitattributes"))
+	graphAttributes := filepath.Join(repo, ".sdd", "graph", ".gitattributes")
+	attributes := readFile(t, graphAttributes)
 	if !strings.Contains(attributes, entryAttribute+"\n") {
-		t.Errorf(".gitattributes should route graph entries to the driver:\n%s", attributes)
+		t.Errorf("the graph's .gitattributes should route graph entries to the driver:\n%s", attributes)
 	}
-	if committed := gitIn(t, repo, "ls-files", ".gitattributes"); committed == "" {
-		t.Error("init should commit .gitattributes")
+	if committed := gitIn(t, repo, "ls-files", ".sdd/graph/.gitattributes"); committed == "" {
+		t.Error("init should commit the graph's .gitattributes")
 	}
 	if driver := strings.TrimSpace(gitIn(t, repo, "config", "--local", "--get", "merge.sdd-entry.driver")); driver != git.MergeDriverCommand {
 		t.Errorf("init should configure the driver command, got %q", driver)
@@ -36,8 +37,8 @@ func TestInitSetsUpTheEntryMergeDriver(t *testing.T) {
 	config := readFile(t, filepath.Join(repo, ".git", "config"))
 	head := gitIn(t, repo, "rev-parse", "HEAD")
 	runApp(t, repo, "init")
-	if again := readFile(t, filepath.Join(repo, ".gitattributes")); again != attributes {
-		t.Errorf("a repeat init should leave .gitattributes alone:\n%s", again)
+	if again := readFile(t, graphAttributes); again != attributes {
+		t.Errorf("a repeat init should leave the graph's .gitattributes alone:\n%s", again)
 	}
 	if again := readFile(t, filepath.Join(repo, ".git", "config")); again != config {
 		t.Errorf("a repeat init should leave the git config alone:\n%s", again)
@@ -135,23 +136,17 @@ func TestInitRefusesAGraphDirThePatternCannotName(t *testing.T) {
 	}
 }
 
+// The graph directory's .gitattributes names no directory, so a graph_dir
+// holding glob characters, whitespace or quotes needs no escaping.
 func TestInitRoutesAGraphDirNeedingQuotesOrEscapes(t *testing.T) {
-	tests := []struct {
-		graphDir string
-		line     string
-	}{
-		{graphDir: "my graph", line: `"my graph/` + model.EntryPathGlob + `" merge=sdd-entry`},
-		{graphDir: "graph*", line: `graph\*/` + model.EntryPathGlob + ` merge=sdd-entry`},
-		{graphDir: `"graph`, line: `"\"graph/` + model.EntryPathGlob + `" merge=sdd-entry`},
-		{graphDir: ".", line: model.EntryPathGlob + ` merge=sdd-entry`},
-	}
+	tests := []struct{ graphDir string }{{"my graph"}, {"graph*"}, {`"graph`}, {"."}}
 	for _, tt := range tests {
 		t.Run(tt.graphDir, func(t *testing.T) {
 			repo := canonicalTemp(t)
 			initRepo(t, repo)
 			runApp(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada", "--graph-dir", tt.graphDir)
-			if attributes := readFile(t, filepath.Join(repo, ".gitattributes")); !strings.Contains(attributes, tt.line+"\n") {
-				t.Errorf(".gitattributes should name the graph directory as it is:\n%s", attributes)
+			if attributes := readFile(t, filepath.Join(repo, tt.graphDir, ".gitattributes")); attributes != model.GraphAttributesLine+"\n" {
+				t.Errorf("the graph's .gitattributes should hold the fixed routing line:\n%s", attributes)
 			}
 			entry := path.Join(tt.graphDir, "2026/10/30-120000-s-tac-abc.md")
 			if got := strings.TrimSpace(gitIn(t, repo, "check-attr", "merge", "--", entry)); !strings.HasSuffix(got, ": merge: sdd-entry") {
@@ -186,12 +181,12 @@ func TestRepeatInitRoutesTheRecordedGraphDir(t *testing.T) {
 			runApp(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada", "--graph-dir", "docs/graph")
 			configPath := filepath.Join(repo, ".sdd", "config.yaml")
 			writeFile(t, configPath, strings.Replace(readFile(t, configPath), "graph_dir: docs/graph", "graph_dir: "+tt.recorded(repo), 1))
-			writeFile(t, filepath.Join(repo, ".gitattributes"), "")
+			writeFile(t, filepath.Join(repo, "docs", "graph", ".gitattributes"), "")
 			gitIn(t, repo, "commit", "-q", "-am", "drop the attribute line")
 
 			runApp(t, repo, "init")
 
-			if attributes := readFile(t, filepath.Join(repo, ".gitattributes")); attributes != "docs/graph/"+model.EntryPathGlob+" merge=sdd-entry\n" {
+			if attributes := readFile(t, filepath.Join(repo, "docs", "graph", ".gitattributes")); attributes != model.GraphAttributesLine+"\n" {
 				t.Errorf("a repeat init should route the recorded graph directory:\n%s", attributes)
 			}
 			if _, err := os.Stat(filepath.Join(repo, ".sdd", "graph")); !os.IsNotExist(err) {

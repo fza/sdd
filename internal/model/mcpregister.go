@@ -19,6 +19,10 @@ type MCPRegTarget struct {
 	// error. It adds the sdd registration when absent and leaves an existing
 	// sdd entry untouched — the user owns it once it exists.
 	Merge func(existing []byte) (merged []byte, changed bool, err error)
+	// Remove takes the file's current bytes and returns them without the sdd
+	// registration, whether anything changed, and any parse error. A nil
+	// result with changed set means nothing else remains and the file goes.
+	Remove func(existing []byte) (rest []byte, changed bool, err error)
 }
 
 // MCPRegistrationTargets returns the project-scope config files that register
@@ -36,12 +40,12 @@ func MCPRegistrationTargets(target AgentTarget, repoRoot string) ([]MCPRegTarget
 	switch target {
 	case AgentClaude:
 		return []MCPRegTarget{
-			{Path: filepath.Join(repoRoot, ".mcp.json"), Merge: MergeClaudeMCPJSON},
-			{Path: filepath.Join(repoRoot, ".claude", "settings.json"), Merge: MergeClaudeSettingsAllow},
+			{Path: filepath.Join(repoRoot, ".mcp.json"), Merge: MergeClaudeMCPJSON, Remove: RemoveClaudeMCPJSON},
+			{Path: filepath.Join(repoRoot, ".claude", "settings.json"), Merge: MergeClaudeSettingsAllow, Remove: RemoveClaudeSettingsAllow},
 		}, nil
 	case AgentCodex:
 		return []MCPRegTarget{
-			{Path: filepath.Join(repoRoot, ".codex", "config.toml"), Merge: MergeCodexConfigTOML},
+			{Path: filepath.Join(repoRoot, ".codex", "config.toml"), Merge: MergeCodexConfigTOML, Remove: RemoveCodexConfigTOML},
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported agent target: %q", target)
@@ -170,4 +174,101 @@ func MergeCodexConfigTOML(existing []byte) ([]byte, bool, error) {
 	out = append(out, '\n')
 	out = append(out, codexSDDBlock...)
 	return out, true, nil
+}
+
+// RemoveClaudeMCPJSON drops the sdd server from a project .mcp.json, and
+// mcpServers with it when no other server remains.
+func RemoveClaudeMCPJSON(existing []byte) ([]byte, bool, error) {
+	if len(bytes.TrimSpace(existing)) == 0 {
+		return existing, false, nil
+	}
+	root := map[string]any{}
+	err := json.Unmarshal(existing, &root)
+	if err != nil {
+		return nil, false, fmt.Errorf("parsing .mcp.json: %w", err)
+	}
+	servers, ok := root["mcpServers"].(map[string]any)
+	if !ok {
+		return existing, false, nil
+	}
+	if _, ok := servers["sdd"]; !ok {
+		return existing, false, nil
+	}
+	delete(servers, "sdd")
+	if len(servers) == 0 {
+		delete(root, "mcpServers")
+	}
+	return marshalRemainder(root)
+}
+
+// RemoveClaudeSettingsAllow drops the mcp__sdd__* rule from
+// .claude/settings.json, and permissions.allow and permissions with it when
+// they end up empty.
+func RemoveClaudeSettingsAllow(existing []byte) ([]byte, bool, error) {
+	if len(bytes.TrimSpace(existing)) == 0 {
+		return existing, false, nil
+	}
+	root := map[string]any{}
+	err := json.Unmarshal(existing, &root)
+	if err != nil {
+		return nil, false, fmt.Errorf("parsing settings.json: %w", err)
+	}
+	perms, ok := root["permissions"].(map[string]any)
+	if !ok {
+		return existing, false, nil
+	}
+	allow, _ := perms["allow"].([]any)
+	kept := make([]any, 0, len(allow))
+	for _, rule := range allow {
+		if s, _ := rule.(string); s != mcpAllowGlob {
+			kept = append(kept, rule)
+		}
+	}
+	if len(kept) == len(allow) {
+		return existing, false, nil
+	}
+	perms["allow"] = kept
+	if len(kept) == 0 {
+		delete(perms, "allow")
+	}
+	if len(perms) == 0 {
+		delete(root, "permissions")
+	}
+	return marshalRemainder(root)
+}
+
+func marshalRemainder(root map[string]any) ([]byte, bool, error) {
+	if len(root) == 0 {
+		return nil, true, nil
+	}
+	return marshalJSONFile(root)
+}
+
+// RemoveCodexConfigTOML drops the [mcp_servers.sdd] table, up to the next
+// table header, from Codex's config.toml.
+func RemoveCodexConfigTOML(existing []byte) ([]byte, bool, error) {
+	lines := strings.SplitAfter(string(existing), "\n")
+	var kept []string
+	inBlock, found := false, false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == codexSDDHeader {
+			inBlock, found = true, true
+			continue
+		}
+		if inBlock && strings.HasPrefix(trimmed, "[") {
+			inBlock = false
+		}
+		if !inBlock {
+			kept = append(kept, line)
+		}
+	}
+	if !found {
+		return existing, false, nil
+	}
+	rest := strings.TrimRight(strings.Join(kept, ""), "\n")
+	if strings.TrimSpace(rest) == "" {
+		return nil, true, nil
+	}
+	return []byte(rest + "\n"), true, nil
 }

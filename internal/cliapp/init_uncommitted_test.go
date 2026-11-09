@@ -64,7 +64,7 @@ func TestInitLeavesTheUsersOwnEditsOutOfARetriedCommit(t *testing.T) {
 	repo := canonicalTemp(t)
 	initRepo(t, repo)
 	runApp(t, repo, "init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada")
-	gitignore := filepath.Join(repo, ".gitignore")
+	gitignore := filepath.Join(repo, ".sdd", ".gitignore")
 	writeFile(t, gitignore, readFile(t, gitignore)+"/scratch\n")
 	skill := filepath.Join(repo, ".claude", "skills", "sdd", "SKILL.md")
 	err := os.Remove(skill)
@@ -80,7 +80,7 @@ func TestInitLeavesTheUsersOwnEditsOutOfARetriedCommit(t *testing.T) {
 
 	runApp(t, repo, "init")
 
-	if status := gitIn(t, repo, "status", "--porcelain"); status != " M .gitignore\n" {
+	if status := gitIn(t, repo, "status", "--porcelain"); status != " M .sdd/.gitignore\n" {
 		t.Errorf("the retried commit should take the restored skill and leave the user's own edit uncommitted:\n%s", status)
 	}
 	if _, statErr := os.Stat(uncommittedRecord(repo)); !os.IsNotExist(statErr) {

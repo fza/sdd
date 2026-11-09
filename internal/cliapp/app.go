@@ -480,6 +480,13 @@ func New(options Options) *cli.Command {
 
 			warnUnknownConfigKeys(ctx)
 
+			if checksStrays(cmd.Args().First()) {
+				err := strayRefusal(ctx)
+				if err != nil {
+					return ctx, err
+				}
+			}
+
 			// Background sync check runs on every command except `sdd init`
 			// (bootstrap may precede remote configuration — sync would emit
 			// spurious warnings) and `sdd sync`, which runs the sync itself.
@@ -527,6 +534,7 @@ func New(options Options) *cli.Command {
 			mergeConfigCmd(),
 			repoCmd(),
 			statsCmd(),
+			moveCmd(),
 		},
 	}
 
@@ -2023,7 +2031,7 @@ func initCmd() *cli.Command {
 
 			graphDir := cmd.String("graph-dir")
 			if graphDir == "" && freshGraph && cliout.IsTerminalReader(cmd.Reader) {
-				prompted, err := promptGraphDir(cmd, model.DefaultGraphDir)
+				prompted, err := promptGraphDir(cmd, model.DefaultGraphDirFor(pointer))
 				if err != nil {
 					return fmt.Errorf("prompt: %w", err)
 				}

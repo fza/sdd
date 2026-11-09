@@ -47,7 +47,7 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 	}
 	graphDir := cmd.GraphDir
 	if graphDir == "" {
-		graphDir = model.DefaultGraphDir
+		graphDir = model.DefaultGraphDirFor(true)
 	}
 	absGraphDir := graphDir
 	if !filepath.IsAbs(absGraphDir) {
@@ -84,6 +84,7 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 	}
 	return h.runProjectInit(ctx, cmd, projectRoot, func(projectCmd *command.InitCmd) {
 		projectCmd.DefaultBranch = branch
+		projectCmd.GraphDir = graphDir
 		projectCmd.Scope = scope
 		projectCmd.ScopeExplicit = true
 		projectCmd.Targets = agents

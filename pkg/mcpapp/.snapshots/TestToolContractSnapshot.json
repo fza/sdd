@@ -144,6 +144,10 @@
             "array"
           ]
         },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
+          "type": "string"
+        },
         "instructions": {
           "type": "string"
         },
@@ -195,6 +199,10 @@
       "properties": {
         "branch": {
           "description": "the now-effective branch binding; empty after clear",
+          "type": "string"
+        },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
           "type": "string"
         },
         "status": {
@@ -301,6 +309,10 @@
         "graphSchema": {
           "description": "schema version the graph records; entries are written at it until an explicit sdd migrate",
           "type": "integer"
+        },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
+          "type": "string"
         },
         "language": {
           "description": "configured graph language; empty = English",
@@ -654,6 +666,10 @@
           "description": "one line: what advances the instance from here",
           "type": "string"
         },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
+          "type": "string"
+        },
         "instance": {
           "type": "string"
         },
@@ -968,6 +984,10 @@
             "object"
           ]
         },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
+          "type": "string"
+        },
         "instance": {
           "type": "string"
         },
@@ -1048,6 +1068,10 @@
           ]
         },
         "content": {
+          "type": "string"
+        },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
           "type": "string"
         },
         "more": {
@@ -1149,6 +1173,10 @@
             "array"
           ]
         },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
+          "type": "string"
+        },
         "sync_notice": {
           "description": "set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says",
           "type": "string"
@@ -1249,6 +1277,10 @@
           ]
         },
         "framing": {
+          "type": "string"
+        },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
           "type": "string"
         },
         "instructions": {
@@ -1494,6 +1526,10 @@
               },
               "goal": {
                 "description": "one line: what advances the instance from here",
+                "type": "string"
+              },
+              "host_notice": {
+                "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
                 "type": "string"
               },
               "instance": {
@@ -1871,6 +1907,10 @@
             "array"
           ]
         },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
+          "type": "string"
+        },
         "notice": {
           "description": "readable incomplete-indexing notice",
           "type": "string"
@@ -1938,6 +1978,10 @@
       "additionalProperties": false,
       "properties": {
         "entries": {
+          "type": "string"
+        },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
           "type": "string"
         },
         "sync_notice": {
@@ -2019,6 +2063,10 @@
         },
         "handle": {
           "description": "attachment handle; pass it in a report's attachments field, or as bodyHandle when the file holds an entry body",
+          "type": "string"
+        },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
           "type": "string"
         },
         "sha256": {
@@ -2308,6 +2356,10 @@
         },
         "goal": {
           "description": "one line: what advances the instance from here",
+          "type": "string"
+        },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
           "type": "string"
         },
         "instance": {
@@ -2756,6 +2808,10 @@
           "description": "one line: what advances the instance from here",
           "type": "string"
         },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
+          "type": "string"
+        },
         "instance": {
           "type": "string"
         },
@@ -2971,6 +3027,10 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
+          "type": "string"
+        },
         "repos": {
           "items": {
             "additionalProperties": false,
@@ -3055,6 +3115,10 @@
       "properties": {
         "hint": {
           "description": "one-line pointer to the view layout grammar, served once per connection",
+          "type": "string"
+        },
+        "host_notice": {
+          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
           "type": "string"
         },
         "sections": {

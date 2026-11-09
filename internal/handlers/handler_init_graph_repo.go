@@ -66,6 +66,16 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 	if projectCfg != nil && (cmd.GraphDir != "" || cmd.Language != "") {
 		return fmt.Errorf("--graph-dir and --language configure the graph repository %s, which is set up already", cmd.GraphRepo)
 	}
+	if projectCfg == nil {
+		graphDir := cmd.GraphDir
+		if graphDir == "" {
+			graphDir = model.DefaultGraphDirFor(true)
+		}
+		err = h.graphClones.Widen(ctx, cmd.GraphRepo, graphDir)
+		if err != nil {
+			return err
+		}
+	}
 	_, httpsURL, err := model.GraphRemoteURLs(cmd.GraphRepo)
 	if err != nil {
 		return err
@@ -88,6 +98,9 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 		projectCmd.GraphOnly = true
 		projectCmd.DefaultBranch = branch
 		if projectCfg == nil {
+			if projectCmd.GraphDir == "" {
+				projectCmd.GraphDir = model.DefaultGraphDirFor(true)
+			}
 			projectCmd.Scope = scope
 			projectCmd.ScopeExplicit = true
 			projectCmd.Targets = agents
@@ -152,16 +165,9 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd) error
 			}
 		}
 	}
-	gitignorePath := filepath.Join(cmd.RepoRoot, ".gitignore")
-	gitignoreAdded, err := ensureGitignoreEntries(gitignorePath, []string{".sdd/" + meta.LocalConfigFileName})
+	err = keepIgnoreFiles(cmd, "", nil, &touched)
 	if err != nil {
-		return fmt.Errorf("updating %s: %w", gitignorePath, err)
-	}
-	if gitignoreAdded {
-		touched = append(touched, gitignorePath)
-		if cmd.OnGitignoreUpdated != nil {
-			cmd.OnGitignoreUpdated(gitignorePath)
-		}
+		return err
 	}
 	guardPath := filepath.Join(cmd.RepoRoot, filepath.FromSlash(model.GraphElsewhereFile))
 	guard := model.GraphElsewhereText(cmd.GraphRepo)

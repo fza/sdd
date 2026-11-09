@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/gofrs/flock"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/syncstate"
 	app "github.com/networkteam/sdd/pkg/application"
@@ -74,8 +75,8 @@ func NewFilesystemGraphStore(options FilesystemGraphStoreOptions) (*FilesystemGr
 	if err := os.MkdirAll(options.GraphDir, 0o755); err != nil {
 		return nil, fmt.Errorf("sdd: creating filesystem graph directory: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Join(options.GraphDir, ".sdd-runtime"), 0o755); err != nil {
-		return nil, fmt.Errorf("sdd: creating graph runtime directory: %w", err)
+	if _, err := meta.EnsureRuntimeDir(options.GraphDir); err != nil {
+		return nil, fmt.Errorf("sdd: %w", err)
 	}
 	return &FilesystemGraphStore{
 		project:        options.Project,

@@ -18,6 +18,12 @@ const (
 	// when initialized with sdd init.
 	DefaultGraphDir = ".sdd/graph"
 
+	// GraphOnlyGraphDir is the default graph directory of a project whose
+	// repository holds only the graph a code repository points at through
+	// project_dir or graph_repo: with no code beside it, the graph sits at
+	// the top level.
+	GraphOnlyGraphDir = "graph"
+
 	// SDDDirName is the metadata directory name at the repository root.
 	SDDDirName = ".sdd"
 
@@ -801,6 +807,16 @@ func mergeRetryConfig(base, overlay RetryConfig) RetryConfig {
 		out.MaxDelay = overlay.MaxDelay
 	}
 	return out
+}
+
+// DefaultGraphDirFor returns the graph directory a fresh init sets up when
+// none is given: GraphOnlyGraphDir for a project holding only the graph of
+// another repository, DefaultGraphDir otherwise.
+func DefaultGraphDirFor(graphOnly bool) string {
+	if graphOnly {
+		return GraphOnlyGraphDir
+	}
+	return DefaultGraphDir
 }
 
 // FormatConfig returns a commented YAML config template with the given graph

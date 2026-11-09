@@ -230,3 +230,42 @@ func TestDelegableOnlyOnAUserChooser(t *testing.T) {
           - {choice: go, to: end(completed)}`
 	requireProblem(t, parseFails(t, machine, "## unit: pick\n\nPick.\n"), "delegable applies only to a user chooser")
 }
+
+// A session follows a dialogue mode set while it runs: the next serve renders
+// for it, and every answer records the mode it was taken under.
+func TestSessionFollowsADialogueModeSetWhileItRuns(t *testing.T) {
+	sink := &recordingSink{}
+	session, sv := dialogueSession(t, sink)
+	if sv.UnitText != "Ask the user." {
+		t.Fatalf("a guided session should ask the user first, got %q", sv.UnitText)
+	}
+
+	session.SetDialogue(model.DialogueAutonomous, "config.local.yaml")
+	sv, err := session.Serve(sv.Instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.UnitText != "Decide yourself." {
+		t.Errorf("the next serve should follow the new mode, got %q", sv.UnitText)
+	}
+	sv, err = session.AnswerWith(sv.Instance, "pick", "go", nil, engine.AnswerWords{Reason: "the only way on"})
+	if err != nil {
+		t.Fatalf("an autonomous session should take the agent's reason: %v", err)
+	}
+
+	session.SetDialogue(model.DialogueGuided, "")
+	_, err = session.AnswerWith(sv.Instance, "keep", "done", nil, engine.AnswerWords{User: "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var modes []string
+	for _, ev := range sink.events {
+		if ev.Event == engine.EventChooserAnswer {
+			mode, _ := ev.Data["dialogue"].(string)
+			modes = append(modes, mode)
+		}
+	}
+	if !slices.Equal(modes, []string{"autonomous", "guided"}) {
+		t.Errorf("each answer should record the mode in force when it was taken, got %v", modes)
+	}
+}

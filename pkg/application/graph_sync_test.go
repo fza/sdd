@@ -335,3 +335,44 @@ func TestSyncTimerBackfillsTitlesEachRound(t *testing.T) {
 		}
 	})
 }
+
+// The timer of a host that rebuilds its runtime syncs, on every tick, the
+// runtime in force then, and nothing on a tick the host refuses.
+func TestRunSyncTimerOf(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		first, second := &recordingGraphSync{due: true}, &recordingGraphSync{due: true}
+		_, firstRuntime := syncedApplication(t, first)
+		_, secondRuntime := syncedApplication(t, second)
+		var mu sync.Mutex
+		current, refusal := firstRuntime, error(nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go func() {
+			_ = sdd.RunSyncTimerOf(ctx, func(context.Context) (*sdd.ProjectRuntime, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				return current, refusal
+			})
+		}()
+
+		time.Sleep(time.Minute + time.Second)
+		synctest.Wait()
+		mu.Lock()
+		current = secondRuntime
+		mu.Unlock()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		if len(first.rounds()) != 1 || len(second.rounds()) != 1 {
+			t.Errorf("each tick should sync the runtime in force, got %v and %v", first.rounds(), second.rounds())
+		}
+
+		mu.Lock()
+		refusal = errors.New("config broken")
+		mu.Unlock()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		if len(second.rounds()) != 1 {
+			t.Errorf("a refused tick should sync nothing, got %v", second.rounds())
+		}
+	})
+}

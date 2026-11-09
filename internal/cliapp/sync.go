@@ -41,7 +41,7 @@ func syncCmd() *cli.Command {
 				Usage: "Pull upstream changes with a merge (never a rebase); refuses on a dirty working tree",
 			},
 		},
-		Action: func(ctx context.Context, cmd *cli.Command) error {
+		Action: refusingStraysAfter(func(ctx context.Context, cmd *cli.Command) error {
 			dir, err := resolveGraphDir(cmd)
 			if err != nil {
 				return err
@@ -83,7 +83,7 @@ func syncCmd() *cli.Command {
 				return err
 			}
 			return backfillTitles(ctx, cmd, dir)
-		},
+		}),
 	}
 }
 
