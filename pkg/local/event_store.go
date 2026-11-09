@@ -25,6 +25,10 @@ const eventSegmentKind = "sdd.events"
 // auto-commit picks up (20261109-004506-d-cpt-udz, D19).
 var localChannelIgnore = []byte("# sdd: local event channel, kept out of Git\n*\n")
 
+// EventSettler returns the IDs of the events of channel that compaction
+// may drop.
+type EventSettler func(ctx context.Context, channel string, events []app.Event) ([]string, error)
+
 // FilesystemEventStoreOptions configures a FilesystemEventStore.
 type FilesystemEventStoreOptions struct {
 	// Dir holds one directory per channel, normally .sdd/events.
@@ -32,15 +36,21 @@ type FilesystemEventStoreOptions struct {
 	// GitChannels are the channels shared through Git; every other channel
 	// is local.
 	GitChannels []string
+	// Settled names, from a channel's events, those compaction drops: the
+	// expired and healed ones, as each type's writer defines them (D17). Nil
+	// drops none.
+	Settled EventSettler
 }
 
 // FilesystemEventStore is the local default of the project event store: an
 // append log per channel of immutable segment files <time>-<random>.seg, one
-// per Append call and channel (20261109-004506-d-cpt-udz, D15 and D17). It
+// per Append call and channel, merged by tiered compaction
+// (20261109-004506-d-cpt-udz, D15 and D17). It
 // never commits; see localChannelIgnore for how sharing follows the channel.
 type FilesystemEventStore struct {
 	dir         string
 	gitChannels []string
+	settled     EventSettler
 }
 
 // NewFilesystemEventStore returns the store over options.Dir. Nothing is
@@ -55,7 +65,7 @@ func NewFilesystemEventStore(options FilesystemEventStoreOptions) (*FilesystemEv
 			return nil, err
 		}
 	}
-	return &FilesystemEventStore{dir: options.Dir, gitChannels: slices.Clone(options.GitChannels)}, nil
+	return &FilesystemEventStore{dir: options.Dir, gitChannels: slices.Clone(options.GitChannels), settled: options.Settled}, nil
 }
 
 func (s *FilesystemEventStore) Append(ctx context.Context, events []app.Event) error {
@@ -77,6 +87,10 @@ func (s *FilesystemEventStore) Append(ctx context.Context, events []app.Event) e
 			return err
 		}
 		err = s.writeSegment(channel, byChannel[channel])
+		if err != nil {
+			return fmt.Errorf("event channel %s: %w", channel, err)
+		}
+		err = s.compactChannel(ctx, channel, false)
 		if err != nil {
 			return fmt.Errorf("event channel %s: %w", channel, err)
 		}
@@ -140,7 +154,7 @@ func (s *FilesystemEventStore) Query(ctx context.Context, query app.EventQuery) 
 		if model.ValidateEventChannel(channel) != nil {
 			continue
 		}
-		read, err := s.readChannel(channel)
+		read, err := s.readChannel(ctx, channel)
 		if err != nil {
 			return nil, fmt.Errorf("event channel %s: %w", channel, err)
 		}
@@ -166,38 +180,113 @@ func (s *FilesystemEventStore) channels() ([]string, error) {
 	return channels, nil
 }
 
-func (s *FilesystemEventStore) readChannel(channel string) ([]app.Event, error) {
-	dir := filepath.Join(s.dir, channel)
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
+func (s *FilesystemEventStore) readChannel(ctx context.Context, channel string) ([]app.Event, error) {
+	files, err := readSegmentFiles(ctx, filepath.Join(s.dir, channel))
 	if err != nil {
 		return nil, err
 	}
 	var events []app.Event
-	for _, entry := range entries {
-		if entry.IsDir() || !segment.IsName(entry.Name()) {
-			continue
+	for _, file := range files {
+		read, err := decodeEventSegment(channel, file.data)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", file.path, err)
 		}
-		path := filepath.Join(dir, entry.Name())
-		data, err := os.ReadFile(path)
+		events = append(events, read...)
+	}
+	return events, nil
+}
+
+func decodeEventSegment(channel string, data []byte) ([]app.Event, error) {
+	records, err := segment.Decode(data, eventSegmentKind)
+	if err != nil {
+		return nil, err
+	}
+	events := make([]app.Event, 0, len(records))
+	for _, record := range records {
+		event, err := decodeEvent(channel, record)
 		if err != nil {
 			return nil, err
 		}
-		records, err := segment.Decode(data, eventSegmentKind)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		for _, record := range records {
-			event, err := decodeEvent(channel, record)
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", path, err)
-			}
-			events = append(events, event)
-		}
+		events = append(events, event)
 	}
 	return events, nil
+}
+
+// Compact merges every segment of each channel into one, holding each event
+// once, without the events the store's Settled hook names.
+func (s *FilesystemEventStore) Compact(ctx context.Context) error {
+	channels, err := s.channels()
+	if err != nil {
+		return err
+	}
+	for _, channel := range channels {
+		err := s.compactChannel(ctx, channel, true)
+		if err != nil {
+			return fmt.Errorf("event channel %s: %w", channel, err)
+		}
+	}
+	return nil
+}
+
+// compactChannel merges the channel's segments: every one when full, else
+// tier by tier (D17). The Settled hook sees the whole channel once, before
+// the first merge; events appended later are never named by it, so they
+// survive.
+func (s *FilesystemEventStore) compactChannel(ctx context.Context, channel string, full bool) error {
+	var settled map[string]bool
+	merge := func(segments [][]byte) ([]byte, error) {
+		if settled == nil {
+			var err error
+			settled, err = s.settledEvents(ctx, channel)
+			if err != nil {
+				return nil, err
+			}
+		}
+		seen := map[string]bool{}
+		var kept []app.Event
+		for _, data := range segments {
+			events, err := decodeEventSegment(channel, data)
+			if err != nil {
+				return nil, err
+			}
+			for _, event := range events {
+				if seen[event.ID] || settled[event.ID] {
+					continue
+				}
+				seen[event.ID] = true
+				kept = append(kept, event)
+			}
+		}
+		if len(kept) == 0 {
+			return nil, nil
+		}
+		slices.SortStableFunc(kept, func(a, b app.Event) int { return a.Time.Compare(b.Time) })
+		records := make([][]byte, len(kept))
+		for i, event := range kept {
+			records[i] = encodeEvent(event)
+		}
+		return segment.Encode(eventSegmentKind, records), nil
+	}
+	return compactDir(ctx, filepath.Join(s.dir, channel), full, merge)
+}
+
+func (s *FilesystemEventStore) settledEvents(ctx context.Context, channel string) (map[string]bool, error) {
+	settled := map[string]bool{}
+	if s.settled == nil {
+		return settled, nil
+	}
+	events, err := s.readChannel(ctx, channel)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := s.settled(ctx, channel, events)
+	if err != nil {
+		return nil, fmt.Errorf("settled events: %w", err)
+	}
+	for _, id := range ids {
+		settled[id] = true
+	}
+	return settled, nil
 }
 
 func encodeEvent(event app.Event) []byte {

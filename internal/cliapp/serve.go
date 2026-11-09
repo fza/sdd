@@ -522,7 +522,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
-	verdicts, err := projectRelevanceStore(locations.StateRoot, baseRepoKey)
+	verdicts, err := projectRelevanceStore(sddDir, locations.StateRoot, baseRepoKey, cfg)
 	if err != nil {
 		return nil, nil, sdd.RequestIdentity{}, err
 	}
@@ -594,7 +594,7 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 		return nil, err
 	}
 	searchIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, index.RepoKey(repoID, dir))
-	verdicts, err := projectRelevanceStore(locations.StateRoot, index.RepoKey(repoID, dir))
+	verdicts, err := projectRelevanceStore(filepath.Join(dir, model.SDDDirName), locations.StateRoot, index.RepoKey(repoID, dir), cfg)
 	if err != nil {
 		return nil, err
 	}

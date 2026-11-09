@@ -35,6 +35,22 @@ func eventsCmd() *cli.Command {
 				},
 			},
 			{
+				Name:  "compact",
+				Usage: "Merge each channel's segments into one, holding every event once",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					store, err := workingProjectEventStore()
+					if err != nil {
+						return err
+					}
+					err = store.Compact(ctx)
+					if err != nil {
+						return err
+					}
+					fmt.Fprintln(cmd.Writer, "Compacted the event store")
+					return nil
+				},
+			},
+			{
 				Name:      "import",
 				Usage:     "Append the events of a JSON Lines file, as export writes it, that the store does not hold yet",
 				ArgsUsage: "<file|->",

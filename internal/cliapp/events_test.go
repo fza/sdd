@@ -72,3 +72,29 @@ func TestEvents_RefuseAnUnknownSharingMode(t *testing.T) {
 		t.Fatalf("export under an unknown share = %v; want an error naming the key", result.err)
 	}
 }
+
+func TestEventsCompact_MergesEachChannel(t *testing.T) {
+	f := newAppFixture(t)
+	for i, line := range []string{
+		`{"id":"e1","channel":"wip","type":"sdd.wip","time":"2026-11-09T12:00:00Z","writer":"sdd","subject":{"uri":"https://tracker.example/issues/7"}}`,
+		`{"id":"e2","channel":"wip","type":"sdd.wip","time":"2026-11-09T12:01:00Z","writer":"sdd","subject":{"uri":"https://tracker.example/issues/7"}}`,
+	} {
+		name := filepath.Join("in", string(rune('a'+i))+".jsonl")
+		f.write(t, name, line+"\n")
+		if imported := f.run(t, "events", "import", name); imported.err != nil {
+			t.Fatal(imported.err)
+		}
+	}
+	compacted := f.run(t, "events", "compact")
+	if compacted.err != nil || !strings.Contains(compacted.stdout, "Compacted") {
+		t.Fatalf("compact = %q, %v", compacted.stdout, compacted.err)
+	}
+	segments, err := filepath.Glob(filepath.Join(f.root, ".sdd", "events", "wip", "*.seg"))
+	if err != nil || len(segments) != 1 {
+		t.Fatalf("compact should leave one segment in the channel, found %v (%v)", segments, err)
+	}
+	exported := f.run(t, "events", "export")
+	if exported.err != nil || !strings.Contains(exported.stdout, `"e1"`) || !strings.Contains(exported.stdout, `"e2"`) {
+		t.Fatalf("export after compact = %q, %v", exported.stdout, exported.err)
+	}
+}

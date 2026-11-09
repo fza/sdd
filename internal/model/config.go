@@ -176,6 +176,9 @@ type PerRepoConfig struct {
 	// Events sets the sharing mode per event channel; only the committed
 	// .sdd/config.yaml sets it.
 	Events EventsConfig `yaml:"events,omitempty"`
+	// Relevance sets where the relevance ledger lives and what a committed
+	// copy holds; only the committed .sdd/config.yaml sets it.
+	Relevance RelevanceConfig `yaml:"relevance,omitempty"`
 	// Contribution names the upstream ref (e.g. origin/main) a checkout's
 	// graph writes are contributed to; set, it turns on contribution mode
 	// (ContributionRefusal). Machine-local only: a checkout opts in, the
@@ -662,6 +665,7 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	}
 	out.Inbound = mergeInboundConfig(base.Inbound, overlay.Inbound)
 	out.Events = mergeEventsConfig(base.Events, overlay.Events)
+	out.Relevance = mergeRelevanceConfig(base.Relevance, overlay.Relevance)
 	if overlay.Contribution != "" {
 		out.Contribution = overlay.Contribution
 	}

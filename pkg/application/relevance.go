@@ -9,10 +9,12 @@ import (
 )
 
 // RelevanceStore keeps the relevance verdict ledger (20261109-004506-d-cpt-udz,
-// 5.7) as immutable segments in the ledger's binary format, one per append.
-// Append stores a copy of the segment and rewrites nothing stored; Segments
-// returns every stored segment in any order. The application folds them
-// into one ledger, so the order of writes and duplicates do not matter.
+// 5.7) as immutable segments in the ledger's binary format. Append stores a
+// copy of the segment; Segments returns stored segments in any order. The
+// application folds them into one ledger, so the order of writes and
+// duplicates do not matter, and a store may merge segments it holds into
+// one, as the local stores' compaction does (D17), as long as the merge folds
+// to the same ledger.
 type RelevanceStore interface {
 	Append(ctx context.Context, segment []byte) error
 	Segments(ctx context.Context) ([][]byte, error)

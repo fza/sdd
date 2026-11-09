@@ -60,7 +60,7 @@ func (c CLI) Commit(message string, paths ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), detachedTimeout)
 	defer cancel()
 
-	segments, err := c.PendingEventSegments(ctx)
+	segments, err := c.PendingSegments(ctx)
 	if err != nil {
 		return err
 	}
@@ -285,14 +285,14 @@ func (r RemovalCommitter) Commit(message string, paths ...string) error {
 			}
 		}
 	}
-	segments, err := repo.PendingEventSegments(ctx)
+	segments, err := repo.PendingSegments(ctx)
 	if err != nil {
 		return err
 	}
 	if len(segments) > 0 {
-		out, err := repo.command(ctx, append([]string{"add", "--"}, segments...)...).CombinedOutput()
+		out, err := repo.command(ctx, append([]string{"add", "--all", "--"}, segments...)...).CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("git add event segments: %s (%w)", out, err)
+			return fmt.Errorf("git add shared segments: %s (%w)", out, err)
 		}
 	}
 	commit := repo.command(ctx, append(append([]string{"commit", "-m", message, "--"}, paths...), segments...)...)

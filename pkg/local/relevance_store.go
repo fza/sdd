@@ -5,20 +5,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
-	"path/filepath"
-	"slices"
-	"strings"
 	"sync"
-	"time"
 
-	"github.com/networkteam/sdd/internal/segment"
+	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/relevance"
 )
 
 // FilesystemRelevanceStore keeps the relevance verdict ledger in a directory
-// of immutable segment files <time>-<random>.seg, one per append
-// (20261109-004506-d-cpt-udz, D17).
+// of immutable segment files <time>-<random>.seg, one per append, merged by
+// tiered compaction (20261109-004506-d-cpt-udz, D17).
 type FilesystemRelevanceStore struct {
 	dir string
 }
@@ -35,6 +31,8 @@ func NewFilesystemRelevanceStore(dir string) (*FilesystemRelevanceStore, error) 
 // Dir is the directory holding the segments.
 func (s *FilesystemRelevanceStore) Dir() string { return s.dir }
 
+// Append writes data as a new segment, then merges the smallest tier once
+// it overflows.
 func (s *FilesystemRelevanceStore) Append(ctx context.Context, data []byte) error {
 	err := ctx.Err()
 	if err != nil {
@@ -44,7 +42,11 @@ func (s *FilesystemRelevanceStore) Append(ctx context.Context, data []byte) erro
 	if err != nil {
 		return err
 	}
-	return writeSegmentFile(s.dir, data)
+	err = writeSegmentFile(s.dir, data)
+	if err != nil {
+		return err
+	}
+	return compactDir(ctx, s.dir, false, mergeRelevanceSegments)
 }
 
 func (s *FilesystemRelevanceStore) Segments(ctx context.Context) ([][]byte, error) {
@@ -57,6 +59,78 @@ func (s *FilesystemRelevanceStore) Segments(ctx context.Context) ([][]byte, erro
 		segments[i] = file.data
 	}
 	return segments, nil
+}
+
+// Compact merges every segment into one canonical segment holding each
+// record once; a directory already in that state stays untouched.
+func (s *FilesystemRelevanceStore) Compact(ctx context.Context) error {
+	return compactDir(ctx, s.dir, true, mergeRelevanceSegments)
+}
+
+func mergeRelevanceSegments(segments [][]byte) ([]byte, error) {
+	ledger, err := relevance.Fold(segments)
+	if err != nil {
+		return nil, err
+	}
+	batch := ledger.Batch()
+	if batch.Empty() {
+		return nil, nil
+	}
+	return relevance.Encode(batch), nil
+}
+
+// SplitRelevanceStore keeps reader verdicts in one store and filter scores
+// and drift steps in another: the layout of a committed ledger under
+// relevance.content: reader, where only reader verdicts reach the
+// repository (D20).
+type SplitRelevanceStore struct {
+	readers *FilesystemRelevanceStore
+	scores  *FilesystemRelevanceStore
+}
+
+// NewSplitRelevanceStore returns the store writing reader verdicts to
+// readers and the rest to scores.
+func NewSplitRelevanceStore(readers, scores *FilesystemRelevanceStore) (*SplitRelevanceStore, error) {
+	if readers == nil || scores == nil || readers.dir == scores.dir {
+		return nil, fmt.Errorf("sdd: a split relevance store needs two distinct directories")
+	}
+	return &SplitRelevanceStore{readers: readers, scores: scores}, nil
+}
+
+func (s *SplitRelevanceStore) Append(ctx context.Context, data []byte) error {
+	batch, err := relevance.Decode(data)
+	if err != nil {
+		return err
+	}
+	readers := model.RelevanceBatch{Readers: batch.Readers}
+	rest := model.RelevanceBatch{Scores: batch.Scores, Steps: batch.Steps}
+	if !readers.Empty() {
+		err = s.readers.Append(ctx, relevance.Encode(readers))
+		if err != nil {
+			return err
+		}
+	}
+	if rest.Empty() {
+		return nil
+	}
+	return s.scores.Append(ctx, relevance.Encode(rest))
+}
+
+func (s *SplitRelevanceStore) Segments(ctx context.Context) ([][]byte, error) {
+	readers, err := s.readers.Segments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scores, err := s.scores.Segments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(readers, scores...), nil
+}
+
+// Compact compacts both stores.
+func (s *SplitRelevanceStore) Compact(ctx context.Context) error {
+	return errors.Join(s.readers.Compact(ctx), s.scores.Compact(ctx))
 }
 
 // MemoryRelevanceStore is a process-local relevance ledger for tests and
@@ -84,71 +158,4 @@ func (s *MemoryRelevanceStore) Segments(_ context.Context) ([][]byte, error) {
 		out[i] = bytes.Clone(data)
 	}
 	return out, nil
-}
-
-// writeSegmentFile writes data as a fresh segment in dir: a temporary file
-// renamed into place, so a reader never sees a partial segment.
-func writeSegmentFile(dir string, data []byte) (err error) {
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, root.Close()) }()
-	name, err := segment.Name(time.Now())
-	if err != nil {
-		return err
-	}
-	temp := "." + name + ".tmp"
-	file, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		return err
-	}
-	_, err = file.Write(data)
-	if err == nil {
-		err = file.Sync()
-	}
-	err = errors.Join(err, file.Close())
-	if err == nil {
-		err = root.Rename(temp, name)
-	}
-	if err != nil {
-		return errors.Join(err, root.Remove(temp))
-	}
-	return nil
-}
-
-type segmentFile struct {
-	path string
-	name string
-	data []byte
-}
-
-// readSegmentFiles returns the segments of dir in name order, none when dir
-// does not exist.
-func readSegmentFiles(ctx context.Context, dir string) ([]segmentFile, error) {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var files []segmentFile
-	for _, entry := range entries {
-		if entry.IsDir() || !segment.IsName(entry.Name()) {
-			continue
-		}
-		err := ctx.Err()
-		if err != nil {
-			return nil, err
-		}
-		path := filepath.Join(dir, entry.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, segmentFile{path: path, name: entry.Name(), data: data})
-	}
-	slices.SortFunc(files, func(a, b segmentFile) int { return strings.Compare(a.name, b.name) })
-	return files, nil
 }

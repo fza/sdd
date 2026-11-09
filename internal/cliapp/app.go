@@ -524,6 +524,7 @@ func New(options Options) *cli.Command {
 			serveCmd(),
 			sessionsCmd(),
 			eventsCmd(),
+			relevanceCmd(),
 			syncCmd(),
 			mergeEntryCmd(),
 			mergeConfigCmd(),

@@ -75,7 +75,7 @@ func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation
 	if len(paths) == 0 {
 		return fmt.Errorf("git finalizer: mutation %s has no paths", mutation.BatchID)
 	}
-	segments, err := git.CLI{Dir: f.Checkout}.PendingEventSegments(ctx)
+	segments, err := git.CLI{Dir: f.Checkout}.PendingSegments(ctx)
 	if err != nil {
 		return err
 	}
