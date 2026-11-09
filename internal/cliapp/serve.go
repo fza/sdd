@@ -604,6 +604,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 		Embedder:  embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
 		LLM:       runner,
 		Grounding: groundingPolicy(cfg),
+		Verifier:  verifierPolicy(cfg), Window: modelWindow(cfg.LLM),
 	})
 	if err != nil {
 		return nil, err
@@ -621,7 +622,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 		dependencies: &connectedDependencies{registry: registry, manager: manager, closure: closure, rounds: rounds,
 			writer: sdd.RepoID(cfg.RepoID), connected: cfg.Connected,
 			build: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
-				return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, memberEmbedder, cacheRoot)
+				return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, modelWindow(cfg.LLM), memberEmbedder, cacheRoot)
 			}},
 	}
 	return &servedProject{
@@ -634,7 +635,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 // config, default branch, graph and write targets. Connected stores are keyed
 // by the dependency's repo ID and exclude embedded entries, so binary-shipped
 // base facts embed once per machine in the base store.
-func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, locations repos.Locations, runner pkgllm.Runner, embeddings embed.Embedder, cacheRoot string) (*sdd.ProjectRuntime, error) {
+func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, locations repos.Locations, runner pkgllm.Runner, window func(context.Context) (sdd.ModelWindow, error), embeddings embed.Embedder, cacheRoot string) (*sdd.ProjectRuntime, error) {
 	project := sdd.ProjectID(repoID)
 	defaultBranch := cfg.DefaultBranch
 	if defaultBranch == "" {
@@ -660,6 +661,8 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, searchIndex), LLM: runner,
 		ExcludeEmbeddedFromIndex: true,
 		Grounding:                groundingPolicy(cfg),
+		Verifier:                 verifierPolicy(cfg),
+		Window:                   window,
 	})
 }
 

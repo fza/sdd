@@ -49,6 +49,7 @@ type GuideFinding struct {
 type LLMScript struct {
 	mu                sync.Mutex
 	calls             map[llm.Purpose]int
+	prompts           map[llm.Purpose][]llm.Request
 	PreflightFindings []PreflightFinding
 	GuideFindings     []GuideFinding
 	// DuringPreflight runs inside every pre-flight call, before it answers:
@@ -56,6 +57,13 @@ type LLMScript struct {
 	DuringPreflight func()
 	Title           string
 	Summary         string
+}
+
+// Prompts returns the requests the runner ran for the purpose, in order.
+func (s *LLMScript) Prompts(purpose llm.Purpose) []llm.Request {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]llm.Request(nil), s.prompts[purpose]...)
 }
 
 // Calls returns how often the runner ran for the purpose.
@@ -74,6 +82,10 @@ func (s *LLMScript) Run(_ context.Context, request llm.Request) (llm.Result, err
 		s.calls = map[llm.Purpose]int{}
 	}
 	s.calls[request.Purpose]++
+	if s.prompts == nil {
+		s.prompts = map[llm.Purpose][]llm.Request{}
+	}
+	s.prompts[request.Purpose] = append(s.prompts[request.Purpose], request)
 	switch request.Purpose {
 	case llm.PurposeSummarize:
 		return marshalAnswer(map[string]string{"title": s.Title, "summary": s.Summary})
@@ -155,6 +167,8 @@ type config struct {
 	finalizers  []sdd.MutationFinalizer
 	dialogue    sdd.Dialogue
 	grounding   sdd.GroundingPolicy
+	verifier    sdd.VerifierPolicy
+	window      *sdd.ModelWindow
 }
 
 // Option configures NewWorld.
@@ -181,6 +195,18 @@ func WithAutonomousDialogue() Option {
 // WithGroundingEnforced turns grounding.enforce on for the world's project.
 func WithGroundingEnforced() Option {
 	return func(c *config) { c.grounding.Enforce = true }
+}
+
+// WithVerifier sets the world project's draft verifier policy, with a model
+// window of window tokens and an answer reserve of reserve; a zero window
+// leaves the runtime without one.
+func WithVerifier(policy sdd.VerifierPolicy, window, reserve int) Option {
+	return func(c *config) {
+		c.verifier = policy
+		if window > 0 {
+			c.window = &sdd.ModelWindow{Tokens: window, OutputReserve: reserve}
+		}
+	}
 }
 
 // WithGrounding sets the world project's whole grounding policy.
@@ -344,7 +370,11 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	script := &LLMScript{Title: "generated title", Summary: "A generated summary."}
 	options := sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "proctest"}, DefaultBranch: "main",
-		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding,
+		Graph: graph, LLM: script, Finalizers: cfg.finalizers, Grounding: cfg.grounding, Verifier: cfg.verifier,
+	}
+	if cfg.window != nil {
+		window := *cfg.window
+		options.Window = func(context.Context) (sdd.ModelWindow, error) { return window, nil }
 	}
 	var dropped map[string]bool
 	if len(cfg.branchDirs) > 0 {

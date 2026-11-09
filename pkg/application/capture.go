@@ -18,6 +18,12 @@ import (
 // PreflightEntry checks a draft without publishing it or opening staged bytes.
 // The procedure persists its findings and invalidates them when checked input changes.
 func (a *Application) PreflightEntry(ctx context.Context, identity RequestIdentity, project ProjectID, binding SessionBinding, draft EntryDraft) (PreflightEntryResult, error) {
+	return a.preflightEntry(ctx, identity, project, draft, nil)
+}
+
+// preflightEntry checks the draft, as the light verifier over reading where
+// the project's verifier is on (20261109-004729-d-cpt-xs5).
+func (a *Application) preflightEntry(ctx context.Context, identity RequestIdentity, project ProjectID, draft EntryDraft, reading *captureReading) (PreflightEntryResult, error) {
 	principal, runtime, err := a.resolve(ctx, identity, project, AccessWrite)
 	if err != nil {
 		return PreflightEntryResult{}, err
@@ -50,13 +56,18 @@ func (a *Application) PreflightEntry(ctx context.Context, identity RequestIdenti
 		PreflightRunner: effective.options.LLM, ProcedureRegistry: registry,
 		Config: &model.PerRepoConfig{Language: effective.options.Language, Dependencies: effective.options.Dependencies},
 	})
-	preflight, err := finder.Preflight(ctx, snapshot.graph, query.PreflightQuery{Entry: entry})
+	light, err := effective.lightPreflight(ctx, reading)
+	if err != nil {
+		return result, fmt.Errorf("pre-flight: %w", err)
+	}
+	preflight, err := finder.Preflight(ctx, snapshot.graph, query.PreflightQuery{Entry: entry, Light: light})
 	if err != nil {
 		return result, fmt.Errorf("pre-flight: %w", err)
 	}
 	for _, finding := range preflight.Findings {
-		result.Findings = append(result.Findings, Finding{Severity: string(finding.Severity), Category: finding.Category, Observation: finding.Observation})
+		result.Findings = append(result.Findings, Finding{Severity: string(finding.Severity), Category: finding.Category, Observation: finding.Observation, Basis: finding.Basis})
 	}
+	result.Calls, result.Excerpted = preflight.Calls, preflight.Excerpted
 	return result, nil
 }
 

@@ -356,7 +356,8 @@ func TestCapture_GuideReviewCorrectsTheActorKind(t *testing.T) {
 
 			draft := actorDraft()
 			draft["actorKind"] = "machine"
-			serve = session.Report(t, instance, draft)
+			session.Report(t, instance, draft)
+			serve = session.Answer(t, instance, "playback", "confirm", nil, "yes")
 			proctest.RequireStep(t, serve, "guideReview")
 
 			world.LLM.GuideFindings = nil

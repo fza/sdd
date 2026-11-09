@@ -56,6 +56,12 @@ type ProjectRuntimeOptions struct {
 	// Grounding is the project's grounding policy; the zero value leaves
 	// grounding off with the default limits.
 	Grounding GroundingPolicy
+	// Verifier is the project's draft verifier policy; the zero value leaves
+	// it off.
+	Verifier VerifierPolicy
+	// Window reports the context window of LLM's model and the answer reserve
+	// a call keeps, which size a light verifier call; nil refuses light.
+	Window func(context.Context) (ModelWindow, error)
 }
 
 // GraphSync runs automatic sync of the graph repository behind a branch's

@@ -17,6 +17,8 @@ type Finding struct {
 	Severity    string
 	Category    string
 	Observation string
+	// Basis names the reading entries a light verifier finding rests on.
+	Basis []string
 }
 
 type EntryRef struct {
@@ -84,6 +86,11 @@ type StagedAttachment struct {
 type PreflightEntryResult struct {
 	Target   MutationTarget
 	Findings []Finding
+	// Calls is how many light verifier calls the reading took; zero outside
+	// the light verifier.
+	Calls int
+	// Excerpted names the reading entries a light call judged on excerpts.
+	Excerpted []string
 }
 
 // ValidationError reports that model.ValidateEntry rejected a draft at the

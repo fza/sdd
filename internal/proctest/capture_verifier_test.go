@@ -1,0 +1,111 @@
+// Capture with the light draft verifier (20261109-004729-d-cpt-xs5, slice 1):
+// pre-flight runs over the grounding reading, adds the graph-fit axes, blocks
+// on high findings as before and serves its one verdict otherwise.
+package proctest_test
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/proctest"
+	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/llm"
+)
+
+func newLightWorld(t *testing.T, connID string, options ...proctest.Option) (*proctest.World, *proctest.Session) {
+	t.Helper()
+	return newCaptureWorld(t, connID, append([]proctest.Option{proctest.WithGroundingEnforced(),
+		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "light"}, 200000, 4096)}, options...)...)
+}
+
+// confirmedLightCapture gathers, opens the unread fixture signal in full and
+// sets it aside, reports the draft and confirms the playback.
+func confirmedLightCapture(t *testing.T, session *proctest.Session) (string, *sdd.WorkflowServe) {
+	t.Helper()
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Gather(t, instance, captureRef2ID)
+	draft := captureDraft()
+	draft["verdicts"] = []any{map[string]any{"ids": []any{captureRef2ID}, "code": model.VerdictCovered}}
+	serve = session.Report(t, instance, draft)
+	proctest.RequireStep(t, serve, "playback")
+	return instance, session.Answer(t, instance, "playback", "confirm", nil, "write it")
+}
+
+func TestCaptureVerifier_LightReadsTheGroundingReading(t *testing.T) {
+	world, session := newLightWorld(t, "light-reading")
+	_, serve := confirmedLightCapture(t, session)
+	proctest.RequireStep(t, serve, "verifySummary")
+	prompts := world.LLM.Prompts(llm.PurposePreflight)
+	if len(prompts) != 1 {
+		t.Fatalf("one light call should judge the draft, got %d", len(prompts))
+	}
+	prompt := prompts[0].UserPrompt
+	for _, want := range []string{"## Reading", "ID: " + captureRef2ID, "Role in the reading: set aside (code: " + model.VerdictCovered + ")", "`duplicates`", "`dismissal`"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the light pre-flight should carry %q", want)
+		}
+	}
+}
+
+func TestCaptureVerifier_OffKeepsPreflightOverTheRefs(t *testing.T) {
+	world, session := newCaptureWorld(t, "light-off", proctest.WithGroundingEnforced())
+	_, serve := confirmedLightCapture(t, session)
+	proctest.RequireStep(t, serve, "verifySummary")
+	prompt := world.LLM.Prompts(llm.PurposePreflight)[0].UserPrompt
+	if strings.Contains(prompt, "## Reading") || strings.Contains(prompt, captureRef2ID) {
+		t.Fatal("with the verifier off, pre-flight judges the draft's refs alone")
+	}
+}
+
+func TestCaptureVerifier_LightBlocksOnHighAndRerunsAfterRevise(t *testing.T) {
+	world, session := newLightWorld(t, "light-high")
+	world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "high", Category: "duplicates", Observation: "the draft repeats a live entry"}}
+	instance, serve := confirmedLightCapture(t, session)
+	proctest.RequireStep(t, serve, "reviseOrOverride")
+	if !strings.Contains(serve.Instructions, "duplicates: the draft repeats a live entry") {
+		t.Fatalf("the blocking finding should be served:\n%s", serve.Instructions)
+	}
+
+	world.LLM.PreflightFindings = nil
+	serve = session.Answer(t, instance, "reviseOrOverride", "revise", map[string]any{"body": "A tactical gap: the fixture observes something new."}, "revise it")
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "now write it")
+	proctest.RequireStep(t, serve, "verifySummary")
+	if got := world.LLM.Calls(llm.PurposePreflight); got != 2 {
+		t.Fatalf("a revised draft goes through pre-flight again, ran %d times", got)
+	}
+}
+
+func TestCaptureVerifier_LightServesOneVerdictThenWrites(t *testing.T) {
+	world, session := newLightWorld(t, "light-verdict")
+	world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "medium", Category: "outdated", Observation: "the draft leans on a closed gap"}}
+	instance, serve := confirmedLightCapture(t, session)
+	proctest.RequireStep(t, serve, "preflightVerdict")
+	if serve.PendingChooser == nil || serve.PendingChooser.Kind != "agent" {
+		t.Fatalf("the light verdict is the drafter's to weigh, got %+v", serve.PendingChooser)
+	}
+	for _, want := range []string{"outdated: the draft leans on a closed gap", "in 1 call(s)", "no rounds"} {
+		if !strings.Contains(serve.Instructions, want) {
+			t.Errorf("the light verdict should carry %q:\n%s", want, serve.Instructions)
+		}
+	}
+	serve = session.Answer(t, instance, "preflightVerdict", "proceed", nil, "")
+	proctest.RequireStep(t, serve, "verifySummary")
+	if got := world.LLM.Calls(llm.PurposePreflight); got != 1 {
+		t.Fatalf("the verdict is given once per draft version, pre-flight ran %d times", got)
+	}
+}
+
+func TestCaptureVerifier_LightWithoutAWindowNamesTheKey(t *testing.T) {
+	_, session := newCaptureWorld(t, "light-window", proctest.WithGroundingEnforced(), proctest.WithVerifier(sdd.VerifierPolicy{Mode: "light"}, 0, 0))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Gather(t, instance)
+	session.Report(t, instance, captureDraft())
+	_, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "write it")
+	if err == nil || !strings.Contains(err.Error(), "llm.context_tokens") {
+		t.Fatalf("a light call without a known window should be refused naming the key, got %v", err)
+	}
+}

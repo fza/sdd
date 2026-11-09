@@ -8,6 +8,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
@@ -91,5 +92,40 @@ func groundingPolicy(cfg *model.PerRepoConfig) sdd.GroundingPolicy {
 	return sdd.GroundingPolicy{
 		Enforce: policy.Enforce, DepthDown: policy.DepthDown, DepthUp: policy.DepthUp,
 		BriefAllBelow: policy.BriefAllBelow, PrefilterFrom: policy.PrefilterFrom,
+	}
+}
+
+func verifierPolicy(cfg *model.PerRepoConfig) sdd.VerifierPolicy {
+	if cfg == nil {
+		return sdd.VerifierPolicy{}
+	}
+	policy := cfg.Verifier.Policy()
+	return sdd.VerifierPolicy{Mode: string(policy.Mode), Skip: string(policy.Skip)}
+}
+
+// modelWindows detects each model's context window once per process.
+var modelWindows = &factory.WindowDetector{}
+
+// modelWindow sizes a light verifier call for the runner cfg configures: the
+// window llm.context_tokens sets or the provider reports, and the answer
+// reserve llm.max_tokens sets, else the model's reported output limit,
+// capped (20261109-004729-d-cpt-xs5, V-D12).
+func modelWindow(cfg model.LLMConfig) func(context.Context) (sdd.ModelWindow, error) {
+	return func(ctx context.Context) (sdd.ModelWindow, error) {
+		window, err := modelWindows.Detect(ctx, cfg)
+		if err != nil {
+			return sdd.ModelWindow{}, err
+		}
+		reserve, err := cfg.ResolvedMaxTokens()
+		if err != nil {
+			return sdd.ModelWindow{}, err
+		}
+		if reserve == 0 {
+			reserve = min(window.MaxOutput, model.LightUncappedOutput)
+			if reserve <= 0 {
+				reserve = model.LightUncappedOutput
+			}
+		}
+		return sdd.ModelWindow{Tokens: window.Tokens, OutputReserve: reserve}, nil
 	}
 }

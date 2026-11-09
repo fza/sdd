@@ -40,6 +40,7 @@ func (w *WorkflowSession) buildRegistry() (*engine.Registry, error) {
 		w.registerWorkflowWrites,
 		w.registerWorkflowWIP,
 		w.registerWorkflowGrounding,
+		w.registerWorkflowTiming,
 	} {
 		if err := register(registry); err != nil {
 			return nil, err
@@ -294,7 +295,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	}
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{Name: "preflightEntry", Doc: "Checks the current capture draft before publication and records its findings.",
-			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride"}},
+			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride", "preflightCalls", "preflightExcerpted"}},
 		GraphIndependent: true,
 		Fn:               w.runWorkflowPreflight,
 	}); err != nil {
@@ -316,7 +317,7 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
 			Name: "writingGuide", Doc: "Runs the writing guide against the draft in isolation (d-cpt-20r); findings are drafting input, never a gate. Runs once per capture — a recorded run is never repeated implicitly; requestGuideRecheck clears it for an explicit re-run.",
-			Reads: []string{"body", "entryKind", "layer", "refs", "intent", "attachments", "closes", "supersedes"}, Writes: []string{"guideFindings"},
+			Reads: []string{"body", "entryKind", "layer", "refs", "intent", "attachments", "closes", "supersedes"}, Writes: []string{"guideFindings", fieldGuideBase},
 		},
 		Fn: w.runWorkflowWritingGuide,
 	}); err != nil {
@@ -363,13 +364,15 @@ func (w *WorkflowSession) registerWorkflowWIP(registry *engine.Registry) error {
 	})
 }
 
-// runWorkflowWritingGuide runs the writing guide op between assemble and
-// playback — once per capture. A recorded run (guideFindings present) is
-// never repeated implicitly: revises and adjusts pass through, because a
-// second pass judges the repairs instead of the draft and drifts toward
-// find-something escalation; re-running is the agent's explicit choice
-// (requestGuideRecheck). An LLM infrastructure failure returns loudly — the
-// op re-runs on the next report rather than degrading to a silent pass.
+// runWorkflowWritingGuide runs the writing guide op once per capture, where
+// the dialogue mode places it (20261109-005108-d-cpt-wcj). A recorded run
+// (guideFindings present) is never repeated implicitly: revises and adjusts
+// pass through, because a second pass judges the repairs instead of the draft
+// and drifts toward find-something escalation; a later adjust gets the delta
+// check of its changed lines only (writingGuideDelta), and a full re-run is
+// the agent's explicit choice (requestGuideRecheck). An LLM infrastructure
+// failure returns loudly: the op re-runs on the next report rather than
+// degrading to a silent pass.
 func (w *WorkflowSession) runWorkflowWritingGuide(ctx *engine.Context) error {
 	// A nil value is a cleared run (requestGuideRecheck), not a recorded one.
 	if v, ok := ctx.Store.Get("guideFindings"); ok && v != nil {
@@ -391,7 +394,7 @@ func (w *WorkflowSession) runWorkflowWritingGuide(ctx *engine.Context) error {
 	if err := ctx.Store.WriteEngine("guideFindings", guideFindings); err != nil {
 		return fmt.Errorf("writingGuide: %w", err)
 	}
-	return nil
+	return writeGuideBase(ctx.Store)
 }
 
 func (w *WorkflowSession) draftFromStore(store *engine.Store) EntryDraft {

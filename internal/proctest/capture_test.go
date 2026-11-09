@@ -338,6 +338,9 @@ func TestCapture_SelectedKindPointsAtItsAuthoringFact(t *testing.T) {
 	}
 }
 
+// In a guided capture the writing guide runs once, on the content the user
+// approved (20261109-005108-d-cpt-wcj): playback comes first, the review
+// after the confirm, and proceeding keeps the approval and writes.
 func TestCapture_WritingGuideFindingsServeReviewThenProceed(t *testing.T) {
 	world, session := newCaptureWorld(t, "core-guide-review")
 	world.LLM.GuideFindings = []proctest.GuideFinding{{
@@ -346,22 +349,32 @@ func TestCapture_WritingGuideFindingsServeReviewThenProceed(t *testing.T) {
 	}}
 
 	serve := session.Start(t, "capture", nil)
-	serve = session.Report(t, serve.Instance, captureDraft())
+	instance := serve.Instance
+	serve = session.Report(t, instance, captureDraft())
+	proctest.RequireStep(t, serve, "playback")
+	if got := world.LLM.Calls("writing-guide"); got != 0 {
+		t.Fatalf("playback rounds run without the writing guide, it ran %d times", got)
+	}
+
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "looks right")
 	proctest.RequireStep(t, serve, "guideReview")
 	if serve.PendingChooser == nil || serve.PendingChooser.Kind != "agent" {
 		t.Fatalf("guideReview must serve an agent chooser, got %+v", serve.PendingChooser)
 	}
-	for _, want := range []string{"stranding", "the earlier approach", "write-in", "substantive", "drafting input"} {
+	for _, want := range []string{"stranding", "the earlier approach", "write-in", "substantive", "drafting input", "judged the content the user approved"} {
 		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("guideReview unit missing %q:\n%s", want, serve.Instructions)
 		}
 	}
 	if got := world.LLM.Calls("writing-guide"); got != 1 {
-		t.Fatalf("writing guide ran %d times, want 1", got)
+		t.Fatalf("the writing guide should run once after the confirm, ran %d times", got)
 	}
 
-	serve = session.Answer(t, serve.Instance, "guideReview", "proceed", nil, "")
-	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "guideReview", "proceed", nil, "")
+	proctest.RequireStep(t, serve, "verifySummary")
+	if got := world.LLM.Calls("writing-guide"); got != 1 {
+		t.Fatalf("proceeding keeps the approval and writes without another guide run, ran %d times", got)
+	}
 }
 
 // A guide quote locates its passage and need not match it
@@ -376,6 +389,7 @@ func TestCapture_WritingGuideQuoteLocatesThePassage(t *testing.T) {
 
 	serve := session.Start(t, "capture", nil)
 	serve = session.Report(t, serve.Instance, captureDraft())
+	serve = session.Answer(t, serve.Instance, "playback", "confirm", nil, "yes")
 	proctest.RequireStep(t, serve, "guideReview")
 	for _, want := range []string{`von "Code einlösen"`, "locate the passage from it instead of matching it"} {
 		if !strings.Contains(serve.Instructions, want) {
@@ -384,6 +398,8 @@ func TestCapture_WritingGuideQuoteLocatesThePassage(t *testing.T) {
 	}
 }
 
+// A revision folding the guide's findings in goes back to the user for one
+// more confirm, and the guide does not run again on it.
 func TestCapture_WritingGuideRunsOncePerCapture(t *testing.T) {
 	world, session := newCaptureWorld(t, "core-guide-once")
 	world.LLM.GuideFindings = []proctest.GuideFinding{{
@@ -393,28 +409,61 @@ func TestCapture_WritingGuideRunsOncePerCapture(t *testing.T) {
 
 	serve := session.Start(t, "capture", nil)
 	instance := serve.Instance
-	serve = session.Report(t, instance, captureDraft())
+	session.Report(t, instance, captureDraft())
+	serve = session.Answer(t, instance, "playback", "adjust", map[string]any{"topics": []any{"cli/ux", "agent/ux"}}, "tweak topics")
+	proctest.RequireStep(t, serve, "playback")
+	if got := world.LLM.Calls("writing-guide"); got != 0 {
+		t.Fatalf("an adjust before the approval runs no guide, it ran %d times", got)
+	}
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "yes")
 	proctest.RequireStep(t, serve, "guideReview")
 
-	// Revise carries the changed body back through assemble, but the guide
-	// judged this capture already — no second run, no second review; the
-	// revised draft lands at playback.
 	serve = session.Answer(t, instance, "guideReview", "revise",
 		map[string]any{"body": "A tactical gap: the fixture observes one thing."}, "")
 	proctest.RequireStep(t, serve, "playback")
-	if got := world.LLM.Calls("writing-guide"); got != 1 {
-		t.Fatalf("writing guide ran %d times, want 1 (once per capture)", got)
-	}
 	if !strings.Contains(serve.Instructions, "observes one thing") {
-		t.Errorf("playback should render the revised body, got %q", serve.Instructions)
+		t.Errorf("the user should see the revised body for one more confirm, got %q", serve.Instructions)
 	}
-
-	// A playback adjust passes through the guide step without another run.
-	serve = session.Answer(t, instance, "playback", "adjust",
-		map[string]any{"topics": []any{"cli/ux", "agent/ux"}}, "tweak topics")
-	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "fine")
+	proctest.RequireStep(t, serve, "verifySummary")
 	if got := world.LLM.Calls("writing-guide"); got != 1 {
-		t.Fatalf("writing guide ran %d times after adjust, want still 1", got)
+		t.Fatalf("the writing guide runs once per capture, ran %d times", got)
+	}
+}
+
+// Only the user's last adjust after the guide's pass gets a delta check, of
+// the lines it changed (20261109-005108-d-cpt-wcj).
+func TestCapture_LastAdjustGetsADeltaCheck(t *testing.T) {
+	world, session := newCaptureWorld(t, "core-guide-delta")
+	world.LLM.GuideFindings = []proctest.GuideFinding{{
+		Reasoning: "removing the second sentence loses nothing", Axis: "dilution",
+		Quote: "the fixture observes something", Repair: "cut", Severity: "minor",
+	}}
+
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Report(t, instance, captureDraft())
+	session.Answer(t, instance, "playback", "confirm", nil, "yes")
+	world.LLM.GuideFindings = nil
+	serve = session.Answer(t, instance, "guideReview", "revise", map[string]any{"body": "A tactical gap: the fixture observes one thing."}, "")
+	proctest.RequireStep(t, serve, "playback")
+
+	serve = session.Answer(t, instance, "playback", "adjust",
+		map[string]any{"body": "A tactical gap: the fixture observes one thing.\n\nIt shows on every run."}, "add the frequency")
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "now it is right")
+	proctest.RequireStep(t, serve, "verifySummary")
+
+	prompts := world.LLM.Prompts("writing-guide")
+	if len(prompts) != 2 {
+		t.Fatalf("the last adjust should get one delta check after the guide's pass, got %d guide calls", len(prompts))
+	}
+	delta := prompts[1].UserPrompt
+	if !strings.Contains(delta, "Changed since the last check") || !strings.Contains(delta, "It shows on every run.") {
+		t.Fatalf("the delta check should name the changed lines:\n%s", delta)
+	}
+	if strings.Contains(delta[strings.Index(delta, "Changed since the last check"):], "observes one thing") {
+		t.Fatalf("the delta check should leave out the lines the guide's judgment already covers:\n%s", delta)
 	}
 }
 
@@ -426,17 +475,59 @@ func TestCapture_WritingGuideRecheckRunsFreshOnReworkedDraft(t *testing.T) {
 	}}
 
 	serve := session.Start(t, "capture", nil)
-	serve = session.Report(t, serve.Instance, captureDraft())
+	instance := serve.Instance
+	session.Report(t, instance, captureDraft())
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "yes")
 	proctest.RequireStep(t, serve, "guideReview")
 
-	// Recheck discards the recorded run: the reworked draft goes back through
-	// assemble and the guide judges it fresh — clean this time.
+	// Recheck discards the recorded run: the reworked draft goes back to the
+	// user, and the guide judges it fresh after the next confirm.
 	world.LLM.GuideFindings = nil
-	serve = session.Answer(t, serve.Instance, "guideReview", "recheck",
+	serve = session.Answer(t, instance, "guideReview", "recheck",
 		map[string]any{"body": "A tactical gap: a completely reworked observation."}, "")
 	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "yes")
+	proctest.RequireStep(t, serve, "verifySummary")
 	if got := world.LLM.Calls("writing-guide"); got != 2 {
 		t.Fatalf("writing guide ran %d times, want 2 (fresh run after recheck)", got)
+	}
+}
+
+// In an autonomous capture the writing guide and the verifier run before
+// playback, since no dialogue edits follow (20261109-005108-d-cpt-wcj).
+func TestCapture_AutonomousRunsGuideAndVerifierBeforePlayback(t *testing.T) {
+	world, session := newCaptureWorld(t, "core-autonomous-checks", proctest.WithAutonomousDialogue(), proctest.WithGroundingEnforced(),
+		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "light"}, 200000, 4096))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Gather(t, instance)
+	serve = session.Report(t, instance, captureDraft())
+	proctest.RequireStep(t, serve, "playback")
+	if world.LLM.Calls("writing-guide") != 1 || world.LLM.Calls("preflight") != 1 {
+		t.Fatalf("both checks should run before playback, guide %d and pre-flight %d times", world.LLM.Calls("writing-guide"), world.LLM.Calls("preflight"))
+	}
+	serve = session.Decide(t, instance, "playback", "confirm", nil, "the draft holds")
+	proctest.RequireStep(t, serve, "verifySummary")
+	if world.LLM.Calls("writing-guide") != 1 || world.LLM.Calls("preflight") != 1 {
+		t.Fatalf("the confirm writes on the checks already run, guide %d and pre-flight %d times", world.LLM.Calls("writing-guide"), world.LLM.Calls("preflight"))
+	}
+}
+
+// Without the verifier, an autonomous capture runs the guide before playback
+// and pre-flight after the confirm, as before.
+func TestCapture_AutonomousWithoutVerifierKeepsPreflightAfterConfirm(t *testing.T) {
+	world, session := newCaptureWorld(t, "core-autonomous-off", proctest.WithAutonomousDialogue())
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	serve = session.Report(t, instance, captureDraft())
+	proctest.RequireStep(t, serve, "playback")
+	if world.LLM.Calls("writing-guide") != 1 || world.LLM.Calls("preflight") != 0 {
+		t.Fatalf("the guide runs before playback, pre-flight after it; guide %d and pre-flight %d times", world.LLM.Calls("writing-guide"), world.LLM.Calls("preflight"))
+	}
+	serve = session.Decide(t, instance, "playback", "confirm", nil, "the draft holds")
+	proctest.RequireStep(t, serve, "verifySummary")
+	if world.LLM.Calls("preflight") != 1 {
+		t.Fatalf("pre-flight runs after the confirm, ran %d times", world.LLM.Calls("preflight"))
 	}
 }
 
