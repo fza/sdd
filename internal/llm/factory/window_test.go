@@ -136,3 +136,35 @@ func TestWindowDetect_RefusesNamingTheKey(t *testing.T) {
 		})
 	}
 }
+
+// The window request derives the models URL from every endpoint form the
+// chat call accepts: a host, a versioned base URL or the full call path.
+func TestWindowDetect_AcceptsEveryEndpointForm(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		path     string
+		fixture  string
+		provider string
+		model    string
+		suffix   string
+	}{
+		{"openai host", "/v1/models", "vllm-models.json", "openai", "Qwen/Qwen3-32B", ""},
+		{"openai versioned base", "/v1/models", "vllm-models.json", "openai", "Qwen/Qwen3-32B", "/v1/"},
+		{"openai chat completions path", "/v1/models", "vllm-models.json", "openai", "Qwen/Qwen3-32B", "/v1/chat/completions"},
+		{"anthropic host", "/v1/models/claude-sonnet-4-6", "anthropic-model.json", "anthropic", "claude-sonnet-4-6", ""},
+		{"anthropic versioned base", "/v1/models/claude-sonnet-4-6", "anthropic-model.json", "anthropic", "claude-sonnet-4-6", "/v1"},
+		{"anthropic messages path", "/v1/models/claude-sonnet-4-6", "anthropic-model.json", "anthropic", "claude-sonnet-4-6", "/v1/messages/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, calls := windowServer(t, tc.path, tc.fixture, nil)
+			detector := &factory.WindowDetector{Client: server.Client()}
+			window, err := detector.Detect(t.Context(), model.LLMConfig{Provider: tc.provider, Model: tc.model, Endpoint: server.URL + tc.suffix})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if window.Tokens <= 0 || calls.Load() != 1 {
+				t.Fatalf("the window should be read from the models URL the endpoint leads to, got %+v after %d calls", window, calls.Load())
+			}
+		})
+	}
+}
