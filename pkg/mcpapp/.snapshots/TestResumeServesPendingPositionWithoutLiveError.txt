@@ -40,13 +40,12 @@ framing: |
   20260601-100000-s-tac-aaa: participant "Tester" does not match any actor canonical in the graph
   20260704-120000-d-prc-tst: participant "Tester" does not match any actor canonical in the graph
 instructions: |
-  Session resumed: step position and collected evidence persist; the
-  open_instances list carries each running instance's current serve — the
-  session shell (user-dialogue) among them, carrying the open-threads block.
-  Brief the user on where the work stands (procedure, step, goal) before
-  continuing, and continue through next, carrying this session's handle. If you
-  lose your place again later, resume_session with this handle re-serves this
-  list in full.
+  Session resumed. Step position and collected evidence persist.
+  open_instances carries each running instance's current serve. The session
+  shell (user-dialogue) is among them, carrying the open-threads block.
+  Brief the user on where the work stands (procedure, step, goal) before you
+  continue. Continue through next with the session's handle. Lose your place
+  again later? resume_session with this handle re-serves this list in full.
 open_instances:
   -
     goal: dialogue freely; start a move when something crystallizes
