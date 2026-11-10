@@ -325,6 +325,11 @@ func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, tou
 		if err != nil {
 			return fmt.Errorf("selecting init paths to commit: %w", err)
 		}
+		// A file init rewrote identical to HEAD has nothing to commit (d-tac-sdq).
+		commitPaths, err = h.tracker.Uncommitted(ctx, commitPaths)
+		if err != nil {
+			return fmt.Errorf("selecting init paths that differ from HEAD: %w", err)
+		}
 		leftover, err = h.trustedLeftover(ctx, record, leftover)
 		if err != nil {
 			return err
