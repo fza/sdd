@@ -60,7 +60,7 @@ func factByID(t *testing.T, id string) *model.Entry {
 
 func TestEntriesShipViewGrammarFact(t *testing.T) {
 	fact := factByID(t, ViewGrammarFactID)
-	const title = "How to compose graph views (view tool): layout grammar, filters, ranking, quoting, and examples"
+	const title = "How to compose graph views (view tool): layout grammar, filters, ranking, quoting, examples"
 	if fact.Index == nil || fact.Index.Title != title || fact.Index.Topic.String() != "cli/view" {
 		t.Errorf("fact index = %+v", fact.Index)
 	}
@@ -273,7 +273,7 @@ func TestEntriesShipProcedureKindFact(t *testing.T) {
 		t.Error("procedure fact body missing the rendered mechanics block")
 	}
 	for _, class := range model.ProcedureClassValues() {
-		if !strings.Contains(fact.Content, "`"+string(class)+"` — "+class.Description()) {
+		if !strings.Contains(fact.Content, "`"+string(class)+"`: "+class.Description()) {
 			t.Errorf("procedure fact body missing class %q with its declared description", class)
 		}
 	}
@@ -308,7 +308,7 @@ func TestEntriesShipProcedureSpecFact(t *testing.T) {
 		t.Error("spec reference does not embed the engine's worked example verbatim")
 	}
 	for _, pair := range engine.PresencePairs() {
-		if !strings.Contains(fact.Content, "`"+pair.Field+"` — checked by `"+pair.Predicate+"`") {
+		if !strings.Contains(fact.Content, "`"+pair.Field+"`: checked by `"+pair.Predicate+"`") {
 			t.Errorf("spec reference missing gateable pair %s/%s", pair.Field, pair.Predicate)
 		}
 	}

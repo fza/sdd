@@ -20,13 +20,13 @@ func TestStartProcedureCaptureServesTypeSystemOverview(t *testing.T) {
 
 	var first mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &first)
-	if !strings.Contains(first.Instructions, basefacts.OverviewFactID) || !strings.Contains(first.Instructions, "a signal records something noticed:") {
+	if !strings.Contains(first.Instructions, basefacts.OverviewFactID) || !strings.Contains(first.Instructions, "A signal records something noticed:") {
 		t.Fatalf("the initial capture start response must serve the overview in full, got: %.300q", first.Instructions)
 	}
 
 	var second mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &second)
-	if strings.Contains(second.Instructions, "a signal records something noticed:") {
+	if strings.Contains(second.Instructions, "A signal records something noticed:") {
 		t.Fatalf("a second capture start in the same session must not repeat the overview body")
 	}
 	if !strings.Contains(second.Instructions, basefacts.OverviewFactID) {
@@ -44,7 +44,7 @@ func TestCaptureOverviewGroundingSurvivesServerRestart(t *testing.T) {
 
 	var first mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &first)
-	if !strings.Contains(first.Instructions, "a signal records something noticed:") {
+	if !strings.Contains(first.Instructions, "A signal records something noticed:") {
 		t.Fatalf("the first capture must serve the overview in full")
 	}
 
@@ -62,7 +62,7 @@ func TestCaptureOverviewGroundingSurvivesServerRestart(t *testing.T) {
 	if reServed == nil {
 		t.Fatalf("the resumed session must re-serve the open capture, got %+v", resumed.Open)
 	}
-	if strings.Contains(reServed.Instructions, "a signal records something noticed:") {
+	if strings.Contains(reServed.Instructions, "A signal records something noticed:") {
 		t.Fatalf("the overview grounding must survive a server restart — the re-serve repeated the body")
 	}
 	if !strings.Contains(reServed.Instructions, basefacts.OverviewFactID) {
