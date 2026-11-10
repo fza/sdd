@@ -85,6 +85,12 @@ type Predicate struct {
 	// (refsInspected naming the un-inspected IDs). Empty results fall back
 	// to FailMessage.
 	FailDetail func(ctx *Context) string
+	// Selector marks a predicate that reads a mode or state no report can
+	// change: it chooses a gate's path and is never owed work, so a
+	// transition failing on it drops out of the gate's diagnostics
+	// (20261110-093504-d-tac-4w0). Off by default, since a wrongly marked
+	// selector hides an owed line.
+	Selector bool
 }
 
 // Query is a registered query.

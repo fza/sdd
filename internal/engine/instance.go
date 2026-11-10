@@ -184,49 +184,59 @@ type Serve struct {
 // it, so the definition lives in the cycle-free public leaf (s-tac-ah2).
 type ServeLane = types.ServeLane
 
-// evalGuard evaluates a guard against the registry, returning the verdict
-// and the failing predicates for diagnostics.
+// evalGuard evaluates a step guard or transition guard against the registry,
+// returning the verdict and the clauses that block it for diagnostics.
 func (s *Session) evalGuard(inst *Instance, g *GuardExpr) (bool, []FailedPredicate, error) {
+	ok, ruledOut, failing, err := s.explainGuard(inst, g, s.isSelector)
+	if err != nil || ok || !ruledOut {
+		return ok, failing, err
+	}
+	// A guard ruled out by selectors holds the step on its mode alone; name
+	// the selectors rather than serve a hold without a reason.
+	ok, _, failing, err = s.explainGuard(inst, g, nil)
+	return ok, failing, err
+}
+
+// explainGuard evaluates g and, when it fails, renders its blocking clauses
+// (GuardExpr.Blocking) as failing predicates.
+func (s *Session) explainGuard(inst *Instance, g *GuardExpr, isSelector func(string) bool) (bool, bool, []FailedPredicate, error) {
 	ctx, err := s.funcContext(inst)
 	if err != nil {
-		return false, nil, err
+		return false, false, nil, err
 	}
-	ok, err := g.Eval(func(name string) (bool, error) {
+	ok, ruledOut, clauses, err := g.Blocking(func(name string) (bool, error) {
 		p, found := s.engine.Registry.Predicate(name)
 		if !found {
 			return false, fmt.Errorf("unknown predicate %q", name)
 		}
 		return p.Fn(ctx)
-	})
-	if err != nil {
-		return false, nil, err
+	}, isSelector)
+	if err != nil || ok {
+		return ok, false, nil, err
 	}
-	if ok {
-		return true, nil, nil
-	}
-	// Full evaluation for diagnostics: name every referenced predicate that
-	// is currently false (predicates are pure, so re-evaluation is safe).
-	var failing []FailedPredicate
-	for _, name := range g.Predicates() {
-		p, found := s.engine.Registry.Predicate(name)
-		if !found {
+	failing := make([]FailedPredicate, 0, len(clauses))
+	for _, c := range clauses {
+		p, _ := s.engine.Registry.Predicate(c.Name)
+		if c.Negated {
+			// FailMessage reads for the false case, so a true predicate
+			// under `not` gets the neutral form.
+			failing = append(failing, FailedPredicate{Name: c.Name, Message: "predicate " + c.Name + " holds"})
 			continue
 		}
-		v, err := p.Fn(ctx)
-		if err != nil {
-			return false, nil, err
-		}
-		if !v {
-			msg := p.FailMessage
-			if p.FailDetail != nil {
-				if detail := p.FailDetail(ctx); detail != "" {
-					msg = detail
-				}
+		msg := p.FailMessage
+		if p.FailDetail != nil {
+			if detail := p.FailDetail(ctx); detail != "" {
+				msg = detail
 			}
-			failing = append(failing, FailedPredicate{Name: name, Message: msg})
 		}
+		failing = append(failing, FailedPredicate{Name: c.Name, Message: msg})
 	}
-	return false, failing, nil
+	return false, ruledOut, failing, nil
+}
+
+func (s *Session) isSelector(name string) bool {
+	p, found := s.engine.Registry.Predicate(name)
+	return found && p.Selector
 }
 
 // funcContext builds the Context registry functions run against at the
@@ -798,7 +808,8 @@ func (s *Session) missingFields(inst *Instance, step *Step) []string {
 }
 
 // transitionDiagnostics evaluates the step's transition guards and returns
-// the predicates that are false across them — why no transition fired.
+// the clauses that block them — why no transition fired. A transition ruled
+// out by a selector is off the step's path and blocks on no clause.
 func (s *Session) transitionDiagnostics(inst *Instance, step *Step) []FailedPredicate {
 	seen := make(map[string]bool)
 	var failing []FailedPredicate
@@ -806,7 +817,7 @@ func (s *Session) transitionDiagnostics(inst *Instance, step *Step) []FailedPred
 		if t.When == nil {
 			continue
 		}
-		_, f, err := s.evalGuard(inst, t.When)
+		_, _, f, err := s.explainGuard(inst, t.When, s.isSelector)
 		if err != nil {
 			continue
 		}

@@ -172,6 +172,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 				policy, _, err := w.deepPolicy(ctx.Instance)
 				return policy.Skip == model.VerifierSkipWeighed, err
 			},
+			Selector: true,
 		},
 		{
 			Doc: engine.FuncDoc{Name: "deepFindingsRefused", Doc: "The verifier's findings still fail the check after its repair: the verifier gave up.", Reads: []string{fieldDeepProblems}},

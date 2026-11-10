@@ -417,6 +417,7 @@ func registerBuiltinPredicates(r *Registry) {
 		},
 		Fn:          noHookFindings,
 		FailMessage: "the hooks joined findings into the step's findings channel",
+		Selector:    true,
 	})
 
 	mustRegisterPredicate(r, Predicate{
