@@ -225,19 +225,25 @@ func readTag(read GroundingRead) string {
 	return string(read.Mode)
 }
 
-// Prefilter protocols (D23).
+// PrefilterProtocol is the protocol that rates relevance (D23).
+type PrefilterProtocol string
+
 const (
-	PrefilterSystemOne    = "systemone"
-	PrefilterCohereRerank = "cohere-rerank"
-	PrefilterGenerate     = "generate"
+	PrefilterSystemOne    PrefilterProtocol = "systemone"
+	PrefilterCohereRerank PrefilterProtocol = "cohere-rerank"
+	PrefilterGenerate     PrefilterProtocol = "generate"
 )
+
+func (PrefilterProtocol) AllowedValues() []string {
+	return closedValues(PrefilterSystemOne, PrefilterCohereRerank, PrefilterGenerate)
+}
 
 // LLMPrefilterConfig is the `llm_prefilter` block: the shape of `llm` plus
 // the protocol that rates relevance. For systemone and cohere-rerank,
 // Provider names the API key's entry in api_keys (default opper); for
 // generate, Provider and Model select the chat model as in `llm`.
 type LLMPrefilterConfig struct {
-	Protocol  string `yaml:"protocol,omitempty"`
+	Protocol  PrefilterProtocol `yaml:"protocol,omitempty"`
 	LLMConfig `yaml:",inline"`
 }
 

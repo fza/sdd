@@ -228,10 +228,10 @@ func TestVerifierRunnerAsked_OnlyUnderDeepWhileUnset(t *testing.T) {
 // unset field takes the family's default.
 func TestVerifierAgentsLayerPerFamily(t *testing.T) {
 	committed := verifyLayer(model.VerifyDeep, "")
-	committed.Verify.Claude = model.VerifierAgent{Model: "opus", Effort: "high"}
+	committed.Verify.Claude = model.ClaudeAgent{Model: "opus", Effort: "high"}
 	committed.Verify.Codex = model.VerifierAgent{Model: "gpt-5.5"}
 	local := &model.PerRepoConfig{}
-	local.Verify.Claude = model.VerifierAgent{Effort: "max"}
+	local.Verify.Claude = model.ClaudeAgent{Effort: "max"}
 	err := model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
 	if err != nil {
 		t.Fatalf("machine-local model and effort may differ from the committed ones: %v", err)

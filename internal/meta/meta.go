@@ -73,6 +73,16 @@ func ReadConfig(sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
 	return model.MergeConfig(base, local), nil
 }
 
+// ConfigLayerFiles names the file behind each config layer, as refusals
+// about a layer's settings name it.
+func ConfigLayerFiles(sddDir, localConfigPath string) map[model.ConfigValueSource]string {
+	return map[model.ConfigValueSource]string{
+		model.ConfigSourceGlobal:  "the user-global config",
+		model.ConfigSourceProject: filepath.Join(sddDir, "config.yaml"),
+		model.ConfigSourceLocal:   LocalConfigPath(sddDir, localConfigPath),
+	}
+}
+
 // ResolveConfig builds the effective per-repo config from the full overlay:
 // the user-global base settings under the committed .sdd/config.yaml under
 // .sdd/config.local.yaml. CLI flags apply on top at the call site. Returns
@@ -84,12 +94,7 @@ func ResolveConfig(global model.BaseConfig, sddDir, localConfigPath string) (*mo
 	if err != nil {
 		return nil, err
 	}
-	files := map[model.ConfigValueSource]string{
-		model.ConfigSourceGlobal:  "the user-global config",
-		model.ConfigSourceProject: filepath.Join(sddDir, "config.yaml"),
-		model.ConfigSourceLocal:   LocalConfigPath(sddDir, localConfigPath),
-	}
-	err = model.CheckVerifyLayers(global, committed, local, files)
+	err = model.CheckVerifyLayers(global, committed, local, ConfigLayerFiles(sddDir, localConfigPath))
 	if err != nil {
 		return nil, err
 	}

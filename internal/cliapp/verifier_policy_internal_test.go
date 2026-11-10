@@ -8,7 +8,7 @@ import (
 )
 
 func TestVerifierPolicyCarriesTheAgentBlocks(t *testing.T) {
-	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Claude: model.VerifierAgent{Model: "opus", Effort: "high"}}}}
+	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Claude: model.ClaudeAgent{Model: "opus", Effort: "high"}}}}
 
 	policy := verifierPolicy(cfg)
 

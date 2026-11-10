@@ -52,7 +52,7 @@ func resolveEmbeddingConfig(cmd *cli.Command) (model.EmbeddingConfig, error) {
 		cfg = fileCfg.Embedding
 	}
 	if cmd.IsSet("embedding-provider") {
-		cfg.Provider = cmd.String("embedding-provider")
+		cfg.Provider = model.EmbeddingProvider(cmd.String("embedding-provider"))
 	}
 	if cmd.IsSet("embedding-model") {
 		cfg.Model = cmd.String("embedding-model")

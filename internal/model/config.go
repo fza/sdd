@@ -272,6 +272,10 @@ const (
 	SyncModeAuto   SyncMode = "auto"
 )
 
+func (SyncMode) AllowedValues() []string {
+	return closedValues(SyncModeManual, SyncModeAuto)
+}
+
 // DialogueConfig holds how engine sessions treat the choices procedures put
 // to the user.
 type DialogueConfig struct {
@@ -288,6 +292,10 @@ const (
 	DialogueGuided     DialogueMode = "guided"
 	DialogueAutonomous DialogueMode = "autonomous"
 )
+
+func (DialogueMode) AllowedValues() []string {
+	return closedValues(DialogueGuided, DialogueAutonomous)
+}
 
 // IgnoredSetting is a setting a config layer carries that sdd reads past:
 // a value it does not know, or a key that layer may not set.
@@ -329,8 +337,8 @@ func ignoredSyncMode(mode SyncMode, committed bool) string {
 		return ""
 	case committed:
 		return personalOnlyReason
-	case mode != SyncModeManual && mode != SyncModeAuto:
-		return fmt.Sprintf("%q is not %s or %s", mode, SyncModeManual, SyncModeAuto)
+	case !slices.Contains(mode.AllowedValues(), string(mode)):
+		return fmt.Sprintf("%q is not %s", mode, oneOf(mode.AllowedValues()))
 	}
 	return ""
 }
@@ -341,8 +349,8 @@ func ignoredDialogueMode(mode DialogueMode, committed bool) string {
 		return ""
 	case committed:
 		return personalOnlyReason
-	case mode != DialogueGuided && mode != DialogueAutonomous:
-		return fmt.Sprintf("%q is not %s or %s", mode, DialogueGuided, DialogueAutonomous)
+	case !slices.Contains(mode.AllowedValues(), string(mode)):
+		return fmt.Sprintf("%q is not %s", mode, oneOf(mode.AllowedValues()))
 	}
 	return ""
 }
@@ -404,7 +412,7 @@ type EmbeddingConfig struct {
 	// Provider names the embedder transport: "openai" (OpenAI-compatible
 	// /v1/embeddings) or "ollama" (/api/embeddings). Empty disables vector
 	// search — the CLI falls back to text-mode-only.
-	Provider string `yaml:"provider,omitempty"`
+	Provider EmbeddingProvider `yaml:"provider,omitempty"`
 	// Model is the provider-specific embedding model identifier
 	// (e.g. "text-embedding-3-small", "nomic-embed-text").
 	Model string `yaml:"model,omitempty"`
@@ -460,6 +468,13 @@ type EmbeddingConfig struct {
 	// stays empty for query-only models (Qwen3, BGE) and untemplated
 	// models (OpenAI).
 	DocumentTemplate string `yaml:"document_template,omitempty"`
+}
+
+// EmbeddingProvider names the embedder transport.
+type EmbeddingProvider string
+
+func (EmbeddingProvider) AllowedValues() []string {
+	return []string{"openai", "ollama"}
 }
 
 // LLMConfig holds settings for LLM provider selection, model choice, and
@@ -541,15 +556,20 @@ const (
 	StructuredOutputAuto StructuredOutputMode = "auto"
 )
 
+func (StructuredOutputMode) AllowedValues() []string {
+	return closedValues(StructuredOutputJSONSchema, StructuredOutputJSONObject, StructuredOutputAuto)
+}
+
 // ParseStructuredOutputMode resolves a configured mode, empty meaning auto.
 func ParseStructuredOutputMode(value string) (StructuredOutputMode, error) {
-	switch mode := StructuredOutputMode(value); mode {
-	case "":
+	mode := StructuredOutputMode(value)
+	switch {
+	case mode == "":
 		return StructuredOutputAuto, nil
-	case StructuredOutputJSONSchema, StructuredOutputJSONObject, StructuredOutputAuto:
+	case slices.Contains(mode.AllowedValues(), value):
 		return mode, nil
 	default:
-		return "", fmt.Errorf("unknown structured_output %q (supported: json_schema, json_object, auto)", value)
+		return "", fmt.Errorf("unknown structured_output %q (supported: %s)", value, strings.Join(mode.AllowedValues(), ", "))
 	}
 }
 

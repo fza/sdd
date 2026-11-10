@@ -82,7 +82,7 @@ func TestHeadlessLauncher_RunsTheConfiguredDriver(t *testing.T) {
 func TestHeadlessLauncher_PassesTheLaunchsModelAndEffort(t *testing.T) {
 	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{
 		Runner: model.VerifierRunnerClaude,
-		Claude: model.VerifierAgent{Model: "opus", Effort: "xhigh"},
+		Claude: model.ClaudeAgent{Model: "opus", Effort: "xhigh"},
 		Codex:  model.VerifierAgent{Model: "gpt-5.5", Effort: "high"},
 	}}}
 	launcher := launcherServing(t, cfg)

@@ -2798,7 +2798,7 @@ func promptVerifyMode(cmd *cli.Command) (model.VerifyMode, error) {
 		Reader: cmd.Reader,
 		Writer: cmd.Writer,
 		Header: "How carefully should sdd check a new entry before saving it? (↑/↓ to navigate, enter to confirm)",
-		Cursor: slices.Index(model.VerifyModes(), model.DefaultVerifyMode),
+		Cursor: slices.Index(model.DefaultVerifyMode.AllowedValues(), string(model.DefaultVerifyMode)),
 		Options: []tui.SelectOption[model.VerifyMode]{
 			{Label: string(model.VerifyOff), Hint: "a quick check of the entry on its own", Value: model.VerifyOff},
 			{Label: string(model.VerifyGrounding), Hint: "your AI first reads related entries, no check after", Value: model.VerifyGrounding},

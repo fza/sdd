@@ -27,6 +27,10 @@ const (
 	EventShareGit EventShare = "git"
 )
 
+func (EventShare) AllowedValues() []string {
+	return closedValues(EventShareLocal, EventShareGit)
+}
+
 // EventsConfig is the `events` block: the sharing mode per channel. Only the
 // committed .sdd/config.yaml sets it, since sharing is the team's choice.
 type EventsConfig struct {
@@ -47,12 +51,11 @@ func (c EventsConfig) GitChannels() ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("events.channels: %w", err)
 		}
-		switch channel.Share {
-		case "", EventShareLocal:
-		case EventShareGit:
+		if channel.Share != "" && !slices.Contains(channel.Share.AllowedValues(), string(channel.Share)) {
+			return nil, fmt.Errorf("events.channels.%s.share: unknown value %q (%s)", name, channel.Share, oneOf(channel.Share.AllowedValues()))
+		}
+		if channel.Share == EventShareGit {
 			channels = append(channels, name)
-		default:
-			return nil, fmt.Errorf("events.channels.%s.share: unknown value %q (git or local)", name, channel.Share)
 		}
 	}
 	slices.Sort(channels)
