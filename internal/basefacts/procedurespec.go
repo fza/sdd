@@ -34,11 +34,11 @@ func procedureSpecFactContent() (string, error) {
 		if desc == "" {
 			return "", fmt.Errorf("domain type %q has no description to render", t)
 		}
-		types = append(types, fmt.Sprintf("- `%s` — %s", t, desc))
+		types = append(types, fmt.Sprintf("- `%s`: %s", t, desc))
 	}
 	fields := make([]string, 0, len(engine.PresencePairs()))
 	for _, p := range engine.PresencePairs() {
-		fields = append(fields, fmt.Sprintf("- `%s` — checked by `%s`", p.Field, p.Predicate))
+		fields = append(fields, fmt.Sprintf("- `%s`: checked by `%s`", p.Field, p.Predicate))
 	}
 	var rendered strings.Builder
 	data := struct{ VarTypes, EndTargets, GateableFields, Example string }{

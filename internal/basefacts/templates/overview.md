@@ -57,49 +57,49 @@ refs:
       kind: related
       desc: the ref-kind vocabulary — how entries connect, with each kind's direction and when it applies
 index:
-    title: 'Understanding the type system: how types, kinds, and layers fit together, which entry to draft when kinds compete, and where each kind''s crafting guide lives'
+    title: 'Type system: how types, kinds and layers fit together, which kind to draft when kinds compete, where each kind''s crafting guide lives'
     topic: type-system/kinds
 summary: >-
-    The type system introduced: every entry is a signal (something noticed) or
-    a decision (something committed to), each carrying a kind picked by the
-    question it answers and a layer naming the depth of thinking — with the
-    tests that settle competing kinds, the retirement split, and a pointer to
-    each kind's own authoring fact.
+    Type system introduced: every entry is a signal (something noticed) or a
+    decision (something committed to). Each carries a kind, picked by the
+    question it answers, and a layer naming the depth of thinking. Includes
+    the tests that settle competing kinds, the retirement split, and a pointer
+    to each kind's own authoring fact.
 ---
 
-# The type system — entries, kinds, and layers
+# The type system: entries, kinds and layers
 
-The graph records everything as entries of two types: a **signal** records something noticed; a **decision** records something committed to. That split is the first test, and the strongest. One loop drives the graph — a signal meets dialogue and becomes a decision; completed work lands as a done signal that closes the commitment and feeds the next loop — and entries are immutable: retiring one means adding a closing or superseding entry, never editing.
+Graph records everything as entries of two types. A **signal** records something noticed; a **decision** records something committed to. That split is the first test, and the strongest. One loop drives the graph: a signal meets dialogue and becomes a decision. Completed work lands as a done signal that closes the commitment and feeds the next loop. Entries are immutable. Retiring one means adding a closing or superseding entry, never editing.
 
-Each entry carries a **kind**; the question it answers picks it.
+Each entry carries a **kind**, picked by the question it answers.
 
 {{ .SignalKinds }}
 
 {{ .DecisionKinds }}
 
-Where two kinds compete, these tests settle it:
+Two kinds compete? These tests settle it:
 
-- **Aspiration vs directive — force, not completion.** Both may lack a completion criterion by design. An aspiration *pulls*: direction the work aligns with, never binding any single piece of it. A directive *pushes*: work is expected to conform, and a violation is observable.
-- **Plan vs activity — WHAT vs THAT.** A plan defines what must be true when the work is done — verifiable outcomes, stated as acceptance criteria. An activity dispatches work whose shape is already known; its validation is a single "was it done?".
+- **Aspiration vs directive: force, not completion.** Both may lack a completion criterion by design. Aspiration *pulls*: direction the work aligns with, never binding any single piece. Directive *pushes*: work must conform, and a violation is observable.
+- **Plan vs activity: WHAT vs THAT.** Plan defines what must be true when work is done: verifiable outcomes, stated as acceptance criteria. Activity dispatches work whose shape is already known; its validation is one "was it done?".
 - **A directive states its posture** as intent:
-  - `pending` — demands follow-up
-  - `guiding` — a guideline that keeps applying
-  - `settled` — born terminal, with the why in its body
-- **Standing constraints are guiding directives.** The contract kind takes no new entries — existing contracts stay valid, and a constraint that must always hold is captured as a directive with guiding intent.
-- **Actor vs role — outside vs here.** What a participant brings from outside the project is their actor identity; what they do within it is a role bound to that actor. This week's task is neither.
+  - `pending`: demands follow-up
+  - `guiding`: a guideline that keeps applying
+  - `settled`: born terminal, with the why in its body
+- **Standing constraints are guiding directives.** Contract kind takes no new entries. Existing contracts stay valid. A constraint that must always hold is captured as a directive with guiding intent.
+- **Actor vs role: outside vs here.** What a participant brings from outside the project is their actor identity. What they do within it is a role bound to that actor. This week's task is neither.
 - **A done records a past act** and points at what it completes.
-- **An annotation carries structure, not narrative** — metadata laid over the entries it references.
+- **An annotation carries structure, not narrative:** metadata laid over the entries it references.
 
-Retirement: any entry that states why another no longer holds may close it; a question, actor, or annotation states no findings and closes nothing. A **done** closes what completed; a **directive** closes, with its reasoning, what will not be built; same-kind supersession replaces.
+Retirement: any entry that states why another no longer holds may close it. A question, actor or annotation states no findings and closes nothing. A **done** closes what completed. A **directive** closes, with its reasoning, what will not be built. Same-kind supersession replaces.
 
-Entries connect: every entry carries typed references naming why it points at prior entries — the basis it reasons from, the gap it answers, the line it extends. The ref-kind vocabulary fact `20260828-160000-s-prc-rfk` defines each kind, its direction, and when it applies over a sharper or weaker neighbor — pull it before drafting any reference.
+Entries connect. Every entry carries typed references naming why it points at prior entries: the basis it reasons from, the gap it answers, the line it extends. Ref-kind vocabulary fact `20260828-160000-s-prc-rfk` defines each kind, its direction, and when it applies over a sharper or weaker neighbor. Pull it before drafting any reference.
 
 Every entry also names its **layer**, the depth of the thinking:
 
-- strategic — why, direction
-- conceptual — approach, shape
-- tactical — structures, trade-offs
-- operational — individual steps
-- process — how we work
+- strategic: why, direction
+- conceptual: approach, shape
+- tactical: structures, trade-offs
+- operational: individual steps
+- process: how we work
 
-This is the map, not the depth. Each kind has its own authoring fact carrying its meaning, make-up, and craft — pull it before drafting that kind. And when two kinds compete and the tests above do not settle it, the discrimination fact `20260818-120000-s-prc-dsc` carries every remaining test, sorted by the situation you are in.
+This is the map, not the depth. Each kind has its own authoring fact with its meaning, make-up and craft. Pull it before drafting that kind. Two kinds compete and the tests above do not settle it? Discrimination fact `20260818-120000-s-prc-dsc` carries every remaining test, sorted by your situation.

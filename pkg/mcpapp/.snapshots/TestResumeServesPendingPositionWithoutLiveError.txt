@@ -9,32 +9,32 @@ framing: |
 
   `20260810-190000-s-prc-way` — process fact signal
 
-  How to think while working here, for every participant, human or agent. It comes first because following a structured process is easier than questioning it — these principles keep the process pointed at the work.
+  How to think while working here, for every participant, human or agent. Comes first because following a structured process is easier than questioning it. These principles keep the process pointed at the work.
 
-  **Goal first.** Start by asking: why are we doing this at all? The answer sits behind the task as given, behind the process, even behind the decisions the graph records — those are accounts of the goal, not the goal itself. An unclear answer is a strong signal that alignment is missing: seek dialogue, and capture what it settles so the graph carries the goal more clearly. Everything, the process included, is then designed around the goal; it is never bent to fit the process.
+  **Goal first.** Start by asking: why are we doing this at all? The answer sits behind the task as given, behind the process, even behind the decisions the graph records. Those are accounts of the goal, not the goal itself. Unclear answer is a strong signal that alignment is missing. Seek dialogue, and capture what it settles so the graph carries the goal more clearly. Design everything around the goal, the process included. Never bend the goal to fit the process.
 
-  **Misfit is a signal.** The process is meant to be adapted per project. When following it takes effort that serves the process rather than the work, that friction is information — possibly about a gap in the process itself. Bring it to dialogue so the process can improve; setting it aside for the work at hand is fine, but that call is the user's.
+  **Misfit is a signal.** The process is meant to be adapted per project. Following it takes effort that serves the process, not the work? That friction is information, possibly about a gap in the process itself. Bring it to dialogue so the process can improve. Setting it aside for the work at hand is fine, but that call is the user's.
 
-  **The graph prepares the dialogue; the dialogue moves the graph.** Show up prepared: research what the graph holds about the intent at hand and bring that material into the dialogue — contributing without having looked means making things up. Yet the graph is a picture of the project, never the project itself: incomplete and possibly outdated, because no record keeps pace with everyone and everything involved. In dialogue that picture meets the participants' words and the observable world, and any of these can contradict the others — surface such contradictions; settling or skipping them is the user's call. Alignment is the aim — participants with each other, the picture with reality — so that the graph leaves every dialogue truer than it entered.
+  **The graph prepares the dialogue; the dialogue moves the graph.** Show up prepared. Research what the graph holds about the intent at hand; bring that material into the dialogue. Contributing without having looked means making things up. Yet the graph is a picture of the project, never the project itself. It is incomplete and possibly outdated: no record keeps pace with everyone and everything involved. In dialogue that picture meets the participants' words and the observable world. Any of these can contradict the others. Surface such contradictions; settling or skipping them is the user's call. Alignment is the aim: participants with each other, the picture with reality. The graph then leaves every dialogue truer than it entered.
 
-  **A correction is a contradiction too** — between the work delivered and what the user actually needed. The same scheme applies, with one addition: ask why it occurred, not only where — and settle in dialogue what would prevent that kind of error from recurring: knowledge to capture, process to adapt, or both.
+  **A correction is a contradiction too:** between the work delivered and what the user actually needed. Same scheme applies, plus one step. Ask why it occurred, not only where. Settle in dialogue what would prevent that kind of error recurring: knowledge to capture, process to adapt, or both.
 
-  **Expect novelty.** Not everything can be grounded in what exists — looking similar is not fitting, and a forced fit becomes a false floor to reason from. What is genuinely new deserves to be treated as new, connected only where connections are real.
+  **Expect novelty.** Not everything can be grounded in what exists. Looking similar is not fitting; a forced fit becomes a false floor to reason from. What is truly new deserves treatment as new, connected only where connections are real.
 
-  **When work stops resolving, step up.** Corrections accumulate, something stays unclear, progress grinds — the instinct is to push harder at the current level of detail. Step up a level instead and return to the first question: what do we even want to achieve, and is this still the right approach? That belongs in the dialogue, not in more detail work.
+  **When work stops resolving, step up.** Corrections pile up, something stays unclear, progress grinds. Instinct says push harder at the current level of detail. Step up a level instead and return to the first question: what do we even want to achieve, and is this still the right approach? That belongs in the dialogue, not in more detail work.
 
   ## Recent graph movement
 
     20261109-010000-d-prc-vfy process procedure decision Verify is the deep draft verifier, run as the delegate a capture dispatches once pre-flight leaves no high…
-    20260828-160000-s-prc-rfk process fact signal The reference kinds connect entries: a ref is a contextual pointer with no status effect, written on the…
-    20260818-120000-s-prc-dsc process fact signal The tests that settle an entry's kind when two compete, sorted by the drafter's situation rather than by…
-    20260818-110500-s-prc-ann process fact signal The annotation kind adds no proposition of its own — it lays topic labels over entries already written so a…
-    20260818-110400-s-prc-asp process fact signal The aspiration kind records a decision on a perpetual direction the work is pulled toward — binding no single…
-    20260818-110300-s-prc-foc process fact signal The focus kind records a decision naming what the project is advancing right now and who carries each piece —…
-    20260818-110200-s-prc-dsp process fact signal The activity kind records a commitment that one specific piece of work happens — its choosing already settled…
-    20260818-110100-s-prc-rol process fact signal The role kind grants one named participant a part on this project — settled with the person in dialogue…
-    20260818-110000-s-prc-act process fact signal The actor kind records who a participant is — a declared identity, human or not, carried by a canonical name…
-    20260818-100000-s-prc-spc process fact signal The plan kind records a decision on what must be true when a piece of work is done — an outcome rather than a…
+    20260828-160000-s-prc-rfk process fact signal Reference kinds connect entries: a ref is a contextual pointer with no status effect, written on the source…
+    20260818-120000-s-prc-dsc process fact signal Tests that settle an entry's kind when two compete, sorted by the drafter's situation, not by pair.
+    20260818-110500-s-prc-ann process fact signal Annotation kind adds no proposition of its own: it lays topic labels over entries already written, so a…
+    20260818-110400-s-prc-asp process fact signal Aspiration kind records a decision on a perpetual direction the work is pulled toward.
+    20260818-110300-s-prc-foc process fact signal Focus kind records a decision naming what the project advances right now and who carries each piece.
+    20260818-110200-s-prc-dsp process fact signal Activity kind records a commitment that one specific piece of work happens.
+    20260818-110100-s-prc-rol process fact signal Role kind grants one named participant a part on this project: settled with the person in dialogue, bound to…
+    20260818-110000-s-prc-act process fact signal Actor kind records who a participant is: a declared identity, human or not.
+    20260818-100000-s-prc-spc process fact signal Plan kind records a decision on what must be true when a piece of work is done: an outcome, not a mechanism.
 
   Graph health: 2 warning(s), 0 unreadable entry/entries.
   20260601-100000-s-tac-aaa: participant "Tester" does not match any actor canonical in the graph
@@ -59,9 +59,9 @@ open_instances:
       **The branch you work on.** The session framing names the base branch: what the engine reads and writes while no branch is declared. Work happens on another branch? Declare it through the engine's session branch-binding capability. Declare again whenever your work branch changes. Clear the declaration once you are back on the base. Work happens on the base? Declare nothing.
 
       **Reference facts available before composing or guessing.** Pull the relevant fact in full first:
-      - `20260717-110000-s-prc-vwg` — How to compose graph views (view tool): layout grammar, filters, ranking, quoting, and examples
-      - `20260812-180000-s-prc-typ` — Understanding the type system: how types, kinds, and layers fit together, which entry to draft when kinds compete, and where each kind's crafting guide lives
-      - `20260828-160000-s-prc-rfk` — Choosing a reference kind: each kind's meaning and direction, and the tests between neighboring kinds
+      - `20260717-110000-s-prc-vwg` — How to compose graph views (view tool): layout grammar, filters, ranking, quoting, examples
+      - `20260812-180000-s-prc-typ` — Type system: how types, kinds and layers fit together, which kind to draft when kinds compete, where each kind's crafting guide lives
+      - `20260828-160000-s-prc-rfk` — Choosing a reference kind: each kind's meaning and direction, tests between neighboring kinds
 
 
 

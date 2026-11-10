@@ -984,7 +984,7 @@ func TestOrientationListsMoveParamSignatures(t *testing.T) {
 func TestOpeningServeIncludesDerivedFactIndex(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	serve := openSession(t, connect(t, env.srv))
-	const pointer = "- `20260717-110000-s-prc-vwg` — How to compose graph views (view tool): layout grammar, filters, ranking, quoting, and examples"
+	const pointer = "- `20260717-110000-s-prc-vwg` — How to compose graph views (view tool): layout grammar, filters, ranking, quoting, examples"
 	if !strings.Contains(serve.Instructions, pointer) {
 		t.Fatalf("opening serve missing fact pointer %q:\n%s", pointer, serve.Instructions)
 	}

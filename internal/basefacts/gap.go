@@ -44,7 +44,7 @@ func gapMechanics() string {
 	var b strings.Builder
 	b.WriteString("## Mechanics\n\n")
 	fmt.Fprintf(&b, "Gap is a signal kind (the signal kinds: %s).\n\n", strings.Join(kinds, ", "))
-	fmt.Fprintf(&b, "Attention kinds — open entries of these kinds are the graph's open-signal surface: %s.\n\n", strings.Join(attention, ", "))
+	fmt.Fprintf(&b, "Attention kinds, whose open entries are the graph's open-signal surface: %s.\n\n", strings.Join(attention, ", "))
 	fmt.Fprintf(&b, "Enforced at capture: %s.\n", model.SignalCloseRule)
 	return b.String()
 }
