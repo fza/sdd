@@ -159,6 +159,7 @@ func TestServeRefusesCallsWhileTheGraphMoveIsUnsettled(t *testing.T) {
 	fixture := newAppFixture(t)
 	committed := readFile(t, filepath.Join(fixture.root, ".sdd", "config.yaml"))
 	entry := filepath.Join("2026", "09", "14-020000-s-tac-cli.md")
+	second := filepath.Join("2026", "09", "14-030000-s-tac-two.md")
 	fixture.serve(t, func(client *mcp.ClientSession) {
 		session, _ := openSession(t, client)
 		resume := func() string {
@@ -177,16 +178,15 @@ func TestServeRefusesCallsWhileTheGraphMoveIsUnsettled(t *testing.T) {
 		if failure := resume(); !strings.Contains(failure, "holds no entries") {
 			t.Errorf("an empty graph folder should refuse the call, got %q", failure)
 		}
-		fixture.write(t, filepath.ToSlash(filepath.Join("moved", entry)), readFile(t, filepath.Join(fixture.root, "decisions", entry)))
-		if failure := resume(); !strings.Contains(failure, "still in") {
-			t.Errorf("entries left in the folder served before should refuse the call, got %q", failure)
+		content := readFile(t, filepath.Join(fixture.root, "decisions", entry))
+		fixture.write(t, filepath.ToSlash(filepath.Join("decisions", second)), content)
+		fixture.write(t, filepath.ToSlash(filepath.Join("moved", entry)), content)
+		if failure := resume(); !strings.Contains(failure, "1 entries in "+filepath.Join(fixture.root, "decisions")+", the folder served before, are missing") {
+			t.Errorf("an entry the new folder lacks should refuse the call, got %q", failure)
 		}
-		err = os.Remove(filepath.Join(fixture.root, "decisions", entry))
-		if err != nil {
-			t.Fatal(err)
-		}
+		fixture.write(t, filepath.ToSlash(filepath.Join("moved", second)), content)
 		if failure := resume(); failure != "" {
-			t.Errorf("a settled move should serve again: %s", failure)
+			t.Errorf("a move whose former folder keeps the same entries, as a checkout does, should serve again: %s", failure)
 		}
 	})
 }

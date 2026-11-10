@@ -674,7 +674,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	}
 	return &servedProject{
 		access: access, cfg: cfg, layout: layout, sessions: sessions, blobs: blobs,
-		graphDir: graphDir, entries: graphFolderEntries(graphDir).Entries, layers: layers, watched: watched,
+		graphDir: graphDir, entries: len(graphFolderEntries(graphDir).Entries), layers: layers, watched: watched,
 	}, nil
 }
 

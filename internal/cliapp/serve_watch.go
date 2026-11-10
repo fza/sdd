@@ -191,7 +191,7 @@ func (w *configWatch) rebuild() error {
 	return nil
 }
 
-// graphFolderEntries counts the entry files under dir.
+// graphFolderEntries lists the entry files under dir.
 func graphFolderEntries(dir string) model.GraphFolder {
 	folder := model.GraphFolder{Dir: dir}
 	info, err := os.Stat(dir)
@@ -205,7 +205,7 @@ func graphFolderEntries(dir string) model.GraphFolder {
 		}
 		rel, relErr := filepath.Rel(dir, path)
 		if relErr == nil && !entry.IsDir() && model.EntryShaped(rel) {
-			folder.Entries++
+			folder.Entries = append(folder.Entries, filepath.ToSlash(rel))
 		}
 		return nil
 	})
