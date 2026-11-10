@@ -350,6 +350,7 @@ func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSettin
 	if reason := ignoredTokenSaving(layer.Sessions.TokenSaving); reason != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "sessions.token_saving", Reason: reason})
 	}
+	ignored = append(ignored, ignoredVerifyValues(layer.Verify)...)
 	return ignored
 }
 

@@ -168,6 +168,7 @@ type VerifierPolicy struct {
 
 // VerifierPolicy resolves the block's verifier keys against the defaults.
 func (c VerifyConfig) VerifierPolicy() VerifierPolicy {
+	c = c.KnownValues()
 	_, mode := c.ResolvedMode().Settings()
 	return VerifierPolicy{
 		Mode: mode, Skip: c.Skip, Runner: c.Runner, Driver: c.Driver,
@@ -192,8 +193,53 @@ func (p VerifierPolicy) WithDefaults() VerifierPolicy {
 	return p
 }
 
+// KnownValues clears every closed value outside its set, so a value a newer
+// sdd wrote or a typo leaves its key to the layer below
+// (20260921-174543-d-cpt-tv9); IgnoredSettings reports it.
+func (c VerifyConfig) KnownValues() VerifyConfig {
+	if !isClosedValue(c.Mode) {
+		c.Mode = ""
+	}
+	if !isClosedValue(c.Skip) {
+		c.Skip = ""
+	}
+	if !isClosedValue(c.Runner) {
+		c.Runner = ""
+	}
+	if !isClosedValue(c.Claude.Effort) {
+		c.Claude.Effort = ""
+	}
+	return c
+}
+
+func isClosedValue[S interface {
+	~string
+	ClosedValues
+}](value S) bool {
+	return slices.Contains(value.AllowedValues(), string(value))
+}
+
+func ignoredVerifyValues(c VerifyConfig) []IgnoredSetting {
+	var ignored []IgnoredSetting
+	for _, setting := range []struct {
+		key, value string
+		allowed    []string
+	}{
+		{"verify.mode", string(c.Mode), c.Mode.AllowedValues()},
+		{"verify.skip", string(c.Skip), c.Skip.AllowedValues()},
+		{"verify.runner", string(c.Runner), c.Runner.AllowedValues()},
+		{"verify.claude.effort", string(c.Claude.Effort), c.Claude.Effort.AllowedValues()},
+	} {
+		if setting.value != "" && !slices.Contains(setting.allowed, setting.value) {
+			ignored = append(ignored, IgnoredSetting{Key: setting.key, Reason: fmt.Sprintf("%q is not %s", setting.value, oneOf(setting.allowed))})
+		}
+	}
+	return ignored
+}
+
 func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
-	out := base
+	out := base.KnownValues()
+	overlay = overlay.KnownValues()
 	if overlay.Mode != "" {
 		out.Mode = overlay.Mode
 	}
@@ -231,6 +277,15 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 	return out
 }
 
+func knownVerifyLayer(layer *PerRepoConfig) *PerRepoConfig {
+	if layer == nil {
+		return nil
+	}
+	known := *layer
+	known.Verify = layer.Verify.KnownValues()
+	return &known
+}
+
 func mergeVerifierAgent(base, overlay VerifierAgent) VerifierAgent {
 	if overlay.Model != "" {
 		base.Model = overlay.Model
@@ -241,14 +296,16 @@ func mergeVerifierAgent(base, overlay VerifierAgent) VerifierAgent {
 	return base
 }
 
-// CheckVerifyLayers refuses a verify configuration that cannot hold: an
-// unknown value, a machine-local value loosening what the user-global and
-// committed layers set, a driver in the committed config, or a driver
-// runner no layer names a command for (V-D19). files names the file behind
-// each layer; the refusal names the key, and the file of every layer it
-// judges.
+// CheckVerifyLayers refuses a verify configuration that cannot hold: a
+// machine-local value loosening what the user-global and committed layers
+// set, a driver in the committed config, or a driver runner no layer names a
+// command for (V-D19). It judges the known values only, as a read does;
+// VerifyKeyRefusal also refuses an unknown one on write. files names the
+// file behind each layer; the refusal names the key, and the file of every
+// layer it judges.
 func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
-	problems := verifyLayerProblems(global, committed, local, files)
+	global.Verify = global.Verify.KnownValues()
+	problems := verifyLayerProblems(global, knownVerifyLayer(committed), knownVerifyLayer(local), files)
 	if len(problems) == 0 {
 		return nil
 	}
@@ -295,21 +352,8 @@ func verifyLayerProblems(global BaseConfig, committed, local *PerRepoConfig, fil
 	}
 	for _, layer := range layers {
 		verify := layer.cfg.Verify
-		for _, setting := range []struct {
-			key, value string
-			allowed    []string
-		}{
-			{"verify.mode", string(verify.Mode), verify.Mode.AllowedValues()},
-			{"verify.skip", string(verify.Skip), verify.Skip.AllowedValues()},
-			{"verify.runner", string(verify.Runner), verify.Runner.AllowedValues()},
-			{"verify.claude.effort", string(verify.Claude.Effort), verify.Claude.Effort.AllowedValues()},
-		} {
-			if setting.value == "" {
-				continue
-			}
-			if err := checkClosedValue(setting.key, setting.value, setting.allowed); err != nil {
-				refuse(setting.key, fmt.Errorf("%s: %w", layerFile(layer.source, files), err))
-			}
+		for _, unknown := range ignoredVerifyValues(verify) {
+			refuse(unknown.Key, fmt.Errorf("%s: %s %s", layerFile(layer.source, files), unknown.Key, unknown.Reason))
 		}
 		if layer.source == ConfigSourceProject && verify.Driver.Command != "" {
 			refuse("verify.driver", fmt.Errorf("%s: verify.driver is refused in the committed config, since its command would run on every contributor's machine; set it in the user-global or the machine-local config", layerFile(layer.source, files)))
@@ -413,9 +457,9 @@ func (p VerifierPolicy) SubagentAgent(clientName string) VerifierAgent {
 	return VerifierAgent{}
 }
 
-// ResolvedMode is the block's mode, DefaultVerifyMode when unset.
+// ResolvedMode is the block's mode, DefaultVerifyMode when unset or unknown.
 func (c VerifyConfig) ResolvedMode() VerifyMode {
-	if c.Mode == "" {
+	if !isClosedValue(c.Mode) {
 		return DefaultVerifyMode
 	}
 	return c.Mode

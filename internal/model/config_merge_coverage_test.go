@@ -70,6 +70,11 @@ func setDistinctive(t *testing.T, f reflect.Value) {
 	t.Helper()
 	switch f.Kind() {
 	case reflect.String:
+		// A closed value outside its set merges as unset (VerifyConfig.KnownValues).
+		if closed, ok := f.Interface().(model.ClosedValues); ok {
+			f.SetString(closed.AllowedValues()[0])
+			return
+		}
 		f.SetString("x")
 	case reflect.Int, reflect.Int64:
 		f.SetInt(7)
