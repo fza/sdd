@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
+
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/gitgate"
@@ -415,6 +417,15 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 	if err != nil {
 		return false, err
 	}
+	formerDir := filepath.Join(source.root, source.graphDir)
+	err = carryRuntimeDir(formerDir, filepath.Join(target.root, target.graphDir))
+	if err != nil {
+		return false, err
+	}
+	err = removeIfEmpty(formerDir)
+	if err != nil {
+		return false, err
+	}
 	if vacated {
 		// The machine-local folders moved out leave .sdd/ empty, which git
 		// keeps no record of.
@@ -779,6 +790,66 @@ func moveTree(from, to string) error {
 		return err
 	}
 	return os.RemoveAll(from)
+}
+
+// carryRuntimeDir moves the runtime folder of the graph folder from to the
+// graph folder to, file by file, then removes it once empty. A file whose
+// name the new folder holds already, or one another process holds a lock
+// on, stays where it is.
+func carryRuntimeDir(from, to string) error {
+	from, to = filepath.Join(from, model.GraphRuntimeDir), filepath.Join(to, model.GraphRuntimeDir)
+	files, err := os.ReadDir(from)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		err = carryRuntimeFile(filepath.Join(from, file.Name()), filepath.Join(to, file.Name()))
+		if err != nil {
+			return fmt.Errorf("carrying the graph's runtime folder: %w", err)
+		}
+	}
+	return removeIfEmpty(from)
+}
+
+// carryRuntimeFile renames file to dest unless dest exists or a lock on file
+// is held; the probe's own lock is released before the rename, so no held
+// lock file is renamed.
+func carryRuntimeFile(file, dest string) error {
+	_, err := os.Lstat(dest)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	probe := flock.New(file)
+	taken, err := probe.TryLock()
+	if err != nil || !taken {
+		return err
+	}
+	err = probe.Unlock()
+	if err != nil {
+		return err
+	}
+	err = os.MkdirAll(filepath.Dir(dest), 0o755)
+	if err != nil {
+		return err
+	}
+	return os.Rename(file, dest)
+}
+
+func removeIfEmpty(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil || len(entries) > 0 {
+		return err
+	}
+	return os.Remove(dir)
 }
 
 // carryStrays carries the entries the former locations of the graph at home
