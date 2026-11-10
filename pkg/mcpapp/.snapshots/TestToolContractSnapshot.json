@@ -1,11 +1,11 @@
 [
   {
-    "description": "Abandon a running move instance (instance, plus session naming the session it belongs to), or tear down a session directly by handle (session alone) — one call, no resume, no framing; the response names the label and discarded threads. Nothing is cleaned up implicitly: held WIP markers are surfaced and left standing for resume or grooming. The session shell concludes through its own junction, never through abandon.",
+    "description": "Abandon a running move instance (instance, plus session naming the session it belongs to). Or tear down a session directly by handle (session alone): one call, no resume, no framing. The response names the label and discarded threads. Nothing is cleaned up implicitly: held WIP markers are surfaced and left standing for resume or grooming. The session shell concludes through its own junction, never through abandon.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "instance": {
-          "description": "instance handle to abandon (a move); pass session too, naming the session the move belongs to",
+          "description": "instance handle of the move to abandon; pass session too, naming the session the move belongs to",
           "type": "string"
         },
         "reason": {
@@ -13,7 +13,7 @@
           "type": "string"
         },
         "session": {
-          "description": "with instance: the attached session the move belongs to (required). Alone: a session handle to tear down directly — no resume, no framing",
+          "description": "with instance: the attached session the move belongs to (required). Alone: a session handle to tear down directly; no resume, no framing",
           "type": "string"
         }
       },
@@ -35,7 +35,7 @@
           "type": "boolean"
         },
         "session": {
-          "description": "session handle this connection is attached to",
+          "description": "attached session's handle",
           "type": "string"
         }
       },
@@ -47,7 +47,7 @@
     "name": "bind_branch"
   },
   {
-    "description": "Ground a draft before its capture, in one call, within the session named by session (required): on a small graph every live entry's brief; above it a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry already served in full prints as a pointer with its brief.",
+    "description": "Ground a draft before its capture, in one call; session required. On a small graph: every live entry's brief. Above it: a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry already served in full prints as a pointer with its brief.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -66,11 +66,11 @@
           ]
         },
         "instance": {
-          "description": "the running capture this reading grounds: its reported draft writes the searches, and only reads made through gather inside it count for its grounding. Report the draft at assemble first",
+          "description": "the running capture this reading grounds. Its reported draft writes the searches. Only reads made through gather inside it count for its grounding. Report the draft at assemble first",
           "type": "string"
         },
         "session": {
-          "description": "session handle this connection is attached to (from start_session or resume_session); required",
+          "description": "attached session's handle, from start_session or resume_session; required",
           "type": "string"
         },
         "topics": {
@@ -89,16 +89,16 @@
     "name": "gather"
   },
   {
-    "description": "Session framing header for the session named by session (required): project, local participant, configured language, and available search modes.",
+    "description": "Session framing header; session required. Project, local participant, configured language, available search modes.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "project": {
-          "description": "project to describe; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read",
+          "description": "project to describe; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal",
           "type": "string"
         },
         "session": {
-          "description": "session handle this connection is attached to (from start_session or resume_session); required — the header describes that session's project",
+          "description": "attached session's handle, from start_session or resume_session; required. The header describes that session's project",
           "type": "string"
         }
       },
@@ -107,7 +107,7 @@
     "name": "info"
   },
   {
-    "description": "Advance a procedure instance in the session named by session (required): send state fields per the served report_schema, or answer a pending chooser with {chooser, choice, userWords?, reason?, fields?}. User choosers must carry the user's answer relayed verbatim in userWords, unless the served schema offers reason for a choice you decide yourself. For an unfinished operation, omit report and pass its exact retry_ref to continue or cancel_ref to leave its effects in place and return to the preceding interaction. Other transitions remain blocked until the operation is retried or cancelled. When a move ends, the response carries the session shell's serve — where the dialogue lands.",
+    "description": "Advance a procedure instance; session required. Send state fields per the served report_schema, or answer a pending chooser with {chooser, choice, userWords?, reason?, fields?}. User choosers must carry the user's answer, relayed verbatim, in userWords. Exception: the served schema offers reason for a choice you decide yourself. Unfinished operation: omit report and pass its exact retry_ref to continue, or cancel_ref to leave its effects in place and return to the preceding interaction. Other transitions stay blocked until the operation is retried or cancelled. When a move ends, the response carries the session shell's serve: where the dialogue lands.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -121,7 +121,7 @@
           "type": "string"
         },
         "label": {
-          "description": "update the session's subject label when the dialogue's subject has sharpened",
+          "description": "update the session's subject label when the dialogue's subject sharpens",
           "type": "string"
         },
         "report": {
@@ -135,7 +135,7 @@
           "type": "integer"
         },
         "session": {
-          "description": "session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction",
+          "description": "attached session's handle, from start_session or resume_session; required. Retain it across context compaction",
           "type": "string"
         }
       },
@@ -147,7 +147,7 @@
     "name": "next"
   },
   {
-    "description": "Park a running move back to the session junction (session required): state and step position keep, the move lists as an open thread (at junctions and on conclude), and next resumes it. Use it when the user shelves work mid-dialogue — a seeded draft parks as a graph-visible thread instead of living in conversation memory as an agent promise.",
+    "description": "Park a running move back to the session junction; session required. State and step position keep. The move lists as an open thread (at junctions and on conclude), and next resumes it. Use it when the user shelves work mid-dialogue. A seeded draft then parks as a graph-visible thread, not as an agent promise living in conversation memory.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -156,11 +156,11 @@
           "type": "string"
         },
         "note": {
-          "description": "one line on why the move is shelved — carried in the session log for whoever resumes it",
+          "description": "one line on why the move is shelved; the session log carries it for whoever resumes it",
           "type": "string"
         },
         "session": {
-          "description": "session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction",
+          "description": "attached session's handle, from start_session or resume_session; required. Retain it across context compaction",
           "type": "string"
         }
       },
@@ -172,7 +172,7 @@
     "name": "park"
   },
   {
-    "description": "Read an attachment's content, paged, within the session named by session (required): an entry's by ID and filename, or a file staged in the session (before any entry carries it) by handle. Never derive storage paths.",
+    "description": "Read an attachment's content, paged; session required. Either an entry's, by ID and filename, or a file staged to that session before any entry carries it, by handle. Never derive storage paths.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -197,11 +197,11 @@
           "type": "integer"
         },
         "project": {
-          "description": "project to read the entry's attachment in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read",
+          "description": "project to read the entry's attachment in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal",
           "type": "string"
         },
         "session": {
-          "description": "session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project, and a staged file is read from that session",
+          "description": "attached session's handle, from start_session or resume_session; required. The read runs in that session's project; a staged file is read from that session",
           "type": "string"
         }
       },
@@ -210,7 +210,7 @@
     "name": "read_attachment"
   },
   {
-    "description": "Engine function contracts (predicates, queries, commands) — what procedure spec authors consult. Carries the session handle like every other tool.",
+    "description": "Engine function contracts (predicates, queries, commands) for procedure spec authors. Carries the session handle like every other tool.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -219,7 +219,7 @@
           "type": "string"
         },
         "session": {
-          "description": "session handle this connection is attached to (from start_session or resume_session); required",
+          "description": "attached session's handle, from start_session or resume_session; required",
           "type": "string"
         }
       },
@@ -228,12 +228,12 @@
     "name": "registry"
   },
   {
-    "description": "The second door, and the compaction escape: re-serve the current position of the session whose handle you present — its framing plus every running move at its current step, each with the report schema to continue it. Presenting the handle is the whole authorization (a handle reaches you only by issuance or by the user handing it over), and it declares that you need re-serving: the served-once memory resets, so the complete position serves in full. Only recorded session state resumes — step position, collected fields, staged files — never another conversation's context. A lost handle is the user's to recover, not yours to guess.",
+    "description": "The second door, and the compaction escape. Re-serves the current position of the session whose handle you present: its framing plus every running move at its current step, each with the report schema to continue it. Presenting the handle is the whole authorization. A handle reaches you only by issuance or by the user handing it over. Presenting it also declares you need re-serving: the served-once memory resets, so the complete position serves in full. Only recorded session state resumes (step position, collected fields, staged files), never another conversation's context. A lost handle is the user's to recover, not yours to guess.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "session": {
-          "description": "the session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step with the schema to continue it. Presenting the handle is the whole authorization; it also declares that you need re-serving, so the served-once memory resets and the complete position serves in full",
+          "description": "session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step, with the schema to continue it. Presenting the handle is the whole authorization. It also declares you need re-serving: the served-once memory resets and the complete position serves in full",
           "type": "string"
         }
       },
@@ -245,7 +245,7 @@
     "name": "resume_session"
   },
   {
-    "description": "Search graph entries: terms (text/regex), query (semantic phrase), or both (hybrid). A free read within the session named by session (required): no move needed, never blocked by procedure state; it runs in that session's project and branch.",
+    "description": "Search graph entries: terms (text/regex), query (semantic phrase), or both (hybrid). A free read; session required. No move needed, never blocked by procedure state. Runs in that session's project and branch.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -280,7 +280,7 @@
           ]
         },
         "project": {
-          "description": "project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read",
+          "description": "project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal",
           "type": "string"
         },
         "query": {
@@ -298,7 +298,7 @@
           ]
         },
         "session": {
-          "description": "session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch",
+          "description": "attached session's handle, from start_session or resume_session; required. The read runs in that session's project and branch",
           "type": "string"
         },
         "terms": {
@@ -321,7 +321,7 @@
     "name": "search"
   },
   {
-    "description": "Read entries in full with their upstream and downstream reference chains, within the session named by session (required). Use whenever the dialogue touches a specific entry — summaries are pointers, not facts.",
+    "description": "Read entries in full with their upstream and downstream reference chains; session required. Use whenever the dialogue touches a specific entry: summaries are pointers, not facts.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -343,11 +343,11 @@
           ]
         },
         "project": {
-          "description": "project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read",
+          "description": "project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal",
           "type": "string"
         },
         "session": {
-          "description": "session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch",
+          "description": "attached session's handle, from start_session or resume_session; required. The read runs in that session's project and branch",
           "type": "string"
         },
         "up": {
@@ -366,7 +366,7 @@
     "name": "show"
   },
   {
-    "description": "Stage a file into the session scratch (session required) and get back a handle to pass in a report's attachments field, or as a capture's bodyHandle when the file holds the entry body, plus the sha256 of the staged bytes; or amend what is already staged: with patches, the file named by name is edited in place through atomic search-replace pairs instead of re-staging it whole. A path is only read, never written. Never a graph write — the write gate materializes staged files with the entry.",
+    "description": "Stage a file into the session scratch; session required. Returns a handle and the sha256 of the staged bytes. Pass the handle in a report's attachments field, or as a capture's bodyHandle when the file holds the entry body. Or amend what is already staged: with patches, the file named by name is edited in place through atomic search-replace pairs, not re-staged whole. A path is only read, never written. Never a graph write: the write gate materializes staged files with the entry.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -379,7 +379,7 @@
           "type": "string"
         },
         "patches": {
-          "description": "edit the already-staged file named by name in place: ordered exact search-replace pairs applied atomically — each old must match exactly once, a failing pair refuses the whole edit. Pass instead of content/path",
+          "description": "edit the already-staged file named by name in place: ordered exact search-replace pairs, applied atomically. Each old must match exactly once; a failing pair refuses the whole edit. Pass instead of content/path",
           "items": {
             "additionalProperties": false,
             "properties": {
@@ -388,7 +388,7 @@
                 "type": "string"
               },
               "old": {
-                "description": "exact text to replace — must match exactly once in the file as it stands when this pair applies",
+                "description": "exact text to replace; must match exactly once in the file as it stands when this pair applies",
                 "type": "string"
               }
             },
@@ -408,7 +408,7 @@
           "type": "string"
         },
         "session": {
-          "description": "session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction",
+          "description": "attached session's handle, from start_session or resume_session; required. Retain it across context compaction",
           "type": "string"
         }
       },
@@ -420,12 +420,12 @@
     "name": "stage_attachment"
   },
   {
-    "description": "Start a procedure instance (a playbook move such as capture) in the session named by session (required). Returns the current step's instructions, the report schema to answer with, and the goal that advances it. This is the only path that leads to graph writes — writes happen inside procedure transitions, never through a direct tool.",
+    "description": "Start a procedure instance (a playbook move such as capture); session required. Returns the current step's instructions, the report schema to answer with, and the goal that advances it. The only path to graph writes: writes happen inside procedure transitions, never through a direct tool.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "canonical": {
-          "description": "the procedure to start, by its stable name (e.g. capture)",
+          "description": "procedure to start, by its stable name (e.g. capture)",
           "type": "string"
         },
         "label": {
@@ -434,19 +434,19 @@
         },
         "params": {
           "additionalProperties": true,
-          "description": "typed start inputs per the procedure's declaration: declared params, plus any declared state field the caller wants to seed at start (e.g. a known anchor)",
+          "description": "typed start inputs per the procedure's declaration: declared params, plus any declared state field to seed at start (e.g. a known anchor)",
           "type": "object"
         },
         "parent": {
-          "description": "instance handle of the spawning instance, when this is a sub-move (e.g. a capture dispatched from an engage); records lineage in the session log",
+          "description": "instance handle of the spawning instance, for a sub-move (e.g. a capture dispatched from an engage); records lineage in the session log",
           "type": "string"
         },
         "project": {
-          "description": "project the move works in, when not the session's home project: it must lie in the home project's declared dependency closure and be one the principal can read. Omitted, a foreign anchor selects its project, else the parent's, else the home project",
+          "description": "project the move works in, when not the session's home project. It must lie in the home project's declared dependency closure and be readable by the principal. Omitted: a foreign anchor selects its project, else the parent's, else the home project",
           "type": "string"
         },
         "session": {
-          "description": "session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction",
+          "description": "attached session's handle, from start_session or resume_session; required. Retain it across context compaction",
           "type": "string"
         }
       },
@@ -458,7 +458,7 @@
     "name": "start_procedure"
   },
   {
-    "description": "Open a fresh dialogue session — one of the two doors, and the only tool that takes a project. Auto-starts the session shell (user-dialogue by default) and returns its opening serve: your orientation, the available moves, and the returned session handle. That handle is the dialogue's identity and binds the session to one project — retain it across context compaction and pass it to every other tool, reads included. Pass project when the composition serves several; omitted, a sole accessible project is inferred, and with several the response lists them (status project-required) instead of opening a session. Every call opens a new dialogue under a new handle; to re-serve an existing one, present its handle to resume_session.",
+    "description": "Open a fresh dialogue session. One of the two doors, and the only tool that takes a project. Auto-starts the session shell (user-dialogue by default). Returns its opening serve: your orientation, the available moves, and the session handle. The handle is the dialogue's identity and binds the session to one project. Retain it across context compaction. Pass it to every other tool, reads included. Pass project when the composition serves several. Without project, a sole accessible project is inferred. With several, the response lists them (status project-required) and opens no session. Every call opens a new dialogue under a new handle. To re-serve an existing one, present its handle to resume_session.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -467,7 +467,7 @@
           "type": "string"
         },
         "project": {
-          "description": "project to open the session in, by ID. Optional: a composition serving one project infers it; when several are accessible and none is passed, the response lists them under projects instead of starting a session — pick one and call again",
+          "description": "project to open the session in, by ID. Optional: a composition serving one project infers it. With several accessible and none passed, the response lists them under projects and starts no session. Pick one and call again",
           "type": "string"
         },
         "shell": {
@@ -480,12 +480,12 @@
     "name": "start_session"
   },
   {
-    "description": "Run the sync round of the connected repositories (session required): each repository's sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to name them; omitted, every connected repository syncs. Returns one outcome per repository.",
+    "description": "Run the sync round of the connected repositories; session required. Each repository's sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to name them. Without repos, every connected repository syncs. Returns one outcome per repository.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "repos": {
-          "description": "connected repositories to sync, by repo ID; omitted, every repository connected on this machine",
+          "description": "connected repositories to sync, by repo ID. Omitted: every repository connected on this machine",
           "items": {
             "type": "string"
           },
@@ -495,7 +495,7 @@
           ]
         },
         "session": {
-          "description": "session handle this connection is attached to (from start_session or resume_session); required; the sync runs for that session's home project",
+          "description": "attached session's handle, from start_session or resume_session; required. The sync runs for that session's home project",
           "type": "string"
         }
       },
@@ -504,7 +504,7 @@
     "name": "sync_repos"
   },
   {
-    "description": "Run an sdd view layout pipeline over the graph — overview sections, topic counts, ranked lists. A free read within the session named by session (required).",
+    "description": "Run an sdd view layout pipeline over the graph: overview sections, topic counts, ranked lists. A free read; session required.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -517,7 +517,7 @@
           "type": "string"
         },
         "project": {
-          "description": "project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read",
+          "description": "project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal",
           "type": "string"
         },
         "repos": {
@@ -531,7 +531,7 @@
           ]
         },
         "session": {
-          "description": "session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch",
+          "description": "attached session's handle, from start_session or resume_session; required. The read runs in that session's project and branch",
           "type": "string"
         }
       },
