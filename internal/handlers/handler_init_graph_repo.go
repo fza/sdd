@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/meta"
@@ -23,8 +24,8 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd, chang
 	if cmd.Bump {
 		return fmt.Errorf("--bump raises the graph repository's minimum_version; run it where %s is checked out", cmd.GraphRepo)
 	}
-	if h.graphClones == nil || h.projectRepos == nil || h.repositoryAt == nil {
-		return errors.New("graph_repo needs sdd's graph clones and a git adapter")
+	if h.graphClones == nil || h.projectRepos == nil || h.repositoryAt == nil || h.cloneRound == nil {
+		return errors.New("graph_repo needs sdd's graph clones, their sync round and a git adapter")
 	}
 	sddDir := filepath.Join(cmd.RepoRoot, model.SDDDirName)
 	configPath := filepath.Join(sddDir, "config.yaml")
@@ -51,7 +52,8 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd, chang
 		return err
 	}
 
-	err = h.EnsureGraphClone(ctx, &command.EnsureGraphCloneCmd{RepoID: cmd.GraphRepo, CodeOrigin: cmd.RemoteURL})
+	cloned := false
+	err = h.EnsureGraphClone(ctx, &command.EnsureGraphCloneCmd{RepoID: cmd.GraphRepo, CodeOrigin: cmd.RemoteURL, OnCloned: func(string) { cloned = true }})
 	if err != nil {
 		return err
 	}
@@ -62,6 +64,16 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd, chang
 	projectCfg, _, err := meta.ReadConfigLayers(meta.SDDDir(cloneDir), "")
 	if err != nil {
 		return err
+	}
+	if projectCfg != nil && !cloned {
+		err = h.syncGraphClone(ctx, cmd.GraphRepo, cloneDir)
+		if err != nil {
+			return err
+		}
+		projectCfg, _, err = meta.ReadConfigLayers(meta.SDDDir(cloneDir), "")
+		if err != nil {
+			return err
+		}
 	}
 	if projectCfg != nil && (cmd.GraphDir != "" || cmd.Language != "") {
 		return fmt.Errorf("--graph-dir and --language configure the graph repository %s, which is set up already", cmd.GraphRepo)
@@ -183,4 +195,28 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd, chang
 		touched = append(touched, guardPath)
 	}
 	return h.installAgentSurfaces(ctx, cmd, agents, scope, touched, initCommitMessage(configExisted), changed)
+}
+
+// syncGraphClone runs the sync round of the clone of repoID at dir, which
+// existed before this init, so the refresh builds on the remote's state
+// (20261110-134112-d-tac-42w). A fetch the gate defers leaves the clone as
+// its last fetch, minutes before, left it.
+func (h *Handler) syncGraphClone(ctx context.Context, repoID model.RepoID, dir string) error {
+	var mu sync.Mutex
+	var blocks []model.SyncBlocked
+	roundCtx := WithSyncReport(ctx, func(block model.SyncBlocked) {
+		mu.Lock()
+		defer mu.Unlock()
+		blocks = append(blocks, block)
+	})
+	err := h.cloneRound.SyncClone(roundCtx, dir, &command.SyncRoundCmd{Explicit: true})
+	if err != nil {
+		return fmt.Errorf("syncing the clone of %s: %w", repoID, err)
+	}
+	for _, block := range blocks {
+		if !block.TitlesFailed() {
+			return fmt.Errorf("syncing the clone of %s: %s", repoID, block.Reason())
+		}
+	}
+	return nil
 }

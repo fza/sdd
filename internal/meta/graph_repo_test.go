@@ -77,6 +77,68 @@ func TestResolveProjectFollowsGraphRepo(t *testing.T) {
 	}
 }
 
+// A repository init switches to a graph repository resolves as that graph
+// repository's project while it still points through project_dir, so its
+// local layer may hold the settings a graph_repo project keeps there.
+func TestResolveSwitchedProject(t *testing.T) {
+	const switched = model.RepoID("example.test/acme/next-sdd")
+	cases := []struct {
+		name      string
+		work      map[string]string
+		wantRepo  model.RepoID
+		wantError string
+	}{
+		{
+			name:     "project_dir with project settings in the local file",
+			work:     map[string]string{"config.yaml": "project_dir: ../project\nskill_scope: project\nsupported_agents: [claude]\n", "config.local.yaml": "participant: Ada\ndialogue:\n  mode: guided\n"},
+			wantRepo: switched,
+		},
+		{
+			name:     "graph_repo naming another graph repository",
+			work:     map[string]string{"config.yaml": "graph_repo: example.test/acme/app-sdd\n"},
+			wantRepo: switched,
+		},
+		{
+			name:     "a project of its own resolves as itself",
+			work:     map[string]string{"config.yaml": "graph_dir: .sdd/graph\nlanguage: en\n"},
+			wantRepo: "",
+		},
+		{
+			name:      "a project setting beside project_dir",
+			work:      map[string]string{"config.yaml": "project_dir: ../project\nlanguage: de\n"},
+			wantError: "sets language",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			work := filepath.Join(root, "work")
+			for name, content := range tc.work {
+				writeConfig(t, work, name, content)
+			}
+			clones := filepath.Join(root, "clones")
+			project, err := meta.ResolveSwitchedProject(work, switched, func(id model.RepoID) (string, error) {
+				return filepath.Join(clones, string(id)), nil
+			})
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("the repository should be refused with the reason: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if project.GraphRepo != tc.wantRepo {
+				t.Errorf("the project should be the one the switch names, got %q", project.GraphRepo)
+			}
+			if tc.wantRepo != "" && project.LocalConfigPath("") != filepath.Join(work, ".sdd", "config.local.yaml") {
+				t.Errorf("the local layer should be the code repository's, got %q", project.LocalConfigPath(""))
+			}
+		})
+	}
+}
+
 func TestProjectLocalConfigPath(t *testing.T) {
 	cases := []struct {
 		name     string

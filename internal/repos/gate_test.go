@@ -27,7 +27,11 @@ type countingGit struct {
 	// remote is the URL a clone's remote has; empty is the graph repository
 	// of the graph clone tests.
 	remote string
+	// idle is a clone holding no commits its upstream lacks.
+	idle bool
 }
+
+func (g *countingGit) CommitsWaiting(context.Context, string) (bool, error) { return !g.idle, nil }
 
 func (g *countingGit) ExpandURL(_ context.Context, url string) (string, error) { return url, nil }
 
@@ -164,6 +168,15 @@ func TestGraphClonesPassTheGate(t *testing.T) {
 	}
 	if git.pushes != 1 {
 		t.Error("a deferred publish should not reach git")
+	}
+
+	git.idle = true
+	err = clones.Publish(t.Context(), repoID)
+	if err != nil {
+		t.Errorf("a publish with no commits waiting should succeed within the push cooldown, got %v", err)
+	}
+	if git.pushes != 1 {
+		t.Error("a publish with no commits waiting should not push")
 	}
 }
 

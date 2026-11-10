@@ -58,6 +58,20 @@ type Options struct {
 // root-global so every subcommand resolves the same layer.
 var localConfigOverride string
 
+// switchingGraphRepo carries init's --graph-repo: the working directory's
+// project resolves as that graph repository's for the whole invocation
+// (meta.ResolveSwitchedProject). Process-wide for the reason
+// localConfigOverride is.
+var switchingGraphRepo model.RepoID
+
+// resolveWorkProject resolves the project governing workRoot.
+func resolveWorkProject(workRoot string, graphClone func(model.RepoID) (string, error)) (meta.Project, error) {
+	if switchingGraphRepo != "" {
+		return meta.ResolveSwitchedProject(workRoot, switchingGraphRepo, graphClone)
+	}
+	return meta.ResolveProject(workRoot, graphClone)
+}
+
 // resolveLLMConfig builds the effective LLMConfig for a command from the
 // config overlay (user-global base, then .sdd/config.yaml, then
 // .sdd/config.local.yaml) and applies CLI flag overrides. Missing config
@@ -293,7 +307,7 @@ func localConfigLayer() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	project, err := meta.ResolveProject(workRoot, repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir)
+	project, err := resolveWorkProject(workRoot, repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir)
 	if err != nil {
 		return "", err
 	}
@@ -454,6 +468,7 @@ func New(options Options) *cli.Command {
 			// run, including the empty case, so an in-process host running the
 			// command twice does not inherit the previous run's layer.
 			localConfigOverride = ""
+			switchingGraphRepo = ""
 			if path := strings.TrimSpace(cmd.String("local-config")); path != "" {
 				abs, err := filepath.Abs(path)
 				if err != nil {
@@ -1643,7 +1658,7 @@ func resolveProject() (meta.Project, error) {
 		return meta.Project{}, err
 	}
 	clones := repos.NewGraphClones(locations, git.GraphClones{}, gate)
-	project, err := meta.ResolveProject(workRoot, clones.Dir)
+	project, err := resolveWorkProject(workRoot, clones.Dir)
 	if err != nil {
 		return meta.Project{}, err
 	}
@@ -1940,6 +1955,18 @@ func initCmd() *cli.Command {
 				Name:  "verify-runner",
 				Usage: "What runs the deep verifier on this machine: subagent, claude, codex or driver, recorded as verify.runner in the project's .sdd/config.local.yaml (prompted interactively under verify.mode deep while no layer sets it)",
 			},
+		},
+		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			address := strings.TrimSpace(cmd.String("graph-repo"))
+			if address == "" {
+				return ctx, nil
+			}
+			repoID, err := model.DeriveRepoID(address)
+			if err != nil {
+				return ctx, fmt.Errorf("--graph-repo: %w", err)
+			}
+			switchingGraphRepo = repoID
+			return ctx, nil
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			// `--bump` cannot be honoured from a dev build — fail before
@@ -2376,10 +2403,15 @@ func initCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			round, err := cloneRound()
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(handlers.Options{
 				Stderr:              cmd.ErrWriter,
 				Reader:              reader,
 				GraphClones:         repos.NewGraphClones(locations, git.GraphClones{}, gate),
+				CloneRound:          round,
 				Committer:           git.CLI{},
 				Tracker:             git.CLI{},
 				Repos:               mgr,

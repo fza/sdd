@@ -50,6 +50,7 @@ func (g *CloneGit) SparseCone(context.Context, string) ([]string, error) {
 func (g *CloneGit) SetSparseCone(context.Context, string, []string) error  { return nil }
 func (g *CloneGit) KeepGraphClone(context.Context, string, []string) error { return nil }
 func (g *CloneGit) PushGraphClone(context.Context, string) error           { return nil }
+func (g *CloneGit) CommitsWaiting(context.Context, string) (bool, error)   { return true, nil }
 
 func (g *CloneGit) RemoteURL(_ context.Context, dir string) (string, error) {
 	if url := g.Remotes[dir]; url != "" {
