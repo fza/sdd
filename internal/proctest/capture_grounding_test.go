@@ -43,6 +43,9 @@ func TestCaptureGrounding_RefusesUntilTheCaptureIsRead(t *testing.T) {
 	serve = session.Report(t, instance, captureDraft())
 	proctest.RequireStep(t, serve, "assemble")
 	requireDiagnostics(t, serve, "no credited reading", "call gather with instance "+instance)
+	if len(serve.Diagnostics) != 1 {
+		t.Fatalf("a guided capture without hooks owes only its reading, got %v", serve.Diagnostics)
+	}
 
 	session.Gather(t, instance)
 	serve = session.Report(t, instance, map[string]any{"confidence": "medium"})
