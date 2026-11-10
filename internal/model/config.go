@@ -191,8 +191,8 @@ type PerRepoConfig struct {
 	// ProjectDir points a work repository at the sdd project that holds its
 	// graph, kept in a repository of its own: the folder holding that
 	// project's .sdd/, relative to the folder holding this .sdd/ or absolute.
-	// A repository setting it carries no project settings of its own — see
-	// PointerKeys and LocalPointerKeys.
+	// Its committed config carries no project settings of its own (see
+	// PointerKeys); its machine-local layer lies over the project's own.
 	ProjectDir string `yaml:"project_dir,omitempty"`
 	// GraphRepo points a code repository at the repository holding its graph,
 	// which sdd reads and writes only through the clone it owns
@@ -222,9 +222,9 @@ type PerRepoConfig struct {
 // the hooks the repository ships (20261109-213250-d-tac-bve).
 var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents", "hooks"}
 
-// LocalPointerKeys are the keys a machine-local config may set beside
-// project_dir: where this machine keeps the project's checkout, and its own
-// hooks.
+// LocalPointerKeys are the keys of a machine-local config that belong to
+// its own repository, which a graph move leaves in place: where this machine
+// keeps the project's checkout, and the repository's own hooks.
 var LocalPointerKeys = []string{"project_dir", "hooks"}
 
 // GraphRepoPointerKeys are the keys a committed config may set beside

@@ -149,7 +149,7 @@ func TestProjectLocalConfigPath(t *testing.T) {
 		{name: "graph_repo uses the code repository's file", project: meta.Project{Root: "/clone", WorkRoot: "/code", GraphRepo: "example.test/acme/app-sdd"}, want: "/code/.sdd/config.local.yaml"},
 		{name: "--local-config wins", project: meta.Project{Root: "/clone", WorkRoot: "/code", GraphRepo: "example.test/acme/app-sdd"}, override: "/elsewhere.yaml", want: "/elsewhere.yaml"},
 		{name: "a project of its own keeps the file under its .sdd", project: meta.Project{Root: "/code", WorkRoot: "/code"}},
-		{name: "project_dir keeps the project's file", project: meta.Project{Root: "/project", WorkRoot: "/code"}},
+		{name: "project_dir uses the code repository's file over the project's", project: meta.Project{Root: "/project", WorkRoot: "/code"}, want: "/code/.sdd/config.local.yaml"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
