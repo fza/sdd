@@ -9,5 +9,5 @@
 */}}
 {{ define "ref_applicability" -}}
 Admissible ref kinds for this target ({{ .Class }}): {{ .Admissible }}
-Chosen ref kind: {{ .Chosen }} — {{ if .Applicable }}applicable: {{ .Note }}. Applicability is settled mechanically; do not flag it.{{ else }}inapplicable: {{ .Note }}. The mechanical check already blocks this; do not add your own finding for it.{{ end }}
+Chosen ref kind: {{ .Chosen }}, {{ if .Applicable }}applicable: {{ .Note }}. Applicability is settled mechanically. Do not flag it.{{ else }}inapplicable: {{ .Note }}. The mechanical check already blocks this. Do not add your own finding for it.{{ end }}
 {{- end }}
