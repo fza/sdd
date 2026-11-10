@@ -29,9 +29,9 @@ type VerifierPolicy struct {
 	// kind is checked at (model.VerifyConfig.ModeFor); a kind it lacks takes
 	// Mode and the grounding GroundingPolicy enforces.
 	Kinds map[string]string
-	// StricterKinds names, for a kind checked looser than verify.mode, the
-	// kinds checked more strictly (model.VerifyConfig.StricterKinds):
-	// pre-flight then also tests that the draft fits its kind.
+	// StricterKinds names, for each kind, the kinds checked more strictly
+	// (model.VerifyConfig.StricterKinds): where it names any, pre-flight also
+	// tests that the draft fits its kind.
 	StricterKinds map[string][]string
 }
 

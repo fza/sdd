@@ -154,7 +154,7 @@ Default rate limits:
 
 A prose verifier call fills half the context window left after the answer reserve (`llm.max_tokens`), counting 3 characters a token. A reading too large for one call is split into several calls, related entries kept together, and an entry too large on its own is sent as whole paragraphs with markers where text is left out. `sdd init` asks how carefully drafts are checked and writes `verify.mode`.
 
-The drafting agent picks the entry kind, so a draft whose kind is checked looser than `verify.mode` also gets a kind check: pre-flight tests whether the body answers its kind's question or that of a kind checked more strictly, and a misfit blocks the write until the draft is relabelled or you override it.
+The drafting agent picks the entry kind, so a draft whose kind is checked looser than `verify.mode` or than any kind named stricter in `verify.kinds` also gets a kind check: pre-flight tests whether the body answers its kind's question or that of a kind checked more strictly, and a misfit blocks the write until the draft is relabelled or you override it.
 
 A `verify.mode`, `verify.skip`, `verify.runner`, `verify.claude.effort` or `verify.kinds` value outside its set, such as one a newer sdd version wrote, is ignored: every command warns `ignoring config setting` with the key and the file, and the value of the layer below applies, or the default.
 

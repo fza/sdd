@@ -1,6 +1,6 @@
 // Capture under per-kind verify modes (verify.kinds): the draft's kind picks
-// the mode, and a kind checked looser than verify.mode gets the kind-fit
-// check, since the drafter picks the kind.
+// the mode, and a kind checked looser than another gets the kind-fit check,
+// since the drafter picks the kind.
 package proctest_test
 
 import (
