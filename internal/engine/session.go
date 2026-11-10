@@ -898,7 +898,7 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 		allowed[cf.Name] = true
 	}
 	for name := range fields {
-		if !allowed[name] {
+		if !allowed[name] && !inst.Spec.State[name].HostSet {
 			return nil, fmt.Errorf("field %q is not collected by option %q", name, choice)
 		}
 	}

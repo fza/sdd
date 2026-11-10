@@ -3,10 +3,14 @@ package proctest_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/baseprocedures"
+	"github.com/networkteam/sdd/internal/engine"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/application/types"
@@ -36,9 +40,6 @@ func TestCapture_BodyFromStagedFile(t *testing.T) {
 	serve := session.Start(t, "capture", nil)
 	serve = session.Report(t, serve.Instance, stagedBodyDraft(staged.Handle))
 	proctest.RequireStep(t, serve, "playback")
-	if !strings.Contains(serve.Instructions, staged.SHA256) {
-		t.Errorf("playback should show the staged body's hash:\n%s", serve.Instructions)
-	}
 	for _, option := range serve.PendingChooser.Options {
 		if option.Choice == "adjust" && !slices.Contains(option.Collect, "bodyHandle?") {
 			t.Errorf("an adjust should offer to name another staged body, got %v", option.Collect)
@@ -56,6 +57,73 @@ func TestCapture_BodyFromStagedFile(t *testing.T) {
 	}
 	if strings.Contains(entry.Content, "ignored-key") {
 		t.Errorf("the header should stay out of the entry body, got %q", entry.Content)
+	}
+}
+
+func TestCapture_NoServedSchemaNamesTheBodyHash(t *testing.T) {
+	entries, err := baseprocedures.Entries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec *engine.Spec
+	for _, entry := range entries {
+		if entry.Canonical == "capture" {
+			spec, err = engine.ParseSpec(entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if spec == nil {
+		t.Fatal("the shipped capture procedure should load")
+	}
+	if _, declared := spec.State["bodyHash"]; !declared {
+		t.Fatal("capture should still hold the body hash in its state")
+	}
+	for _, step := range spec.Steps {
+		schemas := map[string]map[string]any{"report": spec.ReportSchemaForStep(step)}
+		if len(step.Options) > 0 {
+			schemas["answer"] = spec.AnswerSchemaForStep(step, model.DialogueGuided)
+		}
+		for kind, schema := range schemas {
+			encoded, err := json.Marshal(schema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(encoded), `"bodyHash"`) {
+				t.Errorf("the %s schema of step %s should not name the body hash", kind, step.ID)
+			}
+		}
+		for _, option := range step.Options {
+			if slices.ContainsFunc(option.Collect, func(field engine.CollectField) bool { return field.Name == "bodyHash" }) {
+				t.Errorf("option %s of step %s should not collect the body hash", option.Choice, step.ID)
+			}
+		}
+		if slices.Contains(step.ServeDelta, "bodyHash") {
+			t.Errorf("step %s should not play the body hash back", step.ID)
+		}
+	}
+}
+
+func TestCapture_StagedBodyServesNoHash(t *testing.T) {
+	world, session := newCaptureWorld(t, "staged-body-no-hash")
+	staged := session.StageFile(t, "draft.md", []byte(stagedBodyFile))
+	serve := session.Start(t, "capture", nil)
+	serve = session.Report(t, serve.Instance, stagedBodyDraft(staged.Handle))
+	proctest.RequireStep(t, serve, "playback")
+	encoded, err := json.Marshal(serve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "bodyHash") || strings.Contains(string(encoded), staged.SHA256) {
+		t.Errorf("playback should show neither the body hash field nor its value:\n%s", encoded)
+	}
+
+	_, resumed := world.Resume(t, session.ID, "staged-body-no-hash-resumed")
+	for _, open := range resumed.Open {
+		if _, shown := open.Collected["bodyHash"]; shown {
+			t.Errorf("a resume should not hand the body hash back as collected state")
+		}
 	}
 }
 
@@ -148,6 +216,9 @@ func TestCapture_RestagedBodyReopensConfirmedPlayback(t *testing.T) {
 		name     string
 		restage  func(t *testing.T, session *proctest.Session, handle string)
 		wantBody string
+		// headerOnly leaves the drafted fields as they were: the confirm
+		// reopens on the staged file's hash alone.
+		headerOnly bool
 	}{
 		{
 			name: "staged again whole",
@@ -170,7 +241,8 @@ func TestCapture_RestagedBodyReopensConfirmedPlayback(t *testing.T) {
 			restage: func(t *testing.T, session *proctest.Session, handle string) {
 				session.Stage(t, handle, []byte(strings.Replace(stagedBodyFile, "title: anything", "title: something else", 1)))
 			},
-			wantBody: "A tactical gap drafted in a reviewed file.",
+			wantBody:   "A tactical gap drafted in a reviewed file.",
+			headerOnly: true,
 		},
 	}
 	for _, tt := range tests {
@@ -188,8 +260,8 @@ func TestCapture_RestagedBodyReopensConfirmedPlayback(t *testing.T) {
 			world.LLM.PreflightFindings = nil
 			serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "the finding does not apply")
 			proctest.RequireStep(t, serve, "playback")
-			if strings.Contains(serve.Instructions, "Draft unchanged") {
-				t.Errorf("the reopened playback should show what the staging changed:\n%s", serve.Instructions)
+			if unchanged := strings.Contains(serve.Instructions, "Draft unchanged"); unchanged != tt.headerOnly {
+				t.Errorf("the reopened playback should show what the staging changed to the draft, and only that:\n%s", serve.Instructions)
 			}
 
 			serve = session.Answer(t, instance, "playback", "confirm", nil, "capture the revision")
@@ -282,8 +354,8 @@ func TestCapture_AdjustNamesAnotherStagedBody(t *testing.T) {
 
 	serve = session.Answer(t, instance, "playback", "adjust", map[string]any{"bodyHandle": other.Handle}, "use the second draft")
 	proctest.RequireStep(t, serve, "playback")
-	if !strings.Contains(serve.Instructions, other.SHA256) {
-		t.Errorf("playback should show the hash of the newly named file:\n%s", serve.Instructions)
+	if !strings.Contains(serve.Instructions, "A second draft of the gap.") {
+		t.Errorf("playback should show the body of the newly named file:\n%s", serve.Instructions)
 	}
 	proctest.RequireStep(t, session.Answer(t, instance, "playback", "confirm", nil, "capture it"), "verifySummary")
 	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")

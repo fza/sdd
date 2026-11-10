@@ -84,6 +84,12 @@ type VarDecl struct {
 	// current. For answers that are not entry content (a capture's verdicts,
 	// 20261109-004506-d-cpt-udz, D9).
 	ConfirmExempt bool
+	// HostSet marks a state field the embedding host writes, never the
+	// reporting agent: no served schema, collect list, serveDelta or resume
+	// projection names it, and an answer may carry it beyond the option's
+	// collect list because the host merges it into the answer it forwards
+	// after refusing it from the agent (a capture's bodyHash).
+	HostSet bool
 	// Seed names what the engine writes into the field: SeedReading renders
 	// the instance's credited reading into it on every grounding read,
 	// keeping the text around the seed (D32). State text fields only.
@@ -262,6 +268,7 @@ type varDeclYAML struct {
 	Default       any    `yaml:"default"`
 	PatchOf       string `yaml:"patchOf"`
 	ConfirmExempt bool   `yaml:"confirmExempt"`
+	HostSet       bool   `yaml:"hostSet"`
 	Seed          string `yaml:"seed"`
 }
 
@@ -474,8 +481,8 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 	}
 	for _, name := range slices.Sorted(maps.Keys(paramsYAML)) {
 		d := paramsYAML[name]
-		if d.ConfirmExempt || d.Seed != "" {
-			addProblem("params.%s: confirmExempt and seed apply to state fields only", name)
+		if d.ConfirmExempt || d.HostSet || d.Seed != "" {
+			addProblem("params.%s: confirmExempt, hostSet and seed apply to state fields only", name)
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(spec.State)) {
@@ -542,8 +549,12 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 			}
 		}
 		for _, f := range step.ServeDelta {
-			if _, ok := spec.State[f]; !ok {
+			decl, ok := spec.State[f]
+			switch {
+			case !ok:
 				addProblem("%s: serveDelta names %q, which is not declared in state", prefix, f)
+			case decl.HostSet:
+				addProblem("%s: serveDelta names %q, which only the host sets", prefix, f)
 			}
 		}
 		if _, declared := spec.State[step.Findings]; declared {
@@ -640,11 +651,17 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 			if spec.DeliveryOnly(c.Name) {
 				addProblem("%s: collects %q, which only a delivery fills", prefix, c.Name)
 			}
+			if spec.State[c.Name].HostSet {
+				addProblem("%s: collects %q, which only the host sets", prefix, c.Name)
+			}
 		}
 		for _, o := range step.Options {
 			for _, c := range o.Collect {
 				if spec.DeliveryOnly(c.Name) {
 					addProblem("%s: option %q collects %q, which only a delivery fills", prefix, o.Choice, c.Name)
+				}
+				if spec.State[c.Name].HostSet {
+					addProblem("%s: option %q collects %q, which only the host sets", prefix, o.Choice, c.Name)
 				}
 			}
 		}
@@ -681,7 +698,7 @@ func parseVarDecl(name string, d varDeclYAML) (VarDecl, error) {
 	if err != nil {
 		return VarDecl{}, err
 	}
-	decl := VarDecl{Type: t, Optional: d.Optional, Desc: d.Desc, PatchOf: d.PatchOf, ConfirmExempt: d.ConfirmExempt, Seed: d.Seed}
+	decl := VarDecl{Type: t, Optional: d.Optional, Desc: d.Desc, PatchOf: d.PatchOf, ConfirmExempt: d.ConfirmExempt, HostSet: d.HostSet, Seed: d.Seed}
 	if d.Default != nil {
 		dv, err := t.ValidateValue(d.Default)
 		if err != nil {
