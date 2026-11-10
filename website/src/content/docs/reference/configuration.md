@@ -86,6 +86,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `llm.ollama_endpoint` | `http://localhost:11434` | Ollama server for the `ollama` provider. |
 | `llm.timeout` | `5m` for `claude-cli`, `2m` for every other provider | Time limit for one model call. `sdd new --preflight-timeout` and `sdd summarize --timeout` override it for one run. |
 | `llm.params.<name>` | None | Provider settings that sdd adds unchanged to every request body, such as `reasoning_effort` set to `low`. `claude-cli` ignores them. |
+| `llm.preflight.params.<name>` | None | Provider settings for the pre-flight calls alone, laid over `llm.params` key by key, such as `reasoning_effort` set to `medium` while other calls keep `high`. Unset, pre-flight takes `llm.params` as they stand. `claude-cli` ignores them. |
 | `llm.rate_limit_rps` | See below | Maximum requests per second to `anthropic` or `openai`. Raise it on a higher account tier or for a gateway that allows more. |
 | `llm.retry.max_attempts` | `5` | Attempts per call, counting the first. `1` turns retries off. |
 | `llm.retry.base_delay` | `2s` | Wait before the first retry. The wait grows with each further retry. |

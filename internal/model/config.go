@@ -257,6 +257,8 @@ type LLMConfig struct {
 	// setting that moves latency and token usage makes a different population
 	// of calls that must not be averaged with the defaults.
 	Params map[string]string `yaml:"params,omitempty"`
+	// Preflight tunes the LLM pre-flight calls apart from every other call.
+	Preflight LLMPreflightConfig `yaml:"preflight,omitempty"`
 	// Concurrency bounds the worker pool for batch operations. Zero means
 	// "use DefaultLLMConcurrency".
 	Concurrency int `yaml:"concurrency,omitempty"`
@@ -281,6 +283,18 @@ type LLMConfig struct {
 	// exponential backoff with jitter). Ignored by the claude-cli provider,
 	// whose own CLI handles retries.
 	Retry RetryConfig `yaml:"retry,omitempty"`
+}
+
+// LLMPreflightConfig holds the settings of the LLM pre-flight calls.
+type LLMPreflightConfig struct {
+	// Params lay over llm.params key by key for these calls; unset, they take
+	// llm.params as they stand.
+	Params map[string]string `yaml:"params,omitempty"`
+}
+
+// PreflightParams returns the params the pre-flight calls run with.
+func (c LLMConfig) PreflightParams() map[string]string {
+	return mergeStringMap(c.Params, c.Preflight.Params)
 }
 
 // RetryConfig tunes retry/backoff behavior for the gollm-backed runner. Each
@@ -497,6 +511,7 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 		}
 	}
 	out.Params = mergeStringMap(out.Params, overlay.Params)
+	out.Preflight.Params = mergeStringMap(out.Preflight.Params, overlay.Preflight.Params)
 	return out
 }
 

@@ -81,7 +81,17 @@ func compose(cfg model.LLMConfig) (llm.Runner, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(cfg.Preflight.Params) > 0 {
+		tuned := cfg
+		tuned.Params = cfg.PreflightParams()
+		preflight, err := buildProvider(tuned)
+		if err != nil {
+			return nil, err
+		}
+		runner = llm.ByPurpose(map[llm.Purpose]llm.Runner{llm.PurposePreflight: preflight}, runner)
+	}
 
+	// One limit over both runners: they call one provider account.
 	if isRemote(provider) {
 		if rps := effectiveRPS(cfg); rps > 0 {
 			runner = llm.RateLimited(runner, rps)
