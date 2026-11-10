@@ -1,12 +1,12 @@
 {{ define "kind_fit" -}}
 ## Kind fit
 
-The author chose the kind `{{ .Kind }}` for this draft, and this project checks that kind less strictly than the kinds below. Each kind answers one question; a draft belongs to the kind whose question its body answers.
+Author chose kind `{{ .Kind }}` for this draft. This project checks that kind less strictly than the kinds below. Each kind answers one question. A draft belongs to kind whose question its body answers.
 
 - `{{ .Kind }}` (the chosen kind): {{ .Question }}
 {{- range .Stricter }}
 - `{{ .Kind }}`: {{ .Question }}
 {{- end }}
 
-Judge whether the body answers the chosen kind's question. When it answers one of the other questions instead, report a finding with category `kind-fit` and severity `high` that names the kind the body fits and the passage that shows it. A body that answers the chosen kind's question and merely mentions something another kind would record is no finding.
+Judge whether body answers chosen kind's question. When it answers one of the other questions instead, report a finding with category `kind-fit` and severity `high`. Name the kind the body fits and the passage that shows it. A body that answers chosen kind's question and only mentions something another kind would record is no finding.
 {{- end }}

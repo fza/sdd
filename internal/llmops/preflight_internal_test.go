@@ -468,10 +468,10 @@ func Test_assembleContext_RefsCarryApplicabilityLines(t *testing.T) {
 	if !strings.Contains(pctx.ReferencedEntries, "Admissible ref kinds for this target (live-signal):") {
 		t.Errorf("expected admissible-kind line for the open gap target\n%s", pctx.ReferencedEntries)
 	}
-	if !strings.Contains(pctx.ReferencedEntries, "Chosen ref kind: builds-on — applicable:") {
+	if !strings.Contains(pctx.ReferencedEntries, "Chosen ref kind: builds-on, applicable:") {
 		t.Errorf("expected chosen-kind applicable line for builds-on on terminal done\n%s", pctx.ReferencedEntries)
 	}
-	if !strings.Contains(pctx.ReferencedEntries, "Applicability is settled mechanically; do not flag it.") {
+	if !strings.Contains(pctx.ReferencedEntries, "Applicability is settled mechanically. Do not flag it.") {
 		t.Errorf("expected the settled-mechanically instruction\n%s", pctx.ReferencedEntries)
 	}
 	// The terminal-done admissible set must not offer the two excluded kinds.

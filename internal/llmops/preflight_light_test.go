@@ -105,7 +105,7 @@ func TestPreflightLight_CarriesTheReadingWithHeadersAndAxes(t *testing.T) {
 	if strings.Contains(prompt, "Long body never served.") {
 		t.Error("a listed entry should travel as its brief, not its body")
 	}
-	if strings.Contains(prompt, "other calls judge the rest") {
+	if strings.Contains(prompt, "Other calls judge the rest") {
 		t.Error("a single call should not be told it carries a part")
 	}
 }
@@ -141,7 +141,7 @@ func TestPreflightLight_SlicesKeepTheSamePrefixAndMerge(t *testing.T) {
 		if req.SystemPrompt != runner.prompts[0].SystemPrompt || !strings.HasPrefix(req.UserPrompt, prefix) {
 			t.Fatal("every call should open with the same rules and draft, byte for byte")
 		}
-		if !strings.Contains(req.UserPrompt, "other calls judge the rest") {
+		if !strings.Contains(req.UserPrompt, "Other calls judge the rest") {
 			t.Error("a call carrying part of the reading should say so")
 		}
 	}
