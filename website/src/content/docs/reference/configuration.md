@@ -98,6 +98,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `llm.timeout` | `2m` | Time limit for one model call. |
 | `llm.extract_timeout` | `1m` | Time limit for the reformat call that follows a check response that does not parse. |
 | `llm.params.<name>` | None | Provider settings that sdd adds unchanged to every request body, such as `reasoning_effort` set to `low`. `claude-cli` and `codex` ignore them. |
+| `llm.preflight.params.<name>` | None | Provider settings for the pre-flight calls alone, the prose verifier's and their reformat call included, laid over `llm.params` key by key, such as `reasoning_effort` set to `medium` while other calls keep `high`. Unset, pre-flight takes `llm.params` as they stand. |
 | `llm.structured_output` | `auto` | How the checks ask `openai` and `ollama` for JSON: `json_schema`, `json_object` or `auto`. See [structured output modes](#structured-output-modes). |
 | `llm.rate_limit_rps` | See below | Maximum requests per second to `anthropic` or `openai`. Raise it on a higher account tier or for a gateway that allows more. |
 | `llm.retry.max_attempts` | `5` | Attempts per call, counting the first. `1` turns retries off. |
