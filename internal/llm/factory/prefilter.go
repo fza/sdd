@@ -3,6 +3,7 @@ package factory
 import (
 	"cmp"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/networkteam/sdd/internal/llmops"
@@ -83,15 +84,15 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 		modelName = cmp.Or(cfg.ResolvedModel(), cfg.ResolvedProvider())
 		scorer = relevance.PerItem(bridge, concurrency)
 	case "":
-		return Prefilter{}, fmt.Errorf("verify.prefilter is on but llm_prefilter.protocol is not set (supported: %s, %s, %s)", model.PrefilterSystemOne, model.PrefilterCohereRerank, model.PrefilterGenerate)
+		return Prefilter{}, fmt.Errorf("verify.prefilter is on but llm_prefilter.protocol is not set (supported: %s)", strings.Join(cfg.Protocol.AllowedValues(), ", "))
 	default:
-		return Prefilter{}, fmt.Errorf("unknown llm_prefilter.protocol %q (supported: %s, %s, %s)", cfg.Protocol, model.PrefilterSystemOne, model.PrefilterCohereRerank, model.PrefilterGenerate)
+		return Prefilter{}, fmt.Errorf("unknown llm_prefilter.protocol %q (supported: %s)", cfg.Protocol, strings.Join(cfg.Protocol.AllowedValues(), ", "))
 	}
 	if cfg.RateLimitRPS > 0 {
 		scorer = relevance.RateLimited(scorer, cfg.RateLimitRPS)
 	}
 	scorer = relevance.Observed(relevance.Bounded(scorer, timeout), sink)
-	return Prefilter{Scorer: scorer, Judge: cfg.Protocol + ":" + modelName}, nil
+	return Prefilter{Scorer: scorer, Judge: string(cfg.Protocol) + ":" + modelName}, nil
 }
 
 // prefilterKey returns the key provider a direct protocol authenticates with,

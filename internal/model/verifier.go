@@ -24,18 +24,18 @@ const (
 // (20261109-222220-d-tac-4ev).
 const DefaultVerifyMode = VerifyProse
 
-// VerifyModes lists the modes, loosest first.
-func VerifyModes() []VerifyMode {
-	return []VerifyMode{VerifyOff, VerifyGrounding, VerifyProse, VerifyDeep}
+// AllowedValues lists the modes, loosest first.
+func (VerifyMode) AllowedValues() []string {
+	return closedValues(VerifyOff, VerifyGrounding, VerifyProse, VerifyDeep)
 }
 
 // ParseVerifyMode reads a mode, refusing one outside the set.
 func ParseVerifyMode(value string) (VerifyMode, error) {
-	mode := VerifyMode(value)
-	if !slices.Contains(VerifyModes(), mode) {
-		return "", fmt.Errorf("verify.mode %q is not off, grounding, prose or deep", value)
+	err := checkClosedValue("verify.mode", value, VerifyMode("").AllowedValues())
+	if err != nil {
+		return "", err
 	}
-	return mode, nil
+	return VerifyMode(value), nil
 }
 
 // Settings returns whether the mode enforces grounding and the verifier mode
@@ -72,7 +72,10 @@ const (
 	VerifierSkipNever   VerifierSkip = "never"
 )
 
-var verifierSkips = []VerifierSkip{VerifierSkipWeighed, VerifierSkipFailure, VerifierSkipNever}
+// AllowedValues lists the skips, loosest first.
+func (VerifierSkip) AllowedValues() []string {
+	return closedValues(VerifierSkipWeighed, VerifierSkipFailure, VerifierSkipNever)
+}
 
 // VerifierRunner is what runs a deep verifier session (V-D16, V-D19): the
 // drafting agent's harness as a subagent, or sdd through a headless agent CLI
@@ -86,7 +89,9 @@ const (
 	VerifierRunnerDriver   VerifierRunner = "driver"
 )
 
-var verifierRunners = []VerifierRunner{VerifierRunnerSubagent, VerifierRunnerClaude, VerifierRunnerCodex, VerifierRunnerDriver}
+func (VerifierRunner) AllowedValues() []string {
+	return closedValues(VerifierRunnerSubagent, VerifierRunnerClaude, VerifierRunnerCodex, VerifierRunnerDriver)
+}
 
 // VerifierDriver is the external command a driver runner runs per round.
 type VerifierDriver struct {
@@ -109,9 +114,25 @@ var (
 	DefaultVerifierCodex  = VerifierAgent{Effort: "medium"}
 )
 
-// claudeEfforts are the levels the claude CLI's --effort takes. Codex accepts
-// model-defined levels, so its own pass as set.
-var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+// ClaudeEffort is a level the claude CLI's --effort takes. Codex accepts
+// model-defined levels, so its effort stays a plain string.
+type ClaudeEffort string
+
+func (ClaudeEffort) AllowedValues() []string {
+	return []string{"low", "medium", "high", "xhigh", "max"}
+}
+
+// ClaudeAgent is the verify.claude block: a VerifierAgent whose effort the
+// claude CLI must take.
+type ClaudeAgent struct {
+	Model  string       `yaml:"model,omitempty"`
+	Effort ClaudeEffort `yaml:"effort,omitempty"`
+}
+
+// VerifierAgent returns the block as the policy carries it.
+func (a ClaudeAgent) VerifierAgent() VerifierAgent {
+	return VerifierAgent{Model: a.Model, Effort: string(a.Effort)}
+}
 
 // VerifyConfig is the `verify` block (20261109-004506-d-cpt-udz,
 // 20261109-004729-d-cpt-xs5, 20261109-222220-d-tac-4ev). Mode and skip are
@@ -126,7 +147,7 @@ type VerifyConfig struct {
 	Skip          VerifierSkip         `yaml:"skip,omitempty"`
 	Runner        VerifierRunner       `yaml:"runner,omitempty"`
 	Driver        VerifierDriver       `yaml:"driver,omitempty"`
-	Claude        VerifierAgent        `yaml:"claude,omitempty"`
+	Claude        ClaudeAgent          `yaml:"claude,omitempty"`
 	Codex         VerifierAgent        `yaml:"codex,omitempty"`
 	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
 	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
@@ -150,7 +171,7 @@ func (c VerifyConfig) VerifierPolicy() VerifierPolicy {
 	_, mode := c.ResolvedMode().Settings()
 	return VerifierPolicy{
 		Mode: mode, Skip: c.Skip, Runner: c.Runner, Driver: c.Driver,
-		Claude: c.Claude, Codex: c.Codex,
+		Claude: c.Claude.VerifierAgent(), Codex: c.Codex,
 	}.WithDefaults()
 }
 
@@ -185,7 +206,12 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 	if overlay.Driver.Command != "" {
 		out.Driver = overlay.Driver
 	}
-	out.Claude = mergeVerifierAgent(out.Claude, overlay.Claude)
+	if overlay.Claude.Model != "" {
+		out.Claude.Model = overlay.Claude.Model
+	}
+	if overlay.Claude.Effort != "" {
+		out.Claude.Effort = overlay.Claude.Effort
+	}
 	out.Codex = mergeVerifierAgent(out.Codex, overlay.Codex)
 	if overlay.Depth.Down != nil {
 		out.Depth.Down = overlay.Depth.Down
@@ -222,6 +248,35 @@ func mergeVerifierAgent(base, overlay VerifierAgent) VerifierAgent {
 // each layer; the refusal names the key, and the file of every layer it
 // judges.
 func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
+	problems := verifyLayerProblems(global, committed, local, files)
+	if len(problems) == 0 {
+		return nil
+	}
+	return problems[0].err
+}
+
+// VerifyKeyRefusal is CheckVerifyLayers judging only key: the first refusal
+// under key or a block holding it, so a value elsewhere never blocks a write
+// to key (20260921-174543-d-cpt-tv9).
+func VerifyKeyRefusal(key string, global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
+	for _, problem := range verifyLayerProblems(global, committed, local, files) {
+		if key == problem.key || strings.HasPrefix(key, problem.key+".") {
+			return problem.err
+		}
+	}
+	return nil
+}
+
+type verifyProblem struct {
+	key string
+	err error
+}
+
+func verifyLayerProblems(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) []verifyProblem {
+	var problems []verifyProblem
+	refuse := func(key string, err error) {
+		problems = append(problems, verifyProblem{key: key, err: err})
+	}
 	layers := []struct {
 		source ConfigValueSource
 		cfg    BaseConfig
@@ -239,23 +294,25 @@ func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files
 		}{ConfigSourceLocal, local.BaseConfig})
 	}
 	for _, layer := range layers {
-		if mode := layer.cfg.Verify.Mode; mode != "" {
-			_, err := ParseVerifyMode(string(mode))
-			if err != nil {
-				return fmt.Errorf("%s: %w", layerFile(layer.source, files), err)
+		verify := layer.cfg.Verify
+		for _, setting := range []struct {
+			key, value string
+			allowed    []string
+		}{
+			{"verify.mode", string(verify.Mode), verify.Mode.AllowedValues()},
+			{"verify.skip", string(verify.Skip), verify.Skip.AllowedValues()},
+			{"verify.runner", string(verify.Runner), verify.Runner.AllowedValues()},
+			{"verify.claude.effort", string(verify.Claude.Effort), verify.Claude.Effort.AllowedValues()},
+		} {
+			if setting.value == "" {
+				continue
+			}
+			if err := checkClosedValue(setting.key, setting.value, setting.allowed); err != nil {
+				refuse(setting.key, fmt.Errorf("%s: %w", layerFile(layer.source, files), err))
 			}
 		}
-		if skip := layer.cfg.Verify.Skip; skip != "" && !slices.Contains(verifierSkips, skip) {
-			return fmt.Errorf("%s: verify.skip %q is not never, failure or weighed", layerFile(layer.source, files), skip)
-		}
-		if runner := layer.cfg.Verify.Runner; runner != "" && !slices.Contains(verifierRunners, runner) {
-			return fmt.Errorf("%s: verify.runner %q is not subagent, claude, codex or driver", layerFile(layer.source, files), runner)
-		}
-		if effort := layer.cfg.Verify.Claude.Effort; effort != "" && !slices.Contains(claudeEfforts, effort) {
-			return fmt.Errorf("%s: verify.claude.effort %q is not low, medium, high, xhigh or max", layerFile(layer.source, files), effort)
-		}
-		if layer.source == ConfigSourceProject && layer.cfg.Verify.Driver.Command != "" {
-			return fmt.Errorf("%s: verify.driver is refused in the committed config, since its command would run on every contributor's machine; set it in the user-global or the machine-local config", layerFile(layer.source, files))
+		if layer.source == ConfigSourceProject && verify.Driver.Command != "" {
+			refuse("verify.driver", fmt.Errorf("%s: verify.driver is refused in the committed config, since its command would run on every contributor's machine; set it in the user-global or the machine-local config", layerFile(layer.source, files)))
 		}
 	}
 	shared := MergeBaseConfig(global, BaseConfig{})
@@ -268,13 +325,13 @@ func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files
 			lowerMode = DefaultVerifyMode
 		}
 		lowerSkip := shared.Verify.VerifierPolicy().Skip
-		if mode := local.Verify.Mode; mode != "" && slices.Index(VerifyModes(), mode) < slices.Index(VerifyModes(), lowerMode) {
-			return fmt.Errorf("%s: verify.mode %s is refused in the machine-local config, which may only raise the %s the shared layers resolve to; lower it in %s",
-				layerFile(ConfigSourceLocal, files), mode, lowerMode, sharedVerifyFile(global, committed, "mode", files))
+		if mode := local.Verify.Mode; mode != "" && strictness(mode) < strictness(lowerMode) {
+			refuse("verify.mode", fmt.Errorf("%s: verify.mode %s is refused in the machine-local config, which may only raise the %s the shared layers resolve to; lower it in %s",
+				layerFile(ConfigSourceLocal, files), mode, lowerMode, sharedVerifyFile(global, committed, "mode", files)))
 		}
-		if skip := local.Verify.Skip; skip != "" && slices.Index(verifierSkips, skip) < slices.Index(verifierSkips, lowerSkip) {
-			return fmt.Errorf("%s: verify.skip %s is refused in the machine-local config, which may only tighten the %s the shared layers set toward never; loosen it in %s",
-				layerFile(ConfigSourceLocal, files), skip, lowerSkip, sharedVerifyFile(global, committed, "skip", files))
+		if skip := local.Verify.Skip; skip != "" && strictness(skip) < strictness(lowerSkip) {
+			refuse("verify.skip", fmt.Errorf("%s: verify.skip %s is refused in the machine-local config, which may only tighten the %s the shared layers set toward never; loosen it in %s",
+				layerFile(ConfigSourceLocal, files), skip, lowerSkip, sharedVerifyFile(global, committed, "skip", files)))
 		}
 	}
 	resolved := MergeBaseConfig(shared, BaseConfig{})
@@ -282,9 +339,18 @@ func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files
 		resolved = MergeBaseConfig(resolved, local.BaseConfig)
 	}
 	if policy := resolved.Verify.VerifierPolicy(); policy.Runner == VerifierRunnerDriver && policy.Driver.Command == "" {
-		return fmt.Errorf("verify.runner driver needs verify.driver.command, which neither the user-global nor the machine-local config sets; set it in %s", layerFile(ConfigSourceLocal, files))
+		refuse("verify.runner", fmt.Errorf("verify.runner driver needs verify.driver.command, which neither the user-global nor the machine-local config sets; set it in %s", layerFile(ConfigSourceLocal, files)))
 	}
-	return nil
+	return problems
+}
+
+// strictness is a value's place in its type's AllowedValues, which lists the
+// loosest first.
+func strictness[S interface {
+	~string
+	ClosedValues
+}](value S) int {
+	return slices.Index(value.AllowedValues(), string(value))
 }
 
 func layerFile(source ConfigValueSource, files map[ConfigValueSource]string) string {

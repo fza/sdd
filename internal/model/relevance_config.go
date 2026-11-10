@@ -1,6 +1,9 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // RelevanceDirName is the directory under .sdd/ holding the committed copy
 // of the relevance ledger (20261109-004506-d-cpt-udz, D17 and D18).
@@ -17,6 +20,10 @@ const (
 	// steps stay in machine state.
 	RelevanceContentReader RelevanceContent = "reader"
 )
+
+func (RelevanceContent) AllowedValues() []string {
+	return closedValues(RelevanceContentAll, RelevanceContentReader)
+}
 
 // RelevanceConfig is the `relevance` block. Only the committed
 // .sdd/config.yaml sets it, since what the repository carries is the team's
@@ -38,12 +45,10 @@ type RelevanceLayout struct {
 // Layout resolves the block to its defaults and checks the content value.
 func (c RelevanceConfig) Layout() (RelevanceLayout, error) {
 	layout := RelevanceLayout{Commit: c.Commit != nil && *c.Commit, Content: c.Content}
-	switch c.Content {
-	case "":
+	if c.Content == "" {
 		layout.Content = RelevanceContentAll
-	case RelevanceContentAll, RelevanceContentReader:
-	default:
-		return RelevanceLayout{}, fmt.Errorf("relevance.content: unknown value %q (reader or all)", c.Content)
+	} else if !slices.Contains(c.Content.AllowedValues(), string(c.Content)) {
+		return RelevanceLayout{}, fmt.Errorf("relevance.content: unknown value %q (%s)", c.Content, oneOf(c.Content.AllowedValues()))
 	}
 	return layout, nil
 }
