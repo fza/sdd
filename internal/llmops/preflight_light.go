@@ -114,6 +114,9 @@ func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, 
 			results[i], errs[i] = runJSONCheck(ctx, runner, req, preflightLightExtraction, func(output string) (*PreflightResult, error) {
 				return parseLightResult(output, allowed)
 			})
+			if errs[i] == nil {
+				results[i].Findings = flagUnlocated(results[i].Findings, req.UserPrompt)
+			}
 		}()
 	}
 	wg.Wait()
@@ -285,6 +288,7 @@ func parseLightResult(output string, allowed map[string]bool) (*PreflightResult,
 			Severity    string   `json:"severity"`
 			Category    string   `json:"category"`
 			Observation string   `json:"observation"`
+			Quote       string   `json:"quote"`
 			Basis       []string `json:"basis"`
 		} `json:"findings"`
 	}
@@ -311,7 +315,7 @@ func parseLightResult(output string, allowed map[string]bool) (*PreflightResult,
 			}
 		}
 		slices.Sort(basis)
-		findings = append(findings, Finding{Severity: sev, Category: f.Category, Observation: f.Observation, Basis: basis})
+		findings = append(findings, Finding{Severity: sev, Category: f.Category, Observation: f.Observation, Quote: f.Quote, Basis: basis})
 	}
 	return &PreflightResult{Findings: findings}, nil
 }

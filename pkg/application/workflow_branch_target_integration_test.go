@@ -311,7 +311,7 @@ This reference exists only on the bound work branch.
 				preflightCalls++
 				if rejectNextPreflight {
 					rejectNextPreflight = false
-					return pkgllm.Result{Text: `{"findings":[{"severity":"high","category":"retry-route","observation":"reject this first attempt"}]}`, Identity: identity}, nil
+					return pkgllm.Result{Text: `{"findings":[{"severity":"high","category":"retry-route","observation":"reject this first attempt","quote":"The rejected unbound capture retries"}]}`, Identity: identity}, nil
 				}
 				return pkgllm.Result{Text: `{"findings":[]}`, Identity: identity}, nil
 			case pkgllm.PurposeWritingGuide:

@@ -155,7 +155,7 @@ Tell the agent something you noticed, in plain words, for example that a step in
 1. **Draft.** The agent searches the graph for related entries, reads them, and drafts the entry: its kind (a gap, for something that falls short of what was expected), its text, and links to the entries it relates to.
 2. **Writing check.** A separate model reads the draft as a stranger would and points out what is unclear. The agent revises.
 3. **Playback.** The agent shows you the exact entry. You confirm it, ask for changes, or drop it. Nothing is written before you confirm.
-4. **Pre-flight check.** Another check compares the entry with the graph, for example for contradictions with the entries it links to. A serious finding stops the write: you revise the entry, or override the check. Overriding is your call alone, never the agent's.
+4. **Pre-flight check.** Another check compares the entry with the graph, for example for contradictions with the entries it links to. A serious finding stops the write: you revise the entry, or override the check. Overriding is your call alone, never the agent's. Each finding quotes the passage it rests on; a finding whose quote matches nothing the check read is shown as unverified and never stops the write.
 5. **Write.** sdd generates a one-line summary, writes the entry as a markdown file under `.sdd/graph/`, and commits it as `sdd: capture <id>`. The agent compares the summary with the entry and corrects it if it drifted.
 
 If a model call fails, the step stops and the agent tells you. Nothing half-done is written.
