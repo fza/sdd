@@ -23,6 +23,9 @@ type GraphCloneGit interface {
 	SetSparseCone(ctx context.Context, dir string, cone []string) error
 	KeepGraphClone(ctx context.Context, dir string, routing []string) error
 	PushGraphClone(ctx context.Context, dir string) error
+	// CommitsWaiting reports whether the clone at dir holds commits its
+	// upstream lacks.
+	CommitsWaiting(ctx context.Context, dir string) (bool, error)
 	// RemoteURL is the URL of the protocol remote the clone at dir uses.
 	RemoteURL(ctx context.Context, dir string) (string, error)
 	// ExpandURL applies git's URL rewrites to url without reaching it.
@@ -192,11 +195,19 @@ func (g *GraphClones) Widen(ctx context.Context, repoID model.RepoID, graphDir s
 	return nil
 }
 
-// Publish pushes what sdd committed in the clone of repoID.
+// Publish pushes what sdd committed in the clone of repoID, only with commits
+// waiting (20261107-095427-d-tac-yux).
 func (g *GraphClones) Publish(ctx context.Context, repoID model.RepoID) error {
 	dir, err := g.Dir(repoID)
 	if err != nil {
 		return err
+	}
+	waiting, err := g.git.CommitsWaiting(ctx, dir)
+	if err != nil {
+		return fmt.Errorf("publishing the clone of %s: %w", repoID, err)
+	}
+	if !waiting {
+		return nil
 	}
 	err = g.run(ctx, gitgate.Push, func(ctx context.Context) (string, error) { return g.git.RemoteURL(ctx, dir) }, func(ctx context.Context) error {
 		return g.git.PushGraphClone(ctx, dir)

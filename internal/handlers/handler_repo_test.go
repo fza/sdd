@@ -38,6 +38,7 @@ func (f *fakeGit) SparseCone(context.Context, string) ([]string, error) {
 func (f *fakeGit) SetSparseCone(context.Context, string, []string) error  { return nil }
 func (f *fakeGit) KeepGraphClone(context.Context, string, []string) error { return nil }
 func (f *fakeGit) PushGraphClone(context.Context, string) error           { return nil }
+func (f *fakeGit) CommitsWaiting(context.Context, string) (bool, error)   { return true, nil }
 func (f *fakeGit) RemoteURL(context.Context, string) (string, error) {
 	return "git@github.com:networkteam/other.git", nil
 }

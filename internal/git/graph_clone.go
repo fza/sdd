@@ -80,6 +80,25 @@ func (GraphClones) PushGraphClone(ctx context.Context, dir string) error {
 	return CLI{Dir: dir}.Push(ctx)
 }
 
+// CommitsWaiting reports whether the clone at dir holds commits its upstream
+// lacks: any, on a born branch with no upstream yet.
+func (GraphClones) CommitsWaiting(ctx context.Context, dir string) (bool, error) {
+	c := CLI{Dir: dir}
+	born, err := c.hasHead(ctx)
+	if err != nil || !born {
+		return false, err
+	}
+	upstream, err := c.UpstreamRef(ctx)
+	if err != nil {
+		return false, err
+	}
+	if upstream == "" {
+		return true, nil
+	}
+	ahead, err := c.CountCommits(ctx, upstream+"..HEAD", "")
+	return ahead > 0, err
+}
+
 // RemoteURL is the URL of the protocol remote the clone at dir uses.
 func (GraphClones) RemoteURL(ctx context.Context, dir string) (string, error) {
 	return CLI{Dir: dir}.UpstreamURL(ctx)
