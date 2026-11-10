@@ -93,6 +93,35 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 	return result, nil
 }
 
+// PreflightRubric renders the rules pre-flight would judge entry by, for a
+// judge that runs in its place: the deep verifier (20261109-010000-d-prc-vfy).
+// It carries the check the entry's shape selects with every universal rubric,
+// the referenced, closed and superseded entries, the active contracts and the
+// prose verifier's axes over a reading.
+func PreflightRubric(entry *model.Entry, graph *model.Graph, configuredLanguage string) (string, error) {
+	ct := selectCheckType(entry, graph)
+	vocab, err := refKindVocabulary(graph)
+	if err != nil {
+		return "", err
+	}
+	pctx := assembleContext(entry, graph, ct, configuredLanguage)
+	pctx.RefKindVocabulary = vocab
+	req, err := renderPreflightPrompt(ct, pctx)
+	if err != nil {
+		return "", fmt.Errorf("rendering pre-flight prompt: %w", err)
+	}
+	tmpl, err := parsedPreflightTemplates()
+	if err != nil {
+		return "", err
+	}
+	var axes strings.Builder
+	err = tmpl.ExecuteTemplate(&axes, "light_axes", struct{ Partial bool }{false})
+	if err != nil {
+		return "", fmt.Errorf("rendering the prose verifier axes: %w", err)
+	}
+	return req.SystemPrompt + "\n\n" + req.UserPrompt + "\n\n" + strings.TrimSpace(axes.String()), nil
+}
+
 // --- internal helpers ---
 
 // checkType identifies which pre-flight check to run. Templates organize per

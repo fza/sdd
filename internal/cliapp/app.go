@@ -26,6 +26,7 @@ import (
 	"github.com/networkteam/sdd/internal/handlers"
 	localembed "github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/llm/factory"
+	"github.com/networkteam/sdd/internal/llmdebug"
 	"github.com/networkteam/sdd/internal/llmstats"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
@@ -132,6 +133,13 @@ func newRunner(cmd *cli.Command, timeoutFlag string) (pkgllm.Runner, error) {
 	runner, err := factory.New(cfg)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.DebugOn() {
+		sddDir, err := resolveSDDDir()
+		if err != nil {
+			return nil, fmt.Errorf("llm.debug writes into the project's .sdd/ directory: %w", err)
+		}
+		runner = llmdebug.Transcribed(runner, filepath.Join(sddDir, llmdebug.Dir))
 	}
 	return pkgllm.Observed(runner, statsSink()), nil
 }

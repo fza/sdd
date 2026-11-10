@@ -855,8 +855,13 @@ func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSiz
 	// applies only here, on the unit context — inject args render against the
 	// raw store (renderInjectArgs), and the draft lane carries its own bound.
 	storeCap := serveview.Default().Cap(serveview.PartStoreValue)
+	injected := make(map[string]bool, len(step.Inject))
+	for _, inj := range step.Inject {
+		injected[inj.EffectiveID()] = true
+	}
 	for _, name := range slices.Sorted(maps.Keys(tmplCtx)) {
-		if !inst.Store.Has(name) {
+		// An inject under a store value's name replaces it with its own bound.
+		if !inst.Store.Has(name) || injected[name] {
 			continue
 		}
 		bounded, cut := serveview.BoundValue(tmplCtx[name], storeCap)

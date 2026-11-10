@@ -96,6 +96,9 @@ type PreflightEntryResult struct {
 	Calls int
 	// Excerpted names the reading entries a light call judged on excerpts.
 	Excerpted []string
+	// Rubric holds the rules pre-flight would have judged the draft by when
+	// the deep verifier judges in its place; empty when pre-flight's model ran.
+	Rubric string
 }
 
 // ValidationError reports that model.ValidateEntry rejected a draft at the

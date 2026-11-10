@@ -18,12 +18,14 @@ import (
 // PreflightEntry checks a draft without publishing it or opening staged bytes.
 // The procedure persists its findings and invalidates them when checked input changes.
 func (a *Application) PreflightEntry(ctx context.Context, identity RequestIdentity, project ProjectID, binding SessionBinding, draft EntryDraft) (PreflightEntryResult, error) {
-	return a.preflightEntry(ctx, identity, project, draft, nil)
+	return a.preflightEntry(ctx, identity, project, draft, nil, false)
 }
 
 // preflightEntry checks the draft, as the light verifier over reading where
-// the project's verifier is on (20261109-004729-d-cpt-xs5).
-func (a *Application) preflightEntry(ctx context.Context, identity RequestIdentity, project ProjectID, draft EntryDraft, reading *captureReading) (PreflightEntryResult, error) {
+// the project's verifier is on (20261109-004729-d-cpt-xs5). Where deepJudges,
+// the deep verifier judges in pre-flight's place: only the mechanical checks
+// run, and the result carries the rubric the verifier takes over.
+func (a *Application) preflightEntry(ctx context.Context, identity RequestIdentity, project ProjectID, draft EntryDraft, reading *captureReading, deepJudges bool) (PreflightEntryResult, error) {
 	principal, runtime, err := a.resolve(ctx, identity, project, AccessWrite)
 	if err != nil {
 		return PreflightEntryResult{}, err
@@ -56,6 +58,20 @@ func (a *Application) preflightEntry(ctx context.Context, identity RequestIdenti
 		PreflightRunner: effective.options.LLM, ProcedureRegistry: registry,
 		Config: &model.PerRepoConfig{Language: effective.options.Language, Dependencies: effective.options.Dependencies},
 	})
+	if deepJudges {
+		mechanical, err := finder.MechanicalPreflight(snapshot.graph, entry)
+		if err != nil {
+			return result, fmt.Errorf("pre-flight: %w", err)
+		}
+		for _, finding := range mechanical {
+			result.Findings = append(result.Findings, Finding{Severity: string(finding.Severity), Category: finding.Category, Observation: finding.Observation, Basis: finding.Basis})
+		}
+		result.Rubric, err = llmops.PreflightRubric(entry, snapshot.graph, effective.options.Language)
+		if err != nil {
+			return result, fmt.Errorf("pre-flight: %w", err)
+		}
+		return result, nil
+	}
 	light, err := effective.lightPreflight(ctx, reading)
 	if err != nil {
 		return result, fmt.Errorf("pre-flight: %w", err)

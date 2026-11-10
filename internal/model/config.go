@@ -344,6 +344,9 @@ func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSettin
 	if reason := ignoredDialogueMode(layer.Dialogue.Mode, committed); reason != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "dialogue.mode", Reason: reason})
 	}
+	if committed && layer.LLM.Debug != nil {
+		ignored = append(ignored, IgnoredSetting{Key: "llm.debug", Reason: personalOnlyReason})
+	}
 	if reason := ignoredTokenSaving(layer.Sessions.TokenSaving); reason != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "sessions.token_saving", Reason: reason})
 	}
@@ -396,13 +399,14 @@ func ignoredSyncInterval(interval string, committed bool) string {
 // HonoredCommitted returns the committed layer without the settings only a
 // person's own config, or only the user-global config, may make.
 func HonoredCommitted(committed *PerRepoConfig) *PerRepoConfig {
-	if committed == nil || (committed.Sync.Mode == "" && committed.Sync.Interval == "" && committed.Dialogue.Mode == "" && len(misplacedGitLimits(committed.Sync)) == 0) {
+	if committed == nil || (committed.Sync.Mode == "" && committed.Sync.Interval == "" && committed.Dialogue.Mode == "" && committed.LLM.Debug == nil && len(misplacedGitLimits(committed.Sync)) == 0) {
 		return committed
 	}
 	honored := withoutGitLimits(*committed)
 	honored.Sync.Mode = ""
 	honored.Sync.Interval = ""
 	honored.Dialogue.Mode = ""
+	honored.LLM.Debug = nil
 	return &honored
 }
 
@@ -596,6 +600,15 @@ type LLMConfig struct {
 	// exponential backoff with jitter). Ignored by the claude-cli provider,
 	// whose own CLI handles retries.
 	Retry RetryConfig `yaml:"retry,omitempty"`
+	// Debug writes a transcript of every call under .sdd/tmp/llm-debug/
+	// (20261110-150803-s-tac-9u1). Transcripts hold graph content, so only a
+	// person's own config may turn it on.
+	Debug *bool `yaml:"debug,omitempty"`
+}
+
+// DebugOn reports whether calls write transcripts.
+func (c LLMConfig) DebugOn() bool {
+	return c.Debug != nil && *c.Debug
 }
 
 // StructuredOutputMode names how a schema-carrying request asks the provider
@@ -917,6 +930,9 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 		out.RateLimitRPS = overlay.RateLimitRPS
 	}
 	out.Retry = mergeRetryConfig(base.Retry, overlay.Retry)
+	if overlay.Debug != nil {
+		out.Debug = overlay.Debug
+	}
 	if len(overlay.APIKeys) > 0 {
 		if out.APIKeys == nil {
 			out.APIKeys = make(map[string]string, len(overlay.APIKeys))

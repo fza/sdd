@@ -15,6 +15,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/test"
 )
 
@@ -75,9 +76,21 @@ func startDeep(t *testing.T, world *proctest.World, session *proctest.Session, d
 // judge serves the delegate every page and reports its findings.
 func (x *deepExchange) judge(t *testing.T, findings []any) *sdd.WorkflowServe {
 	t.Helper()
-	serve := x.delegate.Answer(t, x.child, "read", "more", nil, "")
-	proctest.RequireStep(t, serve, "read")
+	readAllPages(t, x.delegate, x.child)
 	return x.delegate.Answer(t, x.child, "read", "judge", map[string]any{"findings": findings}, "")
+}
+
+// readAllPages turns the verifier's reading to its last page.
+func readAllPages(t *testing.T, delegate *proctest.Session, instance string) {
+	t.Helper()
+	for range 5 {
+		serve := delegate.Answer(t, instance, "read", "more", nil, "")
+		proctest.RequireStep(t, serve, "read")
+		if strings.Contains(serve.Instructions, "Every page is served.") {
+			return
+		}
+	}
+	t.Fatal("the reading should end within 5 pages")
 }
 
 // pickUp reports the launch started and picks the delegate's delivery up.
@@ -116,25 +129,29 @@ func TestCaptureDeep_ServesTheReadingInPagesAndRefusesEarlyFindings(t *testing.T
 	_, resume := world.Resume(t, x.dispatch.Session, "verifier")
 	first := resume.Open[0].Instructions
 	x.delegate.Refresh(t)
-	for _, want := range []string{"Page 1 of 2.", "## Draft", deepBody, "Role in the reading: declared target", "do not bind you"} {
+	for _, want := range []string{"Page 1 of 3.", "## Draft", deepBody, "Role in the reading: declared target", "do not bind you"} {
 		if !strings.Contains(first, want) {
 			t.Errorf("page 1 should carry %q:\n%s", want, first)
 		}
 	}
 	_, err := x.delegate.AnswerErr(t, x.child, "read", "judge", map[string]any{"findings": []any{}}, "")
-	if err == nil || !strings.Contains(err.Error(), "page 1 of 2 is the last served") {
+	if err == nil || !strings.Contains(err.Error(), "page 1 of 3 is the last served") {
 		t.Fatalf("findings before every page was served should be refused, got %v", err)
 	}
 	serve := x.delegate.Answer(t, x.child, "read", "more", nil, "")
-	if !strings.Contains(serve.Instructions, "Page 2 of 2.") || !strings.Contains(serve.Instructions, "ID: "+captureRef2ID) {
-		t.Fatalf("page 2 should carry the briefs:\n%s", serve.Instructions)
+	if !strings.Contains(serve.Instructions, "Page 2 of 3.") || !strings.Contains(serve.Instructions, "## Pre-flight's rules") {
+		t.Fatalf("page 2 should carry pre-flight's rules:\n%s", serve.Instructions)
+	}
+	serve = x.delegate.Answer(t, x.child, "read", "more", nil, "")
+	if !strings.Contains(serve.Instructions, "Page 3 of 3.") || !strings.Contains(serve.Instructions, "ID: "+captureRef2ID) {
+		t.Fatalf("page 3 should carry the briefs:\n%s", serve.Instructions)
 	}
 }
 
 func TestCaptureDeep_AVerdictReportsItsFindingsList(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-findings-list", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())
-	x.delegate.Answer(t, x.child, "read", "more", nil, "")
+	readAllPages(t, x.delegate, x.child)
 	_, err := x.delegate.AnswerErr(t, x.child, "read", "judge", nil, "")
 	if err == nil || !strings.Contains(err.Error(), "report findings: the whole list") {
 		t.Fatalf("a verdict without a findings list should be refused, got %v", err)
@@ -336,17 +353,46 @@ func TestCaptureDeep_WeighingRecommendsRunForACheckablePath(t *testing.T) {
 	}
 }
 
-func TestCaptureDeep_OverriddenHighFindingIsSettledForTheVerifier(t *testing.T) {
-	world, session := newDeepWorld(t, "deep-override", sdd.VerifierPolicy{})
+func TestCaptureDeep_TheVerifierJudgesInThePreflightModelsPlace(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-no-preflight-model", sdd.VerifierPolicy{})
 	world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "high", Category: "duplicates", Observation: "the draft repeats a live entry"}}
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
-	proctest.RequireStep(t, serve, "reviseOrOverride")
-	serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "it is no duplicate")
 	proctest.RequireStep(t, serve, "deepDispatch")
+	if calls := world.LLM.Calls(llm.PurposePreflight); calls != 0 {
+		t.Fatalf("a deep capture should not ask pre-flight's model, got %d calls", calls)
+	}
 	x := dispatchDeep(t, world, session, instance)
-	_, resume := world.Resume(t, x.dispatch.Session, "verifier")
-	if page := resume.Open[0].Instructions; !strings.Contains(page, "duplicates: the draft repeats a live entry") || !strings.Contains(page, "The user overrode the high ones: they are settled.") {
-		t.Fatalf("the deep verifier should receive pre-flight's findings, the override as settled:\n%s", page)
+	x.delegate.Refresh(t)
+	serve = x.delegate.Answer(t, x.child, "read", "more", nil, "")
+	if strings.Contains(serve.Instructions, "store:pageText") {
+		t.Fatalf("a reading page should be served whole, not at the store-value cap:\n%s", serve.Instructions)
+	}
+	for _, want := range []string{"## Pre-flight's rules", "you judge in its place", deepBody} {
+		if !strings.Contains(serve.Instructions, want) {
+			t.Errorf("the verifier should receive the rules pre-flight's model would have judged the draft by, missing %q:\n%s", want, serve.Instructions)
+		}
+	}
+	serve = x.judge(t, []any{})
+	proctest.RequireStep(t, serve, "waitAnswers")
+	serve = x.pickUp(t)
+	proctest.RequireStep(t, serve, "verifySummary")
+	if calls := world.LLM.Calls(llm.PurposePreflight); calls != 0 {
+		t.Fatalf("a verified deep capture should write without pre-flight's model, got %d calls", calls)
+	}
+}
+
+func TestCaptureDeep_ASkippedExchangeFallsBackToThePreflightModel(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-skip-fallback", sdd.VerifierPolicy{Skip: "weighed"})
+	instance, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepWeigh")
+	world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "high", Category: "duplicates", Observation: "the draft repeats a live entry"}}
+	serve = session.Answer(t, instance, "deepWeigh", "skip", nil, "not worth it")
+	proctest.RequireStep(t, serve, "reviseOrOverride")
+	if calls := world.LLM.Calls(llm.PurposePreflight); calls == 0 {
+		t.Fatal("a skipped deep exchange should hand the draft to pre-flight's model before the write")
+	}
+	if !strings.Contains(serve.Instructions, "the draft repeats a live entry") {
+		t.Fatalf("pre-flight's finding should block the write:\n%s", serve.Instructions)
 	}
 }
 
@@ -377,7 +423,7 @@ func headlessLauncher(t *testing.T) *test.ScriptedLauncher {
 func driveRound(t *testing.T, world *proctest.World, round *test.ScriptedRound) {
 	t.Helper()
 	delegate := world.Delegate(t, &sdd.WorkflowDispatch{Session: round.Launch.Session})
-	delegate.Answer(t, round.Launch.Instance, "read", "more", nil, "")
+	readAllPages(t, delegate, round.Launch.Instance)
 	delegate.Answer(t, round.Launch.Instance, "read", "judge", map[string]any{"findings": []any{}}, "")
 	round.Finish("cli-session", nil)
 }
@@ -581,7 +627,7 @@ func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(resumed.Open[0].Instructions, "Page 1 of 2.") {
+			if !strings.Contains(resumed.Open[0].Instructions, "Page 1 of 3.") {
 				t.Fatalf("the resume should serve page 1:\n%s", resumed.Open[0].Instructions)
 			}
 			held := workflow.TakeStepFullIDs()
@@ -589,12 +635,14 @@ func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
 				t.Fatalf("page 1 should hand on the declared target it serves in full, and only with cuts on, got %v", held)
 			}
 			delegate := &proctest.Session{World: world, WF: workflow, ID: x.dispatch.Session}
-			serve := delegate.Answer(t, x.child, "read", "more", nil, "")
-			if !strings.Contains(serve.Instructions, "Page 2 of 2.") {
-				t.Fatalf("the next serve should be page 2:\n%s", serve.Instructions)
-			}
-			if held := workflow.TakeStepFullIDs(); len(held) != 0 {
-				t.Fatalf("the brief page should hand on nothing, got %v", held)
+			for _, page := range []string{"Page 2 of 3.", "Page 3 of 3."} {
+				serve := delegate.Answer(t, x.child, "read", "more", nil, "")
+				if !strings.Contains(serve.Instructions, page) {
+					t.Fatalf("the next serve should be %q:\n%s", page, serve.Instructions)
+				}
+				if held := workflow.TakeStepFullIDs(); len(held) != 0 {
+					t.Fatalf("the rules page and the brief page should hand on nothing, got %v", held)
+				}
 			}
 		})
 	}
