@@ -14,12 +14,12 @@ cancellation:
     entryId: 20260921-120000-s-tac-op1
     project: test
     source: base
-goal: put the choice to the user and relay their answer verbatim
+goal: put the choice to the user; relay their answer verbatim
 instance: i_2
 instructions: |
   Play back to the user: Test capture entry: the fixture oscillation gap also shows up in integration tests. This entry exists to verify the engine write path end to end.
 
-  Cancelled operation "newEntry". Returned to the "playback" interaction without advancing it. It left: entry 20260921-120000-s-tac-op1, published. Nothing is cleaned up. Confirming again starts a new operation with new identifiers.
+  Cancelled operation "newEntry". Returned to interaction "playback" without advancing it. It left: entry 20260921-120000-s-tac-op1, published. Nothing cleaned up. Confirming again starts a new operation with new identifiers.
 pending_chooser:
   chooser: playback
   kind: user
@@ -50,11 +50,11 @@ report_schema:
       type: string
     chooser:
       const: playback
-      description: the pending chooser's step id — copy it verbatim from pending_chooser.chooser
+      description: the pending chooser's step id; copy it verbatim from pending_chooser.chooser
       type: string
     fields:
       additionalProperties: false
-      description: state fields the chosen option collects — nested here, not at the top level
+      description: state fields the chosen option collects; nest them here, not at the top level
       properties:
         body:
           description: entry description; self-describing first sentence

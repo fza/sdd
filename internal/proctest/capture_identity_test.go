@@ -126,7 +126,7 @@ func TestCapture_RoleUnresolvableActorBlocks(t *testing.T) {
 	draft["roleActor"] = "Ghost"
 	serve = session.Report(t, serve.Instance, draft)
 	proctest.RequireStep(t, serve, "assemble")
-	if !hasDiagnostic(serve, "roleActor does not name an actor known to the graph") {
+	if !hasDiagnostic(serve, "roleActor names no actor known to the graph") {
 		t.Fatalf("diagnostics = %v, want the roleActorResolves message", serve.Diagnostics)
 	}
 }

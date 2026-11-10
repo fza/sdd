@@ -168,7 +168,7 @@ func (s *WorkflowServe) ReminderInstructions() string {
 	if s == nil {
 		return ""
 	}
-	reminder := fmt.Sprintf("(step %s instructions were served earlier this session — follow them; goal: %s. Lost them to a context compaction? resume_session with this session's handle re-serves this position in full.)", s.Step, s.Goal)
+	reminder := fmt.Sprintf("(step %s instructions served earlier this session: follow them. Goal: %s. Lost them to a context compaction? resume_session with this session's handle re-serves this position in full.)", s.Step, s.Goal)
 	return s.ComposeInstructions(reminder)
 }
 
@@ -1104,10 +1104,10 @@ func (w *WorkflowSession) FramingBlocks(ctx context.Context, identity RequestIde
 	}
 	fmt.Fprintf(&infoBlock, "Search: %s", info.Search)
 	if info.GraphSchema < info.BinarySchema {
-		fmt.Fprintf(&infoBlock, "\nGraph schema: %d; entries are written at schema %d until `sdd migrate`", info.GraphSchema, info.GraphSchema)
+		fmt.Fprintf(&infoBlock, "\nGraph schema: %d; entries written at schema %d until `sdd migrate`", info.GraphSchema, info.GraphSchema)
 	}
 	if info.Contribution != "" {
-		fmt.Fprintf(&infoBlock, "\nMode: contribution (%s); entries are written only on a feature branch cut from it", info.Contribution)
+		fmt.Fprintf(&infoBlock, "\nMode: contribution (%s); entries written only on a feature branch cut from it", info.Contribution)
 	}
 	base, err := w.baseLine()
 	if err != nil {
@@ -1151,7 +1151,7 @@ func (w *WorkflowSession) baseLine() (string, error) {
 	line := fmt.Sprintf("\nBase branch: %s (%s)", target.Branch, source)
 	if source != BaseFromCheckout && runtime.options.Branches != nil {
 		if err := runtime.options.Branches.ValidateBranch(w.ctx, target); err != nil {
-			line += fmt.Sprintf("\nNo checkout has the base branch %s: declare the branch you work on before writing.", target.Branch)
+			line += fmt.Sprintf("\nNo checkout has base branch %s: declare your working branch before writing.", target.Branch)
 		}
 	}
 	return line, nil
@@ -1291,7 +1291,7 @@ func framingCutNotice(cut truncate.Cut) string {
 		fmt.Fprintf(&b, "(cut for size: kept %d of %d bytes", cut.KeptBytes, cut.TotalBytes)
 	}
 	if cut.Pull != "" {
-		fmt.Fprintf(&b, " — pull the rest: %s", cut.Pull)
+		fmt.Fprintf(&b, "; pull the rest: %s", cut.Pull)
 	}
 	b.WriteString(")")
 	return b.String()

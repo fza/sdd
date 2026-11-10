@@ -50,7 +50,7 @@ func renderDraft(spec *Spec, fields []string, prev, cur map[string]string, full 
 	var sb strings.Builder
 	var cuts []truncate.Cut
 	if prev == nil {
-		sb.WriteString("Draft as it stands (engine-rendered — what you confirm is this):\n")
+		sb.WriteString("Draft as it stands (engine-rendered; you confirm this):\n")
 		for _, name := range fields {
 			raw, ok := cur[name]
 			if !ok {
@@ -81,7 +81,7 @@ func renderDraft(spec *Spec, fields []string, prev, cur map[string]string, full 
 		}
 	}
 	if len(changed) == 0 && len(cleared) == 0 {
-		return "Draft unchanged since last served — nothing new to re-read.", nil
+		return "Draft unchanged since last served: nothing new to re-read.", nil
 	}
 	sb.WriteString("Draft delta since last served (engine-rendered):\n")
 	for _, name := range fields {
@@ -92,7 +92,7 @@ func renderDraft(spec *Spec, fields []string, prev, cur map[string]string, full 
 			if isProse(spec, name) {
 				if diff := textdiff.Unified(jsonToText(prev[name]), jsonToText(cur[name])); diff != "" {
 					bounded := truncate.Bytes(diff, maxPieceBytes, "")
-					sb.WriteString("- " + name + " (diff against what was last served):\n" + bounded.Text + "\n")
+					sb.WriteString("- " + name + " (diff against last served):\n" + bounded.Text + "\n")
 					if cut := draftCut(bounded.Cut, name); cut != nil {
 						cuts = append(cuts, *cut)
 					}

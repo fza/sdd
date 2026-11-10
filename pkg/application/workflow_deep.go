@@ -402,15 +402,15 @@ func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) []model.De
 		raised = append(raised, fmt.Sprintf("- [%v] %v: %v", finding["severity"], finding["category"], finding["observation"]))
 	}
 	if len(raised) > 0 {
-		lead.WriteString("\n## Already raised by pre-flight\n\nThese are raised already; do not raise them again.")
+		lead.WriteString("\n## Already raised by pre-flight\n\nAlready raised: do not raise them again.")
 		if override, _ := ctx.Store.Get("preflightOverride"); override != nil {
-			lead.WriteString(" The user overrode the high ones: they are settled.")
+			lead.WriteString(" User overrode the high ones: they are settled.")
 		}
 		lead.WriteString("\n\n" + strings.Join(raised, "\n") + "\n")
 	}
 	if previous, ok := readDeepVerdict(ctx.Store); ok {
 		if changed := textdiff.ChangedPassages(previous.Document, base); len(changed) > 0 {
-			lead.WriteString("\n## Changed since the last verdict\n\nAn earlier exchange verified the rest of the draft: judge these passages, the rest as context only.\n\n")
+			lead.WriteString("\n## Changed since the last verdict\n\nAn earlier exchange verified the rest of the draft. Judge these passages; read the rest as context only.\n\n")
 			for _, passage := range changed {
 				lead.WriteString("```\n" + passage + "\n```\n")
 			}
@@ -479,7 +479,7 @@ func withPreflightRubric(pages []model.DeepReadingPage, store *engine.Store) []m
 	if rubric == "" {
 		return pages
 	}
-	page := model.DeepReadingPage{Text: "## Pre-flight's rules\n\nPre-flight's model did not judge this draft: you judge in its place. Apply the rules below as part of your verdict and raise what they would flag as findings in your own report. Their answer format and the reading they mention do not apply: your reading is the rest of these pages.\n\n" + rubric}
+	page := model.DeepReadingPage{Text: "## Pre-flight's rules\n\nPre-flight's model did not judge this draft: you judge in its place. Apply the rules below as part of your verdict. Raise what they would flag as findings in your own report. Their answer format and the reading they mention do not apply: your reading is the rest of these pages.\n\n" + rubric}
 	return append(pages[:1], append([]model.DeepReadingPage{page}, pages[1:]...)...)
 }
 
@@ -494,7 +494,7 @@ func (w *WorkflowSession) readDeepFindings(ctx *engine.Context) error {
 	for i, finding := range findings {
 		owner := ""
 		if finding.Owner {
-			owner = " (only the user can settle it, so it goes to them)"
+			owner = " (only the user can settle it: goes to them)"
 		}
 		fmt.Fprintf(&listed, "- %s [%s, %s]%s: %s", model.DeepFindingID(i), finding.Severity, finding.Axis, owner, finding.Verdict)
 		if len(finding.Basis) > 0 {
@@ -698,7 +698,7 @@ func (w *WorkflowSession) showVerifyPage(store *engine.Store, at int) error {
 	}
 	note := fmt.Sprintf("Page %d of %d.", at+1, len(pages))
 	if at < len(pages)-1 {
-		note += " Report more for the next page; your findings are refused until every page is served."
+		note += " Report more for the next page. Findings are refused until every page is served."
 	} else {
 		note += " Every page is served."
 	}

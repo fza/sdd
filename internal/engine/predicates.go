@@ -189,7 +189,7 @@ func registerBuiltinPredicates(r *Registry) {
 			Reads: []string{"anchor", "targets"},
 		},
 		Fn:          idsResolve("anchor", "targets"),
-		FailMessage: "the anchor or a target does not resolve in the graph — engage on entries that exist",
+		FailMessage: "the anchor or a target does not resolve in the graph; engage on entries that exist",
 	})
 
 	mustRegisterPredicate(r, Predicate{
@@ -199,7 +199,7 @@ func registerBuiltinPredicates(r *Registry) {
 			Reads: []string{"inspectedIds"},
 		},
 		Fn:          idsResolve("inspectedIds"),
-		FailMessage: "an inspected ID does not resolve in the graph — the evidence must name entries that exist",
+		FailMessage: "an inspected ID does not resolve in the graph; evidence must name entries that exist",
 	})
 
 	mustRegisterPredicate(r, Predicate{
@@ -209,7 +209,7 @@ func registerBuiltinPredicates(r *Registry) {
 			Reads: []string{"doneEntry"},
 		},
 		Fn:          idsResolve("doneEntry"),
-		FailMessage: "doneEntry does not resolve in the graph — record the closing done signal before closing out",
+		FailMessage: "doneEntry does not resolve in the graph; record the closing done signal before closing out",
 	})
 
 	mustRegisterPredicate(r, Predicate{
@@ -219,7 +219,7 @@ func registerBuiltinPredicates(r *Registry) {
 			Reads: []string{"refs", "supersedes", "closes"},
 		},
 		Fn:          refsResolve,
-		FailMessage: "a referenced entry does not resolve in the graph — every reference must point at an existing entry",
+		FailMessage: "a referenced entry does not resolve in the graph; every reference must point at an existing entry",
 	})
 
 	mustRegisterPredicate(r, Predicate{
@@ -240,7 +240,7 @@ func registerBuiltinPredicates(r *Registry) {
 				return ""
 			}
 			return "refs not inspected at full depth this session: " + strings.Join(missing, ", ") +
-				" — read them with show (reads stay free), then report again"
+				"; read them with show (reads stay free), then report again"
 		},
 	})
 
@@ -286,7 +286,7 @@ func registerBuiltinPredicates(r *Registry) {
 			Reads: []string{"participants"},
 		},
 		Fn:          participantsCanonical,
-		FailMessage: "a participant is an alias of a recorded actor — report that actor's canonical",
+		FailMessage: "a participant is an alias of a recorded actor; report that actor's canonical",
 		FailDetail:  participantAliasDetail,
 	})
 
@@ -297,7 +297,7 @@ func registerBuiltinPredicates(r *Registry) {
 			Reads: []string{"roleActor"},
 		},
 		Fn:          roleActorResolves,
-		FailMessage: "roleActor does not name an actor known to the graph — capture the actor first, then bind the role to its canonical",
+		FailMessage: "roleActor names no actor known to the graph; capture the actor first, then bind the role to its canonical",
 	})
 
 	mustRegisterPredicate(r, Predicate{
@@ -307,7 +307,7 @@ func registerBuiltinPredicates(r *Registry) {
 			Reads: []string{"aliases", "canonical"},
 		},
 		Fn:          aliasesWellFormed,
-		FailMessage: "an alias is empty, duplicated, or repeats the canonical — list each alternate name once",
+		FailMessage: "an alias is empty, duplicated, or repeats the canonical; list each alternate name once",
 	})
 
 	mustRegisterPredicate(r, Predicate{
@@ -347,7 +347,7 @@ func registerBuiltinPredicates(r *Registry) {
 			Reads: []string{"involvement"},
 		},
 		Fn:          involvementTargetsResolve,
-		FailMessage: "an involvement target does not resolve to a known entry — capture or reference the target first",
+		FailMessage: "an involvement target does not resolve to a known entry; capture or reference the target first",
 	})
 
 	mustRegisterPredicate(r, Predicate{
@@ -367,7 +367,7 @@ func registerBuiltinPredicates(r *Registry) {
 			Reads: []string{"entryKind", "intent"},
 		},
 		Fn:          intentPresentIfDirective,
-		FailMessage: "the target kind is directive but no intent is supplied (pending, guiding, or settled — there is no default)",
+		FailMessage: "the target kind is directive but no intent is supplied (pending, guiding, or settled; no default)",
 	})
 
 	mustRegisterPredicate(r, Predicate{

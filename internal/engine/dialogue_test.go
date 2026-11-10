@@ -60,7 +60,7 @@ func TestDelegableChooserServe(t *testing.T) {
 		wantReason bool
 	}{
 		{name: "guided", wantText: "Ask the user.", wantGoal: "put the choice to the user"},
-		{name: "autonomous", opts: []engine.SessionOption{autonomous()}, wantText: "Decide yourself.", wantGoal: "decide the choice yourself", wantReason: true},
+		{name: "autonomous", opts: []engine.SessionOption{autonomous()}, wantText: "Decide yourself.", wantGoal: "decide yourself", wantReason: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

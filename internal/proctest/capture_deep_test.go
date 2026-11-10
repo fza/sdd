@@ -480,7 +480,7 @@ func TestCaptureDeep_ConfiguredHeadlessLaunchRunsThroughSdd(t *testing.T) {
 	if launches := launcher.Launches(); len(launches) != 1 || launches[0].Runner != "codex" {
 		t.Fatalf("a configured headless launch should go to sdd's launcher, got %+v", launches)
 	}
-	if dispatch := forked.Dispatches[0]; dispatch.Runner != "claude" || !strings.Contains(dispatch.Instructions, "sdd launched the delegate itself, so launch nothing") {
+	if dispatch := forked.Dispatches[0]; dispatch.Runner != "claude" || !strings.Contains(dispatch.Instructions, "sdd launched the delegate itself: launch nothing") {
 		t.Fatalf("the serve should tell the harness to launch nothing, got %+v", dispatch)
 	}
 	round := launcher.NextRound(t)
@@ -680,10 +680,10 @@ func TestCaptureDeep_SubagentDispatchTakesTheClientsAgentBlock(t *testing.T) {
 		want         sdd.VerifierAgent
 		instruction  string
 	}{
-		{"claude code", "claude-code", set, sdd.VerifierAgent{Model: "opus", Effort: "high"}, "Launch it with model opus and effort high"},
-		{"codex", "codex-mcp-client", set, sdd.VerifierAgent{Model: "gpt-5.5", Effort: "low"}, "Launch it with model gpt-5.5 and effort low"},
-		{"claude code defaults", "claude-code", sdd.VerifierPolicy{}, sdd.VerifierAgent{Model: "sonnet", Effort: "medium"}, "Launch it with model sonnet and effort medium"},
-		{"codex defaults", "codex-mcp-client", sdd.VerifierPolicy{}, sdd.VerifierAgent{Effort: "medium"}, "Launch it with effort medium, the dispatch's effort."},
+		{"claude code", "claude-code", set, sdd.VerifierAgent{Model: "opus", Effort: "high"}, "Launch it with the dispatch's model opus and effort high"},
+		{"codex", "codex-mcp-client", set, sdd.VerifierAgent{Model: "gpt-5.5", Effort: "low"}, "Launch it with the dispatch's model gpt-5.5 and effort low"},
+		{"claude code defaults", "claude-code", sdd.VerifierPolicy{}, sdd.VerifierAgent{Model: "sonnet", Effort: "medium"}, "Launch it with the dispatch's model sonnet and effort medium"},
+		{"codex defaults", "codex-mcp-client", sdd.VerifierPolicy{}, sdd.VerifierAgent{Effort: "medium"}, "Launch it with the dispatch's effort medium."},
 		{"another client", "cursor", set, sdd.VerifierAgent{}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
