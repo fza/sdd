@@ -16,7 +16,7 @@ import (
 
 // captureIntroProse opens the shipped base capture's static intro lane —
 // present exactly when that lane serves in full.
-const captureIntroProse = "Draft one entry — one idea, dialogue first."
+const captureIntroProse = "Draft one entry. One idea, dialogue first."
 
 const withheldLanesPrefix = "(lanes served earlier this session: "
 
