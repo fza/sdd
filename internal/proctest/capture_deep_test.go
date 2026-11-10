@@ -223,6 +223,26 @@ func TestCaptureDeep_ContestRoundBuildsTheProposal(t *testing.T) {
 	proctest.RequireStep(t, serve, "verifySummary")
 }
 
+func TestCaptureDeep_AProposalWithMarkupCharactersMatchesItsDraft(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-markup", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	_, resume := world.Resume(t, x.dispatch.Session, "verifier")
+	if page := resume.Open[0].Instructions; !strings.Contains(page, `"desc":"realizes it"`) {
+		t.Fatalf("the verifier should read the refs as the drafter reported them:\n%s", page)
+	}
+	x.delegate.Refresh(t)
+	x.judge(t, []any{map[string]any{"verdict": "the ref leaves its condition unsaid", "axis": "ref-fit", "severity": "medium", "edits": []any{
+		deepEdit(`"desc":"realizes it"`, `"desc":"realizes it while <limit> & rate > 0"`),
+	}}})
+	serve := x.pickUp(t)
+	proctest.RequireStep(t, serve, "deepAnswer")
+	serve = session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+	proctest.RequireStep(t, serve, "deepProposal")
+	refs := []any{map[string]any{"id": captureRefID, "kind": "addresses", "desc": "realizes it while <limit> & rate > 0"}}
+	serve = session.Answer(t, x.instance, "deepProposal", "accept", map[string]any{"refs": refs}, "")
+	proctest.RequireStep(t, serve, "playback")
+}
+
 func TestCaptureDeep_OwnerFindingGoesToTheUser(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-owner", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())
