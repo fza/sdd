@@ -30,13 +30,13 @@ func (p Project) SDDDir() string { return SDDDir(p.Root) }
 
 func (p Project) Pointed() bool { return p.Root != p.WorkRoot }
 
-// LocalConfigPath is the file of the project's machine-local config layer:
-// override (--local-config) when set, else, for a project reached through
-// graph_repo, WorkRoot's config.local.yaml, since the upkeep of sdd's clone
-// removes any local file there (20261106-202055-d-tac-eyl); empty resolves it
-// under SDDDir.
+// LocalConfigPath is the file of the project's machine-local config layer,
+// the one `sdd config set --local` writes: override (--local-config) when
+// set, else, for a pointed project, WorkRoot's config.local.yaml, which lies
+// over the project's own (UnderLocalConfigPath); empty resolves it under
+// SDDDir.
 func (p Project) LocalConfigPath(override string) string {
-	if override == "" && p.GraphRepo != "" {
+	if override == "" && p.Pointed() {
 		return LocalConfigPath(SDDDir(p.WorkRoot), "")
 	}
 	return override
@@ -63,10 +63,6 @@ func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, erro
 		return Project{Root: workRoot, WorkRoot: workRoot}, nil
 	}
 	err = requireOnlyKeys(committedPath, model.PointerKeys)
-	if err != nil {
-		return Project{}, err
-	}
-	err = requireOnlyKeys(localPath, model.LocalPointerKeys)
 	if err != nil {
 		return Project{}, err
 	}

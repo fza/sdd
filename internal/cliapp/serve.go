@@ -482,7 +482,7 @@ func servedConfigLayers(sddDir string) (model.ConfigLayers, []string, error) {
 		return model.ConfigLayers{}, nil, err
 	}
 	layers := model.ConfigLayers{Global: global.BaseConfig, Project: committed, Local: local}
-	watched := []string{loc.ConfigPath, filepath.Join(sddDir, "config.yaml"), meta.LocalConfigPath(sddDir, localLayer)}
+	watched := []string{loc.ConfigPath, filepath.Join(sddDir, "config.yaml"), meta.LocalConfigPath(sddDir, localLayer), meta.LocalConfigPath(sddDir, "")}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return model.ConfigLayers{}, nil, fmt.Errorf("getting working directory: %w", err)

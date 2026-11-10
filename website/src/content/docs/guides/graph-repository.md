@@ -13,7 +13,7 @@ cd ../project && sdd init --project-dir ../project-sdd
 ```text
 project/                     # only work commits
   .sdd/config.yaml           # project_dir, skill_scope, supported_agents, hooks
-  .sdd/config.local.yaml     # optional: project_dir and hooks for this machine
+  .sdd/config.local.yaml     # optional: project_dir, hooks and personal settings for this machine
   .claude/skills/            # sdd init installs and commits these here
   .mcp.json                  # sdd serve
   src/
@@ -25,6 +25,6 @@ project-sdd/                 # only sdd: commits
   .sdd/graph/2026/09/...
 ```
 
-`project_dir` names the folder holding the project's `.sdd/`, relative to the work repository's root or absolute. The work repository's files carry nothing else but [hooks](/sdd/reference/configuration/#hooks): every project setting, the graph, `meta.json`, sessions and stats live in the project, so a work repository that sets any other key is refused, naming the file and key. A `graph_dir` leading into another repository is refused the same way, since commits, the schema and engine branches all belong to the repository holding the project's `.sdd/`.
+`project_dir` names the folder holding the project's `.sdd/`, relative to the work repository's root or absolute. The work repository's committed config carries nothing else but [hooks](/sdd/reference/configuration/#hooks): every shared project setting, the graph, `meta.json`, sessions and stats live in the project, so a committed work config that sets any other key is refused, naming the file and key. Its `config.local.yaml` may hold any machine-local setting. A command run in the work repository lays that file over the project's own: built-in defaults, then the user-global config, the project's `config.yaml`, the project's `config.local.yaml` and the work repository's `config.local.yaml`. `sdd config set --local` run there writes the work repository's file, and `sdd config` names its values `work local`. A `graph_dir` leading into another repository is refused the same way, since commits, the schema and engine branches all belong to the repository holding the project's `.sdd/`.
 
 Every command run in the work repository acts on the project: captures commit there, `sdd serve` serves it and works on its branches (a session binds a branch checked out in the project's repository), and `sdd migrate` and the write gate read its `meta.json`. The work itself stays where it is: `sdd init` installs skills and registers the MCP server in the work repository, `sdd wip start` branches it, and closure evidence comes from its history.

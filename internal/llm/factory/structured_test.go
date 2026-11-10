@@ -28,7 +28,7 @@ func openAIConfig(endpoint string) model.LLMConfig {
 func TestPreflightPassesOnEndpointServingJSONObjectOnly(t *testing.T) {
 	server := test.NewOpenAIServer(t, test.OpenAIBehaviour{
 		RefuseJSONSchema: true,
-		Answer:           `{"findings":[{"observation":"The signal states one observation.","category":"scope","severity":"low"}]}`,
+		Answer:           `{"findings":[{"observation":"The signal states one observation.","quote":"The pre-flight runs against an endpoint","category":"scope","severity":"low"}]}`,
 	})
 	runner, err := factory.New(openAIConfig(server.URL))
 	if err != nil {
@@ -52,8 +52,8 @@ func TestPreflightPassesOnEndpointServingJSONObjectOnly(t *testing.T) {
 
 func TestPreflightReformatsAJSONObjectAnswerOutsideTheSchema(t *testing.T) {
 	server := test.NewOpenAIServer(t, test.OpenAIBehaviour{Answers: []string{
-		`{"findings":[{"observation":"The signal states one observation.","category":"scope","severity":"none"}]}`,
-		`{"findings":[{"observation":"The signal states one observation.","category":"scope","severity":"low"}]}`,
+		`{"findings":[{"observation":"The signal states one observation.","quote":"The pre-flight runs against an endpoint","category":"scope","severity":"none"}]}`,
+		`{"findings":[{"observation":"The signal states one observation.","quote":"The pre-flight runs against an endpoint","category":"scope","severity":"low"}]}`,
 	}})
 	cfg := openAIConfig(server.URL)
 	cfg.StructuredOutput = model.StructuredOutputJSONObject

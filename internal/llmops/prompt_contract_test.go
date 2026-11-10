@@ -39,9 +39,9 @@ func TestCheckerPromptContract(t *testing.T) {
 				_, err := llmops.Preflight(t.Context(), r, entry, graph, "", nil)
 				return err
 			},
-			fields:     []string{"observation", "category", "severity"},
+			fields:     []string{"observation", "quote", "category", "severity"},
 			severities: []string{string(llmops.SeverityHigh), string(llmops.SeverityMedium), string(llmops.SeverityLow)},
-			quoteRule:  []string{"take enough of its words to locate the passage", "need not match it character for character"},
+			quoteRule:  []string{"take enough of its words to locate the passage", "need not match it character for character", "enough to locate it", "marked unverified and cannot block"},
 		},
 		{
 			name: "writing_guide",

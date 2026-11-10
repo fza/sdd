@@ -75,7 +75,7 @@ func TestRunPreflight_BlockingFinding(t *testing.T) {
 		Content: "decision closing signal",
 	}
 
-	runner := &mockRunner{response: `{"findings": [{"severity": "high", "category": "signal-target-miss", "observation": "signal not genuinely addressed"}]}`}
+	runner := &mockRunner{response: `{"findings": [{"severity": "high", "category": "signal-target-miss", "observation": "signal not genuinely addressed", "quote": "decision closing signal"}]}`}
 	f := New(Options{PreflightRunner: runner, Config: &model.PerRepoConfig{}})
 	result, err := f.Preflight(context.Background(), graph, query.PreflightQuery{Entry: proposed})
 	if err != nil {

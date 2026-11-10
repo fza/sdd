@@ -34,6 +34,8 @@ type Finding struct {
 	Severity    Severity
 	Category    string
 	Observation string
+	// Quote locates the passage of the prompt the finding rests on.
+	Quote string
 	// Basis lists the entries a light finding rests on; empty outside light.
 	Basis []string
 }
@@ -91,6 +93,7 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 	if err != nil {
 		return nil, fmt.Errorf("running pre-flight validator: %w", err)
 	}
+	result.Findings = flagUnlocated(result.Findings, req.UserPrompt)
 	return result, nil
 }
 
@@ -604,6 +607,7 @@ func parsePreflightResult(output string) (*PreflightResult, error) {
 			Severity    string `json:"severity"`
 			Category    string `json:"category"`
 			Observation string `json:"observation"`
+			Quote       string `json:"quote"`
 		} `json:"findings"`
 	}
 	if err := json.Unmarshal([]byte(jsonText), &resp); err != nil {
@@ -630,6 +634,7 @@ func parsePreflightResult(output string) (*PreflightResult, error) {
 			Severity:    sev,
 			Category:    f.Category,
 			Observation: f.Observation,
+			Quote:       f.Quote,
 		})
 	}
 

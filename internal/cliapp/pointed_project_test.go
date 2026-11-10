@@ -165,18 +165,6 @@ func TestPointingRepositoryCarriesOnlyPointerKeys(t *testing.T) {
 			content:  "project_dir: ../work-sdd\nrepo_id: example.test/work\n",
 			mentions: []string{"config.yaml", "repo_id", "project_dir, skill_scope, supported_agents"},
 		},
-		{
-			name:     "personal setting in the local file",
-			file:     "config.local.yaml",
-			content:  "participant: Ada\n",
-			mentions: []string{"config.local.yaml", "participant"},
-		},
-		{
-			name:     "agent key in the local file",
-			file:     "config.local.yaml",
-			content:  "project_dir: ../work-sdd\nskill_scope: user\n",
-			mentions: []string{"config.local.yaml", "skill_scope"},
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

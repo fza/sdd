@@ -16,6 +16,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -32,6 +34,8 @@ type PreflightFinding struct {
 	Severity    string `json:"severity"`
 	Category    string `json:"category"`
 	Observation string `json:"observation"`
+	// Quote empty answers with the prompt's first line, a quote that locates.
+	Quote string `json:"quote"`
 }
 
 // GuideFinding is a scripted writing-guide finding, marshaled in the shape
@@ -101,7 +105,7 @@ func (s *LLMScript) Run(_ context.Context, request llm.Request) (llm.Result, err
 		if s.DuringPreflight != nil {
 			s.DuringPreflight()
 		}
-		return marshalFindings(s.PreflightFindings)
+		return marshalFindings(locatedFindings(s.PreflightFindings, request.UserPrompt))
 	case llm.PurposeGatherQuery:
 		return marshalGatherQuery(s.GatherQuery, s.GatherTerm)
 	case llm.PurposeWritingGuide:
@@ -117,6 +121,20 @@ func marshalAnswer(answer map[string]string) (llm.Result, error) {
 		return llm.Result{}, err
 	}
 	return llm.Result{Text: string(data), Identity: scriptIdentity}, nil
+}
+
+func locatedFindings(findings []PreflightFinding, prompt string) []PreflightFinding {
+	if findings == nil {
+		return nil
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(prompt), "\n")
+	out := slices.Clone(findings)
+	for i := range out {
+		if out[i].Quote == "" {
+			out[i].Quote = first
+		}
+	}
+	return out
 }
 
 func marshalFindings[F any](findings []F) (llm.Result, error) {
