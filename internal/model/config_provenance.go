@@ -43,6 +43,7 @@ var configDefaults = map[string]string{
 	"llm.max_tokens":       strconv.Itoa(DefaultLLMMaxTokens),
 	"llm.concurrency":      strconv.Itoa(DefaultLLMConcurrency),
 	"llm.extract_timeout":  DefaultLLMExtractTimeout.String(),
+	"llm.debug":            "false",
 	"sync.cooldown":        DefaultSyncCooldown,
 	"sync.mode":            string(SyncModeManual),
 	"dialogue.mode":        string(DialogueGuided),
