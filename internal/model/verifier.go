@@ -181,14 +181,12 @@ func (c VerifyConfig) ModeFor(kind Kind) VerifyMode {
 	return mode
 }
 
-// StricterKinds lists, for a kind checked looser than Mode, the kinds
-// checked more strictly than it; nil for any other kind. The drafter picks
-// the kind, so pre-flight tests that such a draft fits it (KindFit).
+// StricterKinds lists the kinds checked more strictly than kind: those an
+// unnamed kind's Mode or a named kind's own mode puts above it; nil when
+// none is. The drafter picks the kind, so pre-flight tests that such a draft
+// fits it (KindFit).
 func (c VerifyConfig) StricterKinds(kind Kind) []Kind {
 	own := c.ModeFor(kind)
-	if strictness(own) >= strictness(c.KnownValues().ResolvedMode()) {
-		return nil
-	}
 	var stricter []Kind
 	for _, other := range append(SignalKindValues(), DecisionKindValues()...) {
 		if strictness(c.ModeFor(other)) > strictness(own) {
@@ -199,7 +197,7 @@ func (c VerifyConfig) StricterKinds(kind Kind) []Kind {
 }
 
 // KindFit asks pre-flight whether a draft fits its kind, for a kind the
-// project checks less strictly than verify.mode: the drafter picks the kind,
+// project checks less strictly than another: the drafter picks the kind,
 // so a misfit would let a draft dodge the stricter check.
 type KindFit struct {
 	Kind     Kind

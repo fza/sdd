@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -58,21 +59,31 @@ func TestVerifyConfig_ModeForTakesANamedKindExactly(t *testing.T) {
 	}
 }
 
-func TestVerifyConfig_StricterKindsOnlyForAKindLooserThanTheMode(t *testing.T) {
+func TestVerifyConfig_StricterKindsOnlyForAKindLooserThanAnother(t *testing.T) {
 	block := model.VerifyConfig{Mode: model.VerifyProse, Kinds: map[model.Kind]model.VerifyMode{"insight": model.VerifyOff, "contract": model.VerifyDeep}}
 	got := block.StricterKinds("insight")
 	if len(got) != 14 || got[0] != "gap" {
 		t.Fatalf("an off kind under prose should list every other kind as stricter, got %v", got)
 	}
-	if got := block.StricterKinds("gap"); got != nil {
-		t.Fatalf("a kind at the mode needs no kind-fit check, got %v", got)
-	}
 	if got := block.StricterKinds("contract"); got != nil {
-		t.Fatalf("a kind stricter than the mode needs no kind-fit check, got %v", got)
+		t.Fatalf("the strictest kind needs no kind-fit check, got %v", got)
+	}
+	if got := (model.VerifyConfig{Mode: model.VerifyDeep}).StricterKinds("gap"); got != nil {
+		t.Fatalf("a kind at the mode with no kind above it needs no kind-fit check, got %v", got)
 	}
 	capped := model.VerifyConfig{Mode: model.VerifyDeep}.StricterKinds("done")
 	if len(capped) != 6 {
 		t.Fatalf("a kind capped at prose under deep should list the six uncapped kinds, got %v", capped)
+	}
+}
+
+func TestVerifyConfig_StricterKindsForAKindAtTheModeBelowAConfiguredKind(t *testing.T) {
+	block := model.VerifyConfig{Mode: model.VerifyProse, Kinds: map[model.Kind]model.VerifyMode{"directive": model.VerifyDeep}}
+	if got := block.StricterKinds("done"); !slices.Equal(got, []model.Kind{"directive"}) {
+		t.Fatalf("a kind at verify.mode should be tested against the kind configured stricter than it, got %v", got)
+	}
+	if got := block.StricterKinds("directive"); got != nil {
+		t.Fatalf("the strictest kind needs no kind-fit check, got %v", got)
 	}
 }
 
