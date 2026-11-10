@@ -107,7 +107,7 @@ type Puller interface {
 	// IsClean reports whether the working tree has no uncommitted changes
 	// (a `git status --porcelain` with empty output).
 	IsClean(ctx context.Context) (bool, error)
-	// MergePull runs a merge-only pull (`git pull --no-rebase`) and returns
+	// MergePull fetches and merges upstream, never rebasing, and returns
 	// git's combined output. A non-nil error means the pull failed.
 	MergePull(ctx context.Context) (string, error)
 	UpstreamLocator
