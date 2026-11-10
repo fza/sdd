@@ -8,3 +8,5 @@ skill_scope: project
 # Agent profiles sdd init renders skills for (.claude/skills/, .agents/skills/).
 supported_agents: [claude, codex]
 repo_id: github.com/networkteam/sdd
+verify:
+  mode: deep
