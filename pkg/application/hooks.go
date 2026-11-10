@@ -346,7 +346,7 @@ const (
 // runner, the rounds delivered, and the findings the verifier still stands
 // by.
 func (w *WorkflowSession) hookVerify(point engine.HookPoint) (map[string]any, error) {
-	policy, _, err := w.deepPolicy(point.Instance)
+	policy, _, err := w.deepPolicy(point.Instance, point.Store)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -154,6 +155,69 @@ type VerifyConfig struct {
 	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
 	// Prefilter switches the prefilter on (D7); on by default.
 	Prefilter *bool `yaml:"prefilter,omitempty"`
+	// Kinds sets the mode per entry kind; see ModeFor.
+	Kinds map[Kind]VerifyMode `yaml:"kinds,omitempty"`
+}
+
+// cappedKinds are checked at most at prose while Kinds names no kind: they
+// make no claim a deep check can test, or a deep run costs more than it finds.
+var cappedKinds = []Kind{KindDone, KindActor, KindRole, KindFocus, KindAnnotation, KindInsight, KindQuestion, KindActivity, KindProcedure}
+
+// ModeFor is the mode a draft of kind is checked at: the mode Kinds names
+// for it, else Mode. While Kinds names no kind, cappedKinds take at most
+// prose.
+func (c VerifyConfig) ModeFor(kind Kind) VerifyMode {
+	c = c.KnownValues()
+	mode := c.ResolvedMode()
+	if len(c.Kinds) > 0 {
+		if named, ok := c.Kinds[kind]; ok {
+			return named
+		}
+		return mode
+	}
+	if slices.Contains(cappedKinds, kind) && strictness(mode) > strictness(VerifyProse) {
+		return VerifyProse
+	}
+	return mode
+}
+
+// StricterKinds lists, for a kind checked looser than Mode, the kinds
+// checked more strictly than it; nil for any other kind. The drafter picks
+// the kind, so pre-flight tests that such a draft fits it (KindFit).
+func (c VerifyConfig) StricterKinds(kind Kind) []Kind {
+	own := c.ModeFor(kind)
+	if strictness(own) >= strictness(c.KnownValues().ResolvedMode()) {
+		return nil
+	}
+	var stricter []Kind
+	for _, other := range append(SignalKindValues(), DecisionKindValues()...) {
+		if strictness(c.ModeFor(other)) > strictness(own) {
+			stricter = append(stricter, other)
+		}
+	}
+	return stricter
+}
+
+// KindFit asks pre-flight whether a draft fits its kind, for a kind the
+// project checks less strictly than verify.mode: the drafter picks the kind,
+// so a misfit would let a draft dodge the stricter check.
+type KindFit struct {
+	Kind     Kind
+	Question string
+	// Stricter are the kinds checked more strictly, each with the question
+	// it answers.
+	Stricter []KindTest
+}
+
+// KindTest is an entry kind and the one question it answers.
+type KindTest struct {
+	Kind     Kind
+	Question string
+}
+
+// AllowedValues lists the entry kinds, signals first.
+func (Kind) AllowedValues() []string {
+	return closedValues(append(SignalKindValues(), DecisionKindValues()...)...)
 }
 
 // VerifierPolicy is the resolved verifier configuration of one project.
@@ -209,6 +273,15 @@ func (c VerifyConfig) KnownValues() VerifyConfig {
 	if !isClosedValue(c.Claude.Effort) {
 		c.Claude.Effort = ""
 	}
+	if len(c.Kinds) > 0 {
+		known := make(map[Kind]VerifyMode, len(c.Kinds))
+		for kind, mode := range c.Kinds {
+			if isClosedValue(kind) && isClosedValue(mode) {
+				known[kind] = mode
+			}
+		}
+		c.Kinds = known
+	}
 	return c
 }
 
@@ -232,6 +305,15 @@ func ignoredVerifyValues(c VerifyConfig) []IgnoredSetting {
 	} {
 		if setting.value != "" && !slices.Contains(setting.allowed, setting.value) {
 			ignored = append(ignored, IgnoredSetting{Key: setting.key, Reason: fmt.Sprintf("%q is not %s", setting.value, oneOf(setting.allowed))})
+		}
+	}
+	for _, kind := range slices.Sorted(maps.Keys(c.Kinds)) {
+		mode, key := c.Kinds[kind], "verify.kinds."+string(kind)
+		switch {
+		case !isClosedValue(kind):
+			ignored = append(ignored, IgnoredSetting{Key: key, Reason: fmt.Sprintf("%q is not an entry kind", kind)})
+		case !isClosedValue(mode):
+			ignored = append(ignored, IgnoredSetting{Key: key, Reason: fmt.Sprintf("%q is not %s", mode, oneOf(mode.AllowedValues()))})
 		}
 	}
 	return ignored
@@ -259,6 +341,13 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 		out.Claude.Effort = overlay.Claude.Effort
 	}
 	out.Codex = mergeVerifierAgent(out.Codex, overlay.Codex)
+	if len(overlay.Kinds) > 0 {
+		// KnownValues gave out a map of its own, so base stays unchanged.
+		if out.Kinds == nil {
+			out.Kinds = make(map[Kind]VerifyMode, len(overlay.Kinds))
+		}
+		maps.Copy(out.Kinds, overlay.Kinds)
+	}
 	if overlay.Depth.Down != nil {
 		out.Depth.Down = overlay.Depth.Down
 	}
@@ -381,6 +470,13 @@ func verifyLayerProblems(global BaseConfig, committed, local *PerRepoConfig, fil
 	resolved := MergeBaseConfig(shared, BaseConfig{})
 	if local != nil {
 		resolved = MergeBaseConfig(resolved, local.BaseConfig)
+		for _, kind := range append(SignalKindValues(), DecisionKindValues()...) {
+			lower, raised := shared.Verify.ModeFor(kind), resolved.Verify.ModeFor(kind)
+			if strictness(raised) < strictness(lower) {
+				refuse("verify.kinds."+string(kind), fmt.Errorf("%s: verify.kinds.%s %s is refused in the machine-local config, which may only raise the %s the shared layers resolve %s to",
+					layerFile(ConfigSourceLocal, files), kind, raised, lower, kind))
+			}
+		}
 	}
 	if policy := resolved.Verify.VerifierPolicy(); policy.Runner == VerifierRunnerDriver && policy.Driver.Command == "" {
 		refuse("verify.runner", fmt.Errorf("verify.runner driver needs verify.driver.command, which neither the user-global nor the machine-local config sets; set it in %s", layerFile(ConfigSourceLocal, files)))

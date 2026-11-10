@@ -41,9 +41,9 @@ func (gf *GraphFinder) Preflight(ctx context.Context, q query.PreflightQuery) (*
 		for _, verdict := range q.Light.SetAside {
 			reading.SetAside = append(reading.SetAside, llmops.LightSetAside{IDs: verdict.IDs, Code: verdict.Code})
 		}
-		llmResult, err = llmops.PreflightLight(ctx, f.preflightRunner, q.Entry, gf.graph, language, reading, q.Light.BudgetChars)
+		llmResult, err = llmops.PreflightLight(ctx, f.preflightRunner, q.Entry, gf.graph, language, reading, q.Light.BudgetChars, q.KindFit)
 	} else {
-		llmResult, err = llmops.Preflight(ctx, f.preflightRunner, q.Entry, gf.graph, language)
+		llmResult, err = llmops.Preflight(ctx, f.preflightRunner, q.Entry, gf.graph, language, q.KindFit)
 	}
 	if err != nil {
 		return nil, err

@@ -99,10 +99,16 @@ func refuseUngroundedNew(cfg *model.PerRepoConfig, ncmd *command.NewEntryCmd) er
 	if kind == "" {
 		kind = model.DefaultKindForType(ncmd.Type)
 	}
-	if !groundingPolicy(cfg).Enforce || ncmd.SkipGrounding || ncmd.DryRun || model.GroundingExemptKind(kind) {
+	var block model.VerifyConfig
+	if cfg != nil {
+		block = cfg.Verify
+	}
+	mode := block.ModeFor(kind)
+	enforce, _ := mode.Settings()
+	if !enforce || ncmd.SkipGrounding || ncmd.DryRun || model.GroundingExemptKind(kind) {
 		return nil
 	}
-	return fmt.Errorf("verify.mode %s enforces grounding, so sdd new does not write a %s directly: capture it through the engine (start_procedure capture over the MCP server), whose gather reading the gate judges, write it into that capture with sdd new --session, or pass --skip-grounding to record a bypass", resolvedVerifyMode(cfg), kind)
+	return fmt.Errorf("verify.mode %s enforces grounding, so sdd new does not write a %s directly: capture it through the engine (start_procedure capture over the MCP server), whose gather reading the gate judges, write it into that capture with sdd new --session, or pass --skip-grounding to record a bypass", mode, kind)
 }
 
 // groundingPolicy is the resolved grounding part of cfg's verify block.
@@ -121,22 +127,23 @@ func groundingPolicy(cfg *model.PerRepoConfig) sdd.GroundingPolicy {
 	}
 }
 
-func resolvedVerifyMode(cfg *model.PerRepoConfig) model.VerifyMode {
-	if cfg == nil {
-		return model.DefaultVerifyMode
-	}
-	return cfg.Verify.ResolvedMode()
-}
-
 func verifierPolicy(cfg *model.PerRepoConfig) sdd.VerifierPolicy {
 	var block model.VerifyConfig
 	if cfg != nil {
 		block = cfg.Verify
 	}
 	policy := block.VerifierPolicy()
+	kinds, stricter := map[string]string{}, map[string][]string{}
+	for _, kind := range append(model.SignalKindValues(), model.DecisionKindValues()...) {
+		kinds[string(kind)] = string(block.ModeFor(kind))
+		for _, other := range block.StricterKinds(kind) {
+			stricter[string(kind)] = append(stricter[string(kind)], string(other))
+		}
+	}
 	return sdd.VerifierPolicy{
 		Mode: string(policy.Mode), Skip: string(policy.Skip), Runner: string(policy.Runner),
 		Claude: sdd.VerifierAgent(policy.Claude), Codex: sdd.VerifierAgent(policy.Codex),
+		Kinds: kinds, StricterKinds: stricter,
 	}
 }
 

@@ -38,7 +38,7 @@ func TestCheckersJSONResponse(t *testing.T) {
 			name:    "preflight",
 			payload: `{"findings":[{"severity":"high","category":"missing-ref","observation":"The affected configuration decision is not referenced."}]}`,
 			run: func(runner llm.Runner) (int, error) {
-				result, err := llmops.Preflight(t.Context(), runner, entry, graph, "")
+				result, err := llmops.Preflight(t.Context(), runner, entry, graph, "", nil)
 				if err != nil {
 					return 0, err
 				}

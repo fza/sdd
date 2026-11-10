@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/networkteam/sdd/internal/basefacts"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 )
@@ -24,6 +25,46 @@ type VerifierPolicy struct {
 	// model.DefaultVerifierCodex.
 	Claude VerifierAgent
 	Codex  VerifierAgent
+	// Kinds is the verify mode (off, grounding, prose or deep) each entry
+	// kind is checked at (model.VerifyConfig.ModeFor); a kind it lacks takes
+	// Mode and the grounding GroundingPolicy enforces.
+	Kinds map[string]string
+	// StricterKinds names, for a kind checked looser than verify.mode, the
+	// kinds checked more strictly (model.VerifyConfig.StricterKinds):
+	// pre-flight then also tests that the draft fits its kind.
+	StricterKinds map[string][]string
+}
+
+// verifierFor is the resolved policy a draft of kind is checked under.
+func (r *ProjectRuntime) verifierFor(kind string) model.VerifierPolicy {
+	policy := r.options.Verifier.resolved()
+	if mode, ok := r.options.Verifier.Kinds[kind]; ok {
+		_, policy.Mode = model.VerifyMode(mode).Settings()
+	}
+	return policy
+}
+
+// enforcesGrounding reports whether a draft of kind owes a grounding reading.
+func (r *ProjectRuntime) enforcesGrounding(kind string) bool {
+	if mode, ok := r.options.Verifier.Kinds[kind]; ok {
+		enforce, _ := model.VerifyMode(mode).Settings()
+		return enforce
+	}
+	return r.options.Grounding.resolved().Enforce
+}
+
+// kindFit is the kind-fit check pre-flight adds for a draft of kind; nil
+// where no kind is checked more strictly than it.
+func (r *ProjectRuntime) kindFit(kind string) *model.KindFit {
+	stricter := r.options.Verifier.StricterKinds[kind]
+	if len(stricter) == 0 {
+		return nil
+	}
+	fit := &model.KindFit{Kind: model.Kind(kind), Question: basefacts.KindQuestion(model.Kind(kind))}
+	for _, name := range stricter {
+		fit.Stricter = append(fit.Stricter, model.KindTest{Kind: model.Kind(name), Question: basefacts.KindQuestion(model.Kind(name))})
+	}
+	return fit
 }
 
 // VerifierAgent is a model and effort a deep verifier runs with.
@@ -39,8 +80,6 @@ func (p VerifierPolicy) resolved() model.VerifierPolicy {
 	}.WithDefaults()
 }
 
-func (p VerifierPolicy) mode() model.VerifierMode { return p.resolved().Mode }
-
 // ModelWindow is a model's context window in tokens and the answer reserve
 // each call keeps in it.
 type ModelWindow struct {
@@ -50,8 +89,8 @@ type ModelWindow struct {
 
 // lightPreflight builds the prose verifier's pre-flight over reading, sized
 // by the runtime's model window; nil when the verifier is off.
-func (r *ProjectRuntime) lightPreflight(ctx context.Context, reading *captureReading) (*query.LightPreflight, error) {
-	if r.options.Verifier.mode() == model.VerifierOff || reading == nil {
+func (r *ProjectRuntime) lightPreflight(ctx context.Context, reading *captureReading, kind string) (*query.LightPreflight, error) {
+	if r.verifierFor(kind).Mode == model.VerifierOff || reading == nil {
 		return nil, nil
 	}
 	if r.options.Window == nil {

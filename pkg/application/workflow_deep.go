@@ -114,19 +114,22 @@ func (w *WorkflowSession) deepFingerprint(ctx *engine.Context) string {
 	return hex.EncodeToString(sum.Sum(nil))
 }
 
-func (w *WorkflowSession) deepPolicy(instance string) (model.VerifierPolicy, *ProjectRuntime, error) {
+// deepPolicy is the verifier policy of the draft's kind in the capture's
+// project.
+func (w *WorkflowSession) deepPolicy(instance string, store *engine.Store) (model.VerifierPolicy, *ProjectRuntime, error) {
 	runtime, err := w.targetRuntime(w.instanceProject(instance), AccessRead)
 	if err != nil {
 		return model.VerifierPolicy{}, nil, err
 	}
-	return runtime.options.Verifier.resolved(), runtime, nil
+	kind, _ := workflowStoreString(store, "entryKind")
+	return runtime.verifierFor(kind), runtime, nil
 }
 
 // deepVerdictCurrent reports whether the write may go ahead as far as the
 // deep verifier is concerned: the project runs no deep verifier, or a
 // verdict or skip covers the current input.
 func (w *WorkflowSession) deepVerdictCurrent(ctx *engine.Context) (bool, error) {
-	policy, _, err := w.deepPolicy(ctx.Instance)
+	policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
 	if err != nil || policy.Mode != model.VerifierDeep {
 		return true, err
 	}
@@ -140,7 +143,7 @@ func (w *WorkflowSession) deepVerdictCurrent(ctx *engine.Context) (bool, error) 
 // draft. A skipped exchange falls back to pre-flight's model, so deep never
 // checks less than prose.
 func (w *WorkflowSession) deepJudgesPreflight(ctx *engine.Context) (bool, error) {
-	policy, _, err := w.deepPolicy(ctx.Instance)
+	policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
 	if err != nil || policy.Mode != model.VerifierDeep {
 		return false, err
 	}
@@ -155,7 +158,7 @@ func (w *WorkflowSession) writeDeepVerdict(ctx *engine.Context, outcome, skip st
 	if n, ok := rounds.(int); ok {
 		count = float64(n)
 	}
-	policy, _, err := w.deepPolicy(ctx.Instance)
+	policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
 	if err != nil {
 		return err
 	}
@@ -188,7 +191,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 		{
 			Doc: engine.FuncDoc{Name: "deepSkipWeighed", Doc: "The project sets verify.skip: weighed, so the user weighs running the deep exchange first."},
 			Fn: func(ctx *engine.Context) (bool, error) {
-				policy, _, err := w.deepPolicy(ctx.Instance)
+				policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
 				return policy.Skip == model.VerifierSkipWeighed, err
 			},
 			Selector: true,
@@ -303,7 +306,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 		{
 			Doc: engine.FuncDoc{Name: "recordDeepFailureSkip", Doc: "Records the user's skip after the verifier could not run: the entry carries verification: skipped and confidence low. Refused under verify.skip: never.", Reads: captureDraftFields, Writes: []string{fieldDeepVerdict}},
 			Fn: func(ctx *engine.Context) error {
-				policy, _, err := w.deepPolicy(ctx.Instance)
+				policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
 				if err != nil {
 					return err
 				}
@@ -327,7 +330,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 // over, the reading paged for the verifier (V-D8), and the weighing rule's
 // recommendation.
 func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
-	policy, runtime, err := w.deepPolicy(ctx.Instance)
+	policy, runtime, err := w.deepPolicy(ctx.Instance, ctx.Store)
 	if err != nil {
 		return err
 	}

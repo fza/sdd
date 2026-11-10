@@ -38,7 +38,7 @@ func TestPreflightPassesOnEndpointServingJSONObjectOnly(t *testing.T) {
 	fact := &model.Entry{ID: basefacts.RefKindsFactID, Type: model.TypeSignal, Layer: model.LayerProcess, Kind: model.KindFact, Content: "ref-kind vocabulary stub"}
 	proposed := &model.Entry{Type: model.TypeSignal, Layer: model.LayerTactical, Content: "The pre-flight runs against an endpoint serving json_object only."}
 
-	result, err := llmops.Preflight(context.Background(), runner, proposed, model.NewGraph([]*model.Entry{fact}), "")
+	result, err := llmops.Preflight(context.Background(), runner, proposed, model.NewGraph([]*model.Entry{fact}), "", nil)
 	if err != nil {
 		t.Fatalf("Preflight: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestPreflightReformatsAJSONObjectAnswerOutsideTheSchema(t *testing.T) {
 	fact := &model.Entry{ID: basefacts.RefKindsFactID, Type: model.TypeSignal, Layer: model.LayerProcess, Kind: model.KindFact, Content: "ref-kind vocabulary stub"}
 	proposed := &model.Entry{Type: model.TypeSignal, Layer: model.LayerTactical, Content: "The pre-flight runs against an endpoint serving json_object only."}
 
-	result, err := llmops.Preflight(context.Background(), runner, proposed, model.NewGraph([]*model.Entry{fact}), "")
+	result, err := llmops.Preflight(context.Background(), runner, proposed, model.NewGraph([]*model.Entry{fact}), "", nil)
 	if err != nil {
 		t.Fatalf("Preflight: %v", err)
 	}

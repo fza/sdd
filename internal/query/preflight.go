@@ -15,6 +15,8 @@ type PreflightQuery struct {
 	// Light runs pre-flight as the light verifier over a grounding reading
 	// (20261109-004729-d-cpt-xs5); nil runs it over the draft's refs alone.
 	Light *LightPreflight
+	// KindFit adds the check that the draft fits its kind; nil leaves it out.
+	KindFit *model.KindFit
 }
 
 // LightPreflight is the grounding reading a light pre-flight judges the

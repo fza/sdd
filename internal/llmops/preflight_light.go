@@ -46,7 +46,7 @@ type LightSetAside struct {
 // and the draft leading every call byte for byte; the calls run in parallel
 // and their findings merge into one verdict naming how many calls ran and
 // which entries were judged on excerpts.
-func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string, reading LightReading, budgetChars int) (*PreflightResult, error) {
+func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string, reading LightReading, budgetChars int, kindFit *model.KindFit) (*PreflightResult, error) {
 	ct := selectCheckType(entry, graph)
 	vocab, err := refKindVocabulary(graph)
 	if err != nil {
@@ -54,6 +54,7 @@ func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, 
 	}
 	pctx := assembleContext(entry, graph, ct, configuredLanguage)
 	pctx.RefKindVocabulary = vocab
+	pctx.KindFit = kindFit
 	base, err := renderPreflightPrompt(ct, pctx)
 	if err != nil {
 		return nil, fmt.Errorf("rendering pre-flight prompt: %w", err)

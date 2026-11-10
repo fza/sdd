@@ -90,12 +90,9 @@ func guideRan(store *engine.Store) bool {
 	return ok && value != nil
 }
 
-func (w *WorkflowSession) verifierMode(instance string) (model.VerifierMode, error) {
-	runtime, err := w.targetRuntime(w.instanceProject(instance), AccessRead)
-	if err != nil {
-		return "", err
-	}
-	return runtime.options.Verifier.mode(), nil
+func (w *WorkflowSession) verifierMode(ctx *engine.Context) (model.VerifierMode, error) {
+	policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
+	return policy.Mode, err
 }
 
 func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) error {
@@ -108,7 +105,7 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 		{
 			Doc: engine.FuncDoc{Name: "verifierOn", Doc: "The capture's project sets verify.mode prose or deep, so pre-flight is the prose verifier over the grounding reading."},
 			Fn: func(ctx *engine.Context) (bool, error) {
-				mode, err := w.verifierMode(ctx.Instance)
+				mode, err := w.verifierMode(ctx)
 				return mode != model.VerifierOff, err
 			},
 			Selector: true,
@@ -119,7 +116,7 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 				if !w.Autonomous() {
 					return false, nil
 				}
-				mode, err := w.verifierMode(ctx.Instance)
+				mode, err := w.verifierMode(ctx)
 				return mode != model.VerifierOff, err
 			},
 			Selector: true,
@@ -142,7 +139,7 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 		{
 			Doc: engine.FuncDoc{Name: "quietPreflight", Doc: "The last pre-flight leaves nothing to serve: the verifier is off, or it raised no finding.", Reads: []string{"findings"}},
 			Fn: func(ctx *engine.Context) (bool, error) {
-				mode, err := w.verifierMode(ctx.Instance)
+				mode, err := w.verifierMode(ctx)
 				if err != nil || mode == model.VerifierOff {
 					return true, err
 				}

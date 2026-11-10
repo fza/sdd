@@ -71,7 +71,7 @@ func (r *PreflightResult) HasBlocking() bool {
 // `.sdd/config.yaml` (empty string when unset — English default). It feeds
 // the language-drift check which flags entries whose description prose does
 // not match the configured language.
-func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string) (*PreflightResult, error) {
+func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string, kindFit *model.KindFit) (*PreflightResult, error) {
 	ct := selectCheckType(entry, graph)
 
 	vocab, err := refKindVocabulary(graph)
@@ -80,6 +80,7 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 	}
 	pctx := assembleContext(entry, graph, ct, configuredLanguage)
 	pctx.RefKindVocabulary = vocab
+	pctx.KindFit = kindFit
 
 	req, err := renderPreflightPrompt(ct, pctx)
 	if err != nil {
@@ -218,6 +219,7 @@ type preflightContext struct {
 	// load is failable). The ref-meta consistency rubric renders it instead of
 	// restating the kinds, so the vocabulary is defined once.
 	RefKindVocabulary string
+	KindFit           *model.KindFit
 }
 
 // selectCheckType determines the pre-flight check type from entry properties and graph context.
@@ -568,6 +570,12 @@ func renderPreflightPrompt(ct checkType, pctx *preflightContext) (llm.Request, e
 	}
 	if err := tmpl.ExecuteTemplate(&userB, base+"_user", pctx); err != nil {
 		return llm.Request{}, fmt.Errorf("executing template %s_user: %w", base, err)
+	}
+	if pctx.KindFit != nil {
+		userB.WriteString("\n\n")
+		if err := tmpl.ExecuteTemplate(&userB, "kind_fit", pctx.KindFit); err != nil {
+			return llm.Request{}, fmt.Errorf("executing template kind_fit: %w", err)
+		}
 	}
 
 	return llm.Request{
