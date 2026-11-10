@@ -44,13 +44,26 @@ func draftText(store *engine.Store) string {
 			b.WriteString("\n" + text)
 			continue
 		}
-		encoded, err := json.Marshal(value)
+		encoded, err := draftJSON(value)
 		if err != nil {
-			encoded = fmt.Appendf(nil, "%v", value)
+			encoded = fmt.Sprintf("%v", value)
 		}
 		fmt.Fprintf(&b, "%s: %s\n", field, encoded)
 	}
 	return b.String()
+}
+
+// draftJSON keeps <, > and & literal, so an edit quoting the drafter's words
+// matches the rendered draft.
+func draftJSON(value any) (string, error) {
+	var b strings.Builder
+	encoder := json.NewEncoder(&b)
+	encoder.SetEscapeHTML(false)
+	err := encoder.Encode(value)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(b.String(), "\n"), nil
 }
 
 func writeGuideBase(store *engine.Store) error {
