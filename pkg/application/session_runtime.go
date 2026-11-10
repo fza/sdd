@@ -19,7 +19,7 @@ const reorientSuffix = "reorient with resume_session or start fresh"
 // handle rather than a revival of the spent one (d-tac-k4q). It is composed into
 // the conclude serve and into every refusal an ended session answers with, so
 // each surface names the same one path that works.
-const NewSessionNote = "This session is finished — continuing means opening a new session with start_session, which returns a new handle to carry in place of this one. Its log stays readable for inspection until its retention window expires."
+const NewSessionNote = "Session finished. To continue, open a new session with start_session; carry its new handle in place of this one. This session's log stays readable for inspection until its retention window expires."
 
 const SessionCodecVersion uint32 = 1
 

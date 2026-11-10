@@ -82,7 +82,7 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[stri
 		"chooser": map[string]any{
 			"type":        "string",
 			"const":       step.ID,
-			"description": "the pending chooser's step id — copy it verbatim from pending_chooser.chooser",
+			"description": "the pending chooser's step id; copy it verbatim from pending_chooser.chooser",
 		},
 		"choice": map[string]any{
 			"type":        "string",
@@ -95,11 +95,11 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[stri
 	case step.Chooser == ChooserUser && step.Delegable && mode == model.DialogueAutonomous:
 		properties["userWords"] = map[string]any{
 			"type":        "string",
-			"description": "the user's answer, relayed verbatim, when the user gave one — otherwise omit it and give reason",
+			"description": "the user's answer, relayed verbatim, when the user gave one; otherwise omit it and give reason",
 		}
 		properties["reason"] = map[string]any{
 			"type":        "string",
-			"description": "one line on why you chose this option yourself — give exactly one of reason and userWords",
+			"description": "one line on why you chose this option yourself; give exactly one of reason and userWords",
 		}
 	case step.Chooser == ChooserUser:
 		properties["userWords"] = map[string]any{
@@ -113,7 +113,7 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[stri
 			"type":                 "object",
 			"properties":           fieldProps,
 			"additionalProperties": false,
-			"description":          "state fields the chosen option collects — nested here, not at the top level",
+			"description":          "state fields the chosen option collects; nest them here, not at the top level",
 		}
 	}
 
@@ -308,7 +308,7 @@ func schemaForType(t VarType, desc string) map[string]any {
 		schema = map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"old": map[string]any{"type": "string", "minLength": 1, "description": "exact text to replace — must match exactly once in the target as it stands when this pair applies"},
+				"old": map[string]any{"type": "string", "minLength": 1, "description": "exact text to replace; must match exactly once in the target as it stands when this pair applies"},
 				"new": map[string]any{"type": "string", "description": "replacement text; empty deletes the old text"},
 			},
 			"required":             []string{"old", "new"},

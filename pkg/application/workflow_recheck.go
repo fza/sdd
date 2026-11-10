@@ -104,7 +104,7 @@ func (w *WorkflowSession) strainRefusals(ctx *engine.Context, runtime *ProjectRu
 	}
 	var refusals []string
 	for _, item := range model.StrainRefusals(open, cited) {
-		refusals = append(refusals, fmt.Sprintf("the draft cites %s while %s of %s stays unhealed (recheck item %s): heal it by citing both, redraft around the clash, hold the draft as WIP, or drop the topic; ask the user where the choice is theirs",
+		refusals = append(refusals, fmt.Sprintf("the draft cites %s while %s of %s stays unhealed (recheck item %s): heal it by citing both, redraft around the clash, hold the draft as WIP, or drop the topic. Ask the user where the choice is theirs",
 			strings.Join(citedOf(item.Entries, cited), ", "), item.Relation, strings.Join(item.Entries, " and "), item.ID))
 	}
 	return refusals, nil

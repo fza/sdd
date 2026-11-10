@@ -197,7 +197,7 @@ func (a *Application) Vocabulary(ctx context.Context, identity RequestIdentity, 
 			break
 		}
 	}
-	return fmt.Sprintf("(configured graph language %q has no bundled vocabulary — render user-facing terms in English canonical form; adding vocabulary/%s.md to the bundle is a framework-level contribution)", info.Language, base), nil
+	return fmt.Sprintf("(configured graph language %q has no bundled vocabulary: render user-facing terms in English canonical form. Adding vocabulary/%s.md to the bundle is a framework-level contribution)", info.Language, base), nil
 }
 
 // Lint runs the categorized lint providers over the project's graph — the
@@ -408,7 +408,7 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 	}
 	for _, member := range coverage {
 		if !member.Complete {
-			incomplete := "Search indexing is incomplete for the selected snapshots. Available matches are shown; retry later."
+			incomplete := "Search indexing incomplete for the selected snapshots. Available matches shown; retry later."
 			search.Notice = strings.TrimSpace(search.Notice + " " + incomplete)
 			search.Notices = append(search.Notices, incomplete)
 			break

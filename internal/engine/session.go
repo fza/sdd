@@ -870,7 +870,7 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 		if err != nil {
 			return nil, err
 		}
-		sv.Diagnostics = append(sv.Diagnostics, "not answered: the draft changed since it was last served — play the change back and answer again")
+		sv.Diagnostics = append(sv.Diagnostics, "not answered: draft changed since last served. Play the change back, then answer again")
 		sv.Instructions = ComposeInstructions(sv.UnitText, sv.Diagnostics)
 		return sv, nil
 	}

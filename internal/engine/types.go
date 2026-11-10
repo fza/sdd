@@ -83,7 +83,7 @@ func BaseTypeValues() []BaseType {
 // Semantics only: the concrete shape, enums included, is generated into the
 // step's report schema (schemaForType), never restated here.
 var baseTypeDesc = map[BaseType]string{
-	TypeText:              "free prose — accounts, reports, syntheses; the default for anything narrative",
+	TypeText:              "free prose: accounts, reports, syntheses; the default for anything narrative",
 	TypeBool:              "true or false",
 	TypeEntryID:           "a full entry identifier, resolvable against the graph",
 	TypeRef:               "a reference: target id, relationship kind from the closed ref-kind set, optional why",
@@ -97,8 +97,8 @@ var baseTypeDesc = map[BaseType]string{
 	TypeAttachmentHandle:  "the handle returned when a file is staged during the session, binding that file to the entry being written",
 	TypeProcedureSpec:     "a procedure's workflow declaration as one structured value: params, state, steps, and, for shells, the framing lanes rendered on every serve",
 	TypeFactIndex:         "a fact's enrollment in the served fact index: the title and topic its index line carries",
-	TypePreflightFindings: "the structural findings the graph write gate raised against the draft — engine-written, never collected by a step",
-	TypeGuideFindings:     "the entry-craft findings the capture writing guide returned on the draft — engine-written, never collected by a step",
+	TypePreflightFindings: "the structural findings the graph write gate raised against the draft; engine-written, never collected by a step",
+	TypeGuideFindings:     "the entry-craft findings the capture writing guide returned on the draft; engine-written, never collected by a step",
 	TypeInvolvement:       "a focus involvement: target entry, optional actors, optional time range",
 	TypeInvolvementWhen:   "a from/to date range",
 	TypeSearchReplace:     "one exact edit: old text that must match exactly once in the target, and the new text replacing it",
@@ -107,7 +107,7 @@ var baseTypeDesc = map[BaseType]string{
 	TypeDeepAnswer:        "the drafter's answer to one deep finding: its number, accept or contest, and the reason of a contest",
 	TypeDeepResponse:      "the deep verifier's answer to one contested finding: its number, held, conceded, revised or dropped, a note, and the edits it now proposes",
 	TypeStrain:            "a clash between two existing entries the capture found: which two, and whether one contradicts, duplicates or outdates the other",
-	TypeProse:             "long-form prose — like text, but serves render changes as content diffs instead of re-serving the whole value",
+	TypeProse:             "long-form prose: like text, but serves render changes as content diffs, not the whole value again",
 }
 
 // Description returns the type's served meaning; empty for an unknown type.

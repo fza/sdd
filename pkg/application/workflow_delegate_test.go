@@ -372,7 +372,7 @@ func TestDelegateLivesNoLongerThanItsDispatchingMove(t *testing.T) {
 		}
 		f.advance(t, f.parent, f.dispatch, nil)
 		sent := f.advance(t, f.parent, f.dispatch, map[string]any{"chooser": "answer", "choice": "reply", "fields": map[string]any{"brief": "a1"}})
-		if len(sent.Dispatches) != 0 || strings.Contains(sent.Instructions, "was not delivered") {
+		if len(sent.Dispatches) != 0 || strings.Contains(sent.Instructions, "to the delegate refused") {
 			t.Fatalf("a delegate torn down by handle releases its fork, so nothing is even attempted, got %+v %q", sent.Dispatches, sent.Instructions)
 		}
 	})

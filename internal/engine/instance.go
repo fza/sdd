@@ -620,7 +620,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		if n := partBytes(sv.Produced); n > 0 {
 			sv.Sizes = append(sv.Sizes, PartSize{Part: "produced", Bytes: n})
 		}
-		sv.Goal = "the procedure has ended (" + inst.Outcome + ")"
+		sv.Goal = "procedure ended (" + inst.Outcome + ")"
 		if cancelled := s.cancelled; cancelled != nil && cancelled.Intent.Instance == inst.ID {
 			cancellation, err := s.Cancellation()
 			if err != nil {
@@ -735,9 +735,9 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		if len(sv.Missing) > 0 {
 			diagnostics = append(diagnostics, "missing: "+strings.Join(sv.Missing, ", "))
 		}
-		sv.Goal = "provide the missing report fields"
+		sv.Goal = "report the missing fields"
 		if len(sv.Failing) > 0 {
-			sv.Goal = "resolve what holds the gate, then report again"
+			sv.Goal = "fix what holds the gate, then report again"
 		}
 	case ChooserAgent, ChooserUser:
 		options := make([]ChooserOption, 0, len(step.Options))
@@ -751,11 +751,11 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.DialogueMode)
 		switch {
 		case step.Chooser == ChooserUser && step.Delegable && s.DialogueMode == model.DialogueAutonomous:
-			sv.Goal = "decide the choice yourself and answer with a one-line reason"
+			sv.Goal = "decide yourself; answer with a one-line reason"
 		case step.Chooser == ChooserUser:
-			sv.Goal = "put the choice to the user and relay their answer verbatim"
+			sv.Goal = "put the choice to the user; relay their answer verbatim"
 		default:
-			sv.Goal = "judge and answer the chooser, with the evidence its option collects"
+			sv.Goal = "judge the chooser; answer with the evidence its option collects"
 		}
 	}
 	if step.Goal != "" {
