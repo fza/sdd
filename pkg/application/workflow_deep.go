@@ -14,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/textdiff"
 )
 
@@ -44,6 +45,9 @@ const (
 	fieldDeepProblems   = "deepProblems"
 	fieldDeepNoSubagent = "deepNoSubagent"
 	fieldDeepForkBase   = "deepForkBase"
+	// fieldPreflightRubric is what pre-flight's model would have judged a
+	// draft by, set while the deep verifier judges in its place.
+	fieldPreflightRubric = "preflightRubric"
 )
 
 // Received and reported fields of the capture's deep exchange.
@@ -128,6 +132,21 @@ func (w *WorkflowSession) deepVerdictCurrent(ctx *engine.Context) (bool, error) 
 	}
 	verdict, ok := readDeepVerdict(ctx.Store)
 	return ok && verdict.Fingerprint == w.deepFingerprint(ctx), nil
+}
+
+// deepJudgesPreflight reports whether the deep verifier judges the draft in
+// pre-flight's place, so pre-flight runs only its mechanical checks: the
+// project runs deep, and no skip of the deep exchange covers the current
+// draft. A skipped exchange falls back to pre-flight's model, so deep never
+// checks less than prose.
+func (w *WorkflowSession) deepJudgesPreflight(ctx *engine.Context) (bool, error) {
+	policy, _, err := w.deepPolicy(ctx.Instance)
+	if err != nil || policy.Mode != model.VerifierDeep {
+		return false, err
+	}
+	verdict, ok := readDeepVerdict(ctx.Store)
+	skipped := ok && verdict.Outcome == "skipped" && verdict.Fingerprint == w.deepFingerprint(ctx)
+	return !skipped, nil
 }
 
 func (w *WorkflowSession) writeDeepVerdict(ctx *engine.Context, outcome, skip string) error {
@@ -446,7 +465,18 @@ func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) []model.De
 			rest = append(rest, served)
 		}
 	}
-	return model.DeepReadingPages(lead.String(), first, rest)
+	return withPreflightRubric(model.DeepReadingPages(lead.String(), first, rest), ctx.Store)
+}
+
+// withPreflightRubric serves the rubric pre-flight's model would have judged
+// the draft by as page 2, when the verifier judges in its place.
+func withPreflightRubric(pages []model.DeepReadingPage, store *engine.Store) []model.DeepReadingPage {
+	rubric, _ := workflowStoreString(store, fieldPreflightRubric)
+	if rubric == "" {
+		return pages
+	}
+	page := model.DeepReadingPage{Text: "## Pre-flight's rules\n\nPre-flight's model did not judge this draft: you judge in its place. Apply the rules below as part of your verdict and raise what they would flag as findings in your own report. Their answer format and the reading they mention do not apply: your reading is the rest of these pages.\n\n" + rubric}
+	return append(pages[:1], append([]model.DeepReadingPage{page}, pages[1:]...)...)
 }
 
 func (w *WorkflowSession) readDeepFindings(ctx *engine.Context) error {
@@ -697,6 +727,22 @@ func verifyPageAt(store *engine.Store) (int, int) {
 }
 
 func (w *WorkflowSession) registerVerifyTask(registry *engine.Registry) error {
+	// The deep exchange's documents are the exchange itself: a page, the
+	// findings, the proposal and its hunks reach their reader whole, never at
+	// the store-value cap.
+	err := registry.RegisterQuery(engine.Query{
+		Doc:       engine.FuncDoc{Name: "deepDocument", Doc: "Serves one deep-exchange store value whole: a reading page, the findings, the proposal or its hunks, up to one page of the reading."},
+		ServeSafe: true,
+		Bound:     engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: model.DeepPageChars}},
+		Fn: func(ctx *engine.Context, args map[string]any) (any, error) {
+			field, _ := args["field"].(string)
+			value, _ := workflowStoreString(ctx.Store, field)
+			return value, nil
+		},
+	})
+	if err != nil {
+		return err
+	}
 	predicates := []engine.Predicate{
 		{
 			Doc: engine.FuncDoc{Name: "verifyFindingsStand", Doc: "The verifier's findings pass the check: valid, resolving, and with edits that apply to the base draft.", Reads: []string{fieldVerifyProblems}},

@@ -36,7 +36,11 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 	if err := captureAttachments(&draft, w.staged); err != nil {
 		return err
 	}
-	result, err := w.app.preflightEntry(w.ctx, w.identity, target.Project, draft, instanceReading(ctx))
+	deepJudges, err := w.deepJudgesPreflight(ctx)
+	if err != nil {
+		return err
+	}
+	result, err := w.app.preflightEntry(w.ctx, w.identity, target.Project, draft, instanceReading(ctx), deepJudges)
 	err = w.withSessionBindingTargetError(err, fromBinding)
 	if target.Branch == "" {
 		err = withBaseTargetError("", err)
@@ -61,6 +65,14 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 		return err
 	}
 	err = ctx.Store.WriteEngine("preflightExcerpted", result.Excerpted)
+	if err != nil {
+		return err
+	}
+	var rubric any
+	if result.Rubric != "" {
+		rubric = result.Rubric
+	}
+	err = ctx.Store.WriteEngine(fieldPreflightRubric, rubric)
 	if err != nil {
 		return err
 	}
@@ -177,7 +189,7 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 	if err != nil {
 		return false, false, err
 	}
-	current, accepted := false, false
+	current, accepted, mechanicalOnly := false, false, false
 	checkedBranch := ""
 	selected := workflowStoreStrings(ctx.Store, "attachments")
 	staged := make(map[string]string)
@@ -221,6 +233,8 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 				current, accepted = true, true
 				writes, _ := record.Data["writes"].(map[string]any)
 				checkedBranch, _ = writes["resolvedCaptureBranch"].(string)
+				rubric, _ := writes[fieldPreflightRubric].(string)
+				mechanicalOnly = rubric != ""
 				encoded, err := json.Marshal(writes["findings"])
 				if err != nil {
 					return false, false, err
@@ -242,6 +256,12 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 	}
 	if !current {
 		return false, false, nil
+	}
+	if mechanicalOnly {
+		judges, err := w.deepJudgesPreflight(ctx)
+		if err != nil || !judges {
+			return false, false, err
+		}
 	}
 	target, _ := w.effectiveTargetFor(w.instanceProject(ctx.Instance), ctx.Store)
 	if target.Branch == "" {
