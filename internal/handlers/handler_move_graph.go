@@ -336,7 +336,7 @@ func (h *Handler) moveGraph(ctx context.Context, cmd *command.MoveGraphCmd, proj
 		t.plan.Parents = append(t.plan.Parents, split)
 	}
 
-	err = h.planMeta(cmd, s, t, same)
+	err = h.planMeta(s, t, same)
 	if err != nil {
 		return false, err
 	}
@@ -468,7 +468,7 @@ func (h *Handler) prepareTarget(target, source graphHome, cmd *command.MoveGraph
 	return h.projectRepos.Init(target.root)
 }
 
-func (h *Handler) planMeta(cmd *command.MoveGraphCmd, s, t *moveRepo, same bool) error {
+func (h *Handler) planMeta(s, t *moveRepo, same bool) error {
 	metaPath := filepath.Join(model.SDDDirName, model.SchemaMetaFileName)
 	data, err := os.ReadFile(filepath.Join(s.root, metaPath))
 	if err != nil {
@@ -482,7 +482,7 @@ func (h *Handler) planMeta(cmd *command.MoveGraphCmd, s, t *moveRepo, same bool)
 	if schema.MinimumVersion != nil {
 		recorded = *schema.MinimumVersion
 	}
-	floor := model.MoveMinimumVersion(recorded, cmd.BinaryVersion)
+	floor := model.MoveMinimumVersion(recorded)
 	schema.MinimumVersion = &floor
 	formatted, err := model.FormatSchemaMeta(*schema)
 	if err != nil {

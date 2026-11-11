@@ -15,8 +15,8 @@ type MoveGraphCmd struct {
 	Target model.LocationRef
 	// LocalConfigOverride is the --local-config file, which stays where it is.
 	LocalConfigOverride string
-	// BinaryVersion is the running sdd's version, the ceiling of the
-	// minimum_version the move sets.
+	// BinaryVersion is the running sdd's version, stamped into the agent
+	// surfaces a move installs.
 	BinaryVersion string
 
 	// OnMoved fires once the graph moved, with the record its commits carry.
