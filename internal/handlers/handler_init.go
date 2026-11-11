@@ -309,7 +309,7 @@ func (h *Handler) initRepo(ctx context.Context, cmd *command.InitCmd, changed *b
 	// development doesn't pin a floor the graph's owner didn't choose.
 	var minVersion *string
 	if !model.IsDevVersion(cmd.BinaryVersion) {
-		v := cmd.BinaryVersion
+		v := model.RecordedMinimumVersion(cmd.BinaryVersion)
 		minVersion = &v
 	}
 	err = h.WriteSchemaMeta(ctx, &command.WriteSchemaMetaCmd{
