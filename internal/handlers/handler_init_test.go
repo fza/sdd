@@ -876,6 +876,54 @@ func TestInit_BumpRaisesMinimumVersion(t *testing.T) {
 	}
 }
 
+func TestInit_ForkBuildRecordsUpstreamBase(t *testing.T) {
+	tmp := t.TempDir()
+	h := handlers.New(handlers.Options{Reader: finders.New(finders.Options{})})
+	readMinimum := func() string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(tmp, model.SDDDirName, model.SchemaMetaFileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		meta, err := model.ParseSchemaMeta(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if meta.MinimumVersion == nil {
+			t.Fatal("minimum_version should be recorded")
+		}
+		return *meta.MinimumVersion
+	}
+	initFrom := func(binary string, bump bool) {
+		t.Helper()
+		err := h.Init(context.Background(), &command.InitCmd{
+			RepoRoot:      tmp,
+			BinaryVersion: binary,
+			Scope:         model.ScopeProject,
+			ScopeExplicit: true,
+			Bump:          bump,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	initFrom("v0.18.0-alpha.3.fza.45", false)
+	if got := readMinimum(); got != "v0.18.0-alpha.3" {
+		t.Errorf("fresh init from a fork build should record its upstream base, got %q", got)
+	}
+
+	initFrom("v0.18.0-alpha.3.fza.46", true)
+	if got := readMinimum(); got != "v0.18.0-alpha.3" {
+		t.Errorf("bump from a fork build on the same base should leave the base, got %q", got)
+	}
+
+	initFrom("v0.18.0-alpha.4.fza.50", true)
+	if got := readMinimum(); got != "v0.18.0-alpha.4" {
+		t.Errorf("bump from a fork build on a newer base should record that base, got %q", got)
+	}
+}
+
 // TestInit_BumpEqualIsNoop verifies AC 7's no-op clause: --bump from a
 // binary equal to the recorded minimum does not rewrite meta.json.
 func TestInit_BumpEqualIsNoop(t *testing.T) {

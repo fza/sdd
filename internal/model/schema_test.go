@@ -148,3 +148,37 @@ func TestShouldBumpMinimumVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordedMinimumVersion(t *testing.T) {
+	tests := []struct {
+		name   string
+		binary string
+		want   string
+	}{
+		{"stock release", "v0.18.0-alpha.3", "v0.18.0-alpha.3"},
+		{"stock stable release", "v0.18.0", "v0.18.0"},
+		{"fork build on a pre-release", "v0.18.0-alpha.3.fza.45", "v0.18.0-alpha.3"},
+		{"bare numeric fork build", "0.18.0-alpha.2.fza.42", "0.18.0-alpha.2"},
+		{"fork build on a stable release keeps its suffix", "v0.18.0-fza.1", "v0.18.0-fza.1"},
+		{"fork build metadata", "v0.17.0+fza6", "v0.17.0+fza6"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RecordedMinimumVersion(tt.binary)
+			if got != tt.want {
+				t.Errorf("RecordedMinimumVersion(%q) = %q, want %q", tt.binary, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckCompatibility_StockBuildAcceptsForkRecordedMinimum(t *testing.T) {
+	recorded := RecordedMinimumVersion("v0.18.0-alpha.3.fza.45")
+	meta := SchemaMeta{GraphSchemaVersion: CurrentGraphSchemaVersion, MinimumVersion: &recorded}
+	for _, binary := range []string{"v0.18.0-alpha.3", "v0.18.0-alpha.3.fza.45"} {
+		got := CheckCompatibility(meta, binary, CurrentGraphSchemaVersion)
+		if !got.Compatible {
+			t.Errorf("binary %s should accept the graph: %s", binary, got.Reason)
+		}
+	}
+}

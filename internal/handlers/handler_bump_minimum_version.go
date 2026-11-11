@@ -13,7 +13,7 @@ import (
 )
 
 // BumpMinimumVersion raises .sdd/meta.json's minimum_version field to the
-// running binary's version when the binary is strictly higher (or no
+// running binary's RecordedMinimumVersion when that is strictly higher (or no
 // minimum was recorded). Equal versions are a no-op so repeat invocations
 // stay quiet.
 //
@@ -46,7 +46,8 @@ func (h *Handler) BumpMinimumVersion(ctx context.Context, cmd *command.BumpMinim
 		previous = *meta.MinimumVersion
 	}
 
-	if !model.ShouldBumpMinimumVersion(previous, cmd.BinaryVersion) {
+	current := model.RecordedMinimumVersion(cmd.BinaryVersion)
+	if !model.ShouldBumpMinimumVersion(previous, current) {
 		// Equal or lower binary: leave meta.json alone. Lower is normally
 		// blocked by the write gate before we even reach init, but the
 		// handler stays defensive.
@@ -57,7 +58,6 @@ func (h *Handler) BumpMinimumVersion(ctx context.Context, cmd *command.BumpMinim
 		return nil
 	}
 
-	current := cmd.BinaryVersion
 	meta.MinimumVersion = &current
 	out, err := model.FormatSchemaMeta(*meta)
 	if err != nil {
