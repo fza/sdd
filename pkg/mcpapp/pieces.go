@@ -14,7 +14,7 @@ import (
 // engine decides from them which piece serves as its pointer
 // (20261112-075604-d-tac-t4r).
 type Proofs struct {
-	Held   []string `json:"held,omitempty" jsonschema:"for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word"`
+	Held   []string `json:"held,omitempty" jsonschema:"for each served piece whose text you still see, from every earlier result, not only the last: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word"`
 	Reread []string `json:"reread,omitempty" jsonschema:"tags or piece names of served pieces you no longer see; they serve in full again"`
 }
 

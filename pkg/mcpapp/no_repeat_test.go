@@ -317,12 +317,20 @@ func TestDoorsExplainTheProof(t *testing.T) {
 		if !strings.Contains(text, proofExample) {
 			t.Fatalf("%s should show a worked proof:\n%s", name, text)
 		}
+		if !strings.Contains(text, everyEarlierResult) {
+			t.Fatalf("%s should say a call proves pieces from every earlier result:\n%s", name, text)
+		}
 	}
 }
 
 // proofExample is the worked proof the doors and the held field show: the
 // word right after the tag, never the one before it.
 const proofExample = `"… dialogue ⟦gn9p⟧ first …" → gn9p:first`
+
+// everyEarlierResult is how the doors and the held field say that proofs do
+// not carry over: an agent listing only its last result's tags gets every
+// piece served before that in full again.
+const everyEarlierResult = "every earlier result, not only the last"
 
 // Every tool taking proofs shows the worked proof in its held field.
 func TestHeldFieldShowsAWorkedProof(t *testing.T) {
@@ -354,6 +362,9 @@ func TestHeldFieldShowsAWorkedProof(t *testing.T) {
 		described++
 		if !strings.Contains(held.Description, proofExample) {
 			t.Errorf("%s: the held field should show a worked proof, got %q", tool.Name, held.Description)
+		}
+		if !strings.Contains(held.Description, everyEarlierResult) {
+			t.Errorf("%s: the held field should ask for proofs from every earlier result, got %q", tool.Name, held.Description)
 		}
 	}
 	if described == 0 {
