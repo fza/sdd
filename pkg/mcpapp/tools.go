@@ -793,7 +793,11 @@ func (s *Server) abandon(ctx context.Context, req *mcp.CallToolRequest, args Aba
 		out.Instructions = "The instance holds WIP markers, left standing by design. Tell the user: resume the work later or close the markers through grooming."
 	}
 	if result.Base != nil {
-		base, err := s.toBaseServeResult(ctx, req, ss, result.Base)
+		around, err := resultChars(out)
+		if err != nil {
+			return nil, AbandonResult{}, err
+		}
+		base, err := s.toBaseServeResult(ctx, req, ss, result.Base, serveBudget-around)
 		if err != nil {
 			return nil, AbandonResult{}, err
 		}
@@ -827,7 +831,11 @@ func (s *Server) park(ctx context.Context, req *mcp.CallToolRequest, args ParkAr
 		Instructions: "The move is parked with its state kept — it stays listed as an open thread and resumes through next. Tell the user it is recorded as open work, not forgotten.",
 	}
 	if result.Base != nil {
-		base, err := s.toBaseServeResult(ctx, req, ss, result.Base)
+		around, err := resultChars(out)
+		if err != nil {
+			return nil, ParkResult{}, err
+		}
+		base, err := s.toBaseServeResult(ctx, req, ss, result.Base, serveBudget-around)
 		if err != nil {
 			return nil, ParkResult{}, err
 		}
@@ -1758,9 +1766,9 @@ func (s *Server) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss 
 
 // toBaseServeResult maps a serve onto the base_junction landing, which
 // carries no schema or vocabulary — so neither is recorded as served here.
-// Its last lanes wait while it would cost more than a serve may, as
-// boundedServe has them.
-func (s *Server) toBaseServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (*BaseServe, error) {
+// Its last lanes wait while it would cost more than budget, what a serve may
+// take less the result around it, as boundedServe has them.
+func (s *Server) toBaseServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int) (*BaseServe, error) {
 	ss.root.EndDeferral(serve.Instance)
 	pageFull := ss.root.TakeStepFullIDs()
 	mark := ss.root.ServeMark()
@@ -1776,7 +1784,7 @@ func (s *Server) toBaseServeResult(ctx context.Context, req *mcp.CallToolRequest
 		if err != nil {
 			return nil, err
 		}
-		if cost <= serveBudget || keep == 0 {
+		if cost <= budget || keep == 0 {
 			break
 		}
 		ss.root.WithdrawServedSince(mark)
