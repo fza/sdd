@@ -117,7 +117,7 @@ func TestLaunchedDelegateDispatchCarriesNoHandle(t *testing.T) {
 
 func TestDelegateDispatchOverTheTransport(t *testing.T) {
 	graphDir := writeRelayGraph(t)
-	env := newTestServer(t, nil, graphDir, "")
+	env := newTestServerConfig(t, nil, graphDir, "", "de")
 	client := connect(t, env.srv)
 	door := openSession(t, client)
 
@@ -141,6 +141,12 @@ func TestDelegateDispatchOverTheTransport(t *testing.T) {
 	call(t, client, "next", map[string]any{"session": door.Session, "instance": move.Instance}, &waiting)
 	if waiting.Step != "wait" || !strings.Contains(waiting.Instructions, "waiting for the delegate to deliver briefing") {
 		t.Fatalf("a report-less next re-serves the waiting move, got %s %q", waiting.Step, waiting.Instructions)
+	}
+	// An agent listing no proofs would get every framing block again.
+	var unproved mcpserver.ServeResult
+	call(t, client, "next", map[string]any{"session": door.Session, "instance": move.Instance, "held": []any{}}, &unproved)
+	if unproved.Framing != "" || unproved.Vocabulary != "" || strings.Contains(unproved.Instructions, "\n") {
+		t.Fatalf("a waiting move serves its one line without framing, got framing %q and %q", unproved.Framing, unproved.Instructions)
 	}
 
 	delegate := connect(t, env.srv)

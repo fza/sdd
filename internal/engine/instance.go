@@ -177,6 +177,10 @@ type Serve struct {
 	// Cancellation is the current cancellation this serve lands, rendered as
 	// its own lane; nil on every other serve.
 	Cancellation *CancellationServe
+	// Waiting marks a dispatching move held only by its delegate's delivery:
+	// Instructions is the one line naming what it waits for and when to check
+	// again, and a host serves nothing beside it.
+	Waiting bool
 	// Dispatches names the procedure the chooser answer this serve follows
 	// dispatches, so the shell forks a delegating task in the answering call
 	// (20260829-122157-d-cpt-zpe); empty on every other serve.
@@ -728,6 +732,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		}
 		awaiting := len(step.Await) > 0 && inst.awaitHeld(step)
 		if awaiting {
+			sv.Waiting = s.Lineage == nil && len(sv.Failing) == 0 && len(sv.Missing) == 0 && len(lanes) == 0
 			sv.Failing = append(sv.Failing, FailedPredicate{Name: "await", Message: s.awaitDiagnostic(inst, step)})
 		}
 		if !awaiting && len(sv.Failing) == 0 && len(sv.Missing) == 0 && len(step.Transitions) > 0 {
@@ -747,7 +752,10 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 			diagnostics = append(diagnostics, "missing: "+strings.Join(sv.Missing, ", "))
 		}
 		sv.Goal = "provide the missing report fields"
-		if len(sv.Failing) > 0 {
+		switch {
+		case sv.Waiting:
+			sv.Goal = "wait for the delegate, then check again"
+		case len(sv.Failing) > 0:
 			sv.Goal = "resolve what holds the gate, then report again"
 		}
 	case ChooserAgent, ChooserUser:
@@ -775,6 +783,9 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 
 	sv.Diagnostics = diagnostics
 	sv.Instructions = ComposeInstructions(instructions, diagnostics)
+	if sv.Waiting {
+		sv.Instructions = strings.Join(diagnostics, " ")
+	}
 	if n := partBytes(sv.ReportSchema); n > 0 {
 		sizes = append(sizes, PartSize{Part: "schema", Bytes: n})
 	}

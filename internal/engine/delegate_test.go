@@ -123,18 +123,19 @@ type exchangeFixture struct {
 // into its own session and starts it there.
 func newExchange(t *testing.T) *exchangeFixture {
 	t.Helper()
-	return newExchangeOf(t, dispatcherMachine)
+	return newExchangeOf(t, dispatcherMachine, reviewTaskMachine)
 }
 
-// newExchangeOf is newExchange with the dispatcher declared by machine.
-func newExchangeOf(t *testing.T, machine string) *exchangeFixture {
+// newExchangeOf is newExchange with the dispatcher and the task their
+// machines declare.
+func newExchangeOf(t *testing.T, machine, task string) *exchangeFixture {
 	t.Helper()
 	f := &exchangeFixture{
 		courier:    &sessionCourier{sessions: map[string]*engine.Session{}},
 		parentSink: &recordingSink{},
 		childSink:  &recordingSink{},
 		parentSpec: delegateSpec(t, "dispatcher", "move", machine),
-		childSpec:  delegateSpec(t, "reviewtask", "task", reviewTaskMachine),
+		childSpec:  delegateSpec(t, "reviewtask", "task", task),
 	}
 	eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
 	f.parent = eng.NewSession("s_parent", "tester", f.parentSink, engine.WithCourier(f.courier))
@@ -643,7 +644,7 @@ var endedDispatcherMachine = strings.Replace(dispatcherMachine, "      await: [s
           - {choice: retry, to: ask}`
 
 func TestAwaitGateLeavesForItsEndedRouteOnceNoDelegateIsLive(t *testing.T) {
-	f := newExchangeOf(t, endedDispatcherMachine)
+	f := newExchangeOf(t, endedDispatcherMachine, reviewTaskMachine)
 	if sv, err := f.parent.Poll(f.parentInst); err != nil || sv.Step != "wait" {
 		t.Fatalf("the gate should wait while its delegate is live, got %v at %+v", err, sv)
 	}
@@ -655,6 +656,108 @@ func TestAwaitGateLeavesForItsEndedRouteOnceNoDelegateIsLive(t *testing.T) {
 
 	if err != nil || sv.Step != "stopped" {
 		t.Fatalf("the gate should leave for its ended route once no delegate is live, got %v at %+v", err, sv)
+	}
+}
+
+// A dispatching move held only by its delegate's delivery serves one line:
+// what it waits for and when to check again.
+func TestAwaitGateServesOneWaitingLine(t *testing.T) {
+	f := newExchange(t)
+
+	sv, err := f.parent.Poll(f.parentInst)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sv.Waiting || strings.Contains(sv.Instructions, "\n") || !strings.Contains(sv.Instructions, "waiting for the delegate to deliver synthesis") || !strings.Contains(sv.Instructions, "in 20 seconds") {
+		t.Fatalf("a waiting move should serve one line naming what it waits for and when to check again, got %v %q", sv.Waiting, sv.Instructions)
+	}
+}
+
+// A waiting step with instructions of its own keeps them: only a bare wait
+// shrinks to its one line.
+func TestAwaitGateWithAUnitServesItsUnit(t *testing.T) {
+	content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: dispatcher\nclass: move\n" + dispatcherMachine +
+		"\n---\n\nA synthetic delegate exchange.\n\n## unit: wait\n\nThe delegate reviews the draft.\n"
+	entry, err := model.ParseEntry("20261109-120000-d-prc-dlg.md", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := engine.LoadSpec(entry, engine.NewRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
+	parent := eng.NewSession("s_parent", "tester", nopSink{})
+	sv, err := parent.Start(spec, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sv, err = parent.Answer(sv.Instance, "ask", "delegate", map[string]any{"goal": "check the draft"}, "")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Step != "wait" || sv.Waiting || !strings.Contains(sv.Instructions, "The delegate reviews the draft.") {
+		t.Fatalf("a waiting step with a unit should serve it, got %v %q", sv.Waiting, sv.Instructions)
+	}
+}
+
+func TestAwaitGateMissingAReportServesWhatItMisses(t *testing.T) {
+	f := newExchangeOf(t, strings.Replace(dispatcherMachine, "      await: [synthesis]\n", "      collect: [brief]\n      await: [synthesis]\n", 1), reviewTaskMachine)
+
+	sv, err := f.parent.Poll(f.parentInst)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Waiting || !strings.Contains(sv.Instructions, "missing: brief") {
+		t.Fatalf("a waiting step still missing a report field should name it, got %v %q", sv.Waiting, sv.Instructions)
+	}
+}
+
+func TestAwaitGateHeldByItsGuardServesTheGuard(t *testing.T) {
+	f := newExchangeOf(t, strings.Replace(dispatcherMachine, "      await: [synthesis]\n", "      guard: hasBrief\n      await: [synthesis]\n", 1), reviewTaskMachine)
+
+	sv, err := f.parent.Poll(f.parentInst)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Waiting || !strings.Contains(sv.Instructions, "Gate held:") {
+		t.Fatalf("a waiting step its guard also holds should serve the held gate, got %v %q", sv.Waiting, sv.Instructions)
+	}
+}
+
+// briefFirstTaskMachine is a task that waits for its dispatcher's brief before
+// it delivers anything.
+const briefFirstTaskMachine = `state:
+    topic: {type: text, desc: what to review}
+    contract: {type: text, desc: the dispatching side's answers}
+    body: {type: text, desc: the final result}
+steps:
+    - id: discuss
+      await: [contract]
+      transitions:
+          - otherwise: finish
+    - id: finish
+      collect: [body]
+      deliver: [body]
+      transitions:
+          - when: hasBody
+            to: end(completed)`
+
+func TestAwaitGateOfADelegateEndsItsTurnAsBefore(t *testing.T) {
+	f := newExchangeOf(t, dispatcherMachine, briefFirstTaskMachine)
+
+	sv, err := f.child.Poll(f.childInst)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Step != "discuss" || sv.Waiting || !strings.Contains(sv.Instructions, "end your turn") {
+		t.Fatalf("a delegate waiting for its dispatcher should be told to end its turn, got %v %q", sv.Waiting, sv.Instructions)
 	}
 }
 

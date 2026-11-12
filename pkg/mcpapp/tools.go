@@ -1468,6 +1468,9 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Agent: dispatch.Agent, Model: dispatch.Model, Effort: dispatch.Effort, Runner: dispatch.Runner,
 		})
 	}
+	if serve.Waiting {
+		return res, nil
+	}
 	framing, err := ss.root.FramingBlocks(ctx, s.requestIdentity(req))
 	if err != nil {
 		return ServeResult{}, err
@@ -1546,6 +1549,9 @@ func (s *Server) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss 
 		if err != nil {
 			return ServeResult{}, err
 		}
+	}
+	if serve.Waiting {
+		return res, nil
 	}
 	vocabulary, err := s.app.Vocabulary(ctx, s.requestIdentity(req), ss.root.Project())
 	if err != nil {

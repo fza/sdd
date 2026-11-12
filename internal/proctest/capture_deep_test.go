@@ -760,6 +760,20 @@ func TestCaptureDeep_ARoundEndingWithoutFindingsPutsTheFailureToTheUser(t *testi
 	proctest.RequireStep(t, serve, "deepDispatch")
 }
 
+// The capture waiting for the verifier's findings serves one line per check:
+// what it waits for and when to check again.
+func TestCaptureDeep_TheWaitServesOneLine(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-wait-line", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+
+	serve := x.pickUp(t)
+
+	proctest.RequireStep(t, serve, "deepWait")
+	if !serve.Waiting || strings.Contains(serve.Instructions, "\n") || !strings.Contains(serve.Instructions, "deliver deepFindings") || !strings.Contains(serve.Instructions, "in 20 seconds") {
+		t.Fatalf("the wait should serve one line naming the findings and the interval, got %q", serve.Instructions)
+	}
+}
+
 // A verifier that stops while the capture waits for its findings leaves the
 // capture at its failure step, not waiting for a delivery nothing will make.
 func TestCaptureDeep_AVerifierStoppingWhileTheCaptureWaitsPutsTheFailureToTheUser(t *testing.T) {

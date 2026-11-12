@@ -515,8 +515,12 @@ func (s *Session) awaitDiagnostic(inst *Instance, step *Step) string {
 	if s.Lineage != nil {
 		return "waiting for the dispatching move to send " + joined + ": end your turn; you are continued or relaunched with these same handles once it has, and next with this instance and no report then picks it up"
 	}
-	return "waiting for the delegate to deliver " + joined + "; next with this instance and no report picks the delivery up once it has landed"
+	return fmt.Sprintf("waiting for the delegate to deliver %s; check again in %d seconds: next with this instance and no report picks the delivery up once it has landed", joined, awaitRecheckSeconds)
 }
+
+// awaitRecheckSeconds is how long a dispatching move waits between checks
+// for its delegate's delivery.
+const awaitRecheckSeconds = 20
 
 // exchangeLane renders the full exchange a delegate instance took part in, so
 // a delegate relaunched with fresh context loses nothing
