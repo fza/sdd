@@ -330,7 +330,7 @@ func incompleteAnswer(cut bool, finishReason string, usage *upstream.Usage, cont
 // fault wraps a failed call in the typed llm.Error carrying the identity.
 func (r *Runner) fault(ctx context.Context, err error) *llm.Error {
 	if ctx.Err() == context.DeadlineExceeded {
-		err = fmt.Errorf("gollm %s: timed out", r.provider)
+		err = fmt.Errorf("gollm %s: timed out: %w", r.provider, ctx.Err())
 	} else {
 		err = fmt.Errorf("gollm %s: %w", r.provider, err)
 	}

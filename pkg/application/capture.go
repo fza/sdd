@@ -26,8 +26,9 @@ func (a *Application) PreflightEntry(ctx context.Context, identity RequestIdenti
 // the project's verifier is on (20261109-004729-d-cpt-xs5). Where deepJudges,
 // the deep verifier judges in pre-flight's place: only the mechanical checks
 // run, and the result carries the rubric the verifier takes over. A model
-// answer cut at the token cap returns the mechanical findings with an
-// ErrorAnswerCut error: the model did not judge.
+// answer cut at the token cap, or a call past its bound, returns the
+// mechanical findings with an ErrorAnswerCut or ErrorTimedOut error: the
+// model did not judge.
 func (a *Application) preflightEntry(ctx context.Context, identity RequestIdentity, project ProjectID, draft EntryDraft, reading *captureReading, deepJudges bool) (PreflightEntryResult, error) {
 	principal, runtime, err := a.resolve(ctx, identity, project, AccessWrite)
 	if err != nil {
@@ -77,13 +78,20 @@ func (a *Application) preflightEntry(ctx context.Context, identity RequestIdenti
 		return result, fmt.Errorf("pre-flight: %w", err)
 	}
 	preflight, err := finder.Preflight(ctx, snapshot.graph, query.PreflightQuery{Entry: entry, Light: light, KindFit: effective.kindFit(draft.Kind)})
-	if errors.Is(err, llm.ErrAnswerCut) {
-		cut := &ApplicationError{Code: ErrorAnswerCut, Message: fmt.Sprintf("pre-flight: %v", err), Cause: err}
+	var unjudged ErrorCode
+	switch {
+	case errors.Is(err, llm.ErrAnswerCut):
+		unjudged = ErrorAnswerCut
+	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
+		unjudged = ErrorTimedOut
+	}
+	if unjudged != "" {
+		coded := &ApplicationError{Code: unjudged, Message: fmt.Sprintf("pre-flight: %v", err), Cause: err}
 		result.Findings, err = mechanicalFindings(finder, snapshot.graph, entry)
 		if err != nil {
 			return result, err
 		}
-		return result, cut
+		return result, coded
 	}
 	if err != nil {
 		return result, fmt.Errorf("pre-flight: %w", err)

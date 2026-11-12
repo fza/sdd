@@ -31,6 +31,10 @@ const (
 	// same request runs into the cap again until the user changes the cap or
 	// the model's settings.
 	ErrorAnswerCut ErrorCode = "answer_cut"
+	// ErrorTimedOut is a model call that ran past its configured bound, not
+	// one its caller ended: unlike a cut answer, the same request may succeed
+	// when sent again.
+	ErrorTimedOut ErrorCode = "timed_out"
 )
 
 type ApplicationError struct {

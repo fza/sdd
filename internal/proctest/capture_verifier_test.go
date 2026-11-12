@@ -4,7 +4,9 @@
 package proctest_test
 
 import (
+	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -179,4 +181,85 @@ func TestCaptureVerifier_ACutAnswerUnderSkipNeverHoldsTheWrite(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "verify.skip is never") {
 		t.Fatalf("a skip under verify.skip: never should be refused, got %v", err)
 	}
+}
+
+// preflightTimedOut is the failure a provider adapter reports for a call that
+// ran past llm.timeout, without the factory's hint, so the serve has to name
+// the setting itself.
+func preflightTimedOut() error {
+	return &llm.Error{Err: fmt.Errorf("gollm openai: timed out: %w", context.DeadlineExceeded)}
+}
+
+func TestCaptureVerifier_ATimedOutPreflightPutsTheChoiceToTheUser(t *testing.T) {
+	world, session := newLightWorld(t, "light-timeout")
+	world.LLM.PreflightErr = preflightTimedOut()
+	_, serve := confirmedLightCapture(t, session)
+	proctest.RequireStep(t, serve, "preflightTimedOut")
+	if serve.PendingOperation != nil || serve.PendingChooser == nil || serve.PendingChooser.Kind != "user" {
+		t.Fatalf("a timed-out pre-flight should be the user's choice, not a failed operation, got %+v, %+v", serve.PendingOperation, serve.PendingChooser)
+	}
+	var choices []string
+	for _, option := range serve.PendingChooser.Options {
+		choices = append(choices, option.Choice)
+	}
+	for _, want := range []string{"retry", "revise", "skip", "abort"} {
+		if !slices.Contains(choices, want) {
+			t.Errorf("a timed-out pre-flight should offer %s, got %v", want, choices)
+		}
+	}
+	for _, want := range []string{"gollm openai: timed out", "`sdd config set llm.timeout <duration>`"} {
+		if !strings.Contains(serve.Instructions, want) {
+			t.Errorf("the serve should name the timeout and the setting, missing %q:\n%s", want, serve.Instructions)
+		}
+	}
+	if got := world.LLM.Calls(llm.PurposePreflight); got != 1 {
+		t.Fatalf("a timed-out pre-flight should wait for the user before running again, ran %d times", got)
+	}
+}
+
+func TestCaptureVerifier_ARetryAfterATimeoutRunsPreflightAgain(t *testing.T) {
+	world, session := newLightWorld(t, "light-timeout-retry")
+	world.LLM.PreflightErr = preflightTimedOut()
+	instance, serve := confirmedLightCapture(t, session)
+	proctest.RequireStep(t, serve, "preflightTimedOut")
+	world.LLM.PreflightErr = nil
+	serve = session.Answer(t, instance, "preflightTimedOut", "retry", nil, "try once more")
+	proctest.RequireStep(t, serve, "verifySummary")
+	if got := world.LLM.Calls(llm.PurposePreflight); got != 2 {
+		t.Fatalf("a retry sends the same draft to pre-flight again, ran %d times", got)
+	}
+	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	entryID, _ := serve.Produced["entryId"].(string)
+	if entry := proctest.LoadEntry(t, world.GraphDir, entryID); entry.Verification != "" || entry.Confidence == "low" {
+		t.Fatalf("a retry the model judged writes the entry as judged, got %q and %q", entry.Verification, entry.Confidence)
+	}
+}
+
+func TestCaptureVerifier_ASkipAfterATimeoutWritesConfidenceLow(t *testing.T) {
+	world, session := newLightWorld(t, "light-timeout-skip")
+	world.LLM.PreflightErr = preflightTimedOut()
+	instance, serve := confirmedLightCapture(t, session)
+	proctest.RequireStep(t, serve, "preflightTimedOut")
+	serve = session.Answer(t, instance, "preflightTimedOut", "skip", nil, "skip it")
+	proctest.RequireStep(t, serve, "verifySummary")
+	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	entryID, _ := serve.Produced["entryId"].(string)
+	if entry := proctest.LoadEntry(t, world.GraphDir, entryID); entry.Verification != model.VerificationSkipped || entry.Confidence != "low" {
+		t.Fatalf("a skip after a timeout writes verification: skipped and confidence low, got %q and %q", entry.Verification, entry.Confidence)
+	}
+}
+
+func TestCaptureVerifier_ATimeoutUnderSkipNeverHoldsTheSkipButNotTheRetry(t *testing.T) {
+	world, session := newCaptureWorld(t, "light-timeout-never", proctest.WithGroundingEnforced(),
+		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "prose", Skip: "never"}, 200000, 4096))
+	world.LLM.PreflightErr = preflightTimedOut()
+	instance, serve := confirmedLightCapture(t, session)
+	proctest.RequireStep(t, serve, "preflightTimedOut")
+	_, err := session.AnswerErr(t, instance, "preflightTimedOut", "skip", nil, "skip it")
+	if err == nil || !strings.Contains(err.Error(), "verify.skip is never") {
+		t.Fatalf("a skip under verify.skip: never should be refused, got %v", err)
+	}
+	world.LLM.PreflightErr = nil
+	serve = session.Answer(t, instance, "preflightTimedOut", "retry", nil, "try once more")
+	proctest.RequireStep(t, serve, "verifySummary")
 }

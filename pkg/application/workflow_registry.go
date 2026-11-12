@@ -337,17 +337,26 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	}); err != nil {
 		return err
 	}
+	if err := registry.RegisterPredicate(engine.Predicate{
+		Doc: engine.FuncDoc{Name: "preflightTimedOut", Doc: "Pre-flight's model call ran past llm.timeout, so the model did not judge the draft.", Reads: []string{fieldPreflightTimeout}},
+		Fn: func(ctx *engine.Context) (bool, error) {
+			timeout, _ := workflowStoreString(ctx.Store, fieldPreflightTimeout)
+			return timeout != "", nil
+		},
+	}); err != nil {
+		return err
+	}
 	if err := registry.RegisterCommand(engine.Command{
-		Doc: engine.FuncDoc{Name: "preflightEntry", Doc: "Checks the current capture draft before publication and records its findings, or the cut of its model's answer.",
-			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride", "preflightCalls", "preflightExcerpted", fieldPreflightRubric, fieldPreflightCut, fieldPreflightSkip}},
+		Doc: engine.FuncDoc{Name: "preflightEntry", Doc: "Checks the current capture draft before publication and records its findings, or the cut or timeout of its model's call.",
+			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride", "preflightCalls", "preflightExcerpted", fieldPreflightRubric, fieldPreflightCut, fieldPreflightTimeout, fieldPreflightSkip}},
 		GraphIndependent: true,
 		Fn:               w.runWorkflowPreflight,
 	}); err != nil {
 		return err
 	}
 	if err := registry.RegisterCommand(engine.Command{
-		Doc: engine.FuncDoc{Name: "recordPreflightSkip", Doc: "Records the user's skip after pre-flight's model answer was cut: the entry carries verification: skipped and confidence low. Refused under verify.skip: never and while a high finding is open.",
-			Reads: []string{"entryKind", "findings"}, Writes: []string{fieldPreflightSkip}},
+		Doc: engine.FuncDoc{Name: "recordPreflightSkip", Doc: "Records the user's skip after pre-flight's model answer was cut or timed out: the entry carries verification: skipped and confidence low. Refused under verify.skip: never and while a high finding is open.",
+			Reads: []string{"entryKind", "findings", fieldPreflightTimeout}, Writes: []string{fieldPreflightSkip}},
 		Fn: w.recordPreflightSkip,
 	}); err != nil {
 		return err

@@ -17,18 +17,25 @@ import (
 // token cap: the model did not judge the draft.
 const fieldPreflightCut = "preflightCut"
 
-// fieldPreflightSkip records the user's skip of a cut pre-flight answer, as
-// the cause model.MarkVerificationSkipped takes.
+// fieldPreflightTimeout holds the error of a pre-flight model call that ran
+// past llm.timeout: the model did not judge the draft.
+const fieldPreflightTimeout = "preflightTimeout"
+
+// fieldPreflightSkip records the user's skip of a pre-flight the model did
+// not judge, as the cause model.MarkVerificationSkipped takes.
 const fieldPreflightSkip = "preflightSkip"
 
 // recordPreflightSkip records the user's skip after pre-flight's model answer
-// was cut, under the verify.skip of a verifier that cannot run.
+// was cut or timed out, under the verify.skip of a verifier that cannot run.
 func (w *WorkflowSession) recordPreflightSkip(ctx *engine.Context) error {
 	policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
 	if err != nil {
 		return err
 	}
 	if policy.Skip == model.VerifierSkipNever {
+		if timeout, _ := workflowStoreString(ctx.Store, fieldPreflightTimeout); timeout != "" {
+			return errors.New("verify.skip is never, so the capture waits until pre-flight's model judges the draft: retry, or revise it once llm.timeout changed")
+		}
 		return errors.New("verify.skip is never, so the capture waits until pre-flight's model judges the draft: revise it once the settings changed")
 	}
 	for _, finding := range workflowStoreDocuments(ctx.Store, "findings") {
@@ -73,7 +80,7 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 	}
 	var validation *ValidationError
 	var coded *ApplicationError
-	var cut any
+	var cut, timeout any
 	switch {
 	case errors.As(err, &validation):
 		for _, warning := range validation.Warnings {
@@ -81,10 +88,15 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 		}
 	case errors.As(err, &coded) && coded.Code == ErrorAnswerCut:
 		cut = coded.Error()
+	case errors.As(err, &coded) && coded.Code == ErrorTimedOut:
+		timeout = coded.Error()
 	case err != nil:
 		return err
 	}
 	if err := ctx.Store.WriteEngine(fieldPreflightCut, cut); err != nil {
+		return err
+	}
+	if err := ctx.Store.WriteEngine(fieldPreflightTimeout, timeout); err != nil {
 		return err
 	}
 	if err := ctx.Store.WriteEngine(fieldPreflightSkip, nil); err != nil {
