@@ -22,10 +22,19 @@ const fieldPreflightCut = "preflightCut"
 const fieldPreflightSkip = "preflightSkip"
 
 // recordPreflightSkip records the user's skip after pre-flight's model answer
-// was cut where it judged in place of a skipped deep exchange.
+// was cut, under the verify.skip of a verifier that cannot run.
 func (w *WorkflowSession) recordPreflightSkip(ctx *engine.Context) error {
-	if deepSkipCause(ctx.Store) == "" {
-		return errors.New("verify.skip covers only the deep exchange, so the capture waits until pre-flight's model judges the draft: revise it once the settings changed")
+	policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
+	if err != nil {
+		return err
+	}
+	if policy.Skip == model.VerifierSkipNever {
+		return errors.New("verify.skip is never, so the capture waits until pre-flight's model judges the draft: revise it once the settings changed")
+	}
+	for _, finding := range workflowStoreDocuments(ctx.Store, "findings") {
+		if finding["severity"] == string(query.SeverityHigh) {
+			return errors.New("a high finding is open, and a skip leaves it standing: revise the draft")
+		}
 	}
 	return ctx.Store.WriteEngine(fieldPreflightSkip, model.DeepSkipFailure)
 }

@@ -345,8 +345,8 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 		return err
 	}
 	if err := registry.RegisterCommand(engine.Command{
-		Doc: engine.FuncDoc{Name: "recordPreflightSkip", Doc: "Records the user's skip after pre-flight's model answer was cut: the entry carries verification: skipped and confidence low. Refused where the user did not skip the deep exchange.",
-			Reads: []string{fieldDeepVerdict}, Writes: []string{fieldPreflightSkip}},
+		Doc: engine.FuncDoc{Name: "recordPreflightSkip", Doc: "Records the user's skip after pre-flight's model answer was cut: the entry carries verification: skipped and confidence low. Refused under verify.skip: never and while a high finding is open.",
+			Reads: []string{"entryKind", "findings"}, Writes: []string{fieldPreflightSkip}},
 		Fn: w.recordPreflightSkip,
 	}); err != nil {
 		return err

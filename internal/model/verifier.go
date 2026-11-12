@@ -64,8 +64,8 @@ const (
 	VerifierDeep  VerifierMode = "deep"
 )
 
-// VerifierSkip is when the deep exchange may be skipped, ordered from the
-// loosest to the strictest.
+// VerifierSkip is when the deep exchange, or a pre-flight answer cut at the
+// token cap, may be skipped, ordered from the loosest to the strictest.
 type VerifierSkip string
 
 const (

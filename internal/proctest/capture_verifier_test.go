@@ -155,13 +155,28 @@ func TestCaptureVerifier_ARevisedDraftAfterACutRunsPreflightAgain(t *testing.T) 
 	}
 }
 
-func TestCaptureVerifier_ACutAnswerOutsideASkippedDeepExchangeHoldsTheWrite(t *testing.T) {
+func TestCaptureVerifier_ASkipAfterACutWritesConfidenceLow(t *testing.T) {
 	world, session := newLightWorld(t, "light-cut-skip")
 	world.LLM.PreflightErr = answerCut()
 	instance, serve := confirmedLightCapture(t, session)
 	proctest.RequireStep(t, serve, "preflightUnjudged")
+	serve = session.Answer(t, instance, "preflightUnjudged", "skip", nil, "skip it")
+	proctest.RequireStep(t, serve, "verifySummary")
+	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	entryID, _ := serve.Produced["entryId"].(string)
+	if entry := proctest.LoadEntry(t, world.GraphDir, entryID); entry.Verification != model.VerificationSkipped || entry.Confidence != "low" {
+		t.Fatalf("a skip after a cut answer writes verification: skipped and confidence low, got %q and %q", entry.Verification, entry.Confidence)
+	}
+}
+
+func TestCaptureVerifier_ACutAnswerUnderSkipNeverHoldsTheWrite(t *testing.T) {
+	world, session := newCaptureWorld(t, "light-cut-never", proctest.WithGroundingEnforced(),
+		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "prose", Skip: "never"}, 200000, 4096))
+	world.LLM.PreflightErr = answerCut()
+	instance, serve := confirmedLightCapture(t, session)
+	proctest.RequireStep(t, serve, "preflightUnjudged")
 	_, err := session.AnswerErr(t, instance, "preflightUnjudged", "skip", nil, "skip it")
-	if err == nil || !strings.Contains(err.Error(), "verify.skip covers only the deep exchange") {
-		t.Fatalf("a skip of a prose pre-flight should be refused, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "verify.skip is never") {
+		t.Fatalf("a skip under verify.skip: never should be refused, got %v", err)
 	}
 }
