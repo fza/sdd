@@ -118,3 +118,22 @@ func TestReadAnchorsReadsEveryTagWithItsWord(t *testing.T) {
 		t.Errorf("every well-formed tag should read with its word, got %v", got)
 	}
 }
+
+// A text that already carries a tag, as a lane carrying a tagged entry, takes
+// a second tag only where it leaves the first one's word in place.
+func TestPlaceAnchorKeepsAnotherTagsWord(t *testing.T) {
+	text := "Draft ⟦ab12⟧ grounding across ⟦cd34⟧ entries"
+	for seed := range uint64(200) {
+		anchor, ok := model.PlaceAnchor(text, "zz99", seeded(seed))
+		if !ok {
+			t.Fatal("a text with free content words should take an anchor")
+		}
+		rendered := anchor.Render(text)
+		for _, proof := range []model.Proof{{Tag: "ab12", Word: "grounding"}, {Tag: "cd34", Word: "entries"}} {
+			word, _ := model.WordAfterAnchor(rendered, proof.Tag)
+			if word != proof.Word {
+				t.Fatalf("a new tag should not stand between another tag and its word, got %q", rendered)
+			}
+		}
+	}
+}

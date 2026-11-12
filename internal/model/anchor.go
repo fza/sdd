@@ -244,7 +244,7 @@ func contentWords(text string) []textWord {
 
 func lineContentWords(line string, base int) []textWord {
 	var words []textWord
-	inCode := false
+	inCode, afterTag := false, false
 	i := 0
 	for i < len(line) {
 		r, size := utf8.DecodeRuneInString(line[i:])
@@ -263,12 +263,15 @@ func lineContentWords(line string, base int) []textWord {
 				}
 				end += size
 			}
-			if !inCode {
-				if w, ok := tokenContentWord(line[i:end]); ok {
+			token := line[i:end]
+			// The word after another tag is that tag's proof.
+			if !inCode && !afterTag {
+				if w, ok := tokenContentWord(token); ok {
 					w.offset += base + i
 					words = append(words, w)
 				}
 			}
+			afterTag = strings.Contains(token, anchorTagOpen)
 			i = end
 		}
 	}
