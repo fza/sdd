@@ -2,6 +2,7 @@ package mcpapp
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -91,20 +92,65 @@ func composeFraming(ss *shellSession, blocks []types.ServeLane) string {
 	return strings.Join(served, "\n\n")
 }
 
-// serveReportSchema serves a step's report schema: its pointer when the call
-// holds it, else the schema with its tag in one description.
+// serveReportSchema serves a step's report schema: the required list and any
+// chooser envelope inline, the properties block of the state fields it takes
+// as a piece of its own (20260827-224111-s-tac-vz9), so steps that differ
+// only in what they require share it. The block serves as its pointer when
+// the call holds it, else with its tag in one description.
 func serveReportSchema(ss *shellSession, serve *sdd.WorkflowServe) (map[string]any, error) {
-	name := fmt.Sprintf("schema %s/%s", serve.Procedure, serve.Step)
-	piece, tagged, err := ss.root.ServeSchema(name, serve.ReportSchema)
+	path, ok := fieldsAt(serve.ReportSchema)
+	if !ok {
+		return serve.ReportSchema, nil
+	}
+	fields := schemaAt(serve.ReportSchema, path)
+	name := serve.Procedure + " report fields"
+	piece, tagged, err := ss.root.ServeSchema(name, fields["properties"].(map[string]any))
 	if err != nil {
 		return nil, err
 	}
-	if !piece.Held {
-		return tagged, nil
+	served := maps.Clone(fields)
+	if piece.Held {
+		delete(served, "properties")
+		served["held_properties"] = fmt.Sprintf("you hold these %s as %s — list the tag in reread to have them again, or resume_session re-serves them in full", name, model.AnchorMark(piece.Tag))
+	} else {
+		served["properties"] = tagged
 	}
-	return map[string]any{
-		"served_earlier": fmt.Sprintf("you hold the %s/%s report schema as %s — list the tag in reread to have it again, or resume_session re-serves it in full", serve.Procedure, serve.Step, model.AnchorMark(piece.Tag)),
-	}, nil
+	return withSchemaAt(serve.ReportSchema, path, served), nil
+}
+
+// fieldsAt is the path to the node whose properties are a schema's state
+// fields: the schema itself for a report, its fields object for a chooser
+// answer, none for an answer collecting no field.
+func fieldsAt(schema map[string]any) ([]string, bool) {
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	if _, answer := props["chooser"]; !answer {
+		return nil, true
+	}
+	fields, _ := props["fields"].(map[string]any)
+	_, ok = fields["properties"].(map[string]any)
+	return []string{"properties", "fields"}, ok
+}
+
+func schemaAt(schema map[string]any, path []string) map[string]any {
+	for _, key := range path {
+		schema, _ = schema[key].(map[string]any)
+	}
+	return schema
+}
+
+// withSchemaAt returns a copy of schema whose node at path is node; the maps
+// on the path are copied, the rest is shared.
+func withSchemaAt(schema map[string]any, path []string, node map[string]any) map[string]any {
+	if len(path) == 0 {
+		return node
+	}
+	out := maps.Clone(schema)
+	child, _ := schema[path[0]].(map[string]any)
+	out[path[0]] = withSchemaAt(child, path[1:], node)
+	return out
 }
 
 // serveVocabulary serves the graph's vocabulary table, left out while the

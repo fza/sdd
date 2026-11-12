@@ -2973,7 +2973,7 @@ func TestStubsCarryCompactionBreadcrumb(t *testing.T) {
 	if !strings.Contains(second.Instructions, "you hold the step") || !strings.Contains(second.Instructions, breadcrumb) {
 		t.Fatalf("a stubbed per-step reminder must carry the compaction breadcrumb, got %q", second.Instructions)
 	}
-	if stub, _ := second.ReportSchema["served_earlier"].(string); !strings.Contains(stub, breadcrumb) {
+	if stub, _ := second.ReportSchema["held_properties"].(string); !strings.Contains(stub, breadcrumb) {
 		t.Fatalf("a report-schema stub must carry the compaction breadcrumb, got %q", stub)
 	}
 

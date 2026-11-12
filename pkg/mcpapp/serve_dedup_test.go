@@ -86,10 +86,22 @@ func requireInstructionsExclude(t *testing.T, serve mcpserver.ServeResult, subs 
 	}
 }
 
+// schemaFields is the node of a served report schema that carries its state
+// fields: the schema itself, or a chooser answer's fields object.
+func schemaFields(schema map[string]any) map[string]any {
+	props, _ := schema["properties"].(map[string]any)
+	if _, answer := props["chooser"]; !answer {
+		return schema
+	}
+	fields, _ := props["fields"].(map[string]any)
+	return fields
+}
+
 func requireFullReportSchema(t *testing.T, label string, schema map[string]any) {
 	t.Helper()
-	if _, stub := schema["served_earlier"]; stub {
-		t.Fatalf("%s: report schema should serve in full, got the stub %v", label, schema)
+	fields := schemaFields(schema)
+	if _, held := fields["held_properties"]; held {
+		t.Fatalf("%s: report schema should serve its fields in full, got their pointer %v", label, schema)
 	}
 	if _, ok := schema["properties"]; !ok {
 		t.Fatalf("%s: a full report schema carries properties, got %v", label, schema)
@@ -98,11 +110,12 @@ func requireFullReportSchema(t *testing.T, label string, schema map[string]any) 
 
 func requireStubReportSchema(t *testing.T, label string, schema map[string]any) {
 	t.Helper()
-	if _, ok := schema["properties"]; ok {
-		t.Fatalf("%s: report schema should be the served-earlier stub, got the full schema", label)
+	fields := schemaFields(schema)
+	if _, ok := fields["properties"]; ok {
+		t.Fatalf("%s: report schema should serve its fields as their pointer, got them in full", label)
 	}
-	if _, stub := schema["served_earlier"]; !stub {
-		t.Fatalf("%s: the stub must carry served_earlier, got %v", label, schema)
+	if _, held := fields["held_properties"]; !held {
+		t.Fatalf("%s: the pointer must carry held_properties, got %v", label, schema)
 	}
 }
 
@@ -198,8 +211,8 @@ func TestReportSchemaDedup(t *testing.T) {
 	var second mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &second)
 	requireStubReportSchema(t, "second capture", second.ReportSchema)
-	if msg, _ := second.ReportSchema["served_earlier"].(string); !strings.Contains(msg, "capture/assemble") {
-		t.Fatalf("the stub should name the step whose schema it stands for, got %q", msg)
+	if msg, _ := second.ReportSchema["held_properties"].(string); !strings.Contains(msg, "capture report fields") {
+		t.Fatalf("the pointer should name the fields it stands for, got %q", msg)
 	}
 
 	var resumed mcpserver.ResumeSessionResult
@@ -209,7 +222,7 @@ func TestReportSchemaDedup(t *testing.T) {
 		if open.Procedure != "capture" {
 			continue
 		}
-		if _, stub := open.ReportSchema["served_earlier"]; !stub {
+		if _, stub := open.ReportSchema["held_properties"]; !stub {
 			requireFullReportSchema(t, "replayed capture", open.ReportSchema)
 			fullCaptures++
 		}
@@ -288,4 +301,27 @@ func TestSchemaNotRecordedOnBaseServes(t *testing.T) {
 	call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
 	shell := openServe(t, resumed, "user-dialogue")
 	requireFullReportSchema(t, "replayed shell junction", shell.ReportSchema)
+}
+
+// Gate steps whose schemas differ only in what they require share the
+// properties block (20260827-224111-s-tac-vz9): the next step serves it as
+// its pointer and its own required list inline.
+func TestReportSchemaFieldsServeOnceAcrossSteps(t *testing.T) {
+	env := newTestServer(t, nil, writeAnchorOnlyGraph(t), "")
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+
+	var anchor mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "implementation"}, &anchor)
+	requireFullReportSchema(t, "anchor step", anchor.ReportSchema)
+	var contract mcpserver.ServeResult
+	call(t, cs, "next", map[string]any{"session": session, "instance": anchor.Instance, "report": map[string]any{"anchor": fixtureGapID}}, &contract)
+	if contract.Step != "contract" {
+		t.Fatalf("the anchor should advance to the contract step, at %s", contract.Step)
+	}
+	requireStubReportSchema(t, "contract step", contract.ReportSchema)
+	required, _ := contract.ReportSchema["required"].([]any)
+	if len(required) != 2 || required[0] != "contract" || required[1] != "widenReport" {
+		t.Fatalf("the contract step should serve its own required list inline, got %v", contract.ReportSchema["required"])
+	}
 }

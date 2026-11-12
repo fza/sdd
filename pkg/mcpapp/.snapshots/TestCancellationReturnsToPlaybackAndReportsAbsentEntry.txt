@@ -39,7 +39,32 @@ pending_chooser:
 procedure: capture
 project: test
 report_schema:
-  served_earlier: you hold the capture/playback report schema as ⟦tag⟧ — list the tag in reread to have it again, or resume_session re-serves it in full
+  additionalProperties: false
+  properties:
+    choice:
+      description: the option to take
+      enum:
+        - confirm
+        - adjust
+        - abort
+      type: string
+    chooser:
+      const: playback
+      description: the pending chooser's step id — copy it verbatim from pending_chooser.chooser
+      type: string
+    fields:
+      additionalProperties: false
+      description: state fields the chosen option collects — nested here, not at the top level
+      held_properties: you hold these capture report fields as ⟦tag⟧ — list the tag in reread to have them again, or resume_session re-serves them in full
+      type: object
+    userWords:
+      description: the user's answer, relayed verbatim
+      type: string
+  required:
+    - choice
+    - chooser
+    - userWords
+  type: object
 session: <session-1>
 status: running
 step: playback
