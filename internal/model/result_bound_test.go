@@ -54,3 +54,20 @@ func TestSplitServed(t *testing.T) {
 		t.Fatal("the chunks joined should be the text again")
 	}
 }
+
+// A paragraph break early in the room does not end a chunk: a short heading
+// followed by a long list of single lines, as gather's to-judge section is,
+// fills the chunk with lines instead of leaving it holding the heading alone.
+func TestSplitServedFillsAChunkPastAnEarlyParagraphBreak(t *testing.T) {
+	text := "# to judge (60)\n\n" + strings.Repeat("- a candidate line to judge, one per entry\n", 60)
+	chunks := model.SplitServed(text, 400)
+	if got := model.ServedChars(chunks[0]); got <= 200 {
+		t.Fatalf("the first chunk should carry lines past the heading, got %d characters: %q", got, chunks[0])
+	}
+	if !strings.HasSuffix(chunks[0], "\n") {
+		t.Fatalf("the first chunk should end at a line break: %q", chunks[0])
+	}
+	if strings.Join(chunks, "") != text {
+		t.Fatal("the chunks joined should be the text again")
+	}
+}

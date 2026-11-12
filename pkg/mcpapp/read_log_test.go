@@ -1,6 +1,9 @@
 package mcpapp_test
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -82,6 +85,39 @@ func TestGatherPointsAtAnEntryAlreadyServedInFull(t *testing.T) {
 	call(t, cs, "gather", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &reopened)
 	if !strings.Contains(reopened.Serve, "id: "+fixtureGapID) {
 		t.Fatalf("gather with the ids is the way back and serves in full again:\n%s", reopened.Serve)
+	}
+}
+
+// A gather paged past the result bound carries candidate lines on its first
+// page, not the to-judge heading alone.
+func TestGatherFirstPageCarriesCandidatesToJudge(t *testing.T) {
+	graphDir := writeFixtureGraph(t)
+	for n := range 60 {
+		summary := fmt.Sprintf("Gap %d of the paging fixture is a candidate whose brief line runs long enough that sixty of them fill more than one gather result.", n)
+		entry := strings.Replace(gapEntry, "summary: Pre-flight verdict oscillation produces contradictory findings across runs.", "summary: "+summary, 1)
+		path := filepath.Join(graphDir, fmt.Sprintf("2026/06/02-%06d-s-tac-p%02d.md", 100000+n, n))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(entry), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := newTestServer(t, nil, graphDir, "")
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+
+	var first mcpserver.GatherResult
+	call(t, cs, "gather", map[string]any{"session": session}, &first)
+	if !strings.Contains(first.Serve, "(page 1 of ") {
+		t.Fatalf("the fixture's gather should page past the result bound:\n%.400s", first.Serve)
+	}
+	_, toJudge, ok := strings.Cut(first.Serve, "# to judge (")
+	if !ok {
+		t.Fatalf("the first page should open the to-judge section:\n%.400s", first.Serve)
+	}
+	if !strings.Contains(toJudge, "\n- ") {
+		t.Fatalf("the first page should carry candidates to judge, got:\n%s", toJudge)
 	}
 }
 

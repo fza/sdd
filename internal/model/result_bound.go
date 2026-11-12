@@ -57,8 +57,9 @@ func servedRuneChars(r rune) int {
 
 // SplitServed splits text into chunks that each cost at most room in a
 // serialized result, joined again the text: each breaks after the last
-// paragraph within room where there is one, else after the last line, else
-// between runes.
+// paragraph within room where that keeps at least half of what fits, else
+// after the last line, else between runes, so a heading over a long list of
+// single lines never makes a chunk of its own.
 func SplitServed(text string, room int) []string {
 	var chunks []string
 	for {
@@ -74,7 +75,7 @@ func SplitServed(text string, room int) []string {
 
 func servedBreak(text string, fits int) int {
 	head := text[:fits]
-	if i := strings.LastIndex(head, "\n\n"); i > 0 {
+	if i := strings.LastIndex(head, "\n\n"); i > 0 && i+2 >= fits/2 {
 		return i + 2
 	}
 	if i := strings.LastIndexByte(head, '\n'); i > 0 {
