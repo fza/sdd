@@ -27,6 +27,10 @@ const (
 	// ErrorOperationPending refuses a transition while a recorded operation is
 	// unfinished; only its retry or cancellation is accepted (d-tac-t6u).
 	ErrorOperationPending ErrorCode = "operation_pending"
+	// ErrorAnswerCut is a model answer ended at the output token cap: the
+	// same request runs into the cap again until the user changes the cap or
+	// the model's settings.
+	ErrorAnswerCut ErrorCode = "answer_cut"
 )
 
 type ApplicationError struct {

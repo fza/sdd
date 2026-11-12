@@ -34,8 +34,9 @@ const (
 // it is written with low confidence (20261109-004506-d-cpt-udz, D4).
 const GroundingSkipped = "skipped"
 
-// VerificationSkipped marks an entry written without the deep verifier's
-// verdict: the user skipped it (20261109-004729-d-cpt-xs5, V-D4, V-D24).
+// VerificationSkipped marks an entry written without a verifier's
+// verdict: the user skipped the deep verifier (20261109-004729-d-cpt-xs5,
+// V-D4, V-D24) or a pre-flight answer cut at the token cap.
 const VerificationSkipped = "skipped"
 
 type Layer string
@@ -321,7 +322,7 @@ type Entry struct {
 	Involvement  []Involvement
 	Preflight    string    // PreflightSkipped or PreflightDryRunVerified; empty when a checker validated this entry
 	Grounding    string    // GroundingSkipped when the capture bypassed the grounding gate (20261109-004506-d-cpt-udz, D4); empty otherwise
-	Verification string    // VerificationSkipped when the user skipped the deep verifier; empty otherwise
+	Verification string    // VerificationSkipped when the user skipped a verifier; empty otherwise
 	Attachments  []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
 	Title        string    // short headline naming the entry's subject, generated with the summary; optional at graph schema 1 (20261028-005411-d-tac-tit)
 	Summary      string    // LLM-generated summary: this entry + direct relationships

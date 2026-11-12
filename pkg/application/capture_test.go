@@ -83,6 +83,22 @@ func TestPreflightEntryReturnsFindingsWithoutPublishing(t *testing.T) {
 	}
 }
 
+func TestPreflightEntryCodesAnAnswerCutAtTheCap(t *testing.T) {
+	cut := &llm.Error{FinishReason: "length", Err: fmt.Errorf("gollm openai: %w: finish_reason=length, reasoning 32770 tokens, content 75122 chars", llm.ErrAnswerCut)}
+	f := newWriteFixture(t, writeFixtureOptions{Runner: llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {
+		return llm.Result{}, cut
+	})})
+	draft := sdd.EntryDraft{Kind: "gap", Layer: "tactical", Confidence: "high", Body: "Preflight names a cut answer for what it is."}
+	_, err := f.app.PreflightEntry(t.Context(), f.identity, "example", f.binding, draft)
+	var coded *sdd.ApplicationError
+	if !errors.As(err, &coded) || coded.Code != sdd.ErrorAnswerCut {
+		t.Fatalf("a cut pre-flight answer should carry its code, got %v", err)
+	}
+	if !errors.Is(err, llm.ErrAnswerCut) || !strings.Contains(err.Error(), "finish_reason=length, reasoning 32770 tokens") {
+		t.Fatalf("the coded error should keep the original cause, got %v", err)
+	}
+}
+
 func TestCaptureUsesAcquiredLanguageAndDependencies(t *testing.T) {
 	dependency := acquiredRuntime(t, "example.org/dependency", staticGraphStore{snapshot: acquiredSnapshot(t, "example.org/dependency", "dependency-r1", "Declared source dependency.")})
 	var purposes []llm.Purpose

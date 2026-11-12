@@ -268,6 +268,18 @@ const classifiedActorID = "20260601-110000-s-prc-cls"
 // chain stability rule raises before write.
 func startReclassifyingCapture(t *testing.T, connID string) (*proctest.Session, string) {
 	t.Helper()
+	session, instance := draftReclassifyingCapture(t, connID)
+	serve := session.Answer(t, instance, "playback", "confirm", nil, "go")
+	proctest.RequireStep(t, serve, "reviseOrOverride")
+	if !strings.Contains(serve.Instructions, "actor_kind") || !strings.Contains(serve.Instructions, "contradicts") {
+		t.Fatalf("the hold should name the actor kind contradicting its chain, got %q", serve.Instructions)
+	}
+	return session, instance
+}
+
+// draftReclassifyingCapture reaches the playback of that supersede.
+func draftReclassifyingCapture(t *testing.T, connID string) (*proctest.Session, string) {
+	t.Helper()
 	world := proctest.NewWorld(t, proctest.WithEntries(append(captureFixtureEntries(),
 		&model.Entry{
 			ID: identityActorID, Type: model.TypeSignal, Kind: model.KindActor, Layer: model.LayerProcess, Canonical: "Christopher",
@@ -295,12 +307,21 @@ func startReclassifyingCapture(t *testing.T, connID string) (*proctest.Session, 
 		"widenReport": "read the existing Helper actor before superseding it",
 	})
 	proctest.RequireStep(t, serve, "playback")
-	serve = session.Answer(t, instance, "playback", "confirm", nil, "go")
-	proctest.RequireStep(t, serve, "reviseOrOverride")
-	if !strings.Contains(serve.Instructions, "actor_kind") || !strings.Contains(serve.Instructions, "contradicts") {
-		t.Fatalf("the hold should name the actor kind contradicting its chain, got %q", serve.Instructions)
-	}
 	return session, instance
+}
+
+func TestCapture_ACutAnswerWithAHighFindingOpenRefusesTheSkip(t *testing.T) {
+	session, instance := draftReclassifyingCapture(t, "identity-actor-kind-cut")
+	session.World.LLM.PreflightErr = answerCut()
+	serve := session.Answer(t, instance, "playback", "confirm", nil, "go")
+	proctest.RequireStep(t, serve, "preflightUnjudged")
+	if !strings.Contains(serve.Instructions, "contradicts") {
+		t.Fatalf("the cut serve should list the open mechanical finding, got %q", serve.Instructions)
+	}
+	_, err := session.AnswerErr(t, instance, "preflightUnjudged", "skip", nil, "skip it")
+	if err == nil || !strings.Contains(err.Error(), "a high finding is open") {
+		t.Fatalf("a skip with a high finding open should be refused, got %v", err)
+	}
 }
 
 // TestCapture_ActorKindReclassificationHeldAtPreflight pins the chain

@@ -61,6 +61,8 @@ type LLMScript struct {
 	// DuringPreflight runs inside every pre-flight call, before it answers:
 	// the point to land an entry between a capture's confirm and its write.
 	DuringPreflight func()
+	// PreflightErr, when set, fails every pre-flight call with it.
+	PreflightErr error
 	// GatherQuery is the semantic query the gather query writer answers
 	// with, and its one keyword term.
 	GatherQuery string
@@ -104,6 +106,9 @@ func (s *LLMScript) Run(_ context.Context, request llm.Request) (llm.Result, err
 	case llm.PurposePreflight:
 		if s.DuringPreflight != nil {
 			s.DuringPreflight()
+		}
+		if s.PreflightErr != nil {
+			return llm.Result{}, s.PreflightErr
 		}
 		return marshalFindings(locatedFindings(s.PreflightFindings, request.UserPrompt))
 	case llm.PurposeGatherQuery:
