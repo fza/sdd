@@ -101,6 +101,8 @@ func TestCaptureStartPreselectedKindNamesAuthoringFact(t *testing.T) {
 		"layer":       "tactical",
 		"confidence":  "high",
 		"intent":      "guiding",
+		"reasonWords": "validation stays single-path",
+		"intentWords": "it keeps applying to every write",
 		"widenReport": "searched the graph for prior write-path decisions before drafting",
 	})
 	if advanced.Step == "assemble" {
