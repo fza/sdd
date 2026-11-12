@@ -12,6 +12,10 @@ import (
 // to a file.
 const MaxResultChars = 18000
 
+// MaxServeChars is what one serve may take of a result, leaving room for the
+// notices that join it.
+const MaxServeChars = MaxResultChars - 2000
+
 // ServedChars is what text costs in a result as Claude Code counts it: the
 // characters of the text content, which is the structured copy's JSON, so the
 // text JSON-escaped once. Bytes stand in for characters, which never

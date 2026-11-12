@@ -37,11 +37,11 @@ func heldLine(names []string) string {
 // holds becomes its pointer, the rest serve in full with their tags. A lane
 // carrying an entry of pageFull, those the verify reading page served whole,
 // holds that entry too. The lanes past keep wait, named with the call that
-// serves them.
-func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, pageFull []string) string {
+// serves them. It returns how many lanes it served in full.
+func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, pageFull []string) (string, int) {
 	lanes := serve.InstructionLanes
 	if len(lanes) == 0 {
-		return serve.Instructions
+		return serve.Instructions, 0
 	}
 	var fresh, held, waiting []string
 	for i, lane := range lanes {
@@ -57,6 +57,7 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, p
 		}
 		fresh = append(fresh, served.Text)
 	}
+	full := len(fresh)
 	if len(fresh) == 0 && len(waiting) == 0 {
 		fresh = append(fresh, fmt.Sprintf("(you hold the step %s instructions — follow them; goal: %s)", serve.Step, serve.Goal))
 	}
@@ -67,7 +68,7 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, p
 	if len(waiting) > 0 {
 		text += fmt.Sprintf("\n\n(%d more lanes of these instructions wait, as this result would run past its size bound: %s. Call next with this instance and no report to have them before you act; it serves the step again)", len(waiting), strings.Join(waiting, ", "))
 	}
-	return serve.ComposeInstructions(strings.TrimPrefix(text, "\n\n"))
+	return serve.ComposeInstructions(strings.TrimPrefix(text, "\n\n")), full
 }
 
 func carried(ids []string, text string) []string {

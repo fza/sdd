@@ -263,6 +263,49 @@ func followWaitingLanes(t *testing.T, cs *mcp.ClientSession, session string, ser
 	return ""
 }
 
+// A lane larger than one result never waits forever: once nothing else fits
+// beside it, it serves alone past the bound, so each call serves a lane, as
+// the first lane of a step and as one left waiting behind a lane that fit.
+func TestAnOversizedLaneServesAloneRatherThanWaiting(t *testing.T) {
+	huge := stepLane{"huge", model.MaxResultChars * 6 / 5 / 42}
+	small := stepLane{"small", 20}
+	for _, tc := range []struct {
+		name  string
+		lanes []stepLane
+	}{
+		{"first", []stepLane{huge, small}},
+		{"behind a lane that fit", []stepLane{small, huge}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newTestServer(t, nil, writeLaneStepGraph(t, tc.lanes...), "")
+			cs := connect(t, env.srv)
+			session := openSession(t, cs).Session
+			var serve mcpserver.ServeResult
+			call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step"}, &serve)
+			served := map[string]bool{}
+			for calls := 1; calls <= len(tc.lanes); calls++ {
+				fresh := 0
+				for _, lane := range tc.lanes {
+					if strings.Contains(serve.Instructions, "Lane "+lane.name+" holds") {
+						served[lane.name] = true
+						fresh++
+					}
+				}
+				if fresh == 0 {
+					t.Fatalf("call %d should serve a lane while lanes wait, got %.300q", calls, serve.Instructions)
+				}
+				if !strings.Contains(serve.Instructions, "lanes of these instructions wait") {
+					break
+				}
+				call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance}, &serve)
+			}
+			if !served["huge"] || !served["small"] {
+				t.Fatalf("every lane should be served within as many calls as there are lanes, served %v", served)
+			}
+		})
+	}
+}
+
 func requireWaitingLane(t *testing.T, serve mcpserver.ServeResult) {
 	t.Helper()
 	if !strings.Contains(serve.Instructions, "Lane first holds") || strings.Contains(serve.Instructions, "Lane third holds") || !strings.Contains(serve.Instructions, "lanes of these instructions wait") {
@@ -276,10 +319,28 @@ func requireWaitingLane(t *testing.T, serve mcpserver.ServeResult) {
 // more run past it.
 func writeWideStepGraph(t *testing.T, names ...string) string {
 	t.Helper()
+	lanes := make([]stepLane, len(names))
+	for i, name := range names {
+		lanes[i] = stepLane{name, (model.MaxResultChars - 7000) / 86}
+	}
+	return writeLaneStepGraph(t, lanes...)
+}
+
+// stepLane is one lane of the wide-step procedure: its name and how many
+// lines of about 43 characters it holds.
+type stepLane struct {
+	name  string
+	lines int
+}
+
+// writeLaneStepGraph writes the fixture graph with a procedure whose one step
+// serves the given lanes.
+func writeLaneStepGraph(t *testing.T, laneSizes ...stepLane) string {
+	t.Helper()
 	graphDir := writeFixtureGraph(t)
 	var lanes strings.Builder
-	for _, name := range names {
-		fmt.Fprintf(&lanes, "### lane: %s\n\n%s\n\n", name, strings.Repeat("Lane "+name+" holds a line of its guidance.\n", (model.MaxResultChars-7000)/86))
+	for _, lane := range laneSizes {
+		fmt.Fprintf(&lanes, "### lane: %s\n\n%s\n\n", lane.name, strings.Repeat("Lane "+lane.name+" holds a line of its guidance.\n", lane.lines))
 	}
 	spec := `---
 type: decision

@@ -9,10 +9,10 @@ import (
 
 // The result bound (20261112-075604-d-tac-t4r, model.MaxResultChars) leaves
 // room past what a result's parts may take: textBudget for the one large text
-// field of a read, serveBudget for a serve before its notices join it.
+// field of a read, serveBudget (model.MaxServeChars) for a serve.
 const (
 	textBudget  = model.MaxResultChars - 3000
-	serveBudget = model.MaxResultChars - 2000
+	serveBudget = model.MaxServeChars
 )
 
 // resultChars is what v costs as a tool result: the text content carrying its
