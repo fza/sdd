@@ -231,26 +231,31 @@ func (s *Session) foldAnchor(record any) {
 	s.anchors[tag] = issued
 }
 
-// FollowDeferral settles the instance's deferral, a serve of its step that
-// left lanes waiting past the result bound, as the call in flight serves the
-// instance. With follow set, the call serves the step again without a report:
-// the pieces the deferral sent count as held in it, without a proof, as the
+// FollowDeferral makes the call in flight follow the instance's deferral, a
+// serve of its step that left lanes waiting past the result bound: the
+// pieces the deferral sent count as held in it, without a proof, as the
 // result before carried them, so an agent listing no proofs still reaches the
-// waiting lanes. Either way the deferral ends; every serve of the instance
-// settles it, so the one a call follows is always its own step's.
-func (s *Session) FollowDeferral(instance string, follow bool) {
+// waiting lanes, by a plain next and by a report alike. Called before the
+// serve composes, so the entries it carries print as pointers too.
+func (s *Session) FollowDeferral(instance string) {
 	sent, ok := s.deferred[instance]
 	if !ok {
 		return
 	}
-	if follow {
-		if s.call.issued == nil {
-			s.call.issued, s.call.covered = map[Piece]string{}, map[string]string{}
-		}
-		for p, tag := range sent {
-			s.call.issued[p] = tag
-		}
-		s.call.followed = sent
+	if s.call.issued == nil {
+		s.call.issued, s.call.covered = map[Piece]string{}, map[string]string{}
+	}
+	for p, tag := range sent {
+		s.call.issued[p] = tag
+	}
+	s.call.followed = sent
+}
+
+// EndDeferral ends the instance's deferral. Every serve of the instance
+// settles it, so the one a call follows is always its last serve's.
+func (s *Session) EndDeferral(instance string) {
+	if _, ok := s.deferred[instance]; !ok {
+		return
 	}
 	ended := map[string]any{"ended": true}
 	s.foldDeferral(instance, ended)
@@ -258,15 +263,17 @@ func (s *Session) FollowDeferral(instance string, follow bool) {
 }
 
 // RecordDeferral records that the call's serve of the instance left lanes
-// waiting: the pieces named in sent that the call served in full, with those
-// of a deferral it follows, serve as pointers in the call that follows.
-func (s *Session) RecordDeferral(instance string, sent []string) {
+// waiting: every piece the call served in full whose tag the delivered
+// result carries, with those of a deferral it follows, serves as a pointer
+// in the call that follows. An entry composed into a lane that waits carries
+// no tag in the result, so it serves in full with that lane.
+func (s *Session) RecordDeferral(instance, delivered string) {
 	pieces := maps.Clone(s.call.followed)
 	if pieces == nil {
 		pieces = map[Piece]string{}
 	}
 	for _, p := range s.call.pending {
-		if p.tag != "" && slices.Contains(sent, p.piece.Name) {
+		if p.tag != "" && strings.Contains(delivered, model.AnchorMark(p.tag)) {
 			pieces[p.piece] = p.tag
 		}
 	}

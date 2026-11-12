@@ -22,7 +22,6 @@ import (
 	"github.com/networkteam/sdd/internal/textpatch"
 	"github.com/networkteam/sdd/internal/truncate"
 	sdd "github.com/networkteam/sdd/pkg/application"
-	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // defaultSearchHits caps search responses when the caller sets no limit —
@@ -689,7 +688,7 @@ func (s *Server) startSession(ctx context.Context, req *mcp.CallToolRequest, arg
 	s.noteSyncSession(ctx, req, ss)
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	result, err := s.toRootServeResult(ctx, req, ss, serve, false)
+	result, err := s.toRootServeResult(ctx, req, ss, serve)
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
@@ -738,7 +737,7 @@ func (s *Server) startProcedure(ctx context.Context, req *mcp.CallToolRequest, a
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
-	result, err := s.toRootServeResult(ctx, req, ss, serve, false)
+	result, err := s.toRootServeResult(ctx, req, ss, serve)
 	return nil, result, err
 }
 
@@ -752,6 +751,7 @@ func (s *Server) next(ctx context.Context, req *mcp.CallToolRequest, args NextAr
 		return nil, ServeResult{}, toolError("instance is required")
 	}
 	identity := s.requestIdentity(req)
+	ss.root.FollowDeferral(args.Instance)
 	serve, err := ss.root.Advance(ctx, identity, sdd.WorkflowAdvanceRequest{Instance: args.Instance, Report: args.Report, Label: args.Label, RetryRef: args.RetryRef, CancelRef: args.CancelRef})
 	if err != nil {
 		return nil, ServeResult{}, err
@@ -761,7 +761,7 @@ func (s *Server) next(ctx context.Context, req *mcp.CallToolRequest, args NextAr
 		// never re-served, so its replay leaves the cache with it.
 		defer s.sessions.evict(ss.root.ID())
 	}
-	result, err := s.toRootServeResult(ctx, req, ss, serve, len(args.Report) == 0 && args.RetryRef == 0 && args.CancelRef == 0)
+	result, err := s.toRootServeResult(ctx, req, ss, serve)
 	return nil, result, err
 }
 
@@ -1489,21 +1489,14 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 // the result bound, and records what it served in full into the session
 // ledger. The shell's open-work block lists this dialogue's own threads only;
 // other dialogues never appear.
-// follow marks a call that serves the step again without a report, the call
-// that follows a serve whose lanes wait.
-func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, follow bool) (ServeResult, error) {
-	res, keep, err := s.boundedServe(ctx, req, ss, serve, serveBudget, follow, true)
+func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (ServeResult, error) {
+	res, keep, err := s.boundedServe(ctx, req, ss, serve, serveBudget, true)
 	if err != nil {
 		return ServeResult{}, err
 	}
-	var framing []types.ServeLane
-	if keep < len(serve.InstructionLanes) && !serve.Waiting {
-		framing, err = ss.root.FramingBlocksFor(ctx, s.requestIdentity(req), serve.Framing)
-		if err != nil {
-			return ServeResult{}, err
-		}
+	if err := recordDeferral(ss, serve, keep, res); err != nil {
+		return ServeResult{}, err
 	}
-	recordDeferral(ss, serve, keep, framing)
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return ServeResult{}, err
 	}
@@ -1519,8 +1512,8 @@ func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest
 // than one result never waits forever. A resume serves without it, as a move
 // whose lanes all wait resumes through next. It returns how many lanes the result holds; the caller
 // records what it served and, through recordDeferral, the lanes that wait.
-func (s *Server) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int, follow, progress bool) (ServeResult, int, error) {
-	ss.root.FollowDeferral(serve.Instance, follow)
+func (s *Server) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int, progress bool) (ServeResult, int, error) {
+	ss.root.EndDeferral(serve.Instance)
 	pageFull := ss.root.TakeStepFullIDs()
 	mark := ss.root.ServeMark()
 	lanes := len(serve.InstructionLanes)
@@ -1552,21 +1545,20 @@ func (s *Server) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss 
 }
 
 // recordDeferral records a serve that holds only its first keep lanes, so
-// the call that follows serves the waiting lanes and points at the sent ones.
-// The framing blocks the call sent count among them: re-sent to an agent that
-// proves nothing, they would leave the waiting lanes no room.
-func recordDeferral(ss *shellSession, serve *sdd.WorkflowServe, keep int, framing []types.ServeLane) {
+// the next call on the instance serves the waiting lanes and points at what
+// res, the result delivered, sent: lanes, framing, schema and entries alike,
+// as any of them re-sent to an agent that proves nothing would leave the
+// waiting lanes no room.
+func recordDeferral(ss *shellSession, serve *sdd.WorkflowServe, keep int, res ServeResult) error {
 	if keep >= len(serve.InstructionLanes) {
-		return
+		return nil
 	}
-	sent := make([]string, 0, keep+len(framing))
-	for _, lane := range serve.InstructionLanes[:keep] {
-		sent = append(sent, "lane "+lane.Name)
+	delivered, err := json.Marshal(res)
+	if err != nil {
+		return fmt.Errorf("recording a deferral: %w", err)
 	}
-	for _, block := range framing {
-		sent = append(sent, "framing "+block.Name)
-	}
-	ss.root.RecordDeferral(serve.Instance, sent)
+	ss.root.RecordDeferral(serve.Instance, string(delivered))
+	return nil
 }
 
 // composeServe composes serve's whole result with its first keep lanes, and
@@ -1661,7 +1653,7 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 			continue
 		}
 		mark := ss.root.ServeMark()
-		mapped, keep, err := s.boundedServe(ctx, req, ss, serve, serveBudget-spent, false, false)
+		mapped, keep, err := s.boundedServe(ctx, req, ss, serve, serveBudget-spent, false)
 		if err != nil {
 			return ResumeSessionResult{}, err
 		}
@@ -1675,7 +1667,9 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 			omitted = append(omitted, name)
 			continue
 		}
-		recordDeferral(ss, serve, keep, framing)
+		if err := recordDeferral(ss, serve, keep, mapped); err != nil {
+			return ResumeSessionResult{}, err
+		}
 		spent += cost
 		result.Open = append(result.Open, mapped)
 	}

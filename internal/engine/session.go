@@ -62,7 +62,7 @@ const (
 	EventAnchors EventType = "anchors"
 	// EventDeferred records that a serve of an instance left lanes waiting
 	// past the result bound, with the pieces it sent, or, with ended set, that
-	// the deferral is settled (Session.FollowDeferral).
+	// the deferral is settled (Session.EndDeferral).
 	EventDeferred EventType = "deferred"
 	// EventReoriented records that the consumer asked for the session's
 	// position — the declaration that it needs re-serving. Its call serves
