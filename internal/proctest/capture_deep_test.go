@@ -911,3 +911,40 @@ func TestCaptureDeep_TheDispatchSaysPreflightsModelDidNotJudge(t *testing.T) {
 		t.Fatalf("the dispatch should say pre-flight's model did not judge the draft:\n%s", text)
 	}
 }
+
+// A finding the verifier withdraws on a contest reaches the drafter with the
+// verifier's reason, whole past a store value's cap, to tell the user.
+func TestCaptureDeep_AWithdrawnFindingReachesTheDrafter(t *testing.T) {
+	note := "the dialogue carries the incidents" + strings.Repeat(", as the user said", 150)
+	for _, outcome := range []string{"conceded", "dropped"} {
+		t.Run(outcome, func(t *testing.T) {
+			world, session := newDeepWorld(t, "deep-withdrawn-"+outcome, sdd.VerifierPolicy{})
+			x := startDeep(t, world, session, captureDraft())
+			x.judge(t, []any{
+				map[string]any{"verdict": "the gap rests on incidents no entry records", "axis": "missing-ref", "severity": "medium"},
+				map[string]any{"verdict": "the layer is too low", "axis": "ref-fit", "severity": "low"},
+			})
+			x.pickUp(t)
+			session.Answer(t, x.instance, "deepAnswer", "contest", map[string]any{"deepContest": []any{
+				map[string]any{"target": "f1", "verdict": "contest", "reason": "the user named the incidents in the dialogue"},
+			}}, "")
+			x.delegate.Refresh(t)
+			x.delegate.Report(t, x.child, nil)
+			x.delegate.Answer(t, x.child, "respond", "respond", map[string]any{"responses": []any{
+				map[string]any{"target": "f1", "outcome": outcome, "note": note},
+			}}, "")
+			session.Refresh(t)
+			serve := session.Report(t, x.instance, nil)
+			proctest.RequireStep(t, serve, "verifySummary")
+			text := test.Untagged(serve.Instructions)
+			for _, want := range []string{"- f1 [medium, missing-ref]: the gap rests on incidents no entry records\n  withdrawn: " + note + "\n", "Tell the user which findings the verifier withdrew and why."} {
+				if !strings.Contains(text, want) {
+					t.Errorf("the drafter should be told of the withdrawn finding, missing %q:\n%s", want, text)
+				}
+			}
+			if strings.Contains(text, "the layer is too low") {
+				t.Errorf("a finding the drafter accepted is not withdrawn:\n%s", text)
+			}
+		})
+	}
+}
