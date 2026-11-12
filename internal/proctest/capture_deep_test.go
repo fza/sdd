@@ -223,6 +223,58 @@ func TestCaptureDeep_ContestRoundBuildsTheProposal(t *testing.T) {
 	proctest.RequireStep(t, serve, "verifySummary")
 }
 
+// An accept reporting no draft field has sdd write the proposal into the
+// draft: the body and every header line its hunks change.
+func TestCaptureDeep_AcceptWithoutFieldsWritesTheProposal(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-accept-writes", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	x.judge(t, []any{
+		map[string]any{"verdict": "the gap names no subject", "axis": "inconsistent", "severity": "medium", "edits": []any{deepEdit("observes something.", "observes the attachment writer dropping a file.")}},
+		map[string]any{"verdict": "the layer is too low", "axis": "ref-fit", "severity": "low", "edits": []any{deepEdit("layer: \"tactical\"", "layer: \"conceptual\"")}},
+	})
+	x.pickUp(t)
+	serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+	proctest.RequireStep(t, serve, "deepProposal")
+	if !strings.Contains(serve.Instructions, "@@ h1") || strings.Contains(serve.Instructions, "The draft document it leads to") {
+		t.Fatalf("the proposal should serve its hunks only:\n%s", serve.Instructions)
+	}
+	serve = session.Answer(t, x.instance, "deepProposal", "accept", nil, "")
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, x.instance, "playback", "confirm", nil, "yes, with the verifier's changes")
+	proctest.RequireStep(t, serve, "verifySummary")
+	serve = session.Answer(t, x.instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	entryID, _ := serve.Produced["entryId"].(string)
+	entry := proctest.LoadEntry(t, world.GraphDir, entryID)
+	if !strings.Contains(entry.Content, "observes the attachment writer dropping a file.") || entry.Layer != model.LayerConceptual {
+		t.Fatalf("the entry should carry the proposal's body and layer, got %q on %s", entry.Content, entry.Layer)
+	}
+}
+
+func TestCaptureDeep_AcceptWithoutFieldsLeavesAStagedBodyToItsFile(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-accept-staged", sdd.VerifierPolicy{})
+	handle := session.Stage(t, "draft.md", []byte("A tactical gap: the fixture observes something.\n"))
+	x := startDeep(t, world, session, stagedBodyDraft(handle))
+	x.judge(t, []any{map[string]any{"verdict": "the gap names no subject", "axis": "inconsistent", "severity": "medium", "edits": []any{deepEdit("observes something.", "observes a subject.")}}})
+	x.pickUp(t)
+	session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+	_, err := session.AnswerErr(t, x.instance, "deepProposal", "accept", nil, "")
+	if err == nil || !strings.Contains(err.Error(), `the body comes from the staged file "draft.md"`) {
+		t.Fatalf("an accept should leave a staged body to its file, got %v", err)
+	}
+}
+
+func TestCaptureDeep_AcceptWithoutFieldsRefusesAFieldAcceptCannotWrite(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-accept-uncollected", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	x.judge(t, []any{map[string]any{"verdict": "the gap lacks a canonical", "axis": "inconsistent", "severity": "low", "edits": []any{deepEdit("layer: \"tactical\"", "layer: \"tactical\"\ncanonical: \"gap\"")}}})
+	x.pickUp(t)
+	session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+	_, err := session.AnswerErr(t, x.instance, "deepProposal", "accept", nil, "")
+	if err == nil || !strings.Contains(err.Error(), "the proposal changes canonical, which accept cannot write") {
+		t.Fatalf("a proposal changing a field accept does not carry should be refused by name, got %v", err)
+	}
+}
+
 func TestCaptureDeep_AProposalWithMarkupCharactersMatchesItsDraft(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-markup", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())

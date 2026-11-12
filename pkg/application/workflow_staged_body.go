@@ -107,17 +107,8 @@ func (w *WorkflowSession) checkStagedHeaderAtConfirm(ctx context.Context, identi
 }
 
 func callsConfirmPlayback(spec *engine.Spec, chooser, choice string) bool {
-	for _, step := range spec.Steps {
-		if step.ID != chooser {
-			continue
-		}
-		for _, option := range step.Options {
-			if option.Choice == choice {
-				return option.Call == "confirmPlayback"
-			}
-		}
-	}
-	return false
+	option := answeredOption(spec, chooser, choice)
+	return option != nil && option.Call == "confirmPlayback"
 }
 
 // stagedHeaderAgrees refuses a header key stating a report field otherwise

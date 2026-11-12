@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -436,6 +437,45 @@ func DeepReadingPages(lead string, first, rest []DeepReadingBlock) []DeepReading
 		add(block, false, i == 0)
 	}
 	return pages
+}
+
+// DeepDraftDocument is a draft document the deep exchange edits, read back
+// into its fields: one `name: <JSON>` line per reported field, then, after an
+// empty line, the body.
+type DeepDraftDocument struct {
+	Fields  map[string]any
+	Body    string
+	HasBody bool
+}
+
+// ParseDeepDraftDocument reads a draft document back into its fields,
+// refusing a header line that names no field, names one twice or holds no
+// JSON value.
+func ParseDeepDraftDocument(doc string) (DeepDraftDocument, error) {
+	parsed := DeepDraftDocument{Fields: map[string]any{}}
+	rest := doc
+	for rest != "" {
+		if body, ok := strings.CutPrefix(rest, "\n"); ok {
+			parsed.Body, parsed.HasBody = body, true
+			break
+		}
+		line, after, _ := strings.Cut(rest, "\n")
+		rest = after
+		name, raw, ok := strings.Cut(line, ": ")
+		if !ok || name == "" {
+			return DeepDraftDocument{}, fmt.Errorf("header line %q is not `field: value`", line)
+		}
+		if _, seen := parsed.Fields[name]; seen {
+			return DeepDraftDocument{}, fmt.Errorf("header field %s appears twice", name)
+		}
+		var value any
+		err := json.Unmarshal([]byte(raw), &value)
+		if err != nil {
+			return DeepDraftDocument{}, fmt.Errorf("header field %s: %w", name, err)
+		}
+		parsed.Fields[name] = value
+	}
+	return parsed, nil
 }
 
 // DeepContinuedPages pages text that may run past one page of the reading:

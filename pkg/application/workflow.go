@@ -693,6 +693,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	chooser, hasChooser := request.Report["chooser"].(string)
 	choice, hasChoice := request.Report["choice"].(string)
 	if request.Report != nil {
+		if err := w.applyDeepProposal(request); err != nil {
+			return nil, err
+		}
 		if err := w.applyStagedBody(ctx, identity, request, hasChooser && hasChoice && chooser != "" && choice != ""); err != nil {
 			return nil, err
 		}

@@ -266,3 +266,33 @@ func TestDeepChanges_LeaveOwnerFindingsToTheUser(t *testing.T) {
 		t.Fatalf("an owner finding should carry nothing into the proposal, got %+v", changes)
 	}
 }
+
+func TestParseDeepDraftDocument(t *testing.T) {
+	parsed, err := model.ParseDeepDraftDocument(deepBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Fields["entryKind"] != "gap" || parsed.Fields["layer"] != "tactical" || len(parsed.Fields) != 2 {
+		t.Fatalf("each header line should read back as its field, got %v", parsed.Fields)
+	}
+	if !parsed.HasBody || parsed.Body != "The capture writer drops the second attachment.\nIt happens when two share a name.\n" {
+		t.Fatalf("the text after the empty line should read back as the body, got %q", parsed.Body)
+	}
+	refs, err := model.ParseDeepDraftDocument("refs: [{\"desc\":\"while <limit> & more\",\"id\":\"x\"}]\n\nbody")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := refs.Fields["refs"].([]any); len(list) != 1 {
+		t.Fatalf("a JSON list should read back as a list, got %v", refs.Fields["refs"])
+	}
+	for _, tc := range []struct{ doc, want string }{
+		{"layer \"tactical\"\n\nbody", "is not `field: value`"},
+		{"layer: \"tactical\"\nlayer: \"process\"\n\nbody", "appears twice"},
+		{"layer: tactical\n\nbody", "header field layer"},
+	} {
+		_, err := model.ParseDeepDraftDocument(tc.doc)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("ParseDeepDraftDocument(%q) = %v, want a refusal naming %q", tc.doc, err, tc.want)
+		}
+	}
+}
