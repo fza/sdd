@@ -67,14 +67,14 @@ func TestIncompleteAnswerIsReportedApartFromAProviderFault(t *testing.T) {
 		{
 			name:      "reasoning spent the cap",
 			behaviour: test.OpenAIBehaviour{FinishReason: "length", ReasoningTokens: 7602},
-			sentinel:  gollmrunner.ErrAnswerCut,
+			sentinel:  llm.ErrAnswerCut,
 			message:   "gollm openai: answer cut at the token cap: finish_reason=length, reasoning 7602 tokens, content 0 chars",
 		},
 		{
 			name:      "answer cut mid-JSON in json_object mode",
 			behaviour: test.OpenAIBehaviour{Answer: `{"findings":[`, FinishReason: "length", ReasoningTokens: 7602},
 			mode:      model.StructuredOutputJSONObject,
-			sentinel:  gollmrunner.ErrAnswerCut,
+			sentinel:  llm.ErrAnswerCut,
 			message:   "gollm openai: answer cut at the token cap: finish_reason=length, reasoning 7602 tokens, content 13 chars",
 		},
 		{

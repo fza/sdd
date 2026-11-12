@@ -13,6 +13,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 )
 
 // Purpose names what a call is for: a routing key for implementations and an
@@ -142,6 +143,12 @@ type RunnerFunc func(context.Context, Request) (Result, error)
 func (f RunnerFunc) Run(ctx context.Context, req Request) (Result, error) {
 	return f(ctx, req)
 }
+
+// ErrAnswerCut marks a call the model ended at the output token cap. A
+// reasoning model spends its thinking against that cap, so the answer comes
+// back cut short or missing. An implementation wraps it so a caller can tell
+// a cut from a provider fault.
+var ErrAnswerCut = errors.New("answer cut at the token cap")
 
 // Error optionally attributes a failed call. An implementation that knows what
 // it routed to wraps its error so failures measure like successes. Usage and

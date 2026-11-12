@@ -4,6 +4,7 @@
 package proctest_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -107,5 +108,49 @@ func TestCaptureVerifier_LightWithoutAWindowNamesTheKey(t *testing.T) {
 	_, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "write it")
 	if err == nil || !strings.Contains(err.Error(), "llm.context_tokens") {
 		t.Fatalf("a light call without a known window should be refused naming the key, got %v", err)
+	}
+}
+
+// answerCut is the failure a provider adapter reports for an answer the model
+// ended at the output token cap.
+func answerCut() error {
+	return &llm.Error{FinishReason: "length", Err: fmt.Errorf("gollm openai: %w: finish_reason=length, reasoning 32770 tokens, content 75122 chars", llm.ErrAnswerCut)}
+}
+
+func TestCaptureVerifier_ACutAnswerPutsTheChoiceToTheUser(t *testing.T) {
+	world, session := newLightWorld(t, "light-cut")
+	world.LLM.PreflightErr = answerCut()
+	_, serve := confirmedLightCapture(t, session)
+	proctest.RequireStep(t, serve, "preflightUnjudged")
+	if serve.PendingOperation != nil || serve.PendingChooser == nil || serve.PendingChooser.Kind != "user" {
+		t.Fatalf("a cut answer should be the user's choice, not a failed operation, got %+v, %+v", serve.PendingOperation, serve.PendingChooser)
+	}
+	for _, option := range serve.PendingChooser.Options {
+		if option.Choice == "retry" {
+			t.Error("a cut answer should offer no retry of the same request")
+		}
+	}
+	for _, want := range []string{"finish_reason=length, reasoning 32770 tokens", "`llm.max_tokens`", "`llm.preflight.params`"} {
+		if !strings.Contains(serve.Instructions, want) {
+			t.Errorf("the serve should name the cause and the levers, missing %q:\n%s", want, serve.Instructions)
+		}
+	}
+	if got := world.LLM.Calls(llm.PurposePreflight); got != 1 {
+		t.Fatalf("a cut answer should not be retried on its own, pre-flight ran %d times", got)
+	}
+}
+
+func TestCaptureVerifier_ARevisedDraftAfterACutRunsPreflightAgain(t *testing.T) {
+	world, session := newLightWorld(t, "light-cut-revise")
+	world.LLM.PreflightErr = answerCut()
+	instance, serve := confirmedLightCapture(t, session)
+	proctest.RequireStep(t, serve, "preflightUnjudged")
+	world.LLM.PreflightErr = nil
+	serve = session.Answer(t, instance, "preflightUnjudged", "revise", map[string]any{"body": "A tactical gap: the fixture observes something new."}, "shorter, and the cap is raised")
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "now write it")
+	proctest.RequireStep(t, serve, "verifySummary")
+	if got := world.LLM.Calls(llm.PurposePreflight); got != 2 {
+		t.Fatalf("a revised draft goes through pre-flight again, ran %d times", got)
 	}
 }

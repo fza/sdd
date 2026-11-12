@@ -13,6 +13,10 @@ import (
 	"github.com/networkteam/sdd/internal/query"
 )
 
+// fieldPreflightCut holds the error of a pre-flight model answer cut at the
+// token cap: the model did not judge the draft.
+const fieldPreflightCut = "preflightCut"
+
 var captureDraftFields = []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch", "skipGrounding"}
 
 func captureAttachments(draft *EntryDraft, staged map[string]string) error {
@@ -46,11 +50,19 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 		err = withBaseTargetError("", err)
 	}
 	var validation *ValidationError
-	if errors.As(err, &validation) {
+	var coded *ApplicationError
+	var cut any
+	switch {
+	case errors.As(err, &validation):
 		for _, warning := range validation.Warnings {
 			result.Findings = append(result.Findings, Finding{Severity: string(query.SeverityHigh), Category: "validation", Observation: warning.Message})
 		}
-	} else if err != nil {
+	case errors.As(err, &coded) && coded.Code == ErrorAnswerCut:
+		cut = coded.Error()
+	case err != nil:
+		return err
+	}
+	if err := ctx.Store.WriteEngine(fieldPreflightCut, cut); err != nil {
 		return err
 	}
 	findings := make([]query.Finding, 0, len(result.Findings))

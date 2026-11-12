@@ -327,9 +327,18 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	}); err != nil {
 		return err
 	}
+	if err := registry.RegisterPredicate(engine.Predicate{
+		Doc: engine.FuncDoc{Name: "preflightCut", Doc: "Pre-flight's model answer was cut at the output token cap, so the model did not judge the draft.", Reads: []string{fieldPreflightCut}},
+		Fn: func(ctx *engine.Context) (bool, error) {
+			cut, _ := workflowStoreString(ctx.Store, fieldPreflightCut)
+			return cut != "", nil
+		},
+	}); err != nil {
+		return err
+	}
 	if err := registry.RegisterCommand(engine.Command{
-		Doc: engine.FuncDoc{Name: "preflightEntry", Doc: "Checks the current capture draft before publication and records its findings.",
-			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride", "preflightCalls", "preflightExcerpted", fieldPreflightRubric}},
+		Doc: engine.FuncDoc{Name: "preflightEntry", Doc: "Checks the current capture draft before publication and records its findings, or the cut of its model's answer.",
+			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride", "preflightCalls", "preflightExcerpted", fieldPreflightRubric, fieldPreflightCut}},
 		GraphIndependent: true,
 		Fn:               w.runWorkflowPreflight,
 	}); err != nil {

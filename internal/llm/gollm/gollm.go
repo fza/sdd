@@ -23,11 +23,6 @@ import (
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
-// ErrAnswerCut marks a call the model ended at the output token cap. A
-// reasoning model spends its thinking against that cap, so the answer comes
-// back cut short or missing; llm.max_tokens raises or lifts the cap.
-var ErrAnswerCut = errors.New("answer cut at the token cap")
-
 // ErrNoAnswer marks a response the provider delivered whole, ended for a
 // reason other than the cap, that carries no answer.
 var ErrNoAnswer = errors.New("no answer")
@@ -327,7 +322,7 @@ func incompleteAnswer(cut bool, finishReason string, usage *upstream.Usage, cont
 	}
 	sentinel := ErrNoAnswer
 	if cut {
-		sentinel = ErrAnswerCut
+		sentinel = llm.ErrAnswerCut
 	}
 	return fmt.Errorf("%w: finish_reason=%s, reasoning %d tokens, content %d chars", sentinel, finishReason, reasoning, utf8.RuneCountInString(content))
 }
