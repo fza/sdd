@@ -87,7 +87,10 @@ var ErrDelegateNotLaunched = errors.New("the delegate is left to the harness to 
 
 // WorkflowDispatch is the dispatch handoff served to the dispatching move: the
 // child handles, the prompts a harness launches the delegate with, and the
-// instructions for this round (20260829-122157-d-cpt-zpe).
+// instructions for this round (20260829-122157-d-cpt-zpe). A delegate sdd
+// launched itself is driven by sdd alone: its handoff carries the procedure,
+// the runner and the instructions, and no handle or prompt the dispatching
+// agent could work it with.
 type WorkflowDispatch struct {
 	Session   SessionID
 	Instance  string
@@ -301,13 +304,12 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 		case err != nil:
 			return dispatch, err
 		default:
-			dispatch.Runner = launched
-			arrives := "The round runs in the background. Its results arrive in this move, never through a reply: next with this instance and no report picks a delivery up once it has landed, and fails with the round's error should the round fail."
-			dispatch.Instructions = "sdd launched the delegate itself, so launch nothing. " + arrives
+			alone := "The delegate works on its own while this move waits: never resume, continue or answer for it. Its round runs in the background and its results arrive in this move, never through a reply: next with this instance and no report picks a delivery up once it has landed, and reports the round's failure should it fail."
+			instructions := "sdd launched the delegate itself, so launch nothing. " + alone
 			if runner == DelegateLaunchFallback {
-				dispatch.Instructions = fmt.Sprintf("This harness has no subagent tool, so sdd fell back to the headless %s runner of the agents supported_agents names and launched the delegate itself: launch nothing. %s", launched, arrives)
+				instructions = fmt.Sprintf("This harness has no subagent tool, so sdd fell back to the headless %s runner of the agents supported_agents names and launched the delegate itself: launch nothing. %s", launched, alone)
 			}
-			return dispatch, nil
+			return &WorkflowDispatch{Procedure: procedure, Runner: launched, Instructions: instructions}, nil
 		}
 	}
 	settings, err := w.subagentSettings(ctx, parent, procedure)

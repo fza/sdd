@@ -206,15 +206,16 @@ type ServeResult struct {
 
 // DispatchResult is one delegate handoff: the child handles a delegate
 // receives, the prompts that carry them, and what to do this round. The
-// dispatching session's own handle is never part of it.
+// dispatching session's own handle is never part of it, and a delegate sdd
+// launched itself hands over neither handles nor prompts.
 type DispatchResult struct {
-	Session        string `json:"session" jsonschema:"the delegate's child session handle"`
-	Instance       string `json:"instance" jsonschema:"the delegate's task instance in its child session"`
+	Session        string `json:"session,omitempty" jsonschema:"the delegate's child session handle; absent when sdd launched the delegate"`
+	Instance       string `json:"instance,omitempty" jsonschema:"the delegate's task instance in its child session; absent when sdd launched the delegate"`
 	Procedure      string `json:"procedure"`
-	Prompt         string `json:"prompt" jsonschema:"the whole prompt of a fresh-context delegate"`
-	ContinuePrompt string `json:"continue_prompt" jsonschema:"the prompt continuing a delegate that worked an earlier round"`
+	Prompt         string `json:"prompt,omitempty" jsonschema:"the whole prompt of a fresh-context delegate"`
+	ContinuePrompt string `json:"continue_prompt,omitempty" jsonschema:"the prompt continuing a delegate that worked an earlier round"`
 	Instructions   string `json:"instructions"`
-	Agent          string `json:"agent" jsonschema:"the subagent definition sdd init installs per harness to launch the delegate as"`
+	Agent          string `json:"agent,omitempty" jsonschema:"the subagent definition sdd init installs per harness to launch the delegate as"`
 	Model          string `json:"model,omitempty" jsonschema:"the model the harness launches that subagent with; unset leaves the harness's own"`
 	Effort         string `json:"effort,omitempty" jsonschema:"the effort the harness launches that subagent with; unset leaves the harness's own"`
 	Runner         string `json:"runner,omitempty" jsonschema:"set when sdd launched the delegate itself: the runner its round runs with, in the background"`
