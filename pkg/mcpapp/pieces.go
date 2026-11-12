@@ -86,11 +86,20 @@ func carried(ids []string, text string) []string {
 // the stable aspirations or directives (I6). A block the call holds is left
 // out, as the agent named it itself; a pointer on every serve would be the
 // repeat it saves. A block holds the entries it carries in full (R14); a
-// block is never cut for them.
-func composeFraming(ss *shellSession, blocks []types.ServeLane) string {
-	var served []string
+// block is never cut for them. Only the first keep blocks serve; the rest
+// wait, as instruction lanes do past the result bound.
+func composeFraming(ss *shellSession, blocks []types.ServeLane, keep int) framingServed {
+	var (
+		result framingServed
+		served []string
+	)
 	for _, block := range blocks {
 		if block.Text == "" {
+			continue
+		}
+		result.blocks++
+		if result.blocks > keep {
+			result.waiting = append(result.waiting, block.Name)
 			continue
 		}
 		piece := ss.root.ServeText("framing "+block.Name, block.Text, ss.root.FramingFullIDs(block.Text))
@@ -98,7 +107,25 @@ func composeFraming(ss *shellSession, blocks []types.ServeLane) string {
 			served = append(served, piece.Text)
 		}
 	}
-	return strings.Join(served, "\n\n")
+	result.text, result.fresh = strings.Join(served, "\n\n"), len(served)
+	return result
+}
+
+// framingServed is a composed framing: its text, the blocks that wait, how
+// many blocks it served in full and how many the framing has.
+type framingServed struct {
+	text          string
+	waiting       []string
+	fresh, blocks int
+}
+
+// framingWaitLine names the framing blocks that wait; lanesWait leaves the
+// call that serves them to the line naming the waiting lanes.
+func framingWaitLine(waiting []string, lanesWait bool) string {
+	if lanesWait {
+		return fmt.Sprintf("(framing blocks wait too: %s)", strings.Join(waiting, ", "))
+	}
+	return fmt.Sprintf("(%d framing blocks wait, as this result would run past its size bound: %s. Call next with this instance and no report to have them before you act; it serves the step again)", len(waiting), strings.Join(waiting, ", "))
 }
 
 // serveReportSchema serves a step's report schema: the required list and any

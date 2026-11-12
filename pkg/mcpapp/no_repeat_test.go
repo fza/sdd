@@ -207,7 +207,7 @@ func TestNoRepeatFramingHoldsOnlyWhatItServed(t *testing.T) {
 	}
 	env := newTestServer(t, nil, graphDir, "")
 	cs := connect(t, env.srv)
-	door := openSession(t, cs)
+	door := openSessionWhole(t, cs)
 	if !strings.Contains(door.Framing, "`"+served+"`") || strings.Contains(door.Framing, "`"+dropped+"`") || !strings.Contains(door.Framing, "withheld for size, 1 whole") || !strings.Contains(door.Framing, "- "+dropped+" — ") {
 		t.Fatalf("the principles lane should serve one house rule and leave the other to a pull:\n%s", door.Framing)
 	}

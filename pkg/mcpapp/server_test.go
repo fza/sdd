@@ -474,6 +474,26 @@ func openSession(t *testing.T, cs *mcp.ClientSession) mcpserver.ServeResult {
 	return serve
 }
 
+// openSessionWhole enters through the door and follows what the opening left
+// waiting past the result bound through the shell's next calls with no
+// report, joining their framing and vocabulary into the opening's.
+func openSessionWhole(t *testing.T, cs *mcp.ClientSession) mcpserver.ServeResult {
+	t.Helper()
+	door := openSession(t, cs)
+	instructions := door.Instructions
+	for calls := 0; strings.Contains(instructions, sizeBoundWait); calls++ {
+		if calls == 3 {
+			t.Fatalf("what the opening left waiting should arrive within 3 calls, still waiting:\n%s", instructions)
+		}
+		var serve mcpserver.ServeResult
+		call(t, cs, "next", map[string]any{"session": door.Session, "instance": door.Instance}, &serve)
+		instructions = serve.Instructions
+		door.Framing = strings.TrimPrefix(door.Framing+"\n\n"+serve.Framing, "\n\n")
+		door.Vocabulary += serve.Vocabulary
+	}
+	return door
+}
+
 // call invokes a tool and decodes its structured content into out. Fails the
 // test on protocol errors or tool errors.
 func call[T any](t *testing.T, cs *mcp.ClientSession, tool string, args map[string]any, out *T) {
@@ -709,7 +729,7 @@ Probe entry %02d: the flux capacitor drill needs observing.
 func TestVocabularyBlockForNonEnglishGraphs(t *testing.T) {
 	env := newTestServerConfig(t, nil, "", "", "de")
 	cs := connect(t, env.srv)
-	door := openSession(t, cs)
+	door := openSessionWhole(t, cs)
 	if !strings.Contains(door.Vocabulary, "Vokabular") {
 		t.Fatalf("a German graph's first serve should carry the vocabulary table, got %q", door.Vocabulary)
 	}
@@ -2926,7 +2946,7 @@ Body.
 
 	env := newTestServer(t, nil, graphDir, "")
 	cs := connect(t, env.srv)
-	door := openSession(t, cs)
+	door := openSessionWhole(t, cs)
 	stable := []string{"Aspirations", "Guiding directives", "## Focus", "## Participants"}
 	for _, want := range stable {
 		if !strings.Contains(door.Framing, want) {

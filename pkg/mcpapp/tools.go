@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -23,6 +24,7 @@ import (
 	"github.com/networkteam/sdd/internal/textpatch"
 	"github.com/networkteam/sdd/internal/truncate"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // defaultSearchHits caps search responses when the caller sets no limit —
@@ -689,7 +691,11 @@ func (s *Server) startSession(ctx context.Context, req *mcp.CallToolRequest, arg
 	s.noteSyncSession(ctx, req, ss)
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	result, err := s.toRootServeResult(ctx, req, ss, serve)
+	guide, err := resultChars(proofGuide + "\n\n")
+	if err != nil {
+		return nil, ServeResult{}, err
+	}
+	result, err := s.toRootServeResultWithin(ctx, req, ss, serve, serveBudget-guide)
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
@@ -1469,11 +1475,11 @@ func syncBlockedResult(block *sdd.SyncBlocked) *SyncBlockedResult {
 
 // serveResultBody converts the serve fields every landing shares —
 // instructions with per-lane dedup, the first keep lanes of them, chooser,
-// framing, open threads. Schema and vocabulary dedup live only in
-// composeServe: a base mapping drops those fields, and recording bytes never
-// delivered would stub them for a later serve that does deliver. It returns
-// how many lanes it served in full.
-func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, keep int, pageFull []string) (ServeResult, int, error) {
+// the first framing blocks of the framing, open threads; framing below zero
+// composes none. Schema and vocabulary dedup live only in composeServe: a
+// base mapping drops those fields, and recording bytes never delivered would
+// stub them for a later serve that does deliver. It returns what it served.
+func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, keep, framing int, pageFull []string) (ServeResult, servedCount, error) {
 	res := ServeResult{
 		Session: string(serve.Session), Project: string(serve.Project),
 		Branch: serve.Branch, Instance: serve.Instance, Procedure: serve.Procedure, Status: serve.Status,
@@ -1481,8 +1487,8 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 		ReportSchema: serve.ReportSchema, Execution: serve.Execution,
 		Collected: capValues(serve.Collected), PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
 	}
-	var full int
-	res.Instructions, full = composeInstructions(ss, serve, keep, pageFull)
+	var count servedCount
+	res.Instructions, count.lanes = composeInstructions(ss, serve, keep, pageFull)
 	var omitted []string
 	res.Produced, omitted = endedValues(serve.Produced)
 	if len(omitted) > 0 {
@@ -1502,17 +1508,31 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 		})
 	}
 	if serve.Waiting {
-		return res, full, nil
+		return res, count, nil
 	}
-	framing, err := ss.root.FramingBlocksFor(ctx, s.requestIdentity(req), serve.Framing)
-	if err != nil {
-		return ServeResult{}, 0, err
+	if framing >= 0 {
+		blocks, err := ss.root.FramingBlocksFor(ctx, s.requestIdentity(req), serve.Framing)
+		if err != nil {
+			return ServeResult{}, servedCount{}, err
+		}
+		composed := composeFraming(ss, blocks, framing)
+		res.Framing, count.framing, count.blocks = composed.text, composed.fresh, composed.blocks
+		if len(composed.waiting) > 0 {
+			res.Instructions = strings.TrimPrefix(res.Instructions+"\n\n"+framingWaitLine(composed.waiting, keep < len(serve.InstructionLanes)), "\n\n")
+		}
 	}
-	res.Framing = composeFraming(ss, framing)
 	if ss.root.IsShell(serve.Instance) {
 		res.OpenThreads = openThreadsRoot(ss)
 	}
-	return res, full, nil
+	return res, count, nil
+}
+
+// servedCount is what a composed serve holds: the lanes and framing blocks
+// it served in full, the framing blocks its framing has, and whether its
+// vocabulary table waits.
+type servedCount struct {
+	lanes, framing, blocks int
+	vocabularyWaits        bool
 }
 
 // toRootServeResult converts an engine serve into the tool response, within
@@ -1520,7 +1540,13 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 // ledger. The shell's open-work block lists this dialogue's own threads only;
 // other dialogues never appear.
 func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (ServeResult, error) {
-	res, held, err := s.boundedServe(ctx, req, ss, serve, serveBudget, true)
+	return s.toRootServeResultWithin(ctx, req, ss, serve, serveBudget)
+}
+
+// toRootServeResultWithin is toRootServeResult within budget, for a result
+// that carries more than the serve, as the opening carries the proof guide.
+func (s *Server) toRootServeResultWithin(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int) (ServeResult, error) {
+	res, held, err := s.boundedServe(ctx, req, ss, serve, budget, true)
 	if err != nil {
 		return ServeResult{}, err
 	}
@@ -1533,124 +1559,202 @@ func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest
 	return res, nil
 }
 
-// heldLanes is how many lanes a bounded result holds of its serve and of the
-// session shell's serve it lands in.
-type heldLanes struct{ keep, base int }
+// heldLanes is how much a bounded result holds: lanes of its serve and of the
+// session shell's serve it lands in, framing blocks of its serve, of the
+// blocks its framing has, and whether its vocabulary table waits.
+type heldLanes struct {
+	keep, base, framing, blocks int
+	vocabularyWaits             bool
+}
+
+const (
+	framingAll  = math.MaxInt
+	framingNone = -1
+)
 
 // boundedServe composes serve's result to cost at most budget
 // (20261112-075604-d-tac-t4r): while the whole would cost more, the last
 // lanes of the session shell's serve it lands in wait first, then the step's
-// own, each named with the call that serves them, and what the larger
-// composition served is withdrawn. With progress, a result leaving lanes
-// waiting serves at least one lane in full: where none fits beside the rest,
-// the first lane not yet held serves alone past the bound, so a lane larger
-// than one result never waits forever. A resume serves without it, as a move
-// whose lanes all wait resumes through next. It returns how many lanes the result holds; the caller
-// records what it served and, through recordDeferral, the lanes that wait.
+// own, then its last framing blocks, each named with the call that serves
+// them, and what the larger composition served is withdrawn. With progress,
+// a result leaving anything waiting serves at least one lane or framing block
+// in full: where none fits beside the rest, the first not yet held serves
+// alone past the bound, so a piece larger than one result never waits
+// forever. A resume serves without it and without framing, which it carries
+// once for every move, as a move whose lanes all wait resumes through next.
+// It returns what the result holds; the caller records what it served and,
+// through recordDeferral, what waits.
 func (s *Server) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int, progress bool) (ServeResult, heldLanes, error) {
 	ss.root.EndDeferral(serve.Instance)
 	pageFull := ss.root.TakeStepFullIDs()
 	mark := ss.root.ServeMark()
+	compose := func(held heldLanes) (ServeResult, heldLanes, servedCount, bool, error) {
+		res, count, err := s.composeServe(ctx, req, ss, serve, held, pageFull)
+		if err != nil {
+			return ServeResult{}, heldLanes{}, servedCount{}, false, err
+		}
+		cost, err := resultChars(res)
+		if err != nil {
+			return ServeResult{}, heldLanes{}, servedCount{}, false, err
+		}
+		held.blocks, held.vocabularyWaits = count.blocks, count.vocabularyWaits
+		return res, held, count, cost <= budget, nil
+	}
 	lanes := len(serve.InstructionLanes)
-	base := 0
+	held := heldLanes{keep: lanes, framing: framingAll}
+	if !progress {
+		held.framing = framingNone
+	}
 	if serve.Base != nil {
-		for base = len(serve.Base.InstructionLanes); base > 0; base-- {
-			res, _, err := s.composeServe(ctx, req, ss, serve, heldLanes{lanes, base}, pageFull)
-			if err != nil {
-				return ServeResult{}, heldLanes{}, err
-			}
-			cost, err := resultChars(res)
-			if err != nil {
-				return ServeResult{}, heldLanes{}, err
-			}
-			if cost <= budget {
-				return res, heldLanes{lanes, base}, nil
+		for held.base = len(serve.Base.InstructionLanes); held.base > 0; held.base-- {
+			res, kept, _, fits, err := compose(held)
+			if err != nil || fits {
+				return res, kept, err
 			}
 			ss.root.WithdrawServedSince(mark)
 		}
 	}
 	alone := -1
-	for keep := lanes; ; keep-- {
-		res, full, err := s.composeServe(ctx, req, ss, serve, heldLanes{keep, base}, pageFull)
+	for held.keep = lanes; ; held.keep-- {
+		res, kept, count, fits, err := compose(held)
 		if err != nil {
 			return ServeResult{}, heldLanes{}, err
 		}
-		cost, err := resultChars(res)
-		if err != nil {
-			return ServeResult{}, heldLanes{}, err
+		if count.lanes > 0 {
+			alone = held.keep
 		}
-		if full > 0 {
-			alone = keep
+		if fits && (held.keep == lanes || count.lanes > 0 || !progress) {
+			return res, kept, nil
 		}
-		if cost <= budget && (keep == lanes || full > 0 || !progress) {
-			return res, heldLanes{keep, base}, nil
-		}
-		if keep == 0 && (alone < 0 || !progress) {
-			return res, heldLanes{keep, base}, nil
+		if held.keep == 0 && !progress {
+			return res, kept, nil
 		}
 		ss.root.WithdrawServedSince(mark)
-		if keep == 0 {
-			res, _, err = s.composeServe(ctx, req, ss, serve, heldLanes{alone, base}, pageFull)
-			return res, heldLanes{alone, base}, err
+		if held.keep == 0 {
+			break
 		}
+	}
+	// No lanes fit beside the whole framing: the fewest lanes that serve one
+	// in full, or all where every lane is held, stay, the framing's last
+	// blocks wait and, where none fits beside the vocabulary, it waits too.
+	held.keep = lanes
+	if alone >= 0 {
+		held.keep = alone
+	}
+	blocks := 0
+	fitFraming := func() (ServeResult, heldLanes, bool, error) {
+		for held.framing = framingAll; ; held.framing-- {
+			res, kept, count, fits, err := compose(held)
+			if err != nil {
+				return ServeResult{}, heldLanes{}, false, err
+			}
+			if held.framing == framingAll {
+				blocks = kept.blocks
+				held.framing = blocks
+			}
+			if fits && (count.lanes > 0 || count.framing > 0) {
+				return res, kept, true, nil
+			}
+			ss.root.WithdrawServedSince(mark)
+			if held.framing == 0 {
+				return ServeResult{}, heldLanes{}, false, nil
+			}
+		}
+	}
+	for _, vocabularyWaits := range []bool{false, true} {
+		held.vocabularyWaits = vocabularyWaits
+		res, kept, fits, err := fitFraming()
+		if err != nil || fits {
+			return res, kept, err
+		}
+	}
+	if alone >= 0 {
+		held.framing = 0
+		res, kept, _, _, err := compose(held)
+		return res, kept, err
+	}
+	for held.framing = 1; ; held.framing++ {
+		res, kept, count, _, err := compose(held)
+		if err != nil || count.framing > 0 || held.framing >= blocks {
+			return res, kept, err
+		}
+		ss.root.WithdrawServedSince(mark)
 	}
 }
 
 // recordDeferral records a serve, or the session shell's serve it lands in,
-// that holds only its first lanes, so the next call on that instance serves
-// the waiting lanes and points at what res, the result delivered, sent:
-// lanes, framing, schema and entries alike, as any of them re-sent to an
-// agent that proves nothing would leave the waiting lanes no room.
-func recordDeferral(ss *shellSession, serve *sdd.WorkflowServe, held heldLanes, res ServeResult) error {
+// that holds only its first lanes or framing blocks, so the next call on that
+// instance serves what waits and points at what res, the result delivered,
+// sent: lanes, framing, schema and entries alike, as any of them re-sent to
+// an agent that proves nothing would leave what waits no room.
+func recordDeferral(ss *shellSession, serve *sdd.WorkflowServe, held heldLanes, res any) error {
+	return recordDeferrals(ss, deferredInstances(serve, held), res)
+}
+
+// deferredInstances names the instances of serve whose serve, as held, left
+// something waiting.
+func deferredInstances(serve *sdd.WorkflowServe, held heldLanes) []string {
 	var waiting []string
-	if held.keep < len(serve.InstructionLanes) {
+	if held.keep < len(serve.InstructionLanes) || held.framing >= 0 && held.framing < held.blocks || held.vocabularyWaits {
 		waiting = append(waiting, serve.Instance)
 	}
 	if serve.Base != nil && held.base < len(serve.Base.InstructionLanes) {
 		waiting = append(waiting, serve.Base.Instance)
 	}
-	if len(waiting) == 0 {
+	return waiting
+}
+
+// recordDeferrals records a deferral of each instance against res, the
+// result delivered.
+func recordDeferrals(ss *shellSession, instances []string, res any) error {
+	if len(instances) == 0 {
 		return nil
 	}
 	delivered, err := json.Marshal(res)
 	if err != nil {
 		return fmt.Errorf("recording a deferral: %w", err)
 	}
-	for _, instance := range waiting {
+	for _, instance := range instances {
 		ss.root.RecordDeferral(instance, string(delivered))
 	}
 	return nil
 }
 
-// composeServe composes serve's whole result with the lanes held names, and
-// returns how many of its own lanes it served in full.
-func (s *Server) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, held heldLanes, pageFull []string) (ServeResult, int, error) {
-	res, full, err := s.serveResultBody(ctx, req, ss, serve, held.keep, pageFull)
+// composeServe composes serve's whole result with what held names, and
+// returns what it served of serve's own.
+func (s *Server) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, held heldLanes, pageFull []string) (ServeResult, servedCount, error) {
+	res, count, err := s.serveResultBody(ctx, req, ss, serve, held.keep, held.framing, pageFull)
 	if err != nil {
-		return ServeResult{}, 0, err
+		return ServeResult{}, servedCount{}, err
 	}
 	if len(serve.ReportSchema) > 0 {
 		res.ReportSchema, err = serveReportSchema(ss, serve)
 		if err != nil {
-			return ServeResult{}, 0, err
+			return ServeResult{}, servedCount{}, err
 		}
 	}
 	if serve.Waiting {
-		return res, full, nil
+		return res, count, nil
 	}
 	vocabulary, err := s.app.Vocabulary(ctx, s.requestIdentity(req), ss.root.Project())
 	if err != nil {
-		return ServeResult{}, 0, err
+		return ServeResult{}, servedCount{}, err
 	}
+	vocabularyMark := ss.root.ServeMark()
 	res.Vocabulary = serveVocabulary(ss, vocabulary)
+	if held.vocabularyWaits && res.Vocabulary != "" {
+		ss.root.WithdrawServedSince(vocabularyMark)
+		res.Vocabulary, count.vocabularyWaits = "", true
+		res.Instructions += "\n\n(the vocabulary table waits, as this result would run past its size bound. Call next with this instance and no report to have it before you act; it serves the step again)"
+	}
 	if serve.Base != nil {
-		body, _, err := s.serveResultBody(ctx, req, ss, serve.Base, held.base, nil)
+		body, _, err := s.serveResultBody(ctx, req, ss, serve.Base, held.base, framingAll, nil)
 		if err != nil {
-			return ServeResult{}, 0, err
+			return ServeResult{}, servedCount{}, err
 		}
 		res.Base = rootBaseServe(body)
 	}
-	return res, full, nil
+	return res, count, nil
 }
 
 // toBaseServeResult maps a serve onto the base_junction landing, which
@@ -1664,7 +1768,7 @@ func (s *Server) toBaseServeResult(ctx context.Context, req *mcp.CallToolRequest
 	var base *BaseServe
 	keep := len(serve.InstructionLanes)
 	for ; ; keep-- {
-		body, _, err := s.serveResultBody(ctx, req, ss, serve, keep, pageFull)
+		body, _, err := s.serveResultBody(ctx, req, ss, serve, keep, framingAll, pageFull)
 		if err != nil {
 			return nil, err
 		}
@@ -1679,11 +1783,9 @@ func (s *Server) toBaseServeResult(ctx context.Context, req *mcp.CallToolRequest
 		ss.root.WithdrawServedSince(mark)
 	}
 	if keep < len(serve.InstructionLanes) {
-		delivered, err := json.Marshal(base)
-		if err != nil {
-			return nil, fmt.Errorf("recording a deferral: %w", err)
+		if err := recordDeferrals(ss, []string{serve.Instance}, base); err != nil {
+			return nil, err
 		}
-		ss.root.RecordDeferral(serve.Instance, string(delivered))
 	}
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, err
@@ -1712,12 +1814,11 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 	if err != nil {
 		return ResumeSessionResult{}, err
 	}
-	result.Framing = composeFraming(ss, framing)
 	// Whole-instance granularity is the only legitimate cut on a resume
 	// projection (d-tac-qwc): an instance past the count or the result bound
 	// is named instead, and what its mapping served is withdrawn, so the
 	// serve that does deliver it serves it in full.
-	var omitted []string
+	var omitted, deferred []string
 	spent, err := resultChars(result)
 	if err != nil {
 		return ResumeSessionResult{}, err
@@ -1753,19 +1854,59 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 			omitted = append(omitted, name)
 			continue
 		}
-		if err := recordDeferral(ss, serve, held, mapped); err != nil {
-			return ResumeSessionResult{}, err
-		}
+		deferred = append(deferred, deferredInstances(serve, held)...)
 		spent += cost
 		result.Open = append(result.Open, mapped)
 	}
 	if len(omitted) > 0 {
 		result.Instructions += fmt.Sprintf("\n\n%d open moves omitted here for size — each resumes at its current step through next: %s", len(omitted), strings.Join(omitted, "; "))
 	}
+	shell, err := resumeFraming(ss, source, framing, &result)
+	if err != nil {
+		return ResumeSessionResult{}, err
+	}
+	if shell != "" && !slices.Contains(deferred, shell) {
+		deferred = append(deferred, shell)
+	}
+	if err := recordDeferrals(ss, deferred, result); err != nil {
+		return ResumeSessionResult{}, err
+	}
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return ResumeSessionResult{}, err
 	}
 	return result, nil
+}
+
+// resumeFraming composes the resume's framing into the room its moves leave:
+// the last blocks that do not fit wait, named with the session shell's next
+// call, which serves them. It returns the shell's instance where blocks wait.
+func resumeFraming(ss *shellSession, source sdd.WorkflowResumeResult, framing []types.ServeLane, result *ResumeSessionResult) (string, error) {
+	shell := ""
+	for _, open := range source.Open {
+		if ss.root.IsShell(open.Instance) {
+			shell = open.Instance
+		}
+	}
+	instructions := result.Instructions
+	mark := ss.root.ServeMark()
+	for keep := len(framing); ; keep-- {
+		composed := composeFraming(ss, framing, keep)
+		result.Framing, result.Instructions = composed.text, instructions
+		if len(composed.waiting) > 0 {
+			result.Instructions += fmt.Sprintf("\n\n(%d framing blocks wait, as this result would run past its size bound: %s. Call next with instance %s and no report to have them before you act)", len(composed.waiting), strings.Join(composed.waiting, ", "), shell)
+		}
+		cost, err := resultChars(result)
+		if err != nil {
+			return "", err
+		}
+		if cost <= serveBudget || keep == 0 || shell == "" {
+			if len(composed.waiting) == 0 {
+				return "", nil
+			}
+			return shell, nil
+		}
+		ss.root.WithdrawServedSince(mark)
+	}
 }
 
 // openThreadsRoot renders the session shell's open-work block: this dialogue's

@@ -220,7 +220,7 @@ func TestDoorNeverSplitsPrinciplesBody(t *testing.T) {
 			}
 
 			env := newTestServer(t, nil, graphDir, "")
-			door := openSession(t, connect(t, env.srv))
+			door := openSessionWhole(t, connect(t, env.srv))
 			lane := laneOf(t, door.Framing)
 
 			if strings.Contains(door.Framing, "cut for size") {
