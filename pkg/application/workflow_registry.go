@@ -338,9 +338,16 @@ func (w *WorkflowSession) registerWorkflowWrites(registry *engine.Registry) erro
 	}
 	if err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{Name: "preflightEntry", Doc: "Checks the current capture draft before publication and records its findings, or the cut of its model's answer.",
-			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride", "preflightCalls", "preflightExcerpted", fieldPreflightRubric, fieldPreflightCut}},
+			Reads: captureDraftFields, Writes: []string{"findings", "resolvedCaptureBranch", "preflightOverride", "preflightCalls", "preflightExcerpted", fieldPreflightRubric, fieldPreflightCut, fieldPreflightSkip}},
 		GraphIndependent: true,
 		Fn:               w.runWorkflowPreflight,
+	}); err != nil {
+		return err
+	}
+	if err := registry.RegisterCommand(engine.Command{
+		Doc: engine.FuncDoc{Name: "recordPreflightSkip", Doc: "Records the user's skip after pre-flight's model answer was cut: the entry carries verification: skipped and confidence low. Refused where the user did not skip the deep exchange.",
+			Reads: []string{fieldDeepVerdict}, Writes: []string{fieldPreflightSkip}},
+		Fn: w.recordPreflightSkip,
 	}); err != nil {
 		return err
 	}
@@ -455,6 +462,9 @@ func (w *WorkflowSession) draftFromStore(store *engine.Store) EntryDraft {
 	skip, _ := store.Get("skipGrounding")
 	draft.SkipGrounding, _ = skip.(bool)
 	draft.VerificationSkip = deepSkipCause(store)
+	if skip, _ := workflowStoreString(store, fieldPreflightSkip); skip != "" {
+		draft.VerificationSkip = skip
+	}
 	if index, ok := workflowStoreDocument(store, "index"); ok {
 		title, _ := index["title"].(string)
 		topic, _ := index["topic"].(string)

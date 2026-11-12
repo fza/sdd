@@ -154,3 +154,14 @@ func TestCaptureVerifier_ARevisedDraftAfterACutRunsPreflightAgain(t *testing.T) 
 		t.Fatalf("a revised draft goes through pre-flight again, ran %d times", got)
 	}
 }
+
+func TestCaptureVerifier_ACutAnswerOutsideASkippedDeepExchangeHoldsTheWrite(t *testing.T) {
+	world, session := newLightWorld(t, "light-cut-skip")
+	world.LLM.PreflightErr = answerCut()
+	instance, serve := confirmedLightCapture(t, session)
+	proctest.RequireStep(t, serve, "preflightUnjudged")
+	_, err := session.AnswerErr(t, instance, "preflightUnjudged", "skip", nil, "skip it")
+	if err == nil || !strings.Contains(err.Error(), "verify.skip covers only the deep exchange") {
+		t.Fatalf("a skip of a prose pre-flight should be refused, got %v", err)
+	}
+}

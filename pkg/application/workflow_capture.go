@@ -17,6 +17,19 @@ import (
 // token cap: the model did not judge the draft.
 const fieldPreflightCut = "preflightCut"
 
+// fieldPreflightSkip records the user's skip of a cut pre-flight answer, as
+// the cause model.MarkVerificationSkipped takes.
+const fieldPreflightSkip = "preflightSkip"
+
+// recordPreflightSkip records the user's skip after pre-flight's model answer
+// was cut where it judged in place of a skipped deep exchange.
+func (w *WorkflowSession) recordPreflightSkip(ctx *engine.Context) error {
+	if deepSkipCause(ctx.Store) == "" {
+		return errors.New("verify.skip covers only the deep exchange, so the capture waits until pre-flight's model judges the draft: revise it once the settings changed")
+	}
+	return ctx.Store.WriteEngine(fieldPreflightSkip, model.DeepSkipFailure)
+}
+
 var captureDraftFields = []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch", "skipGrounding"}
 
 func captureAttachments(draft *EntryDraft, staged map[string]string) error {
@@ -63,6 +76,9 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 		return err
 	}
 	if err := ctx.Store.WriteEngine(fieldPreflightCut, cut); err != nil {
+		return err
+	}
+	if err := ctx.Store.WriteEngine(fieldPreflightSkip, nil); err != nil {
 		return err
 	}
 	findings := make([]query.Finding, 0, len(result.Findings))

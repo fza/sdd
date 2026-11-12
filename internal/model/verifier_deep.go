@@ -506,15 +506,16 @@ func DeepContinuedPages(intro, continued, text string) []DeepReadingPage {
 	return pages
 }
 
-// The causes of a deep verifier skip, both the user's alone.
+// The causes of a verifier skip, both the user's alone.
 const (
 	DeepSkipFailure = "failure"
 	DeepSkipWeighed = "weighed"
 )
 
-// MarkVerificationSkipped marks e as written without the deep verifier's
-// verdict and caps its confidence: low after a verifier failure (V-D4), at
-// most medium after the weighed rule's skip (V-D24).
+// MarkVerificationSkipped marks e as written without a verifier's verdict and
+// caps its confidence: low after a verifier failure (V-D4) or a pre-flight
+// answer cut at the token cap, at most medium after the weighed rule's skip
+// (V-D24).
 func MarkVerificationSkipped(e *Entry, cause string) error {
 	switch cause {
 	case DeepSkipFailure:

@@ -527,6 +527,65 @@ func TestCaptureDeep_ASkippedExchangeFallsBackToThePreflightModel(t *testing.T) 
 	}
 }
 
+// A cut fallback answer leaves no judge: the user already skipped the deep
+// exchange, so verify.skip decides as for a verifier that cannot run.
+func TestCaptureDeep_ACutFallbackPutsTheSkipToTheUser(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-skip-cut", sdd.VerifierPolicy{Skip: "weighed"})
+	draft := captureDraft()
+	draft["confidence"] = "high"
+	instance, serve := confirmedDeepCapture(t, session, draft)
+	proctest.RequireStep(t, serve, "deepWeigh")
+	world.LLM.PreflightErr = answerCut()
+	serve = session.Answer(t, instance, "deepWeigh", "skip", nil, "not worth it")
+	proctest.RequireStep(t, serve, "preflightUnjudged")
+	if serve.PendingChooser == nil || serve.PendingChooser.Kind != "user" {
+		t.Fatalf("a cut fallback answer should be the user's choice, got %+v", serve.PendingChooser)
+	}
+	if got := world.LLM.Calls(llm.PurposePreflight); got != 1 {
+		t.Fatalf("a cut answer should not be retried on its own, pre-flight ran %d times", got)
+	}
+	serve = session.Answer(t, instance, "preflightUnjudged", "skip", nil, "skip it")
+	proctest.RequireStep(t, serve, "verifySummary")
+	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	entryID, _ := serve.Produced["entryId"].(string)
+	if entry := proctest.LoadEntry(t, world.GraphDir, entryID); entry.Verification != model.VerificationSkipped || entry.Confidence != "low" {
+		t.Fatalf("a skip after a cut fallback writes verification: skipped and confidence low, got %q and %q", entry.Verification, entry.Confidence)
+	}
+}
+
+// A skip covers the draft pre-flight's model could not judge, never a later
+// revision of it.
+func TestCaptureDeep_ACutSkipEndsWithTheDraftItCovered(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-cut-revised", sdd.VerifierPolicy{Skip: "weighed"})
+	draft := captureDraft()
+	draft["confidence"] = "high"
+	instance, serve := confirmedDeepCapture(t, session, draft)
+	proctest.RequireStep(t, serve, "deepWeigh")
+	late := &model.Entry{ID: "20260603-100000-s-tac-rce", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
+		Summary: "A gap that landed during the pre-flight.", Content: "A gap that landed during the pre-flight."}
+	world.LLM.DuringPreflight = func() { proctest.WriteEntry(t, world.GraphDir, late) }
+	world.LLM.PreflightErr = answerCut()
+	serve = session.Answer(t, instance, "deepWeigh", "skip", nil, "not worth it")
+	proctest.RequireStep(t, serve, "preflightUnjudged")
+	serve = session.Answer(t, instance, "preflightUnjudged", "skip", nil, "skip it")
+	proctest.RequireStep(t, serve, "lateEntries")
+	world.LLM.DuringPreflight, world.LLM.PreflightErr = nil, nil
+	serve = session.Answer(t, instance, "lateEntries", "revise", map[string]any{"body": "A tactical gap: the fixture observes something new."}, "")
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "write it")
+	proctest.RequireStep(t, serve, "deepWeigh")
+	serve = session.Answer(t, instance, "deepWeigh", "skip", nil, "still not worth it")
+	proctest.RequireStep(t, serve, "lateEntries")
+	serve = session.Answer(t, instance, "lateEntries", "setAside",
+		map[string]any{"lateVerdicts": []any{map[string]any{"ids": []any{late.ID}, "code": model.VerdictOtherScope}}}, "")
+	proctest.RequireStep(t, serve, "verifySummary")
+	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	entryID, _ := serve.Produced["entryId"].(string)
+	if entry := proctest.LoadEntry(t, world.GraphDir, entryID); entry.Confidence != "medium" {
+		t.Fatalf("a revision pre-flight's model judged writes the weighed skip's confidence, got %q", entry.Confidence)
+	}
+}
+
 func TestCaptureDeep_AutonomousVerifiesBeforePlayback(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-autonomous", sdd.VerifierPolicy{}, proctest.WithAutonomousDialogue())
 	serve := session.Start(t, "capture", nil)
