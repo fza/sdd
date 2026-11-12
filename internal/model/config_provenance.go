@@ -63,13 +63,8 @@ var configDefaults = map[string]string{
 	"sync.default.https.per_hour":                 strconv.Itoa(DefaultGitHTTPSPerHour),
 	"sync.default.https.per_hour_unauthenticated": strconv.Itoa(DefaultGitHTTPSUnauthenticatedPerHour),
 
-	"sessions.retention":    DefaultSessionRetention,
-	"sessions.token_saving": TokenSavingOn,
+	"sessions.retention": DefaultSessionRetention,
 }
-
-// globalOnlyKeys are read from the user-global layer alone; a per-repo value
-// is reported as ignored (PerRepoIgnoredSettings), never effective.
-var globalOnlyKeys = map[string]bool{"sessions.token_saving": true}
 
 // EffectiveConfigValues computes the effective config overlay with per-key
 // provenance: local wins over project wins over global, and keys no layer
@@ -122,7 +117,7 @@ func effectiveConfigValues(global BaseConfig, work WorkConfigLayers, project, lo
 			set := false
 			var val ConfigValue
 			for _, layer := range layers {
-				if layer.cfg == nil || (globalOnlyKeys[leaf.path] && layer.source != ConfigSourceGlobal) {
+				if layer.cfg == nil {
 					continue
 				}
 				v := leafValue(reflect.ValueOf(*layer.cfg), leaf.index)

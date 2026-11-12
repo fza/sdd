@@ -3,6 +3,7 @@ package finders_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/finders"
@@ -10,7 +11,7 @@ import (
 	"github.com/networkteam/sdd/internal/repos"
 )
 
-func TestUnknownConfigKeysReportsTokenSavingOutsideTheGlobalConfig(t *testing.T) {
+func TestUnknownConfigKeysReportsTheRetiredTokenSavingAsIgnored(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "global.yaml")
 	sddDir := filepath.Join(dir, ".sdd")
@@ -35,16 +36,18 @@ func TestUnknownConfigKeysReportsTokenSavingOutsideTheGlobalConfig(t *testing.T)
 	}
 	reported := map[string]bool{}
 	for _, s := range result.Ignored {
-		if s.Key == "sessions.token_saving" {
+		if s.Key == "sessions.token_saving" && strings.Contains(s.Reason, "no longer used") {
 			reported[s.File] = true
 		}
 	}
-	if reported[globalPath] {
-		t.Error("the global config should be honored, not reported")
-	}
-	for _, path := range []string{filepath.Join(sddDir, "config.yaml"), filepath.Join(sddDir, "config.local.yaml")} {
+	for path := range files {
 		if !reported[path] {
-			t.Errorf("a per-repo layer setting it should be reported: %s", path)
+			t.Errorf("every layer naming the retired key should report it as ignored: %s", path)
+		}
+	}
+	for _, k := range result.Keys {
+		if k.Key == "sessions.token_saving" {
+			t.Errorf("the retired key should read as an ignored setting, not an unknown key: %s", k.File)
 		}
 	}
 }

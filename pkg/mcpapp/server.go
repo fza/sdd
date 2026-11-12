@@ -35,10 +35,6 @@ type Options struct {
 	// cache pruning run; every tool result carries it as cache_notice. Nil
 	// when the host prunes nothing.
 	CacheNotice func(context.Context) string
-	// ServeInFull turns the served-once memory off: every serve carries its
-	// instruction lanes, framing, report schema and vocabulary in full, for
-	// a host whose client collapses repeats itself (20261101-164201-d-tac-sj4).
-	ServeInFull bool
 	// BeforeCall, when set, runs before every tool call: an error refuses the
 	// call with it, a notice rides once on the call's result.
 	BeforeCall func(context.Context) (notice string, err error)
@@ -54,7 +50,6 @@ type Server struct {
 	local          bool
 	version        string
 	cacheNotice    func(context.Context) string
-	serveInFull    bool
 	before         func(context.Context) (string, error)
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
@@ -84,7 +79,6 @@ func New(opts Options) (*Server, error) {
 		local:          opts.LocalClient,
 		version:        opts.Version,
 		cacheNotice:    opts.CacheNotice,
-		serveInFull:    opts.ServeInFull,
 		before:         opts.BeforeCall,
 		sessions:       newSessionCache(),
 	}

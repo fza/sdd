@@ -314,9 +314,16 @@ type IgnoredSetting struct {
 	Reason string
 }
 
-// RetiredConfigKeys are keys sdd no longer uses. Reading them stays
-// tolerant; `sdd config set` refuses them.
-var RetiredConfigKeys = []string{"sync.cooldown", "sync.mode", "sync.interval"}
+// RetiredConfigKeys are keys sdd no longer uses, each with what replaced it.
+// Reading them stays tolerant; `sdd config set` refuses them.
+var RetiredConfigKeys = map[string]string{
+	"sync.cooldown":         retiredSyncReason,
+	"sync.mode":             retiredSyncReason,
+	"sync.interval":         retiredSyncReason,
+	"sessions.token_saving": "sdd serves a piece again as a pointer only when the agent proves it still holds the text (20261112-075604-d-tac-t4r)",
+}
+
+const retiredSyncReason = "git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config"
 
 // IgnoredSettings returns the settings in one config layer that sdd reads
 // past. source names the layer: global, project (the shared
@@ -338,9 +345,6 @@ func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSettin
 	}
 	if committed && layer.LLM.Debug != nil {
 		ignored = append(ignored, IgnoredSetting{Key: "llm.debug", Reason: personalOnlyReason})
-	}
-	if reason := ignoredTokenSaving(layer.Sessions.TokenSaving); reason != "" {
-		ignored = append(ignored, IgnoredSetting{Key: "sessions.token_saving", Reason: reason})
 	}
 	return ignored
 }
@@ -416,40 +420,6 @@ type SessionsConfig struct {
 	// removes it. Days ("14d") or a Go duration ("336h"). Empty means
 	// DefaultSessionRetention.
 	Retention string `yaml:"retention,omitempty"`
-	// TokenSaving is TokenSavingOn or TokenSavingOff; empty means on. Only the
-	// user-global config sets it (20261101-164201-d-tac-sj4).
-	TokenSaving string `yaml:"token_saving,omitempty"`
-}
-
-const (
-	TokenSavingOn  = "on"
-	TokenSavingOff = "off"
-)
-
-// ResolveTokenSaving reports whether the MCP server stubs what a session
-// already received. A value other than on or off is a config error.
-func ResolveTokenSaving(cfg SessionsConfig) (bool, error) {
-	if reason := ignoredTokenSaving(cfg.TokenSaving); reason != "" {
-		return false, fmt.Errorf("sessions.token_saving: %s", reason)
-	}
-	return cfg.TokenSaving != TokenSavingOff, nil
-}
-
-func ignoredTokenSaving(value string) string {
-	switch value {
-	case "", TokenSavingOn, TokenSavingOff:
-		return ""
-	}
-	return fmt.Sprintf("%q is not %s or %s", value, TokenSavingOn, TokenSavingOff)
-}
-
-// PerRepoIgnoredSettings returns the settings a per-repo layer (committed or
-// config.local.yaml) carries that only the user-global config may set.
-func PerRepoIgnoredSettings(layer BaseConfig) []IgnoredSetting {
-	if layer.Sessions.TokenSaving == "" {
-		return nil
-	}
-	return []IgnoredSetting{{Key: "sessions.token_saving", Reason: globalOnlyReason}}
 }
 
 // EmbeddingConfig holds settings for the search index's embedding provider.

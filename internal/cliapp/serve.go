@@ -101,10 +101,6 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				return err
 			}
 			collectSessions(ctx, application, retention)
-			tokenSaving, err := globalTokenSaving()
-			if err != nil {
-				return err
-			}
 
 			transport := cmd.String("transport")
 			srv, err := mcpserver.New(mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll,
@@ -113,7 +109,6 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				LocalClient:   transport == "stdio",
 				Version:       cmd.Root().Version,
 				CacheNotice:   cacheNotice,
-				ServeInFull:   !tokenSaving,
 				BeforeCall:    watch.admit,
 			})
 			if err != nil {
@@ -413,20 +408,6 @@ func (a *localRuntimeAccess) AuthorizeSession(ctx context.Context, request sdd.S
 
 func (a *localRuntimeAccess) ResolveDependency(ctx context.Context, _ sdd.Principal, _ sdd.ProjectID, dependency sdd.RepoID) (*sdd.ProjectRuntime, error) {
 	return a.dependencies.resolve(ctx, dependency)
-}
-
-// globalTokenSaving reads sessions.token_saving from the user-global config,
-// the only layer that may set it.
-func globalTokenSaving() (bool, error) {
-	loc, err := repos.DefaultLocations()
-	if err != nil {
-		return false, err
-	}
-	global, err := repos.LoadConfigFrom(loc.ConfigPath)
-	if err != nil {
-		return false, err
-	}
-	return model.ResolveTokenSaving(global.Sessions)
 }
 
 // localDialogue reads dialogue.mode and the layer that sets it; the

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"slices"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/command"
@@ -39,8 +38,8 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 	if cmd.Key == "inbound" || strings.HasPrefix(cmd.Key, "inbound.") {
 		return fmt.Errorf("%s is set only in the committed .sdd/config.yaml of the graph receiving captures, never in the %s config", cmd.Key, cmd.Target)
 	}
-	if slices.Contains(model.RetiredConfigKeys, cmd.Key) {
-		return fmt.Errorf("%s is no longer used: git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config", cmd.Key)
+	if reason, retired := model.RetiredConfigKeys[cmd.Key]; retired {
+		return fmt.Errorf("%s is no longer used: %s", cmd.Key, reason)
 	}
 	segments := strings.Split(cmd.Key, ".")
 	hostsPath, inHosts, err := model.SyncHostsKeyPath(cmd.Key)
@@ -82,8 +81,6 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 		ignoredSettings := model.IgnoredSettings(settings, source)
 		if source == model.ConfigSourceGlobal {
 			ignoredSettings = append(ignoredSettings, model.IgnoredGitLimits(settings.Sync)...)
-		} else {
-			ignoredSettings = append(ignoredSettings, model.PerRepoIgnoredSettings(settings)...)
 		}
 		for _, ignored := range ignoredSettings {
 			if ignored.Key == cmd.Key || strings.HasPrefix(cmd.Key, ignored.Key+".") {

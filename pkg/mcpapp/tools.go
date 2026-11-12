@@ -20,6 +20,7 @@ import (
 	"github.com/networkteam/sdd/internal/textpatch"
 	"github.com/networkteam/sdd/internal/truncate"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // defaultSearchHits caps search responses when the caller sets no limit —
@@ -183,7 +184,6 @@ type ServeResult struct {
 	Step             string                  `json:"step,omitempty"`
 	Goal             string                  `json:"goal" jsonschema:"one line: what advances the instance from here"`
 	Instructions     string                  `json:"instructions,omitempty"`
-	Lanes            *[]NamedText            `json:"lanes,omitempty" jsonschema:"set instead of instructions when sessions.token_saving is off: each instruction lane as its own named object"`
 	Missing          []string                `json:"missing,omitempty" jsonschema:"required report fields not yet provided"`
 	ReportSchema     map[string]any          `json:"report_schema,omitempty" jsonschema:"JSON Schema for the current step's report"`
 	PendingChooser   *ChooserResult          `json:"pending_chooser,omitempty"`
@@ -192,7 +192,6 @@ type ServeResult struct {
 	Execution        string                  `json:"execution,omitempty" jsonschema:"execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context"`
 	Produced         map[string]string       `json:"produced,omitempty" jsonschema:"engine-written results on completion (e.g. the created entry ID)"`
 	Framing          string                  `json:"framing,omitempty" jsonschema:"session framing (aspirations, directives, focus, participants); served when its content is new to this connection, omitted while unchanged"`
-	FramingBlocks    *[]NamedText            `json:"framing_blocks,omitempty" jsonschema:"set instead of framing when sessions.token_saving is off: each framing block as its own named object"`
 	Vocabulary       string                  `json:"vocabulary,omitempty" jsonschema:"translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; served once per connection"`
 	OpenThreads      string                  `json:"open_threads,omitempty" jsonschema:"this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here"`
 	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve — where the dialogue lands now that this move has ended"`
@@ -229,10 +228,8 @@ type BaseServe struct {
 	Step           string         `json:"step,omitempty"`
 	Goal           string         `json:"goal"`
 	Instructions   string         `json:"instructions,omitempty"`
-	Lanes          *[]NamedText   `json:"lanes,omitempty"`
 	PendingChooser *ChooserResult `json:"pending_chooser,omitempty"`
 	Framing        string         `json:"framing,omitempty"`
-	FramingBlocks  *[]NamedText   `json:"framing_blocks,omitempty"`
 	OpenThreads    string         `json:"open_threads,omitempty" jsonschema:"this dialogue's own open threads; other dialogues are never listed here"`
 }
 
@@ -253,8 +250,6 @@ type ResumeSessionResult struct {
 	Cancellation     *CancellationResult     `json:"cancellation,omitempty" jsonschema:"latest recorded cancellation, included even when its instance is closed or omitted"`
 	Open             []ServeResult           `json:"open_instances" jsonschema:"current serve for every running instance; the session shell's serve carries the open-threads block"`
 	Framing          string                  `json:"framing,omitempty"`
-	FramingBlocks    *[]NamedText            `json:"framing_blocks,omitempty"`
-	Lanes            *[]NamedText            `json:"lanes,omitempty"`
 	Instructions     string                  `json:"instructions,omitempty"`
 }
 
@@ -314,7 +309,6 @@ type SearchResult struct {
 	Coverage []sdd.SearchCoverage `json:"coverage,omitempty" jsonschema:"published entry coverage for each fixed search snapshot"`
 	Notice   string               `json:"notice,omitempty" jsonschema:"readable incomplete-indexing notice"`
 	Results  string               `json:"results" jsonschema:"matching entries with citations"`
-	Hits     *[]SearchHitResult   `json:"hits,omitempty" jsonschema:"set instead of results when sessions.token_saving is off: one object per match"`
 }
 
 type ViewArgs struct {
@@ -327,10 +321,8 @@ type ViewArgs struct {
 
 type ViewResult struct {
 	ResultNotices
-	Sections          string               `json:"sections"`
-	ViewSections      *[]ViewSectionResult `json:"view_sections,omitempty" jsonschema:"set instead of sections when sessions.token_saving is off: one object per layout section, the local graph's first, then each queried repo's"`
-	KnownParticipants []string             `json:"known_participants,omitempty" jsonschema:"set beside view_sections when a participant filter matched nothing: the canonical participants the graph knows"`
-	Hint              string               `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, served once per connection"`
+	Sections string `json:"sections"`
+	Hint     string `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, served once per connection"`
 }
 
 type ShowArgs struct {
@@ -343,8 +335,7 @@ type ShowArgs struct {
 
 type ShowResult struct {
 	ResultNotices
-	Entries string            `json:"entries"`
-	Items   *[]ShowItemResult `json:"items,omitempty" jsonschema:"set instead of entries when sessions.token_saving is off: one object per shown entry with its chains"`
+	Entries string `json:"entries"`
 }
 
 type GatherArgs struct {
@@ -577,14 +568,6 @@ func (s *Server) registerTools() {
 	}, toolBoundary(s, s.syncRepos))
 }
 
-// cutRepeats applies the no-repeat rule to the session's step serves, unless
-// every call serves in full (Options.ServeInFull).
-func (s *Server) cutRepeats(workflow *sdd.WorkflowSession) {
-	if !s.serveInFull {
-		workflow.CutRepeats()
-	}
-}
-
 // attachedSession returns the named session locked and replayed from its ledger.
 func (s *Server) attachedSession(ctx context.Context, req *mcp.CallToolRequest, session string) (*shellSession, error) {
 	id := sdd.SessionID(strings.TrimSpace(session))
@@ -598,8 +581,8 @@ func (s *Server) attachedSession(ctx context.Context, req *mcp.CallToolRequest, 
 		if err != nil {
 			return nil, err
 		}
-		s.cutRepeats(workflow)
-		candidate := &shellSession{root: workflow, inFull: s.serveInFull}
+		workflow.CutRepeats()
+		candidate := &shellSession{root: workflow}
 		candidate.mu.Lock()
 		ss = s.sessions.put(candidate)
 		fresh = ss == candidate
@@ -614,7 +597,7 @@ func (s *Server) attachedSession(ctx context.Context, req *mcp.CallToolRequest, 
 			ss.mu.Unlock()
 			return nil, err
 		}
-		s.cutRepeats(workflow)
+		workflow.CutRepeats()
 		ss.root = workflow
 	}
 	ss.pending, ss.seen = nil, nil
@@ -679,8 +662,8 @@ func (s *Server) startSession(ctx context.Context, req *mcp.CallToolRequest, arg
 		}
 		return nil, ServeResult{}, err
 	}
-	s.cutRepeats(workflow)
-	ss := s.sessions.put(&shellSession{root: workflow, inFull: s.serveInFull})
+	workflow.CutRepeats()
+	ss := s.sessions.put(&shellSession{root: workflow})
 	s.noteSyncSession(ctx, req, ss)
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
@@ -1018,10 +1001,6 @@ func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, args Sear
 	if err := s.logRootRead(ctx, req, ss, "search", nil, result.EntryIDs); err != nil {
 		return nil, SearchResult{}, err
 	}
-	if ss.inFull {
-		hits := searchHitItems(result.Hits)
-		return nil, SearchResult{Hits: &hits, Coverage: result.Coverage, Notice: result.Notice}, nil
-	}
 	out := presenters.SearchText(result.Hits, result.Notices, ss.repeats())
 	if strings.TrimSpace(out) == "" {
 		out = "(no entries matched — try another phrasing, or proceed if the topic is genuinely new)"
@@ -1050,20 +1029,13 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, args ViewAr
 		return nil, ViewResult{}, toolError("viewing: %v", err)
 	}
 	hint := viewHint(ss)
-	var sections string
-	if !ss.inFull {
-		sections = presenters.ViewText(result.ViewSections, ss.repeats())
-	}
+	sections := presenters.ViewText(result.ViewSections, ss.repeats())
 	ss.holdEntries(result.FullIDs)
 	if err := s.logRootRead(ctx, req, ss, "view", result.FullIDs, result.SummaryIDs); err != nil {
 		return nil, ViewResult{}, err
 	}
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, ViewResult{}, err
-	}
-	if ss.inFull {
-		items := viewSectionItems(result.ViewSections)
-		return nil, ViewResult{ViewSections: &items, KnownParticipants: result.KnownParticipants, Hint: hint}, nil
 	}
 	// An empty result must never reach an agent as a blank string — it cannot
 	// tell "matched nothing" from a broken call. Say so, and when a participant
@@ -1231,20 +1203,13 @@ func (s *Server) show(ctx context.Context, req *mcp.CallToolRequest, args ShowAr
 	if err := s.logRootRead(ctx, req, ss, "show", result.FullIDs, result.SummaryIDs); err != nil {
 		return nil, ShowResult{}, err
 	}
-	var entries string
-	if !ss.inFull {
-		entries, err = presenters.ShowText(result.Items, ss.repeats())
-		if err != nil {
-			return nil, ShowResult{}, err
-		}
+	entries, err := presenters.ShowText(result.Items, ss.repeats())
+	if err != nil {
+		return nil, ShowResult{}, err
 	}
 	ss.holdEntries(result.FullIDs)
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, ShowResult{}, err
-	}
-	if ss.inFull {
-		items := showItems(result.Items)
-		return nil, ShowResult{Items: &items}, nil
 	}
 	return nil, ShowResult{Entries: entries}, nil
 }
@@ -1463,14 +1428,14 @@ func syncBlockedResult(block *sdd.SyncBlocked) *SyncBlockedResult {
 // original serve (I6). The entries a served block carries in full are held
 // from then on (R14); a block is never cut for them, so a held entry cannot
 // re-serve a lane the per-lane dedup already withholds.
-func composeFraming(ss *shellSession, blocks []string) string {
+func composeFraming(ss *shellSession, blocks []types.ServeLane) string {
 	var served []string
 	for _, block := range blocks {
-		if block == "" || ss.servedBefore(block) {
+		if block.Text == "" || ss.servedBefore(block.Text) {
 			continue
 		}
-		served = append(served, block)
-		ss.holdEntries(ss.root.FramingFullIDs(block))
+		served = append(served, block.Text)
+		ss.holdEntries(ss.root.FramingFullIDs(block.Text))
 	}
 	return strings.Join(served, "\n\n")
 }
@@ -1488,12 +1453,7 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 		ReportSchema: serve.ReportSchema, Produced: capValues(serve.Produced), Execution: serve.Execution,
 		Collected: capValues(serve.Collected), PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
 	}
-	if ss.inFull {
-		lanes := instructionLanes(ss, serve)
-		res.Lanes = &lanes
-	} else {
-		res.Instructions = composeInstructions(ss, serve)
-	}
+	res.Instructions = composeInstructions(ss, serve)
 	if serve.PendingChooser != nil {
 		chooser := &ChooserResult{Chooser: serve.PendingChooser.Chooser, Kind: string(serve.PendingChooser.Kind)}
 		for _, option := range serve.PendingChooser.Options {
@@ -1511,7 +1471,7 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 	if err != nil {
 		return ServeResult{}, err
 	}
-	res.Framing, res.FramingBlocks = framingFields(ss, framing)
+	res.Framing = composeFraming(ss, framing)
 	if ss.root.IsShell(serve.Instance) {
 		res.OpenThreads = openThreadsRoot(ss)
 	}
@@ -1604,7 +1564,7 @@ func rootBaseServe(result ServeResult) *BaseServe {
 	return &BaseServe{
 		Session: result.Session, Branch: result.Branch, Instance: result.Instance, Procedure: result.Procedure, Status: result.Status,
 		Step: result.Step, Goal: result.Goal, Instructions: result.Instructions, PendingChooser: result.PendingChooser,
-		Framing: result.Framing, OpenThreads: result.OpenThreads, Lanes: result.Lanes, FramingBlocks: result.FramingBlocks,
+		Framing: result.Framing, OpenThreads: result.OpenThreads,
 	}
 }
 
@@ -1621,7 +1581,7 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 	if err != nil {
 		return ResumeSessionResult{}, err
 	}
-	result.Framing, result.FramingBlocks = framingFields(ss, framing)
+	result.Framing = composeFraming(ss, framing)
 	// Whole-instance granularity is the only legitimate cut on a resume
 	// projection (d-tac-qwc): budget and count decisions run on the source
 	// serve, before mapping, because mapping records served-once blocks and an
@@ -1643,16 +1603,12 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 		if err != nil {
 			return ResumeSessionResult{}, err
 		}
-		mapped.Framing, mapped.FramingBlocks = "", nil
+		mapped.Framing = ""
 		spent += size
 		result.Open = append(result.Open, mapped)
 	}
 	if len(omitted) > 0 {
 		result.Instructions += fmt.Sprintf("\n\n%d open moves omitted here for size — each resumes at its current step through next: %s", len(omitted), strings.Join(omitted, "; "))
-	}
-	if ss.inFull {
-		result.Lanes = &[]NamedText{{Name: "resume", Text: result.Instructions}}
-		result.Instructions = ""
 	}
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return ResumeSessionResult{}, err
