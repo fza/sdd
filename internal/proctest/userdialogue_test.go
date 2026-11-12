@@ -8,6 +8,8 @@ package proctest_test
 import (
 	"fmt"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -237,5 +239,58 @@ func TestUserDialogue_RecentMovementHoldsTheNewestFive(t *testing.T) {
 		if newest := i >= 2; strings.Contains(recent, id) != newest {
 			t.Errorf("the lane should list %s exactly when it is among the newest five:\n%s", id, recent)
 		}
+	}
+}
+
+var moreLine = regexp.MustCompile("\\(\\+(\\d+) more: call view with layout `([^`]+)`\\)")
+
+// viewIDs lists the entry IDs a layout serves.
+func viewIDs(t *testing.T, world *proctest.World, layout string) []string {
+	t.Helper()
+	result, err := world.App.View(t.Context(), world.Identity, "proctest", sdd.ViewRequest{Layout: layout})
+	if err != nil {
+		t.Fatalf("view %q: %v", layout, err)
+	}
+	var ids []string
+	for _, section := range result.ViewSections {
+		if section.List == nil {
+			continue
+		}
+		for _, item := range section.List.Items {
+			ids = append(ids, item.Entry.ID)
+		}
+	}
+	return ids
+}
+
+// A framing lane its n(k) cuts ends naming how many more entries matched and
+// the layout serving them; a lane it does not cut carries no such line.
+func TestUserDialogue_CappedLaneNamesTheEntriesPastItsCap(t *testing.T) {
+	world := proctest.NewWorld(t, proctest.WithEntries(&model.Entry{
+		ID: "20261201-100000-d-tac-gdr", Type: model.TypeDecision, Kind: model.KindDirective, Layer: model.LayerTactical,
+		Intent: model.IntentGuiding, Summary: "Always test through the exported surface.", Content: "Always test through the exported surface.",
+	}))
+	session, _ := openShell(t, world, "dlg-more")
+	blocks, err := session.WF.FramingBlocks(t.Context(), world.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lanes := map[string]string{}
+	for _, block := range blocks {
+		lanes[block.Name] = block.Text
+	}
+	if moreLine.MatchString(lanes["directives"]) {
+		t.Errorf("a lane its cap did not cut should name no more entries:\n%s", lanes["directives"])
+	}
+	match := moreLine.FindStringSubmatch(lanes["recentMovement"])
+	if match == nil {
+		t.Fatalf("the recent-movement lane should name the entries past its cap:\n%s", lanes["recentMovement"])
+	}
+	all := viewIDs(t, world, "rank(by(date)):brief:as-list")
+	if want := strconv.Itoa(len(all) - 5); match[1] != want {
+		t.Errorf("the lane should count %s more entries, got %s", want, match[1])
+	}
+	if next := viewIDs(t, world, match[2]); !slices.Equal(next, all[5:]) {
+		t.Errorf("the named layout %q should serve the entries past the cap:\n%v\n%v", match[2], next, all[5:])
 	}
 }

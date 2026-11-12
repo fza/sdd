@@ -40,6 +40,9 @@ func renderAsList(w io.Writer, list types.ViewList, brief bool, r *Repeats) {
 			}
 		}
 	}
+	if list.More > 0 {
+		fmt.Fprintf(w, "(+%d more: call view with layout `%s`)\n", list.More, list.Paging.Layout(len(list.Items), list.More))
+	}
 }
 
 // writeSectionCut renders a section's serve-budget cut in the view register:

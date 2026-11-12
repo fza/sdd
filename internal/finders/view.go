@@ -320,7 +320,9 @@ func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model
 			}
 		}
 	}
+	paged := 0
 	if spec.pageN >= 0 && len(entries) > spec.pageN {
+		paged = len(entries) - spec.pageN
 		entries = entries[:spec.pageN]
 		if scores != nil {
 			scores = scores[:spec.pageN]
@@ -416,7 +418,7 @@ func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model
 	// expand(refs) attaches per-entry ref sub-lines after ranking and
 	// pagination so the expansion follows the already-narrowed entry set
 	// (the as-list render path consumes RefExpansions when present).
-	flat := model.FlatList{Entries: entries, Scores: scores}
+	flat := model.FlatList{Entries: entries, Scores: scores, More: paged, Paging: section.Paging(max(spec.skipN, 0))}
 	if spec.expandField == "refs" {
 		flat.RefExpansions = expandRefs(g, entries, spec.expandRefsInactive)
 		if budget.RefsPerEntry > 0 {

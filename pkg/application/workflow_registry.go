@@ -113,7 +113,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		return err
 	}
 	if err := registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes (line-boundary cut, honest notice; the cut's pull is the lane's own layout). A layout of only as-bodies sections is cut at whole bodies instead, naming each withheld entry. Injected into a step served over MCP, an entry the consumer already holds in full prints as its pointer (R14)."},
+		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes: a listing gives up whole entries and ends naming how many and the layout serving them, as an n(k) that cuts one does; other output is cut at a line boundary with an honest notice whose pull is the lane's own layout. A layout of only as-bodies sections is cut at whole bodies instead, naming each withheld entry. Injected into a step served over MCP, an entry the consumer already holds in full prints as its pointer (R14)."},
 		ServeSafe: true,
 		Bound: engine.QueryBound{
 			Part: serveview.PartText,
@@ -151,6 +151,12 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 				// whole and names what it withheld, so no line cut follows.
 				n := len(text)
 				return truncate.Text{Text: text, Cut: truncate.Cut{KeptBytes: n, TotalBytes: n}}, nil
+			}
+			// A listing past the bound gives up whole entries, its last line
+			// naming how many and the layout serving them.
+			for ctx.Cap.MaxBytes > 0 && len(text) > ctx.Cap.MaxBytes && dropLastListed(result.ViewSections) {
+				w.session.DropPiecesSince(mark)
+				text = presenters.ViewText(result.ViewSections, repeats)
 			}
 			// A line cut can drop a body the view rendered.
 			_, cut := serveview.BoundValue(text, ctx.Cap)
@@ -800,4 +806,14 @@ type RegistryFunction struct {
 	Doc    string
 	Reads  []string
 	Writes []string
+}
+
+// dropLastListed gives up the last entry of the last listing that holds one.
+func dropLastListed(sections []types.ViewSection) bool {
+	for i := len(sections) - 1; i >= 0; i-- {
+		if list := sections[i].List; list != nil && list.DropLast() {
+			return true
+		}
+	}
+	return false
 }

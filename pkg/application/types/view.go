@@ -1,6 +1,9 @@
 package types
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // ViewSection is one section of a view as data (20261101-194502-d-tac-r3f):
 // the render that terminates it, its header, and exactly one shape filled,
@@ -71,6 +74,34 @@ type ViewList struct {
 	// RefsExpanded marks a section that used expand(refs): every item carries
 	// its resolved outgoing refs.
 	RefsExpanded bool
+	// More counts the entries the section matched past Items, left out by its
+	// n(k) or a size bound; Paging composes the layout serving them.
+	More   int
+	Paging ViewPaging
+}
+
+// ViewPaging pages a list section: Head is the section's layout with its own
+// skip, n and name taken out, Offset the skip it applied.
+type ViewPaging struct {
+	Head   string
+	Offset int
+}
+
+// Layout is the layout serving n entries of the section's own output, from
+// its skip-th on.
+func (p ViewPaging) Layout(skip, n int) string {
+	return fmt.Sprintf("skip(%d):n(%d):%s", p.Offset+skip, n, p.Head)
+}
+
+// DropLast moves the list's last item into More, reporting whether there was
+// one.
+func (l *ViewList) DropLast() bool {
+	if len(l.Items) == 0 {
+		return false
+	}
+	l.Items = l.Items[:len(l.Items)-1]
+	l.More++
+	return true
 }
 
 // ViewListItem is one entry of an as-list section. RefsDropped counts the

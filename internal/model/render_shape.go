@@ -1,5 +1,7 @@
 package model
 
+import "github.com/networkteam/sdd/pkg/application/types"
+
 // RenderShape is the data-shape contract between finders (which produce
 // per-section results) and presenters (which render them). Each concrete
 // SectionData variant declares the shape it carries so a presenter can
@@ -47,6 +49,10 @@ type FlatList struct {
 	// capped an entry's ref sub-lines: the count of refs not rendered for
 	// Entries[i]. Nil on explicit pulls, which are never cut (d-tac-rzi).
 	RefExpansionDropped []int
+	// More counts the entries the section's n(k) left out; Paging composes
+	// the layout serving them.
+	More   int
+	Paging types.ViewPaging
 }
 
 // RefExpansion is one resolved outgoing reference for expand(refs) output.
