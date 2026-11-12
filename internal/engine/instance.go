@@ -178,6 +178,8 @@ type Serve struct {
 	// dispatches, so the shell forks a delegating task in the answering call
 	// (20260829-122157-d-cpt-zpe); empty on every other serve.
 	Dispatches string
+	// Framing is the step's declared framing blocks; nil carries them all.
+	Framing []string
 }
 
 // ServeLane is defined in pkg/application/types — the exported surface names
@@ -637,6 +639,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		return nil, fmt.Errorf("instance %s: step %q not found", inst.ID, inst.Step)
 	}
 	sv.Step = step.ID
+	sv.Framing = step.Framing
 	if pending := s.PendingMutation(); pending != nil && pending.Instance == inst.ID {
 		// Only retry or cancel can advance here, so the step's unit, schema
 		// and gate are withheld (d-tac-t6u).

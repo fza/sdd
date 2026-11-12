@@ -64,6 +64,7 @@ An agent chooser (`chooser: agent`) or user chooser (`chooser: user`) declares `
 - `collect` — the state fields reportable here; a `?` suffix marks one optional (quote the marker: `"anchor?"`), and required ones hold the step until reported.
 - `inject` — a list of `{fn: <query name>, args?, maxBytes?, maxItems?}` calls: each result is served into the step's instructions under its function's name. Size is the engine's job — an inject without a declared cap is bounded by the engine's defaults; `maxBytes`/`maxItems` are overrides.
 - `render` — the name of an extra `## unit:` section from the body, served with the step (typically presenting one collected field's content).
+- `framing` — the session framing blocks a serve of this step carries: `info` (participant, language, search, branch), `health`, or the id of a lane the session shell declares, such as `principles` or `recentMovement`. Left out, the step carries every block. Declare `[info]` on a step that only waits, launches or confirms, where the shell's lanes add nothing; a name the session does not frame fails the serve.
 
 A run ends by transitioning to {{ .EndTargets }}.
 

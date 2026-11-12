@@ -242,6 +242,9 @@ type Step struct {
 	// stage, left on moving out of it, and its rounds. At most one of them
 	// holds the stage's findings channel.
 	Stage string
+	// Framing names the session framing blocks a serve of this step carries,
+	// by block name; nil carries them all (20261112-075604-d-tac-t4r).
+	Framing []string
 }
 
 // Terminal transition targets. A procedure ends by transitioning to one of
@@ -342,6 +345,7 @@ type stepYAML struct {
 	AwaitAny    []string         `yaml:"awaitAny"`
 	Findings    string           `yaml:"findings"`
 	Stage       string           `yaml:"stage"`
+	Framing     *[]string        `yaml:"framing"`
 }
 
 // decodeStrict re-encodes a retained YAML node and decodes it with unknown
@@ -744,6 +748,21 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 	}
 	if sy.Stage != "" && !isValidFuncName(sy.Stage) {
 		addProblem("%s: stage %q is not a step name (identifiers only)", prefix, sy.Stage)
+	}
+	if sy.Framing != nil {
+		if len(*sy.Framing) == 0 {
+			addProblem("%s: framing names no block; name the blocks the step serves, or leave framing out to serve them all", prefix)
+		}
+		for _, name := range *sy.Framing {
+			switch {
+			case !isValidFuncName(name):
+				addProblem("%s: framing names %q, not a block name (identifiers only)", prefix, name)
+			case slices.Contains(step.Framing, name):
+				addProblem("%s: framing names %q twice", prefix, name)
+			default:
+				step.Framing = append(step.Framing, name)
+			}
+		}
 	}
 
 	for _, f := range sy.Collect {

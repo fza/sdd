@@ -1467,7 +1467,7 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Agent: dispatch.Agent, Model: dispatch.Model, Effort: dispatch.Effort, Runner: dispatch.Runner,
 		})
 	}
-	framing, err := ss.root.FramingBlocks(ctx, s.requestIdentity(req))
+	framing, err := ss.root.FramingBlocksFor(ctx, s.requestIdentity(req), serve.Framing)
 	if err != nil {
 		return ServeResult{}, err
 	}

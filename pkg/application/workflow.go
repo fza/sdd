@@ -156,6 +156,9 @@ type WorkflowServe struct {
 	// Dispatches are the delegate handoffs this operation owes the harness:
 	// a fork, or a delegate sent its next input.
 	Dispatches []*WorkflowDispatch
+	// Framing names the framing blocks the served step carries, for
+	// FramingBlocksFor; nil carries them all.
+	Framing []string
 }
 
 // ComposeInstructions joins host-recomposed unit text (e.g. the deduped lane
@@ -1064,10 +1067,64 @@ func (w *WorkflowSession) Framing(ctx context.Context, identity RequestIdentity)
 // FramingBlocks is Framing with each block named, stable across calls: info,
 // each shell lane's inject id (or its function), and health.
 func (w *WorkflowSession) FramingBlocks(ctx context.Context, identity RequestIdentity) ([]types.ServeLane, error) {
+	return w.FramingBlocksFor(ctx, identity, nil)
+}
+
+// FramingBlocksFor is FramingBlocks limited to the blocks a step declares
+// (WorkflowServe.Framing); nil declares them all. A declared name that is
+// neither info, health nor a lane the session shell frames is an error.
+func (w *WorkflowSession) FramingBlocksFor(ctx context.Context, identity RequestIdentity, declared []string) ([]types.ServeLane, error) {
 	w.setOperation(ctx, identity)
-	info, err := w.readInfo()
+	if err := w.checkFramingNames(declared); err != nil {
+		return nil, err
+	}
+	wants := func(name string) bool { return declared == nil || slices.Contains(declared, name) }
+	var blocks []types.ServeLane
+	if wants("info") {
+		info, err := w.infoBlock()
+		if err != nil {
+			return nil, err
+		}
+		blocks = append(blocks, types.ServeLane{Name: "info", Text: info})
+	}
+	lanes, err := w.framingLanes(wants)
 	if err != nil {
 		return nil, err
+	}
+	blocks = append(blocks, lanes...)
+	if wants("health") {
+		health, err := w.graphHealthBlock()
+		if err != nil {
+			return nil, err
+		}
+		if health != "" {
+			blocks = append(blocks, types.ServeLane{Name: "health", Text: health})
+		}
+	}
+	return blocks, nil
+}
+
+func (w *WorkflowSession) checkFramingNames(declared []string) error {
+	known := []string{"info", "health"}
+	if inst, ok := w.session.Instance(w.shell); ok && w.shell != "" {
+		for _, call := range inst.Spec.Framing {
+			known = append(known, call.EffectiveID())
+		}
+	}
+	for _, name := range declared {
+		if !slices.Contains(known, name) {
+			return fmt.Errorf("step framing names %q, which this session does not frame (%s)", name, strings.Join(known, ", "))
+		}
+	}
+	return nil
+}
+
+// infoBlock renders the engine-supplied framing block: participant, language,
+// search modes, schema, contribution mode, base and branch binding.
+func (w *WorkflowSession) infoBlock() (string, error) {
+	info, err := w.readInfo()
+	if err != nil {
+		return "", err
 	}
 	var infoBlock strings.Builder
 	fmt.Fprintf(&infoBlock, "Local participant: %s\n", info.Participant)
@@ -1083,25 +1140,13 @@ func (w *WorkflowSession) FramingBlocks(ctx context.Context, identity RequestIde
 	}
 	base, err := w.baseLine()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	infoBlock.WriteString(base)
 	if w.branch != "" {
 		fmt.Fprintf(&infoBlock, "\nBranch binding: %s", w.branch)
 	}
-	lanes, err := w.framingLanes()
-	if err != nil {
-		return nil, err
-	}
-	blocks := append([]types.ServeLane{{Name: "info", Text: infoBlock.String()}}, lanes...)
-	health, err := w.graphHealthBlock()
-	if err != nil {
-		return nil, err
-	}
-	if health != "" {
-		blocks = append(blocks, types.ServeLane{Name: "health", Text: health})
-	}
-	return blocks, nil
+	return infoBlock.String(), nil
 }
 
 // baseLine names the session's base branch and where it came from, re-derived
@@ -1172,7 +1217,7 @@ func (w *WorkflowSession) graphHealthBlock() (string, error) {
 // engine's inject query mechanism, one block per lane (empty results omitted).
 // A lane whose query returns a non-string fails loud — a framing lane must
 // render to text, never be silently dropped.
-func (w *WorkflowSession) framingLanes() ([]types.ServeLane, error) {
+func (w *WorkflowSession) framingLanes(wants func(name string) bool) ([]types.ServeLane, error) {
 	if w.shell == "" {
 		return nil, nil
 	}
@@ -1185,6 +1230,9 @@ func (w *WorkflowSession) framingLanes() ([]types.ServeLane, error) {
 	w.framing = true
 	defer func() { w.laneFull, w.framing = nil, false }()
 	for _, call := range inst.Spec.Framing {
+		if !wants(call.EffectiveID()) {
+			continue
+		}
 		w.laneFull = nil
 		result, cut, err := w.session.Inject(w.shell, call)
 		if err != nil {
@@ -1198,11 +1246,7 @@ func (w *WorkflowSession) framingLanes() ([]types.ServeLane, error) {
 			text += "\n" + framingCutNotice(*cut)
 		}
 		if text = strings.TrimSpace(text); text != "" {
-			name := call.Id
-			if name == "" {
-				name = call.Fn
-			}
-			lanes = append(lanes, types.ServeLane{Name: name, Text: text})
+			lanes = append(lanes, types.ServeLane{Name: call.EffectiveID(), Text: text})
 			if cut == nil && len(w.laneFull) > 0 {
 				w.framingFull[text] = w.laneFull
 			}
@@ -1549,6 +1593,7 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		ReportSchema: serve.ReportSchema, Produced: serve.Produced, Diagnostics: append([]string(nil), serve.Diagnostics...),
 		InstructionLanes: append([]types.ServeLane(nil), serve.Lanes...),
 		Sizes:            append([]types.PartSize(nil), serve.Sizes...),
+		Framing:          slices.Clone(serve.Framing),
 	}
 	if pending := w.pendingOperation(); pending != nil && pending.Instance == serve.Instance {
 		result.PendingOperation = pending
