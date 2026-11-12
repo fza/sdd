@@ -1,12 +1,14 @@
 package mcpapp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -306,6 +308,7 @@ type SearchArgs struct {
 	MaxCitations      *int         `json:"max_citations,omitempty" jsonschema:"citation snippet lines per entry; omitted = 1 (the strongest matching chunk, the match evidence), 0 = headers only"`
 	Repos             []sdd.RepoID `json:"repos,omitempty" jsonschema:"also search these repos of the project's dependency closure by repo-id (additive to the local graph)"`
 	AllRepos          bool         `json:"all_repos,omitempty" jsonschema:"also search every repo in the project's dependency closure"`
+	Page              int          `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
 }
 
 type SearchResult struct {
@@ -322,6 +325,7 @@ type ViewArgs struct {
 	Layout   string       `json:"layout" jsonschema:"sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'"`
 	Repos    []sdd.RepoID `json:"repos,omitempty" jsonschema:"also render the layout over these repos of the project's dependency closure (additive to the local graph)"`
 	AllRepos bool         `json:"all_repos,omitempty" jsonschema:"also render the layout over every repo in the project's dependency closure"`
+	Page     int          `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
 }
 
 type ViewResult struct {
@@ -337,6 +341,7 @@ type ShowArgs struct {
 	IDs     []string `json:"ids" jsonschema:"entry IDs to show; accepts an unambiguous short ID ({type}-{layer}-{suffix}) and resolves it to the full entry"`
 	Up      *int     `json:"up,omitempty" jsonschema:"upstream chain depth; omitted = default 2, 0 = no upstream"`
 	Down    *int     `json:"down,omitempty" jsonschema:"downstream chain depth; omitted = default 1, 0 = no downstream"`
+	Page    int      `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
 }
 
 type ShowResult struct {
@@ -351,6 +356,7 @@ type GatherArgs struct {
 	IDs      []string `json:"ids,omitempty" jsonschema:"entries to open in full; also the way back to an entry a pointer names"`
 	Draft    string   `json:"draft,omitempty" jsonschema:"without instance: the draft text the searches are written from; credits nothing"`
 	Topics   []string `json:"topics,omitempty" jsonschema:"without instance: the draft's topic labels, each listed in full"`
+	Page     int      `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
 }
 
 type GatherResult struct {
@@ -364,7 +370,7 @@ type ReadAttachmentArgs struct {
 	ID       string `json:"id,omitempty" jsonschema:"full ID of the entry whose attachment to read; omit when reading a staged file by handle"`
 	Name     string `json:"name,omitempty" jsonschema:"attachment filename; optional when the entry has exactly one"`
 	Offset   int64  `json:"offset,omitempty" jsonschema:"byte position to continue from (next_offset of the previous page)"`
-	MaxBytes int    `json:"max_bytes,omitempty" jsonschema:"page size cap; default 65536"`
+	MaxBytes int    `json:"max_bytes,omitempty" jsonschema:"page size cap; default 65536. A page stops short of it where the result would grow past its bound; next_offset continues"`
 	Handle   string `json:"handle,omitempty" jsonschema:"read a file staged in this session (before any entry carries it) by its handle, in the same bounded pages; pass instead of id"`
 }
 
@@ -428,6 +434,7 @@ type InfoResult struct {
 type RegistryArgs struct {
 	Session string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required"`
 	Class   string `json:"class,omitempty" jsonschema:"filter: predicate, query, or command"`
+	Page    int    `json:"page,omitempty" jsonschema:"the page of the contracts to serve, from 1; next_page names the one after it"`
 }
 
 type RegistryFuncResult struct {
@@ -441,6 +448,7 @@ type RegistryFuncResult struct {
 type RegistryResult struct {
 	ResultNotices
 	Functions []RegistryFuncResult `json:"functions"`
+	NextPage  int                  `json:"next_page,omitempty" jsonschema:"set while more contracts follow: pass it as page for them"`
 }
 
 func (s *Server) registerTools() {
@@ -979,7 +987,7 @@ func (s *Server) logRootRead(ctx context.Context, req *mcp.CallToolRequest, ss *
 }
 
 func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, SearchResult, error) {
-	if len(args.Terms) == 0 && args.Query == "" {
+	if len(args.Terms) == 0 && args.Query == "" && args.Page < 2 {
 		return nil, SearchResult{}, toolError("pass terms (text mode), query (vector mode), or both (hybrid)")
 	}
 	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
@@ -987,6 +995,10 @@ func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, args Sear
 		return nil, SearchResult{}, err
 	}
 	defer ss.mu.Unlock()
+	if args.Page > 1 {
+		results, err := heldPage(ss, "search", args.Page)
+		return nil, SearchResult{Results: results}, err
+	}
 	limit := args.Limit
 	if limit == 0 {
 		limit = defaultSearchHits
@@ -1017,12 +1029,12 @@ func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, args Sear
 	if strings.TrimSpace(out) == "" {
 		out = "(no entries matched — try another phrasing, or proceed if the topic is genuinely new)"
 	}
-	return nil, SearchResult{Results: out, Coverage: result.Coverage, Notice: result.Notice}, nil
+	return nil, SearchResult{Results: pagedText(ss, "search", out), Coverage: result.Coverage, Notice: result.Notice}, nil
 
 }
 
 func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, args ViewArgs) (*mcp.CallToolResult, ViewResult, error) {
-	if strings.TrimSpace(args.Layout) == "" {
+	if strings.TrimSpace(args.Layout) == "" && args.Page < 2 {
 		return nil, ViewResult{}, toolError("layout is required")
 	}
 	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
@@ -1030,6 +1042,10 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, args ViewAr
 		return nil, ViewResult{}, err
 	}
 	defer ss.mu.Unlock()
+	if args.Page > 1 {
+		sections, err := heldPage(ss, "view", args.Page)
+		return nil, ViewResult{Sections: sections}, err
+	}
 	project, branch, branchFromSession, err := s.readScope(ctx, req, ss, args.Project)
 	if err != nil {
 		return nil, ViewResult{}, err
@@ -1060,7 +1076,7 @@ func (s *Server) view(ctx context.Context, req *mcp.CallToolRequest, args ViewAr
 			sections = msg + "\n\n" + sections
 		}
 	}
-	sections = guardViewSize(sections)
+	sections = pagedText(ss, "view", sections)
 	return nil, ViewResult{Sections: sections, Hint: hint}, nil
 
 }
@@ -1074,22 +1090,6 @@ func emptyViewMessage(knownParticipants []string) string {
 		msg += " Known participants: " + strings.Join(knownParticipants, ", ") + "."
 	}
 	return msg
-}
-
-// maxViewResultBytes caps a view response over MCP. A pathological layout
-// (e.g. active:as-list on a large graph) can otherwise blow the client's token
-// budget in one call; the cap keeps the tool usable and points at paging.
-const maxViewResultBytes = 40000
-
-// guardViewSize truncates an over-cap view result on a line boundary and
-// appends a notice naming n() paging as the recovery, so an agent that hit the
-// cap knows how to narrow rather than seeing a silently cut result.
-func guardViewSize(s string) string {
-	bounded := truncate.Bytes(s, maxViewResultBytes, "")
-	if bounded.Cut.Clean() {
-		return s
-	}
-	return fmt.Sprintf("%s\n\n[view output truncated at %d of %d bytes — narrow with n(K), tighter filters, or fewer sections]", bounded.Text, bounded.Cut.KeptBytes, bounded.Cut.TotalBytes)
 }
 
 // Value-projection caps, derived from the calibrated serveview budget so the
@@ -1118,11 +1118,6 @@ var (
 	// threads, discarded threads, session rejections); cuts keep whole lines
 	// and name the remainder.
 	maxLineListBytes = serveview.Default().Cap(serveview.PartLineList).MaxBytes
-
-	// resumeOpenBudgetBytes is the aggregate byte budget across a resume
-	// projection's open instances — a reorientation serves everything in full,
-	// and whole-instance omission is the only legitimate cut (d-tac-qwc).
-	resumeOpenBudgetBytes = serveview.Default().Total
 )
 
 // maxResumeOpenInstances caps how many open instances a resume projection
@@ -1175,7 +1170,7 @@ func collectedString(v any) string {
 }
 
 // capValue truncates an over-cap value on a rune boundary and appends
-// a notice naming the cap, mirroring guardViewSize.
+// a notice naming the cap.
 func capValue(s string) string {
 	bounded := truncate.Bytes(s, maxCollectedValueBytes, "")
 	if bounded.Cut.Clean() {
@@ -1185,7 +1180,7 @@ func capValue(s string) string {
 }
 
 func (s *Server) show(ctx context.Context, req *mcp.CallToolRequest, args ShowArgs) (*mcp.CallToolResult, ShowResult, error) {
-	if len(args.IDs) == 0 {
+	if len(args.IDs) == 0 && args.Page < 2 {
 		return nil, ShowResult{}, toolError("ids is required")
 	}
 	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
@@ -1193,6 +1188,10 @@ func (s *Server) show(ctx context.Context, req *mcp.CallToolRequest, args ShowAr
 		return nil, ShowResult{}, err
 	}
 	defer ss.mu.Unlock()
+	if args.Page > 1 {
+		entries, err := heldPage(ss, "show", args.Page)
+		return nil, ShowResult{Entries: entries}, err
+	}
 	up := sdd.DefaultShowUpDepth
 	if args.Up != nil {
 		up = *args.Up
@@ -1221,7 +1220,7 @@ func (s *Server) show(ctx context.Context, req *mcp.CallToolRequest, args ShowAr
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, ShowResult{}, err
 	}
-	return nil, ShowResult{Entries: entries}, nil
+	return nil, ShowResult{Entries: pagedText(ss, "show", entries)}, nil
 }
 
 func (s *Server) gather(ctx context.Context, req *mcp.CallToolRequest, args GatherArgs) (*mcp.CallToolResult, GatherResult, error) {
@@ -1230,6 +1229,10 @@ func (s *Server) gather(ctx context.Context, req *mcp.CallToolRequest, args Gath
 		return nil, GatherResult{}, err
 	}
 	defer ss.mu.Unlock()
+	if args.Page > 1 {
+		serve, err := heldPage(ss, "gather", args.Page)
+		return nil, GatherResult{Serve: serve}, err
+	}
 	result, err := ss.root.Gather(ctx, s.requestIdentity(req), sdd.WorkflowGatherRequest{
 		Instance: strings.TrimSpace(args.Instance), IDs: args.IDs, Draft: args.Draft, Topics: args.Topics,
 		SyncMode: s.searchSyncMode,
@@ -1240,7 +1243,7 @@ func (s *Server) gather(ctx context.Context, req *mcp.CallToolRequest, args Gath
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, GatherResult{}, err
 	}
-	return nil, GatherResult{Serve: result.Text}, nil
+	return nil, GatherResult{Serve: pagedText(ss, "gather", result.Text)}, nil
 }
 
 func (s *Server) readAttachment(ctx context.Context, req *mcp.CallToolRequest, args ReadAttachmentArgs) (*mcp.CallToolResult, ReadAttachmentResult, error) {
@@ -1264,10 +1267,10 @@ func (s *Server) readAttachment(ctx context.Context, req *mcp.CallToolRequest, a
 		if err != nil {
 			return nil, ReadAttachmentResult{}, err
 		}
-		return nil, ReadAttachmentResult{
+		return nil, boundedPage(ReadAttachmentResult{
 			Name: page.Filename, Content: string(page.Content), Offset: page.Offset, NextOffset: page.NextOffset,
 			TotalBytes: page.TotalSize, More: page.More, Available: staged,
-		}, nil
+		}), nil
 	}
 	project, branch, branchFromSession, err := s.readScope(ctx, req, ss, args.Project)
 	if err != nil {
@@ -1289,7 +1292,7 @@ func (s *Server) readAttachment(ctx context.Context, req *mcp.CallToolRequest, a
 		output.Path = page.LocalPath
 	}
 
-	return nil, output, nil
+	return nil, boundedPage(output), nil
 
 }
 
@@ -1325,12 +1328,23 @@ func (s *Server) registryDocs(ctx context.Context, req *mcp.CallToolRequest, arg
 	if err != nil {
 		return nil, RegistryResult{}, err
 	}
-	result := RegistryResult{}
+	functions := make([]RegistryFuncResult, 0, len(docs))
 	for _, doc := range docs {
-		result.Functions = append(result.Functions, RegistryFuncResult{Name: doc.Name, Class: doc.Class, Doc: doc.Doc, Reads: doc.Reads, Writes: doc.Writes})
+		functions = append(functions, RegistryFuncResult{Name: doc.Name, Class: doc.Class, Doc: doc.Doc, Reads: doc.Reads, Writes: doc.Writes})
+	}
+	pages, err := pagedItems(functions)
+	if err != nil {
+		return nil, RegistryResult{}, err
+	}
+	page := max(args.Page, 1)
+	if page > len(pages) {
+		return nil, RegistryResult{}, toolError("page %d does not exist: the contracts fill %d", page, len(pages))
+	}
+	result := RegistryResult{Functions: pages[page-1]}
+	if page < len(pages) {
+		result.NextPage = page + 1
 	}
 	return nil, result, nil
-
 }
 
 // toolBoundary is where an error meets the agent: a coded application error
@@ -1427,11 +1441,11 @@ func syncBlockedResult(block *sdd.SyncBlocked) *SyncBlockedResult {
 // --- serve conversion --------------------------------------------------------
 
 // serveResultBody converts the serve fields every landing shares —
-// instructions with per-lane dedup, chooser, framing, open threads. Schema
-// and vocabulary dedup live only in toRootServeResult: a base mapping drops
-// those fields, and recording bytes never delivered would stub them for a
-// later serve that does deliver.
-func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (ServeResult, error) {
+// instructions with per-lane dedup, the first keep lanes of them, chooser,
+// framing, open threads. Schema and vocabulary dedup live only in
+// composeServe: a base mapping drops those fields, and recording bytes never
+// delivered would stub them for a later serve that does deliver.
+func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, keep int, pageFull []string) (ServeResult, error) {
 	res := ServeResult{
 		Session: string(serve.Session), Project: string(serve.Project),
 		Branch: serve.Branch, Instance: serve.Instance, Procedure: serve.Procedure, Status: serve.Status,
@@ -1439,7 +1453,7 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 		ReportSchema: serve.ReportSchema, Produced: capValues(serve.Produced), Execution: serve.Execution,
 		Collected: capValues(serve.Collected), PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
 	}
-	res.Instructions = composeInstructions(ss, serve)
+	res.Instructions = composeInstructions(ss, serve, keep, pageFull)
 	if serve.PendingChooser != nil {
 		chooser := &ChooserResult{Chooser: serve.PendingChooser.Chooser, Kind: string(serve.PendingChooser.Kind)}
 		for _, option := range serve.PendingChooser.Options {
@@ -1464,11 +1478,46 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 	return res, nil
 }
 
-// toRootServeResult converts an engine serve into the tool response and records
-// what it served in full into the session ledger. The shell's open-work block
-// lists this dialogue's own threads only; other dialogues never appear.
+// toRootServeResult converts an engine serve into the tool response, within
+// the result bound, and records what it served in full into the session
+// ledger. The shell's open-work block lists this dialogue's own threads only;
+// other dialogues never appear.
 func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (ServeResult, error) {
-	res, err := s.serveResultBody(ctx, req, ss, serve)
+	res, err := s.boundedServe(ctx, req, ss, serve, serveBudget)
+	if err != nil {
+		return ServeResult{}, err
+	}
+	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
+		return ServeResult{}, err
+	}
+	return res, nil
+}
+
+// boundedServe composes serve's result to cost at most budget
+// (20261112-075604-d-tac-t4r): while the whole would cost more, the step's
+// last lanes wait, named with the call that serves them, and what the larger
+// composition served is withdrawn. The caller records what it served.
+func (s *Server) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int) (ServeResult, error) {
+	pageFull := ss.root.TakeStepFullIDs()
+	mark := ss.root.ServeMark()
+	for keep := len(serve.InstructionLanes); ; keep-- {
+		res, err := s.composeServe(ctx, req, ss, serve, keep, pageFull)
+		if err != nil {
+			return ServeResult{}, err
+		}
+		cost, err := resultChars(res)
+		if err != nil {
+			return ServeResult{}, err
+		}
+		if cost <= budget || keep == 0 {
+			return res, nil
+		}
+		ss.root.WithdrawServedSince(mark)
+	}
+}
+
+func (s *Server) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, keep int, pageFull []string) (ServeResult, error) {
+	res, err := s.serveResultBody(ctx, req, ss, serve, keep, pageFull)
 	if err != nil {
 		return ServeResult{}, err
 	}
@@ -1484,14 +1533,11 @@ func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest
 	}
 	res.Vocabulary = serveVocabulary(ss, vocabulary)
 	if serve.Base != nil {
-		base, err := s.toBaseServeResult(ctx, req, ss, serve.Base)
+		body, err := s.serveResultBody(ctx, req, ss, serve.Base, len(serve.Base.InstructionLanes), nil)
 		if err != nil {
 			return ServeResult{}, err
 		}
-		res.Base = base
-	}
-	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
-		return ServeResult{}, err
+		res.Base = rootBaseServe(body)
 	}
 	return res, nil
 }
@@ -1499,7 +1545,7 @@ func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest
 // toBaseServeResult maps a serve onto the base_junction landing, which
 // carries no schema or vocabulary — so neither is recorded as served here.
 func (s *Server) toBaseServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (*BaseServe, error) {
-	body, err := s.serveResultBody(ctx, req, ss, serve)
+	body, err := s.serveResultBody(ctx, req, ss, serve, len(serve.InstructionLanes), ss.root.TakeStepFullIDs())
 	if err != nil {
 		return nil, err
 	}
@@ -1532,28 +1578,46 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 	}
 	result.Framing = composeFraming(ss, framing)
 	// Whole-instance granularity is the only legitimate cut on a resume
-	// projection (d-tac-qwc): budget and count decisions run on the source
-	// serve, before mapping, because mapping issues anchors and an
-	// omitted instance must issue none for the serve that
-	// does deliver it.
+	// projection (d-tac-qwc): an instance past the count or the result bound
+	// is named instead, and what its mapping served is withdrawn, so the
+	// serve that does deliver it serves it in full.
 	var omitted []string
-	spent := 0
-	for i := range source.Open {
-		serve := &source.Open[i]
-		size := resumeServeBytes(serve)
+	spent, err := resultChars(result)
+	if err != nil {
+		return ResumeSessionResult{}, err
+	}
+	// The moves map before the session shell, which takes what room is left:
+	// its lanes wait sooner than a move is omitted.
+	open := slices.Clone(source.Open)
+	slices.SortStableFunc(open, func(a, b sdd.WorkflowServe) int {
+		return cmp.Compare(boolRank(ss.root.IsShell(a.Instance)), boolRank(ss.root.IsShell(b.Instance)))
+	})
+	for i := range open {
+		serve := &open[i]
 		// The instance holding an unfinished operation is the position the
 		// resume exists to re-serve; it is never the one cut for size.
 		pending := source.PendingOperation != nil && source.PendingOperation.Instance == serve.Instance
-		if !pending && (len(result.Open) >= maxResumeOpenInstances || (len(result.Open) > 0 && spent+size > resumeOpenBudgetBytes)) {
-			omitted = append(omitted, fmt.Sprintf("%s (%s at %s)", serve.Instance, serve.Procedure, serve.Step))
+		name := fmt.Sprintf("%s (%s at %s)", serve.Instance, serve.Procedure, serve.Step)
+		if !pending && len(result.Open) >= maxResumeOpenInstances {
+			omitted = append(omitted, name)
 			continue
 		}
-		mapped, err := s.toRootServeResult(ctx, req, ss, serve)
+		mark := ss.root.ServeMark()
+		mapped, err := s.boundedServe(ctx, req, ss, serve, serveBudget-spent)
 		if err != nil {
 			return ResumeSessionResult{}, err
 		}
 		mapped.Framing = ""
-		spent += size
+		cost, err := resultChars(mapped)
+		if err != nil {
+			return ResumeSessionResult{}, err
+		}
+		if !pending && len(result.Open) > 0 && spent+cost > serveBudget {
+			ss.root.WithdrawServedSince(mark)
+			omitted = append(omitted, name)
+			continue
+		}
+		spent += cost
 		result.Open = append(result.Open, mapped)
 	}
 	if len(omitted) > 0 {
@@ -1563,24 +1627,6 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 		return ResumeSessionResult{}, err
 	}
 	return result, nil
-}
-
-// resumeServeBytes estimates one open serve's projection weight from the
-// fields the mapping actually carries (never InstructionLanes, which duplicate
-// Instructions). Dedup can only shrink the mapped result, so the estimate errs
-// toward omitting — never toward an oversized projection.
-func resumeServeBytes(serve *sdd.WorkflowServe) int {
-	n := len(serve.Instructions) + len(serve.Goal)
-	if b, err := json.Marshal(serve.ReportSchema); err == nil {
-		n += len(b)
-	}
-	for _, v := range capValues(serve.Collected) {
-		n += len(v)
-	}
-	for _, v := range capValues(serve.Produced) {
-		n += len(v)
-	}
-	return n
 }
 
 // openThreadsRoot renders the session shell's open-work block: this dialogue's

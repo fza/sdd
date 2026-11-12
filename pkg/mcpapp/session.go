@@ -16,6 +16,9 @@ import (
 type shellSession struct {
 	mu   sync.Mutex
 	root *sdd.WorkflowSession
+	// pages holds, per tool, the pages of its last result too large for one,
+	// which later calls naming a page serve without running the read again.
+	pages map[string][]string
 }
 
 // repeats is the no-repeat rule over what the call proves it holds.

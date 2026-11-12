@@ -7,7 +7,10 @@ package proctest_test
 
 import (
 	"errors"
+	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -83,14 +86,14 @@ func (x *deepExchange) judge(t *testing.T, findings []any) *sdd.WorkflowServe {
 // readAllPages turns the verifier's reading to its last page.
 func readAllPages(t *testing.T, delegate *proctest.Session, instance string) {
 	t.Helper()
-	for range 5 {
+	for range 20 {
 		serve := delegate.Answer(t, instance, "read", "more", nil, "")
 		proctest.RequireStep(t, serve, "read")
 		if strings.Contains(serve.Instructions, "Every page is served.") {
 			return
 		}
 	}
-	t.Fatal("the reading should end within 5 pages")
+	t.Fatal("the reading should end within 20 pages")
 }
 
 // pickUp reports the launch started and picks the delegate's delivery up.
@@ -129,23 +132,45 @@ func TestCaptureDeep_ServesTheReadingInPagesAndRefusesEarlyFindings(t *testing.T
 	_, resume := world.Resume(t, x.dispatch.Session, "verifier")
 	first := resume.Open[0].Instructions
 	x.delegate.Refresh(t)
-	for _, want := range []string{"Page 1 of 3.", "## Draft", deepBody, "Role in the reading: declared target", "do not bind you"} {
+	count := readingPages(t, first)
+	for _, want := range []string{"Page 1 of ", "## Draft", deepBody, "Role in the reading: declared target", "do not bind you"} {
 		if !strings.Contains(first, want) {
 			t.Errorf("page 1 should carry %q:\n%s", want, first)
 		}
 	}
 	_, err := x.delegate.AnswerErr(t, x.child, "read", "judge", map[string]any{"findings": []any{}}, "")
-	if err == nil || !strings.Contains(err.Error(), "page 1 of 3 is the last served") {
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("page 1 of %d is the last served", count)) {
 		t.Fatalf("findings before every page was served should be refused, got %v", err)
 	}
 	serve := x.delegate.Answer(t, x.child, "read", "more", nil, "")
-	if !strings.Contains(serve.Instructions, "Page 2 of 3.") || !strings.Contains(serve.Instructions, "## Pre-flight's rules") {
+	if !strings.Contains(serve.Instructions, fmt.Sprintf("Page 2 of %d.", count)) || !strings.Contains(serve.Instructions, "## Pre-flight's rules") {
 		t.Fatalf("page 2 should carry pre-flight's rules:\n%s", serve.Instructions)
 	}
-	serve = x.delegate.Answer(t, x.child, "read", "more", nil, "")
-	if !strings.Contains(serve.Instructions, "Page 3 of 3.") || !strings.Contains(serve.Instructions, "ID: "+captureRef2ID) {
-		t.Fatalf("page 3 should carry the briefs:\n%s", serve.Instructions)
+	var later strings.Builder
+	for page := 3; page <= count; page++ {
+		serve = x.delegate.Answer(t, x.child, "read", "more", nil, "")
+		if !strings.Contains(serve.Instructions, fmt.Sprintf("Page %d of %d.", page, count)) {
+			t.Fatalf("the next serve should be page %d:\n%s", page, serve.Instructions)
+		}
+		later.WriteString(serve.Instructions)
 	}
+	if !strings.Contains(later.String(), "ID: "+captureRef2ID) {
+		t.Fatalf("the pages after the rules should carry the briefs:\n%s", later.String())
+	}
+}
+
+// readingPages returns how many pages the reading page 1 opens takes.
+func readingPages(t *testing.T, first string) int {
+	t.Helper()
+	match := regexp.MustCompile(`Page 1 of (\d+)\.`).FindStringSubmatch(first)
+	if match == nil {
+		t.Fatalf("page 1 should name the page count:\n%s", first)
+	}
+	count, err := strconv.Atoi(match[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return count
 }
 
 func TestCaptureDeep_AVerdictReportsItsFindingsList(t *testing.T) {
@@ -736,18 +761,19 @@ func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(resumed.Open[0].Instructions, "Page 1 of 3.") {
+			if !strings.Contains(resumed.Open[0].Instructions, "Page 1 of ") {
 				t.Fatalf("the resume should serve page 1:\n%s", resumed.Open[0].Instructions)
 			}
+			count := readingPages(t, resumed.Open[0].Instructions)
 			held := workflow.TakeStepFullIDs()
 			if slices.Contains(held, captureRefID) != tc.cut || slices.Contains(held, captureRef2ID) {
 				t.Fatalf("page 1 should hand on the declared target it serves in full, and only with cuts on, got %v", held)
 			}
 			delegate := &proctest.Session{World: world, WF: workflow, ID: x.dispatch.Session}
-			for _, page := range []string{"Page 2 of 3.", "Page 3 of 3."} {
+			for page := 2; page <= count; page++ {
 				serve := delegate.Answer(t, x.child, "read", "more", nil, "")
-				if !strings.Contains(serve.Instructions, page) {
-					t.Fatalf("the next serve should be %q:\n%s", page, serve.Instructions)
+				if want := fmt.Sprintf("Page %d of %d.", page, count); !strings.Contains(serve.Instructions, want) {
+					t.Fatalf("the next serve should be %q:\n%s", want, serve.Instructions)
 				}
 				if held := workflow.TakeStepFullIDs(); len(held) != 0 {
 					t.Fatalf("the rules page and the brief page should hand on nothing, got %v", held)

@@ -99,6 +99,10 @@
           "description": "the running capture this reading grounds: its reported draft writes the searches, and only reads made through gather inside it count for its grounding. Report the draft at assemble first",
           "type": "string"
         },
+        "page": {
+          "description": "a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside",
+          "type": "integer"
+        },
         "reread": {
           "description": "tags or piece names of served pieces you no longer see; they serve in full again",
           "items": {
@@ -265,7 +269,7 @@
           "type": "string"
         },
         "max_bytes": {
-          "description": "page size cap; default 65536",
+          "description": "page size cap; default 65536. A page stops short of it where the result would grow past its bound; next_offset continues",
           "type": "integer"
         },
         "name": {
@@ -297,6 +301,10 @@
         "class": {
           "description": "filter: predicate, query, or command",
           "type": "string"
+        },
+        "page": {
+          "description": "the page of the contracts to serve, from 1; next_page names the one after it",
+          "type": "integer"
         },
         "session": {
           "description": "session handle this connection is attached to (from start_session or resume_session); required",
@@ -368,6 +376,10 @@
             "null",
             "integer"
           ]
+        },
+        "page": {
+          "description": "a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside",
+          "type": "integer"
         },
         "project": {
           "description": "project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read",
@@ -451,6 +463,10 @@
             "null",
             "array"
           ]
+        },
+        "page": {
+          "description": "a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside",
+          "type": "integer"
         },
         "project": {
           "description": "project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read",
@@ -665,6 +681,10 @@
         "layout": {
           "description": "sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'",
           "type": "string"
+        },
+        "page": {
+          "description": "a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside",
+          "type": "integer"
         },
         "project": {
           "description": "project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read",

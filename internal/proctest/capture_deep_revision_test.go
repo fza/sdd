@@ -86,7 +86,7 @@ func TestCaptureDeep_ARevisionCanBeReadWhole(t *testing.T) {
 	proctest.RequireStep(t, x.settleWithAChange(t, "A tactical gap: the fixture observes a subject twice."), "deepWait")
 	x.pickUpRevision(t)
 	serve := x.delegate.Answer(t, x.child, "read", "reread", nil, "")
-	if !strings.Contains(serve.Instructions, "Page 1 of 3.") || !strings.Contains(serve.Instructions, "Role in the reading: declared target") || !strings.Contains(serve.Instructions, "observes a subject twice.") {
+	if !strings.Contains(serve.Instructions, "Page 1 of ") || !strings.Contains(serve.Instructions, "Role in the reading: declared target") || !strings.Contains(serve.Instructions, "observes a subject twice.") {
 		t.Fatalf("reread should serve the whole reading of the revised draft from page 1:\n%s", serve.Instructions)
 	}
 	serve = x.judge(t, []any{})

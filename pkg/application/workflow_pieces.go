@@ -67,6 +67,13 @@ func (w *WorkflowSession) ServeSchema(name string, schema map[string]any) (Serve
 	return ServedPiece{Tag: served.Anchor.Tag}, served.Anchor.RenderSchema(schema), nil
 }
 
+// ServeMark marks the pieces the call has served so far.
+func (w *WorkflowSession) ServeMark() int { return w.session.PieceMark() }
+
+// WithdrawServedSince withdraws the pieces served after mark, for a result
+// composed again before it reaches the agent.
+func (w *WorkflowSession) WithdrawServedSince(mark int) { w.session.DropPiecesSince(mark) }
+
 // ServeNotice returns a notice named name that rides on results as served
 // once per change of its text: whole while the text differs from the last the
 // session served, empty otherwise. A finished session serves it whole, as its

@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
 // The deep verifier exchange (20261109-004729-d-cpt-xs5, V-D1, V-D2, V-D25):
@@ -26,8 +25,10 @@ const DeepRounds = 3
 // before a fresh one starts; each opens DeepRounds deliveries of its own.
 const DeepRevisions = 3
 
-// DeepPageChars bounds one served page of the deep verifier's reading (V-D8).
-const DeepPageChars = 50000
+// DeepPageChars bounds what one page of the deep verifier's reading costs in
+// the result that serves it (V-D8, ServedChars), leaving the rest of
+// MaxResultChars to the serve around the page.
+const DeepPageChars = 40000
 
 var deepAxes = []string{"contradicts", "duplicates", "outdated", "inconsistent", "ref-fit", "missing-ref", "dismissal", "aspiration", "strain", "evidence"}
 
@@ -422,10 +423,10 @@ func DeepReadingPages(lead string, first, rest []DeepReadingBlock) []DeepReading
 	pages := []DeepReadingPage{{Text: lead}}
 	add := func(block DeepReadingBlock, full, newPage bool) {
 		current := &pages[len(pages)-1]
-		if len(block.Text) > DeepPageChars {
+		if ServedChars(block.Text) > DeepPageChars {
 			pages = append(pages, DeepContinuedPages("", "("+block.ID+", continued)\n\n", block.Text)...)
 			current = &pages[len(pages)-1]
-		} else if newPage || (current.Text != "" && len(current.Text)+2+len(block.Text) > DeepPageChars) {
+		} else if newPage || (current.Text != "" && ServedChars(current.Text+"\n\n"+block.Text) > DeepPageChars) {
 			pages = append(pages, DeepReadingPage{Text: block.Text})
 			current = &pages[len(pages)-1]
 		} else {
@@ -492,38 +493,16 @@ func ParseDeepDraftDocument(doc string) (DeepDraftDocument, error) {
 // else at a line, else between runes, so the pages joined without their
 // openings are the text again.
 func DeepContinuedPages(intro, continued, text string) []DeepReadingPage {
-	room := DeepPageChars - max(len(intro), len(continued))
-	var pages []DeepReadingPage
-	opening := intro
-	for {
-		chunk := text
-		if len(chunk) > room {
-			chunk = text[:deepBreak(text, room)]
+	chunks := SplitServed(text, DeepPageChars-max(ServedChars(intro), ServedChars(continued)))
+	pages := make([]DeepReadingPage, len(chunks))
+	for i, chunk := range chunks {
+		opening := continued
+		if i == 0 {
+			opening = intro
 		}
-		pages = append(pages, DeepReadingPage{Text: opening + chunk})
-		text = text[len(chunk):]
-		if text == "" {
-			return pages
-		}
-		opening = continued
+		pages[i] = DeepReadingPage{Text: opening + chunk}
 	}
-}
-
-// deepBreak is where text longer than room breaks: after the last paragraph
-// or line break within room, else at the last rune start.
-func deepBreak(text string, room int) int {
-	head := text[:room]
-	if i := strings.LastIndex(head, "\n\n"); i > 0 {
-		return i + 2
-	}
-	if i := strings.LastIndexByte(head, '\n'); i > 0 {
-		return i + 1
-	}
-	cut := room
-	for cut > 1 && !utf8.RuneStart(text[cut]) {
-		cut--
-	}
-	return cut
+	return pages
 }
 
 // The causes of a deep verifier skip, both the user's alone.

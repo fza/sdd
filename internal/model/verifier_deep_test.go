@@ -153,7 +153,7 @@ func TestWeighDeep(t *testing.T) {
 }
 
 func TestDeepReadingPages(t *testing.T) {
-	big := strings.Repeat("x", model.DeepPageChars-20)
+	big := strings.Repeat("x", model.DeepPageChars/2-20)
 	pages := model.DeepReadingPages("draft",
 		[]model.DeepReadingBlock{{ID: "t", Text: "target"}, {ID: "f", Text: "read in full"}},
 		[]model.DeepReadingBlock{{ID: "b1", Text: "brief one"}, {ID: "b2", Text: big}, {ID: "b3", Text: "brief three"}})
@@ -164,8 +164,8 @@ func TestDeepReadingPages(t *testing.T) {
 		t.Fatalf("page 1 holds the draft and full reads, the briefs follow on pages of their own, got %q", []string{pages[0].Text, pages[1].Text[:9], pages[2].Text})
 	}
 	for _, page := range pages {
-		if len(page.Text) > model.DeepPageChars {
-			t.Fatalf("a page should stay within %d characters, got %d", model.DeepPageChars, len(page.Text))
+		if model.ServedChars(page.Text) > model.DeepPageChars {
+			t.Fatalf("a page should stay within the page bound, got %d", model.ServedChars(page.Text))
 		}
 	}
 }
@@ -181,8 +181,8 @@ func TestDeepReadingPagesSplitAnOversizedEntry(t *testing.T) {
 	}
 	var joined strings.Builder
 	for i, page := range pages[1 : len(pages)-1] {
-		if len(page.Text) > model.DeepPageChars {
-			t.Fatalf("page %d should stay within the page bound, got %d characters", i+2, len(page.Text))
+		if model.ServedChars(page.Text) > model.DeepPageChars {
+			t.Fatalf("page %d should stay within the page bound, got %d", i+2, model.ServedChars(page.Text))
 		}
 		body := page.Text
 		if i > 0 {
@@ -206,14 +206,14 @@ func TestDeepReadingPagesSplitAnOversizedEntry(t *testing.T) {
 func TestDeepContinuedPages(t *testing.T) {
 	line := strings.Repeat("l", 99) + "\n"
 	paragraph := strings.Repeat(line, 10) + "\n"
-	runes := "x" + strings.Repeat("ü", model.DeepPageChars)
+	runes := "x" + strings.Repeat("ü", model.DeepPageChars/2)
 	for _, tc := range []struct {
 		name, text, breaks string
 		pages              int
 	}{
 		{"short", "the rules", "", 1},
-		{"paragraphs", strings.Repeat(paragraph, 120), "\n\n", 3},
-		{"lines", strings.Repeat(line, 1200), "\n", 3},
+		{"paragraphs", strings.Repeat(paragraph, 50), "\n\n", 3},
+		{"lines", strings.Repeat(line, 500), "\n", 3},
 		{"one long line", runes, "", 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -223,8 +223,8 @@ func TestDeepContinuedPages(t *testing.T) {
 			}
 			var joined strings.Builder
 			for i, page := range pages {
-				if len(page.Text) > model.DeepPageChars {
-					t.Fatalf("page %d should stay within the page bound, got %d characters", i+1, len(page.Text))
+				if model.ServedChars(page.Text) > model.DeepPageChars {
+					t.Fatalf("page %d should stay within the page bound, got %d", i+1, model.ServedChars(page.Text))
 				}
 				opening := "# Rules, continued\n\n"
 				if i == 0 {
@@ -252,7 +252,7 @@ func TestDeepContinuedPages(t *testing.T) {
 // Each page names the entries it serves in full: the blocks of first, on the
 // page they land on; briefs name none.
 func TestDeepReadingPagesNameTheirFullEntries(t *testing.T) {
-	big := strings.Repeat("x", model.DeepPageChars-5)
+	big := strings.Repeat("x", model.DeepPageChars/2-5)
 	pages := model.DeepReadingPages("draft",
 		[]model.DeepReadingBlock{{ID: "t", Text: "target"}, {ID: "f", Text: big}},
 		[]model.DeepReadingBlock{{ID: "b1", Text: "brief one"}})

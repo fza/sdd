@@ -33,18 +33,23 @@ func heldLine(names []string) string {
 	return fmt.Sprintf("(held: %s — list a tag in reread to have its text again, or resume_session re-serves this position in full)", strings.Join(names, ", "))
 }
 
-// composeInstructions serves the step's lanes: a lane the call holds becomes
-// its pointer, the rest serve in full with their tags. A lane carrying an
-// entry the verify reading page served whole holds that entry too.
-func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe) string {
+// composeInstructions serves the step's first keep lanes: a lane the call
+// holds becomes its pointer, the rest serve in full with their tags. A lane
+// carrying an entry of pageFull, those the verify reading page served whole,
+// holds that entry too. The lanes past keep wait, named with the call that
+// serves them.
+func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, pageFull []string) string {
 	lanes := serve.InstructionLanes
 	if len(lanes) == 0 {
 		return serve.Instructions
 	}
-	pageFull := ss.root.TakeStepFullIDs()
-	var fresh, held []string
-	for _, lane := range lanes {
+	var fresh, held, waiting []string
+	for i, lane := range lanes {
 		name := "lane " + lane.Name
+		if i >= keep {
+			waiting = append(waiting, lane.Name)
+			continue
+		}
 		served := ss.root.ServeText(name, lane.Text, carried(pageFull, lane.Text))
 		if served.Held {
 			held = append(held, heldName(name, served.Tag))
@@ -52,14 +57,17 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe) string {
 		}
 		fresh = append(fresh, served.Text)
 	}
-	if len(fresh) == 0 {
+	if len(fresh) == 0 && len(waiting) == 0 {
 		fresh = append(fresh, fmt.Sprintf("(you hold the step %s instructions — follow them; goal: %s)", serve.Step, serve.Goal))
 	}
 	text := strings.Join(fresh, "\n\n")
 	if len(held) > 0 {
 		text += "\n\n" + heldLine(held)
 	}
-	return serve.ComposeInstructions(text)
+	if len(waiting) > 0 {
+		text += fmt.Sprintf("\n\n(%d more lanes of these instructions wait, as this result would run past its size bound: %s. Call next with this instance and no report to have them before you act; it serves the step again)", len(waiting), strings.Join(waiting, ", "))
+	}
+	return serve.ComposeInstructions(strings.TrimPrefix(text, "\n\n"))
 }
 
 func carried(ids []string, text string) []string {
