@@ -390,7 +390,8 @@ func TestImmediateDeliveryReachesTheHeldDispatcher(t *testing.T) {
 	if forked.Status != "completed" {
 		t.Fatalf("a delivery made while forking should land in the dispatching session the answering call holds and be picked up there, got %s at %s", forked.Status, forked.Step)
 	}
-	if err := workflow.RecordServed(t.Context(), f.identity, []string{"served-after-fork"}); err != nil {
+	workflow.ServeText("lane step", servedLane, nil)
+	if err := workflow.RecordServed(t.Context(), f.identity); err != nil {
 		t.Fatalf("the held dispatching session should stay writable after the fork: %v", err)
 	}
 	if f.ended(t, forked.Dispatches[0].Session) == nil {

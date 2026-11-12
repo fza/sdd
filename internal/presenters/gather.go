@@ -11,7 +11,7 @@ import (
 
 // GatherWayBack is the call a pointer names to have an entry served in full
 // again (D34).
-const GatherWayBack = "gather with its ids, or resume_session"
+const GatherWayBack = "show or gather with its id and its tag left out of held"
 
 // RenderGather writes a gather serve: header, the entries served in full,
 // the candidates to judge and the entries set aside. Nothing is cut (D29):
@@ -37,7 +37,7 @@ func RenderGather(w io.Writer, result *query.GatherResult) error {
 	}
 	fmt.Fprintf(w, "prefilter: %s\n", prefilter)
 
-	repeats := &Repeats{Held: result.Held}
+	repeats := &Repeats{Held: result.Held, Anchor: result.Anchor}
 	wayBackShown := false
 	if result.Full != nil && len(result.Full.Groups) > 0 || len(result.Overflow) > 0 {
 		fmt.Fprintln(w)
@@ -62,7 +62,7 @@ func RenderGather(w io.Writer, result *query.GatherResult) error {
 			fmt.Fprintln(w)
 			fmt.Fprintf(w, "+%d opened entries past the full-serve cap of %d, open them with gather ids [%s]:\n", len(ids), query.GatherFullCap, strings.Join(ids, ", "))
 			for _, e := range result.Overflow {
-				fmt.Fprintln(w, gatherLine(g, model.GatherCandidate{Entry: e}, repeats.holds(e.ID, model.EntryBrief(e))))
+				fmt.Fprintln(w, gatherLine(g, model.GatherCandidate{Entry: e}, repeats))
 			}
 		}
 	}
@@ -72,7 +72,7 @@ func RenderGather(w io.Writer, result *query.GatherResult) error {
 	if len(result.ToJudge) > 0 {
 		fmt.Fprintln(w)
 		for _, candidate := range result.ToJudge {
-			fmt.Fprintln(w, gatherLine(g, candidate, repeats.holds(candidate.Entry.ID, model.EntryBrief(candidate.Entry))))
+			fmt.Fprintln(w, gatherLine(g, candidate, repeats))
 		}
 	}
 	if !wayBackShown {
@@ -102,25 +102,24 @@ func topicPathLabels(paths []model.TopicPath) []string {
 // RenderLateEntries writes the entries that landed after the assemble check
 // as brief lines, one each, nothing cut (D37); an entry held reports in full
 // prints as its pointer (R14).
-func RenderLateEntries(w io.Writer, g *model.Graph, late []*model.Entry, held func(id string) bool) {
-	repeats := &Repeats{Held: held}
+func RenderLateEntries(w io.Writer, g *model.Graph, late []*model.Entry, repeats *Repeats) {
 	for _, e := range late {
-		fmt.Fprintln(w, gatherLine(g, model.GatherCandidate{Entry: e}, repeats.holds(e.ID, model.EntryBrief(e))))
+		fmt.Fprintln(w, gatherLine(g, model.GatherCandidate{Entry: e}, repeats))
 	}
 	repeats.WriteWayBack(w)
 }
 
-// GatherPointer is the pointer an already-served entry prints as.
-func GatherPointer(e *model.Entry) string {
-	return pointerText(e.ID, model.EntryBrief(e))
+// GatherPointer is the pointer an entry held under tag prints as.
+func GatherPointer(e *model.Entry, tag string) string {
+	return pointerText(e.ID, model.EntryBrief(e), tag)
 }
 
-func gatherLine(g *model.Graph, candidate model.GatherCandidate, held bool) string {
+func gatherLine(g *model.Graph, candidate model.GatherCandidate, r *Repeats) string {
 	e := candidate.Entry
 	var line strings.Builder
 	line.WriteString("- ")
-	if held {
-		line.WriteString(GatherPointer(e))
+	if pointer, held := r.pointer(e.ID, model.EntryBrief(e)); held {
+		line.WriteString(pointer)
 	} else {
 		fmt.Fprintf(&line, "%s (%s %s %s)", e.ID, e.Kind, e.LayerLabel(), e.TypeLabel())
 		if status := FormatStatus(g.DerivedStatus(e)); status != "" {

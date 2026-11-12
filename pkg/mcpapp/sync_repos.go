@@ -28,7 +28,7 @@ type SyncReposResult struct {
 }
 
 func (s *Server) syncRepos(ctx context.Context, req *mcp.CallToolRequest, args SyncReposArgs) (*mcp.CallToolResult, SyncReposResult, error) {
-	ss, err := s.attachedSession(ctx, req, args.Session)
+	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
 	if err != nil {
 		return nil, SyncReposResult{}, err
 	}

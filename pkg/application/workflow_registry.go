@@ -142,21 +142,20 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if w.framing {
 				w.laneFull = append(w.laneFull, result.FullIDs...)
 			} else {
-				repeats = &presenters.Repeats{Held: w.heldRepeats()}
+				repeats = w.repeats()
 			}
+			mark := w.session.PieceMark()
 			text := presenters.ViewText(result.ViewSections, repeats)
 			if result.bodiesOnly {
-				if w.cutRepeats && !w.framing {
-					w.stepFull = append(w.stepFull, result.FullIDs...)
-				}
 				// Authored bodies are never split (d-tac-rzi): the view cut them
 				// whole and names what it withheld, so no line cut follows.
 				n := len(text)
 				return truncate.Text{Text: text, Cut: truncate.Cut{KeptBytes: n, TotalBytes: n}}, nil
 			}
+			// A line cut can drop a body the view rendered.
 			_, cut := serveview.BoundValue(text, ctx.Cap)
-			if w.cutRepeats && !w.framing && cut == nil {
-				w.stepFull = append(w.stepFull, result.FullIDs...)
+			if cut != nil {
+				w.session.DropPiecesSince(mark)
 			}
 			return text, nil
 		},
@@ -167,7 +166,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		// Not serve-safe: it calls LogRead, so it writes a read event. It may
 		// inject into a step unit, but never as a framing lane (a serve must not
 		// write — I7); the spec loader enforces that.
-		Doc:   engine.FuncDoc{Name: "entryChains", Doc: "Entries with upstream/downstream chains for an explicit id arg or the store's anchor/targets. Args up, down: expansion depths; onceFull: serve nothing when every entry was already served in full this session; requireBody: fail when a primary resolves to an empty body. An explicit id resolves to its live supersession head before serving, so a project override wins and the read logs under the same ID the dedup checks. Chains are bounded per direction by the engine's entry-list budget; the cut renders as the same honest frontier the depth limit uses. Served over MCP, an entry the consumer already holds in full prints as its pointer (R14).", Reads: []string{"anchor", "targets"}},
+		Doc:   engine.FuncDoc{Name: "entryChains", Doc: "Entries with upstream/downstream chains for an explicit id arg or the store's anchor/targets. Args up, down: expansion depths; onceFull: serve nothing when the consumer holds every entry in full (over MCP proved by its anchor, elsewhere by the read ledger); requireBody: fail when a primary resolves to an empty body. An explicit id resolves to its live supersession head before serving, so a project override wins and the read logs under the same ID the dedup checks. Chains are bounded per direction by the engine's entry-list budget; the cut renders as the same honest frontier the depth limit uses. Served over MCP, an entry the consumer already holds in full prints as its pointer (R14).", Reads: []string{"anchor", "targets"}},
 		Bound: engine.QueryBound{Part: serveview.PartEntryList},
 		Fn: func(ctx *engine.Context, args map[string]any) (any, error) {
 			var ids []string
@@ -185,7 +184,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if onceFull, _ := args["onceFull"].(bool); onceFull {
 				pending := ids[:0]
 				for _, id := range ids {
-					if ctx.Reads[workflowLiveHead(ctx.Graph, id)] != engine.ReadFull {
+					if !w.servedInFull(ctx, workflowLiveHead(ctx.Graph, id)) {
 						pending = append(pending, id)
 					}
 				}
@@ -215,18 +214,11 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if err != nil {
 				return nil, err
 			}
-			text, err := presenters.ShowText(result.Items, &presenters.Repeats{Held: w.heldRepeats()})
+			text, err := presenters.ShowText(result.Items, w.repeats())
 			if err != nil {
 				return nil, err
 			}
 			w.session.LogRead("inject:entryChains", result.FullIDs, result.SummaryIDs)
-			if w.cutRepeats {
-				held := make([]string, len(result.FullIDs))
-				for i, id := range result.FullIDs {
-					held[i] = HeldEntryHash(id)
-				}
-				w.session.RecordServed(held)
-			}
 			return text, nil
 		},
 	}); err != nil {

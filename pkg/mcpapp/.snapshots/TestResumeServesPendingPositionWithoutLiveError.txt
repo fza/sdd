@@ -47,6 +47,14 @@ instructions: |
   continuing, and continue through next, carrying this session's handle. If you
   lose your place again later, resume_session with this handle re-serves this
   list in full.
+
+  Every piece served in full (an instruction lane, a framing block, a report
+  schema, an entry) carries a tag, such as ⟦tag⟧, before one of its words. On
+  each later call, list in held every tag whose text you still see, with the
+  word right after it, as tag:word: that piece then serves as a short pointer.
+  List in reread the tag or name of a piece you no longer see; it serves in
+  full again. Never guess a word: a missing or wrong proof costs only the full
+  text.
 open_instances:
   -
     goal: dialogue freely; start a move when something crystallizes

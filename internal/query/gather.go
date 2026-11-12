@@ -25,6 +25,9 @@ type GatherResult struct {
 	SetAside []model.GatherSetAside
 	// Held reports whether the consumer already holds an entry in full that
 	// the serve did not open by ID: it prints as a pointer with the brief and
-	// the way back (D34, R14). Nil holds nothing, as the CLI serves.
-	Held func(id string) bool
+	// the way back (D34, R14), with the tag it is held under. Nil holds
+	// nothing, as the CLI serves. Anchor places the tag in a body served in
+	// full.
+	Held   func(id string) (tag string, held bool)
+	Anchor func(id, body string) string
 }

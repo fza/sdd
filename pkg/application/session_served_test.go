@@ -4,51 +4,83 @@ import (
 	"testing"
 	"time"
 
+	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
-// TestServedLedgerSurvivesReplayAndReorientClearsIt covers the served-once
-// memory living in the session ledger (d-cpt-aen): what one consumer recorded
-// as served is known to the next one that loads the handle, a reorientation
-// forgets it, and the forgetting replays too.
-func TestServedLedgerSurvivesReplayAndReorientClearsIt(t *testing.T) {
+const servedLane = "Draft one entry, dialogue first, then check its grounding."
+
+// proofOf is the proof an agent holding a piece served in full would list.
+func proofOf(t *testing.T, served sdd.ServedPiece) string {
+	t.Helper()
+	word, ok := model.WordAfterAnchor(served.Text, served.Tag)
+	if served.Held || !ok {
+		t.Fatalf("the piece should serve in full with its tag, got %+v", served)
+	}
+	return served.Tag + ":" + word
+}
+
+// TestAnchorsSurviveReplayAndReorientServesInFull covers the served memory
+// the ledger keeps (d-cpt-aen, 20261112-075604-d-tac-t4r): a tag one consumer
+// received is checked for the next one that loads the handle, and a
+// reorientation serves its call in full without forgetting the tag.
+func TestAnchorsSurviveReplayAndReorientServesInFull(t *testing.T) {
 	application, _, _, _ := newStampWorkflowApp(t, "", "", time.Now)
 	identity := sdd.RequestIdentity{Subject: "christopher"}
 	w, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "mcp-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hashes := []string{"h-orientation", "h-moves"}
-	if err := w.RecordServed(t.Context(), identity, hashes); err != nil {
+	proof := proofOf(t, w.ServeText("lane step", servedLane, nil))
+	err = w.RecordServed(t.Context(), identity)
+	if err != nil {
 		t.Fatal(err)
 	}
-	assertServed := func(t *testing.T, session *sdd.WorkflowSession, want bool) {
+	holds := func(t *testing.T, session *sdd.WorkflowSession, want bool) {
 		t.Helper()
-		for _, hash := range hashes {
-			if got := session.ServedBefore(hash); got != want {
-				t.Fatalf("ServedBefore(%q) = %v, want %v", hash, got, want)
-			}
+		err := session.BeginCall([]string{proof}, nil)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if session.ServedBefore("h-never") {
-			t.Fatal("a hash never recorded reads served")
+		if got := session.ServeText("lane step", servedLane, nil).Held; got != want {
+			t.Fatalf("a call carrying the proof should hold the lane: %v, want %v", got, want)
 		}
 	}
-	assertServed(t, w, true)
 
 	replayed, err := application.LoadWorkflow(t.Context(), identity, sdd.WorkflowResumeRequest{SessionID: w.ID(), ClientName: "mcp-b"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertServed(t, replayed, true)
+	holds(t, replayed, true)
 
-	if err := replayed.Reorient(t.Context(), identity); err != nil {
+	err = replayed.BeginCall([]string{proof}, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	assertServed(t, replayed, false)
+	err = replayed.Reorient(t.Context(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.ServeText("lane step", servedLane, nil).Held {
+		t.Fatal("a reorientation should serve its call in full")
+	}
 
 	again, _, err := application.ResumeWorkflow(t.Context(), identity, sdd.WorkflowResumeRequest{SessionID: w.ID(), ClientName: "mcp-c"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertServed(t, again, false)
+	holds(t, again, true)
+}
+
+func TestBeginCallRefusesAMalformedProof(t *testing.T) {
+	application, _, _, _ := newStampWorkflowApp(t, "", "", time.Now)
+	identity := sdd.RequestIdentity{Subject: "christopher"}
+	w, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "mcp-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = w.BeginCall([]string{"no-word-here"}, nil)
+	if err == nil {
+		t.Error("a held item that is not tag:word should be refused")
+	}
 }

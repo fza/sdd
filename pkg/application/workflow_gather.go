@@ -17,8 +17,6 @@ type WorkflowGatherRequest struct {
 	Draft    string
 	Topics   []string
 	SyncMode SearchSyncMode
-	// Held reports whether the consumer already holds an entry in full.
-	Held func(id string) bool
 }
 
 // Gather runs the reading and, naming a running instance, records it as the
@@ -26,7 +24,10 @@ type WorkflowGatherRequest struct {
 // instance count for the capture's grounding.
 func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, request WorkflowGatherRequest) (GatherResult, error) {
 	w.setOperation(ctx, identity)
-	gather := GatherRequest{SyncMode: request.SyncMode, Draft: request.Draft, Topics: request.Topics, IDs: request.IDs, Held: request.Held}
+	gather := GatherRequest{SyncMode: request.SyncMode, Draft: request.Draft, Topics: request.Topics, IDs: request.IDs}
+	if repeats := w.repeats(); repeats != nil {
+		gather.Held, gather.Anchor = repeats.Held, repeats.Anchor
+	}
 	project := w.project
 	gather.Branch, gather.BranchFromSession = w.branch, w.branch != ""
 	if request.Instance != "" {

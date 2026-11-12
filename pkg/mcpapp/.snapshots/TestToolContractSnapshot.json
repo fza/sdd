@@ -4,6 +4,16 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "held": {
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "instance": {
           "description": "instance handle to abandon (a move); pass session too, naming the session the move belongs to",
           "type": "string"
@@ -11,6 +21,16 @@
         "reason": {
           "description": "why the instance or session is being abandoned",
           "type": "string"
+        },
+        "reread": {
+          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "session": {
           "description": "with instance: the attached session the move belongs to (required). Alone: a session handle to tear down directly — no resume, no framing",
@@ -47,13 +67,23 @@
     "name": "bind_branch"
   },
   {
-    "description": "Ground a draft before its capture, in one call, within the session named by session (required): on a small graph every live entry's brief; above it a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry already served in full prints as a pointer with its brief.",
+    "description": "Ground a draft before its capture, in one call, within the session named by session (required): on a small graph every live entry's brief; above it a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry the call proves it holds prints as a pointer with its brief.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "draft": {
           "description": "without instance: the draft text the searches are written from; credits nothing",
           "type": "string"
+        },
+        "held": {
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "ids": {
           "description": "entries to open in full; also the way back to an entry a pointer names",
@@ -68,6 +98,16 @@
         "instance": {
           "description": "the running capture this reading grounds: its reported draft writes the searches, and only reads made through gather inside it count for its grounding. Report the draft at assemble first",
           "type": "string"
+        },
+        "reread": {
+          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "session": {
           "description": "session handle this connection is attached to (from start_session or resume_session); required",
@@ -116,6 +156,16 @@
           "minimum": 0,
           "type": "integer"
         },
+        "held": {
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "instance": {
           "description": "instance handle from start_procedure",
           "type": "string"
@@ -128,6 +178,16 @@
           "additionalProperties": true,
           "description": "state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}. Omit report, retry_ref and cancel_ref together to pick up a delivery a waiting step was served as awaiting",
           "type": "object"
+        },
+        "reread": {
+          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "retry_ref": {
           "description": "exact retry reference from a failed operation; mutually exclusive with report and cancel_ref",
@@ -151,6 +211,16 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "held": {
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "instance": {
           "description": "running move instance to park",
           "type": "string"
@@ -158,6 +228,16 @@
         "note": {
           "description": "one line on why the move is shelved — carried in the session log for whoever resumes it",
           "type": "string"
+        },
+        "reread": {
+          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "session": {
           "description": "session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction",
@@ -228,12 +308,12 @@
     "name": "registry"
   },
   {
-    "description": "The second door, and the compaction escape: re-serve the current position of the session whose handle you present — its framing plus every running move at its current step, each with the report schema to continue it. Presenting the handle is the whole authorization (a handle reaches you only by issuance or by the user handing it over), and it declares that you need re-serving: the served-once memory resets, so the complete position serves in full. Only recorded session state resumes — step position, collected fields, staged files — never another conversation's context. A lost handle is the user's to recover, not yours to guess.",
+    "description": "The second door, and the compaction escape: re-serve the current position of the session whose handle you present — its framing plus every running move at its current step, each with the report schema to continue it. Presenting the handle is the whole authorization (a handle reaches you only by issuance or by the user handing it over), and it declares that you need re-serving: every piece of the position serves in full. Only recorded session state resumes — step position, collected fields, staged files — never another conversation's context. A lost handle is the user's to recover, not yours to guess.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "session": {
-          "description": "the session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step with the schema to continue it. Presenting the handle is the whole authorization; it also declares that you need re-serving, so the served-once memory resets and the complete position serves in full",
+          "description": "the session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step with the schema to continue it. Presenting the handle is the whole authorization; it also declares that you need re-serving, so every piece of the position serves in full, whatever the call holds",
           "type": "string"
         }
       },
@@ -252,6 +332,16 @@
         "all_repos": {
           "description": "also search every repo in the project's dependency closure",
           "type": "boolean"
+        },
+        "held": {
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "include_superseded": {
           "type": "boolean"
@@ -297,6 +387,16 @@
             "array"
           ]
         },
+        "reread": {
+          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "session": {
           "description": "session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch",
           "type": "string"
@@ -332,6 +432,16 @@
             "integer"
           ]
         },
+        "held": {
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "ids": {
           "description": "entry IDs to show; accepts an unambiguous short ID ({type}-{layer}-{suffix}) and resolves it to the full entry",
           "items": {
@@ -345,6 +455,16 @@
         "project": {
           "description": "project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read",
           "type": "string"
+        },
+        "reread": {
+          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "session": {
           "description": "session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch",
@@ -428,6 +548,16 @@
           "description": "the procedure to start, by its stable name (e.g. capture)",
           "type": "string"
         },
+        "held": {
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "label": {
           "description": "short single-line subject label for the session (the dialogue); set it early, update when the subject sharpens",
           "type": "string"
@@ -444,6 +574,16 @@
         "project": {
           "description": "project the move works in, when not the session's home project: it must lie in the home project's declared dependency closure and be one the principal can read. Omitted, a foreign anchor selects its project, else the parent's, else the home project",
           "type": "string"
+        },
+        "reread": {
+          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
         },
         "session": {
           "description": "session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction",
@@ -512,6 +652,16 @@
           "description": "also render the layout over every repo in the project's dependency closure",
           "type": "boolean"
         },
+        "held": {
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "layout": {
           "description": "sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'",
           "type": "string"
@@ -522,6 +672,16 @@
         },
         "repos": {
           "description": "also render the layout over these repos of the project's dependency closure (additive to the local graph)",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "reread": {
+          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
           "items": {
             "type": "string"
           },

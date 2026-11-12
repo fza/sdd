@@ -36,6 +36,8 @@ When a conversation grows long, the agent compacts it into a summary. The sdd se
 - If the agent carries on from memory instead, skipping steps or answering for you, remind it: "Resume the sdd session first."
 - If the summary lost the session ID, the agent cannot find the session by itself. Give it the ID, or start a new session with `/sdd`.
 
+sdd sends each piece of text in full once: an instruction lane, a framing block, a report schema, an entry. Each piece carries a short tag such as `⟦k3f9⟧` before one of its words. On a later call the agent lists, for each piece it still sees, the tag and the word right after it, and sdd sends a short pointer instead of the text. When a summary drops a tag or the word after it, that proof fails and the text comes back in full. A subagent working on the same session holds no tags and gets the full text too. An agent that has lost a piece names it, and sdd sends it in full again.
+
 In practice it often works better to avoid compaction in long work. Capture the current state, for example as progress notes on the implementation or a partial done, and continue in a fresh agent session.
 
 ## Resume a session in a fresh agent session

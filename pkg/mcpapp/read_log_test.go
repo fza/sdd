@@ -66,10 +66,10 @@ func TestGatherPointsAtAnEntryAlreadyServedInFull(t *testing.T) {
 
 	var again mcpserver.GatherResult
 	call(t, cs, "gather", map[string]any{"session": session}, &again)
-	if !strings.Contains(again.Serve, fixtureGapID+" — ") || !strings.Contains(again.Serve, "(served in full above)") {
+	if !strings.Contains(again.Serve, fixtureGapID+" — ") || !strings.Contains(again.Serve, "(held as ⟦") {
 		t.Fatalf("a later serve should point at the entry served in full:\n%s", again.Serve)
 	}
-	if !strings.Contains(again.Serve, "gather with its ids, or resume_session") {
+	if !strings.Contains(again.Serve, "its tag left out of held") {
 		t.Fatalf("the pointer should name the way back:\n%s", again.Serve)
 	}
 

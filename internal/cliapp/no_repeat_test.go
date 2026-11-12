@@ -5,9 +5,11 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/networkteam/sdd/internal/model"
 )
 
-const pointerMark = "served in full above"
+const pointerMark = "(held as ⟦"
 
 // The no-repeat rule cuts only in MCP mode: the same CLI read prints in full
 // every time, with and without --session, also once the MCP session holds the
@@ -41,8 +43,8 @@ func TestCLIReadsServeInFullEveryTime(t *testing.T) {
 					t.Fatalf("sdd %s: %v\n%s", tc.name, result.err, result.stderr)
 				}
 				assertContainsOutput(t, "stdout", result.stdout, tc.want)
-				if strings.Contains(result.stdout, pointerMark) {
-					t.Fatalf("the CLI printed a pointer:\n%s", result.stdout)
+				if strings.Contains(result.stdout, pointerMark) || strings.Contains(result.stdout, "⟦") {
+					t.Fatalf("the CLI printed a pointer or a tag:\n%s", result.stdout)
 				}
 			}
 		})
@@ -50,7 +52,8 @@ func TestCLIReadsServeInFullEveryTime(t *testing.T) {
 }
 
 // openHoldingSession starts a session over the fixture's MCP server whose
-// consumer holds id in full: a second MCP show of it serves the pointer.
+// consumer holds id in full: a second MCP show of it, proving the tag the
+// first served, serves the pointer.
 func openHoldingSession(t *testing.T, f *appFixture, id string) string {
 	t.Helper()
 	var session string
@@ -60,10 +63,14 @@ func openHoldingSession(t *testing.T, f *appFixture, id string) string {
 			t.Fatalf("start_session: %s", served)
 		}
 		session = opened.Session
+		held := []string{}
 		for range 2 {
-			_, served, failed = callTool(t, client, "show", map[string]any{"session": session, "ids": []string{id}})
+			_, served, failed = callTool(t, client, "show", map[string]any{"session": session, "ids": []string{id}, "held": held})
 			if failed {
 				t.Fatalf("show: %s", served)
+			}
+			for _, proof := range model.ReadAnchors(served) {
+				held = append(held, proof.String())
 			}
 		}
 		if !strings.Contains(served, pointerMark) {

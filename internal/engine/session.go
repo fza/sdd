@@ -53,14 +53,16 @@ const (
 	// the session junction — state kept, resumable through next. Forensic
 	// only: a resuming agent can tell a shelved move from one that drifted.
 	EventParked EventType = "parked"
-	// EventServedBlocks records the content hashes of rendered blocks served
-	// to the session's consumer in full, so what the consumer already holds is
-	// derived from the ledger rather than from the transport (d-cpt-aen). No
-	// instance — the served set is session-level like the read set.
+	// EventServedBlocks is a log written before the anchor proof: replay
+	// reads past it.
 	EventServedBlocks EventType = "served_blocks"
+	// EventAnchors records the anchors a call issued for the pieces it served
+	// in full, so a restarted server still checks their proofs (Piece). No
+	// instance: the served memory is session-level like the read set.
+	EventAnchors EventType = "anchors"
 	// EventReoriented records that the consumer asked for the session's
-	// position — the declaration that it needs re-serving. It resets the
-	// served set; blocks accumulate again after it.
+	// position — the declaration that it needs re-serving. Its call serves
+	// every piece in full.
 	EventReoriented EventType = "reoriented"
 )
 
@@ -241,9 +243,11 @@ type Session struct {
 	// design: a parent's inspections count for children dispatched in the same
 	// session, and replay restores the set from the logged read events.
 	reads map[string]ReadDepth
-	// served folds the served-block events since the last reorientation: the
-	// content hashes the session's consumer holds in full.
-	served map[string]bool
+	// anchors folds the anchor events: each issued tag with its piece and
+	// word. call is the tool call in flight; rnd draws tags and positions.
+	anchors map[string]issuedAnchor
+	call    pieceCall
+	rnd     model.RandomSource
 	// sinkErr carries a deferred log-append failure; surfaced by the next
 	// advance call so a durability problem can't pass silently.
 	sinkErr     error
@@ -287,7 +291,7 @@ func (e *Engine) NewSession(id, participant string, sink EventSink, opts ...Sess
 		now:         time.Now,
 		instances:   map[string]*Instance{},
 		reads:       map[string]ReadDepth{},
-		served:      map[string]bool{},
+		anchors:     map[string]issuedAnchor{},
 		received:    map[string]bool{},
 	}
 	for _, o := range opts {
@@ -494,33 +498,10 @@ func (s *Session) ReadDepthOf(id string) ReadDepth {
 	return s.reads[id]
 }
 
-// ServedBefore reports whether a block with this content hash was served in
-// full since the last reorientation.
-func (s *Session) ServedBefore(hash string) bool {
-	return s.served[hash]
-}
-
-// RecordServed logs the content hashes of blocks just served in full and folds
-// them into the served set. Hashes already held or empty append nothing.
-func (s *Session) RecordServed(hashes []string) {
-	var fresh []string
-	for _, hash := range hashes {
-		if hash == "" || s.served[hash] {
-			continue
-		}
-		s.served[hash] = true
-		fresh = append(fresh, hash)
-	}
-	if len(fresh) == 0 {
-		return
-	}
-	s.appendEvent("", EventServedBlocks, map[string]any{"hashes": fresh})
-}
-
 // Reorient records the consumer's request for the session's position and
-// clears the served set, so the position re-serves in full.
+// makes the call in flight serve every piece in full.
 func (s *Session) Reorient() {
-	s.served = map[string]bool{}
+	s.call.full = true
 	s.appendEvent("", EventReoriented, nil)
 }
 
@@ -1348,19 +1329,13 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			}
 		}
 
-	case EventServedBlocks:
-		if hashes, ok := ev.Data["hashes"].([]any); ok {
-			for _, v := range hashes {
-				if hash, ok := v.(string); ok && hash != "" {
-					s.served[hash] = true
-				}
-			}
+	case EventAnchors:
+		anchors, _ := ev.Data["anchors"].([]any)
+		for _, record := range anchors {
+			s.foldAnchor(record)
 		}
 
-	case EventReoriented:
-		s.served = map[string]bool{}
-
-	case EventServed, EventParked:
+	case EventServed, EventParked, EventServedBlocks, EventReoriented:
 		// Forensic only — no state effect.
 
 	default:

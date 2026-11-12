@@ -44,8 +44,8 @@ func RenderSearch(w io.Writer, hits []types.SearchHit, r *Repeats) {
 
 	maxScore := globalMaxCitationScore(hits)
 	for _, hit := range hits {
-		if r.holds(hit.ID, hit.Brief) {
-			fmt.Fprintf(w, "  %s\n", pointerText(hit.ID, hit.Brief))
+		if pointer, held := r.pointer(hit.ID, hit.Brief); held {
+			fmt.Fprintf(w, "  %s\n", pointer)
 			continue
 		}
 		writeEntryLine(w, hitEntry(hit), math.NaN())

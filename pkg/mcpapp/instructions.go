@@ -64,3 +64,13 @@ Brief the user on where the work stands (procedure, step, goal) before
 continuing, and continue through next, carrying this session's handle. If you
 lose your place again later, resume_session with this handle re-serves this
 list in full.`
+
+// proofGuide tells an agent, at the opening and at every reorientation, how
+// it proves what it still holds (20261112-075604-d-tac-t4r).
+const proofGuide = `Every piece served in full (an instruction lane, a framing block, a report
+schema, an entry) carries a tag, such as ⟦k3f9⟧, before one of its words. On
+each later call, list in held every tag whose text you still see, with the
+word right after it, as tag:word: that piece then serves as a short pointer.
+List in reread the tag or name of a piece you no longer see; it serves in
+full again. Never guess a word: a missing or wrong proof costs only the full
+text.`

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -18,21 +19,31 @@ import (
 // present exactly when that lane serves in full.
 const captureIntroProse = "Draft one entry — one idea, dialogue first."
 
-const withheldLanesPrefix = "(lanes served earlier this session: "
+const withheldLanesPrefix = "(held: "
 
-// withheldLanes extracts the lane names from a serve's withheld-lanes line;
-// nil when the line is absent.
+var heldLaneName = regexp.MustCompile(`^lane (\S+) ⟦[0-9a-z]{4}⟧$`)
+
+// withheldLanes extracts the lane names from a serve's held-lanes line; nil
+// when the line is absent.
 func withheldLanes(t *testing.T, instructions string) []string {
 	t.Helper()
 	_, rest, found := strings.Cut(instructions, withheldLanesPrefix)
 	if !found {
 		return nil
 	}
-	names, _, found := strings.Cut(rest, " — resume_session")
-	if !found {
-		t.Fatalf("withheld-lanes line lacks its resume_session breadcrumb: %q", instructions)
+	names, _, found := strings.Cut(rest, " — list a tag in reread")
+	if !found || !strings.Contains(rest, "resume_session") {
+		t.Fatalf("held-lanes line lacks its way back: %q", instructions)
 	}
-	return strings.Split(names, ", ")
+	var lanes []string
+	for _, name := range strings.Split(names, ", ") {
+		match := heldLaneName.FindStringSubmatch(name)
+		if match == nil {
+			t.Fatalf("a held lane should be named with its tag, got %q", name)
+		}
+		lanes = append(lanes, match[1])
+	}
+	return lanes
 }
 
 // requireWithheldLanes asserts the serve collapsed already-served lanes into

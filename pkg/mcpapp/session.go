@@ -2,8 +2,6 @@ package mcpapp
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"sync"
 
 	"github.com/networkteam/sdd/internal/presenters"
@@ -18,63 +16,16 @@ import (
 type shellSession struct {
 	mu   sync.Mutex
 	root *sdd.WorkflowSession
-	// pending are the content hashes of blocks the call in flight served in
-	// full, recorded into the session ledger when the call's result is
-	// composed; seen dedups within the call.
-	pending []string
-	seen    map[string]bool
 }
 
-// servedBefore reports whether the session's consumer already holds a block
-// with these exact bytes — from the ledger, or earlier in this call — and
-// marks it served when not.
-func (ss *shellSession) servedBefore(block string) bool {
-	return ss.servedHashBefore(blockHash(block))
-}
-
-func (ss *shellSession) servedHashBefore(hash string) bool {
-	if ss.seen[hash] || ss.root.ServedBefore(hash) {
-		return true
-	}
-	if ss.seen == nil {
-		ss.seen = map[string]bool{}
-	}
-	ss.seen[hash] = true
-	ss.pending = append(ss.pending, hash)
-	return false
-}
-
-// holdsEntry reports whether the consumer already holds the entry in full,
-// without marking it.
-func (ss *shellSession) holdsEntry(id string) bool {
-	hash := sdd.HeldEntryHash(id)
-	return ss.root.ServedBefore(hash) || ss.seen[hash]
-}
-
-// repeats is the no-repeat rule over what the consumer already holds.
+// repeats is the no-repeat rule over what the call proves it holds.
 func (ss *shellSession) repeats() *presenters.Repeats {
-	return &presenters.Repeats{Held: ss.holdsEntry}
+	return &presenters.Repeats{Held: ss.root.HoldsEntry, Anchor: ss.root.ServeEntry}
 }
 
-// holdEntries marks entries served in full by the call in flight.
-func (ss *shellSession) holdEntries(ids []string) {
-	for _, id := range ids {
-		ss.servedHashBefore(sdd.HeldEntryHash(id))
-	}
-}
-
-// flushServed records what this call served in full into the session ledger,
-// the entries its step serves' views served whole among them.
+// flushServed records the anchors this call issued into the session ledger.
 func (ss *shellSession) flushServed(ctx context.Context, identity sdd.RequestIdentity) error {
-	ss.holdEntries(ss.root.TakeStepFullIDs())
-	hashes := ss.pending
-	ss.pending, ss.seen = nil, nil
-	return ss.root.RecordServed(ctx, identity, hashes)
-}
-
-func blockHash(block string) string {
-	sum := sha256.Sum256([]byte(block))
-	return hex.EncodeToString(sum[:])
+	return ss.root.RecordServed(ctx, identity)
 }
 
 // sessionCache holds the loaded sessions by ID.

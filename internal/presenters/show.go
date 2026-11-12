@@ -63,8 +63,8 @@ func ShowText(entries []types.ShownEntry, r *Repeats) (string, error) {
 }
 
 func renderShowEntry(w io.Writer, entry types.ShownEntry, opts ShowOptions) error {
-	if opts.Repeats.holds(entry.ID, entry.Brief) {
-		fmt.Fprintln(w, pointerText(entry.ID, entry.Brief))
+	if pointer, held := opts.Repeats.pointer(entry.ID, entry.Brief); held {
+		fmt.Fprintln(w, pointer)
 		renderShowChains(w, entry, opts)
 		return nil
 	}
@@ -77,7 +77,7 @@ func renderShowEntry(w io.Writer, entry types.ShownEntry, opts ShowOptions) erro
 	// (d-cpt-5wv).
 	fmt.Fprintln(w, "# body")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, mdcompose.DemoteTo(entry.Body, bodyHeadingLevel))
+	fmt.Fprintln(w, opts.Repeats.anchor(entry.ID, mdcompose.DemoteTo(entry.Body, bodyHeadingLevel)))
 	renderShowChains(w, entry, opts)
 	return nil
 }
@@ -258,9 +258,13 @@ func renderTreeItem(w io.Writer, item types.ShownChainItem, primaryID string, r 
 	line.WriteString("- ")
 	line.WriteString(treeVerb(item))
 	line.WriteString(" ")
+	pointer, held := "", false
+	if !item.ShownAbove && !item.ShownBelow {
+		pointer, held = r.pointer(item.ID, item.Brief)
+	}
 	switch {
-	case !item.ShownAbove && !item.ShownBelow && r.holds(item.ID, item.Brief):
-		line.WriteString(pointerText(item.ID, item.Brief))
+	case held:
+		line.WriteString(pointer)
 	default:
 		line.WriteString(item.ID)
 		if qual := treeQualifier(item); qual != "" {

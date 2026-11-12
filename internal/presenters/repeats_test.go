@@ -13,14 +13,14 @@ import (
 )
 
 func heldOnly(ids ...string) *presenters.Repeats {
-	return &presenters.Repeats{Held: func(id string) bool {
+	return &presenters.Repeats{Held: func(id string) (string, bool) {
 		for _, held := range ids {
 			if held == id {
-				return true
+				return "ab12", true
 			}
 		}
-		return false
-	}}
+		return "", false
+	}, Anchor: func(_, body string) string { return "⟦zz99⟧ " + body }}
 }
 
 // Every view renderer prints a held entry as its pointer and keeps the rest.
@@ -53,11 +53,11 @@ func TestRenderView_HeldEntryPrintsAsPointer(t *testing.T) {
 			presenters.RenderView(&buf, sections, heldOnly(ids...))
 			got := buf.String()
 			for _, e := range tc.held {
-				if !strings.Contains(got, presenters.GatherPointer(e)) {
+				if !strings.Contains(got, presenters.GatherPointer(e, "ab12")) {
 					t.Errorf("a held entry should print as its pointer:\n%s", got)
 				}
 			}
-			if strings.Contains(got, other.ID) && (!strings.Contains(got, "Other entry.") || strings.Contains(got, presenters.GatherPointer(other))) {
+			if strings.Contains(got, other.ID) && (!strings.Contains(got, "Other entry.") || strings.Contains(got, presenters.GatherPointer(other, "ab12"))) {
 				t.Errorf("an entry not held should print its own line:\n%s", got)
 			}
 			if !strings.Contains(got, presenters.GatherWayBack) {
@@ -85,11 +85,11 @@ func TestRenderShow_HeldChainEntryPrintsAsPointer(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := buf.String()
-	if !strings.Contains(got, presenters.GatherPointer(basis)) {
+	if !strings.Contains(got, presenters.GatherPointer(basis, "ab12")) {
 		t.Fatalf("a held chain entry should print as its pointer:\n%s", got)
 	}
-	if !strings.Contains(got, "# body") {
-		t.Fatalf("the primary not held should print in full:\n%s", got)
+	if !strings.Contains(got, "# body") || !strings.Contains(got, "⟦zz99⟧ Decision on the basis.") {
+		t.Fatalf("the primary not held should print in full with its tag:\n%s", got)
 	}
 }
 
@@ -103,7 +103,7 @@ func TestRenderSearch_HeldHitPrintsAsPointer(t *testing.T) {
 	var buf bytes.Buffer
 	presenters.RenderSearch(&buf, []types.SearchHit{local, remote}, heldOnly(local.ID, remote.ID))
 	got := buf.String()
-	if !strings.Contains(got, local.ID+" — Held entry. (served in full above)") || strings.Contains(got, "local-snippet") {
+	if !strings.Contains(got, local.ID+" — Held entry. (held as ⟦ab12⟧)") || strings.Contains(got, "local-snippet") {
 		t.Errorf("a held local hit should print as its pointer without citations:\n%s", got)
 	}
 	if !strings.Contains(got, "remote-snippet") || strings.Contains(got, remote.ID+" — ") {

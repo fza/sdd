@@ -121,11 +121,18 @@ func TestServedBlocksRecordAfterALaunchedRoundDelivered(t *testing.T) {
 	f.deliverPlan(t, round)
 	round.Finish("cli-1", nil)
 	f.recorded(t, forked.Dispatches[0].Session, 1)
-	if err := workflow.RecordServed(t.Context(), f.identity, []string{"served-while-the-delegate-delivered"}); err != nil {
-		t.Fatalf("the served blocks of the dispatching call should land although the delegate wrote the session meanwhile: %v", err)
+	proof := proofOf(t, workflow.ServeText("lane step", servedLane, nil))
+	err = workflow.RecordServed(t.Context(), f.identity)
+	if err != nil {
+		t.Fatalf("the anchors of the dispatching call should land although the delegate wrote the session meanwhile: %v", err)
 	}
-	if !f.session(t, f.parent).ServedBefore("served-while-the-delegate-delivered") {
-		t.Fatal("the served blocks should be in the session ledger")
+	reloaded := f.session(t, f.parent)
+	err = reloaded.BeginCall([]string{proof}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.ServeText("lane step", servedLane, nil).Held {
+		t.Fatal("the anchors should be in the session ledger")
 	}
 	if picked := f.advance(t, f.parent, f.dispatch, nil); picked.Step != "answer" {
 		t.Fatalf("the delegate's delivery should still land in the dispatching move, at %s", picked.Step)

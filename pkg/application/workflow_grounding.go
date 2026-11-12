@@ -85,7 +85,7 @@ func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) e
 				return nil, err
 			}
 			var rendered bytes.Buffer
-			presenters.RenderLateEntries(&rendered, ctx.Graph, entries, w.heldRepeats())
+			presenters.RenderLateEntries(&rendered, ctx.Graph, entries, w.repeats())
 			return strings.TrimRight(rendered.String(), "\n"), nil
 		},
 	})

@@ -3,10 +3,12 @@ package application_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -46,6 +48,34 @@ func newRepeatWorkflow(t *testing.T, extra ...map[string]string) (*sdd.WorkflowS
 	return workflow, identity, id
 }
 
+var placedTag = regexp.MustCompile(`⟦[0-9a-z]{4}⟧ `)
+
+// untag reads served text without the tags placed in it.
+func untag(text string) string { return placedTag.ReplaceAllString(text, "") }
+
+// holdEntry serves the entry in full, records its anchor and opens a call
+// proving it, as an agent that kept the text would; it returns the tag.
+func holdEntry(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.RequestIdentity, id string) string {
+	t.Helper()
+	proofs := model.ReadAnchors(workflow.ServeEntry(id, repeatTargetBody))
+	if len(proofs) != 1 {
+		t.Fatalf("an entry served in full should carry one tag, got %v", proofs)
+	}
+	err := workflow.RecordServed(t.Context(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = workflow.BeginCall([]string{proofs[0].String()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proofs[0].Tag
+}
+
+func heldPointer(id, tag string) string {
+	return id + " — A target for an explore step. (held as ⟦" + tag + "⟧)"
+}
+
 // The no-repeat rule cuts an injected entry chain only once CutRepeats turned
 // it on, as the MCP surface does; the CLI never cuts (R14).
 func TestInjectedEntryChainsCutRepeatsOnlyWhenTurnedOn(t *testing.T) {
@@ -62,15 +92,12 @@ func TestInjectedEntryChainsCutRepeatsOnlyWhenTurnedOn(t *testing.T) {
 			if tc.cut {
 				workflow.CutRepeats()
 			}
-			err := workflow.RecordServed(t.Context(), identity, []string{sdd.HeldEntryHash(id)})
-			if err != nil {
-				t.Fatal(err)
-			}
+			tag := holdEntry(t, workflow, identity, id)
 			serve, err := workflow.Start(t.Context(), identity, sdd.WorkflowStartRequest{Canonical: "explore", Params: map[string]any{"targets": []any{id}, "goal": "the target"}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			pointed := strings.Contains(serve.Instructions, id+" — A target for an explore step. (served in full above)")
+			pointed := strings.Contains(serve.Instructions, heldPointer(id, tag))
 			if pointed != tc.pointer || strings.Contains(serve.Instructions, repeatTargetBody) == tc.pointer {
 				t.Fatalf("a held target should print as its pointer only with cuts on:\n%s", serve.Instructions)
 			}
@@ -78,16 +105,34 @@ func TestInjectedEntryChainsCutRepeatsOnlyWhenTurnedOn(t *testing.T) {
 	}
 }
 
-// With cuts on, an entry an injected chain serves in full is held from then on.
-func TestInjectedEntryChainsHoldWhatTheyServe(t *testing.T) {
+// With cuts on, an entry an injected chain serves in full carries its tag,
+// and a later call proving it holds the entry.
+func TestInjectedEntryChainsTagWhatTheyServe(t *testing.T) {
 	workflow, identity, id := newRepeatWorkflow(t)
 	workflow.CutRepeats()
-	_, err := workflow.Start(t.Context(), identity, sdd.WorkflowStartRequest{Canonical: "explore", Params: map[string]any{"targets": []any{id}, "goal": "the target"}})
+	serve, err := workflow.Start(t.Context(), identity, sdd.WorkflowStartRequest{Canonical: "explore", Params: map[string]any{"targets": []any{id}, "goal": "the target"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !workflow.ServedBefore(sdd.HeldEntryHash(id)) {
-		t.Fatal("the target the step served in full should be held")
+	err = workflow.RecordServed(t.Context(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proofs := model.ReadAnchors(serve.Instructions)
+	if len(proofs) != 1 || !strings.Contains(untag(serve.Instructions), repeatTargetBody) {
+		t.Fatalf("the target should serve in full under one tag:\n%s", serve.Instructions)
+	}
+	for _, tc := range []struct {
+		held []string
+		want bool
+	}{{nil, false}, {[]string{proofs[0].String()}, true}} {
+		err = workflow.BeginCall(tc.held, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, held := workflow.HoldsEntry(id); held != tc.want {
+			t.Fatalf("a later call should hold the target exactly when it proves it, held=%v with %v", held, tc.held)
+		}
 	}
 }
 
@@ -122,23 +167,21 @@ Serves views of the repeat target.
 {{.listed}}
 `
 
-func startViewStep(t *testing.T, cut bool, held bool) (*sdd.WorkflowSession, string, string) {
+func startViewStep(t *testing.T, cut bool, held bool) (*sdd.WorkflowSession, string, string, string) {
 	t.Helper()
 	workflow, identity, id := newRepeatWorkflow(t, map[string]string{"13-070001-d-prc-vws.md": viewStepProcedure})
 	if cut {
 		workflow.CutRepeats()
 	}
+	var tag string
 	if held {
-		err := workflow.RecordServed(t.Context(), identity, []string{sdd.HeldEntryHash(id)})
-		if err != nil {
-			t.Fatal(err)
-		}
+		tag = holdEntry(t, workflow, identity, id)
 	}
 	serve, err := workflow.Start(t.Context(), identity, sdd.WorkflowStartRequest{Canonical: "view-step"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return workflow, id, serve.Instructions
+	return workflow, id, tag, serve.Instructions
 }
 
 // A view a step injects serves a held entry as its pointer, in a bodies
@@ -154,8 +197,8 @@ func TestInjectedViewCutRepeatsOnlyWhenTurnedOn(t *testing.T) {
 		{"cuts on", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, id, instructions := startViewStep(t, tc.cut, true)
-			pointers := strings.Count(instructions, id+" — A target for an explore step. (served in full above)")
+			_, id, tag, instructions := startViewStep(t, tc.cut, true)
+			pointers := strings.Count(instructions, heldPointer(id, tag))
 			if tc.pointer && pointers != 2 || !tc.pointer && pointers != 0 {
 				t.Fatalf("both views should print the held target as its pointer only with cuts on:\n%s", instructions)
 			}
@@ -166,27 +209,21 @@ func TestInjectedViewCutRepeatsOnlyWhenTurnedOn(t *testing.T) {
 	}
 }
 
-// With cuts on, a step's injected view hands on the entries it served in
-// full, once; with cuts off it hands on none.
-func TestInjectedViewHandsOnWhatItServedInFull(t *testing.T) {
-	t.Run("cuts on", func(t *testing.T) {
-		workflow, id, instructions := startViewStep(t, true, false)
-		if !strings.Contains(instructions, repeatTargetBody) {
+// With cuts on, a step's injected view serves the entries it shows in full
+// under their tags; with cuts off it tags none.
+func TestInjectedViewTagsWhatItServedInFull(t *testing.T) {
+	for _, cut := range []bool{true, false} {
+		workflow, id, _, instructions := startViewStep(t, cut, false)
+		if !strings.Contains(untag(instructions), repeatTargetBody) {
 			t.Fatalf("the step should serve the target in full:\n%s", instructions)
 		}
-		if got := workflow.TakeStepFullIDs(); len(got) != 1 || got[0] != id {
-			t.Fatalf("the step should hand on the target it served in full, got %v", got)
+		if tagged := len(model.ReadAnchors(instructions)) == 1; tagged != cut {
+			t.Fatalf("the target should carry a tag exactly with cuts on, cuts=%v:\n%s", cut, instructions)
 		}
-		if got := workflow.TakeStepFullIDs(); len(got) != 0 {
-			t.Fatalf("a handed-on entry should be forgotten, got %v", got)
+		if _, held := workflow.HoldsEntry(id); held != cut {
+			t.Fatalf("the target served in full should count as served within the call exactly with cuts on, cuts=%v", cut)
 		}
-	})
-	t.Run("cuts off", func(t *testing.T) {
-		workflow, _, _ := startViewStep(t, false, false)
-		if got := workflow.TakeStepFullIDs(); len(got) != 0 {
-			t.Fatalf("without cuts the step should hand on nothing, got %v", got)
-		}
-	})
+	}
 }
 
 // Framing lanes never cut, with cuts on too: a held entry a lane serves still
@@ -195,16 +232,13 @@ func TestFramingServesHeldEntriesInFull(t *testing.T) {
 	const principlesFactID = "20260810-190000-s-prc-way"
 	workflow, identity, _ := newRepeatWorkflow(t)
 	workflow.CutRepeats()
-	err := workflow.RecordServed(t.Context(), identity, []string{sdd.HeldEntryHash(principlesFactID)})
-	if err != nil {
-		t.Fatal(err)
-	}
+	holdEntry(t, workflow, identity, principlesFactID)
 	blocks, err := workflow.Framing(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
 	}
 	framing := strings.Join(blocks, "\n\n")
-	if !strings.Contains(framing, "## Working principles") || strings.Contains(framing, "(served in full above)") {
+	if !strings.Contains(framing, "## Working principles") || strings.Contains(framing, "(held as") {
 		t.Fatalf("the framing should serve the held principles in full:\n%s", framing)
 	}
 	if got := workflow.TakeStepFullIDs(); len(got) != 0 {
@@ -242,9 +276,9 @@ Serves a mixed view of the repeat target.
 `
 }
 
-// A mixed view hands on the bodies it served only when the step serves it
-// uncut: a line cut can drop a body the view rendered.
-func TestInjectedMixedViewHandsOnOnlyWhenUncut(t *testing.T) {
+// A mixed view counts the bodies it served as served only when the step
+// serves it uncut: a line cut can drop a body the view rendered.
+func TestInjectedMixedViewHoldsOnlyWhenUncut(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		bound string
@@ -260,12 +294,11 @@ func TestInjectedMixedViewHandsOnOnlyWhenUncut(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(serve.Instructions, repeatTargetBody) != tc.held {
+			if strings.Contains(untag(serve.Instructions), repeatTargetBody) != tc.held {
 				t.Fatalf("the step should serve the body whole only uncut:\n%s", serve.Instructions)
 			}
-			got := workflow.TakeStepFullIDs()
-			if handed := len(got) == 1 && got[0] == id; handed != tc.held || !tc.held && len(got) != 0 {
-				t.Fatalf("the step should hand on the target only when it served the view uncut, got %v", got)
+			if _, held := workflow.HoldsEntry(id); held != tc.held {
+				t.Fatalf("the target should count as served only when the step served the view uncut, held=%v", held)
 			}
 		})
 	}

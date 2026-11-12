@@ -423,7 +423,16 @@ func newTestServerConfig(t *testing.T, findings []query.Finding, graphDir, sessi
 }
 
 // connect uses an in-memory connection unless the caller supplies a transport.
+// The connection is a fresh agent context that proves every piece it was
+// served.
 func connect(t *testing.T, srv *mcpserver.Server, transports ...mcp.Transport) *mcp.ClientSession {
+	t.Helper()
+	return connectAs(t, srv, newAgentMemory(), transports...)
+}
+
+// connectAs connects the agent context memory holds, which keeps its proofs
+// across connections.
+func connectAs(t *testing.T, srv *mcpserver.Server, memory *agentMemory, transports ...mcp.Transport) *mcp.ClientSession {
 	t.Helper()
 	ctx := t.Context()
 	var transport mcp.Transport
@@ -440,6 +449,7 @@ func connect(t *testing.T, srv *mcpserver.Server, transports ...mcp.Transport) *
 		t.Fatal("connect accepts at most one transport")
 	}
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	client.AddSendingMiddleware(memory.middleware)
 	cs, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1365,7 +1375,7 @@ func TestCaptureProcedureLoop(t *testing.T) {
 	if serve.Step != "playback" {
 		t.Fatalf("no-op adjust should cascade back to playback, got %q", serve.Step)
 	}
-	if strings.Contains(serve.Instructions, "Play back to the user") || !strings.Contains(serve.Instructions, "served earlier this session") {
+	if strings.Contains(serve.Instructions, "Play back to the user") || !strings.Contains(serve.Instructions, "you hold the step") {
 		t.Fatalf("an unchanged playback re-serve should stub to the reminder, got %q", serve.Instructions)
 	}
 
@@ -2530,14 +2540,17 @@ func jsonSize(t *testing.T, v any) int {
 	return len(raw)
 }
 
-// TestServedMemoryIsPerSession pins the served-once memory's home (d-cpt-aen):
-// it is derived from the session ledger, so a second connection presenting the
-// handle is stubbed for what the session's consumer already holds, a
-// reorientation resets it so the complete position serves in full, and
-// afterwards the memory accumulates again.
-func TestServedMemoryIsPerSession(t *testing.T) {
+// TestServedMemoryIsPerAgentContext pins the served memory under the anchor
+// proof (d-cpt-aen, 20261112-075604-d-tac-t4r): the session ledger keeps the
+// issued tags, but only a call proving a piece gets its pointer. The agent
+// context that received a serve gets pointers on any connection; a fresh
+// subagent presenting the same handle holds no tags and gets every piece in
+// full; a reorientation serves its position in full without voiding the
+// tags.
+func TestServedMemoryIsPerAgentContext(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
-	csA := connect(t, env.srv)
+	agent := newAgentMemory()
+	csA := connectAs(t, env.srv, agent)
 	door := openSession(t, csA)
 	if door.Framing == "" {
 		t.Fatal("precondition: the door serves the framing in full")
@@ -2549,63 +2562,92 @@ func TestServedMemoryIsPerSession(t *testing.T) {
 		t.Fatalf("the first capture serves its unit in full, got %q", first.Instructions)
 	}
 
-	// Connection B, same server: what A received is stubbed for B.
-	csB := connect(t, env.srv)
-	var second mcpserver.ServeResult
-	call(t, csB, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &second)
-	if second.Framing != "" {
-		t.Fatalf("the framing was served to this session already, got it again on another connection: %q", second.Framing)
+	// The same agent context on another connection proves what it holds.
+	csSame := connectAs(t, env.srv, agent)
+	var same mcpserver.ServeResult
+	call(t, csSame, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &same)
+	if same.Framing != "" {
+		t.Fatalf("the agent holding the framing should not get it again, got %q", same.Framing)
 	}
-	requireStubReportSchema(t, "second capture from another connection", second.ReportSchema)
-	if !strings.Contains(second.Instructions, "served earlier this session") {
-		t.Fatalf("the identical unit should stub, got %q", second.Instructions)
+	requireStubReportSchema(t, "capture of the agent holding it", same.ReportSchema)
+	if !strings.Contains(same.Instructions, "you hold the step") {
+		t.Fatalf("the identical unit should point at what the agent holds, got %q", same.Instructions)
 	}
 
-	// B reorients: everything serves in full again — the two identical capture
-	// positions dedup against each other within the one call, so the first
-	// carries the full schema and unit.
+	// A fresh subagent sharing the handle holds no tags.
+	subagent := newAgentMemory()
+	subagent.raw = true
+	csSub := connectAs(t, env.srv, subagent)
+	var fresh mcpserver.ServeResult
+	call(t, csSub, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &fresh)
+	if !strings.Contains(fresh.Framing, "⟦") || !strings.Contains(fresh.Instructions, "Existing topics:") {
+		t.Fatalf("a fresh subagent should get the framing and the unit in full with their tags, got framing %q", fresh.Framing)
+	}
+	requireFullReportSchema(t, "capture of a fresh subagent", fresh.ReportSchema)
+	if strings.Contains(fresh.Instructions, "(held: ") {
+		t.Fatalf("a fresh subagent holds no lane, got %q", fresh.Instructions)
+	}
+
+	// The subagent reorients: everything serves in full again.
 	var resumed mcpserver.ResumeSessionResult
-	call(t, csB, "resume_session", map[string]any{"session": door.Session}, &resumed)
+	call(t, csSub, "resume_session", map[string]any{"session": door.Session}, &resumed)
 	if resumed.Framing == "" {
 		t.Fatal("a reorientation serves the framing in full")
 	}
 	resumedCapture := openServe(t, resumed, "capture")
 	requireFullReportSchema(t, "resumed capture", resumedCapture.ReportSchema)
-	if !strings.Contains(resumedCapture.Instructions, "Existing topics:") {
-		t.Fatalf("a reorientation serves the unit in full, got %q", resumedCapture.Instructions)
-	}
 
-	// Then the memory accumulates again, for either connection.
+	// The first agent's tags still prove what it holds.
 	var third mcpserver.ServeResult
 	call(t, csA, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &third)
 	if third.Framing != "" {
-		t.Fatalf("the framing re-served on resume should stub again, got %q", third.Framing)
+		t.Fatalf("the agent's proofs should outlast another context's reorientation, got %q", third.Framing)
 	}
-	requireStubReportSchema(t, "capture after resume", third.ReportSchema)
+	requireStubReportSchema(t, "capture after another context's resume", third.ReportSchema)
 }
 
-// TestServedMemorySurvivesServerRestart: the ledger carries the served-once
-// memory, so a second server over the same store stubs what an earlier one
-// served, without any reorientation in between.
+// TestServedMemorySurvivesServerRestart: the ledger carries the issued tags,
+// so a second server over the same store points at what the agent proves it
+// holds, without any reorientation in between.
 func TestServedMemorySurvivesServerRestart(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
-	cs := connect(t, env.srv)
+	agent := newAgentMemory()
+	cs := connectAs(t, env.srv, agent)
 	door := openSession(t, cs)
 	var first mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &first)
 	requireFullReportSchema(t, "first capture", first.ReportSchema)
 
 	env2 := newTestServer(t, nil, env.graphDir, env.sessionsDir)
-	cs2 := connect(t, env2.srv)
+	cs2 := connectAs(t, env2.srv, agent)
 	var second mcpserver.ServeResult
 	call(t, cs2, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &second)
 	if second.Framing != "" {
-		t.Fatalf("framing served before the restart must stub after it, got %q", second.Framing)
+		t.Fatalf("framing served before the restart must stay held after it, got %q", second.Framing)
 	}
 	requireStubReportSchema(t, "capture after restart", second.ReportSchema)
-	if !strings.Contains(second.Instructions, "served earlier this session") {
-		t.Fatalf("the unit served before the restart must stub after it, got %q", second.Instructions)
+	if !strings.Contains(second.Instructions, "you hold the step") {
+		t.Fatalf("the unit served before the restart must point after it, got %q", second.Instructions)
 	}
+}
+
+// TestCompactionLosesEveryProof: an agent whose proofs are gone, as after a
+// lossy compaction, gets every piece in full on its next call.
+func TestCompactionLosesEveryProof(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	agent := newAgentMemory()
+	cs := connectAs(t, env.srv, agent)
+	door := openSession(t, cs)
+	var first mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &first)
+
+	agent.forget = true
+	var second mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &second)
+	if second.Framing == "" || !strings.Contains(second.Instructions, "Existing topics:") {
+		t.Fatalf("an agent without its proofs should get the framing and the unit in full, got %q", second.Instructions)
+	}
+	requireFullReportSchema(t, "capture after the proofs were lost", second.ReportSchema)
 }
 
 // TestShellComposedFraming pins the framing composition (I6, A1): the engine
@@ -2925,10 +2967,10 @@ func TestStubsCarryCompactionBreadcrumb(t *testing.T) {
 	var serve mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture", "label": "breadcrumb"}, &serve)
 
-	const breadcrumb = "resume_session with this session's handle"
+	const breadcrumb = "resume_session re-serves"
 	var second mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &second)
-	if !strings.Contains(second.Instructions, "served earlier this session") || !strings.Contains(second.Instructions, breadcrumb) {
+	if !strings.Contains(second.Instructions, "you hold the step") || !strings.Contains(second.Instructions, breadcrumb) {
 		t.Fatalf("a stubbed per-step reminder must carry the compaction breadcrumb, got %q", second.Instructions)
 	}
 	if stub, _ := second.ReportSchema["served_earlier"].(string); !strings.Contains(stub, breadcrumb) {
@@ -3324,7 +3366,7 @@ func TestDoorGatingAndShellLifecycle(t *testing.T) {
 	if serve.Base == nil || serve.Base.Procedure != "user-dialogue" || serve.Base.Instance != shell.Instance {
 		t.Fatalf("a completed move should land on the shell junction, got %+v", serve.Base)
 	}
-	if !strings.Contains(serve.Base.Instructions, "served earlier this session") {
+	if !strings.Contains(serve.Base.Instructions, "you hold the step") {
 		t.Fatalf("the shell's re-serve should be the one-line reminder, got %q", serve.Base.Instructions)
 	}
 

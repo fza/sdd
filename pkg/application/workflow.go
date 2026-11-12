@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -159,19 +158,6 @@ type WorkflowServe struct {
 	Dispatches []*WorkflowDispatch
 }
 
-// ReminderInstructions composes the short reminder used when a host has
-// already served this instruction unit, while retaining any gate diagnostics.
-// The stub assumes the caller still holds the earlier full text; if a context
-// compaction dropped it, the breadcrumb names the one-shot escape so an
-// amnesiac agent is not left following instructions it no longer has.
-func (s *WorkflowServe) ReminderInstructions() string {
-	if s == nil {
-		return ""
-	}
-	reminder := fmt.Sprintf("(step %s instructions were served earlier this session — follow them; goal: %s. Lost them to a context compaction? resume_session with this session's handle re-serves this position in full.)", s.Step, s.Goal)
-	return s.ComposeInstructions(reminder)
-}
-
 // ComposeInstructions joins host-recomposed unit text (e.g. the deduped lane
 // subset) with this serve's diagnostics — the engine's one composition rule
 // applied host-side.
@@ -257,8 +243,8 @@ type WorkflowSession struct {
 	laneFull    []string
 	framingFull map[string][]string
 	framing     bool
-	// stepFull collects the entries the step serves rendered whole (injected
-	// views, the verify reading page), until TakeStepFullIDs hands them on.
+	// stepFull collects the entries the verify reading page serves whole, until
+	// TakeStepFullIDs hands them on.
 	stepFull []string
 	// task is a delegate session's one task instance, whose end ends the
 	// session as the shell's does a dialogue's.
@@ -531,25 +517,8 @@ func joinKinds(kinds []model.Kind) string {
 
 func (w *WorkflowSession) ID() SessionID { return w.binding.SessionID }
 
-// ServedBefore reports whether the session's consumer already holds a block
-// with this content hash, derived from the session ledger (d-cpt-aen).
-func (w *WorkflowSession) ServedBefore(hash string) bool {
-	return w.session.ServedBefore(hash)
-}
-
-// RecordServed logs the content hashes of blocks just served in full. A
-// finished session records nothing: its last serve is the one that ended it.
-func (w *WorkflowSession) RecordServed(ctx context.Context, identity RequestIdentity, hashes []string) error {
-	if len(hashes) == 0 || w.Finished() {
-		return nil
-	}
-	w.setOperation(ctx, identity)
-	w.session.RecordServed(hashes)
-	return w.session.SinkErr()
-}
-
-// Reorient records the consumer's request for the session's position and
-// resets the served set, so the position re-serves in full.
+// Reorient records the consumer's request for the session's position; the
+// call in flight serves every piece in full.
 func (w *WorkflowSession) Reorient(ctx context.Context, identity RequestIdentity) error {
 	if w.Finished() {
 		return nil
@@ -1248,39 +1217,22 @@ func (w *WorkflowSession) FramingFullIDs(block string) []string {
 	return w.framingFull[block]
 }
 
-// TakeStepFullIDs returns the entries the step serves (injected views, the
-// verify reading page) served in full and whole since the last call, and
-// forgets them: the MCP surface holds them once the serve is composed (R14).
+// TakeStepFullIDs returns the entries the verify reading page served whole
+// since the last call, and forgets them: the lane carrying the page holds
+// them (ServeText's covers).
 func (w *WorkflowSession) TakeStepFullIDs() []string {
 	ids := w.stepFull
 	w.stepFull = nil
 	return ids
 }
 
-// HeldEntryHash is the served-ledger hash of an entry served in full: the
-// no-repeat rule's unit (20261109-004506-d-cpt-udz, R14). Bodies are
-// immutable, so the ID alone keys it.
-func HeldEntryHash(id string) string {
-	sum := sha256.Sum256([]byte("entry-full:" + id))
-	return hex.EncodeToString(sum[:])
-}
-
 // CutRepeats applies the no-repeat rule to the step serves the session
 // renders, as the MCP surface serves them (R14): an injected entry chain or
-// view prints an entry the consumer already holds in full as its pointer, and
-// holds every entry it serves in full from then on. Framing lanes never cut
-// (composeFraming in the MCP surface). Off by default: the CLI never cuts.
+// view prints an entry the call proves it holds as its pointer, and tags
+// every entry it serves in full. Framing lanes never cut (composeFraming in
+// the MCP surface). Off by default: the CLI never cuts.
 func (w *WorkflowSession) CutRepeats() {
 	w.cutRepeats = true
-}
-
-// heldRepeats reports what the consumer holds in full while CutRepeats is on;
-// nil otherwise, which serves everything in full.
-func (w *WorkflowSession) heldRepeats() func(id string) bool {
-	if !w.cutRepeats {
-		return nil
-	}
-	return func(id string) bool { return w.session.ServedBefore(HeldEntryHash(id)) }
 }
 
 // framingCutNotice renders one framing lane's cut in this surface's register,

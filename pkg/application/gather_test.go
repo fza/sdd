@@ -253,18 +253,18 @@ func TestGather_HeldEntryPrintsAsPointer(t *testing.T) {
 	f.seed(t)
 	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: 10_000}, nil)
 
-	result, err := gather(t, application, sdd.GatherRequest{Held: func(id string) bool { return id == gatherBeta }})
+	result, err := gather(t, application, sdd.GatherRequest{Held: func(id string) (string, bool) { return "ab12", id == gatherBeta }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pointer := gatherBeta + " — The beta entry is about beta matters. (served in full above)"
+	pointer := gatherBeta + " — The beta entry is about beta matters. (held as ⟦ab12⟧)"
 	if !strings.Contains(result.Text, pointer) {
 		t.Errorf("a held entry should print as id, brief and pointer:\n%s", result.Text)
 	}
-	if !strings.Contains(result.Text, "gather with its ids, or resume_session") {
+	if !strings.Contains(result.Text, "its tag left out of held") {
 		t.Errorf("the serve should name the way back:\n%s", result.Text)
 	}
-	if strings.Contains(result.Text, gatherAlpha+" — The alpha entry is about alpha matters. (served in full above)") {
+	if strings.Contains(result.Text, gatherAlpha+" — The alpha entry is about alpha matters. (held as") {
 		t.Errorf("an entry not held printed as a pointer:\n%s", result.Text)
 	}
 }

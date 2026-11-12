@@ -66,7 +66,8 @@ func TestWorkflowHolderFoldsAnotherAttachsAppends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = holder.RecordServed(t.Context(), identity, []string{"held-block"})
+	holder.ServeText("lane step", servedLane, nil)
+	err = holder.RecordServed(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,9 +89,6 @@ func TestWorkflowHolderFoldsAnotherAttachsAppends(t *testing.T) {
 	_, err = holder.Advance(t.Context(), identity, sdd.WorkflowAdvanceRequest{Instance: serve.Instance, Report: map[string]any{"body": "one"}})
 	if err != nil {
 		t.Fatalf("the holder should continue past another attach's appends, got %v", err)
-	}
-	if holder.ServedBefore("held-block") {
-		t.Fatal("the holder should have folded the other attach's reorientation")
 	}
 	if !reflect.DeepEqual(holder.StagedHandles(), cli.StagedHandles()) || len(holder.StagedHandles()) != 1 {
 		t.Fatalf("the holder should hold the other attach's staged file, got %v want %v", holder.StagedHandles(), cli.StagedHandles())
@@ -188,7 +186,8 @@ func TestWorkflowHolderFoldsAnotherAttachsStartedInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = holder.RecordServed(t.Context(), alice, []string{"held-block"})
+	holder.ServeText("lane step", servedLane, nil)
+	err = holder.RecordServed(t.Context(), alice)
 	if err != nil {
 		t.Fatalf("the holder should continue past another attach's start, got %v", err)
 	}

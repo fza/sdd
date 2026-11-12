@@ -12,9 +12,9 @@ import (
 )
 
 // The no-repeat rule over every verb that returns an entry's metadata, title,
-// summary or body (20261109-004506-d-cpt-udz, R14): once an entry was served
-// in full in the MCP session, each verb serves it as a pointer (ID, brief
-// and the way back) until resume_session resets what the consumer holds.
+// summary or body (20261109-004506-d-cpt-udz, R14): an entry served in full
+// carries a tag, and while a call proves it (20261112-075604-d-tac-t4r), each
+// verb serves it as a pointer: ID, brief, tag and the way back.
 //
 //	verb             serves                         test
 //	show             envelope, body, chain lines    TestNoRepeat/show
@@ -22,12 +22,12 @@ import (
 //	search           result lines, citations        TestNoRepeat/search
 //	gather           brief lines, relevant bodies   TestGatherPointsAtAnEntryAlreadyServedInFull,
 //	                 (explicit ids full)            TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer (application)
-//	resume_session   resets the held set            TestNoRepeat/resume_session
+//	lost text        no proof or reread: in full    TestNoRepeat/lost text, TestCompactionLosesEveryProof
 //	start_procedure, next: step units and framing lanes, deduplicated as blocks:
 //	                 TestCaptureLanesDedupAcrossInstances, TestReportSchemaDedup (serve_dedup_test.go)
 //	  entry chains   pointer for a held entry, holds what they serve:
 //	                 TestNoRepeatInjectedEntryChains, TestInjectedEntryChains* (application)
-//	  views          pointer for a held entry, hold what they serve whole:
+//	  views          pointer for a held entry, tag what they serve whole:
 //	                 TestNoRepeatInjectedViews, TestInjectedView* (application)
 //	  late entries   pointer for a held entry: TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer (proctest)
 //	  verify pages   the deep verifier's reading holds what each page serves in full:
@@ -44,7 +44,7 @@ import (
 //
 // The CLI never cuts, with --session too: TestCLIReadsServeInFullEveryTime
 // (internal/cliapp).
-const pointerMark = "(served in full above)"
+const pointerMark = "(held as ⟦"
 
 func TestNoRepeat(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
@@ -64,7 +64,7 @@ func TestNoRepeat(t *testing.T) {
 		if !strings.Contains(again.Entries, pointer) || strings.Contains(again.Entries, "# body") {
 			t.Fatalf("a repeated show should serve the pointer, not the body:\n%s", again.Entries)
 		}
-		if !strings.Contains(again.Entries, "gather with its ids, or resume_session") {
+		if !strings.Contains(again.Entries, "its tag left out of held") {
 			t.Fatalf("the pointer should name the way back:\n%s", again.Entries)
 		}
 	})
@@ -89,13 +89,20 @@ func TestNoRepeat(t *testing.T) {
 			t.Fatalf("a search should serve a held hit as its pointer without its citations:\n%s", found.Results)
 		}
 	})
-	t.Run("resume_session", func(t *testing.T) {
-		var resumed mcpserver.ResumeSessionResult
-		call(t, cs, "resume_session", map[string]any{"session": session}, &resumed)
-		var after mcpserver.ShowResult
-		call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &after)
-		if !strings.Contains(after.Entries, "# body") || strings.Contains(after.Entries, pointerMark) {
-			t.Fatalf("after resume_session the entry should serve in full again:\n%s", after.Entries)
+	t.Run("lost text", func(t *testing.T) {
+		for _, lost := range []map[string]any{
+			{"held": []string{}},
+			{"reread": []string{fixtureGapID}},
+		} {
+			args := map[string]any{"session": session, "ids": []string{fixtureGapID}}
+			for k, v := range lost {
+				args[k] = v
+			}
+			var after mcpserver.ShowResult
+			call(t, cs, "show", args, &after)
+			if !strings.Contains(after.Entries, "# body") || strings.Contains(after.Entries, pointerMark) {
+				t.Fatalf("an agent that cannot prove the entry should get it in full again (%v):\n%s", lost, after.Entries)
+			}
 		}
 	})
 }
@@ -278,4 +285,31 @@ func TestNoRepeatInjectedViews(t *testing.T) {
 			t.Fatalf("a show after the step served the gap should serve the pointer:\n%s", shown.Entries)
 		}
 	})
+}
+
+// A held item that is no tag:word proof refuses the call rather than
+// serving as if it proved nothing.
+func TestMalformedProofRefusesTheCall(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+	msg := callExpectError(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}, "held": []string{"no proof here"}})
+	if !strings.Contains(msg, "held") {
+		t.Fatalf("the refusal should name the held input, got %q", msg)
+	}
+}
+
+// Both doors explain the proof once: the opening serve and every
+// reorientation carry it.
+func TestDoorsExplainTheProof(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	door := openSession(t, cs)
+	var resumed mcpserver.ResumeSessionResult
+	call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
+	for name, text := range map[string]string{"start_session": door.Instructions, "resume_session": resumed.Instructions} {
+		if !strings.Contains(text, "as tag:word") || !strings.Contains(text, "List in reread") {
+			t.Fatalf("%s should explain how to prove a piece and how to have it again:\n%s", name, text)
+		}
+	}
 }

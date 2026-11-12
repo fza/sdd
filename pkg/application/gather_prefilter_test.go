@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/relevance"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
@@ -344,8 +345,8 @@ func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
 	f := prefilterFixture(t, scorer)
 	f.relevance = calibratedLedger(t)
 	application := f.app(t, prefilterPolicy(1), nil)
-	held := func(id string) bool { return id == gatherAlpha }
-	pointer := gatherAlpha + " — The alpha entry is about alpha matters. (served in full above)"
+	held := func(id string) (string, bool) { return "ab12", id == gatherAlpha }
+	pointer := gatherAlpha + " — The alpha entry is about alpha matters. (held as ⟦ab12⟧)"
 
 	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", Held: held})
 	if err != nil {
@@ -354,7 +355,7 @@ func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
 	if !strings.Contains(result.Text, pointer) || strings.Contains(result.Text, "id: "+gatherAlpha) {
 		t.Fatalf("a relevant entry the consumer holds should print as its pointer:\n%s", result.Text)
 	}
-	if !strings.Contains(result.Text, "gather with its ids, or resume_session") {
+	if !strings.Contains(result.Text, presenters.GatherWayBack) {
 		t.Fatalf("the pointer should name the way back:\n%s", result.Text)
 	}
 	if !slices.Contains(result.FullIDs, gatherAlpha) {

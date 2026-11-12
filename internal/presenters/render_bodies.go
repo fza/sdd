@@ -24,8 +24,8 @@ func renderAsBodies(w io.Writer, bodies types.ViewBodies, entryLevel int, r *Rep
 		if i > 0 {
 			fmt.Fprintln(w)
 		}
-		if r.holds(e.ID, e.Brief) {
-			fmt.Fprintf(w, "%s\n", pointerText(e.ID, e.Brief))
+		if pointer, held := r.pointer(e.ID, e.Brief); held {
+			fmt.Fprintf(w, "%s\n", pointer)
 			continue
 		}
 		identity := bodyIdentity(e)
@@ -36,6 +36,7 @@ func renderAsBodies(w io.Writer, bodies types.ViewBodies, entryLevel int, r *Rep
 			fmt.Fprintf(w, "%s %s\n", marker, identity)
 		}
 		if body = strings.TrimSpace(mdcompose.DemoteTo(body, entryLevel+1)); body != "" {
+			body = r.anchor(e.ID, body)
 			fmt.Fprintf(w, "\n%s\n", body)
 		}
 	}
