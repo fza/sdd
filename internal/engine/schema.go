@@ -89,7 +89,7 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode, store *S
 		"chooser": map[string]any{
 			"type":        "string",
 			"const":       step.ID,
-			"description": "the pending chooser's step id — copy it verbatim from pending_chooser.chooser",
+			"description": "the pending chooser's step id",
 		},
 		"choice": map[string]any{
 			"type":        "string",
@@ -102,16 +102,16 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode, store *S
 	case step.Chooser == ChooserUser && step.Delegable && mode == model.DialogueAutonomous:
 		properties["userWords"] = map[string]any{
 			"type":        "string",
-			"description": "the user's answer, relayed verbatim, when the user gave one — otherwise omit it and give reason",
+			"description": "the user's answer verbatim, if they gave one; else give reason",
 		}
 		properties["reason"] = map[string]any{
 			"type":        "string",
-			"description": "one line on why you chose this option yourself — give exactly one of reason and userWords",
+			"description": "your one-line reason; give exactly one of reason and userWords",
 		}
 	case step.Chooser == ChooserUser:
 		properties["userWords"] = map[string]any{
 			"type":        "string",
-			"description": "the user's answer, relayed verbatim",
+			"description": "the user's answer, verbatim",
 		}
 		required = append(required, "userWords")
 	}
@@ -120,7 +120,7 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode, store *S
 			"type":                 "object",
 			"properties":           fieldProps,
 			"additionalProperties": false,
-			"description":          "state fields the chosen option collects — nested here, not at the top level",
+			"description":          "the chosen option's fields, nested here, never at the top level",
 		}
 	}
 
@@ -316,8 +316,8 @@ func schemaForType(t VarType, desc string) map[string]any {
 		schema = map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"old": map[string]any{"type": "string", "minLength": 1, "description": "exact text to replace — must match exactly once in the target as it stands when this pair applies"},
-				"new": map[string]any{"type": "string", "description": "replacement text; empty deletes the old text"},
+				"old": map[string]any{"type": "string", "minLength": 1, "description": "matches the target exactly once, as it stands when this pair applies"},
+				"new": map[string]any{"type": "string", "description": "empty deletes the old text"},
 			},
 			"required":             []string{"old", "new"},
 			"additionalProperties": false,
@@ -458,8 +458,8 @@ func deepEditsSchema() map[string]any {
 		"items": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"old": map[string]any{"type": "string", "minLength": 1, "description": "exact text of the base draft document, matching it exactly once"},
-				"new": map[string]any{"type": "string", "description": "replacement text; empty deletes the old text"},
+				"old": map[string]any{"type": "string", "minLength": 1, "description": "matches the base draft document exactly once"},
+				"new": map[string]any{"type": "string", "description": "empty deletes the old text"},
 			},
 			"required":             []string{"old", "new"},
 			"additionalProperties": false,
@@ -479,16 +479,16 @@ func deepFindingSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"verdict":  map[string]any{"type": "string", "minLength": 1, "description": "what is wrong, in words, reasoning first"},
+			"verdict":  map[string]any{"type": "string", "minLength": 1, "description": "in words, reasoning first"},
 			"axis":     map[string]any{"type": "string", "enum": enumOf(model.DeepAxes())},
 			"severity": map[string]any{"type": "string", "enum": []any{"high", "medium", "low"}},
-			"owner":    map[string]any{"type": "boolean", "description": "true when only the user can settle it; such a finding carries no edits"},
+			"owner":    map[string]any{"type": "boolean", "description": "only the user can settle it; then no edits"},
 			"pointers": map[string]any{
 				"type": "array",
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"field": map[string]any{"type": "string", "description": "the draft field the finding judges"},
+						"field": map[string]any{"type": "string", "description": "the draft field judged"},
 						"quote": map[string]any{"type": "string", "description": "exact draft words"},
 						"id":    map[string]any{"type": "string", "pattern": entryIDSchemaPattern},
 					},
@@ -497,7 +497,7 @@ func deepFindingSchema() map[string]any {
 				},
 			},
 			"basis":   map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": entryIDSchemaPattern}},
-			"sources": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "files, commits or URLs an evidence finding cites"},
+			"sources": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "files, commits or URLs cited"},
 			"edits":   deepEditsSchema(),
 		},
 		"required":             []string{"verdict", "axis", "severity"},
@@ -511,7 +511,7 @@ func deepAnswerSchema() map[string]any {
 		"properties": map[string]any{
 			"target":  map[string]any{"type": "string", "pattern": "^f[1-9][0-9]*$"},
 			"verdict": map[string]any{"type": "string", "enum": []any{"accept", "contest"}},
-			"reason":  map[string]any{"type": "string", "description": "why the finding does not hold; required on a contest"},
+			"reason":  map[string]any{"type": "string", "description": "required on a contest"},
 		},
 		"required":             []string{"target", "verdict"},
 		"additionalProperties": false,

@@ -269,3 +269,21 @@ func TestSessionFollowsADialogueModeSetWhileItRuns(t *testing.T) {
 		t.Errorf("each answer should record the mode in force when it was taken, got %v", modes)
 	}
 }
+
+// The answer envelope keeps the pairing a delegable chooser's answer obeys
+// in its own words, short as they are.
+func TestDelegableChooserEnvelopeKeepsItsPairing(t *testing.T) {
+	_, sv := dialogueSession(t, nopSink{}, autonomous())
+	props, _ := sv.ReportSchema["properties"].(map[string]any)
+	for _, field := range []string{"reason", "userWords"} {
+		node, _ := props[field].(map[string]any)
+		description, _ := node["description"].(string)
+		if !strings.Contains(description, "reason") || len(description) > 70 {
+			t.Errorf("%s should name its pairing with the other field in a short description, got %q", field, description)
+		}
+	}
+	reason, _ := props["reason"].(map[string]any)
+	if description, _ := reason["description"].(string); !strings.Contains(description, "exactly one of reason and userWords") {
+		t.Errorf("reason should keep the exactly-one-of constraint, got %q", description)
+	}
+}

@@ -152,10 +152,10 @@ open_instances:
           type: string
         chooser:
           const: junction
-          description: the pending chooser's step id — copy it verbatim from pending_chooser.chooser
+          description: the pending chooser's step id
           type: string
         userWords:
-          description: the user's answer, relayed verbatim
+          description: the user's answer, verbatim
           type: string
       required:
         - choice

@@ -50,15 +50,15 @@ report_schema:
       type: string
     chooser:
       const: playback
-      description: the pending chooser's step id — copy it verbatim from pending_chooser.chooser
+      description: the pending chooser's step id
       type: string
     fields:
       additionalProperties: false
-      description: state fields the chosen option collects — nested here, not at the top level
+      description: the chosen option's fields, nested here, never at the top level
       held_properties: you hold these capture report fields as ⟦tag⟧ — list the tag in reread to have them again, or resume_session re-serves them in full
       type: object
     userWords:
-      description: the user's answer, relayed verbatim
+      description: the user's answer, verbatim
       type: string
   required:
     - choice
