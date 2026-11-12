@@ -309,6 +309,9 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 			if runner == DelegateLaunchFallback {
 				instructions = fmt.Sprintf("This harness has no subagent tool, so sdd fell back to the headless %s runner of the agents supported_agents names and launched the delegate itself: launch nothing. %s", launched, alone)
 			}
+			if first {
+				instructions = w.freshVerifierNote(parent, procedure) + instructions
+			}
 			return &WorkflowDispatch{Procedure: procedure, Runner: launched, Instructions: instructions}, nil
 		}
 	}
@@ -318,11 +321,28 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 	}
 	dispatch.Model, dispatch.Effort = settings.Model, settings.Effort
 	if first {
-		dispatch.Instructions = "This move dispatched a delegate into its own child session. Launch a fresh-context sub-agent, the " + dispatch.Agent + " subagent sdd init installs for your harness where it has one, whose prompt is exactly the dispatch prompt: the prompt carries the child handles and nothing else, and this dialogue's own session handle never goes into it." + subagentSettingsInstruction(settings) + " The delegate works through the sdd MCP tools only. Its results arrive in this move, never through the sub-agent's reply: next with this instance and no report picks a delivery up once it has landed."
+		dispatch.Instructions = w.freshVerifierNote(parent, procedure) + "This move dispatched a delegate into its own child session. Launch a fresh-context sub-agent, the " + dispatch.Agent + " subagent sdd init installs for your harness where it has one, whose prompt is exactly the dispatch prompt: the prompt carries the child handles and nothing else, and this dialogue's own session handle never goes into it." + subagentSettingsInstruction(settings) + " The delegate works through the sdd MCP tools only. Its results arrive in this move, never through the sub-agent's reply: next with this instance and no report picks a delivery up once it has landed."
 		return dispatch, nil
 	}
 	dispatch.Instructions = "This move sent the delegate its next input. Continue the same delegate through your harness's continue mechanism with the continue prompt; where the harness cannot continue it, launch a fresh-context " + dispatch.Agent + " sub-agent with the dispatch prompt instead, since the child's serve carries the full exchange." + subagentSettingsInstruction(settings) + " This dialogue's own session handle never goes into either prompt. Next with this instance and no report picks the delegate's next delivery up once it has landed."
 	return dispatch, nil
+}
+
+// freshVerifierNote is the line a fresh verifier's dispatch opens with when
+// it starts after a verdict, saying why the last one takes no revision.
+func (w *WorkflowSession) freshVerifierNote(parent, procedure string) string {
+	if procedure != verifyProcedure {
+		return ""
+	}
+	inst, ok := w.session.Instance(parent)
+	if !ok {
+		return ""
+	}
+	why, _ := workflowStoreString(inst.Store, fieldDeepFresh)
+	if why == "" {
+		return ""
+	}
+	return "A fresh verifier reads the draft anew, as " + why + ". "
 }
 
 // subagentSettings is the model and effort a harness launches the deep

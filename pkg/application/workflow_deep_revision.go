@@ -16,7 +16,8 @@ import (
 // waiting, as a revision it judges from the reading it holds, so the child
 // session lasts across rounds as 20261109-004729-d-cpt-xs5 states. A fresh
 // verifier starts only once the child ended, took model.DeepRevisions
-// revisions, or runs where no harness continues it.
+// revisions, or ran a headless round that reported no session to resume;
+// its dispatch says which.
 
 // Engine-written fields of a revision on the capture's side.
 const (
@@ -26,6 +27,8 @@ const (
 	fieldDeepRevisionPages    = "deepRevisionPages"
 	fieldDeepRevisionPageFull = "deepRevisionPageFull"
 	fieldDeepReadIDs          = "deepReadIDs"
+	// fieldDeepFresh is why a fresh verifier starts after a verdict.
+	fieldDeepFresh = "deepFresh"
 )
 
 // verifyWaitStep is the verify step that waits for answers or a revision.
@@ -33,27 +36,56 @@ const verifyWaitStep = "waitAnswers"
 
 // deepRevisable reports whether the capture's draft change can go to its
 // live verifier as a revision: an exchange reached a verdict, the verifier
-// waits for its next input in a child the harness continues, and it has
-// revisions left.
-func (w *WorkflowSession) deepRevisable(ctx *engine.Context) (bool, error) {
+// waits for its next input in a child its runner continues, the harness's
+// subagent or a headless round that reported a session to resume, and it
+// has revisions left. Otherwise, past a verdict, it names in a few words why
+// a fresh verifier starts.
+func (w *WorkflowSession) deepRevisable(ctx *engine.Context) (bool, string, error) {
 	verdict, ok := readDeepVerdict(ctx.Store)
 	if !ok || verdict.Outcome == "skipped" {
-		return false, nil
+		return false, "", nil
 	}
 	taken, _ := ctx.Store.Get(fieldDeepRevisions)
-	if deepRoundCount(taken) >= model.DeepRevisions {
-		return false, nil
+	if n := deepRoundCount(taken); n >= model.DeepRevisions {
+		return false, fmt.Sprintf("the last one judged %d revisions, its limit", n), nil
 	}
 	runner, err := w.delegateRunner(ctx.Instance, verifyProcedure)
-	if err != nil || runner != "" {
-		return false, err
+	if err != nil {
+		return false, "", err
 	}
 	for _, live := range w.session.LiveForks() {
-		if live.Instance == ctx.Instance && live.Fork.Procedure == verifyProcedure {
-			return w.delegateWaits(live.Fork.Child)
+		if live.Instance != ctx.Instance || live.Fork.Procedure != verifyProcedure {
+			continue
 		}
+		waits, err := w.delegateWaits(live.Fork.Child)
+		if err != nil || !waits {
+			return false, "the last one no longer waits for a revision", err
+		}
+		if runner == "" {
+			return true, "", nil
+		}
+		resumable, err := w.delegateResumable(live.Fork.Child)
+		if err != nil || !resumable {
+			return false, "its runner reported no session to resume", err
+		}
+		return true, "", nil
 	}
-	return false, nil
+	return false, "the last one's session ended", nil
+}
+
+// delegateResumable reports whether the child's last launched round reported
+// a session its next round resumes.
+func (w *WorkflowSession) delegateResumable(child engine.Link) (bool, error) {
+	_, _, stored, err := w.app.resolveSession(w.ctx, w.identity, SessionID(child.Session))
+	if err != nil {
+		return false, err
+	}
+	records, err := delegateLaunches(stored.Events)
+	if err != nil {
+		return false, err
+	}
+	n := len(records)
+	return n > 0 && records[n-1].Session != "", nil
 }
 
 // delegateWaits reports whether the child's task waits for the capture's

@@ -11,6 +11,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/test"
 )
 
 // subjectFinding is one finding whose edit rewrites old.
@@ -156,25 +157,74 @@ func TestCaptureDeep_AFreshVerifierAfterThreeRevisions(t *testing.T) {
 	if fresh.dispatch.Session == x.dispatch.Session {
 		t.Fatal("a fourth revision should go to a fresh verifier")
 	}
+	if want := fmt.Sprintf("A fresh verifier reads the draft anew, as the last one judged %d revisions, its limit.", model.DeepRevisions); !strings.HasPrefix(fresh.dispatch.Instructions, want) {
+		t.Fatalf("the fresh dispatch should say why, got %q", fresh.dispatch.Instructions)
+	}
 	if _, _, err := world.App.ResumeWorkflow(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: x.dispatch.Session}); err == nil || !strings.Contains(err.Error(), "replaced") {
 		t.Fatalf("the verifier past its revisions should end, replaced by the fresh one, got %v", err)
 	}
 }
 
-func TestCaptureDeep_AFreshVerifierWhereNoHarnessContinuesIt(t *testing.T) {
-	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-revision-headless", sdd.VerifierPolicy{}, proctest.WithDelegateLauncher(launcher))
+// headlessVerdict drives a configured headless verifier's first round to a
+// finding, its round reporting session, and the capture to its answer.
+func headlessVerdict(t *testing.T, world *proctest.World, session *proctest.Session, launcher *test.ScriptedLauncher, reported string) (*deepExchange, *test.ScriptedRound) {
+	t.Helper()
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
-	forked := session.Answer(t, instance, "deepDispatch", "noSubagent", nil, "")
+	forked := session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
 	round := launcher.NextRound(t)
 	delegate := world.Delegate(t, &sdd.WorkflowDispatch{Session: round.Launch.Session})
 	readAllPages(t, delegate, round.Launch.Instance)
 	delegate.Answer(t, round.Launch.Instance, "read", "judge", map[string]any{"findings": subjectFinding("observes something.")}, "")
-	round.Finish("cli-session", nil)
+	round.Finish(reported, nil)
+	waitForRounds(t, world, round.Launch.Session, 1)
 	x := &deepExchange{world: world, session: session, instance: instance, dispatch: forked.Dispatches[0], delegate: delegate, child: round.Launch.Instance}
 	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+	return x, round
+}
+
+// waitForRounds waits until the child kept n launched rounds' outcomes.
+func waitForRounds(t *testing.T, world *proctest.World, child sdd.SessionID, n int) {
+	t.Helper()
+	test.Eventually(t, "recording the round's end", func() bool {
+		kept, err := world.App.DelegateLaunches(t.Context(), world.Identity, child)
+		return err == nil && len(kept) >= n
+	})
+}
+
+// A headless verifier takes a revision as the harness's subagent does: sdd
+// resumes the session its last round reported, in the same child.
+func TestCaptureDeep_AHeadlessVerifierResumesForARevision(t *testing.T) {
+	launcher := headlessLauncher(t)
+	world, session := newDeepWorld(t, "deep-revision-headless", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	x, first := headlessVerdict(t, world, session, launcher, "cli-session")
+	proctest.RequireStep(t, x.settleWithAChange(t, "A tactical gap: the fixture observes a subject twice."), "deepWait")
+	round := launcher.NextRound(t)
+	if round.Launch.Session != first.Launch.Session || round.Round.Number != 2 || round.Round.Resume != "cli-session" {
+		t.Fatalf("the revision should resume the verifier's session in its child, got round %+v of %s", round.Round, round.Launch.Session)
+	}
+	serve := x.pickUpRevision(t)
+	if !strings.Contains(serve.Instructions, "## Revision 1 of the draft") {
+		t.Fatalf("the resumed verifier should read the revision:\n%s", serve.Instructions)
+	}
+	x.delegate.Answer(t, x.child, "read", "judge", map[string]any{"findings": []any{}}, "")
+	round.Finish("cli-session", nil)
+	waitForRounds(t, world, first.Launch.Session, 2)
+	proctest.RequireStep(t, x.pickUpFindings(t), "verifySummary")
+}
+
+// A headless verifier whose round reported no session to resume cannot take
+// a revision: a fresh one starts, and its dispatch says why.
+func TestCaptureDeep_AFreshVerifierWhereItsRunnerCannotResume(t *testing.T) {
+	launcher := headlessLauncher(t)
+	world, session := newDeepWorld(t, "deep-revision-no-resume", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	x, _ := headlessVerdict(t, world, session, launcher, "")
 	proctest.RequireStep(t, x.settleWithAChange(t, "A tactical gap: the fixture observes a subject twice."), "deepDispatch")
+	forked := session.Answer(t, x.instance, "deepDispatch", "delegate", nil, "")
+	if dispatch := forked.Dispatches[0]; !strings.HasPrefix(dispatch.Instructions, "A fresh verifier reads the draft anew, as its runner reported no session to resume.") {
+		t.Fatalf("the fresh dispatch should say why, got %q", dispatch.Instructions)
+	}
+	driveRound(t, world, launcher.NextRound(t))
 }
 
 // rulesLane returns the verifier's rules lane of a reading serve, which holds

@@ -249,7 +249,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Doc: engine.FuncDoc{
 				Name: "prepareDeep", Doc: "Opens a deep exchange over the current draft: the base document, the paged reading, the weighing rule's recommendation, and a fresh exchange; for the live verifier, the revision's reading.",
 				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict, fieldDeepRevisions, fieldDeepReadIDs),
-				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs},
+				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs, fieldDeepFresh},
 			},
 			Fn: w.prepareDeep,
 		},
@@ -355,7 +355,7 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 	if err != nil {
 		return err
 	}
-	revising, err := w.deepRevisable(ctx)
+	revising, fresh, err := w.deepRevisable(ctx)
 	if err != nil {
 		return err
 	}
@@ -364,7 +364,10 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 		fieldDeepBase: base, fieldDeepHistory: []model.DeepResponse{}, fieldDeepRounds: 0,
 		fieldDeepProposal: nil, fieldDeepHunks: nil, fieldDeepOpen: nil, fieldDeepWithdrawn: nil, fieldDeepListed: nil, fieldDeepProblems: nil, fieldDeepNoSubagent: nil,
 		fieldDeepForkBase: verifyForks(w.session, ctx.Instance), fieldDeepEndReason: nil,
-		fieldDeepRevising: revising, fieldDeepRevisions: 0, fieldDeepRevisionPages: nil, fieldDeepRevisionPageFull: nil,
+		fieldDeepRevising: revising, fieldDeepRevisions: 0, fieldDeepRevisionPages: nil, fieldDeepRevisionPageFull: nil, fieldDeepFresh: nil,
+	}
+	if fresh != "" {
+		writes[fieldDeepFresh] = fresh
 	}
 	pages, held := w.deepPages(ctx, base)
 	writes[fieldDeepPages], writes[fieldDeepPageFull] = pageTexts(pages)

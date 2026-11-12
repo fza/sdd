@@ -643,6 +643,9 @@ func TestCaptureDeep_AFreshVerifierOnceTheChildEndedReadsADelta(t *testing.T) {
 	serve = session.Answer(t, x.instance, "playback", "confirm", nil, "now write it")
 	proctest.RequireStep(t, serve, "deepDispatch")
 	again := dispatchDeep(t, world, session, x.instance)
+	if !strings.HasPrefix(again.dispatch.Instructions, "A fresh verifier reads the draft anew, as the last one's session ended.") {
+		t.Fatalf("the fresh dispatch should say why, got %q", again.dispatch.Instructions)
+	}
 	_, resume := world.Resume(t, again.dispatch.Session, "verifier")
 	if page := resume.Open[0].Instructions; !strings.Contains(page, "## Changed since the last verdict") || !strings.Contains(page, "observes a subject twice.") {
 		t.Fatalf("an edit after the verdict should get a delta reading of the changed passage:\n%s", page)
