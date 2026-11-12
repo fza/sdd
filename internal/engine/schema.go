@@ -215,6 +215,7 @@ func procedureSpecSchema() map[string]any {
 			"delegable":   map[string]any{"type": "boolean"},
 			"deliver":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"await":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"awaitAny":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"findings":    map[string]any{"type": "string"},
 			"stage":       map[string]any{"type": "string"},
 		},

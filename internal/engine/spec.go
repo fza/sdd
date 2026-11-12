@@ -229,6 +229,10 @@ type Step struct {
 	// it holds until each holds a delivery not yet consumed, and passing
 	// consumes them. Only a delivery fills an awaited field.
 	Await []string
+	// AwaitAny holds the gate only until one field of Await holds a delivery
+	// not yet consumed; passing consumes every field Await names. Its
+	// transitions read Context.Arrived to tell which one came.
+	AwaitAny bool
 	// Findings names the engine-written field, in pre-flight's finding
 	// format, that is this gate's findings channel: findings the hooks on
 	// the step being done report join it (20261109-213250-d-tac-bve).
@@ -335,6 +339,7 @@ type stepYAML struct {
 	Delegable   bool             `yaml:"delegable"`
 	Deliver     []string         `yaml:"deliver"`
 	Await       []string         `yaml:"await"`
+	AwaitAny    []string         `yaml:"awaitAny"`
 	Findings    string           `yaml:"findings"`
 	Stage       string           `yaml:"stage"`
 }
@@ -567,13 +572,6 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 						addProblem("%s: option %q dispatch receives %q into %q, which is not a declared state field of this procedure", prefix, o.Choice, child, parentField)
 					}
 				}
-				for child, parentField := range o.Dispatch.Send {
-					_, isState := spec.State[parentField]
-					_, isParam := spec.Params[parentField]
-					if !isState && !isParam {
-						addProblem("%s: option %q dispatch sends %q from %q, which is not a declared param or state field of this procedure", prefix, o.Choice, child, parentField)
-					}
-				}
 				// The source side of each seed mapping (the parent field) must
 				// be one this spec declares — a mistyped source would silently
 				// carry nothing, the exact failure the per-junction mapping
@@ -725,6 +723,15 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		step.Chooser = ChooserUser
 	default:
 		addProblem("%s: unknown chooser %q (gate, agent, or user)", prefix, sy.Chooser)
+	}
+	if len(sy.AwaitAny) > 0 {
+		switch {
+		case len(sy.Await) > 0:
+			addProblem("%s: await and awaitAny exclude each other", prefix)
+		case len(sy.AwaitAny) < 2:
+			addProblem("%s: awaitAny names at least two fields; await waits for one", prefix)
+		}
+		step.Await, step.AwaitAny = sy.AwaitAny, true
 	}
 	if sy.Delegable && step.Chooser != ChooserUser {
 		addProblem("%s: delegable applies only to a user chooser", prefix)
@@ -1027,6 +1034,38 @@ func (s *Spec) Validate(reg *Registry) []string {
 		for _, o := range step.Options {
 			if o.Call != "" {
 				checkCommandWrites(prefix+" option "+o.Choice, o.Call)
+			}
+		}
+	}
+
+	// A send source is a declared field or one a command of this procedure
+	// writes: a mistyped source would carry nothing.
+	written := map[string]bool{}
+	for _, step := range s.Steps {
+		names := []string{step.Op}
+		for _, o := range step.Options {
+			names = append(names, o.Call)
+		}
+		for _, name := range names {
+			if cmd, ok := reg.Command(name); ok {
+				for _, w := range cmd.Doc.Writes {
+					written[w] = true
+				}
+			}
+		}
+	}
+	for _, step := range s.Steps {
+		for _, o := range step.Options {
+			if o.Dispatch == nil {
+				continue
+			}
+			for _, child := range slices.Sorted(maps.Keys(o.Dispatch.Send)) {
+				parentField := o.Dispatch.Send[child]
+				_, isState := s.State[parentField]
+				_, isParam := s.Params[parentField]
+				if !isState && !isParam && !written[parentField] {
+					addProblem("steps.%s: option %q dispatch sends %q from %q, which is no declared param or state field of this procedure and no command of it writes", step.ID, o.Choice, child, parentField)
+				}
 			}
 		}
 	}

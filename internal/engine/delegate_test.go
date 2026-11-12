@@ -573,6 +573,22 @@ steps:
       chooser: agent
       options:
           - {choice: go, dispatch: {procedure: x}, to: end(completed)}`, want: "needs a seed, receive or send mapping"},
+		{name: "await beside awaitAny", class: "move", machine: `state:
+    plan: {type: text, desc: x}
+    note: {type: text, desc: x}
+steps:
+    - id: only
+      await: [plan]
+      awaitAny: [plan, note]
+      transitions:
+          - otherwise: end(completed)`, want: "await and awaitAny exclude each other"},
+		{name: "awaitAny with one field", class: "move", machine: `state:
+    plan: {type: text, desc: x}
+steps:
+    - id: only
+      awaitAny: [plan]
+      transitions:
+          - otherwise: end(completed)`, want: "awaitAny names at least two fields"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

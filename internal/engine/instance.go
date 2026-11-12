@@ -247,7 +247,11 @@ func (s *Session) funcContext(inst *Instance) (*Context, error) {
 		return nil, fmt.Errorf("resolving current graph: %w", err)
 	}
 	_, joined := inst.hookBase[inst.Step]
-	return &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads, Reading: &inst.reading, hooksJoined: joined}, nil
+	ctx := &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads, Reading: &inst.reading, hooksJoined: joined}
+	if step := inst.currentStep(); step != nil {
+		ctx.Arrived = inst.arrived(step)
+	}
+	return ctx, nil
 }
 
 // cascade advances gate steps until something stops them — a failing
@@ -477,6 +481,11 @@ func (s *Session) runCommand(inst *Instance, name, to string, beforeResult func(
 	inst.Store.commit(candidate)
 	if ctx.Intent != nil {
 		s.intentDone = true
+	}
+	// A send-mapped value the command wrote reaches the live forks as a
+	// reported one does.
+	if err := s.sendFills(inst, slices.Sorted(maps.Keys(writes))); err != nil {
+		return err
 	}
 	if cmd.MutatesGraph {
 		s.engine.Graphs.Invalidate()

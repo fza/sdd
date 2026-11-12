@@ -313,14 +313,25 @@ func (s *Session) applyReceived(inst *Instance, d Delivery, fields map[string]an
 }
 
 // awaitHeld reports whether an await gate still waits: some awaited field
-// holds no unconsumed delivery.
+// holds no unconsumed delivery, or, for awaitAny, none holds one.
 func (inst *Instance) awaitHeld(step *Step) bool {
+	arrived := len(inst.arrived(step))
+	if step.AwaitAny {
+		return arrived == 0
+	}
+	return arrived < len(step.Await)
+}
+
+// arrived lists the fields the step awaits that hold a delivery not yet
+// consumed.
+func (inst *Instance) arrived(step *Step) []string {
+	var out []string
 	for _, f := range step.Await {
-		if !inst.unconsumed[f] {
-			return true
+		if inst.unconsumed[f] {
+			out = append(out, f)
 		}
 	}
-	return false
+	return out
 }
 
 // consume clears the unconsumed marks a passing await gate took.
@@ -491,10 +502,14 @@ func (s *Session) awaitDiagnostic(inst *Instance, step *Step) string {
 			waiting = append(waiting, f)
 		}
 	}
-	if s.Lineage != nil {
-		return "waiting for the dispatching move to send " + strings.Join(waiting, ", ") + ": end your turn; you are continued or relaunched with these same handles once it has, and next with this instance and no report then picks it up"
+	joined := strings.Join(waiting, ", ")
+	if step.AwaitAny {
+		joined = strings.Join(waiting, " or ")
 	}
-	return "waiting for the delegate to deliver " + strings.Join(waiting, ", ") + "; next with this instance and no report picks the delivery up once it has landed"
+	if s.Lineage != nil {
+		return "waiting for the dispatching move to send " + joined + ": end your turn; you are continued or relaunched with these same handles once it has, and next with this instance and no report then picks it up"
+	}
+	return "waiting for the delegate to deliver " + joined + "; next with this instance and no report picks the delivery up once it has landed"
 }
 
 // exchangeLane renders the full exchange a delegate instance took part in, so

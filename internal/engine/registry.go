@@ -49,6 +49,9 @@ type Context struct {
 	// Reading is the running instance's credited grounding reads; nil only
 	// in contexts built outside an instance.
 	Reading *model.Reading
+	// Arrived lists the fields the current await gate holds a delivery for
+	// that it has not consumed yet.
+	Arrived []string
 	// Round raises the step's round event with fields added to its payload;
 	// set only for a command declaring Rounds.
 	Round func(fields map[string]any) error
