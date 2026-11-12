@@ -380,13 +380,13 @@ type ReadAttachmentResult struct {
 	Path       string   `json:"path,omitempty" jsonschema:"absolute filesystem path; present only for local (stdio) clients, which may read the file directly instead of paging"`
 }
 
-// ResultNotices carries, on every result, the blocked-sync notice while
-// automatic sync of the graph repository cannot proceed
-// (20261028-201909-d-tac-fxp), and once the notice of a failed background
-// cache pruning run (20261101-131514-d-cpt-9ci), and once the config keys
-// that changed since the previous call.
+// ResultNotices carries the blocked-sync notice while automatic sync of the
+// graph repository cannot proceed (20261028-201909-d-tac-fxp), once per
+// change of its text (20261112-075604-d-tac-t4r); once the notice of a
+// failed background cache pruning run (20261101-131514-d-cpt-9ci); and once
+// the config keys that changed since the previous call.
 type ResultNotices struct {
-	SyncNotice  string `json:"sync_notice,omitempty" jsonschema:"set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says"`
+	SyncNotice  string `json:"sync_notice,omitempty" jsonschema:"set when automatic sync of the graph repository becomes blocked, the background title backfill fails, or the last sync round of a connected repository fails, and whenever that notice changes: one line each naming which and since when or why, plus the fix steps when this session owns the fix. While it stands unchanged later results leave it out; resume_session serves it again. Plain status, not a tool error; act on it as it says"`
 	CacheNotice string `json:"cache_notice,omitempty" jsonschema:"set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user"`
 	HostNotice  string `json:"host_notice,omitempty" jsonschema:"set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values"`
 }
@@ -1356,7 +1356,9 @@ func toolBoundary[In, Out any](s *Server, handler func(context.Context, *mcp.Cal
 		}
 		var syncNotice, cacheNotice string
 		if slot.claim != nil {
-			syncNotice = slot.claim(ctx)
+			var claimErr error
+			syncNotice, claimErr = slot.claim(ctx)
+			err = errors.Join(err, claimErr)
 		}
 		if s.cacheNotice != nil {
 			cacheNotice = s.cacheNotice(ctx)
@@ -1395,7 +1397,7 @@ type syncNoticeKey struct{}
 // blocked-sync notice is claimed after the handler ran, so the notice
 // reflects what the call itself recorded.
 type syncNoticeSlot struct {
-	claim func(context.Context) string
+	claim func(context.Context) (string, error)
 }
 
 func (s *Server) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession) {
@@ -1404,10 +1406,11 @@ func (s *Server) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, 
 		return
 	}
 	identity := s.requestIdentity(req)
-	slot.claim = func(ctx context.Context) string {
+	slot.claim = func(ctx context.Context) (string, error) {
 		ss.mu.Lock()
 		defer ss.mu.Unlock()
-		return ss.root.SyncNotice(ctx, identity)
+		notice := ss.root.ServeNotice("sync notice", ss.root.SyncNotice(ctx, identity))
+		return notice, ss.root.RecordServed(ctx, identity)
 	}
 }
 

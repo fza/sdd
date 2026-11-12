@@ -82,28 +82,40 @@ func conflictBlock() *model.SyncBlocked {
 	}
 }
 
-func TestEveryResponseCarriesTheSyncNotice(t *testing.T) {
+func TestTheSyncNoticeServesOncePerChange(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	owner := connect(t, env.srv)
 	other := connect(t, env.srv)
 	ownerSession := openSession(t, owner).Session
 	otherSession := openSession(t, other).Session
 	env.sync.blockOnRound = conflictBlock()
+	viewNotice := func() string {
+		t.Helper()
+		var view mcpserver.ViewResult
+		call(t, owner, "view", map[string]any{"session": ownerSession, "layout": "active:as-counts"}, &view)
+		return view.SyncNotice
+	}
+	setBlock := func(block *model.SyncBlocked) {
+		env.sync.mu.Lock()
+		env.sync.blocked = block
+		env.sync.mu.Unlock()
+	}
 
-	var view mcpserver.ViewResult
-	call(t, owner, "view", map[string]any{"session": ownerSession, "layout": "active:as-counts"}, &view)
-	if !strings.Contains(view.SyncNotice, "sync blocked since") || !strings.Contains(view.SyncNotice, "git merge origin/main") {
-		t.Errorf("the first call after the block should carry the banner and, as owner, the steps, got %q", view.SyncNotice)
+	if notice := viewNotice(); !strings.Contains(notice, "sync blocked since") || !strings.Contains(notice, "git merge origin/main") {
+		t.Errorf("the first call after the block should carry the banner and, as owner, the steps, got %q", notice)
 	}
 	var registry mcpserver.RegistryResult
 	call(t, other, "registry", map[string]any{"session": otherSession}, &registry)
 	if !strings.HasPrefix(registry.SyncNotice, "sync blocked since") || strings.Contains(registry.SyncNotice, "git merge") {
 		t.Errorf("another agent should get the banner and no steps, got %q", registry.SyncNotice)
 	}
-	var serve mcpserver.ServeResult
-	call(t, owner, "resume_session", map[string]any{"session": ownerSession}, &serve)
-	if !strings.Contains(serve.SyncNotice, "git merge origin/main") {
-		t.Errorf("the owner's served steps should keep carrying the fix, got %q", serve.SyncNotice)
+	if notice := viewNotice(); notice != "" {
+		t.Errorf("a notice served unchanged before should stay out, got %q", notice)
+	}
+	var resumed mcpserver.ResumeSessionResult
+	call(t, owner, "resume_session", map[string]any{"session": ownerSession}, &resumed)
+	if !strings.Contains(resumed.SyncNotice, "git merge origin/main") {
+		t.Errorf("resume_session should serve the standing notice again, got %q", resumed.SyncNotice)
 	}
 	var info mcpserver.InfoResult
 	call(t, other, "info", map[string]any{"session": otherSession}, &info)
@@ -112,12 +124,19 @@ func TestEveryResponseCarriesTheSyncNotice(t *testing.T) {
 		t.Errorf("info should show the whole record, got %+v", got)
 	}
 
-	env.sync.mu.Lock()
-	env.sync.blocked = nil
-	env.sync.mu.Unlock()
-	call(t, owner, "view", map[string]any{"session": ownerSession, "layout": "active:as-counts"}, &view)
-	if view.SyncNotice != "" {
-		t.Errorf("no notice should ride once sync proceeds, got %q", view.SyncNotice)
+	dirty := *conflictBlock()
+	dirty.Kind, dirty.Owner = model.SyncBlockedDirty, ownerSession
+	setBlock(&dirty)
+	if notice := viewNotice(); !strings.Contains(notice, "uncommitted changes") {
+		t.Errorf("a changed notice should serve again, got %q", notice)
+	}
+	setBlock(nil)
+	if notice := viewNotice(); notice != "" {
+		t.Errorf("no notice should ride once sync proceeds, got %q", notice)
+	}
+	setBlock(&dirty)
+	if notice := viewNotice(); !strings.Contains(notice, "uncommitted changes") {
+		t.Errorf("a notice that comes back after sync proceeded should serve again, got %q", notice)
 	}
 }
 

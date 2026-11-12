@@ -67,6 +67,24 @@ func (w *WorkflowSession) ServeSchema(name string, schema map[string]any) (Serve
 	return ServedPiece{Tag: served.Anchor.Tag}, served.Anchor.RenderSchema(schema), nil
 }
 
+// ServeNotice returns a notice named name that rides on results as served
+// once per change of its text: whole while the text differs from the last the
+// session served, empty otherwise. A finished session serves it whole, as its
+// last serve.
+func (w *WorkflowSession) ServeNotice(name, text string) string {
+	if w.Finished() {
+		return text
+	}
+	hash := ""
+	if text != "" {
+		hash = contentHash(text)
+	}
+	if !w.session.ServeChanged(engine.Piece{Name: name, Hash: hash}) {
+		return ""
+	}
+	return text
+}
+
 // HoldsEntry reports whether the call holds the entry in full, with the tag
 // it holds it under: proved by the entry's own tag or by a piece that
 // carried it whole.

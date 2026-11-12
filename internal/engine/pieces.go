@@ -48,12 +48,14 @@ type pieceCall struct {
 	pending []pendingAnchor
 }
 
-// pendingAnchor is a piece the call served in full, not yet recorded.
+// pendingAnchor is a piece the call served in full, not yet recorded;
+// changed marks one that serves once per change of its content.
 type pendingAnchor struct {
-	piece  Piece
-	tag    string
-	word   string
-	covers []string
+	piece   Piece
+	tag     string
+	word    string
+	covers  []string
+	changed bool
 }
 
 // BeginCall starts a call carrying the proofs an agent lists for pieces it
@@ -122,6 +124,26 @@ func (s *Session) ServePiece(p Piece, covers []string, place AnchorPlacer) Serve
 	return Served{Anchor: anchor}
 }
 
+// ServeChanged reports whether the call serves p, a piece that serves once per
+// change of its content: while its content differs from the last the session
+// served under p.Name, or when the call serves every piece in full. An empty
+// Hash withdraws the content, so the next one serves again; it serves
+// nothing. The change is recorded by RecordAnchors.
+func (s *Session) ServeChanged(p Piece) bool {
+	last := s.changed[p.Name]
+	if p.Hash == "" {
+		if last != "" {
+			s.call.pending = append(s.call.pending, pendingAnchor{piece: p, changed: true})
+		}
+		return false
+	}
+	if last == p.Hash && !s.call.full {
+		return false
+	}
+	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, changed: true})
+	return true
+}
+
 // PieceMark marks the pieces the call has served in full so far.
 func (s *Session) PieceMark() int { return len(s.call.pending) }
 
@@ -147,12 +169,18 @@ func (s *Session) DropPiecesSince(mark int) {
 func (s *Session) RecordAnchors() {
 	var records []any
 	for _, p := range s.call.pending {
-		if p.tag == "" {
+		if p.tag == "" && !p.changed {
 			continue
 		}
-		record := map[string]any{"tag": p.tag, "name": p.piece.Name, "word": p.word}
+		record := map[string]any{"name": p.piece.Name}
+		if p.tag != "" {
+			record["tag"], record["word"] = p.tag, p.word
+		}
 		if p.piece.Hash != "" {
 			record["hash"] = p.piece.Hash
+		}
+		if p.changed {
+			record["changed"] = true
 		}
 		if len(p.covers) > 0 {
 			record["covers"] = p.covers
@@ -169,12 +197,18 @@ func (s *Session) RecordAnchors() {
 
 func (s *Session) foldAnchor(record any) {
 	fields, _ := record.(map[string]any)
+	name, _ := fields["name"].(string)
+	hash, _ := fields["hash"].(string)
+	if fields["changed"] == true {
+		if s.changed == nil {
+			s.changed = map[string]string{}
+		}
+		s.changed[name] = hash
+	}
 	tag, _ := fields["tag"].(string)
 	if tag == "" {
 		return
 	}
-	name, _ := fields["name"].(string)
-	hash, _ := fields["hash"].(string)
 	word, _ := fields["word"].(string)
 	issued := issuedAnchor{piece: Piece{Name: name, Hash: hash}, word: word}
 	switch covers := fields["covers"].(type) {

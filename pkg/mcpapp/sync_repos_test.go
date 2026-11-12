@@ -27,7 +27,8 @@ func (c *testConnectedSync) SyncRepos(_ context.Context, request sdd.SyncReposRe
 }
 
 // sync_repos returns one structured outcome per connected repo, passes the
-// named repos on, and a failure stays in the sync notice of later calls.
+// named repos on, and a failure reaches the sync notice once, standing until
+// resume_session serves it again.
 func TestSyncReposReportsEachRepo(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	next := time.Date(2026, 11, 7, 12, 5, 0, 0, time.UTC)
@@ -63,7 +64,12 @@ func TestSyncReposReportsEachRepo(t *testing.T) {
 
 	var info mcpserver.InfoResult
 	call(t, cs, "info", map[string]any{"session": session}, &info)
-	if !strings.Contains(info.SyncNotice, "example.test/acme/offline failed") {
-		t.Errorf("the failure should stay in the notice of later calls, got %q", info.SyncNotice)
+	if info.SyncNotice != "" {
+		t.Errorf("the unchanged notice should stay out of later calls, got %q", info.SyncNotice)
+	}
+	var resumed mcpserver.ResumeSessionResult
+	call(t, cs, "resume_session", map[string]any{"session": session}, &resumed)
+	if !strings.Contains(resumed.SyncNotice, "example.test/acme/offline failed") {
+		t.Errorf("resume_session should serve the standing failure again, got %q", resumed.SyncNotice)
 	}
 }

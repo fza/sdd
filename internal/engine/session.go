@@ -246,6 +246,9 @@ type Session struct {
 	// anchors folds the anchor events: each issued tag with its piece and
 	// word. call is the tool call in flight; rnd draws tags and positions.
 	anchors map[string]issuedAnchor
+	// changed folds the content hash each piece that serves once per change
+	// last served under its name.
+	changed map[string]string
 	call    pieceCall
 	rnd     model.RandomSource
 	// sinkErr carries a deferred log-append failure; surfaced by the next
