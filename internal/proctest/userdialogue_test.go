@@ -6,6 +6,8 @@ package proctest_test
 // and the framing lanes render through the real serve-safe viewLayout queries.
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -196,5 +198,44 @@ func TestUserDialogue_FramingLanesRenderRealGraphContent(t *testing.T) {
 	}
 	if !strings.Contains(blocks[0], "Local participant: Christopher") {
 		t.Errorf("the info block should lead the framing, got %q", blocks[0])
+	}
+}
+
+// The recent-movement lane holds the newest five entries and names that cap
+// in its heading (20261112-075604-d-tac-t4r).
+func TestUserDialogue_RecentMovementHoldsTheNewestFive(t *testing.T) {
+	var entries []*model.Entry
+	var ids []string
+	for i := range 7 {
+		id := fmt.Sprintf("20261201-1%d0000-s-tac-rm%d", i, i)
+		ids = append(ids, id)
+		entries = append(entries, &model.Entry{
+			ID: id, Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
+			Summary: fmt.Sprintf("Recent gap number %d.", i),
+			Content: fmt.Sprintf("Recent gap number %d.", i),
+		})
+	}
+	world := proctest.NewWorld(t, proctest.WithEntries(entries...))
+	session, _ := openShell(t, world, "dlg-recent")
+	blocks, err := session.WF.FramingBlocks(t.Context(), world.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recent string
+	for _, block := range blocks {
+		if block.Name == "recentMovement" {
+			recent = block.Text
+		}
+	}
+	if !strings.Contains(recent, "Recent graph movement, newest 5") {
+		t.Fatalf("the lane should name its cap, got:\n%s", recent)
+	}
+	if lines := len(regexp.MustCompile(`(?m)^\s+\d{8}-\d{6}-`).FindAllString(recent, -1)); lines != 5 {
+		t.Errorf("the lane should list 5 entries, got %d:\n%s", lines, recent)
+	}
+	for i, id := range ids {
+		if newest := i >= 2; strings.Contains(recent, id) != newest {
+			t.Errorf("the lane should list %s exactly when it is among the newest five:\n%s", id, recent)
+		}
 	}
 }

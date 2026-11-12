@@ -166,7 +166,7 @@ func boundedConnect(t *testing.T, srv *mcpserver.Server, proofs bool) (*mcp.Clie
 // A step whose lanes together run past the result bound serves the lanes
 // that fit and names the rest, which next with no report serves.
 func TestAServePastTheResultBoundLeavesItsLastLanesWaiting(t *testing.T) {
-	cs, _ := boundedClient(t, writeWideStepGraph(t, "first", "second", "third"))
+	cs, _ := boundedClient(t, writeWideStepGraph(t, 500, "first", "second", "third"))
 	session := openSession(t, cs).Session
 	var serve mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step"}, &serve)
@@ -181,20 +181,21 @@ func TestAServePastTheResultBoundLeavesItsLastLanesWaiting(t *testing.T) {
 // An agent that lists no proofs reaches every lane of a step past the result
 // bound, on one server and across restarts after the first serve and after
 // the last follow-up: each follow-up serves waiting lanes and points at every
-// lane sent before it, so three lanes take two calls. The deferral ends with
-// the follow-up that serves the last lane, and the step advances on its
-// report.
+// lane sent before it, so three lanes take two calls. Four lanes too wide to
+// share a result take one call each. The deferral ends with the follow-up
+// that serves the last lane, and the step advances on its report.
 func TestANoProofAgentReachesEveryWaitingLane(t *testing.T) {
 	for _, tc := range []struct {
+		lines              int
 		lanes              []string
 		minCalls, maxCalls int
 	}{
-		{[]string{"first", "second", "third"}, 2, 2},
-		{[]string{"first", "second", "third", "fourth"}, 3, 4},
+		{500, []string{"first", "second", "third"}, 2, 2},
+		{650, []string{"first", "second", "third", "fourth"}, 4, 4},
 	} {
 		for _, restart := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%d lanes, restart=%v", len(tc.lanes), restart), func(t *testing.T) {
-				env := newTestServer(t, nil, writeWideStepGraph(t, tc.lanes...), "")
+				env := newTestServer(t, nil, writeWideStepGraph(t, tc.lines, tc.lanes...), "")
 				cs, _ := boundedConnect(t, env.srv, false)
 				session := openSession(t, cs).Session
 				var serve mcpserver.ServeResult
@@ -254,14 +255,14 @@ func requireWaitingLane(t *testing.T, serve mcpserver.ServeResult) {
 }
 
 // writeWideStepGraph writes the fixture graph with a procedure whose one step
-// serves a lane of about 21,500 characters for each name, three or more
-// running past what one result holds.
-func writeWideStepGraph(t *testing.T, names ...string) string {
+// serves a lane of lines lines for each name; 500 lines run about 21,500
+// characters, so three such lanes run past what one result holds.
+func writeWideStepGraph(t *testing.T, lines int, names ...string) string {
 	t.Helper()
 	graphDir := writeFixtureGraph(t)
 	var lanes strings.Builder
 	for _, name := range names {
-		fmt.Fprintf(&lanes, "### lane: %s\n\n%s\n\n", name, strings.Repeat("Lane "+name+" holds a line of its guidance.\n", 500))
+		fmt.Fprintf(&lanes, "### lane: %s\n\n%s\n\n", name, strings.Repeat("Lane "+name+" holds a line of its guidance.\n", lines))
 	}
 	spec := `---
 type: decision
