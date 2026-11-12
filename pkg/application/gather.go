@@ -254,13 +254,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		ToJudge: candidates, SetAside: setAside,
 	}
 	if request.Held != nil {
-		served.Held = func(id string) (string, bool) {
-			if slices.Contains(opened, id) {
-				return "", false
-			}
-			return request.Held(id)
-		}
-		served.Anchor = request.Anchor
+		served.Held, served.Anchor = request.Held, request.Anchor
 	}
 	full := slices.Clone(opened)
 	for _, candidate := range append(split.Relevant, placed.Relevant...) {

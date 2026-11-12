@@ -366,7 +366,19 @@ func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(opened.Text, "id: "+gatherAlpha) || strings.Contains(opened.Text, pointer) {
-		t.Fatalf("an entry opened by ID should serve in full though held:\n%s", opened.Text)
+	if !strings.Contains(opened.Text, pointer) || strings.Contains(opened.Text, "id: "+gatherAlpha) {
+		t.Fatalf("an entry opened by ID that the consumer holds should print as its pointer:\n%s", opened.Text)
+	}
+	if !slices.Contains(opened.FullIDs, gatherAlpha) {
+		t.Fatalf("the opened entry should count as read in full: %v", opened.FullIDs)
+	}
+
+	unproved := func(string) (string, bool) { return "", false }
+	reopened, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", IDs: []string{gatherAlpha}, Held: unproved})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(reopened.Text, "id: "+gatherAlpha) {
+		t.Fatalf("an entry opened by ID without its proof should serve in full:\n%s", reopened.Text)
 	}
 }

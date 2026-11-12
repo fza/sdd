@@ -81,10 +81,16 @@ func TestGatherPointsAtAnEntryAlreadyServedInFull(t *testing.T) {
 		t.Fatalf("the pointer should name the way back:\n%s", served)
 	}
 
+	var proved mcpserver.GatherResult
+	call(t, cs, "gather", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &proved)
+	if strings.Contains(proved.Serve, "id: "+fixtureGapID) || !strings.Contains(proved.Serve, fixtureGapID+" — ") {
+		t.Fatalf("gather with the id of an entry the call proves it holds should serve its pointer:\n%s", proved.Serve)
+	}
+
 	var reopened mcpserver.GatherResult
-	call(t, cs, "gather", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &reopened)
+	call(t, cs, "gather", map[string]any{"session": session, "ids": []string{fixtureGapID}, "held": []any{}}, &reopened)
 	if !strings.Contains(reopened.Serve, "id: "+fixtureGapID) {
-		t.Fatalf("gather with the ids is the way back and serves in full again:\n%s", reopened.Serve)
+		t.Fatalf("gather with the id and its tag left out of held is the way back and serves in full again:\n%s", reopened.Serve)
 	}
 }
 

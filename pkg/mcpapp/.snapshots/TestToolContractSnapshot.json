@@ -86,7 +86,7 @@
           ]
         },
         "ids": {
-          "description": "entries to open in full; also the way back to an entry a pointer names",
+          "description": "entries to open in full; an entry the call proves it holds serves its pointer, so the way back to a pointed entry is its id with its tag left out of held",
           "items": {
             "type": "string"
           },

@@ -357,7 +357,7 @@ type GatherArgs struct {
 	Proofs
 	Session  string   `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required"`
 	Instance string   `json:"instance,omitempty" jsonschema:"the running capture this reading grounds. Its reported draft writes the searches. Only reads made through gather inside it count for its grounding. Report the draft at assemble first"`
-	IDs      []string `json:"ids,omitempty" jsonschema:"entries to open in full; also the way back to an entry a pointer names"`
+	IDs      []string `json:"ids,omitempty" jsonschema:"entries to open in full; an entry the call proves it holds serves its pointer, so the way back to a pointed entry is its id with its tag left out of held"`
 	Draft    string   `json:"draft,omitempty" jsonschema:"without instance: the draft text the searches are written from; credits nothing"`
 	Topics   []string `json:"topics,omitempty" jsonschema:"without instance: the draft's topic labels, each listed in full"`
 	Page     int      `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
