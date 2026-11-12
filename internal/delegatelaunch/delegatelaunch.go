@@ -180,14 +180,16 @@ func runClaude(ctx context.Context, settings Settings, round Round) (string, err
 
 // CodexArgs are the flags of a headless codex round (V-D18): exec with JSON
 // events in a read-only sandbox, no project instructions (a zero byte budget
-// for AGENTS.md), sdd as an MCP server, and the round's prompt; a later round
-// resumes the first round's session.
+// for AGENTS.md), sdd as an MCP server whose tools run unasked, since exec's
+// approval policy never asks and refuses every tool needing approval, and
+// the round's prompt; a later round resumes the first round's session.
 func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
 	args := []string{
 		"exec", "--json", "--sandbox", "read-only",
 		"-c", "project_doc_max_bytes=0",
 		"-c", "mcp_servers.sdd.command=" + strconv.Quote(sdd),
 		"-c", `mcp_servers.sdd.args=["serve"]`,
+		"-c", `mcp_servers.sdd.default_tools_approval_mode="approve"`,
 	}
 	if agent.Model != "" {
 		args = append(args, "-m", agent.Model)
