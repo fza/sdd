@@ -120,7 +120,7 @@ open_instances:
           description: the pending chooser's step id
           type: string
         userWords:
-          description: the user's answer, verbatim
+          description: the user's own message verbatim, never yours
           type: string
       required:
         - choice

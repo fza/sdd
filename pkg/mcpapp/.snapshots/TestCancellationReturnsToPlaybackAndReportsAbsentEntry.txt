@@ -58,7 +58,7 @@ report_schema:
       held_properties: you hold these capture report fields as ⟦tag⟧ — list the tag in reread to have them again, or resume_session re-serves them in full
       type: object
     userWords:
-      description: the user's answer, verbatim
+      description: the user's own message verbatim, never yours
       type: string
   required:
     - choice

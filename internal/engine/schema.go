@@ -129,7 +129,7 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode, store *S
 	case step.Chooser == ChooserUser && step.Delegable && mode == model.DialogueAutonomous:
 		properties["userWords"] = map[string]any{
 			"type":        "string",
-			"description": "the user's answer verbatim, if they gave one; else give reason",
+			"description": "the user's own message verbatim, never yours; else give reason",
 		}
 		properties["reason"] = map[string]any{
 			"type":        "string",
@@ -138,7 +138,7 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode, store *S
 	case step.Chooser == ChooserUser:
 		properties["userWords"] = map[string]any{
 			"type":        "string",
-			"description": "the user's answer, verbatim",
+			"description": "the user's own message verbatim, never yours",
 		}
 		required = append(required, "userWords")
 	}

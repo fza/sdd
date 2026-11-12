@@ -287,3 +287,20 @@ func TestDelegableChooserEnvelopeKeepsItsPairing(t *testing.T) {
 		t.Errorf("reason should keep the exactly-one-of constraint, got %q", description)
 	}
 }
+
+// userWords carries the user's own message, never words the agent puts in
+// their mouth, on a user chooser and a delegable one alike.
+func TestUserWordsAreTheUsersOwnMessage(t *testing.T) {
+	cases := map[string][]engine.SessionOption{"user chooser": nil, "delegable chooser": {autonomous()}}
+	for name, opts := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, sv := dialogueSession(t, nopSink{}, opts...)
+			props, _ := sv.ReportSchema["properties"].(map[string]any)
+			node, _ := props["userWords"].(map[string]any)
+			description, _ := node["description"].(string)
+			if !strings.Contains(description, "the user's own message verbatim, never yours") {
+				t.Errorf("userWords should be the user's own message, never the agent's, got %q", description)
+			}
+		})
+	}
+}
