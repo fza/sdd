@@ -18,6 +18,7 @@ func focusDraft() map[string]any {
 		"layer":       "tactical",
 		"involvement": []any{map[string]any{"target": captureRefID}},
 		"confidence":  "high",
+		"reasonWords": "this target is what we finish this cycle",
 		"widenReport": "checked the graph for an active focus over this target before drafting",
 	}
 }

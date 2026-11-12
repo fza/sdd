@@ -221,6 +221,8 @@ func TestCapture_SupersededKindStateRefusedAtGate(t *testing.T) {
 	draft := captureDraft()
 	draft["entryKind"] = "directive"
 	draft["intent"] = "guiding"
+	draft["reasonWords"] = "the fixture needs it"
+	draft["intentWords"] = "it keeps applying"
 	serve = session.Report(t, instance, draft)
 	proctest.RequireStep(t, serve, "playback")
 
