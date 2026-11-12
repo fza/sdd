@@ -172,9 +172,10 @@ func writeAnchorOnlyGraph(t *testing.T) string {
 
 // TestCaptureLanesDedupAcrossInstances pins per-lane instruction dedup across
 // capture instances in one session: the first capture serves the static lanes
-// in full, its lanes past the result bound on the follow-up serve, whose
-// typeSystem lane points at the overview served before; a second capture's
-// opening serve collapses them all into the withheld-lanes line.
+// in full, every lane within one result; a second capture's opening serve
+// collapses them into the withheld-lanes line while the typeSystem lane —
+// rendered differently now that the overview was served — stays fresh as the
+// pointer.
 func TestCaptureLanesDedupAcrossInstances(t *testing.T) {
 	// A bare graph dir: the fixture graph plants a simplified capture override,
 	// and this test must drive the shipped base capture's lanes.
@@ -186,14 +187,13 @@ func TestCaptureLanesDedupAcrossInstances(t *testing.T) {
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &first)
 	requireInstructionsContain(t, first, captureIntroProse)
 	requireNoWithheldLanes(t, first)
-	if rest := takeWaitingLanes(t, cs, first); !strings.Contains(rest, basefacts.OverviewFactID) || !strings.Contains(rest, "already served") {
-		t.Fatalf("the step served again should point at the overview it served, got %q", rest)
-	}
+	requireInstructionsExclude(t, first, "lanes of these instructions wait")
 
 	var second mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &second)
-	requireWithheldLanes(t, second, "intro", "typeSystem", "grounding", "topics")
+	requireWithheldLanes(t, second, "intro", "grounding", "topics")
 	requireInstructionsExclude(t, second, captureIntroProse)
+	requireInstructionsContain(t, second, basefacts.OverviewFactID, "already served")
 }
 
 // TestReportSchemaDedup pins schema dedup on canonical bytes: the first
@@ -247,7 +247,6 @@ func TestAnchoredCaptureStaticLanesStillDedup(t *testing.T) {
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &plain)
 	requireInstructionsContain(t, plain, captureIntroProse)
 	requireNoWithheldLanes(t, plain)
-	takeWaitingLanes(t, cs, plain)
 
 	var anchored mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{
@@ -327,21 +326,4 @@ func TestReportSchemaFieldsServeOnceAcrossSteps(t *testing.T) {
 	if len(required) != 2 || required[0] != "contract" || required[1] != "widenReport" {
 		t.Fatalf("the contract step should serve its own required list inline, got %v", contract.ReportSchema["required"])
 	}
-}
-
-// takeWaitingLanes follows a serve whose lanes wait past the result bound,
-// as an agent does: next with no report serves the step again, the lanes it
-// holds as pointers and the waiting ones in full. It returns the text of the
-// lanes the follow-up served.
-func takeWaitingLanes(t *testing.T, cs *mcp.ClientSession, serve mcpserver.ServeResult) string {
-	t.Helper()
-	if !strings.Contains(serve.Instructions, "more lanes of these instructions wait") {
-		return ""
-	}
-	var rest mcpserver.ServeResult
-	call(t, cs, "next", map[string]any{"session": serve.Session, "instance": serve.Instance}, &rest)
-	if strings.Contains(rest.Instructions, "more lanes of these instructions wait") {
-		t.Fatalf("the follow-up should serve every waiting lane, got %q", rest.Instructions)
-	}
-	return rest.Instructions
 }

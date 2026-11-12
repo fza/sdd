@@ -5,13 +5,15 @@ import (
 	"unicode/utf8"
 )
 
-// MaxResultChars bounds one serialized MCP result (20261112-075604-d-tac-t4r):
-// Claude Code saves a larger one to a file the agent then reads back.
+// MaxResultChars bounds the text content of one MCP result
+// (20261112-075604-d-tac-t4r): Claude Code saves a larger one to a file the
+// agent then reads back.
 const MaxResultChars = 50000
 
-// ServedChars is what text costs in a serialized MCP result: JSON-escaped once
-// in the structured copy and twice in the text content that carries that JSON
-// as a string. Bytes stand in for characters, which never undercounts.
+// ServedChars is what text costs in a result as Claude Code counts it: the
+// characters of the text content, which is the structured copy's JSON, so the
+// text JSON-escaped once. Bytes stand in for characters, which never
+// undercounts.
 func ServedChars(text string) int {
 	n := 0
 	for _, r := range text {
@@ -34,19 +36,17 @@ func ServedPrefix(text string, room int) int {
 }
 
 // servedRuneChars is one rune's cost under encoding/json's escaping, HTML
-// characters included: escaped once, then the escape escaped again.
+// characters included.
 func servedRuneChars(r rune) int {
 	switch {
-	case r == '"' || r == '\\':
-		return 2 + 4
-	case r == '\n' || r == '\r' || r == '\t':
-		return 2 + 3
+	case r == '"' || r == '\\' || r == '\n' || r == '\r' || r == '\t':
+		return 2
 	case r < 0x20 || r == '<' || r == '>' || r == '&' || r == ' ' || r == ' ' || r == utf8.RuneError:
-		return 6 + 7
+		return 6
 	case r < utf8.RuneSelf:
-		return 1 + 1
+		return 1
 	}
-	return 2 * utf8.RuneLen(r)
+	return utf8.RuneLen(r)
 }
 
 // SplitServed splits text into chunks that each cost at most room in a

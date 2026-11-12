@@ -8,22 +8,16 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// ServedChars counts what a text costs in a serialized MCP result: its JSON
-// encoding in the structured copy plus that encoding's own encoding in the
-// text content.
+// ServedChars counts what a text costs in an MCP result's text content, the
+// structured copy's JSON: the text's JSON encoding, quotes left out.
 func TestServedChars(t *testing.T) {
 	for _, text := range []string{"", "plain words", "a \"quote\" and a \\ backslash", "lines\nand\ttabs\r", "<html> & more", "\x01 control", "ümlaut and 😀", "separators   "} {
-		structured, err := json.Marshal(text)
+		encoded, err := json.Marshal(text)
 		if err != nil {
 			t.Fatal(err)
 		}
-		content, err := json.Marshal(string(structured))
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := len(structured) - 2 + len(content) - 6
-		if got := model.ServedChars(text); got != want {
-			t.Errorf("%q should cost what its two encodings take, got %d", text, got)
+		if got, want := model.ServedChars(text), len(encoded)-2; got != want {
+			t.Errorf("%q should cost what its encoding takes, %d, got %d", text, want, got)
 		}
 		if prefix := model.ServedPrefix(text, model.ServedChars(text)-1); text != "" && prefix >= len(text) {
 			t.Errorf("%q: a room short of the whole text should leave a prefix", text)

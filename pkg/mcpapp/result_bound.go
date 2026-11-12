@@ -11,22 +11,18 @@ import (
 // room past what a result's parts may take: textBudget for the one large text
 // field of a read, serveBudget for a serve before its notices join it.
 const (
-	textBudget  = model.MaxResultChars - 6000
-	serveBudget = model.MaxResultChars - 4000
+	textBudget  = model.MaxResultChars - 3000
+	serveBudget = model.MaxResultChars - 2000
 )
 
-// resultChars is what v costs as a tool result: its JSON as the structured
-// copy plus that JSON as the text content's string.
+// resultChars is what v costs as a tool result: the text content carrying its
+// JSON, which Claude Code counts against the bound.
 func resultChars(v any) (int, error) {
 	structured, err := json.Marshal(v)
 	if err != nil {
 		return 0, fmt.Errorf("measuring a result: %w", err)
 	}
-	content, err := json.Marshal(string(structured))
-	if err != nil {
-		return 0, fmt.Errorf("measuring a result: %w", err)
-	}
-	return len(structured) + len(content), nil
+	return len(structured), nil
 }
 
 // pagedText bounds text, the large field of a tool's result, to textBudget:
@@ -40,7 +36,7 @@ func pagedText(ss *shellSession, tool, text string) string {
 	if ss.pages == nil {
 		ss.pages = map[string][]string{}
 	}
-	ss.pages[tool] = model.SplitServed(text, textBudget-1000)
+	ss.pages[tool] = model.SplitServed(text, textBudget-500)
 	return pageText(ss, tool, 1)
 }
 

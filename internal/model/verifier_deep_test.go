@@ -153,7 +153,7 @@ func TestWeighDeep(t *testing.T) {
 }
 
 func TestDeepReadingPages(t *testing.T) {
-	big := strings.Repeat("x", model.DeepPageChars/2-20)
+	big := strings.Repeat("x", model.DeepPageChars-20)
 	pages := model.DeepReadingPages("draft",
 		[]model.DeepReadingBlock{{ID: "t", Text: "target"}, {ID: "f", Text: "read in full"}},
 		[]model.DeepReadingBlock{{ID: "b1", Text: "brief one"}, {ID: "b2", Text: big}, {ID: "b3", Text: "brief three"}})
@@ -206,14 +206,14 @@ func TestDeepReadingPagesSplitAnOversizedEntry(t *testing.T) {
 func TestDeepContinuedPages(t *testing.T) {
 	line := strings.Repeat("l", 99) + "\n"
 	paragraph := strings.Repeat(line, 10) + "\n"
-	runes := "x" + strings.Repeat("ü", model.DeepPageChars/2)
+	runes := "x" + strings.Repeat("ü", model.DeepPageChars)
 	for _, tc := range []struct {
 		name, text, breaks string
 		pages              int
 	}{
 		{"short", "the rules", "", 1},
-		{"paragraphs", strings.Repeat(paragraph, 50), "\n\n", 3},
-		{"lines", strings.Repeat(line, 500), "\n", 3},
+		{"paragraphs", strings.Repeat(paragraph, 110), "\n\n", 3},
+		{"lines", strings.Repeat(line, 1100), "\n", 3},
 		{"one long line", runes, "", 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -252,7 +252,7 @@ func TestDeepContinuedPages(t *testing.T) {
 // Each page names the entries it serves in full: the blocks of first, on the
 // page they land on; briefs name none.
 func TestDeepReadingPagesNameTheirFullEntries(t *testing.T) {
-	big := strings.Repeat("x", model.DeepPageChars/2-5)
+	big := strings.Repeat("x", model.DeepPageChars-5)
 	pages := model.DeepReadingPages("draft",
 		[]model.DeepReadingBlock{{ID: "t", Text: "target"}, {ID: "f", Text: big}},
 		[]model.DeepReadingBlock{{ID: "b1", Text: "brief one"}})

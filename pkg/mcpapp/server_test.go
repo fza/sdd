@@ -1444,8 +1444,8 @@ func TestEmbeddedCaptureProcedure(t *testing.T) {
 	if !strings.Contains(serve.Instructions, "Ground before you draft") {
 		t.Fatalf("expected the embedded assemble unit, got %q", serve.Instructions)
 	}
-	if rest := takeWaitingLanes(t, cs, serve); !strings.Contains(serve.Instructions+rest, "testing/fixture") {
-		t.Fatalf("assemble unit should render the injected topic counts, got %q", serve.Instructions+rest)
+	if !strings.Contains(serve.Instructions, "testing/fixture") {
+		t.Fatalf("assemble unit should render the injected topic counts, got %q", serve.Instructions)
 	}
 
 	// A draft ref'ing an entry never served in full holds the assemble gate —

@@ -2,7 +2,6 @@ package mcpapp_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,8 +16,8 @@ import (
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
-// boundedResults fails the test for every result whose serialized form, the
-// JSON envelope and the structured copy included, exceeds the result bound.
+// boundedResults fails the test for every result whose text content, what
+// Claude Code counts, exceeds the result bound.
 type boundedResults struct {
 	t       *testing.T
 	mu      sync.Mutex
@@ -32,16 +31,18 @@ func (b *boundedResults) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 		if !ok || err != nil {
 			return res, err
 		}
-		raw, marshalErr := json.Marshal(result)
-		if marshalErr != nil {
-			return res, marshalErr
+		chars := 0
+		for _, content := range result.Content {
+			if text, ok := content.(*mcp.TextContent); ok {
+				chars += len(text.Text)
+			}
 		}
 		tool := req.GetParams().(*mcp.CallToolParams).Name
 		b.mu.Lock()
-		b.largest[tool] = max(b.largest[tool], len(raw))
+		b.largest[tool] = max(b.largest[tool], chars)
 		b.mu.Unlock()
-		if len(raw) > model.MaxResultChars {
-			b.t.Errorf("a %s result of %d characters exceeds the result bound", tool, len(raw))
+		if chars > model.MaxResultChars {
+			b.t.Errorf("a %s result of %d characters exceeds the result bound", tool, chars)
 		}
 		return res, nil
 	}
@@ -92,21 +93,7 @@ func largeGraph(t *testing.T) (dir string, ids []string, huge string) {
 // continuation the agent follows.
 func TestNoResultExceedsTheResultBound(t *testing.T) {
 	dir, ids, huge := largeGraph(t)
-	env := newTestServer(t, nil, dir, "")
-	bound := &boundedResults{t: t, largest: map[string]int{}}
-	memory := newAgentMemory()
-	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	if _, err := env.srv.Connect(t.Context(), serverTransport); err != nil {
-		t.Fatal(err)
-	}
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
-	client.AddSendingMiddleware(memory.middleware, bound.middleware)
-	cs, err := client.Connect(t.Context(), clientTransport, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cs.Close() })
-
+	cs, bound := boundedClient(t, dir)
 	session := openSession(t, cs).Session
 	pages := func(tool string, args map[string]any, text func(map[string]any) string) {
 		t.Helper()
@@ -139,7 +126,6 @@ func TestNoResultExceedsTheResultBound(t *testing.T) {
 	var capture mcpserver.ServeResult
 	for range 3 {
 		call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &capture)
-		takeWaitingLanes(t, cs, capture)
 	}
 	var gathered mcpserver.GatherResult
 	call(t, cs, "gather", map[string]any{"session": session, "instance": capture.Instance}, &gathered)
@@ -148,14 +134,80 @@ func TestNoResultExceedsTheResultBound(t *testing.T) {
 	t.Logf("largest results: %v", bound.largest)
 }
 
+// boundedClient connects to a server over graphDir through a client that
+// lists its proofs and fails the test on every result past the bound.
+func boundedClient(t *testing.T, graphDir string) (*mcp.ClientSession, *boundedResults) {
+	t.Helper()
+	env := newTestServer(t, nil, graphDir, "")
+	bound := &boundedResults{t: t, largest: map[string]int{}}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	if _, err := env.srv.Connect(t.Context(), serverTransport); err != nil {
+		t.Fatal(err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	client.AddSendingMiddleware(newAgentMemory().middleware, bound.middleware)
+	cs, err := client.Connect(t.Context(), clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+	return cs, bound
+}
+
+// A step whose lanes together run past the result bound serves the lanes
+// that fit and names the rest, which next with no report serves.
+func TestAServePastTheResultBoundLeavesItsLastLanesWaiting(t *testing.T) {
+	graphDir := writeFixtureGraph(t)
+	lane := func(name string) string {
+		return fmt.Sprintf("### lane: %s\n\n%s\n\n", name, strings.Repeat("Lane "+name+" holds a line of its guidance.\n", 500))
+	}
+	spec := `---
+type: decision
+kind: procedure
+layer: process
+canonical: wide-step
+confidence: high
+summary: A workflow whose one step serves three wide lanes.
+state:
+    body: {type: text, desc: what the step yields}
+steps:
+    - id: wide
+      collect: [body]
+      transitions:
+          - when: hasBody
+            to: end(completed)
+---
+
+Serves three wide lanes.
+
+## unit: wide
+
+` + lane("first") + lane("second") + lane("third")
+	if err := os.WriteFile(filepath.Join(graphDir, "2026/07/04-120002-d-prc-wid.md"), []byte(spec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cs, _ := boundedClient(t, graphDir)
+	session := openSession(t, cs).Session
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step"}, &serve)
+	if !strings.Contains(serve.Instructions, "Lane first holds") || strings.Contains(serve.Instructions, "Lane third holds") || !strings.Contains(serve.Instructions, "lanes of these instructions wait") {
+		t.Fatalf("the serve should hold the lanes that fit and name the waiting ones, got %.300q", serve.Instructions)
+	}
+	var rest mcpserver.ServeResult
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance}, &rest)
+	if !strings.Contains(rest.Instructions, "Lane third holds") || strings.Contains(rest.Instructions, "lanes of these instructions wait") {
+		t.Fatalf("next with no report should serve the waiting lanes, got %.300q", rest.Instructions)
+	}
+}
+
 // A resume whose moves would together run past the result bound serves the
 // moves that fit and names the others, each resumed through next.
 func TestResumeOmitsMovesPastTheResultBound(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
 	session := openSession(t, cs).Session
-	big := strings.Repeat("z", 4000)
-	for i := range 3 {
+	big := strings.Repeat("z", 20000)
+	for i := range 6 {
 		report := assembleReport()
 		report["body"] = fmt.Sprintf("body %d: %s", i, big)
 		report["widenReport"] = fmt.Sprintf("widen %d: %s", i, big)
@@ -167,14 +219,11 @@ func TestResumeOmitsMovesPastTheResultBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(res)
-	if err != nil {
-		t.Fatal(err)
+	text := contentText(res)
+	if len(text) > model.MaxResultChars {
+		t.Fatalf("the resume should stay within the result bound, got %d characters", len(text))
 	}
-	if len(raw) > model.MaxResultChars {
-		t.Fatalf("the resume should stay within the result bound, got %d characters", len(raw))
-	}
-	if text := contentText(res); !strings.Contains(text, "omitted here for size") || !strings.Contains(text, "capture at ") {
+	if !strings.Contains(text, "omitted here for size") || !strings.Contains(text, "capture at ") {
 		t.Fatalf("the moves past the bound should be named, got %.300q", text)
 	}
 }
