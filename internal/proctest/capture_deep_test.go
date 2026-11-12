@@ -912,6 +912,25 @@ func TestCaptureDeep_TheDispatchSaysPreflightsModelDidNotJudge(t *testing.T) {
 	}
 }
 
+// A step whose unit never renders pre-flight's rubric serves no notice that
+// the rubric was cut for size; the dispatch, which reads it, does.
+func TestCaptureDeep_ACutNoticeServesOnlyWhereTheValueRenders(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-cut-notice", sdd.VerifierPolicy{})
+	instance, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	const notice = "store:preflightRubric"
+	if !strings.Contains(serve.Instructions, notice) {
+		t.Fatalf("the dispatch reads the rubric and should name its cut:\n%s", serve.Instructions)
+	}
+	x := dispatchDeep(t, world, session, instance)
+	x.judge(t, []any{map[string]any{"verdict": "the layer is too low", "axis": "ref-fit", "severity": "low"}})
+	serve = x.pickUp(t)
+	proctest.RequireStep(t, serve, "deepAnswer")
+	if strings.Contains(serve.Instructions, notice) {
+		t.Fatalf("deepAnswer never renders the rubric and should name no cut of it:\n%s", serve.Instructions)
+	}
+}
+
 // A finding the verifier withdraws on a contest reaches the drafter with the
 // verifier's reason, whole past a store value's cap, to tell the user.
 func TestCaptureDeep_AWithdrawnFindingReachesTheDrafter(t *testing.T) {

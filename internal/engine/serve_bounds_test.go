@@ -115,6 +115,35 @@ func TestStoreValueBoundsAtTheUnitContext(t *testing.T) {
 	}
 }
 
+func TestStoreValueCutServesOnlyWhereTheLanesReadIt(t *testing.T) {
+	long := longLines(100) // ~4100 bytes, over the 2000-byte store-value default
+	for _, tc := range []struct {
+		name, lane string
+		cut        bool
+	}{
+		{"field", "{{.note}}", true},
+		{"condition", "{{if .note}}A note is held.{{end}}", true},
+		{"index", `{{index . "note"}}`, true},
+		{"root variable", "{{with .other}}{{$.note}}{{end}}", true},
+		{"range", "{{range $i, $c := .other}}{{$.note}}{{end}}", true},
+		{"template argument", `{{define "n"}}{{.}}{{end}}{{template "n" .note}}`, true},
+		{"defined template", `{{define "n"}}{{.note}}{{end}}{{template "n" .}}`, true},
+		{"not read", "Authored text only.", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := mustParseLanes(t, laneMachine, "## unit: draft\n\n### lane: note\n\n"+tc.lane+"\n")
+			eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
+			sv, err := eng.NewSession("s_store", "tester", nopSink{}).Start(spec, map[string]any{"note": long}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cut := len(sv.Cuts) == 1 && sv.Cuts[0].Part == "store:note"; cut != tc.cut || len(sv.Cuts) > 1 {
+				t.Errorf("Serve.Cuts = %+v, want the store:note cut %v", sv.Cuts, tc.cut)
+			}
+		})
+	}
+}
+
 func TestInjectUnderAStoreNameServesItsOwnBound(t *testing.T) {
 	reg := engine.NewRegistry()
 	long := longLines(100) // ~4100 bytes, over the 2000-byte store-value default

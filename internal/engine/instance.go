@@ -870,23 +870,32 @@ func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSiz
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("unit %s: %w", unitName, err)
 	}
+	tmpls := make([]*template.Template, len(unit.Lanes))
+	for i, lane := range unit.Lanes {
+		tmpls[i], err = template.New(lane.Name).Option("missingkey=zero").Parse(lane.Text)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("unit %s: lane %s: %w", unitName, lane.Name, err)
+		}
+	}
 	var sizes []PartSize
 	var cuts []truncate.Cut
 	// Store values interpolate into served text uncapped otherwise; the bound
 	// applies only here, on the unit context — inject args render against the
 	// raw store (renderInjectArgs), and the draft lane carries its own bound.
+	// A cut serves its notice only where the lanes read the value.
 	storeCap := serveview.Default().Cap(serveview.PartStoreValue)
 	injected := make(map[string]bool, len(step.Inject))
 	for _, inj := range step.Inject {
 		injected[inj.EffectiveID()] = true
 	}
+	reads := templateReads(tmpls)
 	for _, name := range slices.Sorted(maps.Keys(tmplCtx)) {
 		// An inject under a store value's name replaces it with its own bound.
 		if !inst.Store.Has(name) || injected[name] {
 			continue
 		}
 		bounded, cut := serveview.BoundValue(tmplCtx[name], storeCap)
-		if cut != nil {
+		if cut != nil && reads[name] {
 			cut.Part = "store:" + name
 			cuts = append(cuts, *cut)
 		}
@@ -921,13 +930,9 @@ func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSiz
 	}
 
 	lanes := make([]ServeLane, 0, len(unit.Lanes))
-	for _, lane := range unit.Lanes {
-		tmpl, err := template.New(lane.Name).Option("missingkey=zero").Parse(lane.Text)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("unit %s: lane %s: %w", unitName, lane.Name, err)
-		}
+	for i, lane := range unit.Lanes {
 		var buf strings.Builder
-		if err := tmpl.Execute(&buf, tmplCtx); err != nil {
+		if err := tmpls[i].Execute(&buf, tmplCtx); err != nil {
 			return nil, nil, nil, fmt.Errorf("unit %s: lane %s: %w", unitName, lane.Name, err)
 		}
 		if text := strings.TrimSpace(buf.String()); text != "" {
