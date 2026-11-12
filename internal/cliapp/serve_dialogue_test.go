@@ -39,7 +39,7 @@ func TestServeOpensSessionsInTheConfiguredDialogueMode(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				opening = test.Untagged(string(encoded))
+				opening = withWaitingLanes(t, client, test.Untagged(string(encoded)))
 			})
 			if got := strings.Contains(opening, "working on your own"); got != tc.wantAutonomous {
 				t.Errorf("only a person's own config should open the session autonomous, got autonomous=%v", got)

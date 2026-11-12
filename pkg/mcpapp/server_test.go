@@ -1441,11 +1441,12 @@ func TestEmbeddedCaptureProcedure(t *testing.T) {
 	if serve.Step != "assemble" || serve.Status != "running" {
 		t.Fatalf("expected running at assemble, got %s at %q", serve.Status, serve.Step)
 	}
-	if !strings.Contains(serve.Instructions, "Ground before you draft") {
-		t.Fatalf("expected the embedded assemble unit, got %q", serve.Instructions)
+	assemble := followWaitingLanes(t, cs, session, serve)
+	if !strings.Contains(assemble, "Ground before you draft") {
+		t.Fatalf("expected the embedded assemble unit, got %q", assemble)
 	}
-	if !strings.Contains(serve.Instructions, "testing/fixture") {
-		t.Fatalf("assemble unit should render the injected topic counts, got %q", serve.Instructions)
+	if !strings.Contains(assemble, "testing/fixture") {
+		t.Fatalf("assemble unit should render the injected topic counts, got %q", assemble)
 	}
 
 	// A draft ref'ing an entry never served in full holds the assemble gate —
@@ -1562,8 +1563,10 @@ func TestEmbeddedEvaluateToCaptureHandoff(t *testing.T) {
 	if slices.Contains(cap.Missing, "widenReport") {
 		t.Fatalf("capture should inherit widenReport via the handoff, but it is missing: %v", cap.Missing)
 	}
-	if !strings.Contains(cap.Instructions, "inherited") || !strings.Contains(cap.Instructions, "teardown edge is the only new thing") {
-		t.Errorf("assemble should surface the inherited grounding, got %q", cap.Instructions)
+	// The calls serving lanes past the result bound count apart from the bar.
+	assemble := followWaitingLanes(t, cs, session, cap)
+	if !strings.Contains(assemble, "inherited") || !strings.Contains(assemble, "teardown edge is the only new thing") {
+		t.Errorf("assemble should surface the inherited grounding, got %q", assemble)
 	}
 
 	// Capture #2: draft with NO widenReport — the handoff already satisfied
@@ -2495,6 +2498,7 @@ func TestResumeServesPositionInFull(t *testing.T) {
 		t.Fatalf("precondition: the capture step should serve a report schema, got %+v", serve)
 	}
 
+	bare, _ := boundedConnect(t, env.srv, false)
 	var prevSize int
 	for i := range 3 {
 		var resumed mcpserver.ResumeSessionResult
@@ -2514,8 +2518,13 @@ func TestResumeServesPositionInFull(t *testing.T) {
 				shellServe = &resumed.Open[j]
 			}
 		}
-		if shellServe == nil || !strings.Contains(shellServe.Instructions, "Standing goal") {
-			t.Fatalf("resume %d: the shell should re-serve its orientation in full, got %+v", i, shellServe)
+		if shellServe == nil {
+			t.Fatalf("resume %d: the shell should re-serve its orientation, got %+v", i, resumed.Open)
+		}
+		// An agent holding nothing has the waiting lanes in full, never as
+		// the pointers a proving one gets.
+		if orientation := followWaitingLanes(t, bare, session, *shellServe); !strings.Contains(orientation, "Standing goal") {
+			t.Fatalf("resume %d: the shell should re-serve its orientation in full, its lanes past the result bound on the calls that follow, got %q", i, orientation)
 		}
 		if capServe == nil || capServe.Instance != serve.Instance || capServe.Step != serve.Step {
 			t.Fatalf("resume %d: the in-flight move should re-serve at its step, got %+v", i, resumed.Open)

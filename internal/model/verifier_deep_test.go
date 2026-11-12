@@ -212,8 +212,8 @@ func TestDeepContinuedPages(t *testing.T) {
 		pages              int
 	}{
 		{"short", "the rules", "", 1},
-		{"paragraphs", strings.Repeat(paragraph, 110), "\n\n", 3},
-		{"lines", strings.Repeat(line, 1100), "\n", 3},
+		{"paragraphs", strings.Repeat(paragraph, model.DeepPageChars*5/2/model.ServedChars(paragraph)), "\n\n", 3},
+		{"lines", strings.Repeat(line, model.DeepPageChars*5/2/model.ServedChars(line)), "\n", 3},
 		{"one long line", runes, "", 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

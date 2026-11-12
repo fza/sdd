@@ -36,6 +36,45 @@ func callToolResult(t *testing.T, client *mcp.ClientSession, name string, args m
 	return test.Untagged(string(encoded)), ""
 }
 
+// withWaitingLanes follows every serve in result whose lanes wait past the
+// result bound, calling next with no report until none does, and returns
+// result with the text of each call appended.
+func withWaitingLanes(t *testing.T, client *mcp.ClientSession, result string) string {
+	t.Helper()
+	type serve struct {
+		Instance     string `json:"instance"`
+		Instructions string `json:"instructions"`
+	}
+	var carrier struct {
+		Session string  `json:"session"`
+		Open    []serve `json:"open_instances"`
+		serve
+	}
+	err := json.Unmarshal([]byte(result), &carrier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := result
+	for _, s := range append(carrier.Open, carrier.serve) {
+		for range 10 {
+			if !strings.Contains(s.Instructions, "lanes of these instructions wait") {
+				break
+			}
+			next, failure := callToolResult(t, client, "next", map[string]any{"session": carrier.Session, "instance": s.Instance})
+			if failure != "" {
+				t.Fatalf("next: %s", failure)
+			}
+			joined += "\n" + next
+			s = serve{Instance: s.Instance}
+			err = json.Unmarshal([]byte(next), &s)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return joined
+}
+
 func openSession(t *testing.T, client *mcp.ClientSession) (string, string) {
 	t.Helper()
 	opening, failure := callToolResult(t, client, "start_session", map[string]any{})
@@ -49,7 +88,7 @@ func openSession(t *testing.T, client *mcp.ClientSession) (string, string) {
 	if err != nil || door.Session == "" {
 		t.Fatalf("start_session returned no handle: %v %s", err, opening)
 	}
-	return door.Session, opening
+	return door.Session, withWaitingLanes(t, client, opening)
 }
 
 func hostNotice(t *testing.T, result string) string {
@@ -79,7 +118,7 @@ func TestServeFollowsAConfigChangeWithoutAReconnect(t *testing.T) {
 		if failure != "" {
 			t.Fatalf("resume_session: %s", failure)
 		}
-		if !strings.Contains(resumed, "working on your own") {
+		if !strings.Contains(withWaitingLanes(t, client, resumed), "working on your own") {
 			t.Errorf("the running session should follow the new dialogue mode:\n%s", resumed)
 		}
 		if notice := hostNotice(t, resumed); !strings.Contains(notice, "dialogue.mode: guided -> autonomous") {

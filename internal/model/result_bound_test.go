@@ -25,6 +25,15 @@ func TestServedChars(t *testing.T) {
 	}
 }
 
+// A result at the bound prints whole in Codex's code mode, which spends the
+// result's text at the rate measured there, 15,059 tokens for 29,131
+// characters, against an output budget of 10,000 tokens.
+func TestMaxResultCharsFitsCodexOutputBudget(t *testing.T) {
+	if tokens := model.MaxResultChars * 15059 / 29131; tokens > 10000 {
+		t.Fatalf("a result at the bound should print within Codex's output budget, it costs %d tokens", tokens)
+	}
+}
+
 // SplitServed cuts text into chunks within the room, at the widest break each
 // offers, that join to the text again.
 func TestSplitServed(t *testing.T) {

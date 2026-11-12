@@ -22,6 +22,7 @@ import (
 	"github.com/networkteam/sdd/internal/textpatch"
 	"github.com/networkteam/sdd/internal/truncate"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // defaultSearchHits caps search responses when the caller sets no limit —
@@ -1493,7 +1494,14 @@ func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest
 	if err != nil {
 		return ServeResult{}, err
 	}
-	recordDeferral(ss, serve, keep)
+	var framing []types.ServeLane
+	if keep < len(serve.InstructionLanes) && !serve.Waiting {
+		framing, err = ss.root.FramingBlocks(ctx, s.requestIdentity(req))
+		if err != nil {
+			return ServeResult{}, err
+		}
+	}
+	recordDeferral(ss, serve, keep, framing)
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return ServeResult{}, err
 	}
@@ -1528,13 +1536,18 @@ func (s *Server) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss 
 
 // recordDeferral records a serve that holds only its first keep lanes, so
 // the call that follows serves the waiting lanes and points at the sent ones.
-func recordDeferral(ss *shellSession, serve *sdd.WorkflowServe, keep int) {
+// The framing blocks the call sent count among them: re-sent to an agent that
+// proves nothing, they would leave the waiting lanes no room.
+func recordDeferral(ss *shellSession, serve *sdd.WorkflowServe, keep int, framing []types.ServeLane) {
 	if keep >= len(serve.InstructionLanes) {
 		return
 	}
-	sent := make([]string, 0, keep)
+	sent := make([]string, 0, keep+len(framing))
 	for _, lane := range serve.InstructionLanes[:keep] {
 		sent = append(sent, "lane "+lane.Name)
+	}
+	for _, block := range framing {
+		sent = append(sent, "framing "+block.Name)
 	}
 	ss.root.RecordDeferral(serve.Instance, sent)
 }
@@ -1643,7 +1656,7 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 			omitted = append(omitted, name)
 			continue
 		}
-		recordDeferral(ss, serve, keep)
+		recordDeferral(ss, serve, keep, framing)
 		spent += cost
 		result.Open = append(result.Open, mapped)
 	}

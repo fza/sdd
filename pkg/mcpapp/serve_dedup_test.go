@@ -172,10 +172,10 @@ func writeAnchorOnlyGraph(t *testing.T) string {
 
 // TestCaptureLanesDedupAcrossInstances pins per-lane instruction dedup across
 // capture instances in one session: the first capture serves the static lanes
-// in full, every lane within one result; a second capture's opening serve
-// collapses them into the withheld-lanes line while the typeSystem lane —
-// rendered differently now that the overview was served — stays fresh as the
-// pointer.
+// in full, the lanes past the result bound on the calls that follow, which
+// serve the typeSystem lane again rendered as the pointer once the overview
+// was served; a second capture's opening serve collapses every lane into the
+// withheld-lanes line.
 func TestCaptureLanesDedupAcrossInstances(t *testing.T) {
 	// A bare graph dir: the fixture graph plants a simplified capture override,
 	// and this test must drive the shipped base capture's lanes.
@@ -187,13 +187,17 @@ func TestCaptureLanesDedupAcrossInstances(t *testing.T) {
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &first)
 	requireInstructionsContain(t, first, captureIntroProse)
 	requireNoWithheldLanes(t, first)
-	requireInstructionsExclude(t, first, "lanes of these instructions wait")
+	whole := followWaitingLanes(t, cs, session, first)
+	for _, want := range []string{"Ground before you draft", basefacts.OverviewFactID + "`) was already served"} {
+		if !strings.Contains(whole, want) {
+			t.Fatalf("the calls serving the waiting lanes should carry %q, got %q", want, whole)
+		}
+	}
 
 	var second mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &second)
-	requireWithheldLanes(t, second, "intro", "grounding", "topics")
+	requireWithheldLanes(t, second, "intro", "typeSystem", "grounding", "topics")
 	requireInstructionsExclude(t, second, captureIntroProse)
-	requireInstructionsContain(t, second, basefacts.OverviewFactID, "already served")
 }
 
 // TestReportSchemaDedup pins schema dedup on canonical bytes: the first
@@ -247,6 +251,7 @@ func TestAnchoredCaptureStaticLanesStillDedup(t *testing.T) {
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &plain)
 	requireInstructionsContain(t, plain, captureIntroProse)
 	requireNoWithheldLanes(t, plain)
+	followWaitingLanes(t, cs, session, plain)
 
 	var anchored mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{

@@ -13,6 +13,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
+	sdd "github.com/networkteam/sdd/pkg/application"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
@@ -246,6 +247,22 @@ func TestANoProofAgentReachesEveryWaitingLane(t *testing.T) {
 	}
 }
 
+// followWaitingLanes calls next with no report on a serve whose lanes wait
+// until none does, and returns the instructions of every call joined.
+func followWaitingLanes(t *testing.T, cs *mcp.ClientSession, session string, serve mcpserver.ServeResult) string {
+	t.Helper()
+	text := serve.Instructions
+	for range 10 {
+		if !strings.Contains(serve.Instructions, "lanes of these instructions wait") {
+			return text
+		}
+		call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance}, &serve)
+		text += "\n\n" + serve.Instructions
+	}
+	t.Fatalf("the waiting lanes should serve within 10 calls, got %.300q", serve.Instructions)
+	return ""
+}
+
 func requireWaitingLane(t *testing.T, serve mcpserver.ServeResult) {
 	t.Helper()
 	if !strings.Contains(serve.Instructions, "Lane first holds") || strings.Contains(serve.Instructions, "Lane third holds") || !strings.Contains(serve.Instructions, "lanes of these instructions wait") {
@@ -254,14 +271,15 @@ func requireWaitingLane(t *testing.T, serve mcpserver.ServeResult) {
 }
 
 // writeWideStepGraph writes the fixture graph with a procedure whose one step
-// serves a lane of about 21,500 characters for each name, three or more
-// running past what one result holds.
+// serves a lane of about half the result bound less 7,000 characters for
+// each name: two lanes and the step around them fill one result, three or
+// more run past it.
 func writeWideStepGraph(t *testing.T, names ...string) string {
 	t.Helper()
 	graphDir := writeFixtureGraph(t)
 	var lanes strings.Builder
 	for _, name := range names {
-		fmt.Fprintf(&lanes, "### lane: %s\n\n%s\n\n", name, strings.Repeat("Lane "+name+" holds a line of its guidance.\n", 500))
+		fmt.Fprintf(&lanes, "### lane: %s\n\n%s\n\n", name, strings.Repeat("Lane "+name+" holds a line of its guidance.\n", (model.MaxResultChars-7000)/86))
 	}
 	spec := `---
 type: decision
@@ -297,7 +315,7 @@ func TestResumeOmitsMovesPastTheResultBound(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
 	session := openSession(t, cs).Session
-	big := strings.Repeat("z", 20000)
+	big := strings.Repeat("z", model.MaxResultChars*2/5)
 	for i := range 6 {
 		report := assembleReport()
 		report["body"] = fmt.Sprintf("body %d: %s", i, big)
@@ -316,5 +334,68 @@ func TestResumeOmitsMovesPastTheResultBound(t *testing.T) {
 	}
 	if !strings.Contains(text, "omitted here for size") || !strings.Contains(text, "capture at ") {
 		t.Fatalf("the moves past the bound should be named, got %.300q", text)
+	}
+}
+
+// Every page of the deep verifier's reading serves in one result within the
+// bound: the page and the step around it, no lane left waiting.
+func TestEveryDeepReadingPageServesWithinTheResultBound(t *testing.T) {
+	var entries []*model.Entry
+	var ids []string
+	for n := range 12 {
+		var body strings.Builder
+		for i := range 40 {
+			fmt.Fprintf(&body, "Paragraph %d of entry %d observes how the reading behaves under load, with enough words to fill a line.\n\n", i, n)
+		}
+		e := &model.Entry{
+			ID: fmt.Sprintf("20260601-%06d-s-tac-d%02d", 100000+n, n), Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
+			Summary: fmt.Sprintf("Entry %d of the deep fixture observes the reading under load.", n),
+			Content: body.String(), Topics: proctest.MustTopics("testing/fixture"), Confidence: "medium",
+		}
+		entries, ids = append(entries, e), append(ids, e.ID)
+	}
+	world := proctest.NewWorld(t, proctest.WithEntries(entries...), proctest.WithVerifier(sdd.VerifierPolicy{Mode: "deep"}, 200000, 4096))
+	srv, err := mcpserver.New(mcpserver.Options{Application: world.App, SearchSyncMode: sdd.SearchSyncAll, LocalIdentity: world.Identity, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs, bound := boundedConnect(t, srv, true)
+	defer func() { t.Logf("largest results: %v", bound.largest) }()
+	session := openSession(t, cs).Session
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &serve)
+	capture := serve.Instance
+	callRaw(t, cs, "gather", map[string]any{"session": session, "instance": capture, "ids": ids})
+	call(t, cs, "next", map[string]any{"session": session, "instance": capture, "report": map[string]any{
+		"body": "A tactical gap: the deep fixture observes the reading under load.", "entryKind": "gap", "layer": "tactical",
+		"refs":   []map[string]any{{"id": ids[0], "kind": "related", "desc": "the entry this gap sits beside"}},
+		"topics": []string{"testing/fixture"}, "confidence": "medium", "widenReport": "opened every fixture entry",
+	}}, &serve)
+	call(t, cs, "next", map[string]any{"session": session, "instance": capture, "report": map[string]any{"chooser": "playback", "choice": "confirm", "userWords": "write it"}}, &serve)
+	if serve.Step != "deepDispatch" {
+		t.Fatalf("the confirmed draft should reach the deep dispatch, got %q: %.300q", serve.Step, serve.Instructions)
+	}
+	call(t, cs, "next", map[string]any{"session": session, "instance": capture, "report": map[string]any{"chooser": "deepDispatch", "choice": "delegate"}}, &serve)
+	if len(serve.Dispatches) != 1 {
+		t.Fatalf("the dispatching answer should owe one dispatch, got %+v", serve.Dispatches)
+	}
+	child, verify := serve.Dispatches[0].Session, serve.Dispatches[0].Instance
+	var resumed mcpserver.ResumeSessionResult
+	call(t, cs, "resume_session", map[string]any{"session": child}, &resumed)
+	page := resumed.Open[0]
+	for n := 1; ; n++ {
+		if !strings.Contains(page.Instructions, fmt.Sprintf("Page %d of ", n)) || strings.Contains(page.Instructions, "lanes of these instructions wait") {
+			t.Fatalf("page %d should serve whole in one result, got %.300q", n, page.Instructions)
+		}
+		if strings.Contains(page.Instructions, "Every page is served.") {
+			if n < 3 {
+				t.Fatalf("the reading should run over several pages, it took %d", n)
+			}
+			return
+		}
+		if n > 40 {
+			t.Fatal("the reading should end within 40 pages")
+		}
+		call(t, cs, "next", map[string]any{"session": child, "instance": verify, "report": map[string]any{"chooser": "read", "choice": "more"}}, &page)
 	}
 }

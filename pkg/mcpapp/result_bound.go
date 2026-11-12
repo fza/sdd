@@ -16,7 +16,7 @@ const (
 )
 
 // resultChars is what v costs as a tool result: the text content carrying its
-// JSON, which Claude Code counts against the bound.
+// JSON, which the bound counts.
 func resultChars(v any) (int, error) {
 	structured, err := json.Marshal(v)
 	if err != nil {

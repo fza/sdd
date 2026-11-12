@@ -496,7 +496,7 @@ func TestCaptureDeep_ThePreflightRulesReachTheVerifierWhole(t *testing.T) {
 	x := startDeep(t, world, session, captureDraft())
 	x.delegate.Refresh(t)
 	var rules strings.Builder
-	for range 10 {
+	for range 40 {
 		serve := x.delegate.Answer(t, x.child, "read", "more", nil, "")
 		if strings.Contains(serve.Instructions, "## Pre-flight's rules") {
 			rules.WriteString(serve.Instructions)
