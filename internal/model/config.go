@@ -328,7 +328,7 @@ var RetiredConfigKeys = map[string]string{
 	"sync.cooldown":         retiredSyncReason,
 	"sync.mode":             retiredSyncReason,
 	"sync.interval":         retiredSyncReason,
-	"sessions.token_saving": "sdd serves a piece again as a pointer only when the agent proves it still holds the text (20261112-075604-d-tac-t4r)",
+	"sessions.token_saving": "sdd serves a piece again as a pointer only when the agent proves it still holds the text", // 20261112-075604-d-tac-t4r
 }
 
 const retiredSyncReason = "git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config"
