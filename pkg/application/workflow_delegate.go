@@ -52,8 +52,8 @@ type DelegateLaunch struct {
 }
 
 // DelegateRun is a launch a launcher took on: the runner that runs, and Round,
-// which runs one round to its end, bounded by the launcher. sdd runs one round
-// of a child at a time. A round that ends while its delegate neither delivered
+// which runs one round to its end and stops once its context ends, as sdd ends
+// it past verify.round_timeout. sdd runs one round of a child at a time. A round that ends while its delegate neither delivered
 // nor concluded counts as failed.
 type DelegateRun struct {
 	Runner string
@@ -298,7 +298,11 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 		if w.app.launcher == nil {
 			return dispatch, fmt.Errorf("verify.runner %s needs sdd to launch the delegate, and this server launches none: set verify.runner: subagent", runner)
 		}
-		launched, err := w.app.launchDelegate(ctx, identity, id, child.Instance, procedure, w.instanceProject(parent), runner)
+		runtime, err := w.targetRuntime(w.instanceProject(parent), AccessRead)
+		if err != nil {
+			return dispatch, err
+		}
+		launched, err := w.app.launchDelegate(ctx, identity, id, child.Instance, procedure, w.instanceProject(parent), runner, runtime.options.Verifier.resolved().RoundTimeout)
 		switch {
 		case errors.Is(err, ErrDelegateNotLaunched):
 		case err != nil:
@@ -441,8 +445,8 @@ func delegateContinuePrompt(session SessionID, instance string) string {
 
 // launchDelegate hands the delegate's launch to the launcher and, once the
 // launcher took it on, runs its round in the background, outliving the call
-// that launched it; it returns the launch that runs.
-func (a *Application) launchDelegate(ctx context.Context, identity RequestIdentity, child SessionID, instance, procedure string, project ProjectID, configured string) (string, error) {
+// that launched it and bounded by timeout; it returns the launch that runs.
+func (a *Application) launchDelegate(ctx context.Context, identity RequestIdentity, child SessionID, instance, procedure string, project ProjectID, configured string, timeout time.Duration) (string, error) {
 	run, err := a.launcher.LaunchDelegate(ctx, DelegateLaunch{Session: child, Instance: instance, Procedure: procedure, Project: project, Runner: configured})
 	if err != nil {
 		return "", fmt.Errorf("launching the delegate for %s: %w", child, err)
@@ -456,7 +460,7 @@ func (a *Application) launchDelegate(ctx context.Context, identity RequestIdenti
 		if previous != nil {
 			<-previous
 		}
-		err := a.runDelegateRound(background, identity, child, instance, run)
+		err := a.runDelegateRound(background, identity, child, instance, run, timeout)
 		if err != nil {
 			slogutils.FromContext(background).Error("recording a delegate round", "session", child, "error", err)
 		}
@@ -464,11 +468,12 @@ func (a *Application) launchDelegate(ctx context.Context, identity RequestIdenti
 	return run.Runner, nil
 }
 
-// runDelegateRound runs one round and keeps its outcome with the child: the
-// launcher's session, so the next round resumes it, or the error, which the
-// dispatching move's next call fails with. A failed round ends the child. A
-// child that ended during the round keeps nothing: it has no round left.
-func (a *Application) runDelegateRound(ctx context.Context, identity RequestIdentity, child SessionID, instance string, run DelegateRun) error {
+// runDelegateRound runs one round within timeout and keeps its outcome with
+// the child: the launcher's session, so the next round resumes it, or the
+// error, which the dispatching move's next call fails with. A failed round
+// ends the child. A child that ended during the round keeps nothing: it has
+// no round left.
+func (a *Application) runDelegateRound(ctx context.Context, identity RequestIdentity, child SessionID, instance string, run DelegateRun, timeout time.Duration) error {
 	_, _, stored, err := a.resolveSession(ctx, identity, child)
 	if err != nil {
 		return err
@@ -486,7 +491,7 @@ func (a *Application) runDelegateRound(ctx context.Context, identity RequestIden
 		round.Resume = records[n-1].Session
 		round.Prompt = delegateContinuePrompt(child, instance)
 	}
-	end, roundErr := run.Round(ctx, round)
+	end, roundErr := roundWithin(ctx, run, round, timeout)
 	if roundErr == nil {
 		idle, err := a.idleRound(ctx, identity, child, delivered, end.Message)
 		if err != nil {
@@ -505,6 +510,31 @@ func (a *Application) runDelegateRound(ctx context.Context, identity RequestIden
 		return err
 	}
 	return a.endDelegate(ctx, identity, child, record.Error)
+}
+
+// roundWithin runs one round, stopped once it runs past timeout: its context
+// ends, which stops a headless runner's process, and the round fails without
+// waiting on a runner that keeps running.
+func roundWithin(ctx context.Context, run DelegateRun, round DelegateRound, timeout time.Duration) (DelegateRoundEnd, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	type ended struct {
+		end DelegateRoundEnd
+		err error
+	}
+	done := make(chan ended, 1)
+	go func() {
+		end, err := run.Round(ctx, round)
+		done <- ended{end, err}
+	}()
+	select {
+	case e := <-done:
+		if ctx.Err() == nil {
+			return e.end, e.err
+		}
+	case <-ctx.Done():
+	}
+	return DelegateRoundEnd{}, fmt.Errorf("it ran past verify.round_timeout (%s) and was stopped", timeout)
 }
 
 // idleRound names why a round that ended cleanly failed: its child, which had

@@ -3,6 +3,7 @@ package model_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -290,5 +291,26 @@ func TestCheckVerifyLayers_RefusesAnUnknownClaudeEffort(t *testing.T) {
 	err = model.CheckVerifyLayers(model.BaseConfig{}, nil, local, verifierFiles)
 	if err != nil {
 		t.Fatalf("a model-defined effort should pass for codex: %v", err)
+	}
+}
+
+func TestVerifyRoundTimeout(t *testing.T) {
+	if got := (model.VerifyConfig{}).VerifierPolicy().RoundTimeout; got != model.DefaultVerifierRoundTimeout {
+		t.Fatalf("an unset round_timeout should take the default, got %s", got)
+	}
+	committed := verifyLayer(model.VerifyDeep, "")
+	committed.Verify.RoundTimeout = "20m"
+	local := &model.PerRepoConfig{}
+	local.Verify.RoundTimeout = "5m"
+	if err := model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles); err != nil {
+		t.Fatalf("a machine-local round_timeout may differ from the committed one: %v", err)
+	}
+	if got := model.MergeConfig(committed, local).Verify.VerifierPolicy().RoundTimeout; got != 5*time.Minute {
+		t.Fatalf("the machine-local round_timeout should win, got %s", got)
+	}
+	local.Verify.RoundTimeout = "soon"
+	err := model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
+	if err == nil || !strings.Contains(err.Error(), `.sdd/config.local.yaml: verify.round_timeout "soon" is no positive duration`) {
+		t.Fatalf("a round_timeout that is no duration should be refused naming file and key, got %v", err)
 	}
 }

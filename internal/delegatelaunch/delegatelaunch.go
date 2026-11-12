@@ -20,8 +20,8 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// RoundTimeout bounds one launched round.
-const RoundTimeout = 30 * time.Minute
+// RoundTimeout bounds one launched round where Settings.Timeout is unset.
+const RoundTimeout = model.DefaultVerifierRoundTimeout
 
 // Fallback asks for the first headless runner of Settings.Agents whose CLI
 // is found.

@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
@@ -24,6 +25,10 @@ type VerifierPolicy struct {
 	// model.DefaultVerifierCodex.
 	Claude VerifierAgent
 	Codex  VerifierAgent
+	// RoundTimeout bounds one round of a delegate sdd launched: past it the
+	// round is stopped and fails. Zero takes
+	// model.DefaultVerifierRoundTimeout.
+	RoundTimeout time.Duration
 }
 
 // VerifierAgent is a model and effort a deep verifier runs with.
@@ -35,7 +40,7 @@ type VerifierAgent struct {
 func (p VerifierPolicy) resolved() model.VerifierPolicy {
 	return model.VerifierPolicy{
 		Mode: model.VerifierMode(p.Mode), Skip: model.VerifierSkip(p.Skip), Runner: model.VerifierRunner(p.Runner),
-		Claude: model.VerifierAgent(p.Claude), Codex: model.VerifierAgent(p.Codex),
+		Claude: model.VerifierAgent(p.Claude), Codex: model.VerifierAgent(p.Codex), RoundTimeout: p.RoundTimeout,
 	}.WithDefaults()
 }
 

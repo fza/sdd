@@ -38,7 +38,7 @@ func (l headlessLauncher) LaunchDelegate(_ context.Context, launch sdd.DelegateL
 		}
 		policy = served.cfg.Verify.VerifierPolicy()
 	}
-	settings.Driver, settings.Claude, settings.Codex = policy.Driver, policy.Claude, policy.Codex
+	settings.Driver, settings.Claude, settings.Codex, settings.Timeout = policy.Driver, policy.Claude, policy.Codex, policy.RoundTimeout
 	for _, agent := range agents {
 		settings.Agents = append(settings.Agents, string(agent))
 	}

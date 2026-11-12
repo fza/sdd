@@ -2,6 +2,7 @@ package cliapp
 
 import (
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
@@ -26,5 +27,13 @@ func TestVerifierPolicyWithoutConfigResolvesTheDefaults(t *testing.T) {
 
 	if policy.Mode != string(model.VerifierProse) || policy.Runner != string(model.VerifierRunnerSubagent) || policy.Claude != (sdd.VerifierAgent{Model: "sonnet", Effort: "medium"}) {
 		t.Fatalf("no config should resolve to prose, the subagent runner and the default agents, got %+v", policy)
+	}
+}
+
+func TestVerifierPolicyCarriesTheRoundTimeout(t *testing.T) {
+	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{RoundTimeout: "90s"}}}
+
+	if got := verifierPolicy(cfg).RoundTimeout; got != 90*time.Second {
+		t.Fatalf("the application policy should carry verify.round_timeout, got %s", got)
 	}
 }

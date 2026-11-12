@@ -113,3 +113,21 @@ func TestHeadlessLauncher_PassesTheLaunchsModelAndEffort(t *testing.T) {
 		t.Fatalf("claude should run with verify.claude's model and effort only, got %q", args)
 	}
 }
+
+func TestHeadlessLauncher_BoundsARoundByTheRoundTimeout(t *testing.T) {
+	driver := filepath.Join(t.TempDir(), "slow-driver")
+	if err := os.WriteFile(driver, []byte("#!/bin/sh\nexec /bin/sleep 5\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	launcher := launcherServing(t, &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Runner: model.VerifierRunnerDriver, Driver: model.VerifierDriver{Command: driver}, RoundTimeout: "100ms"}}})
+
+	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Runner: "driver"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = run.Round(context.Background(), sdd.DelegateRound{Number: 1})
+
+	if err == nil || !strings.Contains(err.Error(), "did not end its round in time") {
+		t.Fatalf("the round should stop at verify.round_timeout, got %v", err)
+	}
+}

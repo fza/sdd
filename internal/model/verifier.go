@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 )
 
 // VerifyMode is how carefully a capture is checked against the graph before
@@ -109,6 +110,12 @@ var (
 	DefaultVerifierCodex  = VerifierAgent{Effort: "medium"}
 )
 
+// DefaultVerifierRoundTimeout bounds one round of a delegate sdd launches
+// while verify.round_timeout is unset: long enough for a verifier reading
+// several pages, short enough that a stalled one surfaces while the user
+// still waits.
+const DefaultVerifierRoundTimeout = 10 * time.Minute
+
 // claudeEfforts are the levels the claude CLI's --effort takes. Codex accepts
 // model-defined levels, so its own pass as set.
 var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
@@ -116,9 +123,9 @@ var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 // VerifyConfig is the `verify` block (20261109-004506-d-cpt-udz,
 // 20261109-004729-d-cpt-xs5, 20261109-222220-d-tac-4ev). Mode and skip are
 // policy: the user-global and the committed config set them, the committed
-// value wins, and the machine-local config may only tighten them. The runner
-// and the per-agent model and effort describe the machine, so the
-// machine-local value wins (V-D20); the driver runs a command, so only the
+// value wins, and the machine-local config may only tighten them. The runner,
+// the per-agent model and effort and the round timeout, a Go duration,
+// describe the machine, so the machine-local value wins (V-D20); the driver runs a command, so only the
 // user-global and machine-local layers set it (V-D19). Pointers tell an unset
 // grounding key from one a layer sets.
 type VerifyConfig struct {
@@ -128,6 +135,7 @@ type VerifyConfig struct {
 	Driver        VerifierDriver       `yaml:"driver,omitempty"`
 	Claude        VerifierAgent        `yaml:"claude,omitempty"`
 	Codex         VerifierAgent        `yaml:"codex,omitempty"`
+	RoundTimeout  string               `yaml:"round_timeout,omitempty"`
 	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
 	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
 	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
@@ -137,25 +145,29 @@ type VerifyConfig struct {
 
 // VerifierPolicy is the resolved verifier configuration of one project.
 type VerifierPolicy struct {
-	Mode   VerifierMode
-	Skip   VerifierSkip
-	Runner VerifierRunner
-	Driver VerifierDriver
-	Claude VerifierAgent
-	Codex  VerifierAgent
+	Mode         VerifierMode
+	Skip         VerifierSkip
+	Runner       VerifierRunner
+	Driver       VerifierDriver
+	Claude       VerifierAgent
+	Codex        VerifierAgent
+	RoundTimeout time.Duration
 }
 
 // VerifierPolicy resolves the block's verifier keys against the defaults.
 func (c VerifyConfig) VerifierPolicy() VerifierPolicy {
 	_, mode := c.ResolvedMode().Settings()
+	// CheckVerifyLayers refuses a value that does not parse.
+	timeout, _ := time.ParseDuration(c.RoundTimeout)
 	return VerifierPolicy{
 		Mode: mode, Skip: c.Skip, Runner: c.Runner, Driver: c.Driver,
-		Claude: c.Claude, Codex: c.Codex,
+		Claude: c.Claude, Codex: c.Codex, RoundTimeout: timeout,
 	}.WithDefaults()
 }
 
 // WithDefaults fills the unset values: off, skip on failure, a subagent
-// runner, and the default model and effort of each agent family.
+// runner, the default model and effort of each agent family, and the default
+// round timeout.
 func (p VerifierPolicy) WithDefaults() VerifierPolicy {
 	if p.Mode == "" {
 		p.Mode = VerifierOff
@@ -168,6 +180,9 @@ func (p VerifierPolicy) WithDefaults() VerifierPolicy {
 	}
 	p.Claude = mergeVerifierAgent(DefaultVerifierClaude, p.Claude)
 	p.Codex = mergeVerifierAgent(DefaultVerifierCodex, p.Codex)
+	if p.RoundTimeout <= 0 {
+		p.RoundTimeout = DefaultVerifierRoundTimeout
+	}
 	return p
 }
 
@@ -187,6 +202,9 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 	}
 	out.Claude = mergeVerifierAgent(out.Claude, overlay.Claude)
 	out.Codex = mergeVerifierAgent(out.Codex, overlay.Codex)
+	if overlay.RoundTimeout != "" {
+		out.RoundTimeout = overlay.RoundTimeout
+	}
 	if overlay.Depth.Down != nil {
 		out.Depth.Down = overlay.Depth.Down
 	}
@@ -250,6 +268,11 @@ func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files
 		}
 		if runner := layer.cfg.Verify.Runner; runner != "" && !slices.Contains(verifierRunners, runner) {
 			return fmt.Errorf("%s: verify.runner %q is not subagent, claude, codex or driver", layerFile(layer.source, files), runner)
+		}
+		if timeout := layer.cfg.Verify.RoundTimeout; timeout != "" {
+			if d, err := time.ParseDuration(timeout); err != nil || d <= 0 {
+				return fmt.Errorf("%s: verify.round_timeout %q is no positive duration such as 10m", layerFile(layer.source, files), timeout)
+			}
 		}
 		if effort := layer.cfg.Verify.Claude.Effort; effort != "" && !slices.Contains(claudeEfforts, effort) {
 			return fmt.Errorf("%s: verify.claude.effort %q is not low, medium, high, xhigh or max", layerFile(layer.source, files), effort)
