@@ -67,12 +67,10 @@ func TestInitLeavesTheUsersOwnEditsOutOfARetriedCommit(t *testing.T) {
 	gitignore := filepath.Join(repo, ".sdd", ".gitignore")
 	writeFile(t, gitignore, readFile(t, gitignore)+"/scratch\n")
 	skill := filepath.Join(repo, ".claude", "skills", "sdd", "SKILL.md")
-	err := os.Remove(skill)
-	if err != nil {
-		t.Fatal(err)
-	}
+	gitIn(t, repo, "rm", "-q", skill)
+	gitIn(t, repo, "commit", "-q", "-m", "chore: drop the skill")
 	allow := refuseCommits(t, repo)
-	_, err = runAppErr(t, repo, "init")
+	_, err := runAppErr(t, repo, "init")
 	if err == nil {
 		t.Fatal("init should fail when its commit is refused")
 	}

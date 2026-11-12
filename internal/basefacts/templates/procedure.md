@@ -12,33 +12,38 @@ refs:
       kind: related
       desc: the spec reference — the frontmatter fields, variable types, step shapes, and the live ability registry an author consults when actually writing the workflow
 summary: >-
-    The procedure kind commits a repeatable way of working as a runnable
-    entry — every other entry is read, a procedure is also run: a canonical
-    name everything binds to, a typed step workflow in frontmatter the
-    engine executes with guaranteed structure, per-step guidance in the
-    body — revised by supersession under the same canonical, with the
-    workflow's structural validation running at engine load rather than
-    capture.
+    Procedure kind commits a repeatable way of working as a runnable entry.
+    Every other entry is read; a procedure is also run. Canonical name
+    everything binds to; typed step workflow in frontmatter the engine runs
+    with guaranteed structure; per-step guidance in the body. Revised by
+    supersession under the same canonical. Workflow's structural validation
+    runs at engine load, not capture.
 ---
 
-# Extending the process with workflows — the procedure kind
+# Extending the process with workflows: the procedure kind
 
-A procedure records a committed way of working that runs: a repeatable dialogue the engine executes step by step — capturing an entry, a roastery's weekly cupping review, cutting a release. Every other entry is read; a procedure is also run. A directive, an activity, a plan record something — a direction held, work committed, an outcome to reach — and the graph holds them as records. A procedure instead defines a workflow the agent operates step by step while the engine holds the structure: a step cannot be skipped, a gate holds until what it checks is true, and a question declared for the user stops everything until the user answers. That is what the kind buys — dialogue with guaranteed structure, instead of guidance an agent might drift from. Reach for it only when you are defining something to run.
+Procedure records a committed way of working that runs: a repeatable dialogue the engine executes step by step. Capturing an entry, a roastery's weekly cupping review, cutting a release. Every other entry is read; a procedure is also run. Directive, activity, plan record something (direction held, work committed, outcome to reach); graph holds them as records. Procedure instead defines a workflow the agent operates step by step while the engine holds the structure. Step cannot be skipped. Gate holds until what it checks is true. Question declared for the user stops everything until the user answers. That is what the kind buys: dialogue with guaranteed structure, not guidance an agent might drift from. Use it only when defining something to run.
 
-**The canonical is the identity.** A procedure is named by its `canonical` — a short, stable name (`capture`, `release`, `cupping`) everything binds to: sessions start the move by canonical, other procedures dispatch it by canonical, and the entry ID stays out of it. A canonical is written once and never reused for another procedure: revising means superseding the current head under the same canonical, and a closed chain still owns its name. Pick the word the team already uses for the routine.
+**The canonical is the identity.** Procedure is named by its `canonical`: short, stable name (`capture`, `release`, `cupping`) everything binds to. Sessions start the move by canonical; other procedures dispatch it by canonical; entry ID stays out. Canonical is written once, never reused for another procedure. Revising means superseding the current head under the same canonical. Closed chain still owns its name. Pick the word the team already uses for the routine.
 
 **Class places how it enters.** Every procedure carries one execution role:
 
 {{ .Classes }}
 
-**The workflow is frontmatter; the guidance is body.** `params` declare what a start may pass in; `state` declares the working fields steps collect and read; `steps` is the walk itself — each step collects, serves, and advances. What a step wires in — the checks it gates on, the data it serves, the actions it performs — are abilities the framework provides, named from the engine's live registry; a step that asks the user covers whatever no ability does. The body carries one instruction unit per step (`## unit: <step>`) — the authoritative guidance served while that step runs, written to the person or agent in the situation, never documentation about the procedure. A pointer inside a unit says why and when to go read a fact — it never tries to replace it.
+**The workflow is frontmatter; the guidance is body.**
 
-**Ask where the choice is real.** A gate advances on what must hold; an agent chooser records the agent's judgment with its evidence; a user chooser stops the run until the user answers. Gate what is mechanical, and reserve user choosers for what is genuinely the user's to decide: a confirmation that writes, a direction only they can set. A procedure that asks the user to confirm what a gate could check is ceremony; one that gates what only the user can judge is worse.
+- `params`: what a start may pass in
+- `state`: working fields steps collect and read
+- `steps`: the walk itself; each step collects, serves, advances
 
-**Shipped and project procedures.** Some procedures ship with the framework and are always present; a project's own procedures live in its graph beside them, and may freely depend on the project's own environment — the tools, paths, and services it actually uses. Overriding a shipped procedure is ordinary supersession of its chain head; when a newer shipped version and a project override compete for the head, the project's wins for execution and the fork is flagged for deliberate, merge-style reconciliation — never automatic.
+What a step wires in (checks it gates on, data it serves, actions it performs) are framework abilities, named from the engine's live registry. Step that asks the user covers whatever no ability does. Body carries one instruction unit per step (`## unit: <step>`). Unit is the authoritative guidance served while that step runs. Write it to the person or agent in the situation, never as documentation about the procedure. Pointer inside a unit says why and when to read a fact; it never tries to replace it.
 
-**Retire deliberately.** Supersede to revise — same canonical, new head. A practice that ended without replacement is retired by a directive closing the procedure head, stating why the move is no longer how work happens. Editing is never the path: the chain is the history of the practice.
+**Ask where the choice is real.** Gate advances on what must hold. Agent chooser records the agent's judgment with evidence. User chooser stops the run until the user answers. Gate what is mechanical. Keep user choosers for what is truly the user's to decide: a confirmation that writes, a direction only they can set. Asking the user to confirm what a gate could check is ceremony. Gating what only the user can judge is worse.
 
-**Validation waits for the engine.** Capture checks the entry's shape — canonical, class, layer. Whether the workflow itself is sound — step wiring, guards, the abilities it names — is judged when the engine loads the spec, and a broken workflow fails loudly there, not silently at capture.
+**Shipped and project procedures.** Some procedures ship with the framework, always present. Project's own procedures live in its graph beside them. They may freely depend on the project's environment: tools, paths, services it actually uses. Overriding a shipped procedure is ordinary supersession of its chain head. Newer shipped version and project override compete for the head? Project's wins for execution. The fork is flagged for deliberate, merge-style reconciliation, never automatic.
+
+**Retire deliberately.** Supersede to revise: same canonical, new head. Practice ended without replacement? Retire with a directive closing the procedure head, stating why the move is no longer how work happens. Never edit: the chain is the practice's history.
+
+**Validation waits for the engine.** Capture checks entry shape: canonical, class, layer. Workflow soundness (step wiring, guards, abilities it names) is judged when the engine loads the spec. Broken workflow fails loudly there, not silently at capture.
 
 {{ .Mechanics }}

@@ -48,7 +48,7 @@ func New(cfg model.EmbeddingConfig) (pkgembed.Embedder, error) {
 	case "ollama":
 		adapter = newOllama(cfg)
 	default:
-		return nil, fmt.Errorf("unknown embedding provider %q (supported: openai, ollama)", cfg.Provider)
+		return nil, fmt.Errorf("unknown embedding provider %q (supported: %s)", cfg.Provider, strings.Join(cfg.Provider.AllowedValues(), ", "))
 	}
 	if err != nil {
 		return nil, err
@@ -83,14 +83,14 @@ func BatchSize(cfg model.EmbeddingConfig) int {
 	}
 }
 
-func isRemote(provider string) bool {
+func isRemote(provider model.EmbeddingProvider) bool {
 	return provider == "openai"
 }
 
 // providerDefaultRPS biases below tier-1 ceilings so bursty index builds
 // don't trip 429s out of the box. Users on higher tiers override via
 // embedding.rate_limit_rps.
-func providerDefaultRPS(provider, modelName string) float64 {
+func providerDefaultRPS(provider model.EmbeddingProvider, modelName string) float64 {
 	switch provider {
 	case "openai":
 		// OpenAI tier-1 embedding limits are higher than chat — but still

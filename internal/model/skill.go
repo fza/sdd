@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/mod/semver"
@@ -42,19 +43,18 @@ var KnownAgentTargets = []AgentTarget{AgentClaude, AgentCodex}
 // pre-multi-agent default.
 var DefaultSupportedAgents = []AgentTarget{AgentClaude}
 
+func (AgentTarget) AllowedValues() []string {
+	return closedValues(KnownAgentTargets...)
+}
+
 // ParseAgentTarget validates s against KnownAgentTargets, returning the typed
 // value or an error naming the valid set.
 func ParseAgentTarget(s string) (AgentTarget, error) {
-	for _, t := range KnownAgentTargets {
-		if string(t) == s {
-			return t, nil
-		}
+	target := AgentTarget(s)
+	if !slices.Contains(target.AllowedValues(), s) {
+		return "", fmt.Errorf("unknown agent target %q (known: %s)", s, strings.Join(target.AllowedValues(), ", "))
 	}
-	names := make([]string, len(KnownAgentTargets))
-	for i, t := range KnownAgentTargets {
-		names[i] = string(t)
-	}
-	return "", fmt.Errorf("unknown agent target %q (known: %s)", s, strings.Join(names, ", "))
+	return target, nil
 }
 
 // Scope selects where skills are installed for a given agent. User scope is
@@ -71,6 +71,10 @@ const (
 	// <repo>/.claude/skills for Claude).
 	ScopeProject Scope = "project"
 )
+
+func (Scope) AllowedValues() []string {
+	return closedValues(ScopeUser, ScopeProject)
+}
 
 // DefaultScope is the scope used when nothing is specified.
 const DefaultScope = ScopeUser

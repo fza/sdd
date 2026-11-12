@@ -35,6 +35,8 @@ type Finding struct {
 	Severity    Severity
 	Category    string
 	Observation string
+	// Quote locates the passage of the prompt the finding rests on.
+	Quote string
 	// Basis lists the entries a light finding rests on; empty outside light.
 	Basis []string
 }
@@ -72,7 +74,7 @@ func (r *PreflightResult) HasBlocking() bool {
 // `.sdd/config.yaml` (empty string when unset — English default). It feeds
 // the language-drift check which flags entries whose description prose does
 // not match the configured language.
-func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string) (*PreflightResult, error) {
+func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string, kindFit *model.KindFit) (*PreflightResult, error) {
 	ct := selectCheckType(entry, graph)
 
 	vocab, err := refKindVocabulary(graph)
@@ -81,6 +83,7 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 	}
 	pctx := assembleContext(entry, graph, ct, configuredLanguage)
 	pctx.RefKindVocabulary = vocab
+	pctx.KindFit = kindFit
 
 	req, err := renderPreflightPrompt(ct, pctx)
 	if err != nil {
@@ -91,6 +94,7 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 	if err != nil {
 		return nil, fmt.Errorf("running pre-flight validator: %w", err)
 	}
+	result.Findings = flagUnlocated(result.Findings, req.UserPrompt)
 	return result, nil
 }
 
@@ -241,6 +245,7 @@ type preflightContext struct {
 	// load is failable). The ref-meta consistency rubric renders it instead of
 	// restating the kinds, so the vocabulary is defined once.
 	RefKindVocabulary string
+	KindFit           *model.KindFit
 
 	// rubric marks the rules page PreflightRubric renders: the guard methods
 	// below then hold only when the entry meets the guard. Pre-flight's own
@@ -627,6 +632,12 @@ func renderPreflightPrompt(ct checkType, pctx *preflightContext) (llm.Request, e
 	if err := tmpl.ExecuteTemplate(&userB, base+"_user", pctx); err != nil {
 		return llm.Request{}, fmt.Errorf("executing template %s_user: %w", base, err)
 	}
+	if pctx.KindFit != nil {
+		userB.WriteString("\n\n")
+		if err := tmpl.ExecuteTemplate(&userB, "kind_fit", pctx.KindFit); err != nil {
+			return llm.Request{}, fmt.Errorf("executing template kind_fit: %w", err)
+		}
+	}
 
 	return llm.Request{
 		Purpose:        llm.PurposePreflight,
@@ -654,6 +665,7 @@ func parsePreflightResult(output string) (*PreflightResult, error) {
 			Severity    string `json:"severity"`
 			Category    string `json:"category"`
 			Observation string `json:"observation"`
+			Quote       string `json:"quote"`
 		} `json:"findings"`
 	}
 	if err := json.Unmarshal([]byte(jsonText), &resp); err != nil {
@@ -680,6 +692,7 @@ func parsePreflightResult(output string) (*PreflightResult, error) {
 			Severity:    sev,
 			Category:    f.Category,
 			Observation: f.Observation,
+			Quote:       f.Quote,
 		})
 	}
 

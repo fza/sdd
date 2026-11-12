@@ -22,7 +22,7 @@ func TestCapture_TheGuideReviewNamesDismissedFindingsBeforeProceed(t *testing.T)
 	proctest.RequireStep(t, serve, "playback")
 	serve = session.Answer(t, serve.Instance, "playback", "confirm", nil, "looks right")
 	proctest.RequireStep(t, serve, "guideReview")
-	want := "Before you choose **proceed**, name to the user in your own words each `substantive` finding you dismiss, since no playback follows"
+	want := "Before you choose **proceed**, name to the user in your own words each `substantive` finding you dismiss: no playback follows."
 	if text := test.Untagged(serve.Instructions); !strings.Contains(text, want) {
 		t.Fatalf("guideReview should carry %q:\n%s", want, text)
 	}

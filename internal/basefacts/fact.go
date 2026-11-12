@@ -41,7 +41,7 @@ func factMechanics() string {
 	var b strings.Builder
 	b.WriteString("## Mechanics\n\n")
 	fmt.Fprintf(&b, "Fact is a signal kind (the signal kinds: %s).\n\n", strings.Join(kinds, ", "))
-	fmt.Fprintf(&b, "Fact is not an attention kind — those are %s — so an open fact never joins the surface where resolution is owed.\n\n", strings.Join(attention, ", "))
+	fmt.Fprintf(&b, "Fact is not an attention kind (those are %s): an open fact never joins the surface where resolution is owed.\n\n", strings.Join(attention, ", "))
 	fmt.Fprintf(&b, "Index enrollment: %s, and %s.\n\n", model.FactIndexKindRule, model.FactIndexTopicRule)
 	fmt.Fprintf(&b, "Enforced at capture: %s.\n", model.SignalCloseRule)
 	return b.String()

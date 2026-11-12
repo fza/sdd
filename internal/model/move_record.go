@@ -317,16 +317,13 @@ func FormatULID(at time.Time, entropy [10]byte) string {
 // MoveRecordsMinimumVersion is the first sdd release that reads move
 // records; a moved graph raises its minimum_version to it so older builds
 // refuse the graph instead of writing into its former location.
-const MoveRecordsMinimumVersion = "v0.18.0-alpha.4"
+const MoveRecordsMinimumVersion = "v0.18.0-alpha.3.fza.43"
 
-// MoveMinimumVersion is the minimum_version a move leaves a graph with: the
-// released build making the move, which knows move records, or
-// MoveRecordsMinimumVersion from a dev build; a higher recorded one is kept.
-func MoveMinimumVersion(recorded, binaryVersion string) string {
+// MoveMinimumVersion is the minimum_version a move leaves a graph with:
+// MoveRecordsMinimumVersion, whichever build moves it, so every release
+// reading move records still accepts the graph; a higher recorded one is kept.
+func MoveMinimumVersion(recorded string) string {
 	floor := MoveRecordsMinimumVersion
-	if !IsDevVersion(binaryVersion) {
-		floor = binaryVersion
-	}
 	if recorded != "" && !ShouldBumpMinimumVersion(recorded, floor) {
 		return recorded
 	}

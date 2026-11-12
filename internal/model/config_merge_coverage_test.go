@@ -70,6 +70,16 @@ func setDistinctive(t *testing.T, f reflect.Value) {
 	t.Helper()
 	switch f.Kind() {
 	case reflect.String:
+		// A closed value outside its set merges as unset (VerifyConfig.KnownValues).
+		if closed, ok := f.Interface().(model.ClosedValues); ok {
+			f.SetString(closed.AllowedValues()[0])
+			return
+		}
+		// A round timeout that is no duration merges as unset too.
+		if f.Type() == reflect.TypeFor[model.RoundTimeout]() {
+			f.SetString("10m")
+			return
+		}
 		f.SetString("x")
 	case reflect.Int, reflect.Int64:
 		f.SetInt(7)
@@ -79,9 +89,11 @@ func setDistinctive(t *testing.T, f reflect.Value) {
 		f.SetBool(true)
 	case reflect.Map:
 		m := reflect.MakeMap(f.Type())
+		key := reflect.New(f.Type().Key()).Elem()
+		setDistinctive(t, key)
 		value := reflect.New(f.Type().Elem()).Elem()
 		setDistinctive(t, value)
-		m.SetMapIndex(reflect.ValueOf("k").Convert(f.Type().Key()), value)
+		m.SetMapIndex(key, value)
 		f.Set(m)
 	case reflect.Slice:
 		item := reflect.New(f.Type().Elem()).Elem()

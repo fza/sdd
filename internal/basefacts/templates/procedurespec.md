@@ -12,99 +12,110 @@ refs:
       kind: related
       desc: the procedure kind's authoring fact — what a procedure is and when to reach for the kind; this reference covers how to write its spec
 summary: >-
-    The procedure spec reference: the frontmatter fields a runnable procedure
-    declares — typed params and state, the step list with its gates, choosers,
-    and transitions — the closed sets of variable types and gateable field
-    names, how a run receives its initial values and hands work to another
-    procedure, a worked example valid by construction, and the live ability
-    registry a step's guards, injects, and ops draw from.
+    Procedure spec reference: frontmatter fields a runnable procedure
+    declares (typed params and state, step list with gates, choosers and
+    transitions). Closed sets of variable types and gateable field names. How
+    a run gets initial values and hands work to another procedure. Worked
+    example valid by construction. Live ability registry that guards, injects
+    and ops draw from.
 ---
 
 # Writing a procedure spec
 
-A procedure entry's frontmatter declares the workflow the engine executes. Three fields carry it, beside the entry's usual ones: `params`, `state`, and `steps`. The engine runs the workflow over a per-run variable store; params and state declare its fields.
+Procedure entry's frontmatter declares the workflow the engine executes. Three fields carry it, beside the entry's usual ones: `params`, `state`, `steps`. Engine runs the workflow over a per-run variable store; params and state declare its fields.
 
-## `params` — what a caller passes at start
+## `params`: what a caller passes at start
 
 Each entry is a declaration, `name: {type, optional?, desc}`. Params are written into the store once, at start.
 
-## `state` — the working fields of the run
+## `state`: the working fields of the run
 
-Same declaration shape as params, and steps collect and read these fields as the run advances. A field that arrives from a dispatching parent rather than the caller is state, not a param — a parent's seed writes state only.
+Same declaration shape as params. Steps collect and read these fields as the run advances. Field arriving from a dispatching parent, not the caller, is state, not a param: a parent's seed writes state only.
 
-**Field names are a vocabulary, not a free choice.** The commonest gate is a presence check: it passes once one specific field is present and non-empty, and each check is bound to its field by name — `hasAnchor` reads `anchor`, and nothing reads a name outside this vocabulary. So a field is gateable on presence only when it carries one of these names:
+**Field names are a vocabulary, not a free choice.** Commonest gate is a presence check: passes once one specific field is present and non-empty. Each check binds to its field by name: `hasAnchor` reads `anchor`; nothing reads a name outside this vocabulary. So a field is gateable on presence only with one of these names:
 
 {{ .GateableFields }}
 
-Prefer these names over inventing near-synonyms (`brief`, not `timeline`); a field outside the vocabulary can still be collected and served, but no gate can hold on it. Declaring stays your job: a guard naming a check whose field the spec never declares loads cleanly and then never advances — the run waits on a field nothing can collect. This list — like the type list below — renders from the running engine's own declarations each time the fact is served, so it is the running version's truth and cannot disagree with the live registry.
+Prefer these names over invented near-synonyms (`brief`, not `timeline`). Field outside the vocabulary can still be collected and served, but no gate can hold on it. Declaring stays your job. Guard naming a check whose field the spec never declares loads cleanly, then never advances: run waits on a field nothing can collect. This list, like the type list below, renders from the running engine's own declarations each time the fact is served. It is the running version's truth and cannot disagree with the live registry.
 
-The declaration attributes:
+Declaration attributes:
 
-- `type` — a domain type, or `list<T>` around one; see the closed set below.
-- `optional` — `true` marks the field as not required where it is collected.
-- `desc` — one line, served in the step's report schema: the field's shape and its constraint, such as a field it pairs with or what an empty value means. How to fill the field belongs in the step's unit, which the agent reads beside the schema.
-- `default` — state only: applied at start when no channel supplied the field — the one literal a spec carries, written in the type's natural YAML form (`true`, a quoted string, a list).
+- `type`: a domain type, or `list<T>` around one; closed set below.
+- `optional`: `true` marks the field not required where collected.
+- `desc`: one line, served in the step's report schema: the field's shape and its constraint, such as a field it pairs with or what an empty value means. How to fill the field belongs in the step's unit, which the agent reads beside the schema.
+- `default`: state only. Applied at start when no channel supplied the field. The one literal a spec carries, in the type's natural YAML form (`true`, a quoted string, a list).
 
-**How a run's store fills.** Initial values arrive through three channels, and naming them apart matters because one word — "seed" — is casually used for all three. In rank order: a value passed explicitly at start wins (params always arrive this way, and a start may also carry any *declared state field* the caller chooses to set); a dispatching parent's armed seed writes next (state only, see Dispatching below); `default` applies last, only where nothing else supplied the field. Everything after start is collected by steps.
+**How a run's store fills.** Initial values arrive through three channels. Name them apart: "seed" is casually used for all three. Rank order:
 
-## `steps` — the walk itself
+1. Value passed explicitly at start wins. Params always arrive this way; a start may also carry any *declared state field* the caller sets.
+2. Dispatching parent's armed seed writes next (state only; see Dispatching below).
+3. `default` applies last, only where nothing else supplied the field.
 
-A list in execution order. Each step has an `id` and advances in one of three ways.
+Everything after start is collected by steps.
+
+## `steps`: the walk itself
+
+List in execution order. Each step has an `id` and advances one of three ways.
 
 ### Gate steps
 
-A gate declares `transitions`: ordered `{when: <guard>, to: <step id>}` clauses, optionally closed by `{otherwise: <step id>}`. The guard is a boolean combination of ability names written infix — `when: hasBrief and hasSynthesis` — with `and`, `or`, `not`, and parentheses, and nothing else: no comparisons, no literals, no field access. A gate may also run one effect first (`op: <command name>`).
+Gate declares `transitions`: ordered `{when: <guard>, to: <step id>}` clauses, optionally closed by `{otherwise: <step id>}`. Guard is a boolean combination of ability names written infix: `when: hasBrief and hasSynthesis`. Only `and`, `or`, `not` and parentheses. No comparisons, no literals, no field access. Gate may also run one effect first (`op: <command name>`).
 
 ### Chooser steps
 
-An agent chooser (`chooser: agent`) or user chooser (`chooser: user`) declares `options`: `{choice, collect?, call?, dispatch?, to}` — the fields that option collects, an optional command it calls, an optional seed declaration for a handoff (below), and where it goes. A user chooser stops the run until the user answers. An option may route back to an earlier step, which then serves again — a confirm-or-correct loop needs no machinery beyond a user chooser whose options route on the answer.
+Agent chooser (`chooser: agent`) or user chooser (`chooser: user`) declares `options`: `{choice, collect?, call?, dispatch?, to}`. Fields the option collects, optional command it calls, optional seed declaration for a handoff (below), and where it goes. User chooser stops the run until the user answers. Option may route back to an earlier step, which then serves again. Confirm-or-correct loop needs no machinery beyond a user chooser whose options route on the answer.
 
 ### On any step
 
-- `collect` — the state fields reportable here; a `?` suffix marks one optional (quote the marker: `"anchor?"`), and required ones hold the step until reported.
-- `inject` — a list of `{fn: <query name>, args?, maxBytes?, maxItems?}` calls: each result is served into the step's instructions under its function's name. Size is the engine's job — an inject without a declared cap is bounded by the engine's defaults; `maxBytes`/`maxItems` are overrides.
-- `render` — the name of an extra `## unit:` section from the body, served with the step (typically presenting one collected field's content).
-- `framing` — the session framing blocks a serve of this step carries: `info` (participant, language, search, branch), `health`, or the id of a lane the session shell declares, such as `principles` or `recentMovement`. Left out, the step carries every block. Declare `[info]` on a step that only waits, launches or confirms, where the shell's lanes add nothing; a name the session does not frame fails the serve.
+- `collect`: state fields reportable here. `?` suffix marks one optional (quote the marker: `"anchor?"`). Required ones hold the step until reported.
+- `inject`: list of `{fn: <query name>, args?, maxBytes?, maxItems?}` calls. Each result is served into the step's instructions under its function's name. Size is the engine's job: inject without a declared cap is bounded by engine defaults; `maxBytes`/`maxItems` override.
+- `render`: name of an extra `## unit:` section from the body, served with the step (typically presenting one collected field's content).
+- `framing`: session framing blocks a serve of this step carries: `info` (participant, language, search, branch), `health`, or the id of a lane the session shell declares, such as `principles` or `recentMovement`. Left out, the step carries every block. Declare `[info]` on a step that only waits, launches or confirms, where the shell's lanes add nothing. A name the session does not frame fails the serve.
 
-A run ends by transitioning to {{ .EndTargets }}.
+Run ends by transitioning to {{ .EndTargets }}.
 
 ### Serve budget
 
-Every automatic serve is bounded per part, but individually capped parts can still sum past a host's response budget. Capture pre-flight and the graph's lint sweep size each step at its declared worst case and raise an advisory finding when a step exceeds the engine's default serve budget. The finding is a risk note, never a load failure — the spec still runs. To accept the trade, declare `serveBudget: <bytes>` at the spec's top level (beside `params`/`state`/`steps`): a declared total at or above the worst case silences the finding and records the decision on the spec itself.
+Every automatic serve is bounded per part. Individually capped parts can still sum past a host's response budget. Capture pre-flight and the graph's lint sweep size each step at its declared worst case. Step over the engine's default serve budget raises an advisory finding. Finding is a risk note, never a load failure: spec still runs. To accept the trade, declare `serveBudget: <bytes>` at the spec's top level (beside `params`/`state`/`steps`). Declared total at or above the worst case silences the finding and records the decision on the spec itself.
 
 ## Variable types
 
-A declaration's `type` is a domain type, or `list<T>` around one. You declare the semantic type only. The concrete shape a value must take — object fields, identifier patterns, the accepted values of closed enumerations such as the ref-kind set or the confidence grades — is generated from the declaration and served as the step's report schema while the procedure runs, then enforced when the value arrives. Nothing about shape needs restating in the spec. The closed set:
+Declaration's `type` is a domain type, or `list<T>` around one. Declare the semantic type only. Concrete shape a value must take is generated from the declaration: object fields, identifier patterns, accepted values of closed enumerations such as the ref-kind set or the confidence grades. It is served as the step's report schema while the procedure runs, then enforced when the value arrives. Nothing about shape needs restating in the spec. Closed set:
 
 {{ .VarTypes }}
 
 ## Abilities
 
-Guards name checks, `inject` names queries, `op` and `call` name commands — and the engine serves the live inventory of all three, with each ability's contract (what it reads, what it writes), through its function registry. Where the engine is connected, its `registry` tool returns that inventory by class (predicate, query, command), including each query's argument names; what it lists is exactly what a spec can name, for the running version. Beyond the presence checks printed above, this reference deliberately carries no ability list — pull the registry when you write steps. A step that asks the user is always available for whatever no ability covers.
+Guards name checks; `inject` names queries; `op` and `call` name commands. Engine serves the live inventory of all three through its function registry, with each ability's contract (what it reads, what it writes). Where the engine is connected, its `registry` tool returns that inventory by class (predicate, query, command), including each query's argument names. What it lists is exactly what a spec can name, for the running version. Beyond the presence checks above, this reference deliberately carries no ability list: pull the registry when you write steps. Step asking the user is always available for whatever no ability covers.
 
 ## Dispatching another procedure
 
-A step never starts another procedure, and no command does. The handoff lives in the unit's prose: the instruction tells the running agent to start the named procedure as a sub-move of this run, and the product comes back the same way — the agent reports it into a field this spec declares, and the next gate holds on that field. Nothing else flows back from a child that declares no delivery: it writes nothing into this run's store, so the reported field is the only bridge.
+A step never starts another procedure; no command does. Handoff lives in the unit's prose. Instruction tells the running agent to start the named procedure as a sub-move of this run. Product comes back the same way: agent reports it into a field this spec declares, and the next gate holds on that field. Child that declares no delivery returns nothing else: it writes nothing into this run's store. The reported field is the only bridge.
 
-An option's `dispatch` block declares seeding for that handoff, never the start itself: `dispatch: {procedure: <canonical>, seed: {<child field>: <parent field>}}` on the answered option arms the mapping, and the next procedure started under this run receives each value into the *state* field it declares under the child name — a value passed explicitly at start wins, and an empty source seeds nothing.
+Option's `dispatch` block declares seeding for that handoff, never the start itself. `dispatch: {procedure: <canonical>, seed: {<child field>: <parent field>}}` on the answered option arms the mapping. Next procedure started under this run receives each value into the *state* field it declares under the child name. Value passed explicitly at start wins. Empty source seeds nothing.
 
-A delegate procedure (class `task`) is dispatched the same way, with its inputs resolved by the dispatching run; it asks the user nothing and is offered nowhere on its own, so the dispatching unit's prose is where it is discoverable.
+Delegate procedure (class `task`) is dispatched the same way, inputs resolved by the dispatching run. It asks the user nothing and is offered nowhere on its own. So the dispatching unit's prose is where it is discoverable.
 
 ### Delegates that deliver
 
-A task whose gate declares `deliver: [<field>, …]` hands its product back through the engine rather than the agent's prose, and runs in a delegate session of its own: no user, its own reads, the dispatching run's branch and project. It is forked by the answer to an option whose `dispatch` names it: that call forks the delegate and its serve carries the dispatch handoff, which names the launch. It is never started by hand. When one of that gate's transitions fires, the named fields are delivered into the dispatching run. A transition to `end(completed)` is the final delivery and completes the delegate; any other target is an interim delivery that leaves it running, so one delegate can exchange several rounds with the run that dispatched it. A task with an interim delivery declares `rounds: <n>` at its top level: once it has made that many interim deliveries, it concludes at its next waiting gate instead of waiting.
+Task whose gate declares `deliver: [<field>, …]` hands its product back through the engine, not the agent's prose. It runs in its own delegate session: no user, its own reads, the dispatching run's branch and project. Forked by the answer to an option whose `dispatch` names it. That call forks the delegate; its serve carries the dispatch handoff, which names the launch. Never started by hand. When one of that gate's transitions fires, the named fields are delivered into the dispatching run. Transition to `end(completed)` is the final delivery and completes the delegate. Any other target is an interim delivery that leaves it running. So one delegate can exchange several rounds with its dispatching run. Task with an interim delivery declares `rounds: <n>` at its top level. After that many interim deliveries, it concludes at its next waiting gate instead of waiting.
 
-Waiting is a gate that declares `await: [<field>, …]`: it holds until each field holds a delivery from the other side not yet taken, and passing takes it. On the delegate's side the dispatching run fills it; on the dispatching side the delegate does. Only a delivery fills an awaited field: no step collects one and no report writes it. A delivery never moves the receiving run's step; the receiver picks it up on its next call. A gate that declares `awaitAny: [<field>, <field>, …]` instead holds only until one of them holds such a delivery, passing takes them all, and its transitions tell which one came by a predicate reading the fields that arrived. A dispatching gate that declares `delegateEnded: <step>` goes to that step once none of the run's delegates is live and none is about to be forked, since nothing is left to deliver what it waits for: a delegate that concluded, failed or was torn down before delivering. Without it the gate keeps waiting.
+Waiting is a gate that declares `await: [<field>, …]`. It holds until each field holds a delivery from the other side not yet taken; passing takes it. On the delegate's side the dispatching run fills it; on the dispatching side the delegate does. Only a delivery fills an awaited field: no step collects one, no report writes it. Delivery never moves the receiving run's step; receiver picks it up on its next call. Gate declaring `awaitAny: [<field>, <field>, …]` instead holds only until one of them holds such a delivery. Passing takes them all; its transitions tell which one came by a predicate reading the fields that arrived. Dispatching gate declaring `delegateEnded: <step>` goes to that step once none of the run's delegates is live and none is about to be forked: nothing is left to deliver what it waits for (a delegate that concluded, failed or was torn down before delivering). Without it the gate keeps waiting.
 
-The answered option's `dispatch` maps the names, so the task never depends on its dispatcher's: `receive: {<parent field>: <child field>}` lands each delivered child field in a parent field (also delivery-only), and `send: {<child field>: <parent field>}` delivers the parent field into the child field the delegate awaits every time the dispatching run writes it, by a report, an answer or a command of its own. Every field the task delivers must be received and every field it awaits must be sent; a dispatch that misses one is refused when the answer forks the task. A delegate ends with the run that dispatched it: when that run completes or is abandoned, its delegates are abandoned too.
+Answered option's `dispatch` maps the names, so the task never depends on its dispatcher's:
+
+- `receive: {<parent field>: <child field>}` lands each delivered child field in a parent field (also delivery-only).
+- `send: {<child field>: <parent field>}` delivers the parent field into the child field the delegate awaits, every time the dispatching run writes it: by a report, an answer or a command of its own.
+
+Every field the task delivers must be received; every field it awaits must be sent. Dispatch missing one is refused when the answer forks the task. Delegate ends with its dispatching run: when that run completes or is abandoned, its delegates are abandoned too.
 
 ## Instruction units
 
-The entry's body carries one `## unit: <step id>` section per step, served as the instructions the agent works from while that step runs — write it as what to do there and how to report the step's fields. A step's `render` field may name an extra unit section beyond the per-step ones. Units may use template placeholders over the store's fields and the step's injected data — Go-template form, each field by its declared name: `The anchor under review: {{"{{.anchor}}"}}` serves with the store's `anchor` value in place, and an inject's result appears under its function's name the same way. A field not yet collected renders empty.
+Entry's body carries one `## unit: <step id>` section per step. Served as the instructions the agent works from while that step runs. Write it as what to do there and how to report the step's fields. Step's `render` field may name an extra unit section beyond the per-step ones. Units may use template placeholders over the store's fields and the step's injected data: Go-template form, each field by declared name. `The anchor under review: {{"{{.anchor}}"}}` serves with the store's `anchor` value in place. Inject's result appears under its function's name the same way. Field not yet collected renders empty.
 
 ## A worked example
 
-A small review move, written for width rather than realism: an optional param and an optional collect, two injects with differently shaped arguments, compound guards, a user chooser that loops back for correction, a dispatch seed on the confirming option, and a closing gate on the field the dispatched recording hands back. It ships from the same source the engine's own tests load, so it is valid by construction:
+Small review move, written for width, not realism: optional param and optional collect, two injects with differently shaped arguments, compound guards, user chooser looping back for correction, dispatch seed on the confirming option, closing gate on the field the dispatched recording hands back. Ships from the same source the engine's own tests load, so it is valid by construction:
 
 ```yaml
 # one frontmatter: the entry's identity fields, then the workflow it runs
@@ -115,8 +126,8 @@ canonical: example-review
 class: move
 {{ .Example }}```
 
-The workflow sits in the same frontmatter as the entry's usual fields (references, topics, confidence). The body carries one `## unit:` section per step — here `## unit: scope`, `## unit: account`, `## unit: review`, `## unit: record` — each served verbatim as the instructions the agent works from while that step runs: what to do there, and how to report the step's fields. The review unit, for example, presents the account for the user's ruling and instructs that a confirming answer leads to starting the recording procedure as a sub-move.
+Workflow sits in the same frontmatter as the entry's usual fields (references, topics, confidence). Body carries one `## unit:` section per step: here `## unit: scope`, `## unit: account`, `## unit: review`, `## unit: record`. Each is served verbatim as the instructions the agent works from while that step runs: what to do there, how to report the step's fields. Review unit, for example, presents the account for the user's ruling. It instructs that a confirming answer leads to starting the recording procedure as a sub-move.
 
 ## Validation
 
-The spec's structure — step wiring, guard grammar, that every named ability exists — is validated when the engine loads the entry, and a broken spec fails loudly there. A procedure that loads becomes startable by its canonical and appears in the served inventory of moves. Start small, load it, run it, and grow it by superseding the entry — the workflow's identity is its supersession chain, and the canonical keeps resolving to the chain's newest version.
+Spec structure (step wiring, guard grammar, every named ability exists) is validated when the engine loads the entry. Broken spec fails loudly there. Procedure that loads becomes startable by its canonical and appears in the served inventory of moves. Start small, load it, run it, grow it by superseding the entry. Workflow's identity is its supersession chain; canonical keeps resolving to the chain's newest version.

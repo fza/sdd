@@ -28,7 +28,7 @@ func openAIConfig(endpoint string) model.LLMConfig {
 func TestPreflightPassesOnEndpointServingJSONObjectOnly(t *testing.T) {
 	server := test.NewOpenAIServer(t, test.OpenAIBehaviour{
 		RefuseJSONSchema: true,
-		Answer:           `{"findings":[{"observation":"The signal states one observation.","category":"scope","severity":"low"}]}`,
+		Answer:           `{"findings":[{"observation":"The signal states one observation.","quote":"The pre-flight runs against an endpoint","category":"scope","severity":"low"}]}`,
 	})
 	runner, err := factory.New(openAIConfig(server.URL))
 	if err != nil {
@@ -38,7 +38,7 @@ func TestPreflightPassesOnEndpointServingJSONObjectOnly(t *testing.T) {
 	fact := &model.Entry{ID: basefacts.RefKindsFactID, Type: model.TypeSignal, Layer: model.LayerProcess, Kind: model.KindFact, Content: "ref-kind vocabulary stub"}
 	proposed := &model.Entry{Type: model.TypeSignal, Layer: model.LayerTactical, Content: "The pre-flight runs against an endpoint serving json_object only."}
 
-	result, err := llmops.Preflight(context.Background(), runner, proposed, model.NewGraph([]*model.Entry{fact}), "")
+	result, err := llmops.Preflight(context.Background(), runner, proposed, model.NewGraph([]*model.Entry{fact}), "", nil)
 	if err != nil {
 		t.Fatalf("Preflight: %v", err)
 	}
@@ -52,8 +52,8 @@ func TestPreflightPassesOnEndpointServingJSONObjectOnly(t *testing.T) {
 
 func TestPreflightReformatsAJSONObjectAnswerOutsideTheSchema(t *testing.T) {
 	server := test.NewOpenAIServer(t, test.OpenAIBehaviour{Answers: []string{
-		`{"findings":[{"observation":"The signal states one observation.","category":"scope","severity":"none"}]}`,
-		`{"findings":[{"observation":"The signal states one observation.","category":"scope","severity":"low"}]}`,
+		`{"findings":[{"observation":"The signal states one observation.","quote":"The pre-flight runs against an endpoint","category":"scope","severity":"none"}]}`,
+		`{"findings":[{"observation":"The signal states one observation.","quote":"The pre-flight runs against an endpoint","category":"scope","severity":"low"}]}`,
 	}})
 	cfg := openAIConfig(server.URL)
 	cfg.StructuredOutput = model.StructuredOutputJSONObject
@@ -65,7 +65,7 @@ func TestPreflightReformatsAJSONObjectAnswerOutsideTheSchema(t *testing.T) {
 	fact := &model.Entry{ID: basefacts.RefKindsFactID, Type: model.TypeSignal, Layer: model.LayerProcess, Kind: model.KindFact, Content: "ref-kind vocabulary stub"}
 	proposed := &model.Entry{Type: model.TypeSignal, Layer: model.LayerTactical, Content: "The pre-flight runs against an endpoint serving json_object only."}
 
-	result, err := llmops.Preflight(context.Background(), runner, proposed, model.NewGraph([]*model.Entry{fact}), "")
+	result, err := llmops.Preflight(context.Background(), runner, proposed, model.NewGraph([]*model.Entry{fact}), "", nil)
 	if err != nil {
 		t.Fatalf("Preflight: %v", err)
 	}

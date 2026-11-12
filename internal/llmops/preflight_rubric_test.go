@@ -97,7 +97,7 @@ func TestPreflightRubricLeavesTheReadingAndInapplicableRulesOut(t *testing.T) {
 				req = r
 				return llm.Result{Text: `{"findings":[]}`}, nil
 			})
-			_, err := llmops.Preflight(t.Context(), runner, tc.draft, graph, "")
+			_, err := llmops.Preflight(t.Context(), runner, tc.draft, graph, "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}

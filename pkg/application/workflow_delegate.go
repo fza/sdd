@@ -308,10 +308,10 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 		case err != nil:
 			return dispatch, err
 		default:
-			alone := "The delegate works on its own while this move waits: never resume, continue or answer for it. Its round runs in the background and its results arrive in this move, never through a reply: next with this instance and no report picks a delivery up once it has landed, and reports the round's failure should it fail."
-			instructions := "sdd launched the delegate itself, so launch nothing. " + alone
+			alone := "Delegate works on its own while this move waits: never resume, continue or answer for it. Round runs in the background. Its results arrive in this move, never through a reply. Once a delivery has landed, next with this instance and no report picks it up. If the round fails, next reports the round's failure."
+			instructions := "sdd launched the delegate itself: launch nothing. " + alone
 			if runner == DelegateLaunchFallback {
-				instructions = fmt.Sprintf("This harness has no subagent tool, so sdd fell back to the headless %s runner of the agents supported_agents names and launched the delegate itself: launch nothing. %s", launched, alone)
+				instructions = fmt.Sprintf("Harness has no subagent tool. sdd fell back to the headless %s runner of the agents supported_agents names and launched the delegate itself: launch nothing. %s", launched, alone)
 			}
 			if first {
 				instructions = w.freshVerifierNote(parent, procedure) + instructions
@@ -325,10 +325,10 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 	}
 	dispatch.Model, dispatch.Effort = settings.Model, settings.Effort
 	if first {
-		dispatch.Instructions = w.freshVerifierNote(parent, procedure) + "This move dispatched a delegate into its own child session. Launch a fresh-context sub-agent, the " + dispatch.Agent + " subagent sdd init installs for your harness where it has one, whose prompt is exactly the dispatch prompt: the prompt carries the child handles and nothing else, and this dialogue's own session handle never goes into it." + subagentSettingsInstruction(settings) + " The delegate works through the sdd MCP tools only. Its results arrive in this move, never through the sub-agent's reply: next with this instance and no report picks a delivery up once it has landed."
+		dispatch.Instructions = w.freshVerifierNote(parent, procedure) + "Move dispatched a delegate into its own child session. Launch a fresh-context sub-agent: the " + dispatch.Agent + " subagent sdd init installs for your harness, where it has one. Its prompt is exactly the dispatch prompt. That prompt carries the child handles and nothing else; this dialogue's own session handle never goes into it." + subagentSettingsInstruction(settings) + " Delegate works through the sdd MCP tools only. Its results arrive in this move, never through the sub-agent's reply. Once a delivery has landed, next with this instance and no report picks it up."
 		return dispatch, nil
 	}
-	dispatch.Instructions = "This move sent the delegate its next input. Continue the same delegate through your harness's continue mechanism with the continue prompt; where the harness cannot continue it, launch a fresh-context " + dispatch.Agent + " sub-agent with the dispatch prompt instead, since the child's serve carries the full exchange." + subagentSettingsInstruction(settings) + " This dialogue's own session handle never goes into either prompt. Next with this instance and no report picks the delegate's next delivery up once it has landed."
+	dispatch.Instructions = "Move sent the delegate its next input. Continue the same delegate through your harness's continue mechanism, with the continue prompt. Harness cannot continue it? Launch a fresh-context " + dispatch.Agent + " sub-agent with the dispatch prompt instead: the child's serve carries the full exchange." + subagentSettingsInstruction(settings) + " This dialogue's own session handle never goes into either prompt. Once the delegate's next delivery has landed, next with this instance and no report picks it up."
 	return dispatch, nil
 }
 
@@ -375,9 +375,9 @@ func (w *WorkflowSession) subagentSettings(ctx context.Context, parent, procedur
 func subagentSettingsInstruction(settings VerifierAgent) string {
 	switch {
 	case settings.Model != "" && settings.Effort != "":
-		return fmt.Sprintf(" Launch it with model %s and effort %s, the dispatch's model and effort.", settings.Model, settings.Effort)
+		return fmt.Sprintf(" Launch it with the dispatch's model %s and effort %s.", settings.Model, settings.Effort)
 	case settings.Effort != "":
-		return fmt.Sprintf(" Launch it with effort %s, the dispatch's effort.", settings.Effort)
+		return fmt.Sprintf(" Launch it with the dispatch's effort %s.", settings.Effort)
 	}
 	return ""
 }
@@ -432,15 +432,14 @@ func (w *WorkflowSession) filledDispatches(ctx context.Context, identity Request
 }
 
 func delegatePrompt(session SessionID, instance string) string {
-	return fmt.Sprintf("You are a delegate working one sdd task through the sdd MCP tools only: no sdd CLI, no reading graph files. "+
-		"Your child session handle is %s and your instance is %s; they are the only handles you hold. "+
-		"First call resume_session with session %s: it serves the task at its current step with the schema to continue it and the full exchange so far. "+
-		"Follow what each serve says. When a step waits for the dispatching move, end your turn; once it has sent, you are continued or relaunched with these same handles, "+
-		"and next with session %s, instance %s and no report picks its input up.", session, instance, session, session, instance)
+	return fmt.Sprintf("sdd delegate. One task, sdd MCP tools only. No sdd CLI, no graph file reads. "+
+		"Handles: session %s, instance %s. Only these. Every call names the session; next also the instance. "+
+		"First call resume_session: task at its current step, schema to continue, full exchange so far. "+
+		"Follow each serve. Step waits on the dispatching move: end turn. You get continued or relaunched, same handles; next without report picks the input up.", session, instance)
 }
 
 func delegateContinuePrompt(session SessionID, instance string) string {
-	return fmt.Sprintf("The dispatching move has sent its next input. Call next with session %s, instance %s and no report to pick it up, then continue the task.", session, instance)
+	return fmt.Sprintf("Dispatching move sent next input. Call next with session %s, instance %s, no report. Then continue the task.", session, instance)
 }
 
 // launchDelegate hands the delegate's launch to the launcher and, once the
@@ -736,9 +735,9 @@ func (a *Application) releaseFork(ctx context.Context, identity RequestIdentity,
 // delegateEndNote is what a delegate is told once its task has ended.
 func delegateEndNote(serve *engine.Serve) string {
 	if serve.Status == engine.StatusCompleted {
-		return "Your final result is delivered to the dispatching move and this delegate session has ended. Stop here."
+		return "Final result delivered to the dispatching move. Delegate session ended. Stop here."
 	}
-	return "This delegate session has concluded and its work is over. Stop here."
+	return "Delegate session concluded; its work is over. Stop here."
 }
 
 // startsDelegate reports whether starting spec forks a delegate child session.

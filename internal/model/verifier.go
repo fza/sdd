@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -25,18 +26,18 @@ const (
 // (20261109-222220-d-tac-4ev).
 const DefaultVerifyMode = VerifyProse
 
-// VerifyModes lists the modes, loosest first.
-func VerifyModes() []VerifyMode {
-	return []VerifyMode{VerifyOff, VerifyGrounding, VerifyProse, VerifyDeep}
+// AllowedValues lists the modes, loosest first.
+func (VerifyMode) AllowedValues() []string {
+	return closedValues(VerifyOff, VerifyGrounding, VerifyProse, VerifyDeep)
 }
 
 // ParseVerifyMode reads a mode, refusing one outside the set.
 func ParseVerifyMode(value string) (VerifyMode, error) {
-	mode := VerifyMode(value)
-	if !slices.Contains(VerifyModes(), mode) {
-		return "", fmt.Errorf("verify.mode %q is not off, grounding, prose or deep", value)
+	err := checkClosedValue("verify.mode", value, VerifyMode("").AllowedValues())
+	if err != nil {
+		return "", err
 	}
-	return mode, nil
+	return VerifyMode(value), nil
 }
 
 // Settings returns whether the mode enforces grounding and the verifier mode
@@ -73,7 +74,10 @@ const (
 	VerifierSkipNever   VerifierSkip = "never"
 )
 
-var verifierSkips = []VerifierSkip{VerifierSkipWeighed, VerifierSkipFailure, VerifierSkipNever}
+// AllowedValues lists the skips, loosest first.
+func (VerifierSkip) AllowedValues() []string {
+	return closedValues(VerifierSkipWeighed, VerifierSkipFailure, VerifierSkipNever)
+}
 
 // VerifierRunner is what runs a deep verifier session (V-D16, V-D19): the
 // drafting agent's harness as a subagent, or sdd through a headless agent CLI
@@ -87,7 +91,9 @@ const (
 	VerifierRunnerDriver   VerifierRunner = "driver"
 )
 
-var verifierRunners = []VerifierRunner{VerifierRunnerSubagent, VerifierRunnerClaude, VerifierRunnerCodex, VerifierRunnerDriver}
+func (VerifierRunner) AllowedValues() []string {
+	return closedValues(VerifierRunnerSubagent, VerifierRunnerClaude, VerifierRunnerCodex, VerifierRunnerDriver)
+}
 
 // VerifierDriver is the external command a driver runner runs per round.
 type VerifierDriver struct {
@@ -116,9 +122,25 @@ var (
 // still waits.
 const DefaultVerifierRoundTimeout = 10 * time.Minute
 
-// claudeEfforts are the levels the claude CLI's --effort takes. Codex accepts
-// model-defined levels, so its own pass as set.
-var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+// ClaudeEffort is a level the claude CLI's --effort takes. Codex accepts
+// model-defined levels, so its effort stays a plain string.
+type ClaudeEffort string
+
+func (ClaudeEffort) AllowedValues() []string {
+	return []string{"low", "medium", "high", "xhigh", "max"}
+}
+
+// ClaudeAgent is the verify.claude block: a VerifierAgent whose effort the
+// claude CLI must take.
+type ClaudeAgent struct {
+	Model  string       `yaml:"model,omitempty"`
+	Effort ClaudeEffort `yaml:"effort,omitempty"`
+}
+
+// VerifierAgent returns the block as the policy carries it.
+func (a ClaudeAgent) VerifierAgent() VerifierAgent {
+	return VerifierAgent{Model: a.Model, Effort: string(a.Effort)}
+}
 
 // VerifyConfig is the `verify` block (20261109-004506-d-cpt-udz,
 // 20261109-004729-d-cpt-xs5, 20261109-222220-d-tac-4ev). Mode and skip are
@@ -133,14 +155,75 @@ type VerifyConfig struct {
 	Skip          VerifierSkip         `yaml:"skip,omitempty"`
 	Runner        VerifierRunner       `yaml:"runner,omitempty"`
 	Driver        VerifierDriver       `yaml:"driver,omitempty"`
-	Claude        VerifierAgent        `yaml:"claude,omitempty"`
+	Claude        ClaudeAgent          `yaml:"claude,omitempty"`
 	Codex         VerifierAgent        `yaml:"codex,omitempty"`
-	RoundTimeout  string               `yaml:"round_timeout,omitempty"`
+	RoundTimeout  RoundTimeout         `yaml:"round_timeout,omitempty"`
 	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
 	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
 	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
 	// Prefilter switches the prefilter on (D7); on by default.
 	Prefilter *bool `yaml:"prefilter,omitempty"`
+	// Kinds sets the mode per entry kind; see ModeFor.
+	Kinds map[Kind]VerifyMode `yaml:"kinds,omitempty"`
+}
+
+// cappedKinds are checked at most at prose while Kinds names no kind: they
+// make no claim a deep check can test, or a deep run costs more than it finds.
+var cappedKinds = []Kind{KindDone, KindActor, KindRole, KindFocus, KindAnnotation, KindInsight, KindQuestion, KindActivity, KindProcedure}
+
+// ModeFor is the mode a draft of kind is checked at: the mode Kinds names
+// for it, else Mode. While Kinds names no kind, cappedKinds take at most
+// prose.
+func (c VerifyConfig) ModeFor(kind Kind) VerifyMode {
+	c = c.KnownValues()
+	mode := c.ResolvedMode()
+	if len(c.Kinds) > 0 {
+		if named, ok := c.Kinds[kind]; ok {
+			return named
+		}
+		return mode
+	}
+	if slices.Contains(cappedKinds, kind) && strictness(mode) > strictness(VerifyProse) {
+		return VerifyProse
+	}
+	return mode
+}
+
+// StricterKinds lists the kinds checked more strictly than kind: those an
+// unnamed kind's Mode or a named kind's own mode puts above it; nil when
+// none is. The drafter picks the kind, so pre-flight tests that such a draft
+// fits it (KindFit).
+func (c VerifyConfig) StricterKinds(kind Kind) []Kind {
+	own := c.ModeFor(kind)
+	var stricter []Kind
+	for _, other := range append(SignalKindValues(), DecisionKindValues()...) {
+		if strictness(c.ModeFor(other)) > strictness(own) {
+			stricter = append(stricter, other)
+		}
+	}
+	return stricter
+}
+
+// KindFit asks pre-flight whether a draft fits its kind, for a kind the
+// project checks less strictly than another: the drafter picks the kind,
+// so a misfit would let a draft dodge the stricter check.
+type KindFit struct {
+	Kind     Kind
+	Question string
+	// Stricter are the kinds checked more strictly, each with the question
+	// it answers.
+	Stricter []KindTest
+}
+
+// KindTest is an entry kind and the one question it answers.
+type KindTest struct {
+	Kind     Kind
+	Question string
+}
+
+// AllowedValues lists the entry kinds, signals first.
+func (Kind) AllowedValues() []string {
+	return closedValues(append(SignalKindValues(), DecisionKindValues()...)...)
 }
 
 // VerifierPolicy is the resolved verifier configuration of one project.
@@ -156,12 +239,12 @@ type VerifierPolicy struct {
 
 // VerifierPolicy resolves the block's verifier keys against the defaults.
 func (c VerifyConfig) VerifierPolicy() VerifierPolicy {
+	c = c.KnownValues()
 	_, mode := c.ResolvedMode().Settings()
-	// CheckVerifyLayers refuses a value that does not parse.
-	timeout, _ := time.ParseDuration(c.RoundTimeout)
+	timeout, _ := c.RoundTimeout.Duration()
 	return VerifierPolicy{
 		Mode: mode, Skip: c.Skip, Runner: c.Runner, Driver: c.Driver,
-		Claude: c.Claude, Codex: c.Codex, RoundTimeout: timeout,
+		Claude: c.Claude.VerifierAgent(), Codex: c.Codex, RoundTimeout: timeout,
 	}.WithDefaults()
 }
 
@@ -186,8 +269,94 @@ func (p VerifierPolicy) WithDefaults() VerifierPolicy {
 	return p
 }
 
+// KnownValues clears every closed value outside its set, so a value a newer
+// sdd wrote or a typo leaves its key to the layer below
+// (20260921-174543-d-cpt-tv9); IgnoredSettings reports it.
+func (c VerifyConfig) KnownValues() VerifyConfig {
+	if !isClosedValue(c.Mode) {
+		c.Mode = ""
+	}
+	if !isClosedValue(c.Skip) {
+		c.Skip = ""
+	}
+	if !isClosedValue(c.Runner) {
+		c.Runner = ""
+	}
+	if !isClosedValue(c.Claude.Effort) {
+		c.Claude.Effort = ""
+	}
+	if !c.RoundTimeout.Known() {
+		c.RoundTimeout = ""
+	}
+	if len(c.Kinds) > 0 {
+		known := make(map[Kind]VerifyMode, len(c.Kinds))
+		for kind, mode := range c.Kinds {
+			if isClosedValue(kind) && isClosedValue(mode) {
+				known[kind] = mode
+			}
+		}
+		c.Kinds = known
+	}
+	return c
+}
+
+func isClosedValue[S interface {
+	~string
+	ClosedValues
+}](value S) bool {
+	return slices.Contains(value.AllowedValues(), string(value))
+}
+
+// RoundTimeout is the verify.round_timeout value: a duration such as 10m.
+type RoundTimeout string
+
+func (RoundTimeout) FreeText() {}
+
+// Known reports whether the value is unset or a positive duration.
+func (r RoundTimeout) Known() bool {
+	_, ok := r.Duration()
+	return r == "" || ok
+}
+
+// Duration is the value as a positive duration; false when it is none.
+func (r RoundTimeout) Duration() (time.Duration, bool) {
+	d, err := time.ParseDuration(string(r))
+	return d, err == nil && d > 0
+}
+
+func ignoredVerifyValues(c VerifyConfig) []IgnoredSetting {
+	var ignored []IgnoredSetting
+	for _, setting := range []struct {
+		key, value string
+		allowed    []string
+	}{
+		{"verify.mode", string(c.Mode), c.Mode.AllowedValues()},
+		{"verify.skip", string(c.Skip), c.Skip.AllowedValues()},
+		{"verify.runner", string(c.Runner), c.Runner.AllowedValues()},
+		{"verify.claude.effort", string(c.Claude.Effort), c.Claude.Effort.AllowedValues()},
+	} {
+		if setting.value != "" && !slices.Contains(setting.allowed, setting.value) {
+			ignored = append(ignored, IgnoredSetting{Key: setting.key, Reason: fmt.Sprintf("%q is not %s", setting.value, oneOf(setting.allowed))})
+		}
+	}
+	if !c.RoundTimeout.Known() {
+		ignored = append(ignored, IgnoredSetting{Key: "verify.round_timeout", Reason: fmt.Sprintf("%q is no positive duration such as 10m", c.RoundTimeout)})
+	}
+	for _, kind := range slices.Sorted(maps.Keys(c.Kinds)) {
+		mode, key := c.Kinds[kind], "verify.kinds."+string(kind)
+		switch {
+		case !isClosedValue(kind):
+			ignored = append(ignored, IgnoredSetting{Key: key, Reason: fmt.Sprintf("%q is not an entry kind", kind)})
+		case !isClosedValue(mode):
+			ignored = append(ignored, IgnoredSetting{Key: key, Reason: fmt.Sprintf("%q is not %s", mode, oneOf(mode.AllowedValues()))})
+		}
+	}
+	return ignored
+}
+
 func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
-	out := base
+	out := base.KnownValues()
+	overlay = overlay.KnownValues()
 	if overlay.Mode != "" {
 		out.Mode = overlay.Mode
 	}
@@ -200,10 +369,22 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 	if overlay.Driver.Command != "" {
 		out.Driver = overlay.Driver
 	}
-	out.Claude = mergeVerifierAgent(out.Claude, overlay.Claude)
+	if overlay.Claude.Model != "" {
+		out.Claude.Model = overlay.Claude.Model
+	}
+	if overlay.Claude.Effort != "" {
+		out.Claude.Effort = overlay.Claude.Effort
+	}
 	out.Codex = mergeVerifierAgent(out.Codex, overlay.Codex)
 	if overlay.RoundTimeout != "" {
 		out.RoundTimeout = overlay.RoundTimeout
+	}
+	if len(overlay.Kinds) > 0 {
+		// KnownValues gave out a map of its own, so base stays unchanged.
+		if out.Kinds == nil {
+			out.Kinds = make(map[Kind]VerifyMode, len(overlay.Kinds))
+		}
+		maps.Copy(out.Kinds, overlay.Kinds)
 	}
 	if overlay.Depth.Down != nil {
 		out.Depth.Down = overlay.Depth.Down
@@ -223,6 +404,15 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 	return out
 }
 
+func knownVerifyLayer(layer *PerRepoConfig) *PerRepoConfig {
+	if layer == nil {
+		return nil
+	}
+	known := *layer
+	known.Verify = layer.Verify.KnownValues()
+	return &known
+}
+
 func mergeVerifierAgent(base, overlay VerifierAgent) VerifierAgent {
 	if overlay.Model != "" {
 		base.Model = overlay.Model
@@ -233,13 +423,44 @@ func mergeVerifierAgent(base, overlay VerifierAgent) VerifierAgent {
 	return base
 }
 
-// CheckVerifyLayers refuses a verify configuration that cannot hold: an
-// unknown value, a machine-local value loosening what the user-global and
-// committed layers set, a driver in the committed config, or a driver
-// runner no layer names a command for (V-D19). files names the file behind
-// each layer; the refusal names the key, and the file of every layer it
-// judges.
+// CheckVerifyLayers refuses a verify configuration that cannot hold: a
+// machine-local value loosening what the user-global and committed layers
+// set, a driver in the committed config, or a driver runner no layer names a
+// command for (V-D19). It judges the known values only, as a read does;
+// VerifyKeyRefusal also refuses an unknown one on write. files names the
+// file behind each layer; the refusal names the key, and the file of every
+// layer it judges.
 func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
+	global.Verify = global.Verify.KnownValues()
+	problems := verifyLayerProblems(global, knownVerifyLayer(committed), knownVerifyLayer(local), files)
+	if len(problems) == 0 {
+		return nil
+	}
+	return problems[0].err
+}
+
+// VerifyKeyRefusal is CheckVerifyLayers judging only key: the first refusal
+// under key or a block holding it, so a value elsewhere never blocks a write
+// to key (20260921-174543-d-cpt-tv9).
+func VerifyKeyRefusal(key string, global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
+	for _, problem := range verifyLayerProblems(global, committed, local, files) {
+		if key == problem.key || strings.HasPrefix(key, problem.key+".") {
+			return problem.err
+		}
+	}
+	return nil
+}
+
+type verifyProblem struct {
+	key string
+	err error
+}
+
+func verifyLayerProblems(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) []verifyProblem {
+	var problems []verifyProblem
+	refuse := func(key string, err error) {
+		problems = append(problems, verifyProblem{key: key, err: err})
+	}
 	layers := []struct {
 		source ConfigValueSource
 		cfg    BaseConfig
@@ -257,28 +478,12 @@ func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files
 		}{ConfigSourceLocal, local.BaseConfig})
 	}
 	for _, layer := range layers {
-		if mode := layer.cfg.Verify.Mode; mode != "" {
-			_, err := ParseVerifyMode(string(mode))
-			if err != nil {
-				return fmt.Errorf("%s: %w", layerFile(layer.source, files), err)
-			}
+		verify := layer.cfg.Verify
+		for _, unknown := range ignoredVerifyValues(verify) {
+			refuse(unknown.Key, fmt.Errorf("%s: %s %s", layerFile(layer.source, files), unknown.Key, unknown.Reason))
 		}
-		if skip := layer.cfg.Verify.Skip; skip != "" && !slices.Contains(verifierSkips, skip) {
-			return fmt.Errorf("%s: verify.skip %q is not never, failure or weighed", layerFile(layer.source, files), skip)
-		}
-		if runner := layer.cfg.Verify.Runner; runner != "" && !slices.Contains(verifierRunners, runner) {
-			return fmt.Errorf("%s: verify.runner %q is not subagent, claude, codex or driver", layerFile(layer.source, files), runner)
-		}
-		if timeout := layer.cfg.Verify.RoundTimeout; timeout != "" {
-			if d, err := time.ParseDuration(timeout); err != nil || d <= 0 {
-				return fmt.Errorf("%s: verify.round_timeout %q is no positive duration such as 10m", layerFile(layer.source, files), timeout)
-			}
-		}
-		if effort := layer.cfg.Verify.Claude.Effort; effort != "" && !slices.Contains(claudeEfforts, effort) {
-			return fmt.Errorf("%s: verify.claude.effort %q is not low, medium, high, xhigh or max", layerFile(layer.source, files), effort)
-		}
-		if layer.source == ConfigSourceProject && layer.cfg.Verify.Driver.Command != "" {
-			return fmt.Errorf("%s: verify.driver is refused in the committed config, since its command would run on every contributor's machine; set it in the user-global or the machine-local config", layerFile(layer.source, files))
+		if layer.source == ConfigSourceProject && verify.Driver.Command != "" {
+			refuse("verify.driver", fmt.Errorf("%s: verify.driver is refused in the committed config, since its command would run on every contributor's machine; set it in the user-global or the machine-local config", layerFile(layer.source, files)))
 		}
 	}
 	shared := MergeBaseConfig(global, BaseConfig{})
@@ -291,23 +496,39 @@ func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files
 			lowerMode = DefaultVerifyMode
 		}
 		lowerSkip := shared.Verify.VerifierPolicy().Skip
-		if mode := local.Verify.Mode; mode != "" && slices.Index(VerifyModes(), mode) < slices.Index(VerifyModes(), lowerMode) {
-			return fmt.Errorf("%s: verify.mode %s is refused in the machine-local config, which may only raise the %s the shared layers resolve to; lower it in %s",
-				layerFile(ConfigSourceLocal, files), mode, lowerMode, sharedVerifyFile(global, committed, "mode", files))
+		if mode := local.Verify.Mode; mode != "" && strictness(mode) < strictness(lowerMode) {
+			refuse("verify.mode", fmt.Errorf("%s: verify.mode %s is refused in the machine-local config, which may only raise the %s the shared layers resolve to; lower it in %s",
+				layerFile(ConfigSourceLocal, files), mode, lowerMode, sharedVerifyFile(global, committed, "mode", files)))
 		}
-		if skip := local.Verify.Skip; skip != "" && slices.Index(verifierSkips, skip) < slices.Index(verifierSkips, lowerSkip) {
-			return fmt.Errorf("%s: verify.skip %s is refused in the machine-local config, which may only tighten the %s the shared layers set toward never; loosen it in %s",
-				layerFile(ConfigSourceLocal, files), skip, lowerSkip, sharedVerifyFile(global, committed, "skip", files))
+		if skip := local.Verify.Skip; skip != "" && strictness(skip) < strictness(lowerSkip) {
+			refuse("verify.skip", fmt.Errorf("%s: verify.skip %s is refused in the machine-local config, which may only tighten the %s the shared layers set toward never; loosen it in %s",
+				layerFile(ConfigSourceLocal, files), skip, lowerSkip, sharedVerifyFile(global, committed, "skip", files)))
 		}
 	}
 	resolved := MergeBaseConfig(shared, BaseConfig{})
 	if local != nil {
 		resolved = MergeBaseConfig(resolved, local.BaseConfig)
+		for _, kind := range append(SignalKindValues(), DecisionKindValues()...) {
+			lower, raised := shared.Verify.ModeFor(kind), resolved.Verify.ModeFor(kind)
+			if strictness(raised) < strictness(lower) {
+				refuse("verify.kinds."+string(kind), fmt.Errorf("%s: verify.kinds.%s %s is refused in the machine-local config, which may only raise the %s the shared layers resolve %s to",
+					layerFile(ConfigSourceLocal, files), kind, raised, lower, kind))
+			}
+		}
 	}
 	if policy := resolved.Verify.VerifierPolicy(); policy.Runner == VerifierRunnerDriver && policy.Driver.Command == "" {
-		return fmt.Errorf("verify.runner driver needs verify.driver.command, which neither the user-global nor the machine-local config sets; set it in %s", layerFile(ConfigSourceLocal, files))
+		refuse("verify.runner", fmt.Errorf("verify.runner driver needs verify.driver.command, which neither the user-global nor the machine-local config sets; set it in %s", layerFile(ConfigSourceLocal, files)))
 	}
-	return nil
+	return problems
+}
+
+// strictness is a value's place in its type's AllowedValues, which lists the
+// loosest first.
+func strictness[S interface {
+	~string
+	ClosedValues
+}](value S) int {
+	return slices.Index(value.AllowedValues(), string(value))
 }
 
 func layerFile(source ConfigValueSource, files map[ConfigValueSource]string) string {
@@ -370,9 +591,9 @@ func (p VerifierPolicy) SubagentAgent(clientName string) VerifierAgent {
 	return VerifierAgent{}
 }
 
-// ResolvedMode is the block's mode, DefaultVerifyMode when unset.
+// ResolvedMode is the block's mode, DefaultVerifyMode when unset or unknown.
 func (c VerifyConfig) ResolvedMode() VerifyMode {
-	if c.Mode == "" {
+	if !isClosedValue(c.Mode) {
 		return DefaultVerifyMode
 	}
 	return c.Mode

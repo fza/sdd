@@ -120,7 +120,13 @@ func effectiveConfigResult(key string) (*query.EffectiveConfigResult, error) {
 		}
 		if project.Pointed() {
 			q.WorkSDDDir = meta.SDDDir(project.WorkRoot)
-			if workLocal := meta.LocalConfigPath(q.WorkSDDDir, ""); workLocal != meta.LocalConfigPath(sddDir, localLayer) {
+			workLocal := meta.LocalConfigPath(q.WorkSDDDir, "")
+			switch {
+			case project.GraphRepo == "" && localConfigOverride == "":
+				// Each layer under its own name: the project's local, then the
+				// work repository's over it.
+				q.LocalConfigPath, q.WorkLocalConfigPath, q.WorkLocalOver = "", workLocal, true
+			case workLocal != meta.LocalConfigPath(sddDir, localLayer):
 				q.WorkLocalConfigPath = workLocal
 			}
 		}

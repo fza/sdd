@@ -71,8 +71,8 @@ func SchemaChanges(from, to int) []string {
 // SchemaMeta is the decoded contents of .sdd/meta.json.
 //
 // GraphSchemaVersion is required and advances through explicit migrations.
-// MinimumVersion is written once at initial init (set to the binary's semver
-// at creation time) and preserved thereafter; a nil pointer means the field
+// MinimumVersion is written once at initial init (set to the binary's
+// RecordedMinimumVersion) and preserved thereafter; a nil pointer means the field
 // is absent on disk.
 type SchemaMeta struct {
 	GraphSchemaVersion int     `json:"graph_schema_version"`
@@ -138,6 +138,16 @@ func normalizeSemver(v string) string {
 		return "v" + v
 	}
 	return v
+}
+
+// forkBuildSuffixRE matches the pre-release identifiers a fork build appends
+// to the upstream pre-release it is built on, as in v0.18.0-alpha.3.fza.45.
+var forkBuildSuffixRE = regexp.MustCompile(`\.fza\.\d+$`)
+
+// RecordedMinimumVersion is the minimum_version a released binary records:
+// its upstream base, so stock builds of that base still accept the graph.
+func RecordedMinimumVersion(binaryVersion string) string {
+	return forkBuildSuffixRE.ReplaceAllString(binaryVersion, "")
 }
 
 // ShouldBumpMinimumVersion reports whether a recorded minimum_version

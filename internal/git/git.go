@@ -20,6 +20,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/networkteam/sdd/internal/model"
 )
 
 // CLI is the exec-based adapter: a struct whose methods shell out to the git
@@ -463,29 +465,34 @@ func (c CLI) IsClean(ctx context.Context) (bool, error) {
 	return strings.TrimSpace(string(out)) == "", nil
 }
 
-// MergePull runs a merge-only pull. --no-rebase forces a merge pull
-// regardless of the user's pull.rebase config, so background sync never
-// rewrites the shared graph's history.
+// MergePull fetches and merges the branch's upstream, never rebasing, so sync
+// never rewrites the shared graph's history. A merge commit carries
+// model.GraphMergeMessage, which git pull cannot set (20261110-021124-d-tac-non);
+// a conflict stays in the working tree for the user to resolve.
 func (c CLI) MergePull(ctx context.Context) (string, error) {
 	if c.graphClone() {
 		return c.pullClone(ctx)
 	}
-	env, err := admittedEnv(ctx, "pull")
-	if err != nil {
-		return "", err
-	}
 	if err := c.EnsureMergeDriver(ctx); err != nil {
 		return "", fmt.Errorf("setting up the entry merge driver: %w", err)
 	}
-	pull := c.command(ctx, "pull", "--no-rebase")
-	pull.Env = env
-	out, err := pull.CombinedOutput()
+	if err := c.Fetch(ctx); err != nil {
+		return "", err
+	}
+	upstream, err := c.UpstreamRef(ctx)
+	if err != nil {
+		return "", err
+	}
+	if upstream == "" {
+		return "", errors.New("the current branch has no upstream to merge")
+	}
+	out, err := c.command(ctx, "merge", "--no-edit", "-m", model.GraphMergeMessage(upstream), upstream).CombinedOutput()
 	msg := strings.TrimSpace(string(out))
 	if err != nil {
 		if msg == "" {
-			return "", fmt.Errorf("git pull --no-rebase: %w", err)
+			return "", fmt.Errorf("git merge %s: %w", upstream, err)
 		}
-		return "", fmt.Errorf("git pull --no-rebase: %s", msg)
+		return "", fmt.Errorf("git merge %s: %s", upstream, msg)
 	}
 	return msg, nil
 }

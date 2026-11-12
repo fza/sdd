@@ -1,13 +1,13 @@
 {{ define "short_loop_user" -}}
 ## Task
 
-A `kind: done` signal is being created that closes a `kind: gap` signal directly, bypassing an intermediate decision. Verify that this short-loop closure is appropriate given the gap's layer and the done entry's narrative scope.
+A `kind: done` signal is being created that closes a `kind: gap` signal directly, bypassing an intermediate decision. Verify that this short-loop closure fits gap's layer and done entry's narrative scope.
 
 ## Checks
 
-1. **Gap coverage**: The done's narrative addresses what the gap identified — it must resolve the specific concern raised, not a neighboring one.
-2. **Short-loop appropriateness**: At this layer, with this narrative scope-shape, is bypassing a decision appropriate? Short-loop is valid for low-layer execution fixes; higher layers and approach-shaped narratives deserve a captured decision.
-3. **No smuggled decision**: The narrative must not describe a choice that would have warranted a decision (e.g. a reframing, a trade-off being made, an approach being selected).
+1. **Gap coverage**: done's narrative addresses what gap identified. It must resolve specific concern raised, not a neighboring one.
+2. **Short-loop appropriateness**: at this layer, with this narrative scope-shape, is bypassing a decision appropriate? Short-loop is valid for low-layer execution fixes. Higher layers and approach-shaped narratives deserve a captured decision.
+3. **No smuggled decision**: narrative must not describe a choice that would have warranted a decision (e.g. a reframing, a trade-off being made, an approach being selected).
 
 ## Narrative scope-shape
 
@@ -16,7 +16,7 @@ A `kind: done` signal is being created that closes a `kind: gap` signal directly
 
 ## Calibration
 
-Calibration runs on the matrix below — layer of the closed gap × scope-shape of the done narrative:
+Calibration runs on the matrix below: layer of closed gap × scope-shape of done narrative.
 
 | Layer of gap | Execution-shaped done | Approach-shaped done |
 |---|---|---|
@@ -28,25 +28,25 @@ Calibration runs on the matrix below — layer of the closed gap × scope-shape 
 Bands:
 
 - `high`:
-  - Gap at stg closed by done regardless of scope-shape — strategic gaps require a captured decision
-  - Gap at cpt or tac closed by approach-shaped done — the choice is smuggled into the done; should have been a decision
-  - Done does not address the gap it claims to close (coverage failure)
-  - Example: gap "pre-flight over-rejects on wording" closed by done "Changed pre-flight to allow solution-space thinking because signals explore, decisions commit" — approach-shaped at cpt, should have been a decision capturing the reframing
+  - Gap at stg closed by done, whatever the scope-shape: strategic gaps require a captured decision
+  - Gap at cpt or tac closed by approach-shaped done: the choice is smuggled into done; it should have been a decision
+  - Done does not address gap it claims to close (coverage failure)
+  - Example: gap "pre-flight over-rejects on wording" closed by done "Changed pre-flight to allow solution-space thinking because signals explore, decisions commit". Approach-shaped at cpt; should have been a decision capturing the reframing
 
 - `medium`:
-  - Gap at cpt with execution-shaped done — conceptual scope, no explicit choice in prose, but worth surfacing "reads like it could be a decision?"
-  - Gap at ops / prc with approach-shaped done — low-layer choice worth capturing as a decision; surface without blocking
-  - Example: gap "session startup is slow" closed by done "Reduced synthesis to recent entries because full depth was slow" — approach-shaped at ops, medium surface
+  - Gap at cpt with execution-shaped done: conceptual scope, no explicit choice in prose, but worth surfacing "reads like it could be a decision?"
+  - Gap at ops / prc with approach-shaped done: low-layer choice worth capturing as a decision; surface without blocking
+  - Example: gap "session startup is slow" closed by done "Reduced synthesis to recent entries because full depth was slow". Approach-shaped at ops, medium surface
 
 - `low`:
-  - Done technically addresses the gap but could be more specific about which aspect
-  - Example: gap "pre-flight over-rejects on wording" closed by done "Improved pre-flight prompt" — general fix without naming the specific aspect
+  - Done technically addresses gap but could be more specific about which aspect
+  - Example: gap "pre-flight over-rejects on wording" closed by done "Improved pre-flight prompt". General fix without naming specific aspect
 
 - No finding:
   - Gap at ops / prc with execution-shaped done describing pure execution
-  - Standard short-loop fix at low layers — observation → fix
+  - Standard short-loop fix at low layers: observation, then fix
   - Example: gap "catch-up cites superseded decision" closed by done "Updated skill example to reference current decision"
-  - Deferral explicitly acknowledged ("minimal fix; deeper rework deferred") — trust the author's dialogue-grounded judgment
+  - Deferral explicitly acknowledged ("minimal fix; deeper rework deferred"): trust author's dialogue-grounded judgment
 
 ## Proposed entry
 

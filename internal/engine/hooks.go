@@ -388,5 +388,5 @@ func highStepFindingsDetail(ctx *Context) string {
 	for _, finding := range high {
 		lines = append(lines, fmt.Sprintf("[high] %s: %s", finding.Category, finding.Observation))
 	}
-	return "high findings on this step: " + strings.Join(lines, "; ") + ". Revise and report again."
+	return "high findings on this step: " + strings.Join(lines, "; ") + ". Revise, then report again."
 }

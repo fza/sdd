@@ -55,10 +55,10 @@ func TestResolveProject(t *testing.T) {
 			wantError: "sets language",
 		},
 		{
-			name:      "an agent key in the local file",
-			work:      map[string]string{"config.yaml": "project_dir: ../project\n", "config.local.yaml": "supported_agents: [codex]\n"},
-			project:   map[string]string{"config.yaml": "graph_dir: .sdd/graph\n"},
-			wantError: "sets supported_agents",
+			name:     "project settings in the local file",
+			work:     map[string]string{"config.yaml": "project_dir: ../project\n", "config.local.yaml": "llm:\n  model: kept\nverify:\n  mode: prose\n"},
+			project:  map[string]string{"config.yaml": "graph_dir: .sdd/graph\n"},
+			wantRoot: "project",
 		},
 		{
 			name:      "a project that only has a local file",

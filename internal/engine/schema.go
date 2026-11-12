@@ -14,12 +14,12 @@ const entryIDSchemaPattern = `^\d{8}-\d{6}-[sd]-(stg|cpt|tac|ops|prc)-[a-z0-9]+$
 // ReportSchemaForStep generates the JSON Schema for a step's report from the
 // spec's variable declarations: the step's collect fields are the named,
 // described properties (required unless marked optional), and every other
-// declared state field is accepted too — reports may batch fields for later
-// steps, and the cascade rule makes the one-shot full draft as fast as
-// today. Left out are the fields a report never fills: one only a delivery
-// fills, one a single chooser option collects, which that answer carries,
-// and a procedure-spec field while the draft in store is no procedure. The
-// same desc that feeds instruction text feeds the schema.
+// declared state field but a HostSet one is accepted too — reports may batch
+// fields for later steps, and the cascade rule makes the one-shot full draft
+// as fast as today. Left out are the fields a report never fills: one only a
+// delivery fills, one a single chooser option collects, which that answer
+// carries, and a procedure-spec field while the draft in store is no
+// procedure. The same desc that feeds instruction text feeds the schema.
 func (s *Spec) ReportSchemaForStep(step *Step, store *Store) map[string]any {
 	properties := make(map[string]any)
 	var required []string
@@ -41,8 +41,8 @@ func (s *Spec) ReportSchemaForStep(step *Step, store *Store) map[string]any {
 			}
 		}
 	}
-	for name := range s.State {
-		if _, ok := properties[name]; ok || s.DeliveryOnly(name) || s.singleOptionField(name) {
+	for name, decl := range s.State {
+		if _, ok := properties[name]; ok || decl.HostSet || s.DeliveryOnly(name) || s.singleOptionField(name) {
 			continue
 		}
 		addField(name)

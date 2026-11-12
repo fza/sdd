@@ -41,7 +41,7 @@ func insightMechanics() string {
 	var b strings.Builder
 	b.WriteString("## Mechanics\n\n")
 	fmt.Fprintf(&b, "Insight is a signal kind (the signal kinds: %s).\n\n", strings.Join(kinds, ", "))
-	fmt.Fprintf(&b, "Insight is not an attention kind — those are %s — so an open insight never joins the surface where resolution is owed.\n\n", strings.Join(attention, ", "))
+	fmt.Fprintf(&b, "Insight is not an attention kind (those are %s): an open insight never joins the surface where resolution is owed.\n\n", strings.Join(attention, ", "))
 	fmt.Fprintf(&b, "Enforced at capture: %s.\n", model.SignalCloseRule)
 	return b.String()
 }

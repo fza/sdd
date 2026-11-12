@@ -15,9 +15,9 @@ import (
 
 // Markers distinguishing a full overview serve from the suppressed pointer.
 const (
-	overviewBodyMarker      = "a signal records something noticed:"
+	overviewBodyMarker      = "A signal records something noticed:"
 	overviewServedMarker    = "served here in full"
-	overviewSuppressedNote  = "was already served to this session in full"
+	overviewSuppressedNote  = "was already served to the current session in full"
 	kindSequenceInstruction = "Work in this order: read the type-system overview, choose the kind, pull that kind's authoring fact in full, then draft."
 )
 

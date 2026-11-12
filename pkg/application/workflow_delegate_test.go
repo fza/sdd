@@ -253,6 +253,9 @@ func TestDispatchingADeliveringTaskForksADelegateSession(t *testing.T) {
 		if !strings.Contains(prompt, string(dispatch.Session)) || strings.Contains(prompt, string(f.parent)) {
 			t.Fatalf("a delegate prompt carries the child handle and never the dispatching one, got %q", prompt)
 		}
+		if strings.Count(prompt, string(dispatch.Session)) != 1 {
+			t.Fatalf("a delegate prompt names the child handle once, got %q", prompt)
+		}
 	}
 	child, resume, err := f.app.ResumeWorkflow(t.Context(), f.identity, sdd.WorkflowResumeRequest{SessionID: dispatch.Session})
 	if err != nil {
@@ -369,7 +372,7 @@ func TestDelegateLivesNoLongerThanItsDispatchingMove(t *testing.T) {
 		}
 		f.advance(t, f.parent, f.dispatch, nil)
 		sent := f.advance(t, f.parent, f.dispatch, map[string]any{"chooser": "answer", "choice": "reply", "fields": map[string]any{"brief": "a1"}})
-		if len(sent.Dispatches) != 0 || strings.Contains(sent.Instructions, "was not delivered") {
+		if len(sent.Dispatches) != 0 || strings.Contains(sent.Instructions, "to the delegate refused") {
 			t.Fatalf("a delegate torn down by handle releases its fork, so nothing is even attempted, got %+v %q", sent.Dispatches, sent.Instructions)
 		}
 	})

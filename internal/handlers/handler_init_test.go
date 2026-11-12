@@ -348,13 +348,15 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 
 // Init removes from the root .gitignore and .gitattributes exactly the
 // lines earlier builds derived for the graph_dir, keeps the lines added by
-// hand, and gives a runtime folder an earlier build made its own .gitignore.
+// hand, drops a comment left heading none of them, and gives a runtime folder
+// an earlier build made its own .gitignore.
 func TestInit_RemovesTheRootLinesEarlierBuildsDerived(t *testing.T) {
 	cases := []struct {
-		name, graphDir, handIgnore, handAttributes, wantAttributes string
+		name, graphDir, handIgnore, heading, handAttributes, wantAttributes string
 	}{
 		{name: "lines added by hand stay", graphDir: "decisions", handIgnore: "node_modules/\n", handAttributes: "*.png binary\n", wantAttributes: "*.png binary\n"},
 		{name: "files left empty go", graphDir: "decisions"},
+		{name: "a heading over the derived lines goes with them", graphDir: "decisions", handIgnore: "node_modules/\n", heading: "\n# sdd\n"},
 		{name: "a graph at the root keeps its routing", graphDir: ".", handIgnore: "node_modules/\n", wantAttributes: model.GraphAttributesLine + "\n"},
 	}
 	for _, tc := range cases {
@@ -364,7 +366,7 @@ func TestInit_RemovesTheRootLinesEarlierBuildsDerived(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeTestFile(t, filepath.Join(tmp, ".gitignore"), tc.handIgnore+strings.Join(model.LegacyRootIgnoreLines(tc.graphDir), "\n")+"\n")
+			writeTestFile(t, filepath.Join(tmp, ".gitignore"), tc.handIgnore+tc.heading+strings.Join(model.LegacyRootIgnoreLines(tc.graphDir), "\n")+"\n")
 			writeTestFile(t, filepath.Join(tmp, ".gitattributes"), legacyAttribute+"\n"+tc.handAttributes)
 			writeTestFile(t, filepath.Join(tmp, tc.graphDir, model.GraphRuntimeDir, "graph.lock"), "")
 			h := handlers.New(handlers.Options{Reader: finders.New(finders.Options{})})
@@ -1037,6 +1039,54 @@ func TestInit_BumpRaisesMinimumVersion(t *testing.T) {
 	}
 	if meta.MinimumVersion == nil || *meta.MinimumVersion != "v0.6.0" {
 		t.Errorf("minimum_version: got %+v, want v0.6.0", meta.MinimumVersion)
+	}
+}
+
+func TestInit_ForkBuildRecordsUpstreamBase(t *testing.T) {
+	tmp := t.TempDir()
+	h := handlers.New(handlers.Options{Reader: finders.New(finders.Options{})})
+	readMinimum := func() string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(tmp, model.SDDDirName, model.SchemaMetaFileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		meta, err := model.ParseSchemaMeta(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if meta.MinimumVersion == nil {
+			t.Fatal("minimum_version should be recorded")
+		}
+		return *meta.MinimumVersion
+	}
+	initFrom := func(binary string, bump bool) {
+		t.Helper()
+		err := h.Init(context.Background(), &command.InitCmd{
+			RepoRoot:      tmp,
+			BinaryVersion: binary,
+			Scope:         model.ScopeProject,
+			ScopeExplicit: true,
+			Bump:          bump,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	initFrom("v0.18.0-alpha.3.fza.45", false)
+	if got := readMinimum(); got != "v0.18.0-alpha.3" {
+		t.Errorf("fresh init from a fork build should record its upstream base, got %q", got)
+	}
+
+	initFrom("v0.18.0-alpha.3.fza.46", true)
+	if got := readMinimum(); got != "v0.18.0-alpha.3" {
+		t.Errorf("bump from a fork build on the same base should leave the base, got %q", got)
+	}
+
+	initFrom("v0.18.0-alpha.4.fza.50", true)
+	if got := readMinimum(); got != "v0.18.0-alpha.4" {
+		t.Errorf("bump from a fork build on a newer base should record that base, got %q", got)
 	}
 }
 

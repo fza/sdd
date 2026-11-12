@@ -3,72 +3,10 @@ package llmops_test
 import (
 	"regexp"
 	"slices"
-	"strings"
 	"testing"
+
+	"github.com/networkteam/sdd/internal/llmops"
 )
-
-// The eval specimens check quotes against the quote contract
-// (20261005-170145-d-tac-gch): a quote need not match its passage character
-// for character, only locate it.
-
-var quoteNormalizer = strings.NewReplacer(
-	"„", "", "“", "", "”", "", "‚", "", "‘", "", "’", "", "«", "", "»", "",
-	"‹", "", "›", "", `"`, "", "'", "", "`", "", "—", "-", "–", "-",
-)
-
-func normalizeQuoted(s string) string {
-	return strings.Join(strings.Fields(quoteNormalizer.Replace(strings.ToLower(s))), " ")
-}
-
-// quoteParts splits a quote shortened with an ellipsis into the parts that
-// must appear in order.
-func quoteParts(quote string) []string {
-	var parts []string
-	for p := range strings.SplitSeq(strings.ReplaceAll(quote, "...", "…"), "…") {
-		if n := normalizeQuoted(p); n != "" {
-			parts = append(parts, n)
-		}
-	}
-	return parts
-}
-
-// quoteLocatesIn reports whether quote locates a passage of text that overlaps
-// passage; an empty passage accepts any location.
-func quoteLocatesIn(text, quote, passage string) bool {
-	nt := normalizeQuoted(text)
-	from, to := 0, len(nt)
-	if passage != "" {
-		np := normalizeQuoted(passage)
-		i := strings.Index(nt, np)
-		if np == "" || i < 0 {
-			return false
-		}
-		from, to = i, i+len(np)
-	}
-	parts := quoteParts(quote)
-	if len(parts) == 0 {
-		return false
-	}
-	for start := 0; ; {
-		i := strings.Index(nt[start:], parts[0])
-		if i < 0 {
-			return false
-		}
-		first := start + i
-		end := first + len(parts[0])
-		for _, p := range parts[1:] {
-			j := strings.Index(nt[end:], p)
-			if j < 0 {
-				return false
-			}
-			end += j + len(p)
-		}
-		if first < to && end > from {
-			return true
-		}
-		start = first + 1
-	}
-}
 
 var excerptPattern = regexp.MustCompile("“([^”]+)”|„([^“”]+)[“”]|\"([^\"]+)\"|«([^»]+)»|‚([^‘’]+)[‘’]|‘([^’]+)’|`([^`]+)`|(?:^|[^\\pL\\pN])'([^']+)'(?:$|[^\\pL\\pN])")
 
@@ -110,8 +48,8 @@ func TestQuoteLocatesIn(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := quoteLocatesIn(draft, tt.quote, tt.passage); got != tt.want {
-				t.Errorf("quoteLocatesIn(%q, passage %q) = %v, want %v", tt.quote, tt.passage, got, tt.want)
+			if got := llmops.QuoteLocatesIn(draft, tt.quote, tt.passage); got != tt.want {
+				t.Errorf("llmops.QuoteLocatesIn(%q, passage %q) = %v, want %v", tt.quote, tt.passage, got, tt.want)
 			}
 		})
 	}

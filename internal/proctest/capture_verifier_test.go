@@ -13,10 +13,10 @@ import (
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
-func newLightWorld(t *testing.T, connID string, options ...proctest.Option) (*proctest.World, *proctest.Session) {
+func newLightWorld(t *testing.T, connID string) (*proctest.World, *proctest.Session) {
 	t.Helper()
-	return newCaptureWorld(t, connID, append([]proctest.Option{proctest.WithGroundingEnforced(),
-		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "prose"}, 200000, 4096)}, options...)...)
+	return newCaptureWorld(t, connID, proctest.WithGroundingEnforced(),
+		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "prose"}, 200000, 4096))
 }
 
 // confirmedLightCapture gathers, opens the unread fixture signal in full and

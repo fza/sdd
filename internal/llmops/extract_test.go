@@ -108,7 +108,7 @@ func runPreflight(t *testing.T, runner llm.Runner) (*llmops.PreflightResult, err
 		Participants: []string{"Felix Zandanel"},
 		Content:      "A gap worth naming.",
 	}
-	return llmops.Preflight(context.Background(), runner, entry, graph, "")
+	return llmops.Preflight(context.Background(), runner, entry, graph, "", nil)
 }
 
 func graphWithBaseFacts(t *testing.T) *model.Graph {

@@ -222,7 +222,7 @@ func TestDetachedServingCheckoutFallsBackToTheDefaultBranch(t *testing.T) {
 	}
 	// No checkout has main any more: the framing says so and names the remedy.
 	requireFramingBase(t, workflow, identity, "Base branch: main (configured default; the serving checkout has no branch)")
-	requireFramingBase(t, workflow, identity, "No checkout has the base branch main: declare the branch you work on before writing.")
+	requireFramingBase(t, workflow, identity, "No checkout has base branch main: declare your working branch before writing.")
 
 	// An unbound write fails and names both remedies.
 	run, err := workflow.Start(t.Context(), identity, sdd.WorkflowStartRequest{Canonical: "implementation", Params: map[string]any{"anchor": runAnchorID}})

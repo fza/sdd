@@ -117,19 +117,22 @@ func (w *WorkflowSession) deepFingerprint(ctx *engine.Context) string {
 	return hex.EncodeToString(sum.Sum(nil))
 }
 
-func (w *WorkflowSession) deepPolicy(instance string) (model.VerifierPolicy, *ProjectRuntime, error) {
+// deepPolicy is the verifier policy of the draft's kind in the capture's
+// project.
+func (w *WorkflowSession) deepPolicy(instance string, store *engine.Store) (model.VerifierPolicy, *ProjectRuntime, error) {
 	runtime, err := w.targetRuntime(w.instanceProject(instance), AccessRead)
 	if err != nil {
 		return model.VerifierPolicy{}, nil, err
 	}
-	return runtime.options.Verifier.resolved(), runtime, nil
+	kind, _ := workflowStoreString(store, "entryKind")
+	return runtime.verifierFor(kind), runtime, nil
 }
 
 // deepVerdictCurrent reports whether the write may go ahead as far as the
 // deep verifier is concerned: the project runs no deep verifier, or a
 // verdict or skip covers the current input.
 func (w *WorkflowSession) deepVerdictCurrent(ctx *engine.Context) (bool, error) {
-	policy, _, err := w.deepPolicy(ctx.Instance)
+	policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
 	if err != nil || policy.Mode != model.VerifierDeep {
 		return true, err
 	}
@@ -143,7 +146,7 @@ func (w *WorkflowSession) deepVerdictCurrent(ctx *engine.Context) (bool, error) 
 // draft. A skipped exchange falls back to pre-flight's model, so deep never
 // checks less than prose.
 func (w *WorkflowSession) deepJudgesPreflight(ctx *engine.Context) (bool, error) {
-	policy, _, err := w.deepPolicy(ctx.Instance)
+	policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
 	if err != nil || policy.Mode != model.VerifierDeep {
 		return false, err
 	}
@@ -158,7 +161,7 @@ func (w *WorkflowSession) writeDeepVerdict(ctx *engine.Context, outcome, skip st
 	if n, ok := rounds.(int); ok {
 		count = float64(n)
 	}
-	policy, _, err := w.deepPolicy(ctx.Instance)
+	policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
 	if err != nil {
 		return err
 	}
@@ -191,9 +194,10 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 		{
 			Doc: engine.FuncDoc{Name: "deepSkipWeighed", Doc: "The project sets verify.skip: weighed, so the user weighs running the deep exchange first."},
 			Fn: func(ctx *engine.Context) (bool, error) {
-				policy, _, err := w.deepPolicy(ctx.Instance)
+				policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
 				return policy.Skip == model.VerifierSkipWeighed, err
 			},
+			Selector: true,
 		},
 		{
 			Doc: engine.FuncDoc{Name: "deepFindingsRefused", Doc: "The verifier's findings still fail the check after its repair: the verifier gave up.", Reads: []string{fieldDeepProblems}},
@@ -328,7 +332,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 		{
 			Doc: engine.FuncDoc{Name: "recordDeepFailureSkip", Doc: "Records the user's skip after the verifier could not run: the entry carries verification: skipped and confidence low. Refused under verify.skip: never.", Reads: captureDraftFields, Writes: []string{fieldDeepVerdict}},
 			Fn: func(ctx *engine.Context) error {
-				policy, _, err := w.deepPolicy(ctx.Instance)
+				policy, _, err := w.deepPolicy(ctx.Instance, ctx.Store)
 				if err != nil {
 					return err
 				}
@@ -352,7 +356,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 // over, the reading paged for the verifier (V-D8), the weighing rule's
 // recommendation, and for a live verifier the revision's reading.
 func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
-	policy, runtime, err := w.deepPolicy(ctx.Instance)
+	policy, runtime, err := w.deepPolicy(ctx.Instance, ctx.Store)
 	if err != nil {
 		return err
 	}
@@ -438,7 +442,7 @@ func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) ([]model.D
 	lead.WriteString(preflightRaised(ctx.Store))
 	if previous, ok := readDeepVerdict(ctx.Store); ok {
 		if changed := textdiff.ChangedPassages(previous.Document, base); len(changed) > 0 {
-			lead.WriteString("\n## Changed since the last verdict\n\nAn earlier exchange verified the rest of the draft: judge these passages, the rest as context only.\n\n")
+			lead.WriteString("\n## Changed since the last verdict\n\nAn earlier exchange verified the rest of the draft. Judge these passages; read the rest as context only.\n\n")
 			for _, passage := range changed {
 				lead.WriteString("```\n" + passage + "\n```\n")
 			}
@@ -466,9 +470,9 @@ func preflightRaised(store *engine.Store) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\n## Already raised by pre-flight\n\nThese are raised already; do not raise them again.")
+	b.WriteString("\n## Already raised by pre-flight\n\nAlready raised: do not raise them again.")
 	if override, _ := store.Get("preflightOverride"); override != nil {
-		b.WriteString(" The user overrode the high ones: they are settled.")
+		b.WriteString(" User overrode the high ones: they are settled.")
 	}
 	b.WriteString("\n\n" + strings.Join(raised, "\n") + "\n")
 	return b.String()
@@ -568,7 +572,7 @@ func withPreflightRubric(pages []model.DeepReadingPage, store *engine.Store) []m
 	if rubric == "" {
 		return pages
 	}
-	rules := model.DeepContinuedPages("## Pre-flight's rules\n\nPre-flight's model did not judge this draft: you judge in its place. Apply the rules below as part of your verdict and raise what they would flag as findings in your own report. Their answer format and the reading they mention do not apply: your reading is the rest of these pages.\n\n",
+	rules := model.DeepContinuedPages("## Pre-flight's rules\n\nPre-flight's model did not judge this draft: you judge in its place. Apply the rules below as part of your verdict. Raise what they would flag as findings in your own report. Their answer format and the reading they mention do not apply: your reading is the rest of these pages.\n\n",
 		"## Pre-flight's rules, continued\n\n", rubric)
 	return slices.Concat(pages[:1], rules, pages[1:])
 }
@@ -584,7 +588,7 @@ func (w *WorkflowSession) readDeepFindings(ctx *engine.Context) error {
 	for i, finding := range findings {
 		owner := ""
 		if finding.Owner {
-			owner = " (only the user can settle it, so it goes to them)"
+			owner = " (only the user can settle it: goes to them)"
 		}
 		fmt.Fprintf(&listed, "- %s [%s, %s]%s: %s", model.DeepFindingID(i), finding.Severity, finding.Axis, owner, finding.Verdict)
 		if len(finding.Basis) > 0 {
@@ -801,7 +805,7 @@ func (w *WorkflowSession) showVerifyPage(store *engine.Store, at int) error {
 	}
 	note := fmt.Sprintf("Page %d of %d.", at+1, len(pages))
 	if at < len(pages)-1 {
-		note += " Report more for the next page; your findings are refused until every page is served."
+		note += " Report more for the next page. Findings are refused until every page is served."
 	} else {
 		note += " Every page is served."
 	}

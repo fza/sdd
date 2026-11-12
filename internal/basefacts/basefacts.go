@@ -310,14 +310,14 @@ topics:
     - engine/base-facts
     - cli/view
 index:
-    title: 'How to compose graph views (view tool): layout grammar, filters, ranking, quoting, and examples'
+    title: 'How to compose graph views (view tool): layout grammar, filters, ranking, quoting, examples'
     topic: cli/view
 summary: >-
-    The view layout language composes graph views from a colon-chained
-    pipeline — filters, then ranking, paging, and transforms, ending in a
-    render terminator — with named macros as shortcuts; this fact is the
-    grammar and vocabulary reference for building a layout, including the
-    quoting rule for multi-word, date, and duration arguments.
+    View layout language composes graph views from a colon-chained pipeline:
+    filters, then ranking, paging and transforms, ending in a render
+    terminator. Named macros are shortcuts. Grammar and vocabulary reference
+    for building a layout, including the quoting rule for multi-word, date and
+    duration arguments.
 `
 
 func viewGrammarBody(vocab viewlayout.Vocabulary) string {

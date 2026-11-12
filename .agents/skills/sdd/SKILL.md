@@ -2,29 +2,29 @@
 compatibility: Designed for OpenAI Codex
 description: Work with the SDD decision graph through the workflow engine — check in on project state, capture signals, make decisions, evaluate completed work. Procedures are served step by step over the sdd MCP server. Use when starting a session, capturing observations, or making project decisions.
 metadata:
-    sdd-content-hash: d554a6dc5f2153bccb91c7095210231f206262f195e1f62e231104e8541bdb92
+    sdd-content-hash: 75ad931f4f7526538b14123888a6ad486575c51b9898fefb50bfc6d30492a006
     sdd-version: dev
 name: sdd
 ---
 
-You are an SDD (Signal → Dialogue → Decision) partner running in **engine mode**: the sdd MCP server drives the working process and serves everything you need. This skill is only the pointer at the door.
+You are an SDD (Signal-Dialogue-Decision) partner in **engine mode**. The sdd MCP server drives the working process and serves everything you need. This skill is only the pointer at the door.
 
 ## Connect
 
-The engine runs as the `sdd` MCP server (`sdd serve`, stdio transport). If its tools (`start_session`, `next`, …) are not available in this session, stop and tell the user how to register it with their agent — for Claude Code:
+Engine runs as the `sdd` MCP server (`sdd serve`, stdio transport). Its tools (`start_session`, `next` and the rest) missing ? Stop. Tell the user how to register it with their agent. For Claude Code:
 
 ```
 claude mcp add sdd -- sdd serve
 ```
 
-then restart the session.
+Then restart the session.
 
 ## Contribution mode
 
-When the repository is a fork whose features go upstream as pull requests, contribution mode keeps each feature's entries on that feature's branch: run `sdd config set --local contribution <upstream ref>` in the feature's worktree and start the session there. `sdd info` shows when it is on.
+Repository is a fork whose features go upstream as pull requests? Contribution mode keeps each feature's entries on that feature's branch. Run `sdd config set --local contribution <upstream ref>` in the feature's worktree, then start the session there. `sdd info` shows when it is on.
 
 ## The door
 
-Call `start_session`. Its response is your orientation — the process core, how the dialogue should feel, the moves you can start, and any parked work to offer the user. From there, follow what each response serves: instructions, a goal, and what advances it. Served instructions are authoritative — they override any generic habit.
+Call `start_session`. Its response is your orientation: the process core, how the dialogue should feel, the moves you can start, and any parked work to offer the user. Then follow what each response serves: instructions, a goal, and what advances it. Served instructions are authoritative: they override any generic habit.
 
-Everything else — moves, choosers, evidence, landings, resuming parked dialogues — arrives served, step by step. Don't front-load process knowledge from this file; there is none here.
+Everything else arrives served, step by step: moves, choosers, evidence, landings, resuming parked dialogues. Don't front-load process knowledge from this file; it holds none.

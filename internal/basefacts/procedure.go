@@ -51,7 +51,7 @@ func procedureClasses() (string, error) {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "- `%s` — %s", c, desc)
+		fmt.Fprintf(&b, "- `%s`: %s", c, desc)
 	}
 	return b.String(), nil
 }
@@ -69,6 +69,6 @@ func procedureMechanics() string {
 	b.WriteString("## Mechanics\n\n")
 	fmt.Fprintf(&b, "Procedure is a decision kind (the decision kinds: %s), pinned to the process layer.\n\n", strings.Join(kinds, ", "))
 	fmt.Fprintf(&b, "Enforced at capture: a required `canonical`; `class`, when set, one of %s (empty means %s).\n\n", strings.Join(classes, ", "), model.ProcedureClassMove)
-	fmt.Fprintf(&b, "How to write the spec — the fields, the variable types, the step shapes, a skeleton, and pulling the live ability registry — is the spec reference fact `%s`; reach for it the moment you move from choosing the kind to writing the workflow.\n", ProcedureSpecFactID)
+	fmt.Fprintf(&b, "How to write the spec (fields, variable types, step shapes, a skeleton, pulling the live ability registry): the spec reference fact `%s`. Pull it the moment you move from choosing the kind to writing the workflow.\n", ProcedureSpecFactID)
 	return b.String()
 }

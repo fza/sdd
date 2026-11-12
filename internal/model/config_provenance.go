@@ -79,6 +79,9 @@ func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []C
 // layout; nil layers are absent.
 type WorkConfigLayers struct {
 	Committed, Local *PerRepoConfig
+	// LocalOver places Local over the project's local layer for every
+	// setting, as a run starting in the work repository resolves it.
+	LocalOver bool
 }
 
 // EffectiveConfigValuesWithWork is EffectiveConfigValues with a work
@@ -96,6 +99,15 @@ func effectiveConfigValues(global BaseConfig, work WorkConfigLayers, project, lo
 		{local, ConfigSourceLocal},
 		{project, ConfigSourceProject},
 		{&PerRepoConfig{BaseConfig: global}, ConfigSourceGlobal},
+	}
+	if work.LocalOver && work.Local != nil {
+		// Its hooks list through work, apart from the project's.
+		over := *work.Local
+		over.Hooks = nil
+		layers = slices.Insert(layers, 0, struct {
+			cfg    *PerRepoConfig
+			source ConfigValueSource
+		}{&over, ConfigSourceWorkLocal})
 	}
 
 	provider := DefaultLLMProvider

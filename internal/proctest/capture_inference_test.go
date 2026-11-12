@@ -17,8 +17,8 @@ func TestCapture_NeverSuppliesTheWhyOrTheIntent(t *testing.T) {
 	proctest.RequireStep(t, serve, "assemble")
 	assemble := test.Untagged(serve.Instructions)
 	for _, want := range []string{
-		"When the dialogue carries no reason for the decision, ask the user for it before drafting; never supply one.",
-		"When the dialogue states no intent for the directive, ask the user before drafting; never supply one.",
+		"Dialogue carries no reason for the decision? Ask the user for it before drafting; never supply one.",
+		"Dialogue states no intent for the directive? Ask the user before drafting; never supply one.",
 	} {
 		if !strings.Contains(assemble, want) {
 			t.Errorf("assemble should carry %q:\n%s", want, assemble)

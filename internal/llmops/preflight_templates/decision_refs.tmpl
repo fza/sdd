@@ -1,48 +1,48 @@
 {{ define "decision_refs_user" -}}
 ## Task
 
-A decision is being created with references but not closing any entries. Verify that the decision is well-grounded, complete, and — for directive-kind decisions — that it reads as a bounded commitment rather than a perpetual pull (which would be an aspiration).
+A decision is being created with references but not closing any entries. Verify that decision is well-grounded and complete. For directive-kind decisions, also verify that it reads as a bounded commitment, not a perpetual pull (which would be an aspiration).
 
-A common shape under this check is the **augmenting directive** — see "Augmenting directives" below. AC-refinement-via-directive is a first-class resolution path alongside supersession; do not reflexively propose supersede or amend when the proposed entry matches the augmenting-directive shape.
+A common shape under this check is the **augmenting directive** (see "Augmenting directives" below). AC-refinement-via-directive is a first-class resolution path alongside supersession. Do not reflexively propose supersede or amend when proposed entry matches the augmenting-directive shape.
 
 ## Augmenting directives
 
-An augmenting directive is a `kind: directive` decision that refs an active plan, has no `supersedes` and no `closes` on the plan, and refines or clarifies one of the plan's acceptance criteria. The plan stays immutable; the directive joins the plan's implicit AC chain. Closing happens when the plan's done signal lists both the plan and the augmenting directive in `--closes`.
+An augmenting directive is a `kind: directive` decision that refs an active plan, has no `supersedes` and no `closes` on plan, and refines or clarifies one of plan's acceptance criteria. Plan stays immutable; directive joins plan's implicit AC chain. Closing happens when plan's done signal lists both plan and the augmenting directive in `--closes`.
 
-This is a named pattern, not a deviation. When the proposed entry matches this shape:
+This is a named pattern, not a deviation. When proposed entry matches this shape:
 
-- **AC tension is resolved by refinement, not supersession.** The directive sharpens, narrows, or clarifies the plan's AC contract while the plan stays untouched. Do not propose plan amendment, AC supersession, or directive weakening as findings on this basis. AC-refinement-via-directive is a permitted resolution path.
-- **Refs are one-way.** The directive refs the plan; the plan does not back-ref the directive. Visibility runs through `sdd show <plan-id> --downstream`. Do not ask the ref'd plan to be amended to add a backward ref.
-- **Lifecycle is split.** The directive remains open across the plan's implementation window and is closed by the plan's done signal alongside the plan. Do not flag this as dangling commitment or closure-sequencing ambiguity.
-- **Narrowing or sharpening AC scope is the pattern's purpose.** It is not "scope smuggling" — that check exists to catch undiscussed commitments outside the ref'd entries' support, not refinements that the ref'd plan itself invites.
-- **Graph-mechanics meta-patterns are not refs.** Names appearing in prose to identify the entry's shape (e.g. citing the augment-plan pattern itself) are framework-level rules, not logical dependencies for this individual entry. Do not ask for them as refs.
+- **AC tension is resolved by refinement, not supersession.** Directive sharpens, narrows, or clarifies plan's AC contract while plan stays untouched. On this basis, do not propose plan amendment, AC supersession, or directive weakening as findings. AC-refinement-via-directive is a permitted resolution path.
+- **Refs are one-way.** Directive refs plan; plan does not back-ref directive. Visibility runs through `sdd show <plan-id> --downstream`. Do not ask for ref'd plan to be amended with a backward ref.
+- **Lifecycle is split.** Directive stays open across plan's implementation window. Plan's done signal closes it alongside plan. Do not flag this as dangling commitment or closure-sequencing ambiguity.
+- **Narrowing or sharpening AC scope is the pattern's purpose.** It is not "scope smuggling". That check catches undiscussed commitments outside ref'd entries' support, not refinements ref'd plan itself invites.
+- **Graph-mechanics meta-patterns are not refs.** Names in prose that identify entry's shape (e.g. citing the augment-plan pattern itself) are framework-level rules, not logical dependencies for this entry. Do not ask for them as refs.
 
-Genuine supersession is still distinct from augmentation: a directive that *replaces* a core AC commitment (asserting the AC is wrong, not narrower or sharper) belongs in a supersedes operation on the plan. Augmentation refines; supersession replaces.
+Genuine supersession is still distinct from augmentation. A directive that *replaces* a core AC commitment (asserting AC is wrong, not narrower or sharper) belongs in a supersedes operation on plan. Augmentation refines; supersession replaces.
 
 ## Checks
 
-1. **Ref completeness**: Read the body against the referenced entries provided below. Every entry the body reasons from, responds to, contrasts with, or advances should appear as a ref — if a sentence depends on another entry's context to make sense, that entry should be referenced. Judge this from the body itself and the referenced entries below; do not hunt the wider graph for entries that might be related — skill-side widening before capture covers that. Refs represent logical dependency ("builds on"), not topical association. (Graph-mechanics meta-patterns named in prose are not refs — see "Augmenting directives" above.)
-2. **Grounding**: The decision content should be grounded in the referenced entries — not introducing commitments from nowhere.
-3. **No scope smuggling**: The decision should not contain undiscussed commitments beyond what the referenced entries support. (Refining the scope of a ref'd active plan via the augmenting-directive pattern is not scope smuggling — see "Augmenting directives" above.)
-{{ if .ProposedKind "plan" }}4. **Acceptance criteria presence** (applies only when the proposed entry is `Kind: plan`): Plan decisions must include an `## Acceptance criteria` section in the description with `- [ ]` checklist items. Missing AC section on a plan decision is a `high` finding. If the proposed kind is not `plan`, skip this check.
-{{ end }}{{ if .ProposedKind "directive" "strategic" "conceptual" }}5. **Directive shape check** (applies only when the proposed entry is `Kind: directive` at `stg` or `cpt` layer): A directive commits to a bounded choice. A commitment with no plausible completion criterion — perpetual pull, orientation, stance — reads as an aspiration, not a directive. If the proposed kind is not directive, or the layer is `tac` / `ops` / `prc`, skip this check.
+1. **Ref completeness**: read body against referenced entries below. Every entry the body reasons from, responds to, contrasts with, or advances should appear as a ref. If a sentence needs another entry's context to make sense, that entry should be referenced. Judge this from body itself and referenced entries below. Do not hunt the wider graph for entries that might be related: skill-side widening before capture covers that. Refs represent logical dependency ("builds on"), not topical association. (Graph-mechanics meta-patterns named in prose are not refs; see "Augmenting directives" above.)
+2. **Grounding**: decision content should be grounded in referenced entries, not introduce commitments from nowhere.
+3. **No scope smuggling**: decision should not contain undiscussed commitments beyond what referenced entries support. (Refining the scope of a ref'd active plan via the augmenting-directive pattern is not scope smuggling; see "Augmenting directives" above.)
+{{ if .ProposedKind "plan" }}4. **Acceptance criteria presence** (applies only when proposed entry is `Kind: plan`): plan decisions must include an `## Acceptance criteria` section in description with `- [ ]` checklist items. A missing AC section on a plan decision is a `high` finding. If proposed kind is not `plan`, skip this check.
+{{ end }}{{ if .ProposedKind "directive" "strategic" "conceptual" }}5. **Directive shape check** (applies only when proposed entry is `Kind: directive` at `stg` or `cpt` layer): a directive commits to a bounded choice. A commitment with no plausible completion criterion (perpetual pull, orientation, stance) reads as an aspiration, not a directive. If proposed kind is not directive, or layer is `tac` / `ops` / `prc`, skip this check.
 {{ end }}
 ## Calibration
 
-Judge ref completeness from the body and the referenced entries below — not from a graph-wide search. A decision must ref the entries its body reasons from, responds to, or advances. Not every tangentially-related entry needs a ref.
+Judge ref completeness from body and referenced entries below, not from a graph-wide search. A decision must ref the entries its body reasons from, responds to, or advances. Not every tangentially-related entry needs a ref.
 
-{{ if .ProposedKind "plan" }}- `high` — Proposed entry is a plan decision with no `## Acceptance criteria` section in its description.
-{{ end }}- `medium` — The body names a specific entry (by ID or unmistakable description) it depends on, but that entry is absent from the refs; or the reasoning clearly leans on context no referenced entry supplies, suggesting a motivating entry is missing. Could be intentional scope narrowing.
-- `low` — Style suggestion (dense summary could be split across sentences).
-- No finding — The referenced entries adequately ground the body. Strategic decisions synthesize direction without every principle being pre-established in a signal; demanding pre-grounding prevents strategic thinking. Presence-of-field checks (missing Kind, missing Confidence) belong to CLI/lint, not LLM judgment.
+{{ if .ProposedKind "plan" }}- `high`: proposed entry is a plan decision with no `## Acceptance criteria` section in its description.
+{{ end }}- `medium`: body names a specific entry (by ID or unmistakable description) it depends on, but that entry is absent from refs. Or reasoning clearly leans on context no referenced entry supplies, suggesting a motivating entry is missing. Could be intentional scope narrowing.
+- `low`: style suggestion (dense summary could be split across sentences).
+- No finding: referenced entries adequately ground body. Strategic decisions synthesize direction without every principle being pre-established in a signal; demanding pre-grounding prevents strategic thinking. Presence-of-field checks (missing Kind, missing Confidence) belong to CLI/lint, not LLM judgment.
 {{ if .ProposedKind "directive" "strategic" "conceptual" }}
 ### Directive-reads-aspiration-shaped calibration (stg / cpt directives only)
 
-A directive at strategic or conceptual layer with perpetual framing and no "done when" condition is aspiration-shaped. The check flags the mismatch between claimed kind and narrative shape.
+A directive at strategic or conceptual layer with perpetual framing and no "done when" condition is aspiration-shaped. Check flags the mismatch between claimed kind and narrative shape.
 
-- `medium` — Strategic or conceptual directive with perpetual framing and no bounded completion criterion. Narrative uses phrases like "ongoing pull toward X", "we orient around Y", "always favoring Z", with no "done when" or "closed by" horizon. Example: `kind: directive` at `stg` with content "We commit to prioritizing user trust over short-term growth as an enduring stance." — reads as an aspiration.
-- `low` — Directive at any layer where the commitment could read as a perpetual pull rather than a bounded choice; narrative is ambiguous. Example: directive at `cpt` "Favor simplicity in API design" — could be bounded (applied to current design work) or perpetual (a standing orientation); a sentence naming the horizon would clarify.
-- No finding — Directive with a clear bounded choice, even if high-level. Examples: "We will pursue direct-to-consumer distribution over wholesale" (bounded despite strategic); "Use Postgres for the new service" (concrete commitment). Bounded directives have a "done when" shape: a specific change lands, a path is taken, or the commitment is fulfilled by action.
+- `medium`: strategic or conceptual directive with perpetual framing and no bounded completion criterion. Narrative uses phrases like "ongoing pull toward X", "we orient around Y", "always favoring Z", with no "done when" or "closed by" horizon. Example: `kind: directive` at `stg` with content "We commit to prioritizing user trust over short-term growth as an enduring stance." Reads as an aspiration.
+- `low`: directive at any layer where the commitment could read as a perpetual pull rather than a bounded choice; narrative is ambiguous. Example: directive at `cpt` "Favor simplicity in API design". Could be bounded (applied to current design work) or perpetual (a standing orientation); a sentence naming the horizon would clarify.
+- No finding: directive with a clear bounded choice, even if high-level. Examples: "We will pursue direct-to-consumer distribution over wholesale" (bounded despite strategic); "Use Postgres for the new service" (concrete commitment). Bounded directives have a "done when" shape: a specific change lands, a path is taken, or action fulfills the commitment.
 {{ end }}
 ## Proposed decision
 

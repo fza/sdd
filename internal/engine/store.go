@@ -387,7 +387,7 @@ func (s *Store) Collected() map[string]any {
 		if sv.Provenance != ProvenanceParam && sv.Provenance != ProvenanceState {
 			continue
 		}
-		if isTrustMachineryField(name) {
+		if isTrustMachineryField(name) || s.spec.State[name].HostSet {
 			continue
 		}
 		if !s.Has(name) {

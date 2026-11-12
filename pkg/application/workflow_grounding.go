@@ -100,7 +100,8 @@ func (w *WorkflowSession) groundingEvidence(ctx *engine.Context, loadGraph func(
 	if err != nil {
 		return model.GroundingEvidence{}, false, err
 	}
-	if !runtime.options.Grounding.resolved().Enforce {
+	kind, _ := workflowStoreString(ctx.Store, "entryKind")
+	if !runtime.enforcesGrounding(kind) {
 		return model.GroundingEvidence{}, false, nil
 	}
 	skip, _ := ctx.Store.Get("skipGrounding")
@@ -108,7 +109,6 @@ func (w *WorkflowSession) groundingEvidence(ctx *engine.Context, loadGraph func(
 	if skipped {
 		return model.GroundingEvidence{}, false, nil
 	}
-	kind, _ := workflowStoreString(ctx.Store, "entryKind")
 	evidence := model.GroundingEvidence{
 		Reading: ctx.Reading, Kind: model.Kind(kind),
 		Answered: captureAnswered(ctx.Store), Verdicts: storeVerdicts(ctx.Store), Own: w.ownEntries(ctx.Instance),

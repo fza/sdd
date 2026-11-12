@@ -73,6 +73,16 @@ func ReadConfig(sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
 	return model.MergeConfig(base, local), nil
 }
 
+// ConfigLayerFiles names the file behind each config layer, as refusals
+// about a layer's settings name it.
+func ConfigLayerFiles(sddDir, localConfigPath string) map[model.ConfigValueSource]string {
+	return map[model.ConfigValueSource]string{
+		model.ConfigSourceGlobal:  "the user-global config",
+		model.ConfigSourceProject: filepath.Join(sddDir, "config.yaml"),
+		model.ConfigSourceLocal:   LocalConfigPath(sddDir, localConfigPath),
+	}
+}
+
 // ResolveConfig builds the effective per-repo config from the full overlay:
 // the user-global base settings under the committed .sdd/config.yaml under
 // .sdd/config.local.yaml. CLI flags apply on top at the call site. Returns
@@ -84,12 +94,7 @@ func ResolveConfig(global model.BaseConfig, sddDir, localConfigPath string) (*mo
 	if err != nil {
 		return nil, err
 	}
-	files := map[model.ConfigValueSource]string{
-		model.ConfigSourceGlobal:  "the user-global config",
-		model.ConfigSourceProject: filepath.Join(sddDir, "config.yaml"),
-		model.ConfigSourceLocal:   LocalConfigPath(sddDir, localConfigPath),
-	}
-	err = model.CheckVerifyLayers(global, committed, local, files)
+	err = model.CheckVerifyLayers(global, committed, local, ConfigLayerFiles(sddDir, localConfigPath))
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +137,56 @@ func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.P
 			return nil, nil, err
 		}
 		local = model.HonoredLocal(local)
+		under, err := UnderLocalConfigPath(sddDir, localPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		if under != "" {
+			own, err := readConfigFile(under)
+			if err != nil {
+				return nil, nil, err
+			}
+			if own != nil {
+				local = model.MergeConfig(model.HonoredLocal(own), local)
+			}
+		}
 	}
 	return committed, local, nil
+}
+
+// UnderLocalConfigPath is the project's own machine-local file when
+// localPath is the machine-local file of a repository pointing at the
+// project through project_dir, whose settings lie over the project's own;
+// empty otherwise.
+func UnderLocalConfigPath(sddDir, localPath string) (string, error) {
+	own := LocalConfigPath(sddDir, "")
+	if sddDir == "" || filepath.Clean(localPath) == filepath.Clean(own) || filepath.Base(localPath) != LocalConfigFileName {
+		return "", nil
+	}
+	pointingSDDDir := filepath.Dir(localPath)
+	if filepath.Base(pointingSDDDir) != model.SDDDirName {
+		return "", nil
+	}
+	committed, err := readConfigFile(filepath.Join(pointingSDDDir, "config.yaml"))
+	if err != nil {
+		return "", err
+	}
+	local, err := readConfigFile(localPath)
+	if err != nil {
+		return "", err
+	}
+	pointers := model.MergeConfig(committed, local)
+	if pointers == nil || pointers.GraphRepo != "" || pointers.ProjectDir == "" {
+		return "", nil
+	}
+	target := pointers.ProjectDir
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(pointingSDDDir), target)
+	}
+	if filepath.Clean(target) != filepath.Clean(filepath.Dir(sddDir)) {
+		return "", nil
+	}
+	return own, nil
 }
 
 func readConfigFile(path string) (*model.PerRepoConfig, error) {

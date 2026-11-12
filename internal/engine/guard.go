@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -30,7 +31,7 @@ func (g *GuardExpr) String() string { return g.src }
 
 // Predicates returns the distinct predicate names the expression references,
 // in first-appearance order. Used by spec validation (every name must exist
-// in the registry) and by stall diagnostics.
+// in the registry).
 func (g *GuardExpr) Predicates() []string {
 	seen := make(map[string]bool)
 	var names []string
@@ -58,6 +59,81 @@ func (g *GuardExpr) Predicates() []string {
 // diagnostics complete.
 func (g *GuardExpr) Eval(eval func(name string) (bool, error)) (bool, error) {
 	return g.root.eval(eval)
+}
+
+// Clause is a predicate reference with its polarity in the expression:
+// Negated when an odd number of `not`s enclose it.
+type Clause struct {
+	Name    string
+	Negated bool
+}
+
+// Blocking evaluates the expression and, when it fails, names the clauses
+// whose current values make it fail: a plain reference to a false predicate
+// or a negated reference to a true one. isSelector marks the predicates that
+// choose a path (Predicate.Selector); a conjunction failing on one is ruled
+// out and contributes no clauses, and ruledOut reports that every path of the
+// expression is. A nil isSelector marks none.
+func (g *GuardExpr) Blocking(eval func(name string) (bool, error), isSelector func(name string) bool) (holds, ruledOut bool, clauses []Clause, err error) {
+	r, err := explain(g.root, true, eval, isSelector)
+	return r.holds, r.ruledOut, r.clauses, err
+}
+
+type explained struct {
+	holds, ruledOut bool
+	clauses         []Clause
+}
+
+func explain(n guardNode, positive bool, eval func(string) (bool, error), isSelector func(string) bool) (explained, error) {
+	switch node := n.(type) {
+	case *predNode:
+		v, err := eval(node.name)
+		if err != nil {
+			return explained{}, err
+		}
+		switch {
+		case v == positive:
+			return explained{holds: true}, nil
+		case isSelector != nil && isSelector(node.name):
+			return explained{ruledOut: true}, nil
+		}
+		return explained{clauses: []Clause{{Name: node.name, Negated: !positive}}}, nil
+	case *notNode:
+		return explain(node.expr, !positive, eval, isSelector)
+	case *binNode:
+		l, err := explain(node.left, positive, eval, isSelector)
+		if err != nil {
+			return explained{}, err
+		}
+		r, err := explain(node.right, positive, eval, isSelector)
+		if err != nil {
+			return explained{}, err
+		}
+		// Under negation `and` and `or` swap (De Morgan).
+		if (node.op == "and") == positive {
+			switch {
+			case l.holds && r.holds:
+				return explained{holds: true}, nil
+			case l.ruledOut || r.ruledOut:
+				return explained{ruledOut: true}, nil
+			}
+		} else {
+			switch {
+			case l.holds || r.holds:
+				return explained{holds: true}, nil
+			case l.ruledOut && r.ruledOut:
+				return explained{ruledOut: true}, nil
+			}
+		}
+		clauses := slices.Clone(l.clauses)
+		for _, c := range r.clauses {
+			if !slices.Contains(clauses, c) {
+				clauses = append(clauses, c)
+			}
+		}
+		return explained{clauses: clauses}, nil
+	}
+	return explained{}, fmt.Errorf("unknown guard node %T", n)
 }
 
 type guardNode interface {

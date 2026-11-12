@@ -14,6 +14,9 @@ type EffectiveConfigQuery struct {
 	// layer file, empty when that layer is the project's own.
 	WorkSDDDir          string
 	WorkLocalConfigPath string
+	// WorkLocalOver places the work repository's machine-local layer over
+	// the project's for every setting, not for hooks alone.
+	WorkLocalOver bool
 	// Key restricts the result to one dotted key (e.g. "llm.model").
 	// Empty returns every effective entry.
 	Key string

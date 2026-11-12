@@ -83,7 +83,7 @@ func TestPreflightLight_CarriesTheReadingWithHeadersAndAxes(t *testing.T) {
 	result, err := llmops.PreflightLight(t.Context(), runner, lightDraft, graph, "", llmops.LightReading{
 		Full: []string{full.ID}, Listed: []string{brief.ID, aside.ID},
 		SetAside: []llmops.LightSetAside{{IDs: []string{aside.ID}, Code: model.VerdictCovered}},
-	}, 1_000_000)
+	}, 1_000_000, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestPreflightLight_CarriesTheReadingWithHeadersAndAxes(t *testing.T) {
 	if strings.Contains(prompt, "Long body never served.") {
 		t.Error("a listed entry should travel as its brief, not its body")
 	}
-	if strings.Contains(prompt, "other calls judge the rest") {
+	if strings.Contains(prompt, "Other calls judge the rest") {
 		t.Error("a single call should not be told it carries a part")
 	}
 }
@@ -121,7 +121,7 @@ func TestPreflightLight_SlicesKeepTheSamePrefixAndMerge(t *testing.T) {
 	}
 	graph := lightGraph(t, entries...)
 	probe := &lightRunner{}
-	_, err := llmops.PreflightLight(t.Context(), probe, lightDraft, graph, "", llmops.LightReading{}, 1_000_000)
+	_, err := llmops.PreflightLight(t.Context(), probe, lightDraft, graph, "", llmops.LightReading{}, 1_000_000, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestPreflightLight_SlicesKeepTheSamePrefixAndMerge(t *testing.T) {
 	runner := &lightRunner{answer: func(req llm.Request) []lightFinding {
 		return []lightFinding{{Observation: "The draft names no owner.", Category: "missing-owner", Severity: "medium", Basis: []string{}}}
 	}}
-	result, err := llmops.PreflightLight(t.Context(), runner, lightDraft, graph, "", llmops.LightReading{Full: listed}, fixed+len(body)+600)
+	result, err := llmops.PreflightLight(t.Context(), runner, lightDraft, graph, "", llmops.LightReading{Full: listed}, fixed+len(body)+600, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestPreflightLight_SlicesKeepTheSamePrefixAndMerge(t *testing.T) {
 		if req.SystemPrompt != runner.prompts[0].SystemPrompt || !strings.HasPrefix(req.UserPrompt, prefix) {
 			t.Fatal("every call should open with the same rules and draft, byte for byte")
 		}
-		if !strings.Contains(req.UserPrompt, "other calls judge the rest") {
+		if !strings.Contains(req.UserPrompt, "Other calls judge the rest") {
 			t.Error("a call carrying part of the reading should say so")
 		}
 	}
@@ -159,13 +159,13 @@ func TestPreflightLight_ExcerptsAnOversizedEntry(t *testing.T) {
 	big := readingEntry("20261101-100000-s-tac-big", "Attachment names.", strings.Join(paragraphs, "\n\n"))
 	graph := lightGraph(t, big)
 	probe := &lightRunner{}
-	_, err := llmops.PreflightLight(t.Context(), probe, lightDraft, graph, "", llmops.LightReading{}, 1_000_000)
+	_, err := llmops.PreflightLight(t.Context(), probe, lightDraft, graph, "", llmops.LightReading{}, 1_000_000, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fixed := len(probe.prompts[0].SystemPrompt) + len(probe.prompts[0].UserPrompt)
 	runner := &lightRunner{}
-	result, err := llmops.PreflightLight(t.Context(), runner, lightDraft, graph, "", llmops.LightReading{Full: []string{big.ID}}, fixed+700)
+	result, err := llmops.PreflightLight(t.Context(), runner, lightDraft, graph, "", llmops.LightReading{Full: []string{big.ID}}, fixed+700, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestPreflightLight_ExcerptsAnOversizedEntry(t *testing.T) {
 }
 
 func TestPreflightLight_RefusesADraftLargerThanTheCall(t *testing.T) {
-	_, err := llmops.PreflightLight(t.Context(), &lightRunner{}, lightDraft, lightGraph(t), "", llmops.LightReading{}, 1000)
+	_, err := llmops.PreflightLight(t.Context(), &lightRunner{}, lightDraft, lightGraph(t), "", llmops.LightReading{}, 1000, nil)
 	if err == nil || !strings.Contains(err.Error(), "llm.context_tokens") || !strings.Contains(err.Error(), "verify.mode: deep") {
 		t.Fatalf("a draft larger than one call should be refused naming a larger window or deep, got %v", err)
 	}
@@ -191,7 +191,7 @@ func TestPreflightLight_DropsBasisIDsThePromptNeverCarried(t *testing.T) {
 	runner := &lightRunner{answer: func(llm.Request) []lightFinding {
 		return []lightFinding{{Observation: "Duplicates the served entry.", Category: "duplicates", Severity: "high", Basis: []string{served.ID, "20200101-000000-s-tac-inv"}}}
 	}}
-	result, err := llmops.PreflightLight(t.Context(), runner, lightDraft, graph, "", llmops.LightReading{Full: []string{served.ID}}, 1_000_000)
+	result, err := llmops.PreflightLight(t.Context(), runner, lightDraft, graph, "", llmops.LightReading{Full: []string{served.ID}}, 1_000_000, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

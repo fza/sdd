@@ -21,7 +21,7 @@ func renderCuts(cuts []truncate.Cut) string {
 			fmt.Fprintf(&b, "\n- %s: kept %d of %d bytes", c.Part, c.KeptBytes, c.TotalBytes)
 		}
 		if c.Pull != "" {
-			fmt.Fprintf(&b, " — pull the rest: %s", c.Pull)
+			fmt.Fprintf(&b, "; pull the rest: %s", c.Pull)
 		}
 	}
 	return b.String()

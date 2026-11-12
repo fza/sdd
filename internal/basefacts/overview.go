@@ -38,21 +38,26 @@ var kindQuestions = map[model.Kind]string{
 	model.KindDirective:  "Which way do we go?",
 	model.KindActivity:   "What's next to do?",
 	model.KindPlan:       "What must be true when done?",
-	model.KindContract:   "What must always hold? — takes no new captures; standing constraints are guiding directives",
+	model.KindContract:   "What must always hold? Takes no new captures; standing constraints are guiding directives",
 	model.KindAspiration: "What are we pulling toward?",
 	model.KindRole:       "How does an actor participate here?",
 	model.KindFocus:      "What are we attending to in this period, and who is engaged?",
 	model.KindProcedure:  "How does a playbook move run?",
 }
 
+// KindQuestion is the one question entries of kind answer.
+func KindQuestion(kind model.Kind) string {
+	return kindQuestions[kind]
+}
+
 // overviewFactContent renders the overview fact from its embedded template,
 // generating both kind lists from the model enumeration.
 func overviewFactContent() (string, error) {
-	signalKinds, err := kindList("**Signal kinds** — a signal records something noticed:", model.SignalKindValues())
+	signalKinds, err := kindList("**Signal kinds.** A signal records something noticed:", model.SignalKindValues())
 	if err != nil {
 		return "", err
 	}
-	decisionKinds, err := kindList("**Decision kinds** — a decision records something committed to:", model.DecisionKindValues())
+	decisionKinds, err := kindList("**Decision kinds.** A decision records something committed to:", model.DecisionKindValues())
 	if err != nil {
 		return "", err
 	}
@@ -77,7 +82,7 @@ func kindList(heading string, kinds []model.Kind) (string, error) {
 		if !ok || question == "" {
 			return "", fmt.Errorf("kind %q has no question in the overview fact — write one in kindQuestions", k)
 		}
-		fmt.Fprintf(&b, "\n- `%s` — %s", k, question)
+		fmt.Fprintf(&b, "\n- `%s`: %s", k, question)
 	}
 	return b.String(), nil
 }

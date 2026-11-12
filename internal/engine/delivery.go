@@ -513,9 +513,9 @@ func (s *Session) awaitDiagnostic(inst *Instance, step *Step) string {
 		joined = strings.Join(waiting, " or ")
 	}
 	if s.Lineage != nil {
-		return "waiting for the dispatching move to send " + joined + ": end your turn; you are continued or relaunched with these same handles once it has, and next with this instance and no report then picks it up"
+		return "waiting for the dispatching move to send " + joined + ": end your turn. Once it has, you get continued or relaunched with these same handles; next with this instance and no report then picks it up"
 	}
-	return fmt.Sprintf("waiting for the delegate to deliver %s; check again in %d seconds: next with this instance and no report picks the delivery up once it has landed", joined, awaitRecheckSeconds)
+	return fmt.Sprintf("waiting for the delegate to deliver %s; check again in %d seconds. Once landed, next with this instance and no report picks the delivery up", joined, awaitRecheckSeconds)
 }
 
 // awaitRecheckSeconds is how long a dispatching move waits between checks
@@ -534,7 +534,7 @@ func (s *Session) exchangeLane(inst *Instance) (*ServeLane, []truncate.Cut) {
 	if s.Lineage == nil {
 		for _, item := range inst.exchange {
 			if item.Refused != "" {
-				fmt.Fprintf(&b, "A delivery of %s to the delegate was not delivered: %s.\n", strings.Join(slices.Sorted(maps.Keys(item.Fields)), ", "), item.Refused)
+				fmt.Fprintf(&b, "Delivery of %s to the delegate refused: %s.\n", strings.Join(slices.Sorted(maps.Keys(item.Fields)), ", "), item.Refused)
 			}
 		}
 		if b.Len() == 0 {
@@ -544,7 +544,7 @@ func (s *Session) exchangeLane(inst *Instance) (*ServeLane, []truncate.Cut) {
 	}
 	storeCap := serveview.Default().Cap(serveview.PartStoreValue)
 	var cuts []truncate.Cut
-	b.WriteString("The exchange with the dispatching move so far, oldest first:\n")
+	b.WriteString("Exchange with the dispatching move so far, oldest first:\n")
 	for i, item := range inst.exchange {
 		switch {
 		case item.Sent && item.Final:
@@ -552,7 +552,7 @@ func (s *Session) exchangeLane(inst *Instance) (*ServeLane, []truncate.Cut) {
 		case item.Sent:
 			fmt.Fprintf(&b, "\n%d. You delivered:\n", i+1)
 		default:
-			fmt.Fprintf(&b, "\n%d. The dispatching move sent:\n", i+1)
+			fmt.Fprintf(&b, "\n%d. Dispatching move sent:\n", i+1)
 		}
 		for _, name := range slices.Sorted(maps.Keys(item.Fields)) {
 			bounded, cut := serveview.BoundValue(item.Fields[name], storeCap)

@@ -1,9 +1,9 @@
 {{define "gather_query_system"}}
-You write the searches that ground a draft entry of a decision graph before it is captured. The graph holds signals (things noticed) and decisions (things committed to). The searches must find every existing entry the draft could contradict, duplicate, outdate or depend on.
+You write searches that ground a draft entry of a decision graph before capture. Graph holds signals (things noticed) and decisions (things committed to). Searches must find every existing entry the draft could contradict, duplicate, outdate or depend on.
 
 Write two things:
 
-- `query`: one semantic search phrase, a plain sentence naming what the draft commits to or observes. Not its framing, not its wording style: its subject matter.
+- `query`: one semantic search phrase. A plain sentence naming what draft commits to or observes. Not its framing, not its wording style: its subject matter.
 - `terms`: the keyword terms a text search runs, one search per term. Pick the distinctive names the draft relies on: commands, identifiers, config keys, product and component names, domain terms. Between 2 and 6 terms, each a word or a short exact phrase. No common words.
 
 Answer with the JSON object only.

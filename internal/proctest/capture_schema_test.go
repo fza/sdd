@@ -47,7 +47,6 @@ func TestCaptureSchemaDescriptionsStayShortAndKeepTheirConstraints(t *testing.T)
 	for path, constraint := range map[string]string{
 		"intent":              "required when entryKind is directive",
 		"actorKind":           "never human",
-		"bodyHash":            "never reported",
 		"bodyPatch":           "a failing pair refuses the report",
 		"participants":        "empty writes the local participant",
 		"index":               "also in topics",

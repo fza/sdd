@@ -72,11 +72,11 @@ func (a *Application) preflightEntry(ctx context.Context, identity RequestIdenti
 		}
 		return result, nil
 	}
-	light, err := effective.lightPreflight(ctx, reading)
+	light, err := effective.lightPreflight(ctx, reading, draft.Kind)
 	if err != nil {
 		return result, fmt.Errorf("pre-flight: %w", err)
 	}
-	preflight, err := finder.Preflight(ctx, snapshot.graph, query.PreflightQuery{Entry: entry, Light: light})
+	preflight, err := finder.Preflight(ctx, snapshot.graph, query.PreflightQuery{Entry: entry, Light: light, KindFit: effective.kindFit(draft.Kind)})
 	if err != nil {
 		return result, fmt.Errorf("pre-flight: %w", err)
 	}

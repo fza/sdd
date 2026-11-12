@@ -112,14 +112,89 @@ func TestCheckVerifyLayers_CommittedWinsOverGlobal(t *testing.T) {
 	}
 }
 
-func TestCheckVerifyLayers_RefusesUnknownValues(t *testing.T) {
-	err := model.CheckVerifyLayers(model.BaseConfig{}, verifyLayer("strict", ""), nil, verifierFiles)
-	if err == nil || !strings.Contains(err.Error(), `.sdd/config.yaml: verify.mode "strict"`) {
-		t.Fatalf("an unknown mode should be refused naming file and key, got %v", err)
+func TestCheckVerifyLayers_PassesUnknownValues(t *testing.T) {
+	local := verifyLayer("deeep", "sometimes")
+	local.Verify.Runner = "robot"
+	local.Verify.Claude.Effort = "ultra"
+	var global model.BaseConfig
+	global.Verify.Mode = "strict"
+	for _, tc := range []struct {
+		name             string
+		global           model.BaseConfig
+		committed, local *model.PerRepoConfig
+	}{
+		{"global", global, nil, nil},
+		{"committed", model.BaseConfig{}, verifyLayer("strict", ""), nil},
+		{"local under a deep committed mode", model.BaseConfig{}, verifyLayer(model.VerifyDeep, model.VerifierSkipNever), local},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := model.CheckVerifyLayers(tc.global, tc.committed, tc.local, verifierFiles)
+			if err != nil {
+				t.Fatalf("a read should pass a value it does not know: %v", err)
+			}
+		})
 	}
-	err = model.CheckVerifyLayers(model.BaseConfig{}, nil, verifyLayer("", "sometimes"), verifierFiles)
-	if err == nil || !strings.Contains(err.Error(), `.sdd/config.local.yaml: verify.skip "sometimes"`) {
-		t.Fatalf("an unknown skip should be refused naming file and key, got %v", err)
+}
+
+func TestVerifyKeyRefusal_RefusesAnUnknownValueOnWrite(t *testing.T) {
+	err := model.VerifyKeyRefusal("verify.mode", model.BaseConfig{}, verifyLayer("strict", ""), nil, verifierFiles)
+	if err == nil || !strings.Contains(err.Error(), `.sdd/config.yaml: verify.mode "strict"`) {
+		t.Fatalf("a write should refuse an unknown mode naming file and key, got %v", err)
+	}
+	local := &model.PerRepoConfig{}
+	local.Verify.Claude.Effort = "ultra"
+	err = model.VerifyKeyRefusal("verify.claude.effort", model.BaseConfig{}, nil, local, verifierFiles)
+	if err == nil || !strings.Contains(err.Error(), `.sdd/config.local.yaml: verify.claude.effort "ultra"`) {
+		t.Fatalf("a write should refuse an effort the claude CLI does not take, got %v", err)
+	}
+}
+
+func TestMergeBaseConfig_AnUnknownVerifyValueLeavesTheLayerBelow(t *testing.T) {
+	var below, above model.BaseConfig
+	below.Verify = model.VerifyConfig{Mode: model.VerifyDeep, Skip: model.VerifierSkipNever, Runner: model.VerifierRunnerCodex}
+	below.Verify.Claude.Effort = "high"
+	above.Verify = model.VerifyConfig{Mode: "deeep", Skip: "sometimes", Runner: "robot"}
+	above.Verify.Claude.Effort = "ultra"
+	policy := model.MergeBaseConfig(below, above).Verify.VerifierPolicy()
+	if got := model.MergeBaseConfig(below, above).Verify.ResolvedMode(); got != model.VerifyDeep {
+		t.Errorf("an unknown mode should leave the mode below, got %q", got)
+	}
+	if policy.Skip != model.VerifierSkipNever || policy.Runner != model.VerifierRunnerCodex || policy.Claude.Effort != "high" {
+		t.Errorf("unknown skip, runner and effort should leave the values below, got %+v", policy)
+	}
+	alone := model.MergeBaseConfig(above, model.BaseConfig{}).Verify
+	if alone.ResolvedMode() != model.DefaultVerifyMode || alone.Skip != "" || alone.Runner != "" || alone.Claude.Effort != "" {
+		t.Errorf("unknown values with no layer below should clear to unset, got %+v", alone)
+	}
+}
+
+func TestVerifyConfig_UnknownValuesResolveAsUnset(t *testing.T) {
+	block := model.VerifyConfig{Mode: "deeep", Skip: "sometimes", Runner: "robot"}
+	block.Claude.Effort = "ultra"
+	if got := block.ResolvedMode(); got != model.DefaultVerifyMode {
+		t.Errorf("an unknown mode should resolve to the default, got %q", got)
+	}
+	if got, want := block.VerifierPolicy(), (model.VerifyConfig{}).VerifierPolicy(); got.Skip != want.Skip || got.Runner != want.Runner || got.Claude != want.Claude {
+		t.Errorf("unknown policy values should resolve to the defaults, got %+v", got)
+	}
+}
+
+func TestIgnoredSettings_ReportsUnknownVerifyValues(t *testing.T) {
+	var layer model.BaseConfig
+	layer.Verify = model.VerifyConfig{Mode: "deeep", Skip: "sometimes", Runner: "robot"}
+	layer.Verify.Claude.Effort = "ultra"
+	layer.Verify.Codex.Effort = "ultra"
+	reasons := map[string]string{}
+	for _, s := range model.IgnoredSettings(layer, model.ConfigSourceProject) {
+		reasons[s.Key] = s.Reason
+	}
+	for key, value := range map[string]string{"verify.mode": "deeep", "verify.skip": "sometimes", "verify.runner": "robot", "verify.claude.effort": "ultra"} {
+		if !strings.Contains(reasons[key], `"`+value+`" is not`) {
+			t.Errorf("%s should be reported with its unknown value, got %q", key, reasons[key])
+		}
+	}
+	if _, ok := reasons["verify.codex.effort"]; ok {
+		t.Error("codex takes model-defined efforts, so its effort is never reported")
 	}
 }
 
@@ -147,9 +222,9 @@ func TestCheckVerifyLayers_RunnerIsPersonal(t *testing.T) {
 		t.Fatal("an unset runner should be the subagent")
 	}
 	local.Verify.Runner = "remote"
-	err = model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
+	err = model.VerifyKeyRefusal("verify.runner", model.BaseConfig{}, committed, local, verifierFiles)
 	if err == nil || !strings.Contains(err.Error(), `.sdd/config.local.yaml: verify.runner "remote"`) {
-		t.Fatalf("an unknown runner should be refused naming file and key, got %v", err)
+		t.Fatalf("a write should refuse an unknown runner naming file and key, got %v", err)
 	}
 }
 
@@ -229,10 +304,10 @@ func TestVerifierRunnerAsked_OnlyUnderDeepWhileUnset(t *testing.T) {
 // unset field takes the family's default.
 func TestVerifierAgentsLayerPerFamily(t *testing.T) {
 	committed := verifyLayer(model.VerifyDeep, "")
-	committed.Verify.Claude = model.VerifierAgent{Model: "opus", Effort: "high"}
+	committed.Verify.Claude = model.ClaudeAgent{Model: "opus", Effort: "high"}
 	committed.Verify.Codex = model.VerifierAgent{Model: "gpt-5.5"}
 	local := &model.PerRepoConfig{}
-	local.Verify.Claude = model.VerifierAgent{Effort: "max"}
+	local.Verify.Claude = model.ClaudeAgent{Effort: "max"}
 	err := model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
 	if err != nil {
 		t.Fatalf("machine-local model and effort may differ from the committed ones: %v", err)
@@ -279,16 +354,10 @@ func TestSubagentAgent_MatchesTheClientNameCaseInsensitively(t *testing.T) {
 }
 
 // Only claude's effort is a closed set; codex accepts model-defined levels.
-func TestCheckVerifyLayers_RefusesAnUnknownClaudeEffort(t *testing.T) {
+func TestVerifyKeyRefusal_PassesAModelDefinedCodexEffort(t *testing.T) {
 	local := &model.PerRepoConfig{}
-	local.Verify.Claude.Effort = "ultra"
-	err := model.CheckVerifyLayers(model.BaseConfig{}, nil, local, verifierFiles)
-	if err == nil || !strings.Contains(err.Error(), `.sdd/config.local.yaml: verify.claude.effort "ultra"`) {
-		t.Fatalf("an effort the claude CLI does not take should be refused naming file and key, got %v", err)
-	}
-	local.Verify.Claude.Effort = ""
 	local.Verify.Codex.Effort = "ultra"
-	err = model.CheckVerifyLayers(model.BaseConfig{}, nil, local, verifierFiles)
+	err := model.VerifyKeyRefusal("verify.codex.effort", model.BaseConfig{}, nil, local, verifierFiles)
 	if err != nil {
 		t.Fatalf("a model-defined effort should pass for codex: %v", err)
 	}
@@ -309,8 +378,14 @@ func TestVerifyRoundTimeout(t *testing.T) {
 		t.Fatalf("the machine-local round_timeout should win, got %s", got)
 	}
 	local.Verify.RoundTimeout = "soon"
-	err := model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
+	if err := model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles); err != nil {
+		t.Fatalf("a read should pass a round_timeout that is no duration: %v", err)
+	}
+	if got := model.MergeConfig(committed, local).Verify.VerifierPolicy().RoundTimeout; got != 20*time.Minute {
+		t.Fatalf("a round_timeout that is no duration should leave the layer below, got %s", got)
+	}
+	err := model.VerifyKeyRefusal("verify.round_timeout", model.BaseConfig{}, committed, local, verifierFiles)
 	if err == nil || !strings.Contains(err.Error(), `.sdd/config.local.yaml: verify.round_timeout "soon" is no positive duration`) {
-		t.Fatalf("a round_timeout that is no duration should be refused naming file and key, got %v", err)
+		t.Fatalf("a write should refuse a round_timeout that is no duration naming file and key, got %v", err)
 	}
 }

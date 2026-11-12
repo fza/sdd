@@ -10,14 +10,14 @@ import (
 )
 
 type SyncReposArgs struct {
-	Session string   `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required; the sync runs for that session's home project"`
-	Repos   []string `json:"repos,omitempty" jsonschema:"connected repositories to sync, by repo ID; omitted, every repository connected on this machine"`
+	Session string   `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The sync runs for that session's home project"`
+	Repos   []string `json:"repos,omitempty" jsonschema:"connected repositories to sync, by repo ID. Omitted: every repository connected on this machine"`
 }
 
 // RepoSyncResult is what the sync round did for one connected repository.
 type RepoSyncResult struct {
 	Repo   string `json:"repo"`
-	State  string `json:"state" jsonschema:"synced, pushed (local commits published), skipped (the git gate holds it back; next says when it is due), failed (reason says why; next says when it is retried) or refused (reason says why, such as not connected on this machine)"`
+	State  string `json:"state" jsonschema:"synced, pushed (local commits published), skipped (the git gate holds it back; next says when it is due), failed (reason says why; next says when it is retried) or refused (reason says why, e.g. not connected on this machine)"`
 	Next   string `json:"next,omitempty" jsonschema:"RFC 3339 time a skipped repository is due or a failed one is retried"`
 	Reason string `json:"reason,omitempty"`
 }

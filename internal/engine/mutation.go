@@ -72,7 +72,7 @@ func (s *Session) OperationEffects(intent MutationIntent) ([]Effect, error) {
 // The pending-operation serve's goal and its only prose, fixed by d-tac-qws and d-tac-ft4.
 const (
 	PendingOperationGoal         = "retry the unfinished operation, or cancel it to return to the preceding interaction"
-	PendingOperationInstructions = "This operation did not finish. Tell the user in a sentence. Retry, saying so, when trying again can help. When it cannot, or has stopped helping, put both choices to the user: retry, or cancel. It can stay pending until they choose. Retry is safe: it reuses the recorded input, and effects already applied are recognized, not repeated. Cancel leaves what exists in place."
+	PendingOperationInstructions = "Operation did not finish. Tell the user in one sentence. Retry when trying again can help; say so. When it cannot help, or stopped helping, put both choices to the user: retry or cancel. Operation can stay pending until they choose. Retry is safe: it reuses the recorded input; applied effects are recognized, not repeated. Cancel leaves what exists in place."
 )
 
 const MutationCancelled = "cancelled"
@@ -128,11 +128,11 @@ func (s *Session) Cancellation() (*CancellationServe, error) {
 // CancellationNotice is the cancellation serve's prose: where the instance
 // returned to and what the operation reports it left.
 func CancellationNotice(c *CancellationServe) string {
-	position := fmt.Sprintf("Returned to the %q interaction without advancing it.", c.ReturnStep)
+	position := fmt.Sprintf("Returned to interaction %q without advancing it.", c.ReturnStep)
 	if c.Closed {
-		position = "Closed the instance, because no interaction preceded the operation."
+		position = "Instance closed: no interaction preceded the operation."
 	}
-	left := "What it already applied stays in place."
+	left := "Applied effects stay in place."
 	if len(c.Effects) > 0 {
 		items := make([]string, 0, len(c.Effects))
 		for _, effect := range c.Effects {
@@ -140,7 +140,7 @@ func CancellationNotice(c *CancellationServe) string {
 		}
 		left = "It left: " + strings.Join(items, "; ") + "."
 	}
-	return fmt.Sprintf("Cancelled operation %q. %s %s Nothing is cleaned up. Confirming again starts a new operation with new identifiers.", c.Intent.Command, position, left)
+	return fmt.Sprintf("Cancelled operation %q. %s %s Nothing cleaned up. Confirming again starts a new operation with new identifiers.", c.Intent.Command, position, left)
 }
 
 // PendingMutation returns the unresolved invocation, without executing it.

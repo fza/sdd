@@ -21,13 +21,13 @@ func TestStartProcedureCaptureServesTypeSystemOverview(t *testing.T) {
 
 	var first mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &first)
-	if served := followWaitingLanes(t, cs, door.Session, first); !strings.Contains(served, basefacts.OverviewFactID) || !strings.Contains(served, "a signal records something noticed:") {
+	if served := followWaitingLanes(t, cs, door.Session, first); !strings.Contains(served, basefacts.OverviewFactID) || !strings.Contains(served, "A signal records something noticed:") {
 		t.Fatalf("the initial capture start must serve the overview in full, got: %.300q", served)
 	}
 
 	var second mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &second)
-	if strings.Contains(second.Instructions, "a signal records something noticed:") {
+	if strings.Contains(second.Instructions, "A signal records something noticed:") {
 		t.Fatalf("a second capture start in the same session must not repeat the overview body")
 	}
 	if !pointsAtOverview(second.Instructions) {
@@ -53,14 +53,14 @@ func TestCaptureOverviewGroundingSurvivesServerRestart(t *testing.T) {
 
 	var first mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &first)
-	if served := followWaitingLanes(t, cs, door.Session, first); !strings.Contains(served, "a signal records something noticed:") {
+	if served := followWaitingLanes(t, cs, door.Session, first); !strings.Contains(served, "A signal records something noticed:") {
 		t.Fatalf("the first capture must serve the overview in full")
 	}
 
 	env2 := newTestServer(t, nil, env.graphDir, env.sessionsDir)
 	var again mcpserver.ServeResult
 	call(t, connectAs(t, env2.srv, agent), "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &again)
-	if strings.Contains(again.Instructions, "a signal records something noticed:") {
+	if strings.Contains(again.Instructions, "A signal records something noticed:") {
 		t.Fatalf("the overview grounding must survive a server restart — the re-serve repeated the body")
 	}
 	if !pointsAtOverview(again.Instructions) {
@@ -70,7 +70,7 @@ func TestCaptureOverviewGroundingSurvivesServerRestart(t *testing.T) {
 	empty := connect(t, env2.srv)
 	var fresh mcpserver.ServeResult
 	call(t, empty, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &fresh)
-	if served := followWaitingLanes(t, empty, door.Session, fresh); !strings.Contains(served, "a signal records something noticed:") {
+	if served := followWaitingLanes(t, empty, door.Session, fresh); !strings.Contains(served, "A signal records something noticed:") {
 		t.Fatalf("an agent context holding nothing must get the overview in full")
 	}
 }

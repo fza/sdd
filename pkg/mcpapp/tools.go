@@ -35,7 +35,7 @@ const defaultSearchHits = 8
 // --- the loop -------------------------------------------------------------
 
 type StartSessionArgs struct {
-	Project string `json:"project,omitempty" jsonschema:"project to open the session in, by ID. Optional: a composition serving one project infers it; when several are accessible and none is passed, the response lists them under projects instead of starting a session — pick one and call again"`
+	Project string `json:"project,omitempty" jsonschema:"project to open the session in, by ID. Optional: a composition serving one project infers it. With several accessible and none passed, the response lists them under projects and starts no session. Pick one and call again"`
 	Shell   string `json:"shell,omitempty" jsonschema:"shell procedure to open the session with, by canonical; defaults to user-dialogue"`
 	Label   string `json:"label,omitempty" jsonschema:"short single-line subject label for the session; set it early, update when the subject sharpens"`
 }
@@ -55,30 +55,30 @@ const StatusProjectRequired = "project-required"
 
 type StartProcedureArgs struct {
 	Proofs
-	Session   string         `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction"`
-	Canonical string         `json:"canonical" jsonschema:"the procedure to start, by its stable name (e.g. capture)"`
-	Params    map[string]any `json:"params,omitempty" jsonschema:"typed start inputs per the procedure's declaration: declared params, plus any declared state field the caller wants to seed at start (e.g. a known anchor)"`
+	Session   string         `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
+	Canonical string         `json:"canonical" jsonschema:"procedure to start, by its stable name (e.g. capture)"`
+	Params    map[string]any `json:"params,omitempty" jsonschema:"typed start inputs per the procedure's declaration: declared params, plus any declared state field to seed at start (e.g. a known anchor)"`
 	Label     string         `json:"label,omitempty" jsonschema:"short single-line subject label for the session (the dialogue); set it early, update when the subject sharpens"`
-	Parent    string         `json:"parent,omitempty" jsonschema:"instance handle of the spawning instance, when this is a sub-move (e.g. a capture dispatched from an engage); records lineage in the session log"`
-	Project   string         `json:"project,omitempty" jsonschema:"project the move works in, when not the session's home project: it must lie in the home project's declared dependency closure and be one the principal can read. Omitted, a foreign anchor selects its project, else the parent's, else the home project"`
+	Parent    string         `json:"parent,omitempty" jsonschema:"instance handle of the spawning instance, for a sub-move (e.g. a capture dispatched from an engage); records lineage in the session log"`
+	Project   string         `json:"project,omitempty" jsonschema:"project the move works in, when not the session's home project. It must lie in the home project's declared dependency closure and be readable by the principal. Omitted: a foreign anchor selects its project, else the parent's, else the home project"`
 }
 
 type NextArgs struct {
 	Proofs
 	RetryRef  uint64 `json:"retry_ref,omitempty" jsonschema:"exact retry reference from a failed operation; mutually exclusive with report and cancel_ref"`
 	CancelRef uint64 `json:"cancel_ref,omitempty" jsonschema:"exact cancellation reference from a failed operation; leaves effects in place and returns to the preceding interaction; mutually exclusive with report and retry_ref"`
-	Session   string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction"`
+	Session   string `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
 	Instance  string `json:"instance" jsonschema:"instance handle from start_procedure"`
 	// Report carries either state fields for the current step (per the served
 	// report_schema) or a chooser answer {chooser, choice, userWords?, reason?, fields?}.
 	Report map[string]any `json:"report,omitempty" jsonschema:"state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}. Omit report, retry_ref and cancel_ref together to pick up a delivery a waiting step was served as awaiting"`
-	Label  string         `json:"label,omitempty" jsonschema:"update the session's subject label when the dialogue's subject has sharpened"`
+	Label  string         `json:"label,omitempty" jsonschema:"update the session's subject label when the dialogue's subject sharpens"`
 }
 
 type AbandonArgs struct {
 	Proofs
-	Instance string `json:"instance,omitempty" jsonschema:"instance handle to abandon (a move); pass session too, naming the session the move belongs to"`
-	Session  string `json:"session,omitempty" jsonschema:"with instance: the attached session the move belongs to (required). Alone: a session handle to tear down directly — no resume, no framing"`
+	Instance string `json:"instance,omitempty" jsonschema:"instance handle of the move to abandon; pass session too, naming the session the move belongs to"`
+	Session  string `json:"session,omitempty" jsonschema:"with instance: the attached session the move belongs to (required). Alone: a session handle to tear down directly; no resume, no framing"`
 	Reason   string `json:"reason,omitempty" jsonschema:"why the instance or session is being abandoned"`
 }
 
@@ -90,16 +90,16 @@ type AbandonResult struct {
 	// DiscardedThreads names what went down with a session teardown — nothing
 	// vanishes silently (d-tac-dbk).
 	DiscardedThreads []string   `json:"discarded_threads,omitempty" jsonschema:"open moves discarded with the session (procedure at step)"`
-	HeldMarkers      []string   `json:"held_markers,omitempty" jsonschema:"WIP markers held; left standing — resume later or close via groom"`
+	HeldMarkers      []string   `json:"held_markers,omitempty" jsonschema:"WIP markers held; left standing. Resume later or close via groom"`
 	Instructions     string     `json:"instructions,omitempty"`
-	Base             *BaseServe `json:"base_junction,omitempty" jsonschema:"the session shell's current serve — where the dialogue now stands"`
+	Base             *BaseServe `json:"base_junction,omitempty" jsonschema:"the session shell's current serve: where the dialogue now stands"`
 }
 
 type ParkArgs struct {
 	Proofs
-	Session  string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction"`
+	Session  string `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
 	Instance string `json:"instance" jsonschema:"running move instance to park"`
-	Note     string `json:"note,omitempty" jsonschema:"one line on why the move is shelved — carried in the session log for whoever resumes it"`
+	Note     string `json:"note,omitempty" jsonschema:"one line on why the move is shelved; the session log carries it for whoever resumes it"`
 }
 
 type ParkResult struct {
@@ -109,7 +109,7 @@ type ParkResult struct {
 	Procedure    string     `json:"procedure"`
 	Step         string     `json:"step"`
 	Instructions string     `json:"instructions,omitempty"`
-	Base         *BaseServe `json:"base_junction,omitempty" jsonschema:"the session shell's serve — where the dialogue lands"`
+	Base         *BaseServe `json:"base_junction,omitempty" jsonschema:"the session shell's serve: where the dialogue lands"`
 }
 
 type ChooserOptionResult struct {
@@ -118,7 +118,7 @@ type ChooserOptionResult struct {
 }
 
 type ChooserResult struct {
-	Chooser string                `json:"chooser" jsonschema:"the pending chooser's step id — the value to put in a chooser answer's chooser field"`
+	Chooser string                `json:"chooser" jsonschema:"the pending chooser's step id: the value for a chooser answer's chooser field"`
 	Kind    string                `json:"kind" jsonschema:"who answers: agent (advisory judgment) or user (relay their answer verbatim)"`
 	Options []ChooserOptionResult `json:"options"`
 }
@@ -183,12 +183,12 @@ func cancellationResult(cancelled *sdd.WorkflowCancellation) *CancellationResult
 type ServeResult struct {
 	ResultNotices
 	Session          string                  `json:"session,omitempty" jsonschema:"session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool"`
-	Project          string                  `json:"project,omitempty" jsonschema:"the project this instance works in — the session's home project unless the move was started in a dependency"`
-	Projects         []ProjectResult         `json:"projects,omitempty" jsonschema:"start_session only: the principal's accessible projects, served with status project-required when several exist and none was passed — no session opened yet"`
+	Project          string                  `json:"project,omitempty" jsonschema:"project this instance works in: the session's home project unless the move started in a dependency"`
+	Projects         []ProjectResult         `json:"projects,omitempty" jsonschema:"start_session only: the principal's accessible projects, served with status project-required when several exist and none was passed; no session opened yet"`
 	Branch           string                  `json:"branch,omitempty" jsonschema:"the session's declared branch binding"`
 	Instance         string                  `json:"instance,omitempty"`
 	Procedure        string                  `json:"procedure,omitempty"`
-	Status           string                  `json:"status" jsonschema:"running, completed, or abandoned — or project-required from start_session, when a project must be chosen first"`
+	Status           string                  `json:"status" jsonschema:"running, completed, or abandoned; or project-required from start_session, when a project must be chosen first"`
 	Step             string                  `json:"step,omitempty"`
 	Goal             string                  `json:"goal" jsonschema:"one line: what advances the instance from here"`
 	Instructions     string                  `json:"instructions,omitempty"`
@@ -202,9 +202,9 @@ type ServeResult struct {
 	Framing          string                  `json:"framing,omitempty" jsonschema:"session framing (aspirations, directives, focus, participants); each block in full with its tag, left out while the call proves it holds it"`
 	Vocabulary       string                  `json:"vocabulary,omitempty" jsonschema:"translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full with its tag, left out while the call proves it holds it"`
 	OpenThreads      string                  `json:"open_threads,omitempty" jsonschema:"this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here"`
-	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve — where the dialogue lands now that this move has ended"`
-	Collected        map[string]string       `json:"collected,omitempty" jsonschema:"state already collected by this instance — values persist across handover; do not re-derive them"`
-	Dispatches       []DispatchResult        `json:"dispatches,omitempty" jsonschema:"delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions"`
+	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve: where the dialogue lands now that this move has ended"`
+	Collected        map[string]string       `json:"collected,omitempty" jsonschema:"state this instance already collected; values persist across handover. Do not re-derive them"`
+	Dispatches       []DispatchResult        `json:"dispatches,omitempty" jsonschema:"delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input. Follow each one's instructions"`
 }
 
 // DispatchResult is one delegate handoff: the child handles a delegate
@@ -245,7 +245,7 @@ type BaseServe struct {
 // --- sessions & staging ----------------------------------------------------
 
 type ResumeSessionArgs struct {
-	Session string `json:"session" jsonschema:"the session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step with the schema to continue it. Presenting the handle is the whole authorization; it also declares that you need re-serving, so every piece of the position serves in full, whatever the call holds"`
+	Session string `json:"session" jsonschema:"session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step, with the schema to continue it. Presenting the handle is the whole authorization. It also declares you need re-serving: every piece of the position serves in full, whatever the call holds"`
 }
 
 type ResumeSessionResult struct {
@@ -263,7 +263,7 @@ type ResumeSessionResult struct {
 }
 
 type BindBranchArgs struct {
-	Session string `json:"session" jsonschema:"session handle this connection is attached to"`
+	Session string `json:"session" jsonschema:"attached session's handle"`
 	Branch  string `json:"branch,omitempty" jsonschema:"branch to bind this session to"`
 	Clear   bool   `json:"clear,omitempty" jsonschema:"clear the current branch binding"`
 }
@@ -275,16 +275,16 @@ type BindBranchResult struct {
 }
 
 type StageAttachmentArgs struct {
-	Session string             `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — carry it across context compaction"`
+	Session string             `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
 	Name    string             `json:"name" jsonschema:"target filename (plain name, no paths)"`
 	Content string             `json:"content,omitempty" jsonschema:"file content to stage (UTF-8 text)"`
 	Path    string             `json:"path,omitempty" jsonschema:"local file path to stage instead of inline content"`
-	Patches []SearchReplaceArg `json:"patches,omitempty" jsonschema:"edit the already-staged file named by name in place: ordered exact search-replace pairs applied atomically — each old must match exactly once, a failing pair refuses the whole edit. Pass instead of content/path"`
+	Patches []SearchReplaceArg `json:"patches,omitempty" jsonschema:"edit the already-staged file named by name in place: ordered exact search-replace pairs, applied atomically. Each old must match exactly once; a failing pair refuses the whole edit. Pass instead of content/path"`
 }
 
 // SearchReplaceArg is one exact edit inside a patches list.
 type SearchReplaceArg struct {
-	Old string `json:"old" jsonschema:"exact text to replace — must match exactly once in the file as it stands when this pair applies"`
+	Old string `json:"old" jsonschema:"exact text to replace; must match exactly once in the file as it stands when this pair applies"`
 	New string `json:"new" jsonschema:"replacement text; empty deletes the old text"`
 }
 
@@ -300,8 +300,8 @@ type StageAttachmentResult struct {
 type SearchArgs struct {
 	Proofs
 	IncludesRevision  string       `json:"includes_revision,omitempty" jsonschema:"require a selected revision containing this successful write"`
-	Session           string       `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch"`
-	Project           string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
+	Session           string       `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The read runs in that session's project and branch"`
+	Project           string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
 	Terms             []string     `json:"terms,omitempty" jsonschema:"text mode: regex terms combined with AND"`
 	Query             string       `json:"query,omitempty" jsonschema:"vector mode: free-form phrase (requires a configured embedding provider); both together run hybrid"`
 	Type              string       `json:"type,omitempty" jsonschema:"filter: s/signal or d/decision"`
@@ -324,8 +324,8 @@ type SearchResult struct {
 
 type ViewArgs struct {
 	Proofs
-	Session  string       `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch"`
-	Project  string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
+	Session  string       `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The read runs in that session's project and branch"`
+	Project  string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
 	Layout   string       `json:"layout" jsonschema:"sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'"`
 	Repos    []sdd.RepoID `json:"repos,omitempty" jsonschema:"also render the layout over these repos of the project's dependency closure (additive to the local graph)"`
 	AllRepos bool         `json:"all_repos,omitempty" jsonschema:"also render the layout over every repo in the project's dependency closure"`
@@ -340,8 +340,8 @@ type ViewResult struct {
 
 type ShowArgs struct {
 	Proofs
-	Session string   `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project and branch"`
-	Project string   `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
+	Session string   `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The read runs in that session's project and branch"`
+	Project string   `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
 	IDs     []string `json:"ids" jsonschema:"entry IDs to show; accepts an unambiguous short ID ({type}-{layer}-{suffix}) and resolves it to the full entry"`
 	Up      *int     `json:"up,omitempty" jsonschema:"upstream chain depth; omitted = default 2, 0 = no upstream"`
 	Down    *int     `json:"down,omitempty" jsonschema:"downstream chain depth; omitted = default 1, 0 = no downstream"`
@@ -355,8 +355,8 @@ type ShowResult struct {
 
 type GatherArgs struct {
 	Proofs
-	Session  string   `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required"`
-	Instance string   `json:"instance,omitempty" jsonschema:"the running capture this reading grounds: its reported draft writes the searches, and only reads made through gather inside it count for its grounding. Report the draft at assemble first"`
+	Session  string   `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required"`
+	Instance string   `json:"instance,omitempty" jsonschema:"the running capture this reading grounds. Its reported draft writes the searches. Only reads made through gather inside it count for its grounding. Report the draft at assemble first"`
 	IDs      []string `json:"ids,omitempty" jsonschema:"entries to open in full; also the way back to an entry a pointer names"`
 	Draft    string   `json:"draft,omitempty" jsonschema:"without instance: the draft text the searches are written from; credits nothing"`
 	Topics   []string `json:"topics,omitempty" jsonschema:"without instance: the draft's topic labels, each listed in full"`
@@ -369,8 +369,8 @@ type GatherResult struct {
 }
 
 type ReadAttachmentArgs struct {
-	Session  string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the read runs in that session's project, and a staged file is read from that session"`
-	Project  string `json:"project,omitempty" jsonschema:"project to read the entry's attachment in; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
+	Session  string `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The read runs in that session's project; a staged file is read from that session"`
+	Project  string `json:"project,omitempty" jsonschema:"project to read the entry's attachment in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
 	ID       string `json:"id,omitempty" jsonschema:"full ID of the entry whose attachment to read; omit when reading a staged file by handle"`
 	Name     string `json:"name,omitempty" jsonschema:"attachment filename; optional when the entry has exactly one"`
 	Offset   int64  `json:"offset,omitempty" jsonschema:"byte position to continue from (next_offset of the previous page)"`
@@ -396,7 +396,7 @@ type ReadAttachmentResult struct {
 // failed background cache pruning run (20261101-131514-d-cpt-9ci); and once
 // the config keys that changed since the previous call.
 type ResultNotices struct {
-	SyncNotice  string `json:"sync_notice,omitempty" jsonschema:"set when automatic sync of the graph repository becomes blocked, the background title backfill fails, or the last sync round of a connected repository fails, and whenever that notice changes: one line each naming which and since when or why, plus the fix steps when this session owns the fix. While it stands unchanged later results leave it out; resume_session serves it again. Plain status, not a tool error; act on it as it says"`
+	SyncNotice  string `json:"sync_notice,omitempty" jsonschema:"set when automatic sync of the graph repository becomes blocked, the background title backfill fails, or a connected repository's last sync round fails, and whenever that notice changes. One line each: which, and since when or why, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Plain status, not a tool error; act on it as it says"`
 	CacheNotice string `json:"cache_notice,omitempty" jsonschema:"set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user"`
 	HostNotice  string `json:"host_notice,omitempty" jsonschema:"set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values"`
 }
@@ -418,8 +418,8 @@ type SyncBlockedResult struct {
 }
 
 type InfoArgs struct {
-	Session string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required — the header describes that session's project"`
-	Project string `json:"project,omitempty" jsonschema:"project to describe; defaults to the session's home project. Another project must lie in the home project's declared dependency closure and be one the principal can read"`
+	Session string `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The header describes that session's project"`
+	Project string `json:"project,omitempty" jsonschema:"project to describe; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
 }
 
 type InfoResult struct {
@@ -432,11 +432,11 @@ type InfoResult struct {
 	Version      string             `json:"version,omitempty"`
 	GraphSchema  int                `json:"graphSchema,omitempty" jsonschema:"schema version the graph records; entries are written at it until an explicit sdd migrate"`
 	BinarySchema int                `json:"binarySchema,omitempty" jsonschema:"schema version this build writes by default"`
-	Contribution string             `json:"contribution,omitempty" jsonschema:"upstream ref the checkout contributes to; set, graph writes are refused off a feature branch cut from it"`
+	Contribution string             `json:"contribution,omitempty" jsonschema:"upstream ref the checkout contributes to; when set, graph writes are refused off a feature branch cut from it"`
 }
 
 type RegistryArgs struct {
-	Session string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required"`
+	Session string `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required"`
 	Class   string `json:"class,omitempty" jsonschema:"filter: predicate, query, or command"`
 	Page    int    `json:"page,omitempty" jsonschema:"the page of the contracts to serve, from 1; next_page names the one after it"`
 }
@@ -458,62 +458,62 @@ type RegistryResult struct {
 func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "start_session",
-		Description: "Open a fresh dialogue session — one of the two doors, and the only tool that takes a " +
-			"project. Auto-starts the session shell (user-dialogue by default) and returns its opening " +
-			"serve: your orientation, the available moves, and the returned session handle. That handle " +
-			"is the dialogue's identity and binds the session to one project — retain it across context " +
-			"compaction and pass it to every other tool, reads included. Pass project when the composition " +
-			"serves several; omitted, a sole accessible project is inferred, and with several the response " +
-			"lists them (status project-required) instead of opening a session. Every call opens a new " +
-			"dialogue under a new handle; to re-serve an existing one, present its handle to resume_session.",
+		Description: "Open a fresh dialogue session. One of the two doors, and the only tool that takes a " +
+			"project. Auto-starts the session shell (user-dialogue by default). Returns its opening serve: " +
+			"your orientation, the available moves, and the session handle. The handle is the dialogue's " +
+			"identity and binds the session to one project. Retain it across context compaction. Pass it " +
+			"to every other tool, reads included. Pass project when the composition serves several. " +
+			"Without project, a sole accessible project is inferred. With several, the response lists them " +
+			"(status project-required) and opens no session. Every call opens a new dialogue under a new " +
+			"handle. To re-serve an existing one, present its handle to resume_session.",
 	}, toolBoundary(s, s.startSession))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "start_procedure",
-		Description: "Start a procedure instance (a playbook move such as capture) in the session named by " +
-			"session (required). Returns the current step's instructions, the report schema to answer " +
-			"with, and the goal that advances it. This is the only path that leads to graph writes — " +
-			"writes happen inside procedure transitions, never through a direct tool.",
+		Description: "Start a procedure instance (a playbook move such as capture); session required. " +
+			"Returns the current step's instructions, the report schema to answer with, and the goal " +
+			"that advances it. The only path to graph writes: writes happen inside procedure " +
+			"transitions, never through a direct tool.",
 	}, toolBoundary(s, s.startProcedure))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "next",
-		Description: "Advance a procedure instance in the session named by session (required): send state " +
-			"fields per the served report_schema, or answer a pending chooser with {chooser, choice, " +
-			"userWords?, reason?, fields?}. User choosers must carry the user's answer relayed verbatim in " +
-			"userWords, unless the served schema offers reason for a choice you decide yourself. For an unfinished operation, omit report and pass its exact retry_ref to " +
-			"continue or cancel_ref to leave its effects in place and return to the preceding interaction. " +
-			"Other transitions remain blocked until the operation is retried or cancelled. " +
-			"When a move ends, the response carries the session shell's serve — where the " +
-			"dialogue lands.",
+		Description: "Advance a procedure instance; session required. Send state fields per the served " +
+			"report_schema, or answer a pending chooser with {chooser, choice, userWords?, reason?, " +
+			"fields?}. User choosers must carry the user's answer, relayed verbatim, in userWords. " +
+			"Exception: the served schema offers reason for a choice you decide yourself. Unfinished " +
+			"operation: omit report and pass its exact retry_ref to continue, or cancel_ref to leave its " +
+			"effects in place and return to the preceding interaction. Other transitions stay blocked " +
+			"until the operation is retried or cancelled. When a move ends, the response carries the " +
+			"session shell's serve: where the dialogue lands.",
 	}, toolBoundary(s, s.next))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "abandon",
 		Description: "Abandon a running move instance (instance, plus session naming the session it belongs " +
-			"to), or tear down a session directly by handle (session alone) — one call, no resume, no " +
-			"framing; the response names the label and discarded threads. Nothing is cleaned up " +
+			"to). Or tear down a session directly by handle (session alone): one call, no resume, no " +
+			"framing. The response names the label and discarded threads. Nothing is cleaned up " +
 			"implicitly: held WIP markers are surfaced and left standing for resume or grooming. The " +
 			"session shell concludes through its own junction, never through abandon.",
 	}, toolBoundary(s, s.abandon))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "park",
-		Description: "Park a running move back to the session junction (session required): state and step " +
-			"position keep, the move lists as an open thread (at junctions and on conclude), and next " +
-			"resumes it. Use it when the user shelves work mid-dialogue — a seeded draft parks as a " +
-			"graph-visible thread instead of living in conversation memory as an agent promise.",
+		Description: "Park a running move back to the session junction; session required. State and step " +
+			"position keep. The move lists as an open thread (at junctions and on conclude), and next " +
+			"resumes it. Use it when the user shelves work mid-dialogue. A seeded draft then parks as a " +
+			"graph-visible thread, not as an agent promise living in conversation memory.",
 	}, toolBoundary(s, s.park))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "resume_session",
-		Description: "The second door, and the compaction escape: re-serve the current position of the " +
-			"session whose handle you present — its framing plus every running move at its current step, " +
-			"each with the report schema to continue it. Presenting the handle is the whole authorization " +
-			"(a handle reaches you only by issuance or by the user handing it over), and it declares that " +
-			"you need re-serving: every piece of the position serves in full. " +
-			"Only recorded session state resumes — step position, collected fields, staged files — never " +
-			"another conversation's context. A lost handle is the user's to recover, not yours to guess.",
+		Description: "The second door, and the compaction escape. Re-serves the current position of the " +
+			"session whose handle you present: its framing plus every running move at its current step, " +
+			"each with the report schema to continue it. Presenting the handle is the whole authorization. " +
+			"A handle reaches you only by issuance or by the user handing it over. Presenting it also " +
+			"declares you need re-serving: every piece of the position serves in full. " +
+			"Only recorded session state resumes (step position, collected fields, staged files), " +
+			"never another conversation's context. A lost handle is the user's to recover, not yours to guess.",
 	}, toolBoundary(s, s.resumeSession))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
@@ -525,65 +525,64 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "stage_attachment",
-		Description: "Stage a file into the session scratch (session required) and get back a handle to pass " +
-			"in a report's attachments field, or as a capture's bodyHandle when the file holds the entry body, " +
-			"plus the sha256 of the staged bytes; or amend what is already staged: with patches, the file named " +
-			"by name is edited in place through atomic search-replace pairs instead of re-staging it whole. " +
-			"A path is only read, never written. " +
-			"Never a graph write — the write gate materializes staged files with the entry.",
+		Description: "Stage a file into the session scratch; session required. Returns a handle and the " +
+			"sha256 of the staged bytes. Pass the handle in a report's attachments field, or as a capture's " +
+			"bodyHandle when the file holds the entry body. Or amend what is already staged: with patches, " +
+			"the file named by name is edited in place through atomic search-replace pairs, not re-staged " +
+			"whole. A path is only read, never written. Never a graph write: the write gate materializes " +
+			"staged files with the entry.",
 	}, toolBoundary(s, s.stageAttachment))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "search",
 		Description: "Search graph entries: terms (text/regex), query (semantic phrase), or both (hybrid). " +
-			"A free read within the session named by session (required): no move needed, never blocked " +
-			"by procedure state; it runs in that session's project and branch.",
+			"A free read; session required. No move needed, never blocked by procedure state. Runs in " +
+			"that session's project and branch.",
 	}, toolBoundary(s, s.search))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "view",
-		Description: "Run an sdd view layout pipeline over the graph — overview sections, topic counts, " +
-			"ranked lists. A free read within the session named by session (required).",
+		Description: "Run an sdd view layout pipeline over the graph: overview sections, topic counts, " +
+			"ranked lists. A free read; session required.",
 	}, toolBoundary(s, s.view))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "show",
-		Description: "Read entries in full with their upstream and downstream reference chains, within the " +
-			"session named by session (required). Use whenever the dialogue touches a specific entry — " +
-			"summaries are pointers, not facts.",
+		Description: "Read entries in full with their upstream and downstream reference chains; session " +
+			"required. Use whenever the dialogue touches a specific entry: summaries are pointers, not facts.",
 	}, toolBoundary(s, s.show))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "gather",
-		Description: "Ground a draft before its capture, in one call, within the session named by session " +
-			"(required): on a small graph every live entry's brief; above it a semantic search, keyword " +
-			"searches and the live listing of every draft topic, written from the draft. Name the running " +
-			"capture as instance: only reads made through gather inside it ground the capture. Pass ids to " +
-			"open entries in full. An entry the call proves it holds prints as a pointer with its brief.",
+		Description: "Ground a draft before its capture, in one call; session required. On a small graph: " +
+			"every live entry's brief. Above it: a semantic search, keyword searches and the live listing " +
+			"of every draft topic, written from the draft. Name the running capture as instance: only " +
+			"reads made through gather inside it ground the capture. Pass ids to open entries in full. " +
+			"An entry the call proves it holds prints as a pointer with its brief.",
 	}, toolBoundary(s, s.gather))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "read_attachment",
-		Description: "Read an attachment's content, paged, within the session named by session (required): " +
-			"an entry's by ID and filename, or a file staged in the session (before any entry carries it) " +
-			"by handle. Never derive storage paths.",
+		Description: "Read an attachment's content, paged; session required. Either an entry's, by ID and " +
+			"filename, or a file staged to that session before any entry carries it, by handle. Never " +
+			"derive storage paths.",
 	}, toolBoundary(s, s.readAttachment))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "info",
-		Description: "Session framing header for the session named by session (required): project, local participant, configured language, and available search modes.",
+		Description: "Session framing header; session required. Project, local participant, configured language, available search modes.",
 	}, toolBoundary(s, s.info))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "registry",
-		Description: "Engine function contracts (predicates, queries, commands) — what procedure spec authors consult. Carries the session handle like every other tool.",
+		Description: "Engine function contracts (predicates, queries, commands) for procedure spec authors. Carries the session handle like every other tool.",
 	}, toolBoundary(s, s.registryDocs))
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "sync_repos",
-		Description: "Run the sync round of the connected repositories (session required): each repository's " +
+		Description: "Run the sync round of the connected repositories; session required. Each repository's " +
 			"sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to " +
-			"name them; omitted, every connected repository syncs. Returns one outcome per repository.",
+			"name them. Without repos, every connected repository syncs. Returns one outcome per repository.",
 	}, toolBoundary(s, s.syncRepos))
 }
 

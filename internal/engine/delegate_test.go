@@ -252,7 +252,7 @@ func TestParentFilledGateServesTheChildsNextStepOnceFilled(t *testing.T) {
 		t.Fatalf("the filled gate should serve the child's next step, at %s", next.Step)
 	}
 	exchange := laneText(next, "exchange")
-	if !strings.Contains(exchange, "You delivered:\n- plan: f1") || !strings.Contains(exchange, "The dispatching move sent:\n- contract: a1: scope is the capture step") {
+	if !strings.Contains(exchange, "You delivered:\n- plan: f1") || !strings.Contains(exchange, "Dispatching move sent:\n- contract: a1: scope is the capture step") {
 		t.Fatalf("the child's serve should carry the full exchange so far, got %q", exchange)
 	}
 }
