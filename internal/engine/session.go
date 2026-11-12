@@ -730,6 +730,7 @@ func recordDispatchSeed(inst *Instance, opt *Option) {
 		inst.dispatchReceive = opt.Dispatch.Receive
 		inst.dispatchSend = opt.Dispatch.Send
 		inst.dispatchProcedure = opt.Dispatch.Procedure
+		inst.forkPending = len(opt.Dispatch.Receive)+len(opt.Dispatch.Send) > 0
 		return
 	}
 	inst.dispatchSeed = nil

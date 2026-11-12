@@ -123,11 +123,17 @@ type exchangeFixture struct {
 // into its own session and starts it there.
 func newExchange(t *testing.T) *exchangeFixture {
 	t.Helper()
+	return newExchangeOf(t, dispatcherMachine)
+}
+
+// newExchangeOf is newExchange with the dispatcher declared by machine.
+func newExchangeOf(t *testing.T, machine string) *exchangeFixture {
+	t.Helper()
 	f := &exchangeFixture{
 		courier:    &sessionCourier{sessions: map[string]*engine.Session{}},
 		parentSink: &recordingSink{},
 		childSink:  &recordingSink{},
-		parentSpec: delegateSpec(t, "dispatcher", "move", dispatcherMachine),
+		parentSpec: delegateSpec(t, "dispatcher", "move", machine),
 		childSpec:  delegateSpec(t, "reviewtask", "task", reviewTaskMachine),
 	}
 	eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
@@ -589,6 +595,34 @@ steps:
       awaitAny: [plan]
       transitions:
           - otherwise: end(completed)`, want: "awaitAny names at least two fields"},
+		{name: "delegateEnded without await", class: "move", machine: `steps:
+    - id: only
+      delegateEnded: end(abandoned)
+      transitions:
+          - otherwise: end(completed)`, want: "delegateEnded applies only to an await gate"},
+		{name: "delegateEnded to no step", class: "move", machine: `state:
+    plan: {type: text, desc: x}
+steps:
+    - id: only
+      await: [plan]
+      delegateEnded: elsewhere
+      transitions:
+          - otherwise: end(completed)`, want: `delegateEnded target "elsewhere" is not a step or end(...)`},
+		{name: "delegateEnded in a task", class: "task", machine: `state:
+    plan: {type: text, desc: x}
+    body: {type: text, desc: x}
+steps:
+    - id: only
+      await: [plan]
+      delegateEnded: end(abandoned)
+      transitions:
+          - otherwise: finish
+    - id: finish
+      collect: [body]
+      deliver: [body]
+      transitions:
+          - when: hasBody
+            to: end(completed)`, want: "delegateEnded applies to the dispatching side"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -597,6 +631,43 @@ steps:
 				t.Fatalf("ParseSpec = %v, want a problem naming %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// endedDispatcherMachine is the dispatcher whose first waiting gate leaves for
+// stopped once no live delegate is left to deliver what it awaits.
+var endedDispatcherMachine = strings.Replace(dispatcherMachine, "      await: [synthesis]\n", "      await: [synthesis]\n      delegateEnded: stopped\n", 1) + `
+    - id: stopped
+      chooser: agent
+      options:
+          - {choice: retry, to: ask}`
+
+func TestAwaitGateLeavesForItsEndedRouteOnceNoDelegateIsLive(t *testing.T) {
+	f := newExchangeOf(t, endedDispatcherMachine)
+	if sv, err := f.parent.Poll(f.parentInst); err != nil || sv.Step != "wait" {
+		t.Fatalf("the gate should wait while its delegate is live, got %v at %+v", err, sv)
+	}
+	if err := f.parent.EndFork(f.parentInst, engine.Link{Session: "s_child", Instance: f.childInst}, "the round ended without delivering"); err != nil {
+		t.Fatal(err)
+	}
+
+	sv, err := f.parent.Poll(f.parentInst)
+
+	if err != nil || sv.Step != "stopped" {
+		t.Fatalf("the gate should leave for its ended route once no delegate is live, got %v at %+v", err, sv)
+	}
+}
+
+func TestAwaitGateWithoutAnEndedRouteKeepsWaiting(t *testing.T) {
+	f := newExchange(t)
+	if err := f.parent.EndFork(f.parentInst, engine.Link{Session: "s_child", Instance: f.childInst}, "released"); err != nil {
+		t.Fatal(err)
+	}
+
+	sv, err := f.parent.Poll(f.parentInst)
+
+	if err != nil || sv.Step != "wait" {
+		t.Fatalf("a gate declaring no ended route should keep waiting, got %v at %+v", err, sv)
 	}
 }
 

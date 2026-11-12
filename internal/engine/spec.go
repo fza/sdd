@@ -233,6 +233,10 @@ type Step struct {
 	// not yet consumed; passing consumes every field Await names. Its
 	// transitions read Context.Arrived to tell which one came.
 	AwaitAny bool
+	// DelegateEnded is where a dispatching side's await gate goes once its
+	// instance holds no live delegate fork, so nothing is left to deliver what
+	// it awaits; without it the gate keeps waiting.
+	DelegateEnded string
 	// Findings names the engine-written field, in pre-flight's finding
 	// format, that is this gate's findings channel: findings the hooks on
 	// the step being done report join it (20261109-213250-d-tac-bve).
@@ -325,23 +329,24 @@ type transitionYAML struct {
 }
 
 type stepYAML struct {
-	ID          string           `yaml:"id"`
-	Collect     []string         `yaml:"collect"`
-	Inject      []injectYAML     `yaml:"inject"`
-	Render      string           `yaml:"render"`
-	Chooser     string           `yaml:"chooser"`
-	Options     []optionYAML     `yaml:"options"`
-	Guard       string           `yaml:"guard"`
-	Op          string           `yaml:"op"`
-	Transitions []transitionYAML `yaml:"transitions"`
-	Goal        string           `yaml:"goal"`
-	ServeDelta  []string         `yaml:"serveDelta"`
-	Delegable   bool             `yaml:"delegable"`
-	Deliver     []string         `yaml:"deliver"`
-	Await       []string         `yaml:"await"`
-	AwaitAny    []string         `yaml:"awaitAny"`
-	Findings    string           `yaml:"findings"`
-	Stage       string           `yaml:"stage"`
+	ID            string           `yaml:"id"`
+	Collect       []string         `yaml:"collect"`
+	Inject        []injectYAML     `yaml:"inject"`
+	Render        string           `yaml:"render"`
+	Chooser       string           `yaml:"chooser"`
+	Options       []optionYAML     `yaml:"options"`
+	Guard         string           `yaml:"guard"`
+	Op            string           `yaml:"op"`
+	Transitions   []transitionYAML `yaml:"transitions"`
+	Goal          string           `yaml:"goal"`
+	ServeDelta    []string         `yaml:"serveDelta"`
+	Delegable     bool             `yaml:"delegable"`
+	Deliver       []string         `yaml:"deliver"`
+	Await         []string         `yaml:"await"`
+	AwaitAny      []string         `yaml:"awaitAny"`
+	DelegateEnded string           `yaml:"delegateEnded"`
+	Findings      string           `yaml:"findings"`
+	Stage         string           `yaml:"stage"`
 }
 
 // decodeStrict re-encodes a retained YAML node and decodes it with unknown
@@ -546,6 +551,16 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 				addProblem("%s: transition target %q is not a step or end(...)", prefix, t.To)
 			}
 		}
+		if ended := step.DelegateEnded; ended != "" {
+			switch {
+			case len(step.Await) == 0:
+				addProblem("%s: delegateEnded applies only to an await gate", prefix)
+			case spec.Class == model.ProcedureClassTask:
+				addProblem("%s: delegateEnded applies to the dispatching side; a task's await waits for the move that dispatched it, which outlives it", prefix)
+			case !IsEndTarget(ended) && spec.StepByID[ended] == nil:
+				addProblem("%s: delegateEnded target %q is not a step or end(...)", prefix, ended)
+			}
+		}
 		for _, f := range step.ServeDelta {
 			if _, ok := spec.State[f]; !ok {
 				addProblem("%s: serveDelta names %q, which is not declared in state", prefix, f)
@@ -702,17 +717,18 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 	prefix := "steps." + sy.ID
 
 	step := &Step{
-		ID:         sy.ID,
-		Render:     sy.Render,
-		Op:         sy.Op,
-		Chooser:    ChooserGate,
-		Goal:       sy.Goal,
-		ServeDelta: sy.ServeDelta,
-		Delegable:  sy.Delegable,
-		Deliver:    sy.Deliver,
-		Await:      sy.Await,
-		Findings:   sy.Findings,
-		Stage:      sy.Stage,
+		ID:            sy.ID,
+		Render:        sy.Render,
+		Op:            sy.Op,
+		Chooser:       ChooserGate,
+		Goal:          sy.Goal,
+		ServeDelta:    sy.ServeDelta,
+		Delegable:     sy.Delegable,
+		Deliver:       sy.Deliver,
+		Await:         sy.Await,
+		Findings:      sy.Findings,
+		DelegateEnded: sy.DelegateEnded,
+		Stage:         sy.Stage,
 	}
 
 	switch sy.Chooser {

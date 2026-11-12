@@ -174,6 +174,7 @@ func (s *Session) Fork(instanceID string, child Link, spec *Spec) (map[string]an
 		return nil, err
 	}
 	p.forks = append(p.forks, fork)
+	p.forkPending = false
 	return seed, nil
 }
 
@@ -461,6 +462,11 @@ func (s *Session) endInstance(inst *Instance, reason string) {
 	s.appendEvent(inst.ID, EventAbandoned, map[string]any{"reason": reason})
 }
 
+// liveFork reports whether a fork of the instance is still live.
+func (inst *Instance) liveFork() bool {
+	return slices.ContainsFunc(inst.forks, func(f *Fork) bool { return f.Status == ForkLive })
+}
+
 func (inst *Instance) fork(child Link) *Fork {
 	for _, fork := range inst.forks {
 		if fork.Child == child {
@@ -613,6 +619,7 @@ func (s *Session) applyDeliveryEvent(ev Event) error {
 			Child: linkFrom(ev.Data["child"]), Procedure: procedure, Status: ForkLive,
 			Receive: stringMapFrom(ev.Data["receive"]), Send: stringMapFrom(ev.Data["send"]),
 		})
+		inst.forkPending = false
 	case EventForkEnded:
 		if fork := inst.fork(linkFrom(ev.Data["child"])); fork != nil {
 			reason, _ := ev.Data["reason"].(string)

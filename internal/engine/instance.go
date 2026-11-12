@@ -57,6 +57,9 @@ type Instance struct {
 	// answered option declared, recorded on the fork its next task starts.
 	dispatchReceive map[string]string
 	dispatchSend    map[string]string
+	// forkPending marks a delegate dispatch answered whose fork is not
+	// recorded yet, so a delegateEnded route does not fire before it.
+	forkPending bool
 	// forks are the delegate child sessions this instance dispatched.
 	forks []*Fork
 	// unconsumed marks the fields holding a delivery no await gate has taken
@@ -298,7 +301,13 @@ func (s *Session) cascade(inst *Instance) error {
 			return s.checkSink()
 		}
 		if len(step.Await) > 0 && inst.awaitHeld(step) {
-			return nil // stalled: the linked session has not delivered yet
+			if step.DelegateEnded == "" || inst.forkPending || inst.liveFork() {
+				return nil // stalled: the linked session has not delivered yet
+			}
+			if err := s.moveTo(inst, step.DelegateEnded, false, nil); err != nil {
+				return err
+			}
+			continue
 		}
 
 		if step.Op != "" && !inst.opDone {

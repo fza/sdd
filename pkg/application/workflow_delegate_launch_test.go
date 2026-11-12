@@ -81,6 +81,8 @@ func TestLauncherKeepsItsSessionPerChildAndResumesEachRound(t *testing.T) {
 			t.Fatalf("a launched prompt carries the child handle and never the dispatching one, got %q", round.Round.Prompt)
 		}
 	}
+	f.advance(t, second.Launch.Session, second.Launch.Instance, nil)
+	f.advance(t, second.Launch.Session, second.Launch.Instance, map[string]any{"chooser": "respond", "choice": "again", "fields": map[string]any{"plan": "f2 from the launched delegate"}})
 	second.Finish("cli-2", nil)
 	if kept := f.recorded(t, dispatch.Session, 2); strings.Join(kept, ",") != "cli-1,cli-2" {
 		t.Fatalf("the launcher sessions are kept with the child session, got %v", kept)
@@ -107,6 +109,23 @@ func TestFailedRoundFailsTheDispatchingMovesNextCall(t *testing.T) {
 	if held := f.advance(t, f.parent, f.dispatch, nil); held.Step != "wait" {
 		t.Fatalf("the failure surfaces once and its fork ends, at %s", held.Step)
 	}
+}
+
+func TestLaunchedRoundEndingWithoutADeliveryFails(t *testing.T) {
+	launcher := test.NewScriptedLauncher(t, "scripted")
+	f := newDelegateApplication(t, launcher)
+	f.fork(t)
+	round := launcher.NextRound(t)
+	round.FinishSaying("cli-1", "The sdd tools need approval, so I stop.")
+	var failed error
+	test.Eventually(t, "the empty round reaching the dispatching move", func() bool {
+		_, failed = f.session(t, f.parent).Advance(t.Context(), f.identity, sdd.WorkflowAdvanceRequest{Instance: f.dispatch})
+		return failed != nil
+	})
+	if !strings.Contains(failed.Error(), "ended without the delegate delivering or concluding") || !strings.Contains(failed.Error(), "The sdd tools need approval, so I stop.") {
+		t.Fatalf("a round ending with nothing delivered should fail naming its last message, got %v", failed)
+	}
+	test.Eventually(t, "ending the empty round's delegate", func() bool { return f.ended(t, round.Launch.Session) != nil })
 }
 
 func TestServedBlocksRecordAfterALaunchedRoundDelivered(t *testing.T) {

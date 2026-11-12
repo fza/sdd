@@ -45,6 +45,7 @@ const (
 	fieldDeepProblems   = "deepProblems"
 	fieldDeepNoSubagent = "deepNoSubagent"
 	fieldDeepForkBase   = "deepForkBase"
+	fieldDeepEndReason  = "deepEndReason"
 	// fieldPreflightRubric is what pre-flight's model would have judged a
 	// draft by, set while the deep verifier judges in its place.
 	fieldPreflightRubric = "preflightRubric"
@@ -247,7 +248,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Doc: engine.FuncDoc{
 				Name: "prepareDeep", Doc: "Opens a deep exchange over the current draft: the base document, the paged reading, the weighing rule's recommendation, and a fresh exchange; for the live verifier, the revision's reading.",
 				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict, fieldDeepRevisions, fieldDeepReadIDs),
-				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs},
+				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs},
 			},
 			Fn: w.prepareDeep,
 		},
@@ -267,6 +268,18 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 					return nil
 				}
 				return fmt.Errorf("no verify delegate was dispatched for this exchange of %s: answering deepDispatch dispatches it, so report failed with the error that answer returned", ctx.Instance)
+			},
+		},
+		{
+			Doc: engine.FuncDoc{Name: "recordDeepEnded", Doc: "Records why the verify delegate stopped before it delivered: its round failed or ended with nothing delivered, or it was torn down.", Writes: []string{fieldDeepEndReason}},
+			Fn: func(ctx *engine.Context) error {
+				reason := "the verify delegate ended"
+				for _, fork := range w.session.Forks(ctx.Instance) {
+					if fork.Procedure == verifyProcedure && fork.Status == engine.ForkConcluded && fork.Reason != "" {
+						reason = fork.Reason
+					}
+				}
+				return ctx.Store.WriteEngine(fieldDeepEndReason, reason)
 			},
 		},
 		{
@@ -349,7 +362,7 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 	writes := map[string]any{
 		fieldDeepBase: base, fieldDeepHistory: []model.DeepResponse{}, fieldDeepRounds: 0,
 		fieldDeepProposal: nil, fieldDeepHunks: nil, fieldDeepOpen: nil, fieldDeepListed: nil, fieldDeepProblems: nil, fieldDeepNoSubagent: nil,
-		fieldDeepForkBase: verifyForks(w.session, ctx.Instance),
+		fieldDeepForkBase: verifyForks(w.session, ctx.Instance), fieldDeepEndReason: nil,
 		fieldDeepRevising: revising, fieldDeepRevisions: 0, fieldDeepRevisionPages: nil, fieldDeepRevisionPageFull: nil,
 	}
 	pages, held := w.deepPages(ctx, base)

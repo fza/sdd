@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,8 +31,8 @@ const workflowDelegateLaunchCode = "workflow_delegate_launch"
 // next input. It answers at once, taking the launch on or leaving it to the
 // harness, and sdd runs the round it returns in the background, so the
 // dispatching call never waits for a round: that move's next call picks the
-// delegate's deliveries up, and fails with the round's error when the round
-// failed.
+// delegate's deliveries up, and takes a failed round to the waiting gate's
+// delegateEnded route, or else fails with the round's error.
 type DelegateLauncher interface {
 	LaunchDelegate(ctx context.Context, launch DelegateLaunch) (DelegateRun, error)
 }
@@ -51,12 +52,20 @@ type DelegateLaunch struct {
 }
 
 // DelegateRun is a launch a launcher took on: the runner that runs, and Round,
-// which runs one round to its end, bounded by the launcher, and reports the
-// launcher's own session for the next round to resume. sdd runs one round of
-// a child at a time.
+// which runs one round to its end, bounded by the launcher. sdd runs one round
+// of a child at a time. A round that ends while its delegate neither delivered
+// nor concluded counts as failed.
 type DelegateRun struct {
 	Runner string
-	Round  func(ctx context.Context, round DelegateRound) (string, error)
+	Round  func(ctx context.Context, round DelegateRound) (DelegateRoundEnd, error)
+}
+
+// DelegateRoundEnd is what a round that ended reports: the launcher's own
+// session for the next round to resume, and the agent's last message, which
+// names why a round that delivered nothing failed.
+type DelegateRoundEnd struct {
+	Session string
+	Message string
 }
 
 // DelegateRound is one round's input: its number from 1, its prompt, and the
@@ -446,13 +455,26 @@ func (a *Application) runDelegateRound(ctx context.Context, identity RequestIden
 	if err != nil {
 		return err
 	}
+	delivered, err := delegateDeliveries(stored.Events)
+	if err != nil {
+		return err
+	}
 	round := DelegateRound{Number: len(records) + 1, Prompt: delegatePrompt(child, instance)}
 	if n := len(records); n > 0 && records[n-1].Session != "" {
 		round.Resume = records[n-1].Session
 		round.Prompt = delegateContinuePrompt(child, instance)
 	}
-	session, roundErr := run.Round(ctx, round)
-	record := delegateLaunchRecord{Round: round.Number, Session: session, Runner: run.Runner}
+	end, roundErr := run.Round(ctx, round)
+	if roundErr == nil {
+		idle, err := a.idleRound(ctx, identity, child, delivered, end.Message)
+		if err != nil {
+			return err
+		}
+		if idle != "" {
+			roundErr = errors.New(idle)
+		}
+	}
+	record := delegateLaunchRecord{Round: round.Number, Session: end.Session, Runner: run.Runner}
 	if roundErr != nil {
 		record = delegateLaunchRecord{Round: round.Number, Runner: run.Runner, Error: fmt.Sprintf("the delegate's round %d (%s) failed: %v", round.Number, run.Runner, roundErr)}
 	}
@@ -461,6 +483,46 @@ func (a *Application) runDelegateRound(ctx context.Context, identity RequestIden
 		return err
 	}
 	return a.endDelegate(ctx, identity, child, record.Error)
+}
+
+// idleRound names why a round that ended cleanly failed: its child, which had
+// made delivered deliveries before it, delivered nothing more and still runs.
+// It is empty once the child delivered or concluded.
+func (a *Application) idleRound(ctx context.Context, identity RequestIdentity, child SessionID, delivered int, message string) (string, error) {
+	_, _, stored, err := a.resolveSession(ctx, identity, child)
+	if err != nil {
+		return "", err
+	}
+	if stored.Metadata.Ended != nil {
+		return "", nil
+	}
+	now, err := delegateDeliveries(stored.Events)
+	if err != nil || now > delivered {
+		return "", err
+	}
+	said := "it left no last message"
+	if message = strings.TrimSpace(message); message != "" {
+		said = "its last message: " + message
+	}
+	return "it ended without the delegate delivering or concluding; " + said, nil
+}
+
+// delegateDeliveries counts the deliveries a child session made.
+func delegateDeliveries(events []StoredEvent) (int, error) {
+	count := 0
+	for _, stored := range events {
+		if stored.Code != WorkflowEventCode {
+			continue
+		}
+		var event engine.Event
+		if err := json.Unmarshal(stored.Payload, &event); err != nil {
+			return 0, fmt.Errorf("decoding a delegate session event: %w", err)
+		}
+		if event.Event == engine.EventDelivered {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // recordDelegateRound appends a round's outcome to the child session,
@@ -489,10 +551,16 @@ func (a *Application) recordDelegateRound(ctx context.Context, identity RequestI
 	}
 }
 
-// failedRounds fails the call when a background round of a delegate the
-// instance dispatched failed: the fork ends, so the move can report the
-// failure and dispatch afresh.
+// failedRounds ends the fork of a delegate the instance dispatched whose
+// background round failed, so the move can report the failure and dispatch
+// afresh. The call fails with the round's error, unless the move waits at a
+// gate whose delegateEnded route takes the failure on.
 func (w *WorkflowSession) failedRounds(ctx context.Context, identity RequestIdentity, instance string) error {
+	routed := false
+	if inst, ok := w.session.Instance(instance); ok {
+		step := inst.Spec.StepByID[inst.Step]
+		routed = step != nil && len(step.Await) > 0 && step.DelegateEnded != ""
+	}
 	var failures []error
 	for _, live := range w.session.LiveForks() {
 		if live.Instance != instance {
@@ -513,7 +581,9 @@ func (w *WorkflowSession) failedRounds(ctx context.Context, identity RequestIden
 		if err := w.session.EndFork(instance, live.Fork.Child, records[n-1].Error); err != nil {
 			return err
 		}
-		failures = append(failures, errors.New(records[n-1].Error))
+		if !routed {
+			failures = append(failures, errors.New(records[n-1].Error))
+		}
 	}
 	return errors.Join(failures...)
 }

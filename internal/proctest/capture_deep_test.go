@@ -719,6 +719,59 @@ func TestCaptureDeep_EveryContestedFindingGetsAResponse(t *testing.T) {
 	}
 }
 
+// pollUntilMoved re-serves the capture at step until it has left it.
+func pollUntilMoved(t *testing.T, session *proctest.Session, instance, step string) *sdd.WorkflowServe {
+	t.Helper()
+	var serve *sdd.WorkflowServe
+	test.Eventually(t, "the capture leaving "+step, func() bool {
+		session.Refresh(t)
+		serve = session.Report(t, instance, nil)
+		return serve.Step != step
+	})
+	return serve
+}
+
+// A launched round that ends with nothing delivered is a failed round: the
+// waiting capture moves to its failure step, naming the round's last message.
+func TestCaptureDeep_ARoundEndingWithoutFindingsPutsTheFailureToTheUser(t *testing.T) {
+	launcher := headlessLauncher(t)
+	_, session := newDeepWorld(t, "deep-empty-round", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	instance, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
+	round := launcher.NextRound(t)
+	serve = session.Answer(t, instance, "deepLaunch", "started", nil, "")
+	proctest.RequireStep(t, serve, "deepWait")
+
+	round.FinishSaying("codex-3", "The sdd tools need approval, so I stop.")
+
+	serve = pollUntilMoved(t, session, instance, "deepWait")
+	proctest.RequireStep(t, serve, "deepFailed")
+	if !strings.Contains(serve.Instructions, "ended without the delegate delivering or concluding") || !strings.Contains(serve.Instructions, "The sdd tools need approval, so I stop.") {
+		t.Fatalf("the failure step should name why the round failed:\n%s", serve.Instructions)
+	}
+	serve = session.Answer(t, instance, "deepFailed", "retry", nil, "try again")
+	proctest.RequireStep(t, serve, "deepDispatch")
+}
+
+// A verifier that stops while the capture waits for its findings leaves the
+// capture at its failure step, not waiting for a delivery nothing will make.
+func TestCaptureDeep_AVerifierStoppingWhileTheCaptureWaitsPutsTheFailureToTheUser(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-stopped", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	proctest.RequireStep(t, x.pickUp(t), "deepWait")
+	if _, err := world.App.AbandonWorkflowSession(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: x.dispatch.Session}, "the subagent stopped"); err != nil {
+		t.Fatal(err)
+	}
+
+	serve := pollUntilMoved(t, session, x.instance, "deepWait")
+
+	proctest.RequireStep(t, serve, "deepFailed")
+	if !strings.Contains(serve.Instructions, "It stopped before delivering: the delegate session was abandoned") {
+		t.Fatalf("the failure step should name why the verifier stopped:\n%s", serve.Instructions)
+	}
+}
+
 // A dispatching answer whose fork failed still stands: started is refused
 // until a delegate was dispatched, so the drafter reports the failure.
 func TestCaptureDeep_StartedNeedsADispatchedDelegate(t *testing.T) {

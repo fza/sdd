@@ -37,8 +37,8 @@ type ScriptedRound struct {
 }
 
 type roundEnd struct {
-	session string
-	err     error
+	end sdd.DelegateRoundEnd
+	err error
 }
 
 // NewScriptedLauncher returns a launcher reporting runner, whose rounds still
@@ -56,20 +56,20 @@ func (l *ScriptedLauncher) LaunchDelegate(_ context.Context, launch sdd.Delegate
 	l.mu.Lock()
 	l.launches = append(l.launches, launch)
 	l.mu.Unlock()
-	round := func(ctx context.Context, round sdd.DelegateRound) (string, error) {
+	round := func(ctx context.Context, round sdd.DelegateRound) (sdd.DelegateRoundEnd, error) {
 		r := &ScriptedRound{Launch: launch, Round: round, end: make(chan roundEnd, 1)}
 		select {
 		case l.rounds <- r:
 		case <-l.stop:
-			return "", errors.New("the test ended before the round was taken")
+			return sdd.DelegateRoundEnd{}, errors.New("the test ended before the round was taken")
 		}
 		select {
 		case end := <-r.end:
-			return end.session, end.err
+			return end.end, end.err
 		case <-l.stop:
-			return "", errors.New("the test ended before the round did")
+			return sdd.DelegateRoundEnd{}, errors.New("the test ended before the round did")
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return sdd.DelegateRoundEnd{}, ctx.Err()
 		}
 	}
 	return sdd.DelegateRun{Runner: l.Reports, Round: round}, nil
@@ -97,7 +97,13 @@ func (l *ScriptedLauncher) NextRound(t testing.TB) *ScriptedRound {
 // Finish ends the round, reporting the launcher's session or the error the
 // round failed with.
 func (r *ScriptedRound) Finish(session string, err error) {
-	r.end <- roundEnd{session: session, err: err}
+	r.end <- roundEnd{end: sdd.DelegateRoundEnd{Session: session}, err: err}
+}
+
+// FinishSaying ends the round cleanly, reporting the launcher's session and
+// the agent's last message.
+func (r *ScriptedRound) FinishSaying(session, message string) {
+	r.end <- roundEnd{end: sdd.DelegateRoundEnd{Session: session, Message: message}}
 }
 
 // Eventually waits until done holds, failing the test naming what when it

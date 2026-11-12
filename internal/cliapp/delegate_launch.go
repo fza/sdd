@@ -46,11 +46,11 @@ func (l headlessLauncher) LaunchDelegate(_ context.Context, launch sdd.DelegateL
 	if err != nil {
 		return sdd.DelegateRun{}, err
 	}
-	round := func(ctx context.Context, round sdd.DelegateRound) (string, error) {
+	round := func(ctx context.Context, round sdd.DelegateRound) (sdd.DelegateRoundEnd, error) {
 		launched, err := delegatelaunch.Run(ctx, settings, delegatelaunch.Round{
 			Session: string(launch.Session), Instance: launch.Instance, Number: round.Number, Prompt: round.Prompt, Resume: round.Resume,
 		})
-		return launched.Session, err
+		return sdd.DelegateRoundEnd{Session: launched.Session, Message: launched.Message}, err
 	}
 	return sdd.DelegateRun{Runner: settings.Runner, Round: round}, nil
 }

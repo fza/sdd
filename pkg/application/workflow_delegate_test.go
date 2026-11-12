@@ -58,7 +58,7 @@ kind: procedure
 layer: process
 canonical: reviewtask
 class: task
-rounds: 2
+rounds: 3
 confidence: high
 summary: A review task exchanging rounds with its dispatcher for the delegate tests.
 state:
