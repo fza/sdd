@@ -109,10 +109,19 @@ func TestLaunchedDelegateDispatchCarriesNoHandle(t *testing.T) {
 	}
 	round := launcher.NextRound(t)
 	round.Finish("", errors.New("the test is over"))
+	// Polled through the store: a polling resume_session writes the child's
+	// session and contends with the round recording its end.
 	test.Eventually(t, "ending the round's delegate", func() bool {
-		res, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "resume_session", Arguments: map[string]any{"session": string(round.Launch.Session)}})
-		return err == nil && res.IsError && strings.Contains(contentText(res), "ended")
+		stored, err := env.sessions.Load(t.Context(), round.Launch.Session)
+		return err == nil && stored.Metadata.Ended != nil
 	})
+	res, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "resume_session", Arguments: map[string]any{"session": string(round.Launch.Session)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(contentText(res), "ended") {
+		t.Fatalf("the failed round should end its delegate's session, got %s", contentText(res))
+	}
 }
 
 func TestDelegateDispatchOverTheTransport(t *testing.T) {
