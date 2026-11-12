@@ -74,6 +74,18 @@ func (w *WorkflowSession) ServeMark() int { return w.session.PieceMark() }
 // composed again before it reaches the agent.
 func (w *WorkflowSession) WithdrawServedSince(mark int) { w.session.DropPiecesSince(mark) }
 
+// FollowDeferral settles the instance's deferral as the call serves it,
+// follow set for a call that serves its step again without a report.
+func (w *WorkflowSession) FollowDeferral(instance string, follow bool) {
+	w.session.FollowDeferral(instance, follow)
+}
+
+// RecordDeferral records that the call's serve of the instance left lanes
+// waiting past the result bound, sent naming the pieces it served.
+func (w *WorkflowSession) RecordDeferral(instance string, sent []string) {
+	w.session.RecordDeferral(instance, sent)
+}
+
 // ServeNotice returns a notice named name that rides on results as served
 // once per change of its text: whole while the text differs from the last the
 // session served, empty otherwise. A finished session serves it whole, as its

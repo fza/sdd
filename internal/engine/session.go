@@ -60,6 +60,10 @@ const (
 	// in full, so a restarted server still checks their proofs (Piece). No
 	// instance: the served memory is session-level like the read set.
 	EventAnchors EventType = "anchors"
+	// EventDeferred records that a serve of an instance left lanes waiting
+	// past the result bound, with the pieces it sent, or, with ended set, that
+	// the deferral is settled (Session.FollowDeferral).
+	EventDeferred EventType = "deferred"
 	// EventReoriented records that the consumer asked for the session's
 	// position — the declaration that it needs re-serving. Its call serves
 	// every piece in full.
@@ -249,8 +253,11 @@ type Session struct {
 	// changed folds the content hash each piece that serves once per change
 	// last served under its name.
 	changed map[string]string
-	call    pieceCall
-	rnd     model.RandomSource
+	// deferred folds the deferral events: per instance whose lanes wait, the
+	// pieces its serve sent, each under its tag (FollowDeferral).
+	deferred map[string]map[Piece]string
+	call     pieceCall
+	rnd      model.RandomSource
 	// sinkErr carries a deferred log-append failure; surfaced by the next
 	// advance call so a durability problem can't pass silently.
 	sinkErr     error
@@ -1337,6 +1344,9 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		for _, record := range anchors {
 			s.foldAnchor(record)
 		}
+
+	case EventDeferred:
+		s.foldDeferral(ev.Instance, ev.Data)
 
 	case EventServed, EventParked, EventServedBlocks, EventReoriented:
 		// Forensic only — no state effect.

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"maps"
 	"math/rand/v2"
 	"slices"
 	"strings"
@@ -46,6 +47,9 @@ type pieceCall struct {
 	issued  map[Piece]string
 	covered map[string]string
 	pending []pendingAnchor
+	// followed is what the deferral this call follows sent, still pointed at
+	// should the call leave lanes waiting again.
+	followed map[Piece]string
 }
 
 // pendingAnchor is a piece the call served in full, not yet recorded;
@@ -225,6 +229,74 @@ func (s *Session) foldAnchor(record any) {
 		s.anchors = map[string]issuedAnchor{}
 	}
 	s.anchors[tag] = issued
+}
+
+// FollowDeferral settles the instance's deferral, a serve of its step that
+// left lanes waiting past the result bound, as the call in flight serves the
+// instance. With follow set, the call serves the step again without a report:
+// the pieces the deferral sent count as held in it, without a proof, as the
+// result before carried them, so an agent listing no proofs still reaches the
+// waiting lanes. Either way the deferral ends; every serve of the instance
+// settles it, so the one a call follows is always its own step's.
+func (s *Session) FollowDeferral(instance string, follow bool) {
+	sent, ok := s.deferred[instance]
+	if !ok {
+		return
+	}
+	if follow {
+		if s.call.issued == nil {
+			s.call.issued, s.call.covered = map[Piece]string{}, map[string]string{}
+		}
+		for p, tag := range sent {
+			s.call.issued[p] = tag
+		}
+		s.call.followed = sent
+	}
+	ended := map[string]any{"ended": true}
+	s.foldDeferral(instance, ended)
+	s.appendEvent(instance, EventDeferred, ended)
+}
+
+// RecordDeferral records that the call's serve of the instance left lanes
+// waiting: the pieces named in sent that the call served in full, with those
+// of a deferral it follows, serve as pointers in the call that follows.
+func (s *Session) RecordDeferral(instance string, sent []string) {
+	pieces := maps.Clone(s.call.followed)
+	if pieces == nil {
+		pieces = map[Piece]string{}
+	}
+	for _, p := range s.call.pending {
+		if p.tag != "" && slices.Contains(sent, p.piece.Name) {
+			pieces[p.piece] = p.tag
+		}
+	}
+	records := make([]any, 0, len(pieces))
+	for p, tag := range pieces {
+		records = append(records, map[string]any{"name": p.Name, "hash": p.Hash, "tag": tag})
+	}
+	data := map[string]any{"sent": records}
+	s.foldDeferral(instance, data)
+	s.appendEvent(instance, EventDeferred, data)
+}
+
+func (s *Session) foldDeferral(instance string, data map[string]any) {
+	if data["ended"] == true {
+		delete(s.deferred, instance)
+		return
+	}
+	pieces := map[Piece]string{}
+	sent, _ := data["sent"].([]any)
+	for _, record := range sent {
+		fields, _ := record.(map[string]any)
+		name, _ := fields["name"].(string)
+		hash, _ := fields["hash"].(string)
+		tag, _ := fields["tag"].(string)
+		pieces[Piece{Name: name, Hash: hash}] = tag
+	}
+	if s.deferred == nil {
+		s.deferred = map[string]map[Piece]string{}
+	}
+	s.deferred[instance] = pieces
 }
 
 func (s *Session) freshTag() string {

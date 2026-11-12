@@ -687,7 +687,7 @@ func (s *Server) startSession(ctx context.Context, req *mcp.CallToolRequest, arg
 	s.noteSyncSession(ctx, req, ss)
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	result, err := s.toRootServeResult(ctx, req, ss, serve)
+	result, err := s.toRootServeResult(ctx, req, ss, serve, false)
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
@@ -736,7 +736,7 @@ func (s *Server) startProcedure(ctx context.Context, req *mcp.CallToolRequest, a
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
-	result, err := s.toRootServeResult(ctx, req, ss, serve)
+	result, err := s.toRootServeResult(ctx, req, ss, serve, false)
 	return nil, result, err
 }
 
@@ -759,7 +759,7 @@ func (s *Server) next(ctx context.Context, req *mcp.CallToolRequest, args NextAr
 		// never re-served, so its replay leaves the cache with it.
 		defer s.sessions.evict(ss.root.ID())
 	}
-	result, err := s.toRootServeResult(ctx, req, ss, serve)
+	result, err := s.toRootServeResult(ctx, req, ss, serve, len(args.Report) == 0 && args.RetryRef == 0 && args.CancelRef == 0)
 	return nil, result, err
 }
 
@@ -1482,11 +1482,14 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 // the result bound, and records what it served in full into the session
 // ledger. The shell's open-work block lists this dialogue's own threads only;
 // other dialogues never appear.
-func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (ServeResult, error) {
-	res, err := s.boundedServe(ctx, req, ss, serve, serveBudget)
+// follow marks a call that serves the step again without a report, the call
+// that follows a serve whose lanes wait.
+func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, follow bool) (ServeResult, error) {
+	res, keep, err := s.boundedServe(ctx, req, ss, serve, serveBudget, follow)
 	if err != nil {
 		return ServeResult{}, err
 	}
+	recordDeferral(ss, serve, keep)
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return ServeResult{}, err
 	}
@@ -1496,24 +1499,40 @@ func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest
 // boundedServe composes serve's result to cost at most budget
 // (20261112-075604-d-tac-t4r): while the whole would cost more, the step's
 // last lanes wait, named with the call that serves them, and what the larger
-// composition served is withdrawn. The caller records what it served.
-func (s *Server) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int) (ServeResult, error) {
+// composition served is withdrawn. It returns how many lanes the result
+// holds; the caller records what it served and, through recordDeferral, the
+// lanes that wait.
+func (s *Server) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int, follow bool) (ServeResult, int, error) {
+	ss.root.FollowDeferral(serve.Instance, follow)
 	pageFull := ss.root.TakeStepFullIDs()
 	mark := ss.root.ServeMark()
 	for keep := len(serve.InstructionLanes); ; keep-- {
 		res, err := s.composeServe(ctx, req, ss, serve, keep, pageFull)
 		if err != nil {
-			return ServeResult{}, err
+			return ServeResult{}, 0, err
 		}
 		cost, err := resultChars(res)
 		if err != nil {
-			return ServeResult{}, err
+			return ServeResult{}, 0, err
 		}
 		if cost <= budget || keep == 0 {
-			return res, nil
+			return res, keep, nil
 		}
 		ss.root.WithdrawServedSince(mark)
 	}
+}
+
+// recordDeferral records a serve that holds only its first keep lanes, so
+// the call that follows serves the waiting lanes and points at the sent ones.
+func recordDeferral(ss *shellSession, serve *sdd.WorkflowServe, keep int) {
+	if keep >= len(serve.InstructionLanes) {
+		return
+	}
+	sent := make([]string, 0, keep)
+	for _, lane := range serve.InstructionLanes[:keep] {
+		sent = append(sent, "lane "+lane.Name)
+	}
+	ss.root.RecordDeferral(serve.Instance, sent)
 }
 
 func (s *Server) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, keep int, pageFull []string) (ServeResult, error) {
@@ -1603,7 +1622,7 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 			continue
 		}
 		mark := ss.root.ServeMark()
-		mapped, err := s.boundedServe(ctx, req, ss, serve, serveBudget-spent)
+		mapped, keep, err := s.boundedServe(ctx, req, ss, serve, serveBudget-spent, false)
 		if err != nil {
 			return ResumeSessionResult{}, err
 		}
@@ -1617,6 +1636,7 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 			omitted = append(omitted, name)
 			continue
 		}
+		recordDeferral(ss, serve, keep)
 		spent += cost
 		result.Open = append(result.Open, mapped)
 	}

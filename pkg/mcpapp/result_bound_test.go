@@ -138,14 +138,23 @@ func TestNoResultExceedsTheResultBound(t *testing.T) {
 // lists its proofs and fails the test on every result past the bound.
 func boundedClient(t *testing.T, graphDir string) (*mcp.ClientSession, *boundedResults) {
 	t.Helper()
-	env := newTestServer(t, nil, graphDir, "")
+	return boundedConnect(t, newTestServer(t, nil, graphDir, "").srv, true)
+}
+
+// boundedConnect connects to srv through a client that fails the test on
+// every result past the bound, listing its proofs when proofs is set.
+func boundedConnect(t *testing.T, srv *mcpserver.Server, proofs bool) (*mcp.ClientSession, *boundedResults) {
+	t.Helper()
 	bound := &boundedResults{t: t, largest: map[string]int{}}
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	if _, err := env.srv.Connect(t.Context(), serverTransport); err != nil {
+	if _, err := srv.Connect(t.Context(), serverTransport); err != nil {
 		t.Fatal(err)
 	}
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
-	client.AddSendingMiddleware(newAgentMemory().middleware, bound.middleware)
+	if proofs {
+		client.AddSendingMiddleware(newAgentMemory().middleware)
+	}
+	client.AddSendingMiddleware(bound.middleware)
 	cs, err := client.Connect(t.Context(), clientTransport, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -157,9 +166,102 @@ func boundedClient(t *testing.T, graphDir string) (*mcp.ClientSession, *boundedR
 // A step whose lanes together run past the result bound serves the lanes
 // that fit and names the rest, which next with no report serves.
 func TestAServePastTheResultBoundLeavesItsLastLanesWaiting(t *testing.T) {
+	cs, _ := boundedClient(t, writeWideStepGraph(t, "first", "second", "third"))
+	session := openSession(t, cs).Session
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step"}, &serve)
+	requireWaitingLane(t, serve)
+	var rest mcpserver.ServeResult
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance}, &rest)
+	if !strings.Contains(rest.Instructions, "Lane third holds") || strings.Contains(rest.Instructions, "lanes of these instructions wait") {
+		t.Fatalf("next with no report should serve the waiting lanes, got %.300q", rest.Instructions)
+	}
+}
+
+// An agent that lists no proofs reaches every lane of a step past the result
+// bound, on one server and across restarts after the first serve and after
+// the last follow-up: each follow-up serves waiting lanes and points at every
+// lane sent before it, so three lanes take two calls. The deferral ends with
+// the follow-up that serves the last lane, and the step advances on its
+// report.
+func TestANoProofAgentReachesEveryWaitingLane(t *testing.T) {
+	for _, tc := range []struct {
+		lanes              []string
+		minCalls, maxCalls int
+	}{
+		{[]string{"first", "second", "third"}, 2, 2},
+		{[]string{"first", "second", "third", "fourth"}, 3, 4},
+	} {
+		for _, restart := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%d lanes, restart=%v", len(tc.lanes), restart), func(t *testing.T) {
+				env := newTestServer(t, nil, writeWideStepGraph(t, tc.lanes...), "")
+				cs, _ := boundedConnect(t, env.srv, false)
+				session := openSession(t, cs).Session
+				var serve mcpserver.ServeResult
+				call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step"}, &serve)
+				requireWaitingLane(t, serve)
+				if restart {
+					cs, _ = boundedConnect(t, newTestServer(t, nil, env.graphDir, env.sessionsDir).srv, false)
+				}
+				served := map[string]int{}
+				for calls := 1; ; calls++ {
+					for _, name := range tc.lanes {
+						if strings.Contains(serve.Instructions, "Lane "+name+" holds") {
+							served[name]++
+						} else if served[name] > 0 && !strings.Contains(serve.Instructions, "lane "+name) {
+							t.Fatalf("call %d should point at lane %s, sent before, got %.600q", calls, name, serve.Instructions)
+						}
+					}
+					if !strings.Contains(serve.Instructions, "lanes of these instructions wait") {
+						if calls < tc.minCalls || calls > tc.maxCalls {
+							t.Fatalf("the lanes should take %d to %d calls, took %d", tc.minCalls, tc.maxCalls, calls)
+						}
+						break
+					}
+					if calls == tc.maxCalls {
+						t.Fatalf("call %d should serve the last waiting lanes, got %.300q", calls, serve.Instructions)
+					}
+					call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance}, &serve)
+				}
+				for _, name := range tc.lanes {
+					if served[name] != 1 {
+						t.Fatalf("lane %s should serve in full exactly once, served %d times", name, served[name])
+					}
+				}
+				if restart {
+					cs, _ = boundedConnect(t, newTestServer(t, nil, env.graphDir, env.sessionsDir).srv, false)
+				}
+				var again mcpserver.ServeResult
+				call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance}, &again)
+				if !strings.Contains(again.Instructions, "Lane first holds") {
+					t.Fatalf("a call after the deferral ended should serve the lanes in full again, got %.300q", again.Instructions)
+				}
+				var done mcpserver.ServeResult
+				call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": map[string]any{"body": "what the step yields"}}, &done)
+				if done.Status != "completed" {
+					t.Fatalf("the step should advance on its report, got %s at %q", done.Status, done.Step)
+				}
+			})
+		}
+	}
+}
+
+func requireWaitingLane(t *testing.T, serve mcpserver.ServeResult) {
+	t.Helper()
+	if !strings.Contains(serve.Instructions, "Lane first holds") || strings.Contains(serve.Instructions, "Lane third holds") || !strings.Contains(serve.Instructions, "lanes of these instructions wait") {
+		t.Fatalf("the serve should hold the lanes that fit and name the waiting ones, got %.300q", serve.Instructions)
+	}
+}
+
+// writeWideStepGraph writes the fixture graph with a procedure whose one step
+// serves a lane of about 21,500 characters for each name, three or more
+// running past what one result holds.
+func writeWideStepGraph(t *testing.T, names ...string) string {
+	t.Helper()
 	graphDir := writeFixtureGraph(t)
-	lane := func(name string) string {
-		return fmt.Sprintf("### lane: %s\n\n%s\n\n", name, strings.Repeat("Lane "+name+" holds a line of its guidance.\n", 500))
+	var lanes strings.Builder
+	for _, name := range names {
+		fmt.Fprintf(&lanes, "### lane: %s\n\n%s\n\n", name, strings.Repeat("Lane "+name+" holds a line of its guidance.\n", 500))
 	}
 	spec := `---
 type: decision
@@ -167,7 +269,7 @@ kind: procedure
 layer: process
 canonical: wide-step
 confidence: high
-summary: A workflow whose one step serves three wide lanes.
+summary: A workflow whose one step serves wide lanes.
 state:
     body: {type: text, desc: what the step yields}
 steps:
@@ -178,26 +280,15 @@ steps:
             to: end(completed)
 ---
 
-Serves three wide lanes.
+Serves wide lanes.
 
 ## unit: wide
 
-` + lane("first") + lane("second") + lane("third")
+` + lanes.String()
 	if err := os.WriteFile(filepath.Join(graphDir, "2026/07/04-120002-d-prc-wid.md"), []byte(spec), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cs, _ := boundedClient(t, graphDir)
-	session := openSession(t, cs).Session
-	var serve mcpserver.ServeResult
-	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step"}, &serve)
-	if !strings.Contains(serve.Instructions, "Lane first holds") || strings.Contains(serve.Instructions, "Lane third holds") || !strings.Contains(serve.Instructions, "lanes of these instructions wait") {
-		t.Fatalf("the serve should hold the lanes that fit and name the waiting ones, got %.300q", serve.Instructions)
-	}
-	var rest mcpserver.ServeResult
-	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance}, &rest)
-	if !strings.Contains(rest.Instructions, "Lane third holds") || strings.Contains(rest.Instructions, "lanes of these instructions wait") {
-		t.Fatalf("next with no report should serve the waiting lanes, got %.300q", rest.Instructions)
-	}
+	return graphDir
 }
 
 // A resume whose moves would together run past the result bound serves the
