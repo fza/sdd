@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -95,9 +96,11 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 
 // PreflightRubric renders the rules pre-flight would judge entry by, for a
 // judge that runs in its place: the deep verifier (20261109-010000-d-prc-vfy).
-// It carries the check the entry's shape selects with every universal rubric,
-// the referenced, closed and superseded entries, the active contracts and the
-// prose verifier's axes over a reading.
+// It carries the check the entry's shape selects with the universal rubrics,
+// the active contracts and the prose verifier's axes over a reading. It
+// leaves out the rules whose guard the entry fails, and the entry with its
+// referenced, closed and superseded entries: the verifier's reading pages
+// carry those.
 func PreflightRubric(entry *model.Entry, graph *model.Graph, configuredLanguage string) (string, error) {
 	ct := selectCheckType(entry, graph)
 	vocab, err := refKindVocabulary(graph)
@@ -106,6 +109,12 @@ func PreflightRubric(entry *model.Entry, graph *model.Graph, configuredLanguage 
 	}
 	pctx := assembleContext(entry, graph, ct, configuredLanguage)
 	pctx.RefKindVocabulary = vocab
+	pctx.rubric = true
+	for _, field := range []*string{&pctx.ProposedEntry, &pctx.ReferencedEntries, &pctx.ClosedEntries, &pctx.SupersededEntries} {
+		if *field != "" {
+			*field = readingMark
+		}
+	}
 	req, err := renderPreflightPrompt(ct, pctx)
 	if err != nil {
 		return "", fmt.Errorf("rendering pre-flight prompt: %w", err)
@@ -119,7 +128,21 @@ func PreflightRubric(entry *model.Entry, graph *model.Graph, configuredLanguage 
 	if err != nil {
 		return "", fmt.Errorf("rendering the prose verifier axes: %w", err)
 	}
-	return req.SystemPrompt + "\n\n" + req.UserPrompt + "\n\n" + strings.TrimSpace(axes.String()), nil
+	return req.SystemPrompt + "\n\n" + dropSectionsHolding(req.UserPrompt, readingMark) + "\n\n" + strings.TrimSpace(axes.String()), nil
+}
+
+// readingMark stands in for an entry the rubric leaves to the reading pages,
+// so the sections carrying one drop whole.
+const readingMark = "\x1ereading\x1e"
+
+func dropSectionsHolding(prompt, mark string) string {
+	var kept []string
+	for section := range strings.SplitSeq(prompt, "\n## ") {
+		if !strings.Contains(section, mark) {
+			kept = append(kept, section)
+		}
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n## "))
 }
 
 // --- internal helpers ---
@@ -218,7 +241,40 @@ type preflightContext struct {
 	// load is failable). The ref-meta consistency rubric renders it instead of
 	// restating the kinds, so the vocabulary is defined once.
 	RefKindVocabulary string
+
+	// rubric marks the rules page PreflightRubric renders: the guard methods
+	// below then hold only when the entry meets the guard. Pre-flight's own
+	// prompt carries every rule and lets its model apply the guards.
+	rubric      bool
+	entry       *model.Entry
+	closedKinds []model.Kind
 }
+
+// ProposedKind guards a rule on the proposed entry's kind and, when layers
+// are given, its layer.
+func (p *preflightContext) ProposedKind(kind string, layers ...string) bool {
+	if !p.rubric {
+		return true
+	}
+	return string(p.entry.Kind) == kind && (len(layers) == 0 || slices.Contains(layers, string(p.entry.Layer)))
+}
+
+// ClosesKind guards a rule on the kind of an entry the proposed entry closes.
+func (p *preflightContext) ClosesKind(kinds ...string) bool {
+	if !p.rubric {
+		return true
+	}
+	return slices.ContainsFunc(p.closedKinds, func(k model.Kind) bool { return slices.Contains(kinds, string(k)) })
+}
+
+// HasRefs guards a rule on the proposed entry carrying refs.
+func (p *preflightContext) HasRefs() bool { return !p.rubric || len(p.entry.Refs) > 0 }
+
+// HasCloses guards a rule on the proposed entry carrying closes.
+func (p *preflightContext) HasCloses() bool { return !p.rubric || len(p.entry.Closes) > 0 }
+
+// Settled guards a rule on the proposed entry being a settled directive.
+func (p *preflightContext) Settled() bool { return !p.rubric || p.entry.IsSettled() }
 
 // selectCheckType determines the pre-flight check type from entry properties and graph context.
 // Dispatch is kind-aware: the same structural shape (signal with closes) routes to different
@@ -308,6 +364,7 @@ func assembleContext(entry *model.Entry, graph *model.Graph, ct checkType, confi
 	pctx := &preflightContext{
 		ProposedEntry:      formatProposedEntryForPreflight(entry),
 		ConfiguredLanguage: configuredLanguage,
+		entry:              entry,
 	}
 
 	// Referenced entries. Each carries its derived status (active / closed /
@@ -360,6 +417,7 @@ func assembleContext(entry *model.Entry, graph *model.Graph, ct checkType, confi
 				continue
 			}
 			parts = append(parts, FormatEntryForPrompt(e))
+			pctx.closedKinds = append(pctx.closedKinds, e.Kind)
 		}
 		if len(parts) > 0 {
 			pctx.ClosedEntries = strings.Join(parts, "\n\n---\n\n")

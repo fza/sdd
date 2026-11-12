@@ -439,10 +439,15 @@ func TestCaptureDeep_TheVerifierJudgesInThePreflightModelsPlace(t *testing.T) {
 	if strings.Contains(serve.Instructions, "store:pageText") {
 		t.Fatalf("a reading page should be served whole, not at the store-value cap:\n%s", serve.Instructions)
 	}
-	for _, want := range []string{"## Pre-flight's rules", "you judge in its place", deepBody} {
+	for _, want := range []string{"## Pre-flight's rules", "you judge in its place"} {
 		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("the verifier should receive the rules pre-flight's model would have judged the draft by, missing %q:\n%s", want, serve.Instructions)
 		}
+	}
+	// The draft reaches the verifier on its reading pages, not again with
+	// the rules (20261112-075604-d-tac-t4r).
+	if strings.Contains(serve.Instructions, deepBody) {
+		t.Errorf("the rules page should leave the draft to the reading pages:\n%s", serve.Instructions)
 	}
 	serve = x.judge(t, []any{})
 	proctest.RequireStep(t, serve, "waitAnswers")
