@@ -176,3 +176,34 @@ func TestCaptureDeep_AFreshVerifierWhereNoHarnessContinuesIt(t *testing.T) {
 	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
 	proctest.RequireStep(t, x.settleWithAChange(t, "A tactical gap: the fixture observes a subject twice."), "deepDispatch")
 }
+
+// rulesLane returns the verifier's rules lane of a reading serve, which holds
+// no part of the page.
+func rulesLane(t *testing.T, serve *sdd.WorkflowServe) string {
+	t.Helper()
+	for _, lane := range serve.InstructionLanes {
+		if lane.Name == "rules" {
+			if strings.Contains(lane.Text, "Page ") {
+				t.Fatalf("the rules lane should hold no part of the page:\n%s", lane.Text)
+			}
+			return lane.Text
+		}
+	}
+	t.Fatalf("a reading serve should carry the verifier's rules as a lane of their own, got %+v", serve.InstructionLanes)
+	return ""
+}
+
+// The verifier's fixed rules serve as one lane, the same on every page and
+// every revision, so a proof holds them across all of them.
+func TestCaptureDeep_TheVerifierRulesServeAsALaneOfTheirOwn(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-rules-lane", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	x.delegate.Refresh(t)
+	first := rulesLane(t, x.delegate.Report(t, x.child, nil))
+	x.judge(t, subjectFinding("observes something."))
+	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+	proctest.RequireStep(t, x.settleWithAChange(t, "A tactical gap: the fixture observes a subject twice."), "deepWait")
+	if revised := rulesLane(t, x.pickUpRevision(t)); revised != first {
+		t.Fatalf("a revision should serve the same rules lane:\n%s", revised)
+	}
+}
