@@ -964,8 +964,8 @@ func TestCaptureDeep_AWithdrawnFindingReachesTheDrafter(t *testing.T) {
 					t.Errorf("the drafter should be told of the withdrawn finding, missing %q:\n%s", want, text)
 				}
 			}
-			if strings.Contains(text, "the layer is too low") {
-				t.Errorf("a finding the drafter accepted is not withdrawn:\n%s", text)
+			if strings.Contains(text, "the layer is too low\n  withdrawn") || !strings.Contains(text, "which carried no edit, so the entry was written without a change for them:\n\n- f2 [low, ref-fit]: the layer is too low\n") {
+				t.Errorf("a finding the drafter accepted without an edit is named as such, not as withdrawn:\n%s", text)
 			}
 		})
 	}

@@ -42,6 +42,7 @@ const (
 	fieldDeepHunks      = "deepHunks"
 	fieldDeepOpen       = "deepOpen"
 	fieldDeepWithdrawn  = "deepWithdrawn"
+	fieldDeepUnedited   = "deepUnedited"
 	fieldDeepListed     = "deepListed"
 	fieldDeepProblems   = "deepProblems"
 	fieldDeepNoSubagent = "deepNoSubagent"
@@ -249,7 +250,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Doc: engine.FuncDoc{
 				Name: "prepareDeep", Doc: "Opens a deep exchange over the current draft: the base document, the paged reading, the weighing rule's recommendation, and a fresh exchange; for the live verifier, the revision's reading.",
 				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict, fieldDeepRevisions, fieldDeepReadIDs),
-				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs, fieldDeepFresh},
+				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepUnedited, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs, fieldDeepFresh},
 			},
 			Fn: w.prepareDeep,
 		},
@@ -298,7 +299,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Rounds: true,
 		},
 		{
-			Doc: engine.FuncDoc{Name: "buildDeepProposal", Doc: "Builds the proposal from the findings and the latest responses: the changed draft, its hunks labelled by finding, the points open for the user, and the findings the verifier withdrew with its reasons.", Reads: []string{fieldDeepBase, fieldDeepFindings, fieldDeepHistory, fieldDeepContest}, Writes: []string{fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn}},
+			Doc: engine.FuncDoc{Name: "buildDeepProposal", Doc: "Builds the proposal from the findings and the latest responses: the changed draft, its hunks labelled by finding, the points open for the user, the findings the verifier withdrew with its reasons, and the findings taken without an edit.", Reads: []string{fieldDeepBase, fieldDeepFindings, fieldDeepHistory, fieldDeepContest}, Writes: []string{fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepUnedited}},
 			Fn:  w.buildDeepProposal,
 		},
 		{
@@ -362,7 +363,7 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 	base := draftText(ctx.Store)
 	writes := map[string]any{
 		fieldDeepBase: base, fieldDeepHistory: []model.DeepResponse{}, fieldDeepRounds: 0,
-		fieldDeepProposal: nil, fieldDeepHunks: nil, fieldDeepOpen: nil, fieldDeepWithdrawn: nil, fieldDeepListed: nil, fieldDeepProblems: nil, fieldDeepNoSubagent: nil,
+		fieldDeepProposal: nil, fieldDeepHunks: nil, fieldDeepOpen: nil, fieldDeepWithdrawn: nil, fieldDeepUnedited: nil, fieldDeepListed: nil, fieldDeepProblems: nil, fieldDeepNoSubagent: nil,
 		fieldDeepForkBase: verifyForks(w.session, ctx.Instance), fieldDeepEndReason: nil,
 		fieldDeepRevising: revising, fieldDeepRevisions: 0, fieldDeepRevisionPages: nil, fieldDeepRevisionPageFull: nil, fieldDeepFresh: nil,
 	}
@@ -704,11 +705,16 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 	if err != nil {
 		return err
 	}
-	proposal, hunks, err := model.BuildDeepProposal(base, model.DeepChanges(findings, history))
+	changes := model.DeepChanges(findings, history)
+	proposal, hunks, err := model.BuildDeepProposal(base, changes)
 	if err != nil {
 		return fmt.Errorf("buildDeepProposal: the verifier's edits no longer apply: %w", err)
 	}
-	var open, withdrawn strings.Builder
+	edited := map[string]bool{}
+	for _, change := range changes {
+		edited[change.Finding] = true
+	}
+	var open, withdrawn, unedited strings.Builder
 	for i, finding := range findings {
 		id := model.DeepFindingID(i)
 		if finding.Owner {
@@ -724,6 +730,7 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 		}
 		if response != nil && (response.Outcome == model.DeepConceded || response.Outcome == model.DeepDropped) {
 			fmt.Fprintf(&withdrawn, "- %s [%s, %s]: %s\n  withdrawn: %s\n", id, finding.Severity, finding.Axis, finding.Verdict, response.Note)
+			continue
 		}
 		var answer *model.DeepAnswer
 		for j := range contest {
@@ -733,9 +740,13 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 		}
 		if answer != nil && response != nil && response.Outcome == model.DeepHeld {
 			fmt.Fprintf(&open, "- %s: the verifier holds %q (%s); the drafter contests: %s\n", id, finding.Verdict, response.Note, answer.Reason)
+			continue
+		}
+		if !edited[id] {
+			fmt.Fprintf(&unedited, "- %s [%s, %s]: %s\n", id, finding.Severity, finding.Axis, finding.Verdict)
 		}
 	}
-	writes := map[string]any{fieldDeepProposal: proposal, fieldDeepHunks: model.RenderDeepHunks(hunks), fieldDeepOpen: open.String(), fieldDeepWithdrawn: withdrawn.String()}
+	writes := map[string]any{fieldDeepProposal: proposal, fieldDeepHunks: model.RenderDeepHunks(hunks), fieldDeepOpen: open.String(), fieldDeepWithdrawn: withdrawn.String(), fieldDeepUnedited: unedited.String()}
 	for _, name := range slices.Sorted(maps.Keys(writes)) {
 		err := ctx.Store.WriteEngine(name, writes[name])
 		if err != nil {
