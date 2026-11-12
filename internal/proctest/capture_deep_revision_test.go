@@ -114,17 +114,20 @@ func TestCaptureDeep_ARevisionIsJudgedOnlyOnceServed(t *testing.T) {
 	}
 	x.delegate.Refresh(t)
 	serve = x.pickUpRevision(t)
-	if !strings.Contains(serve.Instructions, "Page 1 of 2.") {
-		t.Fatalf("the entry read since the verdict should take a page of the revision:\n%s", serve.Instructions)
+	if !strings.Contains(serve.Instructions, "Page 1 of ") || strings.Contains(serve.Instructions, "Page 1 of 1.") {
+		t.Fatalf("the entry read since the verdict should take pages of the revision:\n%s", serve.Instructions)
 	}
 	_, err := x.delegate.AnswerErr(t, x.child, "read", "judge", map[string]any{"findings": []any{}}, "")
-	if err == nil || !strings.Contains(err.Error(), "page 1 of 2 is the last served") {
+	if err == nil || !strings.Contains(err.Error(), "page 1 of ") {
 		t.Fatalf("findings before every revision page was served should be refused, got %v", err)
 	}
 	x.delegate.Refresh(t)
 	serve = x.delegate.Answer(t, x.child, "read", "more", nil, "")
 	if !strings.Contains(serve.Instructions, "ID: "+read.ID) {
 		t.Fatalf("page 2 should serve the entry read since:\n%s", serve.Instructions)
+	}
+	for !strings.Contains(serve.Instructions, "Every page is served.") {
+		serve = x.delegate.Answer(t, x.child, "read", "more", nil, "")
 	}
 	proctest.RequireStep(t, x.delegate.Answer(t, x.child, "read", "judge", map[string]any{"findings": []any{}}, ""), "waitAnswers")
 	proctest.RequireStep(t, x.pickUpFindings(t), "verifySummary")

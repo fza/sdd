@@ -168,10 +168,38 @@ func TestDeepReadingPages(t *testing.T) {
 			t.Fatalf("a page should stay within %d characters, got %d", model.DeepPageChars, len(page.Text))
 		}
 	}
-	huge := strings.Repeat("y", model.DeepPageChars+5)
-	pages = model.DeepReadingPages("draft", nil, []model.DeepReadingBlock{{ID: "h", Text: huge}})
-	if len(pages) != 2 || pages[1].Text != huge {
-		t.Fatal("a block larger than a page should have a page of its own, never cut")
+}
+
+// An entry larger than a page runs on across pages of its own, each within
+// the page bound, and its pages joined without their openings are the entry
+// again; the last of them names it as served in full.
+func TestDeepReadingPagesSplitAnOversizedEntry(t *testing.T) {
+	huge := strings.Repeat(strings.Repeat("y", 99)+"\n", model.DeepPageChars/50)
+	pages := model.DeepReadingPages("draft", []model.DeepReadingBlock{{ID: "h", Text: huge}}, []model.DeepReadingBlock{{ID: "b", Text: "brief"}})
+	if len(pages) < 4 || pages[0].Text != "draft" || pages[len(pages)-1].Text != "brief" {
+		t.Fatalf("the entry should run on across pages of its own between the lead and the briefs, got %d pages", len(pages))
+	}
+	var joined strings.Builder
+	for i, page := range pages[1 : len(pages)-1] {
+		if len(page.Text) > model.DeepPageChars {
+			t.Fatalf("page %d should stay within the page bound, got %d characters", i+2, len(page.Text))
+		}
+		body := page.Text
+		if i > 0 {
+			var ok bool
+			body, ok = strings.CutPrefix(page.Text, "(h, continued)\n\n")
+			if !ok {
+				t.Fatalf("page %d should open naming the entry it continues:\n%.40s", i+2, page.Text)
+			}
+		}
+		joined.WriteString(body)
+		last := i == len(pages)-3
+		if slices.Contains(page.FullIDs, "h") != last {
+			t.Fatalf("only the entry's last page should name it as served in full, page %d names %v", i+2, page.FullIDs)
+		}
+	}
+	if joined.String() != huge {
+		t.Fatal("the pages joined should be the entry again, nothing cut")
 	}
 }
 

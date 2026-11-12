@@ -415,13 +415,17 @@ type DeepReadingPage struct {
 // opens with lead (the draft and what pre-flight raised) and the blocks of
 // first (the declared targets and the entries read in full), later pages hold
 // rest (the briefs) in order. A page holds whole blocks of at most
-// DeepPageChars; a block larger than a page has a page of its own, never cut.
-// The blocks of first are served in full, those of rest as briefs.
+// DeepPageChars; a block larger than a page runs on across pages of its own,
+// never cut, and its last page names it. The blocks of first are served in
+// full, those of rest as briefs.
 func DeepReadingPages(lead string, first, rest []DeepReadingBlock) []DeepReadingPage {
 	pages := []DeepReadingPage{{Text: lead}}
 	add := func(block DeepReadingBlock, full, newPage bool) {
 		current := &pages[len(pages)-1]
-		if newPage || (current.Text != "" && len(current.Text)+2+len(block.Text) > DeepPageChars) {
+		if len(block.Text) > DeepPageChars {
+			pages = append(pages, DeepContinuedPages("", "("+block.ID+", continued)\n\n", block.Text)...)
+			current = &pages[len(pages)-1]
+		} else if newPage || (current.Text != "" && len(current.Text)+2+len(block.Text) > DeepPageChars) {
 			pages = append(pages, DeepReadingPage{Text: block.Text})
 			current = &pages[len(pages)-1]
 		} else {
