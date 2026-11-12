@@ -3,6 +3,8 @@ package factory_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,5 +83,45 @@ func TestClaudeRunsWithoutTools(t *testing.T) {
 		if !strings.Contains(string(args), want) {
 			t.Errorf("claude -p should run in safe mode with no built-in and no MCP tools, got args %q", args)
 		}
+	}
+}
+
+func TestGollmTimeoutNamesTheSetting(t *testing.T) {
+	done := make(chan struct{})
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		select {
+		case <-r.Context().Done():
+		case <-done:
+		}
+	}))
+	t.Cleanup(stalled.Close)
+	t.Cleanup(func() { close(done) })
+	once := model.RetryConfig{MaxAttempts: 1}
+	for _, tc := range []struct {
+		provider string
+		cfg      model.LLMConfig
+	}{
+		{"anthropic", model.LLMConfig{Provider: "anthropic", Model: "claude-sonnet-4-6", Endpoint: stalled.URL, APIKeys: map[string]string{"anthropic": "k"}, Retry: once}},
+		{"openai", model.LLMConfig{Provider: "openai", Model: "gpt-x", Endpoint: stalled.URL, APIKeys: map[string]string{"openai": "k"}, Retry: once}},
+		{"ollama", model.LLMConfig{Provider: "ollama", Model: "qwen3:8b", OllamaEndpoint: stalled.URL, Retry: once}},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			tc.cfg.Timeout = "200ms"
+			runner, err := factory.New(tc.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = runner.Run(context.Background(), llm.Request{UserPrompt: "review"})
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("a call outlasting its bound should fail as a deadline, got %v", err)
+			}
+			if !strings.Contains(err.Error(), "sdd config set llm.timeout") {
+				t.Errorf("the timeout should name the setting that raises it, got %v", err)
+			}
+		})
 	}
 }
