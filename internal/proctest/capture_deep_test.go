@@ -580,11 +580,17 @@ func TestCaptureDeep_SubagentLaunchStaysWithTheHarness(t *testing.T) {
 	}
 }
 
-func TestCaptureDeep_EditAfterTheVerdictRunsADeltaExchange(t *testing.T) {
+// A change after the verdict whose verifier ended goes to a fresh one, which
+// reads the changed passage as a delta.
+func TestCaptureDeep_AFreshVerifierOnceTheChildEndedReadsADelta(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-delta", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())
 	x.judge(t, []any{map[string]any{"verdict": "the gap names no subject", "axis": "inconsistent", "severity": "low", "edits": []any{deepEdit("observes something.", "observes a subject.")}}})
 	x.pickUp(t)
+	if _, err := world.App.AbandonWorkflowSession(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: x.dispatch.Session}, "the subagent stopped"); err != nil {
+		t.Fatal(err)
+	}
+	session.Refresh(t)
 	session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
 	serve := session.Answer(t, x.instance, "deepProposal", "accept", map[string]any{"body": "A tactical gap: the fixture observes a subject."}, "")
 	proctest.RequireStep(t, serve, "playback")
@@ -596,9 +602,6 @@ func TestCaptureDeep_EditAfterTheVerdictRunsADeltaExchange(t *testing.T) {
 	_, resume := world.Resume(t, again.dispatch.Session, "verifier")
 	if page := resume.Open[0].Instructions; !strings.Contains(page, "## Changed since the last verdict") || !strings.Contains(page, "observes a subject twice.") {
 		t.Fatalf("an edit after the verdict should get a delta reading of the changed passage:\n%s", page)
-	}
-	if _, _, err := world.App.ResumeWorkflow(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: x.dispatch.Session}); err == nil || !strings.Contains(err.Error(), "replaced") {
-		t.Fatalf("the earlier exchange's delegate should end, replaced by the new one, got %v", err)
 	}
 }
 

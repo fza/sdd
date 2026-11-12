@@ -228,6 +228,13 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 				return draftText(ctx.Store) != base, nil
 			},
 		},
+		{
+			Doc: engine.FuncDoc{Name: "deepRevising", Doc: "The exchange prepareDeep opened goes to the live verifier as a revision.", Reads: []string{fieldDeepRevising}},
+			Fn: func(ctx *engine.Context) (bool, error) {
+				revising, _ := ctx.Store.Get(fieldDeepRevising)
+				return revising == true, nil
+			},
+		},
 	}
 	for _, predicate := range predicates {
 		err := registry.RegisterPredicate(predicate)
@@ -238,11 +245,15 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 	commands := []engine.Command{
 		{
 			Doc: engine.FuncDoc{
-				Name: "prepareDeep", Doc: "Opens a deep exchange over the current draft: the base document, the paged reading, the weighing rule's recommendation, and a fresh exchange.",
-				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict),
-				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase},
+				Name: "prepareDeep", Doc: "Opens a deep exchange over the current draft: the base document, the paged reading, the weighing rule's recommendation, and a fresh exchange; for the live verifier, the revision's reading.",
+				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict, fieldDeepRevisions, fieldDeepReadIDs),
+				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs},
 			},
 			Fn: w.prepareDeep,
+		},
+		{
+			Doc: engine.FuncDoc{Name: "sendDeepRevision", Doc: "Sends the live verifier the revision prepareDeep opened: the passages changed since the verdict.", Reads: []string{fieldDeepBase, fieldDeepVerdict, fieldDeepRevisions}, Writes: []string{fieldDeepRevision}},
+			Fn:  w.sendDeepRevision,
 		},
 		{
 			Doc: engine.FuncDoc{Name: "recordNoSubagent", Doc: "Records that the harness has no subagent tool, so the verify delegate falls back to a headless launch.", Writes: []string{fieldDeepNoSubagent}},
@@ -323,10 +334,14 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 }
 
 // prepareDeep opens the exchange: the base document every edit is made
-// over, the reading paged for the verifier (V-D8), and the weighing rule's
-// recommendation.
+// over, the reading paged for the verifier (V-D8), the weighing rule's
+// recommendation, and for a live verifier the revision's reading.
 func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 	policy, runtime, err := w.deepPolicy(ctx.Instance)
+	if err != nil {
+		return err
+	}
+	revising, err := w.deepRevisable(ctx)
 	if err != nil {
 		return err
 	}
@@ -335,14 +350,24 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 		fieldDeepBase: base, fieldDeepHistory: []model.DeepResponse{}, fieldDeepRounds: 0,
 		fieldDeepProposal: nil, fieldDeepHunks: nil, fieldDeepOpen: nil, fieldDeepListed: nil, fieldDeepProblems: nil, fieldDeepNoSubagent: nil,
 		fieldDeepForkBase: verifyForks(w.session, ctx.Instance),
+		fieldDeepRevising: revising, fieldDeepRevisions: 0, fieldDeepRevisionPages: nil, fieldDeepRevisionPageFull: nil,
 	}
-	pages := w.deepPages(ctx, base)
-	texts := make([]string, len(pages))
-	full := make([][]string, len(pages))
-	for i, page := range pages {
-		texts[i], full[i] = page.Text, page.FullIDs
+	pages, held := w.deepPages(ctx, base)
+	writes[fieldDeepPages], writes[fieldDeepPageFull] = pageTexts(pages)
+	writes[fieldDeepReadIDs] = held
+	if revising {
+		var previous deepHeld
+		if value, ok := ctx.Store.Get(fieldDeepReadIDs); ok && value != nil {
+			err := decodeStoreValue(value, &previous)
+			if err != nil {
+				return fmt.Errorf("prepareDeep: reading %s: %w", fieldDeepReadIDs, err)
+			}
+		}
+		taken, _ := ctx.Store.Get(fieldDeepRevisions)
+		number := deepRoundCount(taken) + 1
+		writes[fieldDeepRevisions] = number
+		writes[fieldDeepRevisionPages], writes[fieldDeepRevisionPageFull] = pageTexts(w.deepRevisionPages(ctx, base, number, previous))
 	}
-	writes[fieldDeepPages], writes[fieldDeepPageFull] = texts, full
 	writes[fieldDeepWeighing] = nil
 	if policy.Skip == model.VerifierSkipWeighed {
 		writes[fieldDeepWeighing] = weighDeep(ctx.Store, runtime.options.Checkout)
@@ -386,24 +411,13 @@ func weighDeep(store *engine.Store, checkout fs.FS) string {
 	return fmt.Sprintf("Recommended: %s, because %s.", choice, strings.Join(weighing.Reasons, "; "))
 }
 
-// deepPages renders the verifier's reading: page 1 the draft document, what
-// pre-flight raised, the changed passages since the last verdict, the
-// declared targets and the entries read in full; later pages the briefs, in
-// the order the reading listed them, each set-aside with its code.
-func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) []model.DeepReadingPage {
+// deepPages renders the verifier's whole reading, led by the draft document,
+// what pre-flight raised and the changed passages since the last verdict,
+// and names the entries it serves.
+func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) ([]model.DeepReadingPage, deepHeld) {
 	var lead strings.Builder
 	fmt.Fprintf(&lead, "## Draft\n\n```\n%s\n```\n", base)
-	var raised []string
-	for _, finding := range workflowStoreDocuments(ctx.Store, "findings") {
-		raised = append(raised, fmt.Sprintf("- [%v] %v: %v", finding["severity"], finding["category"], finding["observation"]))
-	}
-	if len(raised) > 0 {
-		lead.WriteString("\n## Already raised by pre-flight\n\nThese are raised already; do not raise them again.")
-		if override, _ := ctx.Store.Get("preflightOverride"); override != nil {
-			lead.WriteString(" The user overrode the high ones: they are settled.")
-		}
-		lead.WriteString("\n\n" + strings.Join(raised, "\n") + "\n")
-	}
+	lead.WriteString(preflightRaised(ctx.Store))
 	if previous, ok := readDeepVerdict(ctx.Store); ok {
 		if changed := textdiff.ChangedPassages(previous.Document, base); len(changed) > 0 {
 			lead.WriteString("\n## Changed since the last verdict\n\nAn earlier exchange verified the rest of the draft: judge these passages, the rest as context only.\n\n")
@@ -412,10 +426,54 @@ func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) []model.De
 			}
 		}
 	}
+	pages, held := w.deepReading(ctx, lead.String(), deepHeld{})
+	return withPreflightRubric(pages, ctx.Store), held
+}
+
+// deepHeld names the entries a verifier's reading served in full and those it
+// listed by their brief.
+type deepHeld struct {
+	Full   []string `json:"full,omitempty"`
+	Listed []string `json:"listed,omitempty"`
+}
+
+// preflightRaised renders what pre-flight raised, for the verifier to leave
+// alone.
+func preflightRaised(store *engine.Store) string {
+	var raised []string
+	for _, finding := range workflowStoreDocuments(store, "findings") {
+		raised = append(raised, fmt.Sprintf("- [%v] %v: %v", finding["severity"], finding["category"], finding["observation"]))
+	}
+	if len(raised) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n## Already raised by pre-flight\n\nThese are raised already; do not raise them again.")
+	if override, _ := store.Get("preflightOverride"); override != nil {
+		b.WriteString(" The user overrode the high ones: they are settled.")
+	}
+	b.WriteString("\n\n" + strings.Join(raised, "\n") + "\n")
+	return b.String()
+}
+
+// deepReading pages lead with the declared targets and the entries read in
+// full, then the briefs, in the order the reading listed them, each set-aside
+// with its code; it leaves out what skip holds already, and names what it
+// serves.
+func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, skip deepHeld) ([]model.DeepReadingPage, deepHeld) {
 	graph := ctx.Graph
 	if graph == nil {
-		return []model.DeepReadingPage{{Text: lead.String()}}
+		return []model.DeepReadingPage{{Text: lead}}, deepHeld{}
 	}
+	heldFull := map[string]bool{}
+	for _, id := range skip.Full {
+		heldFull[id] = true
+	}
+	heldAny := maps.Clone(heldFull)
+	for _, id := range skip.Listed {
+		heldAny[id] = true
+	}
+	var served deepHeld
 	codes := map[string]string{}
 	for _, verdict := range storeVerdicts(ctx.Store) {
 		for _, id := range verdict.IDs {
@@ -430,6 +488,14 @@ func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) []model.De
 			return model.DeepReadingBlock{}, false
 		}
 		seen[id] = true
+		if (full && heldFull[id]) || (!full && heldAny[id]) {
+			return model.DeepReadingBlock{}, false
+		}
+		if full {
+			served.Full = append(served.Full, id)
+		} else {
+			served.Listed = append(served.Listed, id)
+		}
 		if _, aside := codes[id]; aside {
 			role = model.LightRoleSetAside
 		}
@@ -465,7 +531,16 @@ func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) []model.De
 			rest = append(rest, served)
 		}
 	}
-	return withPreflightRubric(model.DeepReadingPages(lead.String(), first, rest), ctx.Store)
+	return model.DeepReadingPages(lead, first, rest), served
+}
+
+func pageTexts(pages []model.DeepReadingPage) ([]string, [][]string) {
+	texts := make([]string, len(pages))
+	full := make([][]string, len(pages))
+	for i, page := range pages {
+		texts[i], full[i] = page.Text, page.FullIDs
+	}
+	return texts, full
 }
 
 // withPreflightRubric serves the rubric pre-flight's model would have judged
@@ -759,6 +834,12 @@ func (w *WorkflowSession) registerVerifyTask(registry *engine.Registry) error {
 				return spent == true, nil
 			},
 		},
+		{
+			Doc: engine.FuncDoc{Name: "verifyRevised", Doc: "The capture sent a revision of the draft."},
+			Fn: func(ctx *engine.Context) (bool, error) {
+				return slices.Contains(ctx.Arrived, "revision"), nil
+			},
+		},
 	}
 	for _, predicate := range predicates {
 		err := registry.RegisterPredicate(predicate)
@@ -768,7 +849,11 @@ func (w *WorkflowSession) registerVerifyTask(registry *engine.Registry) error {
 	}
 	commands := []engine.Command{
 		{
-			Doc: engine.FuncDoc{Name: "loadVerifyInput", Doc: "Loads the draft document and the paged reading from the capture this delegate works for, and serves page 1.", Writes: []string{fieldVerifyBase, fieldVerifyPages, fieldVerifyPageFull, fieldVerifyPageAt, fieldVerifyPage, fieldVerifyPageNote}},
+			Doc: engine.FuncDoc{Name: "loadVerifyRevision", Doc: "Loads the revised draft and the revision's reading from the capture this delegate works for, serves its page 1, and opens a fresh exchange over the revised draft.", Writes: []string{fieldVerifyBase, fieldVerifyPages, fieldVerifyPageFull, fieldVerifyPageAt, fieldVerifyPage, fieldVerifyPageNote, fieldVerifyRepair, fieldVerifyResponded}},
+			Fn:  w.loadVerifyRevision,
+		},
+		{
+			Doc: engine.FuncDoc{Name: "loadVerifyInput", Doc: "Loads the draft document and the paged reading from the capture this delegate works for, and serves page 1: on start, and for a verifier that does not hold the reading.", Writes: []string{fieldVerifyBase, fieldVerifyPages, fieldVerifyPageFull, fieldVerifyPageAt, fieldVerifyPage, fieldVerifyPageNote}},
 			Fn: func(ctx *engine.Context) error {
 				parent, err := w.dispatchingStore()
 				if err != nil {

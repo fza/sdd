@@ -22,6 +22,10 @@ import (
 // points go to the user.
 const DeepRounds = 3
 
+// DeepRevisions is how many revisions of a draft one deep verifier judges
+// before a fresh one starts; each opens DeepRounds deliveries of its own.
+const DeepRevisions = 3
+
 // DeepPageChars bounds one served page of the deep verifier's reading (V-D8).
 const DeepPageChars = 50000
 
