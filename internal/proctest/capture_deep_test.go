@@ -401,6 +401,35 @@ func TestCaptureDeep_TheVerifierJudgesInThePreflightModelsPlace(t *testing.T) {
 	}
 }
 
+// The rules pre-flight's model would have applied run past one page; they
+// reach the verifier whole across pages, never cut at the page bound
+// (20260416-141340-d-prc-8vh).
+func TestCaptureDeep_ThePreflightRulesReachTheVerifierWhole(t *testing.T) {
+	contract := &model.Entry{
+		ID: "20260602-120000-d-prc-cnt", Type: model.TypeDecision, Kind: model.KindContract, Layer: model.LayerProcess,
+		Summary: "A contract whose text runs past one page.",
+		Content: strings.Repeat("Every capture states the rule this paragraph of the contract carries.\n\n", 1500),
+	}
+	world, session := newDeepWorld(t, "deep-rules-whole", sdd.VerifierPolicy{}, proctest.WithEntries(contract))
+	x := startDeep(t, world, session, captureDraft())
+	x.delegate.Refresh(t)
+	var rules strings.Builder
+	for range 10 {
+		serve := x.delegate.Answer(t, x.child, "read", "more", nil, "")
+		if strings.Contains(serve.Instructions, "## Pre-flight's rules") {
+			rules.WriteString(serve.Instructions)
+		}
+		if strings.Contains(serve.Instructions, "Every page is served.") {
+			break
+		}
+	}
+	for _, want := range []string{"you judge in its place", "Severity on these axes:"} {
+		if !strings.Contains(rules.String(), want) {
+			t.Errorf("the rules pages should carry the rules whole, missing %q", want)
+		}
+	}
+}
+
 func TestCaptureDeep_ASkippedExchangeFallsBackToThePreflightModel(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-skip-fallback", sdd.VerifierPolicy{Skip: "weighed"})
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // The deep verifier exchange (20261109-004729-d-cpt-xs5, V-D1, V-D2, V-D25):
@@ -435,6 +436,46 @@ func DeepReadingPages(lead string, first, rest []DeepReadingBlock) []DeepReading
 		add(block, false, i == 0)
 	}
 	return pages
+}
+
+// DeepContinuedPages pages text that may run past one page of the reading:
+// the first page opens with intro, each later page with continued, and no
+// page exceeds DeepPageChars. The text breaks at a paragraph where it can,
+// else at a line, else between runes, so the pages joined without their
+// openings are the text again.
+func DeepContinuedPages(intro, continued, text string) []DeepReadingPage {
+	room := DeepPageChars - max(len(intro), len(continued))
+	var pages []DeepReadingPage
+	opening := intro
+	for {
+		chunk := text
+		if len(chunk) > room {
+			chunk = text[:deepBreak(text, room)]
+		}
+		pages = append(pages, DeepReadingPage{Text: opening + chunk})
+		text = text[len(chunk):]
+		if text == "" {
+			return pages
+		}
+		opening = continued
+	}
+}
+
+// deepBreak is where text longer than room breaks: after the last paragraph
+// or line break within room, else at the last rune start.
+func deepBreak(text string, room int) int {
+	head := text[:room]
+	if i := strings.LastIndex(head, "\n\n"); i > 0 {
+		return i + 2
+	}
+	if i := strings.LastIndexByte(head, '\n'); i > 0 {
+		return i + 1
+	}
+	cut := room
+	for cut > 1 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return cut
 }
 
 // The causes of a deep verifier skip, both the user's alone.

@@ -469,14 +469,15 @@ func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) []model.De
 }
 
 // withPreflightRubric serves the rubric pre-flight's model would have judged
-// the draft by as page 2, when the verifier judges in its place.
+// the draft by from page 2, when the verifier judges in its place.
 func withPreflightRubric(pages []model.DeepReadingPage, store *engine.Store) []model.DeepReadingPage {
 	rubric, _ := workflowStoreString(store, fieldPreflightRubric)
 	if rubric == "" {
 		return pages
 	}
-	page := model.DeepReadingPage{Text: "## Pre-flight's rules\n\nPre-flight's model did not judge this draft: you judge in its place. Apply the rules below as part of your verdict and raise what they would flag as findings in your own report. Their answer format and the reading they mention do not apply: your reading is the rest of these pages.\n\n" + rubric}
-	return append(pages[:1], append([]model.DeepReadingPage{page}, pages[1:]...)...)
+	rules := model.DeepContinuedPages("## Pre-flight's rules\n\nPre-flight's model did not judge this draft: you judge in its place. Apply the rules below as part of your verdict and raise what they would flag as findings in your own report. Their answer format and the reading they mention do not apply: your reading is the rest of these pages.\n\n",
+		"## Pre-flight's rules, continued\n\n", rubric)
+	return slices.Concat(pages[:1], rules, pages[1:])
 }
 
 func (w *WorkflowSession) readDeepFindings(ctx *engine.Context) error {

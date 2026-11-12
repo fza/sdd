@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -171,6 +172,52 @@ func TestDeepReadingPages(t *testing.T) {
 	pages = model.DeepReadingPages("draft", nil, []model.DeepReadingBlock{{ID: "h", Text: huge}})
 	if len(pages) != 2 || pages[1].Text != huge {
 		t.Fatal("a block larger than a page should have a page of its own, never cut")
+	}
+}
+
+func TestDeepContinuedPages(t *testing.T) {
+	line := strings.Repeat("l", 99) + "\n"
+	paragraph := strings.Repeat(line, 10) + "\n"
+	runes := "x" + strings.Repeat("ü", model.DeepPageChars)
+	for _, tc := range []struct {
+		name, text, breaks string
+		pages              int
+	}{
+		{"short", "the rules", "", 1},
+		{"paragraphs", strings.Repeat(paragraph, 120), "\n\n", 3},
+		{"lines", strings.Repeat(line, 1200), "\n", 3},
+		{"one long line", runes, "", 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pages := model.DeepContinuedPages("# Rules\n\n", "# Rules, continued\n\n", tc.text)
+			if len(pages) != tc.pages {
+				t.Fatalf("the text should fill as many pages as it needs, got %d", len(pages))
+			}
+			var joined strings.Builder
+			for i, page := range pages {
+				if len(page.Text) > model.DeepPageChars {
+					t.Fatalf("page %d should stay within the page bound, got %d characters", i+1, len(page.Text))
+				}
+				opening := "# Rules, continued\n\n"
+				if i == 0 {
+					opening = "# Rules\n\n"
+				}
+				body, ok := strings.CutPrefix(page.Text, opening)
+				if !ok {
+					t.Fatalf("page %d should open with its heading:\n%.40s", i+1, page.Text)
+				}
+				if i < len(pages)-1 && !strings.HasSuffix(body, tc.breaks) {
+					t.Fatalf("page %d should break at the widest break the text offers", i+1)
+				}
+				if !utf8.ValidString(body) {
+					t.Fatalf("page %d should break between runes", i+1)
+				}
+				joined.WriteString(body)
+			}
+			if joined.String() != tc.text {
+				t.Fatal("the pages joined should be the text again, nothing cut")
+			}
+		})
 	}
 }
 
