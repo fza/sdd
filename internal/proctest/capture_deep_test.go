@@ -899,3 +899,15 @@ func TestCaptureDeep_SubagentDispatchTakesTheClientsAgentBlock(t *testing.T) {
 		})
 	}
 }
+
+// The dispatch says what pre-flight did: in a deep capture its model never
+// judged the draft, and the verifier judges in its place.
+func TestCaptureDeep_TheDispatchSaysPreflightsModelDidNotJudge(t *testing.T) {
+	_, session := newDeepWorld(t, "deep-dispatch-wording", sdd.VerifierPolicy{})
+	_, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	text := test.Untagged(serve.Instructions)
+	if !strings.Contains(text, "its model did not judge this draft: the deep verifier judges it now in the model's place") || strings.Contains(text, "Pre-flight left no high finding open") {
+		t.Fatalf("the dispatch should say pre-flight's model did not judge the draft:\n%s", text)
+	}
+}
