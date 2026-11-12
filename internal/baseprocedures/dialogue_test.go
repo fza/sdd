@@ -13,14 +13,14 @@ import (
 // the ones they keep for the user: the pre-flight override
 // (20261029-150854-d-tac-b2f), the deep verifier's skips and open points
 // (20261109-004729-d-cpt-xs5), and the choice after a pre-flight model
-// answer cut at the token cap.
+// answer cut at the token cap or past its time limit.
 var (
 	wantDelegable = []string{
 		"bootstrap/propose", "bootstrap/refresh", "capture/playback", "catch-up/junction",
 		"engage/moves", "evaluate/junction", "groom/walk", "implementation/closeout",
 		"implementation/setup", "interview/junction", "user-dialogue/junction",
 	}
-	wantReserved = []string{"capture/deepFailed", "capture/deepUser", "capture/deepWeigh", "capture/preflightUnjudged", "capture/reviseOrOverride"}
+	wantReserved = []string{"capture/deepFailed", "capture/deepUser", "capture/deepWeigh", "capture/preflightTimedOut", "capture/preflightUnjudged", "capture/reviseOrOverride"}
 )
 
 func TestBaseProceduresHandOverEveryChoiceButTheOverride(t *testing.T) {

@@ -324,6 +324,20 @@ func TestCapture_ACutAnswerWithAHighFindingOpenRefusesTheSkip(t *testing.T) {
 	}
 }
 
+func TestCapture_ATimeoutWithAHighFindingOpenRefusesTheSkip(t *testing.T) {
+	session, instance := draftReclassifyingCapture(t, "identity-actor-kind-timeout")
+	session.World.LLM.PreflightErr = preflightTimedOut()
+	serve := session.Answer(t, instance, "playback", "confirm", nil, "go")
+	proctest.RequireStep(t, serve, "preflightTimedOut")
+	if !strings.Contains(serve.Instructions, "contradicts") {
+		t.Fatalf("the timeout serve should list the open mechanical finding, got %q", serve.Instructions)
+	}
+	_, err := session.AnswerErr(t, instance, "preflightTimedOut", "skip", nil, "skip it")
+	if err == nil || !strings.Contains(err.Error(), "a high finding is open") {
+		t.Fatalf("a skip with a high finding open should be refused, got %v", err)
+	}
+}
+
 // TestCapture_ActorKindReclassificationHeldAtPreflight pins the chain
 // stability rule on the engine path: a supersede contradicting the sort its
 // chain declares is held before write, and the revise path can correct it.
