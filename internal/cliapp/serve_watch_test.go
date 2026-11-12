@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/networkteam/sdd/test"
 )
 
 // callTool calls a tool and returns its structured result as JSON, or the
@@ -31,7 +33,7 @@ func callToolResult(t *testing.T, client *mcp.ClientSession, name string, args m
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(encoded), ""
+	return test.Untagged(string(encoded)), ""
 }
 
 func openSession(t *testing.T, client *mcp.ClientSession) (string, string) {

@@ -557,6 +557,16 @@ func driveRound(t *testing.T, world *proctest.World, round *test.ScriptedRound) 
 	readAllPages(t, delegate, round.Launch.Instance)
 	delegate.Answer(t, round.Launch.Instance, "read", "judge", map[string]any{"findings": []any{}}, "")
 	round.Finish("cli-session", nil)
+	// The round records its end in the background; a test ending first would
+	// remove the session store under it.
+	test.Eventually(t, "recording the round's end", func() bool {
+		kept, err := world.App.DelegateLaunches(t.Context(), world.Identity, round.Launch.Session)
+		if err == nil && len(kept) >= round.Round.Number {
+			return true
+		}
+		_, _, err = world.App.ResumeWorkflow(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: round.Launch.Session, ClientName: "verifier"})
+		return err != nil && strings.Contains(err.Error(), "ended")
+	})
 }
 
 func TestCaptureDeep_NoSubagentFallsBackToAHeadlessLaunch(t *testing.T) {

@@ -3,13 +3,13 @@ package application_test
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/test"
 )
 
 const repeatTargetBody = "The target names the work an explore step serves in full."
@@ -47,11 +47,6 @@ func newRepeatWorkflow(t *testing.T, extra ...map[string]string) (*sdd.WorkflowS
 	}
 	return workflow, identity, id
 }
-
-var placedTag = regexp.MustCompile(`⟦[0-9a-z]{4}⟧ `)
-
-// untag reads served text without the tags placed in it.
-func untag(text string) string { return placedTag.ReplaceAllString(text, "") }
 
 // holdEntry serves the entry in full, records its anchor and opens a call
 // proving it, as an agent that kept the text would; it returns the tag.
@@ -98,7 +93,7 @@ func TestInjectedEntryChainsCutRepeatsOnlyWhenTurnedOn(t *testing.T) {
 				t.Fatal(err)
 			}
 			pointed := strings.Contains(serve.Instructions, heldPointer(id, tag))
-			if pointed != tc.pointer || strings.Contains(serve.Instructions, repeatTargetBody) == tc.pointer {
+			if pointed != tc.pointer || strings.Contains(test.Untagged(serve.Instructions), repeatTargetBody) == tc.pointer {
 				t.Fatalf("a held target should print as its pointer only with cuts on:\n%s", serve.Instructions)
 			}
 		})
@@ -119,7 +114,7 @@ func TestInjectedEntryChainsTagWhatTheyServe(t *testing.T) {
 		t.Fatal(err)
 	}
 	proofs := model.ReadAnchors(serve.Instructions)
-	if len(proofs) != 1 || !strings.Contains(untag(serve.Instructions), repeatTargetBody) {
+	if len(proofs) != 1 || !strings.Contains(test.Untagged(serve.Instructions), repeatTargetBody) {
 		t.Fatalf("the target should serve in full under one tag:\n%s", serve.Instructions)
 	}
 	for _, tc := range []struct {
@@ -202,7 +197,7 @@ func TestInjectedViewCutRepeatsOnlyWhenTurnedOn(t *testing.T) {
 			if tc.pointer && pointers != 2 || !tc.pointer && pointers != 0 {
 				t.Fatalf("both views should print the held target as its pointer only with cuts on:\n%s", instructions)
 			}
-			if strings.Contains(instructions, repeatTargetBody) == tc.pointer {
+			if strings.Contains(test.Untagged(instructions), repeatTargetBody) == tc.pointer {
 				t.Fatalf("the bodies view should serve the held target's body only with cuts off:\n%s", instructions)
 			}
 		})
@@ -214,7 +209,7 @@ func TestInjectedViewCutRepeatsOnlyWhenTurnedOn(t *testing.T) {
 func TestInjectedViewTagsWhatItServedInFull(t *testing.T) {
 	for _, cut := range []bool{true, false} {
 		workflow, id, _, instructions := startViewStep(t, cut, false)
-		if !strings.Contains(untag(instructions), repeatTargetBody) {
+		if !strings.Contains(test.Untagged(instructions), repeatTargetBody) {
 			t.Fatalf("the step should serve the target in full:\n%s", instructions)
 		}
 		if tagged := len(model.ReadAnchors(instructions)) == 1; tagged != cut {
@@ -294,7 +289,7 @@ func TestInjectedMixedViewHoldsOnlyWhenUncut(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(untag(serve.Instructions), repeatTargetBody) != tc.held {
+			if strings.Contains(test.Untagged(serve.Instructions), repeatTargetBody) != tc.held {
 				t.Fatalf("the step should serve the body whole only uncut:\n%s", serve.Instructions)
 			}
 			if _, held := workflow.HoldsEntry(id); held != tc.held {
