@@ -645,7 +645,10 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		sv.Sizes = []PartSize{{Part: "operation", Bytes: len(sv.Instructions)}}
 		return sv, nil
 	}
-	sv.ReportSchema = inst.Spec.ReportSchemaForStep(step)
+	if len(step.Await) == 0 || len(step.Collect) > 0 {
+		// A step that only awaits a delivery takes no report.
+		sv.ReportSchema = inst.Spec.ReportSchemaForStep(step, inst.Store)
+	}
 	sv.Missing = s.missingFields(inst, step)
 
 	unitName := step.ID
@@ -747,7 +750,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		// At a chooser the report is a chooser-answer envelope, not a flat
 		// state write — serve the schema that matches, so collected fields nest
 		// under `fields` and the chooser is named where the answer needs it.
-		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.DialogueMode)
+		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.DialogueMode, inst.Store)
 		switch {
 		case step.Chooser == ChooserUser && step.Delegable && s.DialogueMode == model.DialogueAutonomous:
 			sv.Goal = "decide the choice yourself and answer with a one-line reason"

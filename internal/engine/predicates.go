@@ -118,6 +118,20 @@ func loadDraftSpec(ctx *Context, r *Registry) error {
 	return err
 }
 
+// draftIsProcedure reports whether the draft in store is a procedure: its
+// entryKind, else its kind start input. A nil store holds no draft.
+func draftIsProcedure(store *Store) bool {
+	if store == nil {
+		return false
+	}
+	for _, field := range []string{"entryKind", "kind"} {
+		if kind, _ := store.Get(field); kind != nil && kind != "" {
+			return kind == string(model.KindProcedure)
+		}
+	}
+	return false
+}
+
 // draftStoreString reads a store field as a string, "" when unset or not a
 // string.
 func draftStoreString(ctx *Context, field string) string {

@@ -1156,6 +1156,23 @@ func (s *Spec) DeliveryOnly(name string) bool {
 	return false
 }
 
+// singleOptionField reports whether one chooser option alone collects the
+// field and no step does.
+func (s *Spec) singleOptionField(name string) bool {
+	options := 0
+	for _, step := range s.Steps {
+		if slices.ContainsFunc(step.Collect, func(cf CollectField) bool { return cf.Name == name }) {
+			return false
+		}
+		for _, o := range step.Options {
+			if slices.ContainsFunc(o.Collect, func(cf CollectField) bool { return cf.Name == name }) {
+				options++
+			}
+		}
+	}
+	return options == 1
+}
+
 func (s *Spec) hasInterimDelivery() bool {
 	for _, step := range s.Steps {
 		if len(step.Deliver) == 0 {
