@@ -53,8 +53,8 @@ func TestRun_ClaudeRunsHeadlessWithTheReadOnlyToolSet(t *testing.T) {
 
 	launched := launch(t, launchSettings, firstRound())
 
-	if launched != (delegatelaunch.Launched{Session: "claude-7", Runner: "claude"}) {
-		t.Fatalf("the round should report claude's session, got %+v", launched)
+	if launched != (delegatelaunch.Launched{Session: "claude-7", Runner: "claude", Message: "done"}) {
+		t.Fatalf("the round should report claude's session and last message, got %+v", launched)
 	}
 	call := test.LastAgentCall(t, agents, "claude")
 	if call.Dir != launchSettings.WorkDir {
@@ -133,10 +133,11 @@ func TestRun_CodexRunsInAReadOnlySandbox(t *testing.T) {
 		"-c", "project_doc_max_bytes=0",
 		"-c", `mcp_servers.sdd.command="/opt/sdd/bin/sdd"`,
 		"-c", `mcp_servers.sdd.args=["serve"]`,
+		"-c", `mcp_servers.sdd.default_tools_approval_mode="approve"`,
 		roundPrompt,
 	}
 	if !slices.Equal(call.Args, want) {
-		t.Fatalf("codex should run read-only with sdd as an MCP server and the prompt last, got %q", call.Args)
+		t.Fatalf("codex should run read-only with sdd as an MCP server whose tools need no approval and the prompt last, got %q", call.Args)
 	}
 }
 
@@ -154,6 +155,24 @@ func TestRun_CodexResumesThePreviousRound(t *testing.T) {
 	args := test.LastAgentCall(t, agents, "codex").Args
 	if !slices.Equal(args[len(args)-3:], []string{"resume", "codex-3", roundPrompt}) {
 		t.Fatalf("a later round should resume the session before the prompt, got %q", args)
+	}
+}
+
+func TestRun_CodexReportsItsLastMessage(t *testing.T) {
+	agents := test.FakeAgents(t, "codex")
+	events := strings.Join([]string{
+		`{"type":"thread.started","thread_id":"codex-3"}`,
+		`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Reading the draft."}}`,
+		`{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"sdd","tool":"next"}}`,
+		`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"The sdd tools need approval, so I stop."}}`,
+		`{"type":"turn.completed"}`,
+	}, "\n")
+	test.AgentAnswers(t, agents, "codex", events, "", 0)
+
+	launched := launch(t, settings(t, "codex"), firstRound())
+
+	if launched.Message != "The sdd tools need approval, so I stop." {
+		t.Fatalf("the round should report codex's last agent message, got %q", launched.Message)
 	}
 }
 

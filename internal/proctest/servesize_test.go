@@ -9,6 +9,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/baseprocedures"
 	"github.com/networkteam/sdd/internal/engine"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
@@ -32,6 +33,15 @@ type serveRow struct {
 type recorder struct {
 	rows  []serveRow
 	steps map[string]map[string]bool
+	// lanes is what each instruction lane and framing block costs served.
+	lanes map[string]int
+}
+
+func (r *recorder) lane(name, text string) {
+	if r.lanes == nil {
+		r.lanes = map[string]int{}
+	}
+	r.lanes[name] = max(r.lanes[name], model.ServedChars(text))
 }
 
 func (r *recorder) add(proc, step string, total int, largest string) {
@@ -67,6 +77,9 @@ func (r *recorder) serve(serve *sdd.WorkflowServe) {
 		name = "instructions"
 	}
 	r.add(serve.Procedure, serve.Step, total, name)
+	for _, lane := range serve.InstructionLanes {
+		r.lane(serve.Procedure+"/"+serve.Step+" lane "+lane.Name, lane.Text)
+	}
 	if serve.Base != nil {
 		r.serve(serve.Base)
 	}
@@ -76,6 +89,7 @@ func (r *recorder) framing(blocks []string) {
 	total := 0
 	largest, largestLen := "", 0
 	for i, b := range blocks {
+		r.lane(fmt.Sprintf("user-dialogue framing block %d", i), b)
 		total += len(b)
 		if len(b) > largestLen {
 			largest, largestLen = fmt.Sprintf("block[%d] (%dB)", i, len(b)), len(b)
@@ -207,6 +221,40 @@ func TestServeSizesShippedProcedures(t *testing.T) {
 	rec.report(t)
 	rec.logCoverage(t)
 	rec.assertBudget(t)
+}
+
+// Every instruction lane of the shipped procedures and every framing block
+// of the shell fits one serve on its own (20261112-075604-d-tac-t4r), so a
+// lane grown past the bound fails here rather than serving alone past it:
+// the lanes the walk renders on the realistic fixture, and the source of
+// every unit's lanes, which covers the steps no walk reaches.
+func TestEveryShippedLaneFitsOneServe(t *testing.T) {
+	world, hub := proctest.NewRealisticWorld(t, proctest.DefaultShape())
+	rec := &recorder{}
+	walkAll(t, world, rec, hub)
+	if len(rec.lanes) == 0 {
+		t.Fatal("the walk should measure lanes")
+	}
+	entries, err := baseprocedures.Entries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		spec, err := engine.ParseSpec(entry)
+		if err != nil {
+			t.Fatalf("parsing shipped spec %s: %v", entry.ID, err)
+		}
+		for unit, lanes := range spec.Units {
+			for _, lane := range lanes.Lanes {
+				rec.lane(spec.Canonical+" unit "+unit+" lane "+lane.Name+" source", lane.Text)
+			}
+		}
+	}
+	for name, chars := range rec.lanes {
+		if chars > model.MaxServeChars {
+			t.Errorf("%s serves %d characters, past the %d one serve holds", name, chars, model.MaxServeChars)
+		}
+	}
 }
 
 // TestServeSizeCalibration measures against a real graph instead of the

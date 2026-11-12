@@ -181,6 +181,8 @@ def launch_overrides(repo, sdd):
         'mcp_servers.sdd.args=["serve"]',
         f"mcp_servers.sdd.cwd={json.dumps(str(repo))}",
         'mcp_servers.sdd.default_tools_approval_mode="approve"',
+        # Codex passes stdio servers only a fixed set of variables; a codex round sdd launches needs the run's home.
+        'mcp_servers.sdd.env_vars=["CODEX_HOME"]',
     ]
 
 

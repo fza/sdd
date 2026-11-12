@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/networkteam/sdd/test"
 )
 
 // The server opens sessions in the dialogue mode the person's config sets;
@@ -37,7 +39,7 @@ func TestServeOpensSessionsInTheConfiguredDialogueMode(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				opening = string(encoded)
+				opening = withWaitingLanes(t, client, test.Untagged(string(encoded)))
 			})
 			if got := strings.Contains(opening, "working on your own"); got != tc.wantAutonomous {
 				t.Errorf("only a person's own config should open the session autonomous, got autonomous=%v", got)

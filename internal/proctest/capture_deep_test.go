@@ -496,7 +496,7 @@ func TestCaptureDeep_ThePreflightRulesReachTheVerifierWhole(t *testing.T) {
 	x := startDeep(t, world, session, captureDraft())
 	x.delegate.Refresh(t)
 	var rules strings.Builder
-	for range 10 {
+	for range 40 {
 		serve := x.delegate.Answer(t, x.child, "read", "more", nil, "")
 		if strings.Contains(serve.Instructions, "## Pre-flight's rules") {
 			rules.WriteString(serve.Instructions)
@@ -557,6 +557,16 @@ func driveRound(t *testing.T, world *proctest.World, round *test.ScriptedRound) 
 	readAllPages(t, delegate, round.Launch.Instance)
 	delegate.Answer(t, round.Launch.Instance, "read", "judge", map[string]any{"findings": []any{}}, "")
 	round.Finish("cli-session", nil)
+	// The round records its end in the background; a test ending first would
+	// remove the session store under it.
+	test.Eventually(t, "recording the round's end", func() bool {
+		kept, err := world.App.DelegateLaunches(t.Context(), world.Identity, round.Launch.Session)
+		if err == nil && len(kept) >= round.Round.Number {
+			return true
+		}
+		_, _, err = world.App.ResumeWorkflow(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: round.Launch.Session, ClientName: "verifier"})
+		return err != nil && strings.Contains(err.Error(), "ended")
+	})
 }
 
 func TestCaptureDeep_NoSubagentFallsBackToAHeadlessLaunch(t *testing.T) {
@@ -569,8 +579,8 @@ func TestCaptureDeep_NoSubagentFallsBackToAHeadlessLaunch(t *testing.T) {
 	if len(launches) != 1 || launches[0].Runner != sdd.DelegateLaunchFallback || launches[0].Project != "proctest" {
 		t.Fatalf("a harness without a subagent tool should get the headless fallback, got %+v", launches)
 	}
-	if dispatch := forked.Dispatches[0]; dispatch.Runner != "claude" || !strings.Contains(dispatch.Instructions, "fell back to the headless claude runner") {
-		t.Fatalf("the serve should name the launch it fell back to, got %+v", dispatch)
+	if dispatch := forked.Dispatches[0]; dispatch.Runner != "claude" || !strings.Contains(dispatch.Instructions, "fell back to the headless claude runner") || dispatch.Session != "" || dispatch.Prompt != "" {
+		t.Fatalf("the serve should name the launch it fell back to and hand over no handle, got %+v", dispatch)
 	}
 	round := launcher.NextRound(t)
 	if strings.Contains(round.Round.Prompt, string(session.ID)) {
@@ -591,8 +601,12 @@ func TestCaptureDeep_ConfiguredHeadlessLaunchRunsThroughSdd(t *testing.T) {
 	if launches := launcher.Launches(); len(launches) != 1 || launches[0].Runner != "codex" {
 		t.Fatalf("a configured headless launch should go to sdd's launcher, got %+v", launches)
 	}
-	if dispatch := forked.Dispatches[0]; dispatch.Runner != "claude" || !strings.Contains(dispatch.Instructions, "sdd launched the delegate itself, so launch nothing") {
-		t.Fatalf("the serve should tell the harness to launch nothing, got %+v", dispatch)
+	dispatch := forked.Dispatches[0]
+	if dispatch.Runner != "claude" || !strings.Contains(dispatch.Instructions, "sdd launched the delegate itself, so launch nothing") || !strings.Contains(dispatch.Instructions, "works on its own while this move waits") {
+		t.Fatalf("the serve should tell the drafter the verifier works on its own, got %+v", dispatch)
+	}
+	if dispatch.Session != "" || dispatch.Instance != "" || dispatch.Prompt != "" || dispatch.ContinuePrompt != "" || dispatch.Agent != "" {
+		t.Fatalf("a verifier sdd launched hands the drafter neither its handles nor a prompt, got %+v", dispatch)
 	}
 	round := launcher.NextRound(t)
 	if round.Round.Number != 1 {
@@ -640,8 +654,10 @@ func TestCaptureDeep_FailedRoundEndsItsDelegateAndRetries(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-launch-failed", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
-	failed := session.Answer(t, instance, "deepDispatch", "delegate", nil, "").Dispatches[0].Session
-	launcher.NextRound(t).Finish("", errors.New("codex failed: exit status 1: not logged in"))
+	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
+	round := launcher.NextRound(t)
+	failed := round.Launch.Session
+	round.Finish("", errors.New("codex failed: exit status 1: not logged in"))
 	var err error
 	test.Eventually(t, "the failed round reaching the capture", func() bool {
 		workflow, refreshErr := world.App.RefreshWorkflow(t.Context(), world.Identity, session.ID)
@@ -716,6 +732,73 @@ func TestCaptureDeep_EveryContestedFindingGetsAResponse(t *testing.T) {
 	_, err := x.delegate.AnswerErr(t, x.child, "respond", "respond", map[string]any{"responses": []any{map[string]any{"target": "f2", "outcome": "conceded", "note": "tactical it is"}}}, "")
 	if err == nil || !strings.Contains(err.Error(), "f1 is contested and has no response") {
 		t.Fatalf("a contested finding left without a response should be refused, got %v", err)
+	}
+}
+
+// pollUntilMoved re-serves the capture at step until it has left it.
+func pollUntilMoved(t *testing.T, session *proctest.Session, instance, step string) *sdd.WorkflowServe {
+	t.Helper()
+	var serve *sdd.WorkflowServe
+	test.Eventually(t, "the capture leaving "+step, func() bool {
+		session.Refresh(t)
+		serve = session.Report(t, instance, nil)
+		return serve.Step != step
+	})
+	return serve
+}
+
+// A launched round that ends with nothing delivered is a failed round: the
+// waiting capture moves to its failure step, naming the round's last message.
+func TestCaptureDeep_ARoundEndingWithoutFindingsPutsTheFailureToTheUser(t *testing.T) {
+	launcher := headlessLauncher(t)
+	_, session := newDeepWorld(t, "deep-empty-round", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	instance, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
+	round := launcher.NextRound(t)
+	serve = session.Answer(t, instance, "deepLaunch", "started", nil, "")
+	proctest.RequireStep(t, serve, "deepWait")
+
+	round.FinishSaying("codex-3", "The sdd tools need approval, so I stop.")
+
+	serve = pollUntilMoved(t, session, instance, "deepWait")
+	proctest.RequireStep(t, serve, "deepFailed")
+	if !strings.Contains(serve.Instructions, "ended without the delegate delivering or concluding") || !strings.Contains(serve.Instructions, "The sdd tools need approval, so I stop.") {
+		t.Fatalf("the failure step should name why the round failed:\n%s", serve.Instructions)
+	}
+	serve = session.Answer(t, instance, "deepFailed", "retry", nil, "try again")
+	proctest.RequireStep(t, serve, "deepDispatch")
+}
+
+// The capture waiting for the verifier's findings serves one line per check:
+// what it waits for and when to check again.
+func TestCaptureDeep_TheWaitServesOneLine(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-wait-line", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+
+	serve := x.pickUp(t)
+
+	proctest.RequireStep(t, serve, "deepWait")
+	if !serve.Waiting || strings.Contains(serve.Instructions, "\n") || !strings.Contains(serve.Instructions, "deliver deepFindings") || !strings.Contains(serve.Instructions, "in 20 seconds") {
+		t.Fatalf("the wait should serve one line naming the findings and the interval, got %q", serve.Instructions)
+	}
+}
+
+// A verifier that stops while the capture waits for its findings leaves the
+// capture at its failure step, not waiting for a delivery nothing will make.
+func TestCaptureDeep_AVerifierStoppingWhileTheCaptureWaitsPutsTheFailureToTheUser(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-stopped", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	proctest.RequireStep(t, x.pickUp(t), "deepWait")
+	if _, err := world.App.AbandonWorkflowSession(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: x.dispatch.Session}, "the subagent stopped"); err != nil {
+		t.Fatal(err)
+	}
+
+	serve := pollUntilMoved(t, session, x.instance, "deepWait")
+
+	proctest.RequireStep(t, serve, "deepFailed")
+	if !strings.Contains(serve.Instructions, "It stopped before delivering: the delegate session was abandoned") {
+		t.Fatalf("the failure step should name why the verifier stopped:\n%s", serve.Instructions)
 	}
 }
 
@@ -812,6 +895,74 @@ func TestCaptureDeep_SubagentDispatchTakesTheClientsAgentBlock(t *testing.T) {
 			}
 			if tc.instruction != "" && !strings.Contains(x.dispatch.Instructions, tc.instruction) {
 				t.Fatalf("the instructions should name the model and effort to launch with:\n%s", x.dispatch.Instructions)
+			}
+		})
+	}
+}
+
+// The dispatch says what pre-flight did: in a deep capture its model never
+// judged the draft, and the verifier judges in its place.
+func TestCaptureDeep_TheDispatchSaysPreflightsModelDidNotJudge(t *testing.T) {
+	_, session := newDeepWorld(t, "deep-dispatch-wording", sdd.VerifierPolicy{})
+	_, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	text := test.Untagged(serve.Instructions)
+	if !strings.Contains(text, "its model did not judge this draft: the deep verifier judges it now in the model's place") || strings.Contains(text, "Pre-flight left no high finding open") {
+		t.Fatalf("the dispatch should say pre-flight's model did not judge the draft:\n%s", text)
+	}
+}
+
+// A step whose unit never renders pre-flight's rubric serves no notice that
+// the rubric was cut for size; the dispatch, which reads it, does.
+func TestCaptureDeep_ACutNoticeServesOnlyWhereTheValueRenders(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-cut-notice", sdd.VerifierPolicy{})
+	instance, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	const notice = "store:preflightRubric"
+	if !strings.Contains(serve.Instructions, notice) {
+		t.Fatalf("the dispatch reads the rubric and should name its cut:\n%s", serve.Instructions)
+	}
+	x := dispatchDeep(t, world, session, instance)
+	x.judge(t, []any{map[string]any{"verdict": "the layer is too low", "axis": "ref-fit", "severity": "low"}})
+	serve = x.pickUp(t)
+	proctest.RequireStep(t, serve, "deepAnswer")
+	if strings.Contains(serve.Instructions, notice) {
+		t.Fatalf("deepAnswer never renders the rubric and should name no cut of it:\n%s", serve.Instructions)
+	}
+}
+
+// A finding the verifier withdraws on a contest reaches the drafter with the
+// verifier's reason, whole past a store value's cap, to tell the user.
+func TestCaptureDeep_AWithdrawnFindingReachesTheDrafter(t *testing.T) {
+	note := "the dialogue carries the incidents" + strings.Repeat(", as the user said", 150)
+	for _, outcome := range []string{"conceded", "dropped"} {
+		t.Run(outcome, func(t *testing.T) {
+			world, session := newDeepWorld(t, "deep-withdrawn-"+outcome, sdd.VerifierPolicy{})
+			x := startDeep(t, world, session, captureDraft())
+			x.judge(t, []any{
+				map[string]any{"verdict": "the gap rests on incidents no entry records", "axis": "missing-ref", "severity": "medium"},
+				map[string]any{"verdict": "the layer is too low", "axis": "ref-fit", "severity": "low"},
+			})
+			x.pickUp(t)
+			session.Answer(t, x.instance, "deepAnswer", "contest", map[string]any{"deepContest": []any{
+				map[string]any{"target": "f1", "verdict": "contest", "reason": "the user named the incidents in the dialogue"},
+			}}, "")
+			x.delegate.Refresh(t)
+			x.delegate.Report(t, x.child, nil)
+			x.delegate.Answer(t, x.child, "respond", "respond", map[string]any{"responses": []any{
+				map[string]any{"target": "f1", "outcome": outcome, "note": note},
+			}}, "")
+			session.Refresh(t)
+			serve := session.Report(t, x.instance, nil)
+			proctest.RequireStep(t, serve, "verifySummary")
+			text := test.Untagged(serve.Instructions)
+			for _, want := range []string{"- f1 [medium, missing-ref]: the gap rests on incidents no entry records\n  withdrawn: " + note + "\n", "Tell the user which findings the verifier withdrew and why."} {
+				if !strings.Contains(text, want) {
+					t.Errorf("the drafter should be told of the withdrawn finding, missing %q:\n%s", want, text)
+				}
+			}
+			if strings.Contains(text, "the layer is too low") {
+				t.Errorf("a finding the drafter accepted is not withdrawn:\n%s", text)
 			}
 		})
 	}

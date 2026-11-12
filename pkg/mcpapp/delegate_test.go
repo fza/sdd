@@ -1,12 +1,16 @@
 package mcpapp_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
+	"github.com/networkteam/sdd/test"
 )
 
 const relayDispatcherProcedure = `---
@@ -56,7 +60,9 @@ steps:
 Briefs.
 `
 
-func TestDelegateDispatchOverTheTransport(t *testing.T) {
+// writeRelayGraph writes the fixture graph with the relay procedures.
+func writeRelayGraph(t *testing.T) string {
+	t.Helper()
 	graphDir := writeFixtureGraph(t)
 	for rel, content := range map[string]string{
 		"2026/07/05-120000-d-prc-rly.md": relayDispatcherProcedure,
@@ -70,7 +76,48 @@ func TestDelegateDispatchOverTheTransport(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	env := newTestServer(t, nil, graphDir, "")
+	return graphDir
+}
+
+// A delegate sdd launched itself is driven by sdd alone, so its handoff
+// carries no child handle and no prompt on the wire.
+func TestLaunchedDelegateDispatchCarriesNoHandle(t *testing.T) {
+	launcher := test.NewScriptedLauncher(t, "scripted")
+	env := newTestServer(t, nil, writeRelayGraph(t), "", func(opts *testServerOptions) {
+		opts.Application.DelegateLauncher = launcher
+	})
+	client := connect(t, env.srv)
+	door := openSession(t, client)
+	var move mcpserver.ServeResult
+	call(t, client, "start_procedure", map[string]any{"session": door.Session, "canonical": "relay"}, &move)
+
+	forked := callRaw(t, client, "next", map[string]any{"session": door.Session, "instance": move.Instance,
+		"report": map[string]any{"chooser": "ask", "choice": "delegate", "fields": map[string]any{"goal": "the open gaps"}}})
+
+	dispatches, _ := forked["dispatches"].([]any)
+	if len(dispatches) != 1 {
+		t.Fatalf("the dispatching answer should owe one handoff, got %v", forked["dispatches"])
+	}
+	dispatch, _ := dispatches[0].(map[string]any)
+	for _, key := range []string{"session", "instance", "prompt", "continue_prompt", "agent"} {
+		if _, ok := dispatch[key]; ok {
+			t.Fatalf("a launched delegate's handoff should carry no %s, got %v", key, dispatch)
+		}
+	}
+	if dispatch["runner"] != "scripted" {
+		t.Fatalf("the handoff should name the runner sdd launched, got %v", dispatch)
+	}
+	round := launcher.NextRound(t)
+	round.Finish("", errors.New("the test is over"))
+	test.Eventually(t, "ending the round's delegate", func() bool {
+		res, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "resume_session", Arguments: map[string]any{"session": string(round.Launch.Session)}})
+		return err == nil && res.IsError && strings.Contains(contentText(res), "ended")
+	})
+}
+
+func TestDelegateDispatchOverTheTransport(t *testing.T) {
+	graphDir := writeRelayGraph(t)
+	env := newTestServerConfig(t, nil, graphDir, "", "de")
 	client := connect(t, env.srv)
 	door := openSession(t, client)
 
@@ -94,6 +141,12 @@ func TestDelegateDispatchOverTheTransport(t *testing.T) {
 	call(t, client, "next", map[string]any{"session": door.Session, "instance": move.Instance}, &waiting)
 	if waiting.Step != "wait" || !strings.Contains(waiting.Instructions, "waiting for the delegate to deliver briefing") {
 		t.Fatalf("a report-less next re-serves the waiting move, got %s %q", waiting.Step, waiting.Instructions)
+	}
+	// An agent listing no proofs would get every framing block again.
+	var unproved mcpserver.ServeResult
+	call(t, client, "next", map[string]any{"session": door.Session, "instance": move.Instance, "held": []any{}}, &unproved)
+	if unproved.Framing != "" || unproved.Vocabulary != "" || strings.Contains(unproved.Instructions, "\n") {
+		t.Fatalf("a waiting move serves its one line without framing, got framing %q and %q", unproved.Framing, unproved.Instructions)
 	}
 
 	delegate := connect(t, env.srv)

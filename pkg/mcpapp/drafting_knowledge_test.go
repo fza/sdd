@@ -10,7 +10,8 @@ import (
 
 // The initial MCP start response is the surface d-tac-vzz targets: a fresh
 // capture serves the type-system overview in full before any draft report,
-// and a later capture in the same session gets the pointer alone.
+// the lanes past the result bound on the calls that follow, and a later
+// capture in the same session gets the pointer alone.
 func TestStartProcedureCaptureServesTypeSystemOverview(t *testing.T) {
 	// A bare graph dir, not the fixture graph — the fixture plants a simplified
 	// capture override, and this test must drive the shipped base capture.
@@ -20,8 +21,8 @@ func TestStartProcedureCaptureServesTypeSystemOverview(t *testing.T) {
 
 	var first mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &first)
-	if !strings.Contains(first.Instructions, basefacts.OverviewFactID) || !strings.Contains(first.Instructions, "a signal records something noticed:") {
-		t.Fatalf("the initial capture start response must serve the overview in full, got: %.300q", first.Instructions)
+	if served := followWaitingLanes(t, cs, door.Session, first); !strings.Contains(served, basefacts.OverviewFactID) || !strings.Contains(served, "a signal records something noticed:") {
+		t.Fatalf("the initial capture start must serve the overview in full, got: %.300q", served)
 	}
 
 	var second mcpserver.ServeResult
@@ -29,9 +30,15 @@ func TestStartProcedureCaptureServesTypeSystemOverview(t *testing.T) {
 	if strings.Contains(second.Instructions, "a signal records something noticed:") {
 		t.Fatalf("a second capture start in the same session must not repeat the overview body")
 	}
-	if !strings.Contains(second.Instructions, basefacts.OverviewFactID) {
-		t.Errorf("the suppressed serve must still point at the overview fact")
+	if !pointsAtOverview(second.Instructions) {
+		t.Errorf("the suppressed serve must still point at the overview fact, got %q", second.Instructions)
 	}
+}
+
+// pointsAtOverview reports whether a capture serve points at the type-system
+// overview: by its ID, or by the held typeSystem lane whose text names it.
+func pointsAtOverview(instructions string) bool {
+	return strings.Contains(instructions, basefacts.OverviewFactID) || strings.Contains(instructions, "lane typeSystem ⟦")
 }
 
 // The overview grounding is durable session state: a second server over the
@@ -46,7 +53,7 @@ func TestCaptureOverviewGroundingSurvivesServerRestart(t *testing.T) {
 
 	var first mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &first)
-	if !strings.Contains(first.Instructions, "a signal records something noticed:") {
+	if served := followWaitingLanes(t, cs, door.Session, first); !strings.Contains(served, "a signal records something noticed:") {
 		t.Fatalf("the first capture must serve the overview in full")
 	}
 
@@ -56,13 +63,14 @@ func TestCaptureOverviewGroundingSurvivesServerRestart(t *testing.T) {
 	if strings.Contains(again.Instructions, "a signal records something noticed:") {
 		t.Fatalf("the overview grounding must survive a server restart — the re-serve repeated the body")
 	}
-	if !strings.Contains(again.Instructions, basefacts.OverviewFactID) {
-		t.Errorf("the re-served capture must still point at the overview fact")
+	if !pointsAtOverview(again.Instructions) {
+		t.Errorf("the re-served capture must still point at the overview fact, got %q", again.Instructions)
 	}
 
+	empty := connect(t, env2.srv)
 	var fresh mcpserver.ServeResult
-	call(t, connect(t, env2.srv), "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &fresh)
-	if !strings.Contains(fresh.Instructions, "a signal records something noticed:") {
+	call(t, empty, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &fresh)
+	if served := followWaitingLanes(t, empty, door.Session, fresh); !strings.Contains(served, "a signal records something noticed:") {
 		t.Fatalf("an agent context holding nothing must get the overview in full")
 	}
 }

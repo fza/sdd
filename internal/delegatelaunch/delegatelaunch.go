@@ -55,11 +55,12 @@ type Round struct {
 	Resume string
 }
 
-// Launched is what a round reports: the session to resume next round and
-// the runner that ran.
+// Launched is what a round reports: the session to resume next round, the
+// runner that ran, and the agent's last message, empty for a driver.
 type Launched struct {
 	Session string
 	Runner  string
+	Message string
 }
 
 // claudeTools are the tools a headless claude verifier may use (V-D18): read,
@@ -90,18 +91,19 @@ func Run(ctx context.Context, settings Settings, round Round) (Launched, error) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	var launched Launched
 	switch runner {
 	case string(model.VerifierRunnerClaude):
-		session, err := runClaude(ctx, settings, round)
-		return Launched{Session: session, Runner: runner}, err
+		launched, err = runClaude(ctx, settings, round)
 	case string(model.VerifierRunnerCodex):
-		session, err := runCodex(ctx, settings, round)
-		return Launched{Session: session, Runner: runner}, err
+		launched, err = runCodex(ctx, settings, round)
 	case string(model.VerifierRunnerDriver):
-		state, err := runDriver(ctx, settings, round)
-		return Launched{Session: state, Runner: runner}, err
+		launched.Session, err = runDriver(ctx, settings, round)
+	default:
+		return Launched{}, fmt.Errorf("verify.runner %q is no headless runner", runner)
 	}
-	return Launched{}, fmt.Errorf("verify.runner %q is no headless runner", runner)
+	launched.Runner = runner
+	return launched, err
 }
 
 func fallback(agents []string) (string, error) {
@@ -151,14 +153,14 @@ func ClaudeArgs(sdd, resume string, agent model.VerifierAgent) ([]string, error)
 	return args, nil
 }
 
-func runClaude(ctx context.Context, settings Settings, round Round) (string, error) {
+func runClaude(ctx context.Context, settings Settings, round Round) (Launched, error) {
 	args, err := ClaudeArgs(settings.SDD, round.Resume, settings.Claude)
 	if err != nil {
-		return "", err
+		return Launched{}, err
 	}
 	out, err := run(ctx, settings.WorkDir, "claude", args, round.Prompt)
 	if err != nil {
-		return "", err
+		return Launched{}, err
 	}
 	var result struct {
 		SessionID string `json:"session_id"`
@@ -167,27 +169,29 @@ func runClaude(ctx context.Context, settings Settings, round Round) (string, err
 	}
 	err = json.Unmarshal(lastLine(out), &result)
 	if err != nil {
-		return "", fmt.Errorf("claude answered no JSON result: %w", err)
+		return Launched{}, fmt.Errorf("claude answered no JSON result: %w", err)
 	}
 	if result.IsError {
-		return "", fmt.Errorf("claude ended the round with an error: %s", result.Result)
+		return Launched{}, fmt.Errorf("claude ended the round with an error: %s", result.Result)
 	}
 	if result.SessionID == "" {
-		return "", errors.New("claude reported no session_id to resume")
+		return Launched{}, errors.New("claude reported no session_id to resume")
 	}
-	return result.SessionID, nil
+	return Launched{Session: result.SessionID, Message: result.Result}, nil
 }
 
 // CodexArgs are the flags of a headless codex round (V-D18): exec with JSON
 // events in a read-only sandbox, no project instructions (a zero byte budget
-// for AGENTS.md), sdd as an MCP server, and the round's prompt; a later round
-// resumes the first round's session.
+// for AGENTS.md), sdd as an MCP server whose tools run unasked, since exec's
+// approval policy never asks and refuses every tool needing approval, and
+// the round's prompt; a later round resumes the first round's session.
 func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
 	args := []string{
 		"exec", "--json", "--sandbox", "read-only",
 		"-c", "project_doc_max_bytes=0",
 		"-c", "mcp_servers.sdd.command=" + strconv.Quote(sdd),
 		"-c", `mcp_servers.sdd.args=["serve"]`,
+		"-c", `mcp_servers.sdd.default_tools_approval_mode="approve"`,
 	}
 	if agent.Model != "" {
 		args = append(args, "-m", agent.Model)
@@ -201,19 +205,23 @@ func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
 	return append(args, prompt)
 }
 
-func runCodex(ctx context.Context, settings Settings, round Round) (string, error) {
+func runCodex(ctx context.Context, settings Settings, round Round) (Launched, error) {
 	out, err := run(ctx, settings.WorkDir, "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "")
 	if err != nil {
-		return "", err
+		return Launched{}, err
 	}
-	session := round.Resume
+	launched := Launched{Session: round.Resume}
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		var event struct {
 			Type      string `json:"type"`
 			ThreadID  string `json:"thread_id"`
 			SessionID string `json:"session_id"`
 			Message   string `json:"message"`
-			Msg       struct {
+			Item      struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"item"`
+			Msg struct {
 				Type      string `json:"type"`
 				SessionID string `json:"session_id"`
 				Message   string `json:"message"`
@@ -224,19 +232,23 @@ func runCodex(ctx context.Context, settings Settings, round Round) (string, erro
 		}
 		switch {
 		case event.Type == "error" || event.Type == "turn.failed" || event.Msg.Type == "error":
-			return "", fmt.Errorf("codex ended the round with an error: %s", strings.TrimSpace(event.Message+event.Msg.Message))
+			return Launched{}, fmt.Errorf("codex ended the round with an error: %s", strings.TrimSpace(event.Message+event.Msg.Message))
+		case event.Type == "item.completed" && event.Item.Type == "agent_message":
+			launched.Message = event.Item.Text
+		case event.Msg.Type == "agent_message":
+			launched.Message = event.Msg.Message
 		case event.ThreadID != "":
-			session = event.ThreadID
+			launched.Session = event.ThreadID
 		case event.SessionID != "":
-			session = event.SessionID
+			launched.Session = event.SessionID
 		case event.Msg.SessionID != "":
-			session = event.Msg.SessionID
+			launched.Session = event.Msg.SessionID
 		}
 	}
-	if session == "" {
-		return "", errors.New("codex reported no session to resume")
+	if launched.Session == "" {
+		return Launched{}, errors.New("codex reported no session to resume")
 	}
-	return session, nil
+	return launched, nil
 }
 
 // DriverRequest is what a driver reads on stdin per round (V-D19).

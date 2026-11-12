@@ -5,7 +5,7 @@
       "additionalProperties": false,
       "properties": {
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
           "items": {
             "type": "string"
           },
@@ -76,7 +76,7 @@
           "type": "string"
         },
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
           "items": {
             "type": "string"
           },
@@ -161,7 +161,7 @@
           "type": "integer"
         },
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
           "items": {
             "type": "string"
           },
@@ -216,7 +216,7 @@
       "additionalProperties": false,
       "properties": {
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
           "items": {
             "type": "string"
           },
@@ -342,7 +342,7 @@
           "type": "boolean"
         },
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
           "items": {
             "type": "string"
           },
@@ -445,7 +445,7 @@
           ]
         },
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
           "items": {
             "type": "string"
           },
@@ -565,7 +565,7 @@
           "type": "string"
         },
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
           "items": {
             "type": "string"
           },
@@ -669,7 +669,7 @@
           "type": "boolean"
         },
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. k3f9:grounding). A proved piece serves as a short pointer; never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
           "items": {
             "type": "string"
           },

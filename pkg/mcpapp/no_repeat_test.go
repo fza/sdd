@@ -1,6 +1,7 @@
 package mcpapp_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -303,7 +304,9 @@ func TestMalformedProofRefusesTheCall(t *testing.T) {
 // reorientation carry it.
 func TestDoorsExplainTheProof(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
-	cs := connect(t, env.srv)
+	agent := newAgentMemory()
+	agent.raw = true
+	cs := connectAs(t, env.srv, agent)
 	door := openSession(t, cs)
 	var resumed mcpserver.ResumeSessionResult
 	call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
@@ -311,5 +314,49 @@ func TestDoorsExplainTheProof(t *testing.T) {
 		if !strings.Contains(text, "as tag:word") || !strings.Contains(text, "List in reread") {
 			t.Fatalf("%s should explain how to prove a piece and how to have it again:\n%s", name, text)
 		}
+		if !strings.Contains(text, proofExample) {
+			t.Fatalf("%s should show a worked proof:\n%s", name, text)
+		}
+	}
+}
+
+// proofExample is the worked proof the doors and the held field show: the
+// word right after the tag, never the one before it.
+const proofExample = `"… dialogue ⟦gn9p⟧ first …" → gn9p:first`
+
+// Every tool taking proofs shows the worked proof in its held field.
+func TestHeldFieldShowsAWorkedProof(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	tools, err := cs.ListTools(t.Context(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	described := 0
+	for _, tool := range tools.Tools {
+		schema, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var input struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		}
+		err = json.Unmarshal(schema, &input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held, ok := input.Properties["held"]
+		if !ok {
+			continue
+		}
+		described++
+		if !strings.Contains(held.Description, proofExample) {
+			t.Errorf("%s: the held field should show a worked proof, got %q", tool.Name, held.Description)
+		}
+	}
+	if described == 0 {
+		t.Fatal("some tool should take proofs in held")
 	}
 }

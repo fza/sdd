@@ -41,10 +41,12 @@ const (
 	fieldDeepProposal   = "deepProposal"
 	fieldDeepHunks      = "deepHunks"
 	fieldDeepOpen       = "deepOpen"
+	fieldDeepWithdrawn  = "deepWithdrawn"
 	fieldDeepListed     = "deepListed"
 	fieldDeepProblems   = "deepProblems"
 	fieldDeepNoSubagent = "deepNoSubagent"
 	fieldDeepForkBase   = "deepForkBase"
+	fieldDeepEndReason  = "deepEndReason"
 	// fieldPreflightRubric is what pre-flight's model would have judged a
 	// draft by, set while the deep verifier judges in its place.
 	fieldPreflightRubric = "preflightRubric"
@@ -247,7 +249,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Doc: engine.FuncDoc{
 				Name: "prepareDeep", Doc: "Opens a deep exchange over the current draft: the base document, the paged reading, the weighing rule's recommendation, and a fresh exchange; for the live verifier, the revision's reading.",
 				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict, fieldDeepRevisions, fieldDeepReadIDs),
-				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs},
+				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs},
 			},
 			Fn: w.prepareDeep,
 		},
@@ -270,6 +272,18 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
+			Doc: engine.FuncDoc{Name: "recordDeepEnded", Doc: "Records why the verify delegate stopped before it delivered: its round failed or ended with nothing delivered, or it was torn down.", Writes: []string{fieldDeepEndReason}},
+			Fn: func(ctx *engine.Context) error {
+				reason := "the verify delegate ended"
+				for _, fork := range w.session.Forks(ctx.Instance) {
+					if fork.Procedure == verifyProcedure && fork.Status == engine.ForkConcluded && fork.Reason != "" {
+						reason = fork.Reason
+					}
+				}
+				return ctx.Store.WriteEngine(fieldDeepEndReason, reason)
+			},
+		},
+		{
 			Doc:    engine.FuncDoc{Name: "readDeepFindings", Doc: "Lists the verifier's findings for the drafter to answer, and the problems still refusing them.", Reads: []string{fieldDeepFindings, fieldDeepBase}, Writes: []string{fieldDeepListed, fieldDeepProblems, fieldDeepRounds}},
 			Fn:     w.readDeepFindings,
 			Rounds: true,
@@ -284,7 +298,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Rounds: true,
 		},
 		{
-			Doc: engine.FuncDoc{Name: "buildDeepProposal", Doc: "Builds the proposal from the findings and the latest responses: the changed draft, its hunks labelled by finding, and the points open for the user.", Reads: []string{fieldDeepBase, fieldDeepFindings, fieldDeepHistory, fieldDeepContest}, Writes: []string{fieldDeepProposal, fieldDeepHunks, fieldDeepOpen}},
+			Doc: engine.FuncDoc{Name: "buildDeepProposal", Doc: "Builds the proposal from the findings and the latest responses: the changed draft, its hunks labelled by finding, the points open for the user, and the findings the verifier withdrew with its reasons.", Reads: []string{fieldDeepBase, fieldDeepFindings, fieldDeepHistory, fieldDeepContest}, Writes: []string{fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn}},
 			Fn:  w.buildDeepProposal,
 		},
 		{
@@ -348,8 +362,8 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 	base := draftText(ctx.Store)
 	writes := map[string]any{
 		fieldDeepBase: base, fieldDeepHistory: []model.DeepResponse{}, fieldDeepRounds: 0,
-		fieldDeepProposal: nil, fieldDeepHunks: nil, fieldDeepOpen: nil, fieldDeepListed: nil, fieldDeepProblems: nil, fieldDeepNoSubagent: nil,
-		fieldDeepForkBase: verifyForks(w.session, ctx.Instance),
+		fieldDeepProposal: nil, fieldDeepHunks: nil, fieldDeepOpen: nil, fieldDeepWithdrawn: nil, fieldDeepListed: nil, fieldDeepProblems: nil, fieldDeepNoSubagent: nil,
+		fieldDeepForkBase: verifyForks(w.session, ctx.Instance), fieldDeepEndReason: nil,
 		fieldDeepRevising: revising, fieldDeepRevisions: 0, fieldDeepRevisionPages: nil, fieldDeepRevisionPageFull: nil,
 	}
 	pages, held := w.deepPages(ctx, base)
@@ -691,7 +705,7 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 	if err != nil {
 		return fmt.Errorf("buildDeepProposal: the verifier's edits no longer apply: %w", err)
 	}
-	var open strings.Builder
+	var open, withdrawn strings.Builder
 	for i, finding := range findings {
 		id := model.DeepFindingID(i)
 		if finding.Owner {
@@ -705,6 +719,9 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 				break
 			}
 		}
+		if response != nil && (response.Outcome == model.DeepConceded || response.Outcome == model.DeepDropped) {
+			fmt.Fprintf(&withdrawn, "- %s [%s, %s]: %s\n  withdrawn: %s\n", id, finding.Severity, finding.Axis, finding.Verdict, response.Note)
+		}
 		var answer *model.DeepAnswer
 		for j := range contest {
 			if contest[j].Target == id && contest[j].Verdict == "contest" {
@@ -715,7 +732,7 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 			fmt.Fprintf(&open, "- %s: the verifier holds %q (%s); the drafter contests: %s\n", id, finding.Verdict, response.Note, answer.Reason)
 		}
 	}
-	writes := map[string]any{fieldDeepProposal: proposal, fieldDeepHunks: model.RenderDeepHunks(hunks), fieldDeepOpen: open.String()}
+	writes := map[string]any{fieldDeepProposal: proposal, fieldDeepHunks: model.RenderDeepHunks(hunks), fieldDeepOpen: open.String(), fieldDeepWithdrawn: withdrawn.String()}
 	for _, name := range slices.Sorted(maps.Keys(writes)) {
 		err := ctx.Store.WriteEngine(name, writes[name])
 		if err != nil {

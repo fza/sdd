@@ -57,6 +57,9 @@ type Instance struct {
 	// answered option declared, recorded on the fork its next task starts.
 	dispatchReceive map[string]string
 	dispatchSend    map[string]string
+	// forkPending marks a delegate dispatch answered whose fork is not
+	// recorded yet, so a delegateEnded route does not fire before it.
+	forkPending bool
 	// forks are the delegate child sessions this instance dispatched.
 	forks []*Fork
 	// unconsumed marks the fields holding a delivery no await gate has taken
@@ -174,6 +177,10 @@ type Serve struct {
 	// Cancellation is the current cancellation this serve lands, rendered as
 	// its own lane; nil on every other serve.
 	Cancellation *CancellationServe
+	// Waiting marks a dispatching move held only by its delegate's delivery:
+	// Instructions is the one line naming what it waits for and when to check
+	// again, and a host serves nothing beside it.
+	Waiting bool
 	// Dispatches names the procedure the chooser answer this serve follows
 	// dispatches, so the shell forks a delegating task in the answering call
 	// (20260829-122157-d-cpt-zpe); empty on every other serve.
@@ -300,7 +307,13 @@ func (s *Session) cascade(inst *Instance) error {
 			return s.checkSink()
 		}
 		if len(step.Await) > 0 && inst.awaitHeld(step) {
-			return nil // stalled: the linked session has not delivered yet
+			if step.DelegateEnded == "" || inst.forkPending || inst.liveFork() {
+				return nil // stalled: the linked session has not delivered yet
+			}
+			if err := s.moveTo(inst, step.DelegateEnded, false, nil); err != nil {
+				return err
+			}
+			continue
 		}
 
 		if step.Op != "" && !inst.opDone {
@@ -722,6 +735,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		}
 		awaiting := len(step.Await) > 0 && inst.awaitHeld(step)
 		if awaiting {
+			sv.Waiting = s.Lineage == nil && len(sv.Failing) == 0 && len(sv.Missing) == 0 && len(lanes) == 0
 			sv.Failing = append(sv.Failing, FailedPredicate{Name: "await", Message: s.awaitDiagnostic(inst, step)})
 		}
 		if !awaiting && len(sv.Failing) == 0 && len(sv.Missing) == 0 && len(step.Transitions) > 0 {
@@ -741,7 +755,10 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 			diagnostics = append(diagnostics, "missing: "+strings.Join(sv.Missing, ", "))
 		}
 		sv.Goal = "provide the missing report fields"
-		if len(sv.Failing) > 0 {
+		switch {
+		case sv.Waiting:
+			sv.Goal = "wait for the delegate, then check again"
+		case len(sv.Failing) > 0:
 			sv.Goal = "resolve what holds the gate, then report again"
 		}
 	case ChooserAgent, ChooserUser:
@@ -769,6 +786,9 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 
 	sv.Diagnostics = diagnostics
 	sv.Instructions = ComposeInstructions(instructions, diagnostics)
+	if sv.Waiting {
+		sv.Instructions = strings.Join(diagnostics, " ")
+	}
 	if n := partBytes(sv.ReportSchema); n > 0 {
 		sizes = append(sizes, PartSize{Part: "schema", Bytes: n})
 	}
@@ -890,23 +910,32 @@ func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSiz
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("unit %s: %w", unitName, err)
 	}
+	tmpls := make([]*template.Template, len(unit.Lanes))
+	for i, lane := range unit.Lanes {
+		tmpls[i], err = template.New(lane.Name).Option("missingkey=zero").Parse(lane.Text)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("unit %s: lane %s: %w", unitName, lane.Name, err)
+		}
+	}
 	var sizes []PartSize
 	var cuts []truncate.Cut
 	// Store values interpolate into served text uncapped otherwise; the bound
 	// applies only here, on the unit context — inject args render against the
 	// raw store (renderInjectArgs), and the draft lane carries its own bound.
+	// A cut serves its notice only where the lanes read the value.
 	storeCap := serveview.Default().Cap(serveview.PartStoreValue)
 	injected := make(map[string]bool, len(step.Inject))
 	for _, inj := range step.Inject {
 		injected[inj.EffectiveID()] = true
 	}
+	reads := templateReads(tmpls)
 	for _, name := range slices.Sorted(maps.Keys(tmplCtx)) {
 		// An inject under a store value's name replaces it with its own bound.
 		if !inst.Store.Has(name) || injected[name] {
 			continue
 		}
 		bounded, cut := serveview.BoundValue(tmplCtx[name], storeCap)
-		if cut != nil {
+		if cut != nil && reads[name] {
 			cut.Part = "store:" + name
 			cuts = append(cuts, *cut)
 		}
@@ -941,13 +970,9 @@ func (s *Session) renderUnit(inst *Instance, step *Step) ([]ServeLane, []PartSiz
 	}
 
 	lanes := make([]ServeLane, 0, len(unit.Lanes))
-	for _, lane := range unit.Lanes {
-		tmpl, err := template.New(lane.Name).Option("missingkey=zero").Parse(lane.Text)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("unit %s: lane %s: %w", unitName, lane.Name, err)
-		}
+	for i, lane := range unit.Lanes {
 		var buf strings.Builder
-		if err := tmpl.Execute(&buf, tmplCtx); err != nil {
+		if err := tmpls[i].Execute(&buf, tmplCtx); err != nil {
 			return nil, nil, nil, fmt.Errorf("unit %s: lane %s: %w", unitName, lane.Name, err)
 		}
 		if text := strings.TrimSpace(buf.String()); text != "" {

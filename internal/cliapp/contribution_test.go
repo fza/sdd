@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/networkteam/sdd/test"
 )
 
 // contributionProject is a repository on main with an upstream ref
@@ -98,7 +100,7 @@ func TestServeReportsContributionMode(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(served), "Mode: contribution (origin/main)") {
+		if !strings.Contains(test.Untagged(string(served)), "Mode: contribution (origin/main)") {
 			t.Errorf("the session framing should name the mode and the ref:\n%s", served)
 		}
 		handle, _ := door.StructuredContent.(map[string]any)["session"].(string)

@@ -5,10 +5,16 @@ import (
 	"unicode/utf8"
 )
 
-// MaxResultChars bounds the text content of one MCP result
-// (20261112-075604-d-tac-t4r): Claude Code saves a larger one to a file the
-// agent then reads back.
-const MaxResultChars = 50000
+// MaxResultChars bounds the text content of one MCP result, for every host
+// (20261112-075604-d-tac-t4r): Codex prints a result's JSON within a
+// 10,000-token output budget and drops the middle of a larger one, past about
+// 19,000 characters of text. Claude Code saves a result past 50,000 characters
+// to a file.
+const MaxResultChars = 18000
+
+// MaxServeChars is what one serve may take of a result, leaving room for the
+// notices that join it.
+const MaxServeChars = MaxResultChars - 2000
 
 // ServedChars is what text costs in a result as Claude Code counts it: the
 // characters of the text content, which is the structured copy's JSON, so the

@@ -140,6 +140,9 @@ type WorkflowServe struct {
 	Execution        string
 	Produced         map[string]any
 	Diagnostics      []string
+	// Waiting marks a move held only by its delegate's delivery: Instructions
+	// is its one waiting line, served without the session framing.
+	Waiting bool
 	// InstructionLanes are the unit's rendered lanes in order — what the MCP
 	// layer dedups independently; Instructions is their join plus diagnostics.
 	InstructionLanes []types.ServeLane
@@ -1590,7 +1593,7 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		Session: w.ID(), Project: w.instanceProject(serve.Instance), Branch: w.branch,
 		Instance: serve.Instance, Procedure: serve.Procedure, Status: string(serve.Status),
 		Step: serve.Step, Goal: serve.Goal, Instructions: serve.Instructions, Missing: serve.Missing,
-		ReportSchema: serve.ReportSchema, Produced: serve.Produced, Diagnostics: append([]string(nil), serve.Diagnostics...),
+		ReportSchema: serve.ReportSchema, Produced: serve.Produced, Diagnostics: append([]string(nil), serve.Diagnostics...), Waiting: serve.Waiting,
 		InstructionLanes: append([]types.ServeLane(nil), serve.Lanes...),
 		Sizes:            append([]types.PartSize(nil), serve.Sizes...),
 		Framing:          slices.Clone(serve.Framing),

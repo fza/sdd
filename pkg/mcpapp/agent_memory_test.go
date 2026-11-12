@@ -3,12 +3,12 @@ package mcpapp_test
 import (
 	"context"
 	"encoding/json"
-	"regexp"
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/test"
 )
 
 // provingTools are the tools that take held and reread.
@@ -33,12 +33,10 @@ type agentMemory struct {
 
 func newAgentMemory() *agentMemory { return &agentMemory{held: map[string]string{}} }
 
-var placedTag = regexp.MustCompile(`⟦[0-9a-z]{4}⟧ (\pL)`)
-
 func untagged(res *mcp.CallToolResult) error {
 	for _, content := range res.Content {
 		if text, ok := content.(*mcp.TextContent); ok {
-			text.Text = placedTag.ReplaceAllString(text.Text, "$1")
+			text.Text = test.Untagged(text.Text)
 		}
 	}
 	if res.StructuredContent == nil {
@@ -49,7 +47,7 @@ func untagged(res *mcp.CallToolResult) error {
 		return err
 	}
 	var structured any
-	err = json.Unmarshal(placedTag.ReplaceAll(raw, []byte("$1")), &structured)
+	err = json.Unmarshal([]byte(test.Untagged(string(raw))), &structured)
 	if err != nil {
 		return err
 	}
