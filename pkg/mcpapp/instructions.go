@@ -70,7 +70,7 @@ list in full.`
 const proofGuide = `Every piece served in full (an instruction lane, a framing block, a report
 schema, an entry) carries a tag, such as ⟦k3f9⟧, before one of its words. On
 each later call, list in held every tag whose text you still see, with the
-word right after it, as tag:word: that piece then serves as a short pointer.
-List in reread the tag or name of a piece you no longer see; it serves in
-full again. Never guess a word: a missing or wrong proof costs only the full
-text.`
+word right after it, as tag:word ("… dialogue ⟦gn9p⟧ first …" → gn9p:first):
+that piece then serves as a short pointer. List in reread the tag or name of
+a piece you no longer see; it serves in full again. Never guess a word: a
+missing or wrong proof costs only the full text.`
