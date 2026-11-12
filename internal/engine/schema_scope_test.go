@@ -63,7 +63,12 @@ func TestReportSchemaLeavesOutFieldsNoReportFills(t *testing.T) {
 		t.Error("the draft schema should carry the step's own fields")
 	}
 
-	sv, err = session.Report(sv.Instance, map[string]any{"entryKind": "procedure"})
+	if _, err := session.Report(sv.Instance, map[string]any{"entryKind": "procedure"}); err != nil {
+		t.Fatal(err)
+	}
+	// The held report's serve names the missing field alone; the next serve
+	// carries the whole schema.
+	sv, err = session.Poll(sv.Instance)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -57,6 +58,32 @@ func (s *Spec) ReportSchemaForStep(step *Step, store *Store) map[string]any {
 		schema["required"] = required
 	}
 	return schema
+}
+
+// failingSchema is a report schema cut to the named fields, required where
+// the whole requires them. It leaves other properties open: every field the
+// whole names stays reportable.
+func failingSchema(schema map[string]any, fields []string) map[string]any {
+	props, _ := schema["properties"].(map[string]any)
+	required, _ := schema["required"].([]string)
+	kept := make(map[string]any, len(fields))
+	var keptRequired []string
+	for _, name := range fields {
+		kept[name] = props[name]
+		if slices.Contains(required, name) {
+			keptRequired = append(keptRequired, name)
+		}
+	}
+	sort.Strings(keptRequired)
+	out := map[string]any{
+		"type":        "object",
+		"properties":  kept,
+		"description": "only the fields holding this step; every field the step took before stays reportable",
+	}
+	if len(keptRequired) > 0 {
+		out["required"] = keptRequired
+	}
+	return out
 }
 
 // AnswerSchemaForStep generates the JSON Schema for a chooser step's answer:

@@ -778,6 +778,43 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 	return sv, nil
 }
 
+// narrowToFailing serves a gate that holds the report it just took with a
+// schema of the fields holding it (20261112-075604-d-tac-t4r): those still
+// missing and those its failing checks read. A gate held only by checks that
+// read no reportable field keeps the whole schema.
+func (s *Session) narrowToFailing(inst *Instance, sv *Serve) {
+	step := inst.currentStep()
+	props, _ := sv.ReportSchema["properties"].(map[string]any)
+	if step == nil || step.Chooser != ChooserGate || props == nil {
+		return
+	}
+	var fields []string
+	add := func(name string) {
+		if _, ok := props[name]; ok && !slices.Contains(fields, name) {
+			fields = append(fields, name)
+		}
+	}
+	for _, name := range sv.Missing {
+		add(name)
+	}
+	for _, failed := range sv.Failing {
+		if p, ok := s.engine.Registry.Predicate(failed.Name); ok {
+			for _, name := range p.Doc.Reads {
+				add(name)
+			}
+		}
+	}
+	if len(fields) == 0 {
+		return
+	}
+	sv.ReportSchema = failingSchema(sv.ReportSchema, fields)
+	for i := range sv.Sizes {
+		if sv.Sizes[i].Part == "schema" {
+			sv.Sizes[i].Bytes = partBytes(sv.ReportSchema)
+		}
+	}
+}
+
 // ComposeInstructions joins a rendered unit (or a shell-substituted
 // reminder) with stall diagnostics — the one composition rule for the
 // Instructions field, shared by the engine's serve and shells recomposing

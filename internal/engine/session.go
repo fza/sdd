@@ -742,11 +742,22 @@ func recordDispatchSeed(inst *Instance, opt *Option) {
 // cascades. Reports can only write declared state fields; batched fields for
 // later steps are accepted. A report does not answer a pending chooser.
 func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, error) {
+	var at string
+	if inst, ok := s.instances[instanceID]; ok {
+		at = inst.Step
+	}
 	inst, err := s.report(instanceID, fields)
 	if err != nil {
 		return nil, err
 	}
-	return s.serve(inst)
+	sv, err := s.serve(inst)
+	if err != nil {
+		return nil, err
+	}
+	if inst.Status == StatusRunning && inst.Step == at {
+		s.narrowToFailing(inst, sv)
+	}
+	return sv, nil
 }
 
 // Update applies state fields as Report does but serves nothing, so the

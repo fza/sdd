@@ -3,6 +3,7 @@ package proctest_test
 
 import (
 	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -92,4 +93,26 @@ func schemaDescriptions(path string, schema map[string]any) map[string]string {
 		}
 	}
 	return out
+}
+
+// An assemble report missing fields is served again with the missing fields'
+// schema alone; a complete report then plays the draft back.
+func TestCaptureHeldAssembleServesTheMissingFieldsSchema(t *testing.T) {
+	_, session := newCaptureWorld(t, "capture-failing-schema")
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	partial := captureDraft()
+	delete(partial, "layer")
+	delete(partial, "entryKind")
+	serve = session.Report(t, instance, partial)
+	proctest.RequireStep(t, serve, "assemble")
+	props, _ := serve.ReportSchema["properties"].(map[string]any)
+	if len(props) != 2 || props["layer"] == nil || props["entryKind"] == nil {
+		t.Fatalf("the held assemble should serve the missing fields alone, got %v", slices.Sorted(maps.Keys(props)))
+	}
+	if required, _ := serve.ReportSchema["required"].([]string); !slices.Equal(required, []string{"entryKind", "layer"}) {
+		t.Errorf("the missing fields should stay required, got %v", required)
+	}
+	serve = session.Report(t, instance, map[string]any{"layer": "tactical", "entryKind": "gap"})
+	proctest.RequireStep(t, serve, "playback")
 }
