@@ -14,17 +14,20 @@ import (
 
 var waitingLanes = regexp.MustCompile(`more lanes of these instructions wait[^:]*: ([^.]*)\.`)
 
-// writeYoungProjectGraph writes the realistic fixture at the scale of a
-// young project, its base just before the test server's clock.
+// youngProjectShape is the realistic fixture at the scale of a young
+// project.
+var youngProjectShape = proctest.GraphShape{Entries: 24, Facts: 4, Actors: 2, RolesPerActor: 1, Focuses: 1, InvolvementsPerFocus: 2, Aspirations: 1, GuidingDirectives: 2, WIPMarkers: 1, HubFanOut: 6, TopicLabels: 10}
+
+// writeYoungProjectGraph writes the young project's graph, its base just
+// before the test server's clock.
 func writeYoungProjectGraph(t *testing.T) string {
 	t.Helper()
 	graphDir := filepath.Join(t.TempDir(), "graph")
 	base := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
-	shape := proctest.GraphShape{Entries: 24, Facts: 4, Actors: 2, RolesPerActor: 1, Focuses: 1, InvolvementsPerFocus: 2, Aspirations: 1, GuidingDirectives: 2, WIPMarkers: 1, HubFanOut: 6, TopicLabels: 10}
-	for _, entry := range proctest.RealisticGraph(base, shape) {
+	for _, entry := range proctest.RealisticGraph(base, youngProjectShape) {
 		proctest.WriteEntry(t, graphDir, entry)
 	}
-	proctest.WriteWIPMarkers(t, graphDir, base, shape)
+	proctest.WriteWIPMarkers(t, graphDir, base, youngProjectShape)
 	return graphDir
 }
 

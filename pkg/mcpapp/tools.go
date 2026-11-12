@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -195,7 +196,7 @@ type ServeResult struct {
 	PendingOperation *PendingOperationResult `json:"pending_operation,omitempty" jsonschema:"unfinished recorded operation; only its retry_ref or cancel_ref advances this session"`
 	Cancellation     *CancellationResult     `json:"cancellation,omitempty" jsonschema:"recorded cancellation: return position and what the operation reports it left"`
 	Execution        string                  `json:"execution,omitempty" jsonschema:"execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context"`
-	Produced         map[string]string       `json:"produced,omitempty" jsonschema:"engine-written results on completion (e.g. the created entry ID)"`
+	Produced         map[string]string       `json:"produced,omitempty" jsonschema:"engine-written results on completion (e.g. the created entry ID); a value past 200 characters is left out and named in instructions"`
 	Framing          string                  `json:"framing,omitempty" jsonschema:"session framing (aspirations, directives, focus, participants); each block in full with its tag, left out while the call proves it holds it"`
 	Vocabulary       string                  `json:"vocabulary,omitempty" jsonschema:"translation table for non-English graphs: canonical tokens stay English, user-facing narration renders in the configured language; in full with its tag, left out while the call proves it holds it"`
 	OpenThreads      string                  `json:"open_threads,omitempty" jsonschema:"this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here"`
@@ -1126,6 +1127,30 @@ var (
 // serves in full; the rest are named, each reachable through next.
 const maxResumeOpenInstances = 8
 
+// maxEndedValueChars bounds a produced value an ended move serves: the
+// results a caller acts on, such as the entry written, fit; the move's
+// working state does not.
+const maxEndedValueChars = 200
+
+// endedValues renders the values an ended move produced that fit
+// maxEndedValueChars, and names the rest in order.
+func endedValues(values map[string]any) (map[string]string, []string) {
+	var out map[string]string
+	var omitted []string
+	for _, name := range slices.Sorted(maps.Keys(values)) {
+		value := collectedString(values[name])
+		if len(value) > maxEndedValueChars {
+			omitted = append(omitted, name)
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[name] = value
+	}
+	return out, omitted
+}
+
 // capValues renders each collected or produced value to a display string,
 // truncates any over-cap value, and enforces a per-instance total budget by
 // spending it on whole values in sorted-key order — anything past the budget
@@ -1453,11 +1478,16 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 		Session: string(serve.Session), Project: string(serve.Project),
 		Branch: serve.Branch, Instance: serve.Instance, Procedure: serve.Procedure, Status: serve.Status,
 		Step: serve.Step, Goal: serve.Goal, Missing: serve.Missing,
-		ReportSchema: serve.ReportSchema, Produced: capValues(serve.Produced), Execution: serve.Execution,
+		ReportSchema: serve.ReportSchema, Execution: serve.Execution,
 		Collected: capValues(serve.Collected), PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
 	}
 	var full int
 	res.Instructions, full = composeInstructions(ss, serve, keep, pageFull)
+	var omitted []string
+	res.Produced, omitted = endedValues(serve.Produced)
+	if len(omitted) > 0 {
+		res.Instructions = strings.TrimPrefix(res.Instructions+"\n\n"+fmt.Sprintf("(produced leaves out the move's working state, kept in the session store: %s)", strings.Join(omitted, ", ")), "\n\n")
+	}
 	if serve.PendingChooser != nil {
 		chooser := &ChooserResult{Chooser: serve.PendingChooser.Chooser, Kind: string(serve.PendingChooser.Kind)}
 		for _, option := range serve.PendingChooser.Options {
@@ -1490,11 +1520,11 @@ func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, 
 // ledger. The shell's open-work block lists this dialogue's own threads only;
 // other dialogues never appear.
 func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (ServeResult, error) {
-	res, keep, err := s.boundedServe(ctx, req, ss, serve, serveBudget, true)
+	res, held, err := s.boundedServe(ctx, req, ss, serve, serveBudget, true)
 	if err != nil {
 		return ServeResult{}, err
 	}
-	if err := recordDeferral(ss, serve, keep, res); err != nil {
+	if err := recordDeferral(ss, serve, held, res); err != nil {
 		return ServeResult{}, err
 	}
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
@@ -1503,68 +1533,99 @@ func (s *Server) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest
 	return res, nil
 }
 
+// heldLanes is how many lanes a bounded result holds of its serve and of the
+// session shell's serve it lands in.
+type heldLanes struct{ keep, base int }
+
 // boundedServe composes serve's result to cost at most budget
-// (20261112-075604-d-tac-t4r): while the whole would cost more, the step's
-// last lanes wait, named with the call that serves them, and what the larger
+// (20261112-075604-d-tac-t4r): while the whole would cost more, the last
+// lanes of the session shell's serve it lands in wait first, then the step's
+// own, each named with the call that serves them, and what the larger
 // composition served is withdrawn. With progress, a result leaving lanes
 // waiting serves at least one lane in full: where none fits beside the rest,
 // the first lane not yet held serves alone past the bound, so a lane larger
 // than one result never waits forever. A resume serves without it, as a move
 // whose lanes all wait resumes through next. It returns how many lanes the result holds; the caller
 // records what it served and, through recordDeferral, the lanes that wait.
-func (s *Server) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int, progress bool) (ServeResult, int, error) {
+func (s *Server) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int, progress bool) (ServeResult, heldLanes, error) {
 	ss.root.EndDeferral(serve.Instance)
 	pageFull := ss.root.TakeStepFullIDs()
 	mark := ss.root.ServeMark()
 	lanes := len(serve.InstructionLanes)
+	base := 0
+	if serve.Base != nil {
+		for base = len(serve.Base.InstructionLanes); base > 0; base-- {
+			res, _, err := s.composeServe(ctx, req, ss, serve, heldLanes{lanes, base}, pageFull)
+			if err != nil {
+				return ServeResult{}, heldLanes{}, err
+			}
+			cost, err := resultChars(res)
+			if err != nil {
+				return ServeResult{}, heldLanes{}, err
+			}
+			if cost <= budget {
+				return res, heldLanes{lanes, base}, nil
+			}
+			ss.root.WithdrawServedSince(mark)
+		}
+	}
 	alone := -1
 	for keep := lanes; ; keep-- {
-		res, full, err := s.composeServe(ctx, req, ss, serve, keep, pageFull)
+		res, full, err := s.composeServe(ctx, req, ss, serve, heldLanes{keep, base}, pageFull)
 		if err != nil {
-			return ServeResult{}, 0, err
+			return ServeResult{}, heldLanes{}, err
 		}
 		cost, err := resultChars(res)
 		if err != nil {
-			return ServeResult{}, 0, err
+			return ServeResult{}, heldLanes{}, err
 		}
 		if full > 0 {
 			alone = keep
 		}
 		if cost <= budget && (keep == lanes || full > 0 || !progress) {
-			return res, keep, nil
+			return res, heldLanes{keep, base}, nil
 		}
 		if keep == 0 && (alone < 0 || !progress) {
-			return res, keep, nil
+			return res, heldLanes{keep, base}, nil
 		}
 		ss.root.WithdrawServedSince(mark)
 		if keep == 0 {
-			res, _, err = s.composeServe(ctx, req, ss, serve, alone, pageFull)
-			return res, alone, err
+			res, _, err = s.composeServe(ctx, req, ss, serve, heldLanes{alone, base}, pageFull)
+			return res, heldLanes{alone, base}, err
 		}
 	}
 }
 
-// recordDeferral records a serve that holds only its first keep lanes, so
-// the next call on the instance serves the waiting lanes and points at what
-// res, the result delivered, sent: lanes, framing, schema and entries alike,
-// as any of them re-sent to an agent that proves nothing would leave the
-// waiting lanes no room.
-func recordDeferral(ss *shellSession, serve *sdd.WorkflowServe, keep int, res ServeResult) error {
-	if keep >= len(serve.InstructionLanes) {
+// recordDeferral records a serve, or the session shell's serve it lands in,
+// that holds only its first lanes, so the next call on that instance serves
+// the waiting lanes and points at what res, the result delivered, sent:
+// lanes, framing, schema and entries alike, as any of them re-sent to an
+// agent that proves nothing would leave the waiting lanes no room.
+func recordDeferral(ss *shellSession, serve *sdd.WorkflowServe, held heldLanes, res ServeResult) error {
+	var waiting []string
+	if held.keep < len(serve.InstructionLanes) {
+		waiting = append(waiting, serve.Instance)
+	}
+	if serve.Base != nil && held.base < len(serve.Base.InstructionLanes) {
+		waiting = append(waiting, serve.Base.Instance)
+	}
+	if len(waiting) == 0 {
 		return nil
 	}
 	delivered, err := json.Marshal(res)
 	if err != nil {
 		return fmt.Errorf("recording a deferral: %w", err)
 	}
-	ss.root.RecordDeferral(serve.Instance, string(delivered))
+	for _, instance := range waiting {
+		ss.root.RecordDeferral(instance, string(delivered))
+	}
 	return nil
 }
 
-// composeServe composes serve's whole result with its first keep lanes, and
-// returns how many lanes it served in full.
-func (s *Server) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, keep int, pageFull []string) (ServeResult, int, error) {
-	res, full, err := s.serveResultBody(ctx, req, ss, serve, keep, pageFull)
+// composeServe composes serve's whole result with the lanes held names, and
+// returns how many of its own lanes it served in full.
+func (s *Server) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, held heldLanes, pageFull []string) (ServeResult, int, error) {
+	res, full, err := s.serveResultBody(ctx, req, ss, serve, held.keep, pageFull)
 	if err != nil {
 		return ServeResult{}, 0, err
 	}
@@ -1583,7 +1644,7 @@ func (s *Server) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss 
 	}
 	res.Vocabulary = serveVocabulary(ss, vocabulary)
 	if serve.Base != nil {
-		body, _, err := s.serveResultBody(ctx, req, ss, serve.Base, len(serve.Base.InstructionLanes), nil)
+		body, _, err := s.serveResultBody(ctx, req, ss, serve.Base, held.base, nil)
 		if err != nil {
 			return ServeResult{}, 0, err
 		}
@@ -1594,15 +1655,40 @@ func (s *Server) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss 
 
 // toBaseServeResult maps a serve onto the base_junction landing, which
 // carries no schema or vocabulary — so neither is recorded as served here.
+// Its last lanes wait while it would cost more than a serve may, as
+// boundedServe has them.
 func (s *Server) toBaseServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (*BaseServe, error) {
-	body, _, err := s.serveResultBody(ctx, req, ss, serve, len(serve.InstructionLanes), ss.root.TakeStepFullIDs())
-	if err != nil {
-		return nil, err
+	ss.root.EndDeferral(serve.Instance)
+	pageFull := ss.root.TakeStepFullIDs()
+	mark := ss.root.ServeMark()
+	var base *BaseServe
+	keep := len(serve.InstructionLanes)
+	for ; ; keep-- {
+		body, _, err := s.serveResultBody(ctx, req, ss, serve, keep, pageFull)
+		if err != nil {
+			return nil, err
+		}
+		base = rootBaseServe(body)
+		cost, err := resultChars(base)
+		if err != nil {
+			return nil, err
+		}
+		if cost <= serveBudget || keep == 0 {
+			break
+		}
+		ss.root.WithdrawServedSince(mark)
+	}
+	if keep < len(serve.InstructionLanes) {
+		delivered, err := json.Marshal(base)
+		if err != nil {
+			return nil, fmt.Errorf("recording a deferral: %w", err)
+		}
+		ss.root.RecordDeferral(serve.Instance, string(delivered))
 	}
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, err
 	}
-	return rootBaseServe(body), nil
+	return base, nil
 }
 
 func rootBaseServe(result ServeResult) *BaseServe {
@@ -1653,7 +1739,7 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 			continue
 		}
 		mark := ss.root.ServeMark()
-		mapped, keep, err := s.boundedServe(ctx, req, ss, serve, serveBudget-spent, false)
+		mapped, held, err := s.boundedServe(ctx, req, ss, serve, serveBudget-spent, false)
 		if err != nil {
 			return ResumeSessionResult{}, err
 		}
@@ -1667,7 +1753,7 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 			omitted = append(omitted, name)
 			continue
 		}
-		if err := recordDeferral(ss, serve, keep, mapped); err != nil {
+		if err := recordDeferral(ss, serve, held, mapped); err != nil {
 			return ResumeSessionResult{}, err
 		}
 		spent += cost
