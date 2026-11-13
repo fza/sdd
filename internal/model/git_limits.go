@@ -19,8 +19,15 @@ const (
 	DefaultGitSSHPerHour                  = 600
 	DefaultGitHTTPSPerHour                = 600
 	DefaultGitHTTPSUnauthenticatedPerHour = 60
+	DefaultGitLeasePause                  = 10 * time.Minute
+	DefaultGitReadWait                    = 15 * time.Second
 	MinGitFetchCooldown                   = time.Minute
 	MinGitPushCooldown                    = 10 * time.Second
+	MinGitLeasePause                      = time.Minute
+	MinGitReadWait                        = time.Second
+	// gitMinutesPerHourShare divides an hourly limit into the per-minute
+	// limit a bucket takes when none is set.
+	gitMinutesPerHourShare = 10
 )
 
 const (
@@ -36,35 +43,53 @@ type GitLimitsConfig struct {
 	PushCooldown  string               `yaml:"push_cooldown,omitempty"`
 	Retries       *int                 `yaml:"retries,omitempty"`
 	Concurrency   *int                 `yaml:"concurrency,omitempty"`
+	LeasePause    string               `yaml:"lease_pause,omitempty"`
+	ReadWait      string               `yaml:"read_wait,omitempty"`
 	SSH           GitSSHLimitsConfig   `yaml:"ssh,omitempty"`
 	HTTPS         GitHTTPSLimitsConfig `yaml:"https,omitempty"`
 }
 
 // GitSSHLimitsConfig is the `ssh` block of a GitLimitsConfig.
 type GitSSHLimitsConfig struct {
-	PerHour *int `yaml:"per_hour,omitempty"`
+	PerHour   *int `yaml:"per_hour,omitempty"`
+	PerMinute *int `yaml:"per_minute,omitempty"`
 }
 
 // GitHTTPSLimitsConfig is the `https` block of a GitLimitsConfig.
 type GitHTTPSLimitsConfig struct {
-	PerHour                *int `yaml:"per_hour,omitempty"`
-	PerHourUnauthenticated *int `yaml:"per_hour_unauthenticated,omitempty"`
+	PerHour                  *int `yaml:"per_hour,omitempty"`
+	PerHourUnauthenticated   *int `yaml:"per_hour_unauthenticated,omitempty"`
+	PerMinute                *int `yaml:"per_minute,omitempty"`
+	PerMinuteUnauthenticated *int `yaml:"per_minute_unauthenticated,omitempty"`
 }
 
 // GitLimits are the resolved limits on git network operations against one
 // remote host.
 type GitLimits struct {
-	FetchCooldown               time.Duration
-	PushCooldown                time.Duration
-	Retries                     int
-	Concurrency                 int
-	SSHPerHour                  int
-	HTTPSPerHour                int
-	HTTPSUnauthenticatedPerHour int
+	FetchCooldown                 time.Duration
+	PushCooldown                  time.Duration
+	Retries                       int
+	Concurrency                   int
+	SSHPerHour                    int
+	HTTPSPerHour                  int
+	HTTPSUnauthenticatedPerHour   int
+	SSHPerMinute                  int
+	HTTPSPerMinute                int
+	HTTPSUnauthenticatedPerMinute int
+	// LeasePause is how long a repository's lease holds after its last
+	// renewal; ReadWait how long a read waits for the sync a lease starts.
+	LeasePause time.Duration
+	ReadWait   time.Duration
 }
 
 // DefaultGitLimits returns the built-in limits.
 func DefaultGitLimits() GitLimits {
+	limits := baseGitLimits()
+	limits.derivePerMinute()
+	return limits
+}
+
+func baseGitLimits() GitLimits {
 	return GitLimits{
 		FetchCooldown:               DefaultGitFetchCooldown,
 		PushCooldown:                DefaultGitPushCooldown,
@@ -73,6 +98,22 @@ func DefaultGitLimits() GitLimits {
 		SSHPerHour:                  DefaultGitSSHPerHour,
 		HTTPSPerHour:                DefaultGitHTTPSPerHour,
 		HTTPSUnauthenticatedPerHour: DefaultGitHTTPSUnauthenticatedPerHour,
+		LeasePause:                  DefaultGitLeasePause,
+		ReadWait:                    DefaultGitReadWait,
+	}
+}
+
+// derivePerMinute gives each bucket without a per-minute limit a tenth of its
+// hourly one, at least one.
+func (l *GitLimits) derivePerMinute() {
+	for _, pair := range []struct{ perMinute, perHour *int }{
+		{&l.SSHPerMinute, &l.SSHPerHour},
+		{&l.HTTPSPerMinute, &l.HTTPSPerHour},
+		{&l.HTTPSUnauthenticatedPerMinute, &l.HTTPSUnauthenticatedPerHour},
+	} {
+		if *pair.perMinute == 0 {
+			*pair.perMinute = max(*pair.perHour/gitMinutesPerHourShare, 1)
+		}
 	}
 }
 
@@ -80,11 +121,12 @@ func DefaultGitLimits() GitLimits {
 // sync.default, then the sync.hosts entry for host. A value that is malformed,
 // not positive or below its floor is ignored and named in a warning.
 func ResolveGitLimits(sync SyncConfig, host string) (GitLimits, []string) {
-	limits := DefaultGitLimits()
+	limits := baseGitLimits()
 	ignored := sync.Default.applyTo(&limits, gitLimitsDefaultKey)
 	if name, block, ok := hostLimits(sync.Hosts, host); ok {
 		ignored = append(ignored, block.applyTo(&limits, gitLimitsHostsKey+"."+name)...)
 	}
+	limits.derivePerMinute()
 	warnings := make([]string, 0, len(ignored))
 	for _, setting := range ignored {
 		warnings = append(warnings, setting.Key+": "+setting.Reason)
@@ -147,9 +189,14 @@ func (c GitLimitsConfig) String() string {
 	add("push_cooldown", c.PushCooldown)
 	add("retries", formatOptionalInt(c.Retries))
 	add("concurrency", formatOptionalInt(c.Concurrency))
+	add("lease_pause", c.LeasePause)
+	add("read_wait", c.ReadWait)
 	add("ssh.per_hour", formatOptionalInt(c.SSH.PerHour))
 	add("https.per_hour", formatOptionalInt(c.HTTPS.PerHour))
 	add("https.per_hour_unauthenticated", formatOptionalInt(c.HTTPS.PerHourUnauthenticated))
+	add("ssh.per_minute", formatOptionalInt(c.SSH.PerMinute))
+	add("https.per_minute", formatOptionalInt(c.HTTPS.PerMinute))
+	add("https.per_minute_unauthenticated", formatOptionalInt(c.HTTPS.PerMinuteUnauthenticated))
 	return strings.Join(parts, " ")
 }
 
@@ -197,6 +244,8 @@ func (c GitLimitsConfig) applyTo(limits *GitLimits, prefix string) []IgnoredSett
 	}
 	duration("fetch_cooldown", c.FetchCooldown, MinGitFetchCooldown, &limits.FetchCooldown)
 	duration("push_cooldown", c.PushCooldown, MinGitPushCooldown, &limits.PushCooldown)
+	duration("lease_pause", c.LeasePause, MinGitLeasePause, &limits.LeasePause)
+	duration("read_wait", c.ReadWait, MinGitReadWait, &limits.ReadWait)
 	// No retries at all is a valid choice; every other count of 0 would stop
 	// all git traffic to the host.
 	count("retries", c.Retries, 0, &limits.Retries)
@@ -204,6 +253,9 @@ func (c GitLimitsConfig) applyTo(limits *GitLimits, prefix string) []IgnoredSett
 	count("ssh.per_hour", c.SSH.PerHour, 1, &limits.SSHPerHour)
 	count("https.per_hour", c.HTTPS.PerHour, 1, &limits.HTTPSPerHour)
 	count("https.per_hour_unauthenticated", c.HTTPS.PerHourUnauthenticated, 1, &limits.HTTPSUnauthenticatedPerHour)
+	count("ssh.per_minute", c.SSH.PerMinute, 1, &limits.SSHPerMinute)
+	count("https.per_minute", c.HTTPS.PerMinute, 1, &limits.HTTPSPerMinute)
+	count("https.per_minute_unauthenticated", c.HTTPS.PerMinuteUnauthenticated, 1, &limits.HTTPSUnauthenticatedPerMinute)
 	return ignored
 }
 
@@ -255,6 +307,21 @@ func mergeGitLimitsConfig(base, overlay GitLimitsConfig) GitLimitsConfig {
 	}
 	if overlay.HTTPS.PerHourUnauthenticated != nil {
 		out.HTTPS.PerHourUnauthenticated = overlay.HTTPS.PerHourUnauthenticated
+	}
+	if overlay.LeasePause != "" {
+		out.LeasePause = overlay.LeasePause
+	}
+	if overlay.ReadWait != "" {
+		out.ReadWait = overlay.ReadWait
+	}
+	if overlay.SSH.PerMinute != nil {
+		out.SSH.PerMinute = overlay.SSH.PerMinute
+	}
+	if overlay.HTTPS.PerMinute != nil {
+		out.HTTPS.PerMinute = overlay.HTTPS.PerMinute
+	}
+	if overlay.HTTPS.PerMinuteUnauthenticated != nil {
+		out.HTTPS.PerMinuteUnauthenticated = overlay.HTTPS.PerMinuteUnauthenticated
 	}
 	return out
 }
