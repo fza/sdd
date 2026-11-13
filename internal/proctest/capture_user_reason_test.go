@@ -6,6 +6,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/test"
 )
 
 // A decision captured with a user present carries the user's own words for
@@ -101,4 +102,30 @@ func TestCapture_AutonomousDecisionNeedsNoUserWords(t *testing.T) {
 	// An adjust passes the assemble gate again, now past the writing guide.
 	serve = session.Decide(t, serve.Instance, "playback", "adjust", map[string]any{"confidence": "medium"}, "the evidence is thinner")
 	proctest.RequireStep(t, serve, "playback")
+}
+
+func TestCapture_ReasonRepeatingTheIntentIsHeld(t *testing.T) {
+	world := proctest.NewWorld(t)
+	session := world.Open(t, "reason-repeats-intent")
+	serve := session.Start(t, "capture", nil)
+	draft := decisionDraft("directive")
+	draft["reasonWords"] = "We decided the parser module should reject empty input with a clear error instead of returning an empty result."
+	draft["intentWords"] = "the parser module should reject empty input with a clear error"
+	serve = session.Report(t, serve.Instance, draft)
+	proctest.RequireStep(t, serve, "assemble")
+	if !hasDiagnostic(serve, "reasonWords repeats intentWords") || !hasDiagnostic(serve, "ask the user why") {
+		t.Fatalf("a reason restating the decision should hold assemble and send the agent to ask why, got %v", serve.Diagnostics)
+	}
+	serve = session.Report(t, serve.Instance, map[string]any{"reasonWords": "empty input hid upstream bugs twice"})
+	proctest.RequireStep(t, serve, "playback")
+}
+
+func TestCapture_ReasonStatesWhyNeverWhat(t *testing.T) {
+	world := proctest.NewWorld(t)
+	session := world.Open(t, "reason-why-not-what")
+	serve := session.Start(t, "capture", nil)
+	want := "The reason states why, never what: words stating the decision itself never fill `reasonWords`. The user's words give no why? Ask."
+	if !strings.Contains(test.Untagged(serve.Instructions), want) {
+		t.Fatalf("assemble should tell the agent the reason states why:\n%s", serve.Instructions)
+	}
 }

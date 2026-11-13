@@ -17,7 +17,7 @@ func TestCapture_NeverSuppliesTheWhyOrTheIntent(t *testing.T) {
 	proctest.RequireStep(t, serve, "assemble")
 	assemble := test.Untagged(serve.Instructions)
 	for _, want := range []string{
-		"The dialogue holds none? Ask the user, end your turn, and draft after the answer. Never supply them.",
+		"The dialogue holds none of these words? Ask the user, end your turn, and draft after the answer. Never supply them.",
 		"A decision's reason states what the user said in `reasonWords`; never supply one.",
 		"It follows what the user said in `intentWords`; never supply one.",
 	} {
