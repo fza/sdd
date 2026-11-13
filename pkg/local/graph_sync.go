@@ -55,27 +55,67 @@ func (s MergeDriverSetup) Finalize(ctx context.Context, _ app.AppliedMutation) e
 	return nil
 }
 
-// SyncGraph runs one sync round in the checkout of branch when it is an
-// sdd-owned graph clone; its git operations run as far as the git gate admits
-// them, whatever the trigger.
+// SyncGraph runs the sync round syncstate.TimerRound plans for the checkout
+// of branch when it is an sdd-owned graph clone: the full round while its
+// lease holds, a push of the commits waiting otherwise, or none. Its git
+// operations run as far as the git gate admits them, whatever the trigger.
 func (a *GitWorktreeAcquirer) SyncGraph(ctx context.Context, branch string, _ app.SyncTrigger) error {
 	checkout, cfg, err := a.syncCheckout(ctx, branch)
 	if err != nil || cfg == nil || syncstate.Mode(checkout) != model.SyncModeAuto {
 		return err
 	}
-	opts, err := syncstate.HandlerOptions(ctx, meta.ResolveGraphDir(checkout, cfg), handlers.Options{
-		GraphDir: meta.ResolveGraphDir(checkout, cfg), SyncMode: model.SyncModeAuto, Gate: a.gate,
+	graphDir := meta.ResolveGraphDir(checkout, cfg)
+	root, err := git.GraphRepoRoot(graphDir)
+	if err != nil {
+		return err
+	}
+	round, err := syncstate.TimerRound(ctx, a.gate, root)
+	if err != nil || round == model.TimerRoundNone {
+		return err
+	}
+	cmd := &command.SyncRoundCmd{PushOnly: round == model.TimerRoundPush}
+	opts, err := syncstate.HandlerOptions(ctx, graphDir, handlers.Options{
+		GraphDir: graphDir, SyncMode: model.SyncModeAuto, Gate: a.gate,
 	})
 	if err != nil {
 		return err
 	}
 	log := slogutils.FromContext(ctx)
 	ctx = handlers.WithSyncReport(ctx, func(block model.SyncBlocked) { log.Info(block.Banner()) })
-	err = handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{})
+	err = handlers.New(opts).SyncRound(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("syncing the graph of %s: %w", branch, err)
 	}
 	return nil
+}
+
+// DemandGraph renews the lease of branch's checkout when it is an sdd-owned
+// graph clone, running the sync round a lease start asks for
+// (handlers.DemandSync).
+func (a *GitWorktreeAcquirer) DemandGraph(ctx context.Context, branch string, settled func()) (app.GraphDemand, error) {
+	checkout, cfg, err := a.syncCheckout(ctx, branch)
+	if err != nil || cfg == nil || syncstate.Mode(checkout) != model.SyncModeAuto {
+		return app.GraphDemand{}, err
+	}
+	graphDir := meta.ResolveGraphDir(checkout, cfg)
+	opts, err := syncstate.HandlerOptions(ctx, graphDir, handlers.Options{
+		GraphDir: graphDir, SyncMode: model.SyncModeAuto, Gate: a.gate,
+	})
+	if err != nil {
+		return app.GraphDemand{}, err
+	}
+	log := slogutils.FromContext(ctx)
+	ctx = handlers.WithSyncReport(ctx, func(block model.SyncBlocked) { log.Info(block.Banner()) })
+	var demand app.GraphDemand
+	err = handlers.New(opts).DemandSync(ctx, &command.DemandSyncCmd{
+		OnRound:   func() { demand.Ran = true },
+		OnPending: func(fetched time.Time) { demand.Pending, demand.Fetched = true, fetched },
+		OnSettled: settled,
+	})
+	if err != nil {
+		return demand, fmt.Errorf("syncing the graph of %s: %w", branch, err)
+	}
+	return demand, nil
 }
 
 // BackfillTitles titles the untitled entries in the checkout of branch,
@@ -149,9 +189,8 @@ func (a *GitWorktreeAcquirer) ReleaseSyncOwner(ctx context.Context, branch, sess
 	return notice, err
 }
 
-// SyncDue reports whether the sync round of branch's checkout has an
-// operation the git gate would admit: its fetch, or its push with commits
-// waiting. Only an sdd-owned graph clone syncs automatically.
+// SyncDue reports whether the serve timer has a round for branch's checkout
+// (syncstate.TimerRound). Only an sdd-owned graph clone syncs automatically.
 func (a *GitWorktreeAcquirer) SyncDue(ctx context.Context, branch string) (bool, error) {
 	checkout, cfg, err := a.syncCheckout(ctx, branch)
 	if err != nil || cfg == nil || syncstate.Mode(checkout) != model.SyncModeAuto {
@@ -161,7 +200,8 @@ func (a *GitWorktreeAcquirer) SyncDue(ctx context.Context, branch string) (bool,
 	if err != nil {
 		return false, err
 	}
-	return syncstate.RoundDue(ctx, a.gate, root)
+	round, err := syncstate.TimerRound(ctx, a.gate, root)
+	return round != model.TimerRoundNone, err
 }
 
 func (a *GitWorktreeAcquirer) syncCheckout(ctx context.Context, branch string) (string, *model.PerRepoConfig, error) {

@@ -10,6 +10,7 @@ import (
 	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 )
@@ -19,9 +20,8 @@ import (
 // (20261107-095427-d-tac-yux).
 type CloneRound interface {
 	SyncClone(ctx context.Context, dir string, cmd *command.SyncRoundCmd) error
-	// Due reports whether the round of the clone at dir has an operation the
-	// git gate admits now: its fetch, or its push with commits waiting.
-	Due(ctx context.Context, dir string) (bool, error)
+	// TimerRound is what the serve timer runs for the clone at dir.
+	TimerRound(ctx context.Context, dir string) (model.TimerRound, error)
 }
 
 var errNoCloneRound = errors.New("connected-repo sync is not wired (handler built without CloneRound)")
@@ -30,9 +30,9 @@ var errNoCloneRound = errors.New("connected-repo sync is not wired (handler buil
 type connectedSync struct {
 	// clone makes the clone when the repo has none.
 	clone bool
-	// onlyDue runs the round only when the gate has it due, and reports
+	// timer runs what the serve timer has due for the clone, and reports
 	// nothing otherwise.
-	onlyDue bool
+	timer bool
 	// explicit waits for the sync lock and runs while a conflict pauses
 	// automatic sync.
 	explicit bool
@@ -59,13 +59,16 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 	}
 	targets := cmd.RepoIDs
 	mode := connectedSync{clone: true, explicit: true}
+	if !cmd.Due {
+		ctx = gitgate.WithCredits(ctx, gitgate.Fetch, gitgate.Push)
+	}
 	switch {
 	case cmd.Due:
 		targets, err = h.closureMembers(ctx)
 		if err != nil {
 			return err
 		}
-		mode = connectedSync{onlyDue: true}
+		mode = connectedSync{timer: true}
 	case len(targets) == 0:
 		for _, r := range cfg.Repos {
 			targets = append(targets, r.RepoID)
@@ -157,14 +160,16 @@ func (h *Handler) syncConnected(ctx context.Context, repo repos.ConnectedRepo, m
 		}
 		return outcome, true
 	}
-	if mode.onlyDue {
-		due, err := h.cloneRound.Due(ctx, dir)
+	var pushOnly bool
+	if mode.timer {
+		round, err := h.cloneRound.TimerRound(ctx, dir)
 		if err != nil {
 			return *h.failedOutcome(ctx, repo, err), true
 		}
-		if !due {
+		if round == model.TimerRoundNone {
 			return outcome, false
 		}
+		pushOnly = round == model.TimerRoundPush
 	}
 	if mode.explicit {
 		_, _, err = h.repos.Ensure(ctx, repo)
@@ -184,6 +189,7 @@ func (h *Handler) syncConnected(ctx context.Context, repo repos.ConnectedRepo, m
 	var next time.Time
 	err = h.cloneRound.SyncClone(roundCtx, dir, &command.SyncRoundCmd{
 		Explicit:  mode.explicit,
+		PushOnly:  pushOnly,
 		OnSkipped: func() { skipped = true },
 		OnDeferred: func(_ string, at time.Time) {
 			if next.IsZero() || at.Before(next) {
@@ -202,7 +208,7 @@ func (h *Handler) syncConnected(ctx context.Context, repo repos.ConnectedRepo, m
 	}
 	switch {
 	case skipped:
-		return outcome, !mode.onlyDue
+		return outcome, !mode.timer
 	case pushed:
 		outcome.State = model.RepoPushed
 	case !next.IsZero():
@@ -229,13 +235,16 @@ func (h *Handler) failed(ctx context.Context, repo repos.ConnectedRepo, reason s
 	return outcome
 }
 
-// EnsureReposFresh brings the clones of the named connected repos up to date
-// for a read: a clone on first use, else the clone's sync round when the git
-// gate has it due; a deferred one leaves the clone as it stands. Unconnected
-// repo IDs are skipped — the read side renders them unresolved, which is that
-// state's honest surface. Reports whether any clone changed so a long-lived
-// caller can invalidate its GraphSource; every repo is tried, and the
-// failures return joined.
+// EnsureReposFresh starts or renews the lease of each named connected repo
+// for a read (20261113-232855-d-tac-1nz): a clone on first use; else, when
+// the lease starts past the repo's effective fetch cooldown, one sync round,
+// waited for at most read_wait. A round still running then finishes in the
+// background: cmd.OnPending reports it, cmd.OnSettled its outcome. A
+// deferred round leaves the clone as it stands. Unconnected repo IDs are
+// skipped — the read side renders them unresolved, which is that state's
+// honest surface. Reports whether any clone changed so a long-lived caller
+// can invalidate its GraphSource; every repo is tried, and the failures
+// return joined.
 func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposFreshCmd) (changed bool, err error) {
 	if len(cmd.RepoIDs) == 0 {
 		return false, nil
@@ -251,7 +260,6 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposF
 		return false, err
 	}
 	logger := slogutils.FromContext(ctx)
-	scope, _ := ctx.Value(refreshScopeKey{}).(*refreshScope)
 	var failures []error
 	for _, repoID := range cmd.RepoIDs {
 		repo, ok := cfg.Connected(repoID)
@@ -259,12 +267,10 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposF
 			logger.Debug("repo not connected; skipping its refresh", "repo", repoID)
 			continue
 		}
-		if !scope.first(repoID) {
-			logger.Debug("refreshed earlier in this invocation", "repo", repoID)
-			continue
-		}
-		outcome, reported := h.syncConnected(ctx, repo, connectedSync{clone: true, onlyDue: true, onPhase: cmd.OnPhase})
+		outcome, reported, err := h.demandConnected(ctx, repo, cmd)
 		switch {
+		case err != nil:
+			failures = append(failures, fmt.Errorf("%s: %w", repoID, err))
 		case !reported:
 			logger.Debug("refresh not due", "repo", repoID)
 		case outcome.State == model.RepoFailed:
@@ -278,33 +284,81 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposF
 	return changed, errors.Join(failures...)
 }
 
-type refreshScopeKey struct{}
-
-type refreshScope struct {
-	mu        sync.Mutex
-	refreshed map[model.RepoID]bool
+// demandConnected clones repo on first use, then renews its lease and runs
+// the round a lease start asks for; reported is false when none runs or it
+// still runs past the read wait.
+func (h *Handler) demandConnected(ctx context.Context, repo repos.ConnectedRepo, cmd command.EnsureReposFreshCmd) (model.RepoSyncOutcome, bool, error) {
+	dir, err := h.repos.Registry().CloneDir(repo.RepoID)
+	if err != nil {
+		return model.RepoSyncOutcome{}, false, err
+	}
+	if !repos.IsCloned(dir) {
+		outcome, reported := h.syncConnected(ctx, repo, connectedSync{clone: true, onPhase: cmd.OnPhase})
+		_, err = h.repos.Demand(ctx, repo)
+		return outcome, reported, err
+	}
+	demand, err := h.repos.Demand(ctx, repo)
+	if err != nil || !demand.Sync {
+		return model.RepoSyncOutcome{}, false, err
+	}
+	outcome, finished := waitFor(ctx, h, demand.Wait, func(ctx context.Context) model.RepoSyncOutcome {
+		outcome, _ := h.syncConnected(ctx, repo, connectedSync{onPhase: cmd.OnPhase})
+		return outcome
+	}, func() {
+		if cmd.OnPending != nil {
+			cmd.OnPending(repo.RepoID, demand.Fetched)
+		}
+	}, func(outcome model.RepoSyncOutcome) {
+		if cmd.OnSettled != nil {
+			cmd.OnSettled(outcome)
+		}
+	})
+	return outcome, finished, nil
 }
 
-// WithRefreshScope scopes clone refreshes to one invocation: EnsureReposFresh
-// tries each repo's round at most once within it, though the git gate admits
-// a local-path remote every time (20261107-095427-d-tac-yux).
-func WithRefreshScope(ctx context.Context) context.Context {
-	return context.WithValue(ctx, refreshScopeKey{}, &refreshScope{refreshed: map[model.RepoID]bool{}})
+// waitFor runs run on a context that outlives ctx and waits for it at most
+// wait. Past that it calls pending and returns, and run finishes in the
+// background, handing its result to settled, never before pending; Settle
+// waits for it.
+func waitFor[T any](ctx context.Context, h *Handler, wait time.Duration, run func(context.Context) T, pending func(), settled func(T)) (result T, finished bool) {
+	var mu sync.Mutex
+	waiting := true
+	done := make(chan T, 1)
+	h.background.Add(1)
+	go func() {
+		defer h.background.Done()
+		result := run(context.WithoutCancel(ctx))
+		mu.Lock()
+		defer mu.Unlock()
+		if waiting {
+			done <- result
+			return
+		}
+		settled(result)
+	}()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case result := <-done:
+		return result, true
+	case <-timer.C:
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	select {
+	case result := <-done:
+		return result, true
+	default:
+	}
+	waiting = false
+	pending()
+	return result, false
 }
 
-// first reports whether repoID is refreshed for the first time in the scope;
-// always true outside one.
-func (s *refreshScope) first(repoID model.RepoID) bool {
-	if s == nil {
-		return true
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.refreshed[repoID] {
-		return false
-	}
-	s.refreshed[repoID] = true
-	return true
+// Settle waits for the sync rounds that outlived the calls starting them, so
+// a process ending does not cut one short.
+func (h *Handler) Settle() {
+	h.background.Wait()
 }
 
 // freshenReferencedRepos refreshes the clones of every repo a ref set points
@@ -317,8 +371,12 @@ func (h *Handler) freshenReferencedRepos(ctx context.Context, refs []model.Ref) 
 	if len(repoIDs) == 0 {
 		return
 	}
-	if _, err := h.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: repoIDs}); err != nil {
-		slogutils.FromContext(ctx).Warn("could not refresh referenced dependencies; resolving against their clones as they stand", "repos", repoIDs, "err", err)
+	logger := slogutils.FromContext(ctx)
+	_, err := h.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: repoIDs, OnPending: func(repoID model.RepoID, fetched time.Time) {
+		logger.Warn("refresh of a referenced dependency still running; resolving against its clone as it stands", "repo", repoID, "fetched", fetched)
+	}})
+	if err != nil {
+		logger.Warn("could not refresh referenced dependencies; resolving against their clones as they stand", "repos", repoIDs, "err", err)
 	}
 }
 

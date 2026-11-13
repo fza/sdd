@@ -37,7 +37,7 @@ func TestResolveGitLimits(t *testing.T) {
 		{name: "nothing set", host: "gitlab.com", want: defaults},
 		{
 			name: "built-in defaults",
-			want: model.GitLimits{FetchCooldown: 5 * time.Minute, PushCooldown: 30 * time.Second, Retries: 2, Concurrency: 2, SSHPerHour: 600, HTTPSPerHour: 600, HTTPSUnauthenticatedPerHour: 60},
+			want: model.GitLimits{FetchCooldown: 5 * time.Minute, PushCooldown: 30 * time.Second, Retries: 2, Concurrency: 2, SSHPerHour: 600, HTTPSPerHour: 600, HTTPSUnauthenticatedPerHour: 60, SSHPerMinute: 60, HTTPSPerMinute: 60, HTTPSUnauthenticatedPerMinute: 6, LeasePause: 10 * time.Minute, ReadWait: 15 * time.Second},
 		},
 		{
 			name: "default block overrides every key",
@@ -47,7 +47,7 @@ func TestResolveGitLimits(t *testing.T) {
 				HTTPS: model.GitHTTPSLimitsConfig{PerHour: intPtr(200), PerHourUnauthenticated: intPtr(20)},
 			}},
 			host: "gitlab.com",
-			want: model.GitLimits{FetchCooldown: 10 * time.Minute, PushCooldown: time.Minute, Retries: 0, Concurrency: 4, SSHPerHour: 100, HTTPSPerHour: 200, HTTPSUnauthenticatedPerHour: 20},
+			want: model.GitLimits{FetchCooldown: 10 * time.Minute, PushCooldown: time.Minute, Retries: 0, Concurrency: 4, SSHPerHour: 100, HTTPSPerHour: 200, HTTPSUnauthenticatedPerHour: 20, SSHPerMinute: 10, HTTPSPerMinute: 20, HTTPSUnauthenticatedPerMinute: 2, LeasePause: 10 * time.Minute, ReadWait: 15 * time.Second},
 		},
 		{
 			name: "host entry overrides the default block key by key",
@@ -124,6 +124,47 @@ func TestResolveGitLimits(t *testing.T) {
 			}},
 			want:     defaults,
 			warnings: []string{"sync.default.ssh.per_hour", "sync.default.https.per_hour", "sync.default.https.per_hour_unauthenticated"},
+		},
+		{
+			name: "per-minute limits set per bucket",
+			sync: model.SyncConfig{Default: model.GitLimitsConfig{
+				SSH:   model.GitSSHLimitsConfig{PerHour: intPtr(100), PerMinute: intPtr(30)},
+				HTTPS: model.GitHTTPSLimitsConfig{PerMinute: intPtr(7), PerMinuteUnauthenticated: intPtr(3)},
+			}},
+			want: with(func(l *model.GitLimits) {
+				l.SSHPerHour, l.SSHPerMinute, l.HTTPSPerMinute, l.HTTPSUnauthenticatedPerMinute = 100, 30, 7, 3
+			}),
+		},
+		{
+			name: "per-minute limit follows a host's hourly limit",
+			sync: model.SyncConfig{
+				Default: model.GitLimitsConfig{SSH: model.GitSSHLimitsConfig{PerHour: intPtr(300)}},
+				Hosts:   map[string]model.GitLimitsConfig{"gitlab.com": {SSH: model.GitSSHLimitsConfig{PerHour: intPtr(50)}}},
+			},
+			host: "gitlab.com",
+			want: with(func(l *model.GitLimits) { l.SSHPerHour, l.SSHPerMinute = 50, 5 }),
+		},
+		{
+			name: "a small hourly limit still allows one a minute",
+			sync: model.SyncConfig{Default: model.GitLimitsConfig{HTTPS: model.GitHTTPSLimitsConfig{PerHourUnauthenticated: intPtr(5)}}},
+			want: with(func(l *model.GitLimits) { l.HTTPSUnauthenticatedPerHour, l.HTTPSUnauthenticatedPerMinute = 5, 1 }),
+		},
+		{
+			name:     "non-positive per-minute limits",
+			sync:     model.SyncConfig{Default: model.GitLimitsConfig{SSH: model.GitSSHLimitsConfig{PerMinute: intPtr(0)}, HTTPS: model.GitHTTPSLimitsConfig{PerMinute: intPtr(-1), PerMinuteUnauthenticated: intPtr(0)}}},
+			want:     defaults,
+			warnings: []string{"sync.default.ssh.per_minute", "sync.default.https.per_minute", "sync.default.https.per_minute_unauthenticated"},
+		},
+		{
+			name: "lease pause and read wait",
+			sync: model.SyncConfig{Default: model.GitLimitsConfig{LeasePause: "1m", ReadWait: "1s"}},
+			want: with(func(l *model.GitLimits) { l.LeasePause, l.ReadWait = time.Minute, time.Second }),
+		},
+		{
+			name:     "lease pause and read wait below the floor",
+			sync:     model.SyncConfig{Default: model.GitLimitsConfig{LeasePause: "59s", ReadWait: "500ms"}},
+			want:     defaults,
+			warnings: []string{"sync.default.lease_pause", "sync.default.read_wait"},
 		},
 		{
 			name: "an ignored host value leaves the default block's value",

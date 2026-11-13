@@ -89,18 +89,25 @@ type ProjectRuntimeOptions struct {
 // checkout (20261027-194536-d-tac-190) and serves what blocks it
 // (20261028-201909-d-tac-fxp).
 type GraphSync interface {
-	// SyncGraph runs one sync round for branch, skipping it when another
-	// process is syncing.
+	// SyncGraph runs the timer's sync round for branch, skipping it when
+	// another process is syncing. The round runs only as far as the lease of
+	// branch's graph asks (20261113-232855-d-tac-1nz): a fetch while it
+	// holds, a push of the commits waiting either way.
 	SyncGraph(ctx context.Context, branch string, trigger SyncTrigger) error
+	// DemandGraph starts or renews the lease of branch's graph for a call
+	// and runs the sync round a lease start asks for, waiting for it at most
+	// the read wait. A round still running then reports Pending and finishes
+	// in the background, calling settled once it ends.
+	DemandGraph(ctx context.Context, branch string, settled func()) (GraphDemand, error)
 	// SyncNotice returns the blocked-sync notice for session, empty while
 	// sync proceeds; the first session to ask owns the fix.
 	SyncNotice(ctx context.Context, branch, session string) (string, error)
 	// ReleaseSyncOwner gives up session's ownership of branch's blocked sync
 	// as the session ends, returning the banner while sync is blocked.
 	ReleaseSyncOwner(ctx context.Context, branch, session string) (string, error)
-	// SyncDue reports whether a sync round of branch has an operation due:
-	// automatic sync is on and the git gate would admit its fetch, or its
-	// push with commits waiting.
+	// SyncDue reports whether the timer has a round for branch: automatic
+	// sync is on and the git gate would admit its fetch while its lease
+	// holds, or its push with commits waiting.
 	SyncDue(ctx context.Context, branch string) (bool, error)
 	// SyncBlocked reads what blocks sync of branch, nil while sync proceeds.
 	SyncBlocked(ctx context.Context, branch string) (*SyncBlocked, error)
@@ -257,9 +264,9 @@ func (r *ProjectRuntime) syncBranch(ctx context.Context, branch string) (string,
 // (20261107-095427-d-tac-yux).
 const syncTick = time.Minute
 
-// RunSyncTimer runs, whenever a tick finds it due, the base branch's sync
-// round with its title backfill and the round of every connected repository
-// the project reaches, until ctx ends.
+// RunSyncTimer runs, whenever a tick finds it due, the timer round of the
+// base branch with its title backfill and that of every connected repository
+// the project reaches, each as far as its lease asks, until ctx ends.
 func (r *ProjectRuntime) RunSyncTimer(ctx context.Context) error {
 	branch, own := "", false
 	if r.options.Sync != nil {

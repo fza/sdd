@@ -29,6 +29,9 @@ type recordingGraphSync struct {
 	// every backfill running until it is closed.
 	backfills []sdd.SyncTrigger
 	hold      chan struct{}
+	// demand is what DemandGraph returns; leases records its calls.
+	demand sdd.GraphDemand
+	leases demandRecord
 }
 
 func (s *recordingGraphSync) BackfillTitles(_ context.Context, _ string, trigger sdd.SyncTrigger, runner pkgllm.Runner) error {
@@ -148,32 +151,6 @@ func syncedApplication(t *testing.T, sync *recordingGraphSync, base ...sdd.BaseB
 	return application, runtime
 }
 
-func TestRefreshWorkflowSyncsTheSessionBranchFirst(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		err  error
-	}{
-		{name: "sync succeeds"},
-		{name: "sync fails", err: errors.New("upstream unreachable")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			sync := &recordingGraphSync{err: tc.err}
-			application, _ := syncedApplication(t, sync)
-			identity := sdd.RequestIdentity{Subject: "christopher"}
-			workflow, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "test"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := application.RefreshWorkflow(t.Context(), identity, workflow.ID()); err != nil {
-				t.Fatalf("a sync failure should not block the session: %v", err)
-			}
-			if !slices.Equal(sync.branches, []string{"main"}) || !slices.Equal(sync.triggers, []sdd.SyncTrigger{sdd.SyncOnCall}) {
-				t.Errorf("a refresh of an unbound session should run one call round on the base branch, got %v %v", sync.branches, sync.triggers)
-			}
-		})
-	}
-}
-
 func TestSyncSkipsACheckoutWithoutBranch(t *testing.T) {
 	sync := &recordingGraphSync{err: errors.New("no registered checkout"), blocked: &sdd.SyncBlocked{Kind: "no-upstream"}}
 	application, _ := syncedApplication(t, sync, branchlessCheckout{})
@@ -192,8 +169,8 @@ func TestSyncSkipsACheckoutWithoutBranch(t *testing.T) {
 	if _, err := application.RefreshWorkflow(t.Context(), identity, workflow.ID()); err != nil {
 		t.Fatal(err)
 	}
-	if len(sync.rounds()) != 0 {
-		t.Error("a checkout without branch should run no sync round")
+	if len(sync.rounds()) != 0 || len(sync.demanded()) != 0 {
+		t.Error("a checkout without branch should neither sync nor renew a lease")
 	}
 }
 

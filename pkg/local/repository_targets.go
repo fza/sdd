@@ -19,13 +19,16 @@ import (
 // a non-empty localConfigPath stands in for every checkout's
 // .sdd/config.local.yaml. The git network operations sync starts pass a gate
 // keeping its record in stateDir, under the limits the global config sets as
-// read now (20261107-095427-d-tac-yux).
-func NewRepositoryTargets(ctx context.Context, project app.ProjectID, serverCheckout, globalConfigPath, localConfigPath, stateDir string) (*GitWorktreeAcquirer, error) {
+// read now and the sdd-owned clones under dataDir (20261107-095427-d-tac-yux).
+func NewRepositoryTargets(ctx context.Context, project app.ProjectID, serverCheckout, globalConfigPath, localConfigPath, stateDir, dataDir string) (*GitWorktreeAcquirer, error) {
 	limitsConfig, err := repos.LoadConfigFrom(globalConfigPath)
 	if err != nil {
 		return nil, err
 	}
-	gate := gitgate.New(gitgate.Options{StateDir: stateDir, Limits: repos.GitLimitsFunc(ctx, limitsConfig, globalConfigPath)})
+	gate := gitgate.New(gitgate.Options{
+		StateDir: stateDir, Limits: repos.GitLimitsFunc(ctx, limitsConfig, globalConfigPath),
+		Clones: repos.NewCloneTargets(repos.Locations{DataRoot: dataDir}, git.GraphClones{}).Targets,
+	})
 	resolveConfig := func(checkout string) (*model.PerRepoConfig, error) {
 		global, err := repos.LoadConfigFrom(globalConfigPath)
 		if err != nil {

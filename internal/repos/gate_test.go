@@ -39,6 +39,9 @@ func (g *countingGit) CloneGraph(_ context.Context, _ model.RepoID, source model
 	g.clones++
 	g.sources = append(g.sources, source)
 	err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755)
+	if err == nil {
+		err = os.WriteFile(filepath.Join(dir, ".git", "config"), nil, 0o644)
+	}
 	if err != nil {
 		return err
 	}
@@ -177,6 +180,37 @@ func TestGraphClonesPassTheGate(t *testing.T) {
 	}
 	if git.pushes != 1 {
 		t.Error("a publish with no commits waiting should not push")
+	}
+}
+
+// A publish within the push cooldown spends a credit its clone's unused fetch
+// slices earned.
+func TestGraphClonesPublishSpendsACredit(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	loc := repos.Locations{DataRoot: t.TempDir()}
+	git := &countingGit{}
+	gate := gitgate.New(gitgate.Options{
+		StateDir: t.TempDir(),
+		Limits:   func(string) gitgate.Limits { return model.DefaultGitLimits() },
+		Now:      func() time.Time { return now },
+		Clones:   repos.NewCloneTargets(loc, git).Targets,
+	})
+	clones := repos.NewGraphClones(loc, git, gate)
+	repoID := model.RepoID("example.test/acme/app-sdd")
+	_, _, err := clones.Ensure(t.Context(), repoID, "git@example.test:acme/app.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(20 * time.Minute)
+	err = clones.Publish(t.Context(), repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(15 * time.Second)
+	err = clones.Publish(t.Context(), repoID)
+	if err != nil || git.pushes != 2 {
+		t.Errorf("a publish within the push cooldown should spend a credit, got %v after %d pushes", err, git.pushes)
 	}
 }
 

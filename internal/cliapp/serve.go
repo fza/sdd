@@ -360,7 +360,12 @@ func (c connectedRounds) SyncRepos(ctx context.Context, request sdd.SyncReposReq
 }
 
 func (c connectedRounds) refresh(ctx context.Context, repoID sdd.RepoID) error {
-	_, err := c.handler.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: []model.RepoID{model.RepoID(repoID)}})
+	_, err := c.handler.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{
+		RepoIDs: []model.RepoID{model.RepoID(repoID)},
+		OnPending: func(repoID model.RepoID, fetched time.Time) {
+			slogutils.FromContext(ctx).Warn("sync: refresh still running; reading the clone as it stands", "repo", repoID, "fetched", fetched)
+		},
+	})
 	return err
 }
 
@@ -589,7 +594,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	if err != nil {
 		return nil, err
 	}
-	targets, err := localadapter.NewRepositoryTargets(ctx, project, serverCheckout, locations.ConfigPath, localLayer, locations.StateRoot)
+	targets, err := localadapter.NewRepositoryTargets(ctx, project, serverCheckout, locations.ConfigPath, localLayer, locations.StateRoot, locations.DataRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -673,7 +678,7 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 		}
 		defaultBranch = branch
 	}
-	targets, err := localadapter.NewRepositoryTargets(ctx, project, dir, locations.ConfigPath, "", locations.StateRoot)
+	targets, err := localadapter.NewRepositoryTargets(ctx, project, dir, locations.ConfigPath, "", locations.StateRoot, locations.DataRoot)
 	if err != nil {
 		return nil, err
 	}

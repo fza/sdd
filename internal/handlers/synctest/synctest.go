@@ -14,9 +14,23 @@ import (
 )
 
 // Gate is a git gate keeping its ledger in stateDir, with the built-in limits
-// and the clock now; a nil now is the wall clock.
-func Gate(stateDir string, now func() time.Time) *gitgate.Gate {
-	return gitgate.New(gitgate.Options{StateDir: stateDir, Now: now, Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }})
+// and the clock now; a nil now is the wall clock. clones are the remote URLs
+// of the sdd-owned clones it lists.
+func Gate(stateDir string, now func() time.Time, clones ...string) *gitgate.Gate {
+	return gitgate.New(gitgate.Options{
+		StateDir: stateDir, Now: now, Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() },
+		Clones: func(context.Context) ([]gitgate.Target, error) {
+			targets := make([]gitgate.Target, 0, len(clones))
+			for _, url := range clones {
+				target, err := gitgate.TargetFromURL(url)
+				if err != nil {
+					return nil, err
+				}
+				targets = append(targets, target)
+			}
+			return targets, nil
+		},
+	})
 }
 
 // ErrForbidden is what a Repo returns from an operation its test forbids.

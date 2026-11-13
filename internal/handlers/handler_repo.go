@@ -387,7 +387,7 @@ func (h *Handler) refreshClone(ctx context.Context, repoID model.RepoID, cmd com
 		cmd.OnUnconnected(repoID)
 		return nil
 	}
-	if _, err := h.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: []model.RepoID{repoID}, OnPhase: cmd.OnPhase}); err != nil {
+	if _, err := h.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: []model.RepoID{repoID}, OnPhase: cmd.OnPhase, OnPending: cmd.OnPending}); err != nil {
 		cmd.OnRefreshFailed(repoID, err)
 	}
 	return nil

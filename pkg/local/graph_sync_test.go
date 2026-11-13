@@ -183,7 +183,16 @@ func pushUpstream(t *testing.T, remote, path, content, subject string) string {
 	return gitIn(t, other, "rev-parse", "HEAD")
 }
 
-func TestSyncGraphPullsOnlyIntoAGraphClone(t *testing.T) {
+// lease starts the lease of repo's graph, running the round its start asks
+// for.
+func lease(t *testing.T, repo *gitRepository) {
+	t.Helper()
+	if _, err := repo.targets().DemandGraph(t.Context(), "main", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestALeaseStartPullsOnlyIntoAGraphClone(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		checkout func(t *testing.T) (*gitRepository, string)
@@ -196,27 +205,31 @@ func TestSyncGraphPullsOnlyIntoAGraphClone(t *testing.T) {
 			repo, remote := tc.checkout(t)
 			upstream := pushUpstream(t, remote, ".sdd/graph/upstream.md", "upstream\n", "sdd: capture upstream")
 
-			if err := repo.targets().SyncGraph(t.Context(), "main", sdd.SyncOnCall); err != nil {
+			demand, err := repo.targets().DemandGraph(t.Context(), "main", nil)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if pulled := repo.git("rev-parse", "HEAD") == upstream; pulled != tc.pulled {
-				t.Error("upstream graph commits should arrive exactly in a graph clone")
+			if pulled := repo.git("rev-parse", "HEAD") == upstream; pulled != tc.pulled || demand.Ran != tc.pulled {
+				t.Errorf("a lease start should pull upstream graph commits exactly into a graph clone, got pulled %v, ran %v", pulled, demand.Ran)
 			}
 		})
 	}
 }
 
-func TestSyncGraphFetchesWhateverTheTrigger(t *testing.T) {
-	for _, trigger := range []sdd.SyncTrigger{sdd.SyncOnCall, sdd.SyncOnTimer} {
-		t.Run(string(trigger), func(t *testing.T) {
+func TestTheTimerRoundFetchesOnlyWhileTheLeaseHolds(t *testing.T) {
+	for _, leased := range []bool{true, false} {
+		t.Run(fmt.Sprintf("leased %v", leased), func(t *testing.T) {
 			repo, remote := syncedClone(t, nil)
+			if leased {
+				lease(t, repo)
+			}
 			upstream := pushUpstream(t, remote, ".sdd/graph/upstream.md", "upstream\n", "sdd: capture upstream")
 
-			if err := repo.targets().SyncGraph(t.Context(), "main", trigger); err != nil {
+			if err := repo.targets().SyncGraph(t.Context(), "main", sdd.SyncOnTimer); err != nil {
 				t.Fatal(err)
 			}
-			if repo.git("rev-parse", "HEAD") != upstream {
-				t.Error("the git gate, not the trigger, should decide whether a round fetches")
+			if fetched := repo.git("rev-parse", "origin/main") == upstream; fetched != leased {
+				t.Errorf("the timer round should fetch exactly while the lease holds, fetched %v", fetched)
 			}
 		})
 	}
@@ -228,8 +241,16 @@ func TestSyncDue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if due {
+		t.Error("a graph clone without a lease and nothing to push should not be due")
+	}
+	lease(t, repo)
+	due, err = repo.targets().SyncDue(t.Context(), "main")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !due {
-		t.Error("a graph clone on a remote the gate always admits should be due")
+		t.Error("a leased graph clone on a remote the gate always admits should be due")
 	}
 	code, _ := syncedRepository(t, "auto")
 	due, err = code.targets().SyncDue(t.Context(), "main")
@@ -262,6 +283,7 @@ func pauseOnConflict(t *testing.T, repo *gitRepository, source string) {
 
 func TestSyncGraphPausesOnAConflictUntilMerged(t *testing.T) {
 	repo, remote := syncedClone(t, nil)
+	lease(t, repo)
 	source := pushUpstream(t, remote, ".sdd/graph/shared.md", "theirs\n", "sdd: edit elsewhere")
 	pauseOnConflict(t, repo, source)
 
@@ -323,6 +345,7 @@ func TestEngineCaptureCommitsLocallyWhilePaused(t *testing.T) {
 
 func TestConcurrentSyncRoundsNeverOverlap(t *testing.T) {
 	repo, remote := syncedClone(t, nil)
+	lease(t, repo)
 	for i := range 3 {
 		pushUpstream(t, remote, fmt.Sprintf(".sdd/graph/upstream-%d.md", i), "upstream\n", "sdd: capture upstream")
 	}
@@ -353,6 +376,7 @@ func TestConcurrentSyncRoundsNeverOverlap(t *testing.T) {
 
 func TestHeldSyncLockKeepsARoundOut(t *testing.T) {
 	repo, remote := syncedClone(t, nil)
+	lease(t, repo)
 	upstream := pushUpstream(t, remote, ".sdd/graph/upstream.md", "upstream\n", "sdd: capture upstream")
 	_, state, err := syncstate.Open(t.Context(), filepath.Join(repo.root, ".sdd", "graph"))
 	if err != nil {

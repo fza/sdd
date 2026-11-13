@@ -9,6 +9,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/networkteam/sdd/internal/gitgate"
@@ -155,6 +156,8 @@ type Handler struct {
 	stderr          io.Writer
 	now             func() time.Time
 	language        string
+	// background tracks rounds a read stopped waiting for (waitFor).
+	background *sync.WaitGroup
 }
 
 // Options configures a new Handler. Zero-valued fields get sensible defaults.
@@ -274,6 +277,7 @@ func New(opts Options) *Handler {
 		stderr:          opts.Stderr,
 		now:             opts.Now,
 		language:        opts.Language,
+		background:      &sync.WaitGroup{},
 	}
 	if h.stderr == nil {
 		h.stderr = os.Stderr

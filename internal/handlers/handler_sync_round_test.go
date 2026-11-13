@@ -34,7 +34,7 @@ func newSyncFixture(t *testing.T, repo *synctest.Repo) *syncFixture {
 	clock := func() time.Time { return f.now }
 	f.handler = handlers.New(handlers.Options{
 		GraphDir: "graph", GraphFetcher: repo, GraphPuller: repo, Pusher: repo, SyncLock: f.lock, SyncRecord: f.record,
-		SyncMode: model.SyncModeAuto, Now: clock, Gate: synctest.Gate(t.TempDir(), clock),
+		SyncMode: model.SyncModeAuto, Now: clock, Gate: synctest.Gate(t.TempDir(), clock, hostedURL),
 	})
 	return f
 }
@@ -608,5 +608,61 @@ func TestTwoHandlersOnOneStateDirFetchOnce(t *testing.T) {
 	}
 	if len(deferred) != 1 || !deferred[0].After(now) {
 		t.Errorf("the second round should be deferred until the cooldown ends, got %v", deferred)
+	}
+}
+
+// A publish of what a graph command committed spends a credit inside the
+// push cooldown; an automatic round never does.
+func TestPublishGraphSpendsACredit(t *testing.T) {
+	repo := &synctest.Repo{Upstream: "origin/main", URL: hostedURL, Ahead: 1, GraphAhead: 1}
+	f := newSyncFixture(t, repo)
+	f.fetchedJustNow(t)
+	// The fetch slices left unused meanwhile earn credits.
+	f.now = f.now.Add(20 * time.Minute)
+	err := f.handler.PublishGraph(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.now = f.now.Add(15 * time.Second)
+	f.round(t, context.Background(), command.SyncRoundCmd{})
+	if repo.Count("push") != 1 {
+		t.Error("an automatic round should not spend a credit on a push inside its cooldown")
+	}
+	err = f.handler.PublishGraph(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.Count("push") != 2 {
+		t.Error("a publish inside the push cooldown should spend a credit")
+	}
+}
+
+// A push-only round publishes the commits waiting and fetches nothing.
+func TestPushOnlyRound(t *testing.T) {
+	repo := &synctest.Repo{Upstream: "origin/main", URL: hostedURL, Ahead: 1, GraphAhead: 1}
+	f := newSyncFixture(t, repo)
+	f.round(t, context.Background(), command.SyncRoundCmd{PushOnly: true})
+	if repo.Called("fetch") || repo.Called("merge") || !repo.Called("push") {
+		t.Errorf("a push-only round should push without fetching, got calls %v", repo.Calls)
+	}
+}
+
+func TestPushOnlyRoundClearsWhatThePushFixes(t *testing.T) {
+	for _, tc := range []struct {
+		kind    model.SyncBlockedKind
+		cleared bool
+	}{
+		{kind: model.SyncBlockedPushFailed, cleared: true},
+		{kind: model.SyncBlockedFetchFailed},
+	} {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			f := newSyncFixture(t, &synctest.Repo{Upstream: "origin/main", URL: hostedURL, Ahead: 1, GraphAhead: 1})
+			f.record.Current = &model.SyncBlocked{Kind: tc.kind, Since: f.now}
+			f.round(t, context.Background(), command.SyncRoundCmd{PushOnly: true})
+			if cleared := f.record.Current == nil; cleared != tc.cleared {
+				t.Errorf("a push-only round that pushes should clear %s exactly when a push fixes it, cleared %v", tc.kind, cleared)
+			}
+		})
 	}
 }

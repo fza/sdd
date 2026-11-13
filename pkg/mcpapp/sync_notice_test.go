@@ -33,6 +33,16 @@ func (s *testGraphSync) SyncGraph(context.Context, string, sdd.SyncTrigger) erro
 	return nil
 }
 
+func (s *testGraphSync) DemandGraph(context.Context, string, func()) (sdd.GraphDemand, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.blockOnRound != nil {
+		s.blocked, s.blockOnRound = s.blockOnRound, nil
+		return sdd.GraphDemand{Ran: true}, nil
+	}
+	return sdd.GraphDemand{}, nil
+}
+
 func (s *testGraphSync) SyncNotice(_ context.Context, _, session string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -137,6 +137,13 @@ func (h *Handler) syncRound(ctx context.Context, cmd *command.SyncRoundCmd) erro
 	if err != nil {
 		return err
 	}
+	if cmd.PushOnly {
+		blocked, err := h.publish(ctx, cmd)
+		if err != nil || blocked {
+			return err
+		}
+		return h.clearRecord(model.SyncBlocked.ClearedByPush)
+	}
 	var state model.SyncState
 	var reason string
 	err = h.FetchGraph(ctx, &command.FetchGraphCmd{OnDeferred: cmd.OnDeferred, OnFetched: func(fetched model.SyncState, why string) {
@@ -316,6 +323,7 @@ func (h *Handler) publishGraph(ctx context.Context) error {
 	if h.syncMode != model.SyncModeAuto {
 		return nil
 	}
+	ctx = gitgate.WithCredits(ctx, gitgate.Push)
 	release, err := h.takeSyncLock(ctx, true)
 	if err != nil {
 		return err

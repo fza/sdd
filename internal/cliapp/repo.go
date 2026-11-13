@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	"github.com/networkteam/slogutils"
 	"github.com/urfave/cli/v3"
@@ -288,13 +289,14 @@ func repoIDArgs(args []string) []model.RepoID {
 }
 
 // refreshDependencies refreshes the dependency closure's clones ahead of a
-// read that reaches beyond the local graph.
-func refreshDependencies(ctx context.Context, errWriter io.Writer) error {
+// read that reaches beyond the local graph. settle waits for the sync rounds
+// the read stopped waiting for; call it once the read is out.
+func refreshDependencies(ctx context.Context, errWriter io.Writer) (settle func(), err error) {
 	h, err := repoHandler(errWriter)
 	if err != nil {
-		return err
+		return func() {}, err
 	}
-	return h.RefreshDependencyClosure(ctx, dependencyRefreshCmd(ctx))
+	return h.Settle, h.RefreshDependencyClosure(ctx, dependencyRefreshCmd(ctx))
 }
 
 // dependencyRefreshCmd logs what a refresh could not do as warnings; the read
@@ -307,6 +309,9 @@ func dependencyRefreshCmd(ctx context.Context) command.RefreshDependencyClosureC
 		},
 		OnUnconnected: func(repoID model.RepoID) {
 			logger.Warn("dependency is not connected on this machine; connect it with `sdd repo add <clone-url>`", "repo", repoID)
+		},
+		OnPending: func(repoID model.RepoID, fetched time.Time) {
+			logger.Warn("dependency refresh still running; reading its clone as it stands", "repo", repoID, "fetched", fetched)
 		},
 	}
 }

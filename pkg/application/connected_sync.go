@@ -20,8 +20,8 @@ type ConnectedSync interface {
 
 // SyncReposRequest selects the connected repositories a sync reaches: the
 // named ones, every connected one when none is named, or with Due the
-// cloned members of the project's dependency closure whose round the gate
-// has due, as the timer of a running server asks.
+// cloned members of the project's dependency closure, each through the timer
+// round its lease asks for, as the timer of a running server asks.
 type SyncReposRequest struct {
 	Repos []RepoID
 	Due   bool

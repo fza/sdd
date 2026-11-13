@@ -53,6 +53,7 @@ func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, 
 		gather.since = inst.Reading().Corpus
 		gather.reading = inst.Reading()
 	}
+	w.demandProject(project)
 	result, err := w.app.Gather(ctx, identity, project, gather)
 	if err != nil {
 		return GatherResult{}, err

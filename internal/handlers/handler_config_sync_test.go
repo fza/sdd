@@ -81,6 +81,10 @@ func TestConfigSetRefusesGitLimits(t *testing.T) {
 		{name: "push cooldown below the floor", target: "global", key: "sync.hosts.gitlab.com.push_cooldown", value: "5s", mention: "minimum"},
 		{name: "malformed cooldown", target: "global", key: "sync.default.push_cooldown", value: "soon", mention: "duration"},
 		{name: "zero concurrency", target: "global", key: "sync.default.concurrency", value: "0", mention: "minimum"},
+		{name: "lease pause below the floor", target: "global", key: "sync.default.lease_pause", value: "30s", mention: "minimum"},
+		{name: "read wait below the floor", target: "global", key: "sync.hosts.gitlab.com.read_wait", value: "500ms", mention: "minimum"},
+		{name: "zero per-minute limit", target: "global", key: "sync.default.ssh.per_minute", value: "0", mention: "minimum"},
+		{name: "zero unauthenticated per-minute limit", target: "global", key: "sync.hosts.gitlab.com.https.per_minute_unauthenticated", value: "0", mention: "minimum"},
 		{name: "not a number", target: "global", key: "sync.default.retries", value: "many", mention: "sync.default.retries"},
 		{name: "host key naming no limit", target: "global", key: "sync.hosts.gitlab.com.speed", value: "1", mention: "names no git limit"},
 	}

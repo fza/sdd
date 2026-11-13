@@ -328,36 +328,77 @@ func Mode(root string) model.SyncMode {
 	return model.SyncModeManual
 }
 
-// RoundDue reports whether the sync round of the repository at root has an
-// operation the git gate admits now: its fetch, or its push with commits
-// waiting.
-func RoundDue(ctx context.Context, gate *gitgate.Gate, root string) (bool, error) {
+// TimerRepo is the part of a clone's git the timer plan reads.
+type TimerRepo interface {
+	UpstreamURL(ctx context.Context) (string, error)
+	UpstreamRef(ctx context.Context) (string, error)
+	CountCommits(ctx context.Context, rangeSpec, pattern string) (int, error)
+}
+
+// TimerRound is what the serve timer runs for the sdd-owned clone at root.
+func TimerRound(ctx context.Context, gate *gitgate.Gate, root string) (model.TimerRound, error) {
+	return PlanTimerRound(ctx, gate, git.CLI{Dir: root})
+}
+
+// PlanTimerRound is what the serve timer runs for the clone repo
+// (model.PlanTimerRound): its fetch counts only while its lease holds, its
+// push only with commits waiting.
+func PlanTimerRound(ctx context.Context, gate *gitgate.Gate, repo TimerRepo) (model.TimerRound, error) {
 	if gate == nil {
-		return false, repos.ErrNoGate
+		return model.TimerRoundNone, repos.ErrNoGate
 	}
-	repo := git.CLI{Dir: root}
 	url, err := repo.UpstreamURL(ctx)
 	if err != nil {
-		return false, err
+		return model.TimerRoundNone, err
 	}
 	target, err := gitgate.TargetFromURL(url)
 	if err != nil {
-		return false, err
+		return model.TimerRoundNone, err
 	}
-	due, _, err := gate.Due(target, gitgate.Fetch)
-	if err != nil || due {
-		return due, err
+	leased, err := gate.Leased(ctx, target)
+	if err != nil {
+		return model.TimerRoundNone, err
+	}
+	var fetchDue, pushDue bool
+	if leased {
+		fetchDue, _, err = gate.Due(target, gitgate.Fetch)
+		if err != nil {
+			return model.TimerRoundNone, err
+		}
 	}
 	upstream, err := repo.UpstreamRef(ctx)
-	if err != nil || upstream == "" {
-		return false, err
+	if err != nil {
+		return model.TimerRoundNone, err
 	}
-	ahead, err := repo.CountCommits(ctx, "@{u}..HEAD", "")
-	if err != nil || ahead == 0 {
-		return false, err
+	if upstream != "" {
+		ahead, err := repo.CountCommits(ctx, "@{u}..HEAD", "")
+		if err != nil {
+			return model.TimerRoundNone, err
+		}
+		if ahead > 0 {
+			pushDue, _, err = gate.Due(target, gitgate.Push)
+			if err != nil {
+				return model.TimerRoundNone, err
+			}
+		}
 	}
-	due, _, err = gate.Due(target, gitgate.Push)
-	return due, err
+	return model.PlanTimerRound(leased, fetchDue, pushDue), nil
+}
+
+// Demand renews the lease of the sdd-owned clone at root (gitgate.Demand).
+func Demand(ctx context.Context, gate *gitgate.Gate, root string) (gitgate.Demand, error) {
+	if gate == nil {
+		return gitgate.Demand{}, repos.ErrNoGate
+	}
+	url, err := git.CLI{Dir: root}.UpstreamURL(ctx)
+	if err != nil {
+		return gitgate.Demand{}, err
+	}
+	target, err := gitgate.TargetFromURL(url)
+	if err != nil {
+		return gitgate.Demand{}, err
+	}
+	return gate.Demand(ctx, target)
 }
 
 // CloneRounds runs the sync round of an sdd-owned clone through the git
@@ -380,6 +421,6 @@ func (r CloneRounds) SyncClone(ctx context.Context, dir string, cmd *command.Syn
 	return handlers.New(opts).SyncRound(ctx, cmd)
 }
 
-func (r CloneRounds) Due(ctx context.Context, dir string) (bool, error) {
-	return RoundDue(ctx, r.Gate, dir)
+func (r CloneRounds) TimerRound(ctx context.Context, dir string) (model.TimerRound, error) {
+	return TimerRound(ctx, r.Gate, dir)
 }

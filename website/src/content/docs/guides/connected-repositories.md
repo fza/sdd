@@ -54,20 +54,20 @@ sdd never reads another repository's working tree. The clone follows the remote'
 1. Someone commits and pushes it to the platform repository's default branch.
 2. Your clone fetches it in its next sync round.
 
-A sync round fetches, merges, and pushes the commits the clone holds, each operation as far as the [git limits](/sdd/reference/configuration/#sync-and-sessions) admit it. These commands run the round of each clone before reading it, once the fetch cooldown has passed:
+A sync round fetches, merges, and pushes the commits the clone holds, each operation as far as the [git limits](/sdd/reference/configuration/#sync-and-sessions) admit it. These commands start or renew the [lease](/sdd/reference/configuration/#leases) of each clone before reading it, which runs its round when the lease starts past the fetch cooldown; they wait for it at most `read_wait`:
 
 - `sdd search` and `sdd view` with `--repo` or `--all-repos`
 - `sdd show` with a full `<repo_id>:<entry-id>`
 - `sdd index` with `--repo` or `--all-repos`
 
-If a round fails, for example offline, sdd warns and reads the clone as it stands. `sdd show` with a short ID reads the clone without a round. The `sdd` server your agent works through runs the round of every clone in its dependency closure once it is due, and its `sync_repos` tool runs it on request. A capture into a dependency writes through the same clone. To run the rounds yourself:
+If a round fails, for example offline, sdd warns and reads the clone as it stands. `sdd show` with a short ID reads the clone without a round. The `sdd` server your agent works through fetches a clone only while its lease holds, renewed by the calls that work in or read it, and pushes the commits a clone holds with or without one; its `sync_repos` tool runs the round on request. A capture into a dependency writes through the same clone. To run the rounds yourself:
 
 ```bash
 sdd repo sync                            # every connected repository
 sdd repo sync github.com/acme/platform   # one repository
 ```
 
-`sdd repo sync` prints one line per repository: `synced`, `pushed`, `skipped (next HH:MM)`, `failed (<reason>, retry HH:MM)` or `refused (not connected)`.
+`sdd repo sync` prints one line per repository: `synced`, `pushed`, `skipped (next HH:MM)`, `failed (<reason>, retry HH:MM)` or `refused (not connected)`. Inside a cooldown it runs the fetch or push anyway while the host has a [credit](/sdd/reference/configuration/#git-credits) left, and reports `skipped` once none is.
 
 The same holds in the other direction. For another project to reference your entries, commit and push them.
 

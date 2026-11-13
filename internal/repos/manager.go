@@ -91,6 +91,19 @@ func (m *Manager) FetchDue(ctx context.Context, repo ConnectedRepo) (bool, time.
 	return m.clones.gate.Due(target, gitgate.Fetch)
 }
 
+// Demand starts or renews the lease of repo's clone for a read
+// (20261113-232855-d-tac-1nz).
+func (m *Manager) Demand(ctx context.Context, repo ConnectedRepo) (gitgate.Demand, error) {
+	if m.clones.gate == nil {
+		return gitgate.Demand{}, ErrNoGate
+	}
+	target, err := m.clones.Target(ctx, repo.RepoID, repo.CloneURL)
+	if err != nil {
+		return gitgate.Demand{}, err
+	}
+	return m.clones.gate.Demand(ctx, target)
+}
+
 // Slots names the host repo's operations reach and how many of them the
 // gate runs against it at once.
 func (m *Manager) Slots(ctx context.Context, repo ConnectedRepo) (host string, slots int, err error) {

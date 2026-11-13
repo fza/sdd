@@ -65,7 +65,9 @@ func viewCmd() *cli.Command {
 			named, all := repoIDArgs(cmd.StringSlice("repo")), cmd.Bool("all-repos")
 			crossRepo := all || len(named) > 0
 			if crossRepo {
-				if err := refreshDependencies(ctx, cmd.ErrWriter); err != nil {
+				settle, err := refreshDependencies(ctx, cmd.ErrWriter)
+				defer settle()
+				if err != nil {
 					return err
 				}
 			}
