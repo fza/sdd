@@ -43,6 +43,7 @@ const (
 	fieldDeepOpen       = "deepOpen"
 	fieldDeepWithdrawn  = "deepWithdrawn"
 	fieldDeepUnedited   = "deepUnedited"
+	fieldDeepReplayed   = "deepReplayed"
 	fieldDeepListed     = "deepListed"
 	fieldDeepProblems   = "deepProblems"
 	fieldDeepNoSubagent = "deepNoSubagent"
@@ -236,6 +237,20 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
+			Doc: engine.FuncDoc{Name: "deepNotesUnplayed", Doc: "The deep exchange left the draft as it judged it, with findings taken without an edit or withdrawn, and no playback has shown them yet; a changed draft already went back through playback.", Reads: append(slices.Clone(captureDraftFields), fieldDeepBase, fieldDeepUnedited, fieldDeepWithdrawn, fieldDeepReplayed)},
+			Fn: func(ctx *engine.Context) (bool, error) {
+				if replayed, _ := ctx.Store.Get(fieldDeepReplayed); replayed == true {
+					return false, nil
+				}
+				if base, _ := workflowStoreString(ctx.Store, fieldDeepBase); draftText(ctx.Store) != base {
+					return false, nil
+				}
+				unedited, _ := workflowStoreString(ctx.Store, fieldDeepUnedited)
+				withdrawn, _ := workflowStoreString(ctx.Store, fieldDeepWithdrawn)
+				return unedited != "" || withdrawn != "", nil
+			},
+		},
+		{
 			Doc: engine.FuncDoc{Name: "deepRevising", Doc: "The exchange prepareDeep opened goes to the live verifier as a revision.", Reads: []string{fieldDeepRevising}},
 			Fn: func(ctx *engine.Context) (bool, error) {
 				revising, _ := ctx.Store.Get(fieldDeepRevising)
@@ -254,7 +269,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Doc: engine.FuncDoc{
 				Name: "prepareDeep", Doc: "Opens a deep exchange over the current draft: the base document, the paged reading, the weighing rule's recommendation, and a fresh exchange; for the live verifier, the revision's reading.",
 				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict, fieldDeepRevisions, fieldDeepReadIDs),
-				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepUnedited, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs, fieldDeepFresh},
+				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepUnedited, fieldDeepReplayed, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs, fieldDeepFresh},
 			},
 			Fn: w.prepareDeep,
 		},
@@ -318,6 +333,10 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
+			Doc: engine.FuncDoc{Name: "markDeepReplayed", Doc: "Marks the deep exchange's unchanged findings as shown, so the playback they go to runs once.", Writes: []string{fieldDeepReplayed}},
+			Fn:  func(ctx *engine.Context) error { return ctx.Store.WriteEngine(fieldDeepReplayed, true) },
+		},
+		{
 			Doc: engine.FuncDoc{Name: "recordDeepVerdict", Doc: "Records the deep verdict over the current draft.", Reads: captureDraftFields, Writes: []string{fieldDeepVerdict}},
 			Fn:  func(ctx *engine.Context) error { return w.writeDeepVerdict(ctx, "verified", "") },
 		},
@@ -367,7 +386,7 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 	base := draftText(ctx.Store)
 	writes := map[string]any{
 		fieldDeepBase: base, fieldDeepHistory: []model.DeepResponse{}, fieldDeepRounds: 0,
-		fieldDeepProposal: nil, fieldDeepHunks: nil, fieldDeepOpen: nil, fieldDeepWithdrawn: nil, fieldDeepUnedited: nil, fieldDeepListed: nil, fieldDeepProblems: nil, fieldDeepNoSubagent: nil,
+		fieldDeepProposal: nil, fieldDeepHunks: nil, fieldDeepOpen: nil, fieldDeepWithdrawn: nil, fieldDeepUnedited: nil, fieldDeepReplayed: nil, fieldDeepListed: nil, fieldDeepProblems: nil, fieldDeepNoSubagent: nil,
 		fieldDeepForkBase: verifyForks(w.session, ctx.Instance), fieldDeepEndReason: nil,
 		fieldDeepRevising: revising, fieldDeepRevisions: 0, fieldDeepRevisionPages: nil, fieldDeepRevisionPageFull: nil, fieldDeepFresh: nil,
 	}

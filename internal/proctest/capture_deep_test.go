@@ -1039,6 +1039,11 @@ func TestCaptureDeep_AWithdrawnFindingReachesTheDrafter(t *testing.T) {
 			}}, "")
 			session.Refresh(t)
 			serve := session.Report(t, x.instance, nil)
+			proctest.RequireStep(t, serve, "playback")
+			if replay := test.Untagged(serve.Instructions); !strings.Contains(replay, "the gap rests on incidents no entry records\n  withdrawn: ") {
+				t.Errorf("the replayed playback should show the withdrawn finding:\n%s", replay)
+			}
+			serve = session.Answer(t, x.instance, "playback", "confirm", nil, "fine as it is")
 			proctest.RequireStep(t, serve, "verifySummary")
 			text := test.Untagged(serve.Instructions)
 			for _, want := range []string{"- f1 [medium, missing-ref]: the gap rests on incidents no entry records\n  withdrawn: " + note + "\n", "Tell the user which findings the verifier withdrew and why."} {

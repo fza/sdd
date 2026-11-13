@@ -6,6 +6,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/test"
 )
 
@@ -28,17 +29,29 @@ func TestCapture_TheGuideReviewNamesDismissedFindingsBeforeProceed(t *testing.T)
 	}
 }
 
-// A deep finding accepted without an edit is named on the summary check that
-// follows the write, so the agent tells the user the entry stands as written
-// on it.
-func TestCaptureDeep_AFindingAcceptedWithoutAnEditIsNamedAfterTheWrite(t *testing.T) {
+// A deep finding accepted without an edit is played back to the user before
+// the write, so the user can still adjust the draft on it; the replay runs no
+// second pre-flight, and the summary check names it again.
+func TestCaptureDeep_AFindingAcceptedWithoutAnEditIsPlayedBackBeforeTheWrite(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-unedited-told", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())
 	verdict := "the gap claims an observation the graph records nowhere"
 	x.judge(t, []any{map[string]any{"verdict": verdict, "axis": "inconsistent", "severity": "medium"}})
 	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+	preflights := world.LLM.Calls(llm.PurposePreflight)
 	serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+	proctest.RequireStep(t, serve, "playback")
+	replay := test.Untagged(serve.Instructions)
+	for _, want := range []string{"The deep verifier left these findings without a change to the draft", "- f1 [medium, inconsistent]: " + verdict, "Show the user each one"} {
+		if !strings.Contains(replay, want) {
+			t.Fatalf("the replayed playback should carry %q:\n%s", want, replay)
+		}
+	}
+	serve = session.Answer(t, x.instance, "playback", "confirm", nil, "fine as it is")
 	proctest.RequireStep(t, serve, "verifySummary")
+	if calls := world.LLM.Calls(llm.PurposePreflight); calls != preflights {
+		t.Fatalf("the replay should run no second pre-flight, got %d calls after %d", calls, preflights)
+	}
 	text := test.Untagged(serve.Instructions)
 	for _, want := range []string{"You accepted these findings of the deep verifier, which carried no edit, so the entry was written without a change for them:", "- f1 [medium, inconsistent]: " + verdict, "Tell the user each one."} {
 		if !strings.Contains(text, want) {
@@ -85,6 +98,8 @@ func TestCaptureDeep_OnlyAFindingTakenWithoutAnEditIsNamedSo(t *testing.T) {
 	proctest.RequireStep(t, session.Report(t, x.instance, nil), "deepProposal")
 	proctest.RequireStep(t, session.Answer(t, x.instance, "deepProposal", "escalate", nil, ""), "deepUser")
 	serve := session.Answer(t, x.instance, "deepUser", "settle", nil, "they were recorded in the tracker")
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, x.instance, "playback", "confirm", nil, "fine as it is")
 	proctest.RequireStep(t, serve, "verifySummary")
 	if text := test.Untagged(serve.Instructions); strings.Contains(text, "which carried no edit") {
 		t.Fatalf("a held or withdrawn finding is not one taken without an edit:\n%s", text)
