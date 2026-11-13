@@ -9,6 +9,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
@@ -63,10 +64,28 @@ func relevanceCmd() *cli.Command {
 			{
 				Name:  "compact",
 				Usage: "Merge the ledger's segments into one, holding every record once",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "drop-source", Usage: "Leave out the reader records of this source, replay to take a seed back; a pair a live capture also labels stays"},
+				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					store, err := workingRelevanceStore()
 					if err != nil {
 						return err
+					}
+					if name := cmd.String("drop-source"); name != "" {
+						source, err := model.ParseReaderSource(name)
+						if err != nil {
+							return err
+						}
+						if source == model.SourceLive {
+							return fmt.Errorf("--drop-source live would drop every capture's labels: name replay")
+						}
+						err = store.DropSource(ctx, source)
+						if err != nil {
+							return err
+						}
+						fmt.Fprintf(cmd.Writer, "Compacted the relevance ledger without its %s records\n", source)
+						return nil
 					}
 					err = store.Compact(ctx)
 					if err != nil {

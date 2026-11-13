@@ -102,3 +102,30 @@ func TestGroundingSeed_AppendsReplayedLabelsOnce(t *testing.T) {
 		t.Fatalf("export = %q, %v: want one replayed reference", exported.stdout, exported.err)
 	}
 }
+
+func TestRelevanceCompact_DropsAReplaySeed(t *testing.T) {
+	for _, tc := range []struct{ name, config string }{
+		{"machine state", ""},
+		{"committed reader verdicts", "relevance:\n  commit: true\n  content: reader\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAppFixture(t)
+			f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n"+tc.config)
+			f.write(t, "pairs.jsonl", `{"a":"20261109-004506-d-cpt-udz","b":"20261102-120000-s-tac-bbb"}`+"\n")
+			f.write(t, "in.jsonl", relevanceLines)
+			for _, args := range [][]string{{"relevance", "import", "in.jsonl"}, {"grounding", "seed", "--from", "pairs.jsonl"}} {
+				if result := f.run(t, args...); result.err != nil {
+					t.Fatalf("%v: %v\n%s", args, result.err, result.stderr)
+				}
+			}
+			dropped := f.run(t, "relevance", "compact", "--drop-source", "replay")
+			if dropped.err != nil || !strings.Contains(dropped.stdout, "without its replay records") {
+				t.Fatalf("compact = %q, %v", dropped.stdout, dropped.err)
+			}
+			exported := f.run(t, "relevance", "export")
+			if exported.err != nil || exported.stdout != relevanceLines {
+				t.Fatalf("export = %q, %v: the seed should be gone and the live records kept", exported.stdout, exported.err)
+			}
+		})
+	}
+}

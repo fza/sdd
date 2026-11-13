@@ -11,10 +11,12 @@ import (
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
-// relevanceStore is a local relevance ledger, which can also compact.
+// relevanceStore is a local relevance ledger, which can also compact, and
+// drop the records of a source.
 type relevanceStore interface {
 	sdd.RelevanceStore
 	Compact(ctx context.Context) error
+	DropSource(ctx context.Context, source model.ReaderSource) error
 }
 
 // projectRelevanceStore opens the project's relevance verdict ledger

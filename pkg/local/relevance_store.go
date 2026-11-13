@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sync"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -158,4 +159,27 @@ func (s *MemoryRelevanceStore) Segments(_ context.Context) ([][]byte, error) {
 		out[i] = bytes.Clone(data)
 	}
 	return out, nil
+}
+
+// DropSource rewrites the ledger as one segment without the reader records
+// of source: the way a replay seed is taken back. A pair a live record also
+// labels is live and stays.
+func (s *FilesystemRelevanceStore) DropSource(ctx context.Context, source model.ReaderSource) error {
+	return compactDir(ctx, s.dir, true, func(segments [][]byte) ([]byte, error) {
+		ledger, err := relevance.Fold(segments)
+		if err != nil {
+			return nil, err
+		}
+		batch := ledger.Batch()
+		batch.Readers = slices.DeleteFunc(batch.Readers, func(record model.ReaderRecord) bool { return record.Verdict.Source == source })
+		if batch.Empty() {
+			return nil, nil
+		}
+		return relevance.Encode(batch), nil
+	})
+}
+
+// DropSource drops source from the reader store.
+func (s *SplitRelevanceStore) DropSource(ctx context.Context, source model.ReaderSource) error {
+	return s.readers.DropSource(ctx, source)
 }
