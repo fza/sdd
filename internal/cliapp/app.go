@@ -768,7 +768,9 @@ func showCmd() *cli.Command {
 
 			// Cross-repo IDs read through the dependency caches; refresh them first.
 			if len(model.CrossRepoIDs(ids)) > 0 {
-				if err := refreshDependencies(ctx, cmd.ErrWriter); err != nil {
+				settle, err := refreshDependencies(ctx, cmd.ErrWriter)
+				defer settle()
+				if err != nil {
 					return err
 				}
 			}
@@ -1157,6 +1159,7 @@ func newCmd() *cli.Command {
 				return err
 			}
 			handler := handlers.New(opts)
+			defer handler.Settle()
 
 			return handler.NewEntry(ctx, ncmd)
 		})),

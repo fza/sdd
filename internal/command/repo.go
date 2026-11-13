@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -33,16 +34,22 @@ type RepoAddCmd struct {
 	OnPhase func(phase model.Phase)
 }
 
-// EnsureReposFreshCmd brings the sdd-owned clones of the named connected
-// repos up to date for a read: a clone on first use, else the clone's sync
-// round when the git gate has it due. OnPhase reports connecting → cloning
-// for a clone and syncing for a round, so a text-only cross-repo read shows a
-// phase-true footer; it is never fired for a round not due.
+// EnsureReposFreshCmd starts or renews the leases of the named connected
+// repos for a read: a clone on first use, else the sync round a lease start
+// asks for. OnPhase reports connecting → cloning for a clone and syncing for
+// a round, so a text-only cross-repo read shows a phase-true footer; it is
+// never fired for a round not due.
 type EnsureReposFreshCmd struct {
 	RepoIDs []model.RepoID
 
 	// OnPhase reports the freshening stage. Optional.
 	OnPhase func(phase model.Phase)
+
+	// OnPending reports a round still running past the read wait, with when
+	// the clone last fetched; OnSettled that round's outcome once it ends.
+	// Optional.
+	OnPending func(repoID model.RepoID, fetched time.Time)
+	OnSettled func(outcome model.RepoSyncOutcome)
 }
 
 // RefreshDependencyClosureCmd refreshes the clones of the local repo's
@@ -60,6 +67,10 @@ type RefreshDependencyClosureCmd struct {
 
 	// OnPhase reports the refresh stage. Optional.
 	OnPhase func(phase model.Phase)
+
+	// OnPending reports a sync round still running past the read wait, with
+	// when the clone last fetched. Optional.
+	OnPending func(repoID model.RepoID, fetched time.Time)
 }
 
 // Validate checks that no refresh failure can go unreported.
@@ -129,9 +140,9 @@ type RepoSyncCmd struct {
 	RepoIDs []model.RepoID
 
 	// Due selects instead every connected member of the local repo's
-	// dependency closure that has a clone and whose round the git gate has
-	// due, as a timer does: no clone is made, and a round another process is
-	// running is left to it.
+	// dependency closure that has a clone, each running the timer round its
+	// lease asks for (CloneRound.TimerRound): no clone is made, and a round
+	// another process is running is left to it.
 	Due bool
 
 	// OnOutcome receives each repo's outcome, in the order the repos were

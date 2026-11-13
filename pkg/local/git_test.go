@@ -13,6 +13,9 @@ import (
 type gitRepository struct {
 	t    *testing.T
 	root string
+	// state is the machine state directory every targets() call shares, so
+	// they share one git gate record.
+	state string
 }
 
 func newGitRepository(t *testing.T) *gitRepository {

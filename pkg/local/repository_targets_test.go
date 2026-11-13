@@ -168,7 +168,10 @@ func TestRepositoryTargetsReadTheLocalConfigOverride(t *testing.T) {
 
 func (r *gitRepository) targets() *local.GitWorktreeAcquirer {
 	r.t.Helper()
-	targets, err := local.NewRepositoryTargets(r.t.Context(), "example", r.root, filepath.Join(r.root, "global-config.yaml"), "", r.t.TempDir(), r.t.TempDir())
+	if r.state == "" {
+		r.state = r.t.TempDir()
+	}
+	targets, err := local.NewRepositoryTargets(r.t.Context(), "example", r.root, filepath.Join(r.root, "global-config.yaml"), "", r.state, r.t.TempDir())
 	if err != nil {
 		r.t.Fatal(err)
 	}

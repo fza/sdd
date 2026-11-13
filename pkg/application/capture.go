@@ -312,6 +312,15 @@ func entryPublicationBatch(key PublicationKey, publication EntryPublication) (Mu
 }
 
 func (a *Application) prepareCaptureEntry(ctx context.Context, identity RequestIdentity, principal Principal, runtime *ProjectRuntime, target *Snapshot, draft EntryDraft) (*model.Entry, *Snapshot, []AttachmentMaterialization, error) {
+	refIDs := make([]string, 0, len(draft.Refs))
+	for _, ref := range draft.Refs {
+		refIDs = append(refIDs, ref.ID)
+	}
+	for _, repoID := range model.CrossRepoIDs(refIDs) {
+		if dependency, err := a.dependency(ctx, identity, runtime, repoID); err == nil {
+			a.demand(ctx, dependency, "")
+		}
+	}
 	snapshot, err := a.snapshotWithDependencyPolicy(ctx, identity, runtime, target, false)
 	if err != nil {
 		return nil, nil, nil, err

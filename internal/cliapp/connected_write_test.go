@@ -187,30 +187,35 @@ func TestConnectedCaptureWritesThroughTheClone(t *testing.T) {
 	}
 }
 
-// One call syncs a dependency's clone at most once, though the git gate
-// admits a local-path remote every time and the confirm resolves the
-// dependency for writing several times (20261107-095427-d-tac-yux).
-func TestConnectedCaptureConfirmSyncsTheDependencyOnce(t *testing.T) {
+// A capture into a dependency syncs the dependency's clone once, when the
+// start of the capture starts the clone's lease; its later calls renew the
+// lease and sync nothing, though the git gate admits a local-path remote
+// every time and the confirm resolves the dependency for writing several
+// times (20261113-232855-d-tac-1nz).
+func TestConnectedCaptureSyncsTheDependencyOncePerLease(t *testing.T) {
 	fixture, _ := connectedWriteFixture(t, true, true)
 	trace := filepath.Join(t.TempDir(), "git-trace")
 	t.Setenv("GIT_TRACE", trace)
 	fixture.serve(t, func(client *mcp.ClientSession) {
+		before := gitFetches(t, trace)
 		session, serve, served, failed := startConnectedCapture(t, client)
 		if failed {
 			t.Fatalf("start_procedure: %s", served)
+		}
+		if rounds := gitFetches(t, trace) - before; rounds != 1 {
+			t.Errorf("starting the capture should start the lease with one sync round of the dependency's clone, ran %d", rounds)
 		}
 		serve, served, failed = callTool(t, client, "next", map[string]any{"session": session, "instance": serve.Instance, "report": captureReport()})
 		if failed || serve.Step != "playback" {
 			t.Fatalf("the capture should reach playback, got step %q:\n%s", serve.Step, served)
 		}
-		before := gitFetches(t, trace)
 		_, served, failed = callTool(t, client, "next", map[string]any{"session": session, "instance": serve.Instance,
 			"report": map[string]any{"chooser": "playback", "choice": "confirm", "userWords": "yes, capture it"}})
 		if failed {
 			t.Fatalf("the confirmed capture should write:\n%s", served)
 		}
 		if rounds := gitFetches(t, trace) - before; rounds != 1 {
-			t.Errorf("the confirm should run one sync round of the dependency's clone, ran %d", rounds)
+			t.Errorf("calls renewing the lease should run no further sync round, ran %d in all", rounds)
 		}
 	})
 }

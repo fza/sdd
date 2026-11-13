@@ -637,3 +637,32 @@ func TestPublishGraphSpendsACredit(t *testing.T) {
 		t.Error("a publish inside the push cooldown should spend a credit")
 	}
 }
+
+// A push-only round publishes the commits waiting and fetches nothing.
+func TestPushOnlyRound(t *testing.T) {
+	repo := &synctest.Repo{Upstream: "origin/main", URL: hostedURL, Ahead: 1, GraphAhead: 1}
+	f := newSyncFixture(t, repo)
+	f.round(t, context.Background(), command.SyncRoundCmd{PushOnly: true})
+	if repo.Called("fetch") || repo.Called("merge") || !repo.Called("push") {
+		t.Errorf("a push-only round should push without fetching, got calls %v", repo.Calls)
+	}
+}
+
+func TestPushOnlyRoundClearsWhatThePushFixes(t *testing.T) {
+	for _, tc := range []struct {
+		kind    model.SyncBlockedKind
+		cleared bool
+	}{
+		{kind: model.SyncBlockedPushFailed, cleared: true},
+		{kind: model.SyncBlockedFetchFailed},
+	} {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			f := newSyncFixture(t, &synctest.Repo{Upstream: "origin/main", URL: hostedURL, Ahead: 1, GraphAhead: 1})
+			f.record.Current = &model.SyncBlocked{Kind: tc.kind, Since: f.now}
+			f.round(t, context.Background(), command.SyncRoundCmd{PushOnly: true})
+			if cleared := f.record.Current == nil; cleared != tc.cleared {
+				t.Errorf("a push-only round that pushes should clear %s exactly when a push fixes it, cleared %v", tc.kind, cleared)
+			}
+		})
+	}
+}

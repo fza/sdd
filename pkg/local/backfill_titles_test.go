@@ -55,7 +55,7 @@ func TestSyncRoundPullsUntitledEntriesAndTheBackfillTitlesThem(t *testing.T) {
 	pushUpstream(t, remote, pulledPath, pulled, "sdd: signal tactical gap")
 
 	targets := repo.targets()
-	err := targets.SyncGraph(t.Context(), "main", sdd.SyncOnCall)
+	_, err := targets.DemandGraph(t.Context(), "main", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

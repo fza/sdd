@@ -51,7 +51,9 @@ func (r *fakeRound) SyncClone(context.Context, string, *command.SyncRoundCmd) er
 	r.rounds++
 	return nil
 }
-func (r *fakeRound) Due(context.Context, string) (bool, error) { return true, nil }
+func (r *fakeRound) TimerRound(context.Context, string) (model.TimerRound, error) {
+	return model.TimerRoundSync, nil
+}
 
 func testManager(t *testing.T, loc repos.Locations, git repos.GraphCloneGit) *repos.Manager {
 	t.Helper()

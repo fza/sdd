@@ -36,7 +36,9 @@ func (r scriptedRound) SyncClone(_ context.Context, dir string, _ *command.SyncR
 	return nil
 }
 
-func (r scriptedRound) Due(context.Context, string) (bool, error) { return true, nil }
+func (r scriptedRound) TimerRound(context.Context, string) (model.TimerRound, error) {
+	return model.TimerRoundSync, nil
+}
 
 func writeRepoConfig(t *testing.T, dir, content string) {
 	t.Helper()
@@ -86,7 +88,11 @@ func TestRefreshDependencyClosure(t *testing.T) {
 		RepoID:       "example.test/local",
 		Dependencies: []model.RepoID{"example.test/dep", "example.test/failing", "example.test/unconnected"},
 	}})
-	manager := repos.NewManager(reg, repos.NewGraphClones(loc, &synctest.CloneGit{}, synctest.Gate(t.TempDir(), nil)))
+	remotes := map[string]string{}
+	for repoID, dir := range cloneDirs {
+		remotes[dir] = "https://" + string(repoID)
+	}
+	manager := repos.NewManager(reg, repos.NewGraphClones(loc, &synctest.CloneGit{Remotes: remotes}, synctest.Gate(t.TempDir(), nil)))
 	h := handlers.New(handlers.Options{Reader: reader, Repos: manager, CloneRound: round})
 
 	var failed, unconnected []model.RepoID

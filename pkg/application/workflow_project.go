@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/networkteam/slogutils"
+
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -132,11 +134,13 @@ func (w *WorkflowSession) authorizeTarget(project ProjectID, required Access) er
 func (w *WorkflowSession) ReadScope(ctx context.Context, identity RequestIdentity, project ProjectID) (ProjectID, string, bool, error) {
 	w.setOperation(ctx, identity)
 	if project == "" || project == w.project {
+		w.demandProject("")
 		return w.project, w.branch, w.branch != "", nil
 	}
 	if err := w.authorizeTarget(project, AccessRead); err != nil {
 		return "", "", false, err
 	}
+	w.demandProject(project)
 	return project, "", false, nil
 }
 
@@ -302,5 +306,24 @@ func (d *accessDependencies) record(repoID RepoID, runtime *ProjectRuntime) {
 	}
 	if known == nil {
 		d.byRepo[repoID] = runtime
+	}
+}
+
+// demandProject starts or renews the lease of project's graph for the call
+// in flight (Application.demand): the home graph on the session's branch,
+// another project on its default branch. A sync round it ran drops the
+// graph views read before it.
+func (w *WorkflowSession) demandProject(project ProjectID) {
+	branch := ""
+	if project == "" || project == w.project {
+		project, branch = w.project, w.branch
+	}
+	runtime, err := w.targetRuntime(project, AccessRead)
+	if err != nil {
+		slogutils.FromContext(w.ctx).Debug("sync: no lease for an unresolved project", "project", project, "err", err)
+		return
+	}
+	if w.app.demand(w.ctx, runtime, branch) && w.graphs != nil {
+		w.graphs.Invalidate()
 	}
 }

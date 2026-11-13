@@ -284,6 +284,7 @@ func indexCmd() *cli.Command {
 					return err
 				}
 				connH = handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr, CloneRound: round})
+				defer connH.Settle()
 				if err := connH.RefreshDependencyClosure(ctx, dependencyRefreshCmd(ctx)); err != nil {
 					return err
 				}
@@ -552,6 +553,10 @@ func searchCmd() *cli.Command {
 			if showView {
 				prog = newEmbedProgress()
 			}
+			// settle waits, once the results are out, for the sync rounds the
+			// cross-repo read stopped waiting for.
+			settle := func() {}
+			defer func() { settle() }()
 			work := func(ctx context.Context) (*query.SearchResult, error) {
 				sq := sq
 				if needsVector {
@@ -615,6 +620,7 @@ func searchCmd() *cli.Command {
 					return nil, err
 				}
 				h := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr, CloneRound: round})
+				settle = h.Settle
 				refresh := dependencyRefreshCmd(ctx)
 				var fill *command.BuildConnectedIndexesCmd
 				if prog != nil {

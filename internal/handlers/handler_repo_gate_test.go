@@ -18,6 +18,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 	"github.com/networkteam/sdd/internal/repos/repostest"
+	"github.com/networkteam/sdd/internal/syncstate"
 )
 
 // repoRound runs the real sync round on a scripted repository per clone
@@ -65,21 +66,12 @@ func (r *repoRound) SyncClone(ctx context.Context, dir string, cmd *command.Sync
 	}).SyncRound(ctx, cmd)
 }
 
-func (r *repoRound) Due(ctx context.Context, dir string) (bool, error) {
+func (r *repoRound) TimerRound(ctx context.Context, dir string) (model.TimerRound, error) {
 	repo, err := r.repo(dir)
 	if err != nil {
-		return false, err
+		return model.TimerRoundNone, err
 	}
-	url, err := repo.UpstreamURL(ctx)
-	if err != nil {
-		return false, err
-	}
-	target, err := gitgate.TargetFromURL(url)
-	if err != nil {
-		return false, err
-	}
-	due, _, err := r.gate.Due(target, gitgate.Fetch)
-	return due, err
+	return syncstate.PlanTimerRound(ctx, r.gate, repo)
 }
 
 func (r *repoRound) count() int {
@@ -207,93 +199,112 @@ func TestRepoSyncDefaultsToEveryConnectedRepo(t *testing.T) {
 	}
 }
 
-// A refresh for a read runs the round only while it is due and leaves a
-// clone within its cooldown as it stands, reporting no phase for it.
-func TestEnsureReposFreshLeavesADeferredCloneAsItStands(t *testing.T) {
-	const repoID = model.RepoID("example.test/acme/other")
-	c := newConnections(t, time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC), map[model.RepoID]*synctest.Repo{repoID: {Upstream: "origin/main"}})
-	fresh := func() (bool, []model.Phase) {
-		var phases []model.Phase
-		changed, err := c.handler.EnsureReposFresh(t.Context(), command.EnsureReposFreshCmd{
-			RepoIDs: []model.RepoID{repoID}, OnPhase: func(phase model.Phase) { phases = append(phases, phase) },
-		})
-		if err != nil {
-			t.Fatalf("a refresh should never fail on a deferral: %v", err)
-		}
-		return changed, phases
+func (c *connections) fresh(t *testing.T, repoID model.RepoID) (changed bool, phases []model.Phase) {
+	t.Helper()
+	changed, err := c.handler.EnsureReposFresh(t.Context(), command.EnsureReposFreshCmd{
+		RepoIDs: []model.RepoID{repoID}, OnPhase: func(phase model.Phase) { phases = append(phases, phase) },
+	})
+	if err != nil {
+		t.Fatalf("a refresh should never fail on a deferral: %v", err)
 	}
+	return changed, phases
+}
 
-	changed, _ := fresh()
-	if !changed || c.repos[repoID].Count("fetch") != 1 {
-		t.Fatal("the first refresh should run the round and fetch")
-	}
-	changed, phases := fresh()
-	if changed || c.round.count() != 1 {
-		t.Error("a refresh within the fetch cooldown should run no round")
-	}
-	if len(phases) != 0 {
-		t.Errorf("a refresh not due should report no phase, got %v", phases)
+// A refresh for a read renews the clone's lease and runs the round only when
+// the lease starts past the fetch cooldown; otherwise it leaves the clone as
+// it stands, reporting no phase for it.
+func TestEnsureReposFreshRunsARoundOnALeaseStart(t *testing.T) {
+	const repoID = model.RepoID("example.test/acme/other")
+	for _, tc := range []struct {
+		name   string
+		before func(t *testing.T, c *connections)
+		round  bool
+	}{
+		{name: "a lease start past the cooldown", round: true},
+		{name: "a renewal while the lease holds", before: func(t *testing.T, c *connections) {
+			c.fresh(t, repoID)
+			*c.now = c.now.Add(9 * time.Minute)
+		}},
+		{name: "a lease start inside the cooldown", before: func(t *testing.T, c *connections) {
+			c.sync(t, &command.RepoSyncCmd{RepoIDs: []model.RepoID{repoID}})
+			*c.now = c.now.Add(time.Minute)
+		}},
+		{name: "a lease start after the pause", round: true, before: func(t *testing.T, c *connections) {
+			c.fresh(t, repoID)
+			*c.now = c.now.Add(11 * time.Minute)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newConnections(t, time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC), map[model.RepoID]*synctest.Repo{repoID: {Upstream: "origin/main"}})
+			if tc.before != nil {
+				tc.before(t, c)
+			}
+			before := c.round.count()
+			changed, phases := c.fresh(t, repoID)
+			if ran := c.round.count() - before; (ran == 1) != tc.round || changed != tc.round || (len(phases) > 0) != tc.round {
+				t.Errorf("want a round %v, got %d rounds, changed %v, phases %v", tc.round, ran, changed, phases)
+			}
+		})
 	}
 }
 
-// The git gate admits a local-path remote every time, so its round runs on
-// every refresh, except once one ran in the same refresh scope.
-func TestEnsureReposFreshRunsOneRoundPerScope(t *testing.T) {
+// A local-path remote, which the git gate admits every time, runs its round
+// only when its lease starts.
+func TestEnsureReposFreshRunsALocalRemoteOnALeaseStart(t *testing.T) {
 	const repoID = model.RepoID("example.test/acme/local")
 	c := newConnections(t, time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC), map[model.RepoID]*synctest.Repo{repoID: {Upstream: "origin/main"}})
 	c.repos[repoID].URL = "/srv/graphs/local.git"
-	refresh := func(ctx context.Context) {
-		t.Helper()
-		_, err := c.handler.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: []model.RepoID{repoID}})
-		if err != nil {
-			t.Fatal(err)
-		}
+	c.fresh(t, repoID)
+	c.fresh(t, repoID)
+	if c.round.count() != 1 {
+		t.Fatalf("a renewal while the lease holds should run no round, ran %d", c.round.count())
 	}
-
-	refresh(t.Context())
-	refresh(t.Context())
+	*c.now = c.now.Add(11 * time.Minute)
+	c.fresh(t, repoID)
 	if c.round.count() != 2 {
-		t.Fatalf("outside a scope, a local-path remote's round should run on every refresh, ran %d", c.round.count())
-	}
-	scoped := handlers.WithRefreshScope(t.Context())
-	refresh(scoped)
-	refresh(scoped)
-	if c.round.count() != 3 {
-		t.Errorf("within one scope, a repo's round should run once, ran %d in it", c.round.count()-2)
-	}
-	refresh(handlers.WithRefreshScope(t.Context()))
-	if c.round.count() != 4 {
-		t.Error("a new scope should run the round again")
+		t.Error("a lease start after the pause should run the round again")
 	}
 }
 
-// The timer of a running server syncs the cloned members of the dependency
-// closure whose round is due, and reports nothing for the rest: a repo not
-// due, one not cloned, one not connected, one connected outside the closure.
-func TestRepoSyncDueRunsTheDueClosureMembers(t *testing.T) {
+// The timer of a running server fetches the cloned members of the dependency
+// closure whose lease holds and whose fetch is due, pushes the commits a
+// member without a lease holds, and reports nothing for the rest: a member
+// without a lease or within its cooldown, one not cloned, one not connected,
+// one connected outside the closure.
+func TestRepoSyncDueRunsTheTimerRoundOfTheClosureMembers(t *testing.T) {
 	const (
-		member  = model.RepoID("example.test/acme/member")
+		leased  = model.RepoID("example.test/acme/leased")
+		idle    = model.RepoID("example.test/acme/idle")
+		ahead   = model.RepoID("example.test/acme/ahead")
 		outside = model.RepoID("example.test/acme/outside")
 	)
 	c := newConnections(t, time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC), map[model.RepoID]*synctest.Repo{
-		member:  {Upstream: "origin/main"},
+		leased:  {Upstream: "origin/main"},
+		idle:    {Upstream: "origin/main"},
+		ahead:   {Upstream: "origin/main", Ahead: 1, GraphAhead: 1},
 		outside: {Upstream: "origin/main"},
 	})
 	reader := finders.New(finders.Options{
-		Config: &model.PerRepoConfig{RepoID: "example.test/acme/home", Dependencies: []model.RepoID{member, uncloned, "example.test/acme/unconnected"}},
+		Config: &model.PerRepoConfig{RepoID: "example.test/acme/home", Dependencies: []model.RepoID{leased, idle, ahead, uncloned, "example.test/acme/unconnected"}},
 		Repos:  c.manager.Registry(),
 	})
 	c.handler = handlers.New(handlers.Options{Reader: reader, Repos: c.manager, CloneRound: c.round})
+	c.fresh(t, leased)
+	*c.now = c.now.Add(6 * time.Minute)
 
 	first := c.sync(t, &command.RepoSyncCmd{Due: true})
-	if len(first) != 1 || first[member].State != model.RepoSynced {
-		t.Errorf("only the due cloned member should be synced, got %+v", first)
+	if len(first) != 2 || first[leased].State != model.RepoSynced || first[ahead].State != model.RepoPushed {
+		t.Errorf("the leased member should sync and the member with commits waiting push, got %+v", first)
+	}
+	if c.repos[ahead].Count("fetch") != 0 || c.repos[idle].Count("fetch") != 0 {
+		t.Error("a member without a lease should not fetch")
 	}
 	if c.git.Clones != 0 || c.repos[outside].Count("fetch") != 0 {
 		t.Error("the timer should neither clone a member nor reach a repo outside the closure")
 	}
+	c.repos[ahead].Ahead, c.repos[ahead].GraphAhead = 0, 0
 	second := c.sync(t, &command.RepoSyncCmd{Due: true})
-	if len(second) != 0 || c.repos[member].Count("fetch") != 1 {
+	if len(second) != 0 || c.repos[leased].Count("fetch") != 2 {
 		t.Errorf("a member within its cooldown should run no round and report nothing, got %+v", second)
 	}
 }

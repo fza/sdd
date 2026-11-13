@@ -360,7 +360,12 @@ func (c connectedRounds) SyncRepos(ctx context.Context, request sdd.SyncReposReq
 }
 
 func (c connectedRounds) refresh(ctx context.Context, repoID sdd.RepoID) error {
-	_, err := c.handler.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{RepoIDs: []model.RepoID{model.RepoID(repoID)}})
+	_, err := c.handler.EnsureReposFresh(ctx, command.EnsureReposFreshCmd{
+		RepoIDs: []model.RepoID{model.RepoID(repoID)},
+		OnPending: func(repoID model.RepoID, fetched time.Time) {
+			slogutils.FromContext(ctx).Warn("sync: refresh still running; reading the clone as it stands", "repo", repoID, "fetched", fetched)
+		},
+	})
 	return err
 }
 

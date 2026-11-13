@@ -24,6 +24,9 @@ type SyncRoundCmd struct {
 	// Explicit marks a round the user asked for: it waits for the sync lock
 	// and runs while a conflict pauses automatic sync.
 	Explicit bool
+	// PushOnly pushes the commits waiting and fetches nothing, as the serve
+	// timer does for a clone without a lease (20261113-232855-d-tac-1nz).
+	PushOnly bool
 	// OnSkipped is invoked when another process holds the sync lock and the
 	// round did not run.
 	OnSkipped func()
@@ -53,4 +56,19 @@ type ClaimSyncNoticeCmd struct {
 	TitlesOnly bool
 	// OnNotice is invoked with the notice while sync is blocked.
 	OnNotice func(notice string)
+}
+
+// DemandSyncCmd captures intent to start or renew the lease of the graph
+// repository for a call and to run the sync round a lease start asks for
+// (20261113-232855-d-tac-1nz).
+type DemandSyncCmd struct {
+	// OnRound is invoked when the lease start runs a sync round, before it
+	// runs.
+	OnRound func()
+	// OnPending is invoked when the round still runs past the read wait, with
+	// when the repository last fetched; the round then finishes in the
+	// background.
+	OnPending func(fetched time.Time)
+	// OnSettled is invoked once a round reported pending ends.
+	OnSettled func()
 }

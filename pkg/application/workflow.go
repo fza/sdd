@@ -20,7 +20,6 @@ import (
 
 	"github.com/networkteam/sdd/internal/basefacts"
 	"github.com/networkteam/sdd/internal/engine"
-	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/textpatch"
 	"github.com/networkteam/sdd/internal/truncate"
@@ -289,6 +288,7 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err != nil {
 		return nil, nil, err
 	}
+	a.demand(ctx, runtime, created.Metadata.Branch)
 	w, err := a.newWorkflow(ctx, identity, info.Project.ID, sessionBindingFrom(created), created.Metadata.Branch)
 	if err != nil {
 		return nil, nil, err
@@ -379,22 +379,31 @@ func (a *Application) refreshWorkflow(ctx context.Context, identity RequestIdent
 			return nil, err
 		}
 	}
-	runtime.syncGraph(ctx, stored.Metadata.Branch, SyncOnCall)
 	a.background.start(func() { runtime.backfillTitles(ctx, stored.Metadata.Branch, SyncOnCall) })
 	return a.replayWorkflow(ctx, identity, runtime, stored)
 }
 
 // SyncNotice returns the blocked-sync notice a response in this session
-// carries, empty while sync of its branch's graph repository proceeds.
+// carries, empty while sync of its branch's graph repository proceeds and
+// no refresh a call stopped waiting for still runs.
 func (w *WorkflowSession) SyncNotice(ctx context.Context, identity RequestIdentity) string {
 	_, runtime, err := w.app.resolve(ctx, identity, w.project, AccessRead)
 	if err != nil {
 		return ""
 	}
+	var notice string
 	if w.Finished() {
-		return runtime.releaseSyncOwner(ctx, w.branch, string(w.ID()))
+		notice = runtime.releaseSyncOwner(ctx, w.branch, string(w.ID()))
+	} else {
+		notice = runtime.syncNotice(ctx, w.branch, string(w.ID()))
 	}
-	return runtime.syncNotice(ctx, w.branch, string(w.ID()))
+	notices := make([]string, 0, 2)
+	for _, line := range []string{notice, w.app.refreshes.notice(w.app.now())} {
+		if line != "" {
+			notices = append(notices, line)
+		}
+	}
+	return strings.Join(notices, "\n")
 }
 
 func (a *Application) replayWorkflow(ctx context.Context, identity RequestIdentity, runtime *ProjectRuntime, stored StoredSession) (*WorkflowSession, error) {
@@ -534,6 +543,7 @@ func (w *WorkflowSession) Reorient(ctx context.Context, identity RequestIdentity
 		return nil
 	}
 	w.setOperation(ctx, identity)
+	w.demandProject("")
 	w.session.Reorient()
 	return w.session.SinkErr()
 }
@@ -621,6 +631,7 @@ func (w *WorkflowSession) Start(ctx context.Context, identity RequestIdentity, r
 	if err != nil {
 		return nil, err
 	}
+	w.demandProject(project)
 	// A move that publishes an entry into another project is refused at its
 	// start when it may not write there, not after the dialogue it costs.
 	if project != "" && publishesEntry(spec) {
@@ -658,6 +669,7 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 		return nil, w.finishedError()
 	}
 	w.setOperation(ctx, identity)
+	w.demandProject(w.instanceProject(request.Instance))
 	w.graphs.Invalidate()
 	if err := w.setLabel(request.Label); err != nil {
 		return nil, err
@@ -822,6 +834,7 @@ func (w *WorkflowSession) Abandon(ctx context.Context, identity RequestIdentity,
 	if instance == w.shell {
 		return WorkflowAbandonResult{}, fmt.Errorf("the session shell concludes through its own junction")
 	}
+	w.demandProject(w.instanceProject(instance))
 	result := WorkflowAbandonResult{Abandoned: true}
 	if inst, ok := w.session.Instance(instance); ok {
 		if marker, present := workflowStoreString(inst.Store, "wipMarker"); present {
@@ -850,6 +863,7 @@ func (w *WorkflowSession) Park(ctx context.Context, identity RequestIdentity, in
 	if instance == w.shell {
 		return WorkflowParkResult{}, fmt.Errorf("park is for moves; the session shell is the junction they park back to")
 	}
+	w.demandProject(w.instanceProject(instance))
 	inst, ok := w.session.Instance(instance)
 	if !ok {
 		return WorkflowParkResult{}, fmt.Errorf("instance %q not found in session", instance)
@@ -1485,10 +1499,8 @@ func (b *bufferSink) Append(event engine.Event) (uint64, error) {
 	return uint64(event.Seq), nil
 }
 
-// setOperation starts an operation: its resolves of one dependency share one
-// sync round of the dependency's clone.
 func (w *WorkflowSession) setOperation(ctx context.Context, identity RequestIdentity) {
-	w.ctx = handlers.WithRefreshScope(ctx)
+	w.ctx = ctx
 	w.identity = identity
 	if w.graphs != nil {
 		w.graphs.Invalidate()
