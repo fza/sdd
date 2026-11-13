@@ -146,16 +146,17 @@ func TestCaptureDeep_ServesTheReadingInPagesAndRefusesEarlyFindings(t *testing.T
 	if !strings.Contains(serve.Instructions, fmt.Sprintf("Page 2 of %d.", count)) || !strings.Contains(serve.Instructions, "## Pre-flight's rules") {
 		t.Fatalf("page 2 should carry pre-flight's rules:\n%s", serve.Instructions)
 	}
-	var later strings.Builder
+	var reading strings.Builder
+	reading.WriteString(first + serve.Instructions)
 	for page := 3; page <= count; page++ {
 		serve = x.delegate.Answer(t, x.child, "read", "more", nil, "")
 		if !strings.Contains(serve.Instructions, fmt.Sprintf("Page %d of %d.", page, count)) {
 			t.Fatalf("the next serve should be page %d:\n%s", page, serve.Instructions)
 		}
-		later.WriteString(serve.Instructions)
+		reading.WriteString(serve.Instructions)
 	}
-	if !strings.Contains(later.String(), "ID: "+captureRef2ID) {
-		t.Fatalf("the pages after the rules should carry the briefs:\n%s", later.String())
+	if !strings.Contains(reading.String(), "ID: "+captureRef2ID) {
+		t.Fatalf("the reading should carry the briefs, in the room the pages before them leave:\n%s", reading.String())
 	}
 }
 

@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -165,15 +166,15 @@ func TestWeighDeep(t *testing.T) {
 }
 
 func TestDeepReadingPages(t *testing.T) {
-	big := strings.Repeat("x", model.DeepPageChars-20)
-	pages := model.DeepReadingPages("draft",
+	big := strings.Repeat("x", model.DeepPageChars-10)
+	pages := model.DeepReadingPages("draft", nil,
 		[]model.DeepReadingBlock{{ID: "t", Text: "target"}, {ID: "f", Text: "read in full"}},
 		[]model.DeepReadingBlock{{ID: "b1", Text: "brief one"}, {ID: "b2", Text: big}, {ID: "b3", Text: "brief three"}})
 	if len(pages) != 3 {
-		t.Fatalf("want the lead page, then the briefs paged, got %d pages", len(pages))
+		t.Fatalf("want the lead page with the briefs that fit, then a page per brief that does not, got %d pages", len(pages))
 	}
-	if pages[0].Text != "draft\n\ntarget\n\nread in full" || !strings.HasPrefix(pages[1].Text, "brief one") || pages[2].Text != "brief three" {
-		t.Fatalf("page 1 holds the draft and full reads, the briefs follow on pages of their own, got %q", []string{pages[0].Text, pages[1].Text[:9], pages[2].Text})
+	if pages[0].Text != "draft\n\ntarget\n\nread in full\n\nbrief one" || pages[1].Text != big || pages[2].Text != "brief three" {
+		t.Fatalf("page 1 holds the draft, the full reads and the brief that fits, got %q", []string{pages[0].Text, pages[1].Text[:9], pages[2].Text})
 	}
 	for _, page := range pages {
 		if model.ServedChars(page.Text) > model.DeepPageChars {
@@ -187,8 +188,9 @@ func TestDeepReadingPages(t *testing.T) {
 // again; the last of them names it as served in full.
 func TestDeepReadingPagesSplitAnOversizedEntry(t *testing.T) {
 	huge := strings.Repeat(strings.Repeat("y", 99)+"\n", model.DeepPageChars/50)
-	pages := model.DeepReadingPages("draft", []model.DeepReadingBlock{{ID: "h", Text: huge}}, []model.DeepReadingBlock{{ID: "b", Text: "brief"}})
-	if len(pages) < 4 || pages[0].Text != "draft" || pages[len(pages)-1].Text != "brief" {
+	brief := strings.Repeat("b", model.DeepPageChars-10)
+	pages := model.DeepReadingPages("draft", nil, []model.DeepReadingBlock{{ID: "h", Text: huge}}, []model.DeepReadingBlock{{ID: "b", Text: brief}})
+	if len(pages) < 4 || pages[0].Text != "draft" || pages[len(pages)-1].Text != brief {
 		t.Fatalf("the entry should run on across pages of its own between the lead and the briefs, got %d pages", len(pages))
 	}
 	var joined strings.Builder
@@ -265,7 +267,7 @@ func TestDeepContinuedPages(t *testing.T) {
 // page they land on; briefs name none.
 func TestDeepReadingPagesNameTheirFullEntries(t *testing.T) {
 	big := strings.Repeat("x", model.DeepPageChars-5)
-	pages := model.DeepReadingPages("draft",
+	pages := model.DeepReadingPages("draft", nil,
 		[]model.DeepReadingBlock{{ID: "t", Text: "target"}, {ID: "f", Text: big}},
 		[]model.DeepReadingBlock{{ID: "b1", Text: "brief one"}})
 	want := [][]string{{"t"}, {"f"}, nil}
@@ -276,6 +278,60 @@ func TestDeepReadingPagesNameTheirFullEntries(t *testing.T) {
 		if !slices.Equal(page.FullIDs, want[i]) {
 			t.Fatalf("page %d should name the entries it serves in full, got %v", i+1, page.FullIDs)
 		}
+	}
+}
+
+// Briefs fill the room the lead page and the rules' last page leave; a block
+// moves whole to the next page when it does not fit.
+func TestDeepReadingPagesPackBriefsIntoTheRoomLeft(t *testing.T) {
+	block := func(id string, chars int) model.DeepReadingBlock {
+		header := "ID: " + id + "\n"
+		return model.DeepReadingBlock{ID: id, Text: header + strings.Repeat("x", chars-len(header))}
+	}
+	var briefs []model.DeepReadingBlock
+	for i := range 12 {
+		briefs = append(briefs, block("b"+strconv.Itoa(i+1), 1464))
+	}
+	rules := []model.DeepReadingPage{{Text: strings.Repeat("r", 11000)}, {Text: strings.Repeat("r", 5000)}}
+	for _, tc := range []struct {
+		name  string
+		rules []model.DeepReadingPage
+		want  [][]string
+	}{
+		{
+			name: "without rules",
+			want: [][]string{{"t", "b1", "b2", "b3", "b4"}, {"b5", "b6", "b7", "b8", "b9", "b10", "b11", "b12"}},
+		},
+		{
+			name:  "with rules",
+			rules: rules,
+			want:  [][]string{{"t", "b1", "b2", "b3", "b4"}, nil, {"b5", "b6", "b7", "b8"}, {"b9", "b10", "b11", "b12"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := block("t", 2000)
+			pages := model.DeepReadingPages(strings.Repeat("d", 3000), tc.rules, []model.DeepReadingBlock{target}, briefs)
+			if len(pages) != len(tc.want) {
+				t.Fatalf("briefs should fill the room left on earlier pages, got %d pages", len(pages))
+			}
+			for i, page := range pages {
+				var ids []string
+				for _, b := range append([]model.DeepReadingBlock{target}, briefs...) {
+					if strings.Contains(page.Text, b.Text) {
+						ids = append(ids, b.ID)
+					}
+				}
+				if !slices.Equal(ids, tc.want[i]) {
+					t.Errorf("page %d should hold these whole blocks, got %v", i+1, ids)
+				}
+				if model.ServedChars(page.Text) > model.DeepPageChars {
+					t.Errorf("page %d should stay within the page bound, got %d", i+1, model.ServedChars(page.Text))
+				}
+			}
+			if !slices.Equal(pages[0].FullIDs, []string{"t"}) {
+				t.Errorf("page 1 should name only the target as served in full, got %v", pages[0].FullIDs)
+			}
+		})
 	}
 }
 

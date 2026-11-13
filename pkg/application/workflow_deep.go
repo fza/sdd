@@ -468,8 +468,7 @@ func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) ([]model.D
 			}
 		}
 	}
-	pages, held := w.deepReading(ctx, lead.String(), deepHeld{})
-	return withPreflightRubric(pages, ctx.Store), held
+	return w.deepReading(ctx, lead.String(), preflightRules(ctx.Store), deepHeld{})
 }
 
 // deepHeld names the entries a verifier's reading served in full and those it
@@ -498,14 +497,14 @@ func preflightRaised(store *engine.Store) string {
 	return b.String()
 }
 
-// deepReading pages lead with the declared targets and the entries read in
-// full, then the briefs, in the order the reading listed them, each set-aside
-// with its code; it leaves out what skip holds already, and names what it
-// serves.
-func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, skip deepHeld) ([]model.DeepReadingPage, deepHeld) {
+// deepReading pages lead and rules with the declared targets and the entries
+// read in full, then the briefs, in the order the reading listed them, each
+// set-aside with its code; it leaves out what skip holds already, and names
+// what it serves.
+func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []model.DeepReadingPage, skip deepHeld) ([]model.DeepReadingPage, deepHeld) {
 	graph := ctx.Graph
 	if graph == nil {
-		return []model.DeepReadingPage{{Text: lead}}, deepHeld{}
+		return model.DeepReadingPages(lead, rules, nil, nil), deepHeld{}
 	}
 	heldFull := map[string]bool{}
 	for _, id := range skip.Full {
@@ -573,7 +572,7 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, skip dee
 			rest = append(rest, served)
 		}
 	}
-	return model.DeepReadingPages(lead, first, rest), served
+	return model.DeepReadingPages(lead, rules, first, rest), served
 }
 
 func pageTexts(pages []model.DeepReadingPage) ([]string, [][]string) {
@@ -585,16 +584,15 @@ func pageTexts(pages []model.DeepReadingPage) ([]string, [][]string) {
 	return texts, full
 }
 
-// withPreflightRubric serves the rubric pre-flight's model would have judged
-// the draft by from page 2, when the verifier judges in its place.
-func withPreflightRubric(pages []model.DeepReadingPage, store *engine.Store) []model.DeepReadingPage {
+// preflightRules pages the rubric pre-flight's model would have judged the
+// draft by, when the verifier judges in its place.
+func preflightRules(store *engine.Store) []model.DeepReadingPage {
 	rubric, _ := workflowStoreString(store, fieldPreflightRubric)
 	if rubric == "" {
-		return pages
+		return nil
 	}
-	rules := model.DeepContinuedPages("## Pre-flight's rules\n\nPre-flight's model did not judge this draft: you judge in its place. Apply the rules below as part of your verdict. Raise what they would flag as findings in your own report. Their answer format and the reading they mention do not apply: your reading is the rest of these pages.\n\n",
+	return model.DeepContinuedPages("## Pre-flight's rules\n\nPre-flight's model did not judge this draft: you judge in its place. Apply the rules below as part of your verdict. Raise what they would flag as findings in your own report. Their answer format and the reading they mention do not apply: your reading is the rest of these pages.\n\n",
 		"## Pre-flight's rules, continued\n\n", rubric)
-	return slices.Concat(pages[:1], rules, pages[1:])
 }
 
 func (w *WorkflowSession) readDeepFindings(ctx *engine.Context) error {
