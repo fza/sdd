@@ -13,7 +13,9 @@ func readerVerdicts() []model.ReaderVerdict {
 		for _, reason := range []uint8{0, 1, 4, 9} {
 			for _, audit := range []bool{false, true} {
 				for _, relations := range []uint8{0, model.RelationContradicts, model.RelationDuplicates | model.RelationOutdates} {
-					all = append(all, model.ReaderVerdict{Code: code, Reason: reason, Audit: audit, Relations: relations})
+					for _, source := range []model.ReaderSource{model.SourceLive, model.SourceReplay} {
+						all = append(all, model.ReaderVerdict{Code: code, Reason: reason, Audit: audit, Relations: relations, Source: source})
+					}
 				}
 			}
 		}
@@ -133,5 +135,48 @@ func TestRelevanceLedger_FoldsToTheSameBatchInAnyOrder(t *testing.T) {
 	}
 	if forward.Readers[0].Verdict.Code != model.ReaderOpened || forward.Scores[0].Score.Score != 9 {
 		t.Fatalf("folded batch = %+v: want the opened answer and the higher score", forward)
+	}
+}
+
+func TestReaderVerdictJoin_ALiveRecordMakesThePairLive(t *testing.T) {
+	replayed := model.ReaderVerdict{Code: model.ReaderReferenced, Source: model.SourceReplay}
+	cases := []struct {
+		name  string
+		other model.ReaderVerdict
+		want  model.ReaderSource
+	}{
+		{"live dismissal", model.ReaderVerdict{Code: model.ReaderDismissed, Reason: 1}, model.SourceLive},
+		{"live reference", model.ReaderVerdict{Code: model.ReaderReferenced}, model.SourceLive},
+		{"replayed reference", replayed, model.SourceReplay},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := replayed.Join(c.other).Source; got != c.want {
+				t.Fatalf("source %s: a pair should stay replay only until a live record joins it", got)
+			}
+		})
+	}
+}
+
+func TestParseReaderSource_RoundTripsAndReadsEmptyAsLive(t *testing.T) {
+	for _, source := range []model.ReaderSource{model.SourceLive, model.SourceReplay} {
+		got, err := model.ParseReaderSource(source.String())
+		if err != nil || got != source {
+			t.Fatalf("ParseReaderSource(%q) = %v, %v", source, got, err)
+		}
+	}
+	if got, err := model.ParseReaderSource(""); err != nil || got != model.SourceLive {
+		t.Fatalf("an absent source should read as live, got %v, %v", got, err)
+	}
+	if _, err := model.ParseReaderSource("seeded"); err == nil {
+		t.Fatal("an unknown source should be refused")
+	}
+}
+
+func TestReaderVerdictJoin_AnOpeningLeavesTheReadersLabel(t *testing.T) {
+	dismissed := model.ReaderVerdict{Code: model.ReaderDismissed, Reason: 1}
+	got := dismissed.Join(model.ReaderVerdict{OpenedHidden: true})
+	if got.Code != model.ReaderDismissed || got.Reason != 1 || !got.OpenedHidden {
+		t.Fatalf("join = %+v: an opening should keep the dismissal and add its flag", got)
 	}
 }

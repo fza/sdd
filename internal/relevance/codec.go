@@ -10,7 +10,9 @@
 //
 // Indexes and times are varints; code, reason, flags, relations, direction
 // and scores one byte each. A reason byte this sdd does not know is kept as
-// it is (D10).
+// it is (D10). The flags byte holds the audit bit (1), the replay bit (2) and
+// the opened-hidden bit (4); a segment written before a bit existed reads
+// with it unset, a reader record as live.
 package relevance
 
 import (
@@ -30,6 +32,8 @@ const (
 	recordScore  = 's'
 	recordStep   = 'd'
 	flagAudit    = 1
+	flagReplay   = 2
+	flagOpened   = 4
 )
 
 // Encode returns the segment bytes of batch.
@@ -59,6 +63,12 @@ func Encode(batch model.RelevanceBatch) []byte {
 		var flags byte
 		if record.Verdict.Audit {
 			flags |= flagAudit
+		}
+		if record.Verdict.OpenedHidden {
+			flags |= flagOpened
+		}
+		if record.Verdict.Source == model.SourceReplay {
+			flags |= flagReplay
 		}
 		records = append(records, append(out, byte(record.Verdict.Code), record.Verdict.Reason, flags, record.Verdict.Relations))
 	}
@@ -112,7 +122,7 @@ func Decode(data []byte) (model.RelevanceBatch, error) {
 				return model.RelevanceBatch{}, err
 			}
 			batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: model.ReaderVerdict{
-				Code: model.ReaderCode(tail[0]), Reason: tail[1], Audit: tail[2]&flagAudit != 0, Relations: tail[3],
+				Code: model.ReaderCode(tail[0]), Reason: tail[1], Audit: tail[2]&flagAudit != 0, Relations: tail[3], Source: readerSource(tail[2]), OpenedHidden: tail[2]&flagOpened != 0,
 			}})
 		case recordScore:
 			pair, err := readPair(reader, ids)
@@ -299,4 +309,11 @@ func Fold(segments [][]byte) (*model.RelevanceLedger, error) {
 		ledger.Add(batch)
 	}
 	return ledger, nil
+}
+
+func readerSource(flags byte) model.ReaderSource {
+	if flags&flagReplay != 0 {
+		return model.SourceReplay
+	}
+	return model.SourceLive
 }

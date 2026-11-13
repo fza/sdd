@@ -11,11 +11,15 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/networkteam/slogutils"
+
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/textdiff"
+	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
 // The deep draft verifier (20261109-004729-d-cpt-xs5, slice 3): once the
@@ -269,8 +273,8 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 		{
 			Doc: engine.FuncDoc{
 				Name: "prepareDeep", Doc: "Opens a deep exchange over the current draft: the base document, the paged reading, the weighing rule's recommendation, and a fresh exchange; for the live verifier, the revision's reading.",
-				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict, fieldDeepRevisions, fieldDeepReadIDs),
-				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepUnedited, fieldDeepReplayed, fieldDeepListed, fieldDeepUserListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs, fieldDeepFresh},
+				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict, fieldDeepRevisions, fieldDeepReadIDs, fieldDeepHidden),
+				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepUnedited, fieldDeepReplayed, fieldDeepListed, fieldDeepUserListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs, fieldDeepFresh, fieldDeepHidden},
 			},
 			Fn: w.prepareDeep,
 		},
@@ -394,9 +398,13 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 	if fresh != "" {
 		writes[fieldDeepFresh] = fresh
 	}
-	pages, held := w.deepPages(ctx, base)
+	pages, held, err := w.deepPages(ctx, base)
+	if err != nil {
+		return fmt.Errorf("prepareDeep: %w", err)
+	}
 	writes[fieldDeepPages], writes[fieldDeepPageFull] = pageTexts(pages)
 	writes[fieldDeepReadIDs] = held
+	writes[fieldDeepHidden] = uniqueIDs(append(workflowStoreStrings(ctx.Store, fieldDeepHidden), held.Hidden...))
 	if revising {
 		var previous deepHeld
 		if value, ok := ctx.Store.Get(fieldDeepReadIDs); ok && value != nil {
@@ -408,7 +416,11 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 		taken, _ := ctx.Store.Get(fieldDeepRevisions)
 		number := deepRoundCount(taken) + 1
 		writes[fieldDeepRevisions] = number
-		writes[fieldDeepRevisionPages], writes[fieldDeepRevisionPageFull] = pageTexts(w.deepRevisionPages(ctx, base, number, previous))
+		revision, err := w.deepRevisionPages(ctx, base, number, previous)
+		if err != nil {
+			return fmt.Errorf("prepareDeep: %w", err)
+		}
+		writes[fieldDeepRevisionPages], writes[fieldDeepRevisionPageFull] = pageTexts(revision)
 	}
 	writes[fieldDeepWeighing] = nil
 	if policy.Skip == model.VerifierSkipWeighed {
@@ -456,7 +468,7 @@ func weighDeep(store *engine.Store, checkout fs.FS) string {
 // deepPages renders the verifier's whole reading, led by the draft document,
 // what pre-flight raised and the changed passages since the last verdict,
 // and names the entries it serves.
-func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) ([]model.DeepReadingPage, deepHeld) {
+func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) ([]model.DeepReadingPage, deepHeld, error) {
 	var lead strings.Builder
 	fmt.Fprintf(&lead, "## Draft\n\n```\n%s\n```\n", base)
 	lead.WriteString(preflightRaised(ctx.Store))
@@ -476,6 +488,8 @@ func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) ([]model.D
 type deepHeld struct {
 	Full   []string `json:"full,omitempty"`
 	Listed []string `json:"listed,omitempty"`
+	// Hidden are the listed entries the reading served as one line.
+	Hidden []string `json:"hidden,omitempty"`
 }
 
 // preflightRaised renders what pre-flight raised, for the verifier to leave
@@ -501,10 +515,10 @@ func preflightRaised(store *engine.Store) string {
 // read in full, then the briefs, in the order the reading listed them, each
 // set-aside with its code, a closed brief beside its closer short; it leaves
 // out what skip holds already, and names what it serves.
-func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []model.DeepReadingPage, skip deepHeld) ([]model.DeepReadingPage, deepHeld) {
+func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []model.DeepReadingPage, skip deepHeld) ([]model.DeepReadingPage, deepHeld, error) {
 	graph := ctx.Graph
 	if graph == nil {
-		return model.DeepReadingPages(lead, rules, nil, nil), deepHeld{}
+		return model.DeepReadingPages(lead, rules, nil, nil), deepHeld{}, nil
 	}
 	heldFull := map[string]bool{}
 	for _, id := range skip.Full {
@@ -570,13 +584,91 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 			first = append(first, served)
 		}
 	}
-	for _, id := range reading.listed {
+	lanes, err := w.verifierLanes(ctx, reading, targets)
+	if err != nil {
+		return nil, deepHeld{}, err
+	}
+	for _, id := range lanes.Inspect {
 		served, ok := block(id, model.LightRoleBrief, false)
 		if ok {
 			rest = append(rest, served)
 		}
 	}
-	return model.DeepReadingPages(lead, rules, first, rest), served
+	var hidden []*model.Entry
+	for _, id := range lanes.Hidden {
+		if e := graph.ByID[id]; e != nil && !seen[id] && !heldAny[id] {
+			seen[id] = true
+			served.Listed = append(served.Listed, id)
+			hidden = append(hidden, e)
+			served.Hidden = append(served.Hidden, id)
+		}
+	}
+	if len(hidden) > 0 {
+		rest = append(rest, llmops.DeepCompactBlock(hidden))
+	}
+	return model.DeepReadingPages(lead, rules, first, rest), served, nil
+}
+
+// verifierLanes splits the reading's listed entries for the deep verifier
+// by gather's prefilter judge and its shared calibration (SetAside, the
+// threshold the recall bound holds at), scoring only the pairs the reading
+// holds no score for and recording each fresh score in the reading, which
+// publish writes to the ledger.
+func (w *WorkflowSession) verifierLanes(ctx *engine.Context, reading *captureReading, targets []string) (model.VerifierLanes, error) {
+	runtime, err := w.targetRuntime(w.instanceProject(ctx.Instance), AccessRead)
+	if err != nil {
+		return model.VerifierLanes{}, err
+	}
+	_, thresholds, err := runtime.prefilterCalibration(w.ctx)
+	if err != nil {
+		return model.VerifierLanes{}, err
+	}
+	if !thresholds.Valid {
+		return model.VerifierLanes{Inspect: reading.listed}, nil
+	}
+	graph := ctx.Graph
+	draft := w.draftFromStore(ctx.Store)
+	verifierDraft := model.VerifierDraft{Kind: model.Kind(draft.Kind), Targets: targets}
+	for _, label := range draft.Topics {
+		if topic, err := model.ParseTopicPath(label); err == nil {
+			verifierDraft.Topics = append(verifierDraft.Topics, topic)
+		}
+	}
+	structural := model.VerifierStructural(graph, verifierDraft, reading.listed, reading.full, storeVerdictIDs(ctx.Store))
+	prefilter := runtime.options.Prefilter
+	held, _ := ctx.Reading.Scores(prefilter.Judge)
+	scores := maps.Clone(held)
+	if scores == nil {
+		scores = map[string]uint8{}
+	}
+	subject := model.RelevanceText(draft.Kind, draft.Topics, "", draft.Body)
+	var pending []relevance.Candidate
+	for _, id := range reading.listed {
+		if _, scored := scores[id]; !scored && !structural[id] && graph.ByID[id] != nil {
+			pending = append(pending, relevance.Candidate{ID: id, Text: model.EntryRelevanceText(graph, graph.ByID[id])})
+		}
+	}
+	if len(pending) > 0 && prefilter.Scorer != nil {
+		if err := secrets.CheckText("the draft", subject); err != nil {
+			return model.VerifierLanes{}, err
+		}
+		scored := scoreCandidates(w.ctx, prefilter, subject, pending)
+		if scored.unanswered > 0 || scored.oversize > 0 {
+			slogutils.FromContext(w.ctx).Warn("the verifier's reading inspects the entries the prefilter left unscored", "unanswered", scored.unanswered, "oversize", scored.oversize, "failures", scored.failures)
+		}
+		if len(scored.fresh) > 0 {
+			maps.Copy(scores, scored.fresh)
+			payload := &model.PrefilterPayload{Judge: prefilter.Judge, Forward: prefilter.Scorer.Direction() == relevance.Forward, Scores: scored.fresh}
+			if err := w.session.Record(engine.Read{Tool: "verify", Instance: ctx.Instance, Grounding: model.ReadPayload{Prefilter: payload}}); err != nil {
+				return model.VerifierLanes{}, err
+			}
+		}
+	}
+	seed := model.NewCorpusMark(reading.listed).Hash
+	if ctx.Reading != nil && ctx.Reading.Corpus != nil {
+		seed = ctx.Reading.Corpus.Hash
+	}
+	return model.SplitVerifierLanes(reading.listed, structural, scores, thresholds, thresholds.SetAside, seed), nil
 }
 
 func pageTexts(pages []model.DeepReadingPage) ([]string, [][]string) {

@@ -3,6 +3,7 @@ package cliapp
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/urfave/cli/v3"
 
@@ -19,12 +20,15 @@ func groundingCmd() *cli.Command {
 			{
 				Name:  "status",
 				Usage: "Show the current judge's labels, recall bound, thresholds, audit and drift state, and precision per reason code",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "exclude-replay", Usage: "Calibrate on the labels of live captures alone, leaving out those seeded from replayed ones"},
+				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					application, project, identity, err := workingApplication(ctx, cmd)
 					if err != nil {
 						return err
 					}
-					status, err := application.GroundingStatus(ctx, identity, project)
+					status, err := application.GroundingStatus(ctx, identity, project, sdd.GroundingStatusRequest{ExcludeReplay: cmd.Bool("exclude-replay")})
 					if err != nil {
 						return err
 					}
@@ -45,6 +49,34 @@ func groundingCmd() *cli.Command {
 						return err
 					}
 					_, err = fmt.Fprintf(cmd.Writer, "%s scored %d labelled pairs; %d name an entry the graph no longer holds; %d too long to score\n", result.Judge, result.Scored, result.Missing, result.Unanswered)
+					return err
+				},
+			},
+			{
+				Name:  "seed",
+				Usage: "Append a replayed reference label for each pair a JSON Lines file names as {\"a\": ID, \"b\": ID}, skipping pairs already labelled",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "from", Usage: "the JSON Lines file, or - for standard input", Required: true},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					store, err := workingRelevanceStore()
+					if err != nil {
+						return err
+					}
+					input := cmd.Reader
+					if name := cmd.String("from"); name != "-" {
+						file, err := os.Open(name)
+						if err != nil {
+							return err
+						}
+						defer file.Close()
+						input = file
+					}
+					result, err := sdd.SeedReplayLabels(ctx, store, input)
+					if err != nil {
+						return err
+					}
+					_, err = fmt.Fprintf(cmd.Writer, "Seeded %d replayed reference labels; %d pairs already labelled\n", result.Added, result.Skipped)
 					return err
 				},
 			},

@@ -9,9 +9,8 @@ import (
 // the relevance ledger, keyed to the entry it wrote (5.7): every ref,
 // supersede and close is referenced; every verdict sets its entries aside
 // with its code, as opened when the reading served them in full; an audit
-// sample carries the audit bit; every
-// prefilter score the reading holds is kept with its judge, a cosine
-// similarity only for a pair the reader labelled.
+// sample carries the audit bit; every prefilter score the reading holds is
+// kept with its judge.
 func CaptureRelevance(entryID string, reading *Reading, answered []string, verdicts []GroundingVerdict) (RelevanceBatch, error) {
 	var batch RelevanceBatch
 	if reading == nil {
@@ -45,9 +44,6 @@ func CaptureRelevance(entryID string, reading *Reading, answered []string, verdi
 	for _, judge := range slices.Sorted(maps.Keys(reading.scores)) {
 		held := reading.scores[judge]
 		for _, id := range slices.Sorted(maps.Keys(held.scores)) {
-			if IsCosineJudge(judge) && !seen[id] {
-				continue
-			}
 			pair := NewRelevancePair(entryID, id)
 			direction := DirectionBoth
 			if held.forward {
@@ -90,4 +86,33 @@ func SplitByLedger(candidates []GatherCandidate, subject string, ledger *Relevan
 	}
 	slices.Sort(split.NotRelevant)
 	return split
+}
+
+// VerifierRelevance returns the reader records the deep verifier adds to a
+// published capture (20261109-004506-d-cpt-udz, D11, D36): the entry each
+// finding rests on is referenced from the entry written, as an audit sample
+// when the reading showed it as one or when the verifier opened it from the
+// entries its reading hid, a miss for the drift rule. A hidden entry opened
+// with no finding resting on it only carries the OpenedHidden flag.
+func VerifierRelevance(entryID string, reading *Reading, findings []DeepFinding, openedHidden []string) []ReaderRecord {
+	var records []ReaderRecord
+	seen := map[string]bool{}
+	for _, finding := range findings {
+		for _, id := range finding.Basis {
+			if id == "" || id == entryID || seen[id] {
+				continue
+			}
+			seen[id] = true
+			audit := (reading != nil && reading.audit[id]) || slices.Contains(openedHidden, id)
+			records = append(records, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: ReaderReferenced, Audit: audit}})
+		}
+	}
+	for _, id := range openedHidden {
+		if id == "" || id == entryID || seen[id] {
+			continue
+		}
+		seen[id] = true
+		records = append(records, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{OpenedHidden: true}})
+	}
+	return records
 }

@@ -241,8 +241,9 @@ func contextGraph(ctx *engine.Context) func() (*model.Graph, error) {
 	return func() (*model.Graph, error) { return ctx.Graph, nil }
 }
 
-// storeCaptureRelevance writes the capture's reader records, keyed to the
-// entry it published, into the project's relevance ledger.
+// storeCaptureRelevance writes the reader records of the capture and of its
+// deep verifier's findings, keyed to the entry it published, into the
+// project's relevance ledger.
 func (w *WorkflowSession) storeCaptureRelevance(ctx *engine.Context, project ProjectID, entryID string) error {
 	if ctx.Reading == nil || ctx.Reading.Corpus == nil {
 		return nil
@@ -255,6 +256,15 @@ func (w *WorkflowSession) storeCaptureRelevance(ctx *engine.Context, project Pro
 	if err != nil {
 		return err
 	}
+	findings, err := storeDeep[model.DeepFinding](ctx.Store, fieldDeepFindings)
+	if err != nil {
+		return err
+	}
+	opened, err := w.openedHidden(ctx)
+	if err != nil {
+		return err
+	}
+	batch.Readers = append(batch.Readers, model.VerifierRelevance(entryID, ctx.Reading, findings, opened)...)
 	if err := runtime.appendRelevance(w.ctx, batch); err != nil {
 		return err
 	}
@@ -277,4 +287,36 @@ func applyDriftRule(ctx context.Context, runtime *ProjectRuntime, now time.Time)
 		return nil
 	}
 	return runtime.appendRelevance(ctx, model.RelevanceBatch{Steps: []model.DriftStep{step}})
+}
+
+// openedHidden returns the entries a verifier reading of the capture served
+// as one line that a verify delegate's session then read in full.
+func (w *WorkflowSession) openedHidden(ctx *engine.Context) ([]string, error) {
+	hidden := workflowStoreStrings(ctx.Store, fieldDeepHidden)
+	if len(hidden) == 0 {
+		return nil, nil
+	}
+	var opened []string
+	for _, fork := range w.session.Forks(ctx.Instance) {
+		if fork.Procedure != verifyProcedure {
+			continue
+		}
+		child := w.held[SessionID(fork.Child.Session)]
+		if child == nil {
+			linked, refusal, err := w.app.loadLinked(w.ctx, w.identity, SessionID(fork.Child.Session))
+			if err != nil {
+				return nil, fmt.Errorf("reading the verifier's openings: %w", err)
+			}
+			if refusal != "" {
+				return nil, fmt.Errorf("reading the verifier's openings: %s", refusal)
+			}
+			child = linked
+		}
+		for _, id := range hidden {
+			if child.session.ReadDepthOf(id) == engine.ReadFull && !slices.Contains(opened, id) {
+				opened = append(opened, id)
+			}
+		}
+	}
+	return opened, nil
 }

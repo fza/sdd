@@ -116,6 +116,13 @@ type CalibrationReport struct {
 	// score for, re-scored after a judge change (D36).
 	Positive, Negative, Counted, Excluded int
 	Unscored                              int
+	// Live and Replay count the labels by source; ReplayExcluded reports
+	// that the rest of the report reads the live labels alone.
+	Live, Replay int
+	// OpenedHidden counts the hidden entries the deep verifier opened with
+	// no finding resting on them; it moves no threshold.
+	OpenedHidden   int
+	ReplayExcluded bool
 	// Misses are the positives scoring below the set-aside threshold;
 	// RecallBound the Wilson lower bound of recall at it.
 	Misses      int
@@ -149,11 +156,22 @@ func (r CalibrationReport) DominantCode() string {
 	return r.SetAside[0].Code
 }
 
-// Calibration reports judge's calibration over the ledger.
-func (l *RelevanceLedger) Calibration(judge string) CalibrationReport {
+// Calibration reports judge's calibration over the ledger, over its live
+// labels alone when excludeReplay is set.
+func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) CalibrationReport {
 	labels := l.Labels(judge)
 	steps := l.Steps()
-	report := CalibrationReport{Judge: judge, Thresholds: Calibrate(labels, steps, judge), Unscored: len(l.Unscored(judge))}
+	live := LiveLabels(labels)
+	replayed := len(labels) - len(live)
+	if excludeReplay {
+		labels = live
+	}
+	report := CalibrationReport{Judge: judge, Thresholds: Calibrate(labels, steps, judge), Unscored: len(l.Unscored(judge)), Live: len(live), Replay: replayed, ReplayExcluded: excludeReplay}
+	for _, verdict := range l.readers {
+		if verdict.OpenedHidden && verdict.Code != ReaderReferenced {
+			report.OpenedHidden++
+		}
+	}
 	for _, step := range steps {
 		if step.Judge == judge {
 			report.Steps = append(report.Steps, step)
@@ -211,9 +229,19 @@ func InsertBlind(toJudge, audit []GatherCandidate, seed string) []GatherCandidat
 	out := slices.Clone(toJudge)
 	for _, candidate := range audit {
 		candidate.Score = nil
-		sum := sha256.Sum256([]byte(seed + "\naudit\n" + candidate.Entry.ID))
-		position := int(binary.BigEndian.Uint64(sum[:8]) % uint64(len(out)+1))
-		out = slices.Insert(out, position, candidate)
+		out = slices.Insert(out, blindPosition(seed, candidate.Entry.ID, len(out)), candidate)
 	}
 	return out
+}
+
+// blindPosition draws where an audit sample goes among n lines from seed.
+func blindPosition(seed, id string, n int) int {
+	sum := sha256.Sum256([]byte(seed + "\naudit\n" + id))
+	return int(binary.BigEndian.Uint64(sum[:8]) % uint64(n+1))
+}
+
+// LiveLabels returns the labels of live captures, dropping those seeded
+// from replayed ones.
+func LiveLabels(labels []RelevanceLabel) []RelevanceLabel {
+	return slices.DeleteFunc(slices.Clone(labels), func(label RelevanceLabel) bool { return label.Source != SourceLive })
 }

@@ -63,10 +63,21 @@ func relevanceCmd() *cli.Command {
 			{
 				Name:  "compact",
 				Usage: "Merge the ledger's segments into one, holding every record once",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "drop-replay", Usage: "Leave out the replayed reader labels, taking a seed back; a pair a live capture also labels stays"},
+				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					store, err := workingRelevanceStore()
 					if err != nil {
 						return err
+					}
+					if cmd.Bool("drop-replay") {
+						err = store.DropReplay(ctx)
+						if err != nil {
+							return err
+						}
+						fmt.Fprintln(cmd.Writer, "Compacted the relevance ledger without its replayed labels")
+						return nil
 					}
 					err = store.Compact(ctx)
 					if err != nil {

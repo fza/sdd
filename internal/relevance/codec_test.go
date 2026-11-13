@@ -10,6 +10,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
 	"github.com/networkteam/sdd/internal/segment"
+	"github.com/networkteam/sdd/test"
 )
 
 func sampleBatch() model.RelevanceBatch {
@@ -79,5 +80,31 @@ func TestDecode_RefusesCorruptRecords(t *testing.T) {
 				t.Fatalf("Decode = %v, want ErrCorrupt", err)
 			}
 		})
+	}
+}
+
+func TestDecode_ReadsASegmentFromBeforeSourcesAsLive(t *testing.T) {
+	got, err := relevance.Decode(test.SegmentBeforeSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, sampleBatch()) {
+		t.Fatalf("decoded\n%+v\nwant every record unchanged and every reader live\n%+v", got, sampleBatch())
+	}
+	if !bytes.Equal(relevance.Encode(got), test.SegmentBeforeSource) {
+		t.Fatal("a live batch should encode to the bytes written before sources existed")
+	}
+}
+
+func TestEncodeDecode_KeepsTheReplaySourceAndTheOpeningFlag(t *testing.T) {
+	batch := sampleBatch()
+	batch.Readers[1].Verdict.Source = model.SourceReplay
+	batch.Readers[0].Verdict.OpenedHidden = true
+	got, err := relevance.Decode(relevance.Encode(batch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Readers[0].Verdict.Source != model.SourceLive || got.Readers[1].Verdict.Source != model.SourceReplay || !got.Readers[0].Verdict.Audit || !got.Readers[0].Verdict.OpenedHidden || got.Readers[1].Verdict.OpenedHidden {
+		t.Fatalf("readers %+v should keep each source and opening flag beside the audit bit", got.Readers)
 	}
 }

@@ -82,3 +82,50 @@ func ledgerRecords(t *testing.T, dir string) string {
 	}
 	return ""
 }
+
+func TestGroundingSeed_AppendsReplayedLabelsOnce(t *testing.T) {
+	f := newAppFixture(t)
+	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n")
+	f.write(t, "pairs.jsonl", `{"a":"20261109-004506-d-cpt-udz","b":"20261101-120000-s-tac-aaa"}`+"\n")
+
+	first := f.run(t, "grounding", "seed", "--from", "pairs.jsonl")
+	if first.err != nil || !strings.Contains(first.stdout, "Seeded 1 replayed reference labels; 0 pairs already labelled") {
+		t.Fatalf("seed = %q, %v\n%s", first.stdout, first.err, first.stderr)
+	}
+	again := f.run(t, "grounding", "seed", "--from", "pairs.jsonl")
+	if again.err != nil || !strings.Contains(again.stdout, "Seeded 0 replayed reference labels; 1 pairs already labelled") {
+		t.Fatalf("second seed = %q, %v: a repeated file should add nothing", again.stdout, again.err)
+	}
+	exported := f.run(t, "relevance", "export")
+	want := `{"type":"reader","a":"20261101-120000-s-tac-aaa","b":"20261109-004506-d-cpt-udz","code":"referenced","source":"replay"}` + "\n"
+	if exported.err != nil || exported.stdout != want {
+		t.Fatalf("export = %q, %v: want one replayed reference", exported.stdout, exported.err)
+	}
+}
+
+func TestRelevanceCompact_DropsAReplaySeed(t *testing.T) {
+	for _, tc := range []struct{ name, config string }{
+		{"machine state", ""},
+		{"committed reader verdicts", "relevance:\n  commit: true\n  content: reader\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAppFixture(t)
+			f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n"+tc.config)
+			f.write(t, "pairs.jsonl", `{"a":"20261109-004506-d-cpt-udz","b":"20261102-120000-s-tac-bbb"}`+"\n")
+			f.write(t, "in.jsonl", relevanceLines)
+			for _, args := range [][]string{{"relevance", "import", "in.jsonl"}, {"grounding", "seed", "--from", "pairs.jsonl"}} {
+				if result := f.run(t, args...); result.err != nil {
+					t.Fatalf("%v: %v\n%s", args, result.err, result.stderr)
+				}
+			}
+			dropped := f.run(t, "relevance", "compact", "--drop-replay")
+			if dropped.err != nil || !strings.Contains(dropped.stdout, "without its replayed labels") {
+				t.Fatalf("compact = %q, %v", dropped.stdout, dropped.err)
+			}
+			exported := f.run(t, "relevance", "export")
+			if exported.err != nil || exported.stdout != relevanceLines {
+				t.Fatalf("export = %q, %v: the seed should be gone and the live records kept", exported.stdout, exported.err)
+			}
+		})
+	}
+}

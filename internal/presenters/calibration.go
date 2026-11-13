@@ -12,6 +12,11 @@ import (
 // would serve in full were answered, per reason code (D11, D33, D36).
 func RenderCalibration(w io.Writer, report model.CalibrationReport) {
 	fmt.Fprintf(w, "judge: %s\n", report.Judge)
+	sources := fmt.Sprintf("sources: %d live labels, %d replayed from past captures", report.Live, report.Replay)
+	if report.ReplayExcluded {
+		sources += "; the report below reads the live labels alone (--exclude-replay)"
+	}
+	fmt.Fprintln(w, sources)
 	fmt.Fprintf(w, "labels: %d referenced, %d set aside (topic-only, other-scope, term-clash), %d other (counted only), %d excluded (covered, meta, unknown codes)\n",
 		report.Positive, report.Negative, report.Counted, report.Excluded)
 	if report.Unscored > 0 {
@@ -25,6 +30,7 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport) {
 	}
 	fmt.Fprintf(w, "audit: %.0f%% of set-asides shown blind; %d referenced of the latest %d audit labels (window %d, minimum %d, step above %.0f%%)\n",
 		model.AuditShare*100, report.AuditMisses, report.AuditCounted, model.DriftWindow, model.DriftMinimum, model.DriftMissShare*100)
+	fmt.Fprintf(w, "opened hidden: %d entries the deep verifier opened from the ones its reading hid, no finding resting on them (no drift effect)\n", report.OpenedHidden)
 	if len(report.Steps) == 0 {
 		fmt.Fprintln(w, "drift steps: none")
 	} else {
