@@ -543,6 +543,17 @@ func (s *Session) StageFile(t *testing.T, filename string, content []byte) sdd.S
 	return staged
 }
 
+// StageFrom stages the file at path, which the session reads again before a
+// playback confirm.
+func (s *Session) StageFrom(t *testing.T, filename, path string) string {
+	t.Helper()
+	staged, err := s.WF.StageAttachmentFrom(t.Context(), s.World.Identity, filename, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return staged.Handle
+}
+
 // StageErr is Stage for tests asserting the failure.
 func (s *Session) StageErr(t *testing.T, filename string, content []byte) (sdd.StagedFile, error) {
 	t.Helper()

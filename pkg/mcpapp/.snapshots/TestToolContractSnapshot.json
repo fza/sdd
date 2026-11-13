@@ -502,7 +502,7 @@
     "name": "show"
   },
   {
-    "description": "Stage a file into the session scratch; session required. Returns a handle and the sha256 of the staged bytes. Pass the handle in a report's attachments field, or as a capture's bodyHandle when the file holds the entry body. Or amend what is already staged: with patches, the file named by name is edited in place through atomic search-replace pairs, not re-staged whole. A path is only read, never written. Never a graph write: the write gate materializes staged files with the entry.",
+    "description": "Stage a file into the session scratch; session required. Returns a handle and the sha256 of the staged bytes. Pass the handle in a report's attachments field, or as a capture's bodyHandle when the file holds the entry body. Or amend what is already staged: with patches, the file named by name is edited in place through atomic search-replace pairs, not re-staged whole. A path is read now and again before a playback confirms a body staged from it, never written. Never a graph write: the write gate materializes staged files with the entry.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -540,7 +540,7 @@
           ]
         },
         "path": {
-          "description": "local file path to stage instead of inline content",
+          "description": "local file path to stage instead of inline content; read again before a playback confirms a body staged from it",
           "type": "string"
         },
         "session": {
