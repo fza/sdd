@@ -64,7 +64,7 @@ func (w *WorkflowSession) registerUserWords(registry *engine.Registry) error {
 				}
 				return ""
 			}
-			return "missing " + strings.Join(missing, ", ") + ": ask the user for the decision's reason" +
+			return "missing " + strings.Join(missing, ", ") + ": ask the user for the decision's reason, offering none of your own" +
 				" (and a directive's intent), end your turn, and after the answer report their words verbatim; never supply them"
 		},
 	})

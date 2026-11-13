@@ -124,7 +124,7 @@ func TestCapture_ReasonStatesWhyNeverWhat(t *testing.T) {
 	world := proctest.NewWorld(t)
 	session := world.Open(t, "reason-why-not-what")
 	serve := session.Start(t, "capture", nil)
-	want := "The reason states why, never what: words stating the decision itself never fill `reasonWords`. The user's words give no why? Ask."
+	want := "The reason states why, never what: words stating the decision itself never fill `reasonWords`. The user's words give no why? Ask openly, offering no reason of your own, not even as an option."
 	if !strings.Contains(test.Untagged(serve.Instructions), want) {
 		t.Fatalf("assemble should tell the agent the reason states why:\n%s", serve.Instructions)
 	}
