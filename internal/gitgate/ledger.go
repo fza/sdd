@@ -54,6 +54,8 @@ type repoRecord struct {
 	Authenticated *bool       `json:"authenticated,omitempty"`
 	Fetch         *kindRecord `json:"fetch,omitempty"`
 	Push          *kindRecord `json:"push,omitempty"`
+	// Lease is when the repository's lease was last renewed.
+	Lease time.Time `json:"lease,omitzero"`
 }
 
 type kindRecord struct {
