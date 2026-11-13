@@ -67,9 +67,14 @@ func (c CLI) Commit(message string, paths ...string) error {
 		return err
 	}
 	paths = slices.Concat(paths, segments)
-	out, err := c.RunPastIndexLock(ctx, append([]string{"add", "--all", "--"}, paths...)...)
-	if err != nil {
-		return fmt.Errorf("git add: %s (%w)", out, err)
+	// git add refuses a path gone from disk and index alike, as git rm leaves
+	// it; the commit pathspec below records that deletion on its own.
+	var out []byte
+	if onDisk := c.onDisk(paths); len(onDisk) > 0 {
+		out, err = c.RunPastIndexLock(ctx, append([]string{"add", "--all", "--"}, onDisk...)...)
+		if err != nil {
+			return fmt.Errorf("git add: %s (%w)", out, err)
+		}
 	}
 
 	// Scope the commit to exactly the staged paths with an explicit pathspec.
@@ -80,6 +85,21 @@ func (c CLI) Commit(message string, paths ...string) error {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
 	return c.RecordGraphCloneCommit(ctx)
+}
+
+func (c CLI) onDisk(paths []string) []string {
+	var out []string
+	for _, path := range paths {
+		resolved := path
+		if c.Dir != "" && !filepath.IsAbs(path) {
+			resolved = filepath.Join(c.Dir, path)
+		}
+		if _, err := os.Lstat(resolved); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
 }
 
 // Committable returns paths without those git refuses to stage: untracked
