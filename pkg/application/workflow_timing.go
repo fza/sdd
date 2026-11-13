@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/networkteam/sdd/internal/engine"
+	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/textdiff"
@@ -180,7 +181,8 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 
 func (w *WorkflowSession) runWorkflowWritingGuideDelta(ctx *engine.Context) error {
 	base, _ := readGuideBase(ctx.Store)
-	changed := textdiff.ChangedPassages(base.Text, draftText(ctx.Store))
+	text := draftText(ctx.Store)
+	changed := textdiff.ChangedPassages(base.Text, text)
 	guideFindings := []query.GuideFinding{}
 	if len(changed) > 0 {
 		findings, err := w.app.writingGuideCheck(w.ctx, w.identity, w.instanceProject(ctx.Instance), w.draftFromStore(ctx.Store), changed)
@@ -188,6 +190,10 @@ func (w *WorkflowSession) runWorkflowWritingGuideDelta(ctx *engine.Context) erro
 			return fmt.Errorf("writingGuideDelta: %w", err)
 		}
 		for _, f := range findings {
+			// The model sees the whole draft as context; what it judges is the change.
+			if !llmops.QuoteLocatesInAny(text, f.Quote, changed) {
+				continue
+			}
 			guideFindings = append(guideFindings, query.GuideFinding{Reasoning: f.Reasoning, Axis: f.Axis, Quote: f.Quote, Repair: f.Repair, Severity: query.GuideSeverity(f.Severity)})
 		}
 	}
