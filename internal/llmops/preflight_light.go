@@ -243,14 +243,23 @@ func DeepReadingBlock(graph *model.Graph, e *model.Entry, role model.LightRole, 
 	return model.DeepReadingBlock{ID: e.ID, Text: "---\n\n" + header + "\n" + model.EntryBrief(e)}
 }
 
+// deepStatus is derivedStatusForPrompt with a done entry's status in one
+// word: its line names the kind already.
+func deepStatus(s model.Status) string {
+	if s.Kind == model.StatusNone {
+		return "terminal"
+	}
+	return derivedStatusForPrompt(s)
+}
+
 func writeDeepFirstLine(b *strings.Builder, e *model.Entry, status model.Status, withTime bool) {
 	parts, err := model.ParseID(e.ID)
 	if err == nil && model.TypeFromAbbrev[parts.TypeCode] == e.Type && model.LayerFromAbbrev[parts.LayerCode] == e.Layer &&
 		e.Time.Format("20060102-150405") == parts.Timestamp {
-		fmt.Fprintf(b, "ID: %s | kind: %s | Status: %s\n", e.ID, e.Kind, derivedStatusForPrompt(status))
+		fmt.Fprintf(b, "ID: %s | kind: %s | Status: %s\n", e.ID, e.Kind, deepStatus(status))
 		return
 	}
-	fmt.Fprintf(b, "ID: %s | Type: %s, kind: %s, layer: %s | Status: %s", e.ID, e.Type, e.Kind, e.Layer, derivedStatusForPrompt(status))
+	fmt.Fprintf(b, "ID: %s | Type: %s, kind: %s, layer: %s | Status: %s", e.ID, e.Type, e.Kind, e.Layer, deepStatus(status))
 	if withTime {
 		fmt.Fprintf(b, " | Time: %s", e.Time.Format("2006-01-02 15:04:05"))
 	}

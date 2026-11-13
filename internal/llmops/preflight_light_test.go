@@ -91,13 +91,13 @@ func TestDeepReadingHeader(t *testing.T) {
 		entry *model.Entry
 		want  string
 	}{
-		{"its ID carries type, layer and time", done, "ID: 20261101-110000-s-tac-dne | kind: done | Status: terminal (done signal — no lifecycle status)\nSummary: The writer keeps them all.\n"},
+		{"its ID carries type, layer and time", done, "ID: 20261101-110000-s-tac-dne | kind: done | Status: terminal\nSummary: The writer keeps them all.\n"},
 		{"its time is not its ID's", drifted, "ID: 20261101-120000-s-tac-drf | Type: signal, kind: gap, layer: tactical | Status: open | Time: 2026-11-01 12:01:00\nSummary: An entry whose time is not its ID's.\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := llmops.DeepReadingHeader(graph, tc.entry, model.LightRoleBrief, "")
 			if got != tc.want {
-				t.Errorf("the first line should name type, layer and time only where the ID does not, got:\n%s", got)
+				t.Errorf("the first line should name type, layer and time only where the ID does not, and a done entry's status in one word, got:\n%s", got)
 			}
 		})
 	}
