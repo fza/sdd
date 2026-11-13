@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
@@ -148,7 +151,11 @@ func (w *WorkflowSession) applyStagedBody(ctx context.Context, identity RequestI
 		fields, _ = request.Report["fields"].(map[string]any)
 		chooser, _ := request.Report["chooser"].(string)
 		choice, _ := request.Report["choice"].(string)
-		err := w.checkStagedHeaderAtConfirm(ctx, identity, inst, chooser, choice)
+		err := w.stageFromSource(ctx, identity, inst, chooser, choice)
+		if err != nil {
+			return err
+		}
+		err = w.checkStagedHeaderAtConfirm(ctx, identity, inst, chooser, choice)
 		if err != nil {
 			return err
 		}
@@ -216,4 +223,42 @@ func (w *WorkflowSession) boundCaptures(handle string) []*engine.Instance {
 		}
 	}
 	return bound
+}
+
+// recordSource keeps the file a handle was staged from; staging the handle
+// from content or patches drops it, since the staged copy then leads.
+func (w *WorkflowSession) recordSource(handle, source string) {
+	if source == "" {
+		delete(w.stagedFrom, handle)
+		return
+	}
+	w.stagedFrom[handle] = source
+}
+
+// stageFromSource stages again the file a confirmed capture's body was staged
+// from when it changed since: the edit reaches the draft, and the confirm
+// then plays it back instead of confirming the older copy. A file gone since
+// leaves the staged copy standing.
+func (w *WorkflowSession) stageFromSource(ctx context.Context, identity RequestIdentity, inst *engine.Instance, chooser, choice string) error {
+	if !takesStagedBody(inst) || !callsConfirmPlayback(inst.Spec, chooser, choice) {
+		return nil
+	}
+	bound, _ := inst.Store.Get(fieldBodyHandle)
+	handle, _ := bound.(string)
+	source := w.stagedFrom[handle]
+	if source == "" {
+		return nil
+	}
+	content, err := os.ReadFile(source)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading %s, the file %q was staged from: %w", source, handle, err)
+	}
+	if held, _ := inst.Store.Get(fieldBodyHash); held == stagedSHA256(content) {
+		return nil
+	}
+	_, err = w.stage(ctx, identity, handle, source, content)
+	return err
 }

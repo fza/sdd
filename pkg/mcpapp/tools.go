@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -278,7 +277,7 @@ type StageAttachmentArgs struct {
 	Session string             `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
 	Name    string             `json:"name" jsonschema:"target filename (plain name, no paths)"`
 	Content string             `json:"content,omitempty" jsonschema:"file content to stage (UTF-8 text)"`
-	Path    string             `json:"path,omitempty" jsonschema:"local file path to stage instead of inline content"`
+	Path    string             `json:"path,omitempty" jsonschema:"local file path to stage instead of inline content; read again before a playback confirms a body staged from it"`
 	Patches []SearchReplaceArg `json:"patches,omitempty" jsonschema:"edit the already-staged file named by name in place: ordered exact search-replace pairs, applied atomically. Each old must match exactly once; a failing pair refuses the whole edit. Pass instead of content/path"`
 }
 
@@ -529,7 +528,8 @@ func (s *Server) registerTools() {
 			"sha256 of the staged bytes. Pass the handle in a report's attachments field, or as a capture's " +
 			"bodyHandle when the file holds the entry body. Or amend what is already staged: with patches, " +
 			"the file named by name is edited in place through atomic search-replace pairs, not re-staged " +
-			"whole. A path is only read, never written. Never a graph write: the write gate materializes " +
+			"whole. A path is read now and again before a playback confirms a body staged from it, never written. " +
+			"Never a graph write: the write gate materializes " +
 			"staged files with the entry.",
 	}, toolBoundary(s, s.stageAttachment))
 
@@ -955,14 +955,16 @@ func (s *Server) stageAttachment(ctx context.Context, req *mcp.CallToolRequest, 
 		}
 		return nil, StageAttachmentResult{Handle: staged.Handle, SHA256: staged.SHA256, Bound: staged.Bound}, nil
 	}
-	content := []byte(args.Content)
+	var staged sdd.StagedFile
 	if args.Path != "" {
-		content, err = os.ReadFile(args.Path)
-		if err != nil {
-			return nil, StageAttachmentResult{}, toolError("reading %s: %v", args.Path, err)
+		path, absErr := filepath.Abs(args.Path)
+		if absErr != nil {
+			return nil, StageAttachmentResult{}, toolError("path %s: %v", args.Path, absErr)
 		}
+		staged, err = ss.root.StageAttachmentFrom(ctx, identity, args.Name, path)
+	} else {
+		staged, err = ss.root.StageAttachment(ctx, identity, args.Name, []byte(args.Content))
 	}
-	staged, err := ss.root.StageAttachment(ctx, identity, args.Name, content)
 	if err != nil {
 		return nil, StageAttachmentResult{}, err
 	}

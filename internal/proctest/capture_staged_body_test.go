@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -301,9 +303,9 @@ func TestCapture_HeaderDisagreeingAtTheConfirmIsRefused(t *testing.T) {
 // body not yet served and was turned into a fresh playback instead.
 func answerPlayback(t *testing.T, session *proctest.Session, instance, choice string, fields map[string]any) *sdd.WorkflowServe {
 	t.Helper()
-	serve := session.Answer(t, instance, "playback", choice, fields, "as discussed")
+	serve := session.Answer(t, instance, "playback", choice, fields, "as discussed, "+choice)
 	if hasDiagnostic(serve, "not answered") {
-		serve = session.Answer(t, instance, "playback", choice, fields, "as discussed")
+		serve = session.Answer(t, instance, "playback", choice, fields, "as discussed, "+choice)
 	}
 	return serve
 }
@@ -474,5 +476,38 @@ func TestCapture_RestagedBodySurvivesAResume(t *testing.T) {
 	entryID, _ := serve.Produced["entryId"].(string)
 	if entry := proctest.LoadEntry(t, world.GraphDir, entryID); !strings.Contains(entry.Content, "not yet played back") {
 		t.Errorf("the re-staged body should survive a resume, got %q", entry.Content)
+	}
+}
+
+// A body staged from a file the user edits in place, often while answering:
+// the confirm reads the file again, so it never confirms an older copy.
+func TestCapture_ConfirmReadsAStagedFileAgain(t *testing.T) {
+	world, session := newCaptureWorld(t, "staged-body-reread")
+	path := filepath.Join(t.TempDir(), "draft.md")
+	if err := os.WriteFile(path, []byte(stagedBodyFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handle := session.StageFrom(t, "draft.md", path)
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	session, _ = world.Resume(t, session.ID, "staged-body-reread-resumed")
+
+	edited := strings.Replace(stagedBodyFile, "drafted in a reviewed file", "edited in the reviewed file", 1)
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+	proctest.RequireStep(t, serve, "playback")
+	if !hasDiagnostic(serve, "not answered") || !strings.Contains(serve.Instructions, "edited in the reviewed file") {
+		t.Fatalf("a confirm over an edited file should play the edit back instead, got %v\n%s", serve.Diagnostics, serve.Instructions)
+	}
+
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "yes, the edited one")
+	proctest.RequireStep(t, serve, "verifySummary")
+	serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	entryID, _ := serve.Produced["entryId"].(string)
+	if entry := proctest.LoadEntry(t, world.GraphDir, entryID); !strings.Contains(entry.Content, "edited in the reviewed file") {
+		t.Errorf("the entry should carry the edited file, got %q", entry.Content)
 	}
 }

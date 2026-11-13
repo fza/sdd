@@ -42,7 +42,7 @@ func TestCaptureDeep_AFindingAcceptedWithoutAnEditIsPlayedBackBeforeTheWrite(t *
 	serve := session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
 	proctest.RequireStep(t, serve, "playback")
 	replay := test.Untagged(serve.Instructions)
-	for _, want := range []string{"The deep verifier left these findings without a change to the draft", "- f1 [medium, inconsistent]: " + verdict, "Show the user each one"} {
+	for _, want := range []string{"The deep verifier left these findings without a change to the draft", "- f1 [medium, inconsistent]: " + verdict, "Show the user each one in full, as listed, never a paraphrase, before they confirm or adjust the draft."} {
 		if !strings.Contains(replay, want) {
 			t.Fatalf("the replayed playback should carry %q:\n%s", want, replay)
 		}

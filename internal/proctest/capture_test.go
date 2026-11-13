@@ -14,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/test"
 )
 
 const (
@@ -102,6 +103,9 @@ func TestCapture_OneShotHappyPath(t *testing.T) {
 	}
 	if serve.PendingChooser == nil || serve.PendingChooser.Kind != "agent" {
 		t.Fatalf("verifySummary must serve an agent chooser, got %+v", serve.PendingChooser)
+	}
+	if want := "Compare sentence by sentence: a claim the body does not make, a firmer modal or state than the body's, or an ID or hash the body does not carry is drift."; !strings.Contains(test.Untagged(serve.Instructions), want) {
+		t.Errorf("verifySummary should say what counts as drift, got %q", serve.Instructions)
 	}
 	if !strings.Contains(serve.Instructions, "A generated summary.") {
 		t.Errorf("verifySummary unit should render the stored summary, got %q", serve.Instructions)
@@ -780,5 +784,37 @@ func TestCapture_ParamsValidatedAtStart(t *testing.T) {
 	}
 	if _, err := session.StartErr(t, "capture", map[string]any{"anchor": captureRefID}); err != nil {
 		t.Errorf("valid param rejected: %v", err)
+	}
+}
+
+// The delta check judges the changed lines only: a finding quoting a line the
+// guide's judgment already covered is dropped, whatever the model returns.
+func TestCapture_DeltaCheckKeepsOnlyFindingsOnChangedLines(t *testing.T) {
+	world, session := newCaptureWorld(t, "core-guide-delta-scope")
+	world.LLM.GuideFindings = []proctest.GuideFinding{{
+		Reasoning: "removing the second sentence loses nothing", Axis: "dilution",
+		Quote: "the fixture observes something", Repair: "cut", Severity: "minor",
+	}}
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Report(t, instance, captureDraft())
+	session.Answer(t, instance, "playback", "confirm", nil, "yes")
+	serve = session.Answer(t, instance, "guideReview", "revise", map[string]any{"body": "A tactical gap: the fixture observes one thing."}, "")
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, instance, "playback", "adjust",
+		map[string]any{"body": "A tactical gap: the fixture observes one thing.\n\nIt shows on every run."}, "add the frequency")
+	proctest.RequireStep(t, serve, "playback")
+
+	world.LLM.GuideFindings = []proctest.GuideFinding{
+		{Reasoning: "the unchanged opening strands its claim", Axis: "stranding", Quote: "the fixture observes one thing", Repair: "point", Severity: "substantive"},
+		{Reasoning: "the frequency claim names no source", Axis: "stranding", Quote: "It shows on every run", Repair: "point", Severity: "substantive"},
+	}
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "now it is right")
+	proctest.RequireStep(t, serve, "guideReview")
+	if !strings.Contains(serve.Instructions, "the frequency claim names no source") {
+		t.Fatalf("the finding on the changed line should be served:\n%s", serve.Instructions)
+	}
+	if strings.Contains(serve.Instructions, "the unchanged opening strands its claim") {
+		t.Fatalf("a finding on a line the guide already judged should be dropped:\n%s", serve.Instructions)
 	}
 }

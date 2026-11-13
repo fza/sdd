@@ -57,6 +57,10 @@ type Instance struct {
 	// answered option declared, recorded on the fork its next task starts.
 	dispatchReceive map[string]string
 	dispatchSend    map[string]string
+	// lastWords holds, per chooser, the choice and user words of its latest
+	// answer: replayed from the log, so the refusal of repeatedWords holds
+	// across a resume.
+	lastWords map[string]chosenWords
 	// forkPending marks a delegate dispatch answered whose fork is not
 	// recorded yet, so a delegateEnded route does not fire before it.
 	forkPending bool
@@ -1077,4 +1081,27 @@ func (s *Session) dialogueMode() model.DialogueMode {
 		return model.DialogueAutonomous
 	}
 	return model.DialogueGuided
+}
+
+type chosenWords struct{ choice, words string }
+
+func (inst *Instance) recordWords(chooser, choice, words string) {
+	if words == "" {
+		return
+	}
+	if inst.lastWords == nil {
+		inst.lastWords = map[string]chosenWords{}
+	}
+	inst.lastWords[chooser] = chosenWords{choice, words}
+}
+
+// repeatedWords refuses user words relayed for another choice at the same
+// chooser than they were given for: words asking for a change say nothing
+// about the changed draft the step serves next.
+func (inst *Instance) repeatedWords(chooser, choice, words string) error {
+	last, ok := inst.lastWords[chooser]
+	if !ok || words == "" || last.choice == choice || last.words != words {
+		return nil
+	}
+	return fmt.Errorf("userWords repeat the user's words of the earlier %s answer at %s: relay the user's own answer to what this step serves now; they have not given one? End your turn and wait for it", last.choice, chooser)
 }

@@ -102,6 +102,7 @@ func (so *structuredOutput) runJSONObject(ctx context.Context, r *Runner, req ll
 	if err != nil {
 		return llm.Result{}, err
 	}
+	result.Text = dropUndeclared(req.ResponseSchema, result.Text)
 	if err := validate(validator, result.Text); err != nil {
 		fault := upstreamllm.NewLLMError(upstreamllm.ErrorTypeResponse, "failed to parse response", err)
 		return llm.Result{}, r.rejectedReply(ctx, &llm.MalformedAnswerError{Text: result.Text, Err: fault}, result.Usage, result.FinishReason)
@@ -170,4 +171,51 @@ func refusesJSONSchema(err error) bool {
 	}
 	message := strings.ToLower(apiErr.ProviderMessage)
 	return strings.Contains(message, "json_schema") || strings.Contains(message, "json schema") || strings.Contains(message, "json_object")
+}
+
+// dropUndeclared removes the properties an answer carries beyond what a schema
+// closed with additionalProperties false declares: no caller reads them, and a
+// model adding one (a confidence beside the answer) otherwise fails the call.
+// Anything else stays for validate to judge; an unchanged answer keeps its text.
+func dropUndeclared(schema json.RawMessage, text string) string {
+	var shape map[string]any
+	var answer any
+	if json.Unmarshal(schema, &shape) != nil || json.Unmarshal([]byte(strings.TrimSpace(text)), &answer) != nil {
+		return text
+	}
+	if !pruneUndeclared(shape, answer) {
+		return text
+	}
+	pruned, err := json.Marshal(answer)
+	if err != nil {
+		return text
+	}
+	return string(pruned)
+}
+
+func pruneUndeclared(shape map[string]any, value any) bool {
+	pruned := false
+	switch v := value.(type) {
+	case map[string]any:
+		properties, _ := shape["properties"].(map[string]any)
+		closed := shape["additionalProperties"] == false
+		for key, child := range v {
+			declared, ok := properties[key].(map[string]any)
+			switch {
+			case ok:
+				pruned = pruneUndeclared(declared, child) || pruned
+			case closed:
+				delete(v, key)
+				pruned = true
+			}
+		}
+	case []any:
+		items, _ := shape["items"].(map[string]any)
+		for _, child := range v {
+			if items != nil {
+				pruned = pruneUndeclared(items, child) || pruned
+			}
+		}
+	}
+	return pruned
 }
