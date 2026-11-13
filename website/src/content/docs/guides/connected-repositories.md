@@ -67,7 +67,7 @@ sdd repo sync                            # every connected repository
 sdd repo sync github.com/acme/platform   # one repository
 ```
 
-`sdd repo sync` prints one line per repository: `synced`, `pushed`, `skipped (next HH:MM)`, `failed (<reason>, retry HH:MM)` or `refused (not connected)`.
+`sdd repo sync` prints one line per repository: `synced`, `pushed`, `skipped (next HH:MM)`, `failed (<reason>, retry HH:MM)` or `refused (not connected)`. Inside a cooldown it runs the fetch or push anyway while the host has a [credit](/sdd/reference/configuration/#git-credits) left, and reports `skipped` once none is.
 
 The same holds in the other direction. For another project to reference your entries, commit and push them.
 

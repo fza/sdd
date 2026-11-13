@@ -170,7 +170,7 @@ In a guided dialogue the writing guide runs once on the content the user approve
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `sync.default.fetch_cooldown` | `5m` | Least time between two fetches from one remote. A value below `1m` is ignored. |
+| `sync.default.fetch_cooldown` | `5m` | Least time between two fetches from one remote. A value below `1m` is ignored. sdd lengthens it when the remotes on one host would otherwise exceed the hourly limit. |
 | `sync.default.push_cooldown` | `30s` | Least time between two pushes to one remote. A value below `10s` is ignored. |
 | `sync.default.retries` | `2` | Retries of a git network operation that failed. |
 | `sync.default.concurrency` | `2` | Git network operations that run at the same time against one host. |
@@ -179,6 +179,17 @@ In a guided dialogue the writing guide runs once on the content the user approve
 | `sync.default.https.per_hour_unauthenticated` | `60` | HTTPS operations per hour against one host, without credentials. |
 | `sync.hosts.<host>.<limit>` | The `sync.default` value | The same limits for one remote host, such as `github.com`. |
 | `sessions.retention` | `14d` | When `sdd serve` starts, it deletes the logs of sessions that ended longer ago than this. Accepts days, such as `14d`, or a duration, such as `336h`. Set it in the user-global file. An invalid value stops `sdd serve` from starting. |
+
+#### Git credits
+
+sdd counts every git network operation it starts against its host and protocol: SSH, HTTPS with credentials, or HTTPS without. The fetch cooldown of each repository is at least one hour times the number of repositories sdd tracks on that host and protocol, divided by the hourly limit, so that one fetch per repository per cooldown stays within the limit. With the defaults this lengthens the cooldown from 51 repositories on, or from 6 over HTTPS without login. An HTTPS repository whose login sdd does not know yet takes the smaller of the two HTTPS limits.
+
+Once a repository may fetch again, each span of one cooldown that passes without a fetch earns its host and protocol one credit. The credit expires one hour after its span began. A credit lets one operation run inside its cooldown:
+
+- The push of commits sdd just wrote, such as a capture into a connected repository right after its last push.
+- A sync you command with `sdd repo sync` or the `sync_repos` tool, its fetch or its push.
+
+Reads and the rounds `sdd serve` runs on its own never spend a credit. Even with one, fetches of one repository stay at least 1 minute apart and its pushes at least 10 seconds apart, the hourly limit and `concurrency` still apply, and the cooldown after a failed operation holds. Without a credit the operation waits for its cooldown.
 
 ### Connected repositories
 
