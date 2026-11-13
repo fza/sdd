@@ -553,6 +553,26 @@ func TestCaptureDeep_ACutFallbackPutsTheSkipToTheUser(t *testing.T) {
 	}
 }
 
+func TestCaptureDeep_ATimedOutFallbackOffersARetry(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-skip-timeout", sdd.VerifierPolicy{Skip: "weighed"})
+	draft := captureDraft()
+	draft["confidence"] = "high"
+	instance, serve := confirmedDeepCapture(t, session, draft)
+	proctest.RequireStep(t, serve, "deepWeigh")
+	world.LLM.PreflightErr = preflightTimedOut()
+	serve = session.Answer(t, instance, "deepWeigh", "skip", nil, "not worth it")
+	proctest.RequireStep(t, serve, "preflightTimedOut")
+	if serve.PendingChooser == nil || serve.PendingChooser.Kind != "user" {
+		t.Fatalf("a timed-out fallback should be the user's choice, got %+v", serve.PendingChooser)
+	}
+	world.LLM.PreflightErr = nil
+	serve = session.Answer(t, instance, "preflightTimedOut", "retry", nil, "try again")
+	proctest.RequireStep(t, serve, "verifySummary")
+	if got := world.LLM.Calls(llm.PurposePreflight); got != 2 {
+		t.Fatalf("a retry should run the fallback pre-flight once more, pre-flight ran %d times", got)
+	}
+}
+
 // A skip covers the draft pre-flight's model could not judge, never a later
 // revision of it.
 func TestCaptureDeep_ACutSkipEndsWithTheDraftItCovered(t *testing.T) {
