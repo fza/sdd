@@ -499,8 +499,8 @@ func preflightRaised(store *engine.Store) string {
 
 // deepReading pages lead and rules with the declared targets and the entries
 // read in full, then the briefs, in the order the reading listed them, each
-// set-aside with its code; it leaves out what skip holds already, and names
-// what it serves.
+// set-aside with its code, a closed brief beside its closer short; it leaves
+// out what skip holds already, and names what it serves.
 func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []model.DeepReadingPage, skip deepHeld) ([]model.DeepReadingPage, deepHeld) {
 	graph := ctx.Graph
 	if graph == nil {
@@ -514,6 +514,7 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 	for _, id := range skip.Listed {
 		heldAny[id] = true
 	}
+	inReading := maps.Clone(heldAny)
 	var served deepHeld
 	codes := map[string]string{}
 	for _, verdict := range storeVerdicts(ctx.Store) {
@@ -540,11 +541,7 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 		if _, aside := codes[id]; aside {
 			role = model.LightRoleSetAside
 		}
-		text := model.EntryBrief(e)
-		if full {
-			text = e.Content
-		}
-		return model.DeepReadingBlock{ID: e.ID, Text: "---\n\n" + llmops.DeepReadingHeader(graph, e, role, codes[id]) + "\n" + text}, true
+		return llmops.DeepReadingBlock(graph, e, role, codes[id], full, func(id string) bool { return inReading[id] }), true
 	}
 	var targets []string
 	for _, ref := range workflowStoreDocuments(ctx.Store, "refs") {
@@ -553,13 +550,20 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 		}
 	}
 	targets = append(append(targets, workflowStoreStrings(ctx.Store, "supersedes")...), workflowStoreStrings(ctx.Store, "closes")...)
+	reading := instanceReading(ctx)
+	for _, ids := range [][]string{targets, reading.full, reading.listed} {
+		for _, id := range ids {
+			if graph.ByID[id] != nil {
+				inReading[id] = true
+			}
+		}
+	}
 	for _, id := range targets {
 		served, ok := block(id, "declared target", true)
 		if ok {
 			first = append(first, served)
 		}
 	}
-	reading := instanceReading(ctx)
 	for _, id := range reading.full {
 		served, ok := block(id, model.LightRoleFull, true)
 		if ok {

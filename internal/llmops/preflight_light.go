@@ -222,6 +222,27 @@ func DeepReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole,
 	return b.String()
 }
 
+// DeepReadingBlock is e's block of the deep verifier's reading: its
+// DeepReadingHeader, then its body when full, else its brief. A brief whose
+// closer the reading holds comes short, as its ID, type, closer, role and
+// brief: the closer's block tells what closed it, and the brief still
+// shows a draft that reopens it.
+func DeepReadingBlock(graph *model.Graph, e *model.Entry, role model.LightRole, code string, full bool, held func(id string) bool) model.DeepReadingBlock {
+	if full {
+		return model.DeepReadingBlock{ID: e.ID, Text: "---\n\n" + DeepReadingHeader(graph, e, role, code) + "\n" + e.Content}
+	}
+	header := DeepReadingHeader(graph, e, role, code)
+	if status := graph.DerivedStatus(e); status.Kind == model.StatusClosedBy && held(status.By) {
+		var b strings.Builder
+		fmt.Fprintf(&b, "ID: %s | Type: %s, kind: %s, layer: %s | Status: %s\n", e.ID, e.Type, e.Kind, e.Layer, derivedStatusForPrompt(status))
+		if role != model.LightRoleBrief {
+			writeReadingRole(&b, role, code)
+		}
+		header = b.String()
+	}
+	return model.DeepReadingBlock{ID: e.ID, Text: "---\n\n" + header + "\n" + model.EntryBrief(e)}
+}
+
 func writeReadingContext(b *strings.Builder, graph *model.Graph, e *model.Entry) {
 	if topics := graph.EffectiveTopics(e); len(topics) > 0 {
 		labels := make([]string, 0, len(topics))

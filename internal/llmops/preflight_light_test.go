@@ -104,6 +104,44 @@ func TestDeepReadingHeader(t *testing.T) {
 	}
 }
 
+// A closed brief beside its closer comes short, its brief kept; served in
+// full, or with its closer outside the reading, it keeps its whole block.
+func TestDeepReadingBlock(t *testing.T) {
+	closed := readingEntry("20261101-090000-s-tac-cls", "The writer drops attachments.", "The closed gap's body.", "capture/attachments")
+	closed.Title = "Attachments dropped"
+	closer := readingEntry("20261101-100000-s-tac-dne", "The writer keeps them now.", "Body.", "capture/attachments")
+	closer.Kind = model.KindDone
+	closer.Closes = []string{closed.ID}
+	graph := lightGraph(t, closed, closer)
+	whole := llmops.DeepReadingHeader(graph, closed, model.LightRoleBrief, "")
+	inReading := func(id string) bool { return id == closed.ID || id == closer.ID }
+	elsewhere := func(id string) bool { return id == closed.ID }
+	for _, tc := range []struct {
+		name string
+		role model.LightRole
+		code string
+		full bool
+		held func(string) bool
+		want string
+	}{
+		{name: "brief beside its closer", role: model.LightRoleBrief, held: inReading,
+			want: "---\n\nID: " + closed.ID + " | Type: signal, kind: gap, layer: tactical | Status: closed by " + closer.ID + "\n\nAttachments dropped"},
+		{name: "set aside beside its closer", role: model.LightRoleSetAside, code: model.VerdictCovered, held: inReading,
+			want: "---\n\nID: " + closed.ID + " | Type: signal, kind: gap, layer: tactical | Status: closed by " + closer.ID + "\nRole in the reading: set aside (code: " + model.VerdictCovered + ")\n\nAttachments dropped"},
+		{name: "read in full", role: model.LightRoleFull, full: true, held: inReading,
+			want: "---\n\n" + llmops.DeepReadingHeader(graph, closed, model.LightRoleFull, "") + "\nThe closed gap's body."},
+		{name: "closer outside the reading", role: model.LightRoleBrief, held: elsewhere,
+			want: "---\n\n" + whole + "\nAttachments dropped"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			block := llmops.DeepReadingBlock(graph, closed, tc.role, tc.code, tc.full, tc.held)
+			if block.ID != closed.ID || block.Text != tc.want {
+				t.Errorf("the block should come short only for a brief whose closer the reading holds, got:\n%s", block.Text)
+			}
+		})
+	}
+}
+
 func TestPreflightLight_CarriesTheReadingWithHeadersAndAxes(t *testing.T) {
 	full := readingEntry("20261101-100000-s-tac-ful", "Attachments with one name collide.", "The writer keeps only one attachment per name.", "capture/attachments")
 	brief := readingEntry("20261101-110000-s-tac-brf", "Staging keeps every handle.", "Long body never served.", "capture/staging")
