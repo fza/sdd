@@ -108,6 +108,18 @@ func TestCheckDeepFindings(t *testing.T) {
 	}
 }
 
+// A finding only the user can settle, such as whether incidents happened, has
+// nothing to cite: its missing evidence is what the user is asked for.
+func TestOwnerEvidenceFindingNeedsNoSources(t *testing.T) {
+	finding := model.DeepFinding{Verdict: "only the user knows whether the incidents happened", Axis: "evidence", Severity: "medium", Owner: true}
+	if err := finding.Validate(); err != nil {
+		t.Fatalf("an owner evidence finding without sources should validate: %v", err)
+	}
+	if problems := model.CheckDeepFindings(deepBase, []model.DeepFinding{finding}, func(string) bool { return true }); len(problems) != 0 {
+		t.Fatalf("an owner evidence finding without sources should stand: %v", problems)
+	}
+}
+
 func TestDeepAnswersAndResponsesValidate(t *testing.T) {
 	if err := (model.DeepAnswer{Target: "f1", Verdict: "contest"}).Validate(); err == nil {
 		t.Fatal("a contest without a reason should be refused")
