@@ -164,7 +164,7 @@ A `verify.mode`, `verify.skip`, `verify.runner`, `verify.claude.effort` or `veri
 
 A `driver` command reads one JSON request on stdin each round, `{"round": 1, "session": "<child session>", "instance": "<child instance>", "prompt": "<round prompt>", "driver_state": "<last round's state>"}`, starts or continues its agent with the prompt, and prints `{"driver_state": "<state for the next round>"}` once the round ends. The agent reports through the child session's `next` calls, never through the driver. A nonzero exit, a round longer than `verify.round_timeout`, or a round that ends before its agent delivered is a verifier failure.
 
-In a guided dialogue the writing guide runs once on the content the user approved, then the verifier; a later adjust gets a check of the changed lines only. In an autonomous dialogue both run before playback.
+In a guided dialogue the writing guide runs once on the content the user approved, then the verifier; a later adjust gets a check of the changed lines only. When the verifier leaves findings it changed nothing for, the draft is played back once more with them before the write. In an autonomous dialogue both run before playback.
 
 ### Sync and sessions
 
