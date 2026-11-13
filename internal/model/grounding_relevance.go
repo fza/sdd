@@ -9,9 +9,8 @@ import (
 // the relevance ledger, keyed to the entry it wrote (5.7): every ref,
 // supersede and close is referenced; every verdict sets its entries aside
 // with its code, as opened when the reading served them in full; an audit
-// sample carries the audit bit; every
-// prefilter score the reading holds is kept with its judge, a cosine
-// similarity only for a pair the reader labelled.
+// sample carries the audit bit; every prefilter score the reading holds is
+// kept with its judge.
 func CaptureRelevance(entryID string, reading *Reading, answered []string, verdicts []GroundingVerdict) (RelevanceBatch, error) {
 	var batch RelevanceBatch
 	if reading == nil {
@@ -45,9 +44,6 @@ func CaptureRelevance(entryID string, reading *Reading, answered []string, verdi
 	for _, judge := range slices.Sorted(maps.Keys(reading.scores)) {
 		held := reading.scores[judge]
 		for _, id := range slices.Sorted(maps.Keys(held.scores)) {
-			if IsCosineJudge(judge) && !seen[id] {
-				continue
-			}
 			pair := NewRelevancePair(entryID, id)
 			direction := DirectionBoth
 			if held.forward {
