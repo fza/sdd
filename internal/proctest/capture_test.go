@@ -14,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/test"
 )
 
 const (
@@ -102,6 +103,9 @@ func TestCapture_OneShotHappyPath(t *testing.T) {
 	}
 	if serve.PendingChooser == nil || serve.PendingChooser.Kind != "agent" {
 		t.Fatalf("verifySummary must serve an agent chooser, got %+v", serve.PendingChooser)
+	}
+	if want := "Compare sentence by sentence: a claim the body does not make, a firmer modal or state than the body's, or an ID or hash the body does not carry is drift."; !strings.Contains(test.Untagged(serve.Instructions), want) {
+		t.Errorf("verifySummary should say what counts as drift, got %q", serve.Instructions)
 	}
 	if !strings.Contains(serve.Instructions, "A generated summary.") {
 		t.Errorf("verifySummary unit should render the stored summary, got %q", serve.Instructions)
