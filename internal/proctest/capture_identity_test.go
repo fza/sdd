@@ -52,6 +52,7 @@ func roleDraft() map[string]any {
 		"layer":       "process",
 		"roleActor":   "Christopher",
 		"confidence":  "high",
+		"reasonWords": "he makes the strategic and conceptual calls",
 		"widenReport": "confirmed the Christopher actor exists to bind this role",
 	}
 }
