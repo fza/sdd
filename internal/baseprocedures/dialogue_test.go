@@ -72,3 +72,33 @@ func unitBranchesOnMode(unit engine.Unit) bool {
 	}
 	return false
 }
+
+// A revise or recheck option takes the user's own words for the
+// reason and intent beside the draft fields: a user gives them whenever the
+// dialogue reaches the why, not only at playback (20261112-212433-d-tac-v7s).
+func TestCaptureOptionsTakingTheDraftTakeTheUsersWords(t *testing.T) {
+	entries, err := baseprocedures.Entries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		spec, err := engine.ParseSpec(entry)
+		if err != nil {
+			t.Fatalf("%s: %v", entry.ID, err)
+		}
+		if spec.Canonical != "capture" {
+			continue
+		}
+		for _, step := range spec.Steps {
+			for _, option := range step.Options {
+				fields := map[string]bool{}
+				for _, c := range option.Collect {
+					fields[c.Name] = true
+				}
+				if (option.Choice == "revise" || option.Choice == "recheck") && fields["body"] && (!fields["reasonWords"] || !fields["intentWords"]) {
+					t.Errorf("capture/%s option %s takes draft fields but not the user's reasonWords and intentWords", step.ID, option.Choice)
+				}
+			}
+		}
+	}
+}
