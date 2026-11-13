@@ -127,8 +127,8 @@ type AccessResolver interface {
 	// carries it, or refuses. The declared repo ID and the resolved project's
 	// ID coincide only in the local composition. The application asks per
 	// declared dependency, on every view over the horizon and on every
-	// dependency-closure walk; a composition whose answer is costly caches it
-	// itself, since only it knows when a mapping goes stale.
+	// check of a project a move or read names; a composition whose answer is
+	// costly caches it itself, since only it knows when a mapping goes stale.
 	ResolveDependency(context.Context, Principal, ProjectID, RepoID) (*ProjectRuntime, error)
 	// AuthorizeSession answers whether the actor may continue the session.
 	// Membership in the session's home project is asked separately, so a

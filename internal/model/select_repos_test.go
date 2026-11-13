@@ -9,7 +9,7 @@ import (
 )
 
 func TestSelectRepos(t *testing.T) {
-	closure := []model.RepoID{"example.test/a", "example.test/b"}
+	direct := []model.RepoID{"example.test/a", "example.test/b"}
 	tests := []struct {
 		name    string
 		named   []model.RepoID
@@ -18,13 +18,13 @@ func TestSelectRepos(t *testing.T) {
 		wantErr error
 	}{
 		{name: "nothing selected"},
-		{name: "all is the whole closure", all: true, want: closure},
-		{name: "named in closure, once each", named: []model.RepoID{"example.test/b", "example.test/b"}, want: []model.RepoID{"example.test/b"}},
-		{name: "named outside closure", named: []model.RepoID{"example.test/a", "example.test/connected"}, wantErr: model.ErrNotInClosure},
+		{name: "all is every direct dependency", all: true, want: direct},
+		{name: "named direct dependency, once each", named: []model.RepoID{"example.test/b", "example.test/b"}, want: []model.RepoID{"example.test/b"}},
+		{name: "named outside the direct dependencies", named: []model.RepoID{"example.test/a", "example.test/connected"}, wantErr: model.ErrNotDirectDependency},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := model.SelectRepos(tt.named, tt.all, closure)
+			got, err := model.SelectRepos("example.test/home", tt.named, tt.all, direct)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}

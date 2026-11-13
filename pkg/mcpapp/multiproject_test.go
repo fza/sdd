@@ -245,8 +245,8 @@ func TestMovesAndReadsInDependencyProject(t *testing.T) {
 		t.Fatalf("show in the dependency should render its entry, got %q", shown.Entries)
 	}
 	msg := callExpectError(t, cs, "show", map[string]any{"session": door.Session, "project": "gamma", "ids": []string{fixtureGapID}})
-	if !strings.Contains(msg, "dependency closure") {
-		t.Fatalf("a project outside the declared closure must be refused, got %q", msg)
+	if !strings.Contains(msg, "not a direct dependency of alpha") {
+		t.Fatalf("a project outside the direct dependencies must be refused, got %q", msg)
 	}
 
 	var move mcpserver.ServeResult

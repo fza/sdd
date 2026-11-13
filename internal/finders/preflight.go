@@ -25,7 +25,7 @@ import (
 // default); a locale code activates the check against description prose.
 func (gf *GraphFinder) Preflight(ctx context.Context, q query.PreflightQuery) (*query.PreflightResult, error) {
 	f := gf.finder
-	deps, err := f.declaredDependencies()
+	deps, err := f.DirectDependencies()
 	if err != nil {
 		return nil, fmt.Errorf("pre-flight: %w", err)
 	}
@@ -70,7 +70,7 @@ func (f *Finder) Preflight(ctx context.Context, g *model.Graph, q query.Prefligh
 // MechanicalPreflight runs only the Go-side checks of the pre-flight against
 // entry over g, for a decision that must not wait on the LLM.
 func (f *Finder) MechanicalPreflight(g *model.Graph, entry *model.Entry) ([]query.Finding, error) {
-	deps, err := f.declaredDependencies()
+	deps, err := f.DirectDependencies()
 	if err != nil {
 		return nil, fmt.Errorf("mechanical pre-flight: %w", err)
 	}

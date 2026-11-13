@@ -59,7 +59,7 @@ type StartProcedureArgs struct {
 	Params    map[string]any `json:"params,omitempty" jsonschema:"typed start inputs per the procedure's declaration: declared params, plus any declared state field to seed at start (e.g. a known anchor)"`
 	Label     string         `json:"label,omitempty" jsonschema:"short single-line subject label for the session (the dialogue); set it early, update when the subject sharpens"`
 	Parent    string         `json:"parent,omitempty" jsonschema:"instance handle of the spawning instance, for a sub-move (e.g. a capture dispatched from an engage); records lineage in the session log"`
-	Project   string         `json:"project,omitempty" jsonschema:"project the move works in, when not the session's home project. It must lie in the home project's declared dependency closure and be readable by the principal. Omitted: a foreign anchor selects its project, else the parent's, else the home project"`
+	Project   string         `json:"project,omitempty" jsonschema:"project the move works in, when not the session's home project. It must be one of the home project's direct dependencies and be readable by the principal. Omitted: a foreign anchor selects its project, else the parent's, else the home project"`
 }
 
 type NextArgs struct {
@@ -300,7 +300,7 @@ type SearchArgs struct {
 	Proofs
 	IncludesRevision  string       `json:"includes_revision,omitempty" jsonschema:"require a selected revision containing this successful write"`
 	Session           string       `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The read runs in that session's project and branch"`
-	Project           string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
+	Project           string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must be one of the home project's direct dependencies and be readable by the principal"`
 	Terms             []string     `json:"terms,omitempty" jsonschema:"text mode: regex terms combined with AND"`
 	Query             string       `json:"query,omitempty" jsonschema:"vector mode: free-form phrase (requires a configured embedding provider); both together run hybrid"`
 	Type              string       `json:"type,omitempty" jsonschema:"filter: s/signal or d/decision"`
@@ -309,8 +309,8 @@ type SearchArgs struct {
 	IncludeSuperseded bool         `json:"include_superseded,omitempty"`
 	Limit             int          `json:"limit,omitempty" jsonschema:"hit cap; default 8"`
 	MaxCitations      *int         `json:"max_citations,omitempty" jsonschema:"citation snippet lines per entry; omitted = 1 (the strongest matching chunk, the match evidence), 0 = headers only"`
-	Repos             []sdd.RepoID `json:"repos,omitempty" jsonschema:"also search these repos of the project's dependency closure by repo-id (additive to the local graph)"`
-	AllRepos          bool         `json:"all_repos,omitempty" jsonschema:"also search every repo in the project's dependency closure"`
+	Repos             []sdd.RepoID `json:"repos,omitempty" jsonschema:"also search these direct dependencies of the project by repo-id (additive to the local graph)"`
+	AllRepos          bool         `json:"all_repos,omitempty" jsonschema:"also search every direct dependency of the project"`
 	Page              int          `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
 }
 
@@ -324,10 +324,10 @@ type SearchResult struct {
 type ViewArgs struct {
 	Proofs
 	Session  string       `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The read runs in that session's project and branch"`
-	Project  string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
+	Project  string       `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must be one of the home project's direct dependencies and be readable by the principal"`
 	Layout   string       `json:"layout" jsonschema:"sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'"`
-	Repos    []sdd.RepoID `json:"repos,omitempty" jsonschema:"also render the layout over these repos of the project's dependency closure (additive to the local graph)"`
-	AllRepos bool         `json:"all_repos,omitempty" jsonschema:"also render the layout over every repo in the project's dependency closure"`
+	Repos    []sdd.RepoID `json:"repos,omitempty" jsonschema:"also render the layout over these direct dependencies of the project (additive to the local graph)"`
+	AllRepos bool         `json:"all_repos,omitempty" jsonschema:"also render the layout over every direct dependency of the project"`
 	Page     int          `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
 }
 
@@ -340,7 +340,7 @@ type ViewResult struct {
 type ShowArgs struct {
 	Proofs
 	Session string   `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The read runs in that session's project and branch"`
-	Project string   `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
+	Project string   `json:"project,omitempty" jsonschema:"project to read in; defaults to the session's home project. Another must be one of the home project's direct dependencies and be readable by the principal"`
 	IDs     []string `json:"ids" jsonschema:"entry IDs to show; accepts an unambiguous short ID ({type}-{layer}-{suffix}) and resolves it to the full entry"`
 	Up      *int     `json:"up,omitempty" jsonschema:"upstream chain depth; omitted = default 2, 0 = no upstream"`
 	Down    *int     `json:"down,omitempty" jsonschema:"downstream chain depth; omitted = default 1, 0 = no downstream"`
@@ -369,7 +369,7 @@ type GatherResult struct {
 
 type ReadAttachmentArgs struct {
 	Session  string `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The read runs in that session's project; a staged file is read from that session"`
-	Project  string `json:"project,omitempty" jsonschema:"project to read the entry's attachment in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
+	Project  string `json:"project,omitempty" jsonschema:"project to read the entry's attachment in; defaults to the session's home project. Another must be one of the home project's direct dependencies and be readable by the principal"`
 	ID       string `json:"id,omitempty" jsonschema:"full ID of the entry whose attachment to read; omit when reading a staged file by handle"`
 	Name     string `json:"name,omitempty" jsonschema:"attachment filename; optional when the entry has exactly one"`
 	Offset   int64  `json:"offset,omitempty" jsonschema:"byte position to continue from (next_offset of the previous page)"`
@@ -418,7 +418,7 @@ type SyncBlockedResult struct {
 
 type InfoArgs struct {
 	Session string `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. The header describes that session's project"`
-	Project string `json:"project,omitempty" jsonschema:"project to describe; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal"`
+	Project string `json:"project,omitempty" jsonschema:"project to describe; defaults to the session's home project. Another must be one of the home project's direct dependencies and be readable by the principal"`
 }
 
 type InfoResult struct {

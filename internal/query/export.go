@@ -34,8 +34,8 @@ func ParseExportDependencies(s string) (ExportDependencies, error) {
 // document. EXPERIMENTAL: built on the internal model; the shape is not a
 // stable read contract.
 type ExportQuery struct {
-	// Dependencies selects what each repo in the local repo's declared
-	// dependency closure (DependencyClosureQuery) contributes.
+	// Dependencies selects what each of the local repo's direct
+	// dependencies (Finder.DirectDependencies) contributes.
 	Dependencies ExportDependencies
 	// Hops bounds the upstream expansion of ExportDependenciesReferenced.
 	Hops int

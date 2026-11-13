@@ -138,7 +138,7 @@
       "additionalProperties": false,
       "properties": {
         "project": {
-          "description": "project to describe; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal",
+          "description": "project to describe; defaults to the session's home project. Another must be one of the home project's direct dependencies and be readable by the principal",
           "type": "string"
         },
         "session": {
@@ -281,7 +281,7 @@
           "type": "integer"
         },
         "project": {
-          "description": "project to read the entry's attachment in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal",
+          "description": "project to read the entry's attachment in; defaults to the session's home project. Another must be one of the home project's direct dependencies and be readable by the principal",
           "type": "string"
         },
         "session": {
@@ -338,7 +338,7 @@
       "additionalProperties": false,
       "properties": {
         "all_repos": {
-          "description": "also search every repo in the project's dependency closure",
+          "description": "also search every direct dependency of the project",
           "type": "boolean"
         },
         "held": {
@@ -382,7 +382,7 @@
           "type": "integer"
         },
         "project": {
-          "description": "project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal",
+          "description": "project to read in; defaults to the session's home project. Another must be one of the home project's direct dependencies and be readable by the principal",
           "type": "string"
         },
         "query": {
@@ -390,7 +390,7 @@
           "type": "string"
         },
         "repos": {
-          "description": "also search these repos of the project's dependency closure by repo-id (additive to the local graph)",
+          "description": "also search these direct dependencies of the project by repo-id (additive to the local graph)",
           "items": {
             "type": "string"
           },
@@ -469,7 +469,7 @@
           "type": "integer"
         },
         "project": {
-          "description": "project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal",
+          "description": "project to read in; defaults to the session's home project. Another must be one of the home project's direct dependencies and be readable by the principal",
           "type": "string"
         },
         "reread": {
@@ -588,7 +588,7 @@
           "type": "string"
         },
         "project": {
-          "description": "project the move works in, when not the session's home project. It must lie in the home project's declared dependency closure and be readable by the principal. Omitted: a foreign anchor selects its project, else the parent's, else the home project",
+          "description": "project the move works in, when not the session's home project. It must be one of the home project's direct dependencies and be readable by the principal. Omitted: a foreign anchor selects its project, else the parent's, else the home project",
           "type": "string"
         },
         "reread": {
@@ -665,7 +665,7 @@
       "additionalProperties": false,
       "properties": {
         "all_repos": {
-          "description": "also render the layout over every repo in the project's dependency closure",
+          "description": "also render the layout over every direct dependency of the project",
           "type": "boolean"
         },
         "held": {
@@ -687,11 +687,11 @@
           "type": "integer"
         },
         "project": {
-          "description": "project to read in; defaults to the session's home project. Another must lie in the home project's declared dependency closure and be readable by the principal",
+          "description": "project to read in; defaults to the session's home project. Another must be one of the home project's direct dependencies and be readable by the principal",
           "type": "string"
         },
         "repos": {
-          "description": "also render the layout over these repos of the project's dependency closure (additive to the local graph)",
+          "description": "also render the layout over these direct dependencies of the project (additive to the local graph)",
           "items": {
             "type": "string"
           },

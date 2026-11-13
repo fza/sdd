@@ -1,80 +1,39 @@
 package model
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"slices"
 )
 
-// DependencyResolver answers one step of a declared-dependency walk: the
-// dependencies k declares, as the keys they resolve to. Each composition
-// resolves its own way and states its own rule for a dependency it cannot
-// resolve.
-type DependencyResolver[K comparable] interface {
-	Dependencies(ctx context.Context, k K) ([]K, error)
+// ErrNotDirectDependency reports a repo or project a read or a move names
+// outside the home project's directly declared dependencies, the horizon of
+// every surface (20261113-235859-d-cpt-l3m).
+var ErrNotDirectDependency = errors.New("not a direct dependency")
+
+// NotDirectDependency is the ErrNotDirectDependency for target named from
+// home.
+func NotDirectDependency(target, home string) error {
+	return fmt.Errorf("%s is %w of %s", target, ErrNotDirectDependency, home)
 }
 
-// DependencyResolverFunc adapts a function to a DependencyResolver.
-type DependencyResolverFunc[K comparable] func(ctx context.Context, k K) ([]K, error)
-
-func (f DependencyResolverFunc[K]) Dependencies(ctx context.Context, k K) ([]K, error) {
-	return f(ctx, k)
-}
-
-// ErrNotInClosure reports a repo a read names outside the project's
-// dependency closure, its horizon (20261026-194528-d-cpt-gcq).
-var ErrNotInClosure = errors.New("not in the project's dependency closure")
-
-// SelectRepos resolves a read's repo selection against the dependency
-// closure: all selects the whole closure, otherwise each named repo, once,
-// and a named repo outside the closure is an ErrNotInClosure.
-func SelectRepos(named []RepoID, all bool, closure []RepoID) ([]RepoID, error) {
+// SelectRepos resolves a read's repo selection against home's direct
+// dependencies: all selects every one, otherwise each named repo, once, and a
+// named repo outside them is an ErrNotDirectDependency.
+func SelectRepos(home RepoID, named []RepoID, all bool, direct []RepoID) ([]RepoID, error) {
 	if all {
-		return slices.Clone(closure), nil
+		return slices.Clone(direct), nil
 	}
 	var selected []RepoID
 	for _, repoID := range named {
-		if !slices.Contains(closure, repoID) {
-			return nil, fmt.Errorf("repo %s: %w", repoID, ErrNotInClosure)
+		if !slices.Contains(direct, repoID) {
+			return nil, NotDirectDependency(string(repoID), string(home))
 		}
 		if !slices.Contains(selected, repoID) {
 			selected = append(selected, repoID)
 		}
 	}
 	return selected, nil
-}
-
-// DependencyClosure walks the declared dependencies of root transitively and
-// yields every key reached once, breadth-first, in first-reached order, never
-// root itself. A resolver error is yielded and ends the walk; breaking out of
-// the loop stops it.
-func DependencyClosure[K comparable](ctx context.Context, root K, r DependencyResolver[K]) iter.Seq2[K, error] {
-	return func(yield func(K, error) bool) {
-		seen := map[K]bool{root: true}
-		queue := []K{root}
-		for len(queue) > 0 {
-			k := queue[0]
-			queue = queue[1:]
-			deps, err := r.Dependencies(ctx, k)
-			if err != nil {
-				var zero K
-				yield(zero, err)
-				return
-			}
-			for _, dep := range deps {
-				if seen[dep] {
-					continue
-				}
-				seen[dep] = true
-				if !yield(dep, nil) {
-					return
-				}
-				queue = append(queue, dep)
-			}
-		}
-	}
 }
 
 // CitedAcross selects the entries of other repos that the local graph cites:

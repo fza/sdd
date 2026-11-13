@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -57,6 +58,11 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 	if err != nil {
 		return err
 	}
+	home, direct, err := h.project()
+	if err != nil {
+		return err
+	}
+	inProject := home != "" || len(direct) > 0
 	targets := cmd.RepoIDs
 	mode := connectedSync{clone: true, explicit: true}
 	if !cmd.Due {
@@ -64,11 +70,13 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 	}
 	switch {
 	case cmd.Due:
-		targets, err = h.closureMembers(ctx)
-		if err != nil {
-			return err
-		}
+		targets = direct
 		mode = connectedSync{timer: true}
+	case len(targets) == 0 && inProject:
+		targets = direct
+		if len(targets) == 0 {
+			return fmt.Errorf("%s declares no dependencies to sync", home)
+		}
 	case len(targets) == 0:
 		for _, r := range cfg.Repos {
 			targets = append(targets, r.RepoID)
@@ -82,6 +90,10 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 	slots := map[string]chan struct{}{}
 	var wg sync.WaitGroup
 	for i, repoID := range targets {
+		if inProject && !slices.Contains(direct, repoID) {
+			outcomes[i] = &model.RepoSyncOutcome{RepoID: repoID, State: model.RepoRefused, Reason: model.NotDirectDependency(string(repoID), string(home)).Error()}
+			continue
+		}
 		repo, connected := cfg.Connected(repoID)
 		if !connected {
 			if !cmd.Due {
@@ -117,23 +129,18 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 	return nil
 }
 
-// closureMembers lists the connected repos the local repo's dependency
-// closure reaches, as their clones stand.
-func (h *Handler) closureMembers(ctx context.Context) ([]model.RepoID, error) {
-	root, err := h.reader.LocalRepoID()
+// project names the local repo and its direct dependencies; a handler built
+// without a Reader works outside any project and names neither.
+func (h *Handler) project() (home model.RepoID, direct []model.RepoID, err error) {
+	if h.reader == nil {
+		return "", nil, nil
+	}
+	home, err = h.reader.LocalRepoID()
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	var members []model.RepoID
-	for repoID, err := range model.DependencyClosure(ctx, root, model.DependencyResolverFunc[model.RepoID](h.reader.DeclaredDependencies)) {
-		if err != nil {
-			return nil, err
-		}
-		if repoID != root {
-			members = append(members, repoID)
-		}
-	}
-	return members, nil
+	direct, err = h.reader.DirectDependencies()
+	return home, direct, err
 }
 
 // syncConnected brings one connected repo's clone up to date as mode says;

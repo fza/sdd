@@ -1,13 +1,11 @@
 package finders
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"sync"
 
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/query"
 )
 
 // GraphSource is the read side's owner of "what the current graph is": a
@@ -34,7 +32,7 @@ type GraphSource struct {
 //
 // The loaded graph is assembled into a model.MultiGraph here — the single
 // insertion point for cross-repo reads. Member graphs load lazily from the
-// sdd-owned clones of the dependency closure (pure reads; clone and sync
+// sdd-owned clones of the direct dependencies (pure reads; clone and sync
 // side effects run in handlers that invalidate this source), so a graph with no cross-repo
 // touch pays nothing.
 func (f *Finder) NewGraphSource(dir string) *GraphSource {
@@ -43,49 +41,47 @@ func (f *Finder) NewGraphSource(dir string) *GraphSource {
 		if err != nil {
 			return nil, err
 		}
-		deps, err := f.declaredDependencies()
+		deps, err := f.DirectDependencies()
 		if err != nil {
 			return nil, err
 		}
-		model.NewMultiGraph(g, deps, f.memberGraphLoader())
+		model.NewMultiGraph(g, deps, f.memberGraphLoader(deps))
 		return g, nil
 	}}
 }
 
 // memberGraphLoader is the lazy clone→graph read the MultiGraph resolves
-// members through: a repo in the dependency closure loads from its sdd-owned
-// clone. A repo outside the closure, not connected or not yet cloned
-// resolves to nil (the legitimate unresolved state — the refresh handler owns
-// clone and sync); a present clone that fails to load is an error, not a silent
-// gap. A Finder without a Registry resolves nothing — the same honest
-// unresolved state.
-func (f *Finder) memberGraphLoader() func(repoID model.RepoID) (*model.Graph, error) {
-	closure := sync.OnceValues(func() ([]model.RepoID, error) {
-		// The loader carries no context; the walk only reads committed configs.
-		return f.DependencyClosure(context.Background(), query.DependencyClosureQuery{})
-	})
+// members through: a direct dependency loads from its sdd-owned clone. A repo
+// outside deps, not connected or not yet cloned resolves to nil (the
+// legitimate unresolved state — the refresh handler owns clone and sync); a
+// present clone that fails to load is an error, not a silent gap. A Finder
+// without a Registry resolves nothing — the same honest unresolved state.
+func (f *Finder) memberGraphLoader(deps []model.RepoID) func(repoID model.RepoID) (*model.Graph, error) {
 	return func(repoID model.RepoID) (*model.Graph, error) {
-		if f.repos == nil {
+		if f.repos == nil || !slices.Contains(deps, repoID) {
 			return nil, nil
 		}
-		horizon, err := closure()
-		if err != nil || !slices.Contains(horizon, repoID) {
-			return nil, err
-		}
-		clone, connected, err := f.repos.Clone(repoID)
-		if err != nil || !connected || !clone.Cloned() {
-			return nil, err
-		}
-		graphDir, err := clone.GraphDir()
-		if err != nil {
-			return nil, err
-		}
-		g, err := f.LoadGraph(graphDir)
-		if err != nil {
-			return nil, fmt.Errorf("loading the graph of %s: %w", repoID, err)
-		}
-		return g, nil
+		g, _, err := f.cloneGraph(repoID)
+		return g, err
 	}
+}
+
+// cloneGraph loads the graph of repoID's sdd-owned clone; nil when the repo
+// is not connected or not cloned, connected reporting which.
+func (f *Finder) cloneGraph(repoID model.RepoID) (g *model.Graph, connected bool, err error) {
+	clone, connected, err := f.repos.Clone(repoID)
+	if err != nil || !connected || !clone.Cloned() {
+		return nil, connected, err
+	}
+	graphDir, err := clone.GraphDir()
+	if err != nil {
+		return nil, true, err
+	}
+	g, err = f.LoadGraph(graphDir)
+	if err != nil {
+		return nil, true, fmt.Errorf("loading the graph of %s: %w", repoID, err)
+	}
+	return g, true, nil
 }
 
 // CurrentGraph sources the current graph once — the one-shot read every

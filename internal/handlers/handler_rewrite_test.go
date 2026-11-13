@@ -78,7 +78,7 @@ func (r *graphReader) LocalRepoID() (model.RepoID, error) {
 	return "", nil
 }
 
-func (r *graphReader) DeclaredDependencies(context.Context, model.RepoID) ([]model.RepoID, error) {
+func (r *graphReader) DirectDependencies() ([]model.RepoID, error) {
 	return nil, nil
 }
 

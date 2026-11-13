@@ -641,12 +641,33 @@ func (a *workflowClosureAccess) ResolveDependency(_ context.Context, _ Principal
 }
 
 // The operation boundary and repeated graph requests are internal engine seams.
-func TestWorkflowDependencyClosureReusesOperationSources(t *testing.T) {
-	for _, changed := range []ProjectID{"home", "middle"} {
+func TestWorkflowDirectDependencyReusesOperationSources(t *testing.T) {
+	t.Run("a dependency of a dependency is refused", func(t *testing.T) {
+		access := &workflowClosureAccess{projects: map[ProjectID]*ProjectRuntime{}}
+		dependencies := map[ProjectID][]RepoID{"home": {"middle"}, "middle": {"target"}}
+		for _, id := range []ProjectID{"home", "middle", "target"} {
+			snapshot, err := BuildSnapshot(t.Context(), SnapshotData{Project: id, Revision: string(id) + "-r1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := &workflowClosureStore{workflowTargetGraphStore: workflowTargetGraphStore{snapshot: snapshot}, dependencies: dependencies[id]}
+			access.projects[id] = &ProjectRuntime{options: ProjectRuntimeOptions{Project: ProjectRef{ID: id}, Graph: store}}
+		}
+		w := &WorkflowSession{app: &Application{access: access}, project: "home", branch: "work"}
+		w.graphs = &workflowGraphs{workflow: w}
+		w.setOperation(t.Context(), RequestIdentity{Subject: "reader"})
+		if _, err := w.graphs.targetView(MutationTarget{Project: "middle"}, false); err != nil {
+			t.Fatalf("a direct dependency should be reachable: %v", err)
+		}
+		if _, err := w.graphs.targetView(MutationTarget{Project: "target"}, false); err == nil || !strings.Contains(err.Error(), "not a direct dependency of home") {
+			t.Fatalf("a dependency of a dependency should be refused naming why: %v", err)
+		}
+	})
+	for _, changed := range []ProjectID{"home"} {
 		t.Run(string(changed), func(t *testing.T) {
 			stores := map[ProjectID]*workflowClosureStore{}
 			access := &workflowClosureAccess{projects: map[ProjectID]*ProjectRuntime{}}
-			for _, id := range []ProjectID{"home", "middle", "target"} {
+			for _, id := range []ProjectID{"home", "target"} {
 				snapshot, err := BuildSnapshot(t.Context(), SnapshotData{Project: id, Revision: string(id) + "-r1"})
 				if err != nil {
 					t.Fatal(err)
@@ -655,8 +676,7 @@ func TestWorkflowDependencyClosureReusesOperationSources(t *testing.T) {
 				stores[id] = store
 				access.projects[id] = &ProjectRuntime{options: ProjectRuntimeOptions{Project: ProjectRef{ID: id}, Graph: store}}
 			}
-			stores["home"].dependencies = []RepoID{"middle"}
-			stores["middle"].dependencies = []RepoID{"target"}
+			stores["home"].dependencies = []RepoID{"target"}
 			w := &WorkflowSession{app: &Application{access: access}, project: "home", branch: "work"}
 			w.graphs = &workflowGraphs{workflow: w}
 			w.setOperation(t.Context(), RequestIdentity{Subject: "reader"})
@@ -688,7 +708,7 @@ func TestWorkflowDependencyClosureReusesOperationSources(t *testing.T) {
 			}
 			access.denied = false
 			w.setOperation(t.Context(), RequestIdentity{Subject: "reader"})
-			if _, err := w.graphs.targetView(target, false); err == nil || !strings.Contains(err.Error(), "dependency closure") {
+			if _, err := w.graphs.targetView(target, false); err == nil || !strings.Contains(err.Error(), "not a direct dependency of home") {
 				t.Fatalf("next operation ignored configuration change: %v", err)
 			}
 		})

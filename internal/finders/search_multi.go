@@ -41,7 +41,7 @@ func MultiSearch(ctx context.Context, local *SearchFinder, q query.SearchQuery) 
 	if local.repos == nil {
 		return nil, fmt.Errorf("cross-repo search needs the connected-repos registry — construct the SearchFinder with Repos")
 	}
-	repoIDs, err := model.SelectRepos(q.Repos, q.AllRepos, local.closure)
+	repoIDs, err := model.SelectRepos(local.home, q.Repos, q.AllRepos, local.dependencies)
 	if err != nil {
 		return nil, err
 	}

@@ -149,12 +149,12 @@ func (unreadableGraphStore) ReadAttachmentPage(context.Context, string, string, 
 	return sdd.AttachmentPage{}, errors.New("snapshot unreadable")
 }
 
-// TestUnreadableClosureMemberFailsOnlyReadsSelectingIt: base declares a, a
-// declares b and d, d declares c, and b's snapshot cannot be read, so the walk
-// meets b before c. Reads naming a or c succeed, and a session in base may
-// work in c; a read selecting b, alone or through all repos, fails
-// (20260903-153224-s-cpt-ir1).
-func TestUnreadableClosureMemberFailsOnlyReadsSelectingIt(t *testing.T) {
+// TestUnreadableDependencyFailsOnlyReadsSelectingIt: base declares a and b, a
+// declares d, d declares c, and b's snapshot cannot be read. Reads naming a
+// succeed; a read naming c is refused as no direct dependency
+// (20261113-235859-d-cpt-l3m); a read selecting b, alone
+// or through all repos, fails (20260903-153224-s-cpt-ir1).
+func TestUnreadableDependencyFailsOnlyReadsSelectingIt(t *testing.T) {
 	llm := pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
 		return pkgllm.Result{Identity: pkgllm.Identity{Provider: "test", Model: "test"}}, nil
 	})
@@ -178,8 +178,8 @@ func TestUnreadableClosureMemberFailsOnlyReadsSelectingIt(t *testing.T) {
 		graph        sdd.GraphStore
 		dependencies []sdd.RepoID
 	}{
-		{id: "base", graph: staticGraphStore{snapshot: snapshot("base")}, dependencies: []sdd.RepoID{"dep.example/a"}},
-		{id: "dep.example/a", graph: staticGraphStore{attachment: "a attachment", snapshot: snapshot("dep.example/a", gap("2026/07/13-040000-s-tac-dep.md"))}, dependencies: []sdd.RepoID{"dep.example/b", "dep.example/d"}},
+		{id: "base", graph: staticGraphStore{snapshot: snapshot("base")}, dependencies: []sdd.RepoID{"dep.example/a", "dep.example/b"}},
+		{id: "dep.example/a", graph: staticGraphStore{attachment: "a attachment", snapshot: snapshot("dep.example/a", gap("2026/07/13-040000-s-tac-dep.md"))}, dependencies: []sdd.RepoID{"dep.example/d"}},
 		{id: "dep.example/b", graph: unreadableGraphStore{}},
 		{id: "dep.example/d", graph: staticGraphStore{snapshot: snapshot("dep.example/d")}, dependencies: []sdd.RepoID{"dep.example/c"}},
 		{id: "dep.example/c", graph: staticGraphStore{snapshot: snapshot("dep.example/c", gap("2026/07/12-040000-s-tac-dpe.md"))}},
@@ -214,15 +214,8 @@ func TestUnreadableClosureMemberFailsOnlyReadsSelectingIt(t *testing.T) {
 	if result, err := search([]sdd.RepoID{"dep.example/a"}, false); err != nil || !strings.Contains(test.SearchText(result), "20260713-040000-s-tac-dep") {
 		t.Errorf("search naming a = %q, %v", test.SearchText(result), err)
 	}
-	if result, err := search([]sdd.RepoID{"dep.example/c"}, false); err != nil || !strings.Contains(test.SearchText(result), "20260712-040000-s-tac-dpe") {
-		t.Errorf("search naming c = %q, %v", test.SearchText(result), err)
-	}
-	workflow, _, err := application.OpenWorkflow(t.Context(), alice, "base", sdd.WorkflowOpenRequest{ClientName: "alice-mcp"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if project, _, _, err := workflow.ReadScope(t.Context(), alice, "dep.example/c"); err != nil || project != "dep.example/c" {
-		t.Errorf("read scope in c = %q, %v", project, err)
+	if _, err := search([]sdd.RepoID{"dep.example/c"}, false); err == nil || !strings.Contains(err.Error(), "not a direct dependency of base") {
+		t.Errorf("search naming c should be refused as no direct dependency, got %v", err)
 	}
 	if result, err := application.View(t.Context(), alice, "base", sdd.ViewRequest{Layout: "top(5)", Repos: []sdd.RepoID{"dep.example/a"}}); err != nil || !strings.Contains(test.ViewText(result), "repo: dep.example/a") {
 		t.Errorf("view naming a = %q, %v", test.ViewText(result), err)

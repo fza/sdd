@@ -176,7 +176,7 @@ func TestWorkflowHolderFoldsAnAppendRacingItsOwn(t *testing.T) {
 // An instance another attach started in a dependency folds with the project it
 // targets, as replay restores it.
 func TestWorkflowHolderFoldsAnotherAttachsStartedInstance(t *testing.T) {
-	application, alice := newClosureFixture(t)
+	application, alice := newDependencyFixture(t)
 	holder, _, err := application.OpenWorkflow(t.Context(), alice, "project-a", sdd.WorkflowOpenRequest{ClientName: "mcp"})
 	if err != nil {
 		t.Fatal(err)

@@ -29,7 +29,6 @@ import (
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
@@ -214,11 +213,11 @@ func localBearerAuth(token string, next http.Handler) http.Handler {
 	})
 }
 
-// localRuntimeAccess serves one repository and every connected repo its
-// dependency closure reaches. A dependency resolves to one runtime over its
-// sdd-owned clone, both as a member of a horizon and as a project a move may
-// work in, reads and captures alike: its own declared dependencies, its own
-// index namespace, write authority only where both connected-write gates
+// localRuntimeAccess serves one repository and every connected repo it
+// declares as a direct dependency. A dependency resolves to one runtime over
+// its sdd-owned clone, both as a member of a horizon and as a project a move
+// may work in, reads and captures alike: its own declared dependencies, its
+// own index namespace, write authority only where both connected-write gates
 // allow it (20261106-201216-d-cpt-aim). ListProjects names the home alone, so
 // a session still opens there without choosing.
 type localRuntimeAccess struct {
@@ -232,12 +231,12 @@ type localRuntimeAccess struct {
 // connectedDependencies builds a connected repo's runtime from its
 // sdd-owned clone on first use, making the clone when this machine holds
 // none, and keeps it; a repo that is not connected, or whose first clone the
-// git gate defers, is unavailable until it is. closure walks the served
-// project's declarations over the same clones.
+// git gate defers, is unavailable until it is. home reads the served
+// project's direct dependencies.
 type connectedDependencies struct {
 	registry *repos.Registry
 	manager  *repos.Manager
-	closure  *finders.Finder
+	home     *finders.Finder
 	rounds   connectedRounds
 	build    func(repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error)
 	// writer and connected decide a capture into a dependency with the
@@ -292,24 +291,29 @@ func (d *connectedDependencies) resolve(ctx context.Context, repoID sdd.RepoID) 
 	return runtime, nil
 }
 
-// resolveMember resolves a project this process serves beyond its home: a
-// member of the served project's closure (20261026-194528-d-cpt-gcq), never a
-// repo merely connected on this machine.
+// resolveMember resolves a project this process serves beyond its home: one
+// of the served project's direct dependencies (20261113-235859-d-cpt-l3m),
+// never a repo merely connected on this machine.
 func (d *connectedDependencies) resolveMember(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
 	if d == nil {
 		return nil, dependencyUnavailable()
 	}
-	closure, err := d.closure.DependencyClosure(ctx, query.DependencyClosureQuery{})
+	home, err := d.home.LocalRepoID()
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Contains(closure, repoID) {
-		return nil, dependencyUnavailable()
+	direct, err := d.home.DirectDependencies()
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(direct, repoID) {
+		err = model.NotDirectDependency("project "+string(repoID), string(home))
+		return nil, &sdd.ApplicationError{Code: sdd.ErrorProjectUnavailable, Message: err.Error(), Cause: err}
 	}
 	return d.resolve(ctx, repoID)
 }
 
-// resolveWritable resolves a closure member a capture writes into: refused
+// resolveWritable resolves a direct dependency a capture writes into: refused
 // unless the writer's connected.write and the member's committed
 // inbound.accept both allow the pair. The member's round runs first while
 // due, so the gate reads inbound.accept as fresh as the git gate admits; a
@@ -609,8 +613,8 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	if err != nil {
 		return nil, err
 	}
-	closure := finders.New(finders.Options{Config: cfg, Repos: registry})
-	rounds := connectedRounds{handler: handlers.New(handlers.Options{Reader: closure, Repos: manager, CloneRound: round})}
+	home := finders.New(finders.Options{Config: cfg, Repos: registry})
+	rounds := connectedRounds{handler: handlers.New(handlers.Options{Reader: home, Repos: manager, CloneRound: round})}
 	prefilter, err := projectPrefilter(cfg)
 	if err != nil {
 		return nil, err
@@ -652,7 +656,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	}
 	access := &localRuntimeAccess{
 		project: project, participant: participant, dialogue: dialogue, runtime: runtime,
-		dependencies: &connectedDependencies{registry: registry, manager: manager, closure: closure, rounds: rounds,
+		dependencies: &connectedDependencies{registry: registry, manager: manager, home: home, rounds: rounds,
 			writer: sdd.RepoID(cfg.RepoID), connected: cfg.Connected,
 			build: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
 				return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, modelWindow(cfg.LLM), memberEmbedder, memberRuneCap, cacheRoot)

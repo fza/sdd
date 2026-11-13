@@ -84,6 +84,6 @@ func TestCurrentGraphResolvesConnectedRepo(t *testing.T) {
 		t.Error("unconnected repo must not resolve")
 	}
 	if _, _, ok := g.ResolveAcross(undeclared + ":20260401-090000-d-cpt-rem"); ok {
-		t.Error("connected repo outside the dependency closure must not resolve")
+		t.Error("connected repo outside the direct dependencies must not resolve")
 	}
 }

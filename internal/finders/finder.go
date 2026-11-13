@@ -93,10 +93,11 @@ func (f *Finder) language() (string, error) {
 	return f.cfg.Language, nil
 }
 
-// declaredDependencies returns the repo's committed cross-repo dependency
-// declarations. Pre-flight's declared-dependency precondition reasons
+// DirectDependencies returns the repo's committed cross-repo dependency
+// declarations, the horizon of every read (20261113-235859-d-cpt-l3m).
+// Pre-flight's declared-dependency precondition reasons
 // against this list.
-func (f *Finder) declaredDependencies() ([]model.RepoID, error) {
+func (f *Finder) DirectDependencies() ([]model.RepoID, error) {
 	if f.cfg == nil {
 		return nil, fmt.Errorf("declared dependencies unavailable: no per-repo config")
 	}

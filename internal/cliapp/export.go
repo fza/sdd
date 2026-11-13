@@ -26,7 +26,7 @@ func exportCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:  "dependencies",
 				Value: string(query.ExportDependenciesReferenced),
-				Usage: "What the declared dependency closure contributes: none, referenced (entries the local graph cites, plus --hops upstream steps) or all (whole graphs)",
+				Usage: "What each direct dependency contributes: none, referenced (entries the local graph cites, plus --hops upstream steps) or all (whole graphs)",
 			},
 			&cli.IntFlag{
 				Name:  "hops",
@@ -63,7 +63,7 @@ func exportCmd() *cli.Command {
 				return err
 			}
 			if mode != query.ExportDependenciesNone {
-				settle, err := refreshDependencies(ctx, cmd.ErrWriter)
+				settle, err := refreshDependencies(ctx, cmd.ErrWriter, nil)
 				defer settle()
 				if err != nil {
 					return err
