@@ -96,14 +96,15 @@ func TestDecode_ReadsASegmentFromBeforeSourcesAsLive(t *testing.T) {
 	}
 }
 
-func TestEncodeDecode_KeepsTheReplaySource(t *testing.T) {
+func TestEncodeDecode_KeepsTheReplaySourceAndTheOpeningFlag(t *testing.T) {
 	batch := sampleBatch()
 	batch.Readers[1].Verdict.Source = model.SourceReplay
+	batch.Readers[0].Verdict.OpenedHidden = true
 	got, err := relevance.Decode(relevance.Encode(batch))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Readers[0].Verdict.Source != model.SourceLive || got.Readers[1].Verdict.Source != model.SourceReplay || !got.Readers[0].Verdict.Audit {
-		t.Fatalf("readers %+v should keep each source beside the audit bit", got.Readers)
+	if got.Readers[0].Verdict.Source != model.SourceLive || got.Readers[1].Verdict.Source != model.SourceReplay || !got.Readers[0].Verdict.Audit || !got.Readers[0].Verdict.OpenedHidden || got.Readers[1].Verdict.OpenedHidden {
+		t.Fatalf("readers %+v should keep each source and opening flag beside the audit bit", got.Readers)
 	}
 }

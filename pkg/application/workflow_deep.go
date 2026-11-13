@@ -273,8 +273,8 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 		{
 			Doc: engine.FuncDoc{
 				Name: "prepareDeep", Doc: "Opens a deep exchange over the current draft: the base document, the paged reading, the weighing rule's recommendation, and a fresh exchange; for the live verifier, the revision's reading.",
-				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict, fieldDeepRevisions, fieldDeepReadIDs),
-				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepUnedited, fieldDeepReplayed, fieldDeepListed, fieldDeepUserListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs, fieldDeepFresh},
+				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict, fieldDeepRevisions, fieldDeepReadIDs, fieldDeepHidden),
+				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepUnedited, fieldDeepReplayed, fieldDeepListed, fieldDeepUserListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs, fieldDeepFresh, fieldDeepHidden},
 			},
 			Fn: w.prepareDeep,
 		},
@@ -404,6 +404,7 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 	}
 	writes[fieldDeepPages], writes[fieldDeepPageFull] = pageTexts(pages)
 	writes[fieldDeepReadIDs] = held
+	writes[fieldDeepHidden] = uniqueIDs(append(workflowStoreStrings(ctx.Store, fieldDeepHidden), held.Hidden...))
 	if revising {
 		var previous deepHeld
 		if value, ok := ctx.Store.Get(fieldDeepReadIDs); ok && value != nil {
@@ -487,6 +488,8 @@ func (w *WorkflowSession) deepPages(ctx *engine.Context, base string) ([]model.D
 type deepHeld struct {
 	Full   []string `json:"full,omitempty"`
 	Listed []string `json:"listed,omitempty"`
+	// Hidden are the listed entries the reading served as one line.
+	Hidden []string `json:"hidden,omitempty"`
 }
 
 // preflightRaised renders what pre-flight raised, for the verifier to leave
@@ -597,6 +600,7 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 			seen[id] = true
 			served.Listed = append(served.Listed, id)
 			hidden = append(hidden, e)
+			served.Hidden = append(served.Hidden, id)
 		}
 	}
 	if len(hidden) > 0 {

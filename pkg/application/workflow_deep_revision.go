@@ -27,6 +27,9 @@ const (
 	fieldDeepRevisionPages    = "deepRevisionPages"
 	fieldDeepRevisionPageFull = "deepRevisionPageFull"
 	fieldDeepReadIDs          = "deepReadIDs"
+	// fieldDeepHidden names every entry a verifier reading of the capture
+	// served as one line, for the openings publish labels.
+	fieldDeepHidden = "deepHidden"
 	// fieldDeepFresh is why a fresh verifier starts after a verdict.
 	fieldDeepFresh = "deepFresh"
 )

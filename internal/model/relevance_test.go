@@ -172,3 +172,11 @@ func TestParseReaderSource_RoundTripsAndReadsEmptyAsLive(t *testing.T) {
 		t.Fatal("an unknown source should be refused")
 	}
 }
+
+func TestReaderVerdictJoin_AnOpeningLeavesTheReadersLabel(t *testing.T) {
+	dismissed := model.ReaderVerdict{Code: model.ReaderDismissed, Reason: 1}
+	got := dismissed.Join(model.ReaderVerdict{OpenedHidden: true})
+	if got.Code != model.ReaderDismissed || got.Reason != 1 || !got.OpenedHidden {
+		t.Fatalf("join = %+v: an opening should keep the dismissal and add its flag", got)
+	}
+}

@@ -20,19 +20,20 @@ import (
 // (an unknown reason) keep their number, so every record survives a round
 // trip.
 type relevanceJSON struct {
-	Type      string   `json:"type"`
-	A         string   `json:"a,omitempty"`
-	B         string   `json:"b,omitempty"`
-	Code      string   `json:"code,omitempty"`
-	Reason    string   `json:"reason,omitempty"`
-	Audit     bool     `json:"audit,omitempty"`
-	Source    string   `json:"source,omitempty"`
-	Relations []string `json:"relations,omitempty"`
-	Judge     string   `json:"judge,omitempty"`
-	Direction string   `json:"direction,omitempty"`
-	Score     *uint8   `json:"score,omitempty"`
-	At        string   `json:"at,omitempty"`
-	SetAside  *uint8   `json:"set_aside,omitempty"`
+	Type         string   `json:"type"`
+	A            string   `json:"a,omitempty"`
+	B            string   `json:"b,omitempty"`
+	Code         string   `json:"code,omitempty"`
+	Reason       string   `json:"reason,omitempty"`
+	Audit        bool     `json:"audit,omitempty"`
+	Source       string   `json:"source,omitempty"`
+	OpenedHidden bool     `json:"opened_hidden,omitempty"`
+	Relations    []string `json:"relations,omitempty"`
+	Judge        string   `json:"judge,omitempty"`
+	Direction    string   `json:"direction,omitempty"`
+	Score        *uint8   `json:"score,omitempty"`
+	At           string   `json:"at,omitempty"`
+	SetAside     *uint8   `json:"set_aside,omitempty"`
 }
 
 var relationNames = []struct {
@@ -57,7 +58,7 @@ func ExportRelevanceJSON(ctx context.Context, store RelevanceStore, w io.Writer)
 	encoder.SetEscapeHTML(false)
 	for _, record := range batch.Readers {
 		line := relevanceJSON{Type: "reader", A: record.Pair.A, B: record.Pair.B, Code: record.Verdict.Code.String(),
-			Reason: model.VerdictReasonCode(record.Verdict.Reason), Audit: record.Verdict.Audit}
+			Reason: model.VerdictReasonCode(record.Verdict.Reason), Audit: record.Verdict.Audit, OpenedHidden: record.Verdict.OpenedHidden}
 		if record.Verdict.Source != model.SourceLive {
 			line.Source = record.Verdict.Source.String()
 		}
@@ -157,7 +158,7 @@ func addRelevanceJSON(batch *model.RelevanceBatch, record relevanceJSON) error {
 			}
 			relations |= bit
 		}
-		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: p, Verdict: model.ReaderVerdict{Code: code, Reason: reason, Audit: record.Audit, Relations: relations, Source: source}})
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: p, Verdict: model.ReaderVerdict{Code: code, Reason: reason, Audit: record.Audit, Relations: relations, Source: source, OpenedHidden: record.OpenedHidden}})
 	case "score":
 		p, err := pair()
 		if err != nil {

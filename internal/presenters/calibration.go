@@ -30,6 +30,7 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport) {
 	}
 	fmt.Fprintf(w, "audit: %.0f%% of set-asides shown blind; %d referenced of the latest %d audit labels (window %d, minimum %d, step above %.0f%%)\n",
 		model.AuditShare*100, report.AuditMisses, report.AuditCounted, model.DriftWindow, model.DriftMinimum, model.DriftMissShare*100)
+	fmt.Fprintf(w, "opened hidden: %d entries the deep verifier opened from the ones its reading hid, no finding resting on them (no drift effect)\n", report.OpenedHidden)
 	if len(report.Steps) == 0 {
 		fmt.Fprintln(w, "drift steps: none")
 	} else {

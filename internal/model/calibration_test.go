@@ -166,3 +166,27 @@ func TestCalibration_CountsBothSourcesAndExcludesReplayOnRequest(t *testing.T) {
 		t.Fatalf("Calibrate over every label = %+v, want the report's thresholds", got)
 	}
 }
+
+func TestCalibration_CountsOpenedHiddenEntriesWithoutDrift(t *testing.T) {
+	var batch model.RelevanceBatch
+	add := func(i int, verdict model.ReaderVerdict) {
+		pair := model.NewRelevancePair(fmt.Sprintf("20260101-%06d-s-tac-can", i), "20260601-000000-d-tac-sub")
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: verdict})
+		batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: "j", Score: 10}})
+	}
+	topicOnly, _ := model.VerdictReasonByte(model.VerdictTopicOnly)
+	for i := range 60 {
+		add(i, model.ReaderVerdict{Code: model.ReaderDismissed, Reason: topicOnly, Audit: true})
+	}
+	for i := range 5 {
+		add(100+i, model.ReaderVerdict{OpenedHidden: true})
+	}
+	add(200, model.ReaderVerdict{Code: model.ReaderReferenced, Audit: true})
+	report := model.NewRelevanceLedger(batch).Calibration("j", false)
+	if report.OpenedHidden != 5 {
+		t.Fatalf("opened hidden = %d: each opening without a finding should count", report.OpenedHidden)
+	}
+	if report.AuditMisses != 1 || report.AuditCounted != 61 {
+		t.Fatalf("audit %d of %d: only the referenced audit sample is a miss, an opening adds nothing to the window", report.AuditMisses, report.AuditCounted)
+	}
+}

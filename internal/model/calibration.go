@@ -118,7 +118,10 @@ type CalibrationReport struct {
 	Unscored                              int
 	// Live and Replay count the labels by source; ReplayExcluded reports
 	// that the rest of the report reads the live labels alone.
-	Live, Replay   int
+	Live, Replay int
+	// OpenedHidden counts the hidden entries the deep verifier opened with
+	// no finding resting on them; it moves no threshold.
+	OpenedHidden   int
 	ReplayExcluded bool
 	// Misses are the positives scoring below the set-aside threshold;
 	// RecallBound the Wilson lower bound of recall at it.
@@ -164,6 +167,11 @@ func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) Calibrat
 		labels = live
 	}
 	report := CalibrationReport{Judge: judge, Thresholds: Calibrate(labels, steps, judge), Unscored: len(l.Unscored(judge)), Live: len(live), Replay: replayed, ReplayExcluded: excludeReplay}
+	for _, verdict := range l.readers {
+		if verdict.OpenedHidden && verdict.Code != ReaderReferenced {
+			report.OpenedHidden++
+		}
+	}
 	for _, step := range steps {
 		if step.Judge == judge {
 			report.Steps = append(report.Steps, step)

@@ -20,7 +20,7 @@ func TestRelevanceJSON_RoundTripsByteForByte(t *testing.T) {
 	pair := model.NewRelevancePair("20261101-120000-s-tac-aaa", "20261109-004506-d-cpt-udz")
 	other := model.NewRelevancePair("20261101-120000-s-tac-aaa", "20261102-120000-d-tac-bbb")
 	batches := []model.RelevanceBatch{
-		{Readers: []model.ReaderRecord{{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderDismissed, Reason: 3, Audit: true}}}},
+		{Readers: []model.ReaderRecord{{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderDismissed, Reason: 3, Audit: true, OpenedHidden: true}}}},
 		{Readers: []model.ReaderRecord{{Pair: other, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced, Reason: 9, Relations: model.RelationOutdates | 1<<6, Source: model.SourceReplay}}}},
 		{Scores: []model.ScoreRecord{
 			{Pair: pair, Score: model.FilterScore{Judge: "systemone:jev-1.14.0", Direction: model.DirectionBoth, Score: 17}},
@@ -44,7 +44,7 @@ func TestRelevanceJSON_RoundTripsByteForByte(t *testing.T) {
 	if err := sdd.ExportRelevanceJSON(t.Context(), source, &exported); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"reason":"reason-9"`, `"bits-64"`, `"audit":true`, `"source":"replay"`, `"direction":"b-to-a"`, `"type":"step"`} {
+	for _, want := range []string{`"reason":"reason-9"`, `"bits-64"`, `"audit":true`, `"opened_hidden":true`, `"source":"replay"`, `"direction":"b-to-a"`, `"type":"step"`} {
 		if !strings.Contains(exported.String(), want) {
 			t.Fatalf("export should carry %s:\n%s", want, exported.String())
 		}
