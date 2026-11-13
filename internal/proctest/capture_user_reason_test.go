@@ -129,3 +129,29 @@ func TestCapture_ReasonStatesWhyNeverWhat(t *testing.T) {
 		t.Fatalf("assemble should tell the agent the reason states why:\n%s", serve.Instructions)
 	}
 }
+
+// The quoted words stay the user's: an answer that changes them quotes them
+// from what the user says in that answer, and a wording change to the draft
+// goes into the body instead.
+func TestCapture_UserWordsChangeOnlyToWhatTheUserSays(t *testing.T) {
+	world := proctest.NewWorld(t)
+	session := world.Open(t, "reason-words-quoted")
+	serve := session.Start(t, "capture", nil)
+	draft := decisionDraft("directive")
+	draft["reasonWords"] = "empty input hid upstream bugs twice"
+	draft["intentWords"] = "the parser should reject empty input with a clear error"
+	serve = session.Report(t, serve.Instance, draft)
+	proctest.RequireStep(t, serve, "playback")
+
+	wording := `Looks right, but say "an explicit error" instead of "a clear error".`
+	_, err := session.AnswerErr(t, serve.Instance, "playback", "adjust",
+		map[string]any{"intentWords": "the parser should reject empty input with an explicit error"}, wording)
+	if err == nil || !strings.Contains(err.Error(), "intentWords") || !strings.Contains(err.Error(), "quote") {
+		t.Fatalf("intent words the user did not say in the answer should be refused, got %v", err)
+	}
+
+	pending := "The parser still returns an empty result today. Make it pending, the change still has to be made."
+	serve = session.Answer(t, serve.Instance, "playback", "adjust",
+		map[string]any{"intent": "pending", "intentWords": "the change still has to be made"}, pending)
+	proctest.RequireStep(t, serve, "playback")
+}

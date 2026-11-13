@@ -696,6 +696,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 		fields, _ := request.Report["fields"].(map[string]any)
 		words, _ := request.Report["userWords"].(string)
 		reason, _ := request.Report["reason"].(string)
+		if err := w.checkUserWordsQuoted(request.Instance, fields, words); err != nil {
+			return nil, err
+		}
 		serve, err = w.session.AnswerWith(request.Instance, chooser, choice, fields, engine.AnswerWords{User: words, Reason: reason})
 	} else {
 		serve, err = w.session.Report(request.Instance, request.Report)

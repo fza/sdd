@@ -26,3 +26,14 @@ func ReasonRepeatsIntent(reason, intent string) bool {
 func comparableWords(s string) string {
 	return strings.TrimRight(strings.Join(strings.Fields(strings.ToLower(s)), " "), ".,;:!?")
 }
+
+// QuotedFrom reports whether words quote message: message holds them once
+// case, spacing, quotation marks and closing punctuation are set aside.
+func QuotedFrom(words, message string) bool {
+	w, m := comparableWords(unquoted(words)), comparableWords(unquoted(message))
+	return w != "" && strings.Contains(m, w)
+}
+
+func unquoted(s string) string {
+	return strings.NewReplacer(`"`, "", "“", "", "”", "", "„", "", "`", "").Replace(s)
+}

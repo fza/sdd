@@ -48,3 +48,24 @@ func TestReasonRepeatsIntent(t *testing.T) {
 		})
 	}
 }
+
+func TestQuotedFrom(t *testing.T) {
+	message := `Looks right, but say "an explicit error" instead of "a clear error".`
+	for _, tc := range []struct {
+		name  string
+		words string
+		want  bool
+	}{
+		{"part of the message", "say an explicit error", true},
+		{"other case and quotes", "Say “An explicit error”", true},
+		{"closing punctuation", "instead of a clear error.", true},
+		{"words the user did not say", "reject empty input with an explicit error", false},
+		{"empty", "  ", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := model.QuotedFrom(tc.words, message); got != tc.want {
+				t.Errorf("QuotedFrom(%q) should be %v", tc.words, tc.want)
+			}
+		})
+	}
+}
