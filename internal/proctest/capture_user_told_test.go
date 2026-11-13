@@ -55,7 +55,7 @@ func TestCaptureDeep_AFindingOnFactsOnlyTheUserKnowsGoesToTheUser(t *testing.T) 
 	x.judge(t, subjectFinding("observes something."))
 	serve := x.pickUp(t)
 	proctest.RequireStep(t, serve, "deepAnswer")
-	want := "So does one that turns on facts only the user knows, such as whether incidents were ever recorded: neither accept nor contest it on your own guess; ask the user, then answer by what they say, quoting them in the contest reason."
+	want := "A finding without that mark that turns on facts only the user knows, such as whether incidents were ever recorded: never accept or contest it on your own guess. Ask the user; when their answer refutes it, contest it, quoting them in the reason."
 	if text := test.Untagged(serve.Instructions); !strings.Contains(text, want) {
 		t.Fatalf("deepAnswer should carry %q:\n%s", want, text)
 	}

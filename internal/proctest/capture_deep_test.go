@@ -329,6 +329,9 @@ func TestCaptureDeep_OwnerFindingGoesToTheUser(t *testing.T) {
 	if !strings.Contains(serve.Instructions, "only the user can settle it") {
 		t.Fatalf("an owner finding should be named as the user's:\n%s", serve.Instructions)
 	}
+	if !strings.Contains(serve.Instructions, "marked as only the user can settle stays out of the contest") || strings.Contains(serve.Instructions, "goes to them, never into a contest. So does") {
+		t.Fatalf("the answer step should keep a marked finding out of the contest the engine refuses it in:\n%s", serve.Instructions)
+	}
 	_, err := session.AnswerErr(t, x.instance, "deepAnswer", "contest", map[string]any{"deepContest": []any{map[string]any{"target": "f1", "verdict": "contest", "reason": "in scope"}}}, "")
 	if err == nil || !strings.Contains(err.Error(), "f1 is the user's to settle") {
 		t.Fatalf("an owner finding should be refused in a contest, got %v", err)
