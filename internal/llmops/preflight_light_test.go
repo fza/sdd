@@ -74,14 +74,34 @@ func readingEntry(id, summary, content string, topics ...string) *model.Entry {
 var lightDraft = &model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
 	Content: "The capture writer drops the second attachment when two share a name.", Time: time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)}
 
-// The deep reading's header keeps every field of the light one, puts ID,
-// type, status and time on one line, and names a role other than brief.
+// The deep reading's header keeps every field of the light one the ID does
+// not carry, puts ID, kind and status on one line, and names a role other
+// than brief.
 func TestDeepReadingHeader(t *testing.T) {
 	target := readingEntry("20261101-090000-s-tac-tgt", "The writer keeps one attachment per name.", "Body.", "capture/attachments")
 	entry := readingEntry("20261101-100000-s-tac-ent", "Attachments with one name collide.", "Body.", "capture/attachments")
 	entry.Refs = []model.Ref{{ID: target.ID, Kind: "builds-on", Desc: "the writer it observes"}}
-	graph := lightGraph(t, target, entry)
-	const fields = "ID: 20261101-100000-s-tac-ent | Type: signal, kind: gap, layer: tactical | Status: open | Time: 2026-11-01 10:00:00\n" +
+	done := readingEntry("20261101-110000-s-tac-dne", "The writer keeps them all.", "Body.")
+	done.Kind = model.KindDone
+	drifted := readingEntry("20261101-120000-s-tac-drf", "An entry whose time is not its ID's.", "Body.")
+	drifted.Time = drifted.Time.Add(time.Minute)
+	graph := lightGraph(t, target, entry, done, drifted)
+	for _, tc := range []struct {
+		name  string
+		entry *model.Entry
+		want  string
+	}{
+		{"its ID carries type, layer and time", done, "ID: 20261101-110000-s-tac-dne | kind: done | Status: terminal (done signal — no lifecycle status)\nSummary: The writer keeps them all.\n"},
+		{"its time is not its ID's", drifted, "ID: 20261101-120000-s-tac-drf | Type: signal, kind: gap, layer: tactical | Status: open | Time: 2026-11-01 12:01:00\nSummary: An entry whose time is not its ID's.\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := llmops.DeepReadingHeader(graph, tc.entry, model.LightRoleBrief, "")
+			if got != tc.want {
+				t.Errorf("the first line should name type, layer and time only where the ID does not, got:\n%s", got)
+			}
+		})
+	}
+	const fields = "ID: 20261101-100000-s-tac-ent | kind: gap | Status: open\n" +
 		"Topics: capture/attachments\n" +
 		"Ref: builds-on 20261101-090000-s-tac-tgt (the writer it observes)\n" +
 		"Summary: Attachments with one name collide.\n"
@@ -125,9 +145,9 @@ func TestDeepReadingBlock(t *testing.T) {
 		want string
 	}{
 		{name: "brief beside its closer", role: model.LightRoleBrief, held: inReading,
-			want: "---\n\nID: " + closed.ID + " | Type: signal, kind: gap, layer: tactical | Status: closed by " + closer.ID + "\n\nAttachments dropped"},
+			want: "---\n\nID: " + closed.ID + " | kind: gap | Status: closed by " + closer.ID + "\n\nAttachments dropped"},
 		{name: "set aside beside its closer", role: model.LightRoleSetAside, code: model.VerdictCovered, held: inReading,
-			want: "---\n\nID: " + closed.ID + " | Type: signal, kind: gap, layer: tactical | Status: closed by " + closer.ID + "\nRole in the reading: set aside (code: " + model.VerdictCovered + ")\n\nAttachments dropped"},
+			want: "---\n\nID: " + closed.ID + " | kind: gap | Status: closed by " + closer.ID + "\nRole in the reading: set aside (code: " + model.VerdictCovered + ")\n\nAttachments dropped"},
 		{name: "read in full", role: model.LightRoleFull, full: true, held: inReading,
 			want: "---\n\n" + llmops.DeepReadingHeader(graph, closed, model.LightRoleFull, "") + "\nThe closed gap's body."},
 		{name: "closer outside the reading", role: model.LightRoleBrief, held: elsewhere,

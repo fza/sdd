@@ -209,12 +209,12 @@ func ReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole, cod
 }
 
 // DeepReadingHeader is ReadingHeader as the deep verifier's reading serves
-// it: ID, type, status and time share one line, and a brief, the role most
-// of its entries hold, has no role line.
+// it: ID, kind and status share one line, with type, layer and time only
+// where the ID does not carry them, and a brief, the role most of its
+// entries hold, has no role line.
 func DeepReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole, code string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "ID: %s | Type: %s, kind: %s, layer: %s | Status: %s | Time: %s\n", e.ID, e.Type, e.Kind, e.Layer,
-		derivedStatusForPrompt(graph.DerivedStatus(e)), e.Time.Format("2006-01-02 15:04:05"))
+	writeDeepFirstLine(&b, e, graph.DerivedStatus(e), true)
 	writeReadingContext(&b, graph, e)
 	if role != model.LightRoleBrief {
 		writeReadingRole(&b, role, code)
@@ -224,7 +224,7 @@ func DeepReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole,
 
 // DeepReadingBlock is e's block of the deep verifier's reading: its
 // DeepReadingHeader, then its body when full, else its brief. A brief whose
-// closer the reading holds comes short, as its ID, type, closer, role and
+// closer the reading holds comes short, as its ID, kind, closer, role and
 // brief: the closer's block tells what closed it, and the brief still
 // shows a draft that reopens it.
 func DeepReadingBlock(graph *model.Graph, e *model.Entry, role model.LightRole, code string, full bool, held func(id string) bool) model.DeepReadingBlock {
@@ -234,13 +234,27 @@ func DeepReadingBlock(graph *model.Graph, e *model.Entry, role model.LightRole, 
 	header := DeepReadingHeader(graph, e, role, code)
 	if status := graph.DerivedStatus(e); status.Kind == model.StatusClosedBy && held(status.By) {
 		var b strings.Builder
-		fmt.Fprintf(&b, "ID: %s | Type: %s, kind: %s, layer: %s | Status: %s\n", e.ID, e.Type, e.Kind, e.Layer, derivedStatusForPrompt(status))
+		writeDeepFirstLine(&b, e, status, false)
 		if role != model.LightRoleBrief {
 			writeReadingRole(&b, role, code)
 		}
 		header = b.String()
 	}
 	return model.DeepReadingBlock{ID: e.ID, Text: "---\n\n" + header + "\n" + model.EntryBrief(e)}
+}
+
+func writeDeepFirstLine(b *strings.Builder, e *model.Entry, status model.Status, withTime bool) {
+	parts, err := model.ParseID(e.ID)
+	if err == nil && model.TypeFromAbbrev[parts.TypeCode] == e.Type && model.LayerFromAbbrev[parts.LayerCode] == e.Layer &&
+		e.Time.Format("20060102-150405") == parts.Timestamp {
+		fmt.Fprintf(b, "ID: %s | kind: %s | Status: %s\n", e.ID, e.Kind, derivedStatusForPrompt(status))
+		return
+	}
+	fmt.Fprintf(b, "ID: %s | Type: %s, kind: %s, layer: %s | Status: %s", e.ID, e.Type, e.Kind, e.Layer, derivedStatusForPrompt(status))
+	if withTime {
+		fmt.Fprintf(b, " | Time: %s", e.Time.Format("2006-01-02 15:04:05"))
+	}
+	b.WriteByte('\n')
 }
 
 func writeReadingContext(b *strings.Builder, graph *model.Graph, e *model.Entry) {
