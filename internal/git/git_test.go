@@ -132,6 +132,48 @@ func TestRemovalCommit_ScopesToPathspec(t *testing.T) {
 	}
 }
 
+// git add refuses a pathspec that matches nothing on disk or in the index, which
+// a tracked file removed with git rm is; the commit still has to record it.
+func TestCommit_RecordsATrackedPathMissingFromDisk(t *testing.T) {
+	for _, unstaged := range []bool{false, true} {
+		name := "deletion staged"
+		if unstaged {
+			name = "deletion unstaged"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := newTestRepo(t)
+			if err := os.WriteFile(filepath.Join(dir, ".gitattributes"), []byte("* text=auto\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, dir, "add", ".gitattributes")
+			runGit(t, dir, "commit", "-q", "-m", "add attributes")
+			if unstaged {
+				if err := os.Remove(filepath.Join(dir, ".gitattributes")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				runGit(t, dir, "rm", "-q", ".gitattributes")
+			}
+			if err := os.WriteFile(filepath.Join(dir, "touched.txt"), []byte("touched\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Chdir(dir)
+			if err := (CLI{}).Commit("sdd: init", filepath.Join(dir, ".gitattributes"), "touched.txt"); err != nil {
+				t.Fatalf("Commit: %v", err)
+			}
+
+			files := commitFiles(t, dir)
+			if !slices.Contains(files, ".gitattributes") || !slices.Contains(files, "touched.txt") {
+				t.Errorf("the commit should record the deletion and the written file; files = %v", files)
+			}
+			if tracked := strings.Fields(runGit(t, dir, "ls-files")); slices.Contains(tracked, ".gitattributes") {
+				t.Errorf("the deleted path should no longer be tracked; tracked = %v", tracked)
+			}
+		})
+	}
+}
+
 // A graph kept in its own checkout beside the project is committed while the
 // process runs in the project, so the commit has to reach a repository the
 // working directory is not in.
