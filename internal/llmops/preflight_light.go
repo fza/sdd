@@ -65,7 +65,7 @@ func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, 
 	}
 	axes := func(partial bool) (string, error) {
 		var sb strings.Builder
-		err := tmpl.ExecuteTemplate(&sb, "light_axes", struct{ Partial bool }{partial})
+		err := tmpl.ExecuteTemplate(&sb, "light_axes", lightAxes{Partial: partial})
 		return strings.TrimSpace(sb.String()), err
 	}
 	rules, err := axes(true)

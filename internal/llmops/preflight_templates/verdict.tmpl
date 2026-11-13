@@ -1,5 +1,5 @@
 {{ define "verdict" }}
-## Findings
+{{ if not .Rubric }}## Findings
 
 Each finding carries:
 
@@ -20,7 +20,7 @@ Flag findings at severity that matches what you observe:
 
 All three levels are valid, and an empty `findings` array is a valid result. Don't force `high` to name a minor observation. Don't suppress observations to avoid commitment.
 
-## Calibrating against active contracts
+{{ end }}## Calibrating against active contracts
 
 A finding against an active contract is `high` only when entry **directly contradicts** contract's core constraint: the spirit, not the letter. Subtle deviations, missing ritual markers, or wording that doesn't precisely echo contract are `medium` or `low`. Contracts express intent; treating them as literal rules invites find-something behavior. If entry's reasoning shows the agent considered contract and made a deliberate choice, that is `low` or no finding.
 

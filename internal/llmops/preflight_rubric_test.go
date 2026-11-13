@@ -141,3 +141,92 @@ func TestPreflightRubricLeavesTheReadingAndInapplicableRulesOut(t *testing.T) {
 		})
 	}
 }
+
+// The rubric leaves out what only pre-flight's model reads: its role, the
+// layout of its prompt, its answer format, its severity scale and its reading.
+// Every rule, calibration and active contract stays; pre-flight's own prompt
+// keeps everything.
+func TestPreflightRubricLeavesPreflightOnlySectionsOut(t *testing.T) {
+	facts, err := basefacts.Entries(viewlayout.Vocabulary{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gap := &model.Entry{ID: "20260101-000002-s-tac-gap", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Content: "The gap body."}
+	contract := &model.Entry{ID: "20260101-000004-d-cpt-con", Type: model.TypeDecision, Kind: model.KindContract, Layer: model.LayerConceptual, Content: "The contract body."}
+	graph := model.NewGraph(append(facts, gap, contract))
+
+	preflightOnly := []string{
+		"You are a pre-flight validator",
+		"User message carries check-specific task",
+		"## Findings\n",
+		"**Reasoning first, verdict last.**",
+		"## Severity\n",
+		"Before writing this draft, its author read the graph.",
+		"Each finding also carries `basis`",
+	}
+	ownPrompt := []string{preflightOnly[0], preflightOnly[2], preflightOnly[3], preflightOnly[4]}
+	kept := []string{
+		"## Calibrating against active contracts",
+		"## Dialogue context is grounding, not argument",
+		"## Immutability as calibration context",
+		"## Graph fit against the grounding reading",
+		"`duplicates`", "`outdated`", "`strain`", "`dismissal`",
+		"Severity on these axes:",
+	}
+	for _, tc := range []struct {
+		name   string
+		draft  *model.Entry
+		prompt []string
+		kept   []string
+	}{
+		{
+			name:   "done with refs",
+			draft:  &model.Entry{Type: model.TypeSignal, Kind: model.KindDone, Layer: model.LayerTactical, Content: "Draft done.", Refs: []model.Ref{{ID: gap.ID}}},
+			prompt: append([]string{preflightOnly[1]}, ownPrompt...),
+			kept:   append([]string{contract.Content, "## Artifact durability"}, kept...),
+		},
+		{
+			name:   "annotation",
+			draft:  &model.Entry{Type: model.TypeSignal, Kind: model.KindAnnotation, Layer: model.LayerTactical, Content: "Draft annotation.", Refs: []model.Ref{{ID: gap.ID}}},
+			prompt: ownPrompt,
+			kept:   append([]string{"## Annotation rubric"}, kept...),
+		},
+		{
+			name:   "focus",
+			draft:  &model.Entry{Type: model.TypeDecision, Kind: model.KindFocus, Layer: model.LayerTactical, Content: "Draft focus."},
+			prompt: ownPrompt,
+			kept:   append([]string{"## What this rubric does NOT enforce"}, kept...),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var req llm.Request
+			runner := llm.RunnerFunc(func(_ context.Context, r llm.Request) (llm.Result, error) {
+				req = r
+				return llm.Result{Text: `{"findings":[]}`}, nil
+			})
+			_, err := llmops.Preflight(t.Context(), runner, tc.draft, graph, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rubric, err := llmops.PreflightRubric(tc.draft, graph, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, section := range tc.prompt {
+				if !strings.Contains(req.SystemPrompt, section) {
+					t.Errorf("pre-flight's prompt should keep what its model reads: %q", section)
+				}
+			}
+			for _, section := range preflightOnly {
+				if strings.Contains(rubric, section) {
+					t.Errorf("the rubric should leave out what only pre-flight's model reads: %q", section)
+				}
+			}
+			for _, section := range tc.kept {
+				if !strings.Contains(rubric, section) {
+					t.Errorf("the rubric should keep every rule, calibration and contract: %q", section)
+				}
+			}
+		})
+	}
+}
