@@ -301,9 +301,9 @@ func TestCapture_HeaderDisagreeingAtTheConfirmIsRefused(t *testing.T) {
 // body not yet served and was turned into a fresh playback instead.
 func answerPlayback(t *testing.T, session *proctest.Session, instance, choice string, fields map[string]any) *sdd.WorkflowServe {
 	t.Helper()
-	serve := session.Answer(t, instance, "playback", choice, fields, "as discussed")
+	serve := session.Answer(t, instance, "playback", choice, fields, "as discussed, "+choice)
 	if hasDiagnostic(serve, "not answered") {
-		serve = session.Answer(t, instance, "playback", choice, fields, "as discussed")
+		serve = session.Answer(t, instance, "playback", choice, fields, "as discussed, "+choice)
 	}
 	return serve
 }
