@@ -19,12 +19,15 @@ func groundingCmd() *cli.Command {
 			{
 				Name:  "status",
 				Usage: "Show the current judge's labels, recall bound, thresholds, audit and drift state, and precision per reason code",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{Name: "exclude-replay", Usage: "Calibrate on the labels of live captures alone, leaving out those seeded from replayed ones"},
+				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					application, project, identity, err := workingApplication(ctx, cmd)
 					if err != nil {
 						return err
 					}
-					status, err := application.GroundingStatus(ctx, identity, project)
+					status, err := application.GroundingStatus(ctx, identity, project, sdd.GroundingStatusRequest{ExcludeReplay: cmd.Bool("exclude-replay")})
 					if err != nil {
 						return err
 					}

@@ -276,7 +276,7 @@ func TestGroundingStatus_ReportsTheJudgesCalibration(t *testing.T) {
 	f := prefilterFixture(t, &scriptedScorer{})
 	f.relevance = calibratedLedger(t)
 	application := f.app(t, prefilterPolicy(1), nil)
-	status, err := application.GroundingStatus(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject)
+	status, err := application.GroundingStatus(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject, sdd.GroundingStatusRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestRescoreRelevance_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
 	application := f.app(t, prefilterPolicy(1), nil)
 	identity := sdd.RequestIdentity{Subject: "tester"}
 
-	before, err := application.GroundingStatus(t.Context(), identity, gatherProject)
+	before, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestRescoreRelevance_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
 	if !strings.Contains(scorer.requests[0].Subject, "The subject decision.") {
 		t.Fatal("each pair should be scored from its later entry, the one that judged it")
 	}
-	after, err := application.GroundingStatus(t.Context(), identity, gatherProject)
+	after, err := application.GroundingStatus(t.Context(), identity, gatherProject, sdd.GroundingStatusRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}

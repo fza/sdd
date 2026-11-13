@@ -109,6 +109,7 @@ type RelevanceLabel struct {
 	Kind   string
 	Reason string
 	Audit  bool
+	Source ReaderSource
 }
 
 // LabelKind classifies a reader record (D11): a reference is positive; a
@@ -141,7 +142,7 @@ func (l *RelevanceLedger) Labels(judge string) []RelevanceLabel {
 			continue
 		}
 		verdict := l.readers[pair]
-		labels = append(labels, RelevanceLabel{Pair: pair, Score: score, Kind: LabelKind(verdict), Reason: VerdictReasonCode(verdict.Reason), Audit: verdict.Audit})
+		labels = append(labels, RelevanceLabel{Pair: pair, Score: score, Kind: LabelKind(verdict), Reason: VerdictReasonCode(verdict.Reason), Audit: verdict.Audit, Source: verdict.Source})
 	}
 	return labels
 }

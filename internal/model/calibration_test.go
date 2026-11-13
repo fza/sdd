@@ -125,7 +125,7 @@ func TestCalibration_ReportsPrecisionPerCode(t *testing.T) {
 	for i := range 4 {
 		add(2000+i, 230, model.ReaderVerdict{Code: model.ReaderDismissed, Reason: termClash})
 	}
-	report := model.NewRelevanceLedger(batch).Calibration("j")
+	report := model.NewRelevanceLedger(batch).Calibration("j", false)
 	if !report.Thresholds.Valid || report.Positive != 189 || report.Negative != 16 {
 		t.Fatalf("report %+v should count the labels and hold thresholds", report)
 	}
@@ -135,7 +135,34 @@ func TestCalibration_ReportsPrecisionPerCode(t *testing.T) {
 	if report.DominantCode() != model.VerdictTopicOnly || len(report.SetAside) != 2 || report.SetAside[1].Code != model.VerdictTermClash {
 		t.Fatalf("set aside %+v should run by count, the dominant code first", report.SetAside)
 	}
-	if report.Unscored != 0 || model.NewRelevanceLedger(batch).Calibration("new judge").Unscored != 205 {
+	if report.Unscored != 0 || model.NewRelevanceLedger(batch).Calibration("new judge", false).Unscored != 205 {
 		t.Fatal("a new judge should report every labelled pair as unscored")
+	}
+}
+
+func TestCalibration_CountsBothSourcesAndExcludesReplayOnRequest(t *testing.T) {
+	var batch model.RelevanceBatch
+	add := func(i int, score uint8, verdict model.ReaderVerdict) {
+		pair := model.NewRelevancePair(fmt.Sprintf("20260101-%06d-s-tac-can", i), "20260601-000000-d-tac-sub")
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: verdict})
+		batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: "j", Score: score}})
+	}
+	for i := range 150 {
+		add(i, 220, model.ReaderVerdict{Code: model.ReaderReferenced})
+	}
+	for i := range 60 {
+		add(1000+i, 200, model.ReaderVerdict{Code: model.ReaderReferenced, Source: model.SourceReplay})
+	}
+	ledger := model.NewRelevanceLedger(batch)
+	both := ledger.Calibration("j", false)
+	if !both.Thresholds.Valid || both.Positive != 210 || both.Live != 150 || both.Replay != 60 || both.ReplayExcluded {
+		t.Fatalf("report %+v should calibrate on both sources and count each", both)
+	}
+	live := ledger.Calibration("j", true)
+	if live.Thresholds.Valid || live.Positive != 150 || live.Live != 150 || live.Replay != 60 || !live.ReplayExcluded {
+		t.Fatalf("report %+v should read the live labels alone and still count the replayed ones", live)
+	}
+	if got := model.Calibrate(ledger.Labels("j"), nil, "j"); got != both.Thresholds {
+		t.Fatalf("Calibrate over every label = %+v, want the report's thresholds", got)
 	}
 }

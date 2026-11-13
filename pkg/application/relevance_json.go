@@ -16,8 +16,9 @@ import (
 
 // relevanceJSON is one line of the JSON form of the relevance ledger
 // (20261109-004506-d-cpt-udz, D16): a reader record, a score or a drift
-// step. Bytes this sdd cannot name (an unknown reason) keep their number,
-// so every record survives a round trip.
+// step. A live reader record carries no source. Bytes this sdd cannot name
+// (an unknown reason) keep their number, so every record survives a round
+// trip.
 type relevanceJSON struct {
 	Type      string   `json:"type"`
 	A         string   `json:"a,omitempty"`
@@ -25,6 +26,7 @@ type relevanceJSON struct {
 	Code      string   `json:"code,omitempty"`
 	Reason    string   `json:"reason,omitempty"`
 	Audit     bool     `json:"audit,omitempty"`
+	Source    string   `json:"source,omitempty"`
 	Relations []string `json:"relations,omitempty"`
 	Judge     string   `json:"judge,omitempty"`
 	Direction string   `json:"direction,omitempty"`
@@ -56,6 +58,9 @@ func ExportRelevanceJSON(ctx context.Context, store RelevanceStore, w io.Writer)
 	for _, record := range batch.Readers {
 		line := relevanceJSON{Type: "reader", A: record.Pair.A, B: record.Pair.B, Code: record.Verdict.Code.String(),
 			Reason: model.VerdictReasonCode(record.Verdict.Reason), Audit: record.Verdict.Audit}
+		if record.Verdict.Source != model.SourceLive {
+			line.Source = record.Verdict.Source.String()
+		}
 		for _, relation := range relationNames {
 			if record.Verdict.Relations&relation.bit != 0 {
 				line.Relations = append(line.Relations, relation.name)
@@ -136,6 +141,10 @@ func addRelevanceJSON(batch *model.RelevanceBatch, record relevanceJSON) error {
 		if err != nil {
 			return err
 		}
+		source, err := model.ParseReaderSource(record.Source)
+		if err != nil {
+			return err
+		}
 		reason, err := model.ParseVerdictReason(record.Reason)
 		if err != nil {
 			return err
@@ -148,7 +157,7 @@ func addRelevanceJSON(batch *model.RelevanceBatch, record relevanceJSON) error {
 			}
 			relations |= bit
 		}
-		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: p, Verdict: model.ReaderVerdict{Code: code, Reason: reason, Audit: record.Audit, Relations: relations}})
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: p, Verdict: model.ReaderVerdict{Code: code, Reason: reason, Audit: record.Audit, Relations: relations, Source: source}})
 	case "score":
 		p, err := pair()
 		if err != nil {

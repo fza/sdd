@@ -128,21 +128,55 @@ const (
 	RelationOutdates
 )
 
+// ReaderSource is where a reader record comes from: a live capture, or a
+// replay of past captures seeded into the ledger. Live is the zero value, so
+// a record written before sources existed reads as live.
+type ReaderSource uint8
+
+const (
+	SourceLive ReaderSource = iota
+	SourceReplay
+)
+
+// String names the source as JSON exports carry it.
+func (s ReaderSource) String() string {
+	switch s {
+	case SourceLive:
+		return "live"
+	case SourceReplay:
+		return "replay"
+	}
+	return fmt.Sprintf("source-%d", uint8(s))
+}
+
+// ParseReaderSource is String's inverse; empty is live.
+func ParseReaderSource(s string) (ReaderSource, error) {
+	switch s {
+	case "", SourceLive.String():
+		return SourceLive, nil
+	case SourceReplay.String():
+		return SourceReplay, nil
+	}
+	return 0, fmt.Errorf("unknown reader source %q (live, replay)", s)
+}
+
 // ReaderVerdict is a reader's record of one pair: the lattice code, the
 // reason byte of a set-aside, whether the candidate was an audit sample of
-// the prefilter's set-asides, and the strain relation bits.
+// the prefilter's set-asides, the strain relation bits, and the source.
 type ReaderVerdict struct {
 	Code      ReaderCode
 	Reason    uint8
 	Audit     bool
 	Relations uint8
+	Source    ReaderSource
 }
 
 // Join merges two records of one pair. The code is the larger, the reason
-// that of the larger code (the larger byte on a tie), and the bits are
-// ORed, so merges converge in any order and repeat.
+// that of the larger code (the larger byte on a tie), the bits are ORed,
+// and a live record makes the pair live, so merges converge in any order
+// and repeat.
 func (v ReaderVerdict) Join(o ReaderVerdict) ReaderVerdict {
-	out := ReaderVerdict{Audit: v.Audit || o.Audit, Relations: v.Relations | o.Relations}
+	out := ReaderVerdict{Audit: v.Audit || o.Audit, Relations: v.Relations | o.Relations, Source: min(v.Source, o.Source)}
 	switch {
 	case v.Code > o.Code:
 		out.Code, out.Reason = v.Code, v.Reason
@@ -269,7 +303,10 @@ func NewRelevanceLedger(batches ...RelevanceBatch) *RelevanceLedger {
 // Add joins a batch into the ledger.
 func (l *RelevanceLedger) Add(batch RelevanceBatch) {
 	for _, record := range batch.Readers {
-		l.readers[record.Pair] = l.readers[record.Pair].Join(record.Verdict)
+		if held, ok := l.readers[record.Pair]; ok {
+			record.Verdict = held.Join(record.Verdict)
+		}
+		l.readers[record.Pair] = record.Verdict
 	}
 	for _, record := range batch.Scores {
 		byJudge := l.scores[record.Pair]

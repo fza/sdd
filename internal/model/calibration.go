@@ -116,6 +116,10 @@ type CalibrationReport struct {
 	// score for, re-scored after a judge change (D36).
 	Positive, Negative, Counted, Excluded int
 	Unscored                              int
+	// Live and Replay count the labels by source; ReplayExcluded reports
+	// that the rest of the report reads the live labels alone.
+	Live, Replay   int
+	ReplayExcluded bool
 	// Misses are the positives scoring below the set-aside threshold;
 	// RecallBound the Wilson lower bound of recall at it.
 	Misses      int
@@ -149,11 +153,17 @@ func (r CalibrationReport) DominantCode() string {
 	return r.SetAside[0].Code
 }
 
-// Calibration reports judge's calibration over the ledger.
-func (l *RelevanceLedger) Calibration(judge string) CalibrationReport {
+// Calibration reports judge's calibration over the ledger, over its live
+// labels alone when excludeReplay is set.
+func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) CalibrationReport {
 	labels := l.Labels(judge)
 	steps := l.Steps()
-	report := CalibrationReport{Judge: judge, Thresholds: Calibrate(labels, steps, judge), Unscored: len(l.Unscored(judge))}
+	live := LiveLabels(labels)
+	replayed := len(labels) - len(live)
+	if excludeReplay {
+		labels = live
+	}
+	report := CalibrationReport{Judge: judge, Thresholds: Calibrate(labels, steps, judge), Unscored: len(l.Unscored(judge)), Live: len(live), Replay: replayed, ReplayExcluded: excludeReplay}
 	for _, step := range steps {
 		if step.Judge == judge {
 			report.Steps = append(report.Steps, step)
@@ -216,4 +226,10 @@ func InsertBlind(toJudge, audit []GatherCandidate, seed string) []GatherCandidat
 		out = slices.Insert(out, position, candidate)
 	}
 	return out
+}
+
+// LiveLabels returns the labels of live captures, dropping those seeded
+// from replayed ones.
+func LiveLabels(labels []RelevanceLabel) []RelevanceLabel {
+	return slices.DeleteFunc(slices.Clone(labels), func(label RelevanceLabel) bool { return label.Source != SourceLive })
 }

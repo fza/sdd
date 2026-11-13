@@ -18,9 +18,16 @@ type GroundingStatus struct {
 	Text  string
 }
 
+// GroundingStatusRequest selects what GroundingStatus reads: ExcludeReplay
+// calibrates on the live labels alone, leaving out those seeded from
+// replayed captures.
+type GroundingStatusRequest struct {
+	ExcludeReplay bool
+}
+
 // GroundingStatus reports the current judge's labels, recall bound,
 // thresholds, audit and drift state, and the precision per reason code.
-func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdentity, project ProjectID) (GroundingStatus, error) {
+func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdentity, project ProjectID, request GroundingStatusRequest) (GroundingStatus, error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
 		return GroundingStatus{}, err
@@ -34,7 +41,7 @@ func (a *Application) GroundingStatus(ctx context.Context, identity RequestIdent
 		return GroundingStatus{}, err
 	}
 	var rendered bytes.Buffer
-	presenters.RenderCalibration(&rendered, ledger.Calibration(judge))
+	presenters.RenderCalibration(&rendered, ledger.Calibration(judge, request.ExcludeReplay))
 	return GroundingStatus{Judge: judge, Text: strings.TrimRight(rendered.String(), "\n")}, nil
 }
 

@@ -12,6 +12,11 @@ import (
 // would serve in full were answered, per reason code (D11, D33, D36).
 func RenderCalibration(w io.Writer, report model.CalibrationReport) {
 	fmt.Fprintf(w, "judge: %s\n", report.Judge)
+	sources := fmt.Sprintf("sources: %d live labels, %d replayed from past captures", report.Live, report.Replay)
+	if report.ReplayExcluded {
+		sources += "; the report below reads the live labels alone (--exclude-replay)"
+	}
+	fmt.Fprintln(w, sources)
 	fmt.Fprintf(w, "labels: %d referenced, %d set aside (topic-only, other-scope, term-clash), %d other (counted only), %d excluded (covered, meta, unknown codes)\n",
 		report.Positive, report.Negative, report.Counted, report.Excluded)
 	if report.Unscored > 0 {

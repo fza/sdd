@@ -21,7 +21,7 @@ func TestRelevanceJSON_RoundTripsByteForByte(t *testing.T) {
 	other := model.NewRelevancePair("20261101-120000-s-tac-aaa", "20261102-120000-d-tac-bbb")
 	batches := []model.RelevanceBatch{
 		{Readers: []model.ReaderRecord{{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderDismissed, Reason: 3, Audit: true}}}},
-		{Readers: []model.ReaderRecord{{Pair: other, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced, Reason: 9, Relations: model.RelationOutdates | 1<<6}}}},
+		{Readers: []model.ReaderRecord{{Pair: other, Verdict: model.ReaderVerdict{Code: model.ReaderReferenced, Reason: 9, Relations: model.RelationOutdates | 1<<6, Source: model.SourceReplay}}}},
 		{Scores: []model.ScoreRecord{
 			{Pair: pair, Score: model.FilterScore{Judge: "systemone:jev-1.14.0", Direction: model.DirectionBoth, Score: 17}},
 			{Pair: other, Score: model.FilterScore{Judge: "cohere-rerank:rerank-v3.5", Direction: model.DirectionBToA, Score: 230}},
@@ -44,10 +44,13 @@ func TestRelevanceJSON_RoundTripsByteForByte(t *testing.T) {
 	if err := sdd.ExportRelevanceJSON(t.Context(), source, &exported); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"reason":"reason-9"`, `"bits-64"`, `"audit":true`, `"direction":"b-to-a"`, `"type":"step"`} {
+	for _, want := range []string{`"reason":"reason-9"`, `"bits-64"`, `"audit":true`, `"source":"replay"`, `"direction":"b-to-a"`, `"type":"step"`} {
 		if !strings.Contains(exported.String(), want) {
 			t.Fatalf("export should carry %s:\n%s", want, exported.String())
 		}
+	}
+	if strings.Contains(exported.String(), `"source":"live"`) {
+		t.Fatalf("a live record should carry no source:\n%s", exported.String())
 	}
 	target, err := localadapter.NewFilesystemRelevanceStore(filepath.Join(t.TempDir(), "target"))
 	if err != nil {
@@ -85,6 +88,7 @@ func TestImportRelevanceJSON_RefusesAMalformedLine(t *testing.T) {
 		`{"type":"reader","a":"b","b":"a","code":"opened"}`,
 		`{"type":"score","a":"a","b":"b","judge":"j","direction":"both"}`,
 		`{"type":"verdict"}`,
+		`{"type":"reader","a":"a","b":"b","code":"referenced","source":"seeded"}`,
 		`{"type":"reader","a":"a","b":"b","code":"opened","extra":1}`,
 	} {
 		_, err := sdd.ImportRelevanceJSON(t.Context(), localadapter.NewMemoryRelevanceStore(), strings.NewReader(line+"\n"))
