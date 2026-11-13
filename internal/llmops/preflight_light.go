@@ -448,3 +448,18 @@ func joinInts(values []int) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+// DeepCompactID names the deep reading's compact block, which lists the
+// entries the verifier's lane split hides.
+const DeepCompactID = "the entries listed below the prefilter's threshold"
+
+// DeepCompactBlock lists entries one line each, ID and brief, with the count
+// and the call that opens one (20261109-004506-d-cpt-udz, D29).
+func DeepCompactBlock(entries []*model.Entry) model.DeepReadingBlock {
+	var b strings.Builder
+	fmt.Fprintf(&b, "---\n\n## Listed below the prefilter's threshold (%d)\n\nThe prefilter's calibrated judge scored these below the threshold its recall bound holds at: one line each, ID and title. Open one with show when its title bears on the draft.\n", len(entries))
+	for _, e := range entries {
+		fmt.Fprintf(&b, "\n%s  %s", e.ID, model.EntryBrief(e))
+	}
+	return model.DeepReadingBlock{ID: DeepCompactID, Text: b.String()}
+}

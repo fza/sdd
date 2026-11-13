@@ -221,11 +221,15 @@ func InsertBlind(toJudge, audit []GatherCandidate, seed string) []GatherCandidat
 	out := slices.Clone(toJudge)
 	for _, candidate := range audit {
 		candidate.Score = nil
-		sum := sha256.Sum256([]byte(seed + "\naudit\n" + candidate.Entry.ID))
-		position := int(binary.BigEndian.Uint64(sum[:8]) % uint64(len(out)+1))
-		out = slices.Insert(out, position, candidate)
+		out = slices.Insert(out, blindPosition(seed, candidate.Entry.ID, len(out)), candidate)
 	}
 	return out
+}
+
+// blindPosition draws where an audit sample goes among n lines from seed.
+func blindPosition(seed, id string, n int) int {
+	sum := sha256.Sum256([]byte(seed + "\naudit\n" + id))
+	return int(binary.BigEndian.Uint64(sum[:8]) % uint64(n+1))
 }
 
 // LiveLabels returns the labels of live captures, dropping those seeded
