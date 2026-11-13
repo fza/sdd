@@ -158,6 +158,9 @@ func TestCaptureDeep_ServesTheReadingInPagesAndRefusesEarlyFindings(t *testing.T
 	if !strings.Contains(reading.String(), "ID: "+captureRef2ID) {
 		t.Fatalf("the reading should carry the briefs, in the room the pages before them leave:\n%s", reading.String())
 	}
+	if !strings.Contains(reading.String(), "ID: "+captureRef2ID+" | Type: ") || strings.Contains(reading.String(), "Role in the reading: brief") {
+		t.Fatalf("a brief's header should open with its compact line and name no role:\n%s", reading.String())
+	}
 }
 
 // readingPages returns how many pages the reading page 1 opens takes.

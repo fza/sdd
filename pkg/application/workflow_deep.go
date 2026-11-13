@@ -544,7 +544,7 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 		if full {
 			text = e.Content
 		}
-		return model.DeepReadingBlock{ID: e.ID, Text: "---\n\n" + llmops.ReadingHeader(graph, e, role, codes[id]) + "\n" + text}, true
+		return model.DeepReadingBlock{ID: e.ID, Text: "---\n\n" + llmops.DeepReadingHeader(graph, e, role, codes[id]) + "\n" + text}, true
 	}
 	var targets []string
 	for _, ref := range workflowStoreDocuments(ctx.Store, "refs") {

@@ -203,29 +203,51 @@ func ReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole, cod
 	fmt.Fprintf(&b, "Type: %s, kind: %s, layer: %s\n", e.Type, e.Kind, e.Layer)
 	fmt.Fprintf(&b, "Status: %s\n", derivedStatusForPrompt(graph.DerivedStatus(e)))
 	fmt.Fprintf(&b, "Time: %s\n", e.Time.Format("2006-01-02 15:04:05"))
+	writeReadingContext(&b, graph, e)
+	writeReadingRole(&b, role, code)
+	return b.String()
+}
+
+// DeepReadingHeader is ReadingHeader as the deep verifier's reading serves
+// it: ID, type, status and time share one line, and a brief, the role most
+// of its entries hold, has no role line.
+func DeepReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole, code string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "ID: %s | Type: %s, kind: %s, layer: %s | Status: %s | Time: %s\n", e.ID, e.Type, e.Kind, e.Layer,
+		derivedStatusForPrompt(graph.DerivedStatus(e)), e.Time.Format("2006-01-02 15:04:05"))
+	writeReadingContext(&b, graph, e)
+	if role != model.LightRoleBrief {
+		writeReadingRole(&b, role, code)
+	}
+	return b.String()
+}
+
+func writeReadingContext(b *strings.Builder, graph *model.Graph, e *model.Entry) {
 	if topics := graph.EffectiveTopics(e); len(topics) > 0 {
 		labels := make([]string, 0, len(topics))
 		for _, topic := range topics {
 			labels = append(labels, topic.String())
 		}
-		fmt.Fprintf(&b, "Topics: %s\n", strings.Join(labels, ", "))
+		fmt.Fprintf(b, "Topics: %s\n", strings.Join(labels, ", "))
 	}
 	for _, ref := range e.Refs {
-		fmt.Fprintf(&b, "Ref: %s %s", ref.Kind, ref.ID)
+		fmt.Fprintf(b, "Ref: %s %s", ref.Kind, ref.ID)
 		if ref.Desc != "" {
-			fmt.Fprintf(&b, " (%s)", ref.Desc)
+			fmt.Fprintf(b, " (%s)", ref.Desc)
 		}
 		b.WriteByte('\n')
 	}
 	if summary := strings.TrimSpace(e.Summary); summary != "" {
-		fmt.Fprintf(&b, "Summary: %s\n", strings.Join(strings.Fields(summary), " "))
+		fmt.Fprintf(b, "Summary: %s\n", strings.Join(strings.Fields(summary), " "))
 	}
+}
+
+func writeReadingRole(b *strings.Builder, role model.LightRole, code string) {
 	if role == model.LightRoleSetAside {
-		fmt.Fprintf(&b, "Role in the reading: %s (code: %s)\n", role, code)
+		fmt.Fprintf(b, "Role in the reading: %s (code: %s)\n", role, code)
 	} else {
-		fmt.Fprintf(&b, "Role in the reading: %s\n", role)
+		fmt.Fprintf(b, "Role in the reading: %s\n", role)
 	}
-	return b.String()
 }
 
 func renderLightParts(parts []model.LightPart) string {

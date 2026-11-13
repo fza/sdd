@@ -74,6 +74,36 @@ func readingEntry(id, summary, content string, topics ...string) *model.Entry {
 var lightDraft = &model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
 	Content: "The capture writer drops the second attachment when two share a name.", Time: time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)}
 
+// The deep reading's header keeps every field of the light one, puts ID,
+// type, status and time on one line, and names a role other than brief.
+func TestDeepReadingHeader(t *testing.T) {
+	target := readingEntry("20261101-090000-s-tac-tgt", "The writer keeps one attachment per name.", "Body.", "capture/attachments")
+	entry := readingEntry("20261101-100000-s-tac-ent", "Attachments with one name collide.", "Body.", "capture/attachments")
+	entry.Refs = []model.Ref{{ID: target.ID, Kind: "builds-on", Desc: "the writer it observes"}}
+	graph := lightGraph(t, target, entry)
+	const fields = "ID: 20261101-100000-s-tac-ent | Type: signal, kind: gap, layer: tactical | Status: open | Time: 2026-11-01 10:00:00\n" +
+		"Topics: capture/attachments\n" +
+		"Ref: builds-on 20261101-090000-s-tac-tgt (the writer it observes)\n" +
+		"Summary: Attachments with one name collide.\n"
+	for _, tc := range []struct {
+		role model.LightRole
+		code string
+		want string
+	}{
+		{role: model.LightRoleBrief, want: fields},
+		{role: model.LightRoleFull, want: fields + "Role in the reading: read in full\n"},
+		{role: "declared target", want: fields + "Role in the reading: declared target\n"},
+		{role: model.LightRoleSetAside, code: model.VerdictCovered, want: fields + "Role in the reading: set aside (code: " + model.VerdictCovered + ")\n"},
+	} {
+		t.Run(string(tc.role), func(t *testing.T) {
+			got := llmops.DeepReadingHeader(graph, entry, tc.role, tc.code)
+			if got != tc.want {
+				t.Errorf("the header should keep every field on its compact lines and name only a role other than brief, got:\n%s", got)
+			}
+		})
+	}
+}
+
 func TestPreflightLight_CarriesTheReadingWithHeadersAndAxes(t *testing.T) {
 	full := readingEntry("20261101-100000-s-tac-ful", "Attachments with one name collide.", "The writer keeps only one attachment per name.", "capture/attachments")
 	brief := readingEntry("20261101-110000-s-tac-brf", "Staging keeps every handle.", "Long body never served.", "capture/staging")
