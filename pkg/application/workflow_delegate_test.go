@@ -234,6 +234,17 @@ func (f *delegateFixture) ended(t *testing.T, id sdd.SessionID) *sdd.SessionEnd 
 	return stored.Metadata.Ended
 }
 
+func TestDelegatePromptEndsTheTurnOnlyOnAWaitingServe(t *testing.T) {
+	f := newDelegateApplication(t, nil)
+	_, dispatch := f.fork(t)
+	if !strings.Contains(dispatch.Prompt, "End your turn only when a serve says it is waiting for the dispatching move.") {
+		t.Fatalf("the prompt should tie ending the turn to a serve that waits for the dispatching move, got %q", dispatch.Prompt)
+	}
+	if strings.Contains(dispatch.Prompt, "end turn.") {
+		t.Fatalf("the prompt should carry no end-turn order a delegate can read as true of any step, got %q", dispatch.Prompt)
+	}
+}
+
 func TestDispatchingADeliveringTaskForksADelegateSession(t *testing.T) {
 	f := newDelegateApplication(t, nil)
 	serve, dispatch := f.fork(t)
