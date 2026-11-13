@@ -118,8 +118,8 @@ func TestRelevanceCompact_DropsAReplaySeed(t *testing.T) {
 					t.Fatalf("%v: %v\n%s", args, result.err, result.stderr)
 				}
 			}
-			dropped := f.run(t, "relevance", "compact", "--drop-source", "replay")
-			if dropped.err != nil || !strings.Contains(dropped.stdout, "without its replay records") {
+			dropped := f.run(t, "relevance", "compact", "--drop-replay")
+			if dropped.err != nil || !strings.Contains(dropped.stdout, "without its replayed labels") {
 				t.Fatalf("compact = %q, %v", dropped.stdout, dropped.err)
 			}
 			exported := f.run(t, "relevance", "export")

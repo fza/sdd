@@ -161,17 +161,17 @@ func (s *MemoryRelevanceStore) Segments(_ context.Context) ([][]byte, error) {
 	return out, nil
 }
 
-// DropSource rewrites the ledger as one segment without the reader records
-// of source: the way a replay seed is taken back. A pair a live record also
+// DropReplay rewrites the ledger as one segment without the reader records
+// of source replay: the way a seed is taken back. A pair a live record also
 // labels is live and stays.
-func (s *FilesystemRelevanceStore) DropSource(ctx context.Context, source model.ReaderSource) error {
+func (s *FilesystemRelevanceStore) DropReplay(ctx context.Context) error {
 	return compactDir(ctx, s.dir, true, func(segments [][]byte) ([]byte, error) {
 		ledger, err := relevance.Fold(segments)
 		if err != nil {
 			return nil, err
 		}
 		batch := ledger.Batch()
-		batch.Readers = slices.DeleteFunc(batch.Readers, func(record model.ReaderRecord) bool { return record.Verdict.Source == source })
+		batch.Readers = slices.DeleteFunc(batch.Readers, func(record model.ReaderRecord) bool { return record.Verdict.Source == model.SourceReplay })
 		if batch.Empty() {
 			return nil, nil
 		}
@@ -179,7 +179,7 @@ func (s *FilesystemRelevanceStore) DropSource(ctx context.Context, source model.
 	})
 }
 
-// DropSource drops source from the reader store.
-func (s *SplitRelevanceStore) DropSource(ctx context.Context, source model.ReaderSource) error {
-	return s.readers.DropSource(ctx, source)
+// DropReplay drops the replay seed from the reader store.
+func (s *SplitRelevanceStore) DropReplay(ctx context.Context) error {
+	return s.readers.DropReplay(ctx)
 }

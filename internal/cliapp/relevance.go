@@ -12,11 +12,11 @@ import (
 )
 
 // relevanceStore is a local relevance ledger, which can also compact, and
-// drop the records of a source.
+// drop a replay seed.
 type relevanceStore interface {
 	sdd.RelevanceStore
 	Compact(ctx context.Context) error
-	DropSource(ctx context.Context, source model.ReaderSource) error
+	DropReplay(ctx context.Context) error
 }
 
 // projectRelevanceStore opens the project's relevance verdict ledger
