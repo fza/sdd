@@ -183,6 +183,23 @@ func TestRun_CodexErrorEventFailsTheRound(t *testing.T) {
 	refused(t, settings(t, "codex"), firstRound(), "codex ended the round with an error: stream disconnected")
 }
 
+// codex exits nonzero on a failed turn and prints only noise to stderr; the
+// cause, such as a spent usage limit, is in its JSON events on stdout.
+func TestRun_CodexFailureNamesTheCauseFromItsEvents(t *testing.T) {
+	cases := map[string]string{
+		"error event":       `{"type":"error","message":"You've hit your usage limit."}`,
+		"turn.failed event": `{"type":"turn.failed","error":{"message":"You've hit your usage limit."}}`,
+	}
+	for name, event := range cases {
+		t.Run(name, func(t *testing.T) {
+			agents := test.FakeAgents(t, "codex")
+			test.AgentAnswers(t, agents, "codex", `{"type":"thread.started","thread_id":"codex-3"}`+"\n"+event, "Reading additional input from stdin...", 1)
+
+			refused(t, settings(t, "codex"), firstRound(), "codex ended the round with an error: You've hit your usage limit.")
+		})
+	}
+}
+
 func TestRun_CustomDriverContract(t *testing.T) {
 	agents := test.FakeAgents(t, "driver")
 	test.AgentAnswers(t, agents, "driver", "starting\n"+`{"driver_state":"pane-4"}`, "", 0)

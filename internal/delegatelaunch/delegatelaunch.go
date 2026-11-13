@@ -206,10 +206,7 @@ func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
 }
 
 func runCodex(ctx context.Context, settings Settings, round Round) (Launched, error) {
-	out, err := run(ctx, settings.WorkDir, "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "")
-	if err != nil {
-		return Launched{}, err
-	}
+	out, runErr := run(ctx, settings.WorkDir, "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "")
 	launched := Launched{Session: round.Resume}
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		var event struct {
@@ -217,7 +214,10 @@ func runCodex(ctx context.Context, settings Settings, round Round) (Launched, er
 			ThreadID  string `json:"thread_id"`
 			SessionID string `json:"session_id"`
 			Message   string `json:"message"`
-			Item      struct {
+			Error     struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Item struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
 			} `json:"item"`
@@ -232,7 +232,7 @@ func runCodex(ctx context.Context, settings Settings, round Round) (Launched, er
 		}
 		switch {
 		case event.Type == "error" || event.Type == "turn.failed" || event.Msg.Type == "error":
-			return Launched{}, fmt.Errorf("codex ended the round with an error: %s", strings.TrimSpace(event.Message+event.Msg.Message))
+			return Launched{}, fmt.Errorf("codex ended the round with an error: %s", strings.TrimSpace(event.Message+event.Error.Message+event.Msg.Message))
 		case event.Type == "item.completed" && event.Item.Type == "agent_message":
 			launched.Message = event.Item.Text
 		case event.Msg.Type == "agent_message":
@@ -244,6 +244,9 @@ func runCodex(ctx context.Context, settings Settings, round Round) (Launched, er
 		case event.Msg.SessionID != "":
 			launched.Session = event.Msg.SessionID
 		}
+	}
+	if runErr != nil {
+		return Launched{}, runErr
 	}
 	if launched.Session == "" {
 		return Launched{}, errors.New("codex reported no session to resume")
@@ -295,7 +298,7 @@ func run(ctx context.Context, dir, name string, args []string, stdin string) ([]
 		return nil, fmt.Errorf("%s did not end its round in time: %w", name, ctx.Err())
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%s failed: %w: %s", name, err, strings.TrimSpace(stderr.String()))
+		return stdout.Bytes(), fmt.Errorf("%s failed: %w: %s", name, err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
 }
