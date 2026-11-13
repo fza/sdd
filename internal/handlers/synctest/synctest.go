@@ -47,7 +47,9 @@ type Repo struct {
 	// gate always admits.
 	URL      string
 	FetchErr error
-	PushErr  error
+	// OnFetch runs after each fetch that succeeds, landing what it brings.
+	OnFetch func()
+	PushErr error
 	// Ahead and GraphAhead count commits ahead of upstream; Behind and
 	// GraphBehind the ones upstream holds ahead.
 	Ahead, GraphAhead, Behind, GraphBehind int
@@ -106,6 +108,9 @@ func (r *Repo) UpstreamRef(context.Context) (string, error) {
 func (r *Repo) Fetch(context.Context) error {
 	if err := r.call("fetch"); err != nil {
 		return err
+	}
+	if r.FetchErr == nil && r.OnFetch != nil {
+		r.OnFetch()
 	}
 	return r.FetchErr
 }

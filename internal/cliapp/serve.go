@@ -342,6 +342,41 @@ func (d *connectedDependencies) resolveWritable(ctx context.Context, repoID sdd.
 	return runtime, nil
 }
 
+// ResolveFurther resolves an entry a direct dependency's ref names in a repo
+// beyond the served project's direct dependencies: from that repo's clone as
+// it stands, else through the handler's fetch on a miss
+// (handlers.Handler.ResolveFurtherRef).
+func (d *connectedDependencies) ResolveFurther(ctx context.Context, repoID sdd.RepoID, entryID string, fetched bool) (sdd.FurtherResolution, error) {
+	var resolution sdd.FurtherResolution
+	clone, connected, err := d.registry.Clone(repoID)
+	if err != nil {
+		return resolution, err
+	}
+	holds := false
+	if connected && clone.Cloned() {
+		holds, err = clone.Holds(entryID)
+		if err != nil {
+			return resolution, err
+		}
+	}
+	if !holds {
+		err = d.rounds.handler.ResolveFurtherRef(ctx, &command.ResolveFurtherRefCmd{
+			RepoID: repoID, EntryID: entryID, Fetched: fetched,
+			OnFetched:     func() { resolution.Fetched = true },
+			OnUnavailable: func(u model.UnavailableRef) { resolution.Unavailable = &u },
+		})
+		if err != nil || resolution.Unavailable != nil {
+			return resolution, err
+		}
+	}
+	resolution.Runtime, err = d.resolve(ctx, repoID)
+	if err != nil {
+		return resolution, err
+	}
+	resolution.CloneFetched, err = clone.Fetched()
+	return resolution, err
+}
+
 // connectedRounds runs the sync rounds of the connected repos the served
 // project reaches.
 type connectedRounds struct {
@@ -615,6 +650,17 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	}
 	home := finders.New(finders.Options{Config: cfg, Repos: registry})
 	rounds := connectedRounds{handler: handlers.New(handlers.Options{Reader: home, Repos: manager, CloneRound: round})}
+	var memberEmbedder embed.Embedder
+	var memberRuneCap func(context.Context) (int, error)
+	if crossEmbedder.Embedder != nil {
+		memberEmbedder = crossEmbedder
+		memberRuneCap = crossEmbedder.MaxRunes
+	}
+	connectedDeps := &connectedDependencies{registry: registry, manager: manager, home: home, rounds: rounds,
+		writer: sdd.RepoID(cfg.RepoID), connected: cfg.Connected,
+		build: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
+			return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, modelWindow(cfg.LLM), memberEmbedder, memberRuneCap, cacheRoot)
+		}}
 	prefilter, err := projectPrefilter(cfg)
 	if err != nil {
 		return nil, err
@@ -630,8 +676,8 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Sync: targets, Branches: targets, Base: targets,
-		Connected: rounds,
-		Embedder:  embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
+		Connected: rounds, Further: connectedDeps,
+		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
 		LLM:       runner,
 		Grounding: groundingPolicy(cfg),
 		Verifier:  verifierPolicy(cfg), Window: modelWindow(cfg.LLM), Checkout: os.DirFS(layout.WorkRoot),
@@ -648,20 +694,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	if err != nil {
 		return nil, err
 	}
-	var memberEmbedder embed.Embedder
-	var memberRuneCap func(context.Context) (int, error)
-	if crossEmbedder.Embedder != nil {
-		memberEmbedder = crossEmbedder
-		memberRuneCap = crossEmbedder.MaxRunes
-	}
-	access := &localRuntimeAccess{
-		project: project, participant: participant, dialogue: dialogue, runtime: runtime,
-		dependencies: &connectedDependencies{registry: registry, manager: manager, home: home, rounds: rounds,
-			writer: sdd.RepoID(cfg.RepoID), connected: cfg.Connected,
-			build: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
-				return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, modelWindow(cfg.LLM), memberEmbedder, memberRuneCap, cacheRoot)
-			}},
-	}
+	access := &localRuntimeAccess{project: project, participant: participant, dialogue: dialogue, runtime: runtime, dependencies: connectedDeps}
 	return &servedProject{
 		access: access, cfg: cfg, layout: layout, sessions: sessions, blobs: blobs,
 		graphDir: graphDir, entries: len(graphFolderEntries(graphDir).Entries), layers: layers, watched: watched,

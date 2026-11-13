@@ -681,10 +681,14 @@ func (a *Application) snapshotWithDependencyPolicy(ctx context.Context, identity
 		}
 	}
 	// Only the direct dependencies are members (20261113-235859-d-cpt-l3m).
-	model.NewMultiGraph(local, append([]RepoID(nil), runtime.options.Dependencies...), func(repoID RepoID) (*model.Graph, error) {
+	multi := model.NewMultiGraph(local, append([]RepoID(nil), runtime.options.Dependencies...), func(repoID RepoID) (*model.Graph, error) {
 		member := members[repoID]
 		return member.graph, member.err
 	})
+	if runtime.options.Further != nil {
+		multi.ResolveFurther(furtherResolver(ctx, runtime))
+		multi.ObserveFurther(runtime.further.note)
+	}
 	clone := *base
 	clone.graph = local
 	// The finder is the read authority, so rewrap it around the cross-graph

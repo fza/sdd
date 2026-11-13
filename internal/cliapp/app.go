@@ -775,12 +775,16 @@ func showCmd() *cli.Command {
 				}
 			}
 
-			g, err := loadGraph(cmd)
+			dir, err := resolveGraphDir(cmd)
 			if err != nil {
 				return err
 			}
-
-			f, err := newReadFinder()
+			f, settleFurther, err := furtherReadFinder(ctx, cmd.ErrWriter)
+			defer settleFurther()
+			if err != nil {
+				return err
+			}
+			g, err := f.CurrentGraph(dir)
 			if err != nil {
 				return err
 			}
@@ -813,6 +817,7 @@ func showCmd() *cli.Command {
 				return err
 			}
 			full, summary := result.ServedIDs()
+			warnUnavailableRefs(ctx, g)
 			return session.logRead(ctx, "show", full, summary)
 		},
 	}

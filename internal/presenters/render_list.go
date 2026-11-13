@@ -71,12 +71,15 @@ func writeRefExpansion(w io.Writer, ref types.ViewRef) {
 	sb.WriteString(" ")
 	sb.WriteString(ref.ID)
 	if ref.UnresolvedRepo != "" {
-		sb.WriteString(" [unresolved: repo ")
-		sb.WriteString(ref.UnresolvedRepo)
-		sb.WriteString("]")
+		sb.WriteString(" ")
+		sb.WriteString(unavailableMarker(ref.UnresolvedRepo, ref.UnresolvedReason))
 	} else if s := formatStatusTrail(ref.DerivedStatus); s != "" {
 		sb.WriteString(" ")
 		sb.WriteString(s)
+	}
+	if age := cloneAge(ref.CloneFetched); age != "" {
+		sb.WriteString(" ")
+		sb.WriteString(age)
 	}
 	if ref.Desc != "" {
 		sb.WriteString(`: "`)

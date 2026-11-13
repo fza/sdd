@@ -104,6 +104,18 @@ func (m *Manager) Demand(ctx context.Context, repo ConnectedRepo) (gitgate.Deman
 	return m.clones.gate.Demand(ctx, target)
 }
 
+// ReadWait is how long a read waits for a fetch of repo (read_wait).
+func (m *Manager) ReadWait(ctx context.Context, repo ConnectedRepo) (time.Duration, error) {
+	if m.clones.gate == nil {
+		return 0, ErrNoGate
+	}
+	target, err := m.clones.Target(ctx, repo.RepoID, repo.CloneURL)
+	if err != nil {
+		return 0, err
+	}
+	return m.clones.gate.ReadWait(target)
+}
+
 // Slots names the host repo's operations reach and how many of them the
 // gate runs against it at once.
 func (m *Manager) Slots(ctx context.Context, repo ConnectedRepo) (host string, slots int, err error) {

@@ -34,6 +34,37 @@ type RepoAddCmd struct {
 	OnPhase func(phase model.Phase)
 }
 
+// ResolveFurtherRefCmd makes the entry a direct dependency's ref names in a
+// repo beyond the local repo's direct dependencies available in that repo's
+// clone (20261113-235859-d-cpt-l3m): read from the clone as it stands, else
+// one fetch on a miss through the git gate, which may spend a credit inside
+// the fetch cooldown and is waited for at most read_wait.
+type ResolveFurtherRefCmd struct {
+	RepoID  model.RepoID
+	EntryID string
+
+	// Fetched reports that a fetch of RepoID completed earlier in the same
+	// read: a miss then is recorded without another fetch.
+	Fetched bool
+
+	// OnFetched reports that this command completed a fetch. Optional.
+	OnFetched func()
+
+	// OnUnavailable reports why the entry stays unavailable. Required.
+	OnUnavailable func(ref model.UnavailableRef)
+}
+
+// Validate checks that no unavailable entry goes unreported.
+func (c *ResolveFurtherRefCmd) Validate() error {
+	if c.RepoID == "" || c.EntryID == "" {
+		return fmt.Errorf("repo ID and entry ID are required")
+	}
+	if c.OnUnavailable == nil {
+		return fmt.Errorf("OnUnavailable is required")
+	}
+	return nil
+}
+
 // EnsureReposFreshCmd starts or renews the leases of the named connected
 // repos for a read: a clone on first use, else the sync round a lease start
 // asks for. OnPhase reports connecting → cloning for a clone and syncing for

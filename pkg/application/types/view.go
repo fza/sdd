@@ -123,6 +123,9 @@ type ViewRef struct {
 	DerivedStatus  DerivedStatus
 	Desc           string
 	UnresolvedRepo string
+	// UnresolvedReason and CloneFetched are as on ShownChainItem.
+	UnresolvedReason string
+	CloneFetched     time.Time
 }
 
 // ViewGrouped is an as-grouped section: entries bucketed by Field.

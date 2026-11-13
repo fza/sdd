@@ -161,7 +161,7 @@ func TestCLIExportJSON(t *testing.T) {
 
 // newDependencyRepo commits a graph declaring repoID (and deps) in a fresh
 // repository and connects it, so the export's cache freshening clones it.
-func newDependencyRepo(t *testing.T, f *appFixture, repoID string, deps []string, entries map[string]string) {
+func newDependencyRepo(t *testing.T, f *appFixture, repoID string, deps []string, entries map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := "repo_id: " + repoID + "\n"
@@ -196,6 +196,7 @@ func newDependencyRepo(t *testing.T, f *appFixture, repoID string, deps []string
 	}
 	config = append(config, "  - repo_id: "+repoID+"\n    clone_url: "+dir+"\n"...)
 	f.write(t, "config/sdd/config.yaml", string(config))
+	return dir
 }
 
 func testEntry(frontmatter string) string {

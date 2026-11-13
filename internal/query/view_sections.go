@@ -96,10 +96,14 @@ func viewList(g *model.Graph, flat model.FlatList) *types.ViewList {
 func viewRefs(expansions []model.RefExpansion) []types.ViewRef {
 	var refs []types.ViewRef
 	for _, ref := range expansions {
-		refs = append(refs, types.ViewRef{
+		view := types.ViewRef{
 			Kind: string(ref.Kind), ID: ref.ID, DerivedStatus: derivedStatus(ref.Status, ref.SupersedePath),
-			Desc: ref.Desc, UnresolvedRepo: string(ref.UnresolvedRepo),
-		})
+			Desc: ref.Desc, UnresolvedRepo: string(ref.UnresolvedRepo), CloneFetched: ref.CloneFetched,
+		}
+		if ref.Unavailable != nil {
+			view.UnresolvedReason = ref.Unavailable.Reason()
+		}
+		refs = append(refs, view)
 	}
 	return refs
 }

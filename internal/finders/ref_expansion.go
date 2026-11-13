@@ -1,6 +1,10 @@
 package finders
 
-import "github.com/networkteam/sdd/internal/model"
+import (
+	"time"
+
+	"github.com/networkteam/sdd/internal/model"
+)
 
 // expandRefs resolves each entry's outgoing refs into RefExpansion rows for
 // expand(refs) output. The result is parallel to entries: result[i] holds
@@ -27,11 +31,13 @@ func expandRefs(g *model.Graph, entries []*model.Entry, inactiveOnly bool) [][]m
 			var status model.Status
 			var supersedePath []string
 			var unresolvedRepo model.RepoID
+			var cloneFetched time.Time
 			if target, owner, ok := g.ResolveAcross(ref.ID); ok {
 				// Status and supersede trail derive in the owning graph —
 				// for a cross-repo target that is the cached member graph,
 				// with trail IDs qualified for display.
 				status, supersedePath = owner.QualifiedItemStatus(target)
+				cloneFetched, _ = owner.CloneFetched()
 			} else if repoID, _, isCross := model.SplitCrossRepoID(ref.ID); isCross {
 				// Cross-repo target whose repo is not resolvable: status
 				// stays unknown and the row carries the unresolved marker.
@@ -47,6 +53,8 @@ func expandRefs(g *model.Graph, entries []*model.Entry, inactiveOnly bool) [][]m
 				Desc:           ref.Desc,
 				SupersedePath:  supersedePath,
 				UnresolvedRepo: unresolvedRepo,
+				Unavailable:    g.UnavailableRef(ref.ID),
+				CloneFetched:   cloneFetched,
 			})
 		}
 		out[i] = rows

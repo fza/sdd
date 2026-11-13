@@ -2,6 +2,7 @@ package model
 
 import (
 	"sort"
+	"time"
 
 	"github.com/networkteam/sdd/pkg/application/types"
 )
@@ -29,6 +30,11 @@ type ShowTreeItem struct {
 	TruncatedReason string
 	Status          Status   // derived lifecycle status, computed at build so renderers stay pure
 	SupersedePath   []string // resolved origin→head trail when superseded; nil otherwise
+	// Unavailable says why an unresolved cross-repo node beyond the direct
+	// dependencies stays unresolved; CloneFetched is when the clone a resolved
+	// node beyond them was read from last fetched (20261113-235859-d-cpt-l3m).
+	Unavailable  *UnavailableRef
+	CloneFetched time.Time
 }
 
 // NodeID is the identifier a renderer displays and dedup keys on: the
@@ -351,6 +357,7 @@ func (g *Graph) buildUpstream(edgeID string, depth int, relations []string, refK
 				RefKind:     refKind,
 				RefDesc:     refDesc,
 				SummaryOnly: depth > 0,
+				Unavailable: g.UnavailableRef(edgeID),
 			}
 			if rendered[edgeID] || visited[edgeID] {
 				item.ShownAbove = true
@@ -375,6 +382,7 @@ func (g *Graph) buildUpstream(edgeID string, depth int, relations []string, refK
 		item.CrossRepoID = key
 	}
 	item.Status, item.SupersedePath = owner.QualifiedItemStatus(e)
+	item.CloneFetched, _ = owner.CloneFetched()
 
 	if rendered[key] {
 		item.ShownAbove = true
