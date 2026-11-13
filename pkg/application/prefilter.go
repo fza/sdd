@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -72,12 +73,45 @@ func runPrefilter(ctx context.Context, runtime *ProjectRuntime, policy Grounding
 		}
 	}
 	pass.status = model.PrefilterOK
+	scored := scoreCandidates(ctx, prefilter, subject, pending)
+	pass.fresh = scored.fresh
+	maps.Copy(pass.scores, scored.fresh)
+	var notes []string
+	notes = append(notes, fmt.Sprintf("judge %s scored %d of %d pairs; lines to judge run by falling score", prefilter.Judge, len(pass.fresh), len(pending)))
+	if scored.oversize > 0 {
+		notes = append(notes, fmt.Sprintf("%d too long for one call, left to judge uncut", scored.oversize))
+	}
+	if scored.unanswered > 0 {
+		notes = append(notes, fmt.Sprintf("%d unanswered and left to judge (%s)", scored.unanswered, strings.Join(scored.failures, "; ")))
+		pass.status = model.PrefilterPartial
+		if len(pass.fresh) == 0 {
+			pass.status = model.PrefilterFailed
+		}
+	}
+	pass.note = strings.Join(notes, ", ")
+	return pass, nil
+}
+
+// scoredPairs is what one scoring of pending candidates got: a score byte
+// per answered candidate, how many were too long for one call, and how many
+// calls left unanswered with their distinct failures.
+type scoredPairs struct {
+	fresh      map[string]uint8
+	oversize   int
+	unanswered int
+	failures   []string
+}
+
+// scoreCandidates rates pending against subject in filled calls, at most
+// prefilterInFlight at once and within prefilterDeadline (5.8, D30). A
+// failed call leaves its candidates unscored; the result names it.
+func scoreCandidates(ctx context.Context, prefilter Prefilter, subject string, pending []relevance.Candidate) scoredPairs {
+	scored := scoredPairs{fresh: map[string]uint8{}}
 	batches, oversize := relevance.Plan(prefilter.Scorer, subject, pending)
+	scored.oversize = len(oversize)
 	ctx, cancel := context.WithTimeout(ctx, prefilterDeadline)
 	defer cancel()
 	var mu sync.Mutex
-	var failures []string
-	unanswered := 0
 	group := errgroup.Group{}
 	group.SetLimit(prefilterInFlight)
 	for _, batch := range batches {
@@ -93,33 +127,18 @@ func runPrefilter(ctx context.Context, runtime *ProjectRuntime, policy Grounding
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
-				unanswered += len(request.Candidates)
-				if !slices.Contains(failures, err.Error()) {
-					failures = append(failures, err.Error())
+				scored.unanswered += len(request.Candidates)
+				if !slices.Contains(scored.failures, err.Error()) {
+					scored.failures = append(scored.failures, err.Error())
 				}
 				return nil
 			}
 			for i, candidate := range request.Candidates {
-				score := model.ScoreByte(result.Scores[i])
-				pass.fresh[candidate.ID] = score
-				pass.scores[candidate.ID] = score
+				scored.fresh[candidate.ID] = model.ScoreByte(result.Scores[i])
 			}
 			return nil
 		})
 	}
 	_ = group.Wait()
-	var notes []string
-	notes = append(notes, fmt.Sprintf("judge %s scored %d of %d pairs; lines to judge run by falling score", prefilter.Judge, len(pass.fresh), len(pending)))
-	if len(oversize) > 0 {
-		notes = append(notes, fmt.Sprintf("%d too long for one call, left to judge uncut", len(oversize)))
-	}
-	if unanswered > 0 {
-		notes = append(notes, fmt.Sprintf("%d unanswered and left to judge (%s)", unanswered, strings.Join(failures, "; ")))
-		pass.status = model.PrefilterPartial
-		if len(pass.fresh) == 0 {
-			pass.status = model.PrefilterFailed
-		}
-	}
-	pass.note = strings.Join(notes, ", ")
-	return pass, nil
+	return scored
 }

@@ -48,3 +48,19 @@ func (r *ProjectRuntime) appendRelevance(ctx context.Context, batch model.Releva
 	}
 	return nil
 }
+
+// prefilterCalibration loads the ledger and the prefilter judge's calibrated
+// thresholds, which gather's prefilter and the deep verifier's lanes share
+// (20261109-004506-d-cpt-udz, D33): invalid while no judge is configured or
+// the recall bound does not hold.
+func (r *ProjectRuntime) prefilterCalibration(ctx context.Context) (*model.RelevanceLedger, model.RelevanceThresholds, error) {
+	ledger, err := r.relevanceLedger(ctx)
+	if err != nil {
+		return nil, model.RelevanceThresholds{}, err
+	}
+	judge := r.options.Prefilter.Judge
+	if judge == "" {
+		return ledger, model.RelevanceThresholds{}, nil
+	}
+	return ledger, model.Calibrate(ledger.Labels(judge), ledger.Steps(), judge), nil
+}

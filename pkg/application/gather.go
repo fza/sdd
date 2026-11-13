@@ -191,15 +191,11 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 
 	candidates, setAside := model.GatherCandidates(graph, live, reads, opened, request.Answered)
 	candidates = slices.DeleteFunc(candidates, func(c model.GatherCandidate) bool { return c.Entry.ID == request.Subject })
-	ledger, err := runtime.relevanceLedger(ctx)
+	ledger, thresholds, err := runtime.prefilterCalibration(ctx)
 	if err != nil {
 		return GatherResult{}, err
 	}
 	judge := runtime.options.Prefilter.Judge
-	var thresholds model.RelevanceThresholds
-	if judge != "" {
-		thresholds = model.Calibrate(ledger.Labels(judge), ledger.Steps(), judge)
-	}
 	split := model.SplitByLedger(candidates, request.Subject, ledger, judge, thresholds)
 	if len(split.NotRelevant) > 0 {
 		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideJudged, IDs: split.NotRelevant})
