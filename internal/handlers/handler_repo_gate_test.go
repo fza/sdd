@@ -97,6 +97,8 @@ type connections struct {
 	round   *repoRound
 	git     *synctest.CloneGit
 	repos   map[model.RepoID]*synctest.Repo
+	// now is the gate's clock.
+	now *time.Time
 }
 
 const uncloned = model.RepoID("example.test/acme/uncloned")
@@ -133,7 +135,7 @@ func newConnections(t *testing.T, now time.Time, scripted map[model.RepoID]*sync
 	}
 	repostest.WriteConfig(t, loc.ConfigPath, cfg)
 	manager := repos.NewManager(reg, repos.NewGraphClones(loc, git, gate))
-	return &connections{handler: handlers.New(handlers.Options{Repos: manager, CloneRound: round}), manager: manager, round: round, git: git, repos: scripted}
+	return &connections{handler: handlers.New(handlers.Options{Repos: manager, CloneRound: round}), manager: manager, round: round, git: git, repos: scripted, now: &now}
 }
 
 func (c *connections) sync(t *testing.T, cmd *command.RepoSyncCmd) map[model.RepoID]model.RepoSyncOutcome {
@@ -321,5 +323,36 @@ func TestRepoSyncWithoutTheCloneRound(t *testing.T) {
 	_, err = handler.EnsureReposFresh(t.Context(), command.EnsureReposFreshCmd{RepoIDs: []model.RepoID{uncloned}})
 	if err == nil {
 		t.Error("a refresh without the clone round should fail")
+	}
+}
+
+// `sdd repo sync` and sync_repos are commanded: inside a cooldown a credit
+// pays for the fetch, or for the push of commits waiting.
+func TestRepoSyncSpendsCredits(t *testing.T) {
+	const repoID = model.RepoID("example.test/acme/graph")
+	cases := []struct {
+		name  string
+		repo  *synctest.Repo
+		after time.Duration
+		state model.RepoSyncState
+		op    string
+	}{
+		{name: "fetch", repo: &synctest.Repo{Upstream: "origin/main"}, after: 90 * time.Second, state: model.RepoSynced, op: "fetch"},
+		{name: "push of commits waiting", repo: &synctest.Repo{Upstream: "origin/main", Ahead: 1, GraphAhead: 1}, after: 15 * time.Second, state: model.RepoPushed, op: "push"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newConnections(t, time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC), map[model.RepoID]*synctest.Repo{repoID: tc.repo})
+			c.sync(t, &command.RepoSyncCmd{RepoIDs: []model.RepoID{repoID}})
+			// The fetch slices left unused meanwhile earn credits.
+			*c.now = c.now.Add(20 * time.Minute)
+			c.sync(t, &command.RepoSyncCmd{RepoIDs: []model.RepoID{repoID}})
+
+			*c.now = c.now.Add(tc.after)
+			outcome := c.sync(t, &command.RepoSyncCmd{RepoIDs: []model.RepoID{repoID}})[repoID]
+			if outcome.State != tc.state || tc.repo.Count(tc.op) != 3 {
+				t.Errorf("a commanded sync inside the cooldown should spend a credit, got %+v after %d runs", outcome, tc.repo.Count(tc.op))
+			}
+		})
 	}
 }

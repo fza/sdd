@@ -316,6 +316,7 @@ func (h *Handler) publishGraph(ctx context.Context) error {
 	if h.syncMode != model.SyncModeAuto {
 		return nil
 	}
+	ctx = gitgate.WithCredits(ctx, gitgate.Push)
 	release, err := h.takeSyncLock(ctx, true)
 	if err != nil {
 		return err

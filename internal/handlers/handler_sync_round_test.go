@@ -610,3 +610,30 @@ func TestTwoHandlersOnOneStateDirFetchOnce(t *testing.T) {
 		t.Errorf("the second round should be deferred until the cooldown ends, got %v", deferred)
 	}
 }
+
+// A publish of what a graph command committed spends a credit inside the
+// push cooldown; an automatic round never does.
+func TestPublishGraphSpendsACredit(t *testing.T) {
+	repo := &synctest.Repo{Upstream: "origin/main", URL: hostedURL, Ahead: 1, GraphAhead: 1}
+	f := newSyncFixture(t, repo)
+	f.fetchedJustNow(t)
+	// The fetch slices left unused meanwhile earn credits.
+	f.now = f.now.Add(20 * time.Minute)
+	err := f.handler.PublishGraph(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.now = f.now.Add(15 * time.Second)
+	f.round(t, context.Background(), command.SyncRoundCmd{})
+	if repo.Count("push") != 1 {
+		t.Error("an automatic round should not spend a credit on a push inside its cooldown")
+	}
+	err = f.handler.PublishGraph(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.Count("push") != 2 {
+		t.Error("a publish inside the push cooldown should spend a credit")
+	}
+}

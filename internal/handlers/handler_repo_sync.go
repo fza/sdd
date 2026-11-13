@@ -10,6 +10,7 @@ import (
 	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 )
@@ -59,6 +60,9 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 	}
 	targets := cmd.RepoIDs
 	mode := connectedSync{clone: true, explicit: true}
+	if !cmd.Due {
+		ctx = gitgate.WithCredits(ctx, gitgate.Fetch, gitgate.Push)
+	}
 	switch {
 	case cmd.Due:
 		targets, err = h.closureMembers(ctx)

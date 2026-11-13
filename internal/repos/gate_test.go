@@ -180,6 +180,35 @@ func TestGraphClonesPassTheGate(t *testing.T) {
 	}
 }
 
+// A publish within the push cooldown spends a credit its clone's unused fetch
+// slices earned.
+func TestGraphClonesPublishSpendsACredit(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	gate := gitgate.New(gitgate.Options{
+		StateDir: t.TempDir(),
+		Limits:   func(string) gitgate.Limits { return model.DefaultGitLimits() },
+		Now:      func() time.Time { return now },
+	})
+	git := &countingGit{}
+	clones := repos.NewGraphClones(repos.Locations{DataRoot: t.TempDir()}, git, gate)
+	repoID := model.RepoID("example.test/acme/app-sdd")
+	_, _, err := clones.Ensure(t.Context(), repoID, "git@example.test:acme/app.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(20 * time.Minute)
+	err = clones.Publish(t.Context(), repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(15 * time.Second)
+	err = clones.Publish(t.Context(), repoID)
+	if err != nil || git.pushes != 2 {
+		t.Errorf("a publish within the push cooldown should spend a credit, got %v after %d pushes", err, git.pushes)
+	}
+}
+
 func TestGraphClonesWithoutGateRefuseToClone(t *testing.T) {
 	git := &countingGit{}
 	clones := repos.NewGraphClones(repos.Locations{DataRoot: t.TempDir()}, git, nil)

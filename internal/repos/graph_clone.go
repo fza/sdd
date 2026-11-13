@@ -209,7 +209,7 @@ func (g *GraphClones) Publish(ctx context.Context, repoID model.RepoID) error {
 	if !waiting {
 		return nil
 	}
-	err = g.run(ctx, gitgate.Push, func(ctx context.Context) (string, error) { return g.git.RemoteURL(ctx, dir) }, func(ctx context.Context) error {
+	err = g.run(gitgate.WithCredits(ctx, gitgate.Push), gitgate.Push, func(ctx context.Context) (string, error) { return g.git.RemoteURL(ctx, dir) }, func(ctx context.Context) error {
 		return g.git.PushGraphClone(ctx, dir)
 	})
 	if err != nil {
