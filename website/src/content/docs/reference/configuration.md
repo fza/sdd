@@ -174,6 +174,8 @@ In a guided dialogue the writing guide runs once on the content the user approve
 | `sync.default.push_cooldown` | `30s` | Least time between two pushes to one remote. A value below `10s` is ignored. |
 | `sync.default.retries` | `2` | Retries of a git network operation that failed. |
 | `sync.default.concurrency` | `2` | Git network operations that run at the same time against one host. |
+| `sync.default.lease_pause` | `10m` | How long a clone's [lease](#leases) holds after the last call that renewed it. A value below `1m` is ignored. |
+| `sync.default.read_wait` | `15s` | How long a call waits for the sync round its lease start runs. A value below `1s` is ignored. |
 | `sync.default.ssh.per_hour` | `600` | SSH operations per hour against one host. |
 | `sync.default.https.per_hour` | `600` | HTTPS operations per hour against one host, with credentials. |
 | `sync.default.https.per_hour_unauthenticated` | `60` | HTTPS operations per hour against one host, without credentials. |
@@ -182,6 +184,23 @@ In a guided dialogue the writing guide runs once on the content the user approve
 | `sync.default.https.per_minute_unauthenticated` | A tenth of `https.per_hour_unauthenticated` | The same for HTTPS without credentials. |
 | `sync.hosts.<host>.<limit>` | The `sync.default` value | The same limits for one remote host, such as `github.com`. |
 | `sessions.retention` | `14d` | When `sdd serve` starts, it deletes the logs of sessions that ended longer ago than this. Accepts days, such as `14d`, or a duration, such as `336h`. Set it in the user-global file. An invalid value stops `sdd serve` from starting. |
+
+`sdd config set` refuses a value below its minimum; read from a file, such a value is ignored with a warning.
+
+#### Leases
+
+The clones sdd keeps under `~/.local/share/sdd/repos/`, those of connected repositories and the project's own `graph_repo` clone, sync automatically only while a lease holds. A graph inside the code repository has no lease and never syncs automatically. Every `sdd serve` on the machine shares one lease per repository. A lease starts or renews:
+
+- for the home project's graph, on `start_session`, `start_procedure` and `resume_session`;
+- for a project, on every call of a move working in it: `start_procedure`, `next`, `park`, `abandon` and `gather`;
+- for a repository a read names: `search` or `view` with `repos` or `all_repos`, `search`, `show`, `view`, `read_attachment` or `info` with `project`, a capture ref `<repo-id>:<entry-id>`, a capture written into a dependency;
+- for the home project's graph, on a read naming no repository.
+
+`registry` reads no repository and renews nothing. A lease ends `lease_pause` after its last renewal.
+
+While a lease holds, the timer of `sdd serve` fetches the clone once per effective fetch cooldown, described under [git credits](#git-credits). Without a lease it fetches nothing. Commits waiting in a clone are pushed whether a lease holds or not.
+
+When a call starts a lease and the clone's effective fetch cooldown has passed, one sync round runs at once and the call waits for it at most `read_wait`. Past that, the call reads the clone as it stands and its sync notice says the refresh still runs and when the clone last fetched; the round finishes in the background. A lease starting inside the cooldown reads the clone as it stands and spends nothing. The CLI commands that read connected repositories, `sdd show`, `sdd view`, `sdd search`, `sdd export` and `sdd new` with a ref into one, start or renew the leases of the repositories they read the same way and print the same warning. A command ends only once its rounds have finished.
 
 #### Git credits
 
@@ -208,7 +227,7 @@ repos:
     clone_url: git@github.com:acme/platform.git
 ```
 
-sdd keeps a clone of each connected repository under `~/.local/share/sdd/repos/<repo_id>`. A read that needs it runs the clone's sync round once the fetch cooldown of the [git limits](#sync-and-sessions) has passed. The [connected repositories guide](/sdd/guides/connected-repositories/#a-connected-graph-is-what-was-pushed) describes the round.
+sdd keeps a clone of each connected repository under `~/.local/share/sdd/repos/<repo_id>`. A read that needs it starts or renews the clone's [lease](#leases), which runs the clone's sync round once its effective fetch cooldown has passed. The [connected repositories guide](/sdd/guides/connected-repositories/#a-connected-graph-is-what-was-pushed) describes the round.
 
 ## Language model providers
 
