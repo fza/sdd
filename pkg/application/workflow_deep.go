@@ -45,6 +45,7 @@ const (
 	fieldDeepUnedited   = "deepUnedited"
 	fieldDeepReplayed   = "deepReplayed"
 	fieldDeepListed     = "deepListed"
+	fieldDeepUserListed = "deepUserListed"
 	fieldDeepProblems   = "deepProblems"
 	fieldDeepNoSubagent = "deepNoSubagent"
 	fieldDeepForkBase   = "deepForkBase"
@@ -269,7 +270,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Doc: engine.FuncDoc{
 				Name: "prepareDeep", Doc: "Opens a deep exchange over the current draft: the base document, the paged reading, the weighing rule's recommendation, and a fresh exchange; for the live verifier, the revision's reading.",
 				Reads:  append(slices.Clone(captureDraftFields), "findings", "preflightOverride", "verdicts", fieldDeepVerdict, fieldDeepRevisions, fieldDeepReadIDs),
-				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepUnedited, fieldDeepReplayed, fieldDeepListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs, fieldDeepFresh},
+				Writes: []string{fieldDeepBase, fieldDeepPages, fieldDeepPageFull, fieldDeepWeighing, fieldDeepHistory, fieldDeepRounds, fieldDeepProposal, fieldDeepHunks, fieldDeepOpen, fieldDeepWithdrawn, fieldDeepUnedited, fieldDeepReplayed, fieldDeepListed, fieldDeepUserListed, fieldDeepProblems, fieldDeepNoSubagent, fieldDeepForkBase, fieldDeepEndReason, fieldDeepRevising, fieldDeepRevisions, fieldDeepRevisionPages, fieldDeepRevisionPageFull, fieldDeepReadIDs, fieldDeepFresh},
 			},
 			Fn: w.prepareDeep,
 		},
@@ -304,7 +305,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
-			Doc:    engine.FuncDoc{Name: "readDeepFindings", Doc: "Lists the verifier's findings for the drafter to answer, and the problems still refusing them.", Reads: []string{fieldDeepFindings, fieldDeepBase}, Writes: []string{fieldDeepListed, fieldDeepProblems, fieldDeepRounds}},
+			Doc:    engine.FuncDoc{Name: "readDeepFindings", Doc: "Lists the verifier's findings for the drafter to answer, apart from those only the user can settle, and the problems still refusing them.", Reads: []string{fieldDeepFindings, fieldDeepBase}, Writes: []string{fieldDeepListed, fieldDeepUserListed, fieldDeepProblems, fieldDeepRounds}},
 			Fn:     w.readDeepFindings,
 			Rounds: true,
 		},
@@ -386,7 +387,7 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 	base := draftText(ctx.Store)
 	writes := map[string]any{
 		fieldDeepBase: base, fieldDeepHistory: []model.DeepResponse{}, fieldDeepRounds: 0,
-		fieldDeepProposal: nil, fieldDeepHunks: nil, fieldDeepOpen: nil, fieldDeepWithdrawn: nil, fieldDeepUnedited: nil, fieldDeepReplayed: nil, fieldDeepListed: nil, fieldDeepProblems: nil, fieldDeepNoSubagent: nil,
+		fieldDeepProposal: nil, fieldDeepHunks: nil, fieldDeepOpen: nil, fieldDeepWithdrawn: nil, fieldDeepUnedited: nil, fieldDeepReplayed: nil, fieldDeepListed: nil, fieldDeepUserListed: nil, fieldDeepProblems: nil, fieldDeepNoSubagent: nil,
 		fieldDeepForkBase: verifyForks(w.session, ctx.Instance), fieldDeepEndReason: nil,
 		fieldDeepRevising: revising, fieldDeepRevisions: 0, fieldDeepRevisionPages: nil, fieldDeepRevisionPageFull: nil, fieldDeepFresh: nil,
 	}
@@ -603,30 +604,34 @@ func (w *WorkflowSession) readDeepFindings(ctx *engine.Context) error {
 	}
 	base, _ := workflowStoreString(ctx.Store, fieldDeepBase)
 	problems := model.CheckDeepFindings(base, findings, func(id string) bool { return ctx.Graph != nil && ctx.Graph.ByID[id] != nil })
-	var listed strings.Builder
+	var answerable, owned strings.Builder
 	for i, finding := range findings {
-		owner := ""
+		listed := &answerable
 		if finding.Owner {
-			owner = " (only the user can settle it: goes to them)"
+			listed = &owned
 		}
-		fmt.Fprintf(&listed, "- %s [%s, %s]%s: %s", model.DeepFindingID(i), finding.Severity, finding.Axis, owner, finding.Verdict)
+		fmt.Fprintf(listed, "- %s [%s, %s]: %s", model.DeepFindingID(i), finding.Severity, finding.Axis, finding.Verdict)
 		if len(finding.Basis) > 0 {
-			fmt.Fprintf(&listed, " (rests on %s)", strings.Join(finding.Basis, ", "))
+			fmt.Fprintf(listed, " (rests on %s)", strings.Join(finding.Basis, ", "))
 		}
 		for _, pointer := range finding.Pointers {
 			switch {
 			case pointer.Quote != "":
-				fmt.Fprintf(&listed, "\n  - %s: %q", pointer.Field, pointer.Quote)
+				fmt.Fprintf(listed, "\n  - %s: %q", pointer.Field, pointer.Quote)
 			case pointer.ID != "":
-				fmt.Fprintf(&listed, "\n  - %s: %s", pointer.Field, pointer.ID)
+				fmt.Fprintf(listed, "\n  - %s: %s", pointer.Field, pointer.ID)
 			}
 		}
 		if len(finding.Sources) > 0 {
-			fmt.Fprintf(&listed, "\n  - sources: %s", strings.Join(finding.Sources, ", "))
+			fmt.Fprintf(listed, "\n  - sources: %s", strings.Join(finding.Sources, ", "))
 		}
 		listed.WriteString("\n")
 	}
-	err = ctx.Store.WriteEngine(fieldDeepListed, listed.String())
+	err = ctx.Store.WriteEngine(fieldDeepListed, answerable.String())
+	if err != nil {
+		return err
+	}
+	err = ctx.Store.WriteEngine(fieldDeepUserListed, owned.String())
 	if err != nil {
 		return err
 	}

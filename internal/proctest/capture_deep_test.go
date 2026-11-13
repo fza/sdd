@@ -320,17 +320,33 @@ func TestCaptureDeep_AProposalWithMarkupCharactersMatchesItsDraft(t *testing.T) 
 	proctest.RequireStep(t, serve, "playback")
 }
 
+func TestCaptureDeep_AnswerableFindingsAreListedApartFromTheUsers(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-owner-apart", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	x.judge(t, []any{
+		map[string]any{"verdict": "the gap names no owner", "axis": "inconsistent", "severity": "low"},
+		map[string]any{"verdict": "whether this gap is in scope is the owner's call", "axis": "aspiration", "severity": "medium", "owner": true},
+	})
+	serve := x.pickUp(t)
+	proctest.RequireStep(t, serve, "deepAnswer")
+	text := test.Untagged(serve.Instructions)
+	answerable, toUser, found := strings.Cut(text, "Going to the user after the proposal, not yours to accept or contest:")
+	if !found || !strings.Contains(answerable, "- f1 [low, inconsistent]: the gap names no owner") || strings.Contains(answerable, "- f2 ") {
+		t.Fatalf("the findings to answer should hold f1 alone, before the user's block:\n%s", text)
+	}
+	if !strings.Contains(toUser, "- f2 [medium, aspiration]: whether this gap is in scope is the owner's call") || strings.Contains(toUser, "- f1 ") {
+		t.Fatalf("the user's block should hold f2 alone:\n%s", text)
+	}
+}
+
 func TestCaptureDeep_OwnerFindingGoesToTheUser(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-owner", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())
 	x.judge(t, []any{map[string]any{"verdict": "whether this gap is in scope is the owner's call", "axis": "aspiration", "severity": "medium", "owner": true}})
 	serve := x.pickUp(t)
 	proctest.RequireStep(t, serve, "deepAnswer")
-	if !strings.Contains(serve.Instructions, "only the user can settle it") {
-		t.Fatalf("an owner finding should be named as the user's:\n%s", serve.Instructions)
-	}
-	if !strings.Contains(serve.Instructions, "marked as only the user can settle stays out of the contest") || strings.Contains(serve.Instructions, "goes to them, never into a contest. So does") {
-		t.Fatalf("the answer step should keep a marked finding out of the contest the engine refuses it in:\n%s", serve.Instructions)
+	if text := test.Untagged(serve.Instructions); !strings.Contains(text, "Going to the user after the proposal, not yours to accept or contest:\n\n- f1 [medium, aspiration]") || strings.Contains(text, "The deep verifier raised these findings:") {
+		t.Fatalf("the answer step should list an owner finding apart, as going to the user:\n%s", text)
 	}
 	_, err := session.AnswerErr(t, x.instance, "deepAnswer", "contest", map[string]any{"deepContest": []any{map[string]any{"target": "f1", "verdict": "contest", "reason": "in scope"}}}, "")
 	if err == nil || !strings.Contains(err.Error(), "f1 is the user's to settle") {
