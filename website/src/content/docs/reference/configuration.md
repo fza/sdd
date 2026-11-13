@@ -177,19 +177,22 @@ In a guided dialogue the writing guide runs once on the content the user approve
 | `sync.default.ssh.per_hour` | `600` | SSH operations per hour against one host. |
 | `sync.default.https.per_hour` | `600` | HTTPS operations per hour against one host, with credentials. |
 | `sync.default.https.per_hour_unauthenticated` | `60` | HTTPS operations per hour against one host, without credentials. |
+| `sync.default.ssh.per_minute` | A tenth of `ssh.per_hour` | SSH operations per minute against one host. Once reached, every operation waits for the next minute. |
+| `sync.default.https.per_minute` | A tenth of `https.per_hour` | The same for HTTPS with credentials. |
+| `sync.default.https.per_minute_unauthenticated` | A tenth of `https.per_hour_unauthenticated` | The same for HTTPS without credentials. |
 | `sync.hosts.<host>.<limit>` | The `sync.default` value | The same limits for one remote host, such as `github.com`. |
 | `sessions.retention` | `14d` | When `sdd serve` starts, it deletes the logs of sessions that ended longer ago than this. Accepts days, such as `14d`, or a duration, such as `336h`. Set it in the user-global file. An invalid value stops `sdd serve` from starting. |
 
 #### Git credits
 
-sdd counts every git network operation it starts against its host and protocol: SSH, HTTPS with credentials, or HTTPS without. The fetch cooldown of each repository is at least one hour times the number of repositories sdd tracks on that host and protocol, divided by the hourly limit, so that one fetch per repository per cooldown stays within the limit. With the defaults this lengthens the cooldown from 51 repositories on, or from 6 over HTTPS without login. An HTTPS repository whose login sdd does not know yet takes the smaller of the two HTTPS limits.
+sdd counts every git network operation it starts in a bucket per host: SSH, HTTPS with credentials, or HTTPS without. Automatic fetches may use 90 percent of each bucket's hourly limit; the rest is kept for pushes and for syncs you command. The clones sdd keeps under `~/.local/share/sdd/repos/` share the fetches: the fetch cooldown of each repository is at least one hour times the number of those clones in its bucket, divided by 90 percent of the bucket's hourly limit. Repositories you work in yourself and removed clones do not count. With the defaults this lengthens the cooldown from 46 clones on, or from 5 over HTTPS without login. An HTTPS repository whose login sdd does not know yet counts in both HTTPS buckets and takes the longer cooldown.
 
-Once a repository may fetch again, each span of one cooldown that passes without a fetch earns its host and protocol one credit. The credit expires one hour after its span began. A credit lets one operation run inside its cooldown:
+Once a clone may fetch again, each span of one cooldown that passes without a fetch earns its host and protocol one credit. The credit expires one hour after its span began. A credit lets one operation run inside its cooldown:
 
 - The push of commits sdd just wrote, such as a capture into a connected repository right after its last push.
 - A sync you command with `sdd repo sync` or the `sync_repos` tool, its fetch or its push.
 
-Reads and the rounds `sdd serve` runs on its own never spend a credit. Even with one, fetches of one repository stay at least 1 minute apart and its pushes at least 10 seconds apart, the hourly limit and `concurrency` still apply, and the cooldown after a failed operation holds. Without a credit the operation waits for its cooldown.
+Reads and the rounds `sdd serve` runs on its own never spend a credit. Even with one, fetches of one repository stay at least 1 minute apart and its pushes at least 10 seconds apart, the hourly and per-minute limits and `concurrency` still apply, and the cooldown after a failed operation holds. Without a credit the operation waits for its cooldown.
 
 ### Connected repositories
 
