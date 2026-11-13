@@ -164,3 +164,19 @@ func TestJSONObjectAnswerOutsideTheSchemaIsAResponseFault(t *testing.T) {
 		})
 	}
 }
+
+// A model adds a property the schema does not declare, such as a confidence
+// beside the answer; no caller reads it, so the answer stands without it.
+func TestJSONObjectAnswerDropsUndeclaredProperties(t *testing.T) {
+	answer := `{"findings":[{"observation":"o","severity":"low","note":"extra"}],"confidence":"high"}`
+	server := test.NewOpenAIServer(t, test.OpenAIBehaviour{Answer: answer})
+	runner := newStructuredRunner(t, server.URL, "m", model.StructuredOutputJSONObject)
+
+	result, err := runner.Run(context.Background(), llm.Request{UserPrompt: "USER", ResponseSchema: findingsSchema})
+	if err != nil {
+		t.Fatalf("an answer carrying only undeclared extras should stand: %v", err)
+	}
+	if strings.Contains(result.Text, "confidence") || strings.Contains(result.Text, "extra") || !strings.Contains(result.Text, `"observation":"o"`) {
+		t.Errorf("the answer should keep its declared properties only, got %s", result.Text)
+	}
+}
