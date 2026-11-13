@@ -34,7 +34,7 @@ func newSyncFixture(t *testing.T, repo *synctest.Repo) *syncFixture {
 	clock := func() time.Time { return f.now }
 	f.handler = handlers.New(handlers.Options{
 		GraphDir: "graph", GraphFetcher: repo, GraphPuller: repo, Pusher: repo, SyncLock: f.lock, SyncRecord: f.record,
-		SyncMode: model.SyncModeAuto, Now: clock, Gate: synctest.Gate(t.TempDir(), clock),
+		SyncMode: model.SyncModeAuto, Now: clock, Gate: synctest.Gate(t.TempDir(), clock, hostedURL),
 	})
 	return f
 }

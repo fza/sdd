@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -17,10 +18,10 @@ func TestGitFetchSlice(t *testing.T) {
 		want       time.Duration
 	}{
 		{name: "few repositories keep the configured cooldown", configured: 5 * time.Minute, perHour: 600, repos: 10, want: 5 * time.Minute},
-		{name: "at the bucket's share the slice equals the cooldown", configured: 5 * time.Minute, perHour: 600, repos: 50, want: 5 * time.Minute},
-		{name: "more repositories stretch the slice", configured: 5 * time.Minute, perHour: 600, repos: 100, want: 10 * time.Minute},
-		{name: "a small bucket stretches it past an hour", configured: 5 * time.Minute, perHour: 60, repos: 120, want: 2 * time.Hour},
-		{name: "a slice of seconds", configured: time.Minute, perHour: 3600, repos: 90, want: 90 * time.Second},
+		{name: "at the fetch share the slice equals the cooldown", configured: 5 * time.Minute, perHour: 600, repos: 45, want: 5 * time.Minute},
+		{name: "more repositories stretch the slice", configured: 5 * time.Minute, perHour: 600, repos: 90, want: 10 * time.Minute},
+		{name: "a small bucket stretches it past an hour", configured: 5 * time.Minute, perHour: 60, repos: 108, want: 2 * time.Hour},
+		{name: "a slice of seconds", configured: time.Minute, perHour: 4000, repos: 90, want: 90 * time.Second},
 		{name: "no repository tracked yet", configured: 5 * time.Minute, perHour: 600, repos: 0, want: 5 * time.Minute},
 	}
 	for _, tc := range cases {
@@ -28,6 +29,24 @@ func TestGitFetchSlice(t *testing.T) {
 			got := model.GitFetchSlice(tc.configured, tc.perHour, tc.repos)
 			if got != tc.want {
 				t.Errorf("the slice should keep the repositories' fetches within the hourly limit, got %v", got)
+			}
+		})
+	}
+}
+
+func TestGitFetchShare(t *testing.T) {
+	cases := []struct {
+		perHour, want int
+	}{
+		{perHour: 600, want: 540},
+		{perHour: 60, want: 54},
+		{perHour: 4, want: 4},
+		{perHour: 1, want: 1},
+	}
+	for _, tc := range cases {
+		t.Run(strconv.Itoa(tc.perHour), func(t *testing.T) {
+			if got := model.GitFetchShare(tc.perHour); got != tc.want {
+				t.Errorf("automatic fetches should keep a tenth of the hourly limit for pushes and commanded syncs, got %d", got)
 			}
 		})
 	}

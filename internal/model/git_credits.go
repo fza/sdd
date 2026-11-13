@@ -2,14 +2,25 @@ package model
 
 import "time"
 
+// gitFetchPercent is the share of a bucket's hourly limit automatic fetches
+// may use; the rest is kept for pushes and commanded syncs.
+const gitFetchPercent = 90
+
+// GitFetchShare is how many operations of a bucket's hourly limit perHour
+// automatic fetches may use.
+func GitFetchShare(perHour int) int {
+	return (perHour*gitFetchPercent + 99) / 100
+}
+
 // GitFetchSlice is the fetch cooldown of each of repos repositories sharing
 // an hourly bucket of perHour operations: the configured cooldown, stretched
-// so that one fetch per repository per slice stays within perHour.
+// so that one fetch per repository per slice stays within the fetch share of
+// perHour.
 func GitFetchSlice(configured time.Duration, perHour, repos int) time.Duration {
 	if perHour <= 0 || repos <= 0 {
 		return configured
 	}
-	return max(configured, time.Hour*time.Duration(repos)/time.Duration(perHour))
+	return max(configured, time.Hour*time.Duration(repos)*100/(time.Duration(perHour)*gitFetchPercent))
 }
 
 // IdleGitSlices rolls a repository's fetch slice, which came due at due,

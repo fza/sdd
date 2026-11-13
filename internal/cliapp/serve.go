@@ -589,7 +589,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	if err != nil {
 		return nil, err
 	}
-	targets, err := localadapter.NewRepositoryTargets(ctx, project, serverCheckout, locations.ConfigPath, localLayer, locations.StateRoot)
+	targets, err := localadapter.NewRepositoryTargets(ctx, project, serverCheckout, locations.ConfigPath, localLayer, locations.StateRoot, locations.DataRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -673,7 +673,7 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 		}
 		defaultBranch = branch
 	}
-	targets, err := localadapter.NewRepositoryTargets(ctx, project, dir, locations.ConfigPath, "", locations.StateRoot)
+	targets, err := localadapter.NewRepositoryTargets(ctx, project, dir, locations.ConfigPath, "", locations.StateRoot, locations.DataRoot)
 	if err != nil {
 		return nil, err
 	}

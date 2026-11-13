@@ -3,7 +3,6 @@ package gitgate
 import (
 	"context"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -39,43 +38,44 @@ func creditFloor(kind Kind) time.Duration {
 	return model.MinGitFetchCooldown
 }
 
-// fetchSlice is target's fetch cooldown: the configured one, stretched to the
-// slice of its bucket's hourly limit each repository the ledger tracks on its
-// host and protocol gets. A repository counting against both HTTPS buckets
-// takes the smaller limit.
+// fetchSlice is target's effective fetch cooldown: the configured one,
+// stretched to the slice of each of its buckets' fetch share that every
+// sdd-owned clone in that bucket gets; the longest wins.
 func (l *ledger) fetchSlice(repo *repoRecord, target Target, limits Limits) time.Duration {
-	buckets := bucketsFor(repo, target, limits)
-	perHour := buckets[0].limit
-	for _, b := range buckets[1:] {
-		perHour = min(perHour, b.limit)
+	slice := limits.FetchCooldown
+	for _, b := range bucketsFor(repo, target, limits) {
+		slice = max(slice, model.GitFetchSlice(limits.FetchCooldown, b.limit, l.clonesIn(b.key, limits)))
 	}
-	return model.GitFetchSlice(limits.FetchCooldown, perHour, l.tracked(target.Host, target.Protocol))
+	return slice
 }
 
-func (l *ledger) tracked(host string, protocol Protocol) int {
+// clonesIn counts the sdd-owned clones counting against the bucket key; a
+// clone whose login is not known yet counts in both HTTPS buckets.
+func (l *ledger) clonesIn(key string, limits Limits) int {
 	count := 0
-	for key, repo := range l.Repos {
-		if repo.Protocol == protocol && repoHost(key) == host {
-			count++
+	for _, clone := range l.clones {
+		repo := l.Repos[clone.Repo]
+		if repo == nil {
+			repo = &repoRecord{}
+		}
+		for _, b := range bucketsFor(repo, clone, limits) {
+			if b.key == key {
+				count++
+			}
 		}
 	}
 	return count
 }
 
-func repoHost(key string) string {
-	host, _, _ := strings.Cut(key, "/")
-	return host
-}
-
 // accrue credits the wallets of host's buckets with every fetch slice its
-// repositories left unused, rolling each repository's slice forward.
+// sdd-owned clones left unused, rolling each clone's slice forward.
 func (l *ledger) accrue(host string, limits Limits, now time.Time) {
 	since := windowStart(now)
-	for key, repo := range l.Repos {
-		if repo.Fetch == nil || repoHost(key) != host || (repo.Protocol != SSH && repo.Protocol != HTTPS) {
+	for _, target := range l.clones {
+		repo := l.Repos[target.Repo]
+		if target.Host != host || repo == nil || repo.Fetch == nil {
 			continue
 		}
-		target := Target{Host: host, Repo: key, Protocol: repo.Protocol}
 		due := repo.Fetch.Slice
 		if due.IsZero() {
 			due = repo.Fetch.Next

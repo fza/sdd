@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/repos"
 )
@@ -40,7 +41,10 @@ func (g *invocationGate) get() (*gitgate.Gate, error) {
 			g.err = err
 			return
 		}
-		g.gate = gitgate.New(gitgate.Options{StateDir: loc.StateRoot, Limits: repos.GitLimitsFunc(g.ctx, global, loc.ConfigPath)})
+		g.gate = gitgate.New(gitgate.Options{
+			StateDir: loc.StateRoot, Limits: repos.GitLimitsFunc(g.ctx, global, loc.ConfigPath),
+			Clones: repos.NewCloneTargets(loc, git.GraphClones{}).Targets,
+		})
 	})
 	return g.gate, g.err
 }

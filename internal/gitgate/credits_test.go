@@ -69,11 +69,11 @@ func TestFetchSliceStretchesCooldown(t *testing.T) {
 		repos  int
 		want   time.Duration
 	}{
-		{name: "ssh repositories past the bucket's share", limits: func(l *gitgate.Limits) { l.SSHPerHour = 6 }, url: "git@gitlab.com:group/p%d.git", op: sshOpOf, repos: 3, want: 30 * time.Minute},
+		{name: "ssh repositories past the bucket's share", limits: func(l *gitgate.Limits) { l.SSHPerHour = 10 }, url: "git@gitlab.com:group/p%d.git", op: sshOpOf, repos: 3, want: 20 * time.Minute},
 		{name: "the configured cooldown when it is longer", url: "git@gitlab.com:group/p%d.git", op: sshOpOf, repos: 3, want: 5 * time.Minute},
-		{name: "known anonymous HTTPS uses its bucket", limits: func(l *gitgate.Limits) { l.HTTPSUnauthenticatedPerHour = 12 }, url: "https://gitlab.com/group/p%d.git", op: anonymous, repos: 2, want: 10 * time.Minute},
-		{name: "known login uses the authenticated bucket", limits: func(l *gitgate.Limits) { l.HTTPSUnauthenticatedPerHour = 12 }, url: "https://gitlab.com/group/p%d.git", op: authenticated, repos: 2, want: 5 * time.Minute},
-		{name: "unknown login uses the smaller limit", limits: func(l *gitgate.Limits) { l.HTTPSUnauthenticatedPerHour = 12 }, url: "https://gitlab.com/group/p%d.git", op: unknown, repos: 2, want: 10 * time.Minute},
+		{name: "known anonymous HTTPS uses its bucket", limits: func(l *gitgate.Limits) { l.HTTPSUnauthenticatedPerHour = 10 }, url: "https://gitlab.com/group/p%d.git", op: anonymous, repos: 2, want: 800 * time.Second},
+		{name: "known login uses the authenticated bucket", limits: func(l *gitgate.Limits) { l.HTTPSUnauthenticatedPerHour = 10 }, url: "https://gitlab.com/group/p%d.git", op: authenticated, repos: 2, want: 5 * time.Minute},
+		{name: "unknown login uses the smaller limit", limits: func(l *gitgate.Limits) { l.HTTPSUnauthenticatedPerHour = 10 }, url: "https://gitlab.com/group/p%d.git", op: unknown, repos: 2, want: 800 * time.Second},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,7 +84,7 @@ func TestFetchSliceStretchesCooldown(t *testing.T) {
 			gate := setup.gate()
 			var last gitgate.Target
 			for i := range tc.repos {
-				last = mustTarget(t, fmt.Sprintf(tc.url, i))
+				last = setup.clone(t, fmt.Sprintf(tc.url, i))
 				err := gate.Run(t.Context(), last, gitgate.Fetch, tc.op(t))
 				if err != nil {
 					t.Fatal(err)
@@ -121,7 +121,7 @@ func TestCreditsFromIdleSlices(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			setup := newSetup(t)
-			target := mustTarget(t, "git@gitlab.com:group/project.git")
+			target := setup.clone(t, "git@gitlab.com:group/project.git")
 			mustRun(t, setup, t.Context(), target, gitgate.Fetch, t0)
 
 			paid, skip := paidPushes(t, setup, target, t0.Add(tc.idle))
@@ -158,6 +158,7 @@ func TestCreditSpendNeedsTheMark(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			setup := newSetup(t)
+			setup.clones = []gitgate.Target{target}
 			mustRun(t, setup, t.Context(), target, gitgate.Fetch, t0)
 			mustRun(t, setup, t.Context(), target, tc.kind, idle)
 
@@ -191,7 +192,7 @@ func TestCreditFloors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			setup := newSetup(t)
-			target := mustTarget(t, "git@gitlab.com:group/project.git")
+			target := setup.clone(t, "git@gitlab.com:group/project.git")
 			credited := gitgate.WithCredits(t.Context(), tc.kind)
 			mustRun(t, setup, t.Context(), target, gitgate.Fetch, t0)
 			last := t0.Add(20*time.Minute + time.Second)
@@ -210,9 +211,9 @@ func TestCreditFloors(t *testing.T) {
 func TestCreditsKeepTheHourlyLimit(t *testing.T) {
 	setup := newSetup(t)
 	setup.limits.SSHPerHour = 4
-	target := mustTarget(t, "git@gitlab.com:group/a.git")
+	target := setup.clone(t, "git@gitlab.com:group/a.git")
 	mustRun(t, setup, t.Context(), target, gitgate.Fetch, t0)
-	full := t0.Add(30 * time.Minute)
+	full := t0.Add(40 * time.Minute)
 	mustRun(t, setup, t.Context(), target, gitgate.Push, full)
 	mustRun(t, setup, t.Context(), mustTarget(t, "git@gitlab.com:group/b.git"), gitgate.Push, full)
 	mustRun(t, setup, t.Context(), mustTarget(t, "git@gitlab.com:group/c.git"), gitgate.Push, full)
@@ -238,7 +239,7 @@ func TestCreditsAgeOut(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			setup := newSetup(t)
 			setup.limits.FetchCooldown = 15 * time.Minute
-			target := mustTarget(t, "git@gitlab.com:group/project.git")
+			target := setup.clone(t, "git@gitlab.com:group/project.git")
 			// The slice due at 15m goes unused; every later one is fetched.
 			for _, at := range []time.Duration{0, 30 * time.Minute, 45 * time.Minute, 60 * time.Minute} {
 				mustRun(t, setup, t.Context(), target, gitgate.Fetch, t0.Add(at))
@@ -255,7 +256,7 @@ func TestCreditsAgeOut(t *testing.T) {
 // After a failed operation its cooldown holds; a credit does not pay past it.
 func TestNoCreditAfterAFailure(t *testing.T) {
 	setup := newSetup(t)
-	target := mustTarget(t, "git@gitlab.com:group/project.git")
+	target := setup.clone(t, "git@gitlab.com:group/project.git")
 	mustRun(t, setup, t.Context(), target, gitgate.Fetch, t0)
 	failedAt := t0.Add(20*time.Minute + time.Second)
 	setup.clock.Set(failedAt)
@@ -280,8 +281,114 @@ func TestLedgerWithoutCredits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	paid, _ := paidPushes(t, setup, mustTarget(t, "git@gitlab.com:group/project.git"), t0.Add(time.Second))
+	paid, _ := paidPushes(t, setup, setup.clone(t, "git@gitlab.com:group/project.git"), t0.Add(time.Second))
 	if paid != 4 {
 		t.Errorf("the slices since the recorded next fetch should earn credits, paid %d", paid)
+	}
+}
+
+// Only the sdd-owned clones present share the fetch slices and earn credits:
+// a code repository the gate also fetches neither stretches the slice nor
+// earns a credit.
+func TestOnlyClonesShareSlicesAndEarnCredits(t *testing.T) {
+	setup := newSetup(t)
+	setup.limits.SSHPerHour = 10
+	clone := setup.clone(t, "git@gitlab.com:group/clone.git")
+	code := mustTarget(t, "git@gitlab.com:group/code.git")
+	for _, target := range []gitgate.Target{mustTarget(t, "git@gitlab.com:group/removed.git"), code, clone} {
+		mustRun(t, setup, t.Context(), target, gitgate.Fetch, t0)
+	}
+	_, next, err := setup.gate().Due(clone, gitgate.Fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.Equal(t0.Add(400 * time.Second)) {
+		t.Errorf("the slice should count the clones alone, got %v", next.Sub(t0))
+	}
+
+	paid, _ := paidPushes(t, setup, code, t0.Add(20*time.Minute))
+	if paid != 2 {
+		t.Errorf("only the clone's unused slices should earn credits, paid %d", paid)
+	}
+}
+
+// Automatic fetches stop at nine tenths of the hourly limit; pushes and
+// commanded syncs may use the rest, up to the limit.
+func TestAutomaticFetchesKeepAReserve(t *testing.T) {
+	setup := newSetup(t)
+	setup.limits.SSHPerHour = 10
+	setup.limits.SSHPerMinute = 100
+	for i := range 9 {
+		mustRun(t, setup, t.Context(), mustTarget(t, fmt.Sprintf("git@gitlab.com:group/p%d.git", i)), gitgate.Fetch, t0)
+	}
+
+	skip := deferred(t, runAt(t, setup, t.Context(), mustTarget(t, "git@gitlab.com:group/auto.git"), gitgate.Fetch, t0))
+	if skip.Reason != gitgate.ReasonHourly || !skip.Next.Equal(t0.Add(time.Hour)) {
+		t.Errorf("an automatic fetch should stop at the fetch share, got %v", skip)
+	}
+	commanded := gitgate.WithCredits(t.Context(), gitgate.Fetch)
+	mustRun(t, setup, commanded, mustTarget(t, "git@gitlab.com:group/commanded.git"), gitgate.Fetch, t0)
+	skip = deferred(t, runAt(t, setup, t.Context(), mustTarget(t, "git@gitlab.com:group/p0.git"), gitgate.Push, t0))
+	if skip.Reason != gitgate.ReasonHourly {
+		t.Errorf("the reserve should end at the hourly limit, got %v", skip)
+	}
+}
+
+func TestPushUsesTheReserve(t *testing.T) {
+	setup := newSetup(t)
+	setup.limits.SSHPerHour = 10
+	setup.limits.SSHPerMinute = 100
+	for i := range 9 {
+		mustRun(t, setup, t.Context(), mustTarget(t, fmt.Sprintf("git@gitlab.com:group/p%d.git", i)), gitgate.Fetch, t0)
+	}
+	mustRun(t, setup, t.Context(), mustTarget(t, "git@gitlab.com:group/p0.git"), gitgate.Push, t0)
+}
+
+// Once a bucket's operations in the current minute reach its per-minute
+// limit, every operation waits for the next minute, credit or not.
+func TestPerMinuteLimit(t *testing.T) {
+	setup := newSetup(t)
+	setup.limits.SSHPerMinute = 2
+	target := setup.clone(t, "git@gitlab.com:group/project.git")
+	mustRun(t, setup, t.Context(), target, gitgate.Fetch, t0)
+	busy := t0.Add(20*time.Minute + 10*time.Second)
+	mustRun(t, setup, t.Context(), target, gitgate.Push, busy)
+	mustRun(t, setup, t.Context(), mustTarget(t, "git@gitlab.com:group/other.git"), gitgate.Push, busy)
+
+	credited := gitgate.WithCredits(t.Context(), gitgate.Push)
+	skip := deferred(t, runAt(t, setup, credited, target, gitgate.Push, busy.Add(20*time.Second)))
+	if skip.Reason != gitgate.ReasonMinute || !skip.Next.Equal(t0.Add(21*time.Minute)) {
+		t.Errorf("a full minute should defer even a credited push to the next minute, got %v", skip)
+	}
+	mustRun(t, setup, credited, target, gitgate.Push, t0.Add(21*time.Minute))
+}
+
+// A clone counts in the bucket its login puts it in: an HTTPS clone known to
+// log in does not stretch the slices of the clones without login.
+func TestClonesCountPerBucket(t *testing.T) {
+	setup := newSetup(t)
+	setup.limits.HTTPSUnauthenticatedPerHour = 10
+	gate := setup.gate()
+	err := gate.Run(t.Context(), setup.clone(t, "https://gitlab.com/group/private.git"), gitgate.Fetch, func(ctx context.Context) error {
+		writeTrace(t, ctx, httpsWrapper, httpsChild, credentialHelper)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := setup.clone(t, "https://gitlab.com/group/public.git")
+	err = gate.Run(t.Context(), public, gitgate.Fetch, func(ctx context.Context) error {
+		writeTrace(t, ctx, httpsChild)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, next, err := gate.Due(public, gitgate.Fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.Equal(t0.Add(400 * time.Second)) {
+		t.Errorf("only the clones without login should share the unauthenticated slice, got %v", next.Sub(t0))
 	}
 }

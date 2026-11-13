@@ -108,7 +108,11 @@ func newConnections(t *testing.T, now time.Time, scripted map[model.RepoID]*sync
 	dir := t.TempDir()
 	loc := repos.Locations{ConfigPath: filepath.Join(dir, "config.yaml"), CacheRoot: filepath.Join(dir, "cache"), DataRoot: filepath.Join(dir, "data")}
 	cfg := &repos.GlobalConfig{}
-	gate := synctest.Gate(t.TempDir(), func() time.Time { return now })
+	var clones []string
+	for repoID := range scripted {
+		clones = append(clones, "https://"+string(repoID)+".git")
+	}
+	gate := synctest.Gate(t.TempDir(), func() time.Time { return now }, clones...)
 	round := &repoRound{gate: gate, repos: map[string]*synctest.Repo{}}
 	git := &synctest.CloneGit{Remote: "https://example.test/acme/uncloned.git", Remotes: map[string]string{}}
 	reg := repos.NewRegistry(loc)

@@ -13,6 +13,8 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/networkteam/slogutils"
+
+	"github.com/networkteam/sdd/internal/model"
 )
 
 const (
@@ -27,6 +29,7 @@ type Gate struct {
 	stateDir string
 	store    ledgerStore
 	limits   LimitsFunc
+	clones   ClonesFunc
 	now      func() time.Time
 	rand     func() float64
 	slotWait time.Duration
@@ -37,6 +40,8 @@ type Options struct {
 	// directories.
 	StateDir string
 	Limits   LimitsFunc
+	// Clones lists the sdd-owned clones; nil means none.
+	Clones ClonesFunc
 	// Now defaults to time.Now.
 	Now func() time.Time
 	// Rand returns a uniform value in [0, 1); defaults to math/rand/v2.
@@ -50,6 +55,7 @@ func New(opts Options) *Gate {
 		stateDir: opts.StateDir,
 		store:    ledgerStore{dir: opts.StateDir},
 		limits:   opts.Limits,
+		clones:   opts.Clones,
 		now:      opts.Now,
 		rand:     opts.Rand,
 		slotWait: opts.SlotWait,
@@ -199,6 +205,30 @@ func (g *Gate) LastAttempt(ctx context.Context, target Target) (time.Time, error
 	return last, nil
 }
 
+// read reads the ledger with the clones present now; the caller holds the
+// lock.
+func (g *Gate) read(ctx context.Context) (*ledger, error) {
+	l, err := g.store.read()
+	if err != nil {
+		return nil, err
+	}
+	if g.clones == nil {
+		return l, nil
+	}
+	clones, err := g.clones(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing the sdd-owned clones: %w", err)
+	}
+	seen := map[string]bool{}
+	for _, clone := range clones {
+		if !seen[clone.Repo] {
+			seen[clone.Repo] = true
+			l.clones = append(l.clones, clone)
+		}
+	}
+	return l, nil
+}
+
 func (g *Gate) limitsFor(target Target) (Limits, error) {
 	if g.limits == nil {
 		return Limits{}, errors.New("git gate has no limits")
@@ -216,7 +246,7 @@ func (g *Gate) check(ctx context.Context, target Target, kind Kind, limits Limit
 		return verdict{}, err
 	}
 	defer unlock()
-	l, err := g.store.read()
+	l, err := g.read(ctx)
 	if err != nil {
 		return verdict{}, err
 	}
@@ -229,7 +259,7 @@ func (g *Gate) admit(ctx context.Context, target Target, kind Kind, limits Limit
 		return reservation{}, verdict{}, err
 	}
 	defer unlock()
-	l, err := g.store.read()
+	l, err := g.read(ctx)
 	if err != nil {
 		return reservation{}, verdict{}, err
 	}
@@ -294,13 +324,24 @@ func evaluate(l *ledger, target Target, kind Kind, limits Limits, now time.Time,
 		}
 	}
 
+	// Automatic fetches leave the rest of each hourly limit to pushes and
+	// commanded syncs.
+	reserve := kind == Push || spend
 	for _, b := range bucketsFor(repo, target, limits) {
-		count, free := l.Buckets.used(b.key, now, b.limit)
-		if count < b.limit {
-			continue
+		limit := b.limit
+		if !reserve {
+			limit = model.GitFetchShare(b.limit)
+		}
+		reason := ReasonHourly
+		count, free := l.Buckets.used(b.key, now, limit)
+		if count < limit {
+			if b.perMinute <= 0 || l.Buckets.minute(b.key, now) < b.perMinute {
+				continue
+			}
+			reason, free = ReasonMinute, time.Unix((unixMinute(now)+1)*60, 0).UTC()
 		}
 		if v.due || free.After(v.next) {
-			v = verdict{reason: ReasonHourly, next: free}
+			v = verdict{reason: reason, next: free}
 		}
 	}
 	if !v.due {
@@ -313,17 +354,18 @@ func evaluate(l *ledger, target Target, kind Kind, limits Limits, now time.Time,
 }
 
 type bucketLimit struct {
-	key   string
-	limit int
+	key       string
+	limit     int
+	perMinute int
 }
 
 func bucketsFor(repo *repoRecord, target Target, limits Limits) []bucketLimit {
 	if target.Protocol == SSH {
-		return []bucketLimit{{bucketKey(target.Host, bucketSSH), limits.SSHPerHour}}
+		return []bucketLimit{{bucketKey(target.Host, bucketSSH), limits.SSHPerHour, limits.SSHPerMinute}}
 	}
 	authenticated, known := repo.authenticated(HTTPS)
-	authed := bucketLimit{bucketKey(target.Host, bucketHTTPS), limits.HTTPSPerHour}
-	anonymous := bucketLimit{bucketKey(target.Host, bucketHTTPSAnon), limits.HTTPSUnauthenticatedPerHour}
+	authed := bucketLimit{bucketKey(target.Host, bucketHTTPS), limits.HTTPSPerHour, limits.HTTPSPerMinute}
+	anonymous := bucketLimit{bucketKey(target.Host, bucketHTTPSAnon), limits.HTTPSUnauthenticatedPerHour, limits.HTTPSUnauthenticatedPerMinute}
 	switch {
 	case known && authenticated:
 		return []bucketLimit{authed}
@@ -340,7 +382,7 @@ func (g *Gate) record(ctx context.Context, target Target, kind Kind, limits Limi
 		return err
 	}
 	defer unlock()
-	l, err := g.store.read()
+	l, err := g.read(ctx)
 	if err != nil {
 		return err
 	}

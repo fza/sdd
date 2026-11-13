@@ -55,13 +55,18 @@ func (r *fakeRand) Float64() float64 {
 
 func defaultLimits() gitgate.Limits {
 	return gitgate.Limits{
-		FetchCooldown:               5 * time.Minute,
-		PushCooldown:                30 * time.Second,
-		Retries:                     2,
-		Concurrency:                 2,
-		SSHPerHour:                  600,
-		HTTPSPerHour:                600,
-		HTTPSUnauthenticatedPerHour: 60,
+		FetchCooldown:                 5 * time.Minute,
+		PushCooldown:                  30 * time.Second,
+		Retries:                       2,
+		Concurrency:                   2,
+		SSHPerHour:                    600,
+		HTTPSPerHour:                  600,
+		HTTPSUnauthenticatedPerHour:   60,
+		SSHPerMinute:                  60,
+		HTTPSPerMinute:                60,
+		HTTPSUnauthenticatedPerMinute: 6,
+		LeasePause:                    10 * time.Minute,
+		ReadWait:                      15 * time.Second,
 	}
 }
 
@@ -71,6 +76,8 @@ type gateSetup struct {
 	rand   *fakeRand
 	limits gitgate.Limits
 	wait   time.Duration
+	// clones are the sdd-owned clones the gate lists.
+	clones []gitgate.Target
 }
 
 func newSetup(t *testing.T) *gateSetup {
@@ -85,6 +92,9 @@ func (s *gateSetup) gate() *gitgate.Gate {
 		Now:      s.clock.Now,
 		Rand:     s.rand.Float64,
 		SlotWait: s.wait,
+		Clones: func(context.Context) ([]gitgate.Target, error) {
+			return s.clones, nil
+		},
 	})
 }
 
@@ -191,4 +201,12 @@ func bucketCount(t *testing.T, dir, key string) int {
 		total += n
 	}
 	return total
+}
+
+// clone registers rawURL's repository as an sdd-owned clone.
+func (s *gateSetup) clone(t *testing.T, rawURL string) gitgate.Target {
+	t.Helper()
+	target := mustTarget(t, rawURL)
+	s.clones = append(s.clones, target)
+	return target
 }

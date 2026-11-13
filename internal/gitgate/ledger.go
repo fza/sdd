@@ -38,6 +38,8 @@ type ledger struct {
 	Earned counters               `json:"earned,omitempty"`
 	Spent  counters               `json:"spent,omitempty"`
 	Repos  map[string]*repoRecord `json:"repos"`
+	// clones are the sdd-owned clones present when the ledger was read.
+	clones []Target
 }
 
 // counters holds per-minute counts per bucket key.
@@ -156,6 +158,15 @@ func (c counters) used(key string, now time.Time, limit int) (count int, free ti
 		}
 	}
 	return count, now
+}
+
+// minute counts the bucket's operations in now's minute.
+func (c counters) minute(key string, now time.Time) int {
+	b, ok := c[key]
+	if !ok {
+		return 0
+	}
+	return b.Minutes[strconv.FormatInt(unixMinute(now), 10)]
 }
 
 // balance is the bucket's spendable credits: earned minus spent in the last

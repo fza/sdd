@@ -47,11 +47,16 @@ type Limits = model.GitLimits
 // LimitsFunc resolves the limits for one host.
 type LimitsFunc func(host string) Limits
 
+// ClonesFunc lists the remotes of the sdd-owned clones present on this
+// machine: they share each bucket's fetch slices and earn its credits.
+type ClonesFunc func(ctx context.Context) ([]Target, error)
+
 type Reason string
 
 const (
 	ReasonCooldown  Reason = "cooldown"
 	ReasonHourly    Reason = "hourly"
+	ReasonMinute    Reason = "minute"
 	ReasonBusy      Reason = "busy"
 	ReasonRetryWait Reason = "retry_wait"
 )
