@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -27,12 +28,20 @@ const (
 
 // ledger is remotes.json. A file of another version reads as empty and is
 // rewritten whole: an older binary drops what a newer one recorded rather than
-// misreading it.
+// misreading it. Credits stay within version 1: a file without them reads as
+// an empty wallet, and an older binary drops them.
 type ledger struct {
-	Version int                    `json:"version"`
-	Buckets map[string]*bucket     `json:"buckets"`
-	Repos   map[string]*repoRecord `json:"repos"`
+	Version int      `json:"version"`
+	Buckets counters `json:"buckets"`
+	// Earned and Spent are each bucket's wallet: credits earned by unused
+	// fetch slices and spent by credited operations, per minute.
+	Earned counters               `json:"earned,omitempty"`
+	Spent  counters               `json:"spent,omitempty"`
+	Repos  map[string]*repoRecord `json:"repos"`
 }
+
+// counters holds per-minute counts per bucket key.
+type counters map[string]*bucket
 
 type bucket struct {
 	Minutes map[string]int `json:"minutes"`
@@ -53,10 +62,12 @@ type kindRecord struct {
 	RetriesUsed int       `json:"retries_used"`
 	RetryAt     time.Time `json:"retry_at,omitzero"`
 	Next        time.Time `json:"next,omitzero"`
+	// Slice is when the fetch slice in progress came due; unset, Next.
+	Slice time.Time `json:"slice,omitzero"`
 }
 
 func emptyLedger() *ledger {
-	return &ledger{Version: ledgerVersion, Buckets: map[string]*bucket{}, Repos: map[string]*repoRecord{}}
+	return &ledger{Version: ledgerVersion, Buckets: counters{}, Earned: counters{}, Spent: counters{}, Repos: map[string]*repoRecord{}}
 }
 
 func (l *ledger) repo(target Target) *repoRecord {
@@ -96,11 +107,11 @@ func unixMinute(at time.Time) int64 {
 	return at.Unix() / 60
 }
 
-func (l *ledger) add(key string, minute int64, delta int) {
-	b, ok := l.Buckets[key]
+func (c counters) add(key string, minute int64, delta int) {
+	b, ok := c[key]
 	if !ok {
 		b = &bucket{Minutes: map[string]int{}}
-		l.Buckets[key] = b
+		c[key] = b
 	}
 	if b.Minutes == nil {
 		b.Minutes = map[string]int{}
@@ -114,8 +125,8 @@ func (l *ledger) add(key string, minute int64, delta int) {
 
 // used counts the bucket's last 60 minutes and, when that reaches limit,
 // returns when enough of them age out to leave room for one more.
-func (l *ledger) used(key string, now time.Time, limit int) (count int, free time.Time) {
-	b, ok := l.Buckets[key]
+func (c counters) used(key string, now time.Time, limit int) (count int, free time.Time) {
+	b, ok := c[key]
 	if !ok {
 		return 0, now
 	}
@@ -147,9 +158,22 @@ func (l *ledger) used(key string, now time.Time, limit int) (count int, free tim
 	return count, now
 }
 
-func (l *ledger) prune(now time.Time) {
+// balance is the bucket's spendable credits: earned minus spent in the last
+// 60 minutes, never below zero.
+func (l *ledger) balance(key string, now time.Time) int {
+	earned, _ := l.Earned.used(key, now, math.MaxInt)
+	spent, _ := l.Spent.used(key, now, math.MaxInt)
+	return max(earned-spent, 0)
+}
+
+// windowStart is the start of the oldest minute the last 60 minutes count.
+func windowStart(now time.Time) time.Time {
+	return time.Unix((unixMinute(now)-windowMinutes+1)*60, 0).UTC()
+}
+
+func (c counters) prune(now time.Time) {
 	oldest := unixMinute(now) - windowMinutes
-	for key, b := range l.Buckets {
+	for key, b := range c {
 		for field := range b.Minutes {
 			minute, err := strconv.ParseInt(field, 10, 64)
 			if err != nil || minute <= oldest {
@@ -157,7 +181,7 @@ func (l *ledger) prune(now time.Time) {
 			}
 		}
 		if len(b.Minutes) == 0 {
-			delete(l.Buckets, key)
+			delete(c, key)
 		}
 	}
 }
@@ -211,7 +235,13 @@ func (s ledgerStore) read() (*ledger, error) {
 		return nil, fmt.Errorf("reading %s: %w", s.path(), err)
 	}
 	if l.Buckets == nil {
-		l.Buckets = map[string]*bucket{}
+		l.Buckets = counters{}
+	}
+	if l.Earned == nil {
+		l.Earned = counters{}
+	}
+	if l.Spent == nil {
+		l.Spent = counters{}
 	}
 	if l.Repos == nil {
 		l.Repos = map[string]*repoRecord{}
@@ -221,7 +251,9 @@ func (s ledgerStore) read() (*ledger, error) {
 
 func (s ledgerStore) write(l *ledger, now time.Time) error {
 	l.Version = ledgerVersion
-	l.prune(now)
+	for _, c := range []counters{l.Buckets, l.Earned, l.Spent} {
+		c.prune(now)
+	}
 	data, err := json.Marshal(l)
 	if err != nil {
 		return fmt.Errorf("encoding %s: %w", s.path(), err)

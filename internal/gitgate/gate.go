@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/networkteam/slogutils"
 )
 
 const (
@@ -66,11 +67,12 @@ func New(opts Options) *Gate {
 }
 
 type verdict struct {
-	due      bool
-	viaRetry bool
-	reason   Reason
-	next     time.Time
-	buckets  []string
+	due       bool
+	viaRetry  bool
+	viaCredit bool
+	reason    Reason
+	next      time.Time
+	buckets   []string
 }
 
 type reservation struct {
@@ -90,7 +92,7 @@ func (g *Gate) Due(target Target, kind Kind) (due bool, next time.Time, err erro
 	if err != nil {
 		return false, time.Time{}, err
 	}
-	v, err := g.check(context.Background(), target, kind, limits, now)
+	v, err := g.check(context.Background(), target, kind, limits, now, false)
 	if err != nil {
 		return false, time.Time{}, err
 	}
@@ -117,7 +119,8 @@ func (g *Gate) Run(ctx context.Context, target Target, kind Kind, op func(ctx co
 
 	// Checked before waiting for a slot, so an operation in cooldown is not
 	// held up to SlotWait only to be refused.
-	precheck, err := g.check(ctx, target, kind, limits, g.now())
+	spend := creditsFor(ctx, kind)
+	precheck, err := g.check(ctx, target, kind, limits, g.now(), spend)
 	if err != nil {
 		return err
 	}
@@ -135,13 +138,16 @@ func (g *Gate) Run(ctx context.Context, target Target, kind Kind, op func(ctx co
 	if err != nil {
 		return err
 	}
-	res, v, err := g.admit(ctx, target, kind, limits)
+	res, v, err := g.admit(ctx, target, kind, limits, spend)
 	if err != nil || !v.due {
 		removeErr := os.Remove(traceFile)
 		if err != nil {
 			return errors.Join(err, removeErr)
 		}
 		return errors.Join(g.deferred(target, kind, v), removeErr)
+	}
+	if v.viaCredit {
+		slogutils.FromContext(ctx).Debug("git gate: a credit paid for an operation inside its cooldown", "repo", target.Repo, "kind", kind)
 	}
 
 	opErr := op(withAdmission(ctx, &admission{target: target, traceFile: traceFile}))
@@ -204,7 +210,7 @@ func (g *Gate) deferred(target Target, kind Kind, v verdict) error {
 	return &DeferredError{Target: target, Kind: kind, Reason: v.reason, Next: v.next}
 }
 
-func (g *Gate) check(ctx context.Context, target Target, kind Kind, limits Limits, now time.Time) (verdict, error) {
+func (g *Gate) check(ctx context.Context, target Target, kind Kind, limits Limits, now time.Time, spend bool) (verdict, error) {
 	unlock, err := g.store.lock(ctx, true)
 	if err != nil {
 		return verdict{}, err
@@ -214,10 +220,10 @@ func (g *Gate) check(ctx context.Context, target Target, kind Kind, limits Limit
 	if err != nil {
 		return verdict{}, err
 	}
-	return evaluate(l, target, kind, limits, now), nil
+	return evaluate(l, target, kind, limits, now, spend), nil
 }
 
-func (g *Gate) admit(ctx context.Context, target Target, kind Kind, limits Limits) (reservation, verdict, error) {
+func (g *Gate) admit(ctx context.Context, target Target, kind Kind, limits Limits, spend bool) (reservation, verdict, error) {
 	unlock, err := g.store.lock(ctx, false)
 	if err != nil {
 		return reservation{}, verdict{}, err
@@ -228,14 +234,17 @@ func (g *Gate) admit(ctx context.Context, target Target, kind Kind, limits Limit
 		return reservation{}, verdict{}, err
 	}
 	now := g.now()
-	v := evaluate(l, target, kind, limits, now)
+	v := evaluate(l, target, kind, limits, now, spend)
 	if !v.due {
 		return reservation{}, v, nil
 	}
 
 	res := reservation{minute: unixMinute(now), buckets: v.buckets, viaRetry: v.viaRetry}
 	for _, key := range res.buckets {
-		l.add(key, res.minute, 1)
+		l.Buckets.add(key, res.minute, 1)
+		if v.viaCredit {
+			l.Spent.add(key, res.minute, 1)
+		}
 	}
 	repo := l.repo(target)
 	repo.Protocol = target.Protocol
@@ -244,7 +253,7 @@ func (g *Gate) admit(ctx context.Context, target Target, kind Kind, limits Limit
 	record.RetryAt = time.Time{}
 	// Holds off other processes while op runs; record replaces it.
 	if !res.viaRetry {
-		record.Next = now.Add(cooldown(limits, kind)).UTC()
+		setNext(record, kind, now.Add(l.cooldown(repo, target, kind, limits)))
 	}
 	err = g.store.write(l, now)
 	if err != nil {
@@ -253,7 +262,11 @@ func (g *Gate) admit(ctx context.Context, target Target, kind Kind, limits Limit
 	return res, v, nil
 }
 
-func evaluate(l *ledger, target Target, kind Kind, limits Limits, now time.Time) verdict {
+// evaluate decides whether kind is due for target at now. With spend, a
+// credit in each of target's buckets pays past a cooldown a success started,
+// never past the floor.
+func evaluate(l *ledger, target Target, kind Kind, limits Limits, now time.Time, spend bool) verdict {
+	l.accrue(target.Host, limits, now)
 	repo := l.Repos[target.Repo]
 	if repo == nil {
 		repo = &repoRecord{}
@@ -272,13 +285,17 @@ func evaluate(l *ledger, target Target, kind Kind, limits Limits, now time.Time)
 			v.viaRetry = true
 		case !record.RetryAt.IsZero():
 			return verdict{reason: ReasonRetryWait, next: record.RetryAt}
-		default:
+		case !spend || record.Outcome != outcomeOK || !l.hasCredit(repo, target, limits, now):
 			return verdict{reason: ReasonCooldown, next: record.Next}
+		case now.Before(record.LastAttempt.Add(creditFloor(kind))):
+			return verdict{reason: ReasonCooldown, next: record.LastAttempt.Add(creditFloor(kind))}
+		default:
+			v.viaCredit = true
 		}
 	}
 
 	for _, b := range bucketsFor(repo, target, limits) {
-		count, free := l.used(b.key, now, b.limit)
+		count, free := l.Buckets.used(b.key, now, b.limit)
 		if count < b.limit {
 			continue
 		}
@@ -317,13 +334,6 @@ func bucketsFor(repo *repoRecord, target Target, limits Limits) []bucketLimit {
 	}
 }
 
-func cooldown(limits Limits, kind Kind) time.Duration {
-	if kind == Push {
-		return limits.PushCooldown
-	}
-	return limits.FetchCooldown
-}
-
 func (g *Gate) record(ctx context.Context, target Target, kind Kind, limits Limits, res reservation, counts traceCounts, traceRead bool, opErr error) error {
 	unlock, err := g.store.lock(ctx, false)
 	if err != nil {
@@ -342,7 +352,7 @@ func (g *Gate) record(ctx context.Context, target Target, kind Kind, limits Limi
 	}
 
 	record := repo.kind(kind)
-	period := cooldown(limits, kind)
+	period := l.cooldown(repo, target, kind, limits)
 	result := classify(opErr)
 	record.Outcome = result
 	record.RetryAt = time.Time{}
@@ -350,7 +360,7 @@ func (g *Gate) record(ctx context.Context, target Target, kind Kind, limits Limi
 		record.LastSuccess = now.UTC()
 		record.FailedAt = time.Time{}
 		record.RetriesUsed = 0
-		record.Next = now.Add(g.jitter(period)).UTC()
+		setNext(record, kind, now.Add(g.jitter(period)))
 		return g.store.write(l, now)
 	}
 
@@ -359,7 +369,7 @@ func (g *Gate) record(ctx context.Context, target Target, kind Kind, limits Limi
 	} else {
 		record.FailedAt = now.UTC()
 		record.RetriesUsed = 0
-		record.Next = now.Add(g.jitter(period)).UTC()
+		setNext(record, kind, now.Add(g.jitter(period)))
 	}
 	if result == outcomeTransport && record.RetriesUsed < limits.Retries {
 		window := record.FailedAt.Add(period).Sub(now)
@@ -381,22 +391,22 @@ func (g *Gate) record(ctx context.Context, target Target, kind Kind, limits Limi
 // the repository is known to need a login.
 func (g *Gate) countConnections(l *ledger, repo *repoRecord, target Target, res reservation, counts traceCounts) {
 	for _, key := range res.buckets {
-		l.add(key, res.minute, -1)
+		l.Buckets.add(key, res.minute, -1)
 	}
 	if counts.ssh > 0 {
-		l.add(bucketKey(target.Host, bucketSSH), res.minute, counts.ssh)
+		l.Buckets.add(bucketKey(target.Host, bucketSSH), res.minute, counts.ssh)
 	}
 	if counts.https == 0 {
 		return
 	}
 	wasAuthenticated, known := repo.authenticated(HTTPS)
 	if counts.credentialHelper {
-		l.add(bucketKey(target.Host, bucketHTTPS), res.minute, counts.https)
+		l.Buckets.add(bucketKey(target.Host, bucketHTTPS), res.minute, counts.https)
 		if !known || !wasAuthenticated {
-			l.add(bucketKey(target.Host, bucketHTTPSAnon), res.minute, 1)
+			l.Buckets.add(bucketKey(target.Host, bucketHTTPSAnon), res.minute, 1)
 		}
 	} else {
-		l.add(bucketKey(target.Host, bucketHTTPSAnon), res.minute, counts.https)
+		l.Buckets.add(bucketKey(target.Host, bucketHTTPSAnon), res.minute, counts.https)
 	}
 	if target.Protocol == HTTPS {
 		authenticated := counts.credentialHelper
