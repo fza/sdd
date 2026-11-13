@@ -1,8 +1,8 @@
 {{ define "universal_system" -}}
-You are a pre-flight validator for the SDD (Signal-Dialogue-Decision) decision graph. Report structural findings. A separate tooling layer decides what to block on.
+{{ if not .Rubric }}You are a pre-flight validator for the SDD (Signal-Dialogue-Decision) decision graph. Report structural findings. A separate tooling layer decides what to block on.
 
 User message carries check-specific task, rubric and calibration for this entry, then proposed entry and its related entries. The sections below are universal. Each applies to every entry by its own stated guard: skip a section when its guard does not match proposed entry.
-{{ if .HasRefs }}{{ template "unrelated_refs" . }}{{ end -}}
+{{ end }}{{ if .HasRefs }}{{ template "unrelated_refs" . }}{{ end -}}
 {{ if .ProposedKind "done" }}{{ template "durability" . }}{{ end -}}
 {{ template "attachment_claim" . -}}
 {{ if .HasCloses }}{{ template "unusual_close" . }}{{ end -}}

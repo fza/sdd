@@ -74,6 +74,94 @@ func readingEntry(id, summary, content string, topics ...string) *model.Entry {
 var lightDraft = &model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
 	Content: "The capture writer drops the second attachment when two share a name.", Time: time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)}
 
+// The deep reading's header keeps every field of the light one the ID does
+// not carry, puts ID, kind and status on one line, and names a role other
+// than brief.
+func TestDeepReadingHeader(t *testing.T) {
+	target := readingEntry("20261101-090000-s-tac-tgt", "The writer keeps one attachment per name.", "Body.", "capture/attachments")
+	entry := readingEntry("20261101-100000-s-tac-ent", "Attachments with one name collide.", "Body.", "capture/attachments")
+	entry.Refs = []model.Ref{{ID: target.ID, Kind: "builds-on", Desc: "the writer it observes"}}
+	done := readingEntry("20261101-110000-s-tac-dne", "The writer keeps them all.", "Body.")
+	done.Kind = model.KindDone
+	drifted := readingEntry("20261101-120000-s-tac-drf", "An entry whose time is not its ID's.", "Body.")
+	drifted.Time = drifted.Time.Add(time.Minute)
+	graph := lightGraph(t, target, entry, done, drifted)
+	for _, tc := range []struct {
+		name  string
+		entry *model.Entry
+		want  string
+	}{
+		{"its ID carries type, layer and time", done, "ID: 20261101-110000-s-tac-dne | kind: done | Status: terminal\nSummary: The writer keeps them all.\n"},
+		{"its time is not its ID's", drifted, "ID: 20261101-120000-s-tac-drf | Type: signal, kind: gap, layer: tactical | Status: open | Time: 2026-11-01 12:01:00\nSummary: An entry whose time is not its ID's.\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := llmops.DeepReadingHeader(graph, tc.entry, model.LightRoleBrief, "")
+			if got != tc.want {
+				t.Errorf("the first line should name type, layer and time only where the ID does not, and a done entry's status in one word, got:\n%s", got)
+			}
+		})
+	}
+	const fields = "ID: 20261101-100000-s-tac-ent | kind: gap | Status: open\n" +
+		"Topics: capture/attachments\n" +
+		"Ref: builds-on 20261101-090000-s-tac-tgt (the writer it observes)\n" +
+		"Summary: Attachments with one name collide.\n"
+	for _, tc := range []struct {
+		role model.LightRole
+		code string
+		want string
+	}{
+		{role: model.LightRoleBrief, want: fields},
+		{role: model.LightRoleFull, want: fields + "Role in the reading: read in full\n"},
+		{role: "declared target", want: fields + "Role in the reading: declared target\n"},
+		{role: model.LightRoleSetAside, code: model.VerdictCovered, want: fields + "Role in the reading: set aside (code: " + model.VerdictCovered + ")\n"},
+	} {
+		t.Run(string(tc.role), func(t *testing.T) {
+			got := llmops.DeepReadingHeader(graph, entry, tc.role, tc.code)
+			if got != tc.want {
+				t.Errorf("the header should keep every field on its compact lines and name only a role other than brief, got:\n%s", got)
+			}
+		})
+	}
+}
+
+// A closed brief beside its closer comes short, its brief kept; served in
+// full, or with its closer outside the reading, it keeps its whole block.
+func TestDeepReadingBlock(t *testing.T) {
+	closed := readingEntry("20261101-090000-s-tac-cls", "The writer drops attachments.", "The closed gap's body.", "capture/attachments")
+	closed.Title = "Attachments dropped"
+	closer := readingEntry("20261101-100000-s-tac-dne", "The writer keeps them now.", "Body.", "capture/attachments")
+	closer.Kind = model.KindDone
+	closer.Closes = []string{closed.ID}
+	graph := lightGraph(t, closed, closer)
+	whole := llmops.DeepReadingHeader(graph, closed, model.LightRoleBrief, "")
+	inReading := func(id string) bool { return id == closed.ID || id == closer.ID }
+	elsewhere := func(id string) bool { return id == closed.ID }
+	for _, tc := range []struct {
+		name string
+		role model.LightRole
+		code string
+		full bool
+		held func(string) bool
+		want string
+	}{
+		{name: "brief beside its closer", role: model.LightRoleBrief, held: inReading,
+			want: "---\n\nID: " + closed.ID + " | kind: gap | Status: closed by " + closer.ID + "\n\nAttachments dropped"},
+		{name: "set aside beside its closer", role: model.LightRoleSetAside, code: model.VerdictCovered, held: inReading,
+			want: "---\n\nID: " + closed.ID + " | kind: gap | Status: closed by " + closer.ID + "\nRole in the reading: set aside (code: " + model.VerdictCovered + ")\n\nAttachments dropped"},
+		{name: "read in full", role: model.LightRoleFull, full: true, held: inReading,
+			want: "---\n\n" + llmops.DeepReadingHeader(graph, closed, model.LightRoleFull, "") + "\nThe closed gap's body."},
+		{name: "closer outside the reading", role: model.LightRoleBrief, held: elsewhere,
+			want: "---\n\n" + whole + "\nAttachments dropped"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			block := llmops.DeepReadingBlock(graph, closed, tc.role, tc.code, tc.full, tc.held)
+			if block.ID != closed.ID || block.Text != tc.want {
+				t.Errorf("the block should come short only for a brief whose closer the reading holds, got:\n%s", block.Text)
+			}
+		})
+	}
+}
+
 func TestPreflightLight_CarriesTheReadingWithHeadersAndAxes(t *testing.T) {
 	full := readingEntry("20261101-100000-s-tac-ful", "Attachments with one name collide.", "The writer keeps only one attachment per name.", "capture/attachments")
 	brief := readingEntry("20261101-110000-s-tac-brf", "Staging keeps every handle.", "Long body never served.", "capture/staging")

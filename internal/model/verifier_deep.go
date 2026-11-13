@@ -415,38 +415,53 @@ type DeepReadingPage struct {
 }
 
 // DeepReadingPages pages the deep verifier's reading (V-D8): the first page
-// opens with lead (the draft and what pre-flight raised) and the blocks of
-// first (the declared targets and the entries read in full), later pages hold
-// rest (the briefs) in order. A page holds whole blocks of at most
-// DeepPageChars; a block larger than a page runs on across pages of its own,
-// never cut, and its last page names it. The blocks of first are served in
-// full, those of rest as briefs.
-func DeepReadingPages(lead string, first, rest []DeepReadingBlock) []DeepReadingPage {
+// opens with lead (the draft and what pre-flight raised), the pages of rules
+// follow it, and the blocks of first (the declared targets and the entries
+// read in full), then those of rest (the briefs), fill the room the pages
+// before them leave, in order: page 1 takes blocks until one does not fit,
+// the rules' last page takes the blocks after it. A page holds whole blocks
+// of at most DeepPageChars; a block larger than a page runs on across pages
+// of its own, never cut, and its last page names it. The blocks of first are
+// served in full, those of rest as briefs.
+func DeepReadingPages(lead string, rules []DeepReadingPage, first, rest []DeepReadingBlock) []DeepReadingPage {
 	pages := []DeepReadingPage{{Text: lead}}
-	add := func(block DeepReadingBlock, full, newPage bool) {
-		current := &pages[len(pages)-1]
+	placeRules := func() {
+		pages = append(pages, rules...)
+		rules = nil
+	}
+	fits := func(block DeepReadingBlock) bool {
+		current := pages[len(pages)-1].Text
+		return current == "" || ServedChars(current+"\n\n"+block.Text) <= DeepPageChars
+	}
+	add := func(block DeepReadingBlock, full bool) {
 		if ServedChars(block.Text) > DeepPageChars {
+			placeRules()
 			pages = append(pages, DeepContinuedPages("", "("+block.ID+", continued)\n\n", block.Text)...)
-			current = &pages[len(pages)-1]
-		} else if newPage || (current.Text != "" && ServedChars(current.Text+"\n\n"+block.Text) > DeepPageChars) {
-			pages = append(pages, DeepReadingPage{Text: block.Text})
-			current = &pages[len(pages)-1]
 		} else {
+			if !fits(block) {
+				placeRules()
+				if !fits(block) {
+					pages = append(pages, DeepReadingPage{})
+				}
+			}
+			current := &pages[len(pages)-1]
 			if current.Text != "" {
 				current.Text += "\n\n"
 			}
 			current.Text += block.Text
 		}
 		if full {
+			current := &pages[len(pages)-1]
 			current.FullIDs = append(current.FullIDs, block.ID)
 		}
 	}
 	for _, block := range first {
-		add(block, true, false)
+		add(block, true)
 	}
-	for i, block := range rest {
-		add(block, false, i == 0)
+	for _, block := range rest {
+		add(block, false)
 	}
+	placeRules()
 	return pages
 }
 

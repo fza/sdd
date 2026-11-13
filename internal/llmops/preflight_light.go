@@ -65,7 +65,7 @@ func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, 
 	}
 	axes := func(partial bool) (string, error) {
 		var sb strings.Builder
-		err := tmpl.ExecuteTemplate(&sb, "light_axes", struct{ Partial bool }{partial})
+		err := tmpl.ExecuteTemplate(&sb, "light_axes", lightAxes{Partial: partial})
 		return strings.TrimSpace(sb.String()), err
 	}
 	rules, err := axes(true)
@@ -203,29 +203,95 @@ func ReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole, cod
 	fmt.Fprintf(&b, "Type: %s, kind: %s, layer: %s\n", e.Type, e.Kind, e.Layer)
 	fmt.Fprintf(&b, "Status: %s\n", derivedStatusForPrompt(graph.DerivedStatus(e)))
 	fmt.Fprintf(&b, "Time: %s\n", e.Time.Format("2006-01-02 15:04:05"))
+	writeReadingContext(&b, graph, e)
+	writeReadingRole(&b, role, code)
+	return b.String()
+}
+
+// DeepReadingHeader is ReadingHeader as the deep verifier's reading serves
+// it: ID, kind and status share one line, with type, layer and time only
+// where the ID does not carry them, and a brief, the role most of its
+// entries hold, has no role line.
+func DeepReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole, code string) string {
+	var b strings.Builder
+	writeDeepFirstLine(&b, e, graph.DerivedStatus(e), true)
+	writeReadingContext(&b, graph, e)
+	if role != model.LightRoleBrief {
+		writeReadingRole(&b, role, code)
+	}
+	return b.String()
+}
+
+// DeepReadingBlock is e's block of the deep verifier's reading: its
+// DeepReadingHeader, then its body when full, else its brief. A brief whose
+// closer the reading holds comes short, as its ID, kind, closer, role and
+// brief: the closer's block tells what closed it, and the brief still
+// shows a draft that reopens it.
+func DeepReadingBlock(graph *model.Graph, e *model.Entry, role model.LightRole, code string, full bool, held func(id string) bool) model.DeepReadingBlock {
+	if full {
+		return model.DeepReadingBlock{ID: e.ID, Text: "---\n\n" + DeepReadingHeader(graph, e, role, code) + "\n" + e.Content}
+	}
+	header := DeepReadingHeader(graph, e, role, code)
+	if status := graph.DerivedStatus(e); status.Kind == model.StatusClosedBy && held(status.By) {
+		var b strings.Builder
+		writeDeepFirstLine(&b, e, status, false)
+		if role != model.LightRoleBrief {
+			writeReadingRole(&b, role, code)
+		}
+		header = b.String()
+	}
+	return model.DeepReadingBlock{ID: e.ID, Text: "---\n\n" + header + "\n" + model.EntryBrief(e)}
+}
+
+// deepStatus is derivedStatusForPrompt with a done entry's status in one
+// word: its line names the kind already.
+func deepStatus(s model.Status) string {
+	if s.Kind == model.StatusNone {
+		return "terminal"
+	}
+	return derivedStatusForPrompt(s)
+}
+
+func writeDeepFirstLine(b *strings.Builder, e *model.Entry, status model.Status, withTime bool) {
+	parts, err := model.ParseID(e.ID)
+	if err == nil && model.TypeFromAbbrev[parts.TypeCode] == e.Type && model.LayerFromAbbrev[parts.LayerCode] == e.Layer &&
+		e.Time.Format("20060102-150405") == parts.Timestamp {
+		fmt.Fprintf(b, "ID: %s | kind: %s | Status: %s\n", e.ID, e.Kind, deepStatus(status))
+		return
+	}
+	fmt.Fprintf(b, "ID: %s | Type: %s, kind: %s, layer: %s | Status: %s", e.ID, e.Type, e.Kind, e.Layer, deepStatus(status))
+	if withTime {
+		fmt.Fprintf(b, " | Time: %s", e.Time.Format("2006-01-02 15:04:05"))
+	}
+	b.WriteByte('\n')
+}
+
+func writeReadingContext(b *strings.Builder, graph *model.Graph, e *model.Entry) {
 	if topics := graph.EffectiveTopics(e); len(topics) > 0 {
 		labels := make([]string, 0, len(topics))
 		for _, topic := range topics {
 			labels = append(labels, topic.String())
 		}
-		fmt.Fprintf(&b, "Topics: %s\n", strings.Join(labels, ", "))
+		fmt.Fprintf(b, "Topics: %s\n", strings.Join(labels, ", "))
 	}
 	for _, ref := range e.Refs {
-		fmt.Fprintf(&b, "Ref: %s %s", ref.Kind, ref.ID)
+		fmt.Fprintf(b, "Ref: %s %s", ref.Kind, ref.ID)
 		if ref.Desc != "" {
-			fmt.Fprintf(&b, " (%s)", ref.Desc)
+			fmt.Fprintf(b, " (%s)", ref.Desc)
 		}
 		b.WriteByte('\n')
 	}
 	if summary := strings.TrimSpace(e.Summary); summary != "" {
-		fmt.Fprintf(&b, "Summary: %s\n", strings.Join(strings.Fields(summary), " "))
+		fmt.Fprintf(b, "Summary: %s\n", strings.Join(strings.Fields(summary), " "))
 	}
+}
+
+func writeReadingRole(b *strings.Builder, role model.LightRole, code string) {
 	if role == model.LightRoleSetAside {
-		fmt.Fprintf(&b, "Role in the reading: %s (code: %s)\n", role, code)
+		fmt.Fprintf(b, "Role in the reading: %s (code: %s)\n", role, code)
 	} else {
-		fmt.Fprintf(&b, "Role in the reading: %s\n", role)
+		fmt.Fprintf(b, "Role in the reading: %s\n", role)
 	}
-	return b.String()
 }
 
 func renderLightParts(parts []model.LightPart) string {

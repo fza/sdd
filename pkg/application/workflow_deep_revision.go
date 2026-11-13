@@ -112,7 +112,7 @@ func (w *WorkflowSession) deepRevisionPages(ctx *engine.Context, base string, nu
 	fmt.Fprintf(&lead, "## Draft\n\n```\n%s\n```\n", base)
 	lead.WriteString(preflightRaised(ctx.Store))
 	lead.WriteString("\n## Changed since your last findings\n\n" + revisionPassages(ctx.Store, base))
-	pages, _ := w.deepReading(ctx, lead.String(), held)
+	pages, _ := w.deepReading(ctx, lead.String(), nil, held)
 	return pages
 }
 

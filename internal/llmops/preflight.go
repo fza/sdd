@@ -102,9 +102,10 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 // judge that runs in its place: the deep verifier (20261109-010000-d-prc-vfy).
 // It carries the check the entry's shape selects with the universal rubrics,
 // the active contracts and the prose verifier's axes over a reading. It
-// leaves out the rules whose guard the entry fails, and the entry with its
-// referenced, closed and superseded entries: the verifier's reading pages
-// carry those.
+// leaves out the rules whose guard the entry fails; the entry with its
+// referenced, closed and superseded entries, which the verifier's reading
+// pages carry; and what only pre-flight's model reads: its role, its answer
+// format, its severity scale and its reading's layout.
 func PreflightRubric(entry *model.Entry, graph *model.Graph, configuredLanguage string) (string, error) {
 	ct := selectCheckType(entry, graph)
 	vocab, err := refKindVocabulary(graph)
@@ -128,12 +129,16 @@ func PreflightRubric(entry *model.Entry, graph *model.Graph, configuredLanguage 
 		return "", err
 	}
 	var axes strings.Builder
-	err = tmpl.ExecuteTemplate(&axes, "light_axes", struct{ Partial bool }{false})
+	err = tmpl.ExecuteTemplate(&axes, "light_axes", lightAxes{Rubric: true})
 	if err != nil {
 		return "", fmt.Errorf("rendering the prose verifier axes: %w", err)
 	}
 	return req.SystemPrompt + "\n\n" + dropSectionsHolding(req.UserPrompt, readingMark) + "\n\n" + strings.TrimSpace(axes.String()), nil
 }
+
+// lightAxes is what the prose verifier's axes render for: one part of a split
+// reading, or the rubric.
+type lightAxes struct{ Partial, Rubric bool }
 
 // readingMark stands in for an entry the rubric leaves to the reading pages,
 // so the sections carrying one drop whole.
@@ -271,6 +276,9 @@ func (p *preflightContext) ClosesKind(kinds ...string) bool {
 	}
 	return slices.ContainsFunc(p.closedKinds, func(k model.Kind) bool { return slices.Contains(kinds, string(k)) })
 }
+
+// Rubric reports the rules page PreflightRubric renders.
+func (p *preflightContext) Rubric() bool { return p.rubric }
 
 // HasRefs guards a rule on the proposed entry carrying refs.
 func (p *preflightContext) HasRefs() bool { return !p.rubric || len(p.entry.Refs) > 0 }

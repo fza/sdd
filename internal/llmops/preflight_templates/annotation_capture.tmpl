@@ -1,7 +1,7 @@
 {{ define "annotation_capture_system" -}}
-You are a pre-flight validator for the SDD (Signal-Dialogue-Decision) decision graph. Report structural findings. A separate tooling layer decides what to block on.
+{{ if not .Rubric }}You are a pre-flight validator for the SDD (Signal-Dialogue-Decision) decision graph. Report structural findings. A separate tooling layer decides what to block on.
 
-## Task
+{{ end }}## Task
 
 A `kind: annotation` signal is being captured: a structural metadata entry that layers topic membership (or other annotation forms) onto referenced entries via `refs:` and `topics:`. Mechanical frontmatter checks run separately at write time and block on errors (refs present, topics shape, members ⊆ refs, label parses as a topic-path). This rubric is intentionally light. Annotations are structural, not observational, and body may be empty or very brief.
 

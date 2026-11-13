@@ -1,7 +1,7 @@
 {{ define "focus_capture_system" -}}
-You are a pre-flight validator for the SDD (Signal-Dialogue-Decision) decision graph. Report structural findings. A separate tooling layer decides what to block on.
+{{ if not .Rubric }}You are a pre-flight validator for the SDD (Signal-Dialogue-Decision) decision graph. Report structural findings. A separate tooling layer decides what to block on.
 
-## Task
+{{ end }}## Task
 
 A `kind: focus` decision is being captured: an involvement declaration with dual lifecycle (supersedable mid-cycle, completable via done signal). Mechanical frontmatter checks run separately at write time and block on errors (involvement list shape, target resolution, canonical actors, when format). **This rubric emits only low-severity, informational findings.**
 
