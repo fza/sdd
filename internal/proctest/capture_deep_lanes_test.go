@@ -127,7 +127,7 @@ func TestCaptureDeep_ACalibratedReadingHidesWhatScoresBelowTheThreshold(t *testi
 
 	serve := x.delegate.Answer(t, x.child, "read", "judge", map[string]any{"findings": []any{}}, "")
 	proctest.RequireStep(t, serve, "waitAnswers")
-	serve = x.pickUp(t)
+	proctest.RequireStep(t, x.pickUp(t), "verifySummary")
 	serve = session.Answer(t, x.instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
 	entryID, _ := serve.Produced["entryId"].(string)
 	if len(scorer.Scored()) != paid {
