@@ -63,7 +63,8 @@ type DeepFinding struct {
 }
 
 // Validate checks the finding's shape: the closed axis and severity sets, an
-// owner finding without edits, evidence with sources, and full entry IDs.
+// owner finding without edits, evidence with sources unless only the user can
+// settle it, and full entry IDs.
 func (f DeepFinding) Validate() error {
 	if strings.TrimSpace(f.Verdict) == "" {
 		return errors.New("verdict must say in words what is wrong")
@@ -77,7 +78,7 @@ func (f DeepFinding) Validate() error {
 	if f.Owner && len(f.Edits) > 0 {
 		return errors.New("an owner finding carries no edits: only the user can settle it")
 	}
-	if f.Axis == "evidence" && len(f.Sources) == 0 {
+	if f.Axis == "evidence" && !f.Owner && len(f.Sources) == 0 {
 		return errors.New("an evidence finding names its sources")
 	}
 	for _, id := range f.Basis {
