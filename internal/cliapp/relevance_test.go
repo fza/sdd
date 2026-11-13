@@ -82,3 +82,23 @@ func ledgerRecords(t *testing.T, dir string) string {
 	}
 	return ""
 }
+
+func TestGroundingSeed_AppendsReplayedLabelsOnce(t *testing.T) {
+	f := newAppFixture(t)
+	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n")
+	f.write(t, "pairs.jsonl", `{"a":"20261109-004506-d-cpt-udz","b":"20261101-120000-s-tac-aaa"}`+"\n")
+
+	first := f.run(t, "grounding", "seed", "--from", "pairs.jsonl")
+	if first.err != nil || !strings.Contains(first.stdout, "Seeded 1 replayed reference labels; 0 pairs already labelled") {
+		t.Fatalf("seed = %q, %v\n%s", first.stdout, first.err, first.stderr)
+	}
+	again := f.run(t, "grounding", "seed", "--from", "pairs.jsonl")
+	if again.err != nil || !strings.Contains(again.stdout, "Seeded 0 replayed reference labels; 1 pairs already labelled") {
+		t.Fatalf("second seed = %q, %v: a repeated file should add nothing", again.stdout, again.err)
+	}
+	exported := f.run(t, "relevance", "export")
+	want := `{"type":"reader","a":"20261101-120000-s-tac-aaa","b":"20261109-004506-d-cpt-udz","code":"referenced","source":"replay"}` + "\n"
+	if exported.err != nil || exported.stdout != want {
+		t.Fatalf("export = %q, %v: want one replayed reference", exported.stdout, exported.err)
+	}
+}
