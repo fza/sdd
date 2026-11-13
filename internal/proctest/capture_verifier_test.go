@@ -183,11 +183,10 @@ func TestCaptureVerifier_ACutAnswerUnderSkipNeverHoldsTheWrite(t *testing.T) {
 	}
 }
 
-// preflightTimedOut is the failure a provider adapter reports for a call that
-// ran past llm.timeout, without the factory's hint, so the serve has to name
-// the setting itself.
+// preflightTimedOut is the failure a call past llm.timeout reports once the
+// factory's bound named the setting; the step text quotes it, never repeats it.
 func preflightTimedOut() error {
-	return &llm.Error{Err: fmt.Errorf("gollm openai: timed out: %w", context.DeadlineExceeded)}
+	return &llm.Error{Err: fmt.Errorf("gollm openai: timed out: %w: no answer within llm.timeout (2m0s); raise it with `sdd config set llm.timeout <duration>`", context.DeadlineExceeded)}
 }
 
 func TestCaptureVerifier_ATimedOutPreflightPutsTheChoiceToTheUser(t *testing.T) {
@@ -211,6 +210,9 @@ func TestCaptureVerifier_ATimedOutPreflightPutsTheChoiceToTheUser(t *testing.T) 
 		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("the serve should name the timeout and the setting, missing %q:\n%s", want, serve.Instructions)
 		}
+	}
+	if got := strings.Count(serve.Instructions, "sdd config set llm.timeout"); got != 1 {
+		t.Errorf("the serve should name the setting once, from the error that carries it, named it %d times:\n%s", got, serve.Instructions)
 	}
 	if got := world.LLM.Calls(llm.PurposePreflight); got != 1 {
 		t.Fatalf("a timed-out pre-flight should wait for the user before running again, ran %d times", got)
