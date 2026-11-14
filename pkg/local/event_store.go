@@ -37,16 +37,15 @@ type FilesystemEventStoreOptions struct {
 	// is local.
 	GitChannels []string
 	// Settled names, from a channel's events, those compaction drops: the
-	// expired and healed ones, as each type's writer defines them (D17). Nil
-	// drops none.
+	// expired and healed ones, as each type's writer defines them. Nil drops
+	// none.
 	Settled EventSettler
 }
 
 // FilesystemEventStore is the local default of the project event store: an
 // append log per channel of immutable segment files <time>-<random>.seg, one
-// per Append call and channel, merged by tiered compaction
-// (20261109-004506-d-cpt-udz, D15 and D17). It
-// never commits; see localChannelIgnore for how sharing follows the channel.
+// per Append call and channel, merged by tiered compaction. It never commits;
+// see localChannelIgnore for how sharing follows the channel.
 type FilesystemEventStore struct {
 	dir         string
 	gitChannels []string
@@ -228,10 +227,9 @@ func (s *FilesystemEventStore) Compact(ctx context.Context) error {
 	return nil
 }
 
-// compactChannel merges the channel's segments: every one when full, else
-// tier by tier (D17). The Settled hook sees the whole channel once, before
-// the first merge; events appended later are never named by it, so they
-// survive.
+// compactChannel merges the channel's segments: every one when full, else tier
+// by tier. The Settled hook sees the whole channel once, before the first
+// merge; events appended later are never named by it, so they survive.
 func (s *FilesystemEventStore) compactChannel(ctx context.Context, channel string, full bool) error {
 	var settled map[string]bool
 	merge := func(segments [][]byte) ([]byte, error) {

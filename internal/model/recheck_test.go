@@ -85,8 +85,8 @@ func TestUnhealedRecheck(t *testing.T) {
 	}
 }
 
-// D26: a draft citing one entry of an unhealed strain is refused; a draft
-// citing neither, or both, passes.
+// A draft citing one entry of an unhealed strain is refused; a draft citing
+// neither, or both, passes.
 func TestStrainRefusals(t *testing.T) {
 	strain := model.StrainItem(model.Strain{IDs: [2]string{strainA, strainB}, Relation: model.StrainContradicts}, other, time.Time{})
 	edit := model.HandEditItem(strainA, "abc", time.Time{})

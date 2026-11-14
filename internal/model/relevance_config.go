@@ -2,11 +2,11 @@ package model
 
 import "fmt"
 
-// RelevanceDirName is the directory under .sdd/ holding the committed copy
-// of the relevance ledger (20261109-004506-d-cpt-udz, D17 and D18).
+// RelevanceDirName is the directory under .sdd/ holding the committed copy of
+// the relevance ledger.
 const RelevanceDirName = "relevance"
 
-// RelevanceContent is what the committed ledger holds (D20).
+// RelevanceContent is what the committed ledger holds.
 type RelevanceContent string
 
 const (
@@ -20,7 +20,7 @@ const (
 
 // RelevanceConfig is the `relevance` block. Only the committed
 // .sdd/config.yaml sets it, since what the repository carries is the team's
-// choice (D14, D20).
+// choice.
 type RelevanceConfig struct {
 	// Commit keeps the ledger in .sdd/relevance/, where its segments ride the
 	// next sdd auto-commit; off, it lives in machine state.

@@ -55,7 +55,7 @@ func TestPlaceByCosine_SetsAsideBelowTheFloorOnly(t *testing.T) {
 }
 
 // The cosine stage's similarities reach the ledger only for pairs a reader
-// labelled; its set-asides are never stored (5.8 item 11).
+// labelled; its set-asides are never stored.
 func TestCaptureRelevance_StoresCosineOnlyForLabelledPairs(t *testing.T) {
 	judge := model.CosineJudge("counter/v1")
 	var reading model.Reading

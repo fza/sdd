@@ -10,8 +10,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// HandEdit is a commit outside sdd's own that changed a committed entry
-// (20261109-004506-d-cpt-udz, D5).
+// HandEdit is a commit outside sdd's own that changed a committed entry.
 type HandEdit struct {
 	Commit string
 	Entry  string

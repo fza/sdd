@@ -78,8 +78,8 @@ type ShowRequest struct {
 	// zero value is unbounded — explicit pulls arrive complete (d-tac-rzi).
 	Budget types.ShowTreeBudget
 	// Held reports whether the consumer already holds an entry in full; such
-	// an entry serves as its pointer (20261109-004506-d-cpt-udz, R14). Nil
-	// serves everything in full, as the CLI does.
+	// an entry serves as its pointer. Nil serves everything in full, as the
+	// CLI does.
 	Held func(id string) bool
 }
 

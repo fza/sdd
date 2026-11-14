@@ -17,10 +17,9 @@ var relevanceTemplates embed.FS
 
 var relevanceTemplate = template.Must(template.New("relevance").ParseFS(relevanceTemplates, "relevance_templates/*.tmpl"))
 
-// RelevanceBridge is the prefilter's generate protocol
-// (20261109-004506-d-cpt-udz, D23): a chat model rates one candidate per
-// call, as the reference implementation measured that form's recall. Wrap
-// it in relevance.PerItem to score a batch.
+// RelevanceBridge is the prefilter's generate protocol: a chat model rates one
+// candidate per call, as the reference implementation measured that form's
+// recall. Wrap it in relevance.PerItem to score a batch.
 type RelevanceBridge struct {
 	runner llm.Runner
 	system string

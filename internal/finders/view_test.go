@@ -71,9 +71,8 @@ func TestView_ActiveAsList(t *testing.T) {
 	}
 }
 
-// A plain listing serves the live population; history opts into the closed
-// and superseded entries, and an id() selection names its entries outright
-// (20261109-004506-d-cpt-udz, D12).
+// A plain listing serves the live population; history opts into the closed and
+// superseded entries, and an id() selection names its entries outright.
 func TestView_PlainListingIsLiveHistoryIncludesAll(t *testing.T) {
 	a := entry("20260101-100000-d-tac-aaa", withKind(model.KindDirective))
 	b := entry("20260101-110000-d-tac-bbb", withKind(model.KindDirective))

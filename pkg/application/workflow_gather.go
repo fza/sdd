@@ -22,8 +22,8 @@ type WorkflowGatherRequest struct {
 }
 
 // Gather runs the reading and, naming a running instance, records it as the
-// instance's credited read (D28, D31): only reads made through it inside the
-// instance count for the capture's grounding.
+// instance's credited read: only reads made through it inside the instance
+// count for the capture's grounding.
 func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, request WorkflowGatherRequest) (GatherResult, error) {
 	w.setOperation(ctx, identity)
 	gather := GatherRequest{SyncMode: request.SyncMode, Draft: request.Draft, Topics: request.Topics, IDs: request.IDs, Held: request.Held}

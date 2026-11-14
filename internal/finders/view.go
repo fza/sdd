@@ -234,9 +234,9 @@ func executeSection(g *model.Graph, wipMarkers []*model.WIPMarker, section model
 	if err := spec.validateMutualExclusion(); err != nil {
 		return query.SectionResult{}, err
 	}
-	// A plain listing serves the live population; history opts into
-	// closed, superseded and retired entries, and an id() selection names
-	// its entries outright (20261109-004506-d-cpt-udz, D12).
+	// A plain listing serves the live population; history opts into closed,
+	// superseded and retired entries, and an id() selection names its entries
+	// outright.
 	if !spec.history && len(spec.idFilter) == 0 {
 		spec.filter.OpenOnly = true
 	}

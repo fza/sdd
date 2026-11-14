@@ -15,8 +15,7 @@ import (
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
-// Prefilter constants (20261109-004506-d-cpt-udz, 5.8): calls in flight per
-// gather and the pass deadline.
+// Prefilter constants: calls in flight per gather and the pass deadline.
 const (
 	prefilterInFlight = 16
 	prefilterDeadline = 45 * time.Second
@@ -39,10 +38,10 @@ type prefilterPass struct {
 	scores map[string]uint8
 }
 
-// runPrefilter rates the candidates not yet scored in the reading once
-// they reach grounding.prefilter_from (D27). Every candidate a call left
-// unanswered (provider down, deadline, unreadable answer) stays to judge
-// unscored, and the pass names it (5.8).
+// runPrefilter rates the candidates not yet scored in the reading once they
+// reach grounding.prefilter_from. Every candidate a call left unanswered
+// (provider down, deadline, unreadable answer) stays to judge unscored, and
+// the pass names it.
 func runPrefilter(ctx context.Context, runtime *ProjectRuntime, policy GroundingPolicy, subject string, g *model.Graph, candidates []model.GatherCandidate, held map[string]uint8) (prefilterPass, error) {
 	pass := prefilterPass{status: model.PrefilterOff, scores: map[string]uint8{}, fresh: map[string]uint8{}}
 	for id, score := range held {

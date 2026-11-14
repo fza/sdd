@@ -286,8 +286,8 @@ func TestGroundingStatus_ReportsTheJudgesCalibration(t *testing.T) {
 	}
 }
 
-// A judge change computes its recall bound from the stored labelled pairs
-// once the new judge has scored them (D36).
+// A judge change computes its recall bound from the stored labelled pairs once
+// the new judge has scored them.
 func TestRescoreRelevance_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
 	f := newGatherFixture(t)
 	var batch model.RelevanceBatch

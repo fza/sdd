@@ -1,7 +1,6 @@
-// Capture under grounding.enforce (20261109-004506-d-cpt-udz, slice 4): the
-// assemble gate judges the capture's credited gather reading, the write step
-// answers entries that landed after it, and a recorded bypass writes the
-// entry with low confidence.
+// Capture under grounding.enforce: the assemble gate judges the capture's
+// credited gather reading, the write step answers entries that landed after
+// it, and a recorded bypass writes the entry with low confidence.
 package proctest_test
 
 import (
@@ -123,7 +122,7 @@ func TestCaptureGrounding_SeedsTheWidenReport(t *testing.T) {
 
 // An entry landing between the confirm and the write reaches lateEntries,
 // whatever its ID's age, and setting it aside returns to the write without a
-// new confirm (D13, D37).
+// new confirm.
 func TestCaptureGrounding_EntryLandingAfterTheConfirmReachesLateEntries(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -272,8 +271,8 @@ func TestCaptureGrounding_SearchModeOwesTheSearchesAndListings(t *testing.T) {
 	requireDiagnostics(t, serve, "the reading lacks the semantic search, a keyword search, the listing of topic cli/ux", "call gather with instance "+instance)
 }
 
-// An entry another capture of the same dialogue wrote never counts as
-// landed for a reading that began before it (5.5).
+// An entry another capture of the same dialogue wrote never counts as landed
+// for a reading that began before it.
 func TestCaptureGrounding_OwnCapturesNeverCountAsLanded(t *testing.T) {
 	world, session := newGroundingWorld(t, "grounding-own")
 	first := session.Start(t, "capture", nil).Instance
@@ -289,8 +288,8 @@ func TestCaptureGrounding_OwnCapturesNeverCountAsLanded(t *testing.T) {
 	proctest.RequireStep(t, serve, "playback")
 }
 
-// A published capture writes its reader records, keyed to the new entry,
-// into the relevance ledger (5.7).
+// A published capture writes its reader records, keyed to the new entry, into
+// the relevance ledger.
 func TestCaptureGrounding_PublishStoresTheReaderVerdicts(t *testing.T) {
 	store := local.NewMemoryRelevanceStore()
 	world, session := newCaptureWorld(t, "grounding-ledger", proctest.WithGroundingEnforced(), proctest.WithRelevance(store))
@@ -357,7 +356,7 @@ func (s *countingScorer) Score(_ context.Context, request llmrelevance.Request) 
 
 // The prefilter's scores ride the capture's reading: a later gather reuses
 // them instead of scoring again, and publish stores them keyed to the new
-// entry; a failed pass stores none (5.8).
+// entry; a failed pass stores none.
 func TestCaptureGrounding_PrefilterScoresRideTheReadingToTheLedger(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -404,7 +403,7 @@ func TestCaptureGrounding_PrefilterScoresRideTheReadingToTheLedger(t *testing.T)
 
 // An audit sample answered in the capture carries the audit bit into the
 // ledger, and a publish whose audit labels show drift steps the judge's
-// threshold down (D36).
+// threshold down.
 func TestCaptureGrounding_PublishRecordsAuditAndAppliesTheDriftRule(t *testing.T) {
 	const judge = "test:counting"
 	var seed model.RelevanceBatch
@@ -462,9 +461,9 @@ func TestCaptureGrounding_PublishRecordsAuditAndAppliesTheDriftRule(t *testing.T
 	}
 }
 
-// A one-direction judge, as the Cohere reranker is (D21), stores its scores
-// from the draft to each candidate: they answer that direction and leave the
-// reverse pair undecided unless they rate it relevant (5.7 item 4).
+// A one-direction judge, as the Cohere reranker is, stores its scores from the
+// draft to each candidate: they answer that direction and leave the reverse
+// pair undecided unless they rate it relevant.
 func TestCaptureGrounding_OneDirectionScoresAnswerOnlyFromTheDraft(t *testing.T) {
 	store := local.NewMemoryRelevanceStore()
 	scorer := &countingScorer{score: 0.02, forward: true}

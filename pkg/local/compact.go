@@ -10,12 +10,11 @@ import (
 	"slices"
 )
 
-// Tiered compaction of a segment directory (20261109-004506-d-cpt-udz,
-// D17): a segment's tier is its size in powers of four above 4 KiB, and
-// once a tier holds compactFanIn segments they merge into one, which lands
-// in a higher tier. Merging writes the new segment before it removes the
-// old ones, so a reader sees every record at least once; two compactions
-// racing leave duplicate records, which the next merge drops.
+// Tiered compaction of a segment directory: a segment's tier is its size in
+// powers of four above 4 KiB, and once a tier holds compactFanIn segments they
+// merge into one, which lands in a higher tier. Merging writes the new segment
+// before it removes the old ones, so a reader sees every record at least once;
+// two compactions racing leave duplicate records, which the next merge drops.
 const (
 	compactFanIn    = 8
 	compactTierBase = 4096

@@ -14,8 +14,8 @@ import (
 )
 
 // The JSON form of the ledger round-trips byte for byte: a compacted ledger
-// exported and imported into an empty store yields the same segment, and
-// bytes this sdd cannot name keep their number (D16).
+// exported and imported into an empty store yields the same segment, and bytes
+// this sdd cannot name keep their number.
 func TestRelevanceJSON_RoundTripsByteForByte(t *testing.T) {
 	pair := model.NewRelevancePair("20261101-120000-s-tac-aaa", "20261109-004506-d-cpt-udz")
 	other := model.NewRelevancePair("20261101-120000-s-tac-aaa", "20261102-120000-d-tac-bbb")

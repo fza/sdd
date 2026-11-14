@@ -10,9 +10,9 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// Grounding enforcement layers asymmetrically (20261109-004506-d-cpt-udz, D2):
-// the global and committed configs set it with the committed one winning; the
-// machine-local config may only turn it on.
+// Grounding enforcement layers asymmetrically: the global and committed
+// configs set it with the committed one winning; the machine-local config may
+// only turn it on.
 func TestGroundingEnforceLayers(t *testing.T) {
 	enabled := true
 	cases := []struct {

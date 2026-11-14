@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-// Prefilter constants (20261109-004506-d-cpt-udz, 5.13).
+// Prefilter constants.
 const (
 	// RecallFloor is the Wilson lower bound (95%) of recall a judge reaches
-	// before it sets any entry aside (D33).
+	// before it sets any entry aside.
 	RecallFloor = 0.98
 	// RelevantPrecision is the Wilson lower bound (95%) of the referenced
 	// share above which a scored candidate is served in full.
@@ -33,8 +33,7 @@ type PrefilterPayload struct {
 	Judge   string           `json:"judge"`
 	Forward bool             `json:"forward,omitempty"`
 	Scores  map[string]uint8 `json:"scores,omitempty"`
-	// Audit names the set-aside candidates shown blind as lines to judge
-	// (D36).
+	// Audit names the set-aside candidates shown blind as lines to judge.
 	Audit []string `json:"audit,omitempty"`
 }
 
@@ -93,7 +92,7 @@ func WilsonLower(successes, n int) float64 {
 	return (center - margin) / (1 + z2/nf)
 }
 
-// Label kinds of D11.
+// Label kinds: how a reader record counts as a calibration label.
 const (
 	LabelPositive = "positive"
 	LabelNegative = "negative"
@@ -102,7 +101,7 @@ const (
 )
 
 // RelevanceLabel is one judged pair a judge scored: the reader's answer as a
-// calibration label (D11) with the judge's score.
+// calibration label with the judge's score.
 type RelevanceLabel struct {
 	Pair   RelevancePair
 	Score  uint8
@@ -111,9 +110,9 @@ type RelevanceLabel struct {
 	Audit  bool
 }
 
-// LabelKind classifies a reader record (D11): a reference is positive; a
-// set-aside coded topic-only, other-scope or term-clash is negative; other
-// is counted only; covered, meta and unknown codes are excluded.
+// LabelKind classifies a reader record: a reference is positive; a set-aside
+// coded topic-only, other-scope or term-clash is negative; other is counted
+// only; covered, meta and unknown codes are excluded.
 func LabelKind(verdict ReaderVerdict) string {
 	switch verdict.Code {
 	case ReaderReferenced:
@@ -147,7 +146,7 @@ func (l *RelevanceLedger) Labels(judge string) []RelevanceLabel {
 }
 
 // Unscored returns the labelled pairs judge has no score for: what a judge
-// change re-scores before its bound is computed (D36).
+// change re-scores before its bound is computed.
 func (l *RelevanceLedger) Unscored(judge string) []RelevancePair {
 	var pairs []RelevancePair
 	for _, pair := range l.Pairs() {
@@ -162,13 +161,13 @@ func (l *RelevanceLedger) Unscored(judge string) []RelevancePair {
 	return pairs
 }
 
-// Calibrate computes a judge's thresholds from its labels (D33): the
-// set-aside threshold is the highest score that keeps the Wilson lower
-// bound of recall over the positive labels at RecallFloor; the relevant
-// threshold the lowest score at and above which the referenced share's
-// lower bound reaches RelevantPrecision. Until the recall bound holds, the
-// thresholds are invalid and decide nothing. Drift steps cap the set-aside
-// threshold; it never rises above a step (D36).
+// Calibrate computes a judge's thresholds from its labels: the set-aside
+// threshold is the highest score that keeps the Wilson lower bound of recall
+// over the positive labels at RecallFloor; the relevant threshold the lowest
+// score at and above which the referenced share's lower bound reaches
+// RelevantPrecision. Until the recall bound holds, the thresholds are invalid
+// and decide nothing. Drift steps cap the set-aside threshold; it never rises
+// above a step.
 func Calibrate(labels []RelevanceLabel, steps []DriftStep, judge string) RelevanceThresholds {
 	var positives []uint8
 	for _, label := range labels {
@@ -227,11 +226,11 @@ type Prefiltered struct {
 	SetAside []string
 }
 
-// PlacePrefiltered places candidates by their scores: with valid thresholds
-// a score at or above Relevant is served in full and one below SetAside set
+// PlacePrefiltered places candidates by their scores: with valid thresholds a
+// score at or above Relevant is served in full and one below SetAside set
 // aside; every other candidate, scored or not, stays to judge, scored ones
 // first by falling score. Without valid thresholds nothing is set aside or
-// served: the prefilter only sorts (D33).
+// served: the prefilter only sorts.
 func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, thresholds RelevanceThresholds) Prefiltered {
 	var placed Prefiltered
 	for _, candidate := range candidates {
@@ -266,8 +265,8 @@ func PlacePrefiltered(candidates []GatherCandidate, scores map[string]uint8, thr
 	return placed
 }
 
-// RelevanceText is the whole text the prefilter reads of an entry (D30):
-// kind, topics, title and body, never cut.
+// RelevanceText is the whole text the prefilter reads of an entry: kind,
+// topics, title and body, never cut.
 func RelevanceText(kind string, topics []string, title, body string) string {
 	var b strings.Builder
 	b.WriteString("kind: " + kind + "\n")

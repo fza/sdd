@@ -13,8 +13,7 @@ import (
 // event channel and of the committed relevance ledger. A local channel's
 // directory ignores itself, and an uncommitted ledger lives outside the
 // repository, so the segments git lists are shared ones, and they ride the
-// commit sdd is about to make instead of commits of their own
-// (20261109-004506-d-cpt-udz, D17 and D19).
+// commit sdd is about to make instead of commits of their own.
 var segmentPathspecs = []string{
 	":(top,glob)**/" + path.Join(model.SDDDirName, model.EventsDirName) + "/*/*.seg",
 	":(top,glob)**/" + path.Join(model.SDDDirName, model.RelevanceDirName) + "/*.seg",

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Grounding defaults (20261109-004506-d-cpt-udz, D25, D27, D31).
+// Grounding defaults.
 const (
 	DefaultGroundingDepthDown     = 2
 	DefaultGroundingDepthUp       = 1
@@ -14,16 +14,16 @@ const (
 )
 
 // GroundingConfig is the `grounding` block. Pointers tell an unset key from
-// one a layer sets, because enforce resolves asymmetrically (D2): the
-// user-global and the committed config may set true or false, the
-// machine-local config only true.
+// one a layer sets, because enforce resolves asymmetrically: the user-global
+// and the committed config may set true or false, the machine-local config
+// only true.
 type GroundingConfig struct {
 	Enforce       *bool                `yaml:"enforce,omitempty"`
 	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
 	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
 	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
-	// Prefilter switches the prefilter on where llm_prefilter configures it
-	// (D7); off by default.
+	// Prefilter switches the prefilter on where llm_prefilter configures it;
+	// off by default.
 	Prefilter *bool `yaml:"prefilter,omitempty"`
 }
 
@@ -87,16 +87,15 @@ func mergeGroundingConfig(base, overlay GroundingConfig) GroundingConfig {
 }
 
 // GroundingExemptKind reports whether drafts of kind skip the grounding gate
-// and entries of kind never become candidates: only records of who takes
-// part and in which role cannot contradict, duplicate or outdate a claim
-// (D38).
+// and entries of kind never become candidates: only records of who takes part
+// and in which role cannot contradict, duplicate or outdate a claim.
 func GroundingExemptKind(kind Kind) bool {
 	return kind == KindActor || kind == KindRole
 }
 
 // GroundingPopulation returns the live entries a reading judges, in graph
-// order: the open population (superseded and closed entries excluded, D12)
-// without the exempt kinds.
+// order: the open population (superseded and closed entries excluded) without
+// the exempt kinds.
 func GroundingPopulation(g *Graph) []*Entry {
 	var live []*Entry
 	for _, e := range g.Filter(GraphFilter{OpenOnly: true}) {
@@ -108,7 +107,7 @@ func GroundingPopulation(g *Graph) []*Entry {
 }
 
 // EntryBrief is an entry's brief: its title, else the first sentence of its
-// summary. Never cut (D29).
+// summary. Never cut.
 func EntryBrief(e *Entry) string {
 	brief := e.ListingTitle()
 	if brief == "" {
@@ -258,7 +257,7 @@ func readTag(read GroundingRead) string {
 	return string(read.Mode)
 }
 
-// Prefilter protocols (D23).
+// Prefilter protocols.
 const (
 	PrefilterSystemOne    = "systemone"
 	PrefilterCohereRerank = "cohere-rerank"

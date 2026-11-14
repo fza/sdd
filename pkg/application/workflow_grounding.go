@@ -19,8 +19,8 @@ import (
 var groundingVerdictFields = []string{"verdicts", "lateVerdicts"}
 
 // registerWorkflowGrounding registers the capture's grounding gate under
-// grounding.enforce (20261109-004506-d-cpt-udz): the assemble predicate, the
-// write step's late-entries check and the late-entries listing.
+// grounding.enforce: the assemble predicate, the write step's late-entries
+// check and the late-entries listing.
 func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) error {
 	reads := []string{"entryKind", "topics", "refs", "supersedes", "closes", "verdicts", "lateVerdicts", "strains", "skipGrounding"}
 	if err := registry.RegisterPredicate(engine.Predicate{
@@ -261,8 +261,8 @@ func (w *WorkflowSession) storeCaptureRelevance(ctx *engine.Context, project Pro
 	return applyDriftRule(w.ctx, runtime, w.app.clock.Now())
 }
 
-// applyDriftRule steps the current judge's set-aside threshold down when
-// the latest audit labels show too many misses (D36).
+// applyDriftRule steps the current judge's set-aside threshold down when the
+// latest audit labels show too many misses.
 func applyDriftRule(ctx context.Context, runtime *ProjectRuntime, now time.Time) error {
 	judge := runtime.options.Prefilter.Judge
 	if judge == "" {

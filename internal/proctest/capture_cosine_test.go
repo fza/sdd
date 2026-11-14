@@ -25,9 +25,9 @@ var directiveEmbedder = embed.EmbedderFunc{Space: "proctest/directive", Run: fun
 	return embed.Result{Vectors: vectors}, nil
 }}
 
-// The cosine stage's similarities ride the capture's reading to publish,
-// which keeps them only for the pairs the reader labelled: a candidate the
-// capture left unanswered stores nothing (5.8 item 11).
+// The cosine stage's similarities ride the capture's reading to publish, which
+// keeps them only for the pairs the reader labelled: a candidate the capture
+// left unanswered stores nothing.
 func TestCaptureGrounding_CosineSimilaritiesReachTheLedgerOnlyForLabelledPairs(t *testing.T) {
 	store := local.NewMemoryRelevanceStore()
 	world, session := newCaptureWorld(t, "grounding-cosine",

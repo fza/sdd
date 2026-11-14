@@ -118,8 +118,7 @@ func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.P
 		if err != nil {
 			return nil, nil, err
 		}
-		// A machine-local layer may only turn grounding enforcement on
-		// (20261109-004506-d-cpt-udz, D2).
+		// A machine-local layer may only turn grounding enforcement on.
 		if local != nil && local.Grounding.Enforce != nil && !*local.Grounding.Enforce {
 			return nil, nil, fmt.Errorf("%s: grounding.enforce: false is refused in the machine-local config, which may only set true; turn enforcement off in the committed %s",
 				localPath, filepath.Join(sddDir, "config.yaml"))

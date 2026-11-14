@@ -12,8 +12,7 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 )
 
-// HandEdit is a commit outside sdd's own that changed a committed entry
-// (20261109-004506-d-cpt-udz, D5).
+// HandEdit is a commit outside sdd's own that changed a committed entry.
 type HandEdit struct {
 	Commit string
 	Entry  string
@@ -134,7 +133,7 @@ func (r *ProjectRuntime) openRecheck(ctx context.Context, g *model.Graph) ([]mod
 }
 
 // recheckResponsible reports whether participant runs the project's recheck
-// work: everyone while no participant is named (D5).
+// work: everyone while no participant is named.
 func recheckResponsible(policy GroundingPolicy, participant string) bool {
 	return len(policy.RecheckResponsible) == 0 || slices.Contains(policy.RecheckResponsible, participant)
 }

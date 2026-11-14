@@ -10,13 +10,13 @@ import (
 )
 
 // GatherWayBack is the call a pointer names to have an entry served in full
-// again (D34).
+// again.
 const GatherWayBack = "gather with its ids, or resume_session"
 
-// RenderGather writes a gather serve: header, the entries served in full,
-// the candidates to judge and the entries set aside. Nothing is cut (D29):
-// every list prints whole, and what the full block leaves out is named with
-// the call that opens it.
+// RenderGather writes a gather serve: header, the entries served in full, the
+// candidates to judge and the entries set aside. Nothing is cut: every list
+// prints whole, and what the full block leaves out is named with the call that
+// opens it.
 func RenderGather(w io.Writer, result *query.GatherResult) {
 	g := result.Graph
 	fmt.Fprintln(w, "# gather")
@@ -83,8 +83,8 @@ func RenderGather(w io.Writer, result *query.GatherResult) {
 	}
 }
 
-// RenderLateEntries writes the entries that landed after the assemble check
-// as brief lines, one each, nothing cut (D37).
+// RenderLateEntries writes the entries that landed after the assemble check as
+// brief lines, one each, nothing cut.
 func RenderLateEntries(w io.Writer, g *model.Graph, late []*model.Entry) {
 	for _, e := range late {
 		fmt.Fprintln(w, gatherLine(g, model.GatherCandidate{Entry: e}, false))

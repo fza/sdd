@@ -105,8 +105,7 @@ func sessionNewArgs(session string) []string {
 		"s", "tac", "The CLI reads of a session lack a record of the graph directory they used."}
 }
 
-// CLI reads with --session log into the session, as the MCP reads do
-// (20261109-004506-d-cpt-udz, D3).
+// CLI reads with --session log into the session, as the MCP reads do.
 func TestCLISessionReadsLogIntoTheSession(t *testing.T) {
 	cases := []struct {
 		name string
@@ -160,8 +159,7 @@ func TestCLISessionShowInspectsARefForTheCapture(t *testing.T) {
 
 // Under grounding.enforce, sdd new --session passes the gate the engine
 // capture passes: it holds the draft until a gather inside the capture read
-// the graph and every entry it served in full is referenced or dismissed
-// (D3, D9, D39).
+// the graph and every entry it served in full is referenced or dismissed.
 func TestCLISessionNewPassesTheCaptureGate(t *testing.T) {
 	f := sessionFixture(t, true)
 	session := openCapture(t, f)

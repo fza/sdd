@@ -61,8 +61,8 @@ type Instance struct {
 	// retiredStep is the logged position when the log placed the instance on
 	// a step its procedure no longer has (see ReplaySession).
 	retiredStep string
-	// reading folds the grounding reads credited to this instance (D28 of
-	// 20261109-004506-d-cpt-udz); replay restores it from the read events.
+	// reading folds the grounding reads credited to this instance; replay
+	// restores it from the read events.
 	reading model.Reading
 }
 

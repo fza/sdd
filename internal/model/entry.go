@@ -31,7 +31,7 @@ const (
 )
 
 // GroundingSkipped marks an entry whose capture bypassed the grounding gate;
-// it is written with low confidence (20261109-004506-d-cpt-udz, D4).
+// it is written with low confidence.
 const GroundingSkipped = "skipped"
 
 type Layer string
@@ -316,7 +316,7 @@ type Entry struct {
 	// (resolved) when scope.
 	Involvement []Involvement
 	Preflight   string    // PreflightSkipped or PreflightDryRunVerified; empty when a checker validated this entry
-	Grounding   string    // GroundingSkipped when the capture bypassed the grounding gate (20261109-004506-d-cpt-udz, D4); empty otherwise
+	Grounding   string    // GroundingSkipped when the capture bypassed the grounding gate; empty otherwise
 	Attachments []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
 	Title       string    // short headline naming the entry's subject, generated with the summary; optional at graph schema 1 (20261028-005411-d-tac-tit)
 	Summary     string    // LLM-generated summary: this entry + direct relationships

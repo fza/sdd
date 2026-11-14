@@ -7,8 +7,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// recheckCmd shows the recheck list and scans the history for hand edits
-// (20261109-004506-d-cpt-udz, D5).
+// recheckCmd shows the recheck list and scans the history for hand edits.
 func recheckCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "recheck",

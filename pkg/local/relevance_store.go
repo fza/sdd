@@ -14,7 +14,7 @@ import (
 
 // FilesystemRelevanceStore keeps the relevance verdict ledger in a directory
 // of immutable segment files <time>-<random>.seg, one per append, merged by
-// tiered compaction (20261109-004506-d-cpt-udz, D17).
+// tiered compaction.
 type FilesystemRelevanceStore struct {
 	dir string
 }
@@ -79,10 +79,9 @@ func mergeRelevanceSegments(segments [][]byte) ([]byte, error) {
 	return relevance.Encode(batch), nil
 }
 
-// SplitRelevanceStore keeps reader verdicts in one store and filter scores
-// and drift steps in another: the layout of a committed ledger under
-// relevance.content: reader, where only reader verdicts reach the
-// repository (D20).
+// SplitRelevanceStore keeps reader verdicts in one store and filter scores and
+// drift steps in another: the layout of a committed ledger under
+// relevance.content: reader, where only reader verdicts reach the repository.
 type SplitRelevanceStore struct {
 	readers *FilesystemRelevanceStore
 	scores  *FilesystemRelevanceStore

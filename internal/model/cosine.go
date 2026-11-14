@@ -5,11 +5,11 @@ import (
 	"strings"
 )
 
-// The cosine stage (20261109-004506-d-cpt-udz, 5.8 item 11): the vector
-// similarity of the draft to each candidate, the score the semantic search
-// ranks by, sets a candidate aside below a floor calibrated on the labelled
-// pairs' similarities. Its set-asides are recomputable and never stored; the
-// ledger keeps a similarity only for a pair a reader labelled.
+// The cosine stage: the vector similarity of the draft to each candidate, the
+// score the semantic search ranks by, sets a candidate aside below a floor
+// calibrated on the labelled pairs' similarities. Its set-asides are
+// recomputable and never stored; the ledger keeps a similarity only for a pair
+// a reader labelled.
 
 // CosineJudgePrefix starts the judge name the cosine stage scores under; the
 // rest is the embedding fingerprint, so a new vector space calibrates anew.
@@ -23,8 +23,8 @@ func CosineJudge(fingerprint string) string { return CosineJudgePrefix + fingerp
 func IsCosineJudge(judge string) bool { return strings.HasPrefix(judge, CosineJudgePrefix) }
 
 // CosineFloor is the calibrated floor of the cosine stage: a candidate whose
-// similarity byte lies below Floor is set aside. Invalid until enough
-// positive labels hold the recall bound (D33).
+// similarity byte lies below Floor is set aside. Invalid until enough positive
+// labels hold the recall bound.
 type CosineFloor struct {
 	Valid     bool
 	Floor     uint8

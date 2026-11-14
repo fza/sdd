@@ -6,7 +6,7 @@ import (
 )
 
 // Under grounding.enforce a direct `sdd new` is refused, naming the engine
-// capture and the recorded bypass (20261109-004506-d-cpt-udz, D3).
+// capture and the recorded bypass.
 func TestCLINewIsRefusedUnderGroundingEnforcement(t *testing.T) {
 	f := newAppFixture(t)
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\ngrounding:\n  enforce: true\n")

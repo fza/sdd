@@ -26,8 +26,8 @@ func (s *scriptedHandEdits) HandEdits(_ context.Context, since time.Time) ([]sdd
 	return out, nil
 }
 
-// The first scan sets the baseline; later scans record each hand edit since
-// it once, and the list shows it until an entry heals it (D5).
+// The first scan sets the baseline; later scans record each hand edit since it
+// once, and the list shows it until an entry heals it.
 func TestScanHandEdits_RecordsEditsSinceTheBaseline(t *testing.T) {
 	f := newGatherFixture(t)
 	f.seed(t)

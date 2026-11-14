@@ -9,8 +9,7 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
-// groundingCmd reports and maintains the prefilter's calibration
-// (20261109-004506-d-cpt-udz, 7.3, D36).
+// groundingCmd reports and maintains the prefilter's calibration.
 func groundingCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "grounding",

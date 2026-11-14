@@ -17,18 +17,18 @@ import (
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
-// GroundingPolicy is a project's grounding configuration
-// (20261109-004506-d-cpt-udz). A zero limit takes its default.
+// GroundingPolicy is a project's grounding configuration. A zero limit takes
+// its default.
 type GroundingPolicy struct {
 	Enforce       bool
 	DepthDown     int
 	DepthUp       int
 	BriefAllBelow int
 	PrefilterFrom int
-	// Prefilter switches the prefilter on where the runtime has one (D7).
+	// Prefilter switches the prefilter on where the runtime has one.
 	Prefilter bool
 	// RecheckResponsible names the participants catch-up shows the recheck
-	// list to; empty shows it to everyone (D5).
+	// list to; empty shows it to everyone.
 	RecheckResponsible []string
 }
 
@@ -45,14 +45,13 @@ func (p GroundingPolicy) resolved() GroundingPolicy {
 	return p
 }
 
-// gatherSearchLimit is how many hits one grounding search lists. Listings
-// are never bounded: a topic's live population is the read (D29).
+// gatherSearchLimit is how many hits one grounding search lists. Listings are
+// never bounded: a topic's live population is the read.
 const gatherSearchLimit = 20
 
-// GatherRequest asks for a grounding serve (20261109-004506-d-cpt-udz, 5.3).
-// Draft, Kind and Topics describe the draft; IDs opens entries in full; Query
-// and Terms replace the query writer with explicit searches, a path only an
-// uncredited read takes.
+// GatherRequest asks for a grounding serve. Draft, Kind and Topics describe
+// the draft; IDs opens entries in full; Query and Terms replace the query
+// writer with explicit searches, a path only an uncredited read takes.
 type GatherRequest struct {
 	SyncMode          SearchSyncMode
 	Branch            string
@@ -70,12 +69,12 @@ type GatherRequest struct {
 	// and topics stand in for an empty draft, and the relevance ledger's
 	// stored verdicts against it answer repeat pairs without a new judgment.
 	Subject string
-	// Held reports whether the consumer already holds an entry in full; such
-	// a candidate prints as a pointer (D34). Nil serves every line in full,
-	// as the CLI does (R14).
+	// Held reports whether the consumer already holds an entry in full; such a
+	// candidate prints as a pointer. Nil serves every line in full, as the CLI
+	// does.
 	Held func(id string) bool
 	// since is the corpus mark of the capture's reading; the live entries it
-	// lacks are listed as landed since the reading began (D13).
+	// lacks are listed as landed since the reading began.
 	since *model.CorpusMark
 	// reading is the capture's reading, whose prefilter scores a later gather
 	// reuses instead of scoring again.
@@ -294,7 +293,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 }
 
 // gatherSearches runs the semantic search and the keyword searches. The
-// embedder is checked before the query writer spends any LLM tokens (D24).
+// embedder is checked before the query writer spends any LLM tokens.
 func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntime, selected *readSnapshotSelection, request GatherRequest) ([]model.GroundingRead, error) {
 	explicit := request.Query != "" || len(request.Terms) > 0
 	if !explicit || request.Query != "" {

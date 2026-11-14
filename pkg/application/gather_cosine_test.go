@@ -30,7 +30,7 @@ func cosineLedger(t *testing.T, positives int, score uint8) *localadapter.Memory
 
 // Once the labelled pairs' similarities hold the recall bound, the cosine
 // stage sets aside the candidates below the calibrated floor; before that it
-// sets nothing aside (5.8 item 11).
+// sets nothing aside.
 func TestGather_CosineStageSetsAsideBelowItsCalibratedFloor(t *testing.T) {
 	cases := []struct {
 		name      string

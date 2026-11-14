@@ -9,8 +9,7 @@ import (
 	"github.com/networkteam/sdd/internal/secrets"
 )
 
-// cosinePass is what the cosine stage did to one gather's candidates
-// (20261109-004506-d-cpt-udz, 5.8 item 11).
+// cosinePass is what the cosine stage did to one gather's candidates.
 type cosinePass struct {
 	judge    string
 	scores   map[string]uint8

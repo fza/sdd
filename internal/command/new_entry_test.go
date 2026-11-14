@@ -252,9 +252,8 @@ func TestBuildEntry_ResolvesAttachmentPaths(t *testing.T) {
 	}
 }
 
-// A recorded grounding bypass writes the entry with grounding: skipped and
-// low confidence, whatever confidence the command asked for
-// (20261109-004506-d-cpt-udz, D4).
+// A recorded grounding bypass writes the entry with grounding: skipped and low
+// confidence, whatever confidence the command asked for.
 func TestBuildEntry_SkipGroundingRecordsTheBypass(t *testing.T) {
 	cmd := &command.NewEntryCmd{
 		Type: model.TypeSignal, Layer: model.LayerTactical, Kind: model.KindGap,

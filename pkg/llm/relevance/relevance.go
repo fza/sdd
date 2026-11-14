@@ -1,9 +1,8 @@
-// Package relevance is the public port of the grounding prefilter
-// (20261109-004506-d-cpt-udz, D23): a Scorer rates how relevant each
-// candidate text is to one subject text, a batch per call. Adapters plug in
-// a provider protocol; the decorators mirror pkg/llm's. Like llm.Runner, a
-// Scorer keeps no internal retries and bounds no call of its own: deadlines
-// and rates are the host's composition.
+// Package relevance is the public port of the grounding prefilter: a Scorer
+// rates how relevant each candidate text is to one subject text, a batch per
+// call. Adapters plug in a provider protocol; the decorators mirror pkg/llm's.
+// Like llm.Runner, a Scorer keeps no internal retries and bounds no call of
+// its own: deadlines and rates are the host's composition.
 package relevance
 
 import (
@@ -80,11 +79,11 @@ func CheckResult(request Request, result Result) error {
 	return nil
 }
 
-// Plan splits candidates into calls for scorer: each call within MaxBatch
-// and MaxInputTokens, counting the subject once per call. A candidate too
-// long for a call on its own, or beside the subject past MaxPairTokens, lands
-// in oversize instead, by index; nothing is cut (D30). Batches hold candidate
-// indexes in request order.
+// Plan splits candidates into calls for scorer: each call within MaxBatch and
+// MaxInputTokens, counting the subject once per call. A candidate too long for
+// a call on its own, or beside the subject past MaxPairTokens, lands in
+// oversize instead, by index; nothing is cut. Batches hold candidate indexes
+// in request order.
 func Plan(scorer Scorer, subject string, candidates []Candidate) (batches [][]int, oversize []int) {
 	maxBatch, maxTokens, maxPair := scorer.MaxBatch(), scorer.MaxInputTokens(), scorer.MaxPairTokens()
 	subjectTokens := EstimateTokens(subject)

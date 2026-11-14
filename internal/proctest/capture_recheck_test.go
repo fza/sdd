@@ -18,8 +18,7 @@ func strainOf(a, b, relation string) map[string]any {
 
 // A reported strain becomes a recheck item with its relation bit in the
 // ledger; while it stays unhealed a draft citing one of its entries is
-// refused, a draft citing both heals it, and the healed item leaves the
-// list (5.9, D26).
+// refused, a draft citing both heals it, and the healed item leaves the list.
 func TestCaptureRecheck_StrainHoldsDraftsCitingOneSideUntilHealed(t *testing.T) {
 	events := local.NewMemoryEventStore()
 	ledger := local.NewMemoryRelevanceStore()
@@ -87,8 +86,8 @@ func TestCaptureRecheck_StrainsNameListedEntries(t *testing.T) {
 	requireDiagnostics(t, serve, "strains name entries the reading never listed", groundingUnreadID)
 }
 
-// Catch-up shows the recheck list only to the participants
-// recheck.responsible names, to everyone while it names none (D5).
+// Catch-up shows the recheck list only to the participants recheck.responsible
+// names, to everyone while it names none.
 func TestCatchupRecheck_ShowsTheListToTheResponsibleParticipants(t *testing.T) {
 	item := model.StrainItem(model.Strain{IDs: [2]string{"20260815-100000-d-tac-nxt", "20260816-120000-s-tac-gap"}, Relation: model.StrainOutdates}, "", time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC))
 	payload, err := item.Payload()

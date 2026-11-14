@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// Recheck items (20261109-004506-d-cpt-udz, D5, D14): strains between
-// existing entries and hand edits of committed entries, kept as sdd.recheck
-// events in the recheck channel until a later entry heals them.
+// Recheck items: strains between existing entries and hand edits of committed
+// entries, kept as sdd.recheck events in the recheck channel until a later
+// entry heals them.
 const (
 	RecheckChannel   = "recheck"
 	RecheckEventType = ReservedEventNamespace + ".recheck"
@@ -23,7 +23,7 @@ const (
 	RecheckHandEdit     = "hand-edit"
 )
 
-// Strain relations an agent reports between two existing entries (5.9).
+// Strain relations an agent reports between two existing entries.
 const (
 	StrainContradicts = "contradicts"
 	StrainDuplicates  = "duplicates"
@@ -166,7 +166,7 @@ func UnhealedRecheck(g *Graph, items []RecheckItem) []RecheckItem {
 }
 
 // HealedRecheck returns the IDs of the items a later entry healed: what
-// compaction drops from the recheck channel (D17).
+// compaction drops from the recheck channel.
 func HealedRecheck(g *Graph, items []RecheckItem) []string {
 	live := liveEntries(g)
 	var healed []string
@@ -186,9 +186,9 @@ func liveEntries(g *Graph) map[string]bool {
 	return live
 }
 
-// StrainRefusals returns the unhealed strains a draft citing cited builds
-// on (D26): a strain one of whose entries the draft cites, unless the draft
-// cites both and so heals it.
+// StrainRefusals returns the unhealed strains a draft citing cited builds on:
+// a strain one of whose entries the draft cites, unless the draft cites both
+// and so heals it.
 func StrainRefusals(open []RecheckItem, cited []string) []RecheckItem {
 	var out []RecheckItem
 	for _, item := range open {
@@ -211,8 +211,8 @@ func StrainRefusals(open []RecheckItem, cited []string) []RecheckItem {
 // RecheckConfig is the `recheck` block. Only the committed .sdd/config.yaml
 // sets it.
 type RecheckConfig struct {
-	// Responsible names the participants catch-up shows the recheck list
-	// and the healing suggestion to; empty shows them to everyone (D5).
+	// Responsible names the participants catch-up shows the recheck list and
+	// the healing suggestion to; empty shows them to everyone.
 	Responsible []string `yaml:"responsible,omitempty"`
 }
 

@@ -90,11 +90,11 @@ type BaseConfig struct {
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
 	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
-	// Grounding makes captures read the graph before they are written
-	// (20261109-004506-d-cpt-udz); off unless a layer sets enforce.
+	// Grounding makes captures read the graph before they are written; off
+	// unless a layer sets enforce.
 	Grounding GroundingConfig `yaml:"grounding,omitempty"`
-	// LLMPrefilter is the grounding prefilter's model, independent of LLM
-	// (20261109-004506-d-cpt-udz, D8); grounding.prefilter switches it on.
+	// LLMPrefilter is the grounding prefilter's model, independent of LLM;
+	// grounding.prefilter switches it on.
 	LLMPrefilter LLMPrefilterConfig `yaml:"llm_prefilter,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically

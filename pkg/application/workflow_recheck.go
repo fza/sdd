@@ -12,8 +12,7 @@ import (
 	"github.com/networkteam/sdd/internal/serveview"
 )
 
-// registerWorkflowRecheck registers the catch-up's recheck section
-// (20261109-004506-d-cpt-udz, D5).
+// registerWorkflowRecheck registers the catch-up's recheck section.
 func (w *WorkflowSession) registerWorkflowRecheck(registry *engine.Registry) error {
 	return registry.RegisterQuery(engine.Query{
 		Doc: engine.FuncDoc{
@@ -63,7 +62,7 @@ func storeStrains(store *engine.Store) []model.Strain {
 
 // storeCaptureRecheck records the capture's strains as recheck items with
 // their relation bits in the ledger, and scans for hand edits since the
-// baseline (5.9).
+// baseline.
 func (w *WorkflowSession) storeCaptureRecheck(ctx *engine.Context, project ProjectID, entryID string) error {
 	runtime, err := w.targetRuntime(project, AccessWrite)
 	if err != nil {
@@ -95,8 +94,8 @@ func (w *WorkflowSession) storeCaptureRecheck(ctx *engine.Context, project Proje
 	return err
 }
 
-// strainRefusals names the unhealed strains the draft builds on (D26), each
-// with the ways out.
+// strainRefusals names the unhealed strains the draft builds on, each with the
+// ways out.
 func (w *WorkflowSession) strainRefusals(ctx *engine.Context, runtime *ProjectRuntime, cited []string) ([]string, error) {
 	open, err := runtime.openRecheck(w.ctx, ctx.Graph)
 	if err != nil {

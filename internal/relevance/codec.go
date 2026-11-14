@@ -1,16 +1,14 @@
-// Package relevance is the binary codec of the relevance verdict ledger
-// (20261109-004506-d-cpt-udz, 5.7): one segment per write, in the shared
-// segment format. A segment's first record is its entry ID table, sorted and
-// front-coded; its second the judge table; every later record names its
-// entries and judge by index:
+// Package relevance is the binary codec of the relevance verdict ledger: one
+// segment per write, in the shared segment format. A segment's first record is
+// its entry ID table, sorted and front-coded; its second the judge table;
+// every later record names its entries and judge by index:
 //
 //	reader  'r' a b code reason flags relations
 //	score   's' a b judge direction score
 //	step    'd' judge time set-aside
 //
-// Indexes and times are varints; code, reason, flags, relations, direction
-// and scores one byte each. A reason byte this sdd does not know is kept as
-// it is (D10).
+// Indexes and times are varints; code, reason, flags, relations, direction and
+// scores one byte each. A reason byte this sdd does not know is kept as it is.
 package relevance
 
 import (

@@ -81,8 +81,8 @@ func TestFilesystemRelevanceStore_CompactionMergesSmallSegmentsAndDropsDuplicate
 	}
 }
 
-// Two branches each adding ledger segments merge with no conflict and no
-// merge driver (D17).
+// Two branches each adding ledger segments merge with no conflict and no merge
+// driver.
 func TestRelevanceSegments_TwoBranchesMergeWithoutConflict(t *testing.T) {
 	repo := newGitRepository(t)
 	dir := filepath.Join(repo.root, ".sdd", "relevance")
@@ -156,9 +156,9 @@ func TestRelevanceSegments_CompactionRidesTheNextCommit(t *testing.T) {
 	}
 }
 
-// Sizes of the committed ledger under relevance.content reader and all, on
-// a synthetic 10k-entry ledger: each entry the subject of 12 reader
-// verdicts and 60 filter scores by one judge (D20, D35).
+// Sizes of the committed ledger under relevance.content reader and all, on a
+// synthetic 10k-entry ledger: each entry the subject of 12 reader verdicts and
+// 60 filter scores by one judge.
 func TestRelevanceContent_SizesOnASyntheticTenThousandEntryLedger(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a ledger of 720k records")
