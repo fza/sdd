@@ -69,6 +69,10 @@ const (
 	// position — the declaration that it needs re-serving. Its call serves
 	// every piece in full.
 	EventReoriented EventType = "reoriented"
+	// EventModel carries the model the agent behind the session runs on (no
+	// instance), as the agent reported it or its dispatch named it. Last one
+	// wins on fold and replay.
+	EventModel EventType = "model"
 )
 
 // ReadDepth classifies how deeply an entry was served: full means the body
@@ -223,6 +227,9 @@ type Session struct {
 	// picks a parked dialogue by. Agent-supplied via SetLabel, updatable;
 	// empty until supplied.
 	Label string
+	// Model is the model the agent behind the session runs on, as its harness
+	// names it; set through SetModel, empty until known.
+	Model string
 	// DialogueMode is the mode in force: opened from config, then followed
 	// through SetDialogue; DialogueSource names the config layer that set it
 	// (20261029-150854-d-tac-b2f).
@@ -369,6 +376,16 @@ func (s *Session) SetLabel(label string) {
 	}
 	s.Label = label
 	s.appendEvent("", EventLabeled, map[string]any{"label": label})
+}
+
+// SetModel records the model the agent behind the session runs on.
+// Idempotent per value, as SetLabel is.
+func (s *Session) SetModel(model string) {
+	if model == s.Model {
+		return
+	}
+	s.Model = model
+	s.appendEvent("", EventModel, map[string]any{"model": model})
 }
 
 // LogRead records what a read surface served to the session: entry IDs at
@@ -1153,6 +1170,11 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 	case EventLabeled:
 		if l, ok := ev.Data["label"].(string); ok {
 			s.Label = l
+		}
+
+	case EventModel:
+		if m, ok := ev.Data["model"].(string); ok {
+			s.Model = m
 		}
 
 	case EventStarted:

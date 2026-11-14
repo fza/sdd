@@ -82,13 +82,13 @@ Brief the user on where the work stands (procedure, step, goal) before you
 continue. Continue through next with the session's handle. Lose your place
 again later? resume_session with this handle re-serves this list in full.`
 
-// proofGuideFor tells the agent behind the MCP client clientName, at the
-// opening and at every reorientation, how it proves what it still holds: by
-// the hold-next line (20261114-121534-d-tac-qdb) only for a Claude agent, as
-// Codex main agents mostly skipped those proofs in a live eval; by every tag
-// it still sees (20261112-075604-d-tac-t4r) for any other.
-func proofGuideFor(clientName string) string {
-	if model.ClaudeClient(clientName) {
+// proofGuideFor tells the agent running on agentModel, at the opening and at
+// every reorientation, how it proves what it still holds: by the hold-next
+// line (20261114-121534-d-tac-qdb) only on a model.HoldNextModel, as Codex
+// main agents mostly skipped those proofs in a live eval; by every tag it
+// still sees (20261112-075604-d-tac-t4r) on any other or none reported.
+func proofGuideFor(agentModel string) string {
+	if model.HoldNextModel(agentModel) {
 		return holdNextProofGuide
 	}
 	return everyTagProofGuide

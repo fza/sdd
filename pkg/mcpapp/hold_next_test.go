@@ -38,8 +38,8 @@ func named(line, tag string) bool { return slices.Contains(holdNextTags(line), t
 func TestResultsEndWithTheHoldNextLine(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	memory := newAgentMemory()
-	memory.raw = true
-	cs := connectClient(t, env.srv, memory, claudeClient)
+	memory.raw, memory.model = true, opusModel
+	cs := connectAs(t, env.srv, memory)
 	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_session", Arguments: map[string]any{}})
 	checkToolCall(t, "start_session", res, err)
 	text := contentText(res)
@@ -76,24 +76,26 @@ func TestResultsEndWithTheHoldNextLine(t *testing.T) {
 	}
 }
 
-// Only a Claude agent gets the hold-next line: every result Claude Code gets
-// carries one, while any other client, one sending no name included, gets
-// none on any result and proves every tag it still sees
-// (20261112-075604-d-tac-t4r), which still makes a step served again its
-// pointers.
-func TestOnlyAClaudeAgentGetsTheHoldNextLine(t *testing.T) {
+// Only an agent reporting an Opus or Fable model gets the hold-next line:
+// every result it gets carries one, whatever its client, while an agent on
+// any other model, or reporting none, gets none on any result and proves
+// every tag it still sees (20261112-075604-d-tac-t4r), which still makes a
+// step served again its pointers.
+func TestOnlyAnOpusOrFableAgentGetsTheHoldNextLine(t *testing.T) {
 	for _, tc := range []struct {
-		client   string
-		holdNext bool
+		name, client, model string
+		holdNext            bool
 	}{
-		{claudeClient, true},
-		{"codex-mcp-client", false},
-		{"", false},
+		{"opus", claudeClient, opusModel, true},
+		{"fable", otherClient, fableModel, true},
+		{"sonnet", claudeClient, sonnetModel, false},
+		{"no model", claudeClient, "", false},
+		{"codex", codexClient, "", false},
 	} {
-		t.Run(tc.client, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			env := newTestServer(t, nil, "", "")
 			memory := newAgentMemory()
-			memory.holdNext = tc.holdNext
+			memory.holdNext, memory.model = tc.holdNext, tc.model
 			cs := connectClient(t, env.srv, memory, tc.client)
 			door := openSessionWhole(t, cs)
 			var capture mcpserver.ServeResult
@@ -110,10 +112,10 @@ func TestOnlyAClaudeAgentGetsTheHoldNextLine(t *testing.T) {
 
 			lined, unlined := memory.results()
 			if tc.holdNext && len(unlined) > 0 {
-				t.Errorf("every result a Claude agent gets should carry the hold-next line, none on %v", unlined)
+				t.Errorf("every result an Opus or Fable agent gets should carry the hold-next line, none on %v", unlined)
 			}
 			if !tc.holdNext && len(lined) > 0 {
-				t.Errorf("no result another client gets should carry the hold-next line, got one on %v", lined)
+				t.Errorf("no result an agent on another model gets should carry the hold-next line, got one on %v", lined)
 			}
 			if !strings.Contains(again.Instructions, "you hold the step") {
 				t.Errorf("the step served again should point at the lanes the agent proved, got %.300q", again.Instructions)
@@ -128,8 +130,8 @@ func TestOnlyAClaudeAgentGetsTheHoldNextLine(t *testing.T) {
 func TestAgentListingTheHoldNextTagsGetsPointers(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	memory := newAgentMemory()
-	memory.holdNext = true
-	cs := connectClient(t, env.srv, memory, claudeClient)
+	memory.holdNext, memory.model = true, opusModel
+	cs := connectAs(t, env.srv, memory)
 	door := openSessionWhole(t, cs)
 	var capture mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &capture)
@@ -155,8 +157,8 @@ func TestAgentListingTheHoldNextTagsGetsPointers(t *testing.T) {
 func TestARepeatedPieceJoinsTheLinesOfItsMove(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	memory := newAgentMemory()
-	memory.raw = true
-	cs := connectClient(t, env.srv, memory, claudeClient)
+	memory.raw, memory.model = true, opusModel
+	cs := connectAs(t, env.srv, memory)
 	door := openSession(t, cs)
 	var capture mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &capture)
@@ -224,8 +226,8 @@ func TestAnUnprovedLongEntryServesInFullAgain(t *testing.T) {
 func TestGatherBriefLinesStayOffTheHoldNextLine(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	memory := newAgentMemory()
-	memory.raw = true
-	cs := connectClient(t, env.srv, memory, claudeClient)
+	memory.raw, memory.model = true, opusModel
+	cs := connectAs(t, env.srv, memory)
 	door := openSession(t, cs)
 
 	var reading mcpserver.GatherResult
@@ -252,7 +254,9 @@ func TestGatherBriefLinesStayOffTheHoldNextLine(t *testing.T) {
 // agent's context again, and a word is never guessed.
 func TestTheProofGuideMakesASkippedProofACost(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
-	cs := connectClient(t, env.srv, newAgentMemory(), claudeClient)
+	memory := newAgentMemory()
+	memory.model = opusModel
+	cs := connectAs(t, env.srv, memory)
 	door := openSessionWhole(t, cs)
 	var resumed mcpserver.ResumeSessionResult
 	call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
@@ -269,24 +273,24 @@ func TestTheProofGuideMakesASkippedProofACost(t *testing.T) {
 	}
 }
 
-// clientKinds are a Claude agent and any other client, for what both get
-// alike.
-var clientKinds = []string{claudeClient, otherClient}
+// agentModels are a model the hold-next line serves and one it does not, for
+// what agents on both get alike.
+var agentModels = []string{opusModel, sonnetModel}
 
 // A held lane's pointer names its tag first and sends the agent to the full
 // text for the word, so no word of the pointer reads as the word after the
-// tag; every client gets it.
+// tag; every agent gets it.
 func TestAHeldLanePointerLeavesNoWordAfterItsTag(t *testing.T) {
-	for _, client := range clientKinds {
-		t.Run(client, func(t *testing.T) { testHeldLanePointer(t, client) })
+	for _, agentModel := range agentModels {
+		t.Run(agentModel, func(t *testing.T) { testHeldLanePointer(t, agentModel) })
 	}
 }
 
-func testHeldLanePointer(t *testing.T, client string) {
+func testHeldLanePointer(t *testing.T, agentModel string) {
 	env := newTestServer(t, nil, writeLaneStepGraph(t, stepLane{"first", 2}, stepLane{"second", 2}), "")
 	memory := newAgentMemory()
-	memory.raw = true
-	cs := connectClient(t, env.srv, memory, client)
+	memory.raw, memory.model = true, agentModel
+	cs := connectAs(t, env.srv, memory)
 	session := openSession(t, cs).Session
 	var serve mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step", "held": []any{}}, &serve)
@@ -303,18 +307,18 @@ func testHeldLanePointer(t *testing.T, client string) {
 
 // A held proof that fails, by a wrong word or a tag never issued, gets a
 // notice naming the tag beside the full text, so the agent corrects or drops
-// it; a right proof gets none. Every client gets the notice.
+// it; a right proof gets none. Every agent gets the notice.
 func TestAFailedProofIsNamedBesideTheFullText(t *testing.T) {
-	for _, client := range clientKinds {
-		t.Run(client, func(t *testing.T) { testFailedProofNotice(t, client) })
+	for _, agentModel := range agentModels {
+		t.Run(agentModel, func(t *testing.T) { testFailedProofNotice(t, agentModel) })
 	}
 }
 
-func testFailedProofNotice(t *testing.T, client string) {
+func testFailedProofNotice(t *testing.T, agentModel string) {
 	env := newTestServer(t, nil, writeLaneStepGraph(t, stepLane{"first", 2}), "")
 	memory := newAgentMemory()
-	memory.raw = true
-	cs := connectClient(t, env.srv, memory, client)
+	memory.raw, memory.model = true, agentModel
+	cs := connectAs(t, env.srv, memory)
 	session := openSession(t, cs).Session
 	var serve mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step", "held": []any{}}, &serve)
@@ -353,8 +357,8 @@ func TestTheLineAtGuideReviewNamesThePlaybackLanes(t *testing.T) {
 		t.Fatal(err)
 	}
 	memory := newAgentMemory()
-	memory.raw, memory.holdNext = true, true
-	cs := connectClient(t, srv, memory, claudeClient)
+	memory.raw, memory.holdNext, memory.model = true, true, opusModel
+	cs := connectAs(t, srv, memory)
 	session := openSession(t, cs).Session
 	var serve mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &serve)

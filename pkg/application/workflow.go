@@ -46,6 +46,9 @@ type WorkflowOpenRequest struct {
 	ClientVersion string
 	Shell         string
 	Label         string
+	// Model is the model the agent runs on, as its harness names it; empty
+	// when the agent reports none.
+	Model string
 }
 
 // WorkflowResumeRequest names the session to load by its ID and the client
@@ -313,6 +316,7 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err := w.setLabel(request.Label); err != nil {
 		return nil, nil, err
 	}
+	w.setModel(request.Model)
 	public, err := w.publicServe(serve)
 	if err != nil {
 		return nil, nil, err
@@ -532,6 +536,27 @@ func (w *WorkflowSession) Reorient(ctx context.Context, identity RequestIdentity
 	w.setOperation(ctx, identity)
 	w.session.Reorient()
 	return w.session.SinkErr()
+}
+
+// ReportModel records model, the model the agent runs on as it reported it,
+// over the one the session held; an empty report keeps that one.
+func (w *WorkflowSession) ReportModel(ctx context.Context, identity RequestIdentity, model string) error {
+	if w.Finished() {
+		return nil
+	}
+	w.setOperation(ctx, identity)
+	w.setModel(model)
+	return w.session.SinkErr()
+}
+
+// Model is the model the agent behind the session runs on, as it reported it
+// or its dispatch named it; empty when neither did.
+func (w *WorkflowSession) Model() string { return w.session.Model }
+
+func (w *WorkflowSession) setModel(model string) {
+	if model = strings.TrimSpace(model); model != "" {
+		w.session.SetModel(model)
+	}
 }
 
 func (w *WorkflowSession) Project() ProjectID { return w.project }

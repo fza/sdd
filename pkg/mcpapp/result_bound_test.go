@@ -146,21 +146,24 @@ func boundedClient(t *testing.T, graphDir string) (*mcp.ClientSession, *boundedR
 // every result past the bound, listing its proofs when proofs is set.
 func boundedConnect(t *testing.T, srv *mcpserver.Server, proofs bool) (*mcp.ClientSession, *boundedResults) {
 	t.Helper()
-	return boundedConnectClient(t, srv, proofs, otherClient)
+	return boundedConnectModel(t, srv, proofs, "")
 }
 
-// boundedConnectClient connects as boundedConnect does, under the client
-// name name.
-func boundedConnectClient(t *testing.T, srv *mcpserver.Server, proofs bool, name string) (*mcp.ClientSession, *boundedResults) {
+// boundedConnectModel connects as boundedConnect does, for an agent that
+// reports agentModel.
+func boundedConnectModel(t *testing.T, srv *mcpserver.Server, proofs bool, agentModel string) (*mcp.ClientSession, *boundedResults) {
 	t.Helper()
 	bound := &boundedResults{t: t, largest: map[string]int{}}
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	if _, err := srv.Connect(t.Context(), serverTransport); err != nil {
 		t.Fatal(err)
 	}
-	client := mcp.NewClient(&mcp.Implementation{Name: name, Version: "test"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: otherClient, Version: "test"}, nil)
 	if proofs {
 		client.AddSendingMiddleware(newAgentMemory().middleware)
+	}
+	if agentModel != "" {
+		client.AddSendingMiddleware(reportModel(agentModel))
 	}
 	client.AddSendingMiddleware(bound.middleware)
 	cs, err := client.Connect(t.Context(), clientTransport, nil)

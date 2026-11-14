@@ -39,6 +39,7 @@ type StartSessionArgs struct {
 	Project string `json:"project,omitempty" jsonschema:"project to open the session in, by ID. Optional: a composition serving one project infers it. With several accessible and none passed, the response lists them under projects and starts no session. Pick one and call again"`
 	Shell   string `json:"shell,omitempty" jsonschema:"shell procedure to open the session with, by canonical; defaults to user-dialogue"`
 	Label   string `json:"label,omitempty" jsonschema:"short single-line subject label for the session; set it early, update when the subject sharpens"`
+	Model   string `json:"model,omitempty" jsonschema:"the model you run on, as your harness names it (e.g. claude-opus-5-5). Fill it in: this call's instructions depend on it"`
 }
 
 // ProjectResult is one accessible project, served by start_session when the
@@ -250,6 +251,7 @@ type BaseServe struct {
 
 type ResumeSessionArgs struct {
 	Session string `json:"session" jsonschema:"session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step, with the schema to continue it. Presenting the handle is the whole authorization. It also declares you need re-serving: every piece of the position serves in full, whatever the call holds"`
+	Model   string `json:"model,omitempty" jsonschema:"the model you run on, as your harness names it (e.g. claude-opus-5-5). Fill it in: this call's instructions depend on it"`
 }
 
 type ResumeSessionResult struct {
@@ -417,10 +419,10 @@ func (f *ResultNotices) setSyncNotice(notice string)  { f.SyncNotice = notice }
 func (f *ResultNotices) setCacheNotice(notice string) { f.CacheNotice = notice }
 func (f *ResultNotices) setHostNotice(notice string)  { f.HostNotice = notice }
 
-// ResultHoldNext ends every result a Claude agent gets from an attached
-// session with the tags whose pieces the next serve may repeat
-// (20261114-121534-d-tac-qdb, proofGuideFor), and names a failed proof to
-// any client.
+// ResultHoldNext ends every result an agent on a model.HoldNextModel gets
+// from an attached session with the tags whose pieces the next serve may
+// repeat (20261114-121534-d-tac-qdb, proofGuideFor), and names a failed proof
+// to any agent.
 type ResultHoldNext struct {
 	ProofNotice string `json:"proof_notice,omitempty" jsonschema:"set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out"`
 	HoldNext    string `json:"hold_next,omitempty" jsonschema:"the tags, likeliest first, whose pieces your next call may get again; list in its held exactly these tags whose text you still see, each with the word right after it"`
@@ -700,7 +702,7 @@ func (s *Server) startSession(ctx context.Context, req *mcp.CallToolRequest, arg
 	if err == nil {
 		workflow, serve, err = s.app.OpenWorkflow(ctx, identity, project, sdd.WorkflowOpenRequest{
 			ClientName: mcpClientName(req.Session), ClientVersion: mcpClientVersion(req.Session),
-			Shell: args.Shell, Label: args.Label,
+			Shell: args.Shell, Label: args.Label, Model: args.Model,
 		})
 	}
 	if err != nil {
@@ -716,7 +718,7 @@ func (s *Server) startSession(ctx context.Context, req *mcp.CallToolRequest, arg
 	s.noteSyncSession(ctx, req, ss)
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	proofGuide := proofGuideFor(mcpClientName(req.Session))
+	proofGuide := proofGuideFor(ss.root.Model())
 	guide, err := resultChars(proofGuide + "\n\n")
 	if err != nil {
 		return nil, ServeResult{}, err
@@ -914,6 +916,9 @@ func (s *Server) resumeSession(ctx context.Context, req *mcp.CallToolRequest, ar
 	}
 	defer ss.mu.Unlock()
 	identity := s.requestIdentity(req)
+	if err := ss.root.ReportModel(ctx, identity, args.Model); err != nil {
+		return nil, ResumeSessionResult{}, err
+	}
 	if err := ss.root.Reorient(ctx, identity); err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
@@ -1486,9 +1491,9 @@ type syncNoticeKey struct{}
 
 // syncNoticeSlot lets the call's session, once attached, name how its
 // blocked-sync notice is claimed after the handler ran, so the notice
-// reflects what the call itself recorded; the claim leaves the tags a Claude
-// agent's hold-next line names in holdNext and the call's failed proofs in
-// failed.
+// reflects what the call itself recorded; the claim leaves the tags the
+// hold-next line names in holdNext, for an agent whose model gets one, and the
+// call's failed proofs in failed.
 type syncNoticeSlot struct {
 	claim    func(context.Context) (string, error)
 	holdNext []string
@@ -1501,14 +1506,13 @@ func (s *Server) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, 
 		return
 	}
 	identity := s.requestIdentity(req)
-	holdNext := model.ClaudeClient(mcpClientName(req.Session))
 	slot.claim = func(ctx context.Context) (string, error) {
 		ss.mu.Lock()
 		defer ss.mu.Unlock()
 		notice := ss.root.ServeNotice("sync notice", ss.root.SyncNotice(ctx, identity))
 		slot.failed = ss.root.FailedProofs()
 		err := ss.root.RecordServed(ctx, identity)
-		if err != nil || !holdNext {
+		if err != nil || !model.HoldNextModel(ss.root.Model()) {
 			return notice, err
 		}
 		slot.holdNext, err = ss.root.HoldNext()
@@ -1861,7 +1865,7 @@ func (s *Server) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss
 	result := ResumeSessionResult{
 		Session: string(source.Session), Project: string(ss.root.Project()),
 		Participant: source.Participant, Label: source.Label, Branch: source.Branch,
-		Instructions: resumeInstructionsFor(ss, mcpClientName(req.Session)), PendingOperation: pendingOperationResult(source.PendingOperation), Cancellation: cancellationResult(source.Cancellation),
+		Instructions: resumeInstructionsFor(ss), PendingOperation: pendingOperationResult(source.PendingOperation), Cancellation: cancellationResult(source.Cancellation),
 	}
 	if source.Instructions != "" {
 		result.Instructions += "\n\n" + source.Instructions
@@ -1998,11 +2002,11 @@ func openThreadsRoot(ss *shellSession) string {
 
 // resumeInstructionsFor leaves out briefing the user when the session is
 // autonomous.
-func resumeInstructionsFor(ss *shellSession, clientName string) string {
+func resumeInstructionsFor(ss *shellSession) string {
 	if ss.root.Autonomous() {
-		return autonomousResumeInstructions + "\n\n" + proofGuideFor(clientName)
+		return autonomousResumeInstructions + "\n\n" + proofGuideFor(ss.root.Model())
 	}
-	return resumeInstructions + "\n\n" + proofGuideFor(clientName)
+	return resumeInstructions + "\n\n" + proofGuideFor(ss.root.Model())
 }
 
 // boundList cuts a whole-item string list at the line-list cap, appending a

@@ -40,6 +40,9 @@ type agentMemory struct {
 	// lined and unlined name, per call, the tool whose result carried a
 	// hold_next field or none.
 	lined, unlined []string
+	// model is what the agent reports it runs on when it opens a session;
+	// empty reports none.
+	model string
 }
 
 // guideExampleProof is the worked proof the proof guide shows; its tag was

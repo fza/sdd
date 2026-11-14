@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -439,11 +440,38 @@ func connectAs(t *testing.T, srv *mcpserver.Server, memory *agentMemory, transpo
 }
 
 // Claude Code reports claudeClient as its client name, interactive and as
-// claude -p; otherClient stands for every other MCP client.
+// claude -p, Codex codexClient; otherClient stands for every other MCP
+// client. Agents on opusModel and fableModel get the hold-next line
+// (model.HoldNextModel), one on sonnetModel does not.
 const (
 	claudeClient = "claude-code"
+	codexClient  = "codex-mcp-client"
 	otherClient  = "test-client"
+	opusModel    = "claude-opus-5-5"
+	fableModel   = "claude-fable-5"
+	sonnetModel  = "claude-sonnet-4-5"
 )
+
+// reportModel reports agentModel on every start_session that names none, as
+// an agent filling the field does.
+func reportModel(agentModel string) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			params, ok := req.GetParams().(*mcp.CallToolParams)
+			if !ok || params.Name != "start_session" {
+				return next(ctx, method, req)
+			}
+			args, ok := params.Arguments.(map[string]any)
+			if _, own := args["model"]; !ok || own {
+				return next(ctx, method, req)
+			}
+			withModel := maps.Clone(args)
+			withModel["model"] = agentModel
+			params.Arguments = withModel
+			return next(ctx, method, req)
+		}
+	}
+}
 
 // connectClient connects as connectAs does, under the client name name.
 func connectClient(t *testing.T, srv *mcpserver.Server, memory *agentMemory, name string, transports ...mcp.Transport) *mcp.ClientSession {
@@ -464,6 +492,9 @@ func connectClient(t *testing.T, srv *mcpserver.Server, memory *agentMemory, nam
 	}
 	client := mcp.NewClient(&mcp.Implementation{Name: name, Version: "test"}, nil)
 	client.AddSendingMiddleware(memory.middleware)
+	if memory.model != "" {
+		client.AddSendingMiddleware(reportModel(memory.model))
+	}
 	cs, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		t.Fatal(err)
