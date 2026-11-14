@@ -50,6 +50,11 @@ type pieceCall struct {
 	// followed is what the deferral this call follows sent, still pointed at
 	// should the call leave lanes waiting again.
 	followed map[Piece]string
+	// since is the serve sequence the call began at; proved is what its
+	// proofs prove, provedTags the tags not yet recorded.
+	since      int
+	proved     map[Piece]bool
+	provedTags []string
 }
 
 // pendingAnchor is a piece the call served in full, not yet recorded;
@@ -66,10 +71,11 @@ type pendingAnchor struct {
 // still holds and the tags or piece names it lists in reread, which serve in
 // full.
 func (s *Session) BeginCall(held []model.Proof, reread []string) {
-	s.call = pieceCall{held: held, reread: map[string]bool{}}
+	s.call = pieceCall{held: held, reread: map[string]bool{}, since: s.servedSeq}
 	for _, r := range reread {
 		s.call.reread[strings.ToLower(strings.Trim(strings.TrimSpace(r), "⟦⟧"))] = true
 	}
+	s.call.provedTags, s.call.proved = s.provedPieces()
 }
 
 // Holds reports whether the call in flight holds the piece, with the tag it
@@ -169,8 +175,12 @@ func (s *Session) DropPiecesSince(mark int) {
 }
 
 // RecordAnchors logs the anchors the call issued since the last record, so a
-// restarted server still checks their proofs.
+// restarted server still checks their proofs, and the tags its proofs proved,
+// which take their pieces off the unproved list.
 func (s *Session) RecordAnchors() {
+	proved := s.call.provedTags
+	s.call.provedTags = nil
+	s.foldProved(proved)
 	var records []any
 	for _, p := range s.call.pending {
 		if p.tag == "" && !p.changed {
@@ -193,10 +203,17 @@ func (s *Session) RecordAnchors() {
 		records = append(records, record)
 	}
 	s.call.pending = nil
-	if len(records) == 0 {
+	if len(records) == 0 && len(proved) == 0 {
 		return
 	}
-	s.appendEvent("", EventAnchors, map[string]any{"anchors": records})
+	data := map[string]any{}
+	if len(records) > 0 {
+		data["anchors"] = records
+	}
+	if len(proved) > 0 {
+		data["proved"] = proved
+	}
+	s.appendEvent("", EventAnchors, data)
 }
 
 func (s *Session) foldAnchor(record any) {
@@ -229,6 +246,16 @@ func (s *Session) foldAnchor(record any) {
 		s.anchors = map[string]issuedAnchor{}
 	}
 	s.anchors[tag] = issued
+	if s.unproved == nil {
+		s.unproved = map[string]unprovedServe{}
+	}
+	s.servedSeq++
+	s.unproved[name] = unprovedServe{piece: issued.piece, tag: tag, seq: s.servedSeq}
+	for _, id := range issued.covers {
+		if serve, listed := s.unproved[id]; listed && serve.piece.Hash == "" {
+			delete(s.unproved, id)
+		}
+	}
 }
 
 // FollowDeferral makes the call in flight follow the instance's deferral, a
@@ -324,4 +351,106 @@ func (s *Session) random() model.RandomSource {
 		s.rnd = rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
 	}
 	return s.rnd
+}
+
+// MaxUnprovedPieces caps the unproved list a result carries.
+const MaxUnprovedPieces = 20
+
+// UnprovedPiece is a piece an earlier call served in full under Tag, which no
+// call proved since (20261113-121039-d-tac-ca2).
+type UnprovedPiece struct {
+	Name string
+	Tag  string
+}
+
+type unprovedServe struct {
+	piece Piece
+	tag   string
+	seq   int
+}
+
+// Unproved lists the pieces served in full before the call in flight that no
+// call proved since, newest first, at most MaxUnprovedPieces. A piece served
+// in full again is listed only under its newest tag, and not while the call
+// in flight is the one that served it again.
+func (s *Session) Unproved() []UnprovedPiece {
+	serves := make([]unprovedServe, 0, len(s.unproved))
+	for _, serve := range s.unproved {
+		if serve.seq > s.call.since || s.call.proved[serve.piece] || s.servesAgain(serve.piece) {
+			continue
+		}
+		serves = append(serves, serve)
+	}
+	slices.SortFunc(serves, func(a, b unprovedServe) int { return b.seq - a.seq })
+	listed := make([]UnprovedPiece, 0, min(len(serves), MaxUnprovedPieces))
+	for _, serve := range serves[:min(len(serves), MaxUnprovedPieces)] {
+		listed = append(listed, UnprovedPiece{Name: serve.piece.Name, Tag: serve.tag})
+	}
+	return listed
+}
+
+// servesAgain reports whether the call in flight served p's name in full
+// under a tag, itself or carried whole by another piece, and has not recorded
+// it yet.
+func (s *Session) servesAgain(p Piece) bool {
+	return slices.ContainsFunc(s.call.pending, func(served pendingAnchor) bool {
+		return served.tag != "" && (served.piece.Name == p.Name || p.Hash == "" && slices.Contains(served.covers, p.Name))
+	})
+}
+
+// provedPieces is what the call's proofs prove: the piece each matching
+// proof names and the entries that piece carried whole, with the tags of the
+// proofs that take a piece off the unproved list. A tag listed in reread
+// proves nothing, as Holds reads it.
+func (s *Session) provedPieces() ([]string, map[Piece]bool) {
+	var tags []string
+	pieces := map[Piece]bool{}
+	for _, proof := range s.call.held {
+		issued, ok := s.anchors[proof.Tag]
+		if s.call.reread[proof.Tag] || !ok || !model.ProofWordMatches(issued.word, proof.Word) {
+			continue
+		}
+		if len(s.listedUnder(issued)) > 0 {
+			tags = append(tags, proof.Tag)
+		}
+		pieces[issued.piece] = true
+		for _, id := range issued.covers {
+			pieces[Piece{Name: id}] = true
+		}
+	}
+	return tags, pieces
+}
+
+// DropProved keeps what the call's proofs proved out of the record, for a
+// call that failed: its pieces stay listed.
+func (s *Session) DropProved() {
+	s.call.provedTags, s.call.proved = nil, nil
+}
+
+// listedUnder names the listed pieces a proof of issued takes off the
+// unproved list: its own piece and the entries it carried whole.
+func (s *Session) listedUnder(issued issuedAnchor) []string {
+	var names []string
+	if serve, listed := s.unproved[issued.piece.Name]; listed && serve.piece == issued.piece {
+		names = append(names, issued.piece.Name)
+	}
+	for _, id := range issued.covers {
+		if serve, listed := s.unproved[id]; listed && serve.piece.Hash == "" {
+			names = append(names, id)
+		}
+	}
+	return names
+}
+
+// foldProved takes the pieces the tags prove off the unproved list.
+func (s *Session) foldProved(tags []string) {
+	for _, tag := range tags {
+		issued, ok := s.anchors[tag]
+		if !ok {
+			continue
+		}
+		for _, name := range s.listedUnder(issued) {
+			delete(s.unproved, name)
+		}
+	}
 }
