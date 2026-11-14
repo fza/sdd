@@ -15,7 +15,7 @@ import (
 // DemandSync executes a DemandSyncCmd: it renews the lease of the graph
 // repository under automatic sync and, when the lease starts past the
 // effective fetch cooldown, runs one sync round, waited for at most the
-// read wait (20261113-232855-d-tac-1nz).
+// read wait.
 func (h *Handler) DemandSync(ctx context.Context, cmd *command.DemandSyncCmd) error {
 	if h.syncMode != model.SyncModeAuto || h.fetcher == nil || !h.fetcher.InRepo(ctx) || !h.fetcher.HasRemote(ctx) {
 		return nil
