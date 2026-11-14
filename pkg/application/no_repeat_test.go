@@ -72,7 +72,7 @@ func heldPointer(id, tag string) string {
 }
 
 // The no-repeat rule cuts an injected entry chain only once CutRepeats turned
-// it on, as the MCP surface does; the CLI never cuts (R14).
+// it on, as the MCP surface does; the CLI never cuts.
 func TestInjectedEntryChainsCutRepeatsOnlyWhenTurnedOn(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

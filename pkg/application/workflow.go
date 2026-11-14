@@ -1855,8 +1855,8 @@ func (w *WorkflowSession) appendStoredEvents(events []StoredEvent) error {
 // catchUp folds the events another attach of the session (a CLI call with
 // --session beside a serve, a delegate delivering) logged past the version
 // this holder saw, the way replay folds them, and moves the holder to the
-// stored version (20261109-055313-s-tac-7j7). pending is the engine event being
-// appended, already applied in memory: when a folded event names its instance,
+// stored version. pending is the engine event being appended, already applied
+// in memory: when a folded event names its instance,
 // the holder computed that instance on a state the other attach changed, and
 // catchUp refuses as the conflict it is. A transition an operation the folded
 // events opened would have refused is refused alike (Readmit). An ended
