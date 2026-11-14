@@ -33,6 +33,7 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/internal/syncstate"
 	"github.com/networkteam/sdd/internal/timing"
 	sddapp "github.com/networkteam/sdd/pkg/application"
@@ -519,6 +520,7 @@ func New(options Options) *cli.Command {
 			}
 
 			warnUnknownConfigKeys(ctx)
+			useSecretRules(ctx)
 
 			if checksStrays(cmd.Args().First()) {
 				err := strayRefusal(ctx)
@@ -660,12 +662,17 @@ func infoCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			rules, err := secrets.Active().Status()
+			if err != nil {
+				return err
+			}
 			if format == "json" {
-				return presenters.RenderInfoJSON(cmd.Writer, result, block, prune, time.Now())
+				return presenters.RenderInfoJSON(cmd.Writer, result, block, prune, rules, time.Now())
 			}
 			presenters.RenderInfo(cmd.Writer, result)
 			presenters.RenderSyncBlocked(cmd.Writer, block, time.Now())
 			presenters.RenderCachePruneStatus(cmd.Writer, prune)
+			presenters.RenderSecretRules(cmd.Writer, rules)
 			return nil
 		},
 	}
