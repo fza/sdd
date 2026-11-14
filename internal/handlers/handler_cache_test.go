@@ -172,7 +172,7 @@ func TestCacheHandlerPrune(t *testing.T) {
 }
 
 // The pass removes the logs of verifier rounds unchanged for the retention
-// and keeps the others (20261114-160323-d-tac-n0n).
+// and keeps the others.
 func TestCacheHandlerPruneRemovesOldRoundLogs(t *testing.T) {
 	f := newPruneFixture(t, "")
 	logs := filepath.Join(f.loc.StateRoot, roundproc.LogDirName, "github.com", "acme", "kept")

@@ -62,9 +62,9 @@ type DelegateRun struct {
 }
 
 // RoundProcesses runs each round sdd launches in a process of its own, which
-// outlives the server that launched it and records the round's outcome itself
-// (20261114-160323-d-tac-n0n). Any process of the composition answers for a
-// round's process later: whether it still runs, and stopping it.
+// outlives the server that launched it and records the round's outcome itself.
+// Any process of the composition answers for a round's process later: whether
+// it still runs, and stopping it.
 type RoundProcesses interface {
 	// Log is the file the process of round writes its output and its log
 	// to, which a failure of the round names.
@@ -566,7 +566,7 @@ func (a *Application) launchDelegate(ctx context.Context, identity RequestIdenti
 	}
 	round := LaunchedRound{Session: child, Instance: instance, Procedure: procedure, Project: project, Runner: run.Runner, Number: log.next()}
 	// Recorded before the process starts, so a server that dies in between
-	// leaves a round the wait step can fail (20261114-160323-d-tac-n0n).
+	// leaves a round the wait step can fail.
 	launched := delegateRoundStart{Round: round.Number, Runner: run.Runner, LaunchedAt: a.now().UTC().Round(0), Timeout: timeout, Log: a.processes.Log(round)}
 	recorded, err := a.appendDelegateRecord(ctx, identity, child, workflowDelegateRoundCode, launched, nil)
 	if err == nil && !recorded {
