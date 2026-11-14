@@ -142,7 +142,11 @@ func newRunner(cmd *cli.Command, timeoutFlag string) (pkgllm.Runner, error) {
 		}
 		runner = llmdebug.Transcribed(runner, filepath.Join(sddDir, llmdebug.Dir))
 	}
-	return pkgllm.Observed(runner, statsSink()), nil
+	log, err := usageLog()
+	if err != nil {
+		return nil, err
+	}
+	return log.Runner(pkgllm.Observed(runner, statsSink())), nil
 }
 
 // statsSink is the recording sink both the chat runner and the embedder are

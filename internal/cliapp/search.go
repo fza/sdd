@@ -190,9 +190,13 @@ func newEmbedder(cfg model.EmbeddingConfig) (handlers.IndexEmbedder, error) {
 	if err != nil {
 		return handlers.IndexEmbedder{}, err
 	}
+	log, err := usageLog()
+	if err != nil {
+		return handlers.IndexEmbedder{}, err
+	}
 	size := localembed.BatchSize(cfg)
 	return handlers.IndexEmbedder{
-		Embedder:       embed.Batched(embed.Observed(emb, statsSink()), size),
+		Embedder:       embed.Batched(log.Embedder(embed.Observed(emb, statsSink())), size),
 		BatchSize:      size,
 		CalibrationDir: filepath.Join(reg.CacheRoot(), localembed.CalibrationDirName),
 		CalibrationKey: emb.Fingerprint() + "\n" + cfg.Endpoint + "\n" + cfg.Path,
