@@ -114,6 +114,7 @@ type BaseConfig struct {
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
 	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
+	Secrets   SecretsConfig   `yaml:"secrets,omitempty"`
 	// Verify makes captures read the graph before they are written and checks
 	// every draft against that reading; DefaultVerifyMode unless a layer sets
 	// its mode.
@@ -346,6 +347,12 @@ func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSettin
 		if layer.Sessions.Retention != "" {
 			ignored = append(ignored, IgnoredSetting{Key: "sessions.retention", Reason: globalOnlyReason})
 		}
+		// The daily pass and every scan on the machine share one rule file.
+		if layer.Secrets.RulesUpdate != "" {
+			ignored = append(ignored, IgnoredSetting{Key: secretRulesUpdateKey, Reason: globalOnlyReason})
+		}
+	} else if update := layer.Secrets.RulesUpdate; update != "" && !isClosedValue(update) {
+		ignored = append(ignored, IgnoredSetting{Key: secretRulesUpdateKey, Reason: fmt.Sprintf("%q is not %s", update, oneOf(update.AllowedValues()))})
 	}
 	if reason := ignoredSyncMode(layer.Sync.Mode, committed); reason != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "sync.mode", Reason: reason})
@@ -434,6 +441,41 @@ type SessionsConfig struct {
 	// removes it. Days ("14d") or a Go duration ("336h"). Empty means
 	// DefaultSessionRetention.
 	Retention string `yaml:"retention,omitempty"`
+}
+
+// SecretsConfig holds the credential scanner's settings, read from the
+// user-global config only.
+type SecretsConfig struct {
+	// RulesUpdate decides whether the daily pass fetches gitleaks' newest
+	// released rule file. Empty means DefaultSecretRulesUpdate.
+	RulesUpdate SecretRulesUpdate `yaml:"rules_update,omitempty"`
+}
+
+// SecretRulesUpdate is the secrets.rules_update setting. Off also sets aside
+// a copy fetched earlier: scans use the built-in rule file alone.
+type SecretRulesUpdate string
+
+const (
+	SecretRulesDaily SecretRulesUpdate = "daily"
+	SecretRulesOff   SecretRulesUpdate = "off"
+
+	DefaultSecretRulesUpdate = SecretRulesDaily
+
+	secretRulesUpdateKey = "secrets.rules_update"
+)
+
+func (SecretRulesUpdate) AllowedValues() []string {
+	return closedValues(SecretRulesDaily, SecretRulesOff)
+}
+
+// ResolveSecretRulesUpdate returns the effective secrets.rules_update. A value
+// sdd does not know falls back to the default, as an unset one does;
+// IgnoredSettings warns about it.
+func ResolveSecretRulesUpdate(cfg SecretsConfig) SecretRulesUpdate {
+	if cfg.RulesUpdate == "" || !isClosedValue(cfg.RulesUpdate) {
+		return DefaultSecretRulesUpdate
+	}
+	return cfg.RulesUpdate
 }
 
 // EmbeddingConfig holds settings for the search index's embedding provider.

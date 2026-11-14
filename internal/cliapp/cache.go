@@ -19,6 +19,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/internal/syncstate"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
@@ -41,7 +42,8 @@ index.replaced_retention (default ` + model.DefaultReplacedRetention + `); unuse
 snapshots, git gate records, calibrations and the state of unused projects
 after cache.retention (default ` + model.DefaultCacheRetention + `); clones the repos list no longer names;
 and crash leftovers a day old. All three keys live in the user-global config.
-Open sessions, unreadable session logs and the versions the current
+The background pass also fetches the rule file of gitleaks' newest release for
+credential scans while secrets.rules_update is daily (the default). Open sessions, unreadable session logs and the versions the current
 checkout searches always stay. sdd index gc removes more on request.`,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
@@ -75,6 +77,7 @@ checkout searches always stay. sdd index gc removes more on request.`,
 					OwnedClones: syncstate.OwnedClones{Gate: gate}, Gate: gate, Keep: keep,
 					State:         stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
 					DeclaredHooks: hooks.DeclaredIn(loc.ConfigPath, repos.NewGraphClones(loc, git.GraphClones{}, gate).Dir),
+					SecretRules:   secrets.NewUpdater(secretRulesDir(loc), secrets.NewGitHub("", "", nil), nil),
 				})
 				return h.Prune(ctx, &command.PruneCacheCmd{
 					Scheduled: scheduled,
@@ -135,8 +138,37 @@ func runCachePruneTimer(ctx context.Context, launch func(dir, logPath string) er
 			return
 		case <-ticker.C:
 			backgroundCachePrune(ctx, launch, false)
+			useSecretRules(ctx)
 		}
 	}
+}
+
+func secretRulesDir(loc repos.Locations) string {
+	return filepath.Join(loc.CacheRoot, secrets.CacheDirName)
+}
+
+// useSecretRules points credential scans at the rule file
+// secrets.rules_update allows: the copies the daily pass fetches while it is
+// daily, the built-in file while it is off. Called again in a running server,
+// it picks up a copy fetched since. A config it cannot read leaves the rules
+// in use, as the command reading that config fails on its own.
+func useSecretRules(ctx context.Context) {
+	log := slogutils.FromContext(ctx)
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		log.Warn("secret rules: resolving the cache dir", "err", err)
+		return
+	}
+	cfg, err := repos.LoadConfigFrom(loc.ConfigPath)
+	if err != nil {
+		log.Warn("secret rules: reading the global config", "err", err)
+		return
+	}
+	dir := ""
+	if model.ResolveSecretRulesUpdate(cfg.Secrets) == model.SecretRulesDaily {
+		dir = secretRulesDir(loc)
+	}
+	secrets.Use(ctx, dir)
 }
 
 // serveCacheNotice is the MCP server's CacheNotice: a failed run's notice,

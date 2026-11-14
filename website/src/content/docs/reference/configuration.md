@@ -28,6 +28,7 @@ sdd --local-config ~/ci-local.yaml config get participant
 | `participant`, `llm.*`, `embedding.*` | User-global | Any file works. Use the local file to override a value for one project. A value in the project file applies to everyone on the project and overrides their user-global value. |
 | `sessions.retention`, `cache.retention`, `index.replaced_retention` | User-global | The [daily sweep](#the-daily-sweep) reads them from the user-global file only. |
 | `sync.default.*`, `sync.hosts.*` | User-global | The git limits. sdd reads them from the user-global file only. |
+| `secrets.rules_update` | User-global | Every scan on the machine shares one rule file. sdd reads it from the user-global file only. |
 | `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
 | `hooks` | Any file | The lists of all files run together. A hook from a project file runs only once you [confirm it](#confirming-a-hook). |
@@ -215,6 +216,14 @@ Once a clone may fetch again, each span of one cooldown that passes without a fe
 - The fetch a read runs when a dependency references an entry of a repository further out that its clone lacks ([references further out](/sdd/guides/connected-repositories/#references-further-out)).
 
 Other reads and the rounds `sdd serve` runs on its own never spend a credit. Even with one, fetches of one repository stay at least 1 minute apart and its pushes at least 10 seconds apart, the hourly and per-minute limits and `concurrency` still apply, and the cooldown after a failed operation holds. Without a credit the operation waits for its cooldown.
+
+### Credential scan
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `secrets.rules_update` | `daily` | `daily`: the [daily sweep](#the-daily-sweep) fetches the rule file of gitleaks' latest release when it is newer than the one in use. `off`: sdd asks GitHub nothing and [scans for credentials](/sdd/working-modes/#capture) with the rule file built into sdd only, also when it fetched a newer one before. Read from the user-global file only. |
+
+`sdd config set` refuses any other value; read from a file, another value is ignored with a warning and `daily` applies.
 
 ### Connected repositories
 
@@ -473,6 +482,8 @@ Once a day sdd starts `sdd cache prune` in the background, detached from the com
 | What a killed process left: git trace files, unfinished clones, unfinished index writes, emptied index folders, empty folders of old cache clones | One day after, once no lock holds it. |
 
 A session log sdd cannot read stays: it may belong to a newer sdd. The run reports how many it kept.
+
+While `secrets.rules_update` is `daily`, the background run also asks GitHub for gitleaks' latest release and fetches its rule file into `~/.cache/sdd/secret-rules/` when it is newer than the one in use ([credential scan](/sdd/working-modes/#capture)). Each request gives up after 20 seconds. A failed or rejected fetch keeps the rule file in use, is logged as a warning and does not stop the run; `sdd info` shows it with its reason. `sdd cache prune` by hand fetches nothing.
 
 `sdd index gc` stays for deliberate cleanup beyond these rules.
 

@@ -1,13 +1,11 @@
 // Package secrets finds credentials in text bound for the graph, using
-// gitleaks' default rule set vendored as rules.json (vendor-rules.py rebuilds
-// it). A finding refuses the write: an entry is shared and immutable, and a
+// gitleaks' default rule file as gitleaks publishes it: the copy built into
+// the binary, or a newer release the daily pass fetched. A finding refuses the write: an entry is shared and immutable, and a
 // redacted copy beside a missed variant of the same credential is worse than
 // a refusal. Findings name the rule and the line, never the matched text.
 package secrets
 
 import (
-	_ "embed"
-	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -17,33 +15,30 @@ import (
 	"unicode"
 )
 
-//go:embed rules.json
-var rulesJSON []byte
-
 type Finding struct {
 	RuleID string
 	Line   int
 }
 
 type allowlist struct {
-	Condition   string   `json:"condition"`
-	RegexTarget string   `json:"regexTarget"`
-	Regexes     []string `json:"regexes"`
-	Paths       []string `json:"paths"`
-	Stopwords   []string `json:"stopwords"`
+	Condition   string
+	RegexTarget string
+	Regexes     []string
+	Paths       []string
+	Stopwords   []string
 
 	regexes []*regexp.Regexp
 	paths   []*regexp.Regexp
 }
 
 type rule struct {
-	ID          string      `json:"id"`
-	Regex       string      `json:"regex"`
-	Path        string      `json:"path"`
-	Entropy     float64     `json:"entropy"`
-	SecretGroup int         `json:"secretGroup"`
-	Keywords    []string    `json:"keywords"`
-	Allowlists  []allowlist `json:"allowlists"`
+	ID          string
+	Regex       string
+	Path        string
+	Entropy     float64
+	SecretGroup int
+	Keywords    []string
+	Allowlists  []allowlist
 
 	// Patterns compile on first need, so text holding none of a rule's
 	// keywords never pays for its regex.
@@ -53,57 +48,79 @@ type rule struct {
 	err     error
 }
 
-type ruleSet struct {
-	Allowlists []allowlist `json:"allowlists"`
-	Rules      []*rule     `json:"rules"`
+// RuleSet is one gitleaks rule file, read and normalized.
+type RuleSet struct {
+	allowlists []allowlist
+	rules      []*rule
 }
 
-var loadRules = sync.OnceValues(func() (*ruleSet, error) {
-	var set ruleSet
-	err := json.Unmarshal(rulesJSON, &set)
-	if err != nil {
-		return nil, fmt.Errorf("decoding the vendored rules: %w", err)
+// RuleIDs lists the set's rules by id, in file order.
+func (s *RuleSet) RuleIDs() []string {
+	ids := make([]string, 0, len(s.rules))
+	for _, r := range s.rules {
+		ids = append(ids, r.ID)
 	}
-	for i := range set.Allowlists {
-		err = set.Allowlists[i].compilePatterns()
-		if err != nil {
-			return nil, fmt.Errorf("global allowlist: %w", err)
+	return ids
+}
+
+// missing lists the rule ids of floor the set lacks.
+func (s *RuleSet) missing(floor *RuleSet) []string {
+	have := s.RuleIDs()
+	var missing []string
+	for _, id := range floor.RuleIDs() {
+		if !slices.Contains(have, id) {
+			missing = append(missing, id)
 		}
 	}
-	return &set, nil
-})
+	return missing
+}
 
 // Scan reports the credentials in text that has no file path, such as an
-// entry's title, body or summary. Rules scoped to file paths never apply.
+// entry's title, body or summary, using the active rule set (see Use). Rules
+// scoped to file paths never apply.
 func Scan(text string) ([]Finding, error) {
-	return scan("", text)
+	set, err := Active().Rules()
+	if err != nil {
+		return nil, err
+	}
+	return set.Scan(text)
 }
 
 // ScanFile reports the credentials in a file's content; rules and allowlists
 // scoped to file paths apply to path.
 func ScanFile(path string, content []byte) ([]Finding, error) {
-	return scan(path, string(content))
-}
-
-func scan(path, text string) ([]Finding, error) {
-	set, err := loadRules()
+	set, err := Active().Rules()
 	if err != nil {
 		return nil, err
 	}
-	if path != "" && pathAllowed(set.Allowlists, path) {
+	return set.ScanFile(path, content)
+}
+
+// Scan reports the credentials the set finds in text without a file path.
+func (s *RuleSet) Scan(text string) ([]Finding, error) {
+	return s.scan("", text)
+}
+
+// ScanFile reports the credentials the set finds in a file's content.
+func (s *RuleSet) ScanFile(path string, content []byte) ([]Finding, error) {
+	return s.scan(path, string(content))
+}
+
+func (s *RuleSet) scan(path, text string) ([]Finding, error) {
+	if path != "" && pathAllowed(s.allowlists, path) {
 		return nil, nil
 	}
 	lowered := strings.ToLower(text)
 	var findings []Finding
-	for _, r := range set.Rules {
+	for _, r := range s.rules {
 		if !r.mayMatch(lowered) {
 			continue
 		}
-		err = r.compilePatterns()
+		err := r.compilePatterns()
 		if err != nil {
 			return nil, err
 		}
-		found := r.find(path, text, set.Allowlists)
+		found := r.find(path, text, s.allowlists)
 		findings = append(findings, found...)
 	}
 	slices.SortStableFunc(findings, func(a, b Finding) int { return a.Line - b.Line })

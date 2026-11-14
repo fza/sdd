@@ -432,6 +432,22 @@ type InfoResult struct {
 	GraphSchema  int                `json:"graphSchema,omitempty" jsonschema:"schema version the graph records; entries are written at it until an explicit sdd migrate"`
 	BinarySchema int                `json:"binarySchema,omitempty" jsonschema:"schema version this build writes by default"`
 	Contribution string             `json:"contribution,omitempty" jsonschema:"upstream ref the checkout contributes to; when set, graph writes are refused off a feature branch cut from it"`
+	SecretRules  SecretRulesResult  `json:"secretRules" jsonschema:"the gitleaks rule file credential scans use"`
+}
+
+type SecretRulesResult struct {
+	Source       string             `json:"source" jsonschema:"built-in or fetched"`
+	Tag          string             `json:"tag" jsonschema:"the gitleaks release the rule file came from"`
+	Update       string             `json:"update" jsonschema:"secrets.rules_update: daily or off"`
+	Unused       string             `json:"unused,omitempty" jsonschema:"why a fetched copy on disk is not in use"`
+	LastAccepted string             `json:"lastAccepted,omitempty" jsonschema:"when the fetched copy in use was accepted"`
+	LastChecked  string             `json:"lastChecked,omitempty" jsonschema:"when the daily pass last found no newer release"`
+	LastFailure  *SecretRulesFailed `json:"lastFailure,omitempty" jsonschema:"the last failed or rejected fetch"`
+}
+
+type SecretRulesFailed struct {
+	At     string `json:"at"`
+	Reason string `json:"reason"`
 }
 
 type RegistryArgs struct {
@@ -1355,9 +1371,26 @@ func (s *Server) info(ctx context.Context, req *mcp.CallToolRequest, args InfoAr
 	return nil, InfoResult{
 		Project: string(info.Project.ID), Participant: info.Participant, Language: info.Language, Search: info.Search,
 		Version: s.version, GraphSchema: info.GraphSchema, BinarySchema: info.BinarySchema, Contribution: info.Contribution,
-		SyncBlocked: syncBlockedResult(info.SyncBlocked),
+		SyncBlocked: syncBlockedResult(info.SyncBlocked), SecretRules: secretRulesResult(info.SecretRules),
 	}, nil
 
+}
+
+func secretRulesResult(rules sdd.SecretRules) SecretRulesResult {
+	stamp := func(t time.Time) string {
+		if t.IsZero() {
+			return ""
+		}
+		return t.Format(time.RFC3339)
+	}
+	result := SecretRulesResult{
+		Source: rules.Source, Tag: rules.Tag, Update: rules.Update, Unused: rules.Unused,
+		LastAccepted: stamp(rules.LastAccepted), LastChecked: stamp(rules.LastChecked),
+	}
+	if !rules.LastFailureAt.IsZero() {
+		result.LastFailure = &SecretRulesFailed{At: stamp(rules.LastFailureAt), Reason: rules.LastFailure}
+	}
+	return result
 }
 
 func (s *Server) registryDocs(ctx context.Context, req *mcp.CallToolRequest, args RegistryArgs) (*mcp.CallToolResult, RegistryResult, error) {
