@@ -10,7 +10,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// verify.mode layers like every policy key (20261109-004506-d-cpt-udz, D2):
+// verify.mode layers like every policy key:
 // the global and committed configs set it with the committed one winning; the
 // machine-local config may only raise it.
 func TestVerifyModeLayers(t *testing.T) {

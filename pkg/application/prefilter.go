@@ -40,7 +40,7 @@ type prefilterPass struct {
 }
 
 // runPrefilter rates the candidates not yet scored in the reading once
-// they reach verify.prefilter_from (D27). Every candidate a call left
+// they reach verify.prefilter_from. Every candidate a call left
 // unanswered (provider down, deadline, unreadable answer) stays to judge
 // unscored, and the pass names it (5.8).
 func runPrefilter(ctx context.Context, runtime *ProjectRuntime, policy GroundingPolicy, subject string, g *model.Graph, candidates []model.GatherCandidate, held map[string]uint8) (prefilterPass, error) {

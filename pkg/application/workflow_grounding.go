@@ -19,8 +19,8 @@ import (
 var groundingVerdictFields = []string{"verdicts", "lateVerdicts"}
 
 // registerWorkflowGrounding registers the capture's grounding gate under
-// grounding enforcement (20261109-004506-d-cpt-udz): the assemble predicate, the
-// write step's late-entries check and the late-entries listing.
+// grounding enforcement: the assemble predicate, the write step's late-entries
+// check and the late-entries listing.
 func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) error {
 	reads := []string{"entryKind", "topics", "refs", "supersedes", "closes", "verdicts", "lateVerdicts", "strains", "skipGrounding"}
 	if err := registry.RegisterPredicate(engine.Predicate{

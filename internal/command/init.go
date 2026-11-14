@@ -53,8 +53,7 @@ type InitCmd struct {
 	DialogueMode model.DialogueMode
 
 	// VerifyMode, when set, records how carefully drafts are checked against
-	// the graph as verify.mode in the committed config.yaml
-	// (20261109-004729-d-cpt-xs5, V-D28).
+	// the graph as verify.mode in the committed config.yaml.
 	VerifyMode model.VerifyMode
 
 	// VerifierRunner, when set, records what runs the deep verifier on this

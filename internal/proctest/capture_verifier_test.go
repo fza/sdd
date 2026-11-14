@@ -1,6 +1,6 @@
-// Capture with the prose draft verifier (20261109-004729-d-cpt-xs5, slice 1):
-// pre-flight runs over the grounding reading, adds the graph-fit axes, blocks
-// on high findings as before and serves its one verdict otherwise.
+// Capture with the prose draft verifier: pre-flight runs over the grounding
+// reading, adds the graph-fit axes, blocks on high findings as before and
+// serves its one verdict otherwise.
 package proctest_test
 
 import (

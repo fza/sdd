@@ -9,10 +9,9 @@ import (
 )
 
 // VerifyMode is how carefully a capture is checked against the graph before
-// it is written (20261109-004729-d-cpt-xs5, V-D28): it sets grounding
-// enforcement and the draft verifier together, so no invalid pair can be
-// chosen. The modes build up, so their order is the strictness a
-// machine-local layer may only raise.
+// it is written: it sets grounding enforcement and the draft verifier
+// together, so no invalid pair can be chosen. The modes build up, so their
+// order is the strictness a machine-local layer may only raise.
 type VerifyMode string
 
 const (
@@ -22,8 +21,7 @@ const (
 	VerifyDeep      VerifyMode = "deep"
 )
 
-// DefaultVerifyMode is the mode an unset verify.mode resolves to
-// (20261109-222220-d-tac-4ev).
+// DefaultVerifyMode is the mode an unset verify.mode resolves to.
 const DefaultVerifyMode = VerifyProse
 
 // AllowedValues lists the modes, loosest first.
@@ -79,9 +77,9 @@ func (VerifierSkip) AllowedValues() []string {
 	return closedValues(VerifierSkipWeighed, VerifierSkipFailure, VerifierSkipNever)
 }
 
-// VerifierRunner is what runs a deep verifier session (V-D16, V-D19): the
-// drafting agent's harness as a subagent, or sdd through a headless agent CLI
-// or an external driver.
+// VerifierRunner is what runs a deep verifier session: the drafting agent's
+// harness as a subagent, or sdd through a headless agent CLI or an external
+// driver.
 type VerifierRunner string
 
 const (
@@ -109,8 +107,8 @@ type VerifierAgent struct {
 	Effort string `yaml:"effort,omitempty"`
 }
 
-// Verifier agent defaults (20261109-222220-d-tac-4ev): the alias sonnet, which
-// every Claude harness accepts, and codex's own default model.
+// Verifier agent defaults: the alias sonnet, which every Claude harness
+// accepts, and codex's own default model.
 var (
 	DefaultVerifierClaude = VerifierAgent{Model: "sonnet", Effort: "medium"}
 	DefaultVerifierCodex  = VerifierAgent{Effort: "medium"}
@@ -161,7 +159,7 @@ type VerifyConfig struct {
 	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
 	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
 	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
-	// Prefilter switches the prefilter on (D7); on by default.
+	// Prefilter switches the prefilter on; on by default.
 	Prefilter *bool `yaml:"prefilter,omitempty"`
 	// Kinds sets the mode per entry kind; see ModeFor.
 	Kinds map[Kind]VerifyMode `yaml:"kinds,omitempty"`
@@ -570,7 +568,7 @@ func VerifierRunnerChoices(agents []AgentTarget, driver VerifierDriver) []Verifi
 	return choices
 }
 
-// VerifierRunnerAsked reports whether `sdd init` asks for the runner (V-D28):
+// VerifierRunnerAsked reports whether `sdd init` asks for the runner:
 // only under mode deep, and only while no layer sets one.
 func VerifierRunnerAsked(mode VerifyMode, recorded VerifyConfig) bool {
 	return mode == VerifyDeep && recorded.Runner == ""
