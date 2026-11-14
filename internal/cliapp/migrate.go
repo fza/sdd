@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/urfave/cli/v3"
 
@@ -46,8 +45,7 @@ func migrateCmd() *cli.Command {
 			},
 			&cli.DurationFlag{
 				Name:  "timeout",
-				Usage: "Timeout per generation (e.g. 60s, 1m)",
-				Value: 60 * time.Second,
+				Usage: "Timeout per generation (e.g. 60s, 1m); default llm.timeout",
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
