@@ -22,7 +22,7 @@ const eventSegmentKind = "sdd.events"
 // localChannelIgnore keeps a local channel's directory, itself included, out
 // of Git, so its segments never reach a commit, sdd's or anyone's. A git
 // channel carries no such file, so its new segments are what the next sdd
-// auto-commit picks up (20261109-004506-d-cpt-udz, D19).
+// auto-commit picks up.
 var localChannelIgnore = []byte("# sdd: local event channel, kept out of Git\n*\n")
 
 // FilesystemEventStoreOptions configures a FilesystemEventStore.
@@ -36,8 +36,8 @@ type FilesystemEventStoreOptions struct {
 
 // FilesystemEventStore is the local default of the project event store: an
 // append log per channel of immutable segment files <time>-<random>.seg, one
-// per Append call and channel (20261109-004506-d-cpt-udz, D15 and D17). It
-// never commits; see localChannelIgnore for how sharing follows the channel.
+// per Append call and channel. It never commits; see localChannelIgnore for
+// how sharing follows the channel.
 type FilesystemEventStore struct {
 	dir         string
 	gitChannels []string

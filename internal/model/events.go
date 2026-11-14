@@ -8,14 +8,14 @@ import (
 )
 
 // EventsDirName is the directory under .sdd/ holding one directory of
-// segments per event channel (20261109-004506-d-cpt-udz, D17).
+// segments per event channel.
 const EventsDirName = "events"
 
 // ReservedEventNamespace is the first label of the event types core writes;
 // no other writer may write a type under it (20261107-115150-d-cpt-0mu).
 const ReservedEventNamespace = "sdd"
 
-// EventShare is how a channel's segments travel (D19).
+// EventShare is how a channel's segments travel.
 type EventShare string
 
 const (

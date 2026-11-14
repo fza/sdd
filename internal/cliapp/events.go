@@ -14,7 +14,7 @@ import (
 )
 
 // eventsCmd converts the binary event log to and from JSON, so its segments
-// stay inspectable and repairable (20261109-004506-d-cpt-udz, D16).
+// stay inspectable and repairable.
 func eventsCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "events",
