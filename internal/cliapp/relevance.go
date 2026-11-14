@@ -1,7 +1,6 @@
 package cliapp
 
 import (
-	"context"
 	"path/filepath"
 
 	"github.com/networkteam/sdd/internal/llm/factory"
@@ -11,43 +10,22 @@ import (
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
-// relevanceStore is a local relevance ledger, which can also compact, and
-// drop a replay seed.
-type relevanceStore interface {
-	sdd.RelevanceStore
-	Compact(ctx context.Context) error
-	DropReplay(ctx context.Context) error
+// relevanceLedgerDir is the folder of a project's relevance verdict ledger
+// (20261109-004506-d-cpt-udz, 5.7): machine state under stateRoot, keyed
+// like the search index, and nowhere in the repository
+// (20261114-105752-d-tac-tnk).
+func relevanceLedgerDir(stateRoot, repoKey string) string {
+	return filepath.Join(stateRoot, model.RelevanceDirName, filepath.FromSlash(repoKey))
 }
 
-// projectRelevanceStore opens the project's relevance verdict ledger
-// (20261109-004506-d-cpt-udz, 5.7): machine state under stateRoot, keyed
-// like the search index, unless relevance.commit keeps it in .sdd/relevance/
-// beside sddDir. Under relevance.content: reader only reader verdicts go
-// there; scores and drift steps stay in machine state (D14, D20).
-func projectRelevanceStore(sddDir, stateRoot, repoKey string, cfg *model.PerRepoConfig) (relevanceStore, error) {
-	var layout model.RelevanceLayout
-	if cfg != nil {
-		var err error
-		layout, err = cfg.Relevance.Layout()
-		if err != nil {
-			return nil, err
-		}
-	}
-	local, err := localadapter.NewFilesystemRelevanceStore(filepath.Join(stateRoot, model.RelevanceDirName, filepath.FromSlash(repoKey)))
-	if err != nil {
-		return nil, err
-	}
-	if !layout.Commit {
-		return local, nil
-	}
-	committed, err := localadapter.NewFilesystemRelevanceStore(filepath.Join(sddDir, model.RelevanceDirName))
-	if err != nil {
-		return nil, err
-	}
-	if layout.Content == model.RelevanceContentAll {
-		return committed, nil
-	}
-	return localadapter.NewSplitRelevanceStore(committed, local)
+const leftoverRelevanceNotice = "ignoring relevance segments in the repository: the ledger lives only in machine state"
+
+func leftoverRelevanceAdvice(ledgerDir string) string {
+	return "move them into " + ledgerDir + ", then commit their removal from the repository"
+}
+
+func projectRelevanceStore(stateRoot, repoKey string) (*localadapter.FilesystemRelevanceStore, error) {
+	return localadapter.NewFilesystemRelevanceStore(relevanceLedgerDir(stateRoot, repoKey))
 }
 
 // projectPrefilter composes the prefilter verify.prefilter switches on;

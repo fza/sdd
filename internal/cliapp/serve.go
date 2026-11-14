@@ -610,7 +610,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	if err != nil {
 		return nil, err
 	}
-	verdicts, err := projectRelevanceStore(sddDir, locations.StateRoot, baseRepoKey, cfg)
+	verdicts, err := projectRelevanceStore(locations.StateRoot, baseRepoKey)
 	if err != nil {
 		return nil, err
 	}
@@ -683,7 +683,7 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 		return nil, err
 	}
 	searchIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, index.RepoKey(repoID, dir)).WithCheckout(meta.ResolveGraphDir(dir, cfg))
-	verdicts, err := projectRelevanceStore(filepath.Join(dir, model.SDDDirName), locations.StateRoot, index.RepoKey(repoID, dir), cfg)
+	verdicts, err := projectRelevanceStore(locations.StateRoot, index.RepoKey(repoID, dir))
 	if err != nil {
 		return nil, err
 	}

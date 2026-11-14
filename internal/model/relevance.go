@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// RelevanceDirName names the relevance ledger's folder in machine state, and
+// the folder under .sdd/ whose segments sdd reports as ignored
+// (20261114-105752-d-tac-tnk).
+const RelevanceDirName = "relevance"
+
 // RelevancePair is the unordered pair of entries a relevance verdict judges
 // (20261109-004506-d-cpt-udz, 5.7): relevance is symmetric, so A sorts
 // before B.

@@ -14,16 +14,15 @@ const relevanceLines = `{"type":"reader","a":"20261101-120000-s-tac-aaa","b":"20
 {"type":"score","a":"20261101-120000-s-tac-aaa","b":"20261109-004506-d-cpt-udz","judge":"systemone:jev-1.14.0","direction":"both","score":17}
 `
 
-func TestRelevance_LivesWhereTheCommittedConfigPutsIt(t *testing.T) {
+func TestRelevance_LivesOnlyInMachineState(t *testing.T) {
 	cases := []struct {
 		name      string
 		config    string
 		committed string
 		state     string
 	}{
-		{"machine state by default", "", "", "ledger"},
-		{"committed with every record", "relevance:\n  commit: true\n", "ledger", ""},
-		{"committed reader verdicts, local scores", "relevance:\n  commit: true\n  content: reader\n", "reader", "scores"},
+		{"without a relevance block", "", "", "ledger"},
+		{"with the retired relevance block", "relevance:\n  commit: true\n  content: reader\n", "", "ledger"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,28 +103,42 @@ func TestGroundingSeed_AppendsReplayedLabelsOnce(t *testing.T) {
 }
 
 func TestRelevanceCompact_DropsAReplaySeed(t *testing.T) {
-	for _, tc := range []struct{ name, config string }{
-		{"machine state", ""},
-		{"committed reader verdicts", "relevance:\n  commit: true\n  content: reader\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newAppFixture(t)
-			f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n"+tc.config)
-			f.write(t, "pairs.jsonl", `{"a":"20261109-004506-d-cpt-udz","b":"20261102-120000-s-tac-bbb"}`+"\n")
-			f.write(t, "in.jsonl", relevanceLines)
-			for _, args := range [][]string{{"relevance", "import", "in.jsonl"}, {"grounding", "seed", "--from", "pairs.jsonl"}} {
-				if result := f.run(t, args...); result.err != nil {
-					t.Fatalf("%v: %v\n%s", args, result.err, result.stderr)
-				}
-			}
-			dropped := f.run(t, "relevance", "compact", "--drop-replay")
-			if dropped.err != nil || !strings.Contains(dropped.stdout, "without its replayed labels") {
-				t.Fatalf("compact = %q, %v", dropped.stdout, dropped.err)
-			}
-			exported := f.run(t, "relevance", "export")
-			if exported.err != nil || exported.stdout != relevanceLines {
-				t.Fatalf("export = %q, %v: the seed should be gone and the live records kept", exported.stdout, exported.err)
-			}
-		})
+	f := newAppFixture(t)
+	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n")
+	f.write(t, "pairs.jsonl", `{"a":"20261109-004506-d-cpt-udz","b":"20261102-120000-s-tac-bbb"}`+"\n")
+	f.write(t, "in.jsonl", relevanceLines)
+	for _, args := range [][]string{{"relevance", "import", "in.jsonl"}, {"grounding", "seed", "--from", "pairs.jsonl"}} {
+		if result := f.run(t, args...); result.err != nil {
+			t.Fatalf("%v: %v\n%s", args, result.err, result.stderr)
+		}
+	}
+	dropped := f.run(t, "relevance", "compact", "--drop-replay")
+	if dropped.err != nil || !strings.Contains(dropped.stdout, "without its replayed labels") {
+		t.Fatalf("compact = %q, %v", dropped.stdout, dropped.err)
+	}
+	exported := f.run(t, "relevance", "export")
+	if exported.err != nil || exported.stdout != relevanceLines {
+		t.Fatalf("export = %q, %v: the seed should be gone and the live records kept", exported.stdout, exported.err)
+	}
+}
+
+func TestRelevance_ReportsLeftoverSegmentsInTheRepository(t *testing.T) {
+	f := newAppFixture(t)
+	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n")
+	f.write(t, ".sdd/relevance/20261101T120000-abc.seg", "leftover")
+	ledgerDir := filepath.Join(f.root, "state", "sdd", "relevance", "example.test", "cli")
+
+	for _, args := range [][]string{{"info"}, {"config"}} {
+		result := f.run(t, args...)
+		if result.err != nil {
+			t.Fatalf("%v: %v\n%s", args, result.err, result.stderr)
+		}
+		if !strings.Contains(result.stderr, "ignoring relevance segments in the repository") || !strings.Contains(result.stderr, "move them into "+ledgerDir) || !strings.Contains(result.stderr, "commit their removal") {
+			t.Errorf("%v should report the leftover segments with the machine-state folder to move them into:\n%s", args, result.stderr)
+		}
+	}
+	_, err := os.Stat(filepath.Join(f.root, ".sdd", "relevance", "20261101T120000-abc.seg"))
+	if err != nil {
+		t.Fatalf("a leftover segment should stay where it is: %v", err)
 	}
 }

@@ -351,8 +351,9 @@ func loadConfig() (*model.PerRepoConfig, error) {
 }
 
 // warnUnknownConfigKeys names every config key sdd read past — tolerated is
-// not silent. A finder that will not build is left to the command itself,
-// which resolves the same config and reports the failure properly.
+// not silent — and the relevance segments it reads past in the repository.
+// A finder that will not build is left to the command itself, which resolves
+// the same config and reports the failure properly.
 func warnUnknownConfigKeys(ctx context.Context) {
 	f, err := newReadFinder()
 	if err != nil {
@@ -373,6 +374,15 @@ func warnUnknownConfigKeys(ctx context.Context) {
 	for _, s := range result.Ignored {
 		log.Warn("ignoring config setting", "key", s.Key, "file", s.File, "reason", s.Reason)
 	}
+	leftover, err := f.LeftoverRelevance(query.LeftoverRelevanceQuery{SDDDir: sddDir})
+	if err != nil || len(leftover.Segments) == 0 {
+		return
+	}
+	ledgerDir, err := workingRelevanceDir(sddDir)
+	if err != nil {
+		return
+	}
+	log.Warn(leftoverRelevanceNotice, "dir", leftover.Dir, "segments", len(leftover.Segments), "advice", leftoverRelevanceAdvice(ledgerDir))
 }
 
 // resolveConfigAt mirrors loadConfig for an explicit .sdd dir — `sdd init`

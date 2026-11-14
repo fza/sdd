@@ -10,14 +10,12 @@ import (
 )
 
 // segmentPathspecs match the segments sdd shares through Git: those of every
-// event channel and of the committed relevance ledger. A local channel's
-// directory ignores itself, and an uncommitted ledger lives outside the
-// repository, so the segments git lists are shared ones, and they ride the
-// commit sdd is about to make instead of commits of their own
-// (20261109-004506-d-cpt-udz, D17 and D19).
+// event channel. A local channel's directory ignores itself, so the segments
+// git lists are shared ones, and they ride the commit sdd is about to make
+// instead of commits of their own (20261109-004506-d-cpt-udz, D19). The
+// relevance ledger lives only in machine state (20261114-105752-d-tac-tnk).
 var segmentPathspecs = []string{
 	":(top,glob)**/" + path.Join(model.SDDDirName, model.EventsDirName) + "/*/*.seg",
-	":(top,glob)**/" + path.Join(model.SDDDirName, model.RelevanceDirName) + "/*.seg",
 }
 
 // PendingSegments returns the shared segments the next commit has to carry:

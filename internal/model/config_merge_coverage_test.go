@@ -22,7 +22,6 @@ func TestMergeConfigCarriesEveryField(t *testing.T) {
 		{"Sync", func(c *model.PerRepoConfig) any { return &c.Sync }},
 		{"Verify", func(c *model.PerRepoConfig) any { return &c.Verify }},
 		{"LLMPrefilter", func(c *model.PerRepoConfig) any { return &c.LLMPrefilter }},
-		{"Relevance", func(c *model.PerRepoConfig) any { return &c.Relevance }},
 		{"Recheck", func(c *model.PerRepoConfig) any { return &c.Recheck }},
 	} {
 		t.Run(tc.section, func(t *testing.T) {
