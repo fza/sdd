@@ -95,8 +95,8 @@ type ProjectRuntimeOptions struct {
 type GraphSync interface {
 	// SyncGraph runs the timer's sync round for branch, skipping it when
 	// another process is syncing. The round runs only as far as the lease of
-	// branch's graph asks (20261113-232855-d-tac-1nz): a fetch while it
-	// holds, a push of the commits waiting either way.
+	// branch's graph asks: a fetch while it holds, a push of the
+	// commits waiting either way.
 	SyncGraph(ctx context.Context, branch string, trigger SyncTrigger) error
 	// DemandGraph starts or renews the lease of branch's graph for a call
 	// and runs the sync round a lease start asks for, waiting for it at most

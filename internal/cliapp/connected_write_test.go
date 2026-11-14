@@ -191,7 +191,7 @@ func TestConnectedCaptureWritesThroughTheClone(t *testing.T) {
 // start of the capture starts the clone's lease; its later calls renew the
 // lease and sync nothing, though the git gate admits a local-path remote
 // every time and the confirm resolves the dependency for writing several
-// times (20261113-232855-d-tac-1nz).
+// times.
 func TestConnectedCaptureSyncsTheDependencyOncePerLease(t *testing.T) {
 	fixture, _ := connectedWriteFixture(t, true, true)
 	trace := filepath.Join(t.TempDir(), "git-trace")

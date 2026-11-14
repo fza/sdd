@@ -242,9 +242,9 @@ func (h *Handler) failed(ctx context.Context, repo repos.ConnectedRepo, reason s
 }
 
 // EnsureReposFresh starts or renews the lease of each named connected repo
-// for a read (20261113-232855-d-tac-1nz): a clone on first use; else, when
-// the lease starts past the repo's effective fetch cooldown, one sync round,
-// waited for at most read_wait. A round still running then finishes in the
+// for a read: a clone on first use; else, when the lease starts past the
+// repo's effective fetch cooldown, one sync round, waited for at most
+// read_wait. A round still running then finishes in the
 // background: cmd.OnPending reports it, cmd.OnSettled its outcome. A
 // deferred round leaves the clone as it stands. Unconnected repo IDs are
 // skipped — the read side renders them unresolved, which is that state's

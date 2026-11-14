@@ -11,10 +11,9 @@ import (
 	"github.com/networkteam/slogutils"
 )
 
-// GraphDemand is what renewing the lease of a graph for a call did
-// (20261113-232855-d-tac-1nz): Ran when the lease start ran a sync round,
-// Pending when that round still runs past the read wait, with when the graph
-// last fetched.
+// GraphDemand is what renewing the lease of a graph for a call did: Ran
+// when the lease start ran a sync round, Pending when that round still runs
+// past the read wait, with when the graph last fetched.
 type GraphDemand struct {
 	Ran     bool
 	Pending bool

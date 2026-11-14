@@ -1,7 +1,6 @@
 package model
 
-// TimerRound is what the serve timer runs for an sdd-owned clone
-// (20261113-232855-d-tac-1nz).
+// TimerRound is what the serve timer runs for an sdd-owned clone.
 type TimerRound string
 
 const (

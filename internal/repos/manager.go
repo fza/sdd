@@ -91,8 +91,7 @@ func (m *Manager) FetchDue(ctx context.Context, repo ConnectedRepo) (bool, time.
 	return m.clones.gate.Due(target, gitgate.Fetch)
 }
 
-// Demand starts or renews the lease of repo's clone for a read
-// (20261113-232855-d-tac-1nz).
+// Demand starts or renews the lease of repo's clone for a read.
 func (m *Manager) Demand(ctx context.Context, repo ConnectedRepo) (gitgate.Demand, error) {
 	if m.clones.gate == nil {
 		return gitgate.Demand{}, ErrNoGate
