@@ -209,8 +209,7 @@ func TestCacheHandlerPruneKeepsTheCheckoutsCurrentVersions(t *testing.T) {
 	}
 }
 
-// The pass drops the confirmations of hooks no config declares any more
-// (20261109-213250-d-tac-bve).
+// The pass drops the confirmations of hooks no config declares any more.
 func TestCacheHandlerPruneSweepsUndeclaredHookConfirmations(t *testing.T) {
 	f := newPruneFixture(t, "")
 	checkout := t.TempDir()

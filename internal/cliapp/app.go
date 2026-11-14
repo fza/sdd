@@ -2306,7 +2306,7 @@ func initCmd() *cli.Command {
 			var report bytes.Buffer
 			unchanged := false
 			// A kept user-edited skill differs from the bundle, so such a run
-			// is not up to date (20261110-004731-d-tac-0g9).
+			// is not up to date.
 			preserved := false
 			icmd := &command.InitCmd{
 				RepoRoot:        repoRoot,
