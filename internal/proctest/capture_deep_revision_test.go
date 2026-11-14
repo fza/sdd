@@ -79,6 +79,20 @@ func TestCaptureDeep_AChangeAfterTheVerdictGoesToTheLiveVerifier(t *testing.T) {
 	}
 }
 
+// An adjust that rewords only what the verifier wrote stays settled: neither
+// the writing guide's delta check nor the verifier judges it again.
+func TestCaptureDeep_AnAdjustOfTheVerifiersWordsStaysSettled(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-revision-settled", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	x.judge(t, subjectFinding("observes something."))
+	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+	serve := x.settleWithAChange(t, "A tactical gap: the fixture observes something. It names its subject.")
+	proctest.RequireStep(t, serve, "verifySummary")
+	if got := world.LLM.Calls("writing-guide"); got != 1 {
+		t.Fatalf("the guide should judge the approved draft once and leave the reworded verifier sentence alone, ran %d times", got)
+	}
+}
+
 func TestCaptureDeep_ARevisionCanBeReadWhole(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-revision-reread", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())

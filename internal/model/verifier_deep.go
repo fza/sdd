@@ -296,6 +296,44 @@ func DeepChanges(findings []DeepFinding, responses []DeepResponse) []DeepChange 
 	return changes
 }
 
+// DeepSpan is the byte range [Start, End) of a draft document.
+type DeepSpan struct{ Start, End int }
+
+// DeepSettledSpans returns the spans of document an exchange settled: the
+// text each of its edits wrote, and each passage a finding quotes.
+func DeepSettledSpans(document string, findings []DeepFinding, responses []DeepResponse) []DeepSpan {
+	var spans []DeepSpan
+	occurrences := func(text string, from, to int) {
+		for at := 0; text != ""; {
+			i := strings.Index(document[at:], text)
+			if i < 0 {
+				return
+			}
+			spans = append(spans, DeepSpan{Start: at + i + from, End: at + i + len(text) - to})
+			at += i + 1
+		}
+	}
+	for _, change := range DeepChanges(findings, responses) {
+		for _, edit := range change.Edits {
+			prefix := 0
+			for prefix < len(edit.Old) && prefix < len(edit.New) && edit.Old[prefix] == edit.New[prefix] {
+				prefix++
+			}
+			suffix := 0
+			for suffix < len(edit.Old)-prefix && suffix < len(edit.New)-prefix && edit.Old[len(edit.Old)-1-suffix] == edit.New[len(edit.New)-1-suffix] {
+				suffix++
+			}
+			occurrences(edit.New, prefix, suffix)
+		}
+	}
+	for _, finding := range findings {
+		for _, pointer := range finding.Pointers {
+			occurrences(pointer.Quote, 0, 0)
+		}
+	}
+	return spans
+}
+
 type deepSpan struct {
 	start, end int
 	finding    string

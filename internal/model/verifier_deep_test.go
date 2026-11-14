@@ -85,6 +85,22 @@ func TestDeepOpenFindings_FollowTheLatestResponse(t *testing.T) {
 	}
 }
 
+func TestDeepSettledSpans_CoverWhatTheEditsWroteAndTheQuotes(t *testing.T) {
+	document := "The capture writer loses the second attachment. It names the subject.\nIt happens when two share a name.\n"
+	findings := []model.DeepFinding{
+		deepFinding("contradicts", model.DeepEdit{Old: "drops", New: "loses"}),
+		deepFinding("inconsistent", model.DeepEdit{Old: "attachment.", New: "attachment. It names the subject."}),
+		{Verdict: "only the owner knows", Axis: "aspiration", Severity: "low", Owner: true, Pointers: []model.DeepPointer{{Field: "body", Quote: "two share a name"}}},
+	}
+	var got []string
+	for _, span := range model.DeepSettledSpans(document, findings, nil) {
+		got = append(got, document[span.Start:span.End])
+	}
+	if want := []string{"lose", " It names the subject.", "two share a name"}; !slices.Equal(got, want) {
+		t.Fatalf("the spans should hold the bytes each edit changed and each quoted passage, got %q", got)
+	}
+}
+
 // deepLookup finds one entry, one file and one commit.
 var deepLookup = model.DeepLookup{
 	Entry: func(id string) bool { return id == "20261101-100000-s-tac-abc" },
