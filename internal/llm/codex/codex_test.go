@@ -149,7 +149,7 @@ func TestRunLeavesInheritedCredentialsOut(t *testing.T) {
 		}
 	}
 	if !slices.Contains(env, "CODEX_HOME=/home/codex") || !slices.Contains(env, "PATH="+os.Getenv("PATH")) {
-		t.Errorf("the child should keep the rest of the environment, got %q", env)
+		t.Error("the child should keep the rest of the environment")
 	}
 }
 

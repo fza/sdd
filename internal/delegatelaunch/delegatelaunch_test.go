@@ -174,12 +174,12 @@ func TestRun_CodexRoundLeavesInheritedCredentialsOut(t *testing.T) {
 	env := test.LastAgentCall(t, agents, "codex").Env
 	for _, name := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"} {
 		if slices.ContainsFunc(env, func(entry string) bool { return strings.HasPrefix(entry, name+"=") }) {
-			t.Errorf("an inherited credential should not reach the round, got %s in %q", name, env)
+			t.Errorf("an inherited credential should not reach the round, got %s", name)
 		}
 	}
 	for _, kept := range []string{"CODEX_HOME=/home/codex", "PATH=" + agents} {
 		if !slices.Contains(env, kept) {
-			t.Errorf("the round should keep the rest of the environment, missing %s in %q", kept, env)
+			t.Errorf("the round should keep the rest of the environment, missing %s", kept)
 		}
 	}
 }
@@ -212,10 +212,10 @@ func TestRun_CodexRoundRunsOnTheConfiguredProvider(t *testing.T) {
 		t.Fatalf("the round should select the provider and define it ahead of the resume, got %q", call.Args)
 	}
 	if !slices.Contains(call.Env, "OPENAI_API_KEY=sk-provider") {
-		t.Errorf("the variable the provider names as its env_key should reach the round, got %q", call.Env)
+		t.Error("the variable the provider names as its env_key should reach the round")
 	}
 	if slices.ContainsFunc(call.Env, func(entry string) bool { return strings.HasPrefix(entry, "CODEX_API_KEY=") }) {
-		t.Errorf("the other credentials should still be left out, got %q", call.Env)
+		t.Error("the other credentials should still be left out")
 	}
 }
 
