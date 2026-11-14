@@ -154,8 +154,7 @@ func TestCacheHandlerPruneFailsWithoutTheOwnedCloneProbe(t *testing.T) {
 	}
 }
 
-// The run packs a listed clone with git gc --auto (20261114-095140-d-cpt-ad4,
-// rule 4).
+// The run packs a listed clone with git gc --auto.
 func TestCacheHandlerPrunePacksListedClones(t *testing.T) {
 	f := newPruneFixture(t, "")
 	dir, _ := ownedClone(t, f.loc, "kept")

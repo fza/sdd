@@ -171,7 +171,7 @@ const useRefresh = 24 * time.Hour
 
 // Prune deletes the snapshots whose graph directory no longer exists or that
 // nothing loaded or saved for longer than retention, returning how many went
-// and the bytes freed (20261114-095140-d-cpt-ad4).
+// and the bytes freed.
 func (c *Cache) Prune(now time.Time, retention time.Duration) (removed int, freed int64, err error) {
 	entries, err := os.ReadDir(c.root)
 	if errors.Is(err, os.ErrNotExist) {

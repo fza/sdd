@@ -19,7 +19,7 @@ import (
 )
 
 // The state root keeps per-project state under one repository key per
-// category; StateSweep tends it (20261114-095140-d-cpt-ad4, rules 2 and 3).
+// category; StateSweep tends it.
 const (
 	sessionsCategory    = "sessions"
 	stagedBlobsCategory = "staged-blobs"

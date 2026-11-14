@@ -48,7 +48,7 @@ func ResolveCacheRetention(cfg CacheConfig) (time.Duration, error) {
 }
 
 // DefaultReplacedRetention is how long replaced index data survives the
-// daily sweep after its replacement or last use (20261114-095140-d-cpt-ad4).
+// daily sweep after its replacement or last use.
 const DefaultReplacedRetention = "14d"
 
 // IndexConfig holds the machine-global search index settings; user-global

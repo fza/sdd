@@ -36,8 +36,7 @@ func projectRelevanceStore(sddDir, stateRoot, repoKey string, cfg *model.PerRepo
 }
 
 // usedRelevanceStore stamps its project as used on every read and write, so
-// the daily sweep keeps a project a long-running server works in
-// (20261114-095140-d-cpt-ad4, rule 3).
+// the daily sweep keeps a project a long-running server works in.
 type usedRelevanceStore struct {
 	relevanceStore
 	stateRoot, repoKey string

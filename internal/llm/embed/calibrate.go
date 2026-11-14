@@ -162,7 +162,7 @@ func markCalibrationUsed(path string, now time.Time) error {
 }
 
 // PruneCalibrations removes the calibrations under dir no load used for longer
-// than retention, and reports how many went (20261114-095140-d-cpt-ad4).
+// than retention, and reports how many went.
 func PruneCalibrations(dir string, now time.Time, retention time.Duration) (int, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {

@@ -16,7 +16,7 @@ import (
 )
 
 // The run removes crash leftovers older than a day and records unused for
-// cache.retention (20261114-095140-d-cpt-ad4, rules 6 and 7).
+// cache.retention.
 func TestCacheHandlerPruneSweepsLeftoversAndRecords(t *testing.T) {
 	f := newPruneFixture(t, "")
 	now := time.Now()
