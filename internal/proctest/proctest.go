@@ -360,7 +360,9 @@ type World struct {
 	App      *sdd.Application
 	Identity sdd.RequestIdentity
 	GraphDir string
-	LLM      *LLMScript
+	// StagedBlobDir holds the staged attachments, <subject>/<session>/ below.
+	StagedBlobDir string
+	LLM           *LLMScript
 
 	dropped map[string]bool
 }
@@ -434,7 +436,8 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blobs, err := localadapter.NewFilesystemStagedBlobStoreAt(t.TempDir())
+	stagedBlobDir := t.TempDir()
+	blobs, err := localadapter.NewFilesystemStagedBlobStoreAt(stagedBlobDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,7 +480,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &World{App: application, Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, LLM: script, dropped: dropped}
+	return &World{App: application, Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, LLM: script, dropped: dropped}
 }
 
 // Session wraps one workflow session on the world.

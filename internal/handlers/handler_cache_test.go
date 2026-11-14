@@ -15,6 +15,7 @@ import (
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/filestamp"
 	"github.com/networkteam/sdd/internal/finders"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/graphcache"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/handlers/synctest"
@@ -114,10 +115,15 @@ func newPruneFixture(t *testing.T, config string) pruneFixture {
 	return f
 }
 
+func (f pruneFixture) gate() *gitgate.Gate {
+	return synctest.Gate(f.loc.StateRoot, nil)
+}
+
 func (f pruneFixture) handler(keep handlers.CurrentHashSource) *handlers.CacheHandler {
 	return handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
-		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(f.loc.StateRoot, nil)}, Keep: keep,
+		OwnedClones: syncstate.OwnedClones{Gate: f.gate()}, Gate: f.gate(), Keep: keep,
+		State: &synctest.StateSweep{},
 	})
 }
 
@@ -192,7 +198,8 @@ func TestCacheHandlerPruneSweepsUndeclaredHookConfirmations(t *testing.T) {
 	}
 	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
-		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(f.loc.StateRoot, nil)},
+		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(f.loc.StateRoot, nil)}, Gate: synctest.Gate(f.loc.StateRoot, nil),
+		State: &synctest.StateSweep{},
 		DeclaredHooks: func(dir string) ([]string, error) {
 			if dir != checkout {
 				t.Errorf("only the recorded checkout should be asked, asked %s", dir)
@@ -209,6 +216,91 @@ func TestCacheHandlerPruneSweepsUndeclaredHookConfirmations(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), declared) || strings.Contains(string(raw), undeclared) {
 		t.Errorf("the pass should keep only the declared hook's confirmation, store holds %s", raw)
+	}
+}
+
+// usedStore writes a one-version store at dir whose last use is at.
+func usedStore(t *testing.T, dir string, at time.Time) {
+	t.Helper()
+	err := index.WriteStore(t.Context(), dir, func(idx *index.Index) error {
+		row := index.Row{EntryID: "e", EntryHash: "h", ChunkID: "e#v-h#summary", Text: "t", Body: "t", ContentHash: index.HashContent("t"), ModelFingerprint: "m", IsSummary: true, Embedding: []float32{1, 0}}
+		if err := idx.UpsertEntry(context.Background(), "e", nil, []index.Row{row}); err != nil {
+			return err
+		}
+		m := &index.Manifest{Version: 1, Entries: map[string]index.EntryState{}}
+		m.AddVersion("e", index.EntryVersion{Hash: "h", Derivation: index.DerivationCurrent, ChunkIDs: []string{row.ChunkID}, IndexedAt: at})
+		return m.Save(dir)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(dir, "used", index.DerivationCurrent+"@1"), filepath.Join(dir, "manifest.json")} {
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCacheHandlerPruneDropsAReplacedEmbeddingSetup(t *testing.T) {
+	now := time.Now()
+	replaced := 14 * 24 * time.Hour
+	cases := []struct {
+		name     string
+		oldUse   time.Time
+		newUse   *time.Time
+		wantKept bool
+	}{
+		{name: "a store another setup replaced over two weeks ago goes", oldUse: now.Add(-replaced - time.Hour), newUse: &now},
+		{name: "a store used within two weeks stays", oldUse: now.Add(-replaced + time.Hour), newUse: &now, wantKept: true},
+		{name: "a store no other setup replaced keeps the unused retention", oldUse: now.Add(-replaced - time.Hour), wantKept: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPruneFixture(t, "")
+			repo := filepath.Join(f.loc.CacheRoot, "index", "github.com", "acme", "switched")
+			old := filepath.Join(repo, "oldsetup")
+			usedStore(t, old, tc.oldUse)
+			if tc.newUse != nil {
+				usedStore(t, filepath.Join(repo, "newsetup"), *tc.newUse)
+			}
+			if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+				t.Fatal(err)
+			}
+			if kept := exists(t, filepath.Join(old, "manifest.json")); kept != tc.wantKept {
+				t.Errorf("the older setup's store kept should be %v", tc.wantKept)
+			}
+		})
+	}
+}
+
+func TestCacheHandlerPruneSweepsIndexLeftovers(t *testing.T) {
+	f := newPruneFixture(t, "")
+	old := time.Now().Add(-model.CacheLeftoverAge - time.Hour)
+	retired := filepath.Join(f.loc.CacheRoot, "index", "github.com", "acme", "kept", "retired")
+	if err := os.MkdirAll(retired, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stage := filepath.Join(f.usedStore, ".entry-123")
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(retired, ".lock"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{retired, stage} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var counts model.CachePruneCounts
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{OnPruned: func(c model.CachePruneCounts) { counts = c }}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(t, retired) || exists(t, stage) {
+		t.Error("a retired store and a staging dir older than a day should go")
+	}
+	if counts.Leftovers != 2 {
+		t.Errorf("the run should count both leftovers, got %+v", counts)
 	}
 }
 
@@ -309,5 +401,55 @@ func TestCacheHandlerPruneRecordsAFailure(t *testing.T) {
 	}
 	if status.Error == "" || status.Reported || status.FailureNotice() == "" {
 		t.Errorf("the failure should be recorded for the next command to report, got %+v", status)
+	}
+}
+
+// A replaced setup's store keeps its versions while it waits out the replaced
+// retention: pruning them would save its manifest and count as a use.
+func TestCacheHandlerPruneLeavesAReplacedSetupsVersionsAlone(t *testing.T) {
+	now := time.Now()
+	f := newPruneFixture(t, "")
+	repo := filepath.Join(f.loc.CacheRoot, "index", "github.com", "acme", "switched")
+	old := filepath.Join(repo, "oldsetup")
+	lastUse := now.Add(-24 * time.Hour)
+	err := index.WriteStore(t.Context(), old, func(idx *index.Index) error {
+		m := &index.Manifest{Version: 1, Entries: map[string]index.EntryState{}}
+		for _, v := range []struct {
+			hash string
+			at   time.Time
+		}{{"h1", now.Add(-40 * 24 * time.Hour)}, {"h2", now.Add(-20 * 24 * time.Hour)}} {
+			row := index.Row{EntryID: "e", EntryHash: v.hash, ChunkID: "e#v-" + v.hash + "#summary", Text: "t", Body: "t", ContentHash: index.HashContent("t"), ModelFingerprint: "m", IsSummary: true, Embedding: []float32{1, 0}}
+			if err := idx.UpsertEntry(context.Background(), "e", nil, []index.Row{row}); err != nil {
+				return err
+			}
+			m.AddVersion("e", index.EntryVersion{Hash: v.hash, Derivation: index.DerivationCurrent, ChunkIDs: []string{row.ChunkID}, IndexedAt: v.at})
+		}
+		return m.Save(old)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(old, "used", index.DerivationCurrent+"@1"), filepath.Join(old, "manifest.json")} {
+		if err := os.Chtimes(path, lastUse, lastUse); err != nil {
+			t.Fatal(err)
+		}
+	}
+	usedStore(t, filepath.Join(repo, "newsetup"), now)
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatal(err)
+	}
+	m, err := index.LoadManifest(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(m.Entries["e"].Versions); got != 2 {
+		t.Errorf("a replaced setup's store should keep its versions, %d left", got)
+	}
+	last, err := index.StoreLastUse(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last.After(lastUse.Add(time.Second)) {
+		t.Errorf("pruning should not count as a use of the replaced setup's store, last use moved to %v", last)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/networkteam/sdd/internal/graphcache"
 	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/index"
+	"github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 )
@@ -38,16 +39,32 @@ type OwnedCloneProbe interface {
 	// LastAttempt is when the git gate last admitted a fetch or push of the
 	// clone's remote; zero when it never did.
 	LastAttempt(ctx context.Context, dir string) (time.Time, error)
+	// GC runs git gc --auto in the clone, locally.
+	GC(ctx context.Context, dir string) error
+}
+
+// GateSweeper is the git gate's part in the sweep.
+type GateSweeper interface {
+	PruneRecords(ctx context.Context, now time.Time, retention time.Duration) (int, error)
+	SweepTraces(now time.Time, minAge time.Duration) (int, error)
+}
+
+// StateSweeper tends the per-project state under the state root: sessions
+// past sessionRetention and projects unused for unusedRetention.
+type StateSweeper interface {
+	Sweep(ctx context.Context, now time.Time, sessionRetention, unusedRetention time.Duration) (model.CachePruneCounts, error)
 }
 
 // CacheHandlerOptions configures NewCacheHandler. CacheRoot, StateRoot,
-// Registry and OwnedClones are required; Keep is nil outside an sdd checkout;
-// Now defaults to time.Now.
+// Registry, OwnedClones, Gate and State are required; Keep is nil outside an
+// sdd checkout; Now defaults to time.Now.
 type CacheHandlerOptions struct {
 	CacheRoot   string
 	StateRoot   string
 	Registry    *repos.Registry
 	OwnedClones OwnedCloneProbe
+	Gate        GateSweeper
+	State       StateSweeper
 	Keep        CurrentHashSource
 	// DeclaredHooks returns the hashes of the hooks a checkout declares now
 	// (hooks.DeclaredIn); the pass drops every other hook confirmation under
@@ -62,13 +79,15 @@ type CacheHandler struct {
 	stateRoot     string
 	registry      *repos.Registry
 	ownedClones   OwnedCloneProbe
+	gate          GateSweeper
+	state         StateSweeper
 	keep          CurrentHashSource
 	declaredHooks func(checkout string) ([]string, error)
 	now           func() time.Time
 }
 
 func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
-	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, ownedClones: opts.OwnedClones, keep: opts.Keep, declaredHooks: opts.DeclaredHooks, now: opts.Now}
+	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, ownedClones: opts.OwnedClones, gate: opts.Gate, state: opts.State, keep: opts.Keep, declaredHooks: opts.DeclaredHooks, now: opts.Now}
 	if h.now == nil {
 		h.now = time.Now
 	}
@@ -139,6 +158,14 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 	if err != nil {
 		return counts, err
 	}
+	replaced, err := model.ResolveReplacedRetention(cfg.Index)
+	if err != nil {
+		return counts, err
+	}
+	sessionRetention, err := model.ResolveSessionRetention(cfg.Sessions)
+	if err != nil {
+		return counts, err
+	}
 	// An entry's state hash depends on the rune cap a store was chunked
 	// under, so the checkout's current versions are hashed once per cap.
 	keepByCap := map[int]map[string]string{}
@@ -178,6 +205,19 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		}
 	}
 
+	errs = append(errs, h.sweepLeftovers(now, &counts)...)
+	errs = append(errs, h.pruneRecords(ctx, now, retention, &counts)...)
+
+	if h.state == nil {
+		errs = append(errs, errors.New("cache pruning has no sweeper for the state folder"))
+	} else {
+		swept, err := h.state.Sweep(ctx, now, sessionRetention, retention)
+		counts.Add(swept)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("sweeping the state folder: %w", err))
+		}
+	}
+
 	clones, err := h.registry.UnconnectedClones()
 	if err != nil {
 		errs = append(errs, err)
@@ -211,28 +251,149 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		counts.Bytes += size
 		log.Info("removed unconnected clone", "clone", dir, "bytes", size)
 	}
+	errs = append(errs, h.gcListedClones(ctx)...)
 
-	stores, leftovers, err := index.Stores(h.cacheRoot)
+	errs = append(errs, h.pruneIndex(ctx, now, index.Retention{Unused: retention, Replaced: replaced}, keepFor, &counts)...)
+	return counts, errors.Join(errs...)
+}
+
+// gcListedClones runs git gc --auto in each clone the repos list names,
+// skipping one a sync holds.
+func (h *CacheHandler) gcListedClones(ctx context.Context) []error {
+	if h.ownedClones == nil {
+		return []error{errors.New("cache pruning has no probe for sdd-owned clones")}
+	}
+	clones, err := h.registry.ListedClones()
+	if err != nil {
+		return []error{err}
+	}
+	var errs []error
+	for _, clone := range clones {
+		if ctx.Err() != nil {
+			break
+		}
+		release, err := h.ownedClones.TryLockSync(ctx, clone.Dir)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("locking the sync of %s: %w", clone.Dir, err))
+			continue
+		}
+		if release == nil {
+			slogutils.FromContext(ctx).Info("clone in use, gc skipped", "clone", clone.Dir)
+			continue
+		}
+		err = h.ownedClones.GC(ctx, clone.Dir)
+		release()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("packing the clone of %s: %w", clone.RepoID, err))
+		}
+	}
+	return errs
+}
+
+// sweepLeftovers removes what killed processes left outside the index stores
+// once older than model.CacheLeftoverAge.
+func (h *CacheHandler) sweepLeftovers(now time.Time, counts *model.CachePruneCounts) []error {
+	var errs []error
+	if h.gate == nil {
+		errs = append(errs, errors.New("cache pruning has no git gate"))
+	} else {
+		traces, err := h.gate.SweepTraces(now, model.CacheLeftoverAge)
+		counts.Leftovers += traces
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	staging, err := h.registry.SweepCloneStaging(now, model.CacheLeftoverAge)
+	counts.Leftovers += staging
 	if err != nil {
 		errs = append(errs, err)
 	}
-	for _, dir := range leftovers {
+	hosts, err := h.registry.SweepLegacyHostDirs(now, model.CacheLeftoverAge)
+	counts.Leftovers += hosts
+	if err != nil {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
+// pruneRecords drops git gate records and embedder calibrations unused for
+// retention.
+func (h *CacheHandler) pruneRecords(ctx context.Context, now time.Time, retention time.Duration, counts *model.CachePruneCounts) []error {
+	var errs []error
+	if h.gate != nil {
+		records, err := h.gate.PruneRecords(ctx, now, retention)
+		counts.Records += records
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	calibrations, err := embed.PruneCalibrations(filepath.Join(h.cacheRoot, embed.CalibrationDirName), now, retention)
+	counts.Records += calibrations
+	if err != nil {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
+// pruneIndex applies the index rules of 20261114-095140-d-cpt-ad4 to every
+// store, the longest pass, which the run limit cuts short first.
+func (h *CacheHandler) pruneIndex(ctx context.Context, now time.Time, r index.Retention, keepFor func(string) (map[string]string, error), counts *model.CachePruneCounts) []error {
+	log := slogutils.FromContext(ctx)
+	var errs []error
+	tree, err := index.Stores(h.cacheRoot)
+	if err != nil {
+		return []error{err}
+	}
+	for _, dir := range tree.Interrupted {
 		if err := os.RemoveAll(dir); err != nil {
 			errs = append(errs, fmt.Errorf("removing %s: %w", dir, err))
 		}
 	}
-	for _, dir := range stores {
-		if ctx.Err() != nil {
-			log.Info("cache pruning stopped at its time limit; the next run continues")
-			break
+	for _, dir := range tree.Retired {
+		removed, err := index.RemoveRetiredStore(dir, now, model.CacheLeftoverAge)
+		switch {
+		case errors.Is(err, index.ErrLockBusy):
+			log.Info("retired index store in use, skipped", "store", dir)
+		case err != nil:
+			errs = append(errs, err)
+		case removed:
+			counts.Leftovers++
 		}
+	}
+
+	lastUse := map[string]time.Time{}
+	newestSibling := map[string]time.Time{}
+	for _, dir := range tree.Stores {
 		last, err := index.StoreLastUse(dir)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		if now.Sub(last) > retention {
-			freed, err := index.RemoveStore(dir, now, retention)
+		lastUse[dir] = last
+		if repo := filepath.Dir(dir); last.After(newestSibling[repo]) {
+			newestSibling[repo] = last
+		}
+	}
+	for _, dir := range tree.Stores {
+		if ctx.Err() != nil {
+			log.Info("cache pruning stopped at its time limit; the next run continues")
+			break
+		}
+		last, ok := lastUse[dir]
+		if !ok {
+			continue
+		}
+		// A store another store of its repository was used after is a
+		// replaced embedding setup's: it waits out r.Replaced, not r.Unused,
+		// and its versions are not pruned, since a manifest save would count
+		// as its use.
+		replacedSetup := newestSibling[filepath.Dir(dir)].After(last)
+		window := r.Unused
+		if replacedSetup {
+			window = r.Replaced
+		}
+		if now.Sub(last) > window {
+			freed, err := index.RemoveStore(dir, now, window)
 			switch {
 			case errors.Is(err, index.ErrLockBusy):
 				log.Info("index store in use, skipped", "store", dir)
@@ -241,8 +402,11 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 			case freed > 0:
 				counts.Stores++
 				counts.Bytes += freed
-				log.Info("removed unused index store", "store", dir, "bytes", freed)
+				log.Info("removed index store", "store", dir, "replaced_setup", replacedSetup, "bytes", freed)
 			}
+			continue
+		}
+		if replacedSetup {
 			continue
 		}
 		keep, err := keepFor(dir)
@@ -250,21 +414,33 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 			errs = append(errs, fmt.Errorf("pruning %s: %w", dir, err))
 			continue
 		}
-		pruned, err := index.PruneStore(ctx, dir, now, retention, keep)
+		pruned, err := index.PruneStore(ctx, dir, now, r, keep)
 		counts.Versions += pruned.Versions
 		counts.Bytes += pruned.Bytes
 		switch {
 		case errors.Is(err, index.ErrLockBusy):
 			log.Info("index store in use, skipped", "store", dir)
+			continue
 		case err != nil && ctx.Err() != nil:
 			log.Info("cache pruning stopped at its time limit; the next run continues", "store", dir)
+			continue
 		case err != nil:
 			errs = append(errs, fmt.Errorf("pruning %s: %w", dir, err))
+			continue
 		case pruned.Versions > 0:
 			log.Info("pruned index versions", "store", dir, "versions", pruned.Versions, "bytes", pruned.Bytes)
 		}
+		swept, err := index.SweepStore(dir, now, model.CacheLeftoverAge)
+		counts.Leftovers += swept.OrphanRows + swept.Temps
+		counts.Bytes += swept.Bytes
+		switch {
+		case errors.Is(err, index.ErrLockBusy):
+			log.Info("index store in use, skipped", "store", dir)
+		case err != nil:
+			errs = append(errs, fmt.Errorf("sweeping %s: %w", dir, err))
+		}
 	}
-	return counts, errors.Join(errs...)
+	return errs
 }
 
 // holdUnused lets an sdd-owned clone go only while nothing uses it: its sync

@@ -96,6 +96,9 @@ func (c *Cache) Load(dir string, stamps map[string]filestamp.Stamp) (finders.Gra
 	if saved.Dir != abs || !maps.Equal(saved.Stamps, stamps) {
 		return finders.GraphDocuments{}, false, nil
 	}
+	if err := markUsed(path, time.Now()); err != nil {
+		return finders.GraphDocuments{}, false, err
+	}
 	docs := finders.GraphDocuments{Entries: make([]finders.EntryDocument, len(saved.Entries))}
 	for i, saved := range saved.Entries {
 		docs.Entries[i] = finders.EntryDocument{ID: saved.ID, Raw: saved.Raw, Attachments: saved.Attachments}
@@ -146,10 +149,29 @@ func (c *Cache) Save(dir string, stamps map[string]filestamp.Stamp, docs finders
 	return os.Rename(tempPath, path)
 }
 
-// Prune deletes the snapshots whose graph directory no longer exists, and
-// snapshots this binary cannot read that nothing rewrote for longer than
-// retention, returning how many went and the bytes freed
-// (20261101-131514-d-cpt-9ci).
+// markUsed refreshes a snapshot's modification time, its last use, at most
+// once per useRefresh, so a load of an unchanged graph keeps its snapshot.
+func markUsed(path string, now time.Time) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if now.Sub(info.ModTime()) < useRefresh {
+		return nil
+	}
+	if err := os.Chtimes(path, now, now); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("refreshing graph snapshot use: %w", err)
+	}
+	return nil
+}
+
+// useRefresh is how stale a snapshot's last use may grow before a load
+// refreshes it.
+const useRefresh = 24 * time.Hour
+
+// Prune deletes the snapshots whose graph directory no longer exists or that
+// nothing loaded or saved for longer than retention, returning how many went
+// and the bytes freed (20261114-095140-d-cpt-ad4).
 func (c *Cache) Prune(now time.Time, retention time.Duration) (removed int, freed int64, err error) {
 	entries, err := os.ReadDir(c.root)
 	if errors.Is(err, os.ErrNotExist) {
@@ -174,12 +196,10 @@ func (c *Cache) Prune(now time.Time, retention time.Duration) (removed int, free
 		if err != nil {
 			return removed, freed, err
 		}
-		var gone bool
-		if readable {
+		gone := now.Sub(info.ModTime()) > retention
+		if readable && !gone {
 			_, statErr := os.Stat(dir)
 			gone = errors.Is(statErr, os.ErrNotExist)
-		} else {
-			gone = now.Sub(info.ModTime()) > retention
 		}
 		if !gone {
 			continue

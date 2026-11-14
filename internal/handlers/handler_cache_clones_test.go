@@ -117,7 +117,8 @@ func TestCacheHandlerPruneOwnedClones(t *testing.T) {
 			var counts model.CachePruneCounts
 			h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 				CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
-				OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(loc.StateRoot, nil)},
+				OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(loc.StateRoot, nil)}, Gate: synctest.Gate(loc.StateRoot, nil),
+				State: &synctest.StateSweep{},
 			})
 			if err := h.Prune(t.Context(), &command.PruneCacheCmd{OnPruned: func(c model.CachePruneCounts) { counts = c }}); err != nil {
 				t.Fatalf("pruning: %v", err)
@@ -150,5 +151,48 @@ func TestCacheHandlerPruneFailsWithoutTheOwnedCloneProbe(t *testing.T) {
 	}
 	if !exists(t, dir) {
 		t.Error("a clone nothing judged should stay")
+	}
+}
+
+// The run packs a listed clone with git gc --auto (20261114-095140-d-cpt-ad4,
+// rule 4).
+func TestCacheHandlerPrunePacksListedClones(t *testing.T) {
+	f := newPruneFixture(t, "")
+	dir, _ := ownedClone(t, f.loc, "kept")
+	gitIn(t, dir, "repack", "-q")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "sdd: second")
+	gitIn(t, dir, "repack", "-q")
+	gitIn(t, dir, "config", "gc.autoPackLimit", "1")
+	gitIn(t, dir, "config", "gc.autoDetach", "false")
+	packs := func() int {
+		t.Helper()
+		found, err := filepath.Glob(filepath.Join(dir, ".git", "objects", "pack", "*.pack"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(found)
+	}
+	if packs() < 2 {
+		t.Fatal("the clone should start with more packs than gc.autoPackLimit")
+	}
+	release, err := syncstate.OwnedClones{}.TryLockSync(t.Context(), dir)
+	if err != nil || release == nil {
+		t.Fatalf("taking the sync lock: %v", err)
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if packs() < 2 {
+		t.Error("a clone whose sync lock is held should be left unpacked")
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatal(err)
+	}
+	if packs() != 1 {
+		t.Errorf("git gc --auto should have joined the listed clone's packs, %d left", packs())
+	}
+	if !exists(t, dir) {
+		t.Error("a listed clone should stay")
 	}
 }

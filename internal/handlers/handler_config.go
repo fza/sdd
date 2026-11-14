@@ -73,8 +73,15 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 		if err := model.UnmarshalYAML(patched, probe); err != nil {
 			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
 		}
-		if global, ok := probe.(*repos.GlobalConfig); ok && cmd.Key == "cache.retention" {
-			if _, err := model.ResolveCacheRetention(global.Cache); err != nil {
+		if global, ok := probe.(*repos.GlobalConfig); ok {
+			var err error
+			switch cmd.Key {
+			case "cache.retention":
+				_, err = model.ResolveCacheRetention(global.Cache)
+			case "index.replaced_retention":
+				_, err = model.ResolveReplacedRetention(global.Index)
+			}
+			if err != nil {
 				return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
 			}
 		}

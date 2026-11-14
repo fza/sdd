@@ -26,7 +26,7 @@ sdd --local-config ~/ci-local.yaml config get participant
 | Keys | Belong in | Notes |
 | --- | --- | --- |
 | `participant`, `llm.*`, `embedding.*` | User-global | Any file works. Use the local file to override a value for one project. A value in the project file applies to everyone on the project and overrides their user-global value. |
-| `sessions.retention` | User-global | sdd currently ignores it in the project files. |
+| `sessions.retention`, `cache.retention`, `index.replaced_retention` | User-global | The [daily sweep](#the-daily-sweep) reads them from the user-global file only. |
 | `sync.default.*`, `sync.hosts.*` | User-global | The git limits. sdd reads them from the user-global file only. |
 | `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
@@ -185,7 +185,9 @@ In a guided dialogue the writing guide runs once on the content the user approve
 | `sync.default.https.per_minute` | A tenth of `https.per_hour` | The same for HTTPS with credentials. |
 | `sync.default.https.per_minute_unauthenticated` | A tenth of `https.per_hour_unauthenticated` | The same for HTTPS without credentials. |
 | `sync.hosts.<host>.<limit>` | The `sync.default` value | The same limits for one remote host, such as `github.com`. |
-| `sessions.retention` | `14d` | When `sdd serve` starts, it deletes the logs of sessions that ended longer ago than this. Accepts days, such as `14d`, or a duration, such as `336h`. Set it in the user-global file. An invalid value stops `sdd serve` from starting. |
+| `sessions.retention` | `14d` | The [daily sweep](#the-daily-sweep) deletes a session that ended longer ago than this, with its staged attachments. Accepts days, such as `14d`, or a duration, such as `336h`. Read from the user-global file only. |
+| `cache.retention` | `90d` | The daily sweep deletes cache, state and data that nothing used for longer than this. Same forms. Read from the user-global file only. |
+| `index.replaced_retention` | `14d` | The daily sweep deletes replaced search index data this long after its replacement or last use, whichever is later. Same forms. Read from the user-global file only. |
 
 `sdd config set` refuses a value below its minimum; read from a file, such a value is ignored with a warning.
 
@@ -453,9 +455,28 @@ A changed `query_template` applies to the next search. A changed `document_templ
 
 The index lives in `~/.cache/sdd/index/`, or `$XDG_CACHE_HOME/sdd/index/` when that variable is set, with one directory per project and embedding setup. A project's directory is named after its `repo_id`, or after a hash of the repository path when it has none.
 
-The index keeps every embedded version of every entry until the cache prune removes it, so sdd versions that share it do not remove each other's work. `sdd index gc` lists the stored versions by group, `sdd index gc --drop <group>` deletes one group, and `--drop stale` deletes every version this checkout does not search.
+The index keeps every embedded version of every entry until the [daily sweep](#the-daily-sweep) removes it, so sdd versions that share it do not remove each other's work. `sdd index gc` lists the stored versions by group, `sdd index gc --drop <group>` deletes one group, and `--drop stale` deletes every version this checkout does not search.
 
-Once a day sdd starts `sdd cache prune` in the background, which deletes what nothing used for `cache.retention` (user-global config, default `90d`): replaced index versions, unused index stores, graph snapshots of removed folders, clones of disconnected repos. It never delays a command; a failed run is reported once, and `sdd info` shows the last one.
+## The daily sweep
+
+Once a day sdd starts `sdd cache prune` in the background, detached from the command that started it; a running `sdd serve` checks every hour whether a run is due. The run keeps the cache (`~/.cache/sdd`), state (`~/.local/state/sdd`) and data (`~/.local/share/sdd`) folders free of what nothing needs. It never delays a command or waits for a lock another process holds: it skips what is in use and takes it on the next run. A failed run is reported once, as a warning on the next command, and `sdd info` shows the last run. `sdd cache prune` runs it by hand.
+
+| What | When it goes |
+| --- | --- |
+| A session that ended (concluded or abandoned), with its staged attachments | `sessions.retention` after it ended. An open session stays, however long it is idle. |
+| A staged attachment | Once the entry it is attached to is published, unless another capture in progress names it; the rest of a session's when the session ends. One a pending capture still needs stays until that capture is retried or cancelled. |
+| A project's relevance ledger and its empty session folder | After `cache.retention` without the project being used. Open sessions stay. |
+| An older version of an entry in the search index | `index.replaced_retention` after a newer version replaced it, unless a checkout that searched the index within `cache.retention` still reads it. The version the current checkout searches always stays. |
+| Index data in an older format | `index.replaced_retention` after its last use. |
+| The index of an embedding setup you switched away from | `index.replaced_retention` after its last use, once the project's index under another setup was used later. Switching back afterwards embeds the graph again. |
+| A whole index nothing uses | After `cache.retention`. |
+| Graph snapshots, the git gate's record of a repository, embedding calibrations | After `cache.retention` without use. |
+| A clone under `~/.local/share/sdd/repos/` | Once the user-global `repos` list no longer names it, unless it holds unpushed commits or sdd fetched or pushed it within `cache.retention`. Listed clones stay and get `git gc --auto`. |
+| What a killed process left: git trace files, unfinished clones, unfinished index writes, emptied index folders, empty folders of old cache clones | One day after, once no lock holds it. |
+
+A session log sdd cannot read stays: it may belong to a newer sdd. The run reports how many it kept.
+
+`sdd index gc` stays for deliberate cleanup beyond these rules.
 
 ## Hooks
 
@@ -495,7 +516,7 @@ sdd hashes each hook on every run: its event, command, arguments, timeout, findi
 - `sdd init` offers the pending hooks when it runs in a terminal, and otherwise names how many wait.
 - Over MCP, every call that works on a session or opens one first checks all of the project's hooks. Before it does anything else, it shows you the prompt for each unconfirmed hook at once through your client, and goes on only once you accept them all. A decline, or a client that cannot ask, fails the call with nothing done and names `sdd hooks trust`. A hook that changes while the call runs fails the call the same way.
 
-Confirmations live in `~/.local/state/sdd/hooks/<repository>.json`, readable only by you, keyed by the project's `repo_id`, so clones of one repository share them. The daily cache pruning drops the confirmations of hooks no config declares any more and of checkouts gone from disk.
+Confirmations live in `~/.local/state/sdd/hooks/<repository>.json`, readable only by you, keyed by the project's `repo_id`, so clones of one repository share them. The [daily sweep](#the-daily-sweep) drops the confirmations of hooks no config declares any more and of checkouts gone from disk.
 
 ### Events
 

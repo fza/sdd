@@ -194,7 +194,7 @@ func newEmbedder(cfg model.EmbeddingConfig) (handlers.IndexEmbedder, error) {
 	return handlers.IndexEmbedder{
 		Embedder:       embed.Batched(embed.Observed(emb, statsSink()), size),
 		BatchSize:      size,
-		CalibrationDir: filepath.Join(reg.CacheRoot(), "calibration"),
+		CalibrationDir: filepath.Join(reg.CacheRoot(), localembed.CalibrationDirName),
 		CalibrationKey: emb.Fingerprint() + "\n" + cfg.Endpoint + "\n" + cfg.Path,
 	}, nil
 }

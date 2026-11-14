@@ -9,9 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/networkteam/sdd/internal/cacheprune"
 	"github.com/networkteam/sdd/internal/cliapp"
 	"github.com/networkteam/sdd/internal/model"
+	sdd "github.com/networkteam/sdd/pkg/application"
+	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
 // runWithPrune runs one command with a recording launcher in place of the
@@ -132,5 +136,68 @@ func TestConfigSetCacheRetention(t *testing.T) {
 	}
 	if r := f.run(t, "config", "set", "--local", "cache.retention", "30d"); r.err == nil || !strings.Contains(r.err.Error(), "not a valid per-repo config key") {
 		t.Error("a per-repo retention should be refused: the cache is machine-global")
+	}
+}
+
+func TestConfigSetIndexReplacedRetention(t *testing.T) {
+	f := newAppFixture(t)
+	if r := f.run(t, "config", "set", "index.replaced_retention", "7d"); r.err != nil {
+		t.Errorf("a valid retention should be accepted globally: %v\n%s", r.err, r.stderr)
+	}
+	if r := f.run(t, "config", "set", "index.replaced_retention", "later"); r.err == nil || !strings.Contains(r.err.Error(), "positive duration") {
+		t.Error("an invalid retention should be refused")
+	}
+	if r := f.run(t, "config", "set", "--local", "index.replaced_retention", "7d"); r.err == nil || !strings.Contains(r.err.Error(), "not a valid per-repo config key") {
+		t.Error("a per-repo retention should be refused: the index is machine-global")
+	}
+}
+
+// Session collection runs in the daily sweep, also with no server running,
+// and no longer when sdd serve starts (20261114-095140-d-cpt-ad4).
+func TestTheSweepCollectsSessionsAndServeDoesNot(t *testing.T) {
+	f := newAppFixture(t)
+	location := localadapter.StoreLocation{
+		Name:        "test",
+		Sessions:    filepath.Join(f.root, "state", "sdd", "sessions", "example.test", "cli"),
+		StagedBlobs: filepath.Join(f.root, "state", "sdd", "staged-blobs", "example.test", "cli"),
+		Subject:     "local",
+		Project:     "example.test/cli",
+	}
+	sessions, err := localadapter.NewFilesystemSessionStore(location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := time.Now().UTC().Add(-30 * 24 * time.Hour).Round(0)
+	metadata := sdd.SessionMetadata{ID: "s_ended", Subject: "local", Project: "example.test/cli", Participant: "Local Author", UpdatedAt: ended}
+	created, err := sessions.Create(t.Context(), metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata.Ended = &sdd.SessionEnd{Act: sdd.SessionConcluded, EndedAt: ended}
+	payload, err := json.Marshal(metadata.Ended)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessions.Append(t.Context(), "s_ended", created.Version, sdd.SessionAppend{Metadata: &metadata, Events: []sdd.StoredEvent{{CodecVersion: sdd.SessionCodecVersion, Code: sdd.SessionEndedEventCode, Payload: payload}}}); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(location.Sessions, "s_ended.jsonl")
+
+	f.serve(t, func(*mcp.ClientSession) {})
+	if _, err := os.Stat(log); err != nil {
+		t.Fatalf("sdd serve should no longer collect sessions when it starts: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "state", "sdd", "used", "example.test", "cli.stamp")); err != nil {
+		t.Errorf("a served project should be stamped as used, so the sweep keeps its state: %v", err)
+	}
+	r := f.run(t, "cache", "prune")
+	if r.err != nil {
+		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Errorf("the sweep should remove a session ended past sessions.retention, stat says %v", err)
+	}
+	if !strings.Contains(r.stdout, "1 sessions") {
+		t.Errorf("the run should count the session, stdout:\n%s", r.stdout)
 	}
 }

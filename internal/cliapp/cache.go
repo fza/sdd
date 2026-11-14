@@ -3,7 +3,6 @@ package cliapp
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,6 +20,7 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/repos"
 	"github.com/networkteam/sdd/internal/syncstate"
+	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
 const (
@@ -34,10 +34,15 @@ func cacheCmd() *cli.Command {
 		Usage: "Manage the machine-global cache",
 		Commands: []*cli.Command{{
 			Name:  "prune",
-			Usage: "Delete unused cache data now: replaced and unused index versions, unused index stores, graph snapshots of vanished folders, sdd-owned clones nothing uses",
-			Description: `sdd runs this in the background at most once a day. Data unused for
-cache.retention (user-global config, default ` + model.DefaultCacheRetention + `) goes; versions the
-current checkout searches always stay. sdd index gc removes more on request.`,
+			Usage: "Delete data nothing needs from sdd's cache, state and data folders now",
+			Description: `sdd runs this in the background at most once a day. It removes ended
+sessions after sessions.retention (default ` + model.DefaultSessionRetention + `); replaced index data after
+index.replaced_retention (default ` + model.DefaultReplacedRetention + `); unused index stores, graph
+snapshots, git gate records, calibrations and the state of unused projects
+after cache.retention (default ` + model.DefaultCacheRetention + `); clones the repos list no longer names;
+and crash leftovers a day old. All three keys live in the user-global config.
+Open sessions, unreadable session logs and the versions the current
+checkout searches always stay. sdd index gc removes more on request.`,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
 					Name:   scheduledFlag,
@@ -67,7 +72,8 @@ current checkout searches always stay. sdd index gc removes more on request.`,
 				scheduled := cmd.Bool(scheduledFlag)
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
-					OwnedClones: syncstate.OwnedClones{Gate: gate}, Keep: keep,
+					OwnedClones: syncstate.OwnedClones{Gate: gate}, Gate: gate, Keep: keep,
+					State:         stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
 					DeclaredHooks: hooks.DeclaredIn(loc.ConfigPath, repos.NewGraphClones(loc, git.GraphClones{}, gate).Dir),
 				})
 				return h.Prune(ctx, &command.PruneCacheCmd{
@@ -76,17 +82,12 @@ current checkout searches always stay. sdd index gc removes more on request.`,
 						if scheduled {
 							return
 						}
-						presenters.RenderResultLine(cmd.Writer, "pruned the cache", pruneDetail(c))
+						presenters.RenderResultLine(cmd.Writer, "pruned the cache", presenters.CachePruneRemoved(c)+" · "+presenters.HumanBytes(c.Bytes)+" freed")
 					},
 				})
 			},
 		}},
 	}
-}
-
-func pruneDetail(c model.CachePruneCounts) string {
-	return fmt.Sprintf("%d index versions, %d index stores, %d graph snapshots, %d clones · %s freed",
-		c.Versions, c.Stores, c.Snapshots, c.Clones, presenters.HumanBytes(c.Bytes))
 }
 
 // backgroundCachePrune launches the daily pruning pass when one is due and
@@ -167,4 +168,12 @@ func renderCachePruneStatus(w io.Writer) error {
 	}
 	presenters.RenderCachePruneStatus(w, status)
 	return nil
+}
+
+// stateSweeper is the local state sweep as the cache handler counts it.
+type stateSweeper struct{ sweep localadapter.StateSweep }
+
+func (s stateSweeper) Sweep(ctx context.Context, now time.Time, sessionRetention, unusedRetention time.Duration) (model.CachePruneCounts, error) {
+	swept, err := s.sweep.Sweep(ctx, now, sessionRetention, unusedRetention)
+	return model.CachePruneCounts{Sessions: swept.Sessions, Projects: swept.Projects, Unreadable: swept.Unreadable, Bytes: swept.Bytes}, err
 }

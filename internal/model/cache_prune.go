@@ -18,6 +18,9 @@ const (
 	// the machine's run lock for good; what it did not reach waits for the
 	// next run.
 	CachePruneRunLimit = 5 * time.Minute
+	// CacheLeftoverAge is how old a crash leftover must be before the sweep
+	// removes it; a live writer finishes far sooner.
+	CacheLeftoverAge = 24 * time.Hour
 )
 
 // CacheConfig holds the machine-global cache settings. It lives on the
@@ -44,6 +47,32 @@ func ResolveCacheRetention(cfg CacheConfig) (time.Duration, error) {
 	return d, nil
 }
 
+// DefaultReplacedRetention is how long replaced index data survives the
+// daily sweep after its replacement or last use (20261114-095140-d-cpt-ad4).
+const DefaultReplacedRetention = "14d"
+
+// IndexConfig holds the machine-global search index settings; user-global
+// only, for the reason CacheConfig is.
+type IndexConfig struct {
+	// ReplacedRetention is days ("14d") or a Go duration. Empty means
+	// DefaultReplacedRetention.
+	ReplacedRetention string `yaml:"replaced_retention,omitempty"`
+}
+
+// ResolveReplacedRetention returns the effective index.replaced_retention. A
+// value that does not parse is a config error the caller must surface.
+func ResolveReplacedRetention(cfg IndexConfig) (time.Duration, error) {
+	raw := strings.TrimSpace(cfg.ReplacedRetention)
+	if raw == "" {
+		raw = DefaultReplacedRetention
+	}
+	d, err := parseDaysOrDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("index.replaced_retention: %q is not a positive duration; use days (%q) or a Go duration (%q)", raw, "14d", "336h")
+	}
+	return d, nil
+}
+
 // CachePruneStatus is the record of the latest background pruning run.
 type CachePruneStatus struct {
 	// LaunchedAt is when a command last started a background run; StartedAt
@@ -65,7 +94,33 @@ type CachePruneCounts struct {
 	Stores    int
 	Snapshots int
 	Clones    int
-	Bytes     int64
+	// Sessions are ended sessions removed with their staged attachments.
+	Sessions int
+	// Projects are unused projects whose relevance ledger or session folder
+	// went.
+	Projects int
+	// Records are git gate repository records and embedder calibrations.
+	Records int
+	// Leftovers are what killed writers left: trace files, clone staging,
+	// index temp dirs and orphan rows, retired stores, empty host folders.
+	Leftovers int
+	// Unreadable counts session logs kept because they could not be read.
+	Unreadable int
+	Bytes      int64
+}
+
+// Add adds what another part of a run removed.
+func (c *CachePruneCounts) Add(o CachePruneCounts) {
+	c.Versions += o.Versions
+	c.Stores += o.Stores
+	c.Snapshots += o.Snapshots
+	c.Clones += o.Clones
+	c.Sessions += o.Sessions
+	c.Projects += o.Projects
+	c.Records += o.Records
+	c.Leftovers += o.Leftovers
+	c.Unreadable += o.Unreadable
+	c.Bytes += o.Bytes
 }
 
 // Due reports whether a background run should start at now.

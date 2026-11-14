@@ -247,3 +247,15 @@ func (c *Committer) Commit(message string, paths ...string) error {
 	c.Paths = append(c.Paths, slices.Clone(paths))
 	return c.Err
 }
+
+// StateSweep is a cache prune's state sweep that records the retentions it
+// was run with and reports Swept.
+type StateSweep struct {
+	Session, Unused time.Duration
+	Swept           model.CachePruneCounts
+}
+
+func (s *StateSweep) Sweep(_ context.Context, _ time.Time, session, unused time.Duration) (model.CachePruneCounts, error) {
+	s.Session, s.Unused = session, unused
+	return s.Swept, nil
+}

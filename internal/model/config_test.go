@@ -263,17 +263,17 @@ func TestMergeConfig_RetryOverlay(t *testing.T) {
 }
 
 func TestResolveSessionRetention(t *testing.T) {
-	retention := func(raw string) *PerRepoConfig {
-		return &PerRepoConfig{BaseConfig: BaseConfig{Sessions: SessionsConfig{Retention: raw}}}
+	retention := func(raw string) SessionsConfig {
+		return SessionsConfig{Retention: raw}
 	}
 	cases := []struct {
 		name    string
-		cfg     *PerRepoConfig
+		cfg     SessionsConfig
 		want    time.Duration
 		wantErr bool
 	}{
-		{"nil config uses default", nil, 14 * 24 * time.Hour, false},
-		{"empty value uses default", &PerRepoConfig{}, 14 * 24 * time.Hour, false},
+		{"unset uses default", SessionsConfig{}, 14 * 24 * time.Hour, false},
+		{"blank value uses default", retention(" "), 14 * 24 * time.Hour, false},
 		{"days", retention("1d"), 24 * time.Hour, false},
 		{"go duration", retention("336h"), 336 * time.Hour, false},
 		{"garbage is a config error", retention("not-a-duration"), 0, true},

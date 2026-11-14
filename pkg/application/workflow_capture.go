@@ -202,6 +202,14 @@ func (w *WorkflowSession) stagedAt(position uint64) (map[string]string, error) {
 		if event.Sequence >= position {
 			break
 		}
+		if event.Code == workflowStagedBlobReleasedCode {
+			release, err := decodeStagedBlobRelease(event)
+			if err != nil {
+				return nil, err
+			}
+			releaseStaged(staged, release)
+			continue
+		}
 		if event.Code != workflowStagedBlobCode {
 			continue
 		}
