@@ -61,12 +61,12 @@ func TestPointedServeFollowsTheProjectLocal(t *testing.T) {
 	fixture.serve(t, func(client *mcp.ClientSession) {
 		session, _ := openSession(t, client)
 
-		writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\ndialogue:\n  mode: autonomous\n")
+		writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\ndialogue:\n  mode: auto\n")
 		resumed, failure := callToolResult(t, client, "resume_session", map[string]any{"session": session})
 		if failure != "" {
 			t.Fatalf("resume_session: %s", failure)
 		}
-		if notice := hostNotice(t, resumed); !strings.Contains(notice, "dialogue.mode: guided -> autonomous") {
+		if notice := hostNotice(t, resumed); !strings.Contains(notice, "dialogue.mode: guided -> auto") {
 			t.Errorf("a change to the project's local file should take effect while serving, got %q", notice)
 		}
 	})

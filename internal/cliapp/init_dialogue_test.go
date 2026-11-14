@@ -24,9 +24,9 @@ func TestInitRecordsTheDialogueMode(t *testing.T) {
 	t.Run("in this repository", func(t *testing.T) {
 		work, _ := workRepository(t)
 
-		runApp(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "autonomous")
+		runApp(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "auto")
 
-		if got := readDialogueMode(t, filepath.Join(work, ".sdd", "config.local.yaml")); got != model.DialogueAutonomous {
+		if got := readDialogueMode(t, filepath.Join(work, ".sdd", "config.local.yaml")); got != model.DialogueAuto {
 			t.Errorf("the dialogue mode should be recorded in the person's local config, got %q", got)
 		}
 		if got := readDialogueMode(t, filepath.Join(work, ".sdd", "config.yaml")); got != "" {

@@ -17,17 +17,19 @@ func TestServeOpensSessionsInTheConfiguredDialogueMode(t *testing.T) {
 	cases := []struct {
 		name           string
 		file           string
+		mode           string
 		wantAutonomous bool
 	}{
-		{name: "local config", file: ".sdd/config.local.yaml", wantAutonomous: true},
-		{name: "global config", file: "config/sdd/config.yaml", wantAutonomous: true},
-		{name: "committed config", file: ".sdd/config.yaml"},
+		{name: "local config", file: ".sdd/config.local.yaml", mode: "auto", wantAutonomous: true},
+		{name: "global config", file: "config/sdd/config.yaml", mode: "auto", wantAutonomous: true},
+		{name: "committed config", file: ".sdd/config.yaml", mode: "auto"},
+		{name: "former autonomous value", file: ".sdd/config.local.yaml", mode: "autonomous"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newAppFixture(t)
 			existing := readFile(t, filepath.Join(fixture.root, tc.file))
-			fixture.write(t, tc.file, existing+"dialogue:\n  mode: autonomous\n")
+			fixture.write(t, tc.file, existing+"dialogue:\n  mode: "+tc.mode+"\n")
 
 			var opening string
 			fixture.serve(t, func(client *mcp.ClientSession) {
@@ -42,7 +44,7 @@ func TestServeOpensSessionsInTheConfiguredDialogueMode(t *testing.T) {
 				opening = withWaitingLanes(t, client, test.Untagged(string(encoded)))
 			})
 			if got := strings.Contains(opening, "working on your own"); got != tc.wantAutonomous {
-				t.Errorf("only a person's own config should open the session autonomous, got autonomous=%v", got)
+				t.Errorf("only auto in a person's own config should open the session autonomous, got autonomous=%v", got)
 			}
 		})
 	}

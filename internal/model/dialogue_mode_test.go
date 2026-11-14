@@ -14,9 +14,10 @@ func TestDialogueModeAtConfigLoad(t *testing.T) {
 	}{
 		{name: "unset", yaml: "participant: Ada\n", want: model.DialogueGuided},
 		{name: "guided", yaml: "dialogue:\n  mode: guided\n", want: model.DialogueGuided},
-		{name: "autonomous", yaml: "dialogue:\n  mode: autonomous\n", want: model.DialogueAutonomous},
+		{name: "auto", yaml: "dialogue:\n  mode: auto\n", want: model.DialogueAuto},
 		{name: "unknown value", yaml: "dialogue:\n  mode: free\n", want: model.DialogueGuided},
-		{name: "wrong case", yaml: "dialogue:\n  mode: Autonomous\n", want: model.DialogueGuided},
+		{name: "former autonomous", yaml: "dialogue:\n  mode: autonomous\n", want: model.DialogueGuided},
+		{name: "wrong case", yaml: "dialogue:\n  mode: Auto\n", want: model.DialogueGuided},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -25,7 +26,7 @@ func TestDialogueModeAtConfigLoad(t *testing.T) {
 				t.Fatalf("any mode value should load: %v", err)
 			}
 			if got := model.ResolveDialogueMode(cfg); got != tc.want {
-				t.Errorf("only autonomous should hand choices to the agent, got %q", got)
+				t.Errorf("only auto should hand choices to the agent, got %q", got)
 			}
 		})
 	}
@@ -39,11 +40,12 @@ func TestIgnoredDialogueMode(t *testing.T) {
 		ignored   bool
 	}{
 		{name: "unset in the committed layer", committed: true},
-		{name: "autonomous in the committed layer", mode: model.DialogueAutonomous, committed: true, ignored: true},
+		{name: "auto in the committed layer", mode: model.DialogueAuto, committed: true, ignored: true},
 		{name: "guided in the committed layer", mode: model.DialogueGuided, committed: true, ignored: true},
-		{name: "autonomous in a personal layer", mode: model.DialogueAutonomous},
+		{name: "auto in a personal layer", mode: model.DialogueAuto},
 		{name: "guided in a personal layer", mode: model.DialogueGuided},
 		{name: "unknown value in a personal layer", mode: "free", ignored: true},
+		{name: "former autonomous in a personal layer", mode: "autonomous", ignored: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,18 +64,18 @@ func TestIgnoredDialogueMode(t *testing.T) {
 }
 
 func TestHonoredCommittedDropsTheDialogueMode(t *testing.T) {
-	committed := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Dialogue: model.DialogueConfig{Mode: model.DialogueAutonomous}}, GraphDir: "graph"}
+	committed := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Dialogue: model.DialogueConfig{Mode: model.DialogueAuto}}, GraphDir: "graph"}
 	honored := model.HonoredCommitted(committed)
 	if honored.Dialogue.Mode != "" || honored.GraphDir != "graph" {
 		t.Errorf("only the dialogue mode should be dropped from the committed layer, got %+v", honored)
 	}
-	if committed.Dialogue.Mode != model.DialogueAutonomous {
+	if committed.Dialogue.Mode != model.DialogueAuto {
 		t.Error("the layer read should be left as it was")
 	}
 }
 
 func TestDialogueModeLayering(t *testing.T) {
-	autonomous := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Dialogue: model.DialogueConfig{Mode: model.DialogueAutonomous}}}
+	auto := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Dialogue: model.DialogueConfig{Mode: model.DialogueAuto}}}
 	guided := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Dialogue: model.DialogueConfig{Mode: model.DialogueGuided}}}
 	cases := []struct {
 		name    string
@@ -81,9 +83,9 @@ func TestDialogueModeLayering(t *testing.T) {
 		overlay *model.PerRepoConfig
 		want    model.DialogueMode
 	}{
-		{name: "higher layer overrides", base: autonomous, overlay: guided, want: model.DialogueGuided},
-		{name: "higher layer turns it on", base: guided, overlay: autonomous, want: model.DialogueAutonomous},
-		{name: "unset higher layer keeps lower", base: autonomous, overlay: &model.PerRepoConfig{}, want: model.DialogueAutonomous},
+		{name: "higher layer overrides", base: auto, overlay: guided, want: model.DialogueGuided},
+		{name: "higher layer turns it on", base: guided, overlay: auto, want: model.DialogueAuto},
+		{name: "unset higher layer keeps lower", base: auto, overlay: &model.PerRepoConfig{}, want: model.DialogueAuto},
 		{name: "unset everywhere", base: &model.PerRepoConfig{}, overlay: &model.PerRepoConfig{}, want: model.DialogueGuided},
 	}
 	for _, tc := range cases {

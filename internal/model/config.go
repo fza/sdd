@@ -304,12 +304,17 @@ type DialogueConfig struct {
 type DialogueMode string
 
 const (
-	DialogueGuided     DialogueMode = "guided"
-	DialogueAutonomous DialogueMode = "autonomous"
+	DialogueGuided DialogueMode = "guided"
+	DialogueAuto   DialogueMode = "auto"
 )
 
 func (DialogueMode) AllowedValues() []string {
-	return closedValues(DialogueGuided, DialogueAutonomous)
+	return closedValues(DialogueModes()...)
+}
+
+// DialogueModes returns the values dialogue.mode takes.
+func DialogueModes() []DialogueMode {
+	return []DialogueMode{DialogueGuided, DialogueAuto}
 }
 
 // IgnoredSetting is a setting a config layer carries that sdd reads past:
@@ -1044,7 +1049,7 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"# Limits on the git operations sdd starts are set per remote host in the\n" +
 		"# user-global config, under sync.default and sync.hosts.\n" +
 		"\n" +
-		"# Dialogue, set per person: mode: autonomous lets the agent take the\n" +
+		"# Dialogue, set per person: mode: auto lets the agent take the\n" +
 		"# choices an engine session otherwise puts to you.\n" +
 		"# dialogue:\n" +
 		"#   mode: " + string(DialogueGuided) + "\n"
@@ -1081,8 +1086,8 @@ func parseDaysOrDuration(raw string) (time.Duration, error) {
 
 // ResolveDialogueMode returns the effective dialogue mode from cfg.
 func ResolveDialogueMode(cfg *PerRepoConfig) DialogueMode {
-	if cfg != nil && cfg.Dialogue.Mode == DialogueAutonomous {
-		return DialogueAutonomous
+	if cfg != nil && cfg.Dialogue.Mode == DialogueAuto {
+		return DialogueAuto
 	}
 	return DialogueGuided
 }

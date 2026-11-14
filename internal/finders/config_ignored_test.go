@@ -97,3 +97,27 @@ func TestUnknownConfigKeysReportsGitLimitsOutsideTheGlobalConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestUnknownConfigKeysReportsTheFormerAutonomousDialogueMode(t *testing.T) {
+	dir := t.TempDir()
+	sddDir := filepath.Join(dir, ".sdd")
+	localPath := filepath.Join(sddDir, "config.local.yaml")
+	if err := os.MkdirAll(sddDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte("dialogue:\n  mode: autonomous\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := finders.New(finders.Options{Repos: repos.NewRegistry(repos.Locations{ConfigPath: filepath.Join(dir, "global.yaml"), CacheRoot: filepath.Join(dir, "cache")})})
+
+	result, err := f.UnknownConfigKeys(query.UnknownConfigKeysQuery{SDDDir: sddDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Ignored) != 1 {
+		t.Fatalf("the former autonomous value should be reported once as ignored, got %+v", result.Ignored)
+	}
+	if got := result.Ignored[0]; got.File != localPath || got.Key != "dialogue.mode" || !strings.Contains(got.Reason, "guided or auto") {
+		t.Errorf("the ignored setting should name its file, its key and the allowed values, got %+v", got)
+	}
+}

@@ -14,7 +14,7 @@ func TestConfigChanges(t *testing.T) {
 	}
 	after := model.ConfigLayers{
 		Global:  model.BaseConfig{LLM: model.LLMConfig{APIKeys: map[string]string{"anthropic": "new-secret"}}},
-		Local:   &model.PerRepoConfig{BaseConfig: model.BaseConfig{Participant: "Ada", Dialogue: model.DialogueConfig{Mode: model.DialogueAutonomous}}},
+		Local:   &model.PerRepoConfig{BaseConfig: model.BaseConfig{Participant: "Ada", Dialogue: model.DialogueConfig{Mode: model.DialogueAuto}}},
 		Pointer: &model.PerRepoConfig{ProjectDir: "../graph"},
 	}
 
@@ -23,7 +23,7 @@ func TestConfigChanges(t *testing.T) {
 	for _, change := range changes {
 		byKey[change.Key] = change
 	}
-	if got := byKey["dialogue.mode"]; got.Old != "guided" || got.New != "autonomous" {
+	if got := byKey["dialogue.mode"]; got.Old != "guided" || got.New != "auto" {
 		t.Errorf("a changed key should carry its old and new value, got %+v", got)
 	}
 	if got, ok := byKey["llm.api_keys.anthropic"]; !ok || !got.Secret || got.Old != "" || got.New != "" {
@@ -37,7 +37,7 @@ func TestConfigChanges(t *testing.T) {
 	}
 
 	notice := model.FormatConfigNotice(changes)
-	for _, want := range []string{"dialogue.mode: guided -> autonomous", "llm.api_keys.anthropic changed"} {
+	for _, want := range []string{"dialogue.mode: guided -> auto", "llm.api_keys.anthropic changed"} {
 		if !strings.Contains(notice, want) {
 			t.Errorf("the notice should say %q:\n%s", want, notice)
 		}

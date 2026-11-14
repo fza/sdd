@@ -113,7 +113,7 @@ func TestServeFollowsAConfigChangeWithoutAReconnect(t *testing.T) {
 			t.Fatal("the session should open guided")
 		}
 
-		fixture.write(t, ".sdd/config.local.yaml", "participant: Local Author\ndialogue:\n  mode: autonomous\n")
+		fixture.write(t, ".sdd/config.local.yaml", "participant: Local Author\ndialogue:\n  mode: auto\n")
 		resumed, failure := callToolResult(t, client, "resume_session", map[string]any{"session": session})
 		if failure != "" {
 			t.Fatalf("resume_session: %s", failure)
@@ -121,7 +121,7 @@ func TestServeFollowsAConfigChangeWithoutAReconnect(t *testing.T) {
 		if !strings.Contains(withWaitingLanes(t, client, resumed), "working on your own") {
 			t.Errorf("the running session should follow the new dialogue mode:\n%s", resumed)
 		}
-		if notice := hostNotice(t, resumed); !strings.Contains(notice, "dialogue.mode: guided -> autonomous") {
+		if notice := hostNotice(t, resumed); !strings.Contains(notice, "dialogue.mode: guided -> auto") {
 			t.Errorf("the next result should name the changed key with its old and new value, got %q", notice)
 		}
 

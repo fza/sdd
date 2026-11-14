@@ -139,7 +139,7 @@ func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, 
 }
 
 // dialogueFor resolves the dialogue mode a new session of the principal opens
-// in; the engine opens anything but autonomous guided.
+// in; the engine opens anything but "auto" guided.
 func (a *Application) dialogueFor(ctx context.Context, principal Principal, runtime *ProjectRuntime) (Dialogue, error) {
 	resolver, ok := a.access.(DialogueResolver)
 	if !ok {

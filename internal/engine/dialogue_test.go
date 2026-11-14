@@ -22,7 +22,7 @@ const dialogueMachine = `steps:
       options:
           - {choice: done, to: end(completed)}`
 
-const dialogueBody = "## unit: pick\n\n{{if eq .dialogueMode \"autonomous\"}}Decide yourself.{{else}}Ask the user.{{end}}\n\n## unit: keep\n\nAsk the user.\n"
+const dialogueBody = "## unit: pick\n\n{{if eq .dialogueMode \"auto\"}}Decide yourself.{{else}}Ask the user.{{end}}\n\n## unit: keep\n\nAsk the user.\n"
 
 func dialogueSession(t *testing.T, sink engine.EventSink, opts ...engine.SessionOption) (*engine.Session, *engine.Serve) {
 	t.Helper()
@@ -37,7 +37,7 @@ func dialogueSession(t *testing.T, sink engine.EventSink, opts ...engine.Session
 }
 
 func autonomous() engine.SessionOption {
-	return engine.WithDialogue(model.DialogueAutonomous, "config.local.yaml")
+	return engine.WithDialogue(model.DialogueAuto, "config.local.yaml")
 }
 
 func schemaRequires(sv *engine.Serve, field string) bool {
@@ -117,7 +117,7 @@ func TestDialogueAnswers(t *testing.T) {
 			session, sv := dialogueSession(t, sink, tc.opts...)
 			if tc.chooser == "keep" {
 				words := engine.AnswerWords{User: "go on"}
-				if session.DialogueMode == model.DialogueAutonomous {
+				if session.DialogueMode == model.DialogueAuto {
 					words = engine.AnswerWords{Reason: "the only way on"}
 				}
 				var err error
@@ -158,7 +158,7 @@ func TestDialogueModeSurvivesReplay(t *testing.T) {
 	sink := &recordingSink{}
 	dialogueSession(t, sink, autonomous())
 	meta := sink.events[0]
-	if meta.Event != engine.EventSessionMeta || meta.Data["dialogue"] != "autonomous" || meta.Data["dialogueSource"] != "config.local.yaml" {
+	if meta.Event != engine.EventSessionMeta || meta.Data["dialogue"] != "auto" || meta.Data["dialogueSource"] != "config.local.yaml" {
 		t.Fatalf("the session header should record the mode and the layer that set it, got %+v", meta)
 	}
 	spec := mustParseLanes(t, dialogueMachine, dialogueBody)
@@ -168,8 +168,25 @@ func TestDialogueModeSurvivesReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReplaySession: %v", err)
 	}
-	if replayed.DialogueMode != model.DialogueAutonomous || replayed.DialogueSource != "config.local.yaml" {
+	if replayed.DialogueMode != model.DialogueAuto || replayed.DialogueSource != "config.local.yaml" {
 		t.Errorf("a resumed session should keep the mode it opened with, got %q from %q", replayed.DialogueMode, replayed.DialogueSource)
+	}
+}
+
+func TestFormerAutonomousHeaderReplaysGuided(t *testing.T) {
+	sink := &recordingSink{}
+	dialogueSession(t, sink, autonomous())
+	events := slices.Clone(sink.events)
+	events[0].Data = map[string]any{"participant": "tester", "dialogue": "autonomous", "dialogueSource": "config.local.yaml"}
+	spec := mustParseLanes(t, dialogueMachine, dialogueBody)
+	eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
+	resolve := func(string) (*engine.Spec, error) { return spec, nil }
+	replayed, err := eng.ReplaySession("s_dialogue", "tester", events, resolve, nopSink{})
+	if err != nil {
+		t.Fatalf("a log recording the former value should stay readable: %v", err)
+	}
+	if replayed.DialogueMode == model.DialogueAuto {
+		t.Errorf("a recorded value the model no longer knows should replay as guided, got %q", replayed.DialogueMode)
 	}
 }
 
@@ -240,7 +257,7 @@ func TestSessionFollowsADialogueModeSetWhileItRuns(t *testing.T) {
 		t.Fatalf("a guided session should ask the user first, got %q", sv.UnitText)
 	}
 
-	session.SetDialogue(model.DialogueAutonomous, "config.local.yaml")
+	session.SetDialogue(model.DialogueAuto, "config.local.yaml")
 	sv, err := session.Serve(sv.Instance)
 	if err != nil {
 		t.Fatal(err)
@@ -265,7 +282,7 @@ func TestSessionFollowsADialogueModeSetWhileItRuns(t *testing.T) {
 			modes = append(modes, mode)
 		}
 	}
-	if !slices.Equal(modes, []string{"autonomous", "guided"}) {
+	if !slices.Equal(modes, []string{"auto", "guided"}) {
 		t.Errorf("each answer should record the mode in force when it was taken, got %v", modes)
 	}
 }

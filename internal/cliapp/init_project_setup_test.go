@@ -79,7 +79,7 @@ func TestInitSetsUpAMissingProject(t *testing.T) {
 				tc.prepare(t, project)
 			}
 
-			runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "de", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "autonomous", "--verify-mode", "off")
+			runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "de", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "auto", "--verify-mode", "off")
 
 			projectConfig := readFile(t, filepath.Join(project, ".sdd", "config.yaml"))
 			for _, setting := range []string{"graph_dir: graph", "language: de", "skill_scope: project"} {
@@ -97,7 +97,7 @@ func TestInitSetsUpAMissingProject(t *testing.T) {
 				t.Errorf("the project should hold its meta.json: %v", statErr)
 			}
 			projectLocal := readFile(t, filepath.Join(project, ".sdd", "config.local.yaml"))
-			for _, setting := range []string{"participant: Ada", "mode: autonomous"} {
+			for _, setting := range []string{"participant: Ada", "mode: auto"} {
 				if !strings.Contains(projectLocal, setting) {
 					t.Errorf("the person's settings should be recorded with the project, missing %q:\n%s", setting, projectLocal)
 				}

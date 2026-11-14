@@ -224,10 +224,10 @@ func WithEntries(entries ...*model.Entry) Option {
 // WithParticipant sets the resolved participant (default Christopher).
 func WithParticipant(name string) Option { return func(c *config) { c.participant = name } }
 
-// WithAutonomousDialogue opens every session of the world in the autonomous
+// WithAutonomousDialogue opens every session of the world in the auto
 // dialogue mode.
 func WithAutonomousDialogue() Option {
-	return func(c *config) { c.dialogue = sdd.Dialogue{Mode: "autonomous", Source: "config.local.yaml"} }
+	return func(c *config) { c.dialogue = sdd.Dialogue{Mode: "auto", Source: "config.local.yaml"} }
 }
 
 // WithGroundingEnforced turns grounding enforcement on for the world's project.

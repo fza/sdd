@@ -326,7 +326,7 @@ func (e *Engine) NewSession(id, participant string, sink EventSink, opts ...Sess
 		}
 		// A guided session's header stays as it always was; an absent mode
 		// reads back as guided.
-		if s.DialogueMode == model.DialogueAutonomous {
+		if s.DialogueMode == model.DialogueAuto {
 			meta["dialogue"] = string(s.DialogueMode)
 			meta["dialogueSource"] = s.DialogueSource
 		}
@@ -339,7 +339,7 @@ func (e *Engine) NewSession(id, participant string, sink EventSink, opts ...Sess
 // event records it in an autonomous session; guided sessions record nothing
 // and keep today's answer form.
 func (s *Session) answerer(step *Step, userWords, reason string) (string, error) {
-	autonomous := s.DialogueMode == model.DialogueAutonomous
+	autonomous := s.DialogueMode == model.DialogueAuto
 	switch {
 	case reason != "" && userWords != "":
 		return "", fmt.Errorf("give either the user's words or your reason at %s, not both", step.ID)
@@ -1148,8 +1148,8 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		if p, ok := ev.Data["participant"].(string); ok && p != "" {
 			s.Participant = p
 		}
-		if mode, ok := ev.Data["dialogue"].(string); ok && model.DialogueMode(mode) == model.DialogueAutonomous {
-			s.DialogueMode = model.DialogueAutonomous
+		if mode, ok := ev.Data["dialogue"].(string); ok && model.DialogueMode(mode) == model.DialogueAuto {
+			s.DialogueMode = model.DialogueAuto
 			s.DialogueSource, _ = ev.Data["dialogueSource"].(string)
 		}
 		if parent, ok := ev.Data["parent"].(map[string]any); ok {
