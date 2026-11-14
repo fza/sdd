@@ -1,5 +1,4 @@
-// Package codex implements llm.Runner by invoking `codex exec`
-// (20261109-222220-d-tac-4ev).
+// Package codex implements llm.Runner by invoking `codex exec`.
 package codex
 
 import (

@@ -1,7 +1,6 @@
-// Capture under grounding enforcement (20261109-004506-d-cpt-udz, slice 4): the
-// assemble gate judges the capture's credited gather reading, the write step
-// answers entries that landed after it, and a recorded bypass writes the
-// entry with low confidence.
+// Capture under grounding enforcement: the assemble gate judges the capture's
+// credited gather reading, the write step answers entries that landed after
+// it, and a recorded bypass writes the entry with low confidence.
 package proctest_test
 
 import (

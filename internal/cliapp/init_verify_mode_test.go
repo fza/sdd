@@ -8,8 +8,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// The answer is recorded as verify.mode in the committed config
-// (20261109-004729-d-cpt-xs5, V-D28).
+// The answer is recorded as verify.mode in the committed config.
 func TestInitRecordsTheVerifyMode(t *testing.T) {
 	for _, tc := range []struct{ answer, block string }{
 		{"off", "verify:\n  mode: \"off\"\n"},

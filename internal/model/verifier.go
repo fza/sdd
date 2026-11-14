@@ -7,10 +7,9 @@ import (
 )
 
 // VerifyMode is how carefully a capture is checked against the graph before
-// it is written (20261109-004729-d-cpt-xs5, V-D28): it sets grounding
-// enforcement and the draft verifier together, so no invalid pair can be
-// chosen. The modes build up, so their order is the strictness a
-// machine-local layer may only raise.
+// it is written: it sets grounding enforcement and the draft verifier
+// together, so no invalid pair can be chosen. The modes build up, so their
+// order is the strictness a machine-local layer may only raise.
 type VerifyMode string
 
 const (
@@ -20,8 +19,7 @@ const (
 	VerifyDeep      VerifyMode = "deep"
 )
 
-// DefaultVerifyMode is the mode an unset verify.mode resolves to
-// (20261109-222220-d-tac-4ev).
+// DefaultVerifyMode is the mode an unset verify.mode resolves to.
 const DefaultVerifyMode = VerifyProse
 
 // VerifyModes lists the modes, loosest first.
@@ -74,9 +72,9 @@ const (
 
 var verifierSkips = []VerifierSkip{VerifierSkipWeighed, VerifierSkipFailure, VerifierSkipNever}
 
-// VerifierRunner is what runs a deep verifier session (V-D16, V-D19): the
-// drafting agent's harness as a subagent, or sdd through a headless agent CLI
-// or an external driver.
+// VerifierRunner is what runs a deep verifier session: the drafting agent's
+// harness as a subagent, or sdd through a headless agent CLI or an external
+// driver.
 type VerifierRunner string
 
 const (
@@ -102,8 +100,8 @@ type VerifierAgent struct {
 	Effort string `yaml:"effort,omitempty"`
 }
 
-// Verifier agent defaults (20261109-222220-d-tac-4ev): the alias sonnet, which
-// every Claude harness accepts, and codex's own default model.
+// Verifier agent defaults: the alias sonnet, which every Claude harness
+// accepts, and codex's own default model.
 var (
 	DefaultVerifierClaude = VerifierAgent{Model: "sonnet", Effort: "medium"}
 	DefaultVerifierCodex  = VerifierAgent{Effort: "medium"}
@@ -113,14 +111,12 @@ var (
 // model-defined levels, so its own pass as set.
 var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
-// VerifyConfig is the `verify` block (20261109-004506-d-cpt-udz,
-// 20261109-004729-d-cpt-xs5, 20261109-222220-d-tac-4ev). Mode and skip are
-// policy: the user-global and the committed config set them, the committed
-// value wins, and the machine-local config may only tighten them. The runner
-// and the per-agent model and effort describe the machine, so the
-// machine-local value wins (V-D20); the driver runs a command, so only the
-// user-global and machine-local layers set it (V-D19). Pointers tell an unset
-// grounding key from one a layer sets.
+// VerifyConfig is the `verify` block. Mode and skip are policy: the
+// user-global and the committed config set them, the committed value wins,
+// and the machine-local config may only tighten them. The runner and the
+// per-agent model and effort describe the machine, so the machine-local value
+// wins; the driver runs a command, so only the user-global and machine-local
+// layers set it. Pointers tell an unset grounding key from one a layer sets.
 type VerifyConfig struct {
 	Mode          VerifyMode           `yaml:"mode,omitempty"`
 	Skip          VerifierSkip         `yaml:"skip,omitempty"`
@@ -131,7 +127,7 @@ type VerifyConfig struct {
 	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
 	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
 	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
-	// Prefilter switches the prefilter on (D7); on by default.
+	// Prefilter switches the prefilter on; on by default.
 	Prefilter *bool `yaml:"prefilter,omitempty"`
 }
 
@@ -218,7 +214,7 @@ func mergeVerifierAgent(base, overlay VerifierAgent) VerifierAgent {
 // CheckVerifyLayers refuses a verify configuration that cannot hold: an
 // unknown value, a machine-local value loosening what the user-global and
 // committed layers set, a driver in the committed config, or a driver
-// runner no layer names a command for (V-D19). files names the file behind
+// runner no layer names a command for. files names the file behind
 // each layer; the refusal names the key, and the file of every layer it
 // judges.
 func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
@@ -326,7 +322,7 @@ func VerifierRunnerChoices(agents []AgentTarget, driver VerifierDriver) []Verifi
 	return choices
 }
 
-// VerifierRunnerAsked reports whether `sdd init` asks for the runner (V-D28):
+// VerifierRunnerAsked reports whether `sdd init` asks for the runner:
 // only under mode deep, and only while no layer sets one.
 func VerifierRunnerAsked(mode VerifyMode, recorded VerifyConfig) bool {
 	return mode == VerifyDeep && recorded.Runner == ""

@@ -34,8 +34,7 @@ const (
 	DefaultLLMProvider = "claude-cli"
 
 	// LLMProviderCodex runs sdd's LLM calls through `codex exec`, so a person
-	// signed in to Codex alone needs no Claude login or API key
-	// (20261109-222220-d-tac-4ev).
+	// signed in to Codex alone needs no Claude login or API key.
 	LLMProviderCodex = "codex"
 
 	// DefaultLLMEffort is the reasoning effort the claude-cli and codex
@@ -110,8 +109,8 @@ type BaseConfig struct {
 	// every draft against that reading; DefaultVerifyMode unless a layer sets
 	// its mode.
 	Verify VerifyConfig `yaml:"verify,omitempty"`
-	// LLMPrefilter is the grounding prefilter's model (20261109-004506-d-cpt-udz,
-	// D8); verify.prefilter switches it on, and ResolvedPrefilter fills it from LLM.
+	// LLMPrefilter is the grounding prefilter's model; verify.prefilter switches
+	// it on, and ResolvedPrefilter fills it from LLM.
 	LLMPrefilter LLMPrefilterConfig `yaml:"llm_prefilter,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
@@ -495,8 +494,8 @@ type LLMConfig struct {
 	// model's own output limit in force where the provider allows that.
 	MaxTokens *int `yaml:"max_tokens,omitempty"`
 	// ContextTokens is the model's context window in tokens, which sizes the
-	// prose verifier's pre-flight calls (20261109-004729-d-cpt-xs5). Zero means
-	// the window the provider reports.
+	// prose verifier's pre-flight calls. Zero means the window the provider
+	// reports.
 	ContextTokens int `yaml:"context_tokens,omitempty"`
 	// Concurrency bounds the worker pool for batch operations. Zero means
 	// "use DefaultLLMConcurrency".

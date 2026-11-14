@@ -5,8 +5,7 @@ import (
 	"strings"
 )
 
-// Grounding defaults (20261109-004506-d-cpt-udz, D25, D27, D31;
-// 20261109-222220-d-tac-4ev for the prefilter).
+// Grounding defaults.
 const (
 	DefaultGroundingDepthDown     = 2
 	DefaultGroundingDepthUp       = 1
@@ -245,11 +244,10 @@ type LLMPrefilterConfig struct {
 // with: judging relevance needs no reasoning.
 const DefaultPrefilterEffort = "low"
 
-// ResolvedPrefilter is the prefilter block as it runs
-// (20261109-222220-d-tac-4ev): without a protocol, generate; under generate,
-// the llm block's provider, model and connection at DefaultPrefilterEffort,
-// each value llm_prefilter sets winning. The other protocols take the block as
-// set.
+// ResolvedPrefilter is the prefilter block as it runs: without a protocol,
+// generate; under generate, the llm block's provider, model and connection at
+// DefaultPrefilterEffort, each value llm_prefilter sets winning. The other
+// protocols take the block as set.
 func (b BaseConfig) ResolvedPrefilter() LLMPrefilterConfig {
 	out := b.LLMPrefilter
 	if out.Protocol == "" {

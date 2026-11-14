@@ -239,7 +239,7 @@ func runCodex(ctx context.Context, settings Settings, round Round) (string, erro
 	return session, nil
 }
 
-// DriverRequest is what a driver reads on stdin per round (V-D19).
+// DriverRequest is what a driver reads on stdin per round.
 type DriverRequest struct {
 	Round       int    `json:"round"`
 	Session     string `json:"session"`
