@@ -14,7 +14,7 @@ import (
 type autonomousAccess struct{ rootAccess }
 
 func (autonomousAccess) ResolveDialogue(context.Context, sdd.Principal, sdd.ProjectID) (sdd.Dialogue, error) {
-	return sdd.Dialogue{Mode: "autonomous", Source: "config.local.yaml"}, nil
+	return sdd.Dialogue{Mode: "auto", Source: "config.local.yaml"}, nil
 }
 
 func TestResumeAddressesTheSessionsMode(t *testing.T) {

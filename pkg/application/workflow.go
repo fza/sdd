@@ -517,7 +517,7 @@ func (w *WorkflowSession) IsShell(instance string) bool { return instance != "" 
 // mode, where the agent takes the choices procedures hand over
 // (20261029-150854-d-tac-b2f).
 func (w *WorkflowSession) Autonomous() bool {
-	return w.session.DialogueMode == model.DialogueAutonomous
+	return w.session.DialogueMode == model.DialogueAuto
 }
 
 func (w *WorkflowSession) Finished() bool {

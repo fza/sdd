@@ -615,7 +615,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		// under `fields` and the chooser is named where the answer needs it.
 		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.DialogueMode)
 		switch {
-		case step.Chooser == ChooserUser && step.Delegable && s.DialogueMode == model.DialogueAutonomous:
+		case step.Chooser == ChooserUser && step.Delegable && s.DialogueMode == model.DialogueAuto:
 			sv.Goal = "decide the choice yourself and answer with a one-line reason"
 		case step.Chooser == ChooserUser:
 			sv.Goal = "put the choice to the user and relay their answer verbatim"
@@ -850,8 +850,8 @@ func (s *Session) templateContext(inst *Instance) (map[string]any, error) {
 const dialogueModeValue = "dialogueMode"
 
 func (s *Session) dialogueMode() model.DialogueMode {
-	if s.DialogueMode == model.DialogueAutonomous {
-		return model.DialogueAutonomous
+	if s.DialogueMode == model.DialogueAuto {
+		return model.DialogueAuto
 	}
 	return model.DialogueGuided
 }

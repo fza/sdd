@@ -92,7 +92,7 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[stri
 	}
 	required := []string{"choice", "chooser"}
 	switch {
-	case step.Chooser == ChooserUser && step.Delegable && mode == model.DialogueAutonomous:
+	case step.Chooser == ChooserUser && step.Delegable && mode == model.DialogueAuto:
 		properties["userWords"] = map[string]any{
 			"type":        "string",
 			"description": "the user's answer, relayed verbatim, when the user gave one — otherwise omit it and give reason",

@@ -1432,7 +1432,7 @@ func promptDialogueMode(cmd *cli.Command) (model.DialogueMode, error) {
 		Header: "Who makes the choices during a session? (↑/↓ to navigate, enter to confirm)",
 		Options: []tui.SelectOption[model.DialogueMode]{
 			{Label: string(model.DialogueGuided), Hint: "you confirm each step", Value: model.DialogueGuided},
-			{Label: string(model.DialogueAutonomous), Hint: "your AI decides, asks only when a check fails", Value: model.DialogueAutonomous},
+			{Label: string(model.DialogueAuto), Hint: "your AI decides, asks only when a check fails", Value: model.DialogueAuto},
 		},
 	})
 }
@@ -1607,7 +1607,7 @@ func initCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "dialogue-mode",
-				Usage: "Your dialogue mode, guided or autonomous, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
+				Usage: "Your dialogue mode, guided or auto, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
 			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {

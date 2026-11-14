@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -213,9 +214,14 @@ type DialogueConfig struct {
 type DialogueMode string
 
 const (
-	DialogueGuided     DialogueMode = "guided"
-	DialogueAutonomous DialogueMode = "autonomous"
+	DialogueGuided DialogueMode = "guided"
+	DialogueAuto   DialogueMode = "auto"
 )
+
+// DialogueModes returns the values dialogue.mode takes.
+func DialogueModes() []DialogueMode {
+	return []DialogueMode{DialogueGuided, DialogueAuto}
+}
 
 // IgnoredSetting is a setting a config layer carries that sdd reads past:
 // a value it does not know, or a key that layer may not set.
@@ -260,8 +266,8 @@ func ignoredDialogueMode(mode DialogueMode, committed bool) string {
 		return ""
 	case committed:
 		return personalOnlyReason
-	case mode != DialogueGuided && mode != DialogueAutonomous:
-		return fmt.Sprintf("%q is not %s or %s", mode, DialogueGuided, DialogueAutonomous)
+	case !slices.Contains(DialogueModes(), mode):
+		return fmt.Sprintf("%q is not %s or %s", mode, DialogueGuided, DialogueAuto)
 	}
 	return ""
 }
@@ -741,7 +747,7 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"#   mode: " + string(SyncModeManual) + "\n" +
 		"#   interval: 5m\n" +
 		"\n" +
-		"# Dialogue, set per person: mode: autonomous lets the agent take the\n" +
+		"# Dialogue, set per person: mode: auto lets the agent take the\n" +
 		"# choices an engine session otherwise puts to you.\n" +
 		"# dialogue:\n" +
 		"#   mode: " + string(DialogueGuided) + "\n"
@@ -791,8 +797,8 @@ func ResolveSyncCooldown(cfg *PerRepoConfig) time.Duration {
 
 // ResolveDialogueMode returns the effective dialogue mode from cfg.
 func ResolveDialogueMode(cfg *PerRepoConfig) DialogueMode {
-	if cfg != nil && cfg.Dialogue.Mode == DialogueAutonomous {
-		return DialogueAutonomous
+	if cfg != nil && cfg.Dialogue.Mode == DialogueAuto {
+		return DialogueAuto
 	}
 	return DialogueGuided
 }
