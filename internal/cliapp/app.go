@@ -1987,7 +1987,7 @@ func initCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:  "verify-runner",
-				Usage: "What runs the deep verifier on this machine: subagent, claude, codex or driver, recorded as verify.runner in the project's .sdd/config.local.yaml (prompted interactively under verify.mode deep while no layer sets it)",
+				Usage: "What runs the deep verifier on this machine: subagent, claude or driver, recorded as verify.runner in the project's .sdd/config.local.yaml (prompted interactively under verify.mode deep while no layer sets it)",
 			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
@@ -2291,7 +2291,7 @@ func initCmd() *cli.Command {
 			}
 			verifierRunner := model.VerifierRunner(strings.TrimSpace(cmd.String("verify-runner")))
 			if verifierRunner != "" && !slices.Contains(runnerChoices, verifierRunner) {
-				return fmt.Errorf("invalid --verify-runner %q: this project offers %s (claude and codex only where supported_agents names them, driver only once a layer sets verify.driver.command)", verifierRunner, joinRunners(runnerChoices))
+				return fmt.Errorf("invalid --verify-runner %q: this project offers %s (claude only where supported_agents names it, driver only once a layer sets verify.driver.command)", verifierRunner, joinRunners(runnerChoices))
 			}
 			if verifierRunner == "" && model.VerifierRunnerAsked(resolvedMode, recorded) && cliout.IsTerminalReader(cmd.Reader) {
 				verifierRunner, err = promptVerifierRunner(cmd, runnerChoices)
@@ -2931,7 +2931,7 @@ func promptVerifyMode(cmd *cli.Command) (model.VerifyMode, error) {
 			{Label: string(model.VerifyOff), Hint: "a quick check of the entry on its own", Value: model.VerifyOff},
 			{Label: string(model.VerifyGrounding), Hint: "your AI first reads related entries, no check after", Value: model.VerifyGrounding},
 			{Label: string(model.VerifyProse), Hint: "your AI reads related entries, then checks the new one fits", Value: model.VerifyProse},
-			{Label: string(model.VerifyDeep), Hint: "like prose, and a second AI double-checks it", Value: model.VerifyDeep},
+			{Label: string(model.VerifyDeep), Hint: "like prose, and a second AI double-checks it (Claude Code only)", Value: model.VerifyDeep},
 		},
 	})
 }
@@ -2942,7 +2942,6 @@ func promptVerifierRunner(cmd *cli.Command, choices []model.VerifierRunner) (mod
 	hints := map[model.VerifierRunner]string{
 		model.VerifierRunnerSubagent: "inside your AI chat, you can watch it",
 		model.VerifierRunnerClaude:   "a separate Claude in the background, hidden",
-		model.VerifierRunnerCodex:    "a separate Codex in the background, hidden",
 		model.VerifierRunnerDriver:   "your own program, set up in the config",
 	}
 	options := make([]tui.SelectOption[model.VerifierRunner], 0, len(choices))

@@ -1,5 +1,5 @@
 // Package delegatelaunch runs the deep draft verifier's delegate without the
-// drafting agent's harness: a headless claude or codex run per round,
+// drafting agent's harness: a headless claude run per round,
 // resumed by the session id the first round reported, or an external driver
 // per round. The agent reaches the child session only through an sdd MCP
 // server of its own; findings and answers travel through that server, never
@@ -14,32 +14,29 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/networkteam/sdd/internal/llm/codex"
 	"github.com/networkteam/sdd/internal/model"
 )
 
 // RoundTimeout bounds one launched round where Settings.Timeout is unset.
 const RoundTimeout = model.DefaultVerifierRoundTimeout
 
-// Fallback asks for the first headless runner of Settings.Agents whose CLI
-// is found.
+// Fallback asks for claude where Settings.Agents names it and its CLI is
+// found.
 const Fallback = "fallback"
 
 // Settings is how one project launches its deep verifier.
 type Settings struct {
-	// Runner is claude, codex, driver or Fallback.
+	// Runner is claude, driver or Fallback.
 	Runner string
 	// Agents are the project's supported_agents, in order, for Fallback.
 	Agents []string
 	Driver model.VerifierDriver
-	// Claude and Codex are the model and effort each headless runner runs
-	// with; empty values leave the CLI's own.
+	// Claude is the model and effort the headless claude runs with; empty
+	// values leave the CLI's own.
 	Claude model.VerifierAgent
-	Codex  model.VerifierAgent
 	// WorkDir is the project checkout the agent works in.
 	WorkDir string
 	// SDD is the sdd executable the agent's MCP server runs.
@@ -75,8 +72,8 @@ var claudeTools = []string{
 	"Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(git blame:*)",
 }
 
-// Resolve names the runner Run runs: settings.Runner, or for Fallback the
-// first agent of settings.Agents whose CLI is found.
+// Resolve names the runner Run runs: settings.Runner, or for Fallback claude
+// where settings.Agents names it and its CLI is found.
 func Resolve(settings Settings) (string, error) {
 	if settings.Runner == Fallback {
 		return fallback(settings.Agents)
@@ -100,8 +97,6 @@ func Run(ctx context.Context, settings Settings, round Round) (Launched, error) 
 	switch runner {
 	case string(model.VerifierRunnerClaude):
 		launched, err = runClaude(ctx, settings, round)
-	case string(model.VerifierRunnerCodex):
-		launched, err = runCodex(ctx, settings, round)
 	case string(model.VerifierRunnerDriver):
 		launched.Session, err = runDriver(ctx, settings, round)
 	default:
@@ -113,7 +108,7 @@ func Run(ctx context.Context, settings Settings, round Round) (Launched, error) 
 
 func fallback(agents []string) (string, error) {
 	for _, agent := range agents {
-		if agent != string(model.VerifierRunnerClaude) && agent != string(model.VerifierRunnerCodex) {
+		if agent != string(model.VerifierRunnerClaude) {
 			continue
 		}
 		_, err := exec.LookPath(agent)
@@ -163,7 +158,7 @@ func runClaude(ctx context.Context, settings Settings, round Round) (Launched, e
 	if err != nil {
 		return Launched{}, err
 	}
-	out, err := run(ctx, settings.WorkDir, nil, "claude", args, round.Prompt, round.Started)
+	out, err := run(ctx, settings.WorkDir, "claude", args, round.Prompt, round.Started)
 	if err != nil {
 		return Launched{}, err
 	}
@@ -185,83 +180,6 @@ func runClaude(ctx context.Context, settings Settings, round Round) (Launched, e
 	return Launched{Session: result.SessionID, Message: result.Result}, nil
 }
 
-// CodexArgs are the flags of a headless codex round: exec with JSON
-// events in a read-only sandbox, without the user's config.toml (its MCP
-// servers, profiles and provider) or execpolicy rules, no project
-// instructions (a zero byte budget for AGENTS.md), live web search, sdd as
-// the only MCP server, whose tools run unasked since exec's approval policy
-// never asks and refuses every tool needing approval, and the round's prompt;
-// a later round resumes the first round's session.
-func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
-	args := []string{
-		"exec", "--json", "--sandbox", "read-only", "--ignore-user-config", "--ignore-rules",
-		"-c", "project_doc_max_bytes=0",
-		"-c", `web_search="live"`,
-		"-c", "mcp_servers.sdd.command=" + strconv.Quote(sdd),
-		"-c", `mcp_servers.sdd.args=["serve"]`,
-		"-c", `mcp_servers.sdd.default_tools_approval_mode="approve"`,
-	}
-	if agent.Model != "" {
-		args = append(args, "-m", agent.Model)
-	}
-	if agent.Effort != "" {
-		args = append(args, "-c", "model_reasoning_effort="+strconv.Quote(agent.Effort))
-	}
-	if resume != "" {
-		args = append(args, "resume", resume)
-	}
-	return append(args, prompt)
-}
-
-func runCodex(ctx context.Context, settings Settings, round Round) (Launched, error) {
-	out, runErr := run(ctx, settings.WorkDir, codex.ScrubbedEnv(os.Environ()), "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "", round.Started)
-	launched := Launched{Session: round.Resume}
-	for _, line := range bytes.Split(out, []byte("\n")) {
-		var event struct {
-			Type      string `json:"type"`
-			ThreadID  string `json:"thread_id"`
-			SessionID string `json:"session_id"`
-			Message   string `json:"message"`
-			Error     struct {
-				Message string `json:"message"`
-			} `json:"error"`
-			Item struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"item"`
-			Msg struct {
-				Type      string `json:"type"`
-				SessionID string `json:"session_id"`
-				Message   string `json:"message"`
-			} `json:"msg"`
-		}
-		if json.Unmarshal(line, &event) != nil {
-			continue
-		}
-		switch {
-		case event.Type == "error" || event.Type == "turn.failed" || event.Msg.Type == "error":
-			return Launched{}, fmt.Errorf("codex ended the round with an error: %s", strings.TrimSpace(event.Message+event.Error.Message+event.Msg.Message))
-		case event.Type == "item.completed" && event.Item.Type == "agent_message":
-			launched.Message = event.Item.Text
-		case event.Msg.Type == "agent_message":
-			launched.Message = event.Msg.Message
-		case event.ThreadID != "":
-			launched.Session = event.ThreadID
-		case event.SessionID != "":
-			launched.Session = event.SessionID
-		case event.Msg.SessionID != "":
-			launched.Session = event.Msg.SessionID
-		}
-	}
-	if runErr != nil {
-		return Launched{}, runErr
-	}
-	if launched.Session == "" {
-		return Launched{}, errors.New("codex reported no session to resume")
-	}
-	return launched, nil
-}
-
 // DriverRequest is what a driver reads on stdin per round.
 type DriverRequest struct {
 	Round       int    `json:"round"`
@@ -279,7 +197,7 @@ func runDriver(ctx context.Context, settings Settings, round Round) (string, err
 	if err != nil {
 		return "", err
 	}
-	out, err := run(ctx, settings.WorkDir, nil, settings.Driver.Command, settings.Driver.Args, string(request), round.Started)
+	out, err := run(ctx, settings.WorkDir, settings.Driver.Command, settings.Driver.Args, string(request), round.Started)
 	if err != nil {
 		return "", err
 	}
@@ -293,11 +211,9 @@ func runDriver(ctx context.Context, settings Settings, round Round) (string, err
 	return *answer.DriverState, nil
 }
 
-// run runs name in dir with env, the inherited environment when nil.
-func run(ctx context.Context, dir string, env []string, name string, args []string, stdin string, started func(pid int) error) ([]byte, error) {
+func run(ctx context.Context, dir string, name string, args []string, stdin string, started func(pid int) error) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Env = env
 	cmd.Stdin = strings.NewReader(stdin)
 	// A killed agent's own children may still hold its output open.
 	cmd.WaitDelay = 5 * time.Second

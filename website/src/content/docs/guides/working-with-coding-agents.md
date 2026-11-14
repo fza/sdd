@@ -54,6 +54,10 @@ How best to hand work between agent sessions this way is still being worked out.
 
 At a natural stop, the agent offers to wrap up and names every thread that is still open. Wrapping up ends the session for good: an open thread left behind cannot be resumed afterwards. Finish the threads worth finishing, drop the others with a reason, and keep the session open if something should continue. Leaving without wrapping up costs nothing; the session stays resumable by its ID.
 
+## Deep verification needs Claude Code
+
+`verify.mode: deep` has a second agent, run by Claude Code, check each draft. In Codex, a session under `deep`, or under a kind set to `deep` in `verify.kinds`, fails to start or resume and names the setting. For a project you work on in Codex, set it to `prose`, `grounding` or `off`. `verify.runner: codex` no longer exists.
+
 ## In the dialogue
 
 - **Read the playback.** Confirming writes exactly what the agent showed. Ask for changes until it says what you mean.

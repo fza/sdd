@@ -141,7 +141,7 @@ func verifierPolicy(cfg *model.PerRepoConfig) sdd.VerifierPolicy {
 	}
 	return sdd.VerifierPolicy{
 		Mode: string(policy.Mode), Skip: string(policy.Skip), Runner: string(policy.Runner),
-		Claude: sdd.VerifierAgent(policy.Claude), Codex: sdd.VerifierAgent(policy.Codex), RoundTimeout: policy.RoundTimeout,
+		Claude: sdd.VerifierAgent(policy.Claude), RoundTimeout: policy.RoundTimeout,
 		Kinds: kinds, StricterKinds: stricter,
 	}
 }

@@ -938,6 +938,10 @@ func (s *toolSet) resumeSession(ctx context.Context, req *mcp.CallToolRequest, a
 	}
 	defer ss.mu.Unlock()
 	identity := s.requestIdentity(req)
+	err = ss.root.RefuseClient(ctx, identity, mcpClientName(req.Session))
+	if err != nil {
+		return nil, ResumeSessionResult{}, err
+	}
 	if err := ss.root.Reorient(ctx, identity); err != nil {
 		return nil, ResumeSessionResult{}, err
 	}

@@ -24,15 +24,11 @@ func TestEffectiveConfigValues_ShowVerifyAndEffortDefaults(t *testing.T) {
 		"verify.runner":        "subagent",
 		"verify.claude.model":  "sonnet",
 		"verify.claude.effort": "medium",
-		"verify.codex.effort":  "medium",
 		"llm.effort":           "medium",
 	} {
 		if got := values[key]; got.Value != want || got.Source != model.ConfigSourceDefault {
 			t.Errorf("%s = %+v, want the default %s", key, got, want)
 		}
-	}
-	if got, shown := values["verify.codex.model"]; shown {
-		t.Errorf("verify.codex.model leaves codex's own default and shows none, got %+v", got)
 	}
 }
 

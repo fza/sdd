@@ -31,7 +31,7 @@ func launchedWait(t *testing.T, world *proctest.World, session *proctest.Session
 // server that launched it is gone, and a new server picks the outcome up.
 func TestCaptureDeep_ARoundOutlivesTheServerThatLaunchedIt(t *testing.T) {
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-outlives", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-outlives", sdd.VerifierPolicy{Runner: "claude"}, proctest.WithDelegateLauncher(launcher))
 	instance, _ := launchedWait(t, world, session)
 	round := launcher.NextRound(t)
 
@@ -46,7 +46,7 @@ func TestCaptureDeep_ARoundOutlivesTheServerThatLaunchedIt(t *testing.T) {
 // wait, naming that the process ended without an outcome.
 func TestCaptureDeep_ARoundWhoseProcessDiedFailsTheWait(t *testing.T) {
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-process-died", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-process-died", sdd.VerifierPolicy{Runner: "claude"}, proctest.WithDelegateLauncher(launcher))
 	instance, child := launchedWait(t, world, session)
 	launcher.NextRound(t)
 
@@ -75,7 +75,7 @@ func requireRoundLog(t *testing.T, world *proctest.World, serve *sdd.WorkflowSer
 // round recorded.
 func TestCaptureDeep_ARoundWhoseProcessDiedStopsItsAgentCLI(t *testing.T) {
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-died-agent", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-died-agent", sdd.VerifierPolicy{Runner: "claude"}, proctest.WithDelegateLauncher(launcher))
 	instance, child := launchedWait(t, world, session)
 	agent := sdd.RoundProcess{PID: 7001, Started: "agent-started"}
 	launcher.NextRound(t).AgentStarts(t, agent)
@@ -93,7 +93,7 @@ func TestCaptureDeep_ARoundWhoseProcessDiedStopsItsAgentCLI(t *testing.T) {
 // that round left running.
 func TestCaptureDeep_AbandoningTheCaptureStopsTheAgentCLIOfADeadRound(t *testing.T) {
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-abandon-agent", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-abandon-agent", sdd.VerifierPolicy{Runner: "claude"}, proctest.WithDelegateLauncher(launcher))
 	_, child := launchedWait(t, world, session)
 	agent := sdd.RoundProcess{PID: 7002, Started: "agent-started"}
 	launcher.NextRound(t).AgentStarts(t, agent)
@@ -131,7 +131,7 @@ func (c *stepClock) advance(by time.Duration) {
 func TestCaptureDeep_ARoundWithoutAnOutcomePastItsTimeoutFailsTheWait(t *testing.T) {
 	clock := &stepClock{now: time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)}
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-past-timeout", sdd.VerifierPolicy{Runner: "codex", RoundTimeout: time.Minute},
+	world, session := newDeepWorld(t, "deep-past-timeout", sdd.VerifierPolicy{Runner: "claude", RoundTimeout: time.Minute},
 		proctest.WithDelegateLauncher(launcher), proctest.WithClock(clock))
 	world.Rounds.Idle = true
 	instance, child := launchedWait(t, world, session)
@@ -159,7 +159,7 @@ func TestCaptureDeep_ARoundWithoutAnOutcomePastItsTimeoutFailsTheWait(t *testing
 func TestCaptureDeep_ARoundWhoseProcessNeverStartedFailsTheWait(t *testing.T) {
 	clock := &stepClock{now: time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)}
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-never-started", sdd.VerifierPolicy{Runner: "codex"},
+	world, session := newDeepWorld(t, "deep-never-started", sdd.VerifierPolicy{Runner: "claude"},
 		proctest.WithDelegateLauncher(launcher), proctest.WithClock(clock))
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
@@ -191,7 +191,7 @@ func TestCaptureDeep_ARoundWhoseProcessNeverStartedFailsTheWait(t *testing.T) {
 // Abandoning the capture stops the process of its running round.
 func TestCaptureDeep_AbandoningTheCaptureStopsItsRound(t *testing.T) {
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-abandon-stops", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-abandon-stops", sdd.VerifierPolicy{Runner: "claude"}, proctest.WithDelegateLauncher(launcher))
 	_, child := launchedWait(t, world, session)
 	launcher.NextRound(t)
 
@@ -207,7 +207,7 @@ func TestCaptureDeep_AbandoningTheCaptureStopsItsRound(t *testing.T) {
 // Ending the verifier's child session stops the process of its running round.
 func TestCaptureDeep_EndingTheVerifierSessionStopsItsRound(t *testing.T) {
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-child-end-stops", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-child-end-stops", sdd.VerifierPolicy{Runner: "claude"}, proctest.WithDelegateLauncher(launcher))
 	_, child := launchedWait(t, world, session)
 	launcher.NextRound(t)
 

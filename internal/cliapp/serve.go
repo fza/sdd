@@ -704,34 +704,42 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 // by the dependency's repo ID and exclude embedded entries, so binary-shipped
 // base facts embed once per machine in the base store.
 func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, locations repos.Locations, runner pkgllm.Runner, window func(context.Context) (sdd.ModelWindow, error), embeddings embed.Embedder, runeCap func(context.Context) (int, error), cacheRoot string) (*sdd.ProjectRuntime, error) {
+	options, err := cloneRuntimeOptions(ctx, repoID, dir, cfg, locations, runner, window, embeddings, runeCap, cacheRoot)
+	if err != nil {
+		return nil, err
+	}
+	return sdd.NewProjectRuntime(options)
+}
+
+func cloneRuntimeOptions(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig, locations repos.Locations, runner pkgllm.Runner, window func(context.Context) (sdd.ModelWindow, error), embeddings embed.Embedder, runeCap func(context.Context) (int, error), cacheRoot string) (sdd.ProjectRuntimeOptions, error) {
 	project := sdd.ProjectID(repoID)
 	defaultBranch := cfg.DefaultBranch
 	if defaultBranch == "" {
 		branch, err := git.CurrentBranch(dir)
 		if err != nil {
-			return nil, err
+			return sdd.ProjectRuntimeOptions{}, err
 		}
 		defaultBranch = branch
 	}
 	targets, err := localadapter.NewRepositoryTargets(ctx, project, dir, locations.ConfigPath, "", locations.StateRoot, locations.DataRoot)
 	if err != nil {
-		return nil, err
+		return sdd.ProjectRuntimeOptions{}, err
 	}
 	cloneGraphDir := meta.ResolveGraphDir(dir, cfg)
 	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: cloneGraphDir, MetaPath: filepath.Join(dir, model.SDDDirName, model.SchemaMetaFileName)})
 	if err != nil {
-		return nil, err
+		return sdd.ProjectRuntimeOptions{}, err
 	}
 	searchIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, index.RepoKey(repoID, dir)).WithCheckout(meta.ResolveGraphDir(dir, cfg))
 	verdicts, err := projectRelevanceStore(locations.StateRoot, index.RepoKey(repoID, dir))
 	if err != nil {
-		return nil, err
+		return sdd.ProjectRuntimeOptions{}, err
 	}
 	events, err := projectEventStore(filepath.Join(dir, model.SDDDirName), cloneGraphDir, cfg)
 	if err != nil {
-		return nil, err
+		return sdd.ProjectRuntimeOptions{}, err
 	}
-	return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
+	return sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: string(repoID)}, DefaultBranch: defaultBranch, Language: cfg.Language,
 		Dependencies: cfg.Dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: defaultBranch},
 		Targets: targets, Sync: targets, Branches: targets, Base: targets,
@@ -743,7 +751,9 @@ func cloneRuntime(ctx context.Context, repoID sdd.RepoID, dir string, cfg *model
 		Relevance:                verdicts,
 		Events:                   events,
 		HandEdits:                localadapter.GitHandEdits{GraphDir: cloneGraphDir},
-	})
+		Checkout:                 os.DirFS(dir),
+		Commits:                  git.CLI{Dir: dir},
+	}, nil
 }
 
 func optionalSearchIndex(embeddings embed.Embedder, index sdd.SearchIndexStore) sdd.SearchIndexStore {

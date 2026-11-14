@@ -151,7 +151,7 @@ func TestVerifyKeyRefusal_RefusesAnUnknownValueOnWrite(t *testing.T) {
 
 func TestMergeBaseConfig_AnUnknownVerifyValueLeavesTheLayerBelow(t *testing.T) {
 	var below, above model.BaseConfig
-	below.Verify = model.VerifyConfig{Mode: model.VerifyDeep, Skip: model.VerifierSkipNever, Runner: model.VerifierRunnerCodex}
+	below.Verify = model.VerifyConfig{Mode: model.VerifyDeep, Skip: model.VerifierSkipNever, Runner: model.VerifierRunnerClaude}
 	below.Verify.Claude.Effort = "high"
 	above.Verify = model.VerifyConfig{Mode: "deeep", Skip: "sometimes", Runner: "robot"}
 	above.Verify.Claude.Effort = "ultra"
@@ -159,7 +159,7 @@ func TestMergeBaseConfig_AnUnknownVerifyValueLeavesTheLayerBelow(t *testing.T) {
 	if got := model.MergeBaseConfig(below, above).Verify.ResolvedMode(); got != model.VerifyDeep {
 		t.Errorf("an unknown mode should leave the mode below, got %q", got)
 	}
-	if policy.Skip != model.VerifierSkipNever || policy.Runner != model.VerifierRunnerCodex || policy.Claude.Effort != "high" {
+	if policy.Skip != model.VerifierSkipNever || policy.Runner != model.VerifierRunnerClaude || policy.Claude.Effort != "high" {
 		t.Errorf("unknown skip, runner and effort should leave the values below, got %+v", policy)
 	}
 	alone := model.MergeBaseConfig(above, model.BaseConfig{}).Verify
@@ -183,7 +183,6 @@ func TestIgnoredSettings_ReportsUnknownVerifyValues(t *testing.T) {
 	var layer model.BaseConfig
 	layer.Verify = model.VerifyConfig{Mode: "deeep", Skip: "sometimes", Runner: "robot"}
 	layer.Verify.Claude.Effort = "ultra"
-	layer.Verify.Codex.Effort = "ultra"
 	reasons := map[string]string{}
 	for _, s := range model.IgnoredSettings(layer, model.ConfigSourceProject) {
 		reasons[s.Key] = s.Reason
@@ -193,8 +192,26 @@ func TestIgnoredSettings_ReportsUnknownVerifyValues(t *testing.T) {
 			t.Errorf("%s should be reported with its unknown value, got %q", key, reasons[key])
 		}
 	}
-	if _, ok := reasons["verify.codex.effort"]; ok {
-		t.Error("codex takes model-defined efforts, so its effort is never reported")
+}
+
+// A config naming the removed codex runner is refused on read, though an
+// unknown runner only leaves the layer below.
+func TestCheckVerifyLayers_RefusesTheRemovedCodexRunner(t *testing.T) {
+	for name, layers := range map[string]struct {
+		global           model.BaseConfig
+		committed, local *model.PerRepoConfig
+		file             string
+	}{
+		"user-global":   {global: model.BaseConfig{Verify: model.VerifyConfig{Runner: "codex"}}, file: "global.yaml"},
+		"committed":     {committed: &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Runner: "codex"}}}, file: ".sdd/config.yaml"},
+		"machine-local": {local: &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Runner: "codex"}}}, file: ".sdd/config.local.yaml"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := model.CheckVerifyLayers(layers.global, layers.committed, layers.local, verifierFiles)
+			if err == nil || !strings.Contains(err.Error(), layers.file+": verify.runner codex") || !strings.Contains(err.Error(), "Claude Code") {
+				t.Fatalf("a codex runner should be refused naming its file and value, got %v", err)
+			}
+		})
 	}
 }
 
@@ -261,7 +278,7 @@ func TestVerifierRunnerChoices_OfferOnlyWhatTheProjectRuns(t *testing.T) {
 		driver model.VerifierDriver
 		want   string
 	}{
-		"subagent first, agents in order": {agents: []model.AgentTarget{model.AgentCodex, model.AgentClaude}, want: "subagent codex claude"},
+		"subagent first, no codex runner": {agents: []model.AgentTarget{model.AgentCodex, model.AgentClaude}, want: "subagent claude"},
 		"only named agents":               {agents: []model.AgentTarget{model.AgentClaude}, want: "subagent claude"},
 		"no headless cli":                 {agents: []model.AgentTarget{"gemini", model.AgentClaude}, want: "subagent claude"},
 		"driver once configured":          {agents: []model.AgentTarget{model.AgentClaude}, driver: model.VerifierDriver{Command: "/usr/local/bin/verify-driver"}, want: "subagent claude driver"},
@@ -299,13 +316,11 @@ func TestVerifierRunnerAsked_OnlyUnderDeepWhileUnset(t *testing.T) {
 	}
 }
 
-// Each agent family's model and effort describe the machine like the runner:
-// the machine-local value wins field by field, the blocks stay apart, and an
-// unset field takes the family's default.
-func TestVerifierAgentsLayerPerFamily(t *testing.T) {
+// The verifier's model and effort describe the machine like the runner: the
+// machine-local value wins field by field.
+func TestVerifierAgentLayersPerField(t *testing.T) {
 	committed := verifyLayer(model.VerifyDeep, "")
 	committed.Verify.Claude = model.ClaudeAgent{Model: "opus", Effort: "high"}
-	committed.Verify.Codex = model.VerifierAgent{Model: "gpt-5.5"}
 	local := &model.PerRepoConfig{}
 	local.Verify.Claude = model.ClaudeAgent{Effort: "max"}
 	err := model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
@@ -318,9 +333,6 @@ func TestVerifierAgentsLayerPerFamily(t *testing.T) {
 	if policy.Claude != (model.VerifierAgent{Model: "opus", Effort: "max"}) {
 		t.Errorf("the machine-local effort should win and the committed model stay, got %+v", policy.Claude)
 	}
-	if policy.Codex != (model.VerifierAgent{Model: "gpt-5.5", Effort: "medium"}) {
-		t.Errorf("codex should keep its own model and take the default effort, got %+v", policy.Codex)
-	}
 }
 
 func TestVerifierAgentDefaults(t *testing.T) {
@@ -328,20 +340,16 @@ func TestVerifierAgentDefaults(t *testing.T) {
 	if policy.Claude != (model.VerifierAgent{Model: "sonnet", Effort: "medium"}) {
 		t.Errorf("an unset verify.claude should resolve to sonnet at medium, got %+v", policy.Claude)
 	}
-	if policy.Codex != (model.VerifierAgent{Effort: "medium"}) {
-		t.Errorf("an unset verify.codex should leave codex's model at medium, got %+v", policy.Codex)
-	}
 }
 
-// Claude Code reports the client name claude-code and Codex codex-mcp-client;
-// the match is a case-insensitive substring so a renamed build still matches.
+// Claude Code reports the client name claude-code; the match is a
+// case-insensitive substring so a renamed build still matches.
 func TestSubagentAgent_MatchesTheClientNameCaseInsensitively(t *testing.T) {
-	policy := model.VerifierPolicy{Claude: model.VerifierAgent{Model: "opus"}, Codex: model.VerifierAgent{Model: "gpt-5.5"}}
+	policy := model.VerifierPolicy{Claude: model.VerifierAgent{Model: "opus"}}
 	for client, want := range map[string]model.VerifierAgent{
 		"claude-code":      {Model: "opus"},
 		"Claude Desktop":   {Model: "opus"},
-		"codex-mcp-client": {Model: "gpt-5.5"},
-		"CODEX":            {Model: "gpt-5.5"},
+		"codex-mcp-client": {},
 		"cursor":           {},
 		"":                 {},
 	} {
@@ -350,16 +358,6 @@ func TestSubagentAgent_MatchesTheClientNameCaseInsensitively(t *testing.T) {
 				t.Fatalf("client %q should take %+v, got %+v", client, want, got)
 			}
 		})
-	}
-}
-
-// Only claude's effort is a closed set; codex accepts model-defined levels.
-func TestVerifyKeyRefusal_PassesAModelDefinedCodexEffort(t *testing.T) {
-	local := &model.PerRepoConfig{}
-	local.Verify.Codex.Effort = "ultra"
-	err := model.VerifyKeyRefusal("verify.codex.effort", model.BaseConfig{}, nil, local, verifierFiles)
-	if err != nil {
-		t.Fatalf("a model-defined effort should pass for codex: %v", err)
 	}
 }
 

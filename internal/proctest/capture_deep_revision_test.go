@@ -196,7 +196,7 @@ func waitForRounds(t *testing.T, world *proctest.World, child sdd.SessionID, n i
 // resumes the session its last round reported, in the same child.
 func TestCaptureDeep_AHeadlessVerifierResumesForARevision(t *testing.T) {
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-revision-headless", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-revision-headless", sdd.VerifierPolicy{Runner: "claude"}, proctest.WithDelegateLauncher(launcher))
 	x, first := headlessVerdict(t, world, session, launcher, "cli-session")
 	proctest.RequireStep(t, x.settleWithAChange(t, "A tactical gap: the fixture observes a subject twice."), "deepWait")
 	round := launcher.NextRound(t)
@@ -258,7 +258,7 @@ func TestCaptureDeep_AFallbackVerifierResumesHeadlessForARevision(t *testing.T) 
 // a revision: a fresh one starts, and its dispatch says why.
 func TestCaptureDeep_AFreshVerifierWhereItsRunnerCannotResume(t *testing.T) {
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-revision-no-resume", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-revision-no-resume", sdd.VerifierPolicy{Runner: "claude"}, proctest.WithDelegateLauncher(launcher))
 	x, _ := headlessVerdict(t, world, session, launcher, "")
 	proctest.RequireStep(t, x.settleWithAChange(t, "A tactical gap: the fixture observes a subject twice."), "deepDispatch")
 	forked := session.Answer(t, x.instance, "deepDispatch", "delegate", nil, "")

@@ -731,11 +731,11 @@ func TestCaptureDeep_NoSubagentFallsBackToAHeadlessLaunch(t *testing.T) {
 
 func TestCaptureDeep_ConfiguredHeadlessLaunchRunsThroughSdd(t *testing.T) {
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-headless", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-headless", sdd.VerifierPolicy{Runner: "claude"}, proctest.WithDelegateLauncher(launcher))
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	forked := session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
-	if launches := launcher.Launches(); len(launches) != 1 || launches[0].Runner != "codex" {
+	if launches := launcher.Launches(); len(launches) != 1 || launches[0].Runner != "claude" {
 		t.Fatalf("a configured headless launch should go to sdd's launcher, got %+v", launches)
 	}
 	dispatch := forked.Dispatches[0]
@@ -791,13 +791,13 @@ func TestCaptureDeep_AFreshVerifierOnceTheChildEndedReadsADelta(t *testing.T) {
 
 func TestCaptureDeep_FailedRoundEndsItsDelegateAndRetries(t *testing.T) {
 	launcher := headlessLauncher(t)
-	world, session := newDeepWorld(t, "deep-launch-failed", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-launch-failed", sdd.VerifierPolicy{Runner: "claude"}, proctest.WithDelegateLauncher(launcher))
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
 	round := launcher.NextRound(t)
 	failed := round.Launch.Session
-	round.Finish("", errors.New("codex failed: exit status 1: not logged in"))
+	round.Finish("", errors.New("claude failed: exit status 1: not logged in"))
 	var err error
 	test.Eventually(t, "the failed round reaching the capture", func() bool {
 		workflow, refreshErr := world.App.RefreshWorkflow(t.Context(), world.Identity, session.ID)
@@ -891,7 +891,7 @@ func pollUntilMoved(t *testing.T, session *proctest.Session, instance, step stri
 // waiting capture moves to its failure step, naming the round's last message.
 func TestCaptureDeep_ARoundEndingWithoutFindingsPutsTheFailureToTheUser(t *testing.T) {
 	launcher := headlessLauncher(t)
-	_, session := newDeepWorld(t, "deep-empty-round", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	_, session := newDeepWorld(t, "deep-empty-round", sdd.VerifierPolicy{Runner: "claude"}, proctest.WithDelegateLauncher(launcher))
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")
@@ -899,7 +899,7 @@ func TestCaptureDeep_ARoundEndingWithoutFindingsPutsTheFailureToTheUser(t *testi
 	serve = session.Answer(t, instance, "deepLaunch", "started", nil, "")
 	proctest.RequireStep(t, serve, "deepWait")
 
-	round.FinishSaying("codex-3", "The sdd tools need approval, so I stop.")
+	round.FinishSaying("claude-3", "The sdd tools need approval, so I stop.")
 
 	serve = pollUntilMoved(t, session, instance, "deepWait")
 	proctest.RequireStep(t, serve, "deepFailed")
@@ -1007,11 +1007,11 @@ func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
 }
 
 // A subagent dispatch takes the agent block matching the MCP client the
-// session attached through: verify.claude in Claude Code (claude-code),
-// verify.codex in Codex (codex-mcp-client), and neither in any other client.
+// session attached through: verify.claude in Claude Code (claude-code), and
+// none in any other client.
 // The dispatch names the model and effort in its fields and its instructions.
 func TestCaptureDeep_SubagentDispatchTakesTheClientsAgentBlock(t *testing.T) {
-	set := sdd.VerifierPolicy{Claude: sdd.VerifierAgent{Model: "opus", Effort: "high"}, Codex: sdd.VerifierAgent{Model: "gpt-5.5", Effort: "low"}}
+	set := sdd.VerifierPolicy{Claude: sdd.VerifierAgent{Model: "opus", Effort: "high"}}
 	for _, tc := range []struct {
 		name, client string
 		policy       sdd.VerifierPolicy
@@ -1019,9 +1019,7 @@ func TestCaptureDeep_SubagentDispatchTakesTheClientsAgentBlock(t *testing.T) {
 		instruction  string
 	}{
 		{"claude code", "claude-code", set, sdd.VerifierAgent{Model: "opus", Effort: "high"}, "Launch it with the dispatch's model opus and effort high"},
-		{"codex", "codex-mcp-client", set, sdd.VerifierAgent{Model: "gpt-5.5", Effort: "low"}, "Launch it with the dispatch's model gpt-5.5 and effort low"},
 		{"claude code defaults", "claude-code", sdd.VerifierPolicy{}, sdd.VerifierAgent{Model: "sonnet", Effort: "medium"}, "Launch it with the dispatch's model sonnet and effort medium"},
-		{"codex defaults", "codex-mcp-client", sdd.VerifierPolicy{}, sdd.VerifierAgent{Effort: "medium"}, "Launch it with the dispatch's effort medium."},
 		{"another client", "cursor", set, sdd.VerifierAgent{}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1049,6 +1047,29 @@ func TestCaptureDeep_TheDispatchSaysPreflightsModelDidNotJudge(t *testing.T) {
 	text := test.Untagged(serve.Instructions)
 	if !strings.Contains(text, "its model did not judge this draft: the deep verifier judges it now in the model's place") || strings.Contains(text, "Pre-flight left no high finding open") {
 		t.Fatalf("the dispatch should say pre-flight's model did not judge the draft:\n%s", text)
+	}
+}
+
+// Deep runs only in Claude Code: a session opened there does not resume
+// through Codex.
+func TestCaptureDeep_ACodexClientCannotResume(t *testing.T) {
+	world, session := newDeepWorld(t, "claude-code", sdd.VerifierPolicy{})
+
+	_, _, err := world.App.ResumeWorkflow(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: session.ID, ClientName: "codex-mcp-client"})
+
+	if err == nil || !strings.Contains(err.Error(), "verify.mode deep needs Claude Code") {
+		t.Fatalf("the resume should be refused naming the setting, got %v", err)
+	}
+}
+
+// Deep runs only in Claude Code, so the dispatch names its subagent tool.
+func TestCaptureDeep_TheDispatchNamesClaudeCodesAgentTool(t *testing.T) {
+	_, session := newDeepWorld(t, "deep-dispatch-agent-tool", sdd.VerifierPolicy{})
+	_, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	text := test.Untagged(serve.Instructions)
+	if !strings.Contains(text, "your `Agent` tool (agent `sdd_delegate`)") || !strings.Contains(text, "only if `Agent` is missing from your tool list") {
+		t.Fatalf("the dispatch should name the Agent tool as the launch and its absence as the noSubagent case:\n%s", text)
 	}
 }
 

@@ -17,7 +17,7 @@ import (
 type stalledLauncher struct{ release chan struct{} }
 
 func (l stalledLauncher) LaunchDelegate(context.Context, sdd.DelegateLaunch) (sdd.DelegateRun, error) {
-	return sdd.DelegateRun{Runner: "codex", Round: func(context.Context, sdd.DelegateRound) (sdd.DelegateRoundEnd, error) {
+	return sdd.DelegateRun{Runner: "claude", Round: func(context.Context, sdd.DelegateRound) (sdd.DelegateRoundEnd, error) {
 		<-l.release
 		return sdd.DelegateRoundEnd{}, nil
 	}}, nil
@@ -28,7 +28,7 @@ func (l stalledLauncher) LaunchDelegate(context.Context, sdd.DelegateLaunch) (sd
 func TestCaptureDeep_AStalledRoundFailsPastItsTimeLimit(t *testing.T) {
 	launcher := stalledLauncher{release: make(chan struct{})}
 	t.Cleanup(func() { close(launcher.release) })
-	world, session := newDeepWorld(t, "deep-stalled", sdd.VerifierPolicy{Runner: "codex", RoundTimeout: 50 * time.Millisecond}, proctest.WithDelegateLauncher(launcher))
+	world, session := newDeepWorld(t, "deep-stalled", sdd.VerifierPolicy{Runner: "claude", RoundTimeout: 50 * time.Millisecond}, proctest.WithDelegateLauncher(launcher))
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())
 	proctest.RequireStep(t, serve, "deepDispatch")
 	session.Answer(t, instance, "deepDispatch", "delegate", nil, "")

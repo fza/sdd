@@ -78,13 +78,12 @@ func TestHeadlessLauncher_RunsTheConfiguredDriver(t *testing.T) {
 	}
 }
 
-// The launcher hands each headless launch its own block of the served config:
-// claude runs with verify.claude, never with verify.codex.
+// The launcher hands the headless claude launch verify.claude of the served
+// config.
 func TestHeadlessLauncher_PassesTheLaunchsModelAndEffort(t *testing.T) {
 	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{
 		Runner: model.VerifierRunnerClaude,
 		Claude: model.ClaudeAgent{Model: "opus", Effort: "xhigh"},
-		Codex:  model.VerifierAgent{Model: "gpt-5.5", Effort: "high"},
 	}}}
 	launcher := launcherServing(t, cfg)
 	bin := t.TempDir()
