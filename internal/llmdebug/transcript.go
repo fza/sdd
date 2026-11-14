@@ -1,6 +1,5 @@
 // Package llmdebug writes a transcript of every LLM call while llm.debug is on,
-// so a checker's verdict can be traced to the prompt that produced it
-// (20261110-150803-s-tac-9u1).
+// so a checker's verdict can be traced to the prompt that produced it.
 package llmdebug
 
 import (
