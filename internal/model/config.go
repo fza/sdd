@@ -332,7 +332,7 @@ var RetiredConfigKeys = map[string]string{
 
 const retiredSyncReason = "git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config"
 
-const retiredRelevanceReason = "the relevance ledger lives only in machine state (20261114-105752-d-tac-tnk)"
+const retiredRelevanceReason = "the relevance ledger lives only in machine state"
 
 // IgnoredSettings returns the settings in one config layer that sdd reads
 // past. source names the layer: global, project (the shared
