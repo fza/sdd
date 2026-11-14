@@ -488,6 +488,11 @@ summary: {summary}
 
 
 def cmd_setup(args):
+    setup_repo(args, ["--agents", "codex"])
+
+
+def setup_repo(args, init_flags):
+    """A fresh repository with a code module, sdd initialised with init_flags, and the task as a pending directive."""
     repo = Path(args.repo).resolve()
     if repo.exists():
         sys.exit(f"{repo} exists; setup builds a fresh repository")
@@ -503,7 +508,7 @@ def cmd_setup(args):
         'if __name__ == "__main__":\n    unittest.main()\n')
     git(repo, "add", ".")
     git(repo, "commit", "-q", "-m", "Add greeting module")
-    subprocess.run([str(Path(args.sdd).resolve()), "init", "--scope", "project", "--agents", "codex",
+    subprocess.run([str(Path(args.sdd).resolve()), "init", "--scope", "project", *init_flags,
                     "--graph-dir", ".sdd/graph", "--participant", "Eval User", "--language", "en"],
                    cwd=repo, stdin=subprocess.DEVNULL, check=True, capture_output=True)
     config = repo / ".sdd" / "config.yaml"

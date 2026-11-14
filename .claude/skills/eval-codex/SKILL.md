@@ -37,6 +37,25 @@ What the driver fixes for every run:
 - **Sandbox.** `workspace-write` with no approval prompts; the repo's `.git` and its parent are writable so branches, commits and worktrees work.
 - **Codex uses skills, not slash commands.** Start SDD work with `$sdd` in the message, the way a Codex user would.
 
+## Claude Code instead of Codex
+
+`claude_driver.py` next to this file drives Claude Code the same way, one headless `claude -p` per turn, resumed by session id:
+
+```
+python3 claude_driver.py setup  <repo> [--task TEXT] [--summary TEXT] [--verify-mode deep] [--verify-runner subagent] [--dialogue-mode M]
+python3 claude_driver.py start  <repo> "<first user message>" [--model sonnet|opus] [--effort E] [--permission-mode acceptEdits] [--timeout SECONDS]
+python3 claude_driver.py say    <repo> "<next user message>"
+python3 claude_driver.py log    <repo> [--turn N] [--max CHARS]  what the sdd tools returned, subagent calls marked (sub)
+python3 claude_driver.py transcripts <repo>                      the session's transcript, then its subagents' transcripts
+python3 claude_driver.py status <repo>
+```
+
+- **Own config directory.** `<repo>.eval/claude-config` is the run's `CLAUDE_CONFIG_DIR`: transcripts, project list and memory land there, not in `~/.claude`. Your login is shared, never copied: `CLAUDE_SECURESTORAGE_CONFIG_DIR` points the credential lookup at your own config. Only project settings load, so the repo's `.claude/` skills and the `sdd_delegate` agent apply, your CLAUDE.md, hooks and plugins do not.
+- **Only this sdd.** The single MCP server is the chosen `sdd serve`; its tools, `Bash` and skills run without prompts, edits are accepted inside the repo and its parent, anything else is denied. `AskUserQuestion` is off, so the agent asks in its final message.
+- **No daemon.** Background work the agent starts ends with its turn's process.
+- **Slash commands.** Start SDD work with `/sdd` in the message, the way a Claude Code user would.
+- **Measuring.** Pass each path `transcripts` prints to a script that reads Claude Code session files.
+
 ## Playing the user
 
 You are the user, not a coach. The run is only worth something if the agent gets its guidance from what sdd serves.
