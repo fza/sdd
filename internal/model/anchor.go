@@ -57,7 +57,7 @@ func NewAnchorTag(rnd RandomSource) string {
 func AnchorMark(tag string) string { return anchorTagOpen + tag + anchorTagClose }
 
 // TagName is the tag as a pointer names it: without the mark, so no word
-// after it reads as its proof (20261114-121534-d-tac-qdb).
+// after it reads as its proof.
 func TagName(tag string) string { return "tag " + tag }
 
 // PlaceAnchor places tag before a content word of text drawn from rnd. It

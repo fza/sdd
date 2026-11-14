@@ -328,8 +328,7 @@ func TestDoorsExplainTheProof(t *testing.T) {
 const proofExample = `"… dialogue ⟦gn9p⟧ first …" → gn9p:first`
 
 // exactlyThoseTags is how the doors and the held field say which proofs a
-// call lists: the tags the last result's hold_next names
-// (20261114-121534-d-tac-qdb).
+// call lists: the tags the last result's hold_next names.
 const exactlyThoseTags = "exactly those tags"
 
 // Every tool taking proofs shows the worked proof in its held field.

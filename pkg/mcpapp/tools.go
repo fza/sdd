@@ -418,7 +418,7 @@ func (f *ResultNotices) setCacheNotice(notice string) { f.CacheNotice = notice }
 func (f *ResultNotices) setHostNotice(notice string)  { f.HostNotice = notice }
 
 // ResultHoldNext ends every result of an attached session with the tags
-// whose pieces the next serve may repeat (20261114-121534-d-tac-qdb).
+// whose pieces the next serve may repeat.
 type ResultHoldNext struct {
 	ProofNotice string `json:"proof_notice,omitempty" jsonschema:"set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out"`
 	HoldNext    string `json:"hold_next,omitempty" jsonschema:"the tags, likeliest first, whose pieces your next call may get again; list in its held exactly these tags whose text you still see, each with the word right after it"`

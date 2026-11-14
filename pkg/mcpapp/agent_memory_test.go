@@ -32,8 +32,7 @@ type agentMemory struct {
 	forget bool
 	raw    bool
 	// holdNext lists only the tags the last result's hold_next named, as the
-	// served instructions ask (20261114-121534-d-tac-qdb); sent is what the
-	// last call listed.
+	// served instructions ask; sent is what the last call listed.
 	holdNext bool
 	named    []string
 	sent     []string

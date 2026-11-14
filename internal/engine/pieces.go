@@ -19,7 +19,7 @@ type Piece struct {
 }
 
 // HoldRank is how likely the next serve repeats a piece a serve carried, as
-// the hold-next line orders it (20261114-121534-d-tac-qdb).
+// the hold-next line orders it.
 type HoldRank int
 
 const (
@@ -460,13 +460,13 @@ func rankedPieces(records any) []rankedPiece {
 }
 
 // HoldNext names the pieces the next serve may repeat by the tags they were
-// last served under, at most MaxHoldNext, likeliest first
-// (20261114-121534-d-tac-qdb): the lanes and report schemas of the steps the
-// running moves stand at, newest serve first; the hints' knowledge; the lanes
-// and report schemas the last serves of the steps their options lead to
-// carried, nearest first; the hints' reading entries; the pieces the running
-// moves served in full where a proof could have held them; then the rest
-// all those steps carried and what the call served outside them. A piece
+// last served under, at most MaxHoldNext, likeliest first: the lanes and
+// report schemas of the steps the running moves stand at, newest serve first;
+// the hints' knowledge; the lanes and report schemas the last serves of the
+// steps their options lead to carried, nearest first; the hints' reading
+// entries; the pieces the running moves served in full where a proof could
+// have held them; then the rest all those steps carried and what the call
+// served outside them. A piece
 // without a tag, such as a gather brief line, is never named.
 func (s *Session) HoldNext(hints HoldHints) []HeldPiece {
 	var line []HeldPiece
