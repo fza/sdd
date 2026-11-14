@@ -3,6 +3,8 @@ package mcpapp_test
 import (
 	"context"
 	"encoding/json"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -29,6 +31,12 @@ type agentMemory struct {
 	// would.
 	forget bool
 	raw    bool
+	// holdNext lists only the tags the last result's hold_next named, as the
+	// served instructions ask (20261114-121534-d-tac-qdb); sent is what the
+	// last call listed.
+	holdNext bool
+	named    []string
+	sent     []string
 }
 
 func newAgentMemory() *agentMemory { return &agentMemory{held: map[string]string{}} }
@@ -62,10 +70,27 @@ func (m *agentMemory) proofs() []any {
 		m.held, m.forget = map[string]string{}, false
 	}
 	held := make([]any, 0, len(m.held))
+	m.sent = nil
 	for tag, word := range m.held {
+		if m.holdNext && !slices.Contains(m.named, tag) {
+			continue
+		}
 		held = append(held, model.Proof{Tag: tag, Word: word}.String())
+		m.sent = append(m.sent, tag)
 	}
 	return held
+}
+
+func (m *agentMemory) lastNamed() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Sorted(slices.Values(m.named))
+}
+
+func (m *agentMemory) lastSent() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Sorted(slices.Values(m.sent))
 }
 
 func (m *agentMemory) keep(res *mcp.CallToolResult) {
@@ -80,6 +105,18 @@ func (m *agentMemory) keep(res *mcp.CallToolResult) {
 			m.held[proof.Tag] = proof.Word
 		}
 	}
+	if fields, ok := res.StructuredContent.(map[string]any); ok && !res.IsError {
+		line, _ := fields["hold_next"].(string)
+		m.named = holdNextTags(line)
+	}
+}
+
+// holdNextTags reads the tags a hold-next line names, in order.
+func holdNextTags(line string) []string {
+	if line == "" {
+		return nil
+	}
+	return strings.Split(line, ", ")
 }
 
 func (m *agentMemory) middleware(next mcp.MethodHandler) mcp.MethodHandler {

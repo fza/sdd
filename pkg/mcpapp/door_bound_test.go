@@ -65,7 +65,7 @@ func TestTheDoorsServeWithinTheResultBound(t *testing.T) {
 				if size := serveSize(t, opening); size > model.MaxServeChars {
 					t.Fatalf("the opening, its proof guide included, should cost at most %d characters, got %d", model.MaxServeChars, size)
 				}
-				if !strings.Contains(opening.Instructions, "list in held every tag") {
+				if !strings.Contains(opening.Instructions, "list in held exactly those tags") {
 					t.Fatalf("the opening should carry the proof guide, got %.300q", opening.Instructions)
 				}
 				instructions, text := opening.Instructions, opening.Instructions+"\n\n"+opening.Framing+"\n\n"+opening.Vocabulary

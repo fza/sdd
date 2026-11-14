@@ -83,13 +83,11 @@ again later? resume_session with this handle re-serves this list in full.`
 // proofGuide tells an agent, at the opening and at every reorientation, how
 // it proves what it still holds (20261112-075604-d-tac-t4r).
 const proofGuide = `Every piece served in full (instruction lane, framing block, report schema,
-entry) carries a tag, such as ⟦k3f9⟧, before one of its words. On each later
-call, list in held every tag whose text you still see, with the word right
-after it, as tag:word ("… dialogue ⟦gn9p⟧ first …" → gn9p:first). That piece
-then serves as a short pointer. Proofs never carry over: list the tags from
-every earlier result, not only the last, as a piece served many calls ago (the
-type-system overview, a framing block, an entry) serves in full again on any
-call without its proof. Each result's unproved field names, by name and tag,
-the earlier pieces you have not proved since. List in reread the tag or name of
-a piece you no longer see: it serves in full again. Never guess a word: a
-missing or wrong proof costs only the full text.`
+entry) carries a tag, such as ⟦k3f9⟧, before one of its words. Each result
+ends with hold_next: the tags whose pieces your next call may get again. On
+that call, list in held exactly those tags whose text you still see, each with
+the word right after it, as tag:word
+("… dialogue ⟦gn9p⟧ first …" → gn9p:first). That piece then serves as a short
+pointer. List in reread the tag or name of a piece you no longer see: it serves
+in full again. Never guess a word: a missing or wrong proof costs only the full
+text.`

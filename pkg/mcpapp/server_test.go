@@ -2570,7 +2570,7 @@ func jsonSize(t *testing.T, v any) int {
 	return len(raw)
 }
 
-// serveSize is what a serve takes of its result: the unproved list rides in
+// serveSize is what a serve takes of its result: the hold-next line rides in
 // the room model.MaxServeChars leaves under the result bound, as notices do.
 func serveSize(t *testing.T, v any) int {
 	t.Helper()
@@ -2582,7 +2582,7 @@ func serveSize(t *testing.T, v any) int {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		t.Fatal(err)
 	}
-	delete(fields, "unproved")
+	delete(fields, "hold_next")
 	return jsonSize(t, fields)
 }
 

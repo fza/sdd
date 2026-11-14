@@ -15,6 +15,7 @@ cancellation:
     project: test
     source: base
 goal: put the choice to the user; relay their answer verbatim
+hold_next: <tag>, <tag>, <tag>, <tag>, <tag>, <tag>, <tag>, <tag>
 instance: i_2
 instructions: |
   Cancelled operation "newEntry". Returned to interaction "playback" without advancing it. It left: entry 20260921-120000-s-tac-op1, absent. Nothing cleaned up. Confirming again starts a new operation with new identifiers.
