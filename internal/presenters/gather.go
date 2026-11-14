@@ -83,8 +83,8 @@ func RenderGather(w io.Writer, result *query.GatherResult) {
 }
 
 // RenderLateEntries writes the entries that landed after the assemble check
-// as brief lines, one each, nothing cut (D37); an entry held reports in full
-// prints as its pointer (R14).
+// as brief lines, one each, nothing cut; an entry held reports in full prints
+// as its pointer.
 func RenderLateEntries(w io.Writer, g *model.Graph, late []*model.Entry, held func(id string) bool) {
 	repeats := &Repeats{Held: held}
 	for _, e := range late {

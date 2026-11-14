@@ -338,7 +338,7 @@ func TestRescoreRelevance_CalibratesANewJudgeFromStoredLabels(t *testing.T) {
 
 // An entry the prefilter serves in full that the consumer already holds prints
 // as its pointer, and still counts as read; opened by ID it is the way back
-// and serves in full (20261109-004506-d-cpt-udz, R14, D34).
+// and serves in full.
 func TestGather_RelevantEntryTheConsumerHoldsPrintsAsItsPointer(t *testing.T) {
 	scorer := &scriptedScorer{scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.01}}
 	f := prefilterFixture(t, scorer)

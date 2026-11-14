@@ -245,7 +245,7 @@ func TestCLISessionCommandsNeedASession(t *testing.T) {
 }
 
 // A CLI call with --session beside a running serve leaves the serve able to
-// continue the session (20261109-055313-s-tac-7j7).
+// continue the session.
 func TestCLISessionCallLeavesTheServeAbleToContinue(t *testing.T) {
 	f := sessionFixture(t, false)
 	f.serve(t, func(client *mcp.ClientSession) {

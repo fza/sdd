@@ -1414,7 +1414,7 @@ func syncBlockedResult(block *sdd.SyncBlocked) *SyncBlockedResult {
 // recent-moves lane) re-serves that lane alone, never the stable aspirations or
 // directives — the per-lane dedup that keeps a reorientation from exceeding the
 // original serve (I6). The entries a served block carries in full are held
-// from then on (R14); a block is never cut for them, so a held entry cannot
+// from then on; a block is never cut for them, so a held entry cannot
 // re-serve a lane the per-lane dedup already withholds.
 func composeFraming(ss *shellSession, blocks []string) string {
 	var served []string

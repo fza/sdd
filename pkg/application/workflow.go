@@ -1184,15 +1184,14 @@ func (w *WorkflowSession) FramingFullIDs(block string) []string {
 }
 
 // HeldEntryHash is the served-ledger hash of an entry served in full: the
-// no-repeat rule's unit (20261109-004506-d-cpt-udz, R14). Bodies are
-// immutable, so the ID alone keys it.
+// no-repeat rule's unit. Bodies are immutable, so the ID alone keys it.
 func HeldEntryHash(id string) string {
 	sum := sha256.Sum256([]byte("entry-full:" + id))
 	return hex.EncodeToString(sum[:])
 }
 
 // CutRepeats applies the no-repeat rule to the step serves the session
-// renders, as the MCP surface serves them (R14): an injected entry chain
+// renders, as the MCP surface serves them: an injected entry chain
 // prints an entry the consumer already holds in full as its pointer, and
 // holds every entry it serves in full from then on. Off by default: the CLI
 // never cuts.
@@ -1740,8 +1739,8 @@ func (w *WorkflowSession) appendStoredEvents(events []StoredEvent) error {
 // catchUp folds the events another attach of the session (a CLI call with
 // --session beside a serve, a delegate delivering) logged past the version
 // this holder saw, the way replay folds them, and moves the holder to the
-// stored version (20261109-055313-s-tac-7j7). pending is the engine event being
-// appended, already applied in memory: when a folded event names its instance,
+// stored version. pending is the engine event being appended, already applied
+// in memory: when a folded event names its instance,
 // the holder computed that instance on a state the other attach changed, and
 // catchUp refuses as the conflict it is. An ended session surfaces typed.
 func (w *WorkflowSession) catchUp(pending *engine.Event) error {

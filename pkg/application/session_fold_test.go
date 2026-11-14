@@ -54,7 +54,7 @@ func assertIncreasing(t *testing.T, seqs []int) {
 
 // A holder of a session, as the MCP serve holds one, continues after a CLI
 // --session call appended to the stored log: it folds what the other attach
-// wrote and lands its own event after it (20261109-055313-s-tac-7j7).
+// wrote and lands its own event after it.
 func TestWorkflowHolderFoldsAnotherAttachsAppends(t *testing.T) {
 	application, sessions, _, _ := newStampWorkflowApp(t, "", "", time.Now)
 	identity := sdd.RequestIdentity{Subject: "christopher"}

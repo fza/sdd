@@ -503,7 +503,7 @@ func TestCaptureGrounding_OneDirectionScoresAnswerOnlyFromTheDraft(t *testing.T)
 }
 
 // A late entry the consumer already holds in full lists as its pointer while
-// the session cuts repeats, as the MCP surface serves (R14), and as its brief
+// the session cuts repeats, as the MCP surface serves, and as its brief
 // line otherwise.
 func TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer(t *testing.T) {
 	for _, tc := range []struct {
