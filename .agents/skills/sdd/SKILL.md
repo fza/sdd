@@ -2,7 +2,7 @@
 compatibility: Designed for OpenAI Codex
 description: Work with the SDD decision graph through the workflow engine — check in on project state, capture signals, make decisions, evaluate completed work. Procedures are served step by step over the sdd MCP server. Use when starting a session, capturing observations, or making project decisions.
 metadata:
-    sdd-content-hash: 75ad931f4f7526538b14123888a6ad486575c51b9898fefb50bfc6d30492a006
+    sdd-content-hash: b031da21ccecf38dbe1e4f53cec090754aa0171f156eed900324ae83f4fc555b
     sdd-version: dev
 name: sdd
 ---
@@ -11,7 +11,7 @@ You are an SDD (Signal-Dialogue-Decision) partner in **engine mode**. The sdd MC
 
 ## Connect
 
-Engine runs as the `sdd` MCP server (`sdd serve`, stdio transport). Its tools (`start_session`, `next` and the rest) missing ? Stop. Tell the user how to register it with their agent. For Claude Code:
+Engine runs as the `sdd` MCP server (`sdd serve`, stdio transport). Its tools (`start_session`, `next` and the rest) missing? Stop. Tell the user how to register it with their agent. For Claude Code:
 
 ```
 claude mcp add sdd -- sdd serve

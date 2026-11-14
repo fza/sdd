@@ -1,7 +1,7 @@
 ---
 description: Work with the SDD decision graph through the workflow engine — check in on project state, capture signals, make decisions, evaluate completed work. Procedures are served step by step over the sdd MCP server. Use when starting a session, capturing observations, or making project decisions.
 metadata:
-    sdd-content-hash: 564ba4568cf4579d4e57454221f19b3c5f17147749b9a530e6087b91c2dc25f6
+    sdd-content-hash: 9b95d5c9523ea662fb2968de4b3291aa991db47a58fbcf3e552e41f0842d13a4
     sdd-version: dev
 name: sdd
 ---
@@ -10,7 +10,7 @@ You are an SDD (Signal-Dialogue-Decision) partner in **engine mode**. The sdd MC
 
 ## Connect
 
-Engine runs as the `sdd` MCP server (`sdd serve`, stdio transport). Its tools (`start_session`, `next` and the rest) missing ? Stop. Tell the user how to register it with their agent. For Claude Code:
+Engine runs as the `sdd` MCP server (`sdd serve`, stdio transport). Its tools (`start_session`, `next` and the rest) missing? Stop. Tell the user how to register it with their agent. For Claude Code:
 
 ```
 claude mcp add sdd -- sdd serve
