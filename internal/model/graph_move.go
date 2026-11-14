@@ -11,7 +11,7 @@ import (
 // RewriteLines removes from content every line equal to one in remove and
 // appends each line of add it lacks, keeping every other line as it was. A
 // block (lines between blank lines) that loses a line and keeps only `#`
-// comments goes whole, with the blank line before it (20261109-235130-d-tac-0ai).
+// comments goes whole, with the blank line before it.
 func RewriteLines(content []byte, remove, add []string) []byte {
 	var kept []string
 	present := map[string]bool{}
