@@ -138,7 +138,7 @@ func cleanTitle(raw string) (string, error) {
 	if strings.ContainsAny(title, "\r\n") {
 		return "", fmt.Errorf("title %q spans more than one line", title)
 	}
-	return model.CapitalizeTitle(title), nil
+	return model.FitTitle(title), nil
 }
 
 // summaryContext holds all data needed to render the summary and title

@@ -203,7 +203,7 @@ func (a *Application) ReplaceSummary(ctx context.Context, identity RequestIdenti
 		return DocumentPublication{}, err
 	}
 	canonical := current.Content
-	title := model.CapitalizeTitle(replacement.Title)
+	title := model.FitTitle(replacement.Title)
 	summaryReplaced := replacement.Summary == "" || entry.Summary == replacement.Summary
 	titleReplaced := title == "" || entry.Title == title
 	if replacement.ExpectedBlob == "" || GitBlobID(current.Content) == replacement.ExpectedBlob {

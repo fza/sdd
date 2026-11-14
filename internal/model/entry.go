@@ -456,7 +456,7 @@ func (e *Entry) ListingTitle() string {
 // TitleRule is the guidance every title writer follows, the title model and
 // an agent writing a title alike, rendered from here into each surface that
 // states it.
-const TitleRule = "A title names the entry's subject for a reader scanning a list of entries: a noun phrase of 3 to 10 plain words, about 30 to 80 characters, starting with a capital letter, like \"Daemon project removal\". Write a command, identifier, file or package name, and any other name whose own spelling starts with a lowercase letter, as a backtick code span in its own casing wherever it appears; a title naming one first opens with the code span, like \"`sdd` info JSON output\" or \"`macOS` signing failure\"."
+const TitleRule = "A title names the entry's subject for a reader scanning a list of entries: a noun phrase of 3 to 8 plain words, at most 50 characters, starting with a capital letter, like \"Daemon project removal\". Write a command, identifier, file or package name, and any other name whose own spelling starts with a lowercase letter, as a backtick code span in its own casing wherever it appears; a title naming one first opens with the code span, like \"`sdd` info JSON output\" or \"`macOS` signing failure\"."
 
 // CapitalizeTitle starts a title with a capital letter, whatever wrote it:
 // listings show titles in a column, and a mix of cases reads as noise there.
@@ -468,6 +468,38 @@ func CapitalizeTitle(title string) string {
 		return title
 	}
 	return string(unicode.ToTitle(first)) + title[size:]
+}
+
+// Title length bounds. TitleRule asks for at most 50 characters; nothing
+// refuses a longer title, but one over TitleCutAbove characters is cut at the
+// first word boundary after TitleCutAt characters, so a runaway answer cannot
+// flood a listing.
+const (
+	TitleCutAbove = 80
+	TitleCutAt    = 60
+)
+
+// FitTitle is the form a model- or agent-written title takes: capitalized, and
+// cut with an ellipsis when it runs over TitleCutAbove characters and the cut
+// drops at least two words. A title a person passes with --title is stored
+// whole.
+func FitTitle(title string) string {
+	title = CapitalizeTitle(title)
+	runes := []rune(title)
+	if len(runes) <= TitleCutAbove {
+		return title
+	}
+	boundary := -1
+	for i := TitleCutAt; i < len(runes); i++ {
+		if unicode.IsSpace(runes[i]) {
+			boundary = i
+			break
+		}
+	}
+	if boundary < 0 || len(strings.Fields(string(runes[boundary:]))) < 2 {
+		return title
+	}
+	return strings.TrimRight(string(runes[:boundary]), " ,;:-") + "…"
 }
 
 // TitleBackfill counts what filling the missing titles of entries costs:
