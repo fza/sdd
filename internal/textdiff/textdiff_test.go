@@ -93,3 +93,25 @@ func TestChangedSpans(t *testing.T) {
 		})
 	}
 }
+
+func TestAddedSentences(t *testing.T) {
+	old := "The cache misses on restart. It costs a cold start."
+	for _, tc := range []struct {
+		name, new string
+		want      []string
+	}{
+		{"a sentence added to a line", "The cache misses on restart. It costs a cold start. Users wait ten seconds.", []string{"Users wait ten seconds."}},
+		{"a paragraph added", old + "\n\nWarming it at boot fixes this! Does it?", []string{"Warming it at boot fixes this!", "Does it?"}},
+		{"a reworded sentence", "The cache misses after every deploy. It costs a cold start.", []string{"The cache misses after every deploy."}},
+		{"a cut within a sentence", "The cache misses. It costs a cold start.", nil},
+		{"a reordering", "It costs a cold start. The cache misses on restart.", nil},
+		{"a rewrap", "The cache misses\non restart. It costs a cold start.", nil},
+		{"no change", old, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := textdiff.AddedSentences(old, tc.new); !slices.Equal(got, tc.want) {
+				t.Fatalf("only sentences carrying words old does not hold should be added, got %q", got)
+			}
+		})
+	}
+}

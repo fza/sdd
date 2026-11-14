@@ -438,6 +438,61 @@ func TestCapture_WritingGuideRunsOncePerCapture(t *testing.T) {
 	}
 }
 
+// The playback after a guide revision lists each sentence the revision added,
+// so the user sees what they never said.
+func TestCapture_GuideRevisionPlaybackListsAddedSentences(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		wantAdded []string
+	}{
+		{
+			name:      "a written-in sentence is listed",
+			body:      "A tactical gap: the fixture observes something.\n\nThe earlier approach failed under load.",
+			wantAdded: []string{`- "The earlier approach failed under load."`},
+		},
+		{
+			name: "a revision adding nothing shows no list",
+			body: "A tactical gap: the fixture observes.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			world, session := newCaptureWorld(t, "core-guide-added")
+			world.LLM.GuideFindings = []proctest.GuideFinding{{
+				Reasoning: "the body names no reason the gap matters", Axis: "stranding",
+				Quote: "the fixture observes something", Repair: "write-in", Severity: "substantive",
+			}}
+
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+			session.Report(t, instance, captureDraft())
+			session.Answer(t, instance, "playback", "confirm", nil, "yes")
+			serve = session.Answer(t, instance, "guideReview", "revise", map[string]any{"body": tt.body}, "")
+			proctest.RequireStep(t, serve, "playback")
+
+			const header = "Added by the revision, not your words:"
+			if len(tt.wantAdded) == 0 {
+				if strings.Contains(serve.Instructions, header) {
+					t.Fatalf("a revision adding no sentence should list none, got:\n%s", serve.Instructions)
+				}
+				return
+			}
+			for _, want := range append([]string{header}, tt.wantAdded...) {
+				if !strings.Contains(serve.Instructions, want) {
+					t.Errorf("playback should list the revision's added sentence, missing %q:\n%s", want, serve.Instructions)
+				}
+			}
+			if strings.Contains(serve.Instructions, `- "A tactical gap: the fixture observes something."`) {
+				t.Errorf("a sentence the draft held before the revision is not listed as added:\n%s", serve.Instructions)
+			}
+
+			serve = session.Answer(t, instance, "playback", "confirm", nil, "fine")
+			proctest.RequireStep(t, serve, "verifySummary")
+		})
+	}
+}
+
 // Only the user's last adjust after the guide's pass gets a delta check, of
 // the lines it changed.
 func TestCapture_LastAdjustGetsADeltaCheck(t *testing.T) {
