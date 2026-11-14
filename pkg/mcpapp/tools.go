@@ -543,7 +543,7 @@ func (s *toolSet) register(srv *mcp.Server) {
 			"summaries are pointers, not facts.",
 	}, toolBoundary(s, s.show))
 
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	mcp.AddTool(srv, &mcp.Tool{
 		Name: "gather",
 		Description: "Ground a draft before its capture, in one call, within the session named by session " +
 			"(required): on a small graph every live entry's brief; above it a semantic search, keyword " +
@@ -569,7 +569,7 @@ func (s *toolSet) register(srv *mcp.Server) {
 		Description: "Engine function contracts (predicates, queries, commands) — what procedure spec authors consult. Carries the session handle like every other tool.",
 	}, toolBoundary(s, s.registryDocs))
 
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	mcp.AddTool(srv, &mcp.Tool{
 		Name: "sync_repos",
 		Description: "Run the sync round of the connected repositories (session required): each repository's " +
 			"sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to " +
@@ -579,7 +579,7 @@ func (s *toolSet) register(srv *mcp.Server) {
 
 // cutRepeats applies the no-repeat rule to the session's step serves, unless
 // every call serves in full (Options.ServeInFull).
-func (s *Server) cutRepeats(workflow *sdd.WorkflowSession) {
+func (s *toolSet) cutRepeats(workflow *sdd.WorkflowSession) {
 	if !s.serveInFull {
 		workflow.CutRepeats()
 	}
@@ -1249,7 +1249,7 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 	return nil, ShowResult{Entries: entries}, nil
 }
 
-func (s *Server) gather(ctx context.Context, req *mcp.CallToolRequest, args GatherArgs) (*mcp.CallToolResult, GatherResult, error) {
+func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args GatherArgs) (*mcp.CallToolResult, GatherResult, error) {
 	ss, err := s.attachedSession(ctx, req, args.Session)
 	if err != nil {
 		return nil, GatherResult{}, err
@@ -1364,7 +1364,7 @@ func (s *toolSet) registryDocs(ctx context.Context, req *mcp.CallToolRequest, ar
 // its code rather than its prose (d-cpt-s2i). Uncoded errors pass unchanged.
 // The output type is erased to any so the SDK declares no outputSchema; the
 // structured content is still marshalled from the returned value.
-func toolBoundary[In, Out any](s *Server, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
+func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		hostNotice, err := s.beforeCall(ctx)
 		if err != nil {
@@ -1408,7 +1408,7 @@ func toolBoundary[In, Out any](s *Server, handler func(context.Context, *mcp.Cal
 	}
 }
 
-func (s *Server) beforeCall(ctx context.Context) (string, error) {
+func (s *toolSet) beforeCall(ctx context.Context) (string, error) {
 	if s.before == nil {
 		return "", nil
 	}
@@ -1424,7 +1424,7 @@ type syncNoticeSlot struct {
 	claim func(context.Context) string
 }
 
-func (s *Server) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession) {
+func (s *toolSet) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession) {
 	slot, ok := ctx.Value(syncNoticeKey{}).(*syncNoticeSlot)
 	if !ok {
 		return
