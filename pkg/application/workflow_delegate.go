@@ -383,6 +383,11 @@ func (w *WorkflowSession) forkDelegate(ctx context.Context, identity RequestIden
 		reason := "the delegate's launch failed: " + err.Error()
 		return nil, errors.Join(err, w.session.EndFork(parent, link, reason), w.app.endDelegate(ctx, identity, childID, reason))
 	}
+	// The delegate runs on the model its dispatch names until it reports one.
+	child.setModel(dispatch.Model)
+	if err := child.session.SinkErr(); err != nil {
+		return nil, err
+	}
 	return dispatch, nil
 }
 

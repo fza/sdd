@@ -301,20 +301,22 @@ func TestMalformedProofRefusesTheCall(t *testing.T) {
 }
 
 // Both doors explain the proof once: the opening serve and every
-// reorientation carry it, a Claude agent's by the hold-next line, any other
-// client's by every tag from every earlier result.
+// reorientation carry it, an Opus or Fable agent's by the hold-next line, any
+// other agent's by every tag from every earlier result, whatever its client.
 func TestDoorsExplainTheProof(t *testing.T) {
 	for _, tc := range []struct {
-		client, guide, other string
+		name, client, model, guide, other string
 	}{
-		{claudeClient, holdNextGuide, everyEarlierResult},
-		{otherClient, everyTagGuide, "hold_next"},
-		{"", everyTagGuide, "hold_next"},
+		{"opus", claudeClient, opusModel, holdNextGuide, everyEarlierResult},
+		{"fable", otherClient, fableModel, holdNextGuide, everyEarlierResult},
+		{"sonnet", claudeClient, sonnetModel, everyTagGuide, "hold_next"},
+		{"no model", claudeClient, "", everyTagGuide, "hold_next"},
+		{"codex", codexClient, "", everyTagGuide, "hold_next"},
 	} {
-		t.Run(tc.client, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			env := newTestServer(t, nil, "", "")
 			agent := newAgentMemory()
-			agent.raw = true
+			agent.raw, agent.model = true, tc.model
 			cs := connectClient(t, env.srv, agent, tc.client)
 			door := openSession(t, cs)
 			var resumed mcpserver.ResumeSessionResult
@@ -327,7 +329,7 @@ func TestDoorsExplainTheProof(t *testing.T) {
 					t.Fatalf("%s should show a worked proof:\n%s", name, text)
 				}
 				if !strings.Contains(text, tc.guide) || strings.Contains(text, tc.other) {
-					t.Fatalf("%s should carry only the client's proof guide:\n%s", name, text)
+					t.Fatalf("%s should carry only the proof guide for the agent's model:\n%s", name, text)
 				}
 			}
 		})
@@ -339,8 +341,8 @@ func TestDoorsExplainTheProof(t *testing.T) {
 const proofExample = `"… dialogue ⟦gn9p⟧ first …" → gn9p:first`
 
 // holdNextGuide and everyTagGuide are how the two proof guides say which
-// proofs a call lists: a Claude agent the tags the last result's hold_next
-// names (20261114-121534-d-tac-qdb), any other client every tag it still
+// proofs a call lists: an Opus or Fable agent the tags the last result's
+// hold_next names (20261114-121534-d-tac-qdb), any other every tag it still
 // sees (20261112-075604-d-tac-t4r).
 const (
 	holdNextGuide = "held on every call: exactly those tags"

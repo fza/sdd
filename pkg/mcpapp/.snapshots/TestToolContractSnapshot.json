@@ -320,6 +320,10 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "model": {
+          "description": "the model you run on, as your harness names it (e.g. claude-opus-5-5). Fill it in: this call's instructions depend on it",
+          "type": "string"
+        },
         "session": {
           "description": "session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step, with the schema to continue it. Presenting the handle is the whole authorization. It also declares you need re-serving: every piece of the position serves in full, whatever the call holds",
           "type": "string"
@@ -636,6 +640,10 @@
       "properties": {
         "label": {
           "description": "short single-line subject label for the session; set it early, update when the subject sharpens",
+          "type": "string"
+        },
+        "model": {
+          "description": "the model you run on, as your harness names it (e.g. claude-opus-5-5). Fill it in: this call's instructions depend on it",
           "type": "string"
         },
         "project": {

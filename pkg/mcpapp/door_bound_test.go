@@ -56,29 +56,29 @@ func TestTheDoorsServeWithinTheResultBound(t *testing.T) {
 		"mature project":  {shapedServer(proctest.DefaultShape()), []string{"## Working principles", "Local participant: Tester"}},
 		"German project":  {func(t *testing.T) *mcpserver.Server { return newTestServerConfig(t, nil, "", "", "de").srv }, []string{"Vokabular", "Language: de"}},
 	}
-	guides := map[string]string{claudeClient: holdNextGuide, otherClient: everyTagGuide}
+	guides := map[string]string{opusModel: holdNextGuide, sonnetModel: everyTagGuide}
 	for graph, tc := range graphs {
 		phrases := append(tc.phrases, "Ending is part of the arc")
-		for client, guide := range guides {
+		for agentModel, guide := range guides {
 			for _, door := range []string{"start_session", "resume_session"} {
-				t.Run(graph+"/"+client+"/"+door, func(t *testing.T) {
-					testDoorWithinTheResultBound(t, tc.server(t), client, guide, door, phrases)
+				t.Run(graph+"/"+agentModel+"/"+door, func(t *testing.T) {
+					testDoorWithinTheResultBound(t, tc.server(t), agentModel, guide, door, phrases)
 				})
 			}
 		}
 	}
 }
 
-func testDoorWithinTheResultBound(t *testing.T, srv *mcpserver.Server, client, guide, door string, phrases []string) {
+func testDoorWithinTheResultBound(t *testing.T, srv *mcpserver.Server, agentModel, guide, door string, phrases []string) {
 	t.Helper()
-	cs, bound := boundedConnectClient(t, srv, false, client)
+	cs, bound := boundedConnectModel(t, srv, false, agentModel)
 	defer func() { t.Logf("largest results: %v", bound.largest) }()
 	opening := openSession(t, cs)
 	if size := serveSize(t, opening); size > model.MaxServeChars {
 		t.Fatalf("the opening, its proof guide included, should cost at most %d characters, got %d", model.MaxServeChars, size)
 	}
 	if !strings.Contains(opening.Instructions, guide) {
-		t.Fatalf("the opening should carry the client's proof guide, got %.300q", opening.Instructions)
+		t.Fatalf("the opening should carry the proof guide for the agent's model, got %.300q", opening.Instructions)
 	}
 	instructions, text := opening.Instructions, opening.Instructions+"\n\n"+opening.Framing+"\n\n"+opening.Vocabulary
 	if door == "resume_session" {
