@@ -342,8 +342,7 @@ const proofExample = `"… dialogue ⟦gn9p⟧ first …" → gn9p:first`
 
 // holdNextGuide and everyTagGuide are how the two proof guides say which
 // proofs a call lists: an Opus or Fable agent the tags the last result's
-// hold_next names (20261114-121534-d-tac-qdb), any other every tag it still
-// sees (20261112-075604-d-tac-t4r).
+// hold_next names, any other every tag it still sees.
 const (
 	holdNextGuide = "held on every call: exactly those tags"
 	everyTagGuide = "list in held every tag"

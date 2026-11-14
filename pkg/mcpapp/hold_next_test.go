@@ -79,8 +79,8 @@ func TestResultsEndWithTheHoldNextLine(t *testing.T) {
 // Only an agent reporting an Opus or Fable model gets the hold-next line:
 // every result it gets carries one, whatever its client, while an agent on
 // any other model, or reporting none, gets none on any result and proves
-// every tag it still sees (20261112-075604-d-tac-t4r), which still makes a
-// step served again its pointers.
+// every tag it still sees, which still makes a step served again its
+// pointers.
 func TestOnlyAnOpusOrFableAgentGetsTheHoldNextLine(t *testing.T) {
 	for _, tc := range []struct {
 		name, client, model string
