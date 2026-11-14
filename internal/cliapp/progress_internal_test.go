@@ -141,8 +141,11 @@ func TestPlainFillProgress_PacesLines(t *testing.T) {
 }
 
 func TestBackfillProgressCountsFilledEntries(t *testing.T) {
-	backfill := &command.SummarizeCmd{}
+	backfill := &command.SummarizeCmd{OnSkipped: func(string) {}}
 	reporter := newBackfillProgress(backfill)
+	if backfill.OnSkipped != nil {
+		t.Error("a skipped entry should print no line under the bar")
+	}
 	backfill.OnPlanned(3)
 	backfill.OnTitled("20260101-120000-s-prc-aaa", "A title")
 	backfill.OnSummarized("20260101-120001-s-prc-bbb", "A summary.")

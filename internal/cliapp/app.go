@@ -1382,9 +1382,58 @@ func summarizeCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			return handler.Summarize(ctx, sumCmd)
+			if len(ids) > 0 {
+				return handler.Summarize(ctx, sumCmd)
+			}
+
+			out := cmd.ErrWriter
+			err = handler.CommitStrandedTitles(ctx, &command.CommitStrandedTitlesCmd{
+				OnCommitted: func(count int) {
+					fmt.Fprintf(out, "committed %d entries an earlier backfill titled but did not commit\n", count)
+				},
+			})
+			if err != nil {
+				return err
+			}
+			if !sumCmd.Force {
+				graph, err := loadGraph(cmd)
+				if err != nil {
+					return err
+				}
+				withSummary, titleOnly := model.TitleBackfill(graph.Entries)
+				fmt.Fprintf(out, "Backfill: %d entries get a title beside their stored summary, %d entries get a summary and a title -> %d model calls.\n", titleOnly, withSummary, titleOnly+withSummary)
+			}
+			if !cliout.IsInteractive(out) {
+				return handler.Summarize(ctx, sumCmd)
+			}
+			progress := newBackfillProgress(sumCmd)
+			_, err = tui.Interactive(ctx, transientViewPolicy(),
+				tui.View{Reader: cmd.Reader, Writer: out, InitialPhase: model.PhaseSummarizing, Progress: progress},
+				func(ctx context.Context) (struct{}, error) {
+					return struct{}{}, handler.Summarize(ctx, sumCmd)
+				})
+			return err
 		})),
 	}
+}
+
+// newBackfillProgress reroutes a backfill's per-entry callbacks onto a footer
+// reporter: on a terminal the bar replaces the line per entry.
+func newBackfillProgress(backfill *command.SummarizeCmd) *cliout.Reporter {
+	reporter := cliout.NewReporter()
+	reporter.SetUnit("entries")
+	backfill.OnPlanned = func(n int) {
+		reporter.SetPhase(model.PhaseSummarizing)
+		reporter.SetTotal(n)
+	}
+	advance := func(id, _ string) {
+		reporter.Add(1)
+		reporter.SetNote(id)
+	}
+	backfill.OnSummarized = advance
+	backfill.OnTitled = advance
+	backfill.OnSkipped = nil
+	return reporter
 }
 
 // summarizeHandler wires the handler summary generation runs on: the graph,

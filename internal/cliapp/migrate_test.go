@@ -17,7 +17,8 @@ const (
 )
 
 // newMigrateProject builds a schema-1 graph with one summarized, untitled
-// entry, whose LLM is a local listener answering every call with a title.
+// entry, whose LLM is a local listener answering every call with a title and
+// a summary.
 func newMigrateProject(t *testing.T) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +26,7 @@ func newMigrateProject(t *testing.T) string {
 			_, _ = w.Write([]byte(`{"models":[]}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"model":"m","response":"{\"title\":\"migrated title\"}","done":true}`))
+		_, _ = w.Write([]byte(`{"model":"m","response":"{\"title\":\"migrated title\",\"summary\":\"A generated summary.\"}","done":true}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -168,14 +169,59 @@ func TestMigrateCommitsTitlesAFailedCommitLeftBehind(t *testing.T) {
 	}
 }
 
-func TestSummarizeAllFillsTitlesOnASchemaOneGraph(t *testing.T) {
+func TestSummarizeCostLine(t *testing.T) {
+	cases := []struct {
+		name         string
+		args         []string
+		wantCostLine bool
+		wantLine     string
+		wantSummary  string
+	}{
+		{name: "a fill states its cost and keeps the stored summary", args: []string{"summarize", "--all"}, wantCostLine: true, wantLine: "  titled 20260914-020000-s-tac-mig", wantSummary: "summary: A stored summary that stays."},
+		{name: "--force regenerates without a fill's cost line", args: []string{"summarize", "--all", "--force"}, wantLine: "  summarized 20260914-020000-s-tac-mig", wantSummary: "summary: A generated summary."},
+		{name: "a named entry regenerates without a fill's cost line", args: []string{"summarize", "20260914-020000-s-tac-mig"}, wantLine: "  summarized 20260914-020000-s-tac-mig", wantSummary: "summary: A generated summary."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			project := newMigrateProject(t)
+			output, err := runReleased(t, project, "", tc.args...)
+			if err != nil {
+				t.Fatalf("sdd summarize: %v\n%s", err, output)
+			}
+			costLine := "Backfill: 1 entries get a title beside their stored summary, 0 entries get a summary and a title -> 1 model calls."
+			if strings.Contains(output, costLine) != tc.wantCostLine {
+				t.Errorf("only a fill should state its cost before it runs:\n%s", output)
+			}
+			if strings.Contains(output, "Proceed?") {
+				t.Errorf("summarize should run without asking:\n%s", output)
+			}
+			if !strings.Contains(output, tc.wantLine) {
+				t.Errorf("off a terminal each filled entry should get its own line:\n%s", output)
+			}
+			entry := readFile(t, filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel)))
+			if !strings.Contains(entry, "title: Migrated title") || !strings.Contains(entry, tc.wantSummary) {
+				t.Errorf("the entry should gain its title beside the expected summary:\n%s", entry)
+			}
+		})
+	}
+}
+
+func TestSummarizeAllCommitsTitlesAFailedCommitLeftBehind(t *testing.T) {
 	project := newMigrateProject(t)
+	entryPath := filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel))
+	writeFile(t, entryPath, strings.Replace(readFile(t, entryPath), "summary:", "title: stranded title\nsummary:", 1))
+
 	output, err := runReleased(t, project, "", "summarize", "--all")
 	if err != nil {
 		t.Fatalf("summarize --all: %v\n%s", err, output)
 	}
-	entry := readFile(t, filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel)))
-	if !strings.Contains(entry, "title: Migrated title") {
-		t.Errorf("a summarized entry on a schema-1 graph should gain its title:\n%s", entry)
+	if !strings.Contains(output, "committed 1 entries an earlier backfill titled but did not commit") || !strings.Contains(output, "-> 0 model calls") {
+		t.Errorf("the stranded title should be committed before the cost is counted:\n%s", output)
+	}
+	if status := gitIn(t, project, "status", "--porcelain", "--", ".sdd/graph"); strings.TrimSpace(status) != "" {
+		t.Errorf("no graph file should stay uncommitted:\n%s", status)
+	}
+	if entry := readFile(t, entryPath); !strings.Contains(entry, "title: stranded title") {
+		t.Errorf("the stranded title should be kept as written:\n%s", entry)
 	}
 }

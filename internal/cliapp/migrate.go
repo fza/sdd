@@ -137,21 +137,3 @@ func migrateCmd() *cli.Command {
 		},
 	}
 }
-
-// newBackfillProgress reroutes a backfill's per-entry callbacks onto a footer
-// reporter: on a terminal the bar replaces the line per entry.
-func newBackfillProgress(backfill *command.SummarizeCmd) *cliout.Reporter {
-	reporter := cliout.NewReporter()
-	reporter.SetUnit("entries")
-	backfill.OnPlanned = func(n int) {
-		reporter.SetPhase(model.PhaseSummarizing)
-		reporter.SetTotal(n)
-	}
-	advance := func(id, _ string) {
-		reporter.Add(1)
-		reporter.SetNote(id)
-	}
-	backfill.OnSummarized = advance
-	backfill.OnTitled = advance
-	return reporter
-}
