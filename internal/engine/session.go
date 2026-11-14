@@ -57,9 +57,8 @@ const (
 	// reads past it.
 	EventServedBlocks EventType = "served_blocks"
 	// EventAnchors records the anchors a call issued for the pieces it served
-	// in full, so a restarted server still checks their proofs (Piece), and
-	// what each instance's serve carried (HoldNext). No instance: the served
-	// memory is session-level like the read set.
+	// in full, so a restarted server still checks their proofs (Piece). No
+	// instance: the served memory is session-level like the read set.
 	EventAnchors EventType = "anchors"
 	// EventDeferred records that a serve of an instance left lanes waiting
 	// past the result bound, with the pieces it sent, or, with ended set, that
@@ -69,9 +68,7 @@ const (
 	// position — the declaration that it needs re-serving. Its call serves
 	// every piece in full.
 	EventReoriented EventType = "reoriented"
-	// EventModel carries the model the agent behind the session runs on (no
-	// instance), as the agent reported it or its dispatch named it. Last one
-	// wins on fold and replay.
+	// EventModel is a log naming the agent's model: replay reads past it.
 	EventModel EventType = "model"
 )
 
@@ -227,9 +224,6 @@ type Session struct {
 	// picks a parked dialogue by. Agent-supplied via SetLabel, updatable;
 	// empty until supplied.
 	Label string
-	// Model is the model the agent behind the session runs on, as its harness
-	// names it; set through SetModel, empty until known.
-	Model string
 	// DialogueMode is the mode in force: opened from config, then followed
 	// through SetDialogue; DialogueSource names the config layer that set it.
 	DialogueMode   model.DialogueMode
@@ -263,18 +257,8 @@ type Session struct {
 	// deferred folds the deferral events: per instance whose lanes wait, the
 	// pieces its serve sent, each under its tag (FollowDeferral).
 	deferred map[string]map[Piece]string
-	// latest, steps, stepServes and repeats fold what the hold-next line
-	// names (HoldNext): per piece the tag it was last served under, per
-	// instance what its last serve carried and per step of it what that
-	// step's last serve carried, per move the pieces served in full again
-	// where a proof could have held them.
-	latest     map[Piece]string
-	steps      map[string]stepServe
-	stepServes map[string]map[string][]rankedPiece
-	stepSeq    int
-	repeats    map[string][]Piece
-	call       pieceCall
-	rnd        model.RandomSource
+	call     pieceCall
+	rnd      model.RandomSource
 	// sinkErr carries a deferred log-append failure; surfaced by the next
 	// advance call so a durability problem can't pass silently.
 	sinkErr     error
@@ -378,16 +362,6 @@ func (s *Session) SetLabel(label string) {
 	}
 	s.Label = label
 	s.appendEvent("", EventLabeled, map[string]any{"label": label})
-}
-
-// SetModel records the model the agent behind the session runs on.
-// Idempotent per value, as SetLabel is.
-func (s *Session) SetModel(model string) {
-	if model == s.Model {
-		return
-	}
-	s.Model = model
-	s.appendEvent("", EventModel, map[string]any{"model": model})
 }
 
 // LogRead records what a read surface served to the session: entry IDs at
@@ -1183,11 +1157,6 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			s.Label = l
 		}
 
-	case EventModel:
-		if m, ok := ev.Data["model"].(string); ok {
-			s.Model = m
-		}
-
 	case EventStarted:
 		canonical, _ := ev.Data["procedure"].(string)
 		entryID, _ := ev.Data["entry"].(string)
@@ -1402,14 +1371,11 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		for _, record := range anchors {
 			s.foldAnchor(record)
 		}
-		steps, _ := ev.Data["steps"].(map[string]any)
-		at, _ := ev.Data["at"].(map[string]any)
-		s.foldSteps(steps, at)
 
 	case EventDeferred:
 		s.foldDeferral(ev.Instance, ev.Data)
 
-	case EventServed, EventParked, EventServedBlocks, EventReoriented:
+	case EventServed, EventParked, EventServedBlocks, EventReoriented, EventModel:
 		// Forensic only — no state effect.
 
 	default:

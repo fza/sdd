@@ -23,12 +23,7 @@ func newPieceSession(sink engine.EventSink) *engine.Session {
 
 func servedInFull(t *testing.T, session *engine.Session, piece engine.Piece, covers ...string) model.Proof {
 	t.Helper()
-	return servedInFullAs(t, session, piece, engine.HoldCarried, covers...)
-}
-
-func servedInFullAs(t *testing.T, session *engine.Session, piece engine.Piece, rank engine.HoldRank, covers ...string) model.Proof {
-	t.Helper()
-	served := session.ServePiece(piece, rank, covers, placeIn(pieceText))
+	served := session.ServePiece(piece, covers, placeIn(pieceText))
 	if served.Held || served.Anchor.Tag == "" {
 		t.Fatalf("the piece should serve in full under a fresh tag, got %+v", served)
 	}
@@ -41,7 +36,7 @@ func TestServePieceServesInFullUntilTheCallProvesIt(t *testing.T) {
 
 	session.BeginCall(nil, nil)
 	proof := servedInFull(t, session, lane)
-	if served := session.ServePiece(lane, engine.HoldStep, nil, placeIn(pieceText)); !served.Held || served.Tag != proof.Tag {
+	if served := session.ServePiece(lane, nil, placeIn(pieceText)); !served.Held || served.Tag != proof.Tag {
 		t.Errorf("a repeat within the same call should point at the tag just served, got %+v", served)
 	}
 	session.RecordAnchors()
@@ -52,7 +47,7 @@ func TestServePieceServesInFullUntilTheCallProvesIt(t *testing.T) {
 	}
 
 	session.BeginCall([]model.Proof{proof}, nil)
-	if served := session.ServePiece(lane, engine.HoldStep, nil, placeIn(pieceText)); !served.Held || served.Tag != proof.Tag {
+	if served := session.ServePiece(lane, nil, placeIn(pieceText)); !served.Held || served.Tag != proof.Tag {
 		t.Errorf("a call proving the piece should get its pointer, got %+v", served)
 	}
 }
@@ -143,7 +138,7 @@ func TestAnchorsSurviveARestart(t *testing.T) {
 		t.Fatalf("replaying a log carrying anchors and an older served-blocks event: %v", err)
 	}
 	replayed.BeginCall([]model.Proof{proof}, nil)
-	if served := replayed.ServePiece(lane, engine.HoldStep, nil, placeIn(pieceText)); !served.Held {
+	if served := replayed.ServePiece(lane, nil, placeIn(pieceText)); !served.Held {
 		t.Error("a proof issued before the restart should still hold the piece")
 	}
 	if _, held := replayed.Holds(entry); !held {
@@ -176,7 +171,7 @@ func TestServePieceWithoutAWordToTagServesInFull(t *testing.T) {
 	session := newPieceSession(nil)
 	for range 2 {
 		session.BeginCall([]model.Proof{{Tag: "zzzz", Word: "of"}}, nil)
-		served := session.ServePiece(piece, engine.HoldStep, nil, placeIn("— of a"))
+		served := session.ServePiece(piece, nil, placeIn("— of a"))
 		if served.Held || served.Anchor.Tag != "" {
 			t.Fatalf("a piece with no word to tag should serve in full untagged, got %+v", served)
 		}

@@ -11,10 +11,9 @@ import (
 )
 
 // Proofs is what a call lists about the pieces served to it before; the
-// engine decides from them which piece serves as its pointer. A tool schema
-// serves every client, so held describes both proof guides of proofGuideFor.
+// engine decides from them which piece serves as its pointer.
 type Proofs struct {
-	Held   []string `json:"held,omitempty" jsonschema:"for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). Where results end with hold_next, send on every call exactly those tags the last one names; otherwise list the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word"`
+	Held   []string `json:"held,omitempty" jsonschema:"for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). List the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word"`
 	Reread []string `json:"reread,omitempty" jsonschema:"tags or piece names of served pieces you no longer see; they serve in full again"`
 }
 
@@ -26,17 +25,6 @@ func heldName(name, tag string) string {
 		return name
 	}
 	return model.TagName(tag) + " for " + name
-}
-
-// holdNextLine names tags, likeliest first, as many as fit room characters
-// of a result.
-func holdNextLine(tags []string, room int) string {
-	for ; len(tags) > 0; tags = tags[:len(tags)-1] {
-		if line := strings.Join(tags, ", "); model.ServedChars(line) <= room {
-			return line
-		}
-	}
-	return ""
 }
 
 // proofNotice names the proofs of a call that failed, so the agent corrects
@@ -76,7 +64,7 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, p
 			waiting = append(waiting, lane.Name)
 			continue
 		}
-		served := ss.root.ServeLane(name, lane.Text, carried(pageFull, lane.Text))
+		served := ss.root.ServeText(name, lane.Text, carried(pageFull, lane.Text))
 		if served.Held {
 			held = append(held, heldName(name, served.Tag))
 			continue

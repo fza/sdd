@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -437,46 +436,6 @@ func connect(t *testing.T, srv *mcpserver.Server, transports ...mcp.Transport) *
 // across connections.
 func connectAs(t *testing.T, srv *mcpserver.Server, memory *agentMemory, transports ...mcp.Transport) *mcp.ClientSession {
 	t.Helper()
-	return connectClient(t, srv, memory, otherClient, transports...)
-}
-
-// Claude Code reports claudeClient as its client name, interactive and as
-// claude -p, Codex codexClient; otherClient stands for every other MCP
-// client. Agents on opusModel and fableModel get the hold-next line
-// (model.HoldNextModel), one on sonnetModel does not.
-const (
-	claudeClient = "claude-code"
-	codexClient  = "codex-mcp-client"
-	otherClient  = "test-client"
-	opusModel    = "claude-opus-5-5"
-	fableModel   = "claude-fable-5"
-	sonnetModel  = "claude-sonnet-4-5"
-)
-
-// reportModel reports agentModel on every start_session that names none, as
-// an agent filling the field does.
-func reportModel(agentModel string) mcp.Middleware {
-	return func(next mcp.MethodHandler) mcp.MethodHandler {
-		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-			params, ok := req.GetParams().(*mcp.CallToolParams)
-			if !ok || params.Name != "start_session" {
-				return next(ctx, method, req)
-			}
-			args, ok := params.Arguments.(map[string]any)
-			if _, own := args["model"]; !ok || own {
-				return next(ctx, method, req)
-			}
-			withModel := maps.Clone(args)
-			withModel["model"] = agentModel
-			params.Arguments = withModel
-			return next(ctx, method, req)
-		}
-	}
-}
-
-// connectClient connects as connectAs does, under the client name name.
-func connectClient(t *testing.T, srv *mcpserver.Server, memory *agentMemory, name string, transports ...mcp.Transport) *mcp.ClientSession {
-	t.Helper()
 	ctx := t.Context()
 	var transport mcp.Transport
 	switch len(transports) {
@@ -491,11 +450,8 @@ func connectClient(t *testing.T, srv *mcpserver.Server, memory *agentMemory, nam
 	default:
 		t.Fatal("connect accepts at most one transport")
 	}
-	client := mcp.NewClient(&mcp.Implementation{Name: name, Version: "test"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
 	client.AddSendingMiddleware(memory.middleware)
-	if memory.model != "" {
-		client.AddSendingMiddleware(reportModel(memory.model))
-	}
 	cs, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -2608,22 +2564,6 @@ func jsonSize(t *testing.T, v any) int {
 		t.Fatal(err)
 	}
 	return len(raw)
-}
-
-// serveSize is what a serve takes of its result: the hold-next line rides in
-// the room model.MaxServeChars leaves under the result bound, as notices do.
-func serveSize(t *testing.T, v any) int {
-	t.Helper()
-	raw, err := json.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fields map[string]any
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		t.Fatal(err)
-	}
-	delete(fields, "hold_next")
-	return jsonSize(t, fields)
 }
 
 // TestServedMemoryIsPerAgentContext pins the served memory under the anchor
