@@ -513,9 +513,8 @@ const (
 )
 
 // MarkVerificationSkipped marks e as written without a verifier's verdict and
-// caps its confidence: low after a verifier failure (V-D4) or a pre-flight
-// answer cut at the token cap, at most medium after the weighed rule's skip
-// (V-D24).
+// caps its confidence: low after a verifier failure or a pre-flight answer
+// cut at the token cap, at most medium after the weighed rule's skip.
 func MarkVerificationSkipped(e *Entry, cause string) error {
 	switch cause {
 	case DeepSkipFailure:
