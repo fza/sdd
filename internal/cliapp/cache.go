@@ -41,10 +41,11 @@ sessions after sessions.retention (default ` + model.DefaultSessionRetention + `
 index.replaced_retention (default ` + model.DefaultReplacedRetention + `); unused index stores, graph
 snapshots, git gate records, calibrations and the state of unused projects
 after cache.retention (default ` + model.DefaultCacheRetention + `); clones the repos list no longer names;
-and crash leftovers a day old. All three keys live in the user-global config.
-The background pass also fetches the rule file of gitleaks' newest release for
-credential scans while secrets.rules_update is daily (the default). Open sessions, unreadable session logs and the versions the current
-checkout searches always stay. sdd index gc removes more on request.`,
+and crash leftovers a day old. The background pass also fetches the rule file
+of gitleaks' newest release for credential scans while secrets.rules_update is
+daily (the default). All four keys live in the user-global config. Open
+sessions, unreadable session logs and the versions the current checkout
+searches always stay. sdd index gc removes more on request.`,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
 					Name:   scheduledFlag,

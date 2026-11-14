@@ -24,9 +24,10 @@ func moveCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "move",
 		Usage: "Move the graph with its history to another folder or repository, or carry entries left in a former location over",
-		Description: "Pass exactly one target, with the meaning sdd init gives it. Inside one repository the graph moves\n" +
-			"as a rename; into or out of a separate repository its history is carried with git subtree split.\n" +
-			"Run again with the same target to carry over entries left in a former location.",
+		Description: "Pass exactly one target, with the meaning sdd init gives it. Inside one\n" +
+			"repository the graph moves as a rename; into or out of a separate repository\n" +
+			"its history is carried with git subtree split. Run again with the same target\n" +
+			"to carry over entries left in a former location.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  "graph-dir",
