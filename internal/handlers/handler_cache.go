@@ -39,6 +39,8 @@ type OwnedCloneProbe interface {
 	// LastAttempt is when the git gate last admitted a fetch or push of the
 	// clone's remote; zero when it never did.
 	LastAttempt(ctx context.Context, dir string) (time.Time, error)
+	// GC runs git gc --auto in the clone, locally.
+	GC(ctx context.Context, dir string) error
 }
 
 // GateSweeper is the git gate's part in the sweep.
@@ -227,9 +229,43 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		counts.Bytes += size
 		log.Info("removed unconnected clone", "clone", dir, "bytes", size)
 	}
+	errs = append(errs, h.gcListedClones(ctx)...)
 
 	errs = append(errs, h.pruneIndex(ctx, now, index.Retention{Unused: retention, Replaced: replaced}, keepFor, &counts)...)
 	return counts, errors.Join(errs...)
+}
+
+// gcListedClones runs git gc --auto in each clone the repos list names,
+// skipping one a sync holds.
+func (h *CacheHandler) gcListedClones(ctx context.Context) []error {
+	if h.ownedClones == nil {
+		return []error{errors.New("cache pruning has no probe for sdd-owned clones")}
+	}
+	clones, err := h.registry.ListedClones()
+	if err != nil {
+		return []error{err}
+	}
+	var errs []error
+	for _, clone := range clones {
+		if ctx.Err() != nil {
+			break
+		}
+		release, err := h.ownedClones.TryLockSync(ctx, clone.Dir)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("locking the sync of %s: %w", clone.Dir, err))
+			continue
+		}
+		if release == nil {
+			slogutils.FromContext(ctx).Info("clone in use, gc skipped", "clone", clone.Dir)
+			continue
+		}
+		err = h.ownedClones.GC(ctx, clone.Dir)
+		release()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("packing the clone of %s: %w", clone.RepoID, err))
+		}
+	}
+	return errs
 }
 
 // sweepLeftovers removes what killed processes left outside the index stores

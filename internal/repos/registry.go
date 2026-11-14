@@ -93,6 +93,29 @@ func (r *Registry) SelectRepoIDs(named []model.RepoID, all bool) ([]model.RepoID
 	return cfg.SelectRepoIDs(named, all)
 }
 
+// ListedClones returns the sdd-owned clones present on this machine whose
+// repository the user-global repos list names.
+func (r *Registry) ListedClones() ([]Clone, error) {
+	if r.loc.DataRoot == "" {
+		return nil, errors.New("listing clones: no data root for the sdd-owned clones")
+	}
+	cfg, err := r.Load()
+	if err != nil {
+		return nil, err
+	}
+	var clones []Clone
+	for _, repo := range cfg.Repos {
+		dir, err := cloneDir(r.loc.DataRoot, repo.RepoID)
+		if err != nil {
+			return nil, err
+		}
+		if IsCloned(dir) {
+			clones = append(clones, Clone{RepoID: repo.RepoID, Dir: dir})
+		}
+	}
+	return clones, nil
+}
+
 // UnconnectedClone is a clone whose repository the user-global repos list
 // does not name.
 type UnconnectedClone struct {

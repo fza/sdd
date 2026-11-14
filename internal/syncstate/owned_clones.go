@@ -54,3 +54,7 @@ func (o OwnedClones) LastAttempt(ctx context.Context, dir string) (time.Time, er
 	}
 	return o.Gate.LastAttempt(ctx, target)
 }
+
+func (o OwnedClones) GC(ctx context.Context, dir string) error {
+	return git.CLI{Dir: dir}.GCAuto(ctx)
+}

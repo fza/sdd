@@ -152,3 +152,35 @@ func TestCacheHandlerPruneFailsWithoutTheOwnedCloneProbe(t *testing.T) {
 		t.Error("a clone nothing judged should stay")
 	}
 }
+
+// The run packs a listed clone with git gc --auto (20261114-095140-d-cpt-ad4,
+// rule 4).
+func TestCacheHandlerPrunePacksListedClones(t *testing.T) {
+	f := newPruneFixture(t, "")
+	dir, _ := ownedClone(t, f.loc, "kept")
+	gitIn(t, dir, "repack", "-q")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "sdd: second")
+	gitIn(t, dir, "repack", "-q")
+	gitIn(t, dir, "config", "gc.autoPackLimit", "1")
+	gitIn(t, dir, "config", "gc.autoDetach", "false")
+	packs := func() int {
+		t.Helper()
+		found, err := filepath.Glob(filepath.Join(dir, ".git", "objects", "pack", "*.pack"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(found)
+	}
+	if packs() < 2 {
+		t.Fatal("the clone should start with more packs than gc.autoPackLimit")
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatal(err)
+	}
+	if packs() != 1 {
+		t.Errorf("git gc --auto should have joined the listed clone's packs, %d left", packs())
+	}
+	if !exists(t, dir) {
+		t.Error("a listed clone should stay")
+	}
+}
