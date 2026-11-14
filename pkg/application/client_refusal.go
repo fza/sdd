@@ -22,6 +22,17 @@ func (a *Application) RefuseClient(ctx context.Context, identity RequestIdentity
 	return a.sessionClientRefusal(ctx, identity, runtime, stored.Events, clientName)
 }
 
+// RefuseOpen refuses opening a session in project through the MCP client
+// clientName where the project needs another client, before any of its hooks
+// is asked about.
+func (a *Application) RefuseOpen(ctx context.Context, identity RequestIdentity, project ProjectID, clientName string) error {
+	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
+	if err != nil {
+		return err
+	}
+	return runtime.options.Verifier.clientRefusal(clientName)
+}
+
 func (a *Application) sessionClientRefusal(ctx context.Context, identity RequestIdentity, home *ProjectRuntime, events []StoredEvent, clientName string) error {
 	err := home.options.Verifier.clientRefusal(clientName)
 	if err != nil || !model.CodexClient(clientName) {

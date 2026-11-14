@@ -721,7 +721,10 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 		workflow *sdd.WorkflowSession
 		serve    *sdd.WorkflowServe
 	)
-	err := s.confirmHooks(ctx, req, project)
+	err := s.app.RefuseOpen(ctx, identity, project, mcpClientName(req.Session))
+	if err == nil {
+		err = s.confirmHooks(ctx, req, project)
+	}
 	if err == nil {
 		workflow, serve, err = s.app.OpenWorkflow(ctx, identity, project, sdd.WorkflowOpenRequest{
 			ClientName: mcpClientName(req.Session), ClientVersion: mcpClientVersion(req.Session),

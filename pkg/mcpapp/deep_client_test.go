@@ -101,6 +101,22 @@ func TestResumeSession_RefusesACodexClientBeforeItsHooks(t *testing.T) {
 	}
 }
 
+// A Codex start is refused before the project's hooks are asked about.
+func TestStartSession_RefusesACodexClientBeforeItsHooks(t *testing.T) {
+	hooks := &proctest.ScriptedHooks{Configured: []sdd.Hook{{HookConfig: model.HookConfig{Event: "capture.assemble.start", Command: "notify"}, State: model.HookPending}}}
+	world := proctest.NewWorld(t, proctest.WithVerifier(sdd.VerifierPolicy{Mode: "deep"}, 200000, 4096), proctest.WithHooks(hooks))
+	srv, err := mcpserver.New(mcpserver.Options{Application: world.App, SearchSyncMode: sdd.SearchSyncAll, LocalIdentity: world.Identity, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text, isError := callOutcome(t, connectNamed(t, srv, "codex-mcp-client"), "start_session", map[string]any{})
+
+	if !isError || !strings.Contains(text, "verify.mode deep needs Claude Code") {
+		t.Fatalf("the start should be refused before any hook is asked about, got %s", text)
+	}
+}
+
 // A session a Claude client opened under deep cannot be resumed from Codex.
 func TestResumeSession_DeepRefusesACodexClient(t *testing.T) {
 	srv := verifyServer(t, sdd.VerifierPolicy{Mode: "deep"})
