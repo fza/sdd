@@ -107,7 +107,7 @@ It then writes these files and commits them as `sdd: init .sdd/ metadata directo
 | `.sdd/config.yaml` | Project settings, shared through git |
 | `.sdd/config.local.yaml` | Your participant name, on this machine only |
 | `.claude/skills/sdd/` or `.agents/skills/sdd/` | The `sdd` skill for your agent |
-| `.claude/agents/sdd_delegate.md` or `.codex/agents/sdd_delegate.toml` | The `sdd_delegate` subagent your agent launches a delegate as, with the `sdd` server's tools and read-only tools only |
+| `.claude/agents/sdd_delegate.md` or `.codex/agents/sdd_delegate.toml` | The `sdd_delegate` subagent your agent launches a delegate as, with the `sdd` server's tools, read-only tools and the web only: web search and fetch in Claude Code, live web search in Codex |
 | `.mcp.json` and `.claude/settings.json` | Claude Code: starts the `sdd` server and allows its tools |
 | `.codex/config.toml` | Codex: starts the `sdd` server |
 

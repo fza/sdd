@@ -183,13 +183,14 @@ func runClaude(ctx context.Context, settings Settings, round Round) (string, err
 // CodexArgs are the flags of a headless codex round (V-D18): exec with JSON
 // events in a read-only sandbox, without the user's config.toml (its MCP
 // servers, profiles and provider) or execpolicy rules, no project
-// instructions (a zero byte budget for AGENTS.md), sdd as the only MCP
-// server, and the round's prompt; a later round resumes the first round's
-// session.
+// instructions (a zero byte budget for AGENTS.md), live web search, sdd as the
+// only MCP server, and the round's prompt; a later round resumes the first
+// round's session.
 func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
 	args := []string{
 		"exec", "--json", "--sandbox", "read-only", "--ignore-user-config", "--ignore-rules",
 		"-c", "project_doc_max_bytes=0",
+		"-c", `web_search="live"`,
 		"-c", "mcp_servers.sdd.command=" + strconv.Quote(sdd),
 		"-c", `mcp_servers.sdd.args=["serve"]`,
 	}

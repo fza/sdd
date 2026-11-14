@@ -131,12 +131,13 @@ func TestRun_CodexRunsInAReadOnlySandbox(t *testing.T) {
 	want := []string{
 		"exec", "--json", "--sandbox", "read-only", "--ignore-user-config", "--ignore-rules",
 		"-c", "project_doc_max_bytes=0",
+		"-c", `web_search="live"`,
 		"-c", `mcp_servers.sdd.command="/opt/sdd/bin/sdd"`,
 		"-c", `mcp_servers.sdd.args=["serve"]`,
 		roundPrompt,
 	}
 	if !slices.Equal(call.Args, want) {
-		t.Fatalf("codex should run read-only without the user's config and rules, with sdd as an MCP server and the prompt last, got %q", call.Args)
+		t.Fatalf("codex should run read-only without the user's config and rules, with live web search, sdd as an MCP server and the prompt last, got %q", call.Args)
 	}
 }
 
