@@ -60,6 +60,44 @@ func TestCaptureDeep_ARoundWhoseProcessDiedFailsTheWait(t *testing.T) {
 	}
 }
 
+// A round whose process died leaves the agent CLI it started running in its
+// process group: failing the wait stops that group through the agent CLI the
+// round recorded.
+func TestCaptureDeep_ARoundWhoseProcessDiedStopsItsAgentCLI(t *testing.T) {
+	launcher := headlessLauncher(t)
+	world, session := newDeepWorld(t, "deep-died-agent", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	instance, child := launchedWait(t, world, session)
+	agent := sdd.RoundProcess{PID: 7001, Started: "agent-started"}
+	launcher.NextRound(t).AgentStarts(t, agent)
+
+	world.Rounds.Kill(t, child, 1)
+	session.Refresh(t)
+
+	proctest.RequireStep(t, session.Report(t, instance, nil), "deepFailed")
+	if got := world.Rounds.GroupStoppedThrough(child, 1); got != agent {
+		t.Fatalf("the round's process group should be stopped through its agent CLI, got %+v", got)
+	}
+}
+
+// Abandoning the capture of a round whose process died stops the agent CLI
+// that round left running.
+func TestCaptureDeep_AbandoningTheCaptureStopsTheAgentCLIOfADeadRound(t *testing.T) {
+	launcher := headlessLauncher(t)
+	world, session := newDeepWorld(t, "deep-abandon-agent", sdd.VerifierPolicy{Runner: "codex"}, proctest.WithDelegateLauncher(launcher))
+	_, child := launchedWait(t, world, session)
+	agent := sdd.RoundProcess{PID: 7002, Started: "agent-started"}
+	launcher.NextRound(t).AgentStarts(t, agent)
+	world.Rounds.Kill(t, child, 1)
+
+	if _, err := world.App.AbandonWorkflowSession(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: session.ID}, "the user stopped"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := world.Rounds.GroupStoppedThrough(child, 1); got != agent {
+		t.Fatalf("abandoning should stop the dead round's process group through its agent CLI, got %+v", got)
+	}
+}
+
 // stepClock is a clock the test moves on.
 type stepClock struct {
 	mu  sync.Mutex

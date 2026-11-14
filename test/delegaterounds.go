@@ -94,6 +94,18 @@ func (l *ScriptedLauncher) NextRound(t testing.TB) *ScriptedRound {
 	}
 }
 
+// AgentStarts reports agent as the agent CLI the round started, as a headless
+// launcher does once the CLI runs.
+func (r *ScriptedRound) AgentStarts(t testing.TB, agent sdd.RoundProcess) {
+	t.Helper()
+	if r.Round.AgentStarted == nil {
+		t.Fatal("the round takes no agent CLI")
+	}
+	if err := r.Round.AgentStarted(t.Context(), agent); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Finish ends the round, reporting the launcher's session or the error the
 // round failed with.
 func (r *ScriptedRound) Finish(session string, err error) {

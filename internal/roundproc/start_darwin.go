@@ -9,16 +9,15 @@ import (
 // zombie is SZOMB of sys/proc.h: a process that ended and was not reaped.
 const zombie = 5
 
-// startStamp reads the start time of the process with pid, and whether it
-// runs.
-func startStamp(pid int) (string, bool, error) {
+// inspect reads the process with pid.
+func inspect(pid int) (state, error) {
 	procs, err := unix.SysctlKinfoProcSlice("kern.proc.pid", pid)
 	if err != nil {
-		return "", false, err
+		return state{}, err
 	}
 	if len(procs) == 0 || procs[0].Proc.P_stat == zombie {
-		return "", false, nil
+		return state{}, nil
 	}
 	start := procs[0].Proc.P_starttime
-	return fmt.Sprintf("%d.%06d", start.Sec, start.Usec), true, nil
+	return state{running: true, started: fmt.Sprintf("%d.%06d", start.Sec, start.Usec), group: int(procs[0].Eproc.Pgid)}, nil
 }

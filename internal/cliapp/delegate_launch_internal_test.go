@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -111,6 +112,39 @@ func TestHeadlessLauncher_PassesTheLaunchsModelAndEffort(t *testing.T) {
 	args := strings.Split(strings.TrimSpace(string(recorded)), "\n")
 	if !slices.Contains(args, "opus") || !slices.Contains(args, "xhigh") || slices.Contains(args, "gpt-5.5") {
 		t.Fatalf("claude should run with verify.claude's model and effort only, got %q", args)
+	}
+}
+
+// The launcher reports the agent CLI a round started, with its start stamp.
+func TestHeadlessLauncher_ReportsTheAgentCLIARoundStarted(t *testing.T) {
+	launcher := launcherServing(t, &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Runner: model.VerifierRunnerClaude}}})
+	bin := t.TempDir()
+	pidFile := filepath.Join(bin, "pid")
+	script := "#!/bin/sh\necho $$ > " + pidFile + "\ncat > /dev/null\n/bin/sleep 0.3\necho '{\"type\":\"result\",\"is_error\":false,\"session_id\":\"claude-7\",\"result\":\"done\"}'\n"
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/bin:/usr/bin")
+	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Runner: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agents []sdd.RoundProcess
+	round := sdd.DelegateRound{Number: 1, Prompt: "go", AgentStarted: func(_ context.Context, agent sdd.RoundProcess) error {
+		agents = append(agents, agent)
+		return nil
+	}}
+
+	if _, err := run.Round(context.Background(), round); err != nil {
+		t.Fatal(err)
+	}
+
+	recorded, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 || strconv.Itoa(agents[0].PID) != strings.TrimSpace(string(recorded)) || agents[0].Started == "" {
+		t.Fatalf("the round should report the claude it ran with its start stamp, got %+v for %s", agents, recorded)
 	}
 }
 

@@ -45,6 +45,7 @@ func AgentHangs(t testing.TB, dir, name string) {
 
 // AgentCall is how the fake agent was last called.
 type AgentCall struct {
+	PID   int
 	Dir   string
 	Args  []string
 	Stdin string
@@ -61,6 +62,11 @@ func LastAgentCall(t testing.TB, dir, name string) AgentCall {
 	for line := range strings.SplitSeq(strings.TrimSuffix(string(recorded), "\n"), "\n") {
 		key, value, _ := strings.Cut(line, "=")
 		switch key {
+		case "pid":
+			call.PID, err = strconv.Atoi(value)
+			if err != nil {
+				t.Fatal(err)
+			}
 		case "cwd":
 			call.Dir = value
 		case "arg":

@@ -39,6 +39,8 @@ type roundProcess struct {
 	gone     bool
 	stopped  bool
 	err      error
+	// groupAgent is the agent CLI a Stop of the gone process handed.
+	groupAgent sdd.RoundProcess
 }
 
 // NewRoundProcesses returns processes that the test's end kills and waits for.
@@ -111,16 +113,33 @@ func (p *RoundProcesses) Alive(_ context.Context, process sdd.RoundProcess) (boo
 	return found != nil && found.process == process && !found.gone, nil
 }
 
-func (p *RoundProcesses) Stop(_ context.Context, process sdd.RoundProcess) error {
+func (p *RoundProcesses) Stop(_ context.Context, process, agent sdd.RoundProcess) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	found := p.find(process.PID)
-	if found == nil || found.process != process || found.gone {
+	if found == nil || found.process != process {
+		return nil
+	}
+	if found.gone {
+		found.groupAgent = agent
 		return nil
 	}
 	p.kill(found)
 	found.stopped = true
 	return nil
+}
+
+// GroupStoppedThrough is the agent CLI sdd handed for the process group of
+// round number of child once that round's process was gone, zero when none.
+func (p *RoundProcesses) GroupStoppedThrough(child sdd.SessionID, number int) sdd.RoundProcess {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, process := range p.started {
+		if process.round.Session == child && process.round.Number == number {
+			return process.groupAgent
+		}
+	}
+	return sdd.RoundProcess{}
 }
 
 // Kill ends the process of round number of child as the operating system

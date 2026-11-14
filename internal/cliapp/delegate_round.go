@@ -60,8 +60,8 @@ func (roundProcesses) Alive(_ context.Context, process sdd.RoundProcess) (bool, 
 	return roundproc.Alive(roundproc.Process(process))
 }
 
-func (roundProcesses) Stop(_ context.Context, process sdd.RoundProcess) error {
-	return roundproc.Stop(roundproc.Process(process))
+func (roundProcesses) Stop(_ context.Context, process, agent sdd.RoundProcess) error {
+	return roundproc.Stop(roundproc.Process(process), roundproc.Process(agent))
 }
 
 // delegateRoundCmd runs one launched round in the detached process sdd

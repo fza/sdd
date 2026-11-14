@@ -71,8 +71,10 @@ type RoundProcesses interface {
 	// one that started at another time, is gone.
 	Alive(ctx context.Context, process RoundProcess) (bool, error)
 	// Stop ends a running process with its whole process group, the agent CLI
-	// it runs included; a process already gone is left alone.
-	Stop(ctx context.Context, process RoundProcess) error
+	// it runs included. A process already gone leaves its group to agent, the
+	// agent CLI it recorded, zero when none: Stop ends the group only while
+	// agent still runs in it.
+	Stop(ctx context.Context, process, agent RoundProcess) error
 }
 
 // RoundProcess is a round's process: its PID and its start stamp, which tells
@@ -108,6 +110,9 @@ type DelegateRound struct {
 	Number int
 	Prompt string
 	Resume string
+	// AgentStarted, when set, records the agent CLI or driver the round
+	// started, once it runs; the round stops with its error.
+	AgentStarted func(ctx context.Context, agent RoundProcess) error
 }
 
 // DelegateLaunchFallback asks the launcher for the first headless runner of
@@ -164,10 +169,13 @@ const (
 	// workflowDelegateRoundProcessCode marks the record of the process a
 	// launched round runs in, kept once it runs.
 	workflowDelegateRoundProcessCode = "workflow_delegate_round_process"
+	// workflowDelegateRoundAgentCode marks the record of the agent CLI a
+	// launched round's process started, kept once it runs.
+	workflowDelegateRoundAgentCode = "workflow_delegate_round_agent"
 )
 
 // delegateRoundStart is a launched round's launch record, with the process
-// recorded for it once it runs (zero until then).
+// and the agent CLI recorded for it once they run (zero until then).
 type delegateRoundStart struct {
 	Round      int           `json:"round"`
 	Runner     string        `json:"runner"`
@@ -175,6 +183,7 @@ type delegateRoundStart struct {
 	Timeout    time.Duration `json:"timeout"`
 
 	process RoundProcess
+	agent   RoundProcess
 }
 
 // delegateRoundProcess records a process of a launched round.
@@ -564,7 +573,7 @@ func (a *Application) launchDelegate(ctx context.Context, identity RequestIdenti
 		err = fmt.Errorf("round %d of the delegate %s ended before its process was recorded", round.Number, child)
 	}
 	if err != nil {
-		return "", errors.Join(err, a.processes.Stop(ctx, process))
+		return "", errors.Join(err, a.processes.Stop(ctx, process, RoundProcess{}))
 	}
 	return run.Runner, nil
 }
@@ -674,6 +683,13 @@ func (a *Application) runRound(ctx context.Context, identity RequestIdentity, ro
 		return DelegateRoundEnd{}, nil, err
 	}
 	next := DelegateRound{Number: round.Number, Prompt: delegatePrompt(round.Session, round.Instance)}
+	next.AgentStarted = func(ctx context.Context, agent RoundProcess) error {
+		recorded, err := a.appendDelegateRecord(ctx, identity, round.Session, workflowDelegateRoundAgentCode, delegateRoundProcess{Round: round.Number, PID: agent.PID, Started: agent.Started}, roundSettled(round.Number))
+		if err == nil && !recorded {
+			err = fmt.Errorf("round %d of the delegate %s ended before its agent CLI was recorded", round.Number, round.Session)
+		}
+		return err
+	}
 	if previous.Session != "" {
 		next.Resume = previous.Session
 		next.Prompt = delegateContinuePrompt(round.Session, round.Instance)
@@ -760,15 +776,17 @@ func (a *Application) checkRounds(ctx context.Context, identity RequestIdentity,
 
 // failLapsedRound fails the child's round that lapsed without an outcome as
 // its process would have: the error recorded and the child ended. A round
-// past its timeout is stopped first.
+// whose process was recorded is stopped first: one past its timeout with its
+// process group, one whose process is gone with the agent CLI it left
+// running.
 func (a *Application) failLapsedRound(ctx context.Context, identity RequestIdentity, child SessionID) error {
 	check, err := a.checkRounds(ctx, identity, child)
 	if err != nil || check.ended || check.pending == nil || check.lapse == model.RoundRunning {
 		return err
 	}
 	pending := check.pending
-	if check.lapse == model.RoundPastTimeout {
-		if err := a.processes.Stop(ctx, pending.process); err != nil {
+	if check.lapse == model.RoundPastTimeout || check.lapse == model.RoundProcessGone {
+		if err := a.processes.Stop(ctx, pending.process, pending.agent); err != nil {
 			return fmt.Errorf("stopping the process of round %d of the delegate %s: %w", pending.Round, child, err)
 		}
 	}
@@ -798,7 +816,7 @@ func (a *Application) stopRounds(ctx context.Context, child SessionID, events []
 		if a.processes == nil {
 			return fmt.Errorf("round %d of the delegate %s runs in a process this composition cannot stop: it has no RoundProcesses", start.Round, child)
 		}
-		if err := a.processes.Stop(ctx, start.process); err != nil {
+		if err := a.processes.Stop(ctx, start.process, start.agent); err != nil {
 			failures = append(failures, fmt.Errorf("stopping the process of round %d of the delegate %s: %w", start.Round, child, err))
 		}
 	}
@@ -974,7 +992,7 @@ func delegateRoundsOf(events []StoredEvent) (delegateRoundLog, error) {
 	var log delegateRoundLog
 	for _, stored := range events {
 		switch stored.Code {
-		case workflowDelegateLaunchCode, workflowDelegateRoundCode, workflowDelegateRoundProcessCode:
+		case workflowDelegateLaunchCode, workflowDelegateRoundCode, workflowDelegateRoundProcessCode, workflowDelegateRoundAgentCode:
 		default:
 			continue
 		}
@@ -988,16 +1006,21 @@ func delegateRoundsOf(events []StoredEvent) (delegateRoundLog, error) {
 				return delegateRoundLog{}, fmt.Errorf("decoding delegate round start event: %w", err)
 			}
 			log.starts = append(log.starts, start)
-		case workflowDelegateRoundProcessCode:
+		case workflowDelegateRoundProcessCode, workflowDelegateRoundAgentCode:
 			var process delegateRoundProcess
 			if err := json.Unmarshal(stored.Payload, &process); err != nil {
 				return delegateRoundLog{}, fmt.Errorf("decoding delegate round process event: %w", err)
 			}
 			start := log.launched(process.Round)
 			if start == nil {
-				return delegateRoundLog{}, fmt.Errorf("the process of round %d is recorded before the round's launch", process.Round)
+				return delegateRoundLog{}, fmt.Errorf("a process of round %d is recorded before the round's launch", process.Round)
 			}
-			start.process = RoundProcess{PID: process.PID, Started: process.Started}
+			recorded := RoundProcess{PID: process.PID, Started: process.Started}
+			if stored.Code == workflowDelegateRoundAgentCode {
+				start.agent = recorded
+			} else {
+				start.process = recorded
+			}
 		default:
 			var record delegateLaunchRecord
 			if err := json.Unmarshal(stored.Payload, &record); err != nil {
