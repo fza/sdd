@@ -14,6 +14,8 @@ import (
 
 var waitingLanes = regexp.MustCompile(`more lanes of these instructions wait[^:]*: ([^.]*)\.`)
 
+var heldIntroLane = regexp.MustCompile(`\(held: tag [0-9a-z]{4} for lane intro`)
+
 // youngProjectShape is the realistic fixture at the scale of a young
 // project.
 var youngProjectShape = proctest.GraphShape{Entries: 24, Facts: 4, Actors: 2, RolesPerActor: 1, Focuses: 1, InvolvementsPerFocus: 2, Aspirations: 1, GuidingDirectives: 2, WIPMarkers: 1, HubFanOut: 6, TopicLabels: 10}
@@ -63,7 +65,7 @@ func TestANoProofAgentReachesEveryCaptureLane(t *testing.T) {
 				if serve.Step != "assemble" {
 					t.Fatalf("the step should stay at assemble, got %q", serve.Step)
 				}
-				if !strings.Contains(serve.Instructions, "(held: lane intro") {
+				if !heldIntroLane.MatchString(serve.Instructions) {
 					t.Fatalf("call %d should point at the intro lane sent before, got %.300q", calls+1, serve.Instructions)
 				}
 				text += "\n\n" + test.Untagged(serve.Instructions)

@@ -18,13 +18,14 @@ type Proofs struct {
 	Reread []string `json:"reread,omitempty" jsonschema:"tags or piece names of served pieces you no longer see; they serve in full again"`
 }
 
-// heldName names a held piece in a pointer: its name and the tag it is held
-// under.
+// heldName names a held piece in a pointer by the tag it is held under, then
+// its name: an agent read the name's first word as the proof word when the
+// tag followed it.
 func heldName(name, tag string) string {
 	if tag == "" {
 		return name
 	}
-	return name + " (" + model.TagName(tag) + ")"
+	return model.TagName(tag) + " for " + name
 }
 
 // holdNextLine names tags, likeliest first, as many as fit room characters
@@ -41,7 +42,7 @@ func holdNextLine(tags []string, room int) string {
 // heldLine is the pointer to pieces the call holds and the way to have them
 // again.
 func heldLine(names []string) string {
-	return fmt.Sprintf("(held: %s — list a tag in reread to have its text again, or resume_session re-serves this position in full)", strings.Join(names, ", "))
+	return fmt.Sprintf("(held: %s — prove a tag with the word after it in the full text you were served, never a word of this line; list a tag in reread to have its text again, or resume_session re-serves this position in full)", strings.Join(names, ", "))
 }
 
 // composeInstructions serves the step's first keep lanes: a lane the call
@@ -158,7 +159,7 @@ func serveReportSchema(ss *shellSession, serve *sdd.WorkflowServe) (map[string]a
 	served := maps.Clone(fields)
 	if piece.Held {
 		delete(served, "properties")
-		served["held_properties"] = fmt.Sprintf("you hold these %s (%s); list the tag in reread to have them again, or resume_session re-serves them in full", name, model.TagName(piece.Tag))
+		served["held_properties"] = fmt.Sprintf("you hold %s for these %s — prove the tag with the word after it in the full schema you were served, never a word here; list the tag in reread to have them again, or resume_session re-serves them in full", model.TagName(piece.Tag), name)
 	} else {
 		served["properties"] = tagged
 	}

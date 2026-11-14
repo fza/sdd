@@ -220,3 +220,25 @@ func TestTheProofGuideMakesASkippedProofACost(t *testing.T) {
 		}
 	}
 }
+
+// A held lane's pointer names its tag first and sends the agent to the full
+// text for the word, so no word of the pointer reads as the word after the
+// tag.
+func TestAHeldLanePointerLeavesNoWordAfterItsTag(t *testing.T) {
+	env := newTestServer(t, nil, writeLaneStepGraph(t, stepLane{"first", 2}, stepLane{"second", 2}), "")
+	memory := newAgentMemory()
+	memory.raw = true
+	cs := connectAs(t, env.srv, memory)
+	session := openSession(t, cs).Session
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step", "held": []any{}}, &serve)
+	proofs := model.ReadAnchors(serve.Instructions)
+	if len(proofs) != 2 {
+		t.Fatalf("each lane served in full should carry one tag, got %v in:\n%s", proofs, serve.Instructions)
+	}
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "held": []any{proofs[0].String()}}, &serve)
+	want := "(held: tag " + proofs[0].Tag + " for lane first — prove a tag with the word after it in the full text you were served, never a word of this line;"
+	if !strings.Contains(serve.Instructions, want) {
+		t.Errorf("the pointer should name the tag first and send the agent to the full text, want %q in:\n%s", want, serve.Instructions)
+	}
+}

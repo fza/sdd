@@ -38,7 +38,7 @@ func TestStartProcedureCaptureServesTypeSystemOverview(t *testing.T) {
 // pointsAtOverview reports whether a capture serve points at the type-system
 // overview: by its ID, or by the held typeSystem lane whose text names it.
 func pointsAtOverview(instructions string) bool {
-	return strings.Contains(instructions, basefacts.OverviewFactID) || strings.Contains(instructions, "lane typeSystem (tag ")
+	return strings.Contains(instructions, basefacts.OverviewFactID) || strings.Contains(instructions, " for lane typeSystem")
 }
 
 // The overview grounding is durable session state: a second server over the
