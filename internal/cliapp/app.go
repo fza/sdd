@@ -1711,7 +1711,7 @@ func resolveProject() (meta.Project, error) {
 var keptGraphClones sync.Map
 
 // ensureGraphClone clones the graph repository project names when this
-// machine holds no clone yet and keeps it otherwise (20261106-202055-d-tac-eyl).
+// machine holds no clone yet and keeps it otherwise.
 func ensureGraphClone(clones *repos.GraphClones, project meta.Project) error {
 	_, kept := keptGraphClones.Load(project.Root)
 	if kept {

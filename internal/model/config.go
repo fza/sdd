@@ -128,7 +128,7 @@ type BaseConfig struct {
 	// project where the same person deliberately uses another spelling.
 	Participant string `yaml:"participant,omitempty"`
 	// Connected is the writing side's gate on capturing into a connected
-	// graph (20261106-201216-d-cpt-aim).
+	// graph.
 	Connected ConnectedConfig `yaml:"connected,omitempty"`
 	// Hooks are files run at engine events (20261109-213250-d-tac-bve); the
 	// layers concatenate, global first.
@@ -196,8 +196,8 @@ type PerRepoConfig struct {
 	// PointerKeys); its machine-local layer lies over the project's own.
 	ProjectDir string `yaml:"project_dir,omitempty"`
 	// GraphRepo points a code repository at the repository holding its graph,
-	// which sdd reads and writes only through the clone it owns
-	// (20261106-201216-d-cpt-aim). Beside project_dir it wins.
+	// which sdd reads and writes only through the clone it owns. Beside
+	// project_dir it wins.
 	GraphRepo RepoID `yaml:"graph_repo,omitempty"`
 	// Inbound is the receiving graph's gate on captures written from another
 	// project; only the committed .sdd/config.yaml sets it.

@@ -29,7 +29,7 @@ type DescriptionResult struct {
 }
 
 // Description is the one call that writes an entry's title, and its summary
-// when the entry needs one (20261107-021219-d-tac-okg). Rendering it is
+// when the entry needs one. Rendering it is
 // separate from running it so a caller can render under its graph lock and
 // run the call outside it.
 type Description struct {
@@ -185,8 +185,7 @@ func newSummaryContext(entry *model.Entry, graph *model.Graph, configuredLanguag
 
 // newTitleContext carries only what a title names: the entry's type, layer
 // and kind, its stored summary, and the titles of its direct refs, closes and
-// supersedes entries. Neither the body nor any related summary is sent
-// (20261107-021219-d-tac-okg).
+// supersedes entries. Neither the body nor any related summary is sent.
 func newTitleContext(entry *model.Entry, graph *model.Graph, configuredLanguage string) *summaryContext {
 	var head strings.Builder
 	fmt.Fprintf(&head, "Type: %s\nLayer: %s\n", entry.Type, entry.Layer)

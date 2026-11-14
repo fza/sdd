@@ -16,7 +16,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// The sdd-owned graph clone (20261106-202055-d-tac-eyl). A clone is
+// The sdd-owned graph clone. A clone is
 // recognised by the recorded-commits file in its git directory, so every
 // adapter built on its root behaves as the clone needs: merge drivers passed
 // per call, commits recorded, protocol switched on failure.
@@ -451,7 +451,7 @@ func (c CLI) pushClone(ctx context.Context) error {
 // restored, untracked ones removed, commits sdd did not record dropped with
 // its own replayed on top of upstream, the marker and its exclude line in
 // place. A non-nil routing is written last into .git/info/attributes.
-// Everything happens without notice (20261106-202055-d-tac-eyl).
+// Everything happens without notice.
 func (c CLI) KeepGraphClone(ctx context.Context, routing []string) error {
 	gitDir := filepath.Join(c.Dir, ".git")
 	for _, state := range []struct{ head, abort string }{{"MERGE_HEAD", "merge"}, {"CHERRY_PICK_HEAD", "cherry-pick"}} {

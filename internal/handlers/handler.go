@@ -193,9 +193,8 @@ type Options struct {
 	// returns; empty means manual. Only an sdd-owned graph clone syncs
 	// automatically (syncstate.Mode).
 	SyncMode model.SyncMode
-	// GraphClone, when set, is the sdd-owned clone the graph lives in
-	// (20261106-202055-d-tac-eyl): every sync path keeps it first, and a pull
-	// merges every upstream commit.
+	// GraphClone, when set, is the sdd-owned clone the graph lives in: every
+	// sync path keeps it first, and a pull merges every upstream commit.
 	GraphClone GraphCloneKeeper
 	// SetAsideJudge decides which entries an upstream force push set aside
 	// return on their own. Nil leaves every one to an agent.

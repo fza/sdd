@@ -14,7 +14,7 @@ import (
 const MergeNoticePrefix = "sdd notice: "
 
 // MergeConfigYAML three-way merges `.sdd/config.yaml` per key for the
-// sdd-config driver (20261106-202055-d-tac-eyl): a key changed on one side is
+// sdd-config driver: a key changed on one side is
 // taken, `dependencies` merges as a set of both sides' additions and
 // removals, and a value changed on both sides takes theirs, the upstream,
 // with a notice naming the key. The result is theirs with those changes

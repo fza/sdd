@@ -13,7 +13,7 @@ type MergeEntryCmd struct {
 }
 
 // MergeConfigCmd captures intent to merge `.sdd/config.yaml` as the sdd-config
-// merge driver of the sdd-owned graph clone (20261106-202055-d-tac-eyl), with
+// merge driver of the sdd-owned graph clone, with
 // the result written into OursPath and a notice per key both sides changed.
 type MergeConfigCmd struct {
 	BasePath   string

@@ -12,7 +12,7 @@ import (
 )
 
 // GraphCloneKeeper restores the sdd-owned graph clone to what only sdd made
-// before an operation on it (20261106-202055-d-tac-eyl).
+// before an operation on it.
 type GraphCloneKeeper interface {
 	KeepGraphClone(ctx context.Context, routing []string) error
 	SetAside(ctx context.Context) (model.SetAside, error)

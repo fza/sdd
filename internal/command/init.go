@@ -36,8 +36,8 @@ type InitCmd struct {
 	ProjectDir string
 
 	// GraphRepo, when set, makes RepoRoot a code repository whose graph lives
-	// in that graph repository, reached through sdd's own clone of it
-	// (20261106-202055-d-tac-eyl): init clones it, sets up .sdd/ there when
+	// in that graph repository, reached through sdd's own clone of it:
+	// init clones it, sets up .sdd/ there when
 	// it holds none and pushes, then commits graph_repo and the stock guard
 	// in RepoRoot. RemoteURL is RepoRoot's origin, which picks the protocol
 	// the clone tries first.
