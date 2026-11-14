@@ -212,14 +212,15 @@ Once a clone may fetch again, each span of one cooldown that passes without a fe
 
 - The push of commits sdd just wrote, such as a capture into a connected repository right after its last push.
 - A sync you command with `sdd repo sync` or the `sync_repos` tool, its fetch or its push.
+- The fetch a read runs when a dependency references an entry of a repository further out that its clone lacks ([references further out](/sdd/guides/connected-repositories/#references-further-out)).
 
-Reads and the rounds `sdd serve` runs on its own never spend a credit. Even with one, fetches of one repository stay at least 1 minute apart and its pushes at least 10 seconds apart, the hourly and per-minute limits and `concurrency` still apply, and the cooldown after a failed operation holds. Without a credit the operation waits for its cooldown.
+Other reads and the rounds `sdd serve` runs on its own never spend a credit. Even with one, fetches of one repository stay at least 1 minute apart and its pushes at least 10 seconds apart, the hourly and per-minute limits and `concurrency` still apply, and the cooldown after a failed operation holds. Without a credit the operation waits for its cooldown.
 
 ### Connected repositories
 
 | Key | File | Default | Meaning |
 | --- | --- | --- | --- |
-| `dependencies` | Project | None | The `repo_id`s of the graphs this graph references. `sdd repo add` adds one and commits the change. `sdd repo remove` removes one. |
+| `dependencies` | Project | None | The `repo_id`s of the graphs this graph references. Reads, moves, `sdd export`, `sdd lint` and `sdd repo sync` reach only these, never a repository only a dependency declares. `sdd repo add` adds one and commits the change. `sdd repo remove` removes one. |
 | `repos` | User-global | None | How this machine reaches each connected repository, as a list of `repo_id` and `clone_url` pairs. `sdd repo add` writes it. |
 
 ```yaml

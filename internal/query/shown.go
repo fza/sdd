@@ -108,12 +108,16 @@ func shownChainItem(item model.ShowTreeItem) types.ShownChainItem {
 	if entry := item.Entry; entry != nil {
 		shown.Title, shown.Kind, shown.Summary = entry.Title, string(entry.Kind), entry.Summary
 		shown.KindLabel, shown.FirstSentence = kindLabel(entry), entry.FirstSummarySentence()
+		shown.CloneFetched = item.CloneFetched
 		if item.NodeID() == entry.ID {
 			shown.Brief = model.EntryBrief(entry)
 		}
 	} else if item.CrossRepoID != "" {
 		repo, _, _ := model.SplitCrossRepoID(item.CrossRepoID)
 		shown.UnresolvedRepo = string(repo)
+		if item.Unavailable != nil {
+			shown.UnresolvedReason = item.Unavailable.Reason()
+		}
 	}
 	return shown
 }

@@ -229,6 +229,12 @@ func (g *Gate) read(ctx context.Context) (*ledger, error) {
 	return l, nil
 }
 
+// ReadWait is how long a read waits for a fetch of target (read_wait).
+func (g *Gate) ReadWait(target Target) (time.Duration, error) {
+	limits, err := g.limitsFor(target)
+	return limits.ReadWait, err
+}
+
 func (g *Gate) limitsFor(target Target) (Limits, error) {
 	if g.limits == nil {
 		return Limits{}, errors.New("git gate has no limits")

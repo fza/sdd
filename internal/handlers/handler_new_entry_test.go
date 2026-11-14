@@ -61,7 +61,7 @@ func (f *fakeReader) LocalRepoID() (model.RepoID, error) {
 	return "", nil
 }
 
-func (f *fakeReader) DeclaredDependencies(context.Context, model.RepoID) ([]model.RepoID, error) {
+func (f *fakeReader) DirectDependencies() ([]model.RepoID, error) {
 	return nil, nil
 }
 

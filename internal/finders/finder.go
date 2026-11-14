@@ -31,6 +31,7 @@ type Finder struct {
 	procedureRegistry  *engine.Registry
 	graphCache         GraphCache
 	moveHistory        MoveHistory
+	further            model.FurtherResolver
 }
 
 // Options configures a new Finder. Zero-valued fields mean "not available"
@@ -75,6 +76,17 @@ func New(opts Options) *Finder {
 	}
 }
 
+// WithFurther returns a copy of the finder whose graphs resolve the refs a
+// direct dependency holds into repos beyond the direct dependencies through
+// r (model.MultiGraph.ResolveFurther). The composition puts the fetch on a
+// miss behind r (handlers.Handler.ResolveFurtherRef); a finder without one
+// leaves those refs unresolved.
+func (f *Finder) WithFurther(r model.FurtherResolver) *Finder {
+	c := *f
+	c.further = r
+	return &c
+}
+
 // localParticipant returns the canonical participant from config; "" means
 // the key is unset.
 func (f *Finder) localParticipant() (string, error) {
@@ -93,10 +105,11 @@ func (f *Finder) language() (string, error) {
 	return f.cfg.Language, nil
 }
 
-// declaredDependencies returns the repo's committed cross-repo dependency
-// declarations. Pre-flight's declared-dependency precondition reasons
+// DirectDependencies returns the repo's committed cross-repo dependency
+// declarations, the horizon of every read (20261113-235859-d-cpt-l3m).
+// Pre-flight's declared-dependency precondition reasons
 // against this list.
-func (f *Finder) declaredDependencies() ([]model.RepoID, error) {
+func (f *Finder) DirectDependencies() ([]model.RepoID, error) {
 	if f.cfg == nil {
 		return nil, fmt.Errorf("declared dependencies unavailable: no per-repo config")
 	}

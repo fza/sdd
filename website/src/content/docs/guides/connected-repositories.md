@@ -63,11 +63,11 @@ A sync round fetches, merges, and pushes the commits the clone holds, each opera
 If a round fails, for example offline, sdd warns and reads the clone as it stands. `sdd show` with a short ID reads the clone without a round. The `sdd` server your agent works through fetches a clone only while its lease holds, renewed by the calls that work in or read it, and pushes the commits a clone holds with or without one; its `sync_repos` tool runs the round on request. A capture into a dependency writes through the same clone. To run the rounds yourself:
 
 ```bash
-sdd repo sync                            # every connected repository
+sdd repo sync                            # your direct dependencies
 sdd repo sync github.com/acme/platform   # one repository
 ```
 
-`sdd repo sync` prints one line per repository: `synced`, `pushed`, `skipped (next HH:MM)`, `failed (<reason>, retry HH:MM)` or `refused (not connected)`. Inside a cooldown it runs the fetch or push anyway while the host has a [credit](/sdd/reference/configuration/#git-credits) left, and reports `skipped` once none is.
+In a project, `sdd repo sync` reaches only the repositories in its `dependencies`; outside a project it syncs every connected repository. It prints one line per repository: `synced`, `pushed`, `skipped (next HH:MM)`, `failed (<reason>, retry HH:MM)`, `refused (not connected)` or `refused (<repo_id> is not a direct dependency of <repo_id>)`. Inside a cooldown it runs the fetch or push anyway while the host has a [credit](/sdd/reference/configuration/#git-credits) left, and reports `skipped` once none is.
 
 The same holds in the other direction. For another project to reference your entries, commit and push them.
 
@@ -108,7 +108,7 @@ sdd search --query "how services ship their logs" --repo github.com/acme/platfor
 sdd view --layout='top(20)' --repo github.com/acme/platform
 ```
 
-`--all-repos` reaches the dependency closure: your dependencies, their dependencies, and so on. A repository connected on your machine but outside that closure is never read, and naming it with `--repo` is an error. Each repository in the closure needs a connection on your machine; sdd skips one without a connection and warns.
+`--all-repos` reaches your direct dependencies, the `repo_id`s in your `dependencies`. A repository only a dependency declares is not read, nor one connected on your machine that your project does not declare; naming either with `--repo` is an error. Each direct dependency needs a connection on your machine; sdd skips one without a connection and warns. Your agent works under the same rule: its reads and moves reach your project and its direct dependencies.
 
 `sdd search` merges the hits from all graphs into one ranked list and prefixes each hit from a dependency with its `repo_id`. `sdd view` renders the layout for your graph, then once for each selected dependency under a `repo:` heading.
 
@@ -126,6 +126,22 @@ sdd index --all-repos
 
 `sdd index --repo <repo_id> --force` rebuilds a dependency's index from scratch. sdd keeps one index per repository and embedding setup on your machine, shared by every project that depends on that repository.
 
+## References further out
+
+A dependency's entries can reference a repository that the dependency declares and your project does not. `sdd show`, `sdd view` and your agent's reads show the title and summary of such a reference from that repository's clone on your machine, with when the clone last fetched, and do not sync it.
+
+When the clone lacks the entry, or there is no clone, sdd fetches that repository once, cloning it first when it is connected on your machine. The read waits for that fetch at most `read_wait`; past that it finishes in the background. Inside the repository's fetch cooldown a [credit](/sdd/reference/configuration/#git-credits) pays for the fetch.
+
+A reference that stays unresolved shows the unavailable marker with a short reason, `[unresolved: repo <repo_id>: <reason>]`, and sdd warns once per reference with its kind, who must act and the time. The CLI prints the warning; your agent finds it in the sync notice of its results.
+
+| Kind | Reason | Who acts |
+| --- | --- | --- |
+| `not-connected` | `not connected on this machine` | You: `sdd repo add <clone-url>` |
+| `missing-after-fetch` | `not in <repo_id> as of <time>` | The repository's maintainers push the entry, or the dependency fixes its reference |
+| `fetch-deferred` | `fetch deferred until <time>` | Nobody: sdd fetches once the git limits allow |
+
+A fetch that completes without the entry is remembered in `~/.local/state/sdd/ref-misses.json`, beside the git gate's record. sdd fetches for that entry again only once the clone's commit has moved or a day has passed.
+
 ## Remove a dependency
 
 ```bash
@@ -140,7 +156,7 @@ This removes the `repo_id` from `dependencies` and commits the change. It refuse
 | --- | --- | --- |
 | `entry not found: <repo_id>:<entry-id>`, or a new entry blocked because its target is absent from the repository's default branch | The entry is not pushed, or your clone predates it | Push it in the other repository, then run `sdd repo sync` |
 | `[unresolved: repo <repo_id>]` in `sdd show`, or a warning that a dependency is not connected on this machine | Your project declares the dependency, but your machine has no connection | `sdd repo add <clone-url>` |
-| `not in the project's dependency closure` | The repository is connected on your machine, but this project does not depend on it | `sdd repo add <clone-url>` in this project |
+| `<repo_id> is not a direct dependency of <repo_id>` | Your project does not declare the repository, though it may be connected on your machine or declared by one of your dependencies | `sdd repo add <clone-url>` in this project |
 | `declares no repo_id in .sdd/config.yaml` | The other repository has no identity yet | Add an `origin` remote there, run `sdd init`, commit and push |
 | `declares repo_id …, but its clone URL derives …` | The URL points to a fork, a mirror or another repository | Use the URL of the repository that declares that `repo_id` |
 | `sdd lint` reports a reference into a repository that is not a declared dependency | The dependency was removed with `--force` | Declare it again with `sdd repo add` |

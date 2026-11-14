@@ -37,10 +37,10 @@ type Reader interface {
 	Preflight(ctx context.Context, g *model.Graph, q query.PreflightQuery) (*query.PreflightResult, error)
 	SkillStatus(ctx context.Context, q query.SkillStatusQuery) (*query.SkillStatusResult, error)
 	SchemaStatus(ctx context.Context, q query.SchemaStatusQuery) (*query.SchemaStatusResult, error)
-	// LocalRepoID and DeclaredDependencies are the root and the step of the
-	// dependency walk the refresh drives with its own side effect.
+	// LocalRepoID and DirectDependencies name the local repo and the
+	// dependencies every refresh and sync reaches (20261113-235859-d-cpt-l3m).
 	LocalRepoID() (model.RepoID, error)
-	DeclaredDependencies(ctx context.Context, repoID model.RepoID) ([]model.RepoID, error)
+	DirectDependencies() ([]model.RepoID, error)
 }
 
 // Committer performs a git commit of the given paths with the given message.

@@ -211,11 +211,11 @@ func indexCmd() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:  "repo",
-				Usage: "Also build a dependency's index by its repo-id (repeatable; must be in the declared dependency closure) — eager pre-indexing so the first cross-repo search is warm",
+				Usage: "Also build a dependency's index by its repo-id (repeatable; must be a direct dependency) — eager pre-indexing so the first cross-repo search is warm",
 			},
 			&cli.BoolFlag{
 				Name:  "all-repos",
-				Usage: "Also build the index of every repo in the declared dependency closure",
+				Usage: "Also build the index of every direct dependency",
 			},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -285,14 +285,20 @@ func indexCmd() *cli.Command {
 				}
 				connH = handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr, CloneRound: round})
 				defer connH.Settle()
-				if err := connH.RefreshDependencyClosure(ctx, dependencyRefreshCmd(ctx)); err != nil {
-					return err
-				}
-				closure, err := reader.DependencyClosure(ctx, query.DependencyClosureQuery{})
+				home, err := reader.LocalRepoID()
 				if err != nil {
 					return err
 				}
-				if repoIDs, err = model.SelectRepos(repoSelection, allRepos, closure); err != nil {
+				direct, err := reader.DirectDependencies()
+				if err != nil {
+					return err
+				}
+				if repoIDs, err = model.SelectRepos(home, repoSelection, allRepos, direct); err != nil {
+					return err
+				}
+				refresh := dependencyRefreshCmd(ctx)
+				refresh.RepoIDs = repoIDs
+				if err := connH.RefreshDependencies(ctx, refresh); err != nil {
 					return err
 				}
 			}
@@ -399,11 +405,11 @@ func searchCmd() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:  "repo",
-				Usage: "Also search a dependency by its repo-id (repeatable, additive to the local graph; must be in the declared dependency closure)",
+				Usage: "Also search a dependency by its repo-id (repeatable, additive to the local graph; must be a direct dependency)",
 			},
 			&cli.BoolFlag{
 				Name:  "all-repos",
-				Usage: "Also search every repo in the declared dependency closure",
+				Usage: "Also search every direct dependency",
 			},
 		), sessionFlags()...),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -608,9 +614,9 @@ func searchCmd() *cli.Command {
 					defer timing.Start(ctx, "search")()
 					return finders.NewSearchFinder(opts).Search(ctx, sq)
 				}
-				// Side effects first (closure refresh + member index fill, the
+				// Side effects first (dependency refresh + member index fill, the
 				// cross-repo analog of the local lazy-fill above), then the pure
-				// cross-graph read over the refreshed closure.
+				// cross-graph read over the refreshed dependencies.
 				reader, err := newReadFinder()
 				if err != nil {
 					return nil, err
@@ -630,7 +636,10 @@ func searchCmd() *cli.Command {
 				if err := h.PrepareCrossRepoSearch(ctx, sq, emb, refresh, fill); err != nil {
 					return nil, err
 				}
-				if opts.Closure, err = reader.DependencyClosure(ctx, query.DependencyClosureQuery{}); err != nil {
+				if opts.Home, err = reader.LocalRepoID(); err != nil {
+					return nil, err
+				}
+				if opts.Dependencies, err = reader.DirectDependencies(); err != nil {
 					return nil, err
 				}
 				return finders.MultiSearch(ctx, finders.NewSearchFinder(opts), sq)

@@ -34,6 +34,37 @@ type RepoAddCmd struct {
 	OnPhase func(phase model.Phase)
 }
 
+// ResolveFurtherRefCmd makes the entry a direct dependency's ref names in a
+// repo beyond the local repo's direct dependencies available in that repo's
+// clone (20261113-235859-d-cpt-l3m): read from the clone as it stands, else
+// one fetch on a miss through the git gate, which may spend a credit inside
+// the fetch cooldown and is waited for at most read_wait.
+type ResolveFurtherRefCmd struct {
+	RepoID  model.RepoID
+	EntryID string
+
+	// Fetched reports that a fetch of RepoID completed earlier in the same
+	// read: a miss then is recorded without another fetch.
+	Fetched bool
+
+	// OnFetched reports that this command completed a fetch. Optional.
+	OnFetched func()
+
+	// OnUnavailable reports why the entry stays unavailable. Required.
+	OnUnavailable func(ref model.UnavailableRef)
+}
+
+// Validate checks that no unavailable entry goes unreported.
+func (c *ResolveFurtherRefCmd) Validate() error {
+	if c.RepoID == "" || c.EntryID == "" {
+		return fmt.Errorf("repo ID and entry ID are required")
+	}
+	if c.OnUnavailable == nil {
+		return fmt.Errorf("OnUnavailable is required")
+	}
+	return nil
+}
+
 // EnsureReposFreshCmd starts or renews the leases of the named connected
 // repos for a read: a clone on first use, else the sync round a lease start
 // asks for. OnPhase reports connecting → cloning for a clone and syncing for
@@ -52,16 +83,19 @@ type EnsureReposFreshCmd struct {
 	OnSettled func(outcome model.RepoSyncOutcome)
 }
 
-// RefreshDependencyClosureCmd refreshes the clones of the local repo's
-// declared dependency closure ahead of a read, each repo before its
-// declarations are read. The refresh is optional to the read
-// (20261027-150208-d-tac-bg4): its failures are reported through the
-// callbacks, and the read uses the clones as they stand.
-type RefreshDependencyClosureCmd struct {
+// RefreshDependenciesCmd refreshes the clones of the local repo's direct
+// dependencies (20261113-235859-d-cpt-l3m) ahead of a read. The refresh is
+// optional to the read (20261027-150208-d-tac-bg4): its failures are reported
+// through the callbacks, and the read uses the clones as they stand.
+type RefreshDependenciesCmd struct {
+	// RepoIDs narrows the refresh to these direct dependencies; all of them
+	// when empty.
+	RepoIDs []model.RepoID
+
 	// OnRefreshFailed reports a clone or sync round that failed. Required.
 	OnRefreshFailed func(repoID model.RepoID, err error)
 
-	// OnUnconnected reports a closure member with no connection on this
+	// OnUnconnected reports a direct dependency with no connection on this
 	// machine. Required.
 	OnUnconnected func(repoID model.RepoID)
 
@@ -74,7 +108,7 @@ type RefreshDependencyClosureCmd struct {
 }
 
 // Validate checks that no refresh failure can go unreported.
-func (c *RefreshDependencyClosureCmd) Validate() error {
+func (c *RefreshDependenciesCmd) Validate() error {
 	if c.OnRefreshFailed == nil || c.OnUnconnected == nil {
 		return fmt.Errorf("OnRefreshFailed and OnUnconnected are required")
 	}
@@ -134,19 +168,22 @@ func (c *RepoRemoveCmd) Validate() error {
 }
 
 // RepoSyncCmd runs the sync round of connected repos through their
-// sdd-owned clones (20261107-095427-d-tac-yux): the named repos, or every
-// connected repo when RepoIDs is empty. A repo without a clone is cloned.
+// sdd-owned clones (20261107-095427-d-tac-yux): the named repos, or the
+// local repo's direct dependencies when RepoIDs is empty, every connected
+// repo outside a project. Inside a project, a named repo outside its direct
+// dependencies is refused (20261113-235859-d-cpt-l3m). A repo without a clone
+// is cloned.
 type RepoSyncCmd struct {
 	RepoIDs []model.RepoID
 
-	// Due selects instead every connected member of the local repo's
-	// dependency closure that has a clone, each running the timer round its
-	// lease asks for (CloneRound.TimerRound): no clone is made, and a round
+	// Due selects instead every connected direct dependency of the local repo
+	// that has a clone, each running the timer round its lease asks for
+	// (CloneRound.TimerRound): no clone is made, and a round
 	// another process is running is left to it.
 	Due bool
 
 	// OnOutcome receives each repo's outcome, in the order the repos were
-	// named or the closure lists them. Required.
+	// named or the local repo declares them. Required.
 	OnOutcome func(outcome model.RepoSyncOutcome)
 }
 

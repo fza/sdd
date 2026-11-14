@@ -28,6 +28,12 @@ type MultiGraph struct {
 
 	mu      sync.Mutex
 	members map[RepoID]*memberState
+
+	further        FurtherResolver
+	observe        func(ref string, unavailable *UnavailableRef)
+	furtherRepos   map[RepoID]*furtherRepo
+	furtherEntries map[string]furtherEntry
+	unavailable    []UnavailableRef
 }
 
 type memberState struct {
@@ -41,7 +47,8 @@ type memberState struct {
 // loaded member) gets back-wired so traversal code holding any *Graph can
 // resolve across the boundary.
 func NewMultiGraph(local *Graph, deps []RepoID, loader func(repoID RepoID) (*Graph, error)) *MultiGraph {
-	m := &MultiGraph{Local: local, deps: deps, loader: loader, members: make(map[RepoID]*memberState)}
+	m := &MultiGraph{Local: local, deps: deps, loader: loader, members: make(map[RepoID]*memberState),
+		furtherRepos: map[RepoID]*furtherRepo{}, furtherEntries: map[string]furtherEntry{}}
 	local.multi = m
 	return m
 }
@@ -117,6 +124,13 @@ func (from *Graph) ResolveAcross(id string) (e *Entry, owner *Graph, ok bool) {
 	if !isCross {
 		e, ok := from.ByID[id]
 		return e, from, ok
+	}
+	if from.multi.furtherFrom(from, repoID) {
+		resolved := from.multi.resolveFurther(repoID, entryID)
+		if resolved.graph == nil {
+			return nil, nil, false
+		}
+		return resolved.graph.ByID[entryID], resolved.graph, true
 	}
 	member, err := from.multi.Member(repoID)
 	if err != nil || member == nil {

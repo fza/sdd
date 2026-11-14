@@ -24,11 +24,11 @@ func viewCmd() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:  "repo",
-				Usage: "Also render the layout over a dependency's graph by repo-id (repeatable, additive to the local graph; must be in the declared dependency closure)",
+				Usage: "Also render the layout over a dependency's graph by repo-id (repeatable, additive to the local graph; must be a direct dependency)",
 			},
 			&cli.BoolFlag{
 				Name:  "all-repos",
-				Usage: "Also render the layout over every repo in the declared dependency closure",
+				Usage: "Also render the layout over every direct dependency",
 			},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -64,29 +64,32 @@ func viewCmd() *cli.Command {
 
 			named, all := repoIDArgs(cmd.StringSlice("repo")), cmd.Bool("all-repos")
 			crossRepo := all || len(named) > 0
-			if crossRepo {
-				settle, err := refreshDependencies(ctx, cmd.ErrWriter)
-				defer settle()
-				if err != nil {
-					return err
-				}
-			}
 
 			dir, err := resolveGraphDir(cmd)
 			if err != nil {
 				return err
 			}
-			f, err := newReadFinder()
+			f, settleFurther, err := furtherReadFinder(ctx, cmd.ErrWriter)
+			defer settleFurther()
 			if err != nil {
 				return err
 			}
 			var repoIDs []model.RepoID
 			if crossRepo {
-				closure, err := f.DependencyClosure(ctx, query.DependencyClosureQuery{})
+				home, err := f.LocalRepoID()
 				if err != nil {
 					return err
 				}
-				if repoIDs, err = model.SelectRepos(named, all, closure); err != nil {
+				direct, err := f.DirectDependencies()
+				if err != nil {
+					return err
+				}
+				if repoIDs, err = model.SelectRepos(home, named, all, direct); err != nil {
+					return err
+				}
+				settle, err := refreshDependencies(ctx, cmd.ErrWriter, repoIDs)
+				defer settle()
+				if err != nil {
 					return err
 				}
 			}
@@ -127,6 +130,7 @@ func viewCmd() *cli.Command {
 				}
 				presenters.RenderView(cmd.Writer, mresult.ViewSections(repoID), nil)
 			}
+			warnUnavailableRefs(ctx, g)
 			return nil
 		},
 	}

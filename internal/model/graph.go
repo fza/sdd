@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/networkteam/sdd/pkg/application/types"
 )
@@ -35,6 +36,10 @@ type Graph struct {
 	// repo's cache, "" for the local graph. Embedded (binary-scoped) entries
 	// stay bare regardless — they are identical in every member graph.
 	repoID RepoID
+	// further marks a clone graph read for a ref beyond the direct
+	// dependencies; cloneFetched is when that clone last fetched.
+	further      bool
+	cloneFetched time.Time
 }
 
 // nodeKeyFor is the graph-qualified identity of an entry for rendering and

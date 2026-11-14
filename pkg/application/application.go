@@ -680,33 +680,15 @@ func (a *Application) snapshotWithDependencyPolicy(ctx context.Context, identity
 			return nil, readErr
 		}
 	}
-	// The direct dependencies load eagerly above; a repo further out in the
-	// closure loads on first use, when a cross-repo ID names it.
-	var reach *horizon
-	model.NewMultiGraph(local, append([]RepoID(nil), runtime.options.Dependencies...), func(repoID RepoID) (*model.Graph, error) {
-		if member, ok := members[repoID]; ok {
-			return member.graph, member.err
-		}
-		if reach == nil {
-			h, err := a.horizon(ctx, principal, runtime)
-			if err != nil {
-				return nil, err
-			}
-			reach = h
-		}
-		dependency, err := reach.member(repoID)
-		if err != nil {
-			return nil, err
-		}
-		view, err := reach.view(dependency, "")
-		if err != nil {
-			if requireSources {
-				return nil, err
-			}
-			return nil, dependencyUnavailable()
-		}
-		return model.NewGraph(append([]*model.Entry(nil), view.snapshot.graph.Entries...)), nil
+	// Only the direct dependencies are members (20261113-235859-d-cpt-l3m).
+	multi := model.NewMultiGraph(local, append([]RepoID(nil), runtime.options.Dependencies...), func(repoID RepoID) (*model.Graph, error) {
+		member := members[repoID]
+		return member.graph, member.err
 	})
+	if runtime.options.Further != nil {
+		multi.ResolveFurther(furtherResolver(ctx, runtime))
+		multi.ObserveFurther(runtime.further.note)
+	}
 	clone := *base
 	clone.graph = local
 	// The finder is the read authority, so rewrap it around the cross-graph
@@ -716,23 +698,19 @@ func (a *Application) snapshotWithDependencyPolicy(ctx context.Context, identity
 	return &clone, nil
 }
 
-// dependency resolves a repo in runtime's dependency closure, the horizon
-// a cross-repo ID may name.
+// dependency resolves one of runtime's direct dependencies, the horizon a
+// cross-repo ID may name.
 func (a *Application) dependency(ctx context.Context, identity RequestIdentity, runtime *ProjectRuntime, repoID RepoID) (*ProjectRuntime, error) {
 	principal, err := a.access.ResolvePrincipal(ctx, identity)
 	if err != nil {
 		return nil, err
 	}
-	reach, err := a.horizon(ctx, principal, runtime)
-	if err != nil {
-		return nil, err
-	}
-	return reach.member(repoID)
+	return a.directDependencies(ctx, principal, runtime).member(repoID)
 }
 
 // selectedDependencies resolves a read's repo selection against runtime's
-// dependency closure, walked only when the read selects any, and renews the
-// lease of each repo it selects.
+// direct dependencies, resolved only when the read selects any, and renews
+// the lease of each repo it selects.
 func (a *Application) selectedDependencies(ctx context.Context, identity RequestIdentity, runtime *ProjectRuntime, named []RepoID, all bool) ([]RepoID, *horizon, error) {
 	if !all && len(named) == 0 {
 		return nil, nil, nil
@@ -741,16 +719,10 @@ func (a *Application) selectedDependencies(ctx context.Context, identity Request
 	if err != nil {
 		return nil, nil, err
 	}
-	reach, err := a.horizon(ctx, principal, runtime)
+	reach := a.directDependencies(ctx, principal, runtime)
+	selected, err := model.SelectRepos(RepoID(reach.home), named, all, reach.repos)
 	if err != nil {
-		return nil, nil, err
-	}
-	selected, err := model.SelectRepos(named, all, reach.repos)
-	if errors.Is(err, model.ErrNotInClosure) {
-		return nil, nil, dependencyUnavailable()
-	}
-	if err != nil {
-		return nil, nil, err
+		return nil, nil, &ApplicationError{Code: ErrorProjectUnavailable, Message: err.Error(), Cause: err}
 	}
 	for _, repoID := range selected {
 		if member, err := reach.member(repoID); err == nil {

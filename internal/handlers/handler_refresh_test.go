@@ -13,7 +13,6 @@ import (
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/handlers/synctest"
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
 	"github.com/networkteam/sdd/internal/repos/repostest"
 )
@@ -50,12 +49,11 @@ func writeRepoConfig(t *testing.T, dir, content string) {
 	}
 }
 
-// TestRefreshDependencyClosure walks local → dep → deep with a failing and an
-// unconnected sibling. dep's clone holds a broken config that its round
-// repairs, so the walk only succeeds when each repo is refreshed before its
-// declarations are read; the failed round and the missing connection are
+// TestRefreshDependencies refreshes the local repo's direct dependencies only
+// (20261113-235859-d-cpt-l3m): dep's round runs, deep, which only dep
+// declares, is never synced; the failed round and the missing connection are
 // reported and the refresh still succeeds.
-func TestRefreshDependencyClosure(t *testing.T) {
+func TestRefreshDependencies(t *testing.T) {
 	loc := repos.Locations{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), CacheRoot: t.TempDir(), DataRoot: t.TempDir()}
 	reg := repos.NewRegistry(loc)
 	connected := &repos.GlobalConfig{}
@@ -74,15 +72,17 @@ func TestRefreshDependencyClosure(t *testing.T) {
 		cloneDirs[repoID] = dir
 	}
 	repostest.WriteConfig(t, loc.ConfigPath, connected)
-	writeRepoConfig(t, cloneDirs["example.test/dep"], "repo_id: [\n")
+	writeRepoConfig(t, cloneDirs["example.test/dep"], "repo_id: example.test/dep\ndependencies: [example.test/deep]\n")
 	writeRepoConfig(t, cloneDirs["example.test/deep"], "repo_id: example.test/deep\n")
 	writeRepoConfig(t, cloneDirs["example.test/failing"], "repo_id: example.test/failing\n")
 
+	var synced []model.RepoID
 	round := scriptedRound{
 		fail: map[string]error{cloneDirs["example.test/failing"]: errors.New("remote unreachable")},
-		update: map[string]func(){cloneDirs["example.test/dep"]: func() {
-			writeRepoConfig(t, cloneDirs["example.test/dep"], "repo_id: example.test/dep\ndependencies: [example.test/deep]\n")
-		}},
+		update: map[string]func(){
+			cloneDirs["example.test/dep"]:  func() { synced = append(synced, "example.test/dep") },
+			cloneDirs["example.test/deep"]: func() { synced = append(synced, "example.test/deep") },
+		},
 	}
 	reader := finders.New(finders.Options{Repos: reg, Config: &model.PerRepoConfig{
 		RepoID:       "example.test/local",
@@ -96,7 +96,7 @@ func TestRefreshDependencyClosure(t *testing.T) {
 	h := handlers.New(handlers.Options{Reader: reader, Repos: manager, CloneRound: round})
 
 	var failed, unconnected []model.RepoID
-	err := h.RefreshDependencyClosure(t.Context(), command.RefreshDependencyClosureCmd{
+	err := h.RefreshDependencies(t.Context(), command.RefreshDependenciesCmd{
 		OnRefreshFailed: func(repoID model.RepoID, _ error) { failed = append(failed, repoID) },
 		OnUnconnected:   func(repoID model.RepoID) { unconnected = append(unconnected, repoID) },
 	})
@@ -109,17 +109,11 @@ func TestRefreshDependencyClosure(t *testing.T) {
 	if !slices.Equal(unconnected, []model.RepoID{"example.test/unconnected"}) {
 		t.Errorf("reported unconnected = %v, want the unconnected repo", unconnected)
 	}
-
-	closure, err := reader.DependencyClosure(t.Context(), query.DependencyClosureQuery{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []model.RepoID{"example.test/dep", "example.test/failing", "example.test/unconnected", "example.test/deep"}
-	if !slices.Equal(closure, want) {
-		t.Errorf("closure after refresh = %v, want %v", closure, want)
+	if !slices.Equal(synced, []model.RepoID{"example.test/dep"}) {
+		t.Errorf("synced repos = %v, want the direct dependency only", synced)
 	}
 
-	if err := h.RefreshDependencyClosure(t.Context(), command.RefreshDependencyClosureCmd{}); err == nil {
+	if err := h.RefreshDependencies(t.Context(), command.RefreshDependenciesCmd{}); err == nil {
 		t.Error("a refresh without warning callbacks was accepted")
 	}
 }

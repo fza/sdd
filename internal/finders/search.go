@@ -27,12 +27,13 @@ import (
 // Pure read: no side effects. The lazy-fill that precedes a query is
 // the IndexHandler's job; this finder consumes the index as-is.
 type SearchFinder struct {
-	graph      *model.Graph // the graph filtered and resolved against
-	graphDir   string
-	embedder   embed.Embedder  // nil disables vector and hybrid modes
-	indexStore VectorIndex     // nil disables vector and hybrid modes
-	repos      *repos.Registry // nil disables cross-repo search
-	closure    []model.RepoID
+	graph        *model.Graph // the graph filtered and resolved against
+	graphDir     string
+	embedder     embed.Embedder  // nil disables vector and hybrid modes
+	indexStore   VectorIndex     // nil disables vector and hybrid modes
+	repos        *repos.Registry // nil disables cross-repo search
+	home         model.RepoID
+	dependencies []model.RepoID
 }
 
 // SearchFinderOptions configures NewSearchFinder. Graph is the graph the
@@ -47,9 +48,10 @@ type SearchFinderOptions struct {
 	Embedder   embed.Embedder
 	IndexStore VectorIndex
 	Repos      *repos.Registry
-	// Closure is the dependency closure cross-repo search selects from
-	// (Finder.DependencyClosure).
-	Closure []model.RepoID
+	// Home and Dependencies are the project and its direct dependencies
+	// cross-repo search selects from (Finder.DirectDependencies).
+	Home         model.RepoID
+	Dependencies []model.RepoID
 }
 
 // VectorIndex is the store a vector search scans: index.SearchSnapshot on the
@@ -62,12 +64,13 @@ type VectorIndex interface {
 // NewSearchFinder constructs a SearchFinder.
 func NewSearchFinder(opts SearchFinderOptions) *SearchFinder {
 	return &SearchFinder{
-		graph:      opts.Graph,
-		graphDir:   opts.GraphDir,
-		embedder:   opts.Embedder,
-		indexStore: opts.IndexStore,
-		repos:      opts.Repos,
-		closure:    opts.Closure,
+		graph:        opts.Graph,
+		graphDir:     opts.GraphDir,
+		embedder:     opts.Embedder,
+		indexStore:   opts.IndexStore,
+		repos:        opts.Repos,
+		home:         opts.Home,
+		dependencies: opts.Dependencies,
 	}
 }
 

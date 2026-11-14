@@ -51,9 +51,10 @@ Session handle (the session ID):
   registry).
 - A read runs in its session's home project and branch unless it names
   another project.
-- A move or a read may work in a project the home declares as a dependency,
-  directly or through its dependencies. Pass it as project on start_procedure
-  or on the read. Every serve names the project its instance works in.
+- A move or a read may work in a project the home declares directly as a
+  dependency, never in one only a dependency declares. Pass it as project on
+  start_procedure or on the read. Every serve names the project its instance
+  works in.
 - Nothing is derived from the connection. A reconnect changes nothing. Closing
   a connection ends nothing.
 - Retain the handle across context compaction.

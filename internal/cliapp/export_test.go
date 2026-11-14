@@ -161,7 +161,7 @@ func TestCLIExportJSON(t *testing.T) {
 
 // newDependencyRepo commits a graph declaring repoID (and deps) in a fresh
 // repository and connects it, so the export's cache freshening clones it.
-func newDependencyRepo(t *testing.T, f *appFixture, repoID string, deps []string, entries map[string]string) {
+func newDependencyRepo(t *testing.T, f *appFixture, repoID string, deps []string, entries map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := "repo_id: " + repoID + "\n"
@@ -196,17 +196,19 @@ func newDependencyRepo(t *testing.T, f *appFixture, repoID string, deps []string
 	}
 	config = append(config, "  - repo_id: "+repoID+"\n    clone_url: "+dir+"\n"...)
 	f.write(t, "config/sdd/config.yaml", string(config))
+	return dir
 }
 
 func testEntry(frontmatter string) string {
 	return "---\n" + frontmatter + "layer: tactical\nconfidence: medium\nparticipants: [Local Author]\n---\n\nBody.\n"
 }
 
-// TestCLIExportDependencySelection walks the declared closure local → dep →
-// deep: referenced mode starts from what the local graph cites and follows
-// refs and supersedes upstream, crossing into deep only within the hop budget.
-// The local graph overrides a base entry the dependency still cites, so the
-// original must stay listed among the embedded entries.
+// TestCLIExportDependencySelection exports the direct dependency dep of local,
+// never deep, which only dep declares (20261113-235859-d-cpt-l3m): referenced
+// mode starts from what the local graph cites and follows refs and supersedes
+// upstream within the hop budget. The local graph overrides a base entry the
+// dependency still cites, so the original must stay listed among the embedded
+// entries.
 func TestCLIExportDependencySelection(t *testing.T) {
 	f := newAppFixture(t)
 	const (
@@ -256,16 +258,16 @@ func TestCLIExportDependencySelection(t *testing.T) {
 	}{
 		{name: "none", args: []string{"--dependencies", "none"}},
 		{name: "referenced cited only", args: []string{"--hops", "0"}, mode: "referenced", hops: 0, repos: []repoWant{
-			{"example.test/dep", []string{cited}}, {"example.test/deep", nil},
+			{"example.test/dep", []string{cited}},
 		}},
 		{name: "referenced default one hop", mode: "referenced", hops: 1, repos: []repoWant{
-			{"example.test/dep", []string{superseded, grounding, cited}}, {"example.test/deep", nil},
+			{"example.test/dep", []string{superseded, grounding, cited}},
 		}},
-		{name: "referenced crosses into deep", args: []string{"--hops", "2"}, mode: "referenced", hops: 2, repos: []repoWant{
-			{"example.test/dep", []string{superseded, grounding, cited}}, {"example.test/deep", []string{deepEntry}},
+		{name: "referenced stays within the direct dependencies", args: []string{"--hops", "2"}, mode: "referenced", hops: 2, repos: []repoWant{
+			{"example.test/dep", []string{superseded, grounding, cited}},
 		}},
 		{name: "all", args: []string{"--dependencies", "all"}, mode: "all", repos: []repoWant{
-			{"example.test/dep", []string{uncited, superseded, grounding, cited}}, {"example.test/deep", []string{deepEntry}},
+			{"example.test/dep", []string{uncited, superseded, grounding, cited}},
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -286,7 +288,7 @@ func TestCLIExportDependencySelection(t *testing.T) {
 					t.Errorf("repo %d = %s %v, want %s %v", i+1, repo.RepoID, got, want.repoID, want.entries)
 				}
 				sel := repo.Selection
-				wantTotal := map[string]int{"example.test/dep": 4, "example.test/deep": 1}[want.repoID]
+				wantTotal := map[string]int{"example.test/dep": 4}[want.repoID]
 				if sel == nil || sel.Mode != tt.mode || sel.TotalEntries != wantTotal || (sel.Hops == nil) != (tt.mode != "referenced") ||
 					(sel.Hops != nil && *sel.Hops != tt.hops) {
 					t.Errorf("%s selection = %+v, want mode %s hops %d total %d", want.repoID, sel, tt.mode, tt.hops, wantTotal)
@@ -324,8 +326,8 @@ func TestCLIExportDependencySelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	var doc exportDoc
-	if err := json.Unmarshal(data, &doc); err != nil || len(doc.Repos) != 3 {
-		t.Errorf("--out file holds %d repos (%v), want 3", len(doc.Repos), err)
+	if err := json.Unmarshal(data, &doc); err != nil || len(doc.Repos) != 2 {
+		t.Errorf("--out file holds %d repos (%v), want 2", len(doc.Repos), err)
 	}
 	if bad := f.run(t, "export", "--dependencies", "all", "--hops", "2"); bad.err == nil {
 		t.Error("--hops with --dependencies all was accepted")

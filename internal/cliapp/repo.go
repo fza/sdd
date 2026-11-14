@@ -288,22 +288,25 @@ func repoIDArgs(args []string) []model.RepoID {
 	return ids
 }
 
-// refreshDependencies refreshes the dependency closure's clones ahead of a
-// read that reaches beyond the local graph. settle waits for the sync rounds
-// the read stopped waiting for; call it once the read is out.
-func refreshDependencies(ctx context.Context, errWriter io.Writer) (settle func(), err error) {
+// refreshDependencies refreshes the clones of the named direct dependencies,
+// all of them when none is named, ahead of a read that reaches beyond the
+// local graph. settle waits for the sync rounds the read stopped waiting for;
+// call it once the read is out.
+func refreshDependencies(ctx context.Context, errWriter io.Writer, repoIDs []model.RepoID) (settle func(), err error) {
 	h, err := repoHandler(errWriter)
 	if err != nil {
 		return func() {}, err
 	}
-	return h.Settle, h.RefreshDependencyClosure(ctx, dependencyRefreshCmd(ctx))
+	refresh := dependencyRefreshCmd(ctx)
+	refresh.RepoIDs = repoIDs
+	return h.Settle, h.RefreshDependencies(ctx, refresh)
 }
 
 // dependencyRefreshCmd logs what a refresh could not do as warnings; the read
 // proceeds on the caches as they stand.
-func dependencyRefreshCmd(ctx context.Context) command.RefreshDependencyClosureCmd {
+func dependencyRefreshCmd(ctx context.Context) command.RefreshDependenciesCmd {
 	logger := slogutils.FromContext(ctx)
-	return command.RefreshDependencyClosureCmd{
+	return command.RefreshDependenciesCmd{
 		OnRefreshFailed: func(repoID model.RepoID, err error) {
 			logger.Warn("could not refresh dependency; reading its clone as it stands", "repo", repoID, "err", err)
 		},

@@ -14,11 +14,11 @@ import (
 	"github.com/networkteam/sdd/internal/repos/repostest"
 )
 
-// TestIndexLintReportsDriftAcrossTheDependencyClosure: dep, deep (declared by
+// TestIndexLintReportsDriftAcrossTheDirectDependencies: dep, deep (declared by
 // dep) and stray (declared by nobody) are connected and cached, each with an
-// index built under an older embedder. Lint reports drift for the closure
-// members only, the repos a cross-repo search reaches (20261026-194528-d-cpt-gcq).
-func TestIndexLintReportsDriftAcrossTheDependencyClosure(t *testing.T) {
+// index built under an older embedder. Lint reports drift for the direct
+// dependencies only, the repos a cross-repo search reaches (20261113-235859-d-cpt-l3m).
+func TestIndexLintReportsDriftAcrossTheDirectDependencies(t *testing.T) {
 	loc := repos.Locations{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), CacheRoot: t.TempDir(), DataRoot: t.TempDir()}
 	reg := repos.NewRegistry(loc)
 	embedding := model.EmbeddingConfig{Provider: "ollama", Model: "current"}
@@ -62,7 +62,7 @@ func TestIndexLintReportsDriftAcrossTheDependencyClosure(t *testing.T) {
 			drifted = append(drifted, finding.EntryID)
 		}
 	}
-	if want := []string{"example.test/dep", "example.test/deep"}; !slices.Equal(drifted, want) {
+	if want := []string{"example.test/dep"}; !slices.Equal(drifted, want) {
 		t.Errorf("drift reported for %v, want %v", drifted, want)
 	}
 }
