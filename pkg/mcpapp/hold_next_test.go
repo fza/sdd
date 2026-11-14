@@ -12,6 +12,8 @@ import (
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/proctest"
+	sdd "github.com/networkteam/sdd/pkg/application"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
@@ -272,5 +274,60 @@ func TestAFailedProofIsNamedBesideTheFullText(t *testing.T) {
 	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "held": []any{right.String()}}, &serve)
 	if serve.ProofNotice != "" {
 		t.Errorf("a right proof should get no notice, got %q", serve.ProofNotice)
+	}
+}
+
+// At guideReview the line names the playback lanes, as its revise option
+// leads back to playback through assemble; an agent proving them then gets
+// playback's lanes as pointers.
+func TestTheLineAtGuideReviewNamesThePlaybackLanes(t *testing.T) {
+	world := proctest.NewWorld(t)
+	world.LLM.GuideFindings = []proctest.GuideFinding{{
+		Reasoning: "the body leans on 'something' without naming it, so a reader outside the dialogue cannot act",
+		Axis:      "stranding", Quote: "something", Repair: "write-in", Severity: "substantive",
+	}}
+	srv, err := mcpserver.New(mcpserver.Options{Application: world.App, SearchSyncMode: sdd.SearchSyncAll, LocalIdentity: world.Identity, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	memory := newAgentMemory()
+	memory.raw, memory.holdNext = true, true
+	cs := connectAs(t, srv, memory)
+	session := openSession(t, cs).Session
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &serve)
+	followWaitingLanes(t, cs, session, serve)
+	draft := map[string]any{
+		"body": "A tactical gap: the fixture observes something.", "entryKind": "gap", "layer": "tactical",
+		"topics": []string{"testing/fixture"}, "confidence": "medium", "widenReport": "searched from three angles",
+	}
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": draft}, &serve)
+	if serve.Step != "playback" {
+		t.Fatalf("the draft should reach playback, got %q: %.300q", serve.Step, serve.Instructions)
+	}
+	playback := model.ReadAnchors(followWaitingLanes(t, cs, session, serve))
+	if len(playback) == 0 {
+		t.Fatal("playback should serve its lanes with tags")
+	}
+
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": map[string]any{"chooser": "playback", "choice": "confirm", "userWords": "yes"}}, &serve)
+	if serve.Step != "guideReview" {
+		t.Fatalf("the confirm should reach guideReview, got %q: %.300q", serve.Step, serve.Instructions)
+	}
+	for _, proof := range playback {
+		if !named(serve.HoldNext, proof.Tag) {
+			t.Errorf("the line at guideReview should name playback's tag %s, got %q", proof.Tag, serve.HoldNext)
+		}
+	}
+
+	revision := map[string]any{"chooser": "guideReview", "choice": "revise", "fields": map[string]any{"body": "A tactical gap: the fixture observes the missing title."}}
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": revision}, &serve)
+	if serve.Step != "playback" {
+		t.Fatalf("the revision should return to playback, got %q: %.300q", serve.Step, serve.Instructions)
+	}
+	if !slices.ContainsFunc(playback, func(proof model.Proof) bool {
+		return strings.Contains(serve.Instructions, "tag "+proof.Tag+" for lane playback")
+	}) {
+		t.Errorf("playback served again should point at the lane the agent proved, got %.600q", serve.Instructions)
 	}
 }

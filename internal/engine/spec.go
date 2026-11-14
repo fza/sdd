@@ -270,6 +270,45 @@ func IsEndTarget(to string) bool {
 	return to == EndCompleted || to == EndAbandoned
 }
 
+// nextSteps lists the steps an instance at from may be served at next,
+// nearest first: where from's options and transitions lead, and on through
+// each gate reached, as a gate advances on its own.
+func (s *Spec) nextSteps(from string) []string {
+	start := s.StepByID[from]
+	if start == nil {
+		return nil
+	}
+	seen := map[string]bool{from: true}
+	var next []string
+	queue := start.targets()
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		step := s.StepByID[id]
+		if seen[id] || step == nil {
+			continue
+		}
+		seen[id] = true
+		next = append(next, id)
+		if step.Chooser == ChooserGate {
+			queue = append(queue, step.targets()...)
+		}
+	}
+	return next
+}
+
+// targets lists where a step's options and transitions lead.
+func (st *Step) targets() []string {
+	var to []string
+	for _, opt := range st.Options {
+		to = append(to, opt.To)
+	}
+	for _, tr := range st.Transitions {
+		to = append(to, tr.To)
+	}
+	return to
+}
+
 // --- YAML intermediate shapes -------------------------------------------
 
 type varDeclYAML struct {

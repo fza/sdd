@@ -195,3 +195,99 @@ func TestHoldNextLeavesOutUntaggedPieces(t *testing.T) {
 		t.Errorf("neither an untagged piece nor an entry never served in full should be named, got %v", heldNames(got))
 	}
 }
+
+// reviewMachine leads from review, through the draft gate, back to playback;
+// aside is reached only from playback.
+const reviewMachine = `state:
+    body: {type: text, desc: x}
+steps:
+    - id: draft
+      collect: [body]
+      transitions:
+          - when: hasBody
+            to: playback
+    - id: playback
+      chooser: user
+      options:
+          - {choice: confirm, to: review}
+          - {choice: detour, to: aside}
+    - id: aside
+      chooser: agent
+      options:
+          - {choice: back, to: playback}
+    - id: review
+      chooser: agent
+      options:
+          - {choice: revise, collect: ["body?"], to: draft}
+          - {choice: proceed, to: end(completed)}`
+
+// The line names, after the step a move stands at, the steps its options
+// lead to, on through steps that advance on their own, nearest first, also
+// after a restart; a step no option reaches stays off.
+func TestHoldNextNamesTheStepsTheOptionsLeadTo(t *testing.T) {
+	reg := engine.NewRegistry()
+	spec, err := engine.LoadSpec(laneEntry(t, reviewMachine, "## unit: draft\n\nDraft.\n\n## unit: playback\n\nPlay back.\n\n## unit: aside\n\nAside.\n\n## unit: review\n\nReview."), reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	session := newPieceSession(engine.NewWriterSink(&log))
+	serve, err := session.Start(spec, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	move := serve.Instance
+	// Each step serves its lane, as its pointer once the agent proves it, so
+	// no lane is a repeat the line would name anyway.
+	proofs := map[string]model.Proof{}
+	serveStep := func(lane string) {
+		t.Helper()
+		piece := engine.Piece{Name: "lane " + lane, Hash: lane}
+		proof, served := proofs[lane]
+		if served {
+			session.BeginCall([]model.Proof{proof}, nil)
+		} else {
+			session.BeginCall(nil, nil)
+		}
+		session.ServeFor(move)
+		if served {
+			if got := session.ServePiece(piece, engine.HoldStep, nil, placeIn(pieceText)); !got.Held {
+				t.Fatalf("the proved %s lane should serve as its pointer, got %+v", lane, got)
+			}
+		} else {
+			proofs[lane] = servedInFullAs(t, session, piece, engine.HoldStep)
+		}
+		session.RecordAnchors()
+	}
+	advance := func(advanced *engine.Serve, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+		serveStep(advanced.Step)
+	}
+	serveStep("draft")
+	advance(session.Report(move, map[string]any{"body": "x"}))
+	advance(session.Answer(move, "playback", "detour", nil, "aside"))
+	advance(session.Answer(move, "aside", "back", nil, ""))
+	advance(session.Answer(move, "playback", "confirm", nil, "yes"))
+
+	want := []string{"lane review", "lane draft", "lane playback"}
+	session.BeginCall(nil, nil)
+	if got := heldNames(session.HoldNext(engine.HoldHints{})); !slices.Equal(got, want) {
+		t.Errorf("the line should name the review step, then the draft gate and the playback its revise leads to, got %v", got)
+	}
+	events, err := engine.ReadEvents(bytes.NewReader(log.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := engine.New(reg, engine.StaticGraphs{Graph: model.NewGraph(nil)}).
+		ReplaySession("s_pieces", "tester", events, func(string) (*engine.Spec, error) { return spec, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed.BeginCall(nil, nil)
+	if got := heldNames(replayed.HoldNext(engine.HoldHints{})); !slices.Equal(got, want) {
+		t.Errorf("a restarted server should name the same steps, got %v", got)
+	}
+}

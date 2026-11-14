@@ -29,7 +29,7 @@ framing: |
   20260704-120000-d-prc-tst: participant "Tester" does not match any actor canonical in the graph
   20260921-120000-s-tac-op1: participant "Tester" does not match any actor canonical in the graph
 goal: put the choice to the user; relay their answer verbatim
-hold_next: <tag>, <tag>, <tag>, <tag>, <tag>, <tag>, <tag>, <tag>, <tag>
+hold_next: <tag>, <tag>, <tag>, <tag>, <tag>, <tag>, <tag>, <tag>, <tag>, <tag>, <tag>, <tag>, <tag>
 instance: i_2
 instructions: |
   Play back to the user: Test capture entry: the fixture oscillation gap also shows up in integration tests. This entry exists to verify the engine write path end to end.

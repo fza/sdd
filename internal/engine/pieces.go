@@ -66,9 +66,10 @@ type pieceCall struct {
 	// should the call leave lanes waiting again.
 	followed map[Piece]string
 	// serving is the instance whose serve the call composes (ServeFor), served
-	// every instance it composed; carried is what it served outside them.
+	// every instance it composed with the step it stood at; carried is what
+	// it served outside them.
 	serving string
-	served  map[string]bool
+	served  map[string]string
 	carried []Piece
 }
 
@@ -86,10 +87,13 @@ type pendingAnchor struct {
 	instance string
 }
 
-// stepServe is what an instance's last serve carried, numbered by stepSeq.
+// stepServe is what an instance's last serve carried, at step, numbered by
+// stepSeq.
 type stepServe struct {
-	seq    int
-	pieces []rankedPiece
+	seq      int
+	instance string
+	step     string
+	pieces   []rankedPiece
 }
 
 type rankedPiece struct {
@@ -129,9 +133,13 @@ func (s *Session) BeginCall(held []model.Proof, reread []string) {
 func (s *Session) ServeFor(instance string) {
 	s.call.serving = instance
 	if s.call.served == nil {
-		s.call.served = map[string]bool{}
+		s.call.served = map[string]string{}
 	}
-	s.call.served[instance] = true
+	var step string
+	if inst := s.instances[instance]; inst != nil {
+		step = inst.Step
+	}
+	s.call.served[instance] = step
 }
 
 // Holds reports whether the call in flight holds the piece, with the tag it
@@ -296,13 +304,17 @@ func (s *Session) RecordAnchors() {
 		s.foldAnchor(record)
 		records = append(records, record)
 	}
-	s.call.pending, s.call.served = nil, nil
+	at := map[string]any{}
 	for instance, pieces := range steps {
-		if served, ok := s.steps[instance]; ok && slices.Equal(served.pieces, rankedPieces(pieces)) {
+		step := s.call.served[instance]
+		if served, ok := s.steps[instance]; ok && served.step == step && slices.Equal(served.pieces, rankedPieces(pieces)) {
 			delete(steps, instance)
+		} else if step != "" {
+			at[instance] = step
 		}
 	}
-	s.foldSteps(steps)
+	s.call.pending, s.call.served = nil, nil
+	s.foldSteps(steps, at)
 	if len(records) == 0 && len(steps) == 0 {
 		return
 	}
@@ -312,6 +324,9 @@ func (s *Session) RecordAnchors() {
 	}
 	if len(steps) > 0 {
 		data["steps"] = steps
+	}
+	if len(at) > 0 {
+		data["at"] = at
 	}
 	s.appendEvent("", EventAnchors, data)
 }
@@ -399,14 +414,28 @@ func (s *Session) foldAnchor(record any) {
 	}
 }
 
-// foldSteps replaces what each instance's last serve carried.
-func (s *Session) foldSteps(steps map[string]any) {
+// foldSteps replaces what each instance's last serve carried, and what the
+// last serve of the step at names carried; a record without the step, as
+// ledgers written before it, keeps the instance's alone.
+func (s *Session) foldSteps(steps, at map[string]any) {
 	for _, instance := range slices.Sorted(maps.Keys(steps)) {
 		if s.steps == nil {
 			s.steps = map[string]stepServe{}
 		}
 		s.stepSeq++
-		s.steps[instance] = stepServe{seq: s.stepSeq, pieces: rankedPieces(steps[instance])}
+		step, _ := at[instance].(string)
+		pieces := rankedPieces(steps[instance])
+		s.steps[instance] = stepServe{seq: s.stepSeq, instance: instance, step: step, pieces: pieces}
+		if step == "" {
+			continue
+		}
+		if s.stepServes == nil {
+			s.stepServes = map[string]map[string][]rankedPiece{}
+		}
+		if s.stepServes[instance] == nil {
+			s.stepServes[instance] = map[string][]rankedPiece{}
+		}
+		s.stepServes[instance][step] = pieces
 	}
 }
 
@@ -433,11 +462,12 @@ func rankedPieces(records any) []rankedPiece {
 // HoldNext names the pieces the next serve may repeat by the tags they were
 // last served under, at most MaxHoldNext, likeliest first
 // (20261114-121534-d-tac-qdb): the lanes and report schemas of the steps the
-// running moves stand at, newest serve first; the hints' knowledge, then
-// reading entries; the pieces the running moves served in full where a proof
-// could have held them; then the rest those steps carried and what the call
-// served outside them. A piece without a tag, such as a gather brief line,
-// is never named.
+// running moves stand at, newest serve first; the hints' knowledge; the lanes
+// and report schemas the last serves of the steps their options lead to
+// carried, nearest first; the hints' reading entries; the pieces the running
+// moves served in full where a proof could have held them; then the rest
+// all those steps carried and what the call served outside them. A piece
+// without a tag, such as a gather brief line, is never named.
 func (s *Session) HoldNext(hints HoldHints) []HeldPiece {
 	var line []HeldPiece
 	named := map[string]bool{}
@@ -449,15 +479,23 @@ func (s *Session) HoldNext(hints HoldHints) []HeldPiece {
 		named[tag] = true
 		line = append(line, HeldPiece{Name: p.Name, Tag: tag})
 	}
-	serves := s.runningSteps()
-	for _, serve := range serves {
-		for _, p := range serve.pieces {
-			if p.rank == HoldStep {
-				add(p.piece)
+	addRanked := func(serves []stepServe, step bool) {
+		for _, serve := range serves {
+			for _, p := range serve.pieces {
+				if (p.rank == HoldStep) == step {
+					add(p.piece)
+				}
 			}
 		}
 	}
-	for _, id := range slices.Concat(hints.Knowledge, hints.Reading) {
+	serves := s.runningSteps()
+	next := s.nextServes(serves)
+	addRanked(serves, true)
+	for _, id := range hints.Knowledge {
+		add(Piece{Name: id})
+	}
+	addRanked(next, true)
+	for _, id := range hints.Reading {
 		add(Piece{Name: id})
 	}
 	for _, move := range s.runningMoves() {
@@ -465,13 +503,8 @@ func (s *Session) HoldNext(hints HoldHints) []HeldPiece {
 			add(p)
 		}
 	}
-	for _, serve := range serves {
-		for _, p := range serve.pieces {
-			if p.rank != HoldStep {
-				add(p.piece)
-			}
-		}
-	}
+	addRanked(serves, false)
+	addRanked(next, false)
 	for _, p := range s.call.carried {
 		add(p)
 	}
@@ -501,6 +534,24 @@ func (s *Session) runningSteps() []stepServe {
 	}
 	slices.SortFunc(serves, func(a, b stepServe) int { return b.seq - a.seq })
 	return serves
+}
+
+// nextServes lists, for each serve in serves, what the last serve of each
+// step its instance may be served at next carried, nearest step first.
+func (s *Session) nextServes(serves []stepServe) []stepServe {
+	var next []stepServe
+	for _, serve := range serves {
+		inst := s.instances[serve.instance]
+		if inst == nil || inst.Spec == nil {
+			continue
+		}
+		for _, step := range inst.Spec.nextSteps(inst.Step) {
+			if pieces, ok := s.stepServes[serve.instance][step]; ok {
+				next = append(next, stepServe{instance: serve.instance, step: step, pieces: pieces})
+			}
+		}
+	}
+	return next
 }
 
 // FollowDeferral makes the call in flight follow the instance's deferral, a
