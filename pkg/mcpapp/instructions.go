@@ -93,5 +93,7 @@ then serves as a short pointer. Proofs never carry over: list the tags from
 every earlier result, not only the last, as a piece served many calls ago (the
 type-system overview, a framing block, an entry) serves in full again on any
 call without its proof. List in reread the tag or name of a piece you
-no longer see: it serves in full again. Never guess a word: a missing or wrong
-proof costs only the full text.`
+no longer see: it serves in full again. On the follow-up of a split result,
+pieces from the part already sent come as pointers without a proof; list one
+in reread to have it in full. Never guess a word: a missing or wrong proof
+costs only the full text.`
