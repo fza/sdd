@@ -545,7 +545,7 @@ func TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer(t *testing.T) {
 
 			serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "write it anyway")
 			proctest.RequireStep(t, serve, "lateEntries")
-			pointed := strings.Contains(serve.Instructions, late.ID+" — A gap that landed after the confirm. (held as ⟦"+proofs[0].Tag+"⟧)")
+			pointed := strings.Contains(serve.Instructions, late.ID+" — A gap that landed after the confirm. (held as tag "+proofs[0].Tag+")")
 			if pointed != tc.cut {
 				t.Fatalf("the held late entry should list as its pointer only while cuts are on:\n%s", serve.Instructions)
 			}

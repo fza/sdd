@@ -21,7 +21,7 @@ const captureIntroProse = "Draft one entry. One idea, dialogue first."
 
 const withheldLanesPrefix = "(held: "
 
-var heldLaneName = regexp.MustCompile(`^lane (\S+) ⟦[0-9a-z]{4}⟧$`)
+var heldLaneName = regexp.MustCompile(`^lane (\S+) \(tag [0-9a-z]{4}\)$`)
 
 // withheldLanes extracts the lane names from a serve's held-lanes line; nil
 // when the line is absent.

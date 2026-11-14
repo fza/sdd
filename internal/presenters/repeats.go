@@ -69,5 +69,5 @@ func pointerText(id, brief, tag string) string {
 	if tag == "" {
 		return fmt.Sprintf("%s — %s (served in full above)", id, brief)
 	}
-	return fmt.Sprintf("%s — %s (held as %s)", id, brief, model.AnchorMark(tag))
+	return fmt.Sprintf("%s — %s (held as %s)", id, brief, model.TagName(tag))
 }

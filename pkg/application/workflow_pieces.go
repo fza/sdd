@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/networkteam/sdd/internal/basefacts"
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
@@ -40,7 +41,17 @@ func (w *WorkflowSession) BeginCall(held, reread []string) error {
 // ServeText serves a piece of text named name. covers names the entries the
 // text carries whole, which its proof holds too.
 func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPiece {
-	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(text)}, covers,
+	return w.serveText(name, text, covers, engine.HoldCarried)
+}
+
+// ServeLane serves an instruction lane of a step as ServeText does; the
+// hold-next lines name it first.
+func (w *WorkflowSession) ServeLane(name, text string, covers []string) ServedPiece {
+	return w.serveText(name, text, covers, engine.HoldStep)
+}
+
+func (w *WorkflowSession) serveText(name, text string, covers []string, rank engine.HoldRank) ServedPiece {
+	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(text)}, rank, covers,
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
 			return model.PlaceAnchor(text, tag, rnd)
 		})
@@ -50,6 +61,10 @@ func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPi
 	return ServedPiece{Tag: served.Anchor.Tag, Text: served.Anchor.Render(text)}
 }
 
+// ServeFor makes the pieces served from here on in the call belong to the
+// serve of instance, until the next ServeFor.
+func (w *WorkflowSession) ServeFor(instance string) { w.session.ServeFor(instance) }
+
 // ServeSchema serves a report schema named name; in full it returns a copy
 // carrying the tag in one of its descriptions.
 func (w *WorkflowSession) ServeSchema(name string, schema map[string]any) (ServedPiece, map[string]any, error) {
@@ -57,7 +72,7 @@ func (w *WorkflowSession) ServeSchema(name string, schema map[string]any) (Serve
 	if err != nil {
 		return ServedPiece{}, nil, fmt.Errorf("encoding the %s report schema: %w", name, err)
 	}
-	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(string(raw))}, nil,
+	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(string(raw))}, engine.HoldStep, nil,
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
 			return model.PlaceSchemaAnchor(schema, tag, rnd)
 		})
@@ -121,11 +136,50 @@ func (w *WorkflowSession) HoldsEntry(id string) (string, bool) {
 // ServeEntry returns an entry's rendered body served in full, its tag
 // placed.
 func (w *WorkflowSession) ServeEntry(id, body string) string {
-	served := w.session.ServePiece(engine.Piece{Name: id}, nil,
+	served := w.session.ServePiece(engine.Piece{Name: id}, engine.HoldCarried, nil,
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
 			return model.PlaceAnchor(body, tag, rnd)
 		})
 	return served.Anchor.Render(body)
+}
+
+// HoldNext names the tags whose pieces the next serve may repeat, likeliest
+// first and capped (20261114-121534-d-tac-qdb). A running capture adds the
+// type-system overview and its selected kind's authoring fact, a running
+// move the entries its grounding reading served in full. A finished session
+// names none.
+func (w *WorkflowSession) HoldNext() ([]string, error) {
+	if w.Finished() {
+		return nil, nil
+	}
+	var hints engine.HoldHints
+	for _, inst := range w.session.Instances() {
+		if inst.Status != engine.StatusRunning {
+			continue
+		}
+		hints.Reading = append(hints.Reading, inst.Reading().Full()...)
+		if inst.Spec.Canonical != captureCanonical {
+			continue
+		}
+		graph, err := w.graphs.CurrentFor(inst.Store)
+		if err != nil {
+			return nil, fmt.Errorf("naming the pieces to hold: %w", err)
+		}
+		hints.Knowledge = append(hints.Knowledge, workflowLiveHead(graph, basefacts.OverviewFactID))
+		kind, _ := workflowStoreString(inst.Store, "entryKind")
+		if kind == "" {
+			kind, _ = workflowStoreString(inst.Store, "kind")
+		}
+		if id := basefacts.AuthoringFactID(model.Kind(kind)); id != "" {
+			hints.Knowledge = append(hints.Knowledge, workflowLiveHead(graph, id))
+		}
+	}
+	held := w.session.HoldNext(hints)
+	tags := make([]string, 0, len(held))
+	for _, piece := range held {
+		tags = append(tags, piece.Tag)
+	}
+	return tags, nil
 }
 
 // RecordServed logs the anchors the call issued. A finished session records

@@ -18,6 +18,21 @@ type Piece struct {
 	Hash string
 }
 
+// HoldRank is how likely the next serve repeats a piece a serve carried, as
+// the hold-next line orders it (20261114-121534-d-tac-qdb).
+type HoldRank int
+
+const (
+	// HoldStep is an instruction lane or the report schema of a step.
+	HoldStep HoldRank = iota
+	// HoldCarried is any other piece: a framing block, the vocabulary, an
+	// entry.
+	HoldCarried
+)
+
+// MaxHoldNext caps the hold-next line.
+const MaxHoldNext = 20
+
 // Served is how the call in flight serves a piece.
 type Served struct {
 	// Held reports that the call proved it holds the piece, or received it in
@@ -50,16 +65,53 @@ type pieceCall struct {
 	// followed is what the deferral this call follows sent, still pointed at
 	// should the call leave lanes waiting again.
 	followed map[Piece]string
+	// serving is the instance whose serve the call composes (ServeFor), served
+	// every instance it composed; carried is what it served outside them.
+	serving string
+	served  map[string]bool
+	carried []Piece
 }
 
-// pendingAnchor is a piece the call served in full, not yet recorded;
-// changed marks one that serves once per change of its content.
+// pendingAnchor is a piece the call served, not yet recorded: in full, or as
+// its pointer when held; changed marks one that serves once per change of
+// its content.
 type pendingAnchor struct {
-	piece   Piece
-	tag     string
-	word    string
-	covers  []string
-	changed bool
+	piece    Piece
+	tag      string
+	word     string
+	covers   []string
+	changed  bool
+	held     bool
+	rank     HoldRank
+	instance string
+}
+
+// stepServe is what an instance's last serve carried, numbered by stepSeq.
+type stepServe struct {
+	seq    int
+	pieces []rankedPiece
+}
+
+type rankedPiece struct {
+	piece Piece
+	rank  HoldRank
+}
+
+// HeldPiece is a piece the hold-next line names, by the tag it was last
+// served under.
+type HeldPiece struct {
+	Name string
+	Tag  string
+}
+
+// HoldHints names the entries only the caller knows the next serve may
+// repeat, in the order the hold-next line takes them.
+type HoldHints struct {
+	// Knowledge is the type-system overview and the kind guides while a
+	// capture runs.
+	Knowledge []string
+	// Reading is the entries the open readings depend on.
+	Reading []string
 }
 
 // BeginCall starts a call carrying the proofs an agent lists for pieces it
@@ -70,6 +122,16 @@ func (s *Session) BeginCall(held []model.Proof, reread []string) {
 	for _, r := range reread {
 		s.call.reread[strings.ToLower(strings.Trim(strings.TrimSpace(r), "⟦⟧"))] = true
 	}
+}
+
+// ServeFor makes the pieces the call serves from here on belong to the serve
+// of instance, until the next ServeFor.
+func (s *Session) ServeFor(instance string) {
+	s.call.serving = instance
+	if s.call.served == nil {
+		s.call.served = map[string]bool{}
+	}
+	s.call.served[instance] = true
 }
 
 // Holds reports whether the call in flight holds the piece, with the tag it
@@ -105,9 +167,11 @@ func (s *Session) Holds(p Piece) (string, bool) {
 // ServePiece decides how the call in flight serves p: its pointer when the
 // call holds it, otherwise in full under a fresh tag place puts into the
 // content. covers names the entries the piece carries whole, held from then
-// on under the same tag. The issued anchor is recorded by RecordAnchors.
-func (s *Session) ServePiece(p Piece, covers []string, place AnchorPlacer) Served {
+// on under the same tag. rank places p on the hold-next lines that follow.
+// The issued anchor is recorded by RecordAnchors.
+func (s *Session) ServePiece(p Piece, rank HoldRank, covers []string, place AnchorPlacer) Served {
 	if tag, ok := s.Holds(p); ok {
+		s.call.pending = append(s.call.pending, pendingAnchor{piece: p, tag: tag, held: true, rank: rank, instance: s.call.serving})
 		return Served{Held: true, Tag: tag}
 	}
 	tag := s.freshTag()
@@ -124,7 +188,7 @@ func (s *Session) ServePiece(p Piece, covers []string, place AnchorPlacer) Serve
 			s.call.covered[id] = tag
 		}
 	}
-	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, tag: tag, word: anchor.Word, covers: slices.Clone(covers)})
+	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, tag: tag, word: anchor.Word, covers: slices.Clone(covers), rank: rank, instance: s.call.serving})
 	return Served{Anchor: anchor}
 }
 
@@ -148,16 +212,19 @@ func (s *Session) ServeChanged(p Piece) bool {
 	return true
 }
 
-// PieceMark marks the pieces the call has served in full so far.
+// PieceMark marks the pieces the call has served so far.
 func (s *Session) PieceMark() int { return len(s.call.pending) }
 
-// DropPiecesSince withdraws the pieces served in full after mark, for text
-// cut before it reached the agent.
+// DropPiecesSince withdraws the pieces served after mark, for text cut
+// before it reached the agent.
 func (s *Session) DropPiecesSince(mark int) {
 	if mark < 0 || mark > len(s.call.pending) {
 		return
 	}
 	for _, dropped := range s.call.pending[mark:] {
+		if dropped.held {
+			continue
+		}
 		delete(s.call.issued, dropped.piece)
 		for _, id := range dropped.covers {
 			if s.call.covered[id] == dropped.tag {
@@ -169,16 +236,28 @@ func (s *Session) DropPiecesSince(mark int) {
 }
 
 // RecordAnchors logs the anchors the call issued since the last record, so a
-// restarted server still checks their proofs.
+// restarted server still checks their proofs, with what each instance's
+// serve carried and the pieces served in full where a proof could have held
+// them, which the hold-next lines of their move name from then on.
 func (s *Session) RecordAnchors() {
 	var records []any
+	steps := map[string]any{}
+	for instance := range s.call.served {
+		steps[instance] = []any{}
+	}
 	for _, p := range s.call.pending {
-		if p.tag == "" && !p.changed {
+		if p.tag != "" {
+			s.noteCarried(steps, p)
+		}
+		if p.held || p.tag == "" && !p.changed {
 			continue
 		}
 		record := map[string]any{"name": p.piece.Name}
 		if p.tag != "" {
 			record["tag"], record["word"] = p.tag, p.word
+			if s.couldHavePointed(p.piece) {
+				record["repeat"] = s.moveOf(p.instance)
+			}
 		}
 		if p.piece.Hash != "" {
 			record["hash"] = p.piece.Hash
@@ -192,11 +271,65 @@ func (s *Session) RecordAnchors() {
 		s.foldAnchor(record)
 		records = append(records, record)
 	}
-	s.call.pending = nil
-	if len(records) == 0 {
+	s.call.pending, s.call.served = nil, nil
+	for instance, pieces := range steps {
+		if served, ok := s.steps[instance]; ok && slices.Equal(served.pieces, rankedPieces(pieces)) {
+			delete(steps, instance)
+		}
+	}
+	s.foldSteps(steps)
+	if len(records) == 0 && len(steps) == 0 {
 		return
 	}
-	s.appendEvent("", EventAnchors, map[string]any{"anchors": records})
+	data := map[string]any{}
+	if len(records) > 0 {
+		data["anchors"] = records
+	}
+	if len(steps) > 0 {
+		data["steps"] = steps
+	}
+	s.appendEvent("", EventAnchors, data)
+}
+
+// noteCarried adds p to what its instance's serve carried, or to what the
+// call served outside a serve.
+func (s *Session) noteCarried(steps map[string]any, p pendingAnchor) {
+	if p.instance == "" {
+		if !slices.Contains(s.call.carried, p.piece) {
+			s.call.carried = append(s.call.carried, p.piece)
+		}
+		return
+	}
+	pieces, _ := steps[p.instance].([]any)
+	for _, noted := range pieces {
+		if fields := noted.(map[string]any); fields["name"] == p.piece.Name && fields["hash"] == p.piece.Hash {
+			return
+		}
+	}
+	steps[p.instance] = append(pieces, map[string]any{"name": p.piece.Name, "hash": p.piece.Hash, "rank": int(p.rank)})
+}
+
+// couldHavePointed reports whether an earlier call issued p, so a proof
+// would have held it, and the call in flight asked for it neither by reread
+// nor by a reorientation.
+func (s *Session) couldHavePointed(p Piece) bool {
+	tag, issued := s.latest[p]
+	return issued && !s.call.full && !s.call.reread[strings.ToLower(p.Name)] && !s.call.reread[tag]
+}
+
+// moveOf is the move a piece served for instance belongs to: the instance,
+// or for a piece served outside any serve the newest running move; empty
+// when none runs.
+func (s *Session) moveOf(instance string) string {
+	if instance != "" {
+		return instance
+	}
+	for _, id := range slices.Backward(s.order) {
+		if s.instances[id].Status == StatusRunning {
+			return id
+		}
+	}
+	return ""
 }
 
 func (s *Session) foldAnchor(record any) {
@@ -228,7 +361,121 @@ func (s *Session) foldAnchor(record any) {
 	if s.anchors == nil {
 		s.anchors = map[string]issuedAnchor{}
 	}
+	if s.latest == nil {
+		s.latest = map[Piece]string{}
+	}
 	s.anchors[tag] = issued
+	s.latest[issued.piece] = tag
+	if move, ok := fields["repeat"].(string); ok && !slices.Contains(s.repeats[move], issued.piece) {
+		if s.repeats == nil {
+			s.repeats = map[string][]Piece{}
+		}
+		s.repeats[move] = append(s.repeats[move], issued.piece)
+	}
+}
+
+// foldSteps replaces what each instance's last serve carried.
+func (s *Session) foldSteps(steps map[string]any) {
+	for _, instance := range slices.Sorted(maps.Keys(steps)) {
+		if s.steps == nil {
+			s.steps = map[string]stepServe{}
+		}
+		s.stepSeq++
+		s.steps[instance] = stepServe{seq: s.stepSeq, pieces: rankedPieces(steps[instance])}
+	}
+}
+
+// rankedPieces reads the pieces a step record lists, live or replayed.
+func rankedPieces(records any) []rankedPiece {
+	list, _ := records.([]any)
+	pieces := make([]rankedPiece, 0, len(list))
+	for _, record := range list {
+		fields, _ := record.(map[string]any)
+		name, _ := fields["name"].(string)
+		hash, _ := fields["hash"].(string)
+		var rank HoldRank
+		switch r := fields["rank"].(type) {
+		case int:
+			rank = HoldRank(r)
+		case float64:
+			rank = HoldRank(r)
+		}
+		pieces = append(pieces, rankedPiece{piece: Piece{Name: name, Hash: hash}, rank: rank})
+	}
+	return pieces
+}
+
+// HoldNext names the pieces the next serve may repeat by the tags they were
+// last served under, at most MaxHoldNext, likeliest first
+// (20261114-121534-d-tac-qdb): the lanes and report schemas of the steps the
+// running moves stand at, newest serve first; the hints' knowledge, then
+// reading entries; the pieces the running moves served in full where a proof
+// could have held them; then the rest those steps carried and what the call
+// served outside them. A piece without a tag, such as a gather brief line,
+// is never named.
+func (s *Session) HoldNext(hints HoldHints) []HeldPiece {
+	var line []HeldPiece
+	named := map[string]bool{}
+	add := func(p Piece) {
+		tag, ok := s.latest[p]
+		if !ok || named[tag] || len(line) == MaxHoldNext {
+			return
+		}
+		named[tag] = true
+		line = append(line, HeldPiece{Name: p.Name, Tag: tag})
+	}
+	serves := s.runningSteps()
+	for _, serve := range serves {
+		for _, p := range serve.pieces {
+			if p.rank == HoldStep {
+				add(p.piece)
+			}
+		}
+	}
+	for _, id := range slices.Concat(hints.Knowledge, hints.Reading) {
+		add(Piece{Name: id})
+	}
+	for _, move := range s.runningMoves() {
+		for _, p := range s.repeats[move] {
+			add(p)
+		}
+	}
+	for _, serve := range serves {
+		for _, p := range serve.pieces {
+			if p.rank != HoldStep {
+				add(p.piece)
+			}
+		}
+	}
+	for _, p := range s.call.carried {
+		add(p)
+	}
+	return line
+}
+
+// runningMoves lists the running instances, newest first, then the session
+// itself, under which pieces served while no move ran are kept.
+func (s *Session) runningMoves() []string {
+	var moves []string
+	for _, id := range slices.Backward(s.order) {
+		if s.instances[id].Status == StatusRunning {
+			moves = append(moves, id)
+		}
+	}
+	return append(moves, "")
+}
+
+// runningSteps lists what the last serve of each running instance carried,
+// newest serve first.
+func (s *Session) runningSteps() []stepServe {
+	var serves []stepServe
+	for _, move := range s.runningMoves() {
+		if serve, ok := s.steps[move]; ok && move != "" {
+			serves = append(serves, serve)
+		}
+	}
+	slices.SortFunc(serves, func(a, b stepServe) int { return b.seq - a.seq })
+	return serves
 }
 
 // FollowDeferral makes the call in flight follow the instance's deferral, a
@@ -273,7 +520,7 @@ func (s *Session) RecordDeferral(instance, delivered string) {
 		pieces = map[Piece]string{}
 	}
 	for _, p := range s.call.pending {
-		if p.tag != "" && strings.Contains(delivered, model.AnchorMark(p.tag)) {
+		if !p.held && p.tag != "" && strings.Contains(delivered, model.AnchorMark(p.tag)) {
 			pieces[p.piece] = p.tag
 		}
 	}

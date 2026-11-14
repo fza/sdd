@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/networkteam/sdd/internal/basefacts"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/serveview"
@@ -91,6 +92,7 @@ type AbandonResult struct {
 	HeldMarkers      []string   `json:"held_markers,omitempty" jsonschema:"WIP markers held; left standing. Resume later or close via groom"`
 	Instructions     string     `json:"instructions,omitempty"`
 	Base             *BaseServe `json:"base_junction,omitempty" jsonschema:"the session shell's current serve: where the dialogue now stands"`
+	ResultHoldNext
 }
 
 type ParkArgs struct {
@@ -108,6 +110,7 @@ type ParkResult struct {
 	Step         string     `json:"step"`
 	Instructions string     `json:"instructions,omitempty"`
 	Base         *BaseServe `json:"base_junction,omitempty" jsonschema:"the session shell's serve: where the dialogue lands"`
+	ResultHoldNext
 }
 
 type ChooserOptionResult struct {
@@ -203,6 +206,7 @@ type ServeResult struct {
 	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve: where the dialogue lands now that this move has ended"`
 	Collected        map[string]string       `json:"collected,omitempty" jsonschema:"state this instance already collected; values persist across handover. Do not re-derive them"`
 	Dispatches       []DispatchResult        `json:"dispatches,omitempty" jsonschema:"delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input. Follow each one's instructions"`
+	ResultHoldNext
 }
 
 // DispatchResult is one delegate handoff: the child handles a delegate
@@ -258,6 +262,7 @@ type ResumeSessionResult struct {
 	Open             []ServeResult           `json:"open_instances" jsonschema:"current serve for every running instance; the session shell's serve carries the open-threads block"`
 	Framing          string                  `json:"framing,omitempty"`
 	Instructions     string                  `json:"instructions,omitempty"`
+	ResultHoldNext
 }
 
 type BindBranchArgs struct {
@@ -270,6 +275,7 @@ type BindBranchResult struct {
 	ResultNotices
 	Branch string `json:"branch,omitempty" jsonschema:"the now-effective branch binding; empty after clear"`
 	Status string `json:"status"`
+	ResultHoldNext
 }
 
 type StageAttachmentArgs struct {
@@ -301,6 +307,7 @@ type StagedFileResult struct {
 	Handle string   `json:"handle" jsonschema:"attachment handle; pass it in a report's attachments field, or as bodyHandle when the file holds an entry body"`
 	SHA256 string   `json:"sha256" jsonschema:"sha256 of the staged file's raw bytes, as hex; a playback confirm binds to it when the file is a capture's bodyHandle"`
 	Bound  []string `json:"bound,omitempty" jsonschema:"captures taking their body from this handle, whose body and playback this staging replaced"`
+	ResultHoldNext
 }
 
 // --- free reads -------------------------------------------------------------
@@ -328,6 +335,7 @@ type SearchResult struct {
 	Coverage []sdd.SearchCoverage `json:"coverage,omitempty" jsonschema:"published entry coverage for each fixed search snapshot"`
 	Notice   string               `json:"notice,omitempty" jsonschema:"readable incomplete-indexing notice"`
 	Results  string               `json:"results" jsonschema:"matching entries with citations"`
+	ResultHoldNext
 }
 
 type ViewArgs struct {
@@ -344,6 +352,7 @@ type ViewResult struct {
 	ResultNotices
 	Sections string `json:"sections"`
 	Hint     string `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, left out while the call proves it holds it"`
+	ResultHoldNext
 }
 
 type ShowArgs struct {
@@ -359,6 +368,7 @@ type ShowArgs struct {
 type ShowResult struct {
 	ResultNotices
 	Entries string `json:"entries"`
+	ResultHoldNext
 }
 
 type GatherArgs struct {
@@ -374,6 +384,7 @@ type GatherArgs struct {
 type GatherResult struct {
 	ResultNotices
 	Serve string `json:"serve" jsonschema:"the reads run, entries served in full, the entries to judge and the entries set aside; nothing is cut"`
+	ResultHoldNext
 }
 
 type ReadAttachmentArgs struct {
@@ -396,6 +407,7 @@ type ReadAttachmentResult struct {
 	More       bool     `json:"more"`
 	Available  []string `json:"available" jsonschema:"the entry's attachment filenames"`
 	Path       string   `json:"path,omitempty" jsonschema:"absolute filesystem path; present only for local (stdio) clients, which may read the file directly instead of paging"`
+	ResultHoldNext
 }
 
 // ResultNotices carries the blocked-sync notice while automatic sync of the
@@ -412,6 +424,14 @@ type ResultNotices struct {
 func (f *ResultNotices) setSyncNotice(notice string)  { f.SyncNotice = notice }
 func (f *ResultNotices) setCacheNotice(notice string) { f.CacheNotice = notice }
 func (f *ResultNotices) setHostNotice(notice string)  { f.HostNotice = notice }
+
+// ResultHoldNext ends every result of an attached session with the tags
+// whose pieces the next serve may repeat (20261114-121534-d-tac-qdb).
+type ResultHoldNext struct {
+	HoldNext string `json:"hold_next,omitempty" jsonschema:"the tags, likeliest first, whose pieces your next call may get again; list in its held exactly these tags whose text you still see, each with the word right after it"`
+}
+
+func (f *ResultHoldNext) setHoldNext(line string) { f.HoldNext = line }
 
 // SyncBlockedResult is the blocked-sync record info shows.
 type SyncBlockedResult struct {
@@ -441,6 +461,7 @@ type InfoResult struct {
 	GraphSchema  int                `json:"graphSchema,omitempty" jsonschema:"schema version the graph records; entries are written at it until an explicit sdd migrate"`
 	BinarySchema int                `json:"binarySchema,omitempty" jsonschema:"schema version this build writes by default"`
 	Contribution string             `json:"contribution,omitempty" jsonschema:"upstream ref the checkout contributes to; when set, graph writes are refused off a feature branch cut from it"`
+	ResultHoldNext
 }
 
 type RegistryArgs struct {
@@ -461,6 +482,7 @@ type RegistryResult struct {
 	ResultNotices
 	Functions []RegistryFuncResult `json:"functions"`
 	NextPage  int                  `json:"next_page,omitempty" jsonschema:"set while more contracts follow: pass it as page for them"`
+	ResultHoldNext
 }
 
 func (s *Server) registerTools() {
@@ -1440,6 +1462,13 @@ func toolBoundary[In, Out any](s *Server, handler func(context.Context, *mcp.Cal
 		if carrier, ok := any(&out).(interface{ setHostNotice(string) }); ok {
 			carrier.setHostNotice(hostNotice)
 		}
+		if carrier, ok := any(&out).(interface{ setHoldNext(string) }); ok && len(slot.holdNext) > 0 {
+			cost, err := resultChars(out)
+			if err != nil {
+				return res, out, err
+			}
+			carrier.setHoldNext(holdNextLine(slot.holdNext, model.MaxResultChars-cost-len(`,"hold_next":""`)))
+		}
 		return res, out, err
 	}
 }
@@ -1455,9 +1484,11 @@ type syncNoticeKey struct{}
 
 // syncNoticeSlot lets the call's session, once attached, name how its
 // blocked-sync notice is claimed after the handler ran, so the notice
-// reflects what the call itself recorded.
+// reflects what the call itself recorded; the claim leaves the tags the
+// result's hold-next line names in holdNext.
 type syncNoticeSlot struct {
-	claim func(context.Context) (string, error)
+	claim    func(context.Context) (string, error)
+	holdNext []string
 }
 
 func (s *Server) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession) {
@@ -1470,7 +1501,12 @@ func (s *Server) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, 
 		ss.mu.Lock()
 		defer ss.mu.Unlock()
 		notice := ss.root.ServeNotice("sync notice", ss.root.SyncNotice(ctx, identity))
-		return notice, ss.root.RecordServed(ctx, identity)
+		err := ss.root.RecordServed(ctx, identity)
+		if err != nil {
+			return notice, err
+		}
+		slot.holdNext, err = ss.root.HoldNext()
+		return notice, err
 	}
 }
 
@@ -1493,6 +1529,7 @@ func syncBlockedResult(block *sdd.SyncBlocked) *SyncBlockedResult {
 // base mapping drops those fields, and recording bytes never delivered would
 // stub them for a later serve that does deliver. It returns what it served.
 func (s *Server) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, keep, framing int, pageFull []string) (ServeResult, servedCount, error) {
+	ss.root.ServeFor(serve.Instance)
 	res := ServeResult{
 		Session: string(serve.Session), Project: string(serve.Project),
 		Branch: serve.Branch, Instance: serve.Instance, Procedure: serve.Procedure, Status: serve.Status,

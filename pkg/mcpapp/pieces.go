@@ -14,7 +14,7 @@ import (
 // engine decides from them which piece serves as its pointer
 // (20261112-075604-d-tac-t4r).
 type Proofs struct {
-	Held   []string `json:"held,omitempty" jsonschema:"for each served piece whose text you still see, from every earlier result, not only the last: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word"`
+	Held   []string `json:"held,omitempty" jsonschema:"exactly those tags the last result's hold_next names whose text you still see: each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word"`
 	Reread []string `json:"reread,omitempty" jsonschema:"tags or piece names of served pieces you no longer see; they serve in full again"`
 }
 
@@ -24,7 +24,18 @@ func heldName(name, tag string) string {
 	if tag == "" {
 		return name
 	}
-	return name + " " + model.AnchorMark(tag)
+	return name + " (" + model.TagName(tag) + ")"
+}
+
+// holdNextLine names tags, likeliest first, as many as fit room characters
+// of a result.
+func holdNextLine(tags []string, room int) string {
+	for ; len(tags) > 0; tags = tags[:len(tags)-1] {
+		if line := strings.Join(tags, ", "); model.ServedChars(line) <= room {
+			return line
+		}
+	}
+	return ""
 }
 
 // heldLine is the pointer to pieces the call holds and the way to have them
@@ -50,7 +61,7 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, p
 			waiting = append(waiting, lane.Name)
 			continue
 		}
-		served := ss.root.ServeText(name, lane.Text, carried(pageFull, lane.Text))
+		served := ss.root.ServeLane(name, lane.Text, carried(pageFull, lane.Text))
 		if served.Held {
 			held = append(held, heldName(name, served.Tag))
 			continue
@@ -147,7 +158,7 @@ func serveReportSchema(ss *shellSession, serve *sdd.WorkflowServe) (map[string]a
 	served := maps.Clone(fields)
 	if piece.Held {
 		delete(served, "properties")
-		served["held_properties"] = fmt.Sprintf("you hold these %s as %s — list the tag in reread to have them again, or resume_session re-serves them in full", name, model.AnchorMark(piece.Tag))
+		served["held_properties"] = fmt.Sprintf("you hold these %s (%s); list the tag in reread to have them again, or resume_session re-serves them in full", name, model.TagName(piece.Tag))
 	} else {
 		served["properties"] = tagged
 	}

@@ -45,7 +45,7 @@ import (
 //
 // The CLI never cuts, with --session too: TestCLIReadsServeInFullEveryTime
 // (internal/cliapp).
-const pointerMark = "(held as ⟦"
+const pointerMark = "(held as tag "
 
 func TestNoRepeat(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
@@ -317,8 +317,8 @@ func TestDoorsExplainTheProof(t *testing.T) {
 		if !strings.Contains(text, proofExample) {
 			t.Fatalf("%s should show a worked proof:\n%s", name, text)
 		}
-		if !strings.Contains(text, everyEarlierResult) {
-			t.Fatalf("%s should say a call proves pieces from every earlier result:\n%s", name, text)
+		if !strings.Contains(text, "hold_next") || !strings.Contains(text, exactlyThoseTags) {
+			t.Fatalf("%s should say a call proves exactly the tags the last result's hold_next names:\n%s", name, text)
 		}
 	}
 }
@@ -327,10 +327,10 @@ func TestDoorsExplainTheProof(t *testing.T) {
 // word right after the tag, never the one before it.
 const proofExample = `"… dialogue ⟦gn9p⟧ first …" → gn9p:first`
 
-// everyEarlierResult is how the doors and the held field say that proofs do
-// not carry over: an agent listing only its last result's tags gets every
-// piece served before that in full again.
-const everyEarlierResult = "every earlier result, not only the last"
+// exactlyThoseTags is how the doors and the held field say which proofs a
+// call lists: the tags the last result's hold_next names
+// (20261114-121534-d-tac-qdb).
+const exactlyThoseTags = "exactly those tags"
 
 // Every tool taking proofs shows the worked proof in its held field.
 func TestHeldFieldShowsAWorkedProof(t *testing.T) {
@@ -363,8 +363,8 @@ func TestHeldFieldShowsAWorkedProof(t *testing.T) {
 		if !strings.Contains(held.Description, proofExample) {
 			t.Errorf("%s: the held field should show a worked proof, got %q", tool.Name, held.Description)
 		}
-		if !strings.Contains(held.Description, everyEarlierResult) {
-			t.Errorf("%s: the held field should ask for proofs from every earlier result, got %q", tool.Name, held.Description)
+		if !strings.Contains(held.Description, "hold_next") || !strings.Contains(held.Description, exactlyThoseTags) {
+			t.Errorf("%s: the held field should ask for exactly the hold_next tags, got %q", tool.Name, held.Description)
 		}
 	}
 	if described == 0 {
