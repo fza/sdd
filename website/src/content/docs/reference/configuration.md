@@ -21,6 +21,7 @@ A later row overrides an earlier one: local wins over project, project wins over
 | --- | --- | --- |
 | `participant`, `llm.*`, `embedding.*`, `sync.*` | User-global | Any file works. Use the local file to override a value for one project. A value in the project file applies to everyone on the project and overrides their user-global value. |
 | `sessions.retention` | User-global | sdd currently ignores it in the project files. |
+| `dialogue.mode` | User-global or local | Set per person. sdd ignores it in the project file. |
 | `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
 
@@ -75,6 +76,12 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `participant` | None | Your name, recorded as the author of the entries you capture. `sdd init` asks for it, offers your git `user.name`, and writes it to `.sdd/config.local.yaml` unless another file already sets it. Every command warns while it is missing. |
+
+### Dialogue
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `dialogue.mode` | `guided` | Who takes the choices an engine session would put to you. `guided`: you confirm each step. `auto`: your agent takes them and asks you only when a check fails. sdd reads it from the user-global file and `.sdd/config.local.yaml` only. `sdd init` asks for it, or takes `--dialogue-mode`, and writes it to the local file. Any other value is ignored with a warning and the session runs guided; a local value does so even when the user-global file sets `auto`. |
 
 ### Language model
 
