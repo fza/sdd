@@ -219,6 +219,9 @@ func TestCaptureGrounding_BypassWritesLowConfidence(t *testing.T) {
 	draft["skipGrounding"] = true
 	serve = session.Report(t, instance, draft)
 	proctest.RequireStep(t, serve, "playback")
+	if !strings.Contains(serve.Instructions, "- skipGrounding: true") {
+		t.Fatalf("the playback should show the user the bypass that lowers the confidence they confirm:\n%s", serve.Instructions)
+	}
 	entry := confirmCapture(t, world, session, instance)
 	if entry.Grounding != model.GroundingSkipped || entry.Confidence != "low" {
 		t.Fatalf("a bypassed entry should carry grounding: skipped and confidence low, got %q and %q", entry.Grounding, entry.Confidence)
