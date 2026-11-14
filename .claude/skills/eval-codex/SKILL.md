@@ -19,8 +19,9 @@ Tests prove the mechanism. This skill checks the experience: whether an agent th
 
 ```
 python3 driver.py setup  <repo> [--task TEXT] [--summary TEXT]   fresh repo: git, sdd init for Codex, a code module, the task as a pending directive
-python3 driver.py start  <repo> "<first user message>" [--model M] [--effort E] [--provider opper --env-file F]
+python3 driver.py start  <repo> "<first user message>" [--model M] [--effort E] [--provider opper --env-file F] [--idle-timeout SECONDS]
 python3 driver.py say    <repo> "<next user message>"
+python3 driver.py stop   <repo>                                   end the run: app-server and sdd server
 python3 driver.py log    <repo> [--turn N] [--max CHARS]          everything the sdd tools returned, per call
 python3 driver.py status <repo>                                   branches, worktrees, history, WIP markers per branch
 ```
@@ -29,8 +30,9 @@ python3 driver.py status <repo>                                   branches, work
 
 What the driver fixes for every run:
 
+- **One app-server per run.** `start` spawns a daemon that keeps the app-server, and with it `sdd serve`, up between turns, as a real Codex session does, so verifier rounds and other background work survive the turn that began them. Run `stop` when a run is finished; the daemon also stops itself after `--idle-timeout` seconds without a turn (default 2 h). `say` after that fails: `start` a new run. Its log is `<repo>.eval/daemon.log`.
 - **Own Codex home.** `<repo>.eval/codex-home` links your `~/.codex/auth.json` and carries your model settings, nothing else: no plugins, apps, other MCP servers or notify hook, and trust entries and threads stay out of your Codex config. If it warns that `auth.json` is no longer a symlink, Codex refreshed the token into the copy; log in again if your own Codex then complains.
-- **Provider.** `--provider opper` runs `gpt-5.3-codex` through Opper's Responses route instead of your login: no `auth.json` link, the key from `OPPER_API_KEY` or the `KEY=VALUE` file `--env-file` names, passed on to the sdd server too. Codex has no metadata for the model under that provider and warns that it falls back to defaults. Runs on Opper compare with runs on your login only roughly.
+- **Provider.** `--provider opper` runs `gpt-5.3-codex` through Opper's Responses route instead of your login: no `auth.json` link, the key from `OPPER_API_KEY` or the `KEY=VALUE` file `--env-file` names, passed on to the sdd server too. Codex has no metadata for the model under that provider and warns that it falls back to defaults; the run's Codex home sets reasoning effort `medium` unless your settings or `--effort` set one. Runs on Opper compare with runs on your login only roughly.
 - **Only this sdd.** The run's single MCP server is the chosen `sdd serve`, started in the repo, its tools pre-approved.
 - **Sandbox.** `workspace-write` with no approval prompts; the repo's `.git` and its parent are writable so branches, commits and worktrees work.
 - **Codex uses skills, not slash commands.** Start SDD work with `$sdd` in the message, the way a Codex user would.
@@ -73,4 +75,4 @@ Per scenario:
 
 Report what happened; do not fix code, specs or the scratch repo mid-run. What the findings mean is settled with the user afterwards.
 
-Remove the batch directory once the findings are recorded.
+Run `driver.py stop <repo>` for each scenario, then remove the batch directory once the findings are recorded.

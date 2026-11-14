@@ -3,30 +3,41 @@
 repository, one user turn per invocation.
 
   driver.py setup REPO [--task TEXT]      scratch repo: git, sdd init, anchor directive, code
-  driver.py start REPO MESSAGE [opts]     new Codex thread, first user turn
+  driver.py start REPO MESSAGE [opts]     run's daemon, new Codex thread, first user turn
   driver.py say REPO MESSAGE              next user turn on the same thread
+  driver.py stop REPO                     end the run's daemon, app-server and sdd server
   driver.py log REPO [--turn N] [--max N] what the sdd tools served, in full
   driver.py status REPO                   Git state: branches, worktrees, WIP markers
 
 State lives beside the repo in REPO.eval/, never inside it: thread id,
 transcripts, app-server stderr, and a Codex home of its own (CODEX_HOME) that
 shares only the user's auth.json, by symlink, and model settings, so the user's
-Codex config, plugins, trust list and thread history stay out of the run. Every
-turn starts a fresh app-server that resumes the thread, so a driving agent can
-play the user between invocations.
+Codex config, plugins, trust list and thread history stay out of the run.
+
+`start` spawns a daemon that owns one app-server, and so one `sdd serve`, for the
+whole run, as a real Codex session does: work sdd runs in the background, such as
+the deep verifier, outlives the turn that began it. `start` and `say` hand the
+daemon one user turn each over a unix socket, so a driving agent can play the user
+between invocations. The daemon ends on `stop` or after an idle timeout.
 """
 import argparse
+import contextlib
+import hashlib
+import io
 import itertools
 import json
 import os
 import queue
 import random
+import signal
+import socket
 import string
 import subprocess
 import sys
 import threading
 import time
 import tomllib
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -48,23 +59,30 @@ class AppServer:
         self.ids = itertools.count(1)
         self.inbox = queue.Queue()
         self.responses = {}
+        self.lock = threading.Lock()
         threading.Thread(target=self._read, daemon=True).start()
 
     def _record(self, direction, msg):
         self.log.write(json.dumps({"ts": time.time(), "dir": direction, "msg": msg}) + "\n")
 
     def _read(self):
+        # Requests are answered here, so one arriving between turns does not wait for the next turn.
         for line in self.proc.stdout:
             if line.strip():
                 msg = json.loads(line)
-                self._record("in", msg)
-                self.inbox.put(msg)
+                with self.lock:
+                    self._record("in", msg)
+                if "method" in msg and "id" in msg:
+                    self._answer(msg)
+                else:
+                    self.inbox.put(msg)
         self.inbox.put(None)
 
     def _send(self, msg):
-        self._record("out", msg)
-        self.proc.stdin.write(json.dumps(msg) + "\n")
-        self.proc.stdin.flush()
+        with self.lock:
+            self._record("out", msg)
+            self.proc.stdin.write(json.dumps(msg) + "\n")
+            self.proc.stdin.flush()
 
     def _answer(self, msg):
         # Runs are unattended: every approval the sandbox still asks for is granted.
@@ -85,10 +103,9 @@ class AppServer:
     def pump(self, timeout):
         msg = self.inbox.get(timeout=timeout)
         if msg is None:
+            self.inbox.put(None)
             raise EOFError("codex app-server exited; see the stderr log in the state directory")
-        if "method" in msg and "id" in msg:
-            self._answer(msg)
-        elif "id" in msg:
+        if "id" in msg:
             self.responses[msg["id"]] = msg
         return msg
 
@@ -115,7 +132,11 @@ class AppServer:
         turn_id = self.request("turn/start", params)["turn"]["id"]
         items, deadline = [], time.time() + timeout
         while True:
-            msg = self.pump(max(0.1, deadline - time.time()))
+            try:
+                msg = self.pump(max(0.1, deadline - time.time()))
+            except queue.Empty:
+                self.request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id}, timeout=60)
+                raise TimeoutError(f"turn {turn_id} did not complete within {timeout}s; interrupted it") from None
             method, params = msg.get("method"), msg.get("params", {})
             if method == "item/completed" and params.get("turnId") == turn_id:
                 items.append(params["item"])
@@ -123,11 +144,16 @@ class AppServer:
                 return params["turn"], items
 
     def close(self):
-        self.proc.stdin.close()
+        with self.lock:
+            self.proc.stdin.close()
         try:
             self.proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             self.proc.terminate()
+            try:
+                self.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
 
 
 def state_dir(repo):
@@ -166,7 +192,7 @@ wire_api = "responses"
 """
 
 
-def codex_home(repo, provider):
+def codex_home(repo, provider, effort=None):
     """The run's own Codex home, created on first use. The chatgpt provider
     shares the user's login; opper reads OPPER_API_KEY instead."""
     home = state_dir(repo) / "codex-home"
@@ -187,7 +213,11 @@ def codex_home(repo, provider):
         auth.symlink_to(USER_CODEX_HOME / "auth.json")
     lines = ["notify = []"] + [f"{key} = {json.dumps(user[key])}" for key in carried if key in user]
     if provider == "opper":
-        lines += [f"model = {json.dumps(OPPER_MODEL)}", OPPER_PROVIDER]
+        lines.append(f"model = {json.dumps(OPPER_MODEL)}")
+        if not effort and "model_reasoning_effort" not in user:
+            # Codex has no metadata for the model under a custom provider and would run it at effort "none".
+            lines.append('model_reasoning_effort = "medium"')
+        lines.append(OPPER_PROVIDER)
     lines += ["", "[features]"] + [f"{name} = false" for name in DISABLED_FEATURES]
     (home / "config.toml").write_text("\n".join(lines) + "\n")
     return home
@@ -291,30 +321,148 @@ def print_turn(number, turn, items):
         print("(no message)")
 
 
-def run(repo, state, text, timeout, fresh):
-    directory = state_dir(repo)
-    server = AppServer(repo, launch_overrides(repo, Path(state["sdd"]), state),
-                       directory / "transcript.jsonl", directory / "appserver.stderr.log",
-                       codex_home(repo, state.get("provider", "chatgpt")), provider_env(state))
+def socket_path(repo):
+    path = state_dir(repo) / "daemon.sock"
+    if len(os.fsencode(path)) < 104:  # sun_path on macOS
+        return path
+    return Path("/tmp") / f"sdd-eval-{hashlib.sha256(os.fsencode(repo)).hexdigest()[:16]}.sock"
+
+
+def connect(repo):
+    """A connection to the run's daemon, or None when none listens."""
+    client = socket.socket(socket.AF_UNIX)
     try:
-        server.initialize()
-        params = thread_params(repo, state)
-        if fresh:
-            state["thread"] = server.request("thread/start", params)["thread"]["id"]
-        else:
-            server.request("thread/resume", {"threadId": state["thread"], **params})
-        state["turns"] = state.get("turns", 0) + 1
-        save_state(repo, state)
-        if fresh:
-            status = server.request("mcpServerStatus/list", {"threadId": state["thread"], "detail": "toolsAndAuthOnly"})
+        client.connect(str(socket_path(repo)))
+    except (FileNotFoundError, ConnectionRefusedError):
+        client.close()
+        return None
+    return client
+
+
+def ask(client, request):
+    with client, client.makefile("rw") as stream:
+        stream.write(json.dumps(request) + "\n")
+        stream.flush()
+        line = stream.readline()
+    if not line:
+        sys.exit("the run's daemon closed the connection without a reply; see daemon.log in the state directory")
+    return json.loads(line)
+
+
+def send_turn(client, text, timeout):
+    reply = ask(client, {"op": "turn", "text": text, "timeout": timeout})
+    sys.stdout.write(reply.get("output", ""))
+    if reply.get("error"):
+        sys.exit(reply["error"])
+
+
+def note(text):
+    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {text}", file=sys.stderr, flush=True)
+
+
+class Daemon:
+    """Owns the run's app-server and thread; serves the turns `start` and `say` send."""
+
+    def __init__(self, repo, idle_timeout):
+        self.repo, self.idle_timeout = repo, idle_timeout
+        self.directory = state_dir(repo)
+        self.state = load_state(repo)
+        self.server = AppServer(repo, launch_overrides(repo, Path(self.state["sdd"]), self.state),
+                                self.directory / "transcript.jsonl", self.directory / "appserver.stderr.log",
+                                codex_home(repo, self.state.get("provider", "chatgpt"), self.state.get("effort")),
+                                provider_env(self.state))
+        try:
+            self.server.initialize()
+            self.state["thread"] = self.server.request("thread/start", thread_params(repo, self.state))["thread"]["id"]
+            self.state["turns"] = 0
+            save_state(repo, self.state)
+            status = self.server.request("mcpServerStatus/list",
+                                         {"threadId": self.state["thread"], "detail": "toolsAndAuthOnly"})
             live = sorted(s["name"] for s in status["data"] if s.get("runtimeStatus") != "disabled")
-            print("== live MCP servers:", ", ".join(live))
-        turn, items = server.turn(state["thread"], text, timeout, sandbox_policy(repo, state))
-        with open(directory / "turns.jsonl", "a") as log:
-            log.write(json.dumps({"turn": state["turns"], "user": text, "status": turn["status"], "items": items}) + "\n")
-        print_turn(state["turns"], turn, items)
-    finally:
-        server.close()
+            self.preamble = "== live MCP servers: " + ", ".join(live)
+            self.path = socket_path(repo)
+            self.path.unlink(missing_ok=True)
+            self.listener = socket.socket(socket.AF_UNIX)
+            self.listener.bind(str(self.path))
+            self.listener.listen()
+            self.listener.settimeout(1)
+        except BaseException:
+            self.server.close()
+            raise
+        self.turn_lock = threading.Lock()
+        self.stopping = threading.Event()
+        self.stopped = threading.Event()
+        self.handlers = []
+        self.last_active = time.time()
+        note(f"serving thread {self.state['thread']} on {self.path}, app-server pid {self.server.proc.pid}")
+
+    def serve(self):
+        while not self.stopping.is_set():
+            if self.server.proc.poll() is not None:
+                note(f"app-server exited with {self.server.proc.returncode}")
+                break
+            if not self.turn_lock.locked() and time.time() - self.last_active > self.idle_timeout:
+                note(f"idle for {self.idle_timeout}s")
+                break
+            try:
+                conn, _ = self.listener.accept()
+            except TimeoutError:
+                continue
+            handler = threading.Thread(target=self.handle, args=(conn,), daemon=True)
+            handler.start()
+            self.handlers.append(handler)
+        self.listener.close()
+        self.path.unlink(missing_ok=True)
+        self.server.close()
+        note("stopped")
+        self.stopped.set()
+        for handler in self.handlers:
+            handler.join(timeout=5)
+
+    def handle(self, conn):
+        with conn:
+            with conn.makefile("r") as stream:
+                line = stream.readline()
+            if not line:
+                return  # a liveness probe from `start`
+            request = json.loads(line)
+            if request.get("op") == "stop":
+                self.stopping.set()
+                self.stopped.wait()
+                reply = {}
+            elif request.get("op") == "turn":
+                reply = self.turn(request["text"], request["timeout"])
+            else:
+                reply = {"error": f"daemon does not handle {request!r}"}
+            try:
+                conn.sendall((json.dumps(reply) + "\n").encode())
+            except OSError:
+                note("client left before the reply")
+
+    def turn(self, text, timeout):
+        if not self.turn_lock.acquire(blocking=False):
+            return {"error": "a turn is still running on this run"}
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                if self.preamble:
+                    print(self.preamble)
+                    self.preamble = None
+                self.state["turns"] += 1
+                save_state(self.repo, self.state)
+                turn, items = self.server.turn(self.state["thread"], text, timeout,
+                                               sandbox_policy(self.repo, self.state))
+                with open(self.directory / "turns.jsonl", "a") as log:
+                    log.write(json.dumps({"turn": self.state["turns"], "user": text, "status": turn["status"],
+                                          "items": items}) + "\n")
+                print_turn(self.state["turns"], turn, items)
+            return {"output": out.getvalue()}
+        except Exception as error:
+            note(traceback.format_exc())
+            return {"output": out.getvalue(), "error": f"{type(error).__name__}: {error}"}
+        finally:
+            self.last_active = time.time()
+            self.turn_lock.release()
 
 
 def git(repo, *args, check=True):
@@ -373,14 +521,57 @@ def cmd_setup(args):
 
 def cmd_start(args):
     repo = Path(args.repo).resolve()
+    live = connect(repo)
+    if live:
+        live.close()
+        sys.exit(f"a run is live on {repo}; `stop` it first")
+    socket_path(repo).unlink(missing_ok=True)
     state = {"sdd": str(Path(args.sdd).resolve()), "model": args.model, "effort": args.effort, "sandbox": args.sandbox,
              "provider": args.provider, "env_file": str(Path(args.env_file).resolve()) if args.env_file else None}
-    run(repo, state, args.message, args.timeout, fresh=True)
+    provider_env(state)
+    codex_home(repo, args.provider, args.effort)
+    save_state(repo, state)
+    log = state_dir(repo) / "daemon.log"
+    with open(log, "a") as out:
+        daemon = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "daemon", str(repo),
+                                   "--idle-timeout", str(args.idle_timeout)],
+                                  stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True)
+    deadline = time.time() + 300
+    while (client := connect(repo)) is None:
+        if daemon.poll() is not None:
+            sys.exit(f"the run's daemon exited during startup; see {log}")
+        if time.time() > deadline:
+            daemon.terminate()
+            sys.exit(f"the run's daemon did not come up within 300s; see {log}")
+        time.sleep(0.2)
+    send_turn(client, args.message, args.timeout)
 
 
 def cmd_say(args):
     repo = Path(args.repo).resolve()
-    run(repo, load_state(repo), args.message, args.timeout, fresh=False)
+    load_state(repo)
+    client = connect(repo)
+    if client is None:
+        sys.exit(f"no live run on {repo}: its daemon is gone (stopped, idle timeout, or crashed; see daemon.log in "
+                 "the state directory). `start` a new run; what the old thread had in flight is lost.")
+    send_turn(client, args.message, args.timeout)
+
+
+def cmd_stop(args):
+    repo = Path(args.repo).resolve()
+    client = connect(repo)
+    if client is None:
+        socket_path(repo).unlink(missing_ok=True)
+        print(f"no live run on {repo}")
+        return
+    ask(client, {"op": "stop"})
+    print(f"stopped the run on {repo}")
+
+
+def cmd_daemon(args):
+    daemon = Daemon(Path(args.repo).resolve(), args.idle_timeout)
+    signal.signal(signal.SIGTERM, lambda *_: daemon.stopping.set())
+    daemon.serve()
 
 
 def cmd_log(args):
@@ -418,7 +609,7 @@ def cmd_status(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    commands = parser.add_subparsers(dest="command", required=True)
+    commands = parser.add_subparsers(dest="command", required=True, metavar="{setup,start,say,stop,log,status}")
 
     setup = commands.add_parser("setup")
     setup.add_argument("repo")
@@ -440,6 +631,8 @@ def main():
                        help=f"chatgpt: the user's Codex login; opper: {OPPER_MODEL} through Opper's Responses route")
     start.add_argument("--env-file", help="KEY=VALUE file holding OPPER_API_KEY when the environment does not")
     start.add_argument("--timeout", type=int, default=1800)
+    start.add_argument("--idle-timeout", type=int, default=7200,
+                       help="seconds without a turn after which the run's daemon stops itself")
     start.set_defaults(func=cmd_start)
 
     say = commands.add_parser("say")
@@ -447,6 +640,15 @@ def main():
     say.add_argument("message")
     say.add_argument("--timeout", type=int, default=1800)
     say.set_defaults(func=cmd_say)
+
+    stop = commands.add_parser("stop")
+    stop.add_argument("repo")
+    stop.set_defaults(func=cmd_stop)
+
+    daemon = commands.add_parser("daemon")
+    daemon.add_argument("repo")
+    daemon.add_argument("--idle-timeout", type=int, required=True)
+    daemon.set_defaults(func=cmd_daemon)
 
     log = commands.add_parser("log")
     log.add_argument("repo")
