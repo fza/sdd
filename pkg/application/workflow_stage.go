@@ -32,13 +32,12 @@ type stageWrite struct {
 	content []byte
 }
 
-// StageAttachments stages items in call order, one result per item
-// (20261114-121413-d-tac-n6r). Every item is checked before anything is
-// written, and one failing item refuses the call with nothing staged. A write
-// failing after the check stops the call: the files staged before it stay
-// staged, and the error says which they are and whether the failing item was
-// staged. A running capture taking its body from a staged handle gets the new
-// body and hash.
+// StageAttachments stages items in call order, one result per item. Every item
+// is checked before anything is written, and one failing item refuses the call
+// with nothing staged. A write failing after the check stops the call: the
+// files staged before it stay staged, and the error says which they are and
+// whether the failing item was staged. A running capture taking its body from
+// a staged handle gets the new body and hash.
 func (w *WorkflowSession) StageAttachments(ctx context.Context, identity RequestIdentity, items []StageItem) ([]StagedFile, error) {
 	w.setOperation(ctx, identity)
 	writes, err := w.checkStageItems(ctx, identity, items)
