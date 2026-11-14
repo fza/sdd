@@ -29,15 +29,15 @@ func installFor(t *testing.T, h *handlers.Handler, target model.AgentTarget, roo
 }
 
 // The delegate's launch configuration installs beside the skills, per
-// harness, granting the sdd MCP tools and read-only tools only.
+// harness, granting the sdd MCP tools, read-only tools and the web only.
 func TestInstallSkills_InstallsTheDelegateAgentDefinition(t *testing.T) {
 	cases := []struct {
 		target model.AgentTarget
 		path   []string
 		want   []string
 	}{
-		{target: model.AgentClaude, path: []string{".claude", "agents", "sdd_delegate.md"}, want: []string{"name: sdd_delegate\n", "tools: mcp__sdd__*, Read, Grep, Glob\n", "sdd-content-hash: "}},
-		{target: model.AgentCodex, path: []string{".codex", "agents", "sdd_delegate.toml"}, want: []string{"# sdd-version: v0.2.0\n# sdd-content-hash: ", `name = "sdd_delegate"`, "shell_tool = false"}},
+		{target: model.AgentClaude, path: []string{".claude", "agents", "sdd_delegate.md"}, want: []string{"name: sdd_delegate\n", "tools: mcp__sdd__*, Read, Grep, Glob, WebFetch, WebSearch\n", "sdd-content-hash: "}},
+		{target: model.AgentCodex, path: []string{".codex", "agents", "sdd_delegate.toml"}, want: []string{"# sdd-version: v0.2.0\n# sdd-content-hash: ", `name = "sdd_delegate"`, "\nweb_search = \"live\"\n", "shell_tool = false"}},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.target), func(t *testing.T) {

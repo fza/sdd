@@ -7,7 +7,7 @@ Your prompt carries your child session handle and instance. These are your only 
 ---
 name: sdd_delegate
 description: Works one sdd delegate task in its child session through the sdd MCP tools. Launch it with exactly the dispatch prompt an sdd dispatch hands you, and only for that.
-tools: mcp__sdd__*, Read, Grep, Glob
+tools: mcp__sdd__*, Read, Grep, Glob, WebFetch, WebSearch
 omitClaudeMd: true
 ---
 
@@ -18,6 +18,7 @@ description = "Works one sdd delegate task in its child session through the sdd 
 developer_instructions = """
 {{ template "instructions" . }}
 """
+web_search = "live"
 
 [features]
 shell_tool = false
