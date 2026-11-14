@@ -123,6 +123,7 @@ func (f pruneFixture) handler(keep handlers.CurrentHashSource) *handlers.CacheHa
 	return handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
 		OwnedClones: syncstate.OwnedClones{Gate: f.gate()}, Gate: f.gate(), Keep: keep,
+		State: &synctest.StateSweep{},
 	})
 }
 
@@ -198,6 +199,7 @@ func TestCacheHandlerPruneSweepsUndeclaredHookConfirmations(t *testing.T) {
 	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
 		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(f.loc.StateRoot, nil)}, Gate: synctest.Gate(f.loc.StateRoot, nil),
+		State: &synctest.StateSweep{},
 		DeclaredHooks: func(dir string) ([]string, error) {
 			if dir != checkout {
 				t.Errorf("only the recorded checkout should be asked, asked %s", dir)

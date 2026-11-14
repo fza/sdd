@@ -19,9 +19,19 @@ func CachePruneLine(s model.CachePruneStatus) string {
 	case s.Error != "":
 		return fmt.Sprintf("Cache pruning: failed at %s: %s", s.FinishedAt.Format(time.RFC3339), s.Error)
 	}
-	c := s.Removed
-	return fmt.Sprintf("Cache pruning: last run %s, removed %d index versions, %d index stores, %d graph snapshots, %d clones (%s)",
-		s.FinishedAt.Format(time.RFC3339), c.Versions, c.Stores, c.Snapshots, c.Clones, HumanBytes(c.Bytes))
+	return fmt.Sprintf("Cache pruning: last run %s, removed %s (%s)",
+		s.FinishedAt.Format(time.RFC3339), CachePruneRemoved(s.Removed), HumanBytes(s.Removed.Bytes))
+}
+
+// CachePruneRemoved names what a run removed, and the unreadable session logs
+// it kept.
+func CachePruneRemoved(c model.CachePruneCounts) string {
+	text := fmt.Sprintf("%d index versions, %d index stores, %d graph snapshots, %d clones, %d sessions, %d unused projects, %d records, %d leftovers",
+		c.Versions, c.Stores, c.Snapshots, c.Clones, c.Sessions, c.Projects, c.Records, c.Leftovers)
+	if c.Unreadable > 0 {
+		text += fmt.Sprintf("; kept %d unreadable session logs", c.Unreadable)
+	}
+	return text
 }
 
 // RenderCachePruneStatus writes CachePruneLine when there is a run to name.
@@ -38,6 +48,11 @@ type cachePruneJSON struct {
 	Stores     int    `json:"stores"`
 	Snapshots  int    `json:"snapshots"`
 	Clones     int    `json:"clones"`
+	Sessions   int    `json:"sessions"`
+	Projects   int    `json:"projects"`
+	Records    int    `json:"records"`
+	Leftovers  int    `json:"leftovers"`
+	Unreadable int    `json:"unreadable_sessions"`
 	Bytes      int64  `json:"bytes"`
 	Error      string `json:"error,omitempty"`
 }
@@ -55,6 +70,8 @@ func cachePruneValue(s model.CachePruneStatus) *cachePruneJSON {
 	c := s.Removed
 	return &cachePruneJSON{
 		StartedAt: stamp(s.StartedAt), FinishedAt: stamp(s.FinishedAt),
-		Versions: c.Versions, Stores: c.Stores, Snapshots: c.Snapshots, Clones: c.Clones, Bytes: c.Bytes, Error: s.Error,
+		Versions: c.Versions, Stores: c.Stores, Snapshots: c.Snapshots, Clones: c.Clones,
+		Sessions: c.Sessions, Projects: c.Projects, Records: c.Records, Leftovers: c.Leftovers, Unreadable: c.Unreadable,
+		Bytes: c.Bytes, Error: s.Error,
 	}
 }

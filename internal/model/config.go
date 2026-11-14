@@ -341,6 +341,11 @@ func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSettin
 	var ignored []IgnoredSetting
 	if source != ConfigSourceGlobal {
 		ignored = append(ignored, misplacedGitLimits(layer.Sync)...)
+		// The daily sweep collects every project's sessions under one value
+		// (20261114-095140-d-cpt-ad4).
+		if layer.Sessions.Retention != "" {
+			ignored = append(ignored, IgnoredSetting{Key: "sessions.retention", Reason: globalOnlyReason})
+		}
 	}
 	if reason := ignoredSyncMode(layer.Sync.Mode, committed); reason != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "sync.mode", Reason: reason})
@@ -1049,11 +1054,8 @@ func FormatConfig(cfg PerRepoConfig) string {
 // Retention is expressed in days ("14d") or as a Go duration; empty means
 // DefaultSessionRetention. A value that does not parse is a config error the
 // caller must surface, never a silent default.
-func ResolveSessionRetention(cfg *PerRepoConfig) (time.Duration, error) {
-	raw := ""
-	if cfg != nil {
-		raw = strings.TrimSpace(cfg.Sessions.Retention)
-	}
+func ResolveSessionRetention(cfg SessionsConfig) (time.Duration, error) {
+	raw := strings.TrimSpace(cfg.Retention)
 	if raw == "" {
 		raw = DefaultSessionRetention
 	}

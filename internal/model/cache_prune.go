@@ -109,6 +109,20 @@ type CachePruneCounts struct {
 	Bytes      int64
 }
 
+// Add adds what another part of a run removed.
+func (c *CachePruneCounts) Add(o CachePruneCounts) {
+	c.Versions += o.Versions
+	c.Stores += o.Stores
+	c.Snapshots += o.Snapshots
+	c.Clones += o.Clones
+	c.Sessions += o.Sessions
+	c.Projects += o.Projects
+	c.Records += o.Records
+	c.Leftovers += o.Leftovers
+	c.Unreadable += o.Unreadable
+	c.Bytes += o.Bytes
+}
+
 // Due reports whether a background run should start at now.
 func (s CachePruneStatus) Due(now time.Time) bool {
 	last := s.LaunchedAt

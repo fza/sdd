@@ -272,7 +272,10 @@ func TestCollectLeavesUnreadableSessionsAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	f.collect(t, time.Hour)
+	result := f.collect(t, time.Hour)
+	if !slices.Contains(result.Skipped, "s_unreadable") {
+		t.Errorf("collection should report the unreadable log it kept, skipped %v", result.Skipped)
+	}
 
 	after, err := os.ReadFile(unreadable)
 	if err != nil {

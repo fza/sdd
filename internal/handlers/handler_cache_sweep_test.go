@@ -8,7 +8,11 @@ import (
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/gitgate"
+	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/handlers/synctest"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/syncstate"
 )
 
 // The run removes crash leftovers older than a day and records unused for
@@ -75,5 +79,26 @@ func TestCacheHandlerPruneSweepsLeftoversAndRecords(t *testing.T) {
 	}
 	if counts.Leftovers != 2 || counts.Records != 2 {
 		t.Errorf("the run should count two leftovers and two records, got %+v", counts)
+	}
+}
+
+// The run sweeps the state folder under the user-global sessions.retention
+// and cache.retention, and counts what that sweep removed.
+func TestCacheHandlerPruneSweepsTheStateFolder(t *testing.T) {
+	f := newPruneFixture(t, "sessions:\n  retention: 1d\ncache:\n  retention: 30d\n")
+	state := &synctest.StateSweep{Swept: model.CachePruneCounts{Sessions: 2, Projects: 1, Unreadable: 1, Bytes: 10}}
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
+		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
+		OwnedClones: syncstate.OwnedClones{Gate: f.gate()}, Gate: f.gate(), State: state,
+	})
+	var counts model.CachePruneCounts
+	if err := h.Prune(t.Context(), &command.PruneCacheCmd{OnPruned: func(c model.CachePruneCounts) { counts = c }}); err != nil {
+		t.Fatal(err)
+	}
+	if state.Session != 24*time.Hour || state.Unused != 30*24*time.Hour {
+		t.Errorf("the state sweep should run under the global retentions, got %v and %v", state.Session, state.Unused)
+	}
+	if counts.Sessions != 2 || counts.Projects != 1 || counts.Unreadable != 1 {
+		t.Errorf("the run should count what the state sweep removed, got %+v", counts)
 	}
 }

@@ -118,6 +118,7 @@ func TestCacheHandlerPruneOwnedClones(t *testing.T) {
 			h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 				CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
 				OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(loc.StateRoot, nil)}, Gate: synctest.Gate(loc.StateRoot, nil),
+				State: &synctest.StateSweep{},
 			})
 			if err := h.Prune(t.Context(), &command.PruneCacheCmd{OnPruned: func(c model.CachePruneCounts) { counts = c }}); err != nil {
 				t.Fatalf("pruning: %v", err)

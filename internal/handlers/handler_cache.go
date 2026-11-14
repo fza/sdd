@@ -49,15 +49,22 @@ type GateSweeper interface {
 	SweepTraces(now time.Time, minAge time.Duration) (int, error)
 }
 
+// StateSweeper tends the per-project state under the state root: sessions
+// past sessionRetention and projects unused for unusedRetention.
+type StateSweeper interface {
+	Sweep(ctx context.Context, now time.Time, sessionRetention, unusedRetention time.Duration) (model.CachePruneCounts, error)
+}
+
 // CacheHandlerOptions configures NewCacheHandler. CacheRoot, StateRoot,
-// Registry, OwnedClones and Gate are required; Keep is nil outside an sdd
-// checkout; Now defaults to time.Now.
+// Registry, OwnedClones, Gate and State are required; Keep is nil outside an
+// sdd checkout; Now defaults to time.Now.
 type CacheHandlerOptions struct {
 	CacheRoot   string
 	StateRoot   string
 	Registry    *repos.Registry
 	OwnedClones OwnedCloneProbe
 	Gate        GateSweeper
+	State       StateSweeper
 	Keep        CurrentHashSource
 	// DeclaredHooks returns the hashes of the hooks a checkout declares now
 	// (hooks.DeclaredIn); the pass drops every other hook confirmation under
@@ -73,13 +80,14 @@ type CacheHandler struct {
 	registry      *repos.Registry
 	ownedClones   OwnedCloneProbe
 	gate          GateSweeper
+	state         StateSweeper
 	keep          CurrentHashSource
 	declaredHooks func(checkout string) ([]string, error)
 	now           func() time.Time
 }
 
 func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
-	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, ownedClones: opts.OwnedClones, gate: opts.Gate, keep: opts.Keep, declaredHooks: opts.DeclaredHooks, now: opts.Now}
+	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, ownedClones: opts.OwnedClones, gate: opts.Gate, state: opts.State, keep: opts.Keep, declaredHooks: opts.DeclaredHooks, now: opts.Now}
 	if h.now == nil {
 		h.now = time.Now
 	}
@@ -154,6 +162,10 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 	if err != nil {
 		return counts, err
 	}
+	sessionRetention, err := model.ResolveSessionRetention(cfg.Sessions)
+	if err != nil {
+		return counts, err
+	}
 	// An entry's state hash depends on the rune cap a store was chunked
 	// under, so the checkout's current versions are hashed once per cap.
 	keepByCap := map[int]map[string]string{}
@@ -195,6 +207,16 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 
 	errs = append(errs, h.sweepLeftovers(now, &counts)...)
 	errs = append(errs, h.pruneRecords(ctx, now, retention, &counts)...)
+
+	if h.state == nil {
+		errs = append(errs, errors.New("cache pruning has no sweeper for the state folder"))
+	} else {
+		swept, err := h.state.Sweep(ctx, now, sessionRetention, retention)
+		counts.Add(swept)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("sweeping the state folder: %w", err))
+		}
+	}
 
 	clones, err := h.registry.UnconnectedClones()
 	if err != nil {

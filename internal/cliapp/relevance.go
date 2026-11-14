@@ -3,6 +3,7 @@ package cliapp
 import (
 	"context"
 	"path/filepath"
+	"time"
 
 	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/model"
@@ -23,6 +24,44 @@ type relevanceStore interface {
 // beside sddDir. Under relevance.content: reader only reader verdicts go
 // there; scores and drift steps stay in machine state (D14, D20).
 func projectRelevanceStore(sddDir, stateRoot, repoKey string, cfg *model.PerRepoConfig) (relevanceStore, error) {
+	store, err := projectRelevanceLayout(sddDir, stateRoot, repoKey, cfg)
+	if err != nil {
+		return nil, err
+	}
+	used := usedRelevanceStore{relevanceStore: store, stateRoot: stateRoot, repoKey: repoKey}
+	if err := used.mark(); err != nil {
+		return nil, err
+	}
+	return used, nil
+}
+
+// usedRelevanceStore stamps its project as used on every read and write, so
+// the daily sweep keeps a project a long-running server works in
+// (20261114-095140-d-cpt-ad4, rule 3).
+type usedRelevanceStore struct {
+	relevanceStore
+	stateRoot, repoKey string
+}
+
+func (s usedRelevanceStore) mark() error {
+	return localadapter.MarkProjectUsed(s.stateRoot, s.repoKey, time.Now())
+}
+
+func (s usedRelevanceStore) Append(ctx context.Context, segment []byte) error {
+	if err := s.mark(); err != nil {
+		return err
+	}
+	return s.relevanceStore.Append(ctx, segment)
+}
+
+func (s usedRelevanceStore) Segments(ctx context.Context) ([][]byte, error) {
+	if err := s.mark(); err != nil {
+		return nil, err
+	}
+	return s.relevanceStore.Segments(ctx)
+}
+
+func projectRelevanceLayout(sddDir, stateRoot, repoKey string, cfg *model.PerRepoConfig) (relevanceStore, error) {
 	var layout model.RelevanceLayout
 	if cfg != nil {
 		var err error
