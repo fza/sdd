@@ -119,7 +119,7 @@ func (a *GitWorktreeAcquirer) DemandGraph(ctx context.Context, branch string, se
 }
 
 // BackfillTitles titles the untitled entries in the checkout of branch,
-// whatever its sync mode (20261105-233807-d-tac-831). A backfill started by a
+// whatever its sync mode. A backfill started by a
 // call waits out model.TitleBackfillCooldown; one from a session start or a
 // timer always runs. Under automatic sync the next round pushes its commit.
 func (a *GitWorktreeAcquirer) BackfillTitles(ctx context.Context, branch string, trigger app.SyncTrigger, runner llm.Runner) error {

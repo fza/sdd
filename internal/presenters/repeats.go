@@ -7,12 +7,11 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// Repeats applies the no-repeat rule to a serve (20261109-004506-d-cpt-udz,
-// R14) under the anchor proof: an entry the call
-// proves it holds prints as its pointer (ID and brief, never cut) instead of
-// its line, body or citations, and an entry served in full carries its tag.
-// A nil Repeats, or one without Held, serves everything in full, as the CLI
-// does.
+// Repeats applies the no-repeat rule to a serve under the anchor proof: an
+// entry the call proves it holds prints as its pointer (ID and brief, never
+// cut) instead of its line, body or citations, and an entry served in full
+// carries its tag. A nil Repeats, or one without Held, serves everything in
+// full, as the CLI does.
 type Repeats struct {
 	// Held reports whether the call holds the entry, with its tag.
 	Held func(id string) (tag string, held bool)

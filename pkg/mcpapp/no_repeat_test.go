@@ -13,9 +13,9 @@ import (
 )
 
 // The no-repeat rule over every verb that returns an entry's metadata, title,
-// summary or body (20261109-004506-d-cpt-udz, R14): an entry served in full
-// carries a tag, and while a call proves it, each
-// verb serves it as a pointer: ID, brief, tag and the way back.
+// summary or body: an entry served in full carries a tag, and while a call
+// proves it, each verb serves it as a pointer: ID, brief, tag and the way
+// back.
 //
 //	verb             serves                         test
 //	show             envelope, body, chain lines    TestNoRepeat/show

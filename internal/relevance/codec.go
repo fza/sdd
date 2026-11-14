@@ -1,9 +1,8 @@
-// Package relevance encodes and decodes the relevance verdict ledger
-// (20261109-004506-d-cpt-udz, design section 5.7). Each write adds one
-// segment in the shared segment format. A segment's first record is its
-// table of entry IDs, sorted and front-coded; its second is its table of
-// judges. Every later record names its entries and its judge by their index
-// in these tables:
+// Package relevance encodes and decodes the relevance verdict ledger. Each
+// write adds one segment in the shared segment format. A segment's first
+// record is its table of entry IDs, sorted and front-coded; its second is its
+// table of judges. Every later record names its entries and its judge by
+// their index in these tables:
 //
 //	reader  'r' a b code reason flags relations
 //	score   's' a b judge direction score
@@ -12,7 +11,7 @@
 // Indexes are unsigned and times signed variable-length integers (var-ints,
 // as encoding/binary writes them; times in Unix nanoseconds); code, reason,
 // flags, relations, direction and score take one byte each. A reason byte
-// this build does not know is kept unchanged (design decision D10). The flags
+// this build does not know is kept unchanged. The flags
 // byte holds the audit bit (1), the replay bit (2) and the opened-hidden bit
 // (4). A segment written before a bit existed reads with that bit unset, so
 // its reader records read as live.

@@ -121,8 +121,7 @@ type DelegateRound struct {
 }
 
 // DelegateLaunchFallback asks the launcher for the first headless runner of
-// the agents the project's supported_agents name whose CLI is found
-// (20261109-004729-d-cpt-xs5, V-D20).
+// the agents the project's supported_agents name whose CLI is found.
 const DelegateLaunchFallback = "fallback"
 
 // ErrDelegateNotLaunched is what a launcher returns for a delegate it leaves
@@ -493,7 +492,7 @@ func subagentSettingsInstruction(settings VerifierAgent) string {
 
 // delegateRunner is the runner a delegate of procedure takes: for the deep
 // verifier, the project's configured headless runner, or the fallback once
-// the harness reported no subagent tool (V-D20); empty otherwise.
+// the harness reported no subagent tool; empty otherwise.
 func (w *WorkflowSession) delegateRunner(parent, procedure string) (string, error) {
 	if procedure != verifyProcedure {
 		return "", nil

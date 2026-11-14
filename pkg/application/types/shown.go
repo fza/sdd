@@ -48,8 +48,8 @@ type ShownEntry struct {
 	Time          time.Time
 	Procedure     *ShownProcedureSpec
 	// Brief is the pointer text the no-repeat rule prints for an entry the
-	// consumer already holds in full (20261109-004506-d-cpt-udz, R14); empty
-	// for an entry of a connected repo's graph.
+	// consumer already holds in full; empty for an
+	// entry of a connected repo's graph.
 	Brief string
 }
 

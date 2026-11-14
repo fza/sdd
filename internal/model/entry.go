@@ -321,10 +321,10 @@ type Entry struct {
 	// (resolved) when scope.
 	Involvement  []Involvement
 	Preflight    string    // PreflightSkipped or PreflightDryRunVerified; empty when a checker validated this entry
-	Grounding    string    // GroundingSkipped when the capture bypassed the grounding gate (20261109-004506-d-cpt-udz, D4); empty otherwise
+	Grounding    string    // GroundingSkipped when the capture bypassed the grounding gate; empty otherwise
 	Verification string    // VerificationSkipped when the user skipped a verifier; empty otherwise
 	Attachments  []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
-	Title        string    // short headline naming the entry's subject, generated with the summary; optional at graph schema 1 (20261028-005411-d-tac-tit)
+	Title        string    // short headline naming the entry's subject, generated with the summary; optional at graph schema 1
 	Summary      string    // LLM-generated summary: this entry + direct relationships
 	Warnings     []Warning // validation issues found during graph construction
 	// Embedded marks a base entry compiled into the sdd binary (base

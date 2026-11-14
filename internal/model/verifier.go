@@ -140,14 +140,13 @@ func (a ClaudeAgent) VerifierAgent() VerifierAgent {
 	return VerifierAgent{Model: a.Model, Effort: string(a.Effort)}
 }
 
-// VerifyConfig is the `verify` block (20261109-004506-d-cpt-udz,
-// 20261109-004729-d-cpt-xs5, 20261109-222220-d-tac-4ev). Mode and skip are
-// policy: the user-global and the committed config set them, the committed
-// value wins, and the machine-local config may only tighten them. The runner,
-// the per-agent model and effort and the round timeout, a Go duration,
-// describe the machine, so the machine-local value wins (V-D20); the driver runs a command, so only the
-// user-global and machine-local layers set it (V-D19). Pointers tell an unset
-// grounding key from one a layer sets.
+// VerifyConfig is the `verify` block. Mode and skip are policy: the
+// user-global and the committed config set them, the committed value wins,
+// and the machine-local config may only tighten them. The runner, the
+// per-agent model and effort and the round timeout, a Go duration, describe
+// the machine, so the machine-local value wins; the driver runs a command, so
+// only the user-global and machine-local layers set it. Pointers tell an
+// unset grounding key from one a layer sets.
 type VerifyConfig struct {
 	Mode          VerifyMode           `yaml:"mode,omitempty"`
 	Skip          VerifierSkip         `yaml:"skip,omitempty"`
@@ -424,7 +423,7 @@ func mergeVerifierAgent(base, overlay VerifierAgent) VerifierAgent {
 // CheckVerifyLayers refuses a verify configuration that cannot hold: a
 // machine-local value loosening what the user-global and committed layers
 // set, a driver in the committed config, or a driver runner no layer names a
-// command for (V-D19). It judges the known values only, as a read does;
+// command for. It judges the known values only, as a read does;
 // VerifyKeyRefusal also refuses an unknown one on write. files names the
 // file behind each layer; the refusal names the key, and the file of every
 // layer it judges.
@@ -551,7 +550,7 @@ func sharedVerifyFile(global BaseConfig, committed *PerRepoConfig, key string, f
 }
 
 // VerifierRunnerChoices are the runners `sdd init` offers for the deep
-// verifier (V-D28): subagent first as the default, then claude and codex where
+// verifier: subagent first as the default, then claude and codex where
 // agents names them, in its order, and driver only where a layer already
 // configures a driver command.
 func VerifierRunnerChoices(agents []AgentTarget, driver VerifierDriver) []VerifierRunner {

@@ -130,7 +130,7 @@ func mcpConfig(sdd string) (string, error) {
 	return string(encoded), err
 }
 
-// ClaudeArgs are the flags of a headless claude round (V-D18): print mode
+// ClaudeArgs are the flags of a headless claude round: print mode
 // with a JSON result, no settings layer (so no project instructions, hooks or
 // plugins) and no skills, the read-only tool set, and sdd as the only MCP
 // server. The prompt goes on stdin. --safe-mode is no substitute: it drops the
@@ -185,7 +185,7 @@ func runClaude(ctx context.Context, settings Settings, round Round) (Launched, e
 	return Launched{Session: result.SessionID, Message: result.Result}, nil
 }
 
-// CodexArgs are the flags of a headless codex round (V-D18): exec with JSON
+// CodexArgs are the flags of a headless codex round: exec with JSON
 // events in a read-only sandbox, without the user's config.toml (its MCP
 // servers, profiles and provider) or execpolicy rules, no project
 // instructions (a zero byte budget for AGENTS.md), live web search, sdd as

@@ -70,8 +70,8 @@ type GatherRequest struct {
 	// stored verdicts against it answer repeat pairs without a new judgment.
 	Subject string
 	// Held reports whether the consumer already holds an entry in full; such
-	// a candidate prints as a pointer (D34). Nil serves every line in full,
-	// as the CLI does (R14). Anchor places the tag in a body served in full.
+	// a candidate prints as a pointer. Nil serves every line in full,
+	// as the CLI does. Anchor places the tag in a body served in full.
 	Held   func(id string) (tag string, held bool)
 	Anchor func(id, body string) string
 	// since is the corpus mark of the capture's reading; the live entries it

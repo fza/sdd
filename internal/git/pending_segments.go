@@ -12,7 +12,7 @@ import (
 // segmentPathspecs match the segments sdd shares through Git: those of every
 // event channel. A local channel's directory ignores itself, so the segments
 // git lists are shared ones, and they ride the commit sdd is about to make
-// instead of commits of their own (20261109-004506-d-cpt-udz, D19). The
+// instead of commits of their own. The
 // relevance ledger lives only in machine state.
 var segmentPathspecs = []string{
 	":(top,glob)**/" + path.Join(model.SDDDirName, model.EventsDirName) + "/*/*.seg",

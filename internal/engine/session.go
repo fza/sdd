@@ -231,8 +231,7 @@ type Session struct {
 	// names it; set through SetModel, empty until known.
 	Model string
 	// DialogueMode is the mode in force: opened from config, then followed
-	// through SetDialogue; DialogueSource names the config layer that set it
-	// (20261029-150854-d-tac-b2f).
+	// through SetDialogue; DialogueSource names the config layer that set it.
 	DialogueMode   model.DialogueMode
 	DialogueSource string
 	// Lineage names the dispatching instance of a delegate child session; nil

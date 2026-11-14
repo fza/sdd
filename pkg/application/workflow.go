@@ -444,8 +444,7 @@ func (a *Application) replayWorkflow(ctx context.Context, identity RequestIdenti
 }
 
 // followDialogue puts a replayed session in the dialogue mode the config sets
-// now, so a running session follows a config change on its next call
-// (supersedes the bound-at-open rule of 20261029-150854-d-tac-b2f). A
+// now, so a running session follows a config change on its next call. A
 // composition without a dialogue resolver keeps the mode the log opened in.
 func (w *WorkflowSession) followDialogue(ctx context.Context, identity RequestIdentity, runtime *ProjectRuntime) error {
 	if _, ok := w.app.access.(DialogueResolver); !ok {
@@ -600,8 +599,7 @@ func (w *WorkflowSession) IsShell(instance string) bool { return instance != "" 
 // which is the act that wrote the terminal record. A finished session is spent —
 // the door opens a new one rather than re-serving it, and no move may carry it on.
 // Autonomous reports whether the session is in the autonomous dialogue
-// mode, where the agent takes the choices procedures hand over
-// (20261029-150854-d-tac-b2f).
+// mode, where the agent takes the choices procedures hand over.
 func (w *WorkflowSession) Autonomous() bool {
 	return w.session.DialogueMode == model.DialogueAuto
 }
@@ -1277,7 +1275,7 @@ func (w *WorkflowSession) TakeStepFullIDs() []string {
 }
 
 // CutRepeats applies the no-repeat rule to the step serves the session
-// renders, as the MCP surface serves them (R14): an injected entry chain or
+// renders, as the MCP surface serves them: an injected entry chain or
 // view prints an entry the call proves it holds as its pointer, and tags
 // every entry it serves in full. Framing lanes never cut (composeFraming in
 // the MCP surface). Off by default: the CLI never cuts.

@@ -60,7 +60,7 @@ type ListedEntry struct {
 	// Canonical is an actor's canonical name.
 	Canonical string
 	// Brief is the pointer text the no-repeat rule prints for an entry the
-	// consumer already holds in full (20261109-004506-d-cpt-udz, R14).
+	// consumer already holds in full.
 	Brief string
 	// Body is the entry's full text, filled only in a bodies section.
 	Body string

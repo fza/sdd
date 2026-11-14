@@ -12,9 +12,8 @@ import (
 // the folder under .sdd/ whose segments sdd reports as ignored.
 const RelevanceDirName = "relevance"
 
-// RelevancePair is the unordered pair of entries a relevance verdict judges
-// (20261109-004506-d-cpt-udz, 5.7): relevance is symmetric, so A sorts
-// before B.
+// RelevancePair is the unordered pair of entries a relevance verdict judges:
+// relevance is symmetric, so A sorts before B.
 type RelevancePair struct {
 	A string
 	B string

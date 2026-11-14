@@ -168,7 +168,7 @@ func (c *RepoRemoveCmd) Validate() error {
 }
 
 // RepoSyncCmd runs the sync round of connected repos through their
-// sdd-owned clones (20261107-095427-d-tac-yux): the named repos, or the
+// sdd-owned clones: the named repos, or the
 // local repo's direct dependencies when RepoIDs is empty, every connected
 // repo outside a project. Inside a project, a named repo outside its direct
 // dependencies is refused. A repo without a clone

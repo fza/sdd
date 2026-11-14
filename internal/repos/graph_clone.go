@@ -34,7 +34,7 @@ type GraphCloneGit interface {
 
 // GraphClones owns the sdd-owned clone of every graph and connected
 // repository this machine reads or writes, one per repository id under
-// <DataRoot>/repos/<repo-id>/ (20261106-201216-d-cpt-aim). A clone passes
+// <DataRoot>/repos/<repo-id>/. A clone passes
 // the gate as a fetch, a publish as a push.
 type GraphClones struct {
 	dataRoot string
@@ -196,7 +196,7 @@ func (g *GraphClones) Widen(ctx context.Context, repoID model.RepoID, graphDir s
 }
 
 // Publish pushes what sdd committed in the clone of repoID, only with commits
-// waiting (20261107-095427-d-tac-yux).
+// waiting.
 func (g *GraphClones) Publish(ctx context.Context, repoID model.RepoID) error {
 	dir, err := g.Dir(repoID)
 	if err != nil {

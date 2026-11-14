@@ -6,7 +6,7 @@ import (
 )
 
 // CaptureRelevance returns the records a published capture adds to
-// the relevance ledger, keyed to the entry it wrote (5.7): every ref,
+// the relevance ledger, keyed to the entry it wrote: every ref,
 // supersede and close is referenced; every verdict sets its entries aside
 // with its code, as opened when the reading served them in full; an audit
 // sample carries the audit bit; every prefilter score the reading holds is

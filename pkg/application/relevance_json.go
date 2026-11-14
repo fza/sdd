@@ -14,11 +14,10 @@ import (
 	"github.com/networkteam/sdd/internal/relevance"
 )
 
-// relevanceJSON is one line of the JSON form of the relevance ledger
-// (20261109-004506-d-cpt-udz, D16): a reader record, a score or a drift
-// step. A live reader record carries no source. Bytes this sdd cannot name
-// (an unknown reason) keep their number, so every record survives a round
-// trip.
+// relevanceJSON is one line of the JSON form of the relevance ledger: a
+// reader record, a score or a drift step. A live reader record carries no
+// source. Bytes this sdd cannot name (an unknown reason) keep their number,
+// so every record survives a round trip.
 type relevanceJSON struct {
 	Type         string   `json:"type"`
 	A            string   `json:"a,omitempty"`

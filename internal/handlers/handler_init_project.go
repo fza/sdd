@@ -92,8 +92,7 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 }
 
 // refreshProject runs the existing project's own init with the settings it
-// records, so the project stays as current as the work repository
-// (20261029-132740-d-tac-g32).
+// records, so the project stays as current as the work repository.
 func (h *Handler) refreshProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, projectCfg *model.PerRepoConfig, changed *bool) error {
 	if h.projectRepos == nil || h.repositoryAt == nil {
 		return fmt.Errorf("refreshing the project at %s needs a git adapter for it", cmd.ProjectDir)

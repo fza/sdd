@@ -226,7 +226,7 @@ var LocalPointerKeys = []string{"project_dir", "hooks"}
 
 // GraphRepoPointerKeys are the keys a committed config may set beside
 // graph_repo: the pointer keys, project_dir for older builds and graph_dir for
-// the stock guard (20261106-202055-d-tac-eyl).
+// the guard against stock sdd.
 var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents", "hooks"}
 
 // TopLevelKeys returns the top-level keys of a YAML mapping, in file order.
@@ -328,14 +328,14 @@ var RetiredConfigKeys = map[string]string{
 	"sync.cooldown":         retiredSyncReason,
 	"sync.mode":             retiredSyncReason,
 	"sync.interval":         retiredSyncReason,
-	"sessions.token_saving": "sdd serves a piece again as a pointer only when the agent proves it still holds the text", // 20261112-075604-d-tac-t4r
+	"sessions.token_saving": "sdd serves a piece again as a pointer only when the agent proves it still holds the text",
 	"relevance.commit":      retiredRelevanceReason,
 	"relevance.content":     retiredRelevanceReason,
 }
 
 const retiredSyncReason = "git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config"
 
-const retiredRelevanceReason = "the relevance ledger lives only in machine state" // 20261114-105752-d-tac-tnk
+const retiredRelevanceReason = "the relevance ledger lives only in machine state"
 
 // IgnoredSettings returns the settings in one config layer that sdd reads
 // past. source names the layer: global, project (the shared

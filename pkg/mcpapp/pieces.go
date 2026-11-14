@@ -111,7 +111,7 @@ func carried(ids []string, text string) []string {
 // changes one block (the recent-moves lane) re-serves that block alone, never
 // the stable aspirations or directives (I6). A block the call holds is left
 // out, as the agent named it itself; a pointer on every serve would be the
-// repeat it saves. A block holds the entries it carries in full (R14); a
+// repeat it saves. A block holds the entries it carries in full; a
 // block is never cut for them. Only the first keep blocks serve; the rest
 // wait, as instruction lanes do past the result bound.
 func composeFraming(ss *shellSession, blocks []types.ServeLane, keep int) framingServed {

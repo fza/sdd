@@ -49,7 +49,7 @@ type InitCmd struct {
 
 	// DialogueMode, when set, records the person's dialogue.mode in
 	// config.local.yaml of the project holding the graph, which is RepoRoot
-	// unless ProjectDir names another (20261029-150854-d-tac-b2f).
+	// unless ProjectDir names another.
 	DialogueMode model.DialogueMode
 
 	// VerifyMode, when set, records how carefully drafts are checked against
@@ -57,7 +57,7 @@ type InitCmd struct {
 	VerifyMode model.VerifyMode
 
 	// VerifierRunner, when set, records what runs the deep verifier on this
-	// machine in the local config (V-D20, V-D28).
+	// machine in the local config.
 	VerifierRunner model.VerifierRunner
 
 	// SetUpProject allows init to set up a missing project at ProjectDir. Only

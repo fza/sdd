@@ -17,7 +17,7 @@ func titlesLLMConfig(t *testing.T) string {
 const untitledEntryContent = "---\ntype: signal\nlayer: tactical\nkind: gap\nsummary: An untitled entry.\n---\n\nBody.\n"
 
 // An explicit sync titles the untitled entries before it returns, in a graph
-// clone and in the code repository (20261105-233807-d-tac-831).
+// clone and in the code repository.
 func TestExplicitSyncBackfillsTitles(t *testing.T) {
 	t.Run("code repository", func(t *testing.T) {
 		root := syncedProject(t, "")

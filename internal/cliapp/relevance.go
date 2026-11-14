@@ -12,9 +12,9 @@ import (
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
-// relevanceLedgerDir is the folder of a project's relevance verdict ledger
-// (20261109-004506-d-cpt-udz, 5.7): machine state under stateRoot, keyed
-// like the search index, and nowhere in the repository.
+// relevanceLedgerDir is the folder of a project's relevance verdict ledger:
+// machine state under stateRoot, keyed like the search index, and nowhere in
+// the repository.
 func relevanceLedgerDir(stateRoot, repoKey string) string {
 	return filepath.Join(stateRoot, model.RelevanceDirName, filepath.FromSlash(repoKey))
 }
@@ -66,7 +66,7 @@ func (s usedRelevanceStore) Segments(ctx context.Context) ([][]byte, error) {
 }
 
 // projectPrefilter composes the prefilter verify.prefilter switches on;
-// the zero value while it is off (D7).
+// the zero value while it is off.
 func projectPrefilter(cfg *model.PerRepoConfig) (sdd.Prefilter, error) {
 	var base model.BaseConfig
 	if cfg != nil {

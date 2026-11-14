@@ -413,10 +413,9 @@ type ReadAttachmentResult struct {
 }
 
 // ResultNotices carries the blocked-sync notice while automatic sync of the
-// graph repository cannot proceed (20261028-201909-d-tac-fxp), once per
-// change of its text; once the notice of a
-// failed background cache pruning run (20261101-131514-d-cpt-9ci); and once
-// the config keys that changed since the previous call.
+// graph repository cannot proceed, once per change of its text; once the
+// notice of a failed background cache pruning run; and once the config keys
+// that changed since the previous call.
 type ResultNotices struct {
 	SyncNotice  string `json:"sync_notice,omitempty" jsonschema:"set when automatic sync of the graph repository becomes blocked, the background title backfill fails, or a connected repository's last sync round fails, or a refresh the call started still runs past its wait, or a ref a direct dependency holds into a project beyond the home's direct dependencies stays unavailable (its kind, reason and who must act), and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Plain status, not a tool error; act on it as it says"`
 	CacheNotice string `json:"cache_notice,omitempty" jsonschema:"set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user"`

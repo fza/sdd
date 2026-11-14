@@ -114,7 +114,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		return err
 	}
 	if err := registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes: a listing gives up whole entries and ends naming how many and the layout serving them, as an n(k) that cuts one does; other output is cut at a line boundary with an honest notice whose pull is the lane's own layout. A layout of only as-bodies sections is cut at whole bodies instead, naming each withheld entry. Injected into a step served over MCP, an entry the consumer already holds in full prints as its pointer (R14)."},
+		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes: a listing gives up whole entries and ends naming how many and the layout serving them, as an n(k) that cuts one does; other output is cut at a line boundary with an honest notice whose pull is the lane's own layout. A layout of only as-bodies sections is cut at whole bodies instead, naming each withheld entry. Injected into a step served over MCP, an entry the consumer already holds in full prints as its pointer."},
 		ServeSafe: true,
 		Bound: engine.QueryBound{
 			Part: serveview.PartText,
@@ -173,7 +173,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		// Not serve-safe: it calls LogRead, so it writes a read event. It may
 		// inject into a step unit, but never as a framing lane (a serve must not
 		// write — I7); the spec loader enforces that.
-		Doc:   engine.FuncDoc{Name: "entryChains", Doc: "Entries with upstream/downstream chains for an explicit id arg or the store's anchor/targets. Args up, down: expansion depths; onceFull: serve nothing when the consumer holds every entry in full (over MCP proved by its anchor, elsewhere by the read ledger); requireBody: fail when a primary resolves to an empty body. An explicit id resolves to its live supersession head before serving, so a project override wins and the read logs under the same ID the dedup checks. Chains are bounded per direction by the engine's entry-list budget; the cut renders as the same honest frontier the depth limit uses. Served over MCP, an entry the consumer already holds in full prints as its pointer (R14).", Reads: []string{"anchor", "targets"}},
+		Doc:   engine.FuncDoc{Name: "entryChains", Doc: "Entries with upstream/downstream chains for an explicit id arg or the store's anchor/targets. Args up, down: expansion depths; onceFull: serve nothing when the consumer holds every entry in full (over MCP proved by its anchor, elsewhere by the read ledger); requireBody: fail when a primary resolves to an empty body. An explicit id resolves to its live supersession head before serving, so a project override wins and the read logs under the same ID the dedup checks. Chains are bounded per direction by the engine's entry-list budget; the cut renders as the same honest frontier the depth limit uses. Served over MCP, an entry the consumer already holds in full prints as its pointer.", Reads: []string{"anchor", "targets"}},
 		Bound: engine.QueryBound{Part: serveview.PartEntryList},
 		Fn: func(ctx *engine.Context, args map[string]any) (any, error) {
 			var ids []string

@@ -1,8 +1,7 @@
 // Package gitgate keeps the git network operations sdd starts within a
 // per-machine budget per remote host and protocol: a cooldown per repository
 // and kind, retries for transport failures, hourly buckets, credits that
-// unused fetch slices earn, and a cap on concurrent operations per host
-// (20261107-095427-d-tac-yux).
+// unused fetch slices earn, and a cap on concurrent operations per host.
 package gitgate
 
 import (

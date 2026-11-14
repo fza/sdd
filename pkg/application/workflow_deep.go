@@ -194,7 +194,7 @@ func deepSkipCause(store *engine.Store) string {
 func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error {
 	predicates := []engine.Predicate{
 		{
-			Doc: engine.FuncDoc{Name: "captureDeepVerdictCurrent", Doc: "The project runs no deep verifier, or a deep verdict or skip covers the current draft, staged attachments and target (V-D26).", Reads: append(slices.Clone(captureDraftFields), fieldDeepVerdict)},
+			Doc: engine.FuncDoc{Name: "captureDeepVerdictCurrent", Doc: "The project runs no deep verifier, or a deep verdict or skip covers the current draft, staged attachments and target.", Reads: append(slices.Clone(captureDraftFields), fieldDeepVerdict)},
 			Fn:  w.deepVerdictCurrent,
 		},
 		{
@@ -381,7 +381,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 }
 
 // prepareDeep opens the exchange: the base document every edit is made
-// over, the reading paged for the verifier (V-D8), the weighing rule's
+// over, the reading paged for the verifier, the weighing rule's
 // recommendation, and for a live verifier the revision's reading.
 func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 	policy, runtime, err := w.deepPolicy(ctx.Instance, ctx.Store)
@@ -1076,7 +1076,7 @@ func (w *WorkflowSession) registerVerifyTask(registry *engine.Registry) error {
 			},
 		},
 		{
-			Doc: engine.FuncDoc{Name: "requireReadingServed", Doc: "Refuses findings until every page of the reading was served (V-D8).", Reads: []string{fieldVerifyPages, fieldVerifyPageAt}},
+			Doc: engine.FuncDoc{Name: "requireReadingServed", Doc: "Refuses findings until every page of the reading was served.", Reads: []string{fieldVerifyPages, fieldVerifyPageAt}},
 			Fn: func(ctx *engine.Context) error {
 				at, count := verifyPageAt(ctx.Store)
 				if at+1 < count {

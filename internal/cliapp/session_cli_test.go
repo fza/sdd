@@ -162,8 +162,7 @@ func TestCLISessionShowInspectsARefForTheCapture(t *testing.T) {
 
 // Where verify.mode enforces grounding, sdd new --session passes the gate the
 // engine capture passes: it holds the draft until a gather inside the capture read
-// the graph and every entry it served in full is referenced or dismissed
-// (D3, D9, D39).
+// the graph and every entry it served in full is referenced or dismissed.
 func TestCLISessionNewPassesTheCaptureGate(t *testing.T) {
 	f := sessionFixture(t, true)
 	session := openCapture(t, f)

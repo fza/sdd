@@ -45,7 +45,7 @@ func TestInitRefusesAnUnknownVerifyMode(t *testing.T) {
 }
 
 // The deep verifier's runner is personal: init records it in the local
-// config, and offers only the agents supported_agents names (V-D28).
+// config, and offers only the agents supported_agents names.
 func TestInitRecordsTheVerifierRunnerLocally(t *testing.T) {
 	work, _ := workRepository(t)
 	runApp(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--verify-mode", "deep", "--verify-runner", "claude")

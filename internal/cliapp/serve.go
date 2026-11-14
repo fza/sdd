@@ -211,7 +211,7 @@ func localBearerAuth(token string, next http.Handler) http.Handler {
 // its sdd-owned clone, both as a member of a horizon and as a project a move
 // may work in, reads and captures alike: its own declared dependencies, its
 // own index namespace, write authority only where both connected-write gates
-// allow it (20261106-201216-d-cpt-aim). ListProjects names the home alone, so
+// allow it. ListProjects names the home alone, so
 // a session still opens there without choosing.
 type localRuntimeAccess struct {
 	project      sdd.ProjectID
@@ -233,7 +233,7 @@ type connectedDependencies struct {
 	rounds   connectedRounds
 	build    func(repoID sdd.RepoID, dir string, cfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error)
 	// writer and connected decide a capture into a dependency with the
-	// dependency's committed inbound.accept (20261106-201216-d-cpt-aim).
+	// dependency's committed inbound.accept.
 	writer    sdd.RepoID
 	connected model.ConnectedConfig
 

@@ -25,7 +25,7 @@ const DeepRounds = 3
 const DeepRevisions = 3
 
 // DeepPageChars bounds what one page of the deep verifier's reading costs in
-// the result that serves it (V-D8, ServedChars), leaving the rest of
+// the result that serves it (ServedChars), leaving the rest of
 // MaxResultChars to the serve around the page: the resume serving page 1, the
 // verifier's rules lane, the report schema and the notices.
 const DeepPageChars = MaxResultChars - 6000
@@ -412,7 +412,7 @@ type DeepReadingPage struct {
 	FullIDs []string
 }
 
-// DeepReadingPages pages the deep verifier's reading (V-D8): the first page
+// DeepReadingPages pages the deep verifier's reading: the first page
 // opens with lead (the draft and what pre-flight raised), the pages of rules
 // follow it, and the blocks of first (the declared targets and the entries
 // read in full), then those of rest (the briefs), fill the room the pages
