@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	pkgembed "github.com/networkteam/sdd/pkg/llm/embed"
 )
@@ -121,6 +122,9 @@ func LoadOrCalibrate(ctx context.Context, emb pkgembed.Embedder, dir, key string
 		if err := json.Unmarshal(data, &cal); err != nil {
 			return Calibration{}, fmt.Errorf("reading calibration %s: %w", path, err)
 		}
+		if err := markCalibrationUsed(path, time.Now()); err != nil {
+			return Calibration{}, err
+		}
 		return cal, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
@@ -134,6 +138,60 @@ func LoadOrCalibrate(ctx context.Context, emb pkgembed.Embedder, dir, key string
 		return Calibration{}, err
 	}
 	return cal, nil
+}
+
+// CalibrationDirName is the folder under the cache root calibrations live in.
+const CalibrationDirName = "calibration"
+
+// calibrationUseRefresh is how stale a calibration's modification time, its
+// last use, may grow before a load refreshes it.
+const calibrationUseRefresh = 24 * time.Hour
+
+func markCalibrationUsed(path string, now time.Time) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("reading calibration %s: %w", path, err)
+	}
+	if now.Sub(info.ModTime()) < calibrationUseRefresh {
+		return nil
+	}
+	if err := os.Chtimes(path, now, now); err != nil {
+		return fmt.Errorf("refreshing calibration %s: %w", path, err)
+	}
+	return nil
+}
+
+// PruneCalibrations removes the calibrations under dir no load used for longer
+// than retention, and reports how many went (20261114-095140-d-cpt-ad4).
+func PruneCalibrations(dir string, now time.Time, retention time.Duration) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("listing calibrations: %w", err)
+	}
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "calibration-") {
+			continue
+		}
+		info, err := entry.Info()
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return removed, fmt.Errorf("reading calibration: %w", err)
+		}
+		if now.Sub(info.ModTime()) <= retention {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return removed, fmt.Errorf("removing calibration: %w", err)
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 func writeAtomic(path string, cal Calibration) error {

@@ -67,7 +67,7 @@ current checkout searches always stay. sdd index gc removes more on request.`,
 				scheduled := cmd.Bool(scheduledFlag)
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
-					OwnedClones: syncstate.OwnedClones{Gate: gate}, Keep: keep,
+					OwnedClones: syncstate.OwnedClones{Gate: gate}, Gate: gate, Keep: keep,
 					DeclaredHooks: hooks.DeclaredIn(loc.ConfigPath, repos.NewGraphClones(loc, git.GraphClones{}, gate).Dir),
 				})
 				return h.Prune(ctx, &command.PruneCacheCmd{

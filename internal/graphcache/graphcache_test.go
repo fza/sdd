@@ -259,3 +259,44 @@ func TestPrune(t *testing.T) {
 		t.Errorf("an unreadable snapshot untouched past retention should go, stat says %v", err)
 	}
 }
+
+func TestPruneDropsSnapshotsOfUnusedFolders(t *testing.T) {
+	now := time.Now()
+	const retention = 90 * 24 * time.Hour
+	old := now.Add(-retention - time.Hour)
+	root := t.TempDir()
+	cache := graphcache.New(root)
+	docs := finders.GraphDocuments{Entries: []finders.EntryDocument{{ID: "20261020-100000-s-tac-aaa", Raw: []byte(entryContent("Alpha."))}}}
+	unused, loaded := t.TempDir(), t.TempDir()
+	for _, dir := range []string{unused, loaded} {
+		if err := cache.Save(dir, map[string]filestamp.Stamp{}, docs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshots, err := filepath.Glob(filepath.Join(root, "*.graph"))
+	if err != nil || len(snapshots) != 2 {
+		t.Fatalf("two snapshots should be saved, got %v, %v", snapshots, err)
+	}
+	for _, path := range snapshots {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ok, err := cache.Load(loaded, map[string]filestamp.Stamp{}); err != nil || !ok {
+		t.Fatalf("loading the snapshot should hit, got %v, %v", ok, err)
+	}
+
+	count, _, err := cache.Prune(now, retention)
+	if err != nil {
+		t.Fatalf("pruning: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("only the snapshot nothing loaded within the retention should go, removed %d", count)
+	}
+	if _, ok, err := cache.Load(loaded, map[string]filestamp.Stamp{}); err != nil || !ok {
+		t.Errorf("a snapshot loaded within the retention should stay, load says %v, %v", ok, err)
+	}
+	if _, ok, _ := cache.Load(unused, map[string]filestamp.Stamp{}); ok {
+		t.Error("the snapshot of a folder unused for the retention should be gone")
+	}
+}

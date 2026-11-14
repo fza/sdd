@@ -15,6 +15,7 @@ import (
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/filestamp"
 	"github.com/networkteam/sdd/internal/finders"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/graphcache"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/handlers/synctest"
@@ -114,10 +115,14 @@ func newPruneFixture(t *testing.T, config string) pruneFixture {
 	return f
 }
 
+func (f pruneFixture) gate() *gitgate.Gate {
+	return synctest.Gate(f.loc.StateRoot, nil)
+}
+
 func (f pruneFixture) handler(keep handlers.CurrentHashSource) *handlers.CacheHandler {
 	return handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
-		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(f.loc.StateRoot, nil)}, Keep: keep,
+		OwnedClones: syncstate.OwnedClones{Gate: f.gate()}, Gate: f.gate(), Keep: keep,
 	})
 }
 
@@ -192,7 +197,7 @@ func TestCacheHandlerPruneSweepsUndeclaredHookConfirmations(t *testing.T) {
 	}
 	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
-		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(f.loc.StateRoot, nil)},
+		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(f.loc.StateRoot, nil)}, Gate: synctest.Gate(f.loc.StateRoot, nil),
 		DeclaredHooks: func(dir string) ([]string, error) {
 			if dir != checkout {
 				t.Errorf("only the recorded checkout should be asked, asked %s", dir)

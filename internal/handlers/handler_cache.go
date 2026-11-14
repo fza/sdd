@@ -17,6 +17,7 @@ import (
 	"github.com/networkteam/sdd/internal/graphcache"
 	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/index"
+	"github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 )
@@ -40,14 +41,21 @@ type OwnedCloneProbe interface {
 	LastAttempt(ctx context.Context, dir string) (time.Time, error)
 }
 
+// GateSweeper is the git gate's part in the sweep.
+type GateSweeper interface {
+	PruneRecords(ctx context.Context, now time.Time, retention time.Duration) (int, error)
+	SweepTraces(now time.Time, minAge time.Duration) (int, error)
+}
+
 // CacheHandlerOptions configures NewCacheHandler. CacheRoot, StateRoot,
-// Registry and OwnedClones are required; Keep is nil outside an sdd checkout;
-// Now defaults to time.Now.
+// Registry, OwnedClones and Gate are required; Keep is nil outside an sdd
+// checkout; Now defaults to time.Now.
 type CacheHandlerOptions struct {
 	CacheRoot   string
 	StateRoot   string
 	Registry    *repos.Registry
 	OwnedClones OwnedCloneProbe
+	Gate        GateSweeper
 	Keep        CurrentHashSource
 	// DeclaredHooks returns the hashes of the hooks a checkout declares now
 	// (hooks.DeclaredIn); the pass drops every other hook confirmation under
@@ -62,13 +70,14 @@ type CacheHandler struct {
 	stateRoot     string
 	registry      *repos.Registry
 	ownedClones   OwnedCloneProbe
+	gate          GateSweeper
 	keep          CurrentHashSource
 	declaredHooks func(checkout string) ([]string, error)
 	now           func() time.Time
 }
 
 func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
-	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, ownedClones: opts.OwnedClones, keep: opts.Keep, declaredHooks: opts.DeclaredHooks, now: opts.Now}
+	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, ownedClones: opts.OwnedClones, gate: opts.Gate, keep: opts.Keep, declaredHooks: opts.DeclaredHooks, now: opts.Now}
 	if h.now == nil {
 		h.now = time.Now
 	}
@@ -182,6 +191,9 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		}
 	}
 
+	errs = append(errs, h.sweepLeftovers(now, &counts)...)
+	errs = append(errs, h.pruneRecords(ctx, now, retention, &counts)...)
+
 	clones, err := h.registry.UnconnectedClones()
 	if err != nil {
 		errs = append(errs, err)
@@ -218,6 +230,51 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 
 	errs = append(errs, h.pruneIndex(ctx, now, index.Retention{Unused: retention, Replaced: replaced}, keepFor, &counts)...)
 	return counts, errors.Join(errs...)
+}
+
+// sweepLeftovers removes what killed processes left outside the index stores
+// once older than model.CacheLeftoverAge.
+func (h *CacheHandler) sweepLeftovers(now time.Time, counts *model.CachePruneCounts) []error {
+	var errs []error
+	if h.gate == nil {
+		errs = append(errs, errors.New("cache pruning has no git gate"))
+	} else {
+		traces, err := h.gate.SweepTraces(now, model.CacheLeftoverAge)
+		counts.Leftovers += traces
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	staging, err := h.registry.SweepCloneStaging(now, model.CacheLeftoverAge)
+	counts.Leftovers += staging
+	if err != nil {
+		errs = append(errs, err)
+	}
+	hosts, err := h.registry.SweepLegacyHostDirs(now, model.CacheLeftoverAge)
+	counts.Leftovers += hosts
+	if err != nil {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
+// pruneRecords drops git gate records and embedder calibrations unused for
+// retention.
+func (h *CacheHandler) pruneRecords(ctx context.Context, now time.Time, retention time.Duration, counts *model.CachePruneCounts) []error {
+	var errs []error
+	if h.gate != nil {
+		records, err := h.gate.PruneRecords(ctx, now, retention)
+		counts.Records += records
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	calibrations, err := embed.PruneCalibrations(filepath.Join(h.cacheRoot, embed.CalibrationDirName), now, retention)
+	counts.Records += calibrations
+	if err != nil {
+		errs = append(errs, err)
+	}
+	return errs
 }
 
 // pruneIndex applies the index rules of 20261114-095140-d-cpt-ad4 to every
