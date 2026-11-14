@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-// Anchor proof (20261112-075604-d-tac-t4r): a piece served in full carries a
+// Anchor proof: a piece served in full carries a
 // tag placed before a content word; a later call proves it still holds the
 // piece by naming the tag and that word.
 

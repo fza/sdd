@@ -89,7 +89,7 @@ func largeGraph(t *testing.T) (dir string, ids []string, huge string) {
 	return dir, ids, huge
 }
 
-// No result exceeds the result bound (20261112-075604-d-tac-t4r) on a graph
+// No result exceeds the result bound on a graph
 // whose reads would each run far past it: what does not fit pages with a
 // continuation the agent follows.
 func TestNoResultExceedsTheResultBound(t *testing.T) {

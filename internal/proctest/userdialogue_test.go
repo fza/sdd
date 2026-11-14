@@ -204,7 +204,7 @@ func TestUserDialogue_FramingLanesRenderRealGraphContent(t *testing.T) {
 }
 
 // The recent-movement lane holds the newest five entries and names that cap
-// in its heading (20261112-075604-d-tac-t4r).
+// in its heading.
 func TestUserDialogue_RecentMovementHoldsTheNewestFive(t *testing.T) {
 	var entries []*model.Entry
 	var ids []string

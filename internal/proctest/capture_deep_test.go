@@ -470,7 +470,7 @@ func TestCaptureDeep_TheVerifierJudgesInThePreflightModelsPlace(t *testing.T) {
 		}
 	}
 	// The draft reaches the verifier on its reading pages, not again with
-	// the rules (20261112-075604-d-tac-t4r).
+	// the rules.
 	if strings.Contains(serve.Instructions, deepBody) {
 		t.Errorf("the rules page should leave the draft to the reading pages:\n%s", serve.Instructions)
 	}

@@ -83,7 +83,7 @@ continue. Continue through next with the session's handle. Lose your place
 again later? resume_session with this handle re-serves this list in full.`
 
 // proofGuide tells an agent, at the opening and at every reorientation, how
-// it proves what it still holds (20261112-075604-d-tac-t4r).
+// it proves what it still holds.
 const proofGuide = `Every piece served in full (instruction lane, framing block, report schema,
 entry) carries a tag, such as ⟦k3f9⟧, before one of its words. On each later
 call, list in held every tag whose text you still see, with the word right

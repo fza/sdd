@@ -253,7 +253,7 @@ type Step struct {
 	// holds the stage's findings channel.
 	Stage string
 	// Framing names the session framing blocks a serve of this step carries,
-	// by block name; nil carries them all (20261112-075604-d-tac-t4r).
+	// by block name; nil carries them all.
 	Framing []string
 }
 

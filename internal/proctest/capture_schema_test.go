@@ -32,7 +32,7 @@ func TestCaptureSchemasCarryOnlyFieldsAReportFills(t *testing.T) {
 }
 
 // A report schema's descriptions name a field's shape and constraint only:
-// the step's lanes carry the guidance (20261112-075604-d-tac-t4r).
+// the step's lanes carry the guidance.
 func TestCaptureSchemaDescriptionsStayShortAndKeepTheirConstraints(t *testing.T) {
 	const maxDescription = 90
 	_, session := newCaptureWorld(t, "capture-schema-descriptions")
