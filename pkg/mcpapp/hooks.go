@@ -98,6 +98,6 @@ func inputRequired(err error) (*mcp.CallToolResult, bool) {
 
 // confirmHooks asks about the unconfirmed hooks of project before the call
 // does any work.
-func (s *Server) confirmHooks(ctx context.Context, req *mcp.CallToolRequest, project sdd.ProjectID) error {
+func (s *toolSet) confirmHooks(ctx context.Context, req *mcp.CallToolRequest, project sdd.ProjectID) error {
 	return s.app.ConfirmHooks(ctx, s.requestIdentity(req), project, newElicitingConfirmer(req))
 }
