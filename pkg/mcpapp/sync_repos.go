@@ -28,7 +28,7 @@ type SyncReposResult struct {
 	Repos []RepoSyncResult `json:"repos"`
 }
 
-func (s *Server) syncRepos(ctx context.Context, req *mcp.CallToolRequest, args SyncReposArgs) (*mcp.CallToolResult, SyncReposResult, error) {
+func (s *toolSet) syncRepos(ctx context.Context, req *mcp.CallToolRequest, args SyncReposArgs) (*mcp.CallToolResult, SyncReposResult, error) {
 	ss, err := s.attachedSession(ctx, req, args.Session)
 	if err != nil {
 		return nil, SyncReposResult{}, err
