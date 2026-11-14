@@ -53,3 +53,21 @@ func TestResolveConfig_RefusesALocalLoweringTheVerifier(t *testing.T) {
 		t.Fatalf("a local layer lowering the mode should be refused naming the file and key, got %v", err)
 	}
 }
+
+// The verify.codex block a former sdd read fails the load in either per-repo
+// layer, naming the file, as verify.runner codex does.
+func TestResolveConfig_RefusesTheRemovedCodexBlock(t *testing.T) {
+	for _, file := range []string{"config.yaml", "config.local.yaml"} {
+		t.Run(file, func(t *testing.T) {
+			sddDir := t.TempDir()
+			err := os.WriteFile(filepath.Join(sddDir, file), []byte("verify:\n  codex:\n    model: gpt-5\n"), 0o644)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = meta.ResolveConfig(model.BaseConfig{}, sddDir, "")
+			if err == nil || !strings.Contains(err.Error(), filepath.Join(sddDir, file)) || !strings.Contains(err.Error(), "verify.codex no longer exists") {
+				t.Fatalf("the load should fail naming the file and the block, got %v", err)
+			}
+		})
+	}
+}

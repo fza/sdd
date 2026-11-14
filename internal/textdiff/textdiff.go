@@ -5,6 +5,7 @@
 package textdiff
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -140,6 +141,66 @@ func HeadTail(text string, head, tail int) string {
 	parts = append(parts, "[… "+strconv.Itoa(elided)+" lines elided …]")
 	parts = append(parts, lines[len(lines)-tail:]...)
 	return strings.Join(parts, "\n")
+}
+
+// Span is the byte range [Start, End) of a text.
+type Span struct{ Start, End int }
+
+// ChangedSpans returns the spans of old that the change to new replaces, in
+// order, each narrowed to the bytes that differ; a run of lines new inserts
+// without replacing any is an empty span where it goes.
+func ChangedSpans(old, new string) []Span {
+	var spans []Span
+	var removed, added []string
+	offset, start := 0, 0
+	flush := func() {
+		if removed == nil && added == nil {
+			return
+		}
+		before, after := strings.Join(removed, "\n"), strings.Join(added, "\n")
+		if removed == nil {
+			spans = append(spans, Span{Start: start, End: start})
+		} else {
+			prefix := commonPrefix(before, after)
+			suffix := commonPrefix(reverse(before[prefix:]), reverse(after[prefix:]))
+			spans = append(spans, Span{Start: start + prefix, End: start + len(before) - suffix})
+		}
+		removed, added = nil, nil
+	}
+	for _, o := range diffOps(strings.Split(old, "\n"), strings.Split(new, "\n")) {
+		switch o.kind {
+		case opEqual:
+			flush()
+			offset += len(o.line) + 1
+		case opDelete:
+			if removed == nil && added == nil {
+				start = offset
+			}
+			removed = append(removed, o.line)
+			offset += len(o.line) + 1
+		case opInsert:
+			if removed == nil && added == nil {
+				start = offset
+			}
+			added = append(added, o.line)
+		}
+	}
+	flush()
+	return spans
+}
+
+func commonPrefix(a, b string) int {
+	n := 0
+	for n < len(a) && n < len(b) && a[n] == b[n] {
+		n++
+	}
+	return n
+}
+
+func reverse(s string) string {
+	b := []byte(s)
+	slices.Reverse(b)
+	return string(b)
 }
 
 // ChangedPassages returns the runs of lines new holds that old does not, in

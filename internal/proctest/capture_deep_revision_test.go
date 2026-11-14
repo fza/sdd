@@ -54,8 +54,8 @@ func TestCaptureDeep_AChangeAfterTheVerdictGoesToTheLiveVerifier(t *testing.T) {
 	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
 	serve := x.settleWithAChange(t, "A tactical gap: the fixture observes a subject twice.")
 	proctest.RequireStep(t, serve, "deepWait")
-	if serve.ReportSchema != nil {
-		t.Errorf("deepWait only awaits the verifier, so it should serve no report schema, got %v", serve.ReportSchema)
+	if properties, _ := serve.ReportSchema["properties"].(map[string]any); len(properties) != 1 || properties["deepGone"] == nil {
+		t.Errorf("deepWait awaits the verifier, so its report schema should take only the report that the delegate ended, got %v", serve.ReportSchema["properties"])
 	}
 	if len(serve.Dispatches) != 1 || serve.Dispatches[0].Session != x.dispatch.Session || !strings.Contains(serve.Dispatches[0].Instructions, "Continue the same delegate") {
 		t.Fatalf("the revision should go to the same delegate, continued, got %+v", serve.Dispatches)
@@ -76,6 +76,20 @@ func TestCaptureDeep_AChangeAfterTheVerdictGoesToTheLiveVerifier(t *testing.T) {
 	proctest.RequireStep(t, x.pickUpFindings(t), "verifySummary")
 	if _, _, err := world.App.ResumeWorkflow(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: x.dispatch.Session, ClientName: "verifier"}); err != nil {
 		t.Fatalf("the verifier should stay live after judging the revision, got %v", err)
+	}
+}
+
+// An adjust that rewords only what the verifier wrote stays settled: neither
+// the writing guide's delta check nor the verifier judges it again.
+func TestCaptureDeep_AnAdjustOfTheVerifiersWordsStaysSettled(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-revision-settled", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	x.judge(t, subjectFinding("observes something."))
+	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+	serve := x.settleWithAChange(t, "A tactical gap: the fixture observes something. It names its subject.")
+	proctest.RequireStep(t, serve, "verifySummary")
+	if got := world.LLM.Calls("writing-guide"); got != 1 {
+		t.Fatalf("the guide should judge the approved draft once and leave the reworded verifier sentence alone, ran %d times", got)
 	}
 }
 

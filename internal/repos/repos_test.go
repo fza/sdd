@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -42,6 +43,19 @@ repos:
 	}
 	if loaded.Embedding.Provider != "ollama" {
 		t.Errorf("embedding config not decoded: %+v", loaded.Embedding)
+	}
+}
+
+// The verify.codex block a former sdd read fails the user-global load,
+// naming the file.
+func TestLoadConfigFrom_RefusesTheRemovedCodexBlock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("verify:\n  codex:\n    model: gpt-5\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadConfigFrom(path)
+	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "verify.codex no longer exists") {
+		t.Fatalf("the load should fail naming the file and the block, got %v", err)
 	}
 }
 

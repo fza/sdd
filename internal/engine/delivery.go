@@ -200,6 +200,26 @@ func (s *Session) EndFork(instanceID string, child Link, reason string) error {
 	return s.checkSink()
 }
 
+// endGoneForks ends the instance's live forks once a report wrote the
+// current step's DelegateGone field.
+func (s *Session) endGoneForks(inst *Instance, written []string) error {
+	gone := inst.currentStep().DelegateGone
+	if gone == "" || !slices.Contains(written, gone) {
+		return nil
+	}
+	returned, _ := inst.Store.Get(gone)
+	reason := fmt.Sprintf("the delegate ended without delivering; it returned: %v", returned)
+	for _, fork := range inst.forks {
+		if fork.Status != ForkLive {
+			continue
+		}
+		if err := s.EndFork(inst.ID, fork.Child, reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // LiveForks lists every fork still live, in instance start order.
 func (s *Session) LiveForks() []LiveFork {
 	var out []LiveFork
@@ -516,7 +536,11 @@ func (s *Session) awaitDiagnostic(inst *Instance, step *Step) string {
 	if s.Lineage != nil {
 		return "waiting for the dispatching move to send " + joined + ": end your turn. Once it has, you get continued or relaunched with these same handles; next with this instance and no report then picks it up"
 	}
-	return fmt.Sprintf("waiting for the delegate to deliver %s; check again in %d seconds. Once landed, next with this instance and no report picks the delivery up", joined, awaitRecheckSeconds)
+	gone := ""
+	if step.DelegateGone != "" {
+		gone = fmt.Sprintf(". Delegate ended without delivering? Report %s with what it returned", step.DelegateGone)
+	}
+	return fmt.Sprintf("waiting for the delegate to deliver %s; check again in %d seconds. Once landed, next with this instance and no report picks the delivery up%s", joined, awaitRecheckSeconds, gone)
 }
 
 // awaitRecheckSeconds is how long a dispatching move waits between checks

@@ -114,8 +114,12 @@ func storeDeep[T any](store *engine.Store, name string) ([]T, error) {
 // deepFingerprint keys the capture input a deep verdict covers: the draft
 // document, the staged bytes of its attachments, and the write target.
 func (w *WorkflowSession) deepFingerprint(ctx *engine.Context) string {
+	return w.deepFingerprintOf(ctx, draftText(ctx.Store))
+}
+
+func (w *WorkflowSession) deepFingerprintOf(ctx *engine.Context, document string) string {
 	sum := sha256.New()
-	sum.Write([]byte(draftText(ctx.Store)))
+	sum.Write([]byte(document))
 	for _, handle := range workflowStoreStrings(ctx.Store, "attachments") {
 		fmt.Fprintf(sum, "\x00%s=%s", handle, w.staged[handle])
 	}
@@ -145,6 +149,36 @@ func (w *WorkflowSession) deepVerdictCurrent(ctx *engine.Context) (bool, error) 
 	}
 	verdict, ok := readDeepVerdict(ctx.Store)
 	return ok && verdict.Fingerprint == w.deepFingerprint(ctx), nil
+}
+
+// deepEditSettled reports whether a guided capture's draft changed since the
+// deep verdict only within what the last exchange settled
+// (model.DeepSettledSpans), its attachments and target as they were.
+func (w *WorkflowSession) deepEditSettled(ctx *engine.Context) (bool, error) {
+	verdict, ok := readDeepVerdict(ctx.Store)
+	if w.Autonomous() || !ok || verdict.Outcome == "skipped" || verdict.Fingerprint == w.deepFingerprint(ctx) || verdict.Fingerprint != w.deepFingerprintOf(ctx, verdict.Document) {
+		return false, nil
+	}
+	findings, err := storeDeep[model.DeepFinding](ctx.Store, fieldDeepFindings)
+	if err != nil {
+		return false, err
+	}
+	history, err := storeDeep[model.DeepResponse](ctx.Store, fieldDeepHistory)
+	if err != nil {
+		return false, err
+	}
+	settled := model.DeepSettledSpans(verdict.Document, findings, history)
+	changed := textdiff.ChangedSpans(verdict.Document, draftText(ctx.Store))
+	outside := slices.ContainsFunc(changed, func(c textdiff.Span) bool {
+		return !slices.ContainsFunc(settled, func(s model.DeepSpan) bool {
+			// Text added at either edge extends the settled text rather than changing it.
+			if c.Start == c.End {
+				return s.Start < c.Start && c.Start < s.End
+			}
+			return s.Start <= c.Start && c.End <= s.End
+		})
+	})
+	return len(changed) > 0 && !outside, nil
 }
 
 // deepJudgesPreflight reports whether the deep verifier judges the draft in
@@ -180,6 +214,16 @@ func (w *WorkflowSession) writeDeepVerdict(ctx *engine.Context, outcome, skip st
 		Fingerprint: w.deepFingerprint(ctx), Document: draftText(ctx.Store),
 		Outcome: outcome, Skip: skip, Rounds: int(count), Runner: runner,
 	})
+}
+
+// recordDeepSettled records the user's settling as the deep verdict over the
+// current draft, which the writing guide's judgment then covers as well.
+func (w *WorkflowSession) recordDeepSettled(ctx *engine.Context) error {
+	err := w.writeDeepVerdict(ctx, "settled", "")
+	if err != nil || !guideRan(ctx.Store) {
+		return err
+	}
+	return writeGuideBase(ctx.Store)
 }
 
 // deepSkipCause is the cause of the skip the current deep verdict records,
@@ -229,10 +273,10 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
-			Doc: engine.FuncDoc{Name: "deepOwnerOpen", Doc: "A finding only the user can settle is open.", Reads: []string{fieldDeepFindings}},
+			Doc: engine.FuncDoc{Name: "deepUserOpen", Doc: "The proposal leaves a point open for the user: a finding only they can settle, or one the drafter contested and the verifier holds.", Reads: []string{fieldDeepOpen}},
 			Fn: func(ctx *engine.Context) (bool, error) {
-				findings, err := storeDeep[model.DeepFinding](ctx.Store, fieldDeepFindings)
-				return slices.ContainsFunc(findings, func(f model.DeepFinding) bool { return f.Owner }), err
+				open, _ := workflowStoreString(ctx.Store, fieldDeepOpen)
+				return open != "", nil
 			},
 		},
 		{
@@ -255,6 +299,10 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 				withdrawn, _ := workflowStoreString(ctx.Store, fieldDeepWithdrawn)
 				return unedited != "" || withdrawn != "", nil
 			},
+		},
+		{
+			Doc: engine.FuncDoc{Name: "deepEditSettled", Doc: "A guided capture whose draft changed since the deep verdict only within the text the last exchange's edits wrote or its findings quote, its attachments and target unchanged.", Reads: append(slices.Clone(captureDraftFields), fieldDeepVerdict, fieldDeepFindings, fieldDeepHistory)},
+			Fn:  w.deepEditSettled,
 		},
 		{
 			Doc: engine.FuncDoc{Name: "deepRevising", Doc: "The exchange prepareDeep opened goes to the live verifier as a revision.", Reads: []string{fieldDeepRevising}},
@@ -351,8 +399,12 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Fn:  func(ctx *engine.Context) error { return w.writeDeepVerdict(ctx, "verified", "") },
 		},
 		{
-			Doc: engine.FuncDoc{Name: "recordDeepSettled", Doc: "Records the user's settling of the open points as the deep verdict over the current draft.", Reads: captureDraftFields, Writes: []string{fieldDeepVerdict}},
-			Fn:  func(ctx *engine.Context) error { return w.writeDeepVerdict(ctx, "settled", "") },
+			Doc: engine.FuncDoc{Name: "recordDeepSettled", Doc: "Records the user's settling of the open points as the deep verdict over the current draft, and has the writing guide's judgment cover it.", Reads: append(slices.Clone(captureDraftFields), "guideFindings"), Writes: []string{fieldDeepVerdict, fieldGuideBase}},
+			Fn:  w.recordDeepSettled,
+		},
+		{
+			Doc: engine.FuncDoc{Name: "settleDeepEdit", Doc: "Records the user's edit within what the deep exchange settled as the deep verdict over the current draft, and has the writing guide's judgment cover it.", Reads: append(slices.Clone(captureDraftFields), "guideFindings"), Writes: []string{fieldDeepVerdict, fieldGuideBase}},
+			Fn:  w.recordDeepSettled,
 		},
 		{
 			Doc: engine.FuncDoc{Name: "recordDeepSkip", Doc: "Records the user's weighed skip of the deep exchange: the entry carries verification: skipped and confidence at most medium.", Reads: captureDraftFields, Writes: []string{fieldDeepVerdict}},

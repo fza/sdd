@@ -675,9 +675,13 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		sv.Sizes = []PartSize{{Part: "operation", Bytes: len(sv.Instructions)}}
 		return sv, nil
 	}
-	if len(step.Await) == 0 || len(step.Collect) > 0 {
-		// A step that only awaits a delivery takes no report.
+	switch {
+	case len(step.Await) == 0:
 		sv.ReportSchema = inst.Spec.ReportSchemaForStep(step, inst.Store)
+	case len(step.Collect) > 0:
+		// A gate awaiting a delivery takes only what it collects; one that
+		// collects nothing takes no report.
+		sv.ReportSchema = inst.Spec.collectSchema(step, inst.Store)
 	}
 	sv.Missing = s.missingFields(inst, step)
 

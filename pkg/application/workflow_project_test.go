@@ -17,8 +17,9 @@ import (
 // does in every composition but the local one; C is readable and declared by
 // B, so it lies beyond the home's direct dependencies.
 // Alice is a full member of A and B and reads C; B has no write authority of
-// its own, as a local dependency has today.
-func newDependencyFixture(t *testing.T) (*sdd.Application, sdd.RequestIdentity) {
+// its own, as a local dependency has today. verifiers sets a project's verify
+// policy.
+func newDependencyFixture(t *testing.T, verifiers ...map[sdd.ProjectID]sdd.VerifierPolicy) (*sdd.Application, sdd.RequestIdentity) {
 	t.Helper()
 	root := t.TempDir()
 	graphB := filepath.Join(root, "project-b")
@@ -57,7 +58,7 @@ Project B is readable as an authorized dependency.`), 0o644); err != nil {
 		}
 		runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 			Project: sdd.ProjectRef{ID: project.id, DisplayName: string(project.id)}, Dependencies: project.dependencies,
-			DefaultBranch: project.branch, Graph: graph, LLM: llm,
+			DefaultBranch: project.branch, Graph: graph, LLM: llm, Verifier: verifierOf(verifiers, project.id),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -84,6 +85,15 @@ Project B is readable as an authorized dependency.`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return application, sdd.RequestIdentity{Subject: "alice"}
+}
+
+func verifierOf(verifiers []map[sdd.ProjectID]sdd.VerifierPolicy, project sdd.ProjectID) sdd.VerifierPolicy {
+	for _, set := range verifiers {
+		if policy, ok := set[project]; ok {
+			return policy
+		}
+	}
+	return sdd.VerifierPolicy{}
 }
 
 // TestInstanceTargetsDirectDependency pins where an instance's

@@ -346,7 +346,7 @@ func (a *Application) LoadWorkflow(ctx context.Context, identity RequestIdentity
 	if end := stored.Metadata.Ended; end != nil {
 		return nil, endedSessionError(stored.Metadata, *end)
 	}
-	err = runtime.options.Verifier.clientRefusal(request.ClientName)
+	err = a.sessionClientRefusal(ctx, identity, runtime, stored.Events, request.ClientName)
 	if err != nil {
 		return nil, err
 	}
@@ -555,16 +555,6 @@ func (w *WorkflowSession) Reorient(ctx context.Context, identity RequestIdentity
 
 func (w *WorkflowSession) Project() ProjectID { return w.project }
 
-// RefuseClient refuses resuming the session through the MCP client
-// clientName where its home project's verify policy needs another client.
-func (w *WorkflowSession) RefuseClient(ctx context.Context, identity RequestIdentity, clientName string) error {
-	_, runtime, err := w.app.resolve(ctx, identity, w.project, AccessRead)
-	if err != nil {
-		return err
-	}
-	return runtime.options.Verifier.clientRefusal(clientName)
-}
-
 func (w *WorkflowSession) Binding() SessionBinding { return w.binding }
 
 func (w *WorkflowSession) Branch() string { return w.branch }
@@ -656,6 +646,10 @@ func (w *WorkflowSession) Start(ctx context.Context, identity RequestIdentity, r
 		if err != nil {
 			return nil, err
 		}
+		err = w.refuseClientIn(ctx, project)
+		if err != nil {
+			return nil, err
+		}
 	}
 	w.startProject = project
 	serve, err := w.session.Start(spec, request.Params, parent)
@@ -694,6 +688,10 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	if err := w.failedRounds(ctx, identity, request.Instance); err != nil {
 		return nil, err
 	}
+	if err := w.idleDelegates(ctx, identity, request.Instance); err != nil {
+		return nil, err
+	}
+	live := w.liveChildren(request.Instance)
 	var (
 		serve *engine.Serve
 		err   error
@@ -743,6 +741,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	// typed error rather than returning it; surface it here so the first write
 	// fails typed instead of a phantom success.
 	if err := w.session.SinkErr(); err != nil {
+		return nil, err
+	}
+	if err := w.endGoneDelegates(ctx, identity, request.Instance, live); err != nil {
 		return nil, err
 	}
 	exchanged := len(w.session.Exchange(request.Instance))

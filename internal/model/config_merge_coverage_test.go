@@ -74,8 +74,8 @@ func setDistinctive(t *testing.T, f reflect.Value) {
 			f.SetString(closed.AllowedValues()[0])
 			return
 		}
-		// A round timeout that is no duration merges as unset too.
-		if f.Type() == reflect.TypeFor[model.RoundTimeout]() {
+		// A verify duration that is not one merges as unset too.
+		if f.Type() == reflect.TypeFor[model.VerifyDuration]() {
 			f.SetString("10m")
 			return
 		}

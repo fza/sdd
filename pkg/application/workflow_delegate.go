@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -464,13 +465,9 @@ func (w *WorkflowSession) subagentSettings(ctx context.Context, parent, procedur
 	if err != nil {
 		return VerifierAgent{}, err
 	}
-	stored, err := w.app.sessions.Load(ctx, w.binding.SessionID)
+	client, err := w.attachedClient(ctx)
 	if err != nil {
 		return VerifierAgent{}, err
-	}
-	client := ""
-	if attachment := stored.Metadata.Attachment; attachment != nil {
-		client = attachment.ClientName
 	}
 	return VerifierAgent(runtime.options.Verifier.resolved().SubagentAgent(client)), nil
 }
@@ -994,6 +991,71 @@ func (w *WorkflowSession) failedRounds(ctx context.Context, identity RequestIden
 		}
 	}
 	return errors.Join(failures...)
+}
+
+// idleDelegates ends each verify delegate a gate with a delegateEnded route
+// waits on once its child made no call for verify.idle_timeout, so the gate
+// takes that route.
+func (w *WorkflowSession) idleDelegates(ctx context.Context, identity RequestIdentity, instance string) error {
+	inst, ok := w.session.Instance(instance)
+	if !ok || inst.Status != engine.StatusRunning {
+		return nil
+	}
+	step := inst.Spec.StepByID[inst.Step]
+	if step == nil || len(step.Await) == 0 || step.DelegateEnded == "" {
+		return nil
+	}
+	for _, live := range w.session.LiveForks() {
+		if live.Instance != instance || live.Fork.Procedure != verifyProcedure {
+			continue
+		}
+		runtime, err := w.targetRuntime(w.instanceProject(instance), AccessRead)
+		if err != nil {
+			return err
+		}
+		bound := runtime.options.Verifier.resolved().IdleTimeout
+		child := SessionID(live.Fork.Child.Session)
+		_, _, stored, err := w.app.resolveSession(ctx, identity, child)
+		if err != nil {
+			return err
+		}
+		if w.app.now().Sub(stored.Metadata.UpdatedAt) <= bound {
+			continue
+		}
+		reason := fmt.Sprintf("the verify delegate made no call for %s (verify.idle_timeout)", bound)
+		if err := w.session.EndFork(instance, live.Fork.Child, reason); err != nil {
+			return err
+		}
+		if err := w.app.endDelegate(ctx, identity, child, reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// liveChildren lists the children of the instance's live forks.
+func (w *WorkflowSession) liveChildren(instance string) []engine.Link {
+	var children []engine.Link
+	for _, live := range w.session.LiveForks() {
+		if live.Instance == instance {
+			children = append(children, live.Fork.Child)
+		}
+	}
+	return children
+}
+
+// endGoneDelegates tears down the child of each fork in live that the call
+// ended, as a report that the delegate ended without delivering does.
+func (w *WorkflowSession) endGoneDelegates(ctx context.Context, identity RequestIdentity, instance string, live []engine.Link) error {
+	for _, fork := range w.session.Forks(instance) {
+		if fork.Status != engine.ForkConcluded || !slices.Contains(live, fork.Child) {
+			continue
+		}
+		if err := w.app.endDelegate(ctx, identity, SessionID(fork.Child.Session), fork.Reason); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func delegateLaunches(events []StoredEvent) ([]delegateLaunchRecord, error) {
