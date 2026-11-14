@@ -406,8 +406,7 @@ type DeepReadingBlock struct {
 }
 
 // DeepReadingPage is one page of the deep verifier's reading with the entries
-// it serves in full, which the consumer holds once it is served (R14 of
-// 20261109-004506-d-cpt-udz).
+// it serves in full, which the consumer holds once it is served.
 type DeepReadingPage struct {
 	Text    string
 	FullIDs []string

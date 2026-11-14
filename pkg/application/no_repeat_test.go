@@ -180,8 +180,7 @@ func startViewStep(t *testing.T, cut bool, held bool) (*sdd.WorkflowSession, str
 }
 
 // A view a step injects serves a held entry as its pointer, in a bodies
-// section and in a listing alike, only once CutRepeats turned the rule on
-// (R14).
+// section and in a listing alike, only once CutRepeats turned the rule on.
 func TestInjectedViewCutRepeatsOnlyWhenTurnedOn(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

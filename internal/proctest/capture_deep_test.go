@@ -923,9 +923,9 @@ func TestCaptureDeep_StartedNeedsADispatchedDelegate(t *testing.T) {
 }
 
 // The reading pages hold what they serve in full once the no-repeat rule is
-// on, as the MCP surface serves them (20261109-004506-d-cpt-udz, R14): page 1
-// hands on the declared target it serves in full, the brief page hands on
-// nothing; with the rule off nothing is handed on.
+// on, as the MCP surface serves them: page 1 hands on the declared target it
+// serves in full, the brief page hands on nothing; with the rule off nothing
+// is handed on.
 func TestCaptureDeep_ReadingPagesHoldWhatTheyServeInFull(t *testing.T) {
 	for _, tc := range []struct {
 		name string

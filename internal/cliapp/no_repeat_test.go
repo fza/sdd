@@ -13,7 +13,7 @@ const pointerMark = "(held as tag "
 
 // The no-repeat rule cuts only in MCP mode: the same CLI read prints in full
 // every time, with and without --session, also once the MCP session holds the
-// entry (20261109-004506-d-cpt-udz, R14).
+// entry.
 func TestCLIReadsServeInFullEveryTime(t *testing.T) {
 	cases := []struct {
 		name    string
