@@ -6,6 +6,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
+	"github.com/networkteam/sdd/test"
 )
 
 // A capture writes the title from the summary call, the summary check shows
@@ -66,5 +67,24 @@ func TestCapture_DriftedWithoutACorrectionIsRefused(t *testing.T) {
 	entry := proctest.LoadEntry(t, world.GraphDir, entryID)
 	if entry.Title != "Generated title" || entry.Summary != "A generated summary." {
 		t.Errorf("a refused correction should leave the entry as written, got title %q summary %q", entry.Title, entry.Summary)
+	}
+}
+
+// The summary check has the agent pair each summary sentence with the body
+// sentence it rests on before it answers faithful.
+func TestCapture_SummaryCheckPairsEachSentenceWithTheBody(t *testing.T) {
+	_, session := newCaptureWorld(t, "summary-pairs")
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Report(t, instance, captureDraft())
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "publish the observation")
+	proctest.RequireStep(t, serve, "verifySummary")
+	for _, want := range []string{
+		"Check the summary against the body sentence by sentence: for each summary sentence, name the body sentence it rests on. A summary sentence that rests on none, states a firmer modal or state than the body's, or carries an ID or hash the body does not is drift.",
+		"Answer faithful, with each summary sentence and the body sentence it rests on as the fidelity note.",
+	} {
+		if !strings.Contains(test.Untagged(serve.Instructions), want) {
+			t.Errorf("the summary check should carry %q:\n%s", want, serve.Instructions)
+		}
 	}
 }

@@ -327,14 +327,18 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Fn:  w.buildDeepProposal,
 		},
 		{
-			Doc: engine.FuncDoc{Name: commandAcceptDeepProposal, Doc: "Refuses a draft that differs from the proposal; records the deep verdict over the draft once it matches. An accept reporting no draft field carries the fields the proposal changes, written by sdd.", Reads: append(slices.Clone(captureDraftFields), fieldDeepProposal), Writes: []string{fieldDeepVerdict}},
+			Doc: engine.FuncDoc{Name: commandAcceptDeepProposal, Doc: "Refuses a draft that differs from the proposal; records the deep verdict over the draft once it matches, and has the writing guide's judgment cover it, so a delta check leaves what the exchange settled alone. An accept reporting no draft field carries the fields the proposal changes, written by sdd.", Reads: append(slices.Clone(captureDraftFields), fieldDeepProposal, "guideFindings"), Writes: []string{fieldDeepVerdict, fieldGuideBase}},
 			Fn: func(ctx *engine.Context) error {
 				proposal, _ := workflowStoreString(ctx.Store, fieldDeepProposal)
 				current := draftText(ctx.Store)
 				if current != proposal {
 					return fmt.Errorf("the draft differs from the proposal; report the fields so the draft matches it, or none so sdd writes the proposal:\n%s", textdiff.Unified(proposal, current))
 				}
-				return w.writeDeepVerdict(ctx, "verified", "")
+				err := w.writeDeepVerdict(ctx, "verified", "")
+				if err != nil || !guideRan(ctx.Store) {
+					return err
+				}
+				return writeGuideBase(ctx.Store)
 			},
 		},
 		{
@@ -837,15 +841,15 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 	if err != nil {
 		return fmt.Errorf("buildDeepProposal: the verifier's edits no longer apply: %w", err)
 	}
-	edited := map[string]bool{}
+	edited := map[string][]model.DeepEdit{}
 	for _, change := range changes {
-		edited[change.Finding] = true
+		edited[change.Finding] = change.Edits
 	}
 	var open, withdrawn, unedited strings.Builder
 	for i, finding := range findings {
 		id := model.DeepFindingID(i)
 		if finding.Owner {
-			fmt.Fprintf(&open, "- %s (only the user can settle it): %s\n", id, finding.Verdict)
+			fmt.Fprintf(&open, "- %s, only the user can settle it\n  draft: %s\n  verifier: %s\n", id, deepPassages(finding.Pointers), finding.Verdict)
 			continue
 		}
 		var response *model.DeepResponse
@@ -866,10 +870,13 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 			}
 		}
 		if answer != nil && response != nil && response.Outcome == model.DeepHeld {
-			fmt.Fprintf(&open, "- %s: the verifier holds %q (%s); the drafter contests: %s\n", id, finding.Verdict, response.Note, answer.Reason)
+			fmt.Fprintf(&open, "- %s, contested, and the verifier holds it\n  draft: %s; the drafter: %s\n  verifier: %s; %s\n", id, deepPassages(finding.Pointers), answer.Reason, finding.Verdict, response.Note)
+			for _, edit := range edited[id] {
+				fmt.Fprintf(&open, "  verifier's edit: replace %q with %q\n", edit.Old, edit.New)
+			}
 			continue
 		}
-		if !edited[id] {
+		if edited[id] == nil {
 			fmt.Fprintf(&unedited, "- %s [%s, %s]: %s\n", id, finding.Severity, finding.Axis, finding.Verdict)
 		}
 	}
@@ -881,6 +888,23 @@ func (w *WorkflowSession) buildDeepProposal(ctx *engine.Context) error {
 		}
 	}
 	return nil
+}
+
+// deepPassages names what the draft holds where a finding points.
+func deepPassages(pointers []model.DeepPointer) string {
+	var passages []string
+	for _, pointer := range pointers {
+		switch {
+		case pointer.Quote != "":
+			passages = append(passages, fmt.Sprintf("%s says %q", pointer.Field, pointer.Quote))
+		case pointer.ID != "":
+			passages = append(passages, fmt.Sprintf("%s names %s", pointer.Field, pointer.ID))
+		}
+	}
+	if len(passages) == 0 {
+		return "the draft as it stands"
+	}
+	return strings.Join(passages, "; ")
 }
 
 // Engine-written fields of the verify task.

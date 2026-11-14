@@ -25,15 +25,25 @@ func TestCapture_NeverSuppliesTheWhyOrTheIntent(t *testing.T) {
 			t.Errorf("assemble should carry %q:\n%s", want, assemble)
 		}
 	}
-	serve = session.Report(t, serve.Instance, captureDraft())
+	instance := serve.Instance
+	serve = session.Report(t, instance, captureDraft())
 	proctest.RequireStep(t, serve, "playback")
-	playback := test.Untagged(serve.Instructions)
-	for _, want := range []string{
-		`Mark to the user, as your inference ("my inference: …"), every sentence of elaboration in the draft that the user did not say.`,
+	wants := []string{
+		`Mark to the user, as your inference ("my inference: …"), every sentence of elaboration in the draft that the user did not say. Go sentence by sentence and mark each one, in every revised draft too.`,
 		"A decision's reason and a directive's intent are never inference: show the user their quoted words from the draft block.",
-	} {
+	}
+	playback := test.Untagged(serve.Instructions)
+	for _, want := range wants {
 		if !strings.Contains(playback, want) {
 			t.Errorf("playback should carry %q:\n%s", want, playback)
+		}
+	}
+	serve = session.Answer(t, instance, "playback", "adjust", map[string]any{"body": "A tactical gap: the fixture observes one thing."}, "say one thing")
+	proctest.RequireStep(t, serve, "playback")
+	playback = test.Untagged(serve.Instructions)
+	for _, want := range wants {
+		if !strings.Contains(playback, want) {
+			t.Errorf("the playback of a revised draft should carry %q:\n%s", want, playback)
 		}
 	}
 }
