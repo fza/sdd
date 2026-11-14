@@ -20,6 +20,7 @@ func TestFitTitle(t *testing.T) {
 		{name: "78 characters stay whole", title: head + " words words words", want: head + " words words words"},
 		{name: "over 80 cut after 60 when two words go", title: head + " words words words words", want: head + "…"},
 		{name: "over 80 kept when the cut drops one word", title: head + " wordswordswordswordswordswords", want: head + " wordswordswordswordswordswords"},
+		{name: "backticks and punctuation do not count", title: head + " `aa`? `bb`? `cc`? `dd`?", want: head + " `aa`? `bb`? `cc`? `dd`?"},
 		{name: "over 80 without a space after 60 stays whole", title: head + "xxxxxxxxxxxxxxxxxxxxxxxx", want: head + "xxxxxxxxxxxxxxxxxxxxxxxx"},
 	}
 	for _, tc := range tests {

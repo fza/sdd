@@ -486,14 +486,17 @@ const (
 func FitTitle(title string) string {
 	title = CapitalizeTitle(title)
 	runes := []rune(title)
-	if len(runes) <= TitleCutAbove {
+	if titleLength(runes) <= TitleCutAbove {
 		return title
 	}
-	boundary := -1
-	for i := TitleCutAt; i < len(runes); i++ {
-		if unicode.IsSpace(runes[i]) {
+	boundary, counted := -1, 0
+	for i, r := range runes {
+		if counted >= TitleCutAt && unicode.IsSpace(r) {
 			boundary = i
 			break
+		}
+		if countsInTitleLength(r) {
+			counted++
 		}
 	}
 	if boundary < 0 || len(strings.Fields(string(runes[boundary:]))) < 2 {
@@ -502,17 +505,34 @@ func FitTitle(title string) string {
 	return strings.TrimRight(string(runes[:boundary]), " ,;:-") + "…"
 }
 
+// countsInTitleLength reports whether a character counts toward a title's
+// length: letters, digits and spaces do; backticks, punctuation and other
+// symbols do not, so code spans cost no extra length.
+func countsInTitleLength(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r)
+}
+
+func titleLength(runes []rune) int {
+	n := 0
+	for _, r := range runes {
+		if countsInTitleLength(r) {
+			n++
+		}
+	}
+	return n
+}
+
 // TitleBackfill counts what filling the missing titles of entries costs:
-// entries lacking a summary get summary and title from one call, entries
-// holding a summary get a title-only call. Embedded entries have no file to
-// write and are not counted.
+// entries lacking a summary get summary and title from one call, whether or
+// not they hold a title; entries holding a summary but no title get a
+// title-only call. Embedded entries have no file to write and are not counted.
 func TitleBackfill(entries []*Entry) (withSummary, titleOnly int) {
 	for _, e := range entries {
 		switch {
-		case e.Embedded || e.Title != "":
+		case e.Embedded:
 		case e.Summary == "":
 			withSummary++
-		default:
+		case e.Title == "":
 			titleOnly++
 		}
 	}
