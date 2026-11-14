@@ -11,7 +11,7 @@ import (
 
 // One `sdd init --graph-repo` run switches a code repository that points at
 // its graph through project_dir, though its machine-local layer already holds
-// the settings a graph_repo project keeps there (20261110-134112-d-tac-42w).
+// the settings a graph_repo project keeps there.
 func TestInitGraphRepoSwitchesAProjectDirRepository(t *testing.T) {
 	remote := test.NewGraphRemote(t, graphCloneRepoID)
 	remote.Commit(t, "seed the graph", map[string]string{
