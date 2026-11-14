@@ -129,14 +129,14 @@ func TestRun_CodexRunsInAReadOnlySandbox(t *testing.T) {
 		t.Fatalf("the agent should work in the project checkout, got %s", call.Dir)
 	}
 	want := []string{
-		"exec", "--json", "--sandbox", "read-only",
+		"exec", "--json", "--sandbox", "read-only", "--ignore-user-config", "--ignore-rules",
 		"-c", "project_doc_max_bytes=0",
 		"-c", `mcp_servers.sdd.command="/opt/sdd/bin/sdd"`,
 		"-c", `mcp_servers.sdd.args=["serve"]`,
 		roundPrompt,
 	}
 	if !slices.Equal(call.Args, want) {
-		t.Fatalf("codex should run read-only with sdd as an MCP server and the prompt last, got %q", call.Args)
+		t.Fatalf("codex should run read-only without the user's config and rules, with sdd as an MCP server and the prompt last, got %q", call.Args)
 	}
 }
 
@@ -154,6 +154,10 @@ func TestRun_CodexResumesThePreviousRound(t *testing.T) {
 	args := test.LastAgentCall(t, agents, "codex").Args
 	if !slices.Equal(args[len(args)-3:], []string{"resume", "codex-3", roundPrompt}) {
 		t.Fatalf("a later round should resume the session before the prompt, got %q", args)
+	}
+	execFlags := args[:slices.Index(args, "resume")]
+	if !slices.Contains(execFlags, "--ignore-user-config") || !slices.Contains(execFlags, "--ignore-rules") {
+		t.Fatalf("a resumed round should still ignore the user's config and rules, got %q", args)
 	}
 }
 
