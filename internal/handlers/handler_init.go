@@ -982,8 +982,8 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 }
 
 // initGitignoreEntries lists the runtime paths init keeps out of git, the
-// same in a project and in a work repository pointing at it
-// (20261029-132740-d-tac-g32). graphDir is the project's graph_dir.
+// same in a project and in a work repository pointing at it. graphDir is the
+// project's graph_dir.
 func initGitignoreEntries(graphDir string) []string {
 	graphRuntimeEntry := filepath.ToSlash(filepath.Join(graphDir, ".sdd-runtime")) + "/"
 	return []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/", graphRuntimeEntry}

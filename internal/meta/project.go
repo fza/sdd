@@ -33,8 +33,7 @@ func (p Project) Pointed() bool { return p.Root != p.WorkRoot }
 // LocalConfigPath is the file of the project's machine-local config layer:
 // override (--local-config) when set, else, for a project reached through
 // graph_repo, WorkRoot's config.local.yaml, since the upkeep of sdd's clone
-// removes any local file there (20261106-202055-d-tac-eyl); empty resolves it
-// under SDDDir.
+// removes any local file there; empty resolves it under SDDDir.
 func (p Project) LocalConfigPath(override string) string {
 	if override == "" && p.GraphRepo != "" {
 		return LocalConfigPath(SDDDir(p.WorkRoot), "")
