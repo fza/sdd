@@ -65,6 +65,10 @@ func (p *RoundProcesses) Runs(options sdd.ApplicationOptions, identity sdd.Reque
 	p.options, p.identity = options, identity
 }
 
+func (p *RoundProcesses) Log(round sdd.LaunchedRound) string {
+	return fmt.Sprintf("/round-logs/%s-round-%d.log", round.Session, round.Number)
+}
+
 func (p *RoundProcesses) Start(ctx context.Context, round sdd.LaunchedRound) (sdd.RoundProcess, error) {
 	if p.BeforeStart != nil {
 		if err := p.BeforeStart(); err != nil {

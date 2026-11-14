@@ -58,6 +58,16 @@ func TestCaptureDeep_ARoundWhoseProcessDiedFailsTheWait(t *testing.T) {
 	if !strings.Contains(serve.Instructions, "round 1 (claude) failed: the round's process ended without recording an outcome") {
 		t.Fatalf("deepFailed should name the round's process that ended without an outcome:\n%s", serve.Instructions)
 	}
+	requireRoundLog(t, world, serve, child)
+}
+
+// requireRoundLog fails unless the serve names the log of the first round of
+// child.
+func requireRoundLog(t *testing.T, world *proctest.World, serve *sdd.WorkflowServe, child sdd.SessionID) {
+	t.Helper()
+	if log := world.Rounds.Log(sdd.LaunchedRound{Session: child, Number: 1}); !strings.Contains(serve.Instructions, "(its log: "+log+")") {
+		t.Fatalf("deepFailed should name the round's log:\n%s", serve.Instructions)
+	}
 }
 
 // A round whose process died leaves the agent CLI it started running in its
@@ -137,6 +147,7 @@ func TestCaptureDeep_ARoundWithoutAnOutcomePastItsTimeoutFailsTheWait(t *testing
 	if !strings.Contains(serve.Instructions, "round 1 (claude) failed: the round ran past verify.round_timeout (1m0s) without recording an outcome") {
 		t.Fatalf("deepFailed should name the timeout the round ran past:\n%s", serve.Instructions)
 	}
+	requireRoundLog(t, world, serve, child)
 	if !world.Rounds.Stopped(child, 1) {
 		t.Fatal("the round's process should be stopped once it ran past its timeout")
 	}
@@ -174,6 +185,7 @@ func TestCaptureDeep_ARoundWhoseProcessNeverStartedFailsTheWait(t *testing.T) {
 	if !strings.Contains(serve.Instructions, "round 1 (claude) failed: the round's process never started") {
 		t.Fatalf("deepFailed should name the round's process that never started:\n%s", serve.Instructions)
 	}
+	requireRoundLog(t, world, serve, launcher.Launches()[0].Session)
 }
 
 // Abandoning the capture stops the process of its running round.

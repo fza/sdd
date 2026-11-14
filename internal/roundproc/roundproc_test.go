@@ -29,7 +29,7 @@ func eventually(t *testing.T, what string, done func() bool) {
 // and stopping it ends the processes it started too.
 func TestStopEndsTheProcessGroup(t *testing.T) {
 	dir := t.TempDir()
-	process, err := roundproc.Start(dir, "/bin/sh", "-c", "sleep 30 & echo $! > child; wait")
+	process, err := roundproc.Start(dir, filepath.Join(dir, "round.log"), "/bin/sh", "-c", "sleep 30 & echo $! > child; wait")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestStopEndsTheProcessGroup(t *testing.T) {
 
 // A process that ended on its own is gone.
 func TestAProcessThatEndedIsGone(t *testing.T) {
-	process, err := roundproc.Start(t.TempDir(), "/bin/sh", "-c", "sleep 0.2")
+	process, err := roundproc.Start(t.TempDir(), filepath.Join(t.TempDir(), "round.log"), "/bin/sh", "-c", "sleep 0.2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestAProcessThatEndedIsGone(t *testing.T) {
 func orphanedGroup(t *testing.T) (leader, child roundproc.Process) {
 	t.Helper()
 	dir := t.TempDir()
-	leader, err := roundproc.Start(dir, "/bin/sh", "-c", "sleep 30 & echo $! > child.tmp && mv child.tmp child")
+	leader, err := roundproc.Start(dir, filepath.Join(dir, "round.log"), "/bin/sh", "-c", "sleep 30 & echo $! > child.tmp && mv child.tmp child")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestStopEndsTheGroupOfAGoneProcessOnlyThroughItsMember(t *testing.T) {
 			return roundproc.Process{PID: child.PID, Started: "another start"}
 		}},
 		{name: "member runs in another group", member: func(t *testing.T, _ roundproc.Process) roundproc.Process {
-			other, err := roundproc.Start(t.TempDir(), "/bin/sh", "-c", "sleep 30")
+			other, err := roundproc.Start(t.TempDir(), filepath.Join(t.TempDir(), "round.log"), "/bin/sh", "-c", "sleep 30")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -159,7 +159,7 @@ func TestStopEndsTheGroupOfAGoneProcessOnlyThroughItsMember(t *testing.T) {
 // A process that runs is identified by its start stamp; one that ended is
 // refused as ended.
 func TestIdentify(t *testing.T) {
-	process, err := roundproc.Start(t.TempDir(), "/bin/sh", "-c", "sleep 30")
+	process, err := roundproc.Start(t.TempDir(), filepath.Join(t.TempDir(), "round.log"), "/bin/sh", "-c", "sleep 30")
 	if err != nil {
 		t.Fatal(err)
 	}

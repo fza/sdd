@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/networkteam/slogutils"
+
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -64,6 +66,9 @@ type DelegateRun struct {
 // (20261114-160323-d-tac-n0n). Any process of the composition answers for a
 // round's process later: whether it still runs, and stopping it.
 type RoundProcesses interface {
+	// Log is the file the process of round writes its output and its log
+	// to, which a failure of the round names.
+	Log(round LaunchedRound) string
 	// Start starts the process that runs round through RunLaunchedRound, in a
 	// process group of its own, and returns it once it runs.
 	Start(ctx context.Context, round LaunchedRound) (RoundProcess, error)
@@ -181,6 +186,7 @@ type delegateRoundStart struct {
 	Runner     string        `json:"runner"`
 	LaunchedAt time.Time     `json:"launched_at"`
 	Timeout    time.Duration `json:"timeout"`
+	Log        string        `json:"log"`
 
 	process RoundProcess
 	agent   RoundProcess
@@ -556,7 +562,7 @@ func (a *Application) launchDelegate(ctx context.Context, identity RequestIdenti
 	round := LaunchedRound{Session: child, Instance: instance, Procedure: procedure, Project: project, Runner: run.Runner, Number: log.next()}
 	// Recorded before the process starts, so a server that dies in between
 	// leaves a round the wait step can fail (20261114-160323-d-tac-n0n).
-	launched := delegateRoundStart{Round: round.Number, Runner: run.Runner, LaunchedAt: a.now().UTC().Round(0), Timeout: timeout}
+	launched := delegateRoundStart{Round: round.Number, Runner: run.Runner, LaunchedAt: a.now().UTC().Round(0), Timeout: timeout, Log: a.processes.Log(round)}
 	recorded, err := a.appendDelegateRecord(ctx, identity, child, workflowDelegateRoundCode, launched, nil)
 	if err == nil && !recorded {
 		err = fmt.Errorf("the delegate %s ended before its round %d started", child, round.Number)
@@ -602,6 +608,8 @@ func (a *Application) RunLaunchedRound(ctx context.Context, identity RequestIden
 	if err != nil || start == nil {
 		return err
 	}
+	log := slogutils.FromContext(ctx).With("session", round.Session, "round", round.Number, "runner", start.Runner)
+	log.Info("running the launched delegate round")
 	var previous delegateLaunchRecord
 	var roundErr error
 	for {
@@ -617,7 +625,7 @@ func (a *Application) RunLaunchedRound(ctx context.Context, identity RequestIden
 			break
 		}
 		if check.lapse != model.RoundRunning {
-			roundErr = errors.New(lapseCause(fmt.Sprintf("round %d", check.pending.Round), check.lapse, check.pending.Timeout))
+			roundErr = errors.New(lapseCause(fmt.Sprintf("round %d", check.pending.Round), check.lapse, *check.pending))
 			break
 		}
 		if err := pause(ctx); err != nil {
@@ -634,6 +642,9 @@ func (a *Application) RunLaunchedRound(ctx context.Context, identity RequestIden
 	record := delegateLaunchRecord{Round: round.Number, Session: end.Session, Runner: start.Runner, Ended: a.now().UTC().Round(0)}
 	if roundErr != nil {
 		record = delegateLaunchRecord{Round: round.Number, Runner: start.Runner, Error: fmt.Sprintf("the delegate's round %d (%s) failed: %v", round.Number, start.Runner, roundErr), Ended: record.Ended}
+		log.Warn("the launched delegate round failed", "err", roundErr)
+	} else {
+		log.Info("the launched delegate round ended", "resume", end.Session)
 	}
 	recorded, err := a.recordDelegateRound(ctx, identity, round.Session, record)
 	if err != nil || !recorded || roundErr == nil {
@@ -706,16 +717,19 @@ func (a *Application) runRound(ctx context.Context, identity RequestIdentity, ro
 	return end, errors.New(idle), nil
 }
 
-// lapseCause names why a round that recorded no outcome failed; subject names
-// the round.
-func lapseCause(subject string, lapse model.RoundLapse, timeout time.Duration) string {
+// lapseCause names why the launched round that recorded no outcome failed,
+// and its process's log; subject names the round.
+func lapseCause(subject string, lapse model.RoundLapse, round delegateRoundStart) string {
+	var cause string
 	switch lapse {
 	case model.RoundPastTimeout:
-		return fmt.Sprintf("%s ran past verify.round_timeout (%s) without recording an outcome", subject, timeout)
+		cause = fmt.Sprintf("%s ran past verify.round_timeout (%s) without recording an outcome", subject, round.Timeout)
 	case model.RoundNeverStarted:
-		return fmt.Sprintf("%s's process never started: it was not recorded as running within %s of the launch", subject, model.RoundOutcomeMargin)
+		cause = fmt.Sprintf("%s's process never started: it was not recorded as running within %s of the launch", subject, model.RoundOutcomeMargin)
+	default:
+		cause = subject + "'s process ended without recording an outcome"
 	}
-	return subject + "'s process ended without recording an outcome"
+	return fmt.Sprintf("%s (its log: %s)", cause, round.Log)
 }
 
 func pause(ctx context.Context) error {
@@ -791,7 +805,7 @@ func (a *Application) failLapsedRound(ctx context.Context, identity RequestIdent
 		}
 	}
 	record := delegateLaunchRecord{Round: pending.Round, Runner: pending.Runner, Ended: a.now().UTC().Round(0),
-		Error: fmt.Sprintf("the delegate's round %d (%s) failed: %s", pending.Round, pending.Runner, lapseCause("the round", check.lapse, pending.Timeout))}
+		Error: fmt.Sprintf("the delegate's round %d (%s) failed: %s", pending.Round, pending.Runner, lapseCause("the round", check.lapse, *pending))}
 	recorded, err := a.recordDelegateRound(ctx, identity, child, record)
 	if err != nil || !recorded {
 		return err

@@ -6,7 +6,9 @@ package roundproc
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 )
 
@@ -26,10 +28,21 @@ type state struct {
 }
 
 // Start starts name with args in dir as the leader of a session and process
-// group of its own, with no stdio, and returns it once it runs.
-func Start(dir, name string, args ...string) (Process, error) {
+// group of its own, with no stdin and its output appended to the file log,
+// and returns it once it runs.
+func Start(dir, log, name string, args ...string) (_ Process, err error) {
+	if err := os.MkdirAll(filepath.Dir(log), 0o700); err != nil {
+		return Process{}, fmt.Errorf("creating the directory of %s: %w", log, err)
+	}
+	out, err := os.OpenFile(log, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return Process{}, fmt.Errorf("opening %s: %w", log, err)
+	}
+	// The started process holds its own copy.
+	defer func() { err = errors.Join(err, out.Close()) }()
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	cmd.Stdout, cmd.Stderr = out, out
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return Process{}, err

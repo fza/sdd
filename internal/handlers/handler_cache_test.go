@@ -22,6 +22,7 @@ import (
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/roundproc"
 	"github.com/networkteam/sdd/internal/syncstate"
 )
 
@@ -161,6 +162,34 @@ func TestCacheHandlerPrune(t *testing.T) {
 	}
 	if status.StartedAt.IsZero() || status.FinishedAt.IsZero() || status.Error != "" || status.Removed.Clones != 1 {
 		t.Errorf("the run should be recorded as finished without error, got %+v", status)
+	}
+}
+
+// The pass removes the logs of verifier rounds unchanged for the retention
+// and keeps the others (20261114-160323-d-tac-n0n).
+func TestCacheHandlerPruneRemovesOldRoundLogs(t *testing.T) {
+	f := newPruneFixture(t, "")
+	logs := filepath.Join(f.loc.StateRoot, roundproc.LogDirName, "github.com", "acme", "kept")
+	old, fresh := roundproc.LogPath(logs, "child", 1), roundproc.LogPath(logs, "child", 2)
+	if err := os.MkdirAll(logs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{old, fresh} {
+		if err := os.WriteFile(path, []byte("round output"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	long := time.Now().Add(-pruneRetention - time.Hour)
+	if err := os.Chtimes(old, long, long); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if exists(t, old) || !exists(t, fresh) {
+		t.Error("only the round log unchanged for the retention should go")
 	}
 }
 
