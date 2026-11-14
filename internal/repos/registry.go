@@ -48,7 +48,7 @@ func (r *Registry) CacheRoot() string {
 }
 
 // CloneDir resolves where the sdd-owned clone of repoID lives, one per
-// repository id under <DataRoot>/repos (20261107-095427-d-tac-yux).
+// repository id under <DataRoot>/repos.
 func (r *Registry) CloneDir(repoID model.RepoID) (string, error) {
 	return cloneDir(r.loc.DataRoot, repoID)
 }

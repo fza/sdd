@@ -7,7 +7,7 @@ import (
 
 // ErrContributionRefused marks a graph write contribution mode refuses: in a
 // checkout whose machine-local config names an upstream ref, entries are
-// written only on a feature branch cut from that ref (20261027-092131-d-tac-t7g).
+// written only on a feature branch cut from that ref.
 var ErrContributionRefused = errors.New("contribution mode refuses the write")
 
 // ContributionTarget is what contribution mode judges a write by. RefBranch is

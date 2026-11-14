@@ -19,7 +19,7 @@ type FetchGraphCmd struct {
 
 // SyncRoundCmd captures intent to run one automatic sync round of the graph
 // repository: fetch, merge upstream graph commits, publish local ones, and
-// record what blocks them (20261028-201909-d-tac-fxp).
+// record what blocks them.
 type SyncRoundCmd struct {
 	// Explicit marks a round the user asked for: it waits for the sync lock
 	// and runs while a conflict pauses automatic sync.

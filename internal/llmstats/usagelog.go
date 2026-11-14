@@ -3,12 +3,13 @@ package llmstats
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"time"
 
-	"github.com/networkteam/slogutils"
-
 	"github.com/networkteam/sdd/pkg/llm"
+	"github.com/networkteam/sdd/pkg/llm/embed"
 )
 
 // UsageLogEnv names the environment variable holding the path of the usage
@@ -43,13 +44,74 @@ type UsageLog struct {
 	now  func() time.Time
 }
 
-func NewUsageLog(path string) *UsageLog {
-	return &UsageLog{path: path, now: time.Now}
+// NewUsageLog creates the file at path if missing, so an unwritable path fails
+// before the first call.
+func NewUsageLog(path string) (*UsageLog, error) {
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("opening usage log: %w", err)
+	}
+	err = file.Close()
+	if err != nil {
+		return nil, fmt.Errorf("closing usage log: %w", err)
+	}
+	return &UsageLog{path: path, now: time.Now}, nil
 }
 
-// RecordCall appends the call's line. A failed write is dropped with a debug
-// log line: metering must never fail the call it meters.
-func (l *UsageLog) RecordCall(ctx context.Context, stat llm.CallStat) {
+// Runner decorates r so every call appends its line; a line that cannot be
+// written fails the call. A nil log returns r unwrapped.
+func (l *UsageLog) Runner(r llm.Runner) llm.Runner {
+	if l == nil {
+		return r
+	}
+	return llm.RunnerFunc(func(ctx context.Context, req llm.Request) (llm.Result, error) {
+		var call callCapture
+		result, err := llm.Observed(r, &call).Run(ctx, req)
+		return result, l.appendFor(err, call.stat)
+	})
+}
+
+// Embedder decorates e as Runner decorates a runner.
+func (l *UsageLog) Embedder(e embed.Embedder) embed.Embedder {
+	if l == nil {
+		return e
+	}
+	return usageLoggedEmbedder{inner: e, log: l}
+}
+
+type usageLoggedEmbedder struct {
+	inner embed.Embedder
+	log   *UsageLog
+}
+
+func (e usageLoggedEmbedder) Embed(ctx context.Context, req embed.Request) (embed.Result, error) {
+	var call callCapture
+	result, err := embed.Observed(e.inner, &call).Embed(ctx, req)
+	return result, e.log.appendFor(err, call.stat)
+}
+
+func (e usageLoggedEmbedder) Fingerprint() string {
+	return e.inner.Fingerprint()
+}
+
+// callCapture keeps the CallStat the observing decorators build, so the usage
+// log meters a call exactly as the stats sink does.
+type callCapture struct{ stat llm.CallStat }
+
+func (c *callCapture) RecordCall(_ context.Context, stat llm.CallStat) {
+	c.stat = stat
+}
+
+func (l *UsageLog) appendFor(callErr error, stat llm.CallStat) error {
+	err := l.Append(stat)
+	if err != nil {
+		return errors.Join(callErr, err)
+	}
+	return callErr
+}
+
+// Append writes the call's line.
+func (l *UsageLog) Append(stat llm.CallStat) error {
 	record := UsageRecord{
 		At:               l.now().UTC().Format(time.RFC3339),
 		Step:             stat.Purpose,
@@ -68,18 +130,17 @@ func (l *UsageLog) RecordCall(ctx context.Context, stat llm.CallStat) {
 	}
 	line, err := json.Marshal(record)
 	if err != nil {
-		slogutils.FromContext(ctx).Debug("encoding usage log line", "error", err)
-		return
+		return fmt.Errorf("encoding usage log line: %w", err)
 	}
 
 	file, err := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		slogutils.FromContext(ctx).Debug("opening usage log", "path", l.path, "error", err)
-		return
+		return fmt.Errorf("opening usage log: %w", err)
 	}
 	defer file.Close()
 	_, err = file.Write(append(line, '\n'))
 	if err != nil {
-		slogutils.FromContext(ctx).Debug("writing usage log", "path", l.path, "error", err)
+		return fmt.Errorf("writing usage log: %w", err)
 	}
+	return nil
 }

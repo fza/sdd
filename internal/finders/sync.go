@@ -36,7 +36,7 @@ type GitSyncer interface {
 }
 
 // SyncStatus compares the branch with its upstream as last fetched. It
-// reads only: fetching is Handler.FetchGraph's (20261028-192101-d-tac-16h).
+// reads only: fetching is Handler.FetchGraph's.
 func (f *Finder) SyncStatus(ctx context.Context, _ query.SyncStatusQuery) (model.SyncStatus, error) {
 	if f.gitSyncer == nil {
 		return model.SyncStatus{State: model.SyncStateSkipped}, nil

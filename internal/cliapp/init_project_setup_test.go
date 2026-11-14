@@ -273,7 +273,7 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 }
 
 // An init in the work repository runs the project's own init too, with the
-// settings the project records (20261029-132740-d-tac-g32).
+// settings the project records.
 func TestInitRefreshesTheProjectFromTheWorkRepository(t *testing.T) {
 	work, project := workRepository(t)
 	runApp(t, work, "init", "--project-dir", "../work-sdd", "--graph-dir", "graph", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
@@ -308,7 +308,7 @@ func TestInitRefreshesTheProjectFromTheWorkRepository(t *testing.T) {
 }
 
 // Git limits live in the user-global config only, so init asks nothing
-// about sync and writes no sync key (20261107-095427-d-tac-yux).
+// about sync and writes no sync key.
 func TestInitWritesNoSyncSettings(t *testing.T) {
 	work, _ := workRepository(t)
 

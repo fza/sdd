@@ -38,7 +38,7 @@ func (h *Handler) MergeEntry(ctx context.Context, cmd *command.MergeEntryCmd) er
 	versions := model.ResolveDerivedFields([3]string{string(base), string(ours), string(theirs)})
 
 	// git's file is written only with a finished result, so a failure leaves
-	// it as git handed it over for a fallback merge (20261030-093341-d-tac-t6j).
+	// it as git handed it over for a fallback merge.
 	var paths [3]string
 	for i, name := range []string{"base", "ours", "theirs"} {
 		path, clean, err := writeTempVersion(name, versions[i])

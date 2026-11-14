@@ -18,7 +18,7 @@ import (
 const secondEntryPath = ".sdd/graph/2026/11/07-130000-s-tac-def.md"
 
 // requireLazyFetchBar skips where the installed git cannot bar lazy fetches,
-// so sdd leaves them unbarred (20261108-104247-d-tac-k6f).
+// so sdd leaves them unbarred.
 func requireLazyFetchBar(t *testing.T) {
 	t.Helper()
 	out, err := exec.Command("git", "version").Output()

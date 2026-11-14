@@ -26,7 +26,7 @@ type ProjectRepositories interface {
 }
 
 // setUpProject runs a plain init in projectRoot, which holds no sdd project
-// yet, giving it the repository of its own it needs (20261029-130154-d-tac-frl).
+// yet, giving it the repository of its own it needs.
 // Every refusal comes before the first write.
 func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget, changed *bool) error {
 	if h.projectRepos == nil || h.repositoryAt == nil {

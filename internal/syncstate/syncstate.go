@@ -1,6 +1,6 @@
 // Package syncstate keeps the state automatic sync shares across processes
 // on one graph repository: the sync lock, the graph lock it nests, and the
-// blocked-sync record (20261028-192101-d-tac-16h).
+// blocked-sync record.
 package syncstate
 
 import (
@@ -31,7 +31,7 @@ const lockRetryDelay = 50 * time.Millisecond
 // State is the sync lock of one graph repository and the blocked-sync record
 // of the branch a worktree has checked out. Both live in the repository's
 // common git directory: the lock is shared by every worktree and process, the
-// record by every process on that branch (20261028-231901-d-tac-kr9).
+// record by every process on that branch.
 type State struct {
 	dir      string
 	graphDir string
@@ -320,7 +320,7 @@ func ReadBlocked(ctx context.Context, graphDir string) (*model.SyncBlocked, erro
 
 // Mode is the sync mode of the graph repository at root: automatic in the
 // sdd-owned graph clone, which only sdd works in, manual for a graph inside
-// the code repository (20261107-095427-d-tac-yux).
+// the code repository.
 func Mode(root string) model.SyncMode {
 	if git.IsGraphClone(root) {
 		return model.SyncModeAuto
@@ -402,8 +402,7 @@ func Demand(ctx context.Context, gate *gitgate.Gate, root string) (gitgate.Deman
 }
 
 // CloneRounds runs the sync round of an sdd-owned clone through the git
-// gate, the round the project's own graph_repo clone runs
-// (20261107-095427-d-tac-yux).
+// gate, the round the project's own graph_repo clone runs.
 type CloneRounds struct {
 	Gate *gitgate.Gate
 }

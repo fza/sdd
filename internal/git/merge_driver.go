@@ -11,11 +11,11 @@ import (
 )
 
 // MergeDriverCommand is the driver command git runs through sh for a
-// file-level merge of a graph entry (20261030-085158-d-tac-vyt): ancestor,
-// current and other version, conflict marker size, path. Any exit of `sdd
-// merge-entry` but merged (0) or conflicted (MergeEntryConflictExit), such as
-// an sdd without the command, none on PATH or one failing before the command
-// runs, falls back to git's text merge (20261030-105455-d-tac-zrc).
+// file-level merge of a graph entry: ancestor, current and other version,
+// conflict marker size, path. Any exit of `sdd merge-entry` but merged (0) or
+// conflicted (MergeEntryConflictExit), such as an sdd without the command,
+// none on PATH or one failing before the command runs, falls back to git's
+// text merge.
 const MergeDriverCommand = "sdd merge-entry %O %A %B %L %P; s=$?; [ $s -eq 0 ] && exit 0; " +
 	"[ $s -eq 10 ] && exit 1; git merge-file -L ours -L base -L theirs --marker-size=%L %A %O %B"
 

@@ -2,8 +2,7 @@ package model
 
 import "time"
 
-// RepoSyncState is what a sync round did for one connected repository
-// (20261107-095427-d-tac-yux).
+// RepoSyncState is what a sync round did for one connected repository.
 type RepoSyncState string
 
 const (

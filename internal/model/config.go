@@ -258,10 +258,9 @@ func DefaultLLMTimeoutFor(provider string) string {
 }
 
 // SyncConfig is the `sync` block. Default and Hosts are the git limits per
-// remote host and are read from the user-global config only
-// (20261107-095427-d-tac-yux). Cooldown, Mode and Interval are retired: they
-// stay declared so a file carrying them raises no unknown-key warning, and
-// `sdd config set` refuses them.
+// remote host and are read from the user-global config only. Cooldown, Mode
+// and Interval are retired: they stay declared so a file carrying them raises
+// no unknown-key warning, and `sdd config set` refuses them.
 type SyncConfig struct {
 	Default GitLimitsConfig            `yaml:"default,omitempty"`
 	Hosts   map[string]GitLimitsConfig `yaml:"hosts,omitempty"`
@@ -280,7 +279,7 @@ type SyncConfig struct {
 
 // SyncMode is the sync.mode setting. It is set per person: only the
 // user-global config and config.local.yaml may set it, and a value sdd must
-// not honor is read past as manual (20261027-211908-d-tac-l8j).
+// not honor is read past as manual.
 type SyncMode string
 
 const (

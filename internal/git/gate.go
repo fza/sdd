@@ -14,7 +14,7 @@ import (
 
 // admittedEnv is the environment of a git command reaching a remote. A ctx
 // the gate did not admit is refused, so no network operation runs outside
-// the per-machine limits (20261107-095427-d-tac-yux).
+// the per-machine limits.
 func admittedEnv(ctx context.Context, verb string, extra ...string) ([]string, error) {
 	gateEnv, admitted := gitgate.Env(ctx)
 	if !admitted {
@@ -51,7 +51,7 @@ func (c CLI) localEnv(ctx context.Context) []string {
 // cloneEnv lets a git command in an sdd-owned graph clone fetch file
 // contents on its own only inside a gate admission, which counts and bounds
 // the connection; outside one, a command that needs missing contents fails
-// instead of connecting (20261107-224549-d-tac-r9q, 20261108-104247-d-tac-k6f).
+// instead of connecting.
 func cloneEnv(ctx context.Context) []string {
 	gateEnv, admitted := gitgate.Env(ctx)
 	if admitted {

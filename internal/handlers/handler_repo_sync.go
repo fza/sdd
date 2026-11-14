@@ -17,8 +17,7 @@ import (
 )
 
 // CloneRound runs the sync round of an sdd-owned clone: the one path every
-// connected repository refreshes through, read or written
-// (20261107-095427-d-tac-yux).
+// connected repository refreshes through, read or written.
 type CloneRound interface {
 	SyncClone(ctx context.Context, dir string, cmd *command.SyncRoundCmd) error
 	// TimerRound is what the serve timer runs for the clone at dir.

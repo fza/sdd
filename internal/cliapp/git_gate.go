@@ -10,8 +10,7 @@ import (
 )
 
 // invocationGate is the git gate of one command invocation, built on first
-// use from the state root and the limits of the user-global config
-// (20261107-095427-d-tac-yux).
+// use from the state root and the limits of the user-global config.
 type invocationGate struct {
 	ctx  context.Context
 	once sync.Once

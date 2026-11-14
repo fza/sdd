@@ -91,8 +91,7 @@ type ProjectRuntimeOptions struct {
 }
 
 // GraphSync runs automatic sync of the graph repository behind a branch's
-// checkout (20261027-194536-d-tac-190) and serves what blocks it
-// (20261028-201909-d-tac-fxp).
+// checkout and serves what blocks it.
 type GraphSync interface {
 	// SyncGraph runs the timer's sync round for branch, skipping it when
 	// another process is syncing. The round runs only as far as the lease of
@@ -265,8 +264,7 @@ func (r *ProjectRuntime) syncBranch(ctx context.Context, branch string) (string,
 }
 
 // syncTick is how often a running server asks the git gate whether its
-// graph's sync round is due; the gate's cooldowns set the pace
-// (20261107-095427-d-tac-yux).
+// graph's sync round is due; the gate's cooldowns set the pace.
 const syncTick = time.Minute
 
 // RunSyncTimer runs, whenever a tick finds it due, the timer round of the

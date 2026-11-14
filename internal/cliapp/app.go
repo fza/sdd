@@ -146,24 +146,28 @@ func newRunner(cmd *cli.Command, timeoutFlag string) (pkgllm.Runner, error) {
 }
 
 // statsSink is the recording sink both the chat runner and the embedder are
-// observed into: one debug log line per call, one row in .sdd/stats/llm.jsonl
-// that `sdd stats` reads, and one line in the usage log when SDD_USAGE_LOG
-// names one. Best-effort: outside an sdd repo, or when the sink directory
-// cannot be created, calls are not recorded in .sdd/stats.
+// observed into: one debug log line per call, and one row in .sdd/stats/llm.jsonl
+// that `sdd stats` reads. Best-effort: outside an sdd repo, or when the sink
+// directory cannot be created, calls are logged but not recorded.
 func statsSink() pkgllm.StatsSink {
-	var sinks []pkgllm.StatsSink
 	sddDir, err := resolveSDDDir()
-	if err == nil {
-		fileSink, err := llmstats.NewFileSink(filepath.Join(sddDir, "stats"))
-		if err == nil {
-			sinks = append(sinks, fileSink)
-		}
+	if err != nil {
+		return llmstats.Logged(nil)
 	}
-	usageLogPath := os.Getenv(llmstats.UsageLogEnv)
-	if usageLogPath != "" {
-		sinks = append(sinks, llmstats.NewUsageLog(usageLogPath))
+	fileSink, err := llmstats.NewFileSink(filepath.Join(sddDir, "stats"))
+	if err != nil {
+		return llmstats.Logged(nil)
 	}
-	return llmstats.Logged(llmstats.Fanout(sinks...))
+	return llmstats.Logged(fileSink)
+}
+
+// usageLog is the usage log SDD_USAGE_LOG names, nil when it names none.
+func usageLog() (*llmstats.UsageLog, error) {
+	path := os.Getenv(llmstats.UsageLogEnv)
+	if path == "" {
+		return nil, nil
+	}
+	return llmstats.NewUsageLog(path)
 }
 
 // resolveTimeout returns the per-call LLM timeout for the given flag name,
@@ -2034,7 +2038,7 @@ func initCmd() *cli.Command {
 				projectDir = recordedFiles.ProjectDir
 			}
 			// Only a path typed or chosen here may name a project to set up; a
-			// recorded one names a shared project to clone (20261029-132422-d-tac-2sn).
+			// recorded one names a shared project to clone.
 			setUpProject := cmd.IsSet("project-dir")
 			graphRepoAddress := strings.TrimSpace(cmd.String("graph-repo"))
 			var graphRepo model.RepoID
@@ -2071,7 +2075,7 @@ func initCmd() *cli.Command {
 			// which a pointing repository is not.
 			projectSDDDir := sddDir
 			// A pointer at a folder holding no sdd project sets that project
-			// up first, asking what a fresh init asks (20261029-130154-d-tac-frl).
+			// up first, asking what a fresh init asks.
 			projectMissing := false
 			if graphRepo != "" {
 				locations, err := repos.DefaultLocations()
