@@ -146,12 +146,19 @@ func boundedClient(t *testing.T, graphDir string) (*mcp.ClientSession, *boundedR
 // every result past the bound, listing its proofs when proofs is set.
 func boundedConnect(t *testing.T, srv *mcpserver.Server, proofs bool) (*mcp.ClientSession, *boundedResults) {
 	t.Helper()
+	return boundedConnectClient(t, srv, proofs, otherClient)
+}
+
+// boundedConnectClient connects as boundedConnect does, under the client
+// name name.
+func boundedConnectClient(t *testing.T, srv *mcpserver.Server, proofs bool, name string) (*mcp.ClientSession, *boundedResults) {
+	t.Helper()
 	bound := &boundedResults{t: t, largest: map[string]int{}}
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	if _, err := srv.Connect(t.Context(), serverTransport); err != nil {
 		t.Fatal(err)
 	}
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: name, Version: "test"}, nil)
 	if proofs {
 		client.AddSendingMiddleware(newAgentMemory().middleware)
 	}

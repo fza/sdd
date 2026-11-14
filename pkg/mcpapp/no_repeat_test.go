@@ -301,25 +301,36 @@ func TestMalformedProofRefusesTheCall(t *testing.T) {
 }
 
 // Both doors explain the proof once: the opening serve and every
-// reorientation carry it.
+// reorientation carry it, a Claude agent's by the hold-next line, any other
+// client's by every tag from every earlier result.
 func TestDoorsExplainTheProof(t *testing.T) {
-	env := newTestServer(t, nil, "", "")
-	agent := newAgentMemory()
-	agent.raw = true
-	cs := connectAs(t, env.srv, agent)
-	door := openSession(t, cs)
-	var resumed mcpserver.ResumeSessionResult
-	call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
-	for name, text := range map[string]string{"start_session": door.Instructions, "resume_session": resumed.Instructions} {
-		if !strings.Contains(text, "as tag:word") || !strings.Contains(text, "List in reread") {
-			t.Fatalf("%s should explain how to prove a piece and how to have it again:\n%s", name, text)
-		}
-		if !strings.Contains(text, proofExample) {
-			t.Fatalf("%s should show a worked proof:\n%s", name, text)
-		}
-		if !strings.Contains(text, "hold_next") || !strings.Contains(text, exactlyThoseTags) {
-			t.Fatalf("%s should say a call proves exactly the tags the last result's hold_next names:\n%s", name, text)
-		}
+	for _, tc := range []struct {
+		client, guide, other string
+	}{
+		{claudeClient, holdNextGuide, everyEarlierResult},
+		{otherClient, everyTagGuide, "hold_next"},
+		{"", everyTagGuide, "hold_next"},
+	} {
+		t.Run(tc.client, func(t *testing.T) {
+			env := newTestServer(t, nil, "", "")
+			agent := newAgentMemory()
+			agent.raw = true
+			cs := connectClient(t, env.srv, agent, tc.client)
+			door := openSession(t, cs)
+			var resumed mcpserver.ResumeSessionResult
+			call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
+			for name, text := range map[string]string{"start_session": door.Instructions, "resume_session": resumed.Instructions} {
+				if !strings.Contains(text, "as tag:word") || !strings.Contains(text, "List in reread") {
+					t.Fatalf("%s should explain how to prove a piece and how to have it again:\n%s", name, text)
+				}
+				if !strings.Contains(text, proofExample) {
+					t.Fatalf("%s should show a worked proof:\n%s", name, text)
+				}
+				if !strings.Contains(text, tc.guide) || strings.Contains(text, tc.other) {
+					t.Fatalf("%s should carry only the client's proof guide:\n%s", name, text)
+				}
+			}
+		})
 	}
 }
 
@@ -327,10 +338,21 @@ func TestDoorsExplainTheProof(t *testing.T) {
 // word right after the tag, never the one before it.
 const proofExample = `"… dialogue ⟦gn9p⟧ first …" → gn9p:first`
 
-// exactlyThoseTags is how the doors and the held field say which proofs a
-// call lists: the tags the last result's hold_next names
-// (20261114-121534-d-tac-qdb).
-const exactlyThoseTags = "exactly those tags"
+// holdNextGuide and everyTagGuide are how the two proof guides say which
+// proofs a call lists: a Claude agent the tags the last result's hold_next
+// names (20261114-121534-d-tac-qdb), any other client every tag it still
+// sees (20261112-075604-d-tac-t4r).
+const (
+	holdNextGuide = "held on every call: exactly those tags"
+	everyTagGuide = "list in held every tag"
+)
+
+// exactlyThoseTags and everyEarlierResult are how the held field describes
+// both guides, as a tool schema serves every client.
+const (
+	exactlyThoseTags   = "exactly those tags"
+	everyEarlierResult = "every earlier result, not only the last"
+)
 
 // Every tool taking proofs shows the worked proof in its held field.
 func TestHeldFieldShowsAWorkedProof(t *testing.T) {
@@ -364,7 +386,10 @@ func TestHeldFieldShowsAWorkedProof(t *testing.T) {
 			t.Errorf("%s: the held field should show a worked proof, got %q", tool.Name, held.Description)
 		}
 		if !strings.Contains(held.Description, "hold_next") || !strings.Contains(held.Description, exactlyThoseTags) {
-			t.Errorf("%s: the held field should ask for exactly the hold_next tags, got %q", tool.Name, held.Description)
+			t.Errorf("%s: the held field should ask for exactly the hold_next tags where results name them, got %q", tool.Name, held.Description)
+		}
+		if !strings.Contains(held.Description, everyEarlierResult) {
+			t.Errorf("%s: the held field should ask for proofs from every earlier result where no hold_next is named, got %q", tool.Name, held.Description)
 		}
 	}
 	if described == 0 {

@@ -22,7 +22,6 @@ framing: |
   **Expect novelty.** Not everything can be grounded in what exists. Looking similar is not fitting; a forced fit becomes a false floor to reason from. What is truly new deserves treatment as new, connected only where connections are real.
 
   **When work stops resolving, step up.** Corrections pile up, something stays unclear, progress grinds. Instinct says push harder at the current level of detail. Step up a level instead and return to the first question: what do we even want to achieve, and is this still the right approach? That belongs in the dialogue, not in more detail work.
-hold_next: <tag>, <tag>, <tag>, <tag>
 instructions: |
   Session resumed. Step position and collected evidence persist.
   open_instances carries each running instance's current serve. The session
@@ -32,15 +31,15 @@ instructions: |
   again later? resume_session with this handle re-serves this list in full.
 
   Every piece served in full (instruction lane, framing block, report schema,
-  entry) carries a tag, such as ⟦tag⟧, before one of its words. Each result
-  ends with hold_next: the tags whose pieces your next call may get again. Send
-  held on every call: exactly those tags whose text you still see, each with the
-  word right after it in that text, as tag:word
-  ("… dialogue first …" → gn9p:first). A proved piece serves as a short
-  pointer. A tag left out serves its whole text into your context again. Never
-  guess a word: a wrong proof costs the same, and proof_notice names it.
-  List in reread the tag or name of a piece you no longer see: it serves in full
-  again.
+  entry) carries a tag, such as ⟦tag⟧, before one of its words. On each later
+  call, list in held every tag whose text you still see, with the word right
+  after it, as tag:word ("… dialogue first …" → gn9p:first). That piece
+  then serves as a short pointer. Proofs never carry over: list the tags from
+  every earlier result, not only the last, as a piece served many calls ago (the
+  type-system overview, a framing block, an entry) serves in full again on any
+  call without its proof. List in reread the tag or name of a piece you
+  no longer see: it serves in full again. Never guess a word: a missing or wrong
+  proof costs only the full text.
 
   (2 framing blocks wait, as this result would run past its size bound: recentMovement, health. Call next with instance i_1 and no report to have them before you act)
 open_instances:

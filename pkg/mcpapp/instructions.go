@@ -7,6 +7,8 @@ package mcpapp
 // short and front-loads what matters. Tier one is the session shell's opening
 // serve (the user-dialogue base procedure); tier two is the per-step units.
 
+import "github.com/networkteam/sdd/internal/model"
+
 const serverInstructions = `This server hosts an SDD (Signal-Dialogue-Decision) graph: an append-only
 record of project observations (signals) and commitments (decisions). It grows
 through dialogue between the user and their agents.
@@ -80,9 +82,30 @@ Brief the user on where the work stands (procedure, step, goal) before you
 continue. Continue through next with the session's handle. Lose your place
 again later? resume_session with this handle re-serves this list in full.`
 
-// proofGuide tells an agent, at the opening and at every reorientation, how
-// it proves what it still holds (20261112-075604-d-tac-t4r).
-const proofGuide = `Every piece served in full (instruction lane, framing block, report schema,
+// proofGuideFor tells the agent behind the MCP client clientName, at the
+// opening and at every reorientation, how it proves what it still holds: by
+// the hold-next line (20261114-121534-d-tac-qdb) only for a Claude agent, as
+// Codex main agents mostly skipped those proofs in a live eval; by every tag
+// it still sees (20261112-075604-d-tac-t4r) for any other.
+func proofGuideFor(clientName string) string {
+	if model.ClaudeClient(clientName) {
+		return holdNextProofGuide
+	}
+	return everyTagProofGuide
+}
+
+const everyTagProofGuide = `Every piece served in full (instruction lane, framing block, report schema,
+entry) carries a tag, such as ⟦k3f9⟧, before one of its words. On each later
+call, list in held every tag whose text you still see, with the word right
+after it, as tag:word ("… dialogue ⟦gn9p⟧ first …" → gn9p:first). That piece
+then serves as a short pointer. Proofs never carry over: list the tags from
+every earlier result, not only the last, as a piece served many calls ago (the
+type-system overview, a framing block, an entry) serves in full again on any
+call without its proof. List in reread the tag or name of a piece you
+no longer see: it serves in full again. Never guess a word: a missing or wrong
+proof costs only the full text.`
+
+const holdNextProofGuide = `Every piece served in full (instruction lane, framing block, report schema,
 entry) carries a tag, such as ⟦k3f9⟧, before one of its words. Each result
 ends with hold_next: the tags whose pieces your next call may get again. Send
 held on every call: exactly those tags whose text you still see, each with the

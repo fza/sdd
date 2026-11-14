@@ -39,7 +39,7 @@ func TestResultsEndWithTheHoldNextLine(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	memory := newAgentMemory()
 	memory.raw = true
-	cs := connectAs(t, env.srv, memory)
+	cs := connectClient(t, env.srv, memory, claudeClient)
 	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_session", Arguments: map[string]any{}})
 	checkToolCall(t, "start_session", res, err)
 	text := contentText(res)
@@ -76,6 +76,52 @@ func TestResultsEndWithTheHoldNextLine(t *testing.T) {
 	}
 }
 
+// Only a Claude agent gets the hold-next line: every result Claude Code gets
+// carries one, while any other client, one sending no name included, gets
+// none on any result and proves every tag it still sees
+// (20261112-075604-d-tac-t4r), which still makes a step served again its
+// pointers.
+func TestOnlyAClaudeAgentGetsTheHoldNextLine(t *testing.T) {
+	for _, tc := range []struct {
+		client   string
+		holdNext bool
+	}{
+		{claudeClient, true},
+		{"codex-mcp-client", false},
+		{"", false},
+	} {
+		t.Run(tc.client, func(t *testing.T) {
+			env := newTestServer(t, nil, "", "")
+			memory := newAgentMemory()
+			memory.holdNext = tc.holdNext
+			cs := connectClient(t, env.srv, memory, tc.client)
+			door := openSessionWhole(t, cs)
+			var capture mcpserver.ServeResult
+			call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &capture)
+			followWaitingLanes(t, cs, door.Session, capture)
+			var shown mcpserver.ShowResult
+			call(t, cs, "show", map[string]any{"session": door.Session, "ids": []string{fixtureGapID}}, &shown)
+			var info mcpserver.InfoResult
+			call(t, cs, "info", map[string]any{"session": door.Session}, &info)
+			var again mcpserver.ServeResult
+			call(t, cs, "next", map[string]any{"session": door.Session, "instance": capture.Instance}, &again)
+			var resumed mcpserver.ResumeSessionResult
+			call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
+
+			lined, unlined := memory.results()
+			if tc.holdNext && len(unlined) > 0 {
+				t.Errorf("every result a Claude agent gets should carry the hold-next line, none on %v", unlined)
+			}
+			if !tc.holdNext && len(lined) > 0 {
+				t.Errorf("no result another client gets should carry the hold-next line, got one on %v", lined)
+			}
+			if !strings.Contains(again.Instructions, "you hold the step") {
+				t.Errorf("the step served again should point at the lanes the agent proved, got %.300q", again.Instructions)
+			}
+		})
+	}
+}
+
 // An agent listing exactly the tags the last result named gets the step it
 // stands at as pointers when the step serves again, also after a read in
 // between that served no step.
@@ -83,7 +129,7 @@ func TestAgentListingTheHoldNextTagsGetsPointers(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	memory := newAgentMemory()
 	memory.holdNext = true
-	cs := connectAs(t, env.srv, memory)
+	cs := connectClient(t, env.srv, memory, claudeClient)
 	door := openSessionWhole(t, cs)
 	var capture mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &capture)
@@ -110,7 +156,7 @@ func TestARepeatedPieceJoinsTheLinesOfItsMove(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	memory := newAgentMemory()
 	memory.raw = true
-	cs := connectAs(t, env.srv, memory)
+	cs := connectClient(t, env.srv, memory, claudeClient)
 	door := openSession(t, cs)
 	var capture mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &capture)
@@ -179,7 +225,7 @@ func TestGatherBriefLinesStayOffTheHoldNextLine(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	memory := newAgentMemory()
 	memory.raw = true
-	cs := connectAs(t, env.srv, memory)
+	cs := connectClient(t, env.srv, memory, claudeClient)
 	door := openSession(t, cs)
 
 	var reading mcpserver.GatherResult
@@ -206,7 +252,7 @@ func TestGatherBriefLinesStayOffTheHoldNextLine(t *testing.T) {
 // agent's context again, and a word is never guessed.
 func TestTheProofGuideMakesASkippedProofACost(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
-	cs := connect(t, env.srv)
+	cs := connectClient(t, env.srv, newAgentMemory(), claudeClient)
 	door := openSessionWhole(t, cs)
 	var resumed mcpserver.ResumeSessionResult
 	call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
@@ -223,14 +269,24 @@ func TestTheProofGuideMakesASkippedProofACost(t *testing.T) {
 	}
 }
 
+// clientKinds are a Claude agent and any other client, for what both get
+// alike.
+var clientKinds = []string{claudeClient, otherClient}
+
 // A held lane's pointer names its tag first and sends the agent to the full
 // text for the word, so no word of the pointer reads as the word after the
-// tag.
+// tag; every client gets it.
 func TestAHeldLanePointerLeavesNoWordAfterItsTag(t *testing.T) {
+	for _, client := range clientKinds {
+		t.Run(client, func(t *testing.T) { testHeldLanePointer(t, client) })
+	}
+}
+
+func testHeldLanePointer(t *testing.T, client string) {
 	env := newTestServer(t, nil, writeLaneStepGraph(t, stepLane{"first", 2}, stepLane{"second", 2}), "")
 	memory := newAgentMemory()
 	memory.raw = true
-	cs := connectAs(t, env.srv, memory)
+	cs := connectClient(t, env.srv, memory, client)
 	session := openSession(t, cs).Session
 	var serve mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step", "held": []any{}}, &serve)
@@ -247,12 +303,18 @@ func TestAHeldLanePointerLeavesNoWordAfterItsTag(t *testing.T) {
 
 // A held proof that fails, by a wrong word or a tag never issued, gets a
 // notice naming the tag beside the full text, so the agent corrects or drops
-// it; a right proof gets none.
+// it; a right proof gets none. Every client gets the notice.
 func TestAFailedProofIsNamedBesideTheFullText(t *testing.T) {
+	for _, client := range clientKinds {
+		t.Run(client, func(t *testing.T) { testFailedProofNotice(t, client) })
+	}
+}
+
+func testFailedProofNotice(t *testing.T, client string) {
 	env := newTestServer(t, nil, writeLaneStepGraph(t, stepLane{"first", 2}), "")
 	memory := newAgentMemory()
 	memory.raw = true
-	cs := connectAs(t, env.srv, memory)
+	cs := connectClient(t, env.srv, memory, client)
 	session := openSession(t, cs).Session
 	var serve mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step", "held": []any{}}, &serve)
@@ -292,7 +354,7 @@ func TestTheLineAtGuideReviewNamesThePlaybackLanes(t *testing.T) {
 	}
 	memory := newAgentMemory()
 	memory.raw, memory.holdNext = true, true
-	cs := connectAs(t, srv, memory)
+	cs := connectClient(t, srv, memory, claudeClient)
 	session := openSession(t, cs).Session
 	var serve mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &serve)
