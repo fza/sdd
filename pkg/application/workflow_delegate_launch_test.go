@@ -74,8 +74,8 @@ func TestLauncherKeepsItsSessionPerChildAndResumesEachRound(t *testing.T) {
 	if first.Round.Number != 1 || first.Round.Resume != "" || second.Round.Number != 2 || second.Round.Resume != "cli-1" {
 		t.Fatalf("each round resumes the launcher session of the one before, got %+v then %+v", first.Round, second.Round)
 	}
-	if len(launcher.Launches()) != 2 {
-		t.Fatalf("one launch per round, got %d", len(launcher.Launches()))
+	if started := f.rounds.Started(); len(started) != 2 {
+		t.Fatalf("one process per round, got %+v", started)
 	}
 	for _, round := range []*test.ScriptedRound{first, second} {
 		if round.Launch.Session != child {
@@ -90,6 +90,29 @@ func TestLauncherKeepsItsSessionPerChildAndResumesEachRound(t *testing.T) {
 	second.Finish("cli-2", nil)
 	if kept := f.recorded(t, child, 2); strings.Join(kept, ",") != "cli-1,cli-2" {
 		t.Fatalf("the launcher sessions are kept with the child session, got %v", kept)
+	}
+}
+
+// A later round waits for the outcome of the one before it, and fails when
+// that round's process ended without one.
+func TestLaterRoundFailsWhenTheRoundBeforeItEndedWithoutAnOutcome(t *testing.T) {
+	launcher := test.NewScriptedLauncher(t, "scripted")
+	f := newDelegateApplication(t, launcher)
+	f.fork(t)
+	first := launcher.NextRound(t)
+	child := first.Launch.Session
+	f.deliverPlan(t, first)
+	f.advance(t, f.parent, f.dispatch, nil)
+	f.advance(t, f.parent, f.dispatch, map[string]any{"chooser": "answer", "choice": "reply", "fields": map[string]any{"brief": "a1"}})
+
+	f.rounds.Kill(t, child, 1)
+
+	test.Eventually(t, "the second round failing its delegate", func() bool { return f.ended(t, child) != nil })
+	if end := f.ended(t, child); !strings.Contains(end.Reason, "round 2 (scripted) failed: round 1's process ended without recording an outcome") {
+		t.Fatalf("the second round should fail naming the first round's process, got %+v", end)
+	}
+	if ended, err := f.rounds.Ended(child, 2); !ended || err != nil {
+		t.Fatalf("the second round's process should end cleanly once it recorded the failure, got ended %v, %v", ended, err)
 	}
 }
 

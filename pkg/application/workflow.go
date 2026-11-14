@@ -1368,6 +1368,7 @@ func (a *Application) AbandonWorkflowSession(ctx context.Context, identity Reque
 // abandonSession is the teardown by handle. Every delegate the session still
 // has live goes down with it; a delegate session torn down by its own handle
 // releases its fork in the dispatching session when releaseParent is set.
+// A launched round still running in it is stopped last.
 func (a *Application) abandonSession(ctx context.Context, identity RequestIdentity, request WorkflowResumeRequest, reason string, releaseParent bool) (WorkflowAbandonResult, error) {
 	if request.SessionID == "" {
 		return WorkflowAbandonResult{}, fmt.Errorf("sdd: session ID is required")
@@ -1441,7 +1442,7 @@ func (a *Application) abandonSession(ctx context.Context, identity RequestIdenti
 			}
 		}
 	}
-	return result, nil
+	return result, a.stopRounds(ctx, request.SessionID, stored.Events)
 }
 
 // bufferSink collects engine events instead of persisting each, so a teardown

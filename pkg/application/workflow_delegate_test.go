@@ -10,6 +10,7 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	localadapter "github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/test"
 )
 
 // The dispatcher forks the review task into a delegate child session and
@@ -121,6 +122,7 @@ type delegateFixture struct {
 	app      *sdd.Application
 	sessions sdd.SessionStore
 	identity sdd.RequestIdentity
+	rounds   *test.RoundProcesses
 	parent   sdd.SessionID
 	dispatch string
 }
@@ -169,13 +171,21 @@ func newDelegateApplicationWithVerifier(t *testing.T, launcher sdd.DelegateLaunc
 	if err != nil {
 		t.Fatal(err)
 	}
-	application, err := sdd.NewApplication(sdd.ApplicationOptions{
+	identity := sdd.RequestIdentity{Subject: "christopher"}
+	options := sdd.ApplicationOptions{
 		Access: &failAtPrincipalResolver{runtime: runtime}, Sessions: sessions, StagedBlobs: blobs, DelegateLauncher: launcher,
-	})
+	}
+	var rounds *test.RoundProcesses
+	if launcher != nil {
+		rounds = test.NewRoundProcesses(t)
+		options.RoundProcesses = rounds
+		rounds.Runs(options, identity)
+	}
+	application, err := sdd.NewApplication(options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &delegateFixture{app: application, sessions: sessions, identity: sdd.RequestIdentity{Subject: "christopher"}}
+	f := &delegateFixture{app: application, sessions: sessions, identity: identity, rounds: rounds}
 	workflow, _, err := application.OpenWorkflow(t.Context(), f.identity, "example", sdd.WorkflowOpenRequest{ClientName: "test"})
 	if err != nil {
 		t.Fatal(err)

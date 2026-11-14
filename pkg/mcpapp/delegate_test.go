@@ -84,7 +84,9 @@ func writeRelayGraph(t *testing.T) string {
 func TestLaunchedDelegateDispatchCarriesNoHandle(t *testing.T) {
 	launcher := test.NewScriptedLauncher(t, "scripted")
 	env := newTestServer(t, nil, writeRelayGraph(t), "", func(opts *testServerOptions) {
-		opts.Application.DelegateLauncher = launcher
+		rounds := test.NewRoundProcesses(t)
+		opts.Application.DelegateLauncher, opts.Application.RoundProcesses = launcher, rounds
+		rounds.Runs(opts.Application, opts.MCP.LocalIdentity)
 	})
 	client := connect(t, env.srv)
 	door := openSession(t, client)
