@@ -75,7 +75,7 @@ func unitBranchesOnMode(unit engine.Unit) bool {
 
 // A revise or recheck option takes the user's own words for the
 // reason and intent beside the draft fields: a user gives them whenever the
-// dialogue reaches the why, not only at playback (20261112-212433-d-tac-v7s).
+// dialogue reaches the why, not only at playback.
 func TestCaptureOptionsTakingTheDraftTakeTheUsersWords(t *testing.T) {
 	entries, err := baseprocedures.Entries()
 	if err != nil {
