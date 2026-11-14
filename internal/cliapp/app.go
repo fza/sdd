@@ -119,19 +119,13 @@ func statsSink() pkgllm.StatsSink {
 
 // resolveTimeout returns the per-call LLM timeout for the given flag name,
 // preferring the user's explicit --<flag> over the llm.timeout field in
-// config. Falls back to the flag's default Value when neither is set.
+// config. Zero when neither is set, so the factory applies the provider's
+// default (model.DefaultLLMTimeoutFor).
 func resolveTimeout(cmd *cli.Command, flagName string) (time.Duration, error) {
 	if cmd.IsSet(flagName) {
 		return cmd.Duration(flagName), nil
 	}
-	d, err := configuredLLMTimeout(cmd)
-	if err != nil {
-		return 0, err
-	}
-	if d > 0 {
-		return d, nil
-	}
-	return cmd.Duration(flagName), nil
+	return configuredLLMTimeout(cmd)
 }
 
 // configuredLLMTimeout returns the llm.timeout field from config, or zero when
@@ -694,8 +688,7 @@ func newCmd() *cli.Command {
 			},
 			&cli.DurationFlag{
 				Name:  "preflight-timeout",
-				Usage: "Timeout for pre-flight validation (e.g. 120s, 2m)",
-				Value: 120 * time.Second,
+				Usage: "Timeout for pre-flight validation (e.g. 120s, 2m); default llm.timeout",
 			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
@@ -1087,8 +1080,7 @@ func summarizeCmd() *cli.Command {
 			},
 			&cli.DurationFlag{
 				Name:  "timeout",
-				Usage: "Timeout per summary generation (e.g. 60s, 1m)",
-				Value: 60 * time.Second,
+				Usage: "Timeout per summary generation (e.g. 60s, 1m); default llm.timeout",
 			},
 			&cli.StringFlag{
 				Name:  "text",
