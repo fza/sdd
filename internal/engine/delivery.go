@@ -12,9 +12,8 @@ import (
 	"github.com/networkteam/sdd/internal/truncate"
 )
 
-// Delegate child sessions (20260827-232430-d-cpt-voa, refined to rounds by
-// 20261109-004845-d-cpt-ldx): a task that delivers runs in its own session,
-// forked from the instance that dispatched it. Values cross between the two
+// Delegate child sessions (20260827-232430-d-cpt-voa): a task that delivers
+// runs in its own session, forked from the instance that dispatched it. Values cross between the two
 // sessions only as deliveries, and a delivery never moves the receiver's step.
 
 const (
@@ -498,9 +497,8 @@ func (s *Session) awaitDiagnostic(inst *Instance, step *Step) string {
 }
 
 // exchangeLane renders the full exchange a delegate instance took part in, so
-// a delegate relaunched with fresh context loses nothing
-// (20261109-004924-d-cpt-cxw). A dispatching instance's serves carry only its
-// refused deliveries, as named notices.
+// a delegate relaunched with fresh context loses nothing. A dispatching
+// instance's serves carry only its refused deliveries, as named notices.
 func (s *Session) exchangeLane(inst *Instance) (*ServeLane, []truncate.Cut) {
 	if len(inst.exchange) == 0 {
 		return nil, nil

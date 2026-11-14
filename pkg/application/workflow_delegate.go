@@ -14,10 +14,10 @@ import (
 
 // A task that delivers runs in a delegate child session forked on dispatch
 // (20260827-232430-d-cpt-voa), exchanges rounds with the instance that
-// dispatched it (20261109-004845-d-cpt-ldx), and is driven by a delegate the
-// harness or a configured launcher starts and keeps working across rounds
-// (20261109-004924-d-cpt-cxw). The child holds only its own handles; the
-// dispatching session's handle never enters a delegate prompt.
+// dispatched it, and is driven by a delegate the harness or a configured
+// launcher starts and keeps working across rounds. The child holds only its
+// own handles; the dispatching session's handle never enters a delegate
+// prompt.
 
 const workflowDelegateLaunchCode = "workflow_delegate_launch"
 

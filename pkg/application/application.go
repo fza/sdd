@@ -47,7 +47,7 @@ type ApplicationOptions struct {
 	EntrySuffix func(length int) (string, error)
 	// DelegateLauncher, when set, makes sdd itself launch and resume the agent
 	// driving each delegate child session; nil leaves the launch to the harness
-	// the dispatch handoff instructs (20261109-004924-d-cpt-cxw).
+	// the dispatch handoff instructs.
 	DelegateLauncher DelegateLauncher
 }
 
