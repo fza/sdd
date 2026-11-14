@@ -1413,59 +1413,14 @@ func (a *Application) abandonSession(ctx context.Context, identity RequestIdenti
 	if request.SessionID == "" {
 		return WorkflowAbandonResult{}, fmt.Errorf("sdd: session ID is required")
 	}
-	_, runtime, stored, err := a.resolveSession(ctx, identity, request.SessionID)
-	if err != nil {
-		return WorkflowAbandonResult{}, err
-	}
-	if end := stored.Metadata.Ended; end != nil {
-		return WorkflowAbandonResult{}, endedSessionError(stored.Metadata, *end)
-	}
-	w, err := a.newWorkflow(ctx, identity, runtime.options.Project.ID, sessionBindingFrom(stored), stored.Metadata.Branch)
-	if err != nil {
-		return WorkflowAbandonResult{}, err
-	}
-	events, err := decodeWorkflowEvents(stored.Events)
-	if err != nil {
-		return WorkflowAbandonResult{}, err
-	}
-	sink := &bufferSink{}
-	resolve := func(canonical string) (*engine.Spec, error) { return w.loadProcedure(canonical) }
-	w.session, err = w.engine.ReplaySession(string(request.SessionID), stored.Metadata.Participant, events, resolve, sink)
-	if err != nil {
-		return WorkflowAbandonResult{}, fmt.Errorf("replaying session %s: %w", request.SessionID, err)
-	}
-	result := WorkflowAbandonResult{Abandoned: true, Session: stored.Metadata.ID, Label: w.session.Label}
-	for _, inst := range w.session.Instances() {
-		if inst.Status != engine.StatusRunning {
-			continue
-		}
-		if inst.Spec.Class != model.ProcedureClassShell {
-			result.Discarded = append(result.Discarded, WorkflowInstanceSummary{Instance: inst.ID, Procedure: inst.Spec.Canonical, Step: inst.Step})
-			if marker, ok := workflowStoreString(inst.Store, "wipMarker"); ok {
-				result.HeldMarkers = append(result.HeldMarkers, marker)
-			}
-		}
-		if err := w.session.Abandon(inst.ID, reason); err != nil {
-			return WorkflowAbandonResult{}, codedRefusal(err)
+	result, w, runtime, err := a.abandonOnce(ctx, identity, request, reason)
+	if isSessionConflict(err) {
+		result, w, runtime, err = a.abandonOnce(ctx, identity, request, reason)
+		if isSessionConflict(err) {
+			return WorkflowAbandonResult{}, fmt.Errorf("%w; %s", err, reorientSuffix)
 		}
 	}
-	now := a.now().UTC().Round(0)
-	metadata := stored.Metadata
-	metadata.UpdatedAt = now
-	metadata.Ended = &SessionEnd{Act: SessionAbandoned, EndedAt: now, Reason: strings.TrimSpace(reason)}
-	endPayload, err := json.Marshal(metadata.Ended)
 	if err != nil {
-		return WorkflowAbandonResult{}, err
-	}
-	appendData := SessionAppend{Metadata: &metadata, Events: []StoredEvent{{CodecVersion: SessionCodecVersion, Code: SessionEndedEventCode, Payload: endPayload}}}
-	for _, event := range sink.events {
-		payload, marshalErr := json.Marshal(event)
-		if marshalErr != nil {
-			return WorkflowAbandonResult{}, marshalErr
-		}
-		appendData.Events = append(appendData.Events, StoredEvent{CodecVersion: SessionCodecVersion, Code: WorkflowEventCode, Payload: payload})
-	}
-	if _, err := a.sessions.Append(ctx, request.SessionID, stored.Version, appendData); err != nil {
 		return WorkflowAbandonResult{}, err
 	}
 	result.SyncNotice = runtime.releaseSyncOwner(ctx, w.branch, string(request.SessionID))
@@ -1483,6 +1438,69 @@ func (a *Application) abandonSession(ctx context.Context, identity RequestIdenti
 		}
 	}
 	return result, nil
+}
+
+// abandonOnce replays the stored log, abandons its running instances and
+// records the end in one append. Another attach appending since the load
+// fails that append as a session conflict, which abandonSession retries
+// once on a fresh load (20260914-113737-d-cpt-qst bounds the retry).
+func (a *Application) abandonOnce(ctx context.Context, identity RequestIdentity, request WorkflowResumeRequest, reason string) (WorkflowAbandonResult, *WorkflowSession, *ProjectRuntime, error) {
+	_, runtime, stored, err := a.resolveSession(ctx, identity, request.SessionID)
+	if err != nil {
+		return WorkflowAbandonResult{}, nil, nil, err
+	}
+	if end := stored.Metadata.Ended; end != nil {
+		return WorkflowAbandonResult{}, nil, nil, endedSessionError(stored.Metadata, *end)
+	}
+	w, err := a.newWorkflow(ctx, identity, runtime.options.Project.ID, sessionBindingFrom(stored), stored.Metadata.Branch)
+	if err != nil {
+		return WorkflowAbandonResult{}, nil, nil, err
+	}
+	events, err := decodeWorkflowEvents(stored.Events)
+	if err != nil {
+		return WorkflowAbandonResult{}, nil, nil, err
+	}
+	sink := &bufferSink{}
+	resolve := func(canonical string) (*engine.Spec, error) { return w.loadProcedure(canonical) }
+	w.session, err = w.engine.ReplaySession(string(request.SessionID), stored.Metadata.Participant, events, resolve, sink)
+	if err != nil {
+		return WorkflowAbandonResult{}, nil, nil, fmt.Errorf("replaying session %s: %w", request.SessionID, err)
+	}
+	result := WorkflowAbandonResult{Abandoned: true, Session: stored.Metadata.ID, Label: w.session.Label}
+	for _, inst := range w.session.Instances() {
+		if inst.Status != engine.StatusRunning {
+			continue
+		}
+		if inst.Spec.Class != model.ProcedureClassShell {
+			result.Discarded = append(result.Discarded, WorkflowInstanceSummary{Instance: inst.ID, Procedure: inst.Spec.Canonical, Step: inst.Step})
+			if marker, ok := workflowStoreString(inst.Store, "wipMarker"); ok {
+				result.HeldMarkers = append(result.HeldMarkers, marker)
+			}
+		}
+		if err := w.session.Abandon(inst.ID, reason); err != nil {
+			return WorkflowAbandonResult{}, nil, nil, codedRefusal(err)
+		}
+	}
+	now := a.now().UTC().Round(0)
+	metadata := stored.Metadata
+	metadata.UpdatedAt = now
+	metadata.Ended = &SessionEnd{Act: SessionAbandoned, EndedAt: now, Reason: strings.TrimSpace(reason)}
+	endPayload, err := json.Marshal(metadata.Ended)
+	if err != nil {
+		return WorkflowAbandonResult{}, nil, nil, err
+	}
+	appendData := SessionAppend{Metadata: &metadata, Events: []StoredEvent{{CodecVersion: SessionCodecVersion, Code: SessionEndedEventCode, Payload: endPayload}}}
+	for _, event := range sink.events {
+		payload, marshalErr := json.Marshal(event)
+		if marshalErr != nil {
+			return WorkflowAbandonResult{}, nil, nil, marshalErr
+		}
+		appendData.Events = append(appendData.Events, StoredEvent{CodecVersion: SessionCodecVersion, Code: WorkflowEventCode, Payload: payload})
+	}
+	if _, err := a.sessions.Append(ctx, request.SessionID, stored.Version, appendData); err != nil {
+		return WorkflowAbandonResult{}, nil, nil, err
+	}
+	return result, w, runtime, nil
 }
 
 // bufferSink collects engine events instead of persisting each, so a teardown
