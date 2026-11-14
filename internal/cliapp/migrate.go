@@ -1,10 +1,8 @@
 package cliapp
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/urfave/cli/v3"
 
@@ -16,17 +14,12 @@ import (
 )
 
 // migrateCmd upgrades a graph to the schema version this binary writes. It
-// states what the migration changes and what the backfill costs, and runs only
-// on the user's explicit approval: an answer on stdin or --yes.
+// states what the migration changes and what the backfill costs, then runs.
 func migrateCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "migrate",
-		Usage: "Upgrade the graph to this binary's schema version and fill missing titles, after approval",
+		Usage: "Upgrade the graph to this binary's schema version and fill missing titles",
 		Flags: []cli.Flag{
-			&cli.BoolFlag{
-				Name:  "yes",
-				Usage: "Approve the migration without asking",
-			},
 			&cli.BoolFlag{
 				Name:  "stamp-only",
 				Usage: "Stamp the schema version without the backfill; a later `sdd migrate` fills what is missing",
@@ -108,16 +101,6 @@ func migrateCmd() *cli.Command {
 					fmt.Fprintln(out, "An interrupted backfill continues on the next `sdd migrate`.")
 				}
 			}
-			if !cmd.Bool("yes") {
-				fmt.Fprint(out, "Proceed? [y/N] ")
-				answer, _ := bufio.NewReader(cmd.Reader).ReadString('\n')
-				answer = strings.ToLower(strings.TrimSpace(answer))
-				if answer != "y" && answer != "yes" {
-					fmt.Fprintln(out, "migration not approved; graph unchanged")
-					return nil
-				}
-			}
-
 			err = handler.MigrateSchema(ctx, &command.MigrateSchemaCmd{
 				SDDDir:        sddDir,
 				SchemaVersion: model.CurrentGraphSchemaVersion,

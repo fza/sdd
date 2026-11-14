@@ -80,55 +80,37 @@ func TestWritesOnASchemaOneGraphCarryTitles(t *testing.T) {
 }
 
 func TestMigrate(t *testing.T) {
-	cases := []struct {
-		name         string
-		stdin        string
-		args         []string
-		wantMigrated bool
-	}{
-		{name: "no answer leaves the graph unchanged", args: []string{"migrate"}},
-		{name: "a refusal leaves the graph unchanged", stdin: "n\n", args: []string{"migrate"}},
-		{name: "an approval migrates", stdin: "y\n", args: []string{"migrate"}, wantMigrated: true},
-		{name: "--yes migrates without asking", args: []string{"migrate", "--yes"}, wantMigrated: true},
+	project := newMigrateProject(t)
+	output, err := runReleased(t, project, "", "migrate")
+	if err != nil {
+		t.Fatalf("sdd migrate: %v\n%s", err, output)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			project := newMigrateProject(t)
-			output, err := runReleased(t, project, tc.stdin, tc.args...)
-			if err != nil {
-				t.Fatalf("sdd migrate: %v\n%s", err, output)
-			}
-			if !strings.Contains(output, "1 entries get a title beside their stored summary") {
-				t.Errorf("the plan should state the backfill before it runs:\n%s", output)
-			}
-			if strings.Contains(output, "stamped") {
-				t.Errorf("the plan for a graph at the current schema should promise no stamp:\n%s", output)
-			}
+	if !strings.Contains(output, "1 entries get a title beside their stored summary") {
+		t.Errorf("the plan should state the backfill before it runs:\n%s", output)
+	}
+	if strings.Contains(output, "stamped") {
+		t.Errorf("the plan for a graph at the current schema should promise no stamp:\n%s", output)
+	}
+	if strings.Contains(output, "Proceed?") {
+		t.Errorf("the migration should run without asking:\n%s", output)
+	}
 
-			meta := readFile(t, filepath.Join(project, ".sdd", "meta.json"))
-			entry := readFile(t, filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel)))
-			if !tc.wantMigrated {
-				if !strings.Contains(meta, `"graph_schema_version": 1`) || strings.Contains(entry, "title:") {
-					t.Errorf("an unapproved migration should change nothing:\n%s\n%s", meta, entry)
-				}
-				return
-			}
-			if !strings.Contains(meta, `"graph_schema_version": 1`) {
-				t.Errorf("filling titles should leave the schema version as it is:\n%s", meta)
-			}
-			if !strings.Contains(entry, "title: Migrated title") || !strings.Contains(entry, "summary: A stored summary that stays.") {
-				t.Errorf("the backfill should add the title and keep the stored summary:\n%s", entry)
-			}
-			if log := gitIn(t, project, "log", "--format=%s"); strings.Contains(log, "migrate graph schema") {
-				t.Errorf("a graph at the current schema should see no stamp commit:\n%s", log)
-			}
-		})
+	meta := readFile(t, filepath.Join(project, ".sdd", "meta.json"))
+	entry := readFile(t, filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel)))
+	if !strings.Contains(meta, `"graph_schema_version": 1`) {
+		t.Errorf("filling titles should leave the schema version as it is:\n%s", meta)
+	}
+	if !strings.Contains(entry, "title: Migrated title") || !strings.Contains(entry, "summary: A stored summary that stays.") {
+		t.Errorf("the backfill should add the title and keep the stored summary:\n%s", entry)
+	}
+	if log := gitIn(t, project, "log", "--format=%s"); strings.Contains(log, "migrate graph schema") {
+		t.Errorf("a graph at the current schema should see no stamp commit:\n%s", log)
 	}
 }
 
 func TestMigrateOnACurrentGraphOwesNothing(t *testing.T) {
 	project := newMigrateProject(t)
-	if _, err := runReleased(t, project, "", "migrate", "--yes"); err != nil {
+	if _, err := runReleased(t, project, "", "migrate"); err != nil {
 		t.Fatalf("first migrate: %v", err)
 	}
 	before := gitIn(t, project, "rev-parse", "HEAD")
@@ -147,7 +129,7 @@ func TestMigrateOnACurrentGraphOwesNothing(t *testing.T) {
 func TestMigrateStampOnlyOnACurrentGraphChangesNothing(t *testing.T) {
 	project := newMigrateProject(t)
 	before := gitIn(t, project, "rev-parse", "HEAD")
-	output, err := runReleased(t, project, "", "migrate", "--yes", "--stamp-only")
+	output, err := runReleased(t, project, "", "migrate", "--stamp-only")
 	if err != nil {
 		t.Fatalf("sdd migrate --stamp-only: %v\n%s", err, output)
 	}
@@ -165,13 +147,13 @@ func TestMigrateStampOnlyOnACurrentGraphChangesNothing(t *testing.T) {
 
 func TestMigrateCommitsTitlesAFailedCommitLeftBehind(t *testing.T) {
 	project := newMigrateProject(t)
-	if output, err := runReleased(t, project, "", "migrate", "--yes", "--stamp-only"); err != nil {
+	if output, err := runReleased(t, project, "", "migrate", "--stamp-only"); err != nil {
 		t.Fatalf("stamp: %v\n%s", err, output)
 	}
 	entryPath := filepath.Join(project, ".sdd", "graph", filepath.FromSlash(migrateEntryRel))
 	writeFile(t, entryPath, strings.Replace(readFile(t, entryPath), "summary:", "title: stranded title\nsummary:", 1))
 
-	output, err := runReleased(t, project, "", "migrate", "--yes")
+	output, err := runReleased(t, project, "", "migrate")
 	if err != nil {
 		t.Fatalf("sdd migrate: %v\n%s", err, output)
 	}
