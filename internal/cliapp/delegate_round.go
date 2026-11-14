@@ -16,7 +16,7 @@ import (
 )
 
 // delegateRoundCommandName is the hidden command a launched round's detached
-// process runs (20261114-160323-d-tac-n0n).
+// process runs.
 const delegateRoundCommandName = "delegate-round"
 
 // roundProcesses runs launched rounds as detached `sdd delegate-round`

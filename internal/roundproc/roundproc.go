@@ -1,6 +1,5 @@
 // Package roundproc starts the detached processes the delegate rounds sdd
-// launches run in, and tells and stops such a process later from any process
-// (20261114-160323-d-tac-n0n).
+// launches run in, and tells and stops such a process later from any process.
 package roundproc
 
 import (

@@ -4,8 +4,7 @@ import "time"
 
 // RoundOutcomeMargin is how long past its deadline a delegate round sdd
 // launched may take to record its outcome before it counts as failed, and
-// how long past its launch its process may take to be recorded as running
-// (20261114-160323-d-tac-n0n).
+// how long past its launch its process may take to be recorded as running.
 const RoundOutcomeMargin = time.Minute
 
 // RoundLapse is why a launched round that recorded no outcome failed, or
