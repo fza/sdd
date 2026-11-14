@@ -53,7 +53,7 @@ func readOrEmpty(t *testing.T, path string) string {
 }
 
 // A value outside the set its setting allows is refused before it lands,
-// naming the allowed values (20261110-015917-d-tac-yc6).
+// naming the allowed values.
 func TestConfigSetRefusesAValueOutsideTheAllowedSet(t *testing.T) {
 	cases := []struct {
 		target, key, bogus, allowed, valid string
