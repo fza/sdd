@@ -9,7 +9,7 @@ Tests prove the mechanism. This skill checks the experience: whether an agent th
 
 ## Before a batch
 
-- `codex login` done; `git` and Python 3.11+ on `PATH`.
+- `codex login` done, or an Opper key for `--provider opper`; `git` and Python 3.11+ on `PATH`.
 - Build the sdd under test: `devbox run build` in the checkout whose code you evaluate. The driver uses that checkout's `bin/sdd` when it lives in it; pass `--sdd <path>` to `setup` and `start` otherwise.
 - Pick a batch directory in your scratchpad, never inside the sdd repository. Each scenario gets its own subdirectory, `<batch>/<scenario>/repo`, because the sandbox makes the repo's parent writable for sibling worktrees.
 
@@ -19,7 +19,7 @@ Tests prove the mechanism. This skill checks the experience: whether an agent th
 
 ```
 python3 driver.py setup  <repo> [--task TEXT] [--summary TEXT]   fresh repo: git, sdd init for Codex, a code module, the task as a pending directive
-python3 driver.py start  <repo> "<first user message>" [--model M] [--effort E]
+python3 driver.py start  <repo> "<first user message>" [--model M] [--effort E] [--provider opper --env-file F]
 python3 driver.py say    <repo> "<next user message>"
 python3 driver.py log    <repo> [--turn N] [--max CHARS]          everything the sdd tools returned, per call
 python3 driver.py status <repo>                                   branches, worktrees, history, WIP markers per branch
@@ -30,6 +30,7 @@ python3 driver.py status <repo>                                   branches, work
 What the driver fixes for every run:
 
 - **Own Codex home.** `<repo>.eval/codex-home` links your `~/.codex/auth.json` and carries your model settings, nothing else: no plugins, apps, other MCP servers or notify hook, and trust entries and threads stay out of your Codex config. If it warns that `auth.json` is no longer a symlink, Codex refreshed the token into the copy; log in again if your own Codex then complains.
+- **Provider.** `--provider opper` runs `gpt-5.3-codex` through Opper's Responses route instead of your login: no `auth.json` link, the key from `OPPER_API_KEY` or the `KEY=VALUE` file `--env-file` names, passed on to the sdd server too. Codex has no metadata for the model under that provider and warns that it falls back to defaults. Runs on Opper compare with runs on your login only roughly.
 - **Only this sdd.** The run's single MCP server is the chosen `sdd serve`, started in the repo, its tools pre-approved.
 - **Sandbox.** `workspace-write` with no approval prompts; the repo's `.git` and its parent are writable so branches, commits and worktrees work.
 - **Codex uses skills, not slash commands.** Start SDD work with `$sdd` in the message, the way a Codex user would.

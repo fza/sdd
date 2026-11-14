@@ -37,14 +37,14 @@ DEFAULT_SDD = ROOT / "bin" / "sdd"
 class AppServer:
     """Newline-delimited JSON-RPC client for `codex app-server` over stdio."""
 
-    def __init__(self, repo, overrides, transcript, stderr, home):
+    def __init__(self, repo, overrides, transcript, stderr, home, env):
         args = ["codex", "app-server"]
         for override in overrides:
             args += ["-c", override]
         self.log = open(transcript, "a", buffering=1)
         self.proc = subprocess.Popen(args, cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=open(stderr, "a"), text=True, bufsize=1,
-                                     env={**os.environ, "CODEX_HOME": str(home)})
+                                     env={**os.environ, **env, "CODEX_HOME": str(home)})
         self.ids = itertools.count(1)
         self.inbox = queue.Queue()
         self.responses = {}
@@ -155,34 +155,71 @@ DISABLED_FEATURES = ("plugins", "apps", "computer_use", "browser_use", "in_app_b
                      "sleep_tool")
 
 
-def codex_home(repo):
-    """The run's own Codex home, created on first use."""
+OPPER_MODEL = "gpt-5.3-codex"
+OPPER_PROVIDER = """model_provider = "opper"
+
+[model_providers.opper]
+name = "Opper"
+base_url = "https://api.opper.ai/v3/compat"
+env_key = "OPPER_API_KEY"
+wire_api = "responses"
+"""
+
+
+def codex_home(repo, provider):
+    """The run's own Codex home, created on first use. The chatgpt provider
+    shares the user's login; opper reads OPPER_API_KEY instead."""
     home = state_dir(repo) / "codex-home"
     auth = home / "auth.json"
     if home.exists():
-        if not auth.is_symlink():
+        if provider == "chatgpt" and not auth.is_symlink():
             # Codex replaced the link on a token refresh; the user's own copy may now be stale.
             print(f"warning: {auth} is no longer a symlink to {USER_CODEX_HOME / 'auth.json'}", file=sys.stderr)
         return home
     home.mkdir()
-    auth.symlink_to(USER_CODEX_HOME / "auth.json")
     user_config = USER_CODEX_HOME / "config.toml"
     user = tomllib.loads(user_config.read_text()) if user_config.exists() else {}
-    lines = ["notify = []"] + [f"{key} = {json.dumps(user[key])}" for key in CARRIED_SETTINGS if key in user]
+    carried = CARRIED_SETTINGS
+    if provider == "opper":
+        # Opper names models its own way, so the user's model setting stays behind.
+        carried = tuple(key for key in CARRIED_SETTINGS if key != "model")
+    else:
+        auth.symlink_to(USER_CODEX_HOME / "auth.json")
+    lines = ["notify = []"] + [f"{key} = {json.dumps(user[key])}" for key in carried if key in user]
+    if provider == "opper":
+        lines += [f"model = {json.dumps(OPPER_MODEL)}", OPPER_PROVIDER]
     lines += ["", "[features]"] + [f"{name} = false" for name in DISABLED_FEATURES]
     (home / "config.toml").write_text("\n".join(lines) + "\n")
     return home
 
 
-def launch_overrides(repo, sdd):
+def provider_env(state):
+    """Variables the provider needs: OPPER_API_KEY from the environment or
+    from the KEY=VALUE file the run was started with."""
+    if state.get("provider") != "opper":
+        return {}
+    key = os.environ.get("OPPER_API_KEY", "")
+    if not key and state.get("env_file"):
+        for line in Path(state["env_file"]).read_text().splitlines():
+            name, _, value = line.partition("=")
+            if name.strip() == "OPPER_API_KEY":
+                key = value.strip()
+    if not key:
+        sys.exit("the opper provider needs OPPER_API_KEY in the environment or in --env-file")
+    return {"OPPER_API_KEY": key}
+
+
+def launch_overrides(repo, sdd, state):
     """This checkout's sdd binary as the run's only MCP server."""
+    # Codex passes stdio servers only a fixed set of variables; a codex round sdd launches needs the run's home
+    # and the provider's key.
+    passed = ["CODEX_HOME"] + sorted(provider_env(state))
     return [
         f"mcp_servers.sdd.command={json.dumps(str(sdd))}",
         'mcp_servers.sdd.args=["serve"]',
         f"mcp_servers.sdd.cwd={json.dumps(str(repo))}",
         'mcp_servers.sdd.default_tools_approval_mode="approve"',
-        # Codex passes stdio servers only a fixed set of variables; a codex round sdd launches needs the run's home.
-        'mcp_servers.sdd.env_vars=["CODEX_HOME"]',
+        f"mcp_servers.sdd.env_vars={json.dumps(passed)}",
     ]
 
 
@@ -256,8 +293,9 @@ def print_turn(number, turn, items):
 
 def run(repo, state, text, timeout, fresh):
     directory = state_dir(repo)
-    server = AppServer(repo, launch_overrides(repo, Path(state["sdd"])),
-                       directory / "transcript.jsonl", directory / "appserver.stderr.log", codex_home(repo))
+    server = AppServer(repo, launch_overrides(repo, Path(state["sdd"]), state),
+                       directory / "transcript.jsonl", directory / "appserver.stderr.log",
+                       codex_home(repo, state.get("provider", "chatgpt")), provider_env(state))
     try:
         server.initialize()
         params = thread_params(repo, state)
@@ -335,7 +373,8 @@ def cmd_setup(args):
 
 def cmd_start(args):
     repo = Path(args.repo).resolve()
-    state = {"sdd": str(Path(args.sdd).resolve()), "model": args.model, "effort": args.effort, "sandbox": args.sandbox}
+    state = {"sdd": str(Path(args.sdd).resolve()), "model": args.model, "effort": args.effort, "sandbox": args.sandbox,
+             "provider": args.provider, "env_file": str(Path(args.env_file).resolve()) if args.env_file else None}
     run(repo, state, args.message, args.timeout, fresh=True)
 
 
@@ -397,6 +436,9 @@ def main():
     start.add_argument("--model")
     start.add_argument("--effort")
     start.add_argument("--sandbox", default="workspace-write", choices=["read-only", "workspace-write", "danger-full-access"])
+    start.add_argument("--provider", default="chatgpt", choices=["chatgpt", "opper"],
+                       help=f"chatgpt: the user's Codex login; opper: {OPPER_MODEL} through Opper's Responses route")
+    start.add_argument("--env-file", help="KEY=VALUE file holding OPPER_API_KEY when the environment does not")
     start.add_argument("--timeout", type=int, default=1800)
     start.set_defaults(func=cmd_start)
 
