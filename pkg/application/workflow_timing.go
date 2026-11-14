@@ -25,6 +25,18 @@ const fieldGuideBase = "guideBase"
 type guideBase struct {
 	Snapshot string `json:"snapshot"`
 	Text     string `json:"text"`
+	Body     string `json:"body"`
+}
+
+// fieldGuideAdded records the sentences a guide revision added to the body,
+// listed at playback until the user confirms a draft after it.
+const fieldGuideAdded = "guideAdded"
+
+// guideAdded is the value of fieldGuideAdded. Confirmation is the playback
+// confirmation that stood at the revision, so a later confirm ends the list.
+type guideAdded struct {
+	Confirmation string   `json:"confirmation"`
+	Sentences    []string `json:"sentences"`
 }
 
 // guideDraftFields are the reported fields a delta check compares, the body
@@ -68,7 +80,53 @@ func draftJSON(value any) (string, error) {
 }
 
 func writeGuideBase(store *engine.Store) error {
-	return store.WriteEngine(fieldGuideBase, guideBase{Snapshot: store.StateSnapshot(), Text: draftText(store)})
+	body, _ := workflowStoreString(store, fieldBody)
+	return store.WriteEngine(fieldGuideBase, guideBase{Snapshot: store.StateSnapshot(), Text: draftText(store), Body: body})
+}
+
+func recordGuideAdded(store *engine.Store) error {
+	base, _ := readGuideBase(store)
+	body, _ := workflowStoreString(store, fieldBody)
+	confirmation, err := playbackConfirmationKey(store)
+	if err != nil {
+		return err
+	}
+	return store.WriteEngine(fieldGuideAdded, guideAdded{Confirmation: confirmation, Sentences: textdiff.AddedSentences(base.Body, body)})
+}
+
+func playbackConfirmationKey(store *engine.Store) (string, error) {
+	value, ok := store.Get("playbackConfirmation")
+	if !ok || value == nil {
+		return "", nil
+	}
+	return draftJSON(value)
+}
+
+// guideAddedList renders the recorded sentences the body still holds, one
+// quoted bullet each; empty once a confirm followed the revision.
+func guideAddedList(store *engine.Store) (string, error) {
+	doc, ok := workflowStoreDocument(store, fieldGuideAdded)
+	if !ok {
+		return "", nil
+	}
+	confirmation, err := playbackConfirmationKey(store)
+	if err != nil {
+		return "", err
+	}
+	if recorded, _ := doc["confirmation"].(string); recorded != confirmation {
+		return "", nil
+	}
+	body, _ := workflowStoreString(store, fieldBody)
+	body = strings.Join(strings.Fields(body), " ")
+	var b strings.Builder
+	sentences, _ := doc["sentences"].([]any)
+	for _, item := range sentences {
+		sentence, _ := item.(string)
+		if sentence != "" && strings.Contains(body, sentence) {
+			b.WriteString("- \"" + sentence + "\"\n")
+		}
+	}
+	return b.String(), nil
 }
 
 func readGuideBase(store *engine.Store) (guideBase, bool) {
@@ -83,6 +141,7 @@ func readGuideBase(store *engine.Store) (guideBase, bool) {
 	base := guideBase{}
 	base.Snapshot, _ = doc["snapshot"].(string)
 	base.Text, _ = doc["text"].(string)
+	base.Body, _ = doc["body"].(string)
 	return base, true
 }
 
@@ -156,15 +215,29 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 	}
 	err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
-			Name: "recordGuideRevision", Doc: "Records that the agent folded the guide's findings in: the guide step then passes through, and the revised draft is what the guide's judgment covers.",
-			Reads: []string{"guideFindings"}, Writes: []string{"guideReviewed", fieldGuideBase},
+			Name: "recordGuideRevision", Doc: "Records that the agent folded the guide's findings in: the guide step then passes through, and the revised draft is what the guide's judgment covers, and the sentences it added to the body are recorded for playback.",
+			Reads: []string{"guideFindings", fieldGuideBase}, Writes: []string{"guideReviewed", fieldGuideBase, fieldGuideAdded},
 		},
 		Fn: func(ctx *engine.Context) error {
 			err := ctx.Store.WriteEngine("guideReviewed", true)
 			if err != nil {
 				return err
 			}
+			err = recordGuideAdded(ctx.Store)
+			if err != nil {
+				return err
+			}
 			return writeGuideBase(ctx.Store)
+		},
+	})
+	if err != nil {
+		return err
+	}
+	err = registry.RegisterQuery(engine.Query{
+		Doc:       engine.FuncDoc{Name: "guideAdded", Doc: "The sentences the last guide revision added to the body, quoted one per line, until the user confirms a draft after it.", Reads: []string{fieldGuideAdded, "body"}},
+		ServeSafe: true,
+		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
+			return guideAddedList(ctx.Store)
 		},
 	})
 	if err != nil {

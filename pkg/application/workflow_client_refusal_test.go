@@ -36,3 +36,35 @@ func TestCodexClientIsRefusedADeepDependency(t *testing.T) {
 		t.Fatalf("a Codex load of the session should be refused naming the setting, got %v", err)
 	}
 }
+
+// A move started through a parent derives its target from it, and keeps it
+// once that parent ended: a Codex resume is refused while the move runs.
+func TestCodexClientIsRefusedAMoveDerivingADeepDependency(t *testing.T) {
+	application, alice := newDependencyFixture(t, map[sdd.ProjectID]sdd.VerifierPolicy{"project-b": {Mode: "deep"}})
+	claude, _, err := application.OpenWorkflow(t.Context(), alice, "project-a", sdd.WorkflowOpenRequest{ClientName: "claude-code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := claude.Start(t.Context(), alice, sdd.WorkflowStartRequest{Canonical: "capture", Project: "project-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := claude.Start(t.Context(), alice, sdd.WorkflowStartRequest{Canonical: "capture", Parent: parent.Instance})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := claude.Abandon(t.Context(), alice, parent.Instance, "the child carries on"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := application.RefuseClient(t.Context(), alice, claude.ID(), "codex-mcp-client"); err == nil || !strings.Contains(err.Error(), "verify.mode deep needs Claude Code") {
+		t.Fatalf("a Codex resume should be refused while a move deriving the deep dependency runs, got %v", err)
+	}
+
+	if _, err := claude.Abandon(t.Context(), alice, child.Instance, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if err := application.RefuseClient(t.Context(), alice, claude.ID(), "codex-mcp-client"); err != nil {
+		t.Fatalf("a Codex resume should pass once no move targets the deep dependency, got %v", err)
+	}
+}

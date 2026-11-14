@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 const contextLines = 2
@@ -201,6 +202,72 @@ func reverse(s string) string {
 	b := []byte(s)
 	slices.Reverse(b)
 	return string(b)
+}
+
+// AddedSentences returns the sentences new holds that old does not, in order,
+// each once. A sentence whose words one sentence of old already holds is left
+// out: a cut or a reordering adds nothing.
+func AddedSentences(old, new string) []string {
+	held := map[string]bool{}
+	var oldWords []map[string]bool
+	for _, s := range sentences(old) {
+		held[s] = true
+		oldWords = append(oldWords, wordSet(s))
+	}
+	var added []string
+	for _, passage := range ChangedPassages(old, new) {
+		for _, s := range sentences(passage) {
+			if held[s] || slices.ContainsFunc(oldWords, func(in map[string]bool) bool { return wordsIn(s, in) }) {
+				continue
+			}
+			held[s] = true
+			added = append(added, s)
+		}
+	}
+	return added
+}
+
+// sentences splits text at line breaks and at sentence-ending punctuation
+// followed by a space, each sentence with its whitespace collapsed.
+func sentences(text string) []string {
+	var out []string
+	for line := range strings.SplitSeq(text, "\n") {
+		start := 0
+		for i := 0; i < len(line); i++ {
+			if strings.IndexByte(".!?", line[i]) < 0 || (i+1 < len(line) && line[i+1] != ' ' && line[i+1] != '\t') {
+				continue
+			}
+			if s := strings.Join(strings.Fields(line[start:i+1]), " "); s != "" {
+				out = append(out, s)
+			}
+			start = i + 1
+		}
+		if s := strings.Join(strings.Fields(line[start:]), " "); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func words(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) })
+}
+
+func wordSet(s string) map[string]bool {
+	set := map[string]bool{}
+	for _, w := range words(s) {
+		set[w] = true
+	}
+	return set
+}
+
+func wordsIn(s string, set map[string]bool) bool {
+	for _, w := range words(s) {
+		if !set[w] {
+			return false
+		}
+	}
+	return true
 }
 
 // ChangedPassages returns the runs of lines new holds that old does not, in

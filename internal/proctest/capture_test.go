@@ -364,7 +364,8 @@ func TestCapture_WritingGuideFindingsServeReviewThenProceed(t *testing.T) {
 		t.Fatalf("guideReview must serve an agent chooser, got %+v", serve.PendingChooser)
 	}
 	for _, want := range []string{"stranding", "the earlier approach", "write-in", "substantive", "drafting input", "judged the content the user approved",
-		"A revision folds in only what a finding names: add nothing the user did not say, and keep every line the user gave."} {
+		"(repair: write-in) This finding names what is missing, not its content. Write in only what the user said; otherwise ask the user, or dismiss it.",
+		"A revision adds nothing the user did not say and keeps every line the user gave."} {
 		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("guideReview unit missing %q:\n%s", want, serve.Instructions)
 		}
@@ -420,6 +421,9 @@ func TestCapture_WritingGuideRunsOncePerCapture(t *testing.T) {
 	}
 	serve = session.Answer(t, instance, "playback", "confirm", nil, "yes")
 	proctest.RequireStep(t, serve, "guideReview")
+	if strings.Contains(serve.Instructions, "names what is missing") {
+		t.Errorf("only a write-in finding should carry the write-in rule, got:\n%s", serve.Instructions)
+	}
 
 	serve = session.Answer(t, instance, "guideReview", "revise",
 		map[string]any{"body": "A tactical gap: the fixture observes one thing."}, "")
@@ -431,6 +435,61 @@ func TestCapture_WritingGuideRunsOncePerCapture(t *testing.T) {
 	proctest.RequireStep(t, serve, "verifySummary")
 	if got := world.LLM.Calls("writing-guide"); got != 1 {
 		t.Fatalf("the writing guide runs once per capture, ran %d times", got)
+	}
+}
+
+// The playback after a guide revision lists each sentence the revision added,
+// so the user sees what they never said.
+func TestCapture_GuideRevisionPlaybackListsAddedSentences(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		wantAdded []string
+	}{
+		{
+			name:      "a written-in sentence is listed",
+			body:      "A tactical gap: the fixture observes something.\n\nThe earlier approach failed under load.",
+			wantAdded: []string{`- "The earlier approach failed under load."`},
+		},
+		{
+			name: "a revision adding nothing shows no list",
+			body: "A tactical gap: the fixture observes.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			world, session := newCaptureWorld(t, "core-guide-added")
+			world.LLM.GuideFindings = []proctest.GuideFinding{{
+				Reasoning: "the body names no reason the gap matters", Axis: "stranding",
+				Quote: "the fixture observes something", Repair: "write-in", Severity: "substantive",
+			}}
+
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+			session.Report(t, instance, captureDraft())
+			session.Answer(t, instance, "playback", "confirm", nil, "yes")
+			serve = session.Answer(t, instance, "guideReview", "revise", map[string]any{"body": tt.body}, "")
+			proctest.RequireStep(t, serve, "playback")
+
+			const header = "Added by the revision, not your words:"
+			if len(tt.wantAdded) == 0 {
+				if strings.Contains(serve.Instructions, header) {
+					t.Fatalf("a revision adding no sentence should list none, got:\n%s", serve.Instructions)
+				}
+				return
+			}
+			for _, want := range append([]string{header}, tt.wantAdded...) {
+				if !strings.Contains(serve.Instructions, want) {
+					t.Errorf("playback should list the revision's added sentence, missing %q:\n%s", want, serve.Instructions)
+				}
+			}
+			if strings.Contains(serve.Instructions, `- "A tactical gap: the fixture observes something."`) {
+				t.Errorf("a sentence the draft held before the revision is not listed as added:\n%s", serve.Instructions)
+			}
+
+			serve = session.Answer(t, instance, "playback", "confirm", nil, "fine")
+			proctest.RequireStep(t, serve, "verifySummary")
+		})
 	}
 }
 

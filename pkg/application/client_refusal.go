@@ -22,6 +22,17 @@ func (a *Application) RefuseClient(ctx context.Context, identity RequestIdentity
 	return a.sessionClientRefusal(ctx, identity, runtime, stored.Events, clientName)
 }
 
+// RefuseOpen refuses opening a session in project through the MCP client
+// clientName where the project needs another client, before any of its hooks
+// is asked about.
+func (a *Application) RefuseOpen(ctx context.Context, identity RequestIdentity, project ProjectID, clientName string) error {
+	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
+	if err != nil {
+		return err
+	}
+	return runtime.options.Verifier.clientRefusal(clientName)
+}
+
 func (a *Application) sessionClientRefusal(ctx context.Context, identity RequestIdentity, home *ProjectRuntime, events []StoredEvent, clientName string) error {
 	err := home.options.Verifier.clientRefusal(clientName)
 	if err != nil || !model.CodexClient(clientName) {
@@ -50,10 +61,14 @@ func (a *Application) sessionClientRefusal(ctx context.Context, identity Request
 	return nil
 }
 
-// runningInstanceProjects lists, in order, the projects the session's
-// instances recorded as their targets, leaving out instances that ended.
+// runningInstanceProjects lists, in order, the projects the session's running
+// instances target: an instance's own record, else its nearest recorded
+// ancestor's, whether that ancestor still runs or not, as instanceProject
+// resolves it. Instances deriving the home project are left out.
 func runningInstanceProjects(events []StoredEvent) ([]ProjectID, error) {
-	targets := map[string]ProjectID{}
+	recorded := map[string]ProjectID{}
+	parents := map[string]string{}
+	running := map[string]bool{}
 	var order []string
 	for _, stored := range events {
 		switch stored.Code {
@@ -62,24 +77,35 @@ func runningInstanceProjects(events []StoredEvent) ([]ProjectID, error) {
 			if err := json.Unmarshal(stored.Payload, &event); err != nil {
 				return nil, fmt.Errorf("decoding instance project event: %w", err)
 			}
-			if _, seen := targets[event.Instance]; !seen {
-				order = append(order, event.Instance)
-			}
-			targets[event.Instance] = event.Project
+			recorded[event.Instance] = event.Project
 		case WorkflowEventCode:
 			var event engine.Event
 			if err := json.Unmarshal(stored.Payload, &event); err != nil {
 				return nil, fmt.Errorf("decoding workflow event: %w", err)
 			}
-			if event.Event == engine.EventCompleted || event.Event == engine.EventAbandoned {
-				delete(targets, event.Instance)
+			switch event.Event {
+			case engine.EventStarted:
+				parent, _ := event.Data["parent"].(string)
+				parents[event.Instance] = parent
+				running[event.Instance] = true
+				order = append(order, event.Instance)
+			case engine.EventCompleted, engine.EventAbandoned:
+				delete(running, event.Instance)
 			}
 		}
 	}
 	var projects []ProjectID
 	for _, instance := range order {
-		if project, ok := targets[instance]; ok && !slices.Contains(projects, project) {
-			projects = append(projects, project)
+		if !running[instance] {
+			continue
+		}
+		for id := instance; id != ""; id = parents[id] {
+			if project, ok := recorded[id]; ok {
+				if !slices.Contains(projects, project) {
+					projects = append(projects, project)
+				}
+				break
+			}
 		}
 	}
 	return projects, nil
