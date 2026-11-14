@@ -46,7 +46,7 @@ func releaseStaged(staged map[string]string, release stagedBlobRelease) bool {
 // keeping those another instance of the session still claims. It logs the
 // release first, at the version whose state it computed the claims from, and
 // deletes only once that append lands; an append another attach's write beat
-// catches up and computes the claims again (20261114-120345-d-tac-6n4, 1).
+// catches up and computes the claims again.
 func (w *WorkflowSession) releasePublished(instance string, attachments []StagedAttachment) error {
 	released, err := w.logRelease(instance, attachments)
 	if isSessionConflict(err) {

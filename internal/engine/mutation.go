@@ -175,8 +175,7 @@ func (s *Session) endProgression() { s.progressing-- }
 
 // Readmit checks the transition in flight again once folded, the events
 // another writer logged meanwhile, are applied: an operation they opened and
-// left unfinished refuses it as checkProgression would have
-// (20261114-120345-d-tac-6n4).
+// left unfinished refuses it as checkProgression would have.
 func (s *Session) Readmit(folded []Event) error {
 	if s.progressing == 0 || s.PendingMutation() == nil {
 		return nil

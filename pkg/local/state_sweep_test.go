@@ -287,7 +287,7 @@ func (f stateFixture) endInRepoSession(t *testing.T, checkout string, id sdd.Ses
 // Retiring an unused project keeps the staged attachments of a session still
 // open in the .sdd/sessions of any checkout sdd opened the project from, or
 // whose log there it cannot read; an ended session's, or those of a checkout
-// gone from disk, go (20261114-120345-d-tac-6n4, 3).
+// gone from disk, go.
 func TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions(t *testing.T) {
 	long := 3 * sweepUnusedRetention
 	for _, tc := range []struct {
