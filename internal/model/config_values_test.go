@@ -10,8 +10,7 @@ import (
 )
 
 // Every named string type a config schema holds says whether its values form
-// a fixed set, so `sdd config set` can refuse what loading would refuse
-// (20261110-015917-d-tac-yc6).
+// a fixed set, so `sdd config set` can refuse what loading would refuse.
 func TestConfigSchemasDeclareTheValuesOfEveryNamedStringType(t *testing.T) {
 	closed := reflect.TypeFor[model.ClosedValues]()
 	free := reflect.TypeFor[model.FreeText]()

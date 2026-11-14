@@ -487,7 +487,7 @@ func (c CLI) IsClean(ctx context.Context) (bool, error) {
 
 // MergePull fetches and merges the branch's upstream, never rebasing, so sync
 // never rewrites the shared graph's history. A merge commit carries
-// model.GraphMergeMessage, which git pull cannot set (20261110-021124-d-tac-non);
+// model.GraphMergeMessage, which git pull cannot set;
 // a conflict stays in the working tree for the user to resolve.
 func (c CLI) MergePull(ctx context.Context) (string, error) {
 	if c.graphClone() {

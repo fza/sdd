@@ -223,7 +223,7 @@ func readTag(read GroundingRead) string {
 	return string(read.Mode)
 }
 
-// PrefilterProtocol is the protocol that rates relevance (D23).
+// PrefilterProtocol is the protocol that rates relevance.
 type PrefilterProtocol string
 
 const (

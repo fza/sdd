@@ -9,7 +9,7 @@ import (
 
 // ClosedValues is a config setting type whose values form a fixed set. Loading
 // refuses or reads past any other value, so `sdd config set` refuses it before
-// it lands (20261110-015917-d-tac-yc6).
+// it lands.
 type ClosedValues interface {
 	AllowedValues() []string
 }
