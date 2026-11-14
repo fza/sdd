@@ -273,10 +273,10 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
-			Doc: engine.FuncDoc{Name: "deepOwnerOpen", Doc: "A finding only the user can settle is open.", Reads: []string{fieldDeepFindings}},
+			Doc: engine.FuncDoc{Name: "deepUserOpen", Doc: "The proposal leaves a point open for the user: a finding only they can settle, or one the drafter contested and the verifier holds.", Reads: []string{fieldDeepOpen}},
 			Fn: func(ctx *engine.Context) (bool, error) {
-				findings, err := storeDeep[model.DeepFinding](ctx.Store, fieldDeepFindings)
-				return slices.ContainsFunc(findings, func(f model.DeepFinding) bool { return f.Owner }), err
+				open, _ := workflowStoreString(ctx.Store, fieldDeepOpen)
+				return open != "", nil
 			},
 		},
 		{
