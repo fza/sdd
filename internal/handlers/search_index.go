@@ -100,8 +100,7 @@ func (h *SearchIndexHandler) complete(ctx context.Context, entries []*model.Entr
 }
 
 // CheckoutRecorder is a search index store that records which versions the
-// reading checkout currently uses, so cache pruning keeps them
-// (20261101-153339-d-tac-pnl).
+// reading checkout currently uses, so cache pruning keeps them.
 type CheckoutRecorder interface {
 	RecordCheckout(ctx context.Context, namespace types.IndexNamespace, hashes map[string]string) error
 }

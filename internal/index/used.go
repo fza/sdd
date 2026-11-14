@@ -11,7 +11,7 @@ import (
 )
 
 // Last-use stamps tell background pruning which stores and derivation rules a
-// binary still reads (20261101-131514-d-cpt-9ci). Each is an empty file under
+// binary still reads. Each is an empty file under
 // <store>/used/ named <rule>@<manifest format>, its modification time the last
 // use; one file per rule keeps binaries of different rules from racing on one
 // record.

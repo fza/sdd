@@ -148,8 +148,7 @@ func (c *Cache) Save(dir string, stamps map[string]filestamp.Stamp, docs finders
 
 // Prune deletes the snapshots whose graph directory no longer exists, and
 // snapshots this binary cannot read that nothing rewrote for longer than
-// retention, returning how many went and the bytes freed
-// (20261101-131514-d-cpt-9ci).
+// retention, returning how many went and the bytes freed.
 func (c *Cache) Prune(now time.Time, retention time.Duration) (removed int, freed int64, err error) {
 	entries, err := os.ReadDir(c.root)
 	if errors.Is(err, os.ErrNotExist) {
