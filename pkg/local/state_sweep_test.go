@@ -213,6 +213,31 @@ func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
 	}
 }
 
+// A project whose last session ended without using it, as a long-running
+// server or a cache.retention below sessions.retention allows, loses its
+// session folder on the sweep that collects that session.
+func TestStateSweepRetiresAnUnusedProjectOnceItsLastSessionIsCollected(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "github.com/acme/unused"
+	f.used(t, key, f.now.Add(-sweepUnusedRetention-time.Hour))
+	f.session(t, key, "s_ended", f.now.Add(-sweepSessionRetention+time.Hour))
+
+	f.sweep(t)
+	if !f.logExists(t, key, "s_ended") {
+		t.Fatal("an ended session within sessions.retention should stay")
+	}
+	later := f
+	later.now = f.now.Add(2 * time.Hour)
+	removed := later.sweep(t)
+
+	if removed.Sessions != 1 || removed.Projects != 1 {
+		t.Errorf("the later sweep should collect the session and retire the project, got %+v", removed)
+	}
+	if _, err := os.Stat(f.location(key).Sessions); err == nil {
+		t.Error("the session folder of a project unused for cache.retention should go once its last session is collected")
+	}
+}
+
 func TestMarkProjectUsedRefreshesOnceADay(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "local/abcdef012345"
