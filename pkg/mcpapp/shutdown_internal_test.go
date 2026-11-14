@@ -95,7 +95,7 @@ func TestShutdownContextBoundsInFlightSessionDrain(t *testing.T) {
 }
 
 func newLifecycleTestServer() *Server {
-	server := &Server{app: &sdd.Application{}, sessions: newSessionCache()}
+	server := &Server{app: &sdd.Application{}}
 	server.mcp = mcp.NewServer(&mcp.Implementation{Name: "lifecycle-test", Version: "test"}, nil)
 	server.mcp.AddReceivingMiddleware(server.refuseWhileClosing)
 	return server
