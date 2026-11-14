@@ -863,7 +863,7 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 
 // AnswerWords is who speaks in a chooser answer: the user's words relayed, or
 // the agent's one-line reason for a delegable user chooser it decided itself
-// in an autonomous session (20261029-150854-d-tac-b2f).
+// in an autonomous session.
 type AnswerWords struct {
 	User   string
 	Reason string

@@ -12,7 +12,7 @@ import (
 )
 
 // The server opens sessions in the dialogue mode the person's config sets;
-// the committed config cannot set it (20261029-150854-d-tac-b2f).
+// the committed config cannot set it.
 func TestServeOpensSessionsInTheConfiguredDialogueMode(t *testing.T) {
 	cases := []struct {
 		name           string

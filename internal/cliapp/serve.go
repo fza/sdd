@@ -448,7 +448,7 @@ func (a *localRuntimeAccess) ResolveDependency(ctx context.Context, _ sdd.Princi
 }
 
 // localDialogue reads dialogue.mode and the layer that sets it; the
-// committed layer arrives without it (20261029-150854-d-tac-b2f).
+// committed layer arrives without it.
 func localDialogue(sddDir string) (sdd.Dialogue, error) {
 	loc, err := repos.DefaultLocations()
 	if err != nil {

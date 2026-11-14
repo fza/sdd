@@ -606,6 +606,9 @@ func (w *WorkflowSession) Autonomous() bool {
 	return w.session.DialogueMode == model.DialogueAuto
 }
 
+// Finished reports whether this dialogue is over: the shell has left running,
+// which is the act that wrote the terminal record. A finished session is spent —
+// the door opens a new one rather than re-serving it, and no move may carry it on.
 func (w *WorkflowSession) Finished() bool {
 	if w.task != "" {
 		inst, ok := w.session.Instance(w.task)

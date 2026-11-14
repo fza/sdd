@@ -299,8 +299,7 @@ type DialogueConfig struct {
 	Mode DialogueMode `yaml:"mode,omitempty"`
 }
 
-// DialogueMode is the dialogue.mode setting, set per person like sync.mode
-// (20261029-150854-d-tac-b2f).
+// DialogueMode is the dialogue.mode setting, set per person like sync.mode.
 type DialogueMode string
 
 const (

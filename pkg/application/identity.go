@@ -93,7 +93,7 @@ func OwnerOnly(_ context.Context, request SessionAccessRequest) error {
 }
 
 // Dialogue is the dialogue mode a principal's new sessions open in, and the
-// config layer that set it (20261029-150854-d-tac-b2f).
+// config layer that set it.
 type Dialogue struct {
 	// Mode is "guided" or "auto"; anything else opens guided.
 	Mode   string

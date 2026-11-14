@@ -7,9 +7,8 @@ import (
 	"github.com/networkteam/sdd/internal/proctest"
 )
 
-// The autonomous dialogue mode (20261029-150854-d-tac-b2f): the agent takes
-// every choice a base procedure hands over and keeps the pre-flight override
-// for the user.
+// The autonomous dialogue mode: the agent takes every choice a base procedure
+// hands over and keeps the pre-flight override for the user.
 
 func TestAutonomousDialogue_ShellServesTheAgentAndTheAgentConcludes(t *testing.T) {
 	world := proctest.NewWorld(t, proctest.WithAutonomousDialogue())

@@ -223,8 +223,7 @@ type Step struct {
 	// scalars whole (20260826-120330-d-tac-8f8).
 	ServeDelta []string
 	// Delegable hands a user chooser to the agent in an autonomous session;
-	// an unmarked one stays the user's in every mode
-	// (20261029-150854-d-tac-b2f).
+	// an unmarked one stays the user's in every mode.
 	Delegable bool
 	// Deliver names the state fields a task's gate delivers into the
 	// dispatching instance when one of its transitions fires: a transition to
