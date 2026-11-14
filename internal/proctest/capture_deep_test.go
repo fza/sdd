@@ -1050,6 +1050,29 @@ func TestCaptureDeep_TheDispatchSaysPreflightsModelDidNotJudge(t *testing.T) {
 	}
 }
 
+// Deep runs only in Claude Code: a session opened there does not resume
+// through Codex.
+func TestCaptureDeep_ACodexClientCannotResume(t *testing.T) {
+	world, session := newDeepWorld(t, "claude-code", sdd.VerifierPolicy{})
+
+	_, _, err := world.App.ResumeWorkflow(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: session.ID, ClientName: "codex-mcp-client"})
+
+	if err == nil || !strings.Contains(err.Error(), "verify.mode deep needs Claude Code") {
+		t.Fatalf("the resume should be refused naming the setting, got %v", err)
+	}
+}
+
+// Deep runs only in Claude Code, so the dispatch names its subagent tool.
+func TestCaptureDeep_TheDispatchNamesClaudeCodesAgentTool(t *testing.T) {
+	_, session := newDeepWorld(t, "deep-dispatch-agent-tool", sdd.VerifierPolicy{})
+	_, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	text := test.Untagged(serve.Instructions)
+	if !strings.Contains(text, "your `Agent` tool (agent `sdd_delegate`)") || !strings.Contains(text, "only if `Agent` is missing from your tool list") {
+		t.Fatalf("the dispatch should name the Agent tool as the launch and its absence as the noSubagent case:\n%s", text)
+	}
+}
+
 // A step whose unit never renders pre-flight's rubric serves no notice that
 // the rubric was cut for size; the dispatch, which reads it, does.
 func TestCaptureDeep_ACutNoticeServesOnlyWhereTheValueRenders(t *testing.T) {

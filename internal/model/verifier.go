@@ -590,11 +590,10 @@ func VerifierRunnerAsked(mode VerifyMode, recorded VerifyConfig) bool {
 }
 
 // SubagentAgent is the agent block a subagent runner launches the deep
-// verifier with under the MCP client clientName: Claude's where the name holds
-// "claude", matched case-insensitively; none for any other client, whose
-// subagent tool takes the harness's own.
+// verifier with under the MCP client clientName: Claude's for a ClaudeClient,
+// none for any other client, whose subagent tool takes the harness's own.
 func (p VerifierPolicy) SubagentAgent(clientName string) VerifierAgent {
-	if strings.Contains(strings.ToLower(clientName), "claude") {
+	if ClaudeClient(clientName) {
 		return p.Claude
 	}
 	return VerifierAgent{}

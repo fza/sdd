@@ -2931,7 +2931,7 @@ func promptVerifyMode(cmd *cli.Command) (model.VerifyMode, error) {
 			{Label: string(model.VerifyOff), Hint: "a quick check of the entry on its own", Value: model.VerifyOff},
 			{Label: string(model.VerifyGrounding), Hint: "your AI first reads related entries, no check after", Value: model.VerifyGrounding},
 			{Label: string(model.VerifyProse), Hint: "your AI reads related entries, then checks the new one fits", Value: model.VerifyProse},
-			{Label: string(model.VerifyDeep), Hint: "like prose, and a second AI double-checks it", Value: model.VerifyDeep},
+			{Label: string(model.VerifyDeep), Hint: "like prose, and a second AI double-checks it (Claude Code only)", Value: model.VerifyDeep},
 		},
 	})
 }

@@ -275,6 +275,10 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err != nil {
 		return nil, nil, err
 	}
+	err = runtime.options.Verifier.clientRefusal(request.ClientName)
+	if err != nil {
+		return nil, nil, err
+	}
 	id := newWorkflowSessionID(time.Now())
 	now := a.now().UTC().Round(0)
 	metadata := SessionMetadata{
@@ -341,6 +345,10 @@ func (a *Application) LoadWorkflow(ctx context.Context, identity RequestIdentity
 	// replay it and auto-start a fresh shell, the revival d-tac-k4q refuses.
 	if end := stored.Metadata.Ended; end != nil {
 		return nil, endedSessionError(stored.Metadata, *end)
+	}
+	err = runtime.options.Verifier.clientRefusal(request.ClientName)
+	if err != nil {
+		return nil, err
 	}
 	stored, err = a.stampAttachment(ctx, principal, request, stored)
 	if err != nil {
@@ -546,6 +554,16 @@ func (w *WorkflowSession) Reorient(ctx context.Context, identity RequestIdentity
 }
 
 func (w *WorkflowSession) Project() ProjectID { return w.project }
+
+// RefuseClient refuses resuming the session through the MCP client
+// clientName where its home project's verify policy needs another client.
+func (w *WorkflowSession) RefuseClient(ctx context.Context, identity RequestIdentity, clientName string) error {
+	_, runtime, err := w.app.resolve(ctx, identity, w.project, AccessRead)
+	if err != nil {
+		return err
+	}
+	return runtime.options.Verifier.clientRefusal(clientName)
+}
 
 func (w *WorkflowSession) Binding() SessionBinding { return w.binding }
 
