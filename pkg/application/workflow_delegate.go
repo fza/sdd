@@ -465,13 +465,9 @@ func (w *WorkflowSession) subagentSettings(ctx context.Context, parent, procedur
 	if err != nil {
 		return VerifierAgent{}, err
 	}
-	stored, err := w.app.sessions.Load(ctx, w.binding.SessionID)
+	client, err := w.attachedClient(ctx)
 	if err != nil {
 		return VerifierAgent{}, err
-	}
-	client := ""
-	if attachment := stored.Metadata.Attachment; attachment != nil {
-		client = attachment.ClientName
 	}
 	return VerifierAgent(runtime.options.Verifier.resolved().SubagentAgent(client)), nil
 }

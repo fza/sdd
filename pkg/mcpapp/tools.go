@@ -932,16 +932,18 @@ func (s *toolSet) abandonSession(ctx context.Context, req *mcp.CallToolRequest, 
 // caller presents — the reorientation. Presenting the handle declares the
 // caller needs re-serving, so its call serves every piece in full (d-cpt-aen).
 func (s *toolSet) resumeSession(ctx context.Context, req *mcp.CallToolRequest, args ResumeSessionArgs) (*mcp.CallToolResult, ResumeSessionResult, error) {
+	identity := s.requestIdentity(req)
+	if id := sdd.SessionID(strings.TrimSpace(args.Session)); id != "" {
+		err := s.app.RefuseClient(ctx, identity, id, mcpClientName(req.Session))
+		if err != nil {
+			return nil, ResumeSessionResult{}, err
+		}
+	}
 	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
 	if err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
 	defer ss.mu.Unlock()
-	identity := s.requestIdentity(req)
-	err = ss.root.RefuseClient(ctx, identity, mcpClientName(req.Session))
-	if err != nil {
-		return nil, ResumeSessionResult{}, err
-	}
 	if err := ss.root.Reorient(ctx, identity); err != nil {
 		return nil, ResumeSessionResult{}, err
 	}

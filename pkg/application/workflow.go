@@ -346,7 +346,7 @@ func (a *Application) LoadWorkflow(ctx context.Context, identity RequestIdentity
 	if end := stored.Metadata.Ended; end != nil {
 		return nil, endedSessionError(stored.Metadata, *end)
 	}
-	err = runtime.options.Verifier.clientRefusal(request.ClientName)
+	err = a.sessionClientRefusal(ctx, identity, runtime, stored.Events, request.ClientName)
 	if err != nil {
 		return nil, err
 	}
@@ -555,16 +555,6 @@ func (w *WorkflowSession) Reorient(ctx context.Context, identity RequestIdentity
 
 func (w *WorkflowSession) Project() ProjectID { return w.project }
 
-// RefuseClient refuses resuming the session through the MCP client
-// clientName where its home project's verify policy needs another client.
-func (w *WorkflowSession) RefuseClient(ctx context.Context, identity RequestIdentity, clientName string) error {
-	_, runtime, err := w.app.resolve(ctx, identity, w.project, AccessRead)
-	if err != nil {
-		return err
-	}
-	return runtime.options.Verifier.clientRefusal(clientName)
-}
-
 func (w *WorkflowSession) Binding() SessionBinding { return w.binding }
 
 func (w *WorkflowSession) Branch() string { return w.branch }
@@ -653,6 +643,10 @@ func (w *WorkflowSession) Start(ctx context.Context, identity RequestIdentity, r
 	// start when it may not write there, not after the dialogue it costs.
 	if project != "" && publishesEntry(spec) {
 		err = w.authorizeTarget(project, AccessWrite)
+		if err != nil {
+			return nil, err
+		}
+		err = w.refuseClientIn(ctx, project)
 		if err != nil {
 			return nil, err
 		}

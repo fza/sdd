@@ -1,11 +1,14 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // VerifyMode is how carefully a capture is checked against the graph before
@@ -161,6 +164,18 @@ type VerifyConfig struct {
 	Prefilter *bool `yaml:"prefilter,omitempty"`
 	// Kinds sets the mode per entry kind; see ModeFor.
 	Kinds map[Kind]VerifyMode `yaml:"kinds,omitempty"`
+}
+
+// UnmarshalYAML refuses the verify.codex block a former sdd read: unlike a
+// key a newer sdd may write, it names a verifier sdd no longer runs.
+func (c *VerifyConfig) UnmarshalYAML(node *yaml.Node) error {
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "codex" {
+			return errors.New("verify.codex no longer exists, since deep verification needs Claude Code; remove the block")
+		}
+	}
+	type plain VerifyConfig
+	return node.Decode((*plain)(c))
 }
 
 // cappedKinds are checked at most at prose while Kinds names no kind: they
