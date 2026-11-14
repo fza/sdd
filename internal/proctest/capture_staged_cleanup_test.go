@@ -1,9 +1,11 @@
 package proctest_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/proctest"
@@ -114,6 +116,57 @@ func TestCapture_PublicationAndSessionEndFreeStagedAttachments(t *testing.T) {
 				t.Errorf("ending the session should free its staged attachments, %d left", got)
 			}
 		})
+	}
+}
+
+// duringPublication runs once inside the first publication, after its write
+// was recorded and before its staged attachments are released.
+type duringPublication struct{ run func() }
+
+func (*duringPublication) Name() string { return "during-publication" }
+func (d *duringPublication) Finalize(context.Context, sdd.AppliedMutation) error {
+	if run := d.run; run != nil {
+		d.run = nil
+		run()
+	}
+	return nil
+}
+
+// Another attach of the session, replayed before a publication's write,
+// reports a capture naming the same attachment while that write runs: the
+// publication cannot see the claim and releases the file, and the report's
+// pre-flight, run before playback in an autonomous dialogue, still finds it
+// staged. The capture's write then refuses the released attachment as no
+// longer staged rather than writing from the deleted file.
+func TestCapture_ACaptureRacingAReleaseRefusesTheReleasedAttachment(t *testing.T) {
+	race := &duringPublication{}
+	world, session := newCaptureWorld(t, "staged-race", proctest.WithFinalizers(race),
+		proctest.WithAutonomousDialogue(), proctest.WithVerifier(sdd.VerifierPolicy{Mode: "prose"}, 200000, 4096))
+	handle := session.Stage(t, "record.md", []byte("The record."))
+	first := session.Start(t, "capture", nil)
+	draft := captureDraft()
+	draft["attachments"] = []any{handle}
+	session.Report(t, first.Instance, draft)
+	other, _ := world.Resume(t, session.ID, "staged-race-other")
+	second := other.Start(t, "capture", nil)
+	var reported *sdd.WorkflowServe
+	race.run = func() { reported = other.Report(t, second.Instance, draft) }
+	session.Decide(t, first.Instance, "playback", "confirm", nil, "the draft holds")
+	if reported == nil {
+		t.Fatal("the other attach should report its capture during the publication")
+	}
+	proctest.RequireStep(t, reported, "playback")
+	if got := stagedBlobs(t, world, session); got != 0 {
+		t.Fatalf("the publication should release the attachment it used, %d staged", got)
+	}
+
+	other.Refresh(t)
+	failed, err := other.DecideErr(t, second.Instance, "playback", "confirm", nil, "the draft holds")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.PendingOperation == nil || !strings.Contains(failed.PendingOperation.Error, `attachment "record.md" has not been staged`) {
+		t.Errorf("the capture should refuse the released attachment as no longer staged: %+v", failed.PendingOperation)
 	}
 }
 
