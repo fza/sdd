@@ -18,7 +18,7 @@ import (
 )
 
 // holdNextAtEnd reads the hold-next line a result's text ends with: bare
-// tags, comma-separated (20261114-121534-d-tac-qdb).
+// tags, comma-separated.
 var holdNextAtEnd = regexp.MustCompile(`,"hold_next":"([0-9a-z]{4}(?:, [0-9a-z]{4})*)"}\s*$`)
 
 func proofOf(t *testing.T, text, id string) model.Proof {

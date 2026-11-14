@@ -52,10 +52,10 @@ func replayPieces(t *testing.T, log *bytes.Buffer) *engine.Session {
 	return replayed
 }
 
-// The hold-next line (20261114-121534-d-tac-qdb) names, by the tag each was
-// last served under: the lanes and report schema of the step a running move
-// stands at, the knowledge hints, the reading hints, then the rest the step
-// carried and what the call served outside it.
+// The hold-next line names, by the tag each was last served under: the lanes
+// and report schema of the step a running move stands at, the knowledge
+// hints, the reading hints, then the rest the step carried and what the call
+// served outside it.
 func TestHoldNextNamesTheLikeliestPiecesFirst(t *testing.T) {
 	framing := engine.Piece{Name: "framing principles", Hash: "h1"}
 	lane := engine.Piece{Name: "lane draft", Hash: "h2"}

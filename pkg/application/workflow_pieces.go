@@ -162,10 +162,9 @@ func (w *WorkflowSession) ServeEntry(id, body string) string {
 }
 
 // HoldNext names the tags whose pieces the next serve may repeat, likeliest
-// first and capped (20261114-121534-d-tac-qdb). A running capture adds the
-// type-system overview and its selected kind's authoring fact, a running
-// move the entries its grounding reading served in full. A finished session
-// names none.
+// first and capped. A running capture adds the type-system overview and its
+// selected kind's authoring fact, a running move the entries its grounding
+// reading served in full. A finished session names none.
 func (w *WorkflowSession) HoldNext() ([]string, error) {
 	if w.Finished() {
 		return nil, nil
