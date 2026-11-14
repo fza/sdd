@@ -35,8 +35,7 @@ type VerifierAgent struct {
 func (p VerifierPolicy) resolved() model.VerifierPolicy {
 	return model.VerifierPolicy{
 		Mode: model.VerifierMode(p.Mode), Skip: model.VerifierSkip(p.Skip), Runner: model.VerifierRunner(p.Runner),
-		Claude: model.VerifierAgent{Model: p.Claude.Model, Effort: p.Claude.Effort},
-		Codex:  model.VerifierAgent{Model: p.Codex.Model, Effort: p.Codex.Effort},
+		Claude: model.VerifierAgent(p.Claude), Codex: model.VerifierAgent(p.Codex),
 	}.WithDefaults()
 }
 

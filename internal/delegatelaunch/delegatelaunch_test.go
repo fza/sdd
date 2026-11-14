@@ -184,55 +184,6 @@ func TestRun_CodexRoundLeavesInheritedCredentialsOut(t *testing.T) {
 	}
 }
 
-func TestRun_CodexRoundRunsOnTheConfiguredProvider(t *testing.T) {
-	agents := test.FakeAgents(t, "codex")
-	test.AgentAnswers(t, agents, "codex", `{"type":"thread.started","thread_id":"codex-3"}`, "", 0)
-	t.Setenv("OPENAI_API_KEY", "sk-provider")
-	t.Setenv("CODEX_API_KEY", "inherited")
-	launchSettings := settings(t, "codex")
-	launchSettings.Codex = model.VerifierAgent{Model: "gpt-5.5", Provider: model.CodexProvider{
-		ID: "opper", Name: "Opper", BaseURL: "https://api.opper.ai/v1", EnvKey: "OPENAI_API_KEY", WireAPI: "responses",
-	}}
-	round := firstRound()
-	round.Number, round.Resume = 2, "codex-2"
-
-	launch(t, launchSettings, round)
-
-	call := test.LastAgentCall(t, agents, "codex")
-	want := []string{
-		"-m", "gpt-5.5",
-		"-c", `model_provider="opper"`,
-		"-c", `model_providers.opper.name="Opper"`,
-		"-c", `model_providers.opper.base_url="https://api.opper.ai/v1"`,
-		"-c", `model_providers.opper.env_key="OPENAI_API_KEY"`,
-		"-c", `model_providers.opper.wire_api="responses"`,
-		"resume", "codex-2", roundPrompt,
-	}
-	if !slices.Equal(call.Args[len(call.Args)-len(want):], want) {
-		t.Fatalf("the round should select the provider and define it ahead of the resume, got %q", call.Args)
-	}
-	if !slices.Contains(call.Env, "OPENAI_API_KEY=sk-provider") {
-		t.Error("the variable the provider names as its env_key should reach the round")
-	}
-	if slices.ContainsFunc(call.Env, func(entry string) bool { return strings.HasPrefix(entry, "CODEX_API_KEY=") }) {
-		t.Error("the other credentials should still be left out")
-	}
-}
-
-func TestRun_CodexProviderLeavesUnsetKeysToCodex(t *testing.T) {
-	agents := test.FakeAgents(t, "codex")
-	test.AgentAnswers(t, agents, "codex", `{"type":"thread.started","thread_id":"codex-3"}`, "", 0)
-	launchSettings := settings(t, "codex")
-	launchSettings.Codex = model.VerifierAgent{Provider: model.CodexProvider{ID: "local", Name: "Local"}}
-
-	launch(t, launchSettings, firstRound())
-
-	args := strings.Join(test.LastAgentCall(t, agents, "codex").Args, " ")
-	if !strings.Contains(args, `-c model_provider="local" -c model_providers.local.name="Local" `+roundPrompt) {
-		t.Fatalf("only the provider keys the config sets should be passed, got %q", args)
-	}
-}
-
 func TestRun_CodexErrorEventFailsTheRound(t *testing.T) {
 	agents := test.FakeAgents(t, "codex")
 	test.AgentAnswers(t, agents, "codex", `{"type":"thread.started","thread_id":"codex-3"}`+"\n"+`{"type":"error","message":"stream disconnected"}`, "", 0)

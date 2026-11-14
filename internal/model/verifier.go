@@ -1,9 +1,7 @@
 package model
 
 import (
-	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 )
@@ -98,28 +96,11 @@ type VerifierDriver struct {
 
 // VerifierAgent is the model and effort the deep verifier runs with in one
 // agent family, passed to its CLI or subagent tool as written; an empty value
-// leaves the agent's own default. A driver's command picks its own. Provider
-// is the codex runner's alone.
+// leaves the agent's own default. A driver's command picks its own.
 type VerifierAgent struct {
-	Model    string        `yaml:"model,omitempty"`
-	Effort   string        `yaml:"effort,omitempty"`
-	Provider CodexProvider `yaml:"provider,omitempty"`
+	Model  string `yaml:"model,omitempty"`
+	Effort string `yaml:"effort,omitempty"`
 }
-
-// CodexProvider is the model provider a codex verifier round runs on, its
-// keys those of Codex's model_providers.<id> table; unset, codex runs its
-// built-in provider.
-type CodexProvider struct {
-	ID      string `yaml:"id,omitempty"`
-	Name    string `yaml:"name,omitempty"`
-	BaseURL string `yaml:"base_url,omitempty"`
-	EnvKey  string `yaml:"env_key,omitempty"`
-	WireAPI string `yaml:"wire_api,omitempty"`
-}
-
-// codexProviderID is what a provider id may hold: a bare TOML key, since it
-// becomes a segment of a codex -c key path.
-var codexProviderID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // Verifier agent defaults (20261109-222220-d-tac-4ev): the alias sonnet, which
 // every Claude harness accepts, and codex's own default model.
@@ -231,9 +212,6 @@ func mergeVerifierAgent(base, overlay VerifierAgent) VerifierAgent {
 	if overlay.Effort != "" {
 		base.Effort = overlay.Effort
 	}
-	if overlay.Provider != (CodexProvider{}) {
-		base.Provider = overlay.Provider
-	}
 	return base
 }
 
@@ -279,15 +257,6 @@ func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files
 		if layer.source == ConfigSourceProject && layer.cfg.Verify.Driver.Command != "" {
 			return fmt.Errorf("%s: verify.driver is refused in the committed config, since its command would run on every contributor's machine; set it in the user-global or the machine-local config", layerFile(layer.source, files))
 		}
-		if layer.cfg.Verify.Claude.Provider != (CodexProvider{}) {
-			return fmt.Errorf("%s: verify.claude.provider is refused: only the codex runner takes a provider", layerFile(layer.source, files))
-		}
-		if provider := layer.cfg.Verify.Codex.Provider; provider != (CodexProvider{}) {
-			err := checkCodexProvider(provider, layer.source)
-			if err != nil {
-				return fmt.Errorf("%s: %w", layerFile(layer.source, files), err)
-			}
-		}
 	}
 	shared := MergeBaseConfig(global, BaseConfig{})
 	if committed != nil {
@@ -314,23 +283,6 @@ func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files
 	}
 	if policy := resolved.Verify.VerifierPolicy(); policy.Runner == VerifierRunnerDriver && policy.Driver.Command == "" {
 		return fmt.Errorf("verify.runner driver needs verify.driver.command, which neither the user-global nor the machine-local config sets; set it in %s", layerFile(ConfigSourceLocal, files))
-	}
-	return nil
-}
-
-// checkCodexProvider refuses a provider codex could not load, and one in the
-// committed config: its env_key names the variable whose key every
-// contributor's round would send to its base_url.
-func checkCodexProvider(provider CodexProvider, source ConfigValueSource) error {
-	switch {
-	case source == ConfigSourceProject:
-		return errors.New("verify.codex.provider is refused in the committed config, since every contributor's round would send the key its env_key names to its base_url; set it in the user-global or the machine-local config")
-	case provider.ID == "":
-		return errors.New("verify.codex.provider.id is required")
-	case !codexProviderID.MatchString(provider.ID):
-		return fmt.Errorf("verify.codex.provider.id %q may hold only letters, digits, _ and -", provider.ID)
-	case provider.Name == "":
-		return errors.New("verify.codex.provider.name is required")
 	}
 	return nil
 }
