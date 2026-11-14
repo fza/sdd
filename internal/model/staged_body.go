@@ -8,8 +8,7 @@ import (
 )
 
 // StagedHeaderKeys are the header keys of a staged body file that are checked
-// against the capture report field of the same name
-// (20261030-120506-d-tac-l2b).
+// against the capture report field of the same name.
 var StagedHeaderKeys = []string{"entryKind", "layer", "confidence", "intent", "refs", "topics", "closes", "supersedes"}
 
 // SplitStagedBody splits a staged body file into its header and its body. A
