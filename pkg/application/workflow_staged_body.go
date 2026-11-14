@@ -259,6 +259,6 @@ func (w *WorkflowSession) stageFromSource(ctx context.Context, identity RequestI
 	if held, _ := inst.Store.Get(fieldBodyHash); held == stagedSHA256(content) {
 		return nil
 	}
-	_, err = w.stage(ctx, identity, handle, source, content)
+	_, _, err = w.stage(ctx, identity, stageWrite{name: handle, source: source, content: content})
 	return err
 }

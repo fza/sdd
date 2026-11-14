@@ -550,7 +550,7 @@ func (s *Session) StageFile(t *testing.T, filename string, content []byte) sdd.S
 // playback confirm.
 func (s *Session) StageFrom(t *testing.T, filename, path string) string {
 	t.Helper()
-	staged, err := s.WF.StageAttachmentFrom(t.Context(), s.World.Identity, filename, path)
+	staged, err := s.StageItem(t, sdd.StageItem{Name: filename, Path: path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +560,17 @@ func (s *Session) StageFrom(t *testing.T, filename, path string) string {
 // StageErr is Stage for tests asserting the failure.
 func (s *Session) StageErr(t *testing.T, filename string, content []byte) (sdd.StagedFile, error) {
 	t.Helper()
-	return s.WF.StageAttachment(t.Context(), s.World.Identity, filename, content)
+	return s.StageItem(t, sdd.StageItem{Name: filename, Content: content})
+}
+
+// StageItem stages one file of any source.
+func (s *Session) StageItem(t *testing.T, item sdd.StageItem) (sdd.StagedFile, error) {
+	t.Helper()
+	staged, err := s.WF.StageAttachments(t.Context(), s.World.Identity, []sdd.StageItem{item})
+	if err != nil {
+		return sdd.StagedFile{}, err
+	}
+	return staged[0], nil
 }
 
 // StartChild starts a procedure under a spawning parent, so a dispatch seed

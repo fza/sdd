@@ -91,8 +91,8 @@ func TestPublicMCPApplicationRunsStatefulWorkflowOnRootRuntime(t *testing.T) {
 	}
 	session := opened.Session
 	var staged mcpserver.StageAttachmentResult
-	call(t, client, "stage_attachment", map[string]any{"session": session, "name": "root-evidence.md", "content": "root-owned attachment"}, &staged)
-	if staged.Handle == "" {
+	call(t, client, "stage_attachment", map[string]any{"session": session, "files": []map[string]any{{"name": "root-evidence.md", "content": "root-owned attachment"}}}, &staged)
+	if len(staged.Files) != 1 || staged.Files[0].Handle == "" {
 		t.Fatal("root runtime returned no staged blob handle")
 	}
 
@@ -102,7 +102,7 @@ func TestPublicMCPApplicationRunsStatefulWorkflowOnRootRuntime(t *testing.T) {
 		t.Fatalf("root runtime capture = %+v", capture)
 	}
 	report := assembleReport()
-	report["attachments"] = []string{staged.Handle}
+	report["attachments"] = []string{staged.Files[0].Handle}
 	call(t, client, "next", map[string]any{"session": session, "instance": capture.Instance, "report": report}, &capture)
 	if capture.Step != "playback" {
 		t.Fatalf("root runtime report stopped at %q: %+v", capture.Step, capture)
