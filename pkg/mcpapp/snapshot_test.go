@@ -37,22 +37,16 @@ func snapshotResponse(t *testing.T, res *mcp.CallToolResult) {
 	}
 	text := anyTag.ReplaceAllString(aliasSessions(sb.String()), "⟦tag⟧")
 	text = anyNamedTag.ReplaceAllString(text, "tag <tag>$1")
-	text = holdNextField.ReplaceAllStringFunc(text, func(line string) string {
-		return holdNextTag.ReplaceAllString(line, "<tag>")
-	})
 	cupaloy.New(cupaloy.SnapshotFileExtension(".txt")).SnapshotT(t, text)
 }
 
 var sessionHandle = regexp.MustCompile(`s_\d{8}-\d{6}-[0-9a-f]{32}`)
 
-// anyTag, anyNamedTag and the hold-next line's tags name a tag as placed in
-// text, as a pointer names it and as the hold-next line does; all are drawn
-// per serve.
+// anyTag and anyNamedTag name a tag as placed in text and as a pointer names
+// it; both are drawn per serve.
 var (
-	anyTag        = regexp.MustCompile(`⟦[0-9a-z]{4}⟧`)
-	anyNamedTag   = regexp.MustCompile(`\btag [0-9a-z]{4}( for\b|\))`)
-	holdNextField = regexp.MustCompile(`(?m)^\s*hold_next: .*$`)
-	holdNextTag   = regexp.MustCompile(`\b[0-9a-z]{4}\b`)
+	anyTag      = regexp.MustCompile(`⟦[0-9a-z]{4}⟧`)
+	anyNamedTag = regexp.MustCompile(`\btag [0-9a-z]{4}( for\b|\))`)
 )
 
 func aliasSessions(text string) string {

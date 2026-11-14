@@ -25,7 +25,7 @@ type RepoSyncResult struct {
 type SyncReposResult struct {
 	ResultNotices
 	Repos []RepoSyncResult `json:"repos"`
-	ResultHoldNext
+	ResultProofNotice
 }
 
 func (s *toolSet) syncRepos(ctx context.Context, req *mcp.CallToolRequest, args SyncReposArgs) (*mcp.CallToolResult, SyncReposResult, error) {

@@ -5,7 +5,7 @@
       "additionalProperties": false,
       "properties": {
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). Where results end with hold_next, send on every call exactly those tags the last one names; otherwise list the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). List the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -76,7 +76,7 @@
           "type": "string"
         },
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). Where results end with hold_next, send on every call exactly those tags the last one names; otherwise list the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). List the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -161,7 +161,7 @@
           "type": "integer"
         },
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). Where results end with hold_next, send on every call exactly those tags the last one names; otherwise list the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). List the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -216,7 +216,7 @@
       "additionalProperties": false,
       "properties": {
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). Where results end with hold_next, send on every call exactly those tags the last one names; otherwise list the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). List the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -320,10 +320,6 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
-        "model": {
-          "description": "the model you run on, as your harness names it (e.g. claude-opus-5-5). Fill it in: this call's instructions depend on it",
-          "type": "string"
-        },
         "session": {
           "description": "session handle (the session ID) whose current position to re-serve: its framing plus every running move at its current step, with the schema to continue it. Presenting the handle is the whole authorization. It also declares you need re-serving: every piece of the position serves in full, whatever the call holds",
           "type": "string"
@@ -346,7 +342,7 @@
           "type": "boolean"
         },
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). Where results end with hold_next, send on every call exactly those tags the last one names; otherwise list the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). List the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -449,7 +445,7 @@
           ]
         },
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). Where results end with hold_next, send on every call exactly those tags the last one names; otherwise list the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). List the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -585,7 +581,7 @@
           "type": "string"
         },
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). Where results end with hold_next, send on every call exactly those tags the last one names; otherwise list the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). List the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -642,10 +638,6 @@
           "description": "short single-line subject label for the session; set it early, update when the subject sharpens",
           "type": "string"
         },
-        "model": {
-          "description": "the model you run on, as your harness names it (e.g. claude-opus-5-5). Fill it in: this call's instructions depend on it",
-          "type": "string"
-        },
         "project": {
           "description": "project to open the session in, by ID. Optional: a composition serving one project infers it. With several accessible and none passed, the response lists them under projects and starts no session. Pick one and call again",
           "type": "string"
@@ -693,7 +685,7 @@
           "type": "boolean"
         },
         "held": {
-          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). Where results end with hold_next, send on every call exactly those tags the last one names; otherwise list the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
+          "description": "for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). List the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },

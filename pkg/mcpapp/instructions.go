@@ -7,8 +7,6 @@ package mcpapp
 // short and front-loads what matters. Tier one is the session shell's opening
 // serve (the user-dialogue base procedure); tier two is the per-step units.
 
-import "github.com/networkteam/sdd/internal/model"
-
 // Instructions is SDD's server instructions text. A host that registers SDD's
 // tools with [Register] includes it in its own server instructions.
 const Instructions = `This server hosts an SDD (Signal-Dialogue-Decision) graph: an append-only
@@ -85,19 +83,9 @@ Brief the user on where the work stands (procedure, step, goal) before you
 continue. Continue through next with the session's handle. Lose your place
 again later? resume_session with this handle re-serves this list in full.`
 
-// proofGuideFor tells the agent running on agentModel, at the opening and at
-// every reorientation, how it proves what it still holds: by the hold-next
-// line only on a model.HoldNextModel, as Codex main agents mostly skipped
-// those proofs in a live eval; by every tag it still sees on any other or
-// none reported.
-func proofGuideFor(agentModel string) string {
-	if model.HoldNextModel(agentModel) {
-		return holdNextProofGuide
-	}
-	return everyTagProofGuide
-}
-
-const everyTagProofGuide = `Every piece served in full (instruction lane, framing block, report schema,
+// proofGuide tells an agent, at the opening and at every reorientation, how
+// it proves what it still holds.
+const proofGuide = `Every piece served in full (instruction lane, framing block, report schema,
 entry) carries a tag, such as ⟦k3f9⟧, before one of its words. On each later
 call, list in held every tag whose text you still see, with the word right
 after it, as tag:word ("… dialogue ⟦gn9p⟧ first …" → gn9p:first). That piece
@@ -107,14 +95,3 @@ type-system overview, a framing block, an entry) serves in full again on any
 call without its proof. List in reread the tag or name of a piece you
 no longer see: it serves in full again. Never guess a word: a missing or wrong
 proof costs only the full text.`
-
-const holdNextProofGuide = `Every piece served in full (instruction lane, framing block, report schema,
-entry) carries a tag, such as ⟦k3f9⟧, before one of its words. Each result
-ends with hold_next: the tags whose pieces your next call may get again. Send
-held on every call: exactly those tags whose text you still see, each with the
-word right after it in that text, as tag:word
-("… dialogue ⟦gn9p⟧ first …" → gn9p:first). A proved piece serves as a short
-pointer. A tag left out serves its whole text into your context again. Never
-guess a word: a wrong proof costs the same, and proof_notice names it.
-List in reread the tag or name of a piece you no longer see: it serves in full
-again.`

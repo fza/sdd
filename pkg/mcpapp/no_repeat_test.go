@@ -301,38 +301,25 @@ func TestMalformedProofRefusesTheCall(t *testing.T) {
 }
 
 // Both doors explain the proof once: the opening serve and every
-// reorientation carry it, an Opus or Fable agent's by the hold-next line, any
-// other agent's by every tag from every earlier result, whatever its client.
+// reorientation carry it.
 func TestDoorsExplainTheProof(t *testing.T) {
-	for _, tc := range []struct {
-		name, client, model, guide, other string
-	}{
-		{"opus", claudeClient, opusModel, holdNextGuide, everyEarlierResult},
-		{"fable", otherClient, fableModel, holdNextGuide, everyEarlierResult},
-		{"sonnet", claudeClient, sonnetModel, everyTagGuide, "hold_next"},
-		{"no model", claudeClient, "", everyTagGuide, "hold_next"},
-		{"codex", codexClient, "", everyTagGuide, "hold_next"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			env := newTestServer(t, nil, "", "")
-			agent := newAgentMemory()
-			agent.raw, agent.model = true, tc.model
-			cs := connectClient(t, env.srv, agent, tc.client)
-			door := openSession(t, cs)
-			var resumed mcpserver.ResumeSessionResult
-			call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
-			for name, text := range map[string]string{"start_session": door.Instructions, "resume_session": resumed.Instructions} {
-				if !strings.Contains(text, "as tag:word") || !strings.Contains(text, "List in reread") {
-					t.Fatalf("%s should explain how to prove a piece and how to have it again:\n%s", name, text)
-				}
-				if !strings.Contains(text, proofExample) {
-					t.Fatalf("%s should show a worked proof:\n%s", name, text)
-				}
-				if !strings.Contains(text, tc.guide) || strings.Contains(text, tc.other) {
-					t.Fatalf("%s should carry only the proof guide for the agent's model:\n%s", name, text)
-				}
-			}
-		})
+	env := newTestServer(t, nil, "", "")
+	agent := newAgentMemory()
+	agent.raw = true
+	cs := connectAs(t, env.srv, agent)
+	door := openSession(t, cs)
+	var resumed mcpserver.ResumeSessionResult
+	call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
+	for name, text := range map[string]string{"start_session": door.Instructions, "resume_session": resumed.Instructions} {
+		if !strings.Contains(text, "as tag:word") || !strings.Contains(text, "List in reread") {
+			t.Fatalf("%s should explain how to prove a piece and how to have it again:\n%s", name, text)
+		}
+		if !strings.Contains(text, proofExample) {
+			t.Fatalf("%s should show a worked proof:\n%s", name, text)
+		}
+		if !strings.Contains(text, everyEarlierResult) {
+			t.Fatalf("%s should say a call proves pieces from every earlier result:\n%s", name, text)
+		}
 	}
 }
 
@@ -340,20 +327,10 @@ func TestDoorsExplainTheProof(t *testing.T) {
 // word right after the tag, never the one before it.
 const proofExample = `"… dialogue ⟦gn9p⟧ first …" → gn9p:first`
 
-// holdNextGuide and everyTagGuide are how the two proof guides say which
-// proofs a call lists: an Opus or Fable agent the tags the last result's
-// hold_next names, any other every tag it still sees.
-const (
-	holdNextGuide = "held on every call: exactly those tags"
-	everyTagGuide = "list in held every tag"
-)
-
-// exactlyThoseTags and everyEarlierResult are how the held field describes
-// both guides, as a tool schema serves every client.
-const (
-	exactlyThoseTags   = "exactly those tags"
-	everyEarlierResult = "every earlier result, not only the last"
-)
+// everyEarlierResult is how the doors and the held field say that proofs do
+// not carry over: an agent listing only its last result's tags gets every
+// piece served before that in full again.
+const everyEarlierResult = "every earlier result, not only the last"
 
 // Every tool taking proofs shows the worked proof in its held field.
 func TestHeldFieldShowsAWorkedProof(t *testing.T) {
@@ -386,11 +363,8 @@ func TestHeldFieldShowsAWorkedProof(t *testing.T) {
 		if !strings.Contains(held.Description, proofExample) {
 			t.Errorf("%s: the held field should show a worked proof, got %q", tool.Name, held.Description)
 		}
-		if !strings.Contains(held.Description, "hold_next") || !strings.Contains(held.Description, exactlyThoseTags) {
-			t.Errorf("%s: the held field should ask for exactly the hold_next tags where results name them, got %q", tool.Name, held.Description)
-		}
 		if !strings.Contains(held.Description, everyEarlierResult) {
-			t.Errorf("%s: the held field should ask for proofs from every earlier result where no hold_next is named, got %q", tool.Name, held.Description)
+			t.Errorf("%s: the held field should ask for proofs from every earlier result, got %q", tool.Name, held.Description)
 		}
 	}
 	if described == 0 {
