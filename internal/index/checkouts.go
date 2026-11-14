@@ -14,7 +14,7 @@ import (
 )
 
 // Checkout records keep the versions every checkout reading a store still
-// uses safe from pruning (20261101-153339-d-tac-pnl): one file per checkout
+// uses safe from pruning: one file per checkout
 // under <store>/used/checkouts/, holding each entry's current state hash, its
 // modification time the checkout's last read.
 

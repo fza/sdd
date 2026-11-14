@@ -1,7 +1,6 @@
 // Package cacheprune owns the on-disk record of background cache pruning
-// (20261101-131514-d-cpt-9ci) under the state root: when a run was last
-// launched and started, what it removed, and the failure no command has shown
-// yet. Commands read it to decide whether to launch a run and to report a
+// under the state root: when a run was last launched and started, what it
+// removed, and the failure no command has shown yet. Commands read it to decide whether to launch a run and to report a
 // failed one once.
 package cacheprune
 

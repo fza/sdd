@@ -204,7 +204,7 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 		return err
 	}
 	// Recorded before the plan reads the manifest, so a pruning session that
-	// starts after this sees the versions the plan will skip (20261101-153339-d-tac-pnl).
+	// starts after this sees the versions the plan will skip.
 	if err := index.RecordCheckout(h.indexDir, h.graphDir, currentHashes, time.Now()); err != nil {
 		return err
 	}

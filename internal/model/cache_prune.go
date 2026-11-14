@@ -9,7 +9,7 @@ import (
 const (
 	// DefaultCacheRetention is how long unused cache data survives background
 	// pruning: a replaced index version after its replacement, an unused index
-	// store or derivation rule after its last use (20261101-131514-d-cpt-9ci).
+	// store or derivation rule after its last use.
 	DefaultCacheRetention = "90d"
 	// CachePruneInterval is the least time between two background pruning
 	// runs on one machine.

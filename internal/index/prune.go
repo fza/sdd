@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Background pruning of index stores (20261101-131514-d-cpt-9ci). A pass
+// Background pruning of index stores. A pass
 // takes a store's lock only when it is free, holds it for at most pruneBatch
 // versions, and then pauses before the next session: flock gives a waiting
 // reader no precedence, so without the pause a pass retaking the lock at once
