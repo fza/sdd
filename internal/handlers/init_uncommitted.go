@@ -15,7 +15,7 @@ import (
 
 // uncommittedRecord lists, relative to a repository root, the paths an init
 // commit holds until it lands, so a run after a failed commit commits them
-// too (20261030-180738-d-tac-f1k).
+// too.
 type uncommittedRecord struct {
 	repoRoot string
 }
