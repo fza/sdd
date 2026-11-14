@@ -1247,10 +1247,9 @@ func TestStagedAttachmentEditAndRead(t *testing.T) {
 	}
 }
 
-// TestStagedAttachmentHashesRawBytes pins the staging answer's sha256
-// (20261030-121523-d-tac-isy): the raw bytes as read from a path, header,
-// CRLF and byte order mark included, then the patched bytes; the path itself
-// is only read.
+// TestStagedAttachmentHashesRawBytes pins the staging answer's sha256: the raw
+// bytes as read from a path, header, CRLF and byte order mark included, then
+// the patched bytes; the path itself is only read.
 func TestStagedAttachmentHashesRawBytes(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)

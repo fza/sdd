@@ -12,8 +12,7 @@ import (
 
 // A capture whose body comes from a staged file names it in bodyHandle; sdd
 // keeps body and bodyHash in step with that file, so the playback
-// confirmation, bound to the state snapshot, covers the file's bytes
-// (20261030-120506-d-tac-l2b, 20261030-121523-d-tac-isy).
+// confirmation, bound to the state snapshot, covers the file's bytes.
 const (
 	fieldBodyHandle = "bodyHandle"
 	fieldBodyHash   = "bodyHash"
