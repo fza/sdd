@@ -23,7 +23,7 @@ type RoundProcesses struct {
 	// stands for a server that ended there, and no process starts.
 	BeforeStart func() error
 
-	mu      sync.Mutex
+	mu       sync.Mutex
 	options  sdd.ApplicationOptions
 	identity sdd.RequestIdentity
 	pid      int

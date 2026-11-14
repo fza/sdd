@@ -593,13 +593,13 @@ func roundSettled(round int) func(delegateRoundLog) bool {
 }
 
 // RunLaunchedRound runs a round sdd launched, in the process RoundProcesses
-// started for it, whose PID is pid. It waits for the round's start record and
+// started for it, whose PID is pid. It waits for the record of its process and
 // for the round before it to record its outcome, whose session it resumes;
 // runs the round through the launcher until its deadline; and records the
 // outcome with the child: the launcher's session, or the error, which also
-// ends the child. A round before it whose process ended without an outcome, or
-// ran past its timeout, fails this one. A child that ended meanwhile has no
-// round left and keeps nothing.
+// ends the child. A round before it whose process ended without an outcome,
+// ran past its timeout or never started fails this one. A child that ended
+// meanwhile has no round left and keeps nothing.
 func (a *Application) RunLaunchedRound(ctx context.Context, identity RequestIdentity, round LaunchedRound, pid int) error {
 	if a.launcher == nil {
 		return errors.New("sdd: running a launched round needs the composition's DelegateLauncher")
