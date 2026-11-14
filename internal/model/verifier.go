@@ -116,6 +116,10 @@ var DefaultVerifierClaude = VerifierAgent{Model: "sonnet", Effort: "medium"}
 // still waits.
 const DefaultVerifierRoundTimeout = 10 * time.Minute
 
+// DefaultVerifierIdleTimeout is how long a capture waits on a verify
+// delegate that makes no call while verify.idle_timeout is unset.
+const DefaultVerifierIdleTimeout = 10 * time.Minute
+
 // ClaudeEffort is a level the claude CLI's --effort takes.
 type ClaudeEffort string
 
@@ -138,8 +142,8 @@ func (a ClaudeAgent) VerifierAgent() VerifierAgent {
 // VerifyConfig is the `verify` block. Mode and skip are policy: the
 // user-global and the committed config set them, the committed value wins,
 // and the machine-local config may only tighten them. The runner, the
-// per-agent model and effort and the round timeout, a Go duration, describe
-// the machine, so the machine-local value wins; the driver runs a command, so
+// per-agent model and effort and the round and idle timeouts, Go durations,
+// describe the machine, so the machine-local value wins; the driver runs a command, so
 // only the user-global and machine-local layers set it. Pointers tell an
 // unset grounding key from one a layer sets.
 type VerifyConfig struct {
@@ -148,7 +152,8 @@ type VerifyConfig struct {
 	Runner        VerifierRunner       `yaml:"runner,omitempty"`
 	Driver        VerifierDriver       `yaml:"driver,omitempty"`
 	Claude        ClaudeAgent          `yaml:"claude,omitempty"`
-	RoundTimeout  RoundTimeout         `yaml:"round_timeout,omitempty"`
+	RoundTimeout  VerifyDuration       `yaml:"round_timeout,omitempty"`
+	IdleTimeout   VerifyDuration       `yaml:"idle_timeout,omitempty"`
 	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
 	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
 	PrefilterFrom *int                 `yaml:"prefilter_from,omitempty"`
@@ -225,6 +230,7 @@ type VerifierPolicy struct {
 	Driver       VerifierDriver
 	Claude       VerifierAgent
 	RoundTimeout time.Duration
+	IdleTimeout  time.Duration
 }
 
 // VerifierPolicy resolves the block's verifier keys against the defaults.
@@ -232,15 +238,16 @@ func (c VerifyConfig) VerifierPolicy() VerifierPolicy {
 	c = c.KnownValues()
 	_, mode := c.ResolvedMode().Settings()
 	timeout, _ := c.RoundTimeout.Duration()
+	idle, _ := c.IdleTimeout.Duration()
 	return VerifierPolicy{
 		Mode: mode, Skip: c.Skip, Runner: c.Runner, Driver: c.Driver,
-		Claude: c.Claude.VerifierAgent(), RoundTimeout: timeout,
+		Claude: c.Claude.VerifierAgent(), RoundTimeout: timeout, IdleTimeout: idle,
 	}.WithDefaults()
 }
 
 // WithDefaults fills the unset values: off, skip on failure, a subagent
-// runner, the default verifier model and effort, and the default round
-// timeout.
+// runner, the default verifier model and effort, and the default round and
+// idle timeouts.
 func (p VerifierPolicy) WithDefaults() VerifierPolicy {
 	if p.Mode == "" {
 		p.Mode = VerifierOff
@@ -254,6 +261,9 @@ func (p VerifierPolicy) WithDefaults() VerifierPolicy {
 	p.Claude = mergeVerifierAgent(DefaultVerifierClaude, p.Claude)
 	if p.RoundTimeout <= 0 {
 		p.RoundTimeout = DefaultVerifierRoundTimeout
+	}
+	if p.IdleTimeout <= 0 {
+		p.IdleTimeout = DefaultVerifierIdleTimeout
 	}
 	return p
 }
@@ -277,6 +287,9 @@ func (c VerifyConfig) KnownValues() VerifyConfig {
 	if !c.RoundTimeout.Known() {
 		c.RoundTimeout = ""
 	}
+	if !c.IdleTimeout.Known() {
+		c.IdleTimeout = ""
+	}
 	if len(c.Kinds) > 0 {
 		known := make(map[Kind]VerifyMode, len(c.Kinds))
 		for kind, mode := range c.Kinds {
@@ -296,19 +309,20 @@ func isClosedValue[S interface {
 	return slices.Contains(value.AllowedValues(), string(value))
 }
 
-// RoundTimeout is the verify.round_timeout value: a duration such as 10m.
-type RoundTimeout string
+// VerifyDuration is a verify.round_timeout or verify.idle_timeout value: a
+// duration such as 10m.
+type VerifyDuration string
 
-func (RoundTimeout) FreeText() {}
+func (VerifyDuration) FreeText() {}
 
 // Known reports whether the value is unset or a positive duration.
-func (r RoundTimeout) Known() bool {
+func (r VerifyDuration) Known() bool {
 	_, ok := r.Duration()
 	return r == "" || ok
 }
 
 // Duration is the value as a positive duration; false when it is none.
-func (r RoundTimeout) Duration() (time.Duration, bool) {
+func (r VerifyDuration) Duration() (time.Duration, bool) {
 	d, err := time.ParseDuration(string(r))
 	return d, err == nil && d > 0
 }
@@ -330,6 +344,9 @@ func ignoredVerifyValues(c VerifyConfig) []IgnoredSetting {
 	}
 	if !c.RoundTimeout.Known() {
 		ignored = append(ignored, IgnoredSetting{Key: "verify.round_timeout", Reason: fmt.Sprintf("%q is no positive duration such as 10m", c.RoundTimeout)})
+	}
+	if !c.IdleTimeout.Known() {
+		ignored = append(ignored, IgnoredSetting{Key: "verify.idle_timeout", Reason: fmt.Sprintf("%q is no positive duration such as 10m", c.IdleTimeout)})
 	}
 	for _, kind := range slices.Sorted(maps.Keys(c.Kinds)) {
 		mode, key := c.Kinds[kind], "verify.kinds."+string(kind)
@@ -366,6 +383,9 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 	}
 	if overlay.RoundTimeout != "" {
 		out.RoundTimeout = overlay.RoundTimeout
+	}
+	if overlay.IdleTimeout != "" {
+		out.IdleTimeout = overlay.IdleTimeout
 	}
 	if len(overlay.Kinds) > 0 {
 		// KnownValues gave out a map of its own, so base stays unchanged.

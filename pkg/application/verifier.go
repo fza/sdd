@@ -29,6 +29,10 @@ type VerifierPolicy struct {
 	// round is stopped and fails. Zero takes
 	// model.DefaultVerifierRoundTimeout.
 	RoundTimeout time.Duration
+	// IdleTimeout bounds how long a capture waits on a verify delegate that
+	// makes no call: past it the delegate ends. Zero takes
+	// model.DefaultVerifierIdleTimeout.
+	IdleTimeout time.Duration
 	// Kinds is the verify mode (off, grounding, prose or deep) each entry
 	// kind is checked at (model.VerifyConfig.ModeFor); a kind it lacks takes
 	// Mode and the grounding GroundingPolicy enforces.
@@ -80,7 +84,7 @@ type VerifierAgent struct {
 func (p VerifierPolicy) resolved() model.VerifierPolicy {
 	return model.VerifierPolicy{
 		Mode: model.VerifierMode(p.Mode), Skip: model.VerifierSkip(p.Skip), Runner: model.VerifierRunner(p.Runner),
-		Claude: model.VerifierAgent(p.Claude), RoundTimeout: p.RoundTimeout,
+		Claude: model.VerifierAgent(p.Claude), RoundTimeout: p.RoundTimeout, IdleTimeout: p.IdleTimeout,
 	}.WithDefaults()
 }
 

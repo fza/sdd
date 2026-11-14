@@ -361,6 +361,24 @@ func TestSubagentAgent_MatchesTheClientNameCaseInsensitively(t *testing.T) {
 	}
 }
 
+func TestVerifyIdleTimeout(t *testing.T) {
+	if got := (model.VerifyConfig{}).VerifierPolicy().IdleTimeout; got != model.DefaultVerifierIdleTimeout {
+		t.Fatalf("an unset idle_timeout should take the default, got %s", got)
+	}
+	committed := verifyLayer(model.VerifyDeep, "")
+	committed.Verify.IdleTimeout = "20m"
+	local := &model.PerRepoConfig{}
+	local.Verify.IdleTimeout = "5m"
+	if got := model.MergeConfig(committed, local).Verify.VerifierPolicy().IdleTimeout; got != 5*time.Minute {
+		t.Fatalf("the machine-local idle_timeout should win, got %s", got)
+	}
+	local.Verify.IdleTimeout = "soon"
+	err := model.VerifyKeyRefusal("verify.idle_timeout", model.BaseConfig{}, committed, local, verifierFiles)
+	if err == nil || !strings.Contains(err.Error(), `.sdd/config.local.yaml: verify.idle_timeout "soon" is no positive duration`) {
+		t.Fatalf("a write should refuse an idle_timeout that is no duration naming file and key, got %v", err)
+	}
+}
+
 func TestVerifyRoundTimeout(t *testing.T) {
 	if got := (model.VerifyConfig{}).VerifierPolicy().RoundTimeout; got != model.DefaultVerifierRoundTimeout {
 		t.Fatalf("an unset round_timeout should take the default, got %s", got)

@@ -819,6 +819,9 @@ func (s *Session) report(instanceID string, fields map[string]any) (*Instance, e
 	if err := s.sendFills(inst, written); err != nil {
 		return nil, err
 	}
+	if err := s.endGoneForks(inst, written); err != nil {
+		return nil, err
+	}
 	s.clearCancellation(inst.ID)
 	if inst.currentStep().Op == "" {
 		inst.interactionStep = inst.Step

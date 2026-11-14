@@ -54,8 +54,8 @@ func TestCaptureDeep_AChangeAfterTheVerdictGoesToTheLiveVerifier(t *testing.T) {
 	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
 	serve := x.settleWithAChange(t, "A tactical gap: the fixture observes a subject twice.")
 	proctest.RequireStep(t, serve, "deepWait")
-	if serve.ReportSchema != nil {
-		t.Errorf("deepWait only awaits the verifier, so it should serve no report schema, got %v", serve.ReportSchema)
+	if properties, _ := serve.ReportSchema["properties"].(map[string]any); len(properties) != 1 || properties["deepGone"] == nil {
+		t.Errorf("deepWait awaits the verifier, so its report schema should take only the report that the delegate ended, got %v", serve.ReportSchema["properties"])
 	}
 	if len(serve.Dispatches) != 1 || serve.Dispatches[0].Session != x.dispatch.Session || !strings.Contains(serve.Dispatches[0].Instructions, "Continue the same delegate") {
 		t.Fatalf("the revision should go to the same delegate, continued, got %+v", serve.Dispatches)

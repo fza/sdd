@@ -694,6 +694,10 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	if err := w.failedRounds(ctx, identity, request.Instance); err != nil {
 		return nil, err
 	}
+	if err := w.idleDelegates(ctx, identity, request.Instance); err != nil {
+		return nil, err
+	}
+	live := w.liveChildren(request.Instance)
 	var (
 		serve *engine.Serve
 		err   error
@@ -743,6 +747,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	// typed error rather than returning it; surface it here so the first write
 	// fails typed instead of a phantom success.
 	if err := w.session.SinkErr(); err != nil {
+		return nil, err
+	}
+	if err := w.endGoneDelegates(ctx, identity, request.Instance, live); err != nil {
 		return nil, err
 	}
 	exchanged := len(w.session.Exchange(request.Instance))

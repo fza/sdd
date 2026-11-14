@@ -242,6 +242,10 @@ type Step struct {
 	// instance holds no live delegate fork, so nothing is left to deliver what
 	// it awaits; without it the gate keeps waiting.
 	DelegateEnded string
+	// DelegateGone names the field the dispatching agent reports at such a
+	// gate once its delegate ended without delivering: the report ends the
+	// instance's live forks with it as their reason, so DelegateEnded applies.
+	DelegateGone string
 	// Findings names the engine-written field, in pre-flight's finding
 	// format, that is this gate's findings channel: findings the hooks on
 	// the step being done report join it.
@@ -354,6 +358,7 @@ type stepYAML struct {
 	Await         []string         `yaml:"await"`
 	AwaitAny      []string         `yaml:"awaitAny"`
 	DelegateEnded string           `yaml:"delegateEnded"`
+	DelegateGone  string           `yaml:"delegateGone"`
 	Findings      string           `yaml:"findings"`
 	Stage         string           `yaml:"stage"`
 	Framing       *[]string        `yaml:"framing"`
@@ -571,6 +576,14 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 				addProblem("%s: delegateEnded target %q is not a step or end(...)", prefix, ended)
 			}
 		}
+		if gone := step.DelegateGone; gone != "" {
+			if step.DelegateEnded == "" {
+				addProblem("%s: delegateGone applies only to a gate with a delegateEnded route", prefix)
+			}
+			if !slices.ContainsFunc(step.Collect, func(c CollectField) bool { return c.Name == gone }) {
+				addProblem("%s: delegateGone names %q, which the step does not collect", prefix, gone)
+			}
+		}
 		for _, f := range step.ServeDelta {
 			decl, ok := spec.State[f]
 			switch {
@@ -748,6 +761,7 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		Await:         sy.Await,
 		Findings:      sy.Findings,
 		DelegateEnded: sy.DelegateEnded,
+		DelegateGone:  sy.DelegateGone,
 		Stage:         sy.Stage,
 	}
 

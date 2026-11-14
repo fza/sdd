@@ -27,10 +27,11 @@ func TestVerifierPolicyWithoutConfigResolvesTheDefaults(t *testing.T) {
 	}
 }
 
-func TestVerifierPolicyCarriesTheRoundTimeout(t *testing.T) {
-	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{RoundTimeout: "90s"}}}
+func TestVerifierPolicyCarriesTheTimeouts(t *testing.T) {
+	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{RoundTimeout: "90s", IdleTimeout: "3m"}}}
 
-	if got := verifierPolicy(cfg).RoundTimeout; got != 90*time.Second {
-		t.Fatalf("the application policy should carry verify.round_timeout, got %s", got)
+	policy := verifierPolicy(cfg)
+	if policy.RoundTimeout != 90*time.Second || policy.IdleTimeout != 3*time.Minute {
+		t.Fatalf("the application policy should carry verify.round_timeout and verify.idle_timeout, got %s and %s", policy.RoundTimeout, policy.IdleTimeout)
 	}
 }

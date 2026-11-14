@@ -601,6 +601,26 @@ steps:
       delegateEnded: end(abandoned)
       transitions:
           - otherwise: end(completed)`, want: "delegateEnded applies only to an await gate"},
+		{name: "delegateGone without delegateEnded", class: "move", machine: `state:
+    plan: {type: text, desc: x}
+    gone: {type: text, optional: true, desc: x}
+steps:
+    - id: only
+      collect: ["gone?"]
+      await: [plan]
+      delegateGone: gone
+      transitions:
+          - otherwise: end(completed)`, want: "delegateGone applies only to a gate with a delegateEnded route"},
+		{name: "delegateGone not collected", class: "move", machine: `state:
+    plan: {type: text, desc: x}
+    gone: {type: text, optional: true, desc: x}
+steps:
+    - id: only
+      await: [plan]
+      delegateEnded: end(abandoned)
+      delegateGone: gone
+      transitions:
+          - otherwise: end(completed)`, want: `delegateGone names "gone", which the step does not collect`},
 		{name: "delegateEnded to no step", class: "move", machine: `state:
     plan: {type: text, desc: x}
 steps:
@@ -656,6 +676,32 @@ func TestAwaitGateLeavesForItsEndedRouteOnceNoDelegateIsLive(t *testing.T) {
 
 	if err != nil || sv.Step != "stopped" {
 		t.Fatalf("the gate should leave for its ended route once no delegate is live, got %v at %+v", err, sv)
+	}
+}
+
+// goneDispatcherMachine is the ended-route dispatcher whose waiting gate takes
+// the report that its delegate ended without delivering.
+var goneDispatcherMachine = strings.Replace(strings.Replace(endedDispatcherMachine,
+	"    brief: {type: text, desc: the answers to the findings}\n", "    brief: {type: text, desc: the answers to the findings}\n    gone: {type: text, optional: true, desc: what the delegate returned}\n", 1),
+	"      delegateEnded: stopped\n", "      collect: [\"gone?\"]\n      delegateEnded: stopped\n      delegateGone: gone\n", 1)
+
+func TestAwaitGateTakesTheReportThatItsDelegateEnded(t *testing.T) {
+	f := newExchangeOf(t, goneDispatcherMachine, reviewTaskMachine)
+	sv, err := f.parent.Poll(f.parentInst)
+	if err != nil || !strings.Contains(sv.Instructions, "Delegate ended without delivering? Report gone") {
+		t.Fatalf("the wait should name the report for a delegate that ended, got %v %q", err, sv.Instructions)
+	}
+	if properties, _ := sv.ReportSchema["properties"].(map[string]any); len(properties) != 1 || properties["gone"] == nil {
+		t.Fatalf("the waiting gate should take only the report that its delegate ended, got %v", sv.ReportSchema)
+	}
+
+	sv, err = f.parent.Report(f.parentInst, map[string]any{"gone": "it stopped"})
+
+	if err != nil || sv.Step != "stopped" {
+		t.Fatalf("the report should take the gate's ended route, got %v at %+v", err, sv)
+	}
+	if forks := f.parent.Forks(f.parentInst); len(forks) != 1 || forks[0].Status != engine.ForkConcluded || !strings.Contains(forks[0].Reason, "it returned: it stopped") {
+		t.Fatalf("the report should end the fork with what the delegate returned, got %+v", forks)
 	}
 }
 

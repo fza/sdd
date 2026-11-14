@@ -60,6 +60,18 @@ func (s *Spec) ReportSchemaForStep(step *Step, store *Store) map[string]any {
 	return schema
 }
 
+// collectSchema is ReportSchemaForStep cut to the fields the step collects.
+func (s *Spec) collectSchema(step *Step, store *Store) map[string]any {
+	schema := s.ReportSchemaForStep(step, store)
+	properties, _ := schema["properties"].(map[string]any)
+	for name := range properties {
+		if !slices.ContainsFunc(step.Collect, func(c CollectField) bool { return c.Name == name }) {
+			delete(properties, name)
+		}
+	}
+	return schema
+}
+
 // failingSchema is a report schema cut to the named fields, required where
 // the whole requires them. It leaves other properties open: every field the
 // whole names stays reportable.
