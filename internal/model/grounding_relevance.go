@@ -89,7 +89,7 @@ func SplitByLedger(candidates []GatherCandidate, subject string, ledger *Relevan
 }
 
 // VerifierRelevance returns the reader records the deep verifier adds to a
-// published capture (20261109-004506-d-cpt-udz, D11, D36): the entry each
+// published capture: the entry each
 // finding rests on is referenced from the entry written, as an audit sample
 // when the reading showed it as one or when the verifier opened it from the
 // entries its reading hid, a miss for the drift rule. A hidden entry opened

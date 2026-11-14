@@ -102,7 +102,7 @@ type scoredPairs struct {
 }
 
 // scoreCandidates rates pending against subject in filled calls, at most
-// prefilterInFlight at once and within prefilterDeadline (5.8, D30). A
+// prefilterInFlight at once and within prefilterDeadline. A
 // failed call leaves its candidates unscored; the result names it.
 func scoreCandidates(ctx context.Context, prefilter Prefilter, subject string, pending []relevance.Candidate) scoredPairs {
 	scored := scoredPairs{fresh: map[string]uint8{}}

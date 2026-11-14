@@ -8,7 +8,7 @@ type LeftoverRelevanceQuery struct {
 
 // LeftoverRelevanceResult names the folder under .sdd/ and the segment
 // files in it, which sdd ignores since the ledger lives only in machine
-// state (20261114-105752-d-tac-tnk). No segments means nothing to report.
+// state. No segments means nothing to report.
 type LeftoverRelevanceResult struct {
 	Dir      string
 	Segments []string

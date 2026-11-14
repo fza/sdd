@@ -2,9 +2,8 @@ package model
 
 import "slices"
 
-// VerifierDraft is what the deep verifier's lane split reads of a draft
-// (20261109-004506-d-cpt-udz, D29, D33, D36): its kind, its topics and the
-// entries it declares as refs, supersedes and closes.
+// VerifierDraft is what the deep verifier's lane split reads of a draft: its
+// kind, its topics and the entries it declares as refs, supersedes and closes.
 type VerifierDraft struct {
 	Kind    Kind
 	Topics  []TopicPath
@@ -70,7 +69,7 @@ type VerifierLanes struct {
 // While the thresholds are invalid every entry is inspected, as before any
 // calibration. Once valid, an entry is hidden only when it is not
 // structural, holds a score, and scores below threshold; AuditSample of the
-// hidden ones return to the inspect lane blind (D36).
+// hidden ones return to the inspect lane blind.
 func SplitVerifierLanes(listed []string, structural map[string]bool, scores map[string]uint8, thresholds RelevanceThresholds, threshold float64, seed string) VerifierLanes {
 	if !thresholds.Valid {
 		return VerifierLanes{Inspect: slices.Clone(listed)}

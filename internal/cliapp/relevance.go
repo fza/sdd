@@ -14,8 +14,7 @@ import (
 
 // relevanceLedgerDir is the folder of a project's relevance verdict ledger
 // (20261109-004506-d-cpt-udz, 5.7): machine state under stateRoot, keyed
-// like the search index, and nowhere in the repository
-// (20261114-105752-d-tac-tnk).
+// like the search index, and nowhere in the repository.
 func relevanceLedgerDir(stateRoot, repoKey string) string {
 	return filepath.Join(stateRoot, model.RelevanceDirName, filepath.FromSlash(repoKey))
 }

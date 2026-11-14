@@ -13,7 +13,7 @@ import (
 )
 
 // The entry a verifier's finding rests on is referenced from the entry the
-// capture writes, as a live label (20261109-004506-d-cpt-udz, D11).
+// capture writes, as a live label.
 func TestCaptureDeep_AFindingsBasisIsALiveReference(t *testing.T) {
 	store := laneLedger(t, false)
 	world, session := newDeepWorld(t, "deep-basis", sdd.VerifierPolicy{}, proctest.WithRelevance(store))
@@ -44,7 +44,7 @@ func TestCaptureDeep_AFindingsBasisIsALiveReference(t *testing.T) {
 
 // A hidden entry the verifier opens is an audit miss when a finding rests on
 // it; opened alone it counts toward the status's opened-hidden line and
-// leaves the drift window alone (20261109-004506-d-cpt-udz, D36).
+// leaves the drift window alone.
 func TestCaptureDeep_AnOpenedHiddenEntryIsAMissOnlyUnderAFinding(t *testing.T) {
 	scorer := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
 	store := laneLedger(t, true)
