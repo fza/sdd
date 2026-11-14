@@ -213,6 +213,41 @@ func TestCaptureDeep_AHeadlessVerifierResumesForARevision(t *testing.T) {
 	proctest.RequireStep(t, x.pickUpFindings(t), "verifySummary")
 }
 
+// A verifier sdd launched itself because the harness has no subagent tool
+// takes a revision through sdd's launch again, never through the drafter.
+func TestCaptureDeep_AFallbackVerifierResumesHeadlessForARevision(t *testing.T) {
+	launcher := headlessLauncher(t)
+	world, session := newDeepWorld(t, "deep-revision-fallback", sdd.VerifierPolicy{}, proctest.WithDelegateLauncher(launcher))
+	instance, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	forked := session.Answer(t, instance, "deepDispatch", "noSubagent", nil, "")
+	first := launcher.NextRound(t)
+	delegate := world.Delegate(t, &sdd.WorkflowDispatch{Session: first.Launch.Session})
+	readAllPages(t, delegate, first.Launch.Instance)
+	delegate.Answer(t, first.Launch.Instance, "read", "judge", map[string]any{"findings": subjectFinding("observes something.")}, "")
+	first.Finish("cli-session", nil)
+	waitForRounds(t, world, first.Launch.Session, 1)
+	x := &deepExchange{world: world, session: session, instance: instance, dispatch: forked.Dispatches[0], delegate: delegate, child: first.Launch.Instance}
+	session.Refresh(t)
+	proctest.RequireStep(t, session.Answer(t, instance, "deepLaunch", "started", nil, ""), "deepAnswer")
+	serve = x.settleWithAChange(t, "A tactical gap: the fixture observes a subject twice.")
+	proctest.RequireStep(t, serve, "deepWait")
+	for _, dispatch := range serve.Dispatches {
+		if strings.Contains(dispatch.Instructions, "Continue the same delegate") || dispatch.Prompt != "" {
+			t.Fatalf("the revision should not hand the verifier to the drafter, got %+v", dispatch)
+		}
+	}
+	round := launcher.NextRound(t)
+	if round.Launch.Session != first.Launch.Session || round.Launch.Runner != sdd.DelegateLaunchFallback || round.Round.Resume != "cli-session" {
+		t.Fatalf("the revision should resume the fallback verifier through sdd's launch, got round %+v of %s by %q", round.Round, round.Launch.Session, round.Launch.Runner)
+	}
+	x.pickUpRevision(t)
+	x.delegate.Answer(t, x.child, "read", "judge", map[string]any{"findings": []any{}}, "")
+	round.Finish("cli-session", nil)
+	waitForRounds(t, world, first.Launch.Session, 2)
+	proctest.RequireStep(t, x.pickUpFindings(t), "verifySummary")
+}
+
 // A headless verifier whose round reported no session to resume cannot take
 // a revision: a fresh one starts, and its dispatch says why.
 func TestCaptureDeep_AFreshVerifierWhereItsRunnerCannotResume(t *testing.T) {

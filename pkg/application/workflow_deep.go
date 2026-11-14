@@ -395,6 +395,11 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 		fieldDeepForkBase: verifyForks(w.session, ctx.Instance), fieldDeepEndReason: nil,
 		fieldDeepRevising: revising, fieldDeepRevisions: 0, fieldDeepRevisionPages: nil, fieldDeepRevisionPageFull: nil, fieldDeepFresh: nil,
 	}
+	if revising {
+		// The live verifier keeps the launch it started with: one sdd launched
+		// for a harness without a subagent tool is never handed to the drafter.
+		delete(writes, fieldDeepNoSubagent)
+	}
 	if fresh != "" {
 		writes[fieldDeepFresh] = fresh
 	}
