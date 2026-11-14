@@ -8,9 +8,9 @@ import (
 )
 
 // ViewSections is the result in its public data form, the one input of the
-// view renderer and the application's structured view result
-// (20261101-194502-d-tac-r3f). repo tags each section with the connected repo
-// whose graph produced it, empty for the local graph.
+// view renderer and the application's structured view result.
+// repo tags each section with the connected repo whose graph produced it,
+// empty for the local graph.
 func (r *ViewResult) ViewSections(repo model.RepoID) []types.ViewSection {
 	sections := make([]types.ViewSection, 0, len(r.Sections))
 	for _, section := range r.Sections {

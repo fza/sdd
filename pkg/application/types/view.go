@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// ViewSection is one section of a view as data (20261101-194502-d-tac-r3f):
+// ViewSection is one section of a view as data:
 // the render that terminates it, its header, and exactly one shape filled,
 // the one Render names.
 type ViewSection struct {
