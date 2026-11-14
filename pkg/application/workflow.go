@@ -1191,7 +1191,7 @@ func (w *WorkflowSession) FramingFullIDs(block string) []string {
 
 // TakeStepFullIDs returns the entries the step serves (injected views, the
 // verify reading page) served in full and whole since the last call, and
-// forgets them: the MCP surface holds them once the serve is composed (R14).
+// forgets them: the MCP surface holds them once the serve is composed.
 func (w *WorkflowSession) TakeStepFullIDs() []string {
 	ids := w.stepFull
 	w.stepFull = nil
@@ -1207,7 +1207,7 @@ func HeldEntryHash(id string) string {
 }
 
 // CutRepeats applies the no-repeat rule to the step serves the session
-// renders, as the MCP surface serves them (R14): an injected entry chain or
+// renders, as the MCP surface serves them: an injected entry chain or
 // view prints an entry the consumer already holds in full as its pointer, and
 // holds every entry it serves in full from then on. Framing lanes never cut
 // (composeFraming in the MCP surface). Off by default: the CLI never cuts.
