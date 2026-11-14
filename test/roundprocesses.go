@@ -19,8 +19,11 @@ type RoundProcesses struct {
 	// Idle starts processes that run no round, as one that hangs before it
 	// records anything.
 	Idle bool
+	// BeforeStart, when set, runs as a process is about to start; an error
+	// stands for a server that ended there, and no process starts.
+	BeforeStart func() error
 
-	mu       sync.Mutex
+	mu      sync.Mutex
 	options  sdd.ApplicationOptions
 	identity sdd.RequestIdentity
 	pid      int
@@ -61,6 +64,11 @@ func (p *RoundProcesses) Runs(options sdd.ApplicationOptions, identity sdd.Reque
 }
 
 func (p *RoundProcesses) Start(ctx context.Context, round sdd.LaunchedRound) (sdd.RoundProcess, error) {
+	if p.BeforeStart != nil {
+		if err := p.BeforeStart(); err != nil {
+			return sdd.RoundProcess{}, err
+		}
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.options.Sessions == nil {

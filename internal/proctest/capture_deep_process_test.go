@@ -1,6 +1,7 @@
 package proctest_test
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -100,6 +101,40 @@ func TestCaptureDeep_ARoundWithoutAnOutcomePastItsTimeoutFailsTheWait(t *testing
 	}
 	if !world.Rounds.Stopped(child, 1) {
 		t.Fatal("the round's process should be stopped once it ran past its timeout")
+	}
+}
+
+// A round whose server ended after recording the launch, before the round's
+// process ran, fails the wait once the margin past its launch passed, naming
+// that its process never started.
+func TestCaptureDeep_ARoundWhoseProcessNeverStartedFailsTheWait(t *testing.T) {
+	clock := &stepClock{now: time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)}
+	launcher := headlessLauncher(t)
+	world, session := newDeepWorld(t, "deep-never-started", sdd.VerifierPolicy{Runner: "codex"},
+		proctest.WithDelegateLauncher(launcher), proctest.WithClock(clock))
+	instance, serve := confirmedDeepCapture(t, session, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	world.Rounds.BeforeStart = func() error {
+		world.Restart(t)
+		return errors.New("the server ended")
+	}
+	if _, err := session.AnswerErr(t, instance, "deepDispatch", "delegate", nil, ""); err == nil {
+		t.Fatal("the call whose server ended should not answer")
+	}
+	world.Rounds.BeforeStart = nil
+
+	session.Refresh(t)
+	proctest.RequireStep(t, session.Answer(t, instance, "deepLaunch", "started", nil, ""), "deepWait")
+	clock.advance(model.RoundOutcomeMargin)
+	session.Refresh(t)
+	proctest.RequireStep(t, session.Report(t, instance, nil), "deepWait")
+	clock.advance(time.Second)
+	session.Refresh(t)
+	serve = session.Report(t, instance, nil)
+
+	proctest.RequireStep(t, serve, "deepFailed")
+	if !strings.Contains(serve.Instructions, "round 1 (claude) failed: the round's process never started") {
+		t.Fatalf("deepFailed should name the round's process that never started:\n%s", serve.Instructions)
 	}
 }
 

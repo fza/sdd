@@ -157,22 +157,31 @@ type delegateLaunchRecord struct {
 	Ended   time.Time `json:"ended,omitzero"`
 }
 
-// workflowDelegateRoundCode marks a launched round's start record.
-const workflowDelegateRoundCode = "workflow_delegate_round"
+const (
+	// workflowDelegateRoundCode marks a launched round's launch record, kept
+	// before sdd starts the round's process.
+	workflowDelegateRoundCode = "workflow_delegate_round"
+	// workflowDelegateRoundProcessCode marks the record of the process a
+	// launched round runs in, kept once it runs.
+	workflowDelegateRoundProcessCode = "workflow_delegate_round_process"
+)
 
-// delegateRoundStart is a launched round's start record, kept with the child
-// session before the round's process runs it.
+// delegateRoundStart is a launched round's launch record, with the process
+// recorded for it once it runs (zero until then).
 type delegateRoundStart struct {
-	Round     int           `json:"round"`
-	Runner    string        `json:"runner"`
-	PID       int           `json:"pid"`
-	Process   string        `json:"process_started"`
-	StartedAt time.Time     `json:"started_at"`
-	Timeout   time.Duration `json:"timeout"`
+	Round      int           `json:"round"`
+	Runner     string        `json:"runner"`
+	LaunchedAt time.Time     `json:"launched_at"`
+	Timeout    time.Duration `json:"timeout"`
+
+	process RoundProcess
 }
 
-func (s delegateRoundStart) process() RoundProcess {
-	return RoundProcess{PID: s.PID, Started: s.Process}
+// delegateRoundProcess records a process of a launched round.
+type delegateRoundProcess struct {
+	Round   int    `json:"round"`
+	PID     int    `json:"pid"`
+	Started string `json:"started"`
 }
 
 // delegateRoundLog is what a child session keeps of its launched rounds.
@@ -182,12 +191,19 @@ type delegateRoundLog struct {
 }
 
 func (l delegateRoundLog) start(round int) (delegateRoundStart, bool) {
-	for _, start := range l.starts {
-		if start.Round == round {
-			return start, true
-		}
+	if start := l.launched(round); start != nil {
+		return *start, true
 	}
 	return delegateRoundStart{}, false
+}
+
+func (l delegateRoundLog) launched(round int) *delegateRoundStart {
+	for i := range l.starts {
+		if l.starts[i].Round == round {
+			return &l.starts[i]
+		}
+	}
+	return nil
 }
 
 func (l delegateRoundLog) outcome(round int) (delegateLaunchRecord, bool) {
@@ -529,19 +545,36 @@ func (a *Application) launchDelegate(ctx context.Context, identity RequestIdenti
 		return "", err
 	}
 	round := LaunchedRound{Session: child, Instance: instance, Procedure: procedure, Project: project, Runner: run.Runner, Number: log.next()}
+	// Recorded before the process starts, so a server that dies in between
+	// leaves a round the wait step can fail (20261114-160323-d-tac-n0n).
+	launched := delegateRoundStart{Round: round.Number, Runner: run.Runner, LaunchedAt: a.now().UTC().Round(0), Timeout: timeout}
+	recorded, err := a.appendDelegateRecord(ctx, identity, child, workflowDelegateRoundCode, launched, nil)
+	if err == nil && !recorded {
+		err = fmt.Errorf("the delegate %s ended before its round %d started", child, round.Number)
+	}
+	if err != nil {
+		return "", err
+	}
 	process, err := a.processes.Start(ctx, round)
 	if err != nil {
 		return "", fmt.Errorf("starting the process of round %d of the delegate %s: %w", round.Number, child, err)
 	}
-	start := delegateRoundStart{Round: round.Number, Runner: run.Runner, PID: process.PID, Process: process.Started, StartedAt: a.now().UTC().Round(0), Timeout: timeout}
-	recorded, err := a.appendDelegateRecord(ctx, identity, child, workflowDelegateRoundCode, start, nil)
+	recorded, err = a.appendDelegateRecord(ctx, identity, child, workflowDelegateRoundProcessCode, delegateRoundProcess{Round: round.Number, PID: process.PID, Started: process.Started}, roundSettled(round.Number))
 	if err == nil && !recorded {
-		err = fmt.Errorf("the delegate %s ended before its round %d started", child, round.Number)
+		err = fmt.Errorf("round %d of the delegate %s ended before its process was recorded", round.Number, child)
 	}
 	if err != nil {
 		return "", errors.Join(err, a.processes.Stop(ctx, process))
 	}
 	return run.Runner, nil
+}
+
+// roundSettled holds once round has its outcome.
+func roundSettled(round int) func(delegateRoundLog) bool {
+	return func(log delegateRoundLog) bool {
+		_, ok := log.outcome(round)
+		return ok
+	}
 }
 
 // RunLaunchedRound runs a round sdd launched, in the process RoundProcesses
@@ -600,18 +633,18 @@ func (a *Application) RunLaunchedRound(ctx context.Context, identity RequestIden
 	return a.endDelegate(ctx, identity, round.Session, record.Error)
 }
 
-// awaitRoundStart waits for the round's start record, which names this
-// process; nil once the child ended first.
+// awaitRoundStart waits for the record of the round's process, which names
+// this process; nil once the child ended or the round has its outcome first.
 func (a *Application) awaitRoundStart(ctx context.Context, identity RequestIdentity, round LaunchedRound, pid int) (*delegateRoundStart, error) {
 	limit := a.now().Add(model.RoundOutcomeMargin)
 	for {
 		log, ended, err := a.childRounds(ctx, identity, round.Session)
-		if err != nil || ended {
+		if err != nil || ended || roundSettled(round.Number)(log) {
 			return nil, err
 		}
-		if start, ok := log.start(round.Number); ok {
-			if start.PID != pid {
-				return nil, fmt.Errorf("round %d of the delegate %s is recorded with process %d, not with this one (%d)", round.Number, round.Session, start.PID, pid)
+		if start, ok := log.start(round.Number); ok && start.process.PID != 0 {
+			if start.process.PID != pid {
+				return nil, fmt.Errorf("round %d of the delegate %s is recorded with process %d, not with this one (%d)", round.Number, round.Session, start.process.PID, pid)
 			}
 			return &start, nil
 		}
@@ -645,7 +678,7 @@ func (a *Application) runRound(ctx context.Context, identity RequestIdentity, ro
 		next.Resume = previous.Session
 		next.Prompt = delegateContinuePrompt(round.Session, round.Instance)
 	}
-	deadline := model.RoundDeadline(start.StartedAt, previous.Ended, start.Timeout)
+	deadline := model.RoundDeadline(start.LaunchedAt, previous.Ended, start.Timeout)
 	end, roundErr = roundWithin(ctx, run, next, deadline.Sub(a.now()), start.Timeout)
 	if roundErr != nil {
 		return end, roundErr, nil
@@ -660,8 +693,11 @@ func (a *Application) runRound(ctx context.Context, identity RequestIdentity, ro
 // lapseCause names why a round that recorded no outcome failed; subject names
 // the round.
 func lapseCause(subject string, lapse model.RoundLapse, timeout time.Duration) string {
-	if lapse == model.RoundPastTimeout {
+	switch lapse {
+	case model.RoundPastTimeout:
 		return fmt.Sprintf("%s ran past verify.round_timeout (%s) without recording an outcome", subject, timeout)
+	case model.RoundNeverStarted:
+		return fmt.Sprintf("%s's process never started: it was not recorded as running within %s of the launch", subject, model.RoundOutcomeMargin)
 	}
 	return subject + "'s process ended without recording an outcome"
 }
@@ -697,25 +733,29 @@ func (a *Application) checkRounds(ctx context.Context, identity RequestIdentity,
 	if pending == nil {
 		return roundCheck{log: log}, nil
 	}
-	if a.processes == nil {
-		return roundCheck{}, fmt.Errorf("round %d of the delegate %s runs in a process this composition cannot check: it has no RoundProcesses", pending.Round, child)
-	}
-	alive, err := a.processes.Alive(ctx, pending.process())
-	if err != nil {
-		return roundCheck{}, fmt.Errorf("checking the process of round %d of the delegate %s: %w", pending.Round, child, err)
+	started := pending.process.PID != 0
+	alive := false
+	if started {
+		if a.processes == nil {
+			return roundCheck{}, fmt.Errorf("round %d of the delegate %s runs in a process this composition cannot check: it has no RoundProcesses", pending.Round, child)
+		}
+		alive, err = a.processes.Alive(ctx, pending.process)
+		if err != nil {
+			return roundCheck{}, fmt.Errorf("checking the process of round %d of the delegate %s: %w", pending.Round, child, err)
+		}
 	}
 	// Read again: a process that recorded its outcome and ended in between
-	// did not lapse.
+	// did not lapse, nor did one recorded as running in between.
 	log, ended, err = a.childRounds(ctx, identity, child)
 	if err != nil || ended {
 		return roundCheck{ended: ended, log: log}, err
 	}
-	if again := log.pending(); again == nil || again.Round != pending.Round {
+	if again := log.pending(); again == nil || again.Round != pending.Round || again.process != pending.process {
 		return roundCheck{log: log, pending: again}, nil
 	}
 	previous, _ := log.outcome(pending.Round - 1)
-	deadline := model.RoundDeadline(pending.StartedAt, previous.Ended, pending.Timeout)
-	return roundCheck{log: log, pending: pending, lapse: model.LapsedRound(alive, deadline, a.now())}, nil
+	round := model.PendingRound{Launched: pending.LaunchedAt, Deadline: model.RoundDeadline(pending.LaunchedAt, previous.Ended, pending.Timeout), Started: started, Alive: alive}
+	return roundCheck{log: log, pending: pending, lapse: model.LapsedRound(round, a.now())}, nil
 }
 
 // failLapsedRound fails the child's round that lapsed without an outcome as
@@ -728,7 +768,7 @@ func (a *Application) failLapsedRound(ctx context.Context, identity RequestIdent
 	}
 	pending := check.pending
 	if check.lapse == model.RoundPastTimeout {
-		if err := a.processes.Stop(ctx, pending.process()); err != nil {
+		if err := a.processes.Stop(ctx, pending.process); err != nil {
 			return fmt.Errorf("stopping the process of round %d of the delegate %s: %w", pending.Round, child, err)
 		}
 	}
@@ -742,7 +782,9 @@ func (a *Application) failLapsedRound(ctx context.Context, identity RequestIdent
 }
 
 // stopRounds stops the process of every round of the ended child events
-// belong to that recorded no outcome.
+// belong to that recorded no outcome. A round whose process was never
+// recorded has none to stop: a process that runs unrecorded finds the child
+// ended and runs nothing.
 func (a *Application) stopRounds(ctx context.Context, child SessionID, events []StoredEvent) error {
 	log, err := delegateRoundsOf(events)
 	if err != nil {
@@ -750,13 +792,13 @@ func (a *Application) stopRounds(ctx context.Context, child SessionID, events []
 	}
 	var failures []error
 	for _, start := range log.starts {
-		if _, ok := log.outcome(start.Round); ok {
+		if _, ok := log.outcome(start.Round); ok || start.process.PID == 0 {
 			continue
 		}
 		if a.processes == nil {
 			return fmt.Errorf("round %d of the delegate %s runs in a process this composition cannot stop: it has no RoundProcesses", start.Round, child)
 		}
-		if err := a.processes.Stop(ctx, start.process()); err != nil {
+		if err := a.processes.Stop(ctx, start.process); err != nil {
 			failures = append(failures, fmt.Errorf("stopping the process of round %d of the delegate %s: %w", start.Round, child, err))
 		}
 	}
@@ -844,10 +886,7 @@ func delegateDeliveries(events []StoredEvent) (int, error) {
 // reporting whether it did: a child that ended, or a round that has its
 // outcome already, keeps no other.
 func (a *Application) recordDelegateRound(ctx context.Context, identity RequestIdentity, child SessionID, record delegateLaunchRecord) (bool, error) {
-	return a.appendDelegateRecord(ctx, identity, child, workflowDelegateLaunchCode, record, func(log delegateRoundLog) bool {
-		_, ok := log.outcome(record.Round)
-		return ok
-	})
+	return a.appendDelegateRecord(ctx, identity, child, workflowDelegateLaunchCode, record, roundSettled(record.Round))
 }
 
 // appendDelegateRecord appends record under code to the child session,
@@ -934,25 +973,38 @@ func delegateLaunches(events []StoredEvent) ([]delegateLaunchRecord, error) {
 func delegateRoundsOf(events []StoredEvent) (delegateRoundLog, error) {
 	var log delegateRoundLog
 	for _, stored := range events {
-		if stored.Code != workflowDelegateLaunchCode && stored.Code != workflowDelegateRoundCode {
+		switch stored.Code {
+		case workflowDelegateLaunchCode, workflowDelegateRoundCode, workflowDelegateRoundProcessCode:
+		default:
 			continue
 		}
 		if !SupportedSessionCodecVersion(stored.CodecVersion) {
 			return delegateRoundLog{}, &ApplicationError{Code: ErrorMigrationRequired, Message: "unsupported delegate launch event codec", Version: stored.CodecVersion}
 		}
-		if stored.Code == workflowDelegateRoundCode {
+		switch stored.Code {
+		case workflowDelegateRoundCode:
 			var start delegateRoundStart
 			if err := json.Unmarshal(stored.Payload, &start); err != nil {
 				return delegateRoundLog{}, fmt.Errorf("decoding delegate round start event: %w", err)
 			}
 			log.starts = append(log.starts, start)
-			continue
+		case workflowDelegateRoundProcessCode:
+			var process delegateRoundProcess
+			if err := json.Unmarshal(stored.Payload, &process); err != nil {
+				return delegateRoundLog{}, fmt.Errorf("decoding delegate round process event: %w", err)
+			}
+			start := log.launched(process.Round)
+			if start == nil {
+				return delegateRoundLog{}, fmt.Errorf("the process of round %d is recorded before the round's launch", process.Round)
+			}
+			start.process = RoundProcess{PID: process.PID, Started: process.Started}
+		default:
+			var record delegateLaunchRecord
+			if err := json.Unmarshal(stored.Payload, &record); err != nil {
+				return delegateRoundLog{}, fmt.Errorf("decoding delegate launch event: %w", err)
+			}
+			log.outcomes = append(log.outcomes, record)
 		}
-		var record delegateLaunchRecord
-		if err := json.Unmarshal(stored.Payload, &record); err != nil {
-			return delegateRoundLog{}, fmt.Errorf("decoding delegate launch event: %w", err)
-		}
-		log.outcomes = append(log.outcomes, record)
 	}
 	return log, nil
 }

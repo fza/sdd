@@ -28,22 +28,27 @@ func TestRoundDeadline(t *testing.T) {
 }
 
 func TestLapsedRound(t *testing.T) {
+	launched := time.Date(2026, 11, 14, 11, 0, 0, 0, time.UTC)
 	deadline := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name  string
-		alive bool
-		now   time.Time
-		want  model.RoundLapse
+		name    string
+		started bool
+		alive   bool
+		now     time.Time
+		want    model.RoundLapse
 	}{
-		{name: "running in time", alive: true, now: deadline, want: model.RoundRunning},
-		{name: "running within the margin", alive: true, now: deadline.Add(model.RoundOutcomeMargin), want: model.RoundRunning},
-		{name: "running past the margin", alive: true, now: deadline.Add(model.RoundOutcomeMargin + time.Second), want: model.RoundPastTimeout},
-		{name: "process gone in time", alive: false, now: deadline, want: model.RoundProcessGone},
-		{name: "process gone past the margin", alive: false, now: deadline.Add(time.Hour), want: model.RoundProcessGone},
+		{name: "running in time", started: true, alive: true, now: deadline, want: model.RoundRunning},
+		{name: "running within the margin", started: true, alive: true, now: deadline.Add(model.RoundOutcomeMargin), want: model.RoundRunning},
+		{name: "running past the margin", started: true, alive: true, now: deadline.Add(model.RoundOutcomeMargin + time.Second), want: model.RoundPastTimeout},
+		{name: "process gone in time", started: true, now: deadline, want: model.RoundProcessGone},
+		{name: "process gone past the margin", started: true, now: deadline.Add(time.Hour), want: model.RoundProcessGone},
+		{name: "not started within the margin of its launch", now: launched.Add(model.RoundOutcomeMargin), want: model.RoundRunning},
+		{name: "not started past the margin of its launch", now: launched.Add(model.RoundOutcomeMargin + time.Second), want: model.RoundNeverStarted},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := model.LapsedRound(tt.alive, deadline, tt.now); got != tt.want {
+			round := model.PendingRound{Launched: launched, Deadline: deadline, Started: tt.started, Alive: tt.alive}
+			if got := model.LapsedRound(round, tt.now); got != tt.want {
 				t.Fatalf("LapsedRound() = %d, want %d", got, tt.want)
 			}
 		})
