@@ -35,8 +35,8 @@ const (
 const GroundingSkipped = "skipped"
 
 // VerificationSkipped marks an entry written without a verifier's
-// verdict: the user skipped the deep verifier (20261109-004729-d-cpt-xs5,
-// V-D4, V-D24) or a pre-flight answer cut at the token cap.
+// verdict: the user skipped the deep verifier or a pre-flight answer cut at
+// the token cap.
 const VerificationSkipped = "skipped"
 
 type Layer string
