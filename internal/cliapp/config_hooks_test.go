@@ -8,7 +8,7 @@ import (
 
 // sdd config lists the hooks of both personal layers by the keys a person
 // writes, each labelled with the layer it comes from; a key the hook leaves
-// unset is not listed (20261109-005138-d-tac-i61).
+// unset is not listed.
 func TestConfigListsTheHooksOfEveryPersonalLayer(t *testing.T) {
 	f := newAppFixture(t)
 	for file, command := range map[string]string{"config/sdd/config.yaml": "notify-global", ".sdd/config.local.yaml": "lint-local"} {

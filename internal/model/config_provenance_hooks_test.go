@@ -9,8 +9,7 @@ import (
 )
 
 // Hooks concatenate across the layers, so the provenance lists every
-// layer's hooks in the order they run, each with its own layer
-// (20261109-005138-d-tac-i61).
+// layer's hooks in the order they run, each with its own layer.
 func TestEffectiveConfigValuesListsTheHooksOfEveryLayer(t *testing.T) {
 	global := model.BaseConfig{Hooks: []model.HookConfig{{Event: "entry.written", Command: "notify"}}}
 	local := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Hooks: []model.HookConfig{

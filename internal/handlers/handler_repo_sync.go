@@ -287,7 +287,7 @@ type refreshScope struct {
 
 // WithRefreshScope scopes clone refreshes to one invocation: EnsureReposFresh
 // tries each repo's round at most once within it, though the git gate admits
-// a local-path remote every time (20261107-095427-d-tac-yux).
+// a local-path remote every time.
 func WithRefreshScope(ctx context.Context) context.Context {
 	return context.WithValue(ctx, refreshScopeKey{}, &refreshScope{refreshed: map[model.RepoID]bool{}})
 }

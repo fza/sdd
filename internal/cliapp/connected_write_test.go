@@ -189,7 +189,7 @@ func TestConnectedCaptureWritesThroughTheClone(t *testing.T) {
 
 // One call syncs a dependency's clone at most once, though the git gate
 // admits a local-path remote every time and the confirm resolves the
-// dependency for writing several times (20261107-095427-d-tac-yux).
+// dependency for writing several times.
 func TestConnectedCaptureConfirmSyncsTheDependencyOnce(t *testing.T) {
 	fixture, _ := connectedWriteFixture(t, true, true)
 	trace := filepath.Join(t.TempDir(), "git-trace")
