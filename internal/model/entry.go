@@ -35,7 +35,7 @@ const (
 const GroundingSkipped = "skipped"
 
 // VerificationSkipped marks an entry written without the deep verifier's
-// verdict: the user skipped it (20261109-004729-d-cpt-xs5, V-D4, V-D24).
+// verdict: the user skipped it.
 const VerificationSkipped = "skipped"
 
 type Layer string

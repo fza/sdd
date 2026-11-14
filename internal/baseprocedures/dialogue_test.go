@@ -10,9 +10,8 @@ import (
 )
 
 // Every user choice the base procedures hand to an autonomous agent, and
-// the ones they keep for the user: the pre-flight override
-// (20261029-150854-d-tac-b2f) and the deep verifier's skips and open points
-// (20261109-004729-d-cpt-xs5).
+// the ones they keep for the user: the pre-flight override and the deep
+// verifier's skips and open points.
 var (
 	wantDelegable = []string{
 		"bootstrap/propose", "bootstrap/refresh", "capture/playback", "catch-up/junction",

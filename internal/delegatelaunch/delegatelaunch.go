@@ -1,9 +1,9 @@
 // Package delegatelaunch runs the deep draft verifier's delegate without the
-// drafting agent's harness (20261109-004729-d-cpt-xs5, V-D16 to V-D20): a
-// headless claude or codex run per round, resumed by the session id the
-// first round reported, or an external driver per round. The agent reaches
-// the child session only through an sdd MCP server of its own; findings and
-// answers travel through that server, never through the launch.
+// drafting agent's harness: a headless claude or codex run per round,
+// resumed by the session id the first round reported, or an external driver
+// per round. The agent reaches the child session only through an sdd MCP
+// server of its own; findings and answers travel through that server, never
+// through the launch.
 package delegatelaunch
 
 import (
@@ -58,7 +58,7 @@ type Launched struct {
 	Launch  string
 }
 
-// claudeTools are the tools a headless claude verifier may use (V-D18): read,
+// claudeTools are the tools a headless claude verifier may use: read,
 // search and glob, the web, the sdd MCP tools, and read-only git.
 var claudeTools = []string{
 	"Read", "Grep", "Glob", "WebFetch", "WebSearch", "mcp__sdd__*",
@@ -114,7 +114,7 @@ func mcpConfig(sdd string) (string, error) {
 	return string(encoded), err
 }
 
-// ClaudeArgs are the flags of a headless claude round (V-D18): print mode
+// ClaudeArgs are the flags of a headless claude round: print mode
 // with a JSON result, safe mode, the read-only tool set, and sdd as the only
 // MCP server. The prompt goes on stdin.
 func ClaudeArgs(sdd, resume string) ([]string, error) {
@@ -161,7 +161,7 @@ func runClaude(ctx context.Context, settings Settings, round Round) (string, err
 	return result.SessionID, nil
 }
 
-// CodexArgs are the flags of a headless codex round (V-D18): exec with JSON
+// CodexArgs are the flags of a headless codex round: exec with JSON
 // events in a read-only sandbox, sdd as an MCP server, and the round's
 // prompt; a later round resumes the first round's session.
 func CodexArgs(sdd, resume, prompt string) []string {
@@ -214,7 +214,7 @@ func runCodex(ctx context.Context, settings Settings, round Round) (string, erro
 	return session, nil
 }
 
-// DriverRequest is what a custom driver reads on stdin per round (V-D19).
+// DriverRequest is what a custom driver reads on stdin per round.
 type DriverRequest struct {
 	Round       int    `json:"round"`
 	Session     string `json:"session"`

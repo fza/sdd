@@ -9,7 +9,7 @@ import (
 )
 
 // One strictness answer sets grounding.enforce and verifier.mode together in
-// the committed config (20261109-004729-d-cpt-xs5, V-D28).
+// the committed config.
 func TestInitRecordsTheStrictness(t *testing.T) {
 	for _, tc := range []struct {
 		answer  string
@@ -45,7 +45,7 @@ func TestInitRefusesAnUnknownStrictness(t *testing.T) {
 }
 
 // The deep verifier's launch is personal: init records it in the local
-// config, and offers only the agents supported_agents names (V-D28).
+// config, and offers only the agents supported_agents names.
 func TestInitRecordsTheVerifierLaunchLocally(t *testing.T) {
 	work, _ := workRepository(t)
 	runApp(t, work, "init", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--strictness", "deep", "--verifier-launch", "claude")

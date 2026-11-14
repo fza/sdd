@@ -10,17 +10,16 @@ import (
 	"strings"
 )
 
-// The deep verifier exchange (20261109-004729-d-cpt-xs5, V-D1, V-D2, V-D25):
-// the verifier returns findings with per-finding search-replace edits over the
-// base draft document, the drafter accepts or contests each, the verifier
-// answers the contested ones, and sdd builds the proposal, its hunks and the
-// finding each hunk carries.
+// The deep verifier exchange: the verifier returns findings with per-finding
+// search-replace edits over the base draft document, the drafter accepts or
+// contests each, the verifier answers the contested ones, and sdd builds the
+// proposal, its hunks and the finding each hunk carries.
 
 // DeepRounds is how many deliveries a deep verifier makes before the open
 // points go to the user.
 const DeepRounds = 3
 
-// DeepPageChars bounds one served page of the deep verifier's reading (V-D8).
+// DeepPageChars bounds one served page of the deep verifier's reading.
 const DeepPageChars = 50000
 
 var deepAxes = []string{"contradicts", "duplicates", "outdated", "inconsistent", "ref-fit", "missing-ref", "dismissal", "aspiration", "strain", "evidence"}
@@ -324,7 +323,7 @@ func CheckDeepFindings(base string, findings []DeepFinding, resolves func(id str
 }
 
 // DeepWeighing is the fixed rule's recommendation on running the deep
-// exchange (V-D24), with the reasons that made it.
+// exchange, with the reasons that made it.
 type DeepWeighing struct {
 	Run     bool
 	Reasons []string
@@ -391,7 +390,7 @@ func WeighDeep(draft DeepDraft, found func(path string) bool) DeepWeighing {
 	return DeepWeighing{Run: true, Reasons: reasons}
 }
 
-// DeepReadingPages pages the deep verifier's reading (V-D8): the first page
+// DeepReadingPages pages the deep verifier's reading: the first page
 // opens with lead (the draft and what pre-flight raised) and the blocks of
 // first (the declared targets and the entries read in full), later pages hold
 // rest (the briefs) in order. A page holds whole blocks of at most
@@ -425,8 +424,8 @@ const (
 )
 
 // MarkVerificationSkipped marks e as written without the deep verifier's
-// verdict and caps its confidence: low after a verifier failure (V-D4), at
-// most medium after the weighed rule's skip (V-D24).
+// verdict and caps its confidence: low after a verifier failure, at
+// most medium after the weighed rule's skip.
 func MarkVerificationSkipped(e *Entry, cause string) error {
 	switch cause {
 	case DeepSkipFailure:

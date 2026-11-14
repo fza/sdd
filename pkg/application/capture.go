@@ -22,7 +22,7 @@ func (a *Application) PreflightEntry(ctx context.Context, identity RequestIdenti
 }
 
 // preflightEntry checks the draft, as the light verifier over reading where
-// the project's verifier is on (20261109-004729-d-cpt-xs5).
+// the project's verifier is on.
 func (a *Application) preflightEntry(ctx context.Context, identity RequestIdentity, project ProjectID, draft EntryDraft, reading *captureReading) (PreflightEntryResult, error) {
 	principal, runtime, err := a.resolve(ctx, identity, project, AccessWrite)
 	if err != nil {

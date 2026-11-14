@@ -11,7 +11,7 @@ import (
 )
 
 // A verifier mode without grounding enforcement is refused when the config
-// resolves, naming both keys and the files that set them (V-D7).
+// resolves, naming both keys and the files that set them.
 func TestResolveConfig_RefusesAVerifierWithoutGrounding(t *testing.T) {
 	sddDir := t.TempDir()
 	err := os.WriteFile(filepath.Join(sddDir, "config.yaml"), []byte("verifier:\n  mode: light\n"), 0o644)

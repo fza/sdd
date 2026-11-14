@@ -24,9 +24,9 @@ var preflightLightExtraction = extraction{
 }
 
 // LightReading is the grounding reading a light pre-flight judges the draft
-// against (20261109-004729-d-cpt-xs5): the entries served in full, the
-// entries only listed, in the order the reads listed them, and the entries
-// the author set aside with a reason code.
+// against: the entries served in full, the entries only listed, in the order
+// the reads listed them, and the entries the author set aside with a reason
+// code.
 type LightReading struct {
 	Full     []string
 	Listed   []string
@@ -191,7 +191,7 @@ func lightItems(entry *model.Entry, graph *model.Graph, reading LightReading) []
 	return items
 }
 
-// ReadingHeader is the fixed header of one reading entry (V-D13): never cut,
+// ReadingHeader is the fixed header of one reading entry: never cut,
 // since status and refs are what outdated and inconsistent findings rest on.
 func ReadingHeader(graph *model.Graph, e *model.Entry, role model.LightRole, code string) string {
 	var b strings.Builder
@@ -317,7 +317,7 @@ func parseLightResult(output string, allowed map[string]bool) (*PreflightResult,
 
 // mergeLightResults folds the calls' findings into one verdict: findings on
 // one category and basis raised by several calls collapse into one, at the
-// highest severity raised, naming every call that raised it (V-D11). Within
+// highest severity raised, naming every call that raised it. Within
 // one call, every finding stands.
 func mergeLightResults(results []*PreflightResult) *PreflightResult {
 	if len(results) == 1 {

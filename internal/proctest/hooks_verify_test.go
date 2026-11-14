@@ -1,5 +1,5 @@
 // Configured hooks at the capture's deep verification step, the verify
-// stage (20261109-005138-d-tac-i61, 20261109-004729-d-cpt-xs5).
+// stage.
 package proctest_test
 
 import (

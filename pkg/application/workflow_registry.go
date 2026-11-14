@@ -368,7 +368,7 @@ func (w *WorkflowSession) registerWorkflowWIP(registry *engine.Registry) error {
 }
 
 // runWorkflowWritingGuide runs the writing guide op once per capture, where
-// the dialogue mode places it (20261109-005108-d-cpt-wcj). A recorded run
+// the dialogue mode places it. A recorded run
 // (guideFindings present) is never repeated implicitly: revises and adjusts
 // pass through, because a second pass judges the repairs instead of the draft
 // and drifts toward find-something escalation; a later adjust gets the delta

@@ -101,7 +101,7 @@ type BaseConfig struct {
 	// (20261109-004506-d-cpt-udz); off unless a layer sets enforce.
 	Grounding GroundingConfig `yaml:"grounding,omitempty"`
 	// Verifier checks every capture draft against its grounding reading
-	// before the write (20261109-004729-d-cpt-xs5); off unless a layer sets it.
+	// before the write; off unless a layer sets it.
 	Verifier VerifierConfig `yaml:"verifier,omitempty"`
 	// LLMPrefilter is the grounding prefilter's model, independent of LLM
 	// (20261109-004506-d-cpt-udz, D8); grounding.prefilter switches it on.
@@ -484,8 +484,8 @@ type LLMConfig struct {
 	// model's own output limit in force where the provider allows that.
 	MaxTokens *int `yaml:"max_tokens,omitempty"`
 	// ContextTokens is the model's context window in tokens, which sizes the
-	// light verifier's pre-flight calls (20261109-004729-d-cpt-xs5). Zero means
-	// the window the provider reports.
+	// light verifier's pre-flight calls. Zero means the window the provider
+	// reports.
 	ContextTokens int `yaml:"context_tokens,omitempty"`
 	// Concurrency bounds the worker pool for batch operations. Zero means
 	// "use DefaultLLMConcurrency".

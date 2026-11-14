@@ -54,8 +54,7 @@ type DelegateLaunch struct {
 }
 
 // DelegateLaunchFallback asks the launcher for the first headless launch of
-// the agents the project's supported_agents name whose CLI is found
-// (20261109-004729-d-cpt-xs5, V-D20).
+// the agents the project's supported_agents name whose CLI is found.
 const DelegateLaunchFallback = "fallback"
 
 // ErrDelegateNotLaunched is what a launcher returns for a delegate it leaves
@@ -263,7 +262,7 @@ func (w *WorkflowSession) dispatchFor(ctx context.Context, identity RequestIdent
 
 // delegateLaunch is the launch a delegate of procedure takes: for the deep
 // verifier, the project's configured headless launch, or the fallback once
-// the harness reported no subagent tool (V-D20); empty otherwise.
+// the harness reported no subagent tool; empty otherwise.
 func (w *WorkflowSession) delegateLaunch(parent, procedure string) (string, error) {
 	if procedure != verifyProcedure {
 		return "", nil

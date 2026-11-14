@@ -7,8 +7,8 @@ import (
 )
 
 // VerifierMode is how far the draft verifier checks a capture against its
-// grounding reading (20261109-004729-d-cpt-xs5). The modes build up, so their
-// order is the strictness a machine-local layer may only raise.
+// grounding reading. The modes build up, so their order is the strictness a
+// machine-local layer may only raise.
 type VerifierMode string
 
 const (
@@ -31,7 +31,7 @@ const (
 
 var verifierSkips = []VerifierSkip{VerifierSkipWeighed, VerifierSkipFailure, VerifierSkipNever}
 
-// VerifierLaunch is how a deep verifier session is launched (V-D16, V-D19):
+// VerifierLaunch is how a deep verifier session is launched:
 // by the drafting agent's harness as a subagent, or by sdd through a headless
 // agent CLI or an external driver.
 type VerifierLaunch string
@@ -55,9 +55,9 @@ type VerifierDriver struct {
 // VerifierConfig is the `verifier` block. Mode and skip layer like
 // grounding.enforce: the user-global and the committed config set them, the
 // committed value wins, and the machine-local config may only tighten them.
-// Launch describes the machine, so the machine-local value wins (V-D20); the
+// Launch describes the machine, so the machine-local value wins; the
 // driver runs a command, so only the user-global and machine-local layers set
-// it (V-D19).
+// it.
 type VerifierConfig struct {
 	Mode   VerifierMode   `yaml:"mode,omitempty"`
 	Skip   VerifierSkip   `yaml:"skip,omitempty"`
@@ -109,8 +109,8 @@ func mergeVerifierConfig(base, overlay VerifierConfig) VerifierConfig {
 // CheckVerifierLayers refuses a verifier configuration that cannot hold:
 // an unknown value, a machine-local value loosening what the user-global and
 // committed layers set, or a verifier mode other than off while grounding
-// enforcement is off (V-D7), a driver in the committed config, or a
-// custom_driver launch no layer names a driver for (V-D19). files names the
+// enforcement is off, a driver in the committed config, or a
+// custom_driver launch no layer names a driver for. files names the
 // file behind each layer; the refusal names the key, and the file of every
 // layer it judges.
 func CheckVerifierLayers(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
@@ -214,7 +214,7 @@ func sharedVerifierFile(global BaseConfig, committed *PerRepoConfig, key string,
 
 // Strictness is the one answer to how strictly drafts are checked against
 // the graph, which sets grounding.enforce and verifier.mode together so no
-// invalid pair can be chosen (V-D28).
+// invalid pair can be chosen.
 type Strictness string
 
 const (
@@ -252,7 +252,7 @@ func (s Strictness) Settings() (enforce bool, mode VerifierMode) {
 }
 
 // VerifierLaunchChoices are the launches `sdd init` offers for the deep
-// verifier (V-D28): subagent first as the default, then claude and codex where
+// verifier: subagent first as the default, then claude and codex where
 // agents names them, in its order, and custom_driver only where a layer
 // already configures a driver.
 func VerifierLaunchChoices(agents []AgentTarget, driver VerifierDriver) []VerifierLaunch {
@@ -269,7 +269,7 @@ func VerifierLaunchChoices(agents []AgentTarget, driver VerifierDriver) []Verifi
 	return choices
 }
 
-// VerifierLaunchAsked reports whether `sdd init` asks for the launch (V-D28):
+// VerifierLaunchAsked reports whether `sdd init` asks for the launch:
 // only under mode deep, and only while no layer sets one.
 func VerifierLaunchAsked(mode VerifierMode, recorded VerifierConfig) bool {
 	return mode == VerifierDeep && recorded.Launch == ""

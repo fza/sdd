@@ -6,9 +6,8 @@ import (
 	"strings"
 )
 
-// Light verifier sizing (20261109-004729-d-cpt-xs5, V-D12, V-D13): a call
-// fills half the window left after the answer reserve, and a token counts as
-// 3 characters.
+// Light verifier sizing: a call fills half the window left after the answer
+// reserve, and a token counts as 3 characters.
 const (
 	LightCharsPerToken = 3
 	LightFillRatio     = 0.5
@@ -72,7 +71,7 @@ type LightCall struct {
 }
 
 // PlanLightCalls packs the reading into the fewest calls of room characters
-// each (V-D11): entries related through refs, else a shared topic, are
+// each: entries related through refs, else a shared topic, are
 // grouped and whole groups placed together where they fit; an item larger
 // than a call alone is cut into excerpts ranked by rank. Every item's header
 // stays whole, so a header larger than a call refuses.
@@ -217,7 +216,7 @@ func ExcerptGap(n int) string {
 }
 
 // ExcerptParagraphs cuts body to room characters as whole paragraphs, code
-// blocks and list items (V-D13): the blocks rank scores highest are kept, in
+// blocks and list items: the blocks rank scores highest are kept, in
 // document order, with the heading of every section they draw from, and a
 // marker names each gap at the start, between kept blocks and at the end. A
 // block larger than room alone is cut at sentence ends. It reports false

@@ -51,8 +51,8 @@ type Runner struct {
 	useCache bool
 
 	// ollama sizes num_ctx per call: Ollama cuts a prompt longer than its
-	// context without an error (20261109-004729-d-cpt-xs5, V-D12). The
-	// option lives on the shared client, so calls take turns setting it.
+	// context without an error. The option lives on the shared client, so
+	// calls take turns setting it.
 	ollama       bool
 	ollamaMu     sync.Mutex
 	outputTokens int

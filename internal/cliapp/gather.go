@@ -135,7 +135,7 @@ var modelWindows = &factory.WindowDetector{}
 // modelWindow sizes a light verifier call for the runner cfg configures: the
 // window llm.context_tokens sets or the provider reports, and the answer
 // reserve llm.max_tokens sets, else the model's reported output limit,
-// capped (20261109-004729-d-cpt-xs5, V-D12).
+// capped.
 func modelWindow(cfg model.LLMConfig) func(context.Context) (sdd.ModelWindow, error) {
 	return func(ctx context.Context) (sdd.ModelWindow, error) {
 		window, err := modelWindows.Detect(ctx, cfg)
