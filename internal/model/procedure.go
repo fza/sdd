@@ -25,8 +25,8 @@ type ProcedureSpecRaw struct {
 	// (d-tac-rzi). Advisory only — never enforced at load or runtime.
 	ServeBudget int
 	// Rounds is a task procedure's round cap: the most interim deliveries its
-	// delegate child session makes (20261109-004845-d-cpt-ldx). Zero declares
-	// none; the engine validates it.
+	// delegate child session makes. Zero declares none; the engine validates
+	// it.
 	Rounds int
 }
 

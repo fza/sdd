@@ -54,8 +54,8 @@ type Spec struct {
 	// on shells that declare none (which then serve info-only framing).
 	Framing []InjectCall
 	// Rounds is a delegate task's round cap: the most interim deliveries it
-	// makes before it concludes (20261109-004845-d-cpt-ldx). Zero on every
-	// procedure without an interim delivery.
+	// makes before it concludes. Zero on every procedure without an interim
+	// delivery.
 	Rounds int
 }
 
@@ -229,7 +229,7 @@ type Step struct {
 	// Deliver names the state fields a task's gate delivers into the
 	// dispatching instance when one of its transitions fires: a transition to
 	// end(completed) is the final delivery, any other step an interim one
-	// that leaves the child running (20261109-004845-d-cpt-ldx).
+	// that leaves the child running.
 	Deliver []string
 	// Await names the state fields a gate waits for from the linked session:
 	// it holds until each holds a delivery not yet consumed, and passing
