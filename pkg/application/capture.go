@@ -22,7 +22,7 @@ func (a *Application) PreflightEntry(ctx context.Context, identity RequestIdenti
 }
 
 // preflightEntry checks the draft, as the light verifier over reading where
-// the project's verifier is on (20261109-004729-d-cpt-xs5). Where deepJudges,
+// the project's verifier is on. Where deepJudges,
 // the deep verifier judges in pre-flight's place: only the mechanical checks
 // run, and the result carries the rubric the verifier takes over.
 func (a *Application) preflightEntry(ctx context.Context, identity RequestIdentity, project ProjectID, draft EntryDraft, reading *captureReading, deepJudges bool) (PreflightEntryResult, error) {

@@ -585,9 +585,9 @@ type LLMConfig struct {
 	// exponential backoff with jitter). Ignored by the claude-cli provider,
 	// whose own CLI handles retries.
 	Retry RetryConfig `yaml:"retry,omitempty"`
-	// Debug writes a transcript of every call under .sdd/tmp/llm-debug/
-	// (20261110-150803-s-tac-9u1). Transcripts hold graph content, so only a
-	// person's own config may turn it on.
+	// Debug writes a transcript of every call under .sdd/tmp/llm-debug/.
+	// Transcripts hold graph content, so only a person's own config may turn it
+	// on.
 	Debug *bool `yaml:"debug,omitempty"`
 }
 
