@@ -12,6 +12,8 @@ import (
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/proctest"
+	sdd "github.com/networkteam/sdd/pkg/application"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
@@ -69,7 +71,7 @@ func TestResultsEndWithTheHoldNextLine(t *testing.T) {
 	if lastLane < 0 || lastLane > firstFraming {
 		t.Errorf("the step's lanes should come before its framing, got %v", tags)
 	}
-	if !strings.Contains(door.Instructions, "list in held exactly those tags") || strings.Contains(door.Instructions, "every earlier result") {
+	if !strings.Contains(door.Instructions, "held on every call: exactly those tags") || strings.Contains(door.Instructions, "every earlier result") {
 		t.Errorf("the proof guide should ask for exactly the hold-next tags, got:\n%s", door.Instructions)
 	}
 }
@@ -196,5 +198,136 @@ func TestGatherBriefLinesStayOffTheHoldNextLine(t *testing.T) {
 	call(t, cs, "gather", map[string]any{"session": door.Session, "ids": []string{fixtureGapID}, "held": []any{}}, &opened)
 	if proof := proofOf(t, opened.Serve, fixtureGapID); !named(opened.HoldNext, proof.Tag) {
 		t.Errorf("an entry gather opened in full should be named, got %q", opened.HoldNext)
+	}
+}
+
+// The proof guide, at the opening and on resume, makes the hold-next proofs
+// the act every call owes: a tag left out serves its whole text into the
+// agent's context again, and a word is never guessed.
+func TestTheProofGuideMakesASkippedProofACost(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	door := openSessionWhole(t, cs)
+	var resumed mcpserver.ResumeSessionResult
+	call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
+	for name, text := range map[string]string{"opening": door.Instructions, "resume": resumed.Instructions} {
+		text = strings.Join(strings.Fields(text), " ")
+		for _, want := range []string{"Send held on every call", "A tag left out serves its whole text into your context again", "Never guess a word"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("the %s's proof guide should say %q, got:\n%s", name, want, text)
+			}
+		}
+		if strings.Contains(text, "costs only") {
+			t.Errorf("the %s's proof guide should not make a skipped proof look free, got:\n%s", name, text)
+		}
+	}
+}
+
+// A held lane's pointer names its tag first and sends the agent to the full
+// text for the word, so no word of the pointer reads as the word after the
+// tag.
+func TestAHeldLanePointerLeavesNoWordAfterItsTag(t *testing.T) {
+	env := newTestServer(t, nil, writeLaneStepGraph(t, stepLane{"first", 2}, stepLane{"second", 2}), "")
+	memory := newAgentMemory()
+	memory.raw = true
+	cs := connectAs(t, env.srv, memory)
+	session := openSession(t, cs).Session
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step", "held": []any{}}, &serve)
+	proofs := model.ReadAnchors(serve.Instructions)
+	if len(proofs) != 2 {
+		t.Fatalf("each lane served in full should carry one tag, got %v in:\n%s", proofs, serve.Instructions)
+	}
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "held": []any{proofs[0].String()}}, &serve)
+	want := "(held: tag " + proofs[0].Tag + " for lane first — prove a tag with the word after it in the full text you were served, never a word of this line;"
+	if !strings.Contains(serve.Instructions, want) {
+		t.Errorf("the pointer should name the tag first and send the agent to the full text, want %q in:\n%s", want, serve.Instructions)
+	}
+}
+
+// A held proof that fails, by a wrong word or a tag never issued, gets a
+// notice naming the tag beside the full text, so the agent corrects or drops
+// it; a right proof gets none.
+func TestAFailedProofIsNamedBesideTheFullText(t *testing.T) {
+	env := newTestServer(t, nil, writeLaneStepGraph(t, stepLane{"first", 2}), "")
+	memory := newAgentMemory()
+	memory.raw = true
+	cs := connectAs(t, env.srv, memory)
+	session := openSession(t, cs).Session
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step", "held": []any{}}, &serve)
+	lane := proofOf(t, serve.Instructions, "lane first")
+
+	wrong := model.Proof{Tag: lane.Tag, Word: "where"}
+	unknown := model.Proof{Tag: "zz00", Word: "word"}
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "held": []any{wrong.String(), unknown.String()}}, &serve)
+	if !strings.Contains(serve.Instructions, "Lane first holds a line of its guidance.") {
+		t.Errorf("the lane whose proof failed should serve in full, got %.300q", serve.Instructions)
+	}
+	for _, want := range []string{wrong.String() + " (not the word after that tag)", unknown.String() + " (no such tag)"} {
+		if !strings.Contains(serve.ProofNotice, want) {
+			t.Errorf("the proof notice should name %q, got %q", want, serve.ProofNotice)
+		}
+	}
+
+	right := proofOf(t, serve.Instructions, "lane first")
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "held": []any{right.String()}}, &serve)
+	if serve.ProofNotice != "" {
+		t.Errorf("a right proof should get no notice, got %q", serve.ProofNotice)
+	}
+}
+
+// At guideReview the line names the playback lanes, as its revise option
+// leads back to playback through assemble; an agent proving them then gets
+// playback's lanes as pointers.
+func TestTheLineAtGuideReviewNamesThePlaybackLanes(t *testing.T) {
+	world := proctest.NewWorld(t)
+	world.LLM.GuideFindings = []proctest.GuideFinding{{
+		Reasoning: "the body leans on 'something' without naming it, so a reader outside the dialogue cannot act",
+		Axis:      "stranding", Quote: "something", Repair: "write-in", Severity: "substantive",
+	}}
+	srv, err := mcpserver.New(mcpserver.Options{Application: world.App, SearchSyncMode: sdd.SearchSyncAll, LocalIdentity: world.Identity, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	memory := newAgentMemory()
+	memory.raw, memory.holdNext = true, true
+	cs := connectAs(t, srv, memory)
+	session := openSession(t, cs).Session
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &serve)
+	followWaitingLanes(t, cs, session, serve)
+	draft := map[string]any{
+		"body": "A tactical gap: the fixture observes something.", "entryKind": "gap", "layer": "tactical",
+		"topics": []string{"testing/fixture"}, "confidence": "medium", "widenReport": "searched from three angles",
+	}
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": draft}, &serve)
+	if serve.Step != "playback" {
+		t.Fatalf("the draft should reach playback, got %q: %.300q", serve.Step, serve.Instructions)
+	}
+	playback := model.ReadAnchors(followWaitingLanes(t, cs, session, serve))
+	if len(playback) == 0 {
+		t.Fatal("playback should serve its lanes with tags")
+	}
+
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": map[string]any{"chooser": "playback", "choice": "confirm", "userWords": "yes"}}, &serve)
+	if serve.Step != "guideReview" {
+		t.Fatalf("the confirm should reach guideReview, got %q: %.300q", serve.Step, serve.Instructions)
+	}
+	for _, proof := range playback {
+		if !named(serve.HoldNext, proof.Tag) {
+			t.Errorf("the line at guideReview should name playback's tag %s, got %q", proof.Tag, serve.HoldNext)
+		}
+	}
+
+	revision := map[string]any{"chooser": "guideReview", "choice": "revise", "fields": map[string]any{"body": "A tactical gap: the fixture observes the missing title."}}
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "report": revision}, &serve)
+	if serve.Step != "playback" {
+		t.Fatalf("the revision should return to playback, got %q: %.300q", serve.Step, serve.Instructions)
+	}
+	if !slices.ContainsFunc(playback, func(proof model.Proof) bool {
+		return strings.Contains(serve.Instructions, "tag "+proof.Tag+" for lane playback")
+	}) {
+		t.Errorf("playback served again should point at the lane the agent proved, got %.600q", serve.Instructions)
 	}
 }

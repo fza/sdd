@@ -36,7 +36,7 @@ func snapshotResponse(t *testing.T, res *mcp.CallToolResult) {
 		writeValue(&sb, value, 0)
 	}
 	text := anyTag.ReplaceAllString(aliasSessions(sb.String()), "⟦tag⟧")
-	text = anyNamedTag.ReplaceAllString(text, "tag <tag>)")
+	text = anyNamedTag.ReplaceAllString(text, "tag <tag>$1")
 	text = holdNextField.ReplaceAllStringFunc(text, func(line string) string {
 		return holdNextTag.ReplaceAllString(line, "<tag>")
 	})
@@ -50,7 +50,7 @@ var sessionHandle = regexp.MustCompile(`s_\d{8}-\d{6}-[0-9a-f]{32}`)
 // per serve.
 var (
 	anyTag        = regexp.MustCompile(`⟦[0-9a-z]{4}⟧`)
-	anyNamedTag   = regexp.MustCompile(`\btag [0-9a-z]{4}\)`)
+	anyNamedTag   = regexp.MustCompile(`\btag [0-9a-z]{4}( for\b|\))`)
 	holdNextField = regexp.MustCompile(`(?m)^\s*hold_next: .*$`)
 	holdNextTag   = regexp.MustCompile(`\b[0-9a-z]{4}\b`)
 )

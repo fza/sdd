@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/engine"
@@ -180,5 +181,29 @@ func TestServePieceWithoutAWordToTagServesInFull(t *testing.T) {
 			t.Fatalf("a piece with no word to tag should serve in full untagged, got %+v", served)
 		}
 		session.RecordAnchors()
+	}
+}
+
+// FailedProofs names a proof whose word is not the one after its tag and one
+// whose tag was never issued; a right proof and a tag listed in reread are
+// not failures.
+func TestFailedProofsNamesWrongWordsAndUnknownTags(t *testing.T) {
+	lane := engine.Piece{Name: "lane step", Hash: "h1"}
+	session := newPieceSession(nil)
+	session.BeginCall(nil, nil)
+	proof := servedInFull(t, session, lane)
+	session.RecordAnchors()
+
+	wrong := model.Proof{Tag: proof.Tag, Word: "elsewhere"}
+	unknown := model.Proof{Tag: "zzzz", Word: proof.Word}
+	session.BeginCall([]model.Proof{proof, wrong, unknown}, nil)
+	want := []engine.FailedProof{{Proof: wrong, Issued: true}, {Proof: unknown}}
+	if got := session.FailedProofs(); !slices.Equal(got, want) {
+		t.Errorf("failed proofs = %+v, want %+v", got, want)
+	}
+
+	session.BeginCall([]model.Proof{wrong}, []string{proof.Tag})
+	if got := session.FailedProofs(); len(got) != 0 {
+		t.Errorf("a tag listed in reread should not count as a failed proof, got %+v", got)
 	}
 }

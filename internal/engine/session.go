@@ -257,16 +257,18 @@ type Session struct {
 	// deferred folds the deferral events: per instance whose lanes wait, the
 	// pieces its serve sent, each under its tag (FollowDeferral).
 	deferred map[string]map[Piece]string
-	// latest, steps and repeats fold what the hold-next line names
-	// (HoldNext): per piece the tag it was last served under, per instance
-	// what its last serve carried, per move the pieces served in full again
+	// latest, steps, stepServes and repeats fold what the hold-next line
+	// names (HoldNext): per piece the tag it was last served under, per
+	// instance what its last serve carried and per step of it what that
+	// step's last serve carried, per move the pieces served in full again
 	// where a proof could have held them.
-	latest  map[Piece]string
-	steps   map[string]stepServe
-	stepSeq int
-	repeats map[string][]Piece
-	call    pieceCall
-	rnd     model.RandomSource
+	latest     map[Piece]string
+	steps      map[string]stepServe
+	stepServes map[string]map[string][]rankedPiece
+	stepSeq    int
+	repeats    map[string][]Piece
+	call       pieceCall
+	rnd        model.RandomSource
 	// sinkErr carries a deferred log-append failure; surfaced by the next
 	// advance call so a durability problem can't pass silently.
 	sinkErr     error
@@ -1380,7 +1382,8 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			s.foldAnchor(record)
 		}
 		steps, _ := ev.Data["steps"].(map[string]any)
-		s.foldSteps(steps)
+		at, _ := ev.Data["at"].(map[string]any)
+		s.foldSteps(steps, at)
 
 	case EventDeferred:
 		s.foldDeferral(ev.Instance, ev.Data)

@@ -85,10 +85,11 @@ again later? resume_session with this handle re-serves this list in full.`
 // it proves what it still holds (20261112-075604-d-tac-t4r).
 const proofGuide = `Every piece served in full (instruction lane, framing block, report schema,
 entry) carries a tag, such as ⟦k3f9⟧, before one of its words. Each result
-ends with hold_next: the tags whose pieces your next call may get again. On
-that call, list in held exactly those tags whose text you still see, each with
-the word right after it, as tag:word
-("… dialogue ⟦gn9p⟧ first …" → gn9p:first). That piece then serves as a short
-pointer. List in reread the tag or name of a piece you no longer see: it serves
-in full again. Never guess a word: a missing or wrong proof costs only the full
-text.`
+ends with hold_next: the tags whose pieces your next call may get again. Send
+held on every call: exactly those tags whose text you still see, each with the
+word right after it in that text, as tag:word
+("… dialogue ⟦gn9p⟧ first …" → gn9p:first). A proved piece serves as a short
+pointer. A tag left out serves its whole text into your context again. Never
+guess a word: a wrong proof costs the same, and proof_notice names it.
+List in reread the tag or name of a piece you no longer see: it serves in full
+again.`

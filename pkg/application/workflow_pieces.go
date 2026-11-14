@@ -38,6 +38,24 @@ func (w *WorkflowSession) BeginCall(held, reread []string) error {
 	return nil
 }
 
+// FailedProof is a proof the call listed in held that holds no piece, as
+// "tag:word"; Issued reports whether the tag was ever issued, so only the
+// word is wrong.
+type FailedProof struct {
+	Proof  string
+	Issued bool
+}
+
+// FailedProofs lists the proofs of the call that hold no piece: a tag never
+// issued or a word other than the one after the tag.
+func (w *WorkflowSession) FailedProofs() []FailedProof {
+	var failed []FailedProof
+	for _, f := range w.session.FailedProofs() {
+		failed = append(failed, FailedProof{Proof: f.Proof.String(), Issued: f.Issued})
+	}
+	return failed
+}
+
 // ServeText serves a piece of text named name. covers names the entries the
 // text carries whole, which its proof holds too.
 func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPiece {

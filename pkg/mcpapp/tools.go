@@ -428,10 +428,12 @@ func (f *ResultNotices) setHostNotice(notice string)  { f.HostNotice = notice }
 // ResultHoldNext ends every result of an attached session with the tags
 // whose pieces the next serve may repeat (20261114-121534-d-tac-qdb).
 type ResultHoldNext struct {
-	HoldNext string `json:"hold_next,omitempty" jsonschema:"the tags, likeliest first, whose pieces your next call may get again; list in its held exactly these tags whose text you still see, each with the word right after it"`
+	ProofNotice string `json:"proof_notice,omitempty" jsonschema:"set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out"`
+	HoldNext    string `json:"hold_next,omitempty" jsonschema:"the tags, likeliest first, whose pieces your next call may get again; list in its held exactly these tags whose text you still see, each with the word right after it"`
 }
 
-func (f *ResultHoldNext) setHoldNext(line string) { f.HoldNext = line }
+func (f *ResultHoldNext) setHoldNext(line string)      { f.HoldNext = line }
+func (f *ResultHoldNext) setProofNotice(notice string) { f.ProofNotice = notice }
 
 // SyncBlockedResult is the blocked-sync record info shows.
 type SyncBlockedResult struct {
@@ -1495,6 +1497,9 @@ func toolBoundary[In, Out any](s *Server, handler func(context.Context, *mcp.Cal
 		if carrier, ok := any(&out).(interface{ setHostNotice(string) }); ok {
 			carrier.setHostNotice(hostNotice)
 		}
+		if carrier, ok := any(&out).(interface{ setProofNotice(string) }); ok && len(slot.failed) > 0 {
+			carrier.setProofNotice(proofNotice(slot.failed))
+		}
 		if carrier, ok := any(&out).(interface{ setHoldNext(string) }); ok && len(slot.holdNext) > 0 {
 			cost, err := resultChars(out)
 			if err != nil {
@@ -1518,10 +1523,12 @@ type syncNoticeKey struct{}
 // syncNoticeSlot lets the call's session, once attached, name how its
 // blocked-sync notice is claimed after the handler ran, so the notice
 // reflects what the call itself recorded; the claim leaves the tags the
-// result's hold-next line names in holdNext.
+// result's hold-next line names in holdNext and the call's failed proofs in
+// failed.
 type syncNoticeSlot struct {
 	claim    func(context.Context) (string, error)
 	holdNext []string
+	failed   []sdd.FailedProof
 }
 
 func (s *Server) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession) {
@@ -1534,6 +1541,7 @@ func (s *Server) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, 
 		ss.mu.Lock()
 		defer ss.mu.Unlock()
 		notice := ss.root.ServeNotice("sync notice", ss.root.SyncNotice(ctx, identity))
+		slot.failed = ss.root.FailedProofs()
 		err := ss.root.RecordServed(ctx, identity)
 		if err != nil {
 			return notice, err
