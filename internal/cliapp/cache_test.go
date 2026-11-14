@@ -204,7 +204,7 @@ func TestTheSweepCollectsSessionsAndServeDoesNot(t *testing.T) {
 
 // Opening a project records its checkout, so retiring the unused project keeps
 // the staged attachments of a session still open in that checkout's
-// .sdd/sessions (20261114-120345-d-tac-6n4, 3).
+// .sdd/sessions.
 func TestTheSweepKeepsTheStagedAttachmentsOfAnOpenInRepoSession(t *testing.T) {
 	f := newAppFixture(t)
 	inRepo, err := localadapter.NewFilesystemSessionStoreAt(filepath.Join(f.root, ".sdd", "sessions"))

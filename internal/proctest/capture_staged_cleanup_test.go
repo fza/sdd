@@ -125,7 +125,7 @@ func TestCapture_PublicationAndSessionEndFreeStagedAttachments(t *testing.T) {
 
 // A stale attach reporting into another instance while another attach's
 // operation is unfinished is refused as a fresh attach would be, and its report
-// does not land in the middle of that write (20261114-120345-d-tac-6n4, 2).
+// does not land in the middle of that write.
 func TestCapture_AStaleAttachCannotReportDuringAnotherAttachsUnfinishedWrite(t *testing.T) {
 	world, session := newCaptureWorld(t, "stale-report", proctest.WithFinalizers(&captureCompletionFailure{}))
 	first := session.Start(t, "capture", nil)
@@ -249,7 +249,7 @@ func appendReport(t *testing.T, world *proctest.World, id sdd.SessionID, instanc
 // A report naming a staged attachment that lands while another capture is
 // published keeps the attachment staged: the publication logs its release on
 // the log as it then stands before it deletes anything, and the reporting
-// capture publishes with the file (20261114-120345-d-tac-6n4, 1).
+// capture publishes with the file.
 func TestCapture_PublicationKeepsAnAttachmentAReportNamedMeanwhile(t *testing.T) {
 	race := &duringPublication{}
 	world, session := newCaptureWorld(t, "staged-race", proctest.WithFinalizers(race))

@@ -72,7 +72,7 @@ func projectStampPath(stateRoot, repoKey string) (string, error) {
 
 // RecordCheckout notes checkout as a working tree the project keyed repoKey
 // is opened from, so the sweep reads the sessions older versions logged into
-// its .sdd/sessions (20261114-120345-d-tac-6n4, 3).
+// its .sdd/sessions.
 func RecordCheckout(stateRoot, repoKey, checkout string) error {
 	path, err := checkoutsPath(stateRoot, repoKey)
 	if err != nil {
