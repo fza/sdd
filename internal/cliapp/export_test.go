@@ -204,7 +204,7 @@ func testEntry(frontmatter string) string {
 }
 
 // TestCLIExportDependencySelection exports the direct dependency dep of local,
-// never deep, which only dep declares (20261113-235859-d-cpt-l3m): referenced
+// never deep, which only dep declares: referenced
 // mode starts from what the local graph cites and follows refs and supersedes
 // upstream within the hop budget. The local graph overrides a base entry the
 // dependency still cites, so the original must stay listed among the embedded

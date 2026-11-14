@@ -36,7 +36,7 @@ type RepoAddCmd struct {
 
 // ResolveFurtherRefCmd makes the entry a direct dependency's ref names in a
 // repo beyond the local repo's direct dependencies available in that repo's
-// clone (20261113-235859-d-cpt-l3m): read from the clone as it stands, else
+// clone: read from the clone as it stands, else
 // one fetch on a miss through the git gate, which may spend a credit inside
 // the fetch cooldown and is waited for at most read_wait.
 type ResolveFurtherRefCmd struct {
@@ -84,7 +84,7 @@ type EnsureReposFreshCmd struct {
 }
 
 // RefreshDependenciesCmd refreshes the clones of the local repo's direct
-// dependencies (20261113-235859-d-cpt-l3m) ahead of a read. The refresh is
+// dependencies ahead of a read. The refresh is
 // optional to the read (20261027-150208-d-tac-bg4): its failures are reported
 // through the callbacks, and the read uses the clones as they stand.
 type RefreshDependenciesCmd struct {
@@ -171,7 +171,7 @@ func (c *RepoRemoveCmd) Validate() error {
 // sdd-owned clones (20261107-095427-d-tac-yux): the named repos, or the
 // local repo's direct dependencies when RepoIDs is empty, every connected
 // repo outside a project. Inside a project, a named repo outside its direct
-// dependencies is refused (20261113-235859-d-cpt-l3m). A repo without a clone
+// dependencies is refused. A repo without a clone
 // is cloned.
 type RepoSyncCmd struct {
 	RepoIDs []model.RepoID

@@ -6,8 +6,7 @@ import (
 )
 
 // UnavailableRefKind names why a ref a direct dependency holds into a
-// project beyond the home's direct dependencies stays unresolved
-// (20261113-235859-d-cpt-l3m).
+// project beyond the home's direct dependencies stays unresolved.
 type UnavailableRefKind string
 
 const (

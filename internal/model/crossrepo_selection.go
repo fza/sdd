@@ -8,7 +8,7 @@ import (
 
 // ErrNotDirectDependency reports a repo or project a read or a move names
 // outside the home project's directly declared dependencies, the horizon of
-// every surface (20261113-235859-d-cpt-l3m).
+// every surface.
 var ErrNotDirectDependency = errors.New("not a direct dependency")
 
 // NotDirectDependency is the ErrNotDirectDependency for target named from

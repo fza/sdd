@@ -145,7 +145,7 @@ func (w *WorkflowSession) ReadScope(ctx context.Context, identity RequestIdentit
 
 // resolveTargetProject resolves a project an instance of a session homed in
 // home may work in. Two grants, kept distinct: the target is one of the home
-// project's direct dependencies (20261113-235859-d-cpt-l3m) — a graph fact,
+// project's direct dependencies — a graph fact,
 // true for every principal — and the principal is a member of the target,
 // asked with the access the operation needs. Reading a dependency inside the
 // home view and being in it are different questions; this is the second.
@@ -176,7 +176,7 @@ func (a *Application) resolveTargetProject(ctx context.Context, identity Request
 }
 
 // horizon is what a read reaches beyond its project: the project's direct
-// dependencies (20261113-235859-d-cpt-l3m), in declared order, each with the
+// dependencies, in declared order, each with the
 // runtime the AccessResolver resolved it to for the principal, so a read
 // reaches exactly what a session may work in. A declaration the composition
 // refuses keeps a nil runtime, so a read selecting it fails as unavailable

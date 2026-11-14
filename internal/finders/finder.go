@@ -106,7 +106,7 @@ func (f *Finder) language() (string, error) {
 }
 
 // DirectDependencies returns the repo's committed cross-repo dependency
-// declarations, the horizon of every read (20261113-235859-d-cpt-l3m).
+// declarations, the horizon of every read.
 // Pre-flight's declared-dependency precondition reasons
 // against this list.
 func (f *Finder) DirectDependencies() ([]model.RepoID, error) {

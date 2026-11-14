@@ -32,7 +32,7 @@ type ShowTreeItem struct {
 	SupersedePath   []string // resolved origin→head trail when superseded; nil otherwise
 	// Unavailable says why an unresolved cross-repo node beyond the direct
 	// dependencies stays unresolved; CloneFetched is when the clone a resolved
-	// node beyond them was read from last fetched (20261113-235859-d-cpt-l3m).
+	// node beyond them was read from last fetched.
 	Unavailable  *UnavailableRef
 	CloneFetched time.Time
 }

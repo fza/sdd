@@ -3,8 +3,7 @@ package presenters
 import "time"
 
 // unavailableMarker is the one marker every surface renders in place of a
-// ref target that does not resolve, with the short reason when one is known
-// (20261113-235859-d-cpt-l3m).
+// ref target that does not resolve, with the short reason when one is known.
 func unavailableMarker(repo, reason string) string {
 	if reason == "" {
 		return "[unresolved: repo " + repo + "]"

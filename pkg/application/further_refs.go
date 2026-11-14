@@ -15,11 +15,11 @@ import (
 
 // UnavailableRef is a ref a direct dependency holds into a project beyond the
 // home's direct dependencies that stays unresolved, with its kind, reason and
-// who must act (20261113-235859-d-cpt-l3m).
+// who must act.
 type UnavailableRef = types.UnavailableRef
 
 // FurtherRefs resolves the refs a direct dependency holds into projects
-// beyond the home's direct dependencies (20261113-235859-d-cpt-l3m).
+// beyond the home's direct dependencies.
 type FurtherRefs interface {
 	// ResolveFurther resolves entryID of repo: the runtime over repo's clone
 	// when it holds the entry, with when that clone last fetched, else one

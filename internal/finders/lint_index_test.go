@@ -17,7 +17,7 @@ import (
 // TestIndexLintReportsDriftAcrossTheDirectDependencies: dep, deep (declared by
 // dep) and stray (declared by nobody) are connected and cached, each with an
 // index built under an older embedder. Lint reports drift for the direct
-// dependencies only, the repos a cross-repo search reaches (20261113-235859-d-cpt-l3m).
+// dependencies only, the repos a cross-repo search reaches.
 func TestIndexLintReportsDriftAcrossTheDirectDependencies(t *testing.T) {
 	loc := repos.Locations{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), CacheRoot: t.TempDir(), DataRoot: t.TempDir()}
 	reg := repos.NewRegistry(loc)
