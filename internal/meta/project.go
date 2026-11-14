@@ -92,8 +92,8 @@ func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, erro
 // names when its config points at a graph already, through graph_repo or
 // project_dir: `sdd init --graph-repo` switches such a repository, whose
 // machine-local layer holds the settings of a graph_repo project before its
-// committed config names one (20261110-134112-d-tac-42w). Any other workRoot
-// resolves as ResolveProject resolves it.
+// committed config names one. Any other workRoot resolves as ResolveProject
+// resolves it.
 func ResolveSwitchedProject(workRoot string, repoID model.RepoID, graphClone func(model.RepoID) (string, error)) (Project, error) {
 	sddDir := SDDDir(workRoot)
 	committed, local, err := ReadConfigLayers(sddDir, LocalConfigPath(sddDir, ""))

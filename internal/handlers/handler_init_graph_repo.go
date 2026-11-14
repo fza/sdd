@@ -198,9 +198,9 @@ func (h *Handler) initGraphRepo(ctx context.Context, cmd *command.InitCmd, chang
 }
 
 // syncGraphClone runs the sync round of the clone of repoID at dir, which
-// existed before this init, so the refresh builds on the remote's state
-// (20261110-134112-d-tac-42w). A fetch the gate defers leaves the clone as
-// its last fetch, minutes before, left it.
+// existed before this init, so the refresh builds on the remote's state. A
+// fetch the gate defers leaves the clone as its last fetch, minutes before,
+// left it.
 func (h *Handler) syncGraphClone(ctx context.Context, repoID model.RepoID, dir string) error {
 	var mu sync.Mutex
 	var blocks []model.SyncBlocked
