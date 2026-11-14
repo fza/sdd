@@ -233,10 +233,21 @@ def run_turn(repo, state, text, timeout):
         sys.exit(f"claude {reason} without a result; see {stderr} and {stream}")
 
 
+def init_knows(sdd, flag):
+    help_text = subprocess.run([str(Path(sdd).resolve()), "init", "--help"],
+                               capture_output=True, text=True, check=True).stdout
+    return flag in help_text
+
+
 def cmd_setup(args):
-    flags = ["--agents", "claude", "--verify-mode", args.verify_mode]
-    if args.verify_mode == "deep":
-        flags += ["--verify-runner", args.verify_runner]
+    flags = ["--agents", "claude"]
+    if init_knows(args.sdd, "--verify-mode"):
+        mode = args.verify_mode or "deep"
+        flags += ["--verify-mode", mode]
+        if mode == "deep":
+            flags += ["--verify-runner", args.verify_runner or "subagent"]
+    elif args.verify_mode or args.verify_runner:
+        sys.exit(f"{args.sdd} init has no --verify-mode; drop --verify-mode and --verify-runner")
     if args.dialogue_mode:
         flags += ["--dialogue-mode", args.dialogue_mode]
     driver.setup_repo(args, flags)
@@ -298,8 +309,8 @@ def main():
     setup.add_argument("--task", default=(
         "Add a `farewell(name)` function to `greeting.py` that returns `Goodbye, <name>!`, "
         "with a unit test in `test_greeting.py`."))
-    setup.add_argument("--verify-mode", default="deep", choices=["off", "grounding", "prose", "deep"])
-    setup.add_argument("--verify-runner", default="subagent", choices=["subagent", "claude", "codex", "driver"])
+    setup.add_argument("--verify-mode", choices=["off", "grounding", "prose", "deep"])
+    setup.add_argument("--verify-runner", choices=["subagent", "claude", "codex", "driver"])
     setup.add_argument("--dialogue-mode", choices=["guided", "auto"])
     setup.set_defaults(func=cmd_setup)
 
