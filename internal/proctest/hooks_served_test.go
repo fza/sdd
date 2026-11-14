@@ -1,5 +1,5 @@
 // A hook's non-blocking findings are served to the agent like the other
-// findings of the step they join (20261109-005138-d-tac-i61).
+// findings of the step they join.
 package proctest_test
 
 import (
