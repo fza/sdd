@@ -158,6 +158,18 @@ func (c CLI) RevParse(ctx context.Context, ref string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// HasCommit reports whether hash names a commit the repository holds.
+func (c CLI) HasCommit(ctx context.Context, hash string) (bool, error) {
+	err := c.command(ctx, "rev-parse", "--verify", "--quiet", "--end-of-options", hash+"^{commit}").Run()
+	if err == nil {
+		return true, nil
+	}
+	if errExitCode(err) == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("git rev-parse %s: %w", hash, err)
+}
+
 // Contains reports whether commit is reachable from HEAD. A commit the
 // repository does not know is not contained.
 func (c CLI) Contains(ctx context.Context, commit string) (bool, error) {

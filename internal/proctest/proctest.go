@@ -261,7 +261,7 @@ func WithClock(clock sdd.Clock) Option {
 }
 
 // WithCheckout gives the world's project a checkout the deep verifier's
-// weighing rule looks cited paths up in.
+// weighing rule and its findings look cited paths up in.
 func WithCheckout(checkout fs.FS) Option {
 	return func(c *config) { c.checkout = checkout }
 }

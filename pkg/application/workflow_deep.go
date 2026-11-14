@@ -10,6 +10,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/networkteam/slogutils"
 
@@ -474,6 +475,41 @@ func weighDeep(store *engine.Store, checkout fs.FS) string {
 	return fmt.Sprintf("Recommended: %s, because %s.", choice, strings.Join(weighing.Reasons, "; "))
 }
 
+// deepLookup resolves what deep findings cite: entries in the instance's
+// graph, files in its project's checkout and commits in its repository.
+func (w *WorkflowSession) deepLookup(ctx *engine.Context) (model.DeepLookup, error) {
+	runtime, err := w.targetRuntime(w.instanceProject(ctx.Instance), AccessRead)
+	if err != nil {
+		return model.DeepLookup{}, err
+	}
+	lookup := model.DeepLookup{Entry: func(id string) bool { return ctx.Graph != nil && ctx.Graph.ByID[id] != nil }}
+	if checkout := runtime.options.Checkout; checkout != nil {
+		lookup.File = func(path string) (string, bool, error) { return checkoutFile(checkout, path) }
+	}
+	if commits := runtime.options.Commits; commits != nil {
+		lookup.Commit = func(hash string) (bool, error) { return commits.HasCommit(w.ctx, hash) }
+	}
+	return lookup, nil
+}
+
+func checkoutFile(checkout fs.FS, path string) (string, bool, error) {
+	info, err := fs.Stat(checkout, path)
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("reading cited file %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", false, nil
+	}
+	data, err := fs.ReadFile(checkout, path)
+	if err != nil {
+		return "", false, fmt.Errorf("reading cited file %s: %w", path, err)
+	}
+	return string(data), true, nil
+}
+
 // deepPages renders the verifier's whole reading, led by the draft document,
 // what pre-flight raised and the changed passages since the last verdict,
 // and names the entries it serves.
@@ -706,7 +742,14 @@ func (w *WorkflowSession) readDeepFindings(ctx *engine.Context) error {
 		return err
 	}
 	base, _ := workflowStoreString(ctx.Store, fieldDeepBase)
-	problems := model.CheckDeepFindings(base, findings, func(id string) bool { return ctx.Graph != nil && ctx.Graph.ByID[id] != nil })
+	lookup, err := w.deepLookup(ctx)
+	if err != nil {
+		return err
+	}
+	problems, err := model.CheckDeepFindings(base, findings, lookup)
+	if err != nil {
+		return err
+	}
 	var answerable, owned strings.Builder
 	for i, finding := range findings {
 		listed := &answerable
@@ -725,8 +768,11 @@ func (w *WorkflowSession) readDeepFindings(ctx *engine.Context) error {
 				fmt.Fprintf(listed, "\n  - %s: %s", pointer.Field, pointer.ID)
 			}
 		}
-		if len(finding.Sources) > 0 {
-			fmt.Fprintf(listed, "\n  - sources: %s", strings.Join(finding.Sources, ", "))
+		for _, source := range finding.Sources {
+			fmt.Fprintf(listed, "\n  - %s %s", source.Kind, source.Ref)
+			if source.Quote != "" {
+				fmt.Fprintf(listed, ": %q", source.Quote)
+			}
 		}
 		listed.WriteString("\n")
 	}
@@ -1093,7 +1139,14 @@ func (w *WorkflowSession) registerVerifyTask(registry *engine.Registry) error {
 					return err
 				}
 				base, _ := workflowStoreString(ctx.Store, fieldVerifyBase)
-				problems := model.CheckDeepFindings(base, findings, func(id string) bool { return ctx.Graph != nil && ctx.Graph.ByID[id] != nil })
+				lookup, err := w.deepLookup(ctx)
+				if err != nil {
+					return err
+				}
+				problems, err := model.CheckDeepFindings(base, findings, lookup)
+				if err != nil {
+					return err
+				}
 				return ctx.Store.WriteEngine(fieldVerifyProblems, strings.Join(problems, "\n"))
 			},
 		},

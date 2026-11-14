@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -84,8 +85,25 @@ func TestDeepOpenFindings_FollowTheLatestResponse(t *testing.T) {
 	}
 }
 
+// deepLookup finds one entry, one file and one commit.
+var deepLookup = model.DeepLookup{
+	Entry: func(id string) bool { return id == "20261101-100000-s-tac-abc" },
+	File: func(path string) (string, bool, error) {
+		if path == "internal/capture/writer.go" {
+			return "Write keeps the first\n   attachment of a name.\n", true, nil
+		}
+		return "", false, nil
+	},
+	Commit: func(hash string) (bool, error) { return hash == "4aeb2c4e", nil },
+}
+
+func evidence(sources ...model.DeepSource) model.DeepFinding {
+	finding := deepFinding("evidence")
+	finding.Sources = sources
+	return finding
+}
+
 func TestCheckDeepFindings(t *testing.T) {
-	resolves := func(id string) bool { return id == "20261101-100000-s-tac-abc" }
 	for _, tc := range []struct {
 		name    string
 		finding model.DeepFinding
@@ -96,16 +114,62 @@ func TestCheckDeepFindings(t *testing.T) {
 		{"evidence without sources", deepFinding("evidence"), "f1: an evidence finding names its sources"},
 		{"unresolved basis", model.DeepFinding{Verdict: "v", Axis: "duplicates", Severity: "high", Basis: []string{"20261101-100000-s-tac-zzz"}}, "f1: basis 20261101-100000-s-tac-zzz resolves to no entry"},
 		{"edit not matching", deepFinding("contradicts", model.DeepEdit{Old: "nowhere", New: "x"}), "f1 edit 1: old text matches the draft 0 times"},
+		{"invented file", evidence(model.DeepSource{Kind: "file", Ref: "internal/capture/invented.go"}), "f1: source file internal/capture/invented.go is not in the checkout"},
+		{"quote not in the file", evidence(model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go", Quote: "keeps the last attachment"}), `f1: source file internal/capture/writer.go does not hold the quote "keeps the last attachment"`},
+		{"invented commit", evidence(model.DeepSource{Kind: "commit", Ref: "deadbeef"}), "f1: source commit deadbeef is not in the repository"},
+		{"invented entry", evidence(model.DeepSource{Kind: "entry", Ref: "20261101-100000-s-tac-zzz"}), "f1: source entry 20261101-100000-s-tac-zzz resolves to no entry"},
+		{"malformed url", evidence(model.DeepSource{Kind: "url", Ref: "example.org/spec"}), `f1: source url "example.org/spec" is no http or https URL`},
+		{"unknown kind", evidence(model.DeepSource{Kind: "chat", Ref: "the user said so"}), `f1: source kind "chat" is not one of`},
+		{"path leaving the checkout", evidence(model.DeepSource{Kind: "file", Ref: "../secrets.txt"}), `f1: source file "../secrets.txt" is no path inside the checkout`},
+		{"pointer quote not in the draft", model.DeepFinding{Verdict: "v", Axis: "inconsistent", Severity: "low", Pointers: []model.DeepPointer{{Field: "body", Quote: "drops every attachment"}}}, `f1: pointer quote "drops every attachment" is not in the draft`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			problems := model.CheckDeepFindings(deepBase, []model.DeepFinding{tc.finding}, resolves)
+			problems, err := model.CheckDeepFindings(deepBase, []model.DeepFinding{tc.finding}, deepLookup)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !strings.Contains(strings.Join(problems, "\n"), tc.want) {
 				t.Fatalf("want a problem naming %q, got %v", tc.want, problems)
 			}
 		})
 	}
-	if problems := model.CheckDeepFindings(deepBase, nil, resolves); len(problems) != 0 {
-		t.Fatalf("an empty set of findings stands, got %v", problems)
+	if problems, err := model.CheckDeepFindings(deepBase, nil, deepLookup); err != nil || len(problems) != 0 {
+		t.Fatalf("an empty set of findings stands, got %v, %v", problems, err)
+	}
+}
+
+// Quotes match across differing whitespace, and a URL is checked for its
+// form alone, never fetched.
+func TestCheckDeepFindings_CitationsThatResolveStand(t *testing.T) {
+	finding := evidence(
+		model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go", Quote: "keeps the first attachment"},
+		model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go"},
+		model.DeepSource{Kind: "commit", Ref: "4aeb2c4e"},
+		model.DeepSource{Kind: "entry", Ref: "20261101-100000-s-tac-abc"},
+		model.DeepSource{Kind: "url", Ref: "https://example.org/never-fetched"},
+	)
+	finding.Pointers = []model.DeepPointer{{Field: "body", Quote: "drops the second\n  attachment."}, {Field: "layer", Quote: "tactical"}}
+	problems, err := model.CheckDeepFindings(deepBase, []model.DeepFinding{finding}, deepLookup)
+	if err != nil || len(problems) != 0 {
+		t.Fatalf("citations that resolve should stand, got %v, %v", problems, err)
+	}
+}
+
+func TestCheckDeepFindings_PointerQuoteMatchesAHeaderFieldsValue(t *testing.T) {
+	base := "title: \"The \\\"writer\\\" drops <files>\"\n\nBody.\n"
+	finding := model.DeepFinding{Verdict: "v", Axis: "inconsistent", Severity: "low", Pointers: []model.DeepPointer{{Field: "title", Quote: `The "writer" drops <files>`}}}
+	problems, err := model.CheckDeepFindings(base, []model.DeepFinding{finding}, deepLookup)
+	if err != nil || len(problems) != 0 {
+		t.Fatalf("a quote of a header field's value should match it, got %v, %v", problems, err)
+	}
+}
+
+func TestCheckDeepFindings_ALookupFailureIsAnError(t *testing.T) {
+	failing := deepLookup
+	failing.Commit = func(string) (bool, error) { return false, errors.New("git is gone") }
+	_, err := model.CheckDeepFindings(deepBase, []model.DeepFinding{evidence(model.DeepSource{Kind: "commit", Ref: "4aeb2c4e"})}, failing)
+	if err == nil || !strings.Contains(err.Error(), "git is gone") {
+		t.Fatalf("a lookup failure should surface as an error, got %v", err)
 	}
 }
 
@@ -116,8 +180,8 @@ func TestOwnerEvidenceFindingNeedsNoSources(t *testing.T) {
 	if err := finding.Validate(); err != nil {
 		t.Fatalf("an owner evidence finding without sources should validate: %v", err)
 	}
-	if problems := model.CheckDeepFindings(deepBase, []model.DeepFinding{finding}, func(string) bool { return true }); len(problems) != 0 {
-		t.Fatalf("an owner evidence finding without sources should stand: %v", problems)
+	if problems, err := model.CheckDeepFindings(deepBase, []model.DeepFinding{finding}, deepLookup); err != nil || len(problems) != 0 {
+		t.Fatalf("an owner evidence finding without sources should stand: %v, %v", problems, err)
 	}
 }
 
