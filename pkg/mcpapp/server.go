@@ -32,7 +32,7 @@ type Options struct {
 	LocalClient bool
 	// Version is the SDD version the info tool reports, and the server
 	// implementation version under New.
-	Version     string
+	Version string
 	// CacheNotice returns, once, the host's notice of a failed background
 	// cache pruning run; every tool result carries it as cache_notice. Nil
 	// when the host prunes nothing.
