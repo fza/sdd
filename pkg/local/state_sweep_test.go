@@ -238,6 +238,158 @@ func TestStateSweepRetiresAnUnusedProjectOnceItsLastSessionIsCollected(t *testin
 	}
 }
 
+// inRepoSession writes a session an older sdd logged into checkout's
+// .sdd/sessions, ended at ended unless that is zero, and stages one attachment
+// of it in the project's state folder, where sdd stages for every location.
+func (f stateFixture) inRepoSession(t *testing.T, key, checkout string, id sdd.SessionID, ended time.Time) {
+	t.Helper()
+	sessions, err := localadapter.NewFilesystemSessionStoreAt(filepath.Join(checkout, ".sdd", "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := sdd.SessionMetadata{ID: id, Subject: "local", Project: "local", Participant: "Christopher", UpdatedAt: f.now.Add(-200 * 24 * time.Hour)}
+	if _, err := sessions.Create(t.Context(), metadata); err != nil {
+		t.Fatal(err)
+	}
+	blobs, err := localadapter.NewFilesystemStagedBlobStore(f.location(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := blobs.Stage(t.Context(), sdd.SessionRef{Subject: "local", Session: id}, "evidence.md", strings.NewReader("evidence")); err != nil {
+		t.Fatal(err)
+	}
+	if !ended.IsZero() {
+		f.endInRepoSession(t, checkout, id, ended)
+	}
+}
+
+func (f stateFixture) endInRepoSession(t *testing.T, checkout string, id sdd.SessionID, ended time.Time) {
+	t.Helper()
+	sessions, err := localadapter.NewFilesystemSessionStoreAt(filepath.Join(checkout, ".sdd", "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := sessions.Load(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := stored.Metadata
+	metadata.Ended = &sdd.SessionEnd{Act: sdd.SessionConcluded, EndedAt: ended}
+	payload, err := json.Marshal(metadata.Ended)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessions.Append(t.Context(), id, stored.Version, sdd.SessionAppend{Metadata: &metadata, Events: []sdd.StoredEvent{{CodecVersion: sdd.SessionCodecVersion, Code: sdd.SessionEndedEventCode, Payload: payload}}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Retiring an unused project keeps the staged attachments of a session still
+// open in the .sdd/sessions of any checkout sdd opened the project from, or
+// whose log there it cannot read; an ended session's, or those of a checkout
+// gone from disk, go (20261114-120345-d-tac-6n4, 3).
+func TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions(t *testing.T) {
+	long := 3 * sweepUnusedRetention
+	for _, tc := range []struct {
+		name     string
+		prepare  func(t *testing.T, f stateFixture, key, checkout string)
+		wantKept bool
+	}{
+		{name: "open", wantKept: true, prepare: func(t *testing.T, f stateFixture, key, checkout string) {
+			f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
+		}},
+		{name: "unreadable", wantKept: true, prepare: func(t *testing.T, f stateFixture, key, checkout string) {
+			f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
+			if err := os.WriteFile(filepath.Join(checkout, ".sdd", "sessions", "s_inrepo.jsonl"), []byte("{not json\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "open in a second checkout", wantKept: true, prepare: func(t *testing.T, f stateFixture, key, checkout string) {
+			f.inRepoSession(t, key, checkout, "s_first", f.now.Add(-time.Hour))
+			second := t.TempDir()
+			if err := localadapter.RecordCheckout(f.root, key, second); err != nil {
+				t.Fatal(err)
+			}
+			f.inRepoSession(t, key, second, "s_inrepo", time.Time{})
+		}},
+		{name: "ended", prepare: func(t *testing.T, f stateFixture, key, checkout string) {
+			f.inRepoSession(t, key, checkout, "s_inrepo", f.now.Add(-time.Hour))
+		}},
+		{name: "checkout gone", prepare: func(t *testing.T, f stateFixture, key, checkout string) {
+			f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
+			if err := os.RemoveAll(checkout); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			const key = "github.com/acme/paused"
+			checkout := t.TempDir()
+			if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+				t.Fatal(err)
+			}
+			f.used(t, key, f.now.Add(-long))
+			tc.prepare(t, f, key, checkout)
+
+			f.sweep(t)
+
+			if kept := f.stagedExists(t, key, "s_inrepo"); kept != tc.wantKept {
+				t.Errorf("the staged attachments of the in-repo session kept should be %v", tc.wantKept)
+			}
+			record := filepath.Join(f.root, "checkouts", "github.com", "acme", "paused.list")
+			if _, err := os.Stat(record); (err == nil) != tc.wantKept {
+				t.Errorf("the checkout record should stay exactly while staged attachments do, stat says %v", err)
+			}
+		})
+	}
+}
+
+// A retired project whose staged attachments an open in-repo session kept is
+// swept again, through its checkout record, and loses them once that session
+// ends.
+func TestStateSweepRemovesTheKeptStagedAttachmentsOnceTheInRepoSessionEnds(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "github.com/acme/paused"
+	checkout := t.TempDir()
+	if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+		t.Fatal(err)
+	}
+	f.relevance(t, key)
+	f.used(t, key, f.now.Add(-3*sweepUnusedRetention))
+	f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
+
+	f.sweep(t)
+	if !f.stagedExists(t, key, "s_inrepo") {
+		t.Fatal("an open in-repo session should keep its staged attachments")
+	}
+	f.endInRepoSession(t, checkout, "s_inrepo", f.now)
+	later := f
+	later.now = f.now.Add(time.Hour)
+	later.sweep(t)
+
+	if f.stagedExists(t, key, "s_inrepo") {
+		t.Error("the staged attachments should go once the in-repo session ended")
+	}
+}
+
+func TestRecordCheckoutRecordsEachCheckoutOnce(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "local/abcdef012345"
+	for _, checkout := range []string{"/work/app", "/work/app-feature", "/work/app"} {
+		if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+			t.Fatal(err)
+		}
+	}
+	content, err := os.ReadFile(filepath.Join(f.root, "checkouts", "local", "abcdef012345.list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(content), "/work/app\n/work/app-feature\n"; got != want {
+		t.Errorf("the record should list each checkout once, got %q, want %q", got, want)
+	}
+}
+
 func TestMarkProjectUsedRefreshesOnceADay(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "local/abcdef012345"

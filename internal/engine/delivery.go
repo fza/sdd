@@ -128,6 +128,7 @@ func (s *Session) Fork(instanceID string, child Link, spec *Spec) (map[string]an
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
+	defer s.endProgression()
 	p, ok := s.instances[instanceID]
 	if !ok {
 		return nil, fmt.Errorf("no parent instance %q", instanceID)
@@ -230,6 +231,7 @@ func (s *Session) Poll(instanceID string) (*Serve, error) {
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return nil, fmt.Errorf("no instance %q", instanceID)

@@ -266,6 +266,9 @@ type Session struct {
 	intentDone  bool
 	cancelled   *MutationCancellation
 	hooks       Hooks
+	// progressing counts the transitions in flight that passed
+	// checkProgression, which Readmit checks again after a fold.
+	progressing int
 }
 
 // SessionOption configures a session.
@@ -523,6 +526,7 @@ func (s *Session) Park(instanceID, note string) error {
 	if err := s.checkProgression(); err != nil {
 		return err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return fmt.Errorf("instance %q not found in session", instanceID)
@@ -581,6 +585,7 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
+	defer s.endProgression()
 	if len(spec.Steps) == 0 {
 		return nil, fmt.Errorf("procedure %s: no steps", spec.Canonical)
 	}
@@ -774,6 +779,7 @@ func (s *Session) report(instanceID string, fields map[string]any) (*Instance, e
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return nil, fmt.Errorf("instance %q not found in session", instanceID)
@@ -841,6 +847,7 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return nil, fmt.Errorf("instance %q not found in session", instanceID)
@@ -1052,6 +1059,7 @@ func (s *Session) Abandon(instanceID, reason string) error {
 	if err := s.checkProgression(); err != nil {
 		return err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return fmt.Errorf("instance %q not found in session", instanceID)

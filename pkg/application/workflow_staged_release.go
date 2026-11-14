@@ -43,11 +43,42 @@ func releaseStaged(staged map[string]string, release stagedBlobRelease) bool {
 }
 
 // releasePublished deletes the staged attachments the entry just published,
-// keeping those another instance of the session still claims.
+// keeping those another instance of the session still claims. It logs the
+// release first, at the version whose state it computed the claims from, and
+// deletes only once that append lands; an append another attach's write beat
+// catches up and computes the claims again (20261114-120345-d-tac-6n4, 1).
 func (w *WorkflowSession) releasePublished(instance string, attachments []StagedAttachment) error {
-	claims, err := w.pendingClaims(instance)
+	released, err := w.logRelease(instance, attachments)
+	if isSessionConflict(err) {
+		err = w.catchUp(nil)
+		if err == nil {
+			released, err = w.logRelease(instance, attachments)
+		}
+	}
+	if isSessionConflict(err) {
+		return fmt.Errorf("%w; %s", err, reorientSuffix)
+	}
 	if err != nil {
 		return err
+	}
+	ref := SessionRef{Subject: w.binding.Subject, Session: w.binding.SessionID}
+	for _, release := range released {
+		if releaseStaged(w.staged, release) {
+			w.recordSource(release.Handle, "")
+		}
+		if err := w.app.blobs.DeleteBlob(w.ctx, ref, release.BlobID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// logRelease appends the release of the attachments no other instance claims
+// in the state the holder has, and returns what it released.
+func (w *WorkflowSession) logRelease(instance string, attachments []StagedAttachment) ([]stagedBlobRelease, error) {
+	claims, err := w.pendingClaims(instance)
+	if err != nil {
+		return nil, err
 	}
 	for _, inst := range w.session.Instances() {
 		if inst.ID == instance || inst.Status != engine.StatusRunning || inst.Store.Has("entryId") {
@@ -55,36 +86,24 @@ func (w *WorkflowSession) releasePublished(instance string, attachments []Staged
 		}
 		claimHandles(claims, inst, w.staged)
 	}
-	ref := SessionRef{Subject: w.binding.Subject, Session: w.binding.SessionID}
 	var events []StoredEvent
 	var released []stagedBlobRelease
 	for _, attachment := range attachments {
 		if claims[attachment.BlobID] {
 			continue
 		}
-		if err := w.app.blobs.DeleteBlob(w.ctx, ref, attachment.BlobID); err != nil {
-			return err
-		}
 		release := stagedBlobRelease{Handle: attachment.Filename, BlobID: attachment.BlobID}
 		payload, err := json.Marshal(release)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		events = append(events, StoredEvent{CodecVersion: SessionCodecVersion, Code: workflowStagedBlobReleasedCode, Payload: payload})
 		released = append(released, release)
 	}
 	if len(events) == 0 {
-		return nil
+		return nil, nil
 	}
-	if err := w.appendStoredEvents(events); err != nil {
-		return err
-	}
-	for _, release := range released {
-		if releaseStaged(w.staged, release) {
-			w.recordSource(release.Handle, "")
-		}
-	}
-	return nil
+	return released, w.appendStoredEventsOnce(events)
 }
 
 // pendingClaims is the staged files the session's pending write needs, unless

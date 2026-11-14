@@ -468,6 +468,7 @@ Once a day sdd starts `sdd cache prune` in the background, detached from the com
 | A session that ended (concluded or abandoned), with its staged attachments | `sessions.retention` after it ended. An open session stays, however long it is idle. |
 | A staged attachment | Once the entry it is attached to is published, unless another capture in progress names it; the rest of a session's when the session ends. One a pending capture still needs stays until that capture is retried or cancelled. |
 | A project's relevance ledger and its empty session folder | After `cache.retention` without the project being used. Open sessions stay. |
+| A project's staged attachments no session owns | After `cache.retention` without the project being used. Those of a session open in a checkout's `.sdd/sessions`, where older sdd versions logged sessions, stay: sdd records each checkout it opens the project from and reads the sessions there. |
 | An older version of an entry in the search index | `index.replaced_retention` after a newer version replaced it, unless a checkout that searched the index within `cache.retention` still reads it. The version the current checkout searches always stays. |
 | Index data in an older format | `index.replaced_retention` after its last use. |
 | The index of an embedding setup you switched away from | `index.replaced_retention` after its last use, once the project's index under another setup was used later. Switching back afterwards embeds the graph again. |
@@ -476,7 +477,7 @@ Once a day sdd starts `sdd cache prune` in the background, detached from the com
 | A clone under `~/.local/share/sdd/repos/` | Once the user-global `repos` list no longer names it, unless it holds unpushed commits or sdd fetched or pushed it within `cache.retention`. Listed clones stay and get `git gc --auto`. |
 | What a killed process left: git trace files, unfinished clones, unfinished index writes, emptied index folders, empty folders of old cache clones | One day after, once no lock holds it. |
 
-A session log sdd cannot read stays: it may belong to a newer sdd. The run reports how many it kept.
+A session log sdd cannot read stays, with its staged attachments: it may belong to a newer sdd. The run reports how many it kept.
 
 `sdd index gc` stays for deliberate cleanup beyond these rules.
 
