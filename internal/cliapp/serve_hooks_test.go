@@ -67,7 +67,7 @@ func toolText(result *mcp.CallToolResult) string {
 }
 
 // A hook in the user-global config runs at its event without confirmation,
-// its payload on stdin (20261109-213250-d-tac-bve).
+// its payload on stdin.
 func TestServeRunsAUserGlobalHookUnconfirmed(t *testing.T) {
 	fixture := newAppFixture(t)
 	payloadFile := fixture.payloadHook(t, "config/sdd/config.yaml", "user-dialogue.junction.start")

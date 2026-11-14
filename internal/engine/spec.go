@@ -198,7 +198,7 @@ type Step struct {
 	Delegable bool
 	// Findings names the engine-written field, in pre-flight's finding
 	// format, that is this gate's findings channel: findings the hooks on
-	// the step being done report join it (20261109-213250-d-tac-bve).
+	// the step being done report join it.
 	Findings string
 }
 

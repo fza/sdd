@@ -18,9 +18,9 @@ import (
 	"github.com/networkteam/sdd/pkg/application/types"
 )
 
-// Hook is one declared hook resolved against its layer
-// (20261109-213250-d-tac-bve): a file run with an event's JSON payload on
-// stdin, its hash, and whether this machine confirmed it.
+// Hook is one declared hook resolved against its layer: a file run with an
+// event's JSON payload on stdin, its hash, and whether this machine confirmed
+// it.
 type Hook = types.Hook
 
 // HookReview is what the person sees before confirming a hook.
@@ -48,10 +48,9 @@ type HookConfirmer interface {
 }
 
 // ConfirmHooks asks confirmer about every hook of project this machine has
-// not confirmed and records their hashes once the person accepts them all
-// (20261109-213250-d-tac-bve). A call that can fire hooks calls it before any
-// work, so a declined hook leaves nothing behind. Left empty, project is the
-// sole accessible one. A decline, or a nil confirmer, fails naming
+// not confirmed and records their hashes once the person accepts them all.
+// A call that can fire hooks calls it before any work, so a declined hook
+// leaves nothing behind. Left empty, project is the sole accessible one. A decline, or a nil confirmer, fails naming
 // `sdd hooks trust`.
 func (a *Application) ConfirmHooks(ctx context.Context, identity RequestIdentity, project ProjectID, confirmer HookConfirmer) error {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)

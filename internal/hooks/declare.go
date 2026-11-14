@@ -1,7 +1,7 @@
 // Package hooks resolves, confirms and runs the hooks a project and the
-// person running sdd declare (20261109-213250-d-tac-bve): each hook a file in
-// its layer's hooks folder, hashed over its config and the files it names,
-// run without a shell once its hash is confirmed.
+// person running sdd declare: each hook a file in its layer's hooks folder,
+// hashed over its config and the files it names, run without a shell once its
+// hash is confirmed.
 package hooks
 
 import (

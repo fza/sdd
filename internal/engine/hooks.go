@@ -24,9 +24,8 @@ const (
 // start hooks.
 const HooksFn = "hooks"
 
-// HookPoint is one moment the engine runs the configured hooks at
-// (20261109-213250-d-tac-bve): a step's event, or an event a command
-// announces, which carries no phase.
+// HookPoint is one moment the engine runs the configured hooks at: a step's
+// event, or an event a command announces, which carries no phase.
 type HookPoint struct {
 	Event     string
 	Procedure string

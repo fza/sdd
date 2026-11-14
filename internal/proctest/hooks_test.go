@@ -1,5 +1,5 @@
 // Configured hooks at the steps of the shipped procedures through the real
-// application (20261109-213250-d-tac-bve).
+// application.
 package proctest_test
 
 import (
@@ -226,7 +226,7 @@ func TestHooks_DoneAliasMatchesTheBareStepEvent(t *testing.T) {
 }
 
 // A failing start hook on pre-flight keeps the pre-flight LLM call from
-// running on every retry (20261109-213250-d-tac-bve).
+// running on every retry.
 func TestHooks_FailingStartHookKeepsThePreflightCallFromRunning(t *testing.T) {
 	world, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.preflight.start", Command: "gate"}})
 	scripted.Scripts["gate"] = proctest.HookScript{Err: errors.New("exit status 1")}
@@ -274,7 +274,7 @@ func pendingHook(event, command string) sdd.Hook {
 // ConfirmHooks, and the session refresh that asks first, ask about every
 // pending hook of the project in one question and confirm them all only once
 // the person accepts; without a confirmer, declined or not askable they fail
-// naming `sdd hooks trust` and confirm nothing (20261109-213250-d-tac-bve).
+// naming `sdd hooks trust` and confirm nothing.
 func TestHooks_ConfirmHooksAsksAboutEveryPendingHookAtOnce(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

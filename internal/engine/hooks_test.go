@@ -368,8 +368,7 @@ steps:
 }
 
 // A failing start hook holds its step: every later call raises the event
-// again, and the step's op runs only once the hook passes
-// (20261109-213250-d-tac-bve).
+// again, and the step's op runs only once the hook passes.
 func TestHookFailingAtStartHoldsTheStepUntilItPasses(t *testing.T) {
 	for _, replay := range []bool{false, true} {
 		t.Run(map[bool]string{false: "live", true: "replayed"}[replay], func(t *testing.T) {
