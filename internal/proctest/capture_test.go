@@ -361,7 +361,8 @@ func TestCapture_WritingGuideFindingsServeReviewThenProceed(t *testing.T) {
 	if serve.PendingChooser == nil || serve.PendingChooser.Kind != "agent" {
 		t.Fatalf("guideReview must serve an agent chooser, got %+v", serve.PendingChooser)
 	}
-	for _, want := range []string{"stranding", "the earlier approach", "write-in", "substantive", "drafting input", "judged the content the user approved"} {
+	for _, want := range []string{"stranding", "the earlier approach", "write-in", "substantive", "drafting input", "judged the content the user approved",
+		"A revision folds in only what a finding names: add nothing the user did not say, and keep every line the user gave."} {
 		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("guideReview unit missing %q:\n%s", want, serve.Instructions)
 		}
