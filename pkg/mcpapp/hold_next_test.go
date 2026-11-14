@@ -69,7 +69,7 @@ func TestResultsEndWithTheHoldNextLine(t *testing.T) {
 	if lastLane < 0 || lastLane > firstFraming {
 		t.Errorf("the step's lanes should come before its framing, got %v", tags)
 	}
-	if !strings.Contains(door.Instructions, "list in held exactly those tags") || strings.Contains(door.Instructions, "every earlier result") {
+	if !strings.Contains(door.Instructions, "held on every call: exactly those tags") || strings.Contains(door.Instructions, "every earlier result") {
 		t.Errorf("the proof guide should ask for exactly the hold-next tags, got:\n%s", door.Instructions)
 	}
 }
@@ -196,5 +196,27 @@ func TestGatherBriefLinesStayOffTheHoldNextLine(t *testing.T) {
 	call(t, cs, "gather", map[string]any{"session": door.Session, "ids": []string{fixtureGapID}, "held": []any{}}, &opened)
 	if proof := proofOf(t, opened.Serve, fixtureGapID); !named(opened.HoldNext, proof.Tag) {
 		t.Errorf("an entry gather opened in full should be named, got %q", opened.HoldNext)
+	}
+}
+
+// The proof guide, at the opening and on resume, makes the hold-next proofs
+// the act every call owes: a tag left out serves its whole text into the
+// agent's context again, and a word is never guessed.
+func TestTheProofGuideMakesASkippedProofACost(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	door := openSessionWhole(t, cs)
+	var resumed mcpserver.ResumeSessionResult
+	call(t, cs, "resume_session", map[string]any{"session": door.Session}, &resumed)
+	for name, text := range map[string]string{"opening": door.Instructions, "resume": resumed.Instructions} {
+		text = strings.Join(strings.Fields(text), " ")
+		for _, want := range []string{"Send held on every call", "A tag left out serves its whole text into your context again", "Never guess a word"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("the %s's proof guide should say %q, got:\n%s", name, want, text)
+			}
+		}
+		if strings.Contains(text, "costs only") {
+			t.Errorf("the %s's proof guide should not make a skipped proof look free, got:\n%s", name, text)
+		}
 	}
 }

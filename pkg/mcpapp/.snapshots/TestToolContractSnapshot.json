@@ -5,7 +5,7 @@
       "additionalProperties": false,
       "properties": {
         "held": {
-          "description": "exactly those tags the last result's hold_next names whose text you still see: each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
+          "description": "send on every call: exactly those tags the last result's hold_next names whose text you still see, each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -76,7 +76,7 @@
           "type": "string"
         },
         "held": {
-          "description": "exactly those tags the last result's hold_next names whose text you still see: each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
+          "description": "send on every call: exactly those tags the last result's hold_next names whose text you still see, each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -161,7 +161,7 @@
           "type": "integer"
         },
         "held": {
-          "description": "exactly those tags the last result's hold_next names whose text you still see: each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
+          "description": "send on every call: exactly those tags the last result's hold_next names whose text you still see, each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -216,7 +216,7 @@
       "additionalProperties": false,
       "properties": {
         "held": {
-          "description": "exactly those tags the last result's hold_next names whose text you still see: each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
+          "description": "send on every call: exactly those tags the last result's hold_next names whose text you still see, each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -342,7 +342,7 @@
           "type": "boolean"
         },
         "held": {
-          "description": "exactly those tags the last result's hold_next names whose text you still see: each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
+          "description": "send on every call: exactly those tags the last result's hold_next names whose text you still see, each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -445,7 +445,7 @@
           ]
         },
         "held": {
-          "description": "exactly those tags the last result's hold_next names whose text you still see: each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
+          "description": "send on every call: exactly those tags the last result's hold_next names whose text you still see, each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -565,7 +565,7 @@
           "type": "string"
         },
         "held": {
-          "description": "exactly those tags the last result's hold_next names whose text you still see: each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
+          "description": "send on every call: exactly those tags the last result's hold_next names whose text you still see, each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
@@ -669,7 +669,7 @@
           "type": "boolean"
         },
         "held": {
-          "description": "exactly those tags the last result's hold_next names whose text you still see: each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; never guess a word",
+          "description": "send on every call: exactly those tags the last result's hold_next names whose text you still see, each tag and the word right after it in the text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word",
           "items": {
             "type": "string"
           },
