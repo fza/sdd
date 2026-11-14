@@ -179,13 +179,13 @@ func TestResolveFurtherRefRecordsAMissAfterAFetch(t *testing.T) {
 	}
 
 	f.write(t, ".git/HEAD", "c2\n")
-	f.resolve(t, furtherEntry, false)
+	_, _ = f.resolve(t, furtherEntry, false)
 	if f.repo.Count("fetch") != 2 {
 		t.Errorf("a moved clone commit should allow the next fetch, fetches %d", f.repo.Count("fetch"))
 	}
 
 	*f.now = f.now.Add(model.RefMissRetry)
-	f.resolve(t, furtherEntry, false)
+	_, _ = f.resolve(t, furtherEntry, false)
 	if f.repo.Count("fetch") != 3 {
 		t.Errorf("a day after the miss the next fetch should run, fetches %d", f.repo.Count("fetch"))
 	}
@@ -199,7 +199,7 @@ func TestResolveFurtherRefRecordsAMissAfterAFetch(t *testing.T) {
 func TestResolveFurtherRefSpendsACreditInsideTheCooldown(t *testing.T) {
 	t.Run("no credit defers", func(t *testing.T) {
 		f := newFurther(t, 5*time.Second, true)
-		f.resolve(t, furtherEntry, false)
+		_, _ = f.resolve(t, furtherEntry, false)
 		*f.now = f.now.Add(90 * time.Second)
 		_, unavailable := f.resolve(t, "20261101-110000-s-tac-oth", false)
 		if f.repo.Count("fetch") != 1 || unavailable == nil || unavailable.Kind != model.RefFetchDeferred || !unavailable.At.After(*f.now) {
@@ -208,10 +208,10 @@ func TestResolveFurtherRefSpendsACreditInsideTheCooldown(t *testing.T) {
 	})
 	t.Run("a credit pays", func(t *testing.T) {
 		f := newFurther(t, 5*time.Second, true)
-		f.resolve(t, furtherEntry, false)
+		_, _ = f.resolve(t, furtherEntry, false)
 		// The fetch slices left unused meanwhile earn credits.
 		*f.now = f.now.Add(20 * time.Minute)
-		f.resolve(t, "20261101-110000-s-tac-two", false)
+		_, _ = f.resolve(t, "20261101-110000-s-tac-two", false)
 		*f.now = f.now.Add(90 * time.Second)
 		_, unavailable := f.resolve(t, "20261101-120000-s-tac-thr", false)
 		if f.repo.Count("fetch") != 3 || unavailable == nil || unavailable.Kind != model.RefMissingAfterFetch {

@@ -62,7 +62,6 @@ type FurtherResolver func(repoID RepoID, entryID string, fetched bool) (FurtherR
 // unavailability that holds for every entry (not connected, fetch deferred).
 type furtherRepo struct {
 	graph   *Graph
-	fetched time.Time
 	ran     bool
 	blocked *UnavailableRef
 }

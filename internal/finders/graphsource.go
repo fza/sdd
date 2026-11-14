@@ -66,8 +66,7 @@ func (f *Finder) memberGraphLoader(deps []model.RepoID) func(repoID model.RepoID
 		if f.repos == nil || !slices.Contains(deps, repoID) {
 			return nil, nil
 		}
-		g, _, err := f.cloneGraph(repoID)
-		return g, err
+		return f.cloneGraph(repoID)
 	}
 }
 
@@ -78,7 +77,7 @@ func (f *Finder) FurtherClone(repoID model.RepoID) (*model.Graph, time.Time, err
 	if f.repos == nil {
 		return nil, time.Time{}, nil
 	}
-	g, _, err := f.cloneGraph(repoID)
+	g, err := f.cloneGraph(repoID)
 	if err != nil || g == nil {
 		return nil, time.Time{}, err
 	}
@@ -91,21 +90,21 @@ func (f *Finder) FurtherClone(repoID model.RepoID) (*model.Graph, time.Time, err
 }
 
 // cloneGraph loads the graph of repoID's sdd-owned clone; nil when the repo
-// is not connected or not cloned, connected reporting which.
-func (f *Finder) cloneGraph(repoID model.RepoID) (g *model.Graph, connected bool, err error) {
+// is not connected or not cloned.
+func (f *Finder) cloneGraph(repoID model.RepoID) (*model.Graph, error) {
 	clone, connected, err := f.repos.Clone(repoID)
 	if err != nil || !connected || !clone.Cloned() {
-		return nil, connected, err
+		return nil, err
 	}
 	graphDir, err := clone.GraphDir()
 	if err != nil {
-		return nil, true, err
+		return nil, err
 	}
-	g, err = f.LoadGraph(graphDir)
+	g, err := f.LoadGraph(graphDir)
 	if err != nil {
-		return nil, true, fmt.Errorf("loading the graph of %s: %w", repoID, err)
+		return nil, fmt.Errorf("loading the graph of %s: %w", repoID, err)
 	}
-	return g, true, nil
+	return g, nil
 }
 
 // CurrentGraph sources the current graph once — the one-shot read every
