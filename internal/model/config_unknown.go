@@ -1,6 +1,8 @@
 package model
 
 import (
+	"iter"
+	"maps"
 	"reflect"
 	"strings"
 
@@ -45,12 +47,16 @@ func UnknownYAMLKeys(data []byte, t reflect.Type) ([]string, error) {
 		known[leaf.path] = true
 	}
 	// A struct-valued field contributes no leaf of its own, only its children,
-	// so `llm` is declared by virtue of `llm.provider`.
+	// so `llm` is declared by virtue of `llm.provider`. A retired key's block
+	// is walked too, so a block t no longer declares still names the retired
+	// key itself.
 	branches := map[string]bool{}
-	for path := range known {
-		segments := strings.Split(path, ".")
-		for i := 1; i < len(segments); i++ {
-			branches[strings.Join(segments[:i], ".")] = true
+	for _, paths := range []iter.Seq[string]{maps.Keys(known), maps.Keys(RetiredConfigKeys)} {
+		for path := range paths {
+			segments := strings.Split(path, ".")
+			for i := 1; i < len(segments); i++ {
+				branches[strings.Join(segments[:i], ".")] = true
+			}
 		}
 	}
 

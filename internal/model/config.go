@@ -204,9 +204,6 @@ type PerRepoConfig struct {
 	// Events sets the sharing mode per event channel; only the committed
 	// .sdd/config.yaml sets it.
 	Events EventsConfig `yaml:"events,omitempty"`
-	// Relevance sets where the relevance ledger lives and what a committed
-	// copy holds; only the committed .sdd/config.yaml sets it.
-	Relevance RelevanceConfig `yaml:"relevance,omitempty"`
 	// Recheck names who runs the recheck work; only the committed
 	// .sdd/config.yaml sets it.
 	Recheck RecheckConfig `yaml:"recheck,omitempty"`
@@ -328,10 +325,14 @@ var RetiredConfigKeys = map[string]string{
 	"sync.cooldown":         retiredSyncReason,
 	"sync.mode":             retiredSyncReason,
 	"sync.interval":         retiredSyncReason,
-	"sessions.token_saving": "sdd serves a piece again as a pointer only when the agent proves it still holds the text", // 20261112-075604-d-tac-t4r
+	"sessions.token_saving": "sdd serves a piece again as a pointer only when the agent proves it still holds the text (20261112-075604-d-tac-t4r)",
+	"relevance.commit":      retiredRelevanceReason,
+	"relevance.content":     retiredRelevanceReason,
 }
 
 const retiredSyncReason = "git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config"
+
+const retiredRelevanceReason = "the relevance ledger lives only in machine state (20261114-105752-d-tac-tnk)"
 
 // IgnoredSettings returns the settings in one config layer that sdd reads
 // past. source names the layer: global, project (the shared
@@ -810,7 +811,6 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	}
 	out.Inbound = mergeInboundConfig(base.Inbound, overlay.Inbound)
 	out.Events = mergeEventsConfig(base.Events, overlay.Events)
-	out.Relevance = mergeRelevanceConfig(base.Relevance, overlay.Relevance)
 	out.Recheck = mergeRecheckConfig(base.Recheck, overlay.Recheck)
 	if overlay.Contribution != "" {
 		out.Contribution = overlay.Contribution

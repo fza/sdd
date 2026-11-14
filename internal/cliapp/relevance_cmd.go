@@ -11,6 +11,7 @@ import (
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/repos"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
 // relevanceCmd converts the binary relevance ledger to and from JSON and
@@ -93,22 +94,31 @@ func relevanceCmd() *cli.Command {
 
 // workingRelevanceStore opens the relevance ledger of the project the
 // working directory belongs to, where serve opens it.
-func workingRelevanceStore() (relevanceStore, error) {
+func workingRelevanceStore() (*localadapter.FilesystemRelevanceStore, error) {
 	sddDir, err := resolveSDDDir()
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := loadConfig()
+	dir, err := workingRelevanceDir(sddDir)
 	if err != nil {
 		return nil, err
+	}
+	return localadapter.NewFilesystemRelevanceStore(dir)
+}
+
+// workingRelevanceDir is the ledger folder of the project at sddDir.
+func workingRelevanceDir(sddDir string) (string, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return "", err
 	}
 	locations, err := repos.DefaultLocations()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	stableRepoRoot, err := git.StableRepoRoot(filepath.Dir(sddDir))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return projectRelevanceStore(sddDir, locations.StateRoot, persistentIndexRepoKey(cfg, stableRepoRoot), cfg)
+	return relevanceLedgerDir(locations.StateRoot, persistentIndexRepoKey(cfg, stableRepoRoot)), nil
 }

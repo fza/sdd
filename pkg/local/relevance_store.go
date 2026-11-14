@@ -3,7 +3,6 @@ package local
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -80,60 +79,6 @@ func mergeRelevanceSegments(segments [][]byte) ([]byte, error) {
 	return relevance.Encode(batch), nil
 }
 
-// SplitRelevanceStore keeps reader verdicts in one store and filter scores
-// and drift steps in another: the layout of a committed ledger under
-// relevance.content: reader, where only reader verdicts reach the
-// repository (D20).
-type SplitRelevanceStore struct {
-	readers *FilesystemRelevanceStore
-	scores  *FilesystemRelevanceStore
-}
-
-// NewSplitRelevanceStore returns the store writing reader verdicts to
-// readers and the rest to scores.
-func NewSplitRelevanceStore(readers, scores *FilesystemRelevanceStore) (*SplitRelevanceStore, error) {
-	if readers == nil || scores == nil || readers.dir == scores.dir {
-		return nil, fmt.Errorf("sdd: a split relevance store needs two distinct directories")
-	}
-	return &SplitRelevanceStore{readers: readers, scores: scores}, nil
-}
-
-func (s *SplitRelevanceStore) Append(ctx context.Context, data []byte) error {
-	batch, err := relevance.Decode(data)
-	if err != nil {
-		return err
-	}
-	readers := model.RelevanceBatch{Readers: batch.Readers}
-	rest := model.RelevanceBatch{Scores: batch.Scores, Steps: batch.Steps}
-	if !readers.Empty() {
-		err = s.readers.Append(ctx, relevance.Encode(readers))
-		if err != nil {
-			return err
-		}
-	}
-	if rest.Empty() {
-		return nil
-	}
-	return s.scores.Append(ctx, relevance.Encode(rest))
-}
-
-func (s *SplitRelevanceStore) Segments(ctx context.Context) ([][]byte, error) {
-	readers, err := s.readers.Segments(ctx)
-	if err != nil {
-		return nil, err
-	}
-	scores, err := s.scores.Segments(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return append(readers, scores...), nil
-}
-
-// Compact compacts both stores.
-func (s *SplitRelevanceStore) Compact(ctx context.Context) error {
-	return errors.Join(s.readers.Compact(ctx), s.scores.Compact(ctx))
-}
-
 // MemoryRelevanceStore is a process-local relevance ledger for tests and
 // embedded compositions.
 type MemoryRelevanceStore struct {
@@ -177,9 +122,4 @@ func (s *FilesystemRelevanceStore) DropReplay(ctx context.Context) error {
 		}
 		return relevance.Encode(batch), nil
 	})
-}
-
-// DropReplay drops the replay seed from the reader store.
-func (s *SplitRelevanceStore) DropReplay(ctx context.Context) error {
-	return s.readers.DropReplay(ctx)
 }

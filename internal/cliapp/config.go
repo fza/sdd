@@ -184,6 +184,17 @@ func printUnknownConfigKeys(errWriter io.Writer) error {
 			fmt.Fprintf(errWriter, "  %s  (%s): %s\n", s.Key, s.File, s.Reason)
 		}
 	}
+	leftover, err := f.LeftoverRelevance(query.LeftoverRelevanceQuery{SDDDir: sddDir})
+	if err != nil {
+		return err
+	}
+	if len(leftover.Segments) > 0 {
+		ledgerDir, err := workingRelevanceDir(sddDir)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(errWriter, "\n%s:\n  %s  (%d segments): %s\n", leftoverRelevanceNotice, leftover.Dir, len(leftover.Segments), leftoverRelevanceAdvice(ledgerDir))
+	}
 	return nil
 }
 
