@@ -56,7 +56,7 @@ func (r *Repeats) entry(w io.Writer, id, brief string, write func()) {
 func (r *Repeats) Pointed() bool { return r != nil && r.pointed }
 
 // WriteWayBack writes, after a serve that printed a pointer, the call that
-// serves a pointed entry in full again (D34).
+// serves a pointed entry in full again.
 func (r *Repeats) WriteWayBack(w io.Writer) {
 	if r.Pointed() {
 		fmt.Fprintf(w, "\nAn entry marked held is not served again while you prove you hold it; to have it in full again, call %s.\n", GatherWayBack)

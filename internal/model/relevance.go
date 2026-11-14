@@ -79,9 +79,8 @@ func ParseReaderCode(s string) (ReaderCode, error) {
 	return 0, fmt.Errorf("unknown reader code %q (none, dismissed, opened, referenced)", s)
 }
 
-// Verdict reason bytes. Each code holds its own byte so codes added later
-// keep the format; 5 is the slot of the removed superseded code (D10, D12)
-// and stays free.
+// Verdict reason bytes. Each code holds its own byte so codes added later keep
+// the format; 5 is the slot of the removed superseded code and stays free.
 var verdictReasonBytes = map[string]uint8{
 	VerdictTopicOnly:  1,
 	VerdictOtherScope: 2,
@@ -126,7 +125,7 @@ func ParseVerdictReason(s string) (uint8, error) {
 	return VerdictReasonByte(s)
 }
 
-// Relation bits: how two entries strain each other (5.9).
+// Relation bits: how two entries strain each other.
 const (
 	RelationContradicts uint8 = 1 << iota
 	RelationDuplicates
@@ -402,17 +401,17 @@ const (
 
 // RelevanceThresholds are a judge's calibrated limits: a candidate scoring
 // below SetAside is set aside, one scoring at or above Relevant is served in
-// full. Valid is false until the recall bound holds (D33), and an invalid
-// set decides nothing.
+// full. Valid is false until the recall bound holds, and an invalid set
+// decides nothing.
 type RelevanceThresholds struct {
 	Valid    bool
 	SetAside float64
 	Relevant float64
 }
 
-// Lookup decides a pair from subject to candidate (5.7): a reader record
-// decides; else judge's score against the thresholds. A one-way score in
-// the other direction answers only when it rates the pair relevant.
+// Lookup decides a pair from subject to candidate: a reader record decides;
+// else judge's score against the thresholds. A one-way score in the other
+// direction answers only when it rates the pair relevant.
 func (l *RelevanceLedger) Lookup(subject, candidate, judge string, thresholds RelevanceThresholds) RelevanceDecision {
 	pair := NewRelevancePair(subject, candidate)
 	if reader, ok := l.readers[pair]; ok && reader.Code != ReaderNone {
@@ -446,7 +445,7 @@ func (t RelevanceThresholds) decide(score float64) RelevanceDecision {
 }
 
 // DriftStep records that the audit drift rule lowered a judge's set-aside
-// threshold to SetAside at time At (D36). Steps only ever lower it.
+// threshold to SetAside at time At. Steps only ever lower it.
 type DriftStep struct {
 	Judge    string
 	At       time.Time

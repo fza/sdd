@@ -8,7 +8,7 @@ import (
 )
 
 // GroundingReadMode names how one grounding read selected the entries it
-// surfaced (20261109-004506-d-cpt-udz).
+// surfaced.
 type GroundingReadMode string
 
 const (
@@ -24,10 +24,10 @@ const (
 	// GroundingOpened is entries opened in full by ID.
 	GroundingOpened GroundingReadMode = "opened"
 	// GroundingNew is the live entries that landed after the reading began,
-	// listed by a later gather (D13).
+	// listed by a later gather.
 	GroundingNew GroundingReadMode = "new"
 	// GroundingLate is the entries that landed after the assemble check,
-	// listed at the write step (D37).
+	// listed at the write step.
 	GroundingLate GroundingReadMode = "late"
 )
 
@@ -104,7 +104,7 @@ func (p ReadPayload) Empty() bool {
 }
 
 // Reading is the record of the grounding reads that credit one capture
-// instance: only reads made inside the instance fold in (D28).
+// instance: only reads made inside the instance fold in.
 type Reading struct {
 	Reads  []GroundingRead
 	Corpus *CorpusMark

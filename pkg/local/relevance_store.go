@@ -14,7 +14,7 @@ import (
 
 // FilesystemRelevanceStore keeps the relevance verdict ledger in a directory
 // of immutable segment files <time>-<random>.seg, one per append, merged by
-// tiered compaction (20261109-004506-d-cpt-udz, D17).
+// tiered compaction.
 type FilesystemRelevanceStore struct {
 	dir string
 }

@@ -16,8 +16,7 @@ import (
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
-// Prefilter constants (20261109-004506-d-cpt-udz, 5.8): calls in flight per
-// gather and the pass deadline.
+// Prefilter constants: calls in flight per gather and the pass deadline.
 const (
 	prefilterInFlight = 16
 	prefilterDeadline = 45 * time.Second

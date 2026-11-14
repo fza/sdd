@@ -11,9 +11,8 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
-// dismissCmd sets entries a session's capture read aside with a code, into
-// the same verdicts the engine capture reports (20261109-004506-d-cpt-udz,
-// D9).
+// dismissCmd sets entries a session's capture read aside with a code, into the
+// same verdicts the engine capture reports.
 func dismissCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "dismiss",

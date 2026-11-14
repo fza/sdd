@@ -701,8 +701,8 @@ Downstream fixture.
 		}
 	}
 
-	// A fresh session holds nothing, so the no-repeat rule serves the entry
-	// in full again (20261109-004506-d-cpt-udz, R14).
+	// A fresh session holds nothing, so the no-repeat rule serves the entry in
+	// full again.
 	fresh := openSession(t, cs).Session
 	call(t, cs, "show", map[string]any{
 		"session": fresh, "ids": []string{"20260820-100100-d-tac-mid"}, "up": 0, "down": 0,

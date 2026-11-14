@@ -73,8 +73,7 @@ type EntryDraft struct {
 	Involvement   []types.Involvement
 	SkipPreflight bool
 	// SkipGrounding records a bypass of the grounding gate: the entry is
-	// written with grounding: skipped and low confidence
-	// (20261109-004506-d-cpt-udz, D4).
+	// written with grounding: skipped and low confidence.
 	SkipGrounding bool
 	// VerificationSkip records that the user skipped the deep verifier: after a
 	// verifier failure ("failure") the entry is written with confidence low,

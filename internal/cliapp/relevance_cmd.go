@@ -15,7 +15,7 @@ import (
 )
 
 // relevanceCmd converts the binary relevance ledger to and from JSON and
-// compacts it (20261109-004506-d-cpt-udz, D16 and D17).
+// compacts it.
 func relevanceCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "relevance",

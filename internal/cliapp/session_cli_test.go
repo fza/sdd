@@ -108,8 +108,7 @@ func sessionNewArgs(session string) []string {
 		"s", "tac", "The CLI reads of a session lack a record of the graph directory they used."}
 }
 
-// CLI reads with --session log into the session, as the MCP reads do
-// (20261109-004506-d-cpt-udz, D3).
+// CLI reads with --session log into the session, as the MCP reads do.
 func TestCLISessionReadsLogIntoTheSession(t *testing.T) {
 	cases := []struct {
 		name string

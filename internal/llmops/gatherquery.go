@@ -31,9 +31,9 @@ type GatherQueries struct {
 	Terms []string
 }
 
-// GatherQuery writes the searches a grounding reading runs for a draft
-// (20261109-004506-d-cpt-udz, D24): the queries must bear on what the draft
-// commits to, which no fixed rule over the draft's words guarantees.
+// GatherQuery writes the searches a grounding reading runs for a draft: the
+// queries must bear on what the draft commits to, which no fixed rule over the
+// draft's words guarantees.
 func GatherQuery(ctx context.Context, runner llm.Runner, draft GatherQueryDraft) (GatherQueries, error) {
 	if strings.TrimSpace(draft.Text) == "" {
 		return GatherQueries{}, fmt.Errorf("the query writer needs the draft's text")

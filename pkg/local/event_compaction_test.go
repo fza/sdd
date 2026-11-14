@@ -14,8 +14,8 @@ import (
 )
 
 // Tiered compaction merges a channel's small segments and holds each event
-// once; a full compaction leaves one segment without the events the
-// Settled hook names (D17).
+// once; a full compaction leaves one segment without the events the Settled
+// hook names.
 func TestFilesystemEventStore_CompactionDropsDuplicatesAndSettledEvents(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "events")
 	var settledCalls int

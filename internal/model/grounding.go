@@ -54,16 +54,15 @@ func intOr(v *int, fallback int) int {
 }
 
 // GroundingExemptKind reports whether drafts of kind skip the grounding gate
-// and entries of kind never become candidates: only records of who takes
-// part and in which role cannot contradict, duplicate or outdate a claim
-// (D38).
+// and entries of kind never become candidates: only records of who takes part
+// and in which role cannot contradict, duplicate or outdate a claim.
 func GroundingExemptKind(kind Kind) bool {
 	return kind == KindActor || kind == KindRole
 }
 
 // GroundingPopulation returns the live entries a reading judges, in graph
-// order: the open population (superseded and closed entries excluded, D12)
-// without the exempt kinds.
+// order: the open population (superseded and closed entries excluded) without
+// the exempt kinds.
 func GroundingPopulation(g *Graph) []*Entry {
 	var live []*Entry
 	for _, e := range g.Filter(GraphFilter{OpenOnly: true}) {
@@ -75,7 +74,7 @@ func GroundingPopulation(g *Graph) []*Entry {
 }
 
 // EntryBrief is an entry's brief: its title, else the first sentence of its
-// summary. Never cut (D29).
+// summary. Never cut.
 func EntryBrief(e *Entry) string {
 	brief := e.ListingTitle()
 	if brief == "" {

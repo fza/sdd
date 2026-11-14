@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// The CLI credits no capture and never points: the same gather prints the
-// same whole serve every time (20261109-004506-d-cpt-udz, R14).
+// The CLI credits no capture and never points: the same gather prints the same
+// whole serve every time.
 func TestCLIGatherServesInFullEveryTime(t *testing.T) {
 	f := newAppFixture(t)
 	for range 2 {

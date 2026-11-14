@@ -7,9 +7,9 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// RenderCalibration writes `sdd grounding status`: the judge's labels,
-// recall bound, thresholds, audit and drift state, and how the pairs it
-// would serve in full were answered, per reason code (D11, D33, D36).
+// RenderCalibration writes `sdd grounding status`: the judge's labels, recall
+// bound, thresholds, audit and drift state, and how the pairs it would serve
+// in full were answered, per reason code.
 func RenderCalibration(w io.Writer, report model.CalibrationReport) {
 	fmt.Fprintf(w, "judge: %s\n", report.Judge)
 	sources := fmt.Sprintf("sources: %d live labels, %d replayed from past captures", report.Live, report.Replay)

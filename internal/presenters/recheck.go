@@ -9,8 +9,7 @@ import (
 )
 
 // RenderRecheckItems renders the unhealed recheck items as the catch-up's
-// recheck section with its healing suggestion (20261109-004506-d-cpt-udz,
-// D5); nothing when no item is open.
+// recheck section with its healing suggestion; nothing when no item is open.
 func RenderRecheckItems(w io.Writer, g *model.Graph, items []model.RecheckItem) {
 	if len(items) == 0 {
 		return

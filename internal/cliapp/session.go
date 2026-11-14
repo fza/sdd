@@ -10,9 +10,8 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
-// sessionFlags join a CLI read or write to an open dialogue session
-// (20261109-004506-d-cpt-udz, D3): its reads log into the session, and gather,
-// dismiss and new act on its capture.
+// sessionFlags join a CLI read or write to an open dialogue session: its reads
+// log into the session, and gather, dismiss and new act on its capture.
 func sessionFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{Name: "session", Usage: "Session ID of an open dialogue: reads log into it, and gather, dismiss and new act on its capture"},
@@ -67,7 +66,7 @@ func instanceWithoutSession(cmd *cli.Command) error {
 }
 
 // logRead records a CLI read into the session, as the MCP read tools do. It
-// credits no capture: only gather reads count for grounding (D31).
+// credits no capture: only gather reads count for grounding.
 func (s *cliSession) logRead(ctx context.Context, tool string, full, summary []string) error {
 	if s == nil {
 		return nil

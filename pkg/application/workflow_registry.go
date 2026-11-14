@@ -539,8 +539,8 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 		draft.SkipPreflight, _ = override.(bool)
 	}
 	// The write step's late-entries check, once more on a fresh graph right
-	// before the write (20261109-004506-d-cpt-udz, 7.2): an entry landing in
-	// between leaves the capture unwritten, and publish routes to lateEntries.
+	// before the write: an entry landing in between leaves the capture
+	// unwritten, and publish routes to lateEntries.
 	late, err := w.lateEntries(ctx, func() (*model.Graph, error) {
 		w.graphs.Invalidate()
 		return w.graphs.CurrentFor(ctx.Store)

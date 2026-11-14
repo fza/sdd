@@ -1,8 +1,7 @@
-// Package cohere is the relevance adapter over Cohere rerank through
-// Opper's rerank route (20261109-004506-d-cpt-udz, D22): one call ranks a
-// batch of candidate documents against the draft as the query. A reranker
-// reads one direction only, so its score answers only from the draft to each
-// candidate.
+// Package cohere is the relevance adapter over Cohere rerank through Opper's
+// rerank route: one call ranks a batch of candidate documents against the
+// draft as the query. A reranker reads one direction only, so its score
+// answers only from the draft to each candidate.
 //
 //	POST {endpoint}  {"model", "query", "documents": [text...]}
 //	200              {"id", "model", "results": [{"index", "relevance_score"}], "usage": {"total_tokens", "cost"}}
@@ -30,8 +29,8 @@ const (
 	DefaultModel    = "aws/cohere/rerank-v3.5"
 	// MaxBatch is the documents one rerank call takes.
 	MaxBatch = 1000
-	// MaxPairTokens is the window rerank reads the query and one document
-	// in; a longer pair would be cut, so Plan leaves it to the reader (D30).
+	// MaxPairTokens is the window rerank reads the query and one document in;
+	// a longer pair would be cut, so Plan leaves it to the reader.
 	MaxPairTokens = 4096
 )
 

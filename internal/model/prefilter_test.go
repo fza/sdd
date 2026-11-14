@@ -7,8 +7,8 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// The label counts D33 names: the recall bound reaches the floor at 189
-// referenced labels with no miss, 280 with one, 361 with two.
+// The recall bound reaches the floor at 189 referenced labels with no miss,
+// 280 with one, 361 with two.
 func TestWilsonLower_ReachesTheRecallFloorAtTheNamedCounts(t *testing.T) {
 	for _, tc := range []struct{ n, misses int }{{189, 0}, {280, 1}, {361, 2}} {
 		if got := model.WilsonLower(tc.n-tc.misses, tc.n); got < model.RecallFloor {

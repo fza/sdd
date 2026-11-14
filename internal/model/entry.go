@@ -31,7 +31,7 @@ const (
 )
 
 // GroundingSkipped marks an entry whose capture bypassed the grounding gate;
-// it is written with low confidence (20261109-004506-d-cpt-udz, D4).
+// it is written with low confidence.
 const GroundingSkipped = "skipped"
 
 // VerificationSkipped marks an entry written without a verifier's

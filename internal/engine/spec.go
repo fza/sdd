@@ -81,8 +81,8 @@ type VarDecl struct {
 	PatchOf string
 	// ConfirmExempt keeps the field out of the playback confirmation's state
 	// snapshot: a report of it after the confirm leaves the confirmation
-	// current. For answers that are not entry content (a capture's verdicts,
-	// 20261109-004506-d-cpt-udz, D9).
+	// current. For answers that are not entry content, such as a capture's
+	// verdicts.
 	ConfirmExempt bool
 	// HostSet marks a state field the embedding host writes, never the
 	// reporting agent: no served schema, collect list, serveDelta or resume
@@ -91,8 +91,8 @@ type VarDecl struct {
 	// after refusing it from the agent (a capture's bodyHash).
 	HostSet bool
 	// Seed names what the engine writes into the field: SeedReading renders
-	// the instance's credited reading into it on every grounding read,
-	// keeping the text around the seed (D32). State text fields only.
+	// the instance's credited reading into it on every grounding read, keeping
+	// the text around the seed. State text fields only.
 	Seed string
 }
 

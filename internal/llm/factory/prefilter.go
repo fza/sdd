@@ -14,9 +14,8 @@ import (
 	"github.com/networkteam/sdd/pkg/llm/relevance/systemone"
 )
 
-// Prefilter defaults (20261109-004506-d-cpt-udz, 5.8): a call is bounded by
-// the pass deadline, and a one-pair protocol fans out up to the calls in
-// flight.
+// Prefilter defaults: a call is bounded by the pass deadline, and a one-pair
+// protocol fans out up to the calls in flight.
 const (
 	defaultPrefilterTimeout     = 45 * time.Second
 	defaultPrefilterConcurrency = 16

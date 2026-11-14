@@ -20,7 +20,7 @@ steps:
           - {choice: finish, to: end(completed)}`
 
 // A credited read seeds the declared field, keeping the text around the seed,
-// and replay restores the seeded value (20261109-004506-d-cpt-udz, D32).
+// and replay restores the seeded value.
 func TestGroundingSeed_ReadSeedsTheFieldAndReplayRestoresIt(t *testing.T) {
 	spec := historySpec(t, seededMachine)
 	eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})

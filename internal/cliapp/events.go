@@ -100,8 +100,7 @@ func workingProjectEventStore() (*localadapter.FilesystemEventStore, error) {
 }
 
 // projectEventStore opens the event store under sddDir with the sharing the
-// config sets. Compaction drops the recheck items an entry in graphDir
-// healed (20261109-004506-d-cpt-udz, D17).
+// config sets. Compaction drops the recheck items an entry in graphDir healed.
 func projectEventStore(sddDir, graphDir string, cfg *model.PerRepoConfig) (*localadapter.FilesystemEventStore, error) {
 	var err error
 	var gitChannels []string

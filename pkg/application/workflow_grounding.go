@@ -271,8 +271,8 @@ func (w *WorkflowSession) storeCaptureRelevance(ctx *engine.Context, project Pro
 	return applyDriftRule(w.ctx, runtime, w.app.clock.Now())
 }
 
-// applyDriftRule steps the current judge's set-aside threshold down when
-// the latest audit labels show too many misses (D36).
+// applyDriftRule steps the current judge's set-aside threshold down when the
+// latest audit labels show too many misses.
 func applyDriftRule(ctx context.Context, runtime *ProjectRuntime, now time.Time) error {
 	judge := runtime.options.Prefilter.Judge
 	if judge == "" {

@@ -9,7 +9,7 @@ import (
 )
 
 // A commit outside sdd's own that modifies a committed entry is a hand edit;
-// sdd's own commits, new entries and other files are not (D5).
+// sdd's own commits, new entries and other files are not.
 func TestGitHandEdits_FindsCommitsOutsideSddThatModifyEntries(t *testing.T) {
 	repo := newGitRepository(t)
 	entry := ".sdd/graph/2026/11/01-120000-d-tac-aaa.md"

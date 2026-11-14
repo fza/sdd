@@ -11,8 +11,7 @@ import (
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
-// GroundingStatus is the rendered calibration of a project's prefilter
-// judge (20261109-004506-d-cpt-udz, 7.3).
+// GroundingStatus is the rendered calibration of a project's prefilter judge.
 type GroundingStatus struct {
 	Judge string
 	Text  string
@@ -53,10 +52,10 @@ type RescoreResult struct {
 	Scored, Missing, Unanswered int
 }
 
-// RescoreRelevance has the current judge score every labelled pair it has
-// not scored, so a new judge's recall bound is computed from the stored
-// labels at once (D36). Each pair is scored from its later entry, the one
-// whose reading judged the other.
+// RescoreRelevance has the current judge score every labelled pair it has not
+// scored, so a new judge's recall bound is computed from the stored labels at
+// once. Each pair is scored from its later entry, the one whose reading judged
+// the other.
 func (a *Application) RescoreRelevance(ctx context.Context, identity RequestIdentity, project ProjectID) (result RescoreResult, err error) {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {

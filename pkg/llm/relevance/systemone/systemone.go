@@ -1,7 +1,6 @@
-// Package systemone is the relevance adapter over the System One protocol
-// (20261109-004506-d-cpt-udz, D22): Jev answers one noul question per
-// candidate over a shared state holding the subject and the batch, all in
-// one call.
+// Package systemone is the relevance adapter over the System One protocol: Jev
+// answers one noul question per candidate over a shared state holding the
+// subject and the batch, all in one call.
 //
 //	POST {endpoint}  {"model", "state", "questions": {id: {"type": "noul", "instructions"}}}
 //	200              {"model", "answers": {id: {"type": "noul", "noul": p}}, "usage": {"input_tokens", "output_tokens"}}

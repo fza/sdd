@@ -8,7 +8,7 @@ import (
 )
 
 // WorkflowDismissRequest sets entries a running capture read aside with a
-// verdict code (20261109-004506-d-cpt-udz, D9).
+// verdict code.
 type WorkflowDismissRequest struct {
 	Instance string
 	IDs      []string

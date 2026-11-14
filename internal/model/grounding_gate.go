@@ -7,7 +7,7 @@ import (
 )
 
 // Verdict codes: why an entry served in full or listed in a capture's reading
-// is set aside instead of referenced (20261109-004506-d-cpt-udz, D10, D12).
+// is set aside instead of referenced.
 const (
 	VerdictTopicOnly  = "topic-only"
 	VerdictOtherScope = "other-scope"
@@ -51,12 +51,12 @@ type GroundingEvidence struct {
 	Own []string
 }
 
-// Exempt reports whether the draft's kind skips the gate (D38).
+// Exempt reports whether the draft's kind skips the gate.
 func (e GroundingEvidence) Exempt() bool { return GroundingExemptKind(e.Kind) }
 
 // OwedReads names the reads the reading still lacks: none once every live
-// brief was served, else the semantic search, a keyword search and the
-// listing of each draft topic (D24, D25).
+// brief was served, else the semantic search, a keyword search and the listing
+// of each draft topic.
 func (e GroundingEvidence) OwedReads() []string {
 	if e.Reading.Ran(GroundingBriefs) {
 		return nil
@@ -89,7 +89,7 @@ func (e GroundingEvidence) listedTopic(label string) bool {
 }
 
 // Unlisted returns the live entries that landed after the reading began and
-// that no credited read listed yet (D13).
+// that no credited read listed yet.
 func (e GroundingEvidence) Unlisted() []string {
 	var out []string
 	for _, id := range e.landed() {
@@ -100,8 +100,8 @@ func (e GroundingEvidence) Unlisted() []string {
 	return out
 }
 
-// OpenFullReads returns the entries served in full inside the reading that
-// end neither in the draft's refs nor in a verdict (D39).
+// OpenFullReads returns the entries served in full inside the reading that end
+// neither in the draft's refs nor in a verdict.
 func (e GroundingEvidence) OpenFullReads() []string {
 	answered := e.answered()
 	var out []string
@@ -129,8 +129,8 @@ func (e GroundingEvidence) UnlistedVerdicts() []string {
 }
 
 // Late returns the live entries that landed after the reading began, that no
-// read before the write step listed, and that neither the draft nor a
-// verdict answers: what the write step still owes (D13, D37).
+// read before the write step listed, and that neither the draft nor a verdict
+// answers: what the write step still owes.
 func (e GroundingEvidence) Late() []string {
 	answered := e.answered()
 	var out []string
@@ -174,8 +174,8 @@ const (
 	readingSeedClose = "End of the recorded reading."
 )
 
-// WithReadingSeed returns text with the reading's seed block (D32): every read
-// as run with the IDs it surfaced, then the entries served in full. A seed
+// WithReadingSeed returns text with the reading's seed block: every read as
+// run with the IDs it surfaced, then the entries served in full. A seed
 // already in text is replaced in place; text around it stays as written, so
 // inherited text stays above the seed and the agent's prose below it.
 func WithReadingSeed(text string, r *Reading) string {

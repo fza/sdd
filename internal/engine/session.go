@@ -403,7 +403,7 @@ func (s *Session) LogRead(tool string, full, summary []string) {
 
 // Read is what one read surface served: the tool, the entry IDs at full and
 // summary depth, and, for a grounding read, the running instance it credits
-// with the reads as run (20261109-004506-d-cpt-udz).
+// with the reads as run.
 type Read struct {
 	Tool    string
 	Full    []string
@@ -415,9 +415,9 @@ type Read struct {
 }
 
 // Record logs a read: the IDs fold into the session's read set as LogRead
-// does, and a grounding payload folds into the named instance's reading.
-// Only a running instance takes credit; a read made outside it credits
-// nothing (D28). A read with nothing to record appends nothing.
+// does, and a grounding payload folds into the named instance's reading. Only
+// a running instance takes credit; a read made outside it credits nothing. A
+// read with nothing to record appends nothing.
 func (s *Session) Record(read Read) error {
 	var inst *Instance
 	if read.Instance != "" {

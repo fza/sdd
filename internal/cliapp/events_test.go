@@ -99,8 +99,8 @@ func TestEventsCompact_MergesEachChannel(t *testing.T) {
 	}
 }
 
-// Compaction drops the recheck items a later entry healed and keeps the
-// open ones (D17).
+// Compaction drops the recheck items a later entry healed and keeps the open
+// ones.
 func TestEventsCompact_DropsHealedRecheckItems(t *testing.T) {
 	f := newAppFixture(t)
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n")

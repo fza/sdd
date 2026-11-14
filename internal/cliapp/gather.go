@@ -13,9 +13,8 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
-// gatherCmd prints the grounding serve of a draft (20261109-004506-d-cpt-udz,
-// 5.3). It never cuts or points (R14); only with --session does the reading
-// credit a capture (D3).
+// gatherCmd prints the grounding serve of a draft. It never cuts or points;
+// only with --session does the reading credit a capture.
 func gatherCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "gather",
@@ -92,8 +91,8 @@ func sessionGather(ctx context.Context, cmd *cli.Command, session *cliSession, d
 
 // refuseUngroundedNew refuses a direct `sdd new` under grounding enforcement: the
 // CLI holds no capture whose reading the gate could judge, so the write goes
-// through the engine capture, or records its bypass (D3, D4). A dry run
-// writes nothing and actor and role drafts are exempt (D38).
+// through the engine capture, or records its bypass. A dry run writes nothing
+// and actor and role drafts are exempt.
 func refuseUngroundedNew(cfg *model.PerRepoConfig, ncmd *command.NewEntryCmd) error {
 	kind := ncmd.Kind
 	if kind == "" {

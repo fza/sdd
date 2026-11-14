@@ -22,11 +22,10 @@ var sessionNewUnsupported = []string{"topic", "actors", "when", "involvement", "
 const maxSessionNewSteps = 8
 
 // newInSession writes ncmd through the session's capture, so the draft passes
-// the gate the engine capture passes (20261109-004506-d-cpt-udz, D3): it is
-// reported at assemble, the command stands for the user's confirm at
-// playback, and the generated summary is printed for its user to check. A
-// step the CLI cannot answer stops the run with its diagnostics; the session
-// continues it.
+// the gate the engine capture passes: it is reported at assemble, the command
+// stands for the user's confirm at playback, and the generated summary is
+// printed for its user to check. A step the CLI cannot answer stops the run
+// with its diagnostics; the session continues it.
 func newInSession(ctx context.Context, cmd *cli.Command, ncmd *command.NewEntryCmd) error {
 	for _, name := range sessionNewUnsupported {
 		if cmd.IsSet(name) {

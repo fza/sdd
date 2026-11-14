@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Audit and drift constants (20261109-004506-d-cpt-udz, D36).
+// Audit and drift constants.
 const (
 	// AuditShare is the share of the prefilter's set-asides shown blind as
 	// ordinary lines to judge.
@@ -80,10 +80,10 @@ func DriftWindowMisses(labels []RelevanceLabel) (misses, counted int) {
 	return misses, len(audit)
 }
 
-// DriftStepDue returns the step the drift rule takes now (D36): when the
-// latest audit labels, at least DriftMinimum, hold more than DriftMissShare
-// referenced samples and no step of the judge came within DriftInterval,
-// the set-aside threshold halves. It never rises.
+// DriftStepDue returns the step the drift rule takes now: when the latest
+// audit labels, at least DriftMinimum, hold more than DriftMissShare
+// referenced samples and no step of the judge came within DriftInterval, the
+// set-aside threshold halves. It never rises.
 func DriftStepDue(labels []RelevanceLabel, steps []DriftStep, judge string, now time.Time) (DriftStep, bool) {
 	misses, counted := DriftWindowMisses(labels)
 	if counted < DriftMinimum || float64(misses)/float64(counted) <= DriftMissShare {
@@ -102,7 +102,7 @@ func DriftStepDue(labels []RelevanceLabel, steps []DriftStep, judge string, now 
 }
 
 // CodePrecision is how the pairs a judge would serve in full were answered,
-// for one reason code (D11).
+// for one reason code.
 type CodePrecision struct {
 	Code  string
 	Count int
@@ -113,7 +113,7 @@ type CalibrationReport struct {
 	Judge      string
 	Thresholds RelevanceThresholds
 	// Labels by kind; Unscored counts the labelled pairs the judge has no
-	// score for, re-scored after a judge change (D36).
+	// score for, re-scored after a judge change.
 	Positive, Negative, Counted, Excluded int
 	Unscored                              int
 	// Live and Replay count the labels by source; ReplayExcluded reports
@@ -147,8 +147,8 @@ func (r CalibrationReport) Precision() float64 {
 	return float64(r.Referenced) / float64(r.PassedInFull)
 }
 
-// DominantCode is the code most pairs passed in full were set aside with:
-// the direction a prompt revision takes (D11). Empty when none was.
+// DominantCode is the code most pairs passed in full were set aside with: the
+// direction a prompt revision takes. Empty when none was.
 func (r CalibrationReport) DominantCode() string {
 	if len(r.SetAside) == 0 {
 		return ""
@@ -222,9 +222,8 @@ func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) Calibrat
 	return report
 }
 
-// InsertBlind places audit samples among the lines to judge at positions
-// drawn from seed, unscored, so nothing tells them from the band the
-// prefilter left (D36).
+// InsertBlind places audit samples among the lines to judge at positions drawn
+// from seed, unscored, so nothing tells them from the band the prefilter left.
 func InsertBlind(toJudge, audit []GatherCandidate, seed string) []GatherCandidate {
 	out := slices.Clone(toJudge)
 	for _, candidate := range audit {

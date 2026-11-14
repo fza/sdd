@@ -7,8 +7,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// A bypassed entry names its grounding bypass in the show envelope
-// (20261109-004506-d-cpt-udz, D4).
+// A bypassed entry names its grounding bypass in the show envelope.
 func TestRenderShow_EnvelopeNamesAGroundingBypass(t *testing.T) {
 	e := entry("20260410-100000-s-tac-skp", withContent("An ungrounded gap."), withConfidence("low"))
 	e.Grounding = model.GroundingSkipped

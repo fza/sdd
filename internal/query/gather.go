@@ -2,13 +2,12 @@ package query
 
 import "github.com/networkteam/sdd/internal/model"
 
-// GatherFullCap bounds the entries one gather serves in full (D35); the rest
-// list as lines with the call that opens them.
+// GatherFullCap bounds the entries one gather serves in full; the rest list as
+// lines with the call that opens them.
 const GatherFullCap = 12
 
-// GatherResult is one gather serve (20261109-004506-d-cpt-udz, 5.3): the
-// reads as run, the entries served in full, the candidates to judge and the
-// entries set aside.
+// GatherResult is one gather serve: the reads as run, the entries served in
+// full, the candidates to judge and the entries set aside.
 type GatherResult struct {
 	Graph  *model.Graph
 	Reads  []model.GroundingRead
