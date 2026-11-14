@@ -111,8 +111,13 @@ func TestLaterRoundFailsWhenTheRoundBeforeItEndedWithoutAnOutcome(t *testing.T) 
 	if end := f.ended(t, child); !strings.Contains(end.Reason, "round 2 (scripted) failed: round 1's process ended without recording an outcome") {
 		t.Fatalf("the second round should fail naming the first round's process, got %+v", end)
 	}
-	if ended, err := f.rounds.Ended(child, 2); !ended || err != nil {
-		t.Fatalf("the second round's process should end cleanly once it recorded the failure, got ended %v, %v", ended, err)
+	// The process exits after it records the failure, so its end trails the delegate's.
+	test.Eventually(t, "the second round's process ending", func() bool {
+		ended, _ := f.rounds.Ended(child, 2)
+		return ended
+	})
+	if _, err := f.rounds.Ended(child, 2); err != nil {
+		t.Fatalf("the second round's process should end cleanly once it recorded the failure, got %v", err)
 	}
 }
 
