@@ -10,7 +10,7 @@ const DefaultHookTimeout = 600 * time.Second
 
 // HookConfig is one entry of a config file's hooks list: a file in the
 // declaring layer's hooks folder sdd runs, without a shell, with the event's
-// JSON payload on stdin (20261109-213250-d-tac-bve).
+// JSON payload on stdin.
 type HookConfig struct {
 	// Event is `<procedure>.<step>` (alias `<procedure>.<step>.done`),
 	// `<procedure>.<step>.start` or `<procedure>.<step>.round`, `*` standing

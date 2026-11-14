@@ -93,7 +93,7 @@ type WorkConfigLayers struct {
 
 // EffectiveConfigValuesWithWork is EffectiveConfigValues with a work
 // repository's layers, whose hooks list between the global and the
-// project's (20261109-213250-d-tac-bve).
+// project's.
 func EffectiveConfigValuesWithWork(global BaseConfig, work WorkConfigLayers, project, local *PerRepoConfig) []ConfigValue {
 	return effectiveConfigValues(global, work, project, local, true)
 }

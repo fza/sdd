@@ -9,8 +9,7 @@ import (
 )
 
 // Hooks concatenate across the layers, so the provenance lists every
-// layer's hooks in the order they run, each with its own layer
-// (20261109-005138-d-tac-i61).
+// layer's hooks in the order they run, each with its own layer.
 func TestEffectiveConfigValuesListsTheHooksOfEveryLayer(t *testing.T) {
 	global := model.BaseConfig{Hooks: []model.HookConfig{{Event: "entry.written", Command: "notify"}}}
 	local := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Hooks: []model.HookConfig{
@@ -45,7 +44,7 @@ func hookValues(values []model.ConfigValue) []model.ConfigValue {
 }
 
 // A project_dir layout's work repository lists its hooks between the global
-// layer's and the project's (20261109-213250-d-tac-bve).
+// layer's and the project's.
 func TestEffectiveConfigValuesListsTheWorkRepositorysHooksBeforeTheProjects(t *testing.T) {
 	layer := func(command string) *model.PerRepoConfig {
 		return &model.PerRepoConfig{BaseConfig: model.BaseConfig{Hooks: []model.HookConfig{{Event: "capture.assemble", Command: command, Args: []string{"--strict"}}}}}

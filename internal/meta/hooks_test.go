@@ -13,7 +13,7 @@ func hookLayer(command string) string {
 	return "hooks:\n  - event: capture.assemble\n    command: " + command + "\n    args: [--config, vale.ini]\n    files: [styles/*]\n"
 }
 
-// A project ships hooks in its committed config (20261109-213250-d-tac-bve).
+// A project ships hooks in its committed config.
 func TestHooksResolveFromTheCommittedLayer(t *testing.T) {
 	sddDir := t.TempDir()
 	writeLayer(t, filepath.Join(sddDir, "config.yaml"), "graph_dir: .sdd/graph\n"+hookLayer("vale.sh"))

@@ -18,7 +18,7 @@ import (
 )
 
 // hooksCmd lists the declared hooks with their confirmation state and
-// confirms pending ones (20261109-213250-d-tac-bve).
+// confirms pending ones.
 func hooksCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "hooks",

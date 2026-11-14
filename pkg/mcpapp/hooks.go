@@ -22,10 +22,9 @@ func (e *hookInputRequired) Error() string {
 }
 
 // elicitingConfirmer asks the person behind the MCP client, by elicitation,
-// whether the hooks this machine has not confirmed may run
-// (20261109-213250-d-tac-bve). The client shows the prompt to the person,
-// not to the agent, so accepting confirms the hooks as `sdd hooks trust`
-// does. The questions ride the call's result as input requests and the
+// whether the hooks this machine has not confirmed may run. The client shows
+// the prompt to the person, not to the agent, so accepting confirms the hooks
+// as `sdd hooks trust` does. The questions ride the call's result as input requests and the
 // answers arrive with the client's retry; for a client on a protocol before
 // multi round-trip the SDK elicits them and calls again.
 type elicitingConfirmer struct {

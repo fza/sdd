@@ -134,7 +134,7 @@ func TestDeclaredRefusesACommandFileThatCannotRun(t *testing.T) {
 
 // Hooks of every layer resolve in order: user-global, work repository,
 // project repository, committed before local, each against its own hooks
-// folder (20261109-213250-d-tac-bve).
+// folder.
 func TestDeclaredReadsEveryLayerOfAProjectDirLayout(t *testing.T) {
 	base := t.TempDir()
 	global := filepath.Join(base, "config", "sdd", "config.yaml")

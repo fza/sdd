@@ -130,8 +130,8 @@ type BaseConfig struct {
 	// Connected is the writing side's gate on capturing into a connected
 	// graph.
 	Connected ConnectedConfig `yaml:"connected,omitempty"`
-	// Hooks are files run at engine events (20261109-213250-d-tac-bve); the
-	// layers concatenate, global first.
+	// Hooks are files run at engine events; the layers concatenate, global
+	// first.
 	Hooks []HookConfig `yaml:"hooks,omitempty" sdd:"concat"`
 }
 
@@ -217,7 +217,7 @@ type PerRepoConfig struct {
 
 // PointerKeys are the keys a committed config may set beside project_dir:
 // what concerns the agents working in the repository, not the graph, and
-// the hooks the repository ships (20261109-213250-d-tac-bve).
+// the hooks the repository ships.
 var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents", "hooks"}
 
 // LocalPointerKeys are the keys of a machine-local config that belong to
