@@ -53,7 +53,6 @@ var configDefaults = map[string]string{
 	"verify.prefilter":     strconv.FormatBool(DefaultGroundingPrefilter),
 	"verify.claude.model":  DefaultVerifierClaude.Model,
 	"verify.claude.effort": DefaultVerifierClaude.Effort,
-	"verify.codex.effort":  DefaultVerifierCodex.Effort,
 
 	"sync.default.fetch_cooldown":                   DefaultGitFetchCooldown.String(),
 	"sync.default.push_cooldown":                    DefaultGitPushCooldown.String(),

@@ -24,7 +24,7 @@ func settings(t *testing.T, launch string) delegatelaunch.Settings {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return delegatelaunch.Settings{Runner: launch, Agents: []string{"claude", "codex"}, WorkDir: workDir, SDD: "/opt/sdd/bin/sdd"}
+	return delegatelaunch.Settings{Runner: launch, Agents: []string{"claude"}, WorkDir: workDir, SDD: "/opt/sdd/bin/sdd"}
 }
 
 func firstRound() delegatelaunch.Round {
@@ -111,125 +111,6 @@ func TestRun_ClaudeFailures(t *testing.T) {
 	}
 }
 
-func TestRun_CodexRunsInAReadOnlySandbox(t *testing.T) {
-	agents := test.FakeAgents(t, "codex")
-	events := strings.Join([]string{
-		`{"type":"thread.started","thread_id":"codex-3"}`,
-		`{"type":"turn.started"}`,
-		`{"type":"turn.completed"}`,
-	}, "\n")
-	test.AgentAnswers(t, agents, "codex", events, "", 0)
-	launchSettings := settings(t, "codex")
-
-	launched := launch(t, launchSettings, firstRound())
-
-	if launched != (delegatelaunch.Launched{Session: "codex-3", Runner: "codex"}) {
-		t.Fatalf("the round should report codex's thread, got %+v", launched)
-	}
-	call := test.LastAgentCall(t, agents, "codex")
-	if call.Dir != launchSettings.WorkDir {
-		t.Fatalf("the agent should work in the project checkout, got %s", call.Dir)
-	}
-	want := []string{
-		"exec", "--json", "--sandbox", "read-only", "--ignore-user-config", "--ignore-rules",
-		"-c", "project_doc_max_bytes=0",
-		"-c", `web_search="live"`,
-		"-c", `mcp_servers.sdd.command="/opt/sdd/bin/sdd"`,
-		"-c", `mcp_servers.sdd.args=["serve"]`,
-		"-c", `mcp_servers.sdd.default_tools_approval_mode="approve"`,
-		roundPrompt,
-	}
-	if !slices.Equal(call.Args, want) {
-		t.Fatalf("codex should run read-only without the user's config and rules, with live web search, sdd as an MCP server whose tools need no approval and the prompt last, got %q", call.Args)
-	}
-}
-
-func TestRun_CodexResumesThePreviousRound(t *testing.T) {
-	agents := test.FakeAgents(t, "codex")
-	test.AgentAnswers(t, agents, "codex", `{"type":"turn.completed"}`, "", 0)
-	round := firstRound()
-	round.Number, round.Resume = 2, "codex-3"
-
-	launched := launch(t, settings(t, "codex"), round)
-
-	if launched.Session != "codex-3" {
-		t.Fatalf("a resumed round should keep the session when codex reports none, got %q", launched.Session)
-	}
-	args := test.LastAgentCall(t, agents, "codex").Args
-	if !slices.Equal(args[len(args)-3:], []string{"resume", "codex-3", roundPrompt}) {
-		t.Fatalf("a later round should resume the session before the prompt, got %q", args)
-	}
-	execFlags := args[:slices.Index(args, "resume")]
-	if !slices.Contains(execFlags, "--ignore-user-config") || !slices.Contains(execFlags, "--ignore-rules") {
-		t.Fatalf("a resumed round should still ignore the user's config and rules, got %q", args)
-	}
-}
-
-func TestRun_CodexRoundLeavesInheritedCredentialsOut(t *testing.T) {
-	agents := test.FakeAgents(t, "codex")
-	test.AgentAnswers(t, agents, "codex", `{"type":"thread.started","thread_id":"codex-3"}`, "", 0)
-	t.Setenv("OPENAI_API_KEY", "sk-inherited")
-	t.Setenv("CODEX_API_KEY", "inherited")
-	t.Setenv("OPENAI_BASE_URL", "https://inherited.example")
-	t.Setenv("CODEX_HOME", "/home/codex")
-
-	launch(t, settings(t, "codex"), firstRound())
-
-	env := test.LastAgentCall(t, agents, "codex").Env
-	for _, name := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"} {
-		if slices.ContainsFunc(env, func(entry string) bool { return strings.HasPrefix(entry, name+"=") }) {
-			t.Errorf("an inherited credential should not reach the round, got %s", name)
-		}
-	}
-	for _, kept := range []string{"CODEX_HOME=/home/codex", "PATH=" + agents} {
-		if !slices.Contains(env, kept) {
-			t.Errorf("the round should keep the rest of the environment, missing %s", kept)
-		}
-	}
-}
-
-func TestRun_CodexReportsItsLastMessage(t *testing.T) {
-	agents := test.FakeAgents(t, "codex")
-	events := strings.Join([]string{
-		`{"type":"thread.started","thread_id":"codex-3"}`,
-		`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Reading the draft."}}`,
-		`{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"sdd","tool":"next"}}`,
-		`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"The sdd tools need approval, so I stop."}}`,
-		`{"type":"turn.completed"}`,
-	}, "\n")
-	test.AgentAnswers(t, agents, "codex", events, "", 0)
-
-	launched := launch(t, settings(t, "codex"), firstRound())
-
-	if launched.Message != "The sdd tools need approval, so I stop." {
-		t.Fatalf("the round should report codex's last agent message, got %q", launched.Message)
-	}
-}
-
-func TestRun_CodexErrorEventFailsTheRound(t *testing.T) {
-	agents := test.FakeAgents(t, "codex")
-	test.AgentAnswers(t, agents, "codex", `{"type":"thread.started","thread_id":"codex-3"}`+"\n"+`{"type":"error","message":"stream disconnected"}`, "", 0)
-
-	refused(t, settings(t, "codex"), firstRound(), "codex ended the round with an error: stream disconnected")
-}
-
-// codex exits nonzero on a failed turn and prints only noise to stderr; the
-// cause, such as a spent usage limit, is in its JSON events on stdout.
-func TestRun_CodexFailureNamesTheCauseFromItsEvents(t *testing.T) {
-	cases := map[string]string{
-		"error event":       `{"type":"error","message":"You've hit your usage limit."}`,
-		"turn.failed event": `{"type":"turn.failed","error":{"message":"You've hit your usage limit."}}`,
-	}
-	for name, event := range cases {
-		t.Run(name, func(t *testing.T) {
-			agents := test.FakeAgents(t, "codex")
-			test.AgentAnswers(t, agents, "codex", `{"type":"thread.started","thread_id":"codex-3"}`+"\n"+event, "Reading additional input from stdin...", 1)
-
-			refused(t, settings(t, "codex"), firstRound(), "codex ended the round with an error: You've hit your usage limit.")
-		})
-	}
-}
-
 func TestRun_CustomDriverContract(t *testing.T) {
 	agents := test.FakeAgents(t, "driver")
 	test.AgentAnswers(t, agents, "driver", "starting\n"+`{"driver_state":"pane-4"}`, "", 0)
@@ -294,21 +175,20 @@ func TestRun_ARoundPastItsTimeoutFails(t *testing.T) {
 	refused(t, launchSettings, firstRound(), "claude did not end its round in time")
 }
 
-func TestRun_FallbackTakesTheFirstSupportedAgentFound(t *testing.T) {
+func TestRun_FallbackTakesClaudeWhereSupportedAndFound(t *testing.T) {
 	cases := map[string]struct {
 		installed []string
 		agents    []string
 		want      string
 	}{
-		"first in order":        {installed: []string{"claude", "codex"}, agents: []string{"codex", "claude"}, want: "codex"},
-		"skips one not found":   {installed: []string{"codex"}, agents: []string{"claude", "codex"}, want: "codex"},
+		"skips codex":           {installed: []string{"claude", "codex"}, agents: []string{"codex", "claude"}, want: "claude"},
 		"skips no headless cli": {installed: []string{"claude", "gemini"}, agents: []string{"gemini", "claude"}, want: "claude"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			agents := test.FakeAgents(t, tc.installed...)
 			for _, agent := range tc.installed {
-				test.AgentAnswers(t, agents, agent, `{"session_id":"s-1","thread_id":"s-1"}`, "", 0)
+				test.AgentAnswers(t, agents, agent, `{"session_id":"s-1"}`, "", 0)
 			}
 			launchSettings := settings(t, delegatelaunch.Fallback)
 			launchSettings.Agents = tc.agents
@@ -316,31 +196,34 @@ func TestRun_FallbackTakesTheFirstSupportedAgentFound(t *testing.T) {
 			launched := launch(t, launchSettings, firstRound())
 
 			if launched.Runner != tc.want {
-				t.Fatalf("the fallback should take the first supported agent whose CLI is found, got %q", launched.Runner)
+				t.Fatalf("the fallback should take claude where supported_agents names it and its CLI is found, got %q", launched.Runner)
 			}
 		})
 	}
 }
 
 func TestRun_FallbackWithNoSupportedCLIFoundIsRefused(t *testing.T) {
-	test.FakeAgents(t, "gemini")
+	test.FakeAgents(t, "gemini", "codex")
 	launchSettings := settings(t, delegatelaunch.Fallback)
 	launchSettings.Agents = []string{"claude", "codex"}
 
 	refused(t, launchSettings, firstRound(), "no CLI of supported_agents (claude, codex) is on PATH: set verify.runner")
 }
 
-func TestRun_SubagentIsNoHeadlessLaunch(t *testing.T) {
-	test.FakeAgents(t)
+func TestRun_SubagentAndCodexAreNoHeadlessLaunch(t *testing.T) {
+	for _, runner := range []string{"subagent", "codex"} {
+		t.Run(runner, func(t *testing.T) {
+			test.FakeAgents(t, runner)
 
-	refused(t, settings(t, "subagent"), firstRound(), `verify.runner "subagent" is no headless runner`)
+			refused(t, settings(t, runner), firstRound(), `verify.runner "`+runner+`" is no headless runner`)
+		})
+	}
 }
 
 // Every runner hands Started the PID of the CLI it started.
 func TestRun_HandsStartedTheCLIsPID(t *testing.T) {
 	answers := map[string]string{
 		"claude": `{"is_error":false,"session_id":"claude-7"}`,
-		"codex":  `{"type":"thread.started","thread_id":"codex-3"}`,
 		"driver": `{"driver_state":"pane-4"}`,
 	}
 	for runner, answer := range answers {
@@ -387,69 +270,35 @@ func TestRun_AFailingStartedStopsTheCLI(t *testing.T) {
 	}
 }
 
-func TestRun_CodexReportingNoSessionFailsTheFirstRound(t *testing.T) {
-	agents := test.FakeAgents(t, "codex")
-	test.AgentAnswers(t, agents, "codex", `{"type":"turn.completed"}`, "", 0)
+// The headless claude runs with the model and effort verify.claude sets, and
+// a resumed round keeps them.
+func TestRun_HeadlessClaudeTakesItsModelAndEffort(t *testing.T) {
+	agents := test.FakeAgents(t, "claude")
+	test.AgentAnswers(t, agents, "claude", `{"type":"result","is_error":false,"session_id":"claude-7","result":"done"}`, "", 0)
+	launchSettings := settings(t, "claude")
+	launchSettings.Claude = model.VerifierAgent{Model: "opus", Effort: "xhigh"}
+	round := firstRound()
+	round.Resume = "claude-6"
 
-	refused(t, settings(t, "codex"), firstRound(), "codex reported no session to resume")
-}
+	launch(t, launchSettings, round)
 
-// Each headless launch runs with the model and effort its own block sets
-// (verify.claude, verify.codex), in the CLI's own flags, and a resumed
-// round keeps them.
-func TestRun_HeadlessLaunchesTakeTheirModelAndEffort(t *testing.T) {
-	codexEvents := `{"type":"thread.started","thread_id":"codex-3"}` + "\n" + `{"type":"turn.completed"}`
-	for _, tc := range []struct {
-		launch string
-		answer string
-		want   []string
-	}{
-		{"claude", `{"type":"result","is_error":false,"session_id":"claude-7","result":"done"}`, []string{"--model", "opus", "--effort", "xhigh", "--resume", "claude-6"}},
-		{"codex", codexEvents, []string{"-m", "gpt-5.5", "-c", `model_reasoning_effort="high"`, "resume", "codex-2", roundPrompt}},
-	} {
-		t.Run(tc.launch, func(t *testing.T) {
-			agents := test.FakeAgents(t, tc.launch)
-			test.AgentAnswers(t, agents, tc.launch, tc.answer, "", 0)
-			launchSettings := settings(t, tc.launch)
-			launchSettings.Claude = model.VerifierAgent{Model: "opus", Effort: "xhigh"}
-			launchSettings.Codex = model.VerifierAgent{Model: "gpt-5.5", Effort: "high"}
-			round := firstRound()
-			round.Resume = map[string]string{"claude": "claude-6", "codex": "codex-2"}[tc.launch]
-
-			launch(t, launchSettings, round)
-
-			args := test.LastAgentCall(t, agents, tc.launch).Args
-			if !slices.Equal(args[len(args)-len(tc.want):], tc.want) {
-				t.Fatalf("the launch should pass its own model and effort before the resume, got %q", args)
-			}
-		})
+	args := test.LastAgentCall(t, agents, "claude").Args
+	want := []string{"--model", "opus", "--effort", "xhigh", "--resume", "claude-6"}
+	if !slices.Equal(args[len(args)-len(want):], want) {
+		t.Fatalf("the launch should pass its model and effort before the resume, got %q", args)
 	}
 }
 
 // A launch whose block sets nothing runs with the CLI's own model and effort.
-func TestRun_HeadlessLaunchesWithoutABlockPassNoModel(t *testing.T) {
-	for _, launchName := range []string{"claude", "codex"} {
-		t.Run(launchName, func(t *testing.T) {
-			agents := test.FakeAgents(t, launchName)
-			answer := `{"type":"result","is_error":false,"session_id":"claude-7","result":"done"}`
-			if launchName == "codex" {
-				answer = `{"type":"thread.started","thread_id":"codex-3"}`
-			}
-			test.AgentAnswers(t, agents, launchName, answer, "", 0)
-			launchSettings := settings(t, launchName)
-			launchSettings.Claude = model.VerifierAgent{Model: "opus"}
-			if launchName == "claude" {
-				launchSettings.Claude = model.VerifierAgent{}
-				launchSettings.Codex = model.VerifierAgent{Model: "gpt-5.5"}
-			}
+func TestRun_HeadlessClaudeWithoutABlockPassesNoModel(t *testing.T) {
+	agents := test.FakeAgents(t, "claude")
+	test.AgentAnswers(t, agents, "claude", `{"type":"result","is_error":false,"session_id":"claude-7","result":"done"}`, "", 0)
 
-			launch(t, launchSettings, firstRound())
+	launch(t, settings(t, "claude"), firstRound())
 
-			for _, arg := range test.LastAgentCall(t, agents, launchName).Args {
-				if arg == "--model" || arg == "-m" || arg == "--effort" || strings.HasPrefix(arg, "model_reasoning_effort") {
-					t.Fatalf("a launch should not take another launch's model or effort, got %q", test.LastAgentCall(t, agents, launchName).Args)
-				}
-			}
-		})
+	for _, arg := range test.LastAgentCall(t, agents, "claude").Args {
+		if arg == "--model" || arg == "--effort" {
+			t.Fatalf("a launch without a block should pass no model or effort, got %q", test.LastAgentCall(t, agents, "claude").Args)
+		}
 	}
 }

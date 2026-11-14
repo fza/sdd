@@ -310,7 +310,7 @@ def main():
         "Add a `farewell(name)` function to `greeting.py` that returns `Goodbye, <name>!`, "
         "with a unit test in `test_greeting.py`."))
     setup.add_argument("--verify-mode", choices=["off", "grounding", "prose", "deep"])
-    setup.add_argument("--verify-runner", choices=["subagent", "claude", "codex", "driver"])
+    setup.add_argument("--verify-runner", choices=["subagent", "claude", "driver"])
     setup.add_argument("--dialogue-mode", choices=["guided", "auto"])
     setup.set_defaults(func=cmd_setup)
 

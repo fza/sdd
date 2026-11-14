@@ -17,15 +17,13 @@ type VerifierPolicy struct {
 	Mode string
 	// Skip is never, failure or weighed; empty means failure.
 	Skip string
-	// Runner is subagent, claude, codex or driver; empty means subagent. The
+	// Runner is subagent, claude or driver; empty means subagent. The
 	// values other than subagent need the composition's DelegateLauncher.
 	Runner string
-	// Claude and Codex are the model and effort the dispatch asks a Claude or
-	// a Codex harness to run a subagent deep verifier with, told apart by the
-	// MCP client name; an empty field takes model.DefaultVerifierClaude or
-	// model.DefaultVerifierCodex.
+	// Claude is the model and effort the dispatch asks a Claude harness to run
+	// a subagent deep verifier with, told by the MCP client name; an empty
+	// field takes model.DefaultVerifierClaude.
 	Claude VerifierAgent
-	Codex  VerifierAgent
 	// RoundTimeout bounds one round of a delegate sdd launched: past it the
 	// round is stopped and fails. Zero takes
 	// model.DefaultVerifierRoundTimeout.
@@ -81,7 +79,7 @@ type VerifierAgent struct {
 func (p VerifierPolicy) resolved() model.VerifierPolicy {
 	return model.VerifierPolicy{
 		Mode: model.VerifierMode(p.Mode), Skip: model.VerifierSkip(p.Skip), Runner: model.VerifierRunner(p.Runner),
-		Claude: model.VerifierAgent(p.Claude), Codex: model.VerifierAgent(p.Codex), RoundTimeout: p.RoundTimeout,
+		Claude: model.VerifierAgent(p.Claude), RoundTimeout: p.RoundTimeout,
 	}.WithDefaults()
 }
 

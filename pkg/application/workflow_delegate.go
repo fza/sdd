@@ -45,8 +45,8 @@ type DelegateLaunch struct {
 	Procedure string
 	// Project is the project the delegate works in.
 	Project ProjectID
-	// Runner is the runner the project configures for this delegate: claude,
-	// codex or driver, or DelegateLaunchFallback where the harness reported
+	// Runner is the runner the project configures for this delegate: claude
+	// or driver, or DelegateLaunchFallback where the harness reported
 	// no subagent tool; empty leaves the runner to the composition. A round's
 	// process asks with the runner the launch reported.
 	Runner string
@@ -146,7 +146,7 @@ type WorkflowDispatch struct {
 	// Agent is the subagent definition a harness launches the delegate as.
 	Agent string
 	// Model and Effort are what the harness launches that subagent with, from
-	// verify.claude or verify.codex as the MCP client tells; empty leaves the
+	// verify.claude where the MCP client is Claude's; empty leaves the
 	// harness's own.
 	Model  string
 	Effort string

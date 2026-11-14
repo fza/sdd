@@ -15,8 +15,8 @@ shares only the user's auth.json, by symlink, and model settings, so the user's
 Codex config, plugins, trust list and thread history stay out of the run.
 
 `start` spawns a daemon that owns one app-server, and so one `sdd serve`, for the
-whole run, as a real Codex session does: work sdd runs in the background, such as
-the deep verifier, outlives the turn that began it. `start` and `say` hand the
+whole run, as a real Codex session does: work sdd runs in the background
+outlives the turn that began it. `start` and `say` hand the
 daemon one user turn each over a unix socket, so a driving agent can play the user
 between invocations. The daemon ends on `stop` or after an idle timeout.
 """

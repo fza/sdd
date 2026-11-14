@@ -8,16 +8,13 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
-func TestVerifierPolicyCarriesTheAgentBlocks(t *testing.T) {
+func TestVerifierPolicyCarriesTheAgentBlock(t *testing.T) {
 	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Claude: model.ClaudeAgent{Model: "opus", Effort: "high"}}}}
 
 	policy := verifierPolicy(cfg)
 
 	if policy.Claude != (sdd.VerifierAgent{Model: "opus", Effort: "high"}) {
 		t.Errorf("the application policy should carry verify.claude, got %+v", policy.Claude)
-	}
-	if policy.Codex != (sdd.VerifierAgent{Effort: "medium"}) {
-		t.Errorf("the application policy should carry the resolved verify.codex, got %+v", policy.Codex)
 	}
 }
 

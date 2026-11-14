@@ -78,19 +78,18 @@ func (VerifierSkip) AllowedValues() []string {
 }
 
 // VerifierRunner is what runs a deep verifier session: the drafting agent's
-// harness as a subagent, or sdd through a headless agent CLI or an external
+// harness as a subagent, or sdd through a headless claude or an external
 // driver.
 type VerifierRunner string
 
 const (
 	VerifierRunnerSubagent VerifierRunner = "subagent"
 	VerifierRunnerClaude   VerifierRunner = "claude"
-	VerifierRunnerCodex    VerifierRunner = "codex"
 	VerifierRunnerDriver   VerifierRunner = "driver"
 )
 
 func (VerifierRunner) AllowedValues() []string {
-	return closedValues(VerifierRunnerSubagent, VerifierRunnerClaude, VerifierRunnerCodex, VerifierRunnerDriver)
+	return closedValues(VerifierRunnerSubagent, VerifierRunnerClaude, VerifierRunnerDriver)
 }
 
 // VerifierDriver is the external command a driver runner runs per round.
@@ -99,20 +98,17 @@ type VerifierDriver struct {
 	Args    []string `yaml:"args,omitempty"`
 }
 
-// VerifierAgent is the model and effort the deep verifier runs with in one
-// agent family, passed to its CLI or subagent tool as written; an empty value
-// leaves the agent's own default. A driver's command picks its own.
+// VerifierAgent is the model and effort the deep verifier runs with, passed
+// to the claude CLI or subagent tool as written; an empty value leaves the
+// agent's own default. A driver's command picks its own.
 type VerifierAgent struct {
 	Model  string `yaml:"model,omitempty"`
 	Effort string `yaml:"effort,omitempty"`
 }
 
-// Verifier agent defaults: the alias sonnet, which every Claude harness
-// accepts, and codex's own default model.
-var (
-	DefaultVerifierClaude = VerifierAgent{Model: "sonnet", Effort: "medium"}
-	DefaultVerifierCodex  = VerifierAgent{Effort: "medium"}
-)
+// DefaultVerifierClaude is the verifier agent's default: the alias sonnet,
+// which every Claude harness accepts.
+var DefaultVerifierClaude = VerifierAgent{Model: "sonnet", Effort: "medium"}
 
 // DefaultVerifierRoundTimeout bounds one round of a delegate sdd launches
 // while verify.round_timeout is unset: long enough for a verifier reading
@@ -120,8 +116,7 @@ var (
 // still waits.
 const DefaultVerifierRoundTimeout = 10 * time.Minute
 
-// ClaudeEffort is a level the claude CLI's --effort takes. Codex accepts
-// model-defined levels, so its effort stays a plain string.
+// ClaudeEffort is a level the claude CLI's --effort takes.
 type ClaudeEffort string
 
 func (ClaudeEffort) AllowedValues() []string {
@@ -153,7 +148,6 @@ type VerifyConfig struct {
 	Runner        VerifierRunner       `yaml:"runner,omitempty"`
 	Driver        VerifierDriver       `yaml:"driver,omitempty"`
 	Claude        ClaudeAgent          `yaml:"claude,omitempty"`
-	Codex         VerifierAgent        `yaml:"codex,omitempty"`
 	RoundTimeout  RoundTimeout         `yaml:"round_timeout,omitempty"`
 	Depth         GroundingDepthConfig `yaml:"depth,omitempty"`
 	BriefAllBelow *int                 `yaml:"brief_all_below,omitempty"`
@@ -230,7 +224,6 @@ type VerifierPolicy struct {
 	Runner       VerifierRunner
 	Driver       VerifierDriver
 	Claude       VerifierAgent
-	Codex        VerifierAgent
 	RoundTimeout time.Duration
 }
 
@@ -241,13 +234,13 @@ func (c VerifyConfig) VerifierPolicy() VerifierPolicy {
 	timeout, _ := c.RoundTimeout.Duration()
 	return VerifierPolicy{
 		Mode: mode, Skip: c.Skip, Runner: c.Runner, Driver: c.Driver,
-		Claude: c.Claude.VerifierAgent(), Codex: c.Codex, RoundTimeout: timeout,
+		Claude: c.Claude.VerifierAgent(), RoundTimeout: timeout,
 	}.WithDefaults()
 }
 
 // WithDefaults fills the unset values: off, skip on failure, a subagent
-// runner, the default model and effort of each agent family, and the default
-// round timeout.
+// runner, the default verifier model and effort, and the default round
+// timeout.
 func (p VerifierPolicy) WithDefaults() VerifierPolicy {
 	if p.Mode == "" {
 		p.Mode = VerifierOff
@@ -259,7 +252,6 @@ func (p VerifierPolicy) WithDefaults() VerifierPolicy {
 		p.Runner = VerifierRunnerSubagent
 	}
 	p.Claude = mergeVerifierAgent(DefaultVerifierClaude, p.Claude)
-	p.Codex = mergeVerifierAgent(DefaultVerifierCodex, p.Codex)
 	if p.RoundTimeout <= 0 {
 		p.RoundTimeout = DefaultVerifierRoundTimeout
 	}
@@ -372,7 +364,6 @@ func mergeVerifyConfig(base, overlay VerifyConfig) VerifyConfig {
 	if overlay.Claude.Effort != "" {
 		out.Claude.Effort = overlay.Claude.Effort
 	}
-	out.Codex = mergeVerifierAgent(out.Codex, overlay.Codex)
 	if overlay.RoundTimeout != "" {
 		out.RoundTimeout = overlay.RoundTimeout
 	}
@@ -428,6 +419,10 @@ func mergeVerifierAgent(base, overlay VerifierAgent) VerifierAgent {
 // file behind each layer; the refusal names the key, and the file of every
 // layer it judges.
 func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
+	err := refuseRemovedRunner(global, committed, local, files)
+	if err != nil {
+		return err
+	}
 	global.Verify = global.Verify.KnownValues()
 	problems := verifyLayerProblems(global, knownVerifyLayer(committed), knownVerifyLayer(local), files)
 	if len(problems) == 0 {
@@ -443,6 +438,28 @@ func VerifyKeyRefusal(key string, global BaseConfig, committed, local *PerRepoCo
 	for _, problem := range verifyLayerProblems(global, committed, local, files) {
 		if key == problem.key || strings.HasPrefix(key, problem.key+".") {
 			return problem.err
+		}
+	}
+	return nil
+}
+
+// removedCodexRunner is a verify.runner value sdd no longer runs, since deep
+// verification needs Claude Code. Unlike an unknown value a newer sdd may
+// have written, it is refused on read.
+const removedCodexRunner VerifierRunner = "codex"
+
+func refuseRemovedRunner(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
+	runners := map[ConfigValueSource]VerifierRunner{ConfigSourceGlobal: global.Verify.Runner}
+	if committed != nil {
+		runners[ConfigSourceProject] = committed.Verify.Runner
+	}
+	if local != nil {
+		runners[ConfigSourceLocal] = local.Verify.Runner
+	}
+	for _, source := range []ConfigValueSource{ConfigSourceGlobal, ConfigSourceProject, ConfigSourceLocal} {
+		if runners[source] == removedCodexRunner {
+			return fmt.Errorf("%s: verify.runner codex no longer exists, since deep verification needs Claude Code; set verify.runner to %s, or remove it",
+				layerFile(source, files), oneOf(VerifierRunner("").AllowedValues()))
 		}
 	}
 	return nil
@@ -550,14 +567,13 @@ func sharedVerifyFile(global BaseConfig, committed *PerRepoConfig, key string, f
 }
 
 // VerifierRunnerChoices are the runners `sdd init` offers for the deep
-// verifier: subagent first as the default, then claude and codex where
-// agents names them, in its order, and driver only where a layer already
-// configures a driver command.
+// verifier: subagent first as the default, then claude where agents names
+// it, and driver only where a layer already configures a driver command.
 func VerifierRunnerChoices(agents []AgentTarget, driver VerifierDriver) []VerifierRunner {
 	choices := []VerifierRunner{VerifierRunnerSubagent}
 	for _, agent := range agents {
 		runner := VerifierRunner(agent)
-		if (runner == VerifierRunnerClaude || runner == VerifierRunnerCodex) && !slices.Contains(choices, runner) {
+		if runner == VerifierRunnerClaude && !slices.Contains(choices, runner) {
 			choices = append(choices, runner)
 		}
 	}
@@ -575,15 +591,11 @@ func VerifierRunnerAsked(mode VerifyMode, recorded VerifyConfig) bool {
 
 // SubagentAgent is the agent block a subagent runner launches the deep
 // verifier with under the MCP client clientName: Claude's where the name holds
-// "claude", Codex's where it holds "codex", matched case-insensitively; none
-// for any other client, whose subagent tool takes the harness's own.
+// "claude", matched case-insensitively; none for any other client, whose
+// subagent tool takes the harness's own.
 func (p VerifierPolicy) SubagentAgent(clientName string) VerifierAgent {
-	name := strings.ToLower(clientName)
-	switch {
-	case strings.Contains(name, "claude"):
+	if strings.Contains(strings.ToLower(clientName), "claude") {
 		return p.Claude
-	case strings.Contains(name, "codex"):
-		return p.Codex
 	}
 	return VerifierAgent{}
 }
