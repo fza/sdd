@@ -9,8 +9,7 @@ import (
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
-// autonomousAccess opens every session in the autonomous dialogue mode
-// (20261029-150854-d-tac-b2f).
+// autonomousAccess opens every session in the autonomous dialogue mode.
 type autonomousAccess struct{ rootAccess }
 
 func (autonomousAccess) ResolveDialogue(context.Context, sdd.Principal, sdd.ProjectID) (sdd.Dialogue, error) {

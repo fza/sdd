@@ -39,8 +39,7 @@ type InitCmd struct {
 	// is RepoRoot unless ProjectDir names another (20261027-211908-d-tac-l8j).
 	SyncMode     model.SyncMode
 	SyncInterval string
-	// DialogueMode, when set, records the person's dialogue.mode in the same
-	// file (20261029-150854-d-tac-b2f).
+	// DialogueMode, when set, records the person's dialogue.mode in the same file.
 	DialogueMode model.DialogueMode
 
 	// SetUpProject allows init to set up a missing project at ProjectDir. Only

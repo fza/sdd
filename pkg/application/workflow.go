@@ -510,16 +510,15 @@ func (w *WorkflowSession) OpenInstances() []WorkflowInstanceSummary {
 
 func (w *WorkflowSession) IsShell(instance string) bool { return instance != "" && instance == w.shell }
 
-// Finished reports whether this dialogue is over: the shell has left running,
-// which is the act that wrote the terminal record. A finished session is spent —
-// the door opens a new one rather than re-serving it, and no move may carry it on.
 // Autonomous reports whether the session opened in the autonomous dialogue
-// mode, where the agent takes the choices procedures hand over
-// (20261029-150854-d-tac-b2f).
+// mode, where the agent takes the choices procedures hand over.
 func (w *WorkflowSession) Autonomous() bool {
 	return w.session.DialogueMode == model.DialogueAutonomous
 }
 
+// Finished reports whether this dialogue is over: the shell has left running,
+// which is the act that wrote the terminal record. A finished session is spent —
+// the door opens a new one rather than re-serving it, and no move may carry it on.
 func (w *WorkflowSession) Finished() bool {
 	inst, ok := w.session.Instance(w.shell)
 	return ok && inst.Status != engine.StatusRunning

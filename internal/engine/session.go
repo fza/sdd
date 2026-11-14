@@ -216,8 +216,7 @@ type Session struct {
 	// empty until supplied.
 	Label string
 	// DialogueMode is fixed when the session opens and kept on resume;
-	// DialogueSource names the config layer that set it
-	// (20261029-150854-d-tac-b2f).
+	// DialogueSource names the config layer that set it.
 	DialogueMode   model.DialogueMode
 	DialogueSource string
 
@@ -656,7 +655,7 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 
 // AnswerWords is who speaks in a chooser answer: the user's words relayed, or
 // the agent's one-line reason for a delegable user chooser it decided itself
-// in an autonomous session (20261029-150854-d-tac-b2f).
+// in an autonomous session.
 type AnswerWords struct {
 	User   string
 	Reason string

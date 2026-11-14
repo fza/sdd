@@ -10,7 +10,7 @@ import (
 )
 
 // Every user choice the base procedures hand to an autonomous agent, and
-// the one they keep for the user (20261029-150854-d-tac-b2f).
+// the one they keep for the user.
 var (
 	wantDelegable = []string{
 		"bootstrap/propose", "bootstrap/refresh", "capture/playback", "catch-up/junction",
