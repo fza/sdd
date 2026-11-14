@@ -421,8 +421,7 @@ func (f *ResultNotices) setHostNotice(notice string)  { f.HostNotice = notice }
 
 // ResultHoldNext ends every result an agent on a model.HoldNextModel gets
 // from an attached session with the tags whose pieces the next serve may
-// repeat (20261114-121534-d-tac-qdb, proofGuideFor), and names a failed proof
-// to any agent.
+// repeat (see proofGuideFor), and names a failed proof to any agent.
 type ResultHoldNext struct {
 	ProofNotice string `json:"proof_notice,omitempty" jsonschema:"set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out"`
 	HoldNext    string `json:"hold_next,omitempty" jsonschema:"the tags, likeliest first, whose pieces your next call may get again; list in its held exactly these tags whose text you still see, each with the word right after it"`
