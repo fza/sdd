@@ -72,7 +72,7 @@ func TestAnEndedMoveServesWithinTheResultBound(t *testing.T) {
 	if serve.Status != "completed" || serve.Produced["entryId"] == "" || serve.Base == nil {
 		t.Fatalf("the completion should name the entry it wrote and the shell it lands in, got %s %v", serve.Status, serve.Produced)
 	}
-	if size := jsonSize(t, serve); size > model.MaxServeChars {
+	if size := serveSize(t, serve); size > model.MaxServeChars {
 		t.Fatalf("the completion should cost at most %d characters, got %d", model.MaxServeChars, size)
 	}
 	if _, ok := serve.Produced["deepPages"]; ok || !strings.Contains(serve.Instructions, "deepPages") {
@@ -103,7 +103,7 @@ func TestALandingOnTheShellServesWithinTheResultBound(t *testing.T) {
 			var serve mcpserver.ServeResult
 			call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "capture"}, &serve)
 			landed := callRaw(t, cs, tool, map[string]any{"session": session, "instance": serve.Instance})
-			if size := jsonSize(t, landed); size > model.MaxServeChars {
+			if size := serveSize(t, landed); size > model.MaxServeChars {
 				t.Fatalf("the %s landing should cost at most %d characters, got %d", tool, model.MaxServeChars, size)
 			}
 			base, _ := landed["base_junction"].(map[string]any)
