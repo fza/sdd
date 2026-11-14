@@ -112,28 +112,36 @@ func newRunner(cmd *cli.Command, timeoutFlag string) (pkgllm.Runner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pkgllm.Observed(runner, statsSink()), nil
+	log, err := usageLog()
+	if err != nil {
+		return nil, err
+	}
+	return log.Runner(pkgllm.Observed(runner, statsSink())), nil
 }
 
 // statsSink is the recording sink both the chat runner and the embedder are
-// observed into: one debug log line per call, one row in .sdd/stats/llm.jsonl
-// that `sdd stats` reads, and one line in the usage log when SDD_USAGE_LOG
-// names one. Best-effort: outside an sdd repo, or when the sink directory
-// cannot be created, calls are not recorded in .sdd/stats.
+// observed into: one debug log line per call, and one row in .sdd/stats/llm.jsonl
+// that `sdd stats` reads. Best-effort: outside an sdd repo, or when the sink
+// directory cannot be created, calls are logged but not recorded.
 func statsSink() pkgllm.StatsSink {
-	var sinks []pkgllm.StatsSink
 	sddDir, err := resolveSDDDir()
-	if err == nil {
-		fileSink, err := llmstats.NewFileSink(filepath.Join(sddDir, "stats"))
-		if err == nil {
-			sinks = append(sinks, fileSink)
-		}
+	if err != nil {
+		return llmstats.Logged(nil)
 	}
-	usageLogPath := os.Getenv(llmstats.UsageLogEnv)
-	if usageLogPath != "" {
-		sinks = append(sinks, llmstats.NewUsageLog(usageLogPath))
+	fileSink, err := llmstats.NewFileSink(filepath.Join(sddDir, "stats"))
+	if err != nil {
+		return llmstats.Logged(nil)
 	}
-	return llmstats.Logged(llmstats.Fanout(sinks...))
+	return llmstats.Logged(fileSink)
+}
+
+// usageLog is the usage log SDD_USAGE_LOG names, nil when it names none.
+func usageLog() (*llmstats.UsageLog, error) {
+	path := os.Getenv(llmstats.UsageLogEnv)
+	if path == "" {
+		return nil, nil
+	}
+	return llmstats.NewUsageLog(path)
 }
 
 // resolveTimeout returns the per-call LLM timeout for the given flag name,

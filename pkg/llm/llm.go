@@ -104,9 +104,9 @@ type Usage struct {
 	// thinking.
 	ReasoningTokens int
 	CostUSD         float64
-	// BillingCost is the provider's own per-reply billing object as raw JSON
-	// (melious.ai reports energy and credits), empty when the reply carries
-	// none. Raw because its fields and units are the provider's.
+	// BillingCost is the provider's own per-reply billing object as raw JSON,
+	// empty when the reply carries none. Raw because its fields and units are
+	// the provider's.
 	BillingCost string
 }
 

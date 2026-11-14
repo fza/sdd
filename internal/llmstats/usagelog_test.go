@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/llmstats"
 	"github.com/networkteam/sdd/pkg/llm"
+	"github.com/networkteam/sdd/pkg/llm/embed"
 )
 
 const meliousBillingCost = `{"energy":"0.103","credits":"0.0000103","paid_with":"energy"}`
@@ -95,7 +97,10 @@ func TestUsageLogRecordsOneLinePerCall(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "usage.jsonl")
 			before := time.Now().UTC().Truncate(time.Second)
 
-			llmstats.NewUsageLog(path).RecordCall(context.Background(), tc.stat)
+			err := newUsageLog(t, path).Append(tc.stat)
+			if err != nil {
+				t.Fatalf("appending the line: %v", err)
+			}
 
 			lines := readUsageLog(t, path)
 			if len(lines) != 1 {
@@ -122,13 +127,25 @@ func TestUsageLogRecordsOneLinePerCall(t *testing.T) {
 	}
 }
 
+func newUsageLog(t *testing.T, path string) *llmstats.UsageLog {
+	t.Helper()
+	log, err := llmstats.NewUsageLog(path)
+	if err != nil {
+		t.Fatalf("creating the usage log: %v", err)
+	}
+	return log
+}
+
 func TestUsageLogAppendsToAnExistingLog(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "usage.jsonl")
 	if err := os.WriteFile(path, []byte(`{"step":"earlier"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	llmstats.NewUsageLog(path).RecordCall(context.Background(), llm.CallStat{Purpose: "preflight"})
+	err := newUsageLog(t, path).Append(llm.CallStat{Purpose: "preflight"})
+	if err != nil {
+		t.Fatalf("appending the line: %v", err)
+	}
 
 	lines := readUsageLog(t, path)
 	if len(lines) != 2 || string(lines[0]["step"]) != `"earlier"` {
@@ -138,7 +155,7 @@ func TestUsageLogAppendsToAnExistingLog(t *testing.T) {
 
 func TestUsageLogConcurrentWritersNeverInterleaveALine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "usage.jsonl")
-	writers := []*llmstats.UsageLog{llmstats.NewUsageLog(path), llmstats.NewUsageLog(path)}
+	writers := []*llmstats.UsageLog{newUsageLog(t, path), newUsageLog(t, path)}
 	const callsPerWriter = 200
 	stat := llm.CallStat{
 		Purpose: "preflight", Identity: llm.Identity{Provider: "openai", Model: strings.Repeat("m", 512), Host: "api.melious.ai"},
@@ -146,46 +163,70 @@ func TestUsageLogConcurrentWritersNeverInterleaveALine(t *testing.T) {
 	}
 
 	var wait sync.WaitGroup
+	errs := make(chan error, len(writers)*callsPerWriter)
 	for _, writer := range writers {
 		for range callsPerWriter {
-			wait.Go(func() { writer.RecordCall(context.Background(), stat) })
+			wait.Go(func() { errs <- writer.Append(stat) })
 		}
 	}
 	wait.Wait()
+	close(errs)
 
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("appending a line: %v", err)
+		}
+	}
 	if lines := readUsageLog(t, path); len(lines) != len(writers)*callsPerWriter {
 		t.Fatalf("every call should land as its own whole line, got %d", len(lines))
 	}
 }
 
-func TestUsageLogUnwritablePathKeepsTheCallRunning(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "missing", "usage.jsonl")
+func TestNewUsageLogRefusesAnUnwritablePath(t *testing.T) {
+	_, err := llmstats.NewUsageLog(filepath.Join(t.TempDir(), "missing", "usage.jsonl"))
 
-	llmstats.NewUsageLog(path).RecordCall(context.Background(), llm.CallStat{Purpose: "preflight"})
-
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Errorf("an unwritable usage log should be skipped, got %v", err)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a usage log that cannot be created should fail before the first call, got %v", err)
 	}
 }
 
-type purposeSink struct {
-	mu       sync.Mutex
-	purposes []string
-}
+func TestUsageLogFailedWriteFailsTheCall(t *testing.T) {
+	runner := llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {
+		return llm.Result{Text: "ok"}, nil
+	})
+	embedder := embed.EmbedderFunc{Space: "fixed/1", Run: func(context.Context, embed.Request) (embed.Result, error) {
+		return embed.Result{Vectors: [][]float32{{1}}}, nil
+	}}
+	for _, tc := range []struct {
+		name string
+		call func(log *llmstats.UsageLog) error
+	}{
+		{"chat call", func(log *llmstats.UsageLog) error {
+			_, err := log.Runner(runner).Run(context.Background(), llm.Request{Purpose: "preflight"})
+			return err
+		}},
+		{"embedding call", func(log *llmstats.UsageLog) error {
+			_, err := log.Embedder(embedder).Embed(context.Background(), embed.Request{Purpose: embed.PurposeQuery, Texts: []string{"q"}})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "usage.jsonl")
+			log := newUsageLog(t, path)
+			err := os.Remove(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = os.Mkdir(path, 0o755)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-func (s *purposeSink) RecordCall(_ context.Context, stat llm.CallStat) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.purposes = append(s.purposes, stat.Purpose)
-}
+			err = tc.call(log)
 
-func TestFanoutHandsEveryCallToEachSink(t *testing.T) {
-	first, second := &purposeSink{}, &purposeSink{}
-
-	llmstats.Fanout(first, second).RecordCall(context.Background(), llm.CallStat{Purpose: "preflight"})
-	llmstats.Fanout().RecordCall(context.Background(), llm.CallStat{Purpose: "ignored"})
-
-	if !slices.Equal(first.purposes, []string{"preflight"}) || !slices.Equal(second.purposes, []string{"preflight"}) {
-		t.Fatalf("each sink should receive the call once, got %v and %v", first.purposes, second.purposes)
+			if err == nil || !strings.Contains(err.Error(), "usage log") {
+				t.Errorf("a usage log line that cannot be written should fail the call it meters, got %v", err)
+			}
+		})
 	}
 }
