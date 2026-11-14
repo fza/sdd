@@ -45,8 +45,7 @@ func takesStagedBody(inst *engine.Instance) bool {
 // refuses what a report may not carry beside a staged body, and returns body,
 // bodyHash and bodyHandle to write when the report names a handle; nil when
 // nothing is to be written. Header and fields are compared at the confirm
-// only, so the two halves of a header edit can arrive in either order
-// (20261030-174307-d-tac-r7k).
+// only, so the two halves of a header edit can arrive in either order.
 func (w *WorkflowSession) stagedBodyFields(ctx context.Context, identity RequestIdentity, inst *engine.Instance, fields map[string]any) (map[string]any, error) {
 	if !takesStagedBody(inst) {
 		return nil, nil
