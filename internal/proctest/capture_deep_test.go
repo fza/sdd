@@ -424,6 +424,42 @@ func TestCaptureDeep_RefusedRepairIsAVerifierFailure(t *testing.T) {
 	}
 }
 
+// A finding citing a file the checkout lacks gets the problems unit; refused
+// again after the repair, it never reaches the drafter.
+func TestCaptureDeep_AnInventedSourceIsRefused(t *testing.T) {
+	checkout := fstest.MapFS{"internal/capture/writer.go": {Data: []byte("package capture")}}
+	world, session := newDeepWorld(t, "deep-invented-source", sdd.VerifierPolicy{}, proctest.WithCheckout(checkout))
+	x := startDeep(t, world, session, captureDraft())
+	invented := []any{map[string]any{"verdict": "the writer keeps every attachment", "axis": "evidence", "severity": "high",
+		"sources": []any{map[string]any{"kind": "file", "ref": "internal/capture/invented.go"}}}}
+	serve := x.judge(t, invented)
+	proctest.RequireStep(t, serve, "repair")
+	if !strings.Contains(serve.Instructions, "source file internal/capture/invented.go is not in the checkout") {
+		t.Fatalf("the refusal should name the invented source:\n%s", serve.Instructions)
+	}
+	serve = x.delegate.Answer(t, x.child, "repair", "repair", map[string]any{"findings": invented}, "")
+	proctest.RequireStatus(t, serve, "completed")
+	serve = x.pickUp(t)
+	proctest.RequireStep(t, serve, "deepFailed")
+	if !strings.Contains(serve.Instructions, "refused after the repair") || strings.Contains(serve.Instructions, "keeps every attachment") {
+		t.Fatalf("the refused finding should end the exchange without reaching the drafter:\n%s", serve.Instructions)
+	}
+}
+
+func TestCaptureDeep_ACitedSourceThatResolvesReachesTheDrafter(t *testing.T) {
+	checkout := fstest.MapFS{"internal/capture/writer.go": {Data: []byte("The writer keeps the first\n  attachment of a name.\n")}}
+	world, session := newDeepWorld(t, "deep-cited-source", sdd.VerifierPolicy{}, proctest.WithCheckout(checkout))
+	x := startDeep(t, world, session, captureDraft())
+	x.judge(t, []any{map[string]any{"verdict": "the writer keeps the first attachment", "axis": "evidence", "severity": "medium",
+		"pointers": []any{map[string]any{"field": "body", "quote": "observes something"}},
+		"sources":  []any{map[string]any{"kind": "file", "ref": "internal/capture/writer.go", "quote": "keeps the first attachment"}}}})
+	serve := x.pickUp(t)
+	proctest.RequireStep(t, serve, "deepAnswer")
+	if !strings.Contains(serve.Instructions, `- file internal/capture/writer.go: "keeps the first attachment"`) {
+		t.Fatalf("the finding should reach the drafter with its source:\n%s", serve.Instructions)
+	}
+}
+
 func TestCaptureDeep_SkipNeverKeepsTheCaptureWaiting(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-never", sdd.VerifierPolicy{Skip: "never"})
 	instance, serve := confirmedDeepCapture(t, session, captureDraft())

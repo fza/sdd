@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"net/url"
 	"regexp"
 	"slices"
 	"sort"
@@ -49,6 +51,65 @@ type DeepPointer struct {
 	ID    string `json:"id,omitempty"`
 }
 
+// The kinds of source a deep finding cites.
+const (
+	DeepSourceFile   = "file"
+	DeepSourceCommit = "commit"
+	DeepSourceURL    = "url"
+	DeepSourceEntry  = "entry"
+)
+
+var deepSourceKinds = []string{DeepSourceFile, DeepSourceCommit, DeepSourceURL, DeepSourceEntry}
+
+// DeepSourceKinds lists the closed set of kinds a deep source names.
+func DeepSourceKinds() []string { return slices.Clone(deepSourceKinds) }
+
+// DeepSource is one source a finding cites: a checkout file, a commit, a URL
+// or a graph entry, with the words it quotes from it.
+type DeepSource struct {
+	Kind  string `json:"kind"`
+	Ref   string `json:"ref"`
+	Quote string `json:"quote,omitempty"`
+}
+
+var deepCommitRef = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
+// Validate checks the source's form: a known kind, a path inside the
+// checkout, a commit hash, an http or https URL, or a full entry ID.
+func (s DeepSource) Validate() error {
+	switch s.Kind {
+	case DeepSourceFile:
+		if !fs.ValidPath(s.Ref) || s.Ref == "." {
+			return fmt.Errorf("source file %q is no path inside the checkout, relative to its root", s.Ref)
+		}
+	case DeepSourceCommit:
+		if !deepCommitRef.MatchString(s.Ref) {
+			return fmt.Errorf("source commit %q is no commit hash", s.Ref)
+		}
+	case DeepSourceURL:
+		parsed, err := url.Parse(s.Ref)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return fmt.Errorf("source url %q is no http or https URL", s.Ref)
+		}
+	case DeepSourceEntry:
+		if _, err := ParseID(s.Ref); err != nil {
+			return fmt.Errorf("source entry %q: %w", s.Ref, err)
+		}
+	default:
+		return fmt.Errorf("source kind %q is not one of %s", s.Kind, strings.Join(deepSourceKinds, ", "))
+	}
+	return nil
+}
+
+// DeepLookup resolves what deep findings cite. A nil function finds nothing.
+type DeepLookup struct {
+	Entry func(id string) bool
+	// File returns the content of a file in the checkout; found is false when
+	// no file is at path.
+	File   func(path string) (content string, found bool, err error)
+	Commit func(hash string) (bool, error)
+}
+
 // DeepFinding is one finding of the deep verifier, reasoning first.
 type DeepFinding struct {
 	Verdict  string        `json:"verdict"`
@@ -57,13 +118,13 @@ type DeepFinding struct {
 	Owner    bool          `json:"owner,omitempty"`
 	Pointers []DeepPointer `json:"pointers,omitempty"`
 	Basis    []string      `json:"basis,omitempty"`
-	Sources  []string      `json:"sources,omitempty"`
+	Sources  []DeepSource  `json:"sources,omitempty"`
 	Edits    []DeepEdit    `json:"edits,omitempty"`
 }
 
 // Validate checks the finding's shape: the closed axis and severity sets, an
 // owner finding without edits, evidence with sources unless only the user can
-// settle it, and full entry IDs.
+// settle it, full entry IDs, and sources of a valid form.
 func (f DeepFinding) Validate() error {
 	if strings.TrimSpace(f.Verdict) == "" {
 		return errors.New("verdict must say in words what is wrong")
@@ -83,6 +144,11 @@ func (f DeepFinding) Validate() error {
 	for _, id := range f.Basis {
 		if _, err := ParseID(id); err != nil {
 			return fmt.Errorf("basis %q: %w", id, err)
+		}
+	}
+	for _, source := range f.Sources {
+		if err := source.Validate(); err != nil {
+			return err
 		}
 	}
 	for i, edit := range f.Edits {
@@ -300,9 +366,12 @@ func RenderDeepHunks(hunks []DeepHunk) string {
 }
 
 // CheckDeepFindings lists what refuses a set of findings over base: an
-// invalid finding, a basis or ref pointer that does not resolve, or edits
-// that do not apply. Empty means the findings stand.
-func CheckDeepFindings(base string, findings []DeepFinding, resolves func(id string) bool) []string {
+// invalid finding, a basis, ref pointer or cited source that does not
+// resolve, a quote its draft or file does not hold, or edits that do not
+// apply. Empty means the findings stand; an error is a lookup that failed.
+func CheckDeepFindings(base string, findings []DeepFinding, lookup DeepLookup) ([]string, error) {
+	resolves := func(id string) bool { return lookup.Entry != nil && lookup.Entry(id) }
+	draft := newDeepDraftTexts(base)
 	var problems []string
 	for i, finding := range findings {
 		id := DeepFindingID(i)
@@ -319,17 +388,105 @@ func CheckDeepFindings(base string, findings []DeepFinding, resolves func(id str
 			if pointer.ID != "" && !resolves(pointer.ID) {
 				problems = append(problems, fmt.Sprintf("%s: pointer %s resolves to no entry", id, pointer.ID))
 			}
+			if pointer.Quote != "" && !draft.holds(pointer.Quote) {
+				problems = append(problems, fmt.Sprintf("%s: pointer quote %q is not in the draft", id, pointer.Quote))
+			}
+		}
+		for _, source := range finding.Sources {
+			problem, err := checkDeepSource(source, lookup)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", id, err)
+			}
+			if problem != "" {
+				problems = append(problems, id+": "+problem)
+			}
 		}
 	}
 	if len(problems) > 0 {
-		return problems
+		return problems, nil
 	}
 	_, _, err := BuildDeepProposal(base, DeepChanges(findings, nil))
 	if err != nil {
 		problems = append(problems, strings.Split(err.Error(), "\n")...)
 	}
-	return problems
+	return problems, nil
 }
+
+// checkDeepSource names why a valid source does not resolve, empty when it
+// does. Quotes match with whitespace runs collapsed.
+func checkDeepSource(source DeepSource, lookup DeepLookup) (string, error) {
+	switch source.Kind {
+	case DeepSourceFile:
+		if lookup.File == nil {
+			return fmt.Sprintf("source file %s is not in the checkout", source.Ref), nil
+		}
+		content, found, err := lookup.File(source.Ref)
+		if err != nil {
+			return "", err
+		}
+		if !found {
+			return fmt.Sprintf("source file %s is not in the checkout", source.Ref), nil
+		}
+		if source.Quote != "" && !strings.Contains(collapseSpace(content), collapseSpace(source.Quote)) {
+			return fmt.Sprintf("source file %s does not hold the quote %q", source.Ref, source.Quote), nil
+		}
+	case DeepSourceCommit:
+		found := false
+		if lookup.Commit != nil {
+			var err error
+			found, err = lookup.Commit(source.Ref)
+			if err != nil {
+				return "", err
+			}
+		}
+		if !found {
+			return fmt.Sprintf("source commit %s is not in the repository", source.Ref), nil
+		}
+	case DeepSourceEntry:
+		if lookup.Entry == nil || !lookup.Entry(source.Ref) {
+			return fmt.Sprintf("source entry %s resolves to no entry", source.Ref), nil
+		}
+	}
+	return "", nil
+}
+
+// deepDraftTexts is the draft document a pointer quotes, whitespace
+// collapsed: the document as written and each header field's value decoded.
+type deepDraftTexts []string
+
+func newDeepDraftTexts(base string) deepDraftTexts {
+	texts := deepDraftTexts{collapseSpace(base)}
+	parsed, err := ParseDeepDraftDocument(base)
+	if err != nil {
+		return texts
+	}
+	var add func(value any)
+	add = func(value any) {
+		switch v := value.(type) {
+		case string:
+			texts = append(texts, collapseSpace(v))
+		case []any:
+			for _, item := range v {
+				add(item)
+			}
+		case map[string]any:
+			for _, item := range v {
+				add(item)
+			}
+		}
+	}
+	for _, value := range parsed.Fields {
+		add(value)
+	}
+	return texts
+}
+
+func (d deepDraftTexts) holds(quote string) bool {
+	quote = collapseSpace(quote)
+	return slices.ContainsFunc(d, func(text string) bool { return strings.Contains(text, quote) })
+}
+
+func collapseSpace(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // DeepWeighing is the fixed rule's recommendation on running the deep
 // exchange, with the reasons that made it.

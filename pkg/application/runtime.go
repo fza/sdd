@@ -86,8 +86,17 @@ type ProjectRuntimeOptions struct {
 	// a call keeps, which size a light verifier call; nil refuses light.
 	Window func(context.Context) (ModelWindow, error)
 	// Checkout is the project checkout the deep verifier's weighing rule looks
-	// a cited path up in; nil finds none.
+	// a cited path up in, and its findings' cited files; nil finds none.
 	Checkout fs.FS
+	// Commits looks up the commits the deep verifier's findings cite; nil
+	// finds none.
+	Commits CommitLookup
+}
+
+// CommitLookup reports whether a commit exists in the project checkout's
+// repository.
+type CommitLookup interface {
+	HasCommit(ctx context.Context, hash string) (bool, error)
 }
 
 // GraphSync runs automatic sync of the graph repository behind a branch's

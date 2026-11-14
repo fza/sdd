@@ -174,3 +174,28 @@ func TestMergeRefusesACancelledContext(t *testing.T) {
 		t.Error("a merge that did not start should leave the branch as it was")
 	}
 }
+
+func TestHasCommitFindsOnlyCommitsTheRepositoryHolds(t *testing.T) {
+	dir := newRepo(t)
+	head := gitOut(t, dir, "rev-parse", "HEAD")
+	tree := gitOut(t, dir, "rev-parse", "HEAD^{tree}")
+	for _, tc := range []struct {
+		name, hash string
+		want       bool
+	}{
+		{"full hash", head, true},
+		{"short hash", head[:8], true},
+		{"unknown hash", "0000000deadbeef", false},
+		{"a tree, no commit", tree, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			found, err := git.CLI{Dir: dir}.HasCommit(context.Background(), tc.hash)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if found != tc.want {
+				t.Errorf("HasCommit should find a commit and nothing else, got %v", found)
+			}
+		})
+	}
+}
