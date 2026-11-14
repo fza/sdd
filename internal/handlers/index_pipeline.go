@@ -51,7 +51,7 @@ func prepareIndexEntry(ctx context.Context, input indexInput, reader chunking.At
 
 // entriesPerPublication bounds how many finished entries wait for one
 // publication. A store write reloads the whole store, so publishing per entry
-// makes a reindex quadratic (20261101-003415-s-tac-1fw); an interrupted run
+// makes a reindex quadratic; an interrupted run
 // redoes at most this many entries' embeddings.
 const entriesPerPublication = 64
 
