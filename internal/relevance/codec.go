@@ -9,12 +9,13 @@
 //	score   's' a b judge direction score
 //	step    'd' judge time set-aside
 //
-// Indexes and times are varints; code, reason, flags, relations, direction
-// and score take one byte each. A reason byte this build does not know is
-// kept unchanged (design decision D10). The flags byte holds the audit bit
-// (1), the replay bit (2) and the opened-hidden bit (4). A segment written
-// before a bit existed reads with that bit unset, so its reader records read
-// as live.
+// Indexes are unsigned and times signed variable-length integers (var-ints,
+// as encoding/binary writes them; times in Unix nanoseconds); code, reason,
+// flags, relations, direction and score take one byte each. A reason byte
+// this build does not know is kept unchanged (design decision D10). The flags
+// byte holds the audit bit (1), the replay bit (2) and the opened-hidden bit
+// (4). A segment written before a bit existed reads with that bit unset, so
+// its reader records read as live.
 package relevance
 
 import (
