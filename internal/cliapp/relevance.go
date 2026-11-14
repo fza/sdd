@@ -33,7 +33,7 @@ func projectRelevanceStore(stateRoot, repoKey string) (usedRelevanceStore, error
 	if err != nil {
 		return usedRelevanceStore{}, err
 	}
-	used := usedRelevanceStore{FilesystemRelevanceStore: store, stateRoot: stateRoot, repoKey: repoKey}
+	used := usedRelevanceStore{FilesystemRelevanceStore: store, stateRoot: stateRoot, repoKey: repoKey, now: time.Now}
 	if err := used.mark(); err != nil {
 		return usedRelevanceStore{}, err
 	}
@@ -46,10 +46,11 @@ func projectRelevanceStore(stateRoot, repoKey string) (usedRelevanceStore, error
 type usedRelevanceStore struct {
 	*localadapter.FilesystemRelevanceStore
 	stateRoot, repoKey string
+	now                func() time.Time
 }
 
 func (s usedRelevanceStore) mark() error {
-	return localadapter.MarkProjectUsed(s.stateRoot, s.repoKey, time.Now())
+	return localadapter.MarkProjectUsed(s.stateRoot, s.repoKey, s.now())
 }
 
 func (s usedRelevanceStore) Append(ctx context.Context, segment []byte) error {
