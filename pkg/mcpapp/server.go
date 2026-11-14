@@ -88,7 +88,7 @@ func New(opts Options) (*Server, error) {
 	}, &mcp.ServerOptions{
 		Instructions: serverInstructions,
 	})
-	s.mcp.AddReceivingMiddleware(s.refuseWhileClosing)
+	s.mcp.AddReceivingMiddleware(s.refuseWhileClosing, refuseSingleFileStaging)
 	s.registerTools()
 	return s, nil
 }

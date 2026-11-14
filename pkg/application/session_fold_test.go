@@ -81,7 +81,7 @@ func TestWorkflowHolderFoldsAnotherAttachsAppends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = cli.StageAttachment(t.Context(), identity, "notes.md", []byte("staged by the CLI\n"))
+	_, err = cli.StageAttachments(t.Context(), identity, []sdd.StageItem{{Name: "notes.md", Content: []byte("staged by the CLI\n")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestWorkflowHolderStagesPastAnotherAttachsRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = holder.StageAttachment(t.Context(), identity, "notes.md", []byte("staged by the holder\n"))
+	_, err = holder.StageAttachments(t.Context(), identity, []sdd.StageItem{{Name: "notes.md", Content: []byte("staged by the holder\n")}})
 	if err != nil {
 		t.Fatalf("the holder should stage past another attach's read, got %v", err)
 	}

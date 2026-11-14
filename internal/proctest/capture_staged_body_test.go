@@ -232,7 +232,7 @@ func TestCapture_RestagedBodyReopensConfirmedPlayback(t *testing.T) {
 		{
 			name: "patched in staging",
 			restage: func(t *testing.T, session *proctest.Session, handle string) {
-				if _, err := session.WF.EditStagedAttachment(t.Context(), session.World.Identity, handle, []types.PatchPair{{Old: "reviewed file", New: "patched file"}}); err != nil {
+				if _, err := session.StageItem(t, sdd.StageItem{Name: handle, Patches: []types.PatchPair{{Old: "reviewed file", New: "patched file"}}}); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -441,6 +441,29 @@ func TestCapture_RestageDuringAnUnfinishedOperationIsRefused(t *testing.T) {
 	page, _, err := session.WF.ReadStagedAttachment(t.Context(), session.World.Identity, handle, 0, 0)
 	if err != nil || string(page.Content) != stagedBodyFile {
 		t.Errorf("a refused re-stage should leave the staged file as it was, got %q (%v)", page.Content, err)
+	}
+}
+
+func TestCapture_RestageInACallOfSeveralFilesStagesNone(t *testing.T) {
+	_, session := newCaptureWorld(t, "staged-body-pending-batch", proctest.WithFinalizers(&captureCompletionFailure{}))
+	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	failed, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "capture it")
+	if err != nil || failed.PendingOperation == nil {
+		t.Fatalf("the failing finalizer should leave the write unfinished, got %v", err)
+	}
+
+	_, err = session.WF.StageAttachments(t.Context(), session.World.Identity, []sdd.StageItem{
+		{Name: "notes.md", Content: []byte("staged beside the body\n")},
+		{Name: handle, Content: []byte(unseenStagedBody)},
+	})
+	if err == nil || !strings.Contains(err.Error(), `files item 2 "draft.md"`) || !strings.Contains(err.Error(), "unfinished") {
+		t.Fatalf("re-staging the body file in a call of several should refuse the call naming that file, got %v", err)
+	}
+	if staged := session.WF.StagedHandles(); slices.Contains(staged, "notes.md") {
+		t.Errorf("a refused call should stage none of its files, got %v", staged)
 	}
 }
 

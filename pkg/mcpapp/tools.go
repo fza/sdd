@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -274,11 +273,16 @@ type BindBranchResult struct {
 }
 
 type StageAttachmentArgs struct {
-	Session string             `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
+	Session string         `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required. Retain it across context compaction"`
+	Files   []StageFileArg `json:"files" jsonschema:"files to stage, in order; a name appears at most once. Every file is checked before any is staged: one failing file refuses the call and nothing is staged"`
+}
+
+// StageFileArg is one file of a stage_attachment call.
+type StageFileArg struct {
 	Name    string             `json:"name" jsonschema:"target filename (plain name, no paths)"`
 	Content string             `json:"content,omitempty" jsonschema:"file content to stage (UTF-8 text)"`
 	Path    string             `json:"path,omitempty" jsonschema:"local file path to stage instead of inline content; read again before a playback confirms a body staged from it"`
-	Patches []SearchReplaceArg `json:"patches,omitempty" jsonschema:"edit the already-staged file named by name in place: ordered exact search-replace pairs, applied atomically. Each old must match exactly once; a failing pair refuses the whole edit. Pass instead of content/path"`
+	Patches []SearchReplaceArg `json:"patches,omitempty" jsonschema:"edit the file staged under name before this call in place: ordered exact search-replace pairs, applied atomically. Each old must match exactly once; a failing pair refuses the whole call. Pass instead of content/path"`
 }
 
 // SearchReplaceArg is one exact edit inside a patches list.
@@ -289,6 +293,11 @@ type SearchReplaceArg struct {
 
 type StageAttachmentResult struct {
 	ResultNotices
+	Files []StagedFileResult `json:"files" jsonschema:"one result per staged file, in call order"`
+}
+
+// StagedFileResult is one staged file of a stage_attachment call.
+type StagedFileResult struct {
 	Handle string   `json:"handle" jsonschema:"attachment handle; pass it in a report's attachments field, or as bodyHandle when the file holds an entry body"`
 	SHA256 string   `json:"sha256" jsonschema:"sha256 of the staged file's raw bytes, as hex; a playback confirm binds to it when the file is a capture's bodyHandle"`
 	Bound  []string `json:"bound,omitempty" jsonschema:"captures taking their body from this handle, whose body and playback this staging replaced"`
@@ -524,11 +533,12 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name: "stage_attachment",
-		Description: "Stage a file into the session scratch; session required. Returns a handle and the " +
-			"sha256 of the staged bytes. Pass the handle in a report's attachments field, or as a capture's " +
-			"bodyHandle when the file holds the entry body. Or amend what is already staged: with patches, " +
-			"the file named by name is edited in place through atomic search-replace pairs, not re-staged " +
-			"whole. A path is read now and again before a playback confirms a body staged from it, never written. " +
+		Description: "Stage one or more files into the session scratch in one call; session required. Each " +
+			"files item takes a name and exactly one of content, path and patches. Returns, per file in call " +
+			"order, a handle and the sha256 of the staged bytes. Pass a handle in a report's attachments field, " +
+			"or as a capture's bodyHandle when the file holds the entry body. Or amend what is already staged: " +
+			"with patches, the file staged under name is edited in place through atomic search-replace pairs, " +
+			"not re-staged whole. A path is read now and again before a playback confirms a body staged from it, never written. " +
 			"Never a graph write: the write gate materializes " +
 			"staged files with the entry.",
 	}, toolBoundary(s, s.stageAttachment))
@@ -926,59 +936,53 @@ func (s *Server) bindBranch(ctx context.Context, req *mcp.CallToolRequest, args 
 // resumed pre-shell session gains a base to land on (d-tac-bfc).
 
 func (s *Server) stageAttachment(ctx context.Context, req *mcp.CallToolRequest, args StageAttachmentArgs) (*mcp.CallToolResult, StageAttachmentResult, error) {
-	if err := validAttachmentName(args.Name); err != nil {
-		return nil, StageAttachmentResult{}, toolError("name: %v", err)
-	}
-	sources := 0
-	for _, present := range []bool{args.Content != "", args.Path != "", len(args.Patches) > 0} {
-		if present {
-			sources++
-		}
-	}
-	if sources != 1 {
-		return nil, StageAttachmentResult{}, toolError("pass exactly one of content, path, or patches")
-	}
 	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
 	if err != nil {
 		return nil, StageAttachmentResult{}, err
 	}
 	defer ss.mu.Unlock()
-	identity := s.requestIdentity(req)
-	if len(args.Patches) > 0 {
-		pairs := make([]textpatch.Pair, 0, len(args.Patches))
-		for _, p := range args.Patches {
-			pairs = append(pairs, textpatch.Pair{Old: p.Old, New: p.New})
+	items := make([]sdd.StageItem, 0, len(args.Files))
+	for _, file := range args.Files {
+		item := sdd.StageItem{Name: file.Name, Content: []byte(file.Content), Path: file.Path}
+		for _, p := range file.Patches {
+			item.Patches = append(item.Patches, textpatch.Pair{Old: p.Old, New: p.New})
 		}
-		staged, err := ss.root.EditStagedAttachment(ctx, identity, args.Name, pairs)
-		if err != nil {
-			return nil, StageAttachmentResult{}, err
-		}
-		return nil, StageAttachmentResult{Handle: staged.Handle, SHA256: staged.SHA256, Bound: staged.Bound}, nil
+		items = append(items, item)
 	}
-	var staged sdd.StagedFile
-	if args.Path != "" {
-		path, absErr := filepath.Abs(args.Path)
-		if absErr != nil {
-			return nil, StageAttachmentResult{}, toolError("path %s: %v", args.Path, absErr)
-		}
-		staged, err = ss.root.StageAttachmentFrom(ctx, identity, args.Name, path)
-	} else {
-		staged, err = ss.root.StageAttachment(ctx, identity, args.Name, []byte(args.Content))
-	}
+	staged, err := ss.root.StageAttachments(ctx, s.requestIdentity(req), items)
 	if err != nil {
 		return nil, StageAttachmentResult{}, err
 	}
-	return nil, StageAttachmentResult{Handle: staged.Handle, SHA256: staged.SHA256, Bound: staged.Bound}, nil
+	result := StageAttachmentResult{Files: make([]StagedFileResult, 0, len(staged))}
+	for _, file := range staged {
+		result.Files = append(result.Files, StagedFileResult{Handle: file.Handle, SHA256: file.SHA256, Bound: file.Bound})
+	}
+	return nil, result, nil
 }
 
-func validAttachmentName(name string) error {
-	if name == "" {
-		return fmt.Errorf("filename is required")
+// refuseSingleFileStaging answers a stage_attachment call carrying the
+// single-file fields ahead of the schema check, whose refusal would not name
+// files (20261114-121413-d-tac-n6r).
+func refuseSingleFileStaging(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		call, ok := req.(*mcp.CallToolRequest)
+		if !ok || call.Params == nil || call.Params.Name != "stage_attachment" {
+			return next(ctx, method, req)
+		}
+		var args map[string]json.RawMessage
+		err := json.Unmarshal(call.Params.Arguments, &args)
+		if err != nil {
+			return next(ctx, method, req)
+		}
+		for _, field := range []string{"name", "content", "path", "patches"} {
+			_, present := args[field]
+			if present {
+				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_attachment takes files: [{name, content | path | patches}, ...]; " +
+					"pass each file as an item of files, not name, content, path or patches beside it"}}}, nil
+			}
+		}
+		return next(ctx, method, req)
 	}
-	if filepath.Base(name) != name || strings.ContainsAny(name, `/\\`) {
-		return fmt.Errorf("must be a plain filename")
-	}
-	return nil
 }
 
 // readScope is what a free read takes from its session: the project it runs
