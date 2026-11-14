@@ -9,7 +9,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// Piece is one unit of the served memory (20261112-075604-d-tac-t4r): a
+// Piece is one unit of the served memory: a
 // lane, a framing block, a report schema, an entry served in full. Name is
 // what an agent names in reread, an entry's ID for an entry; Hash keys the
 // content and stays empty for an entry, whose body never changes.

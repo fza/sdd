@@ -816,7 +816,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 }
 
 // narrowToFailing serves a gate that holds the report it just took with a
-// schema of the fields holding it (20261112-075604-d-tac-t4r): those still
+// schema of the fields holding it: those still
 // missing and those its failing checks read. A gate held only by checks that
 // read no reportable field keeps the whole schema.
 func (s *Session) narrowToFailing(inst *Instance, sv *Serve) {

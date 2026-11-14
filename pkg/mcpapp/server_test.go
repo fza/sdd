@@ -2628,7 +2628,7 @@ func serveSize(t *testing.T, v any) int {
 }
 
 // TestServedMemoryIsPerAgentContext pins the served memory under the anchor
-// proof (d-cpt-aen, 20261112-075604-d-tac-t4r): the session ledger keeps the
+// proof (d-cpt-aen): the session ledger keeps the
 // issued tags, but only a call proving a piece gets its pointer. The agent
 // context that received a serve gets pointers on any connection; a fresh
 // subagent presenting the same handle holds no tags and gets every piece in

@@ -20,8 +20,8 @@ var provingTools = map[string]bool{
 }
 
 // agentMemory is one agent context that keeps every piece served to it: each
-// call it makes lists every tag it received, with the word after it, as held
-// (20261112-075604-d-tac-t4r). A fresh connection is a fresh context. It
+// call it makes lists every tag it received, with the word after it, as held.
+// A fresh connection is a fresh context. It
 // hands the test each result with the placed tags taken out, so assertions
 // read the text as written; raw keeps them.
 type agentMemory struct {

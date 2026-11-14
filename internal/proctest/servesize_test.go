@@ -224,7 +224,7 @@ func TestServeSizesShippedProcedures(t *testing.T) {
 }
 
 // Every instruction lane of the shipped procedures and every framing block
-// of the shell fits one serve on its own (20261112-075604-d-tac-t4r), so a
+// of the shell fits one serve on its own, so a
 // lane grown past the bound fails here rather than serving alone past it:
 // the lanes the walk renders on the realistic fixture, and the source of
 // every unit's lanes, which covers the steps no walk reaches.

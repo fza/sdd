@@ -7,7 +7,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// The result bound (20261112-075604-d-tac-t4r, model.MaxResultChars) leaves
+// The result bound (model.MaxResultChars) leaves
 // room past what a result's parts may take: textBudget for the one large text
 // field of a read, serveBudget (model.MaxServeChars) for a serve.
 const (

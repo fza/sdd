@@ -13,8 +13,8 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 )
 
-// ServedPiece is how a call serves one piece under the anchor proof
-// (20261112-075604-d-tac-t4r): when Held, the call proved it holds the piece
+// ServedPiece is how a call serves one piece under the anchor proof:
+// when Held, the call proved it holds the piece
 // under Tag and gets its pointer; otherwise Text is the piece with its fresh
 // Tag placed, Tag empty when the text holds no word to anchor.
 type ServedPiece struct {

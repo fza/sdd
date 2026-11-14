@@ -21,7 +21,7 @@ func proofOf(t *testing.T, served sdd.ServedPiece) string {
 }
 
 // TestAnchorsSurviveReplayAndReorientServesInFull covers the served memory
-// the ledger keeps (d-cpt-aen, 20261112-075604-d-tac-t4r): a tag one consumer
+// the ledger keeps (d-cpt-aen): a tag one consumer
 // received is checked for the next one that loads the handle, and a
 // reorientation serves its call in full without forgetting the tag.
 func TestAnchorsSurviveReplayAndReorientServesInFull(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"unicode/utf8"
 )
 
-// MaxResultChars bounds the text content of one MCP result, for every host
-// (20261112-075604-d-tac-t4r): Codex prints a result's JSON within a
+// MaxResultChars bounds the text content of one MCP result, for every host:
+// Codex prints a result's JSON within a
 // 10,000-token output budget and drops the middle of a larger one, past about
 // 19,000 characters of text. Claude Code saves a result past 50,000 characters
 // to a file.

@@ -15,8 +15,7 @@ import (
 // The rubric pre-flight hands the deep verifier carries the rules whose
 // guard the draft meets and the active contracts, but neither the draft nor
 // the entries it refs, closes or supersedes: the verifier's reading pages
-// carry those. Pre-flight's own prompt keeps every rule and every entry
-// (20261112-075604-d-tac-t4r).
+// carry those. Pre-flight's own prompt keeps every rule and every entry.
 func TestPreflightRubricLeavesTheReadingAndInapplicableRulesOut(t *testing.T) {
 	facts, err := basefacts.Entries(viewlayout.Vocabulary{})
 	if err != nil {

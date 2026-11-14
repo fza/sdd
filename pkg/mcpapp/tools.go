@@ -414,7 +414,7 @@ type ReadAttachmentResult struct {
 
 // ResultNotices carries the blocked-sync notice while automatic sync of the
 // graph repository cannot proceed (20261028-201909-d-tac-fxp), once per
-// change of its text (20261112-075604-d-tac-t4r); once the notice of a
+// change of its text; once the notice of a
 // failed background cache pruning run (20261101-131514-d-cpt-9ci); and once
 // the config keys that changed since the previous call.
 type ResultNotices struct {
@@ -1672,8 +1672,8 @@ const (
 	framingNone = -1
 )
 
-// boundedServe composes serve's result to cost at most budget
-// (20261112-075604-d-tac-t4r): while the whole would cost more, the last
+// boundedServe composes serve's result to cost at most budget:
+// while the whole would cost more, the last
 // lanes of the session shell's serve it lands in wait first, then the step's
 // own, then its last framing blocks, each named with the call that serves
 // them, and what the larger composition served is withdrawn. With progress,

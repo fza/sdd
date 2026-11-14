@@ -8,7 +8,7 @@ import (
 )
 
 // Repeats applies the no-repeat rule to a serve (20261109-004506-d-cpt-udz,
-// R14) under the anchor proof (20261112-075604-d-tac-t4r): an entry the call
+// R14) under the anchor proof: an entry the call
 // proves it holds prints as its pointer (ID and brief, never cut) instead of
 // its line, body or citations, and an entry served in full carries its tag.
 // A nil Repeats, or one without Held, serves everything in full, as the CLI

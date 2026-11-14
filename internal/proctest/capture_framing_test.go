@@ -1,6 +1,6 @@
 // The capture's steps that only wait, launch, weigh findings or confirm the
 // summary carry the info block alone; the steps that draft or talk to the
-// user carry the whole framing (20261112-075604-d-tac-t4r).
+// user carry the whole framing.
 package proctest_test
 
 import (

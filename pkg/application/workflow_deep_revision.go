@@ -14,7 +14,7 @@ import (
 
 // A draft changed after a deep verdict goes to the verifier the exchange left
 // waiting, as a revision it judges from the reading it holds, so the child
-// session lasts across rounds as 20261109-004729-d-cpt-xs5 states. A fresh
+// session lasts across rounds. A fresh
 // verifier starts only once the child ended, took model.DeepRevisions
 // revisions, or ran a headless round that reported no session to resume;
 // its dispatch says which.
