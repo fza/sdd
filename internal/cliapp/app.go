@@ -524,7 +524,6 @@ func New(options Options) *cli.Command {
 			wipCmd(),
 			lintCmd(),
 			summarizeCmd(),
-			migrateCmd(),
 			indexCmd(),
 			searchCmd(),
 			serveCmd(),

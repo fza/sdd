@@ -240,7 +240,7 @@
           "type": "string"
         },
         "graphSchema": {
-          "description": "schema version the graph records; entries are written at it until an explicit sdd migrate",
+          "description": "schema version the graph records; entries are written at it",
           "type": "integer"
         },
         "language": {

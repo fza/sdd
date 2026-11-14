@@ -33,7 +33,7 @@ func contributionProject(t *testing.T) (project, feature string) {
 
 func captureGap(t *testing.T, dir string) (string, error) {
 	t.Helper()
-	return runReleased(t, dir, "", "new", "s", "tac", "--confidence", "high", "--skip-preflight", "--summary", "S.", "--title", "T", "A contributed gap.")
+	return runReleased(t, dir, "new", "s", "tac", "--confidence", "high", "--skip-preflight", "--summary", "S.", "--title", "T", "A contributed gap.")
 }
 
 func TestContributionModeCapturesOnlyOnTheFeatureBranch(t *testing.T) {
@@ -50,7 +50,7 @@ func TestContributionModeCapturesOnlyOnTheFeatureBranch(t *testing.T) {
 	if subject := headSubject(t, feature); !strings.HasPrefix(subject, "sdd:") {
 		t.Errorf("the capture should land on the feature branch, its HEAD is %q", subject)
 	}
-	info, err := runReleased(t, feature, "", "info")
+	info, err := runReleased(t, feature, "info")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestContributionModeGuardsEveryGraphWrite(t *testing.T) {
 		t.Run(strings.Join(args[:2], " "), func(t *testing.T) {
 			project, _ := contributionProject(t)
 			writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\ncontribution: origin/main\n")
-			output, err := runReleased(t, project, "", args...)
+			output, err := runReleased(t, project, args...)
 			if err == nil || !strings.Contains(err.Error()+output, "main is the default branch") {
 				t.Errorf("a graph write on the default branch should be refused in contribution mode, got %v\n%s", err, output)
 			}

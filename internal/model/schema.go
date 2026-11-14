@@ -25,13 +25,9 @@ type SchemaCapabilities struct {
 	Titles bool `json:"titles"`
 }
 
-// schemaVersions holds, per version, what it supports and what it adds over
-// the version before it.
-var schemaVersions = map[int]struct {
-	capabilities SchemaCapabilities
-	change       string
-}{
-	1: {capabilities: SchemaCapabilities{Titles: true}},
+// schemaVersions holds what each version supports.
+var schemaVersions = map[int]SchemaCapabilities{
+	1: {Titles: true},
 }
 
 // ErrUnknownSchemaVersion reports a graph schema version this binary has no
@@ -44,7 +40,7 @@ func CapabilitiesFor(version int) (SchemaCapabilities, error) {
 	if !ok {
 		return SchemaCapabilities{}, fmt.Errorf("graph schema version %d: %w", version, ErrUnknownSchemaVersion)
 	}
-	return known.capabilities, nil
+	return known, nil
 }
 
 // WriteSchemaVersion returns the schema a write to the graph produces: the
@@ -54,18 +50,6 @@ func WriteSchemaVersion(meta *SchemaMeta) int {
 		return CurrentGraphSchemaVersion
 	}
 	return meta.GraphSchemaVersion
-}
-
-// SchemaChanges lists what a migration from version from to version to
-// adds, in version order.
-func SchemaChanges(from, to int) []string {
-	var changes []string
-	for v := from + 1; v <= to; v++ {
-		if known, ok := schemaVersions[v]; ok && known.change != "" {
-			changes = append(changes, known.change)
-		}
-	}
-	return changes
 }
 
 // SchemaMeta is the decoded contents of .sdd/meta.json.
@@ -171,8 +155,7 @@ func ShouldBumpMinimumVersion(current, binaryVersion string) bool {
 // For released binaries: a graph newer than the binary errors with upgrade
 // guidance, and a minimum_version higher than the binary does too; either
 // leaves Compatible = false. A graph older than the binary is compatible and
-// written at its own schema; only `sdd migrate`, confirmed by the user,
-// raises it.
+// written at its own schema; a future `sdd migrate` raises it.
 func CheckCompatibility(meta SchemaMeta, binaryVersion string, binarySchemaVersion int) CompatibilityResult {
 	if IsDevVersion(binaryVersion) {
 		return CompatibilityResult{Compatible: true, IsDevBuild: true}

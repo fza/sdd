@@ -977,7 +977,7 @@ func (w *WorkflowSession) Framing(ctx context.Context, identity RequestIdentity)
 	}
 	fmt.Fprintf(&infoBlock, "Search: %s", info.Search)
 	if info.GraphSchema < info.BinarySchema {
-		fmt.Fprintf(&infoBlock, "\nGraph schema: %d; entries are written at schema %d until `sdd migrate`", info.GraphSchema, info.GraphSchema)
+		fmt.Fprintf(&infoBlock, "\nGraph schema: %d, older than this binary's %d; entries are written at schema %d", info.GraphSchema, info.BinarySchema, info.GraphSchema)
 	}
 	if info.Contribution != "" {
 		fmt.Fprintf(&infoBlock, "\nMode: contribution (%s); entries are written only on a feature branch cut from it", info.Contribution)

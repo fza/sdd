@@ -2,6 +2,7 @@ package cliapp_test
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -29,8 +30,8 @@ func TestServeAndInfoOnASchemaOneGraph(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(served), "until `sdd migrate`") {
-			t.Errorf("a graph at the binary's schema should owe no migration in the session framing:\n%s", served)
+		if strings.Contains(string(served), "entries are written at schema") {
+			t.Errorf("a graph at the binary's schema should get no older-schema line from start_session:\n%s", served)
 		}
 		handle, _ := door.StructuredContent.(map[string]any)["session"].(string)
 		result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "info", Arguments: map[string]any{"session": handle}})
@@ -42,4 +43,30 @@ func TestServeAndInfoOnASchemaOneGraph(t *testing.T) {
 			t.Errorf("MCP info should report both schemas, got %+v", structured)
 		}
 	})
+}
+
+func TestWritesOnASchemaOneGraphCarryTitles(t *testing.T) {
+	project := newUntitledProject(t)
+
+	output, err := runReleased(t, project, "new", "s", "tac", "--confidence", "high", "--skip-preflight", "--summary", "S.", "A new gap.")
+	if err != nil {
+		t.Fatalf("a write on a schema-1 graph should go through: %v\n%s", err, output)
+	}
+	written := gitIn(t, project, "show", "--name-only", "--format=", "HEAD")
+	entry := readFile(t, filepath.Join(project, strings.TrimSpace(written)))
+	if !strings.Contains(entry, "\ntitle: ") {
+		t.Errorf("an entry on a schema-1 graph should carry a generated title:\n%s", entry)
+	}
+	if meta := readFile(t, filepath.Join(project, ".sdd", "meta.json")); !strings.Contains(meta, `"graph_schema_version": 1`) {
+		t.Errorf("a write should leave the graph's schema alone:\n%s", meta)
+	}
+
+	output, err = runReleased(t, project, "new", "s", "tac", "--confidence", "high", "--skip-preflight", "--summary", "S.", "--title", "Explicit title", "Another gap.")
+	if err != nil {
+		t.Fatalf("an explicit title on a schema-1 graph should be accepted: %v\n%s", err, output)
+	}
+	written = gitIn(t, project, "show", "--name-only", "--format=", "HEAD")
+	if entry := readFile(t, filepath.Join(project, strings.TrimSpace(written))); !strings.Contains(entry, "title: Explicit title") {
+		t.Errorf("the explicit title should be written as given:\n%s", entry)
+	}
 }
