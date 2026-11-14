@@ -22,7 +22,7 @@ const eventSegmentKind = "sdd.events"
 // localChannelIgnore keeps a local channel's directory, itself included, out
 // of Git, so its segments never reach a commit, sdd's or anyone's. A git
 // channel carries no such file, so its new segments are what the next sdd
-// auto-commit picks up (20261109-004506-d-cpt-udz, D19).
+// auto-commit picks up.
 var localChannelIgnore = []byte("# sdd: local event channel, kept out of Git\n*\n")
 
 // EventSettler returns the IDs of the events of channel that compaction

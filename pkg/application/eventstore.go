@@ -16,9 +16,8 @@ import (
 // Event is one occurrence in the project event store
 // (20261107-115150-d-cpt-0mu): the envelope of type, time, writer, subject
 // and payload. ID dedupes copies of one event; Channel names the channel its
-// type belongs to, which decides how its storage is shared
-// (20261109-004506-d-cpt-udz, D17 and D19). The payload is opaque here: the
-// writer of a type owns its shape and retention.
+// type belongs to, which decides how its storage is shared. The payload is
+// opaque here: the writer of a type owns its shape and retention.
 type Event struct {
 	ID      string
 	Channel string

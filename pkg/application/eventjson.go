@@ -12,10 +12,9 @@ import (
 	"time"
 )
 
-// eventJSON is one line of the JSON form of the event store
-// (20261109-004506-d-cpt-udz, D16). A payload that is compact JSON is shown
-// as itself, any other payload as base64, so both survive a round trip byte
-// for byte.
+// eventJSON is one line of the JSON form of the event store. A payload that
+// is compact JSON is shown as itself, any other payload as base64, so both
+// survive a round trip byte for byte.
 type eventJSON struct {
 	ID            string           `json:"id"`
 	Channel       string           `json:"channel"`
