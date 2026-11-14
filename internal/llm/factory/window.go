@@ -17,8 +17,8 @@ import (
 )
 
 // Window is a model's context window as the light verifier sizes its calls
-// by (20261109-004729-d-cpt-xs5, V-D12): the input tokens it accepts and,
-// where the provider reports it, its largest output.
+// by: the input tokens it accepts and, where the provider reports it, its
+// largest output.
 type Window struct {
 	Tokens    int
 	MaxOutput int

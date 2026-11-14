@@ -1,8 +1,7 @@
-// Capture with the deep draft verifier (20261109-004729-d-cpt-xs5, slice 3):
-// once pre-flight leaves no high finding open, the capture dispatches the
-// verify task into a delegate child session, exchanges findings, answers and
-// responses with it, and writes only under a deep verdict or the user's skip
-// covering the current draft.
+// Capture with the deep draft verifier: once pre-flight leaves no high
+// finding open, the capture dispatches the verify task into a delegate child
+// session, exchanges findings, answers and responses with it, and writes only
+// under a deep verdict or the user's skip covering the current draft.
 package proctest_test
 
 import (

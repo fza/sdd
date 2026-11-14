@@ -85,9 +85,9 @@ func WritingGuide(ctx context.Context, runner llm.Runner, entry *model.Entry, cl
 }
 
 // WritingGuideDelta is WritingGuide confined to the passages changed since
-// the guide last judged the draft (20261109-005108-d-cpt-wcj): the whole
-// draft is context, only the changed passages are judged. Without changed
-// passages it judges the whole draft.
+// the guide last judged the draft: the whole draft is context, only the
+// changed passages are judged. Without changed passages it judges the whole
+// draft.
 func WritingGuideDelta(ctx context.Context, runner llm.Runner, entry *model.Entry, closureTargets []model.ClosureTarget, refFacts ReferenceFacts, changed []string) (*WritingGuideResult, error) {
 	req, err := renderWritingGuideRequest(entry, closureTargets, refFacts, changed)
 	if err != nil {

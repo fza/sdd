@@ -22,11 +22,11 @@ import (
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
 
-// The deep draft verifier (20261109-004729-d-cpt-xs5, slice 3): once the
-// light pre-flight leaves no high finding open, the capture dispatches the
-// verify task into a child session, exchanges findings, answers and responses
-// with it for at most model.DeepRounds deliveries, and records a deep verdict
-// over the draft it settled; the write requires that verdict to be current.
+// The deep draft verifier: once the light pre-flight leaves no high finding
+// open, the capture dispatches the verify task into a child session,
+// exchanges findings, answers and responses with it for at most
+// model.DeepRounds deliveries, and records a deep verdict over the draft it
+// settled; the write requires that verdict to be current.
 
 const verifyProcedure = "verify"
 
@@ -67,7 +67,7 @@ const (
 )
 
 // deepVerdict is the deep verifier's verdict, or the user's skip, over the
-// capture input it covers (V-D26).
+// capture input it covers.
 type deepVerdict struct {
 	Fingerprint string `json:"fingerprint"`
 	// Document is the draft document the verdict covers, which a later
@@ -445,7 +445,7 @@ func (w *WorkflowSession) prepareDeep(ctx *engine.Context) error {
 }
 
 // weighDeep is the fixed rule's recommendation, rendered for the user's
-// run-or-skip choice (V-D24).
+// run-or-skip choice.
 func weighDeep(store *engine.Store, checkout fs.FS) string {
 	kind, _ := workflowStoreString(store, "entryKind")
 	layer, _ := workflowStoreString(store, "layer")

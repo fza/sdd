@@ -341,7 +341,7 @@ func TestCapture_SelectedKindPointsAtItsAuthoringFact(t *testing.T) {
 }
 
 // In a guided capture the writing guide runs once, on the content the user
-// approved (20261109-005108-d-cpt-wcj): playback comes first, the review
+// approved: playback comes first, the review
 // after the confirm, and proceeding keeps the approval and writes.
 func TestCapture_WritingGuideFindingsServeReviewThenProceed(t *testing.T) {
 	world, session := newCaptureWorld(t, "core-guide-review")
@@ -435,7 +435,7 @@ func TestCapture_WritingGuideRunsOncePerCapture(t *testing.T) {
 }
 
 // Only the user's last adjust after the guide's pass gets a delta check, of
-// the lines it changed (20261109-005108-d-cpt-wcj).
+// the lines it changed.
 func TestCapture_LastAdjustGetsADeltaCheck(t *testing.T) {
 	world, session := newCaptureWorld(t, "core-guide-delta")
 	world.LLM.GuideFindings = []proctest.GuideFinding{{
@@ -497,7 +497,7 @@ func TestCapture_WritingGuideRecheckRunsFreshOnReworkedDraft(t *testing.T) {
 }
 
 // In an autonomous capture the writing guide and the verifier run before
-// playback, since no dialogue edits follow (20261109-005108-d-cpt-wcj).
+// playback, since no dialogue edits follow.
 func TestCapture_AutonomousRunsGuideAndVerifierBeforePlayback(t *testing.T) {
 	world, session := newCaptureWorld(t, "core-autonomous-checks", proctest.WithAutonomousDialogue(), proctest.WithGroundingEnforced(),
 		proctest.WithVerifier(sdd.VerifierPolicy{Mode: "prose"}, 200000, 4096))

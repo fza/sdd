@@ -78,7 +78,7 @@ type EntryDraft struct {
 	// VerificationSkip records that the user skipped the deep verifier: after a
 	// verifier failure ("failure") the entry is written with confidence low,
 	// after the weighed rule's skip ("weighed") with confidence at most medium;
-	// either way it carries verification: skipped (20261109-004729-d-cpt-xs5).
+	// either way it carries verification: skipped.
 	VerificationSkip string
 }
 

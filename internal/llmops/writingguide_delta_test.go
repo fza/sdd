@@ -10,7 +10,7 @@ import (
 )
 
 // A delta check judges only the passages changed since the guide's last
-// pass, with the whole draft as context (20261109-005108-d-cpt-wcj).
+// pass, with the whole draft as context.
 func TestWritingGuideDelta_ConfinesTheJudgmentToChangedPassages(t *testing.T) {
 	graph := lightGraph(t)
 	entry := &model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical, Content: "The loader drops the second option.\n\nIt happens on every reload."}

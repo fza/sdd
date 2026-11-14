@@ -11,11 +11,10 @@ import (
 	"strings"
 )
 
-// The deep verifier exchange (20261109-004729-d-cpt-xs5, V-D1, V-D2, V-D25):
-// the verifier returns findings with per-finding search-replace edits over the
-// base draft document, the drafter accepts or contests each, the verifier
-// answers the contested ones, and sdd builds the proposal, its hunks and the
-// finding each hunk carries.
+// The deep verifier exchange: the verifier returns findings with per-finding
+// search-replace edits over the base draft document, the drafter accepts or
+// contests each, the verifier answers the contested ones, and sdd builds the
+// proposal, its hunks and the finding each hunk carries.
 
 // DeepRounds is how many deliveries a deep verifier makes before the open
 // points go to the user.
@@ -333,7 +332,7 @@ func CheckDeepFindings(base string, findings []DeepFinding, resolves func(id str
 }
 
 // DeepWeighing is the fixed rule's recommendation on running the deep
-// exchange (V-D24), with the reasons that made it.
+// exchange, with the reasons that made it.
 type DeepWeighing struct {
 	Run     bool
 	Reasons []string

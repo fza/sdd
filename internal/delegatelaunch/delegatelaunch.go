@@ -1,9 +1,9 @@
 // Package delegatelaunch runs the deep draft verifier's delegate without the
-// drafting agent's harness (20261109-004729-d-cpt-xs5, V-D16 to V-D20): a
-// headless claude or codex run per round, resumed by the session id the
-// first round reported, or an external driver per round. The agent reaches
-// the child session only through an sdd MCP server of its own; findings and
-// answers travel through that server, never through the launch.
+// drafting agent's harness: a headless claude or codex run per round,
+// resumed by the session id the first round reported, or an external driver
+// per round. The agent reaches the child session only through an sdd MCP
+// server of its own; findings and answers travel through that server, never
+// through the launch.
 package delegatelaunch
 
 import (
@@ -68,7 +68,7 @@ type Launched struct {
 	Message string
 }
 
-// claudeTools are the tools a headless claude verifier may use (V-D18): read,
+// claudeTools are the tools a headless claude verifier may use: read,
 // search and glob, the web, the sdd MCP tools, and read-only git.
 var claudeTools = []string{
 	"Read", "Grep", "Glob", "WebFetch", "WebSearch", "mcp__sdd__*",

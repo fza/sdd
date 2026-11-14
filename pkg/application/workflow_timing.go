@@ -12,10 +12,10 @@ import (
 	"github.com/networkteam/sdd/internal/textdiff"
 )
 
-// The capture's checks run at the point the dialogue mode sets
-// (20261109-005108-d-cpt-wcj): guided, the writing guide runs once on the
-// content the user approved, then the verifier, and a later adjust gets a
-// delta check of its changed lines; autonomous, both run before playback.
+// The capture's checks run at the point the dialogue mode sets: guided, the
+// writing guide runs once on the content the user approved, then the
+// verifier, and a later adjust gets a delta check of its changed lines;
+// autonomous, both run before playback.
 
 // fieldGuideBase records the draft the writing guide's judgment covers: the
 // one it judged, or the agent's revision folding its findings in.

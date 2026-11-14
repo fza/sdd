@@ -11,7 +11,7 @@ import (
 )
 
 // VerifierPolicy is how far the draft verifier checks a capture against its
-// grounding reading (20261109-004729-d-cpt-xs5).
+// grounding reading.
 type VerifierPolicy struct {
 	// Mode is off, prose or deep; empty means off.
 	Mode string

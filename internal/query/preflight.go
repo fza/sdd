@@ -12,8 +12,8 @@ import (
 type PreflightQuery struct {
 	Entry *model.Entry
 	Model string // LLM model identifier (e.g. "claude-sonnet-4-6")
-	// Light runs pre-flight as the light verifier over a grounding reading
-	// (20261109-004729-d-cpt-xs5); nil runs it over the draft's refs alone.
+	// Light runs pre-flight as the light verifier over a grounding reading;
+	// nil runs it over the draft's refs alone.
 	Light *LightPreflight
 	// KindFit adds the check that the draft fits its kind; nil leaves it out.
 	KindFit *model.KindFit
