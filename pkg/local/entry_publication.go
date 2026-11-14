@@ -41,7 +41,7 @@ func (s *PersistentSearchIndexStore) PublishEntry(ctx context.Context, version a
 // PublishEntries publishes every listed version in one write session per
 // store directory: one store load, one chunk-ownership pass and one manifest
 // save cover the whole batch, so a reindex costs a store load per batch
-// instead of per entry (20261101-003415-s-tac-1fw). The manifest save commits
+// instead of per entry. The manifest save commits
 // the batch; a failure before it publishes none of the batch.
 func (s *PersistentSearchIndexStore) PublishEntries(ctx context.Context, publications []types.SearchEntryPublication) error {
 	var dirs []string
