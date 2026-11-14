@@ -334,7 +334,8 @@ func (w *WorkflowSession) subagentSettings(ctx context.Context, parent, procedur
 	if attachment := stored.Metadata.Attachment; attachment != nil {
 		client = attachment.ClientName
 	}
-	return VerifierAgent(runtime.options.Verifier.resolved().SubagentAgent(client)), nil
+	agent := runtime.options.Verifier.resolved().SubagentAgent(client)
+	return VerifierAgent{Model: agent.Model, Effort: agent.Effort}, nil
 }
 
 func subagentSettingsInstruction(settings VerifierAgent) string {

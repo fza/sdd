@@ -184,8 +184,8 @@ func runClaude(ctx context.Context, settings Settings, round Round) (string, err
 // events in a read-only sandbox, without the user's config.toml (its MCP
 // servers, profiles and provider) or execpolicy rules, no project
 // instructions (a zero byte budget for AGENTS.md), sdd as the only MCP
-// server, and the round's prompt; a later round resumes the first round's
-// session.
+// server, the configured model, effort and provider, and the round's prompt;
+// a later round resumes the first round's session.
 func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
 	args := []string{
 		"exec", "--json", "--sandbox", "read-only", "--ignore-user-config", "--ignore-rules",
@@ -199,14 +199,32 @@ func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
 	if agent.Effort != "" {
 		args = append(args, "-c", "model_reasoning_effort="+strconv.Quote(agent.Effort))
 	}
+	args = append(args, providerArgs(agent.Provider)...)
 	if resume != "" {
 		args = append(args, "resume", resume)
 	}
 	return append(args, prompt)
 }
 
+// providerArgs select the configured provider and define it, key by key, as
+// the model_providers table codex would read from config.toml.
+func providerArgs(provider model.CodexProvider) []string {
+	if provider.ID == "" {
+		return nil
+	}
+	args := []string{"-c", "model_provider=" + strconv.Quote(provider.ID)}
+	for _, key := range []struct{ name, value string }{
+		{"name", provider.Name}, {"base_url", provider.BaseURL}, {"env_key", provider.EnvKey}, {"wire_api", provider.WireAPI},
+	} {
+		if key.value != "" {
+			args = append(args, "-c", "model_providers."+provider.ID+"."+key.name+"="+strconv.Quote(key.value))
+		}
+	}
+	return args
+}
+
 func runCodex(ctx context.Context, settings Settings, round Round) (string, error) {
-	out, err := run(ctx, settings.WorkDir, codex.ScrubbedEnv(os.Environ(), ""), "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "")
+	out, err := run(ctx, settings.WorkDir, codex.ScrubbedEnv(os.Environ(), settings.Codex.Provider.EnvKey), "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "")
 	if err != nil {
 		return "", err
 	}

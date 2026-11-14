@@ -277,6 +277,53 @@ func TestSubagentAgent_MatchesTheClientNameCaseInsensitively(t *testing.T) {
 	}
 }
 
+// A codex provider names an endpoint and the variable whose key is sent to
+// it, so like the driver it stays off the committed config; a machine-local
+// provider replaces a user-global one whole.
+func TestCheckVerifyLayers_CodexProviderIsPersonal(t *testing.T) {
+	opper := model.CodexProvider{ID: "opper", Name: "Opper", BaseURL: "https://api.opper.ai/v1", EnvKey: "OPPER_API_KEY", WireAPI: "responses"}
+	global := model.BaseConfig{}
+	global.Verify.Codex = model.VerifierAgent{Model: "gpt-5.5", Provider: model.CodexProvider{ID: "gateway", Name: "Gateway", EnvKey: "GATEWAY_KEY"}}
+	local := &model.PerRepoConfig{}
+	local.Verify.Codex.Provider = opper
+	err := model.CheckVerifyLayers(global, nil, local, verifierFiles)
+	if err != nil {
+		t.Fatalf("a provider in the user-global and machine-local configs should pass: %v", err)
+	}
+	policy := model.MergeConfig(&model.PerRepoConfig{BaseConfig: global}, local).Verify.VerifierPolicy()
+	if policy.Codex != (model.VerifierAgent{Model: "gpt-5.5", Effort: "medium", Provider: opper}) {
+		t.Errorf("the machine-local provider should replace the user-global one whole and keep the model, got %+v", policy.Codex)
+	}
+
+	committed := verifyLayer(model.VerifyDeep, "")
+	committed.Verify.Codex.Provider = opper
+	err = model.CheckVerifyLayers(model.BaseConfig{}, committed, nil, verifierFiles)
+	if err == nil || !strings.Contains(err.Error(), ".sdd/config.yaml: verify.codex.provider is refused in the committed config") {
+		t.Fatalf("a committed provider should be refused naming file and key, got %v", err)
+	}
+}
+
+func TestCheckVerifyLayers_RefusesAnIncompleteCodexProvider(t *testing.T) {
+	for name, tc := range map[string]struct {
+		claude, codex model.CodexProvider
+		refusal       string
+	}{
+		"no id":           {codex: model.CodexProvider{Name: "Opper"}, refusal: "verify.codex.provider.id is required"},
+		"id not a key":    {codex: model.CodexProvider{ID: "op per", Name: "Opper"}, refusal: `verify.codex.provider.id "op per" may hold only letters, digits, _ and -`},
+		"no name":         {codex: model.CodexProvider{ID: "opper"}, refusal: "verify.codex.provider.name is required"},
+		"claude provider": {claude: model.CodexProvider{ID: "opper", Name: "Opper"}, refusal: "verify.claude.provider is refused: only the codex runner takes a provider"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			local := &model.PerRepoConfig{}
+			local.Verify.Claude.Provider, local.Verify.Codex.Provider = tc.claude, tc.codex
+			err := model.CheckVerifyLayers(model.BaseConfig{}, nil, local, verifierFiles)
+			if err == nil || !strings.Contains(err.Error(), ".sdd/config.local.yaml: "+tc.refusal) {
+				t.Fatalf("the provider should be refused naming file and key, got %v", err)
+			}
+		})
+	}
+}
+
 // Only claude's effort is a closed set; codex accepts model-defined levels.
 func TestCheckVerifyLayers_RefusesAnUnknownClaudeEffort(t *testing.T) {
 	local := &model.PerRepoConfig{}

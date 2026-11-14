@@ -145,6 +145,7 @@ Default rate limits:
 | `verify.driver.command`, `verify.driver.args` | User-global, local | None | The command the `driver` runner runs each round. sdd refuses it in the committed config, since it would run on every contributor's machine. |
 | `verify.claude.model`, `verify.claude.effort` | User-global, project, local | `sonnet`, `medium` | The model and effort of a `deep` verifier in Claude: the `claude` runner passes them to `--model` and `--effort` (`low`, `medium`, `high`, `xhigh` or `max`), and a `subagent` dispatch names them when the MCP client is Claude Code. The setting describes the machine, so `config.local.yaml` wins. |
 | `verify.codex.model`, `verify.codex.effort` | User-global, project, local | None, `medium` | The same for Codex: the `codex` runner passes them to `-m` and `model_reasoning_effort`, and a `subagent` dispatch names them when the MCP client is Codex. Unset, the model is codex's own default. |
+| `verify.codex.provider.id`, `.name`, `.base_url`, `.env_key`, `.wire_api` | User-global, local | None | The model provider a `codex` round runs on, in place of codex's built-in one. sdd selects it with `-c model_provider="<id>"` and defines it with `-c model_providers.<id>.<key>="<value>"` for each key set, the keys of Codex's `model_providers` table. `id` (letters, digits, `_` and `-`) and `name` are required. The variable `env_key` names passes to the round even when it is one of the credentials sdd otherwise leaves out. sdd refuses the block in the committed config, since every contributor's round would send the key `env_key` names to `base_url`. A machine-local block replaces a user-global one whole. |
 | `verify.prefilter` | User-global, project, local | `true` | Rates the relevance of each listed entry before the reading judges it, and sets aside the ones below the calibrated threshold. Without an `llm_prefilter` block it runs the `generate` protocol on the `llm` provider and model at effort `low`; a value `llm_prefilter` sets wins. On `claude-cli` or `codex` each rated entry starts a process of its own. |
 
 A prose verifier call fills half the context window left after the answer reserve (`llm.max_tokens`), counting 3 characters a token. A reading too large for one call is split into several calls, related entries kept together, and an entry too large on its own is sent as whole paragraphs with markers where text is left out. `sdd init` asks how carefully drafts are checked and writes `verify.mode`.
@@ -152,6 +153,21 @@ A prose verifier call fills half the context window left after the answer reserv
 `deep` runs `prose` first, then a tool-using verifier agent in a child session that reads the draft and its grounding reading, checks claims against the code and its history, and exchanges findings with the drafting agent for at most 3 rounds. sdd turns the findings into edits of the draft and shows them as a diff; findings the agents settle are applied, and findings left open go to the user. A capture is written only under a deep verdict for its exact draft. A skipped exchange writes `verification: skipped` into the entry and lowers its confidence: to `low` after a verifier failure, and at most `medium` for a skip weighed as safe. Where the harness has no subagent tool, sdd falls back to the headless runner of the first agent `supported_agents` names whose CLI it finds. With `deep` and no runner set, `sdd init` also asks what runs the verifier and writes the answer to `config.local.yaml`. Model and effort values pass to the CLI or the subagent tool as written: sdd keeps no table translating model names between harnesses, so a subagent dispatch in a client other than Claude Code or Codex names neither.
 
 A `driver` command reads one JSON request on stdin each round, `{"round": 1, "session": "<child session>", "instance": "<child instance>", "prompt": "<round prompt>", "driver_state": "<last round's state>"}`, starts or continues its agent with the prompt, and prints `{"driver_state": "<state for the next round>"}` once the round ends. The agent reports through the child session's `next` calls, never through the driver. A nonzero exit or a round longer than 30 minutes is a verifier failure.
+
+A `codex` round loads no `config.toml`, so a provider your Codex setup defines there goes in `verify.codex.provider` instead, in the user-global file or `config.local.yaml`:
+
+```yaml
+verify:
+  runner: codex
+  codex:
+    model: gpt-5.5
+    provider:
+      id: gateway
+      name: Gateway
+      base_url: https://gateway.example/v1
+      env_key: GATEWAY_API_KEY
+      wire_api: responses
+```
 
 In a guided dialogue the writing guide runs once on the content the user approved, then the verifier; a later adjust gets a check of the changed lines only. In an autonomous dialogue both run before playback.
 
