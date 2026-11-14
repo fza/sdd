@@ -27,13 +27,12 @@ const provider = "codex"
 var credentialEnvVars = []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"}
 
 // ScrubbedEnv returns env for a codex child without the credential variables,
-// matched by name, except keep: the variable a configured provider names as
-// its env_key.
-func ScrubbedEnv(env []string, keep string) []string {
+// matched by name.
+func ScrubbedEnv(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, entry := range env {
 		name, _, _ := strings.Cut(entry, "=")
-		if name != keep && slices.Contains(credentialEnvVars, name) {
+		if slices.Contains(credentialEnvVars, name) {
 			continue
 		}
 		out = append(out, entry)
@@ -102,7 +101,7 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	}
 	cmd := exec.CommandContext(ctx, "codex", execArgs(r.model, r.effort, schemaFile)...)
 	cmd.Dir = workDir
-	cmd.Env = ScrubbedEnv(os.Environ(), "")
+	cmd.Env = ScrubbedEnv(os.Environ())
 	cmd.Stdin = strings.NewReader(req.Combined())
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

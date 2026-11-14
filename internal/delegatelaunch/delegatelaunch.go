@@ -206,7 +206,7 @@ func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
 }
 
 func runCodex(ctx context.Context, settings Settings, round Round) (string, error) {
-	out, err := run(ctx, settings.WorkDir, codex.ScrubbedEnv(os.Environ(), ""), "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "")
+	out, err := run(ctx, settings.WorkDir, codex.ScrubbedEnv(os.Environ()), "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "")
 	if err != nil {
 		return "", err
 	}

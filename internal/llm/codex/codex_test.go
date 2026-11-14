@@ -154,21 +154,12 @@ func TestRunLeavesInheritedCredentialsOut(t *testing.T) {
 }
 
 func TestScrubbedEnv(t *testing.T) {
-	env := []string{"PATH=/bin", "OPENAI_API_KEY=sk-1", "CODEX_API_KEY=c-1", "OPENAI_BASE_URL=https://x", "OPENAI_API_KEY_HINT=sk-look-alike", "OPPER_API_KEY=o-1"}
-	for name, tc := range map[string]struct {
-		keep string
-		want []string
-	}{
-		"no provider key":           {"", []string{"PATH=/bin", "OPENAI_API_KEY_HINT=sk-look-alike", "OPPER_API_KEY=o-1"}},
-		"provider names its own":    {"OPPER_API_KEY", []string{"PATH=/bin", "OPENAI_API_KEY_HINT=sk-look-alike", "OPPER_API_KEY=o-1"}},
-		"provider names a scrubbed": {"OPENAI_API_KEY", []string{"PATH=/bin", "OPENAI_API_KEY=sk-1", "OPENAI_API_KEY_HINT=sk-look-alike", "OPPER_API_KEY=o-1"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			got := codex.ScrubbedEnv(env, tc.keep)
-			if !slices.Equal(got, tc.want) {
-				t.Errorf("only the credential variables other than the provider's own should go, got %q", got)
-			}
-		})
+	env := []string{"PATH=/bin", "OPENAI_API_KEY=sk-1", "CODEX_API_KEY=c-1", "OPENAI_BASE_URL=https://x", "OPENAI_API_KEY_HINT=sk-look-alike", "OTHER_API_KEY=o-1"}
+
+	got := codex.ScrubbedEnv(env)
+
+	if want := []string{"PATH=/bin", "OPENAI_API_KEY_HINT=sk-look-alike", "OTHER_API_KEY=o-1"}; !slices.Equal(got, want) {
+		t.Errorf("only the credential variables, matched by name, should go, got %q", got)
 	}
 }
 
