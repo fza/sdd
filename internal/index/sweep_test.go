@@ -129,6 +129,21 @@ func TestRemoveRetiredStore(t *testing.T) {
 		}
 	})
 
+	t.Run("a store a fill wrote into again stays", func(t *testing.T) {
+		dir := retired(t, now.Add(-leftoverAge-time.Hour))
+		manifest := filepath.Join(dir, "manifest.json")
+		if err := os.WriteFile(manifest, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		age(t, now.Add(-leftoverAge-time.Hour), dir)
+		if removed, err := index.RemoveRetiredStore(dir, now, leftoverAge); err != nil || removed {
+			t.Errorf("a store holding more than its locks should stay, got %v, %v", removed, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".lock")); err != nil {
+			t.Errorf("a store holding more than its locks should keep them: %v", err)
+		}
+	})
+
 	t.Run("a store whose lock is held stays", func(t *testing.T) {
 		dir := retired(t, now.Add(-leftoverAge-time.Hour))
 		held := flock.New(filepath.Join(dir, ".lock"))

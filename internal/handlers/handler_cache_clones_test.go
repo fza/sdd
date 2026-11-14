@@ -175,6 +175,17 @@ func TestCacheHandlerPrunePacksListedClones(t *testing.T) {
 	if packs() < 2 {
 		t.Fatal("the clone should start with more packs than gc.autoPackLimit")
 	}
+	release, err := syncstate.OwnedClones{}.TryLockSync(t.Context(), dir)
+	if err != nil || release == nil {
+		t.Fatalf("taking the sync lock: %v", err)
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if packs() < 2 {
+		t.Error("a clone whose sync lock is held should be left unpacked")
+	}
 	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
 		t.Fatal(err)
 	}

@@ -300,3 +300,42 @@ func TestPruneDropsSnapshotsOfUnusedFolders(t *testing.T) {
 		t.Error("the snapshot of a folder unused for the retention should be gone")
 	}
 }
+
+func TestLoadRefreshesASnapshotsUseOnceADay(t *testing.T) {
+	now := time.Now()
+	root := t.TempDir()
+	cache := graphcache.New(root)
+	docs := finders.GraphDocuments{Entries: []finders.EntryDocument{{ID: "20261020-100000-s-tac-aaa", Raw: []byte(entryContent("Alpha."))}}}
+	folder := t.TempDir()
+	if err := cache.Save(folder, map[string]filestamp.Stamp{}, docs); err != nil {
+		t.Fatal(err)
+	}
+	snapshots, err := filepath.Glob(filepath.Join(root, "*.graph"))
+	if err != nil || len(snapshots) != 1 {
+		t.Fatalf("one snapshot should be saved, got %v, %v", snapshots, err)
+	}
+	for _, tc := range []struct {
+		name      string
+		lastUse   time.Time
+		refreshed bool
+	}{
+		{name: "a use within a day stays as it was", lastUse: now.Add(-time.Hour)},
+		{name: "a use older than a day moves to the load", lastUse: now.Add(-25 * time.Hour), refreshed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.Chtimes(snapshots[0], tc.lastUse, tc.lastUse); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok, err := cache.Load(folder, map[string]filestamp.Stamp{}); err != nil || !ok {
+				t.Fatalf("loading the snapshot should hit, got %v, %v", ok, err)
+			}
+			info, err := os.Stat(snapshots[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if refreshed := info.ModTime().After(tc.lastUse.Add(time.Minute)); refreshed != tc.refreshed {
+				t.Errorf("the snapshot's last use refreshed should be %v, it is %v", tc.refreshed, info.ModTime())
+			}
+		})
+	}
+}

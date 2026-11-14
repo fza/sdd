@@ -187,6 +187,9 @@ func TestTheSweepCollectsSessionsAndServeDoesNot(t *testing.T) {
 	if _, err := os.Stat(log); err != nil {
 		t.Fatalf("sdd serve should no longer collect sessions when it starts: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(f.root, "state", "sdd", "used", "example.test", "cli.stamp")); err != nil {
+		t.Errorf("a served project should be stamped as used, so the sweep keeps its state: %v", err)
+	}
 	r := f.run(t, "cache", "prune")
 	if r.err != nil {
 		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)

@@ -35,14 +35,16 @@ func TestSweepCloneStaging(t *testing.T) {
 	oldCloning := filepath.Join(repoRoot, "github.com", "acme", "x.cloning")
 	youngCloning := filepath.Join(repoRoot, "github.com", "acme", "y.cloning")
 	clone := filepath.Join(repoRoot, "github.com", "acme", "z")
-	mkdirs(t, old, oldAdding, oldCloning, filepath.Join(clone, ".git"))
+	nestedAdding := filepath.Join(repoRoot, "github.com", ".adding-3")
+	inClone := filepath.Join(clone, "docs.cloning")
+	mkdirs(t, old, oldAdding, oldCloning, filepath.Join(clone, ".git"), nestedAdding, inClone)
 	mkdirs(t, young, youngAdding, youngCloning)
 
 	removed, err := repos.NewRegistry(loc).SweepCloneStaging(now, minAge)
 	if err != nil || removed != 2 {
 		t.Fatalf("the two staging dirs older than a day should go, removed %d: %v", removed, err)
 	}
-	for dir, wantKept := range map[string]bool{oldAdding: false, oldCloning: false, youngAdding: true, youngCloning: true, clone: true} {
+	for dir, wantKept := range map[string]bool{oldAdding: false, oldCloning: false, youngAdding: true, youngCloning: true, clone: true, nestedAdding: true, inClone: true} {
 		if _, err := os.Stat(dir); (err == nil) != wantKept {
 			t.Errorf("%s kept should be %v, stat says %v", dir, wantKept, err)
 		}

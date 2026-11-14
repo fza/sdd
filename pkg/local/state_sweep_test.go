@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
+
 	sdd "github.com/networkteam/sdd/pkg/application"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
@@ -155,10 +157,35 @@ func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
 		unused     = "github.com/acme/unused"
 		unusedOpen = "github.com/acme/paused"
 		used       = "github.com/acme/used"
+		retained   = "github.com/acme/retained"
+		unstamped  = "github.com/acme/unstamped"
+		locked     = "github.com/acme/locked"
+		legacy     = "github.com/acme/legacy"
 	)
 	unusedLedger := f.relevance(t, unused)
 	f.session(t, unused, "s_ended", long)
 	f.used(t, unused, long)
+	f.session(t, retained, "s_recent", f.now.Add(-time.Hour))
+	f.used(t, retained, long)
+	unstampedLedger := f.relevance(t, unstamped)
+	lockDir := filepath.Join(f.root, "sessions", filepath.FromSlash(locked))
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	held := flock.New(filepath.Join(lockDir, "s_gone.lock"))
+	if _, err := held.TryLock(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Unlock() }()
+	f.used(t, locked, long)
+	legacyArea := filepath.Join(f.location(legacy).StagedBlobs, "local", "s_open")
+	if err := os.MkdirAll(legacyArea, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyArea, "0123456789abcdef0123456789abcdef.blob"), []byte("evidence"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.used(t, legacy, long)
 	pausedLedger := f.relevance(t, unusedOpen)
 	f.session(t, unusedOpen, "s_open", time.Time{})
 	f.used(t, unusedOpen, long)
@@ -172,7 +199,7 @@ func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
 	}
 	for dir, wantKept := range map[string]bool{
 		unusedLedger: false, f.location(unused).Sessions: false, f.location(unused).StagedBlobs: false,
-		pausedLedger: false, usedLedger: true,
+		pausedLedger: false, usedLedger: true, unstampedLedger: true, lockDir: true, legacyArea: true,
 	} {
 		if _, err := os.Stat(dir); (err == nil) != wantKept {
 			t.Errorf("%s kept should be %v, stat says %v", dir, wantKept, err)
@@ -180,6 +207,9 @@ func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
 	}
 	if !f.logExists(t, unusedOpen, "s_open") || !f.stagedExists(t, unusedOpen, "s_open") {
 		t.Error("an open session and its attachments stay however long the project was unused")
+	}
+	if !f.logExists(t, retained, "s_recent") || !f.stagedExists(t, retained, "s_recent") {
+		t.Error("an ended session not yet collected keeps its attachments however long the project was unused")
 	}
 }
 

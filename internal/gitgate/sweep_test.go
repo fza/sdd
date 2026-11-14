@@ -15,11 +15,15 @@ func TestPruneRecords(t *testing.T) {
 	gate := s.gate()
 	stale := mustTarget(t, "git@gitlab.com:group/stale.git")
 	fresh := mustTarget(t, "git@gitlab.com:group/fresh.git")
+	leased := mustTarget(t, "git@gitlab.com:group/leased.git")
 	runs := 0
 	if err := gate.Run(t.Context(), stale, gitgate.Fetch, sshOp(t, &runs)); err != nil {
 		t.Fatal(err)
 	}
 	s.clock.Set(t0.Add(30 * 24 * time.Hour))
+	if _, err := gate.Demand(t.Context(), leased); err != nil {
+		t.Fatal(err)
+	}
 	if err := gate.Run(t.Context(), fresh, gitgate.Fetch, sshOp(t, &runs)); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +34,7 @@ func TestPruneRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	if removed != 1 {
-		t.Errorf("only the record unused for the retention should go, removed %d", removed)
+		t.Errorf("only the record unused for the retention should go, a lease counting as use, removed %d", removed)
 	}
 	for target, wantKept := range map[gitgate.Target]bool{stale: false, fresh: true} {
 		last, err := gate.LastAttempt(t.Context(), target)

@@ -432,7 +432,8 @@ func TestStores(t *testing.T) {
 	store := filepath.Join(root, "index", "github.com", "o", "r", "abc123")
 	leftover := filepath.Join(root, "index", "github.com", "o", "r", ".def456.pruned")
 	retired := filepath.Join(root, "index", "github.com", "o", "r", "fed654")
-	for _, dir := range []string{filepath.Join(store, "chromem"), leftover, retired} {
+	empty := filepath.Join(root, "index", "github.com", "o", "empty")
+	for _, dir := range []string{filepath.Join(store, "chromem"), leftover, retired, empty} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -445,7 +446,7 @@ func TestStores(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(tree.Stores, []string{store}) || !slices.Equal(tree.Interrupted, []string{leftover}) || !slices.Equal(tree.Retired, []string{retired}) {
-		t.Errorf("listing should find the store, the interrupted removal and the retired store, got %+v", tree)
+		t.Errorf("listing should find the store, the interrupted removal and the retired store, never an empty folder, got %+v", tree)
 	}
 	if tree, err := index.Stores(t.TempDir()); err != nil || len(tree.Stores) != 0 {
 		t.Errorf("a cache without an index tree should list nothing, got %v, %v", tree.Stores, err)

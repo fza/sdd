@@ -403,3 +403,53 @@ func TestCacheHandlerPruneRecordsAFailure(t *testing.T) {
 		t.Errorf("the failure should be recorded for the next command to report, got %+v", status)
 	}
 }
+
+// A replaced setup's store keeps its versions while it waits out the replaced
+// retention: pruning them would save its manifest and count as a use.
+func TestCacheHandlerPruneLeavesAReplacedSetupsVersionsAlone(t *testing.T) {
+	now := time.Now()
+	f := newPruneFixture(t, "")
+	repo := filepath.Join(f.loc.CacheRoot, "index", "github.com", "acme", "switched")
+	old := filepath.Join(repo, "oldsetup")
+	lastUse := now.Add(-24 * time.Hour)
+	err := index.WriteStore(t.Context(), old, func(idx *index.Index) error {
+		m := &index.Manifest{Version: 1, Entries: map[string]index.EntryState{}}
+		for _, v := range []struct {
+			hash string
+			at   time.Time
+		}{{"h1", now.Add(-40 * 24 * time.Hour)}, {"h2", now.Add(-20 * 24 * time.Hour)}} {
+			row := index.Row{EntryID: "e", EntryHash: v.hash, ChunkID: "e#v-" + v.hash + "#summary", Text: "t", Body: "t", ContentHash: index.HashContent("t"), ModelFingerprint: "m", IsSummary: true, Embedding: []float32{1, 0}}
+			if err := idx.UpsertEntry(context.Background(), "e", nil, []index.Row{row}); err != nil {
+				return err
+			}
+			m.AddVersion("e", index.EntryVersion{Hash: v.hash, Derivation: index.DerivationCurrent, ChunkIDs: []string{row.ChunkID}, IndexedAt: v.at})
+		}
+		return m.Save(old)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(old, "used", index.DerivationCurrent+"@1"), filepath.Join(old, "manifest.json")} {
+		if err := os.Chtimes(path, lastUse, lastUse); err != nil {
+			t.Fatal(err)
+		}
+	}
+	usedStore(t, filepath.Join(repo, "newsetup"), now)
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatal(err)
+	}
+	m, err := index.LoadManifest(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(m.Entries["e"].Versions); got != 2 {
+		t.Errorf("a replaced setup's store should keep its versions, %d left", got)
+	}
+	last, err := index.StoreLastUse(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last.After(lastUse.Add(time.Second)) {
+		t.Errorf("pruning should not count as a use of the replaced setup's store, last use moved to %v", last)
+	}
+}
