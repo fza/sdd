@@ -18,6 +18,9 @@ const (
 	// the machine's run lock for good; what it did not reach waits for the
 	// next run.
 	CachePruneRunLimit = 5 * time.Minute
+	// CacheLeftoverAge is how old a crash leftover must be before the sweep
+	// removes it; a live writer finishes far sooner.
+	CacheLeftoverAge = 24 * time.Hour
 )
 
 // CacheConfig holds the machine-global cache settings. It lives on the
@@ -91,7 +94,19 @@ type CachePruneCounts struct {
 	Stores    int
 	Snapshots int
 	Clones    int
-	Bytes     int64
+	// Sessions are ended sessions removed with their staged attachments.
+	Sessions int
+	// Projects are unused projects whose relevance ledger or session folder
+	// went.
+	Projects int
+	// Records are git gate repository records and embedder calibrations.
+	Records int
+	// Leftovers are what killed writers left: trace files, clone staging,
+	// index temp dirs and orphan rows, retired stores, empty host folders.
+	Leftovers int
+	// Unreadable counts session logs kept because they could not be read.
+	Unreadable int
+	Bytes      int64
 }
 
 // Due reports whether a background run should start at now.

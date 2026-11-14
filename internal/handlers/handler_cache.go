@@ -139,6 +139,10 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 	if err != nil {
 		return counts, err
 	}
+	replaced, err := model.ResolveReplacedRetention(cfg.Index)
+	if err != nil {
+		return counts, err
+	}
 	// An entry's state hash depends on the rune cap a store was chunked
 	// under, so the checkout's current versions are hashed once per cap.
 	keepByCap := map[int]map[string]string{}
@@ -212,27 +216,69 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		log.Info("removed unconnected clone", "clone", dir, "bytes", size)
 	}
 
-	stores, leftovers, err := index.Stores(h.cacheRoot)
+	errs = append(errs, h.pruneIndex(ctx, now, index.Retention{Unused: retention, Replaced: replaced}, keepFor, &counts)...)
+	return counts, errors.Join(errs...)
+}
+
+// pruneIndex applies the index rules of 20261114-095140-d-cpt-ad4 to every
+// store, the longest pass, which the run limit cuts short first.
+func (h *CacheHandler) pruneIndex(ctx context.Context, now time.Time, r index.Retention, keepFor func(string) (map[string]string, error), counts *model.CachePruneCounts) []error {
+	log := slogutils.FromContext(ctx)
+	var errs []error
+	tree, err := index.Stores(h.cacheRoot)
 	if err != nil {
-		errs = append(errs, err)
+		return []error{err}
 	}
-	for _, dir := range leftovers {
+	for _, dir := range tree.Interrupted {
 		if err := os.RemoveAll(dir); err != nil {
 			errs = append(errs, fmt.Errorf("removing %s: %w", dir, err))
 		}
 	}
-	for _, dir := range stores {
-		if ctx.Err() != nil {
-			log.Info("cache pruning stopped at its time limit; the next run continues")
-			break
+	for _, dir := range tree.Retired {
+		removed, err := index.RemoveRetiredStore(dir, now, model.CacheLeftoverAge)
+		switch {
+		case errors.Is(err, index.ErrLockBusy):
+			log.Info("retired index store in use, skipped", "store", dir)
+		case err != nil:
+			errs = append(errs, err)
+		case removed:
+			counts.Leftovers++
 		}
+	}
+
+	lastUse := map[string]time.Time{}
+	newestSibling := map[string]time.Time{}
+	for _, dir := range tree.Stores {
 		last, err := index.StoreLastUse(dir)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		if now.Sub(last) > retention {
-			freed, err := index.RemoveStore(dir, now, retention)
+		lastUse[dir] = last
+		if repo := filepath.Dir(dir); last.After(newestSibling[repo]) {
+			newestSibling[repo] = last
+		}
+	}
+	for _, dir := range tree.Stores {
+		if ctx.Err() != nil {
+			log.Info("cache pruning stopped at its time limit; the next run continues")
+			break
+		}
+		last, ok := lastUse[dir]
+		if !ok {
+			continue
+		}
+		// A store another store of its repository was used after is a
+		// replaced embedding setup's: it waits out r.Replaced, not r.Unused,
+		// and its versions are not pruned, since a manifest save would count
+		// as its use.
+		replacedSetup := newestSibling[filepath.Dir(dir)].After(last)
+		window := r.Unused
+		if replacedSetup {
+			window = r.Replaced
+		}
+		if now.Sub(last) > window {
+			freed, err := index.RemoveStore(dir, now, window)
 			switch {
 			case errors.Is(err, index.ErrLockBusy):
 				log.Info("index store in use, skipped", "store", dir)
@@ -241,8 +287,11 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 			case freed > 0:
 				counts.Stores++
 				counts.Bytes += freed
-				log.Info("removed unused index store", "store", dir, "bytes", freed)
+				log.Info("removed index store", "store", dir, "replaced_setup", replacedSetup, "bytes", freed)
 			}
+			continue
+		}
+		if replacedSetup {
 			continue
 		}
 		keep, err := keepFor(dir)
@@ -250,21 +299,33 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 			errs = append(errs, fmt.Errorf("pruning %s: %w", dir, err))
 			continue
 		}
-		pruned, err := index.PruneStore(ctx, dir, now, retention, keep)
+		pruned, err := index.PruneStore(ctx, dir, now, r, keep)
 		counts.Versions += pruned.Versions
 		counts.Bytes += pruned.Bytes
 		switch {
 		case errors.Is(err, index.ErrLockBusy):
 			log.Info("index store in use, skipped", "store", dir)
+			continue
 		case err != nil && ctx.Err() != nil:
 			log.Info("cache pruning stopped at its time limit; the next run continues", "store", dir)
+			continue
 		case err != nil:
 			errs = append(errs, fmt.Errorf("pruning %s: %w", dir, err))
+			continue
 		case pruned.Versions > 0:
 			log.Info("pruned index versions", "store", dir, "versions", pruned.Versions, "bytes", pruned.Bytes)
 		}
+		swept, err := index.SweepStore(dir, now, model.CacheLeftoverAge)
+		counts.Leftovers += swept.OrphanRows + swept.Temps
+		counts.Bytes += swept.Bytes
+		switch {
+		case errors.Is(err, index.ErrLockBusy):
+			log.Info("index store in use, skipped", "store", dir)
+		case err != nil:
+			errs = append(errs, fmt.Errorf("sweeping %s: %w", dir, err))
+		}
 	}
-	return counts, errors.Join(errs...)
+	return errs
 }
 
 // holdUnused lets an sdd-owned clone go only while nothing uses it: its sync

@@ -212,6 +212,91 @@ func TestCacheHandlerPruneSweepsUndeclaredHookConfirmations(t *testing.T) {
 	}
 }
 
+// usedStore writes a one-version store at dir whose last use is at.
+func usedStore(t *testing.T, dir string, at time.Time) {
+	t.Helper()
+	err := index.WriteStore(t.Context(), dir, func(idx *index.Index) error {
+		row := index.Row{EntryID: "e", EntryHash: "h", ChunkID: "e#v-h#summary", Text: "t", Body: "t", ContentHash: index.HashContent("t"), ModelFingerprint: "m", IsSummary: true, Embedding: []float32{1, 0}}
+		if err := idx.UpsertEntry(context.Background(), "e", nil, []index.Row{row}); err != nil {
+			return err
+		}
+		m := &index.Manifest{Version: 1, Entries: map[string]index.EntryState{}}
+		m.AddVersion("e", index.EntryVersion{Hash: "h", Derivation: index.DerivationCurrent, ChunkIDs: []string{row.ChunkID}, IndexedAt: at})
+		return m.Save(dir)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(dir, "used", index.DerivationCurrent+"@1"), filepath.Join(dir, "manifest.json")} {
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCacheHandlerPruneDropsAReplacedEmbeddingSetup(t *testing.T) {
+	now := time.Now()
+	replaced := 14 * 24 * time.Hour
+	cases := []struct {
+		name     string
+		oldUse   time.Time
+		newUse   *time.Time
+		wantKept bool
+	}{
+		{name: "a store another setup replaced over two weeks ago goes", oldUse: now.Add(-replaced - time.Hour), newUse: &now},
+		{name: "a store used within two weeks stays", oldUse: now.Add(-replaced + time.Hour), newUse: &now, wantKept: true},
+		{name: "a store no other setup replaced keeps the unused retention", oldUse: now.Add(-replaced - time.Hour), wantKept: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPruneFixture(t, "")
+			repo := filepath.Join(f.loc.CacheRoot, "index", "github.com", "acme", "switched")
+			old := filepath.Join(repo, "oldsetup")
+			usedStore(t, old, tc.oldUse)
+			if tc.newUse != nil {
+				usedStore(t, filepath.Join(repo, "newsetup"), *tc.newUse)
+			}
+			if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+				t.Fatal(err)
+			}
+			if kept := exists(t, filepath.Join(old, "manifest.json")); kept != tc.wantKept {
+				t.Errorf("the older setup's store kept should be %v", tc.wantKept)
+			}
+		})
+	}
+}
+
+func TestCacheHandlerPruneSweepsIndexLeftovers(t *testing.T) {
+	f := newPruneFixture(t, "")
+	old := time.Now().Add(-model.CacheLeftoverAge - time.Hour)
+	retired := filepath.Join(f.loc.CacheRoot, "index", "github.com", "acme", "kept", "retired")
+	if err := os.MkdirAll(retired, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stage := filepath.Join(f.usedStore, ".entry-123")
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(retired, ".lock"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{retired, stage} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var counts model.CachePruneCounts
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{OnPruned: func(c model.CachePruneCounts) { counts = c }}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(t, retired) || exists(t, stage) {
+		t.Error("a retired store and a staging dir older than a day should go")
+	}
+	if counts.Leftovers != 2 {
+		t.Errorf("the run should count both leftovers, got %+v", counts)
+	}
+}
+
 type hashesByCap map[int]map[string]string
 
 func (h hashesByCap) CurrentHashes(_ context.Context, maxRunes int) (map[string]string, error) {

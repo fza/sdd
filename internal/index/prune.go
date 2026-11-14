@@ -10,8 +10,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/gofrs/flock"
 )
 
 // Background pruning of index stores (20261101-131514-d-cpt-9ci). A pass
@@ -38,15 +36,32 @@ const (
 // crash interrupted is finished by the next run.
 const prunedSuffix = ".pruned"
 
+// Retention bounds how long pruning keeps index data
+// (20261114-095140-d-cpt-ad4).
+type Retention struct {
+	// Unused is cache.retention: a store nothing used, versions of a rule
+	// newer than this binary's, and checkout records.
+	Unused time.Duration
+	// Replaced is index.replaced_retention: replaced versions, data in older
+	// formats, and the store of a replaced embedding setup.
+	Replaced time.Duration
+}
+
+// olderFormat reports whether a derivation rule predates this binary's.
+func olderFormat(derivation string) bool {
+	return derivation == GroupPreDerivation || derivation == GroupLegacy
+}
+
 // PruneVersions removes the versions background pruning deletes and returns
 // their chunk IDs with the count removed, at most limit versions (no limit
 // when limit is zero). A current-rule version goes once a newer version of the
 // same entry under the same rule has been in the store for longer than
-// retention, unless keep names its hash as a current state of the entry. Another
-// rule's versions go once that rule's latest use, its stamp in ruleUses or its
-// newest write, is older than retention. Chunk IDs a kept version still names
-// are never returned. It performs no I/O.
-func (m *Manifest) PruneVersions(now time.Time, retention time.Duration, ruleUses map[string]time.Time, keep KeepSet, limit int) (chunkIDs []string, versions int) {
+// r.Replaced, unless keep names its hash as a current state of the entry. An
+// older format's versions go once that rule's latest use, its stamp in
+// ruleUses or its newest write, is older than r.Replaced; any other rule's once
+// it is older than r.Unused. Chunk IDs a kept version still names are never
+// returned. It performs no I/O.
+func (m *Manifest) PruneVersions(now time.Time, r Retention, ruleUses map[string]time.Time, keep KeepSet, limit int) (chunkIDs []string, versions int) {
 	ruleLast := map[string]time.Time{}
 	for _, state := range m.Entries {
 		for _, v := range state.Versions {
@@ -63,8 +78,11 @@ func (m *Manifest) PruneVersions(now time.Time, retention time.Duration, ruleUse
 	}
 	expired := func(id string, state EntryState, v EntryVersion) bool {
 		d := v.derivation()
+		if olderFormat(d) {
+			return now.Sub(ruleLast[d]) > r.Replaced
+		}
 		if d != DerivationCurrent {
-			return now.Sub(ruleLast[d]) > retention
+			return now.Sub(ruleLast[d]) > r.Unused
 		}
 		if keep.Has(id, v.Hash) {
 			return false
@@ -78,7 +96,7 @@ func (m *Manifest) PruneVersions(now time.Time, retention time.Duration, ruleUse
 				replacedAt = other.IndexedAt
 			}
 		}
-		return !replacedAt.IsZero() && now.Sub(replacedAt) > retention
+		return !replacedAt.IsZero() && now.Sub(replacedAt) > r.Replaced
 	}
 
 	var dropped []string
@@ -133,11 +151,11 @@ type PrunedVersions struct {
 // than pruneResumeWait between sessions, with what the sessions before it
 // removed. The manifest is saved before rows are deleted, so it never names a
 // row that is gone.
-func PruneStore(ctx context.Context, indexDir string, now time.Time, retention time.Duration, keep map[string]string) (PrunedVersions, error) {
+func PruneStore(ctx context.Context, indexDir string, now time.Time, r Retention, keep map[string]string) (PrunedVersions, error) {
 	var total PrunedVersions
 	var wait time.Duration
 	for {
-		pruned, more, err := pruneSession(ctx, indexDir, now, retention, keep, wait)
+		pruned, more, err := pruneSession(ctx, indexDir, now, r, keep, wait)
 		total.Versions += pruned.Versions
 		total.Bytes += pruned.Bytes
 		if err != nil || !more {
@@ -152,7 +170,7 @@ func PruneStore(ctx context.Context, indexDir string, now time.Time, retention t
 	}
 }
 
-func pruneSession(ctx context.Context, indexDir string, now time.Time, retention time.Duration, keep map[string]string, wait time.Duration) (_ PrunedVersions, more bool, err error) {
+func pruneSession(ctx context.Context, indexDir string, now time.Time, r Retention, keep map[string]string, wait time.Duration) (_ PrunedVersions, more bool, err error) {
 	lock := lockFile(indexDir)
 	locked, err := lock.TryLock()
 	if err == nil && !locked && wait > 0 {
@@ -179,10 +197,10 @@ func pruneSession(ctx context.Context, indexDir string, now time.Time, retention
 		return PrunedVersions{}, false, err
 	}
 	sessionKeep := NewKeepSet(keep)
-	if err := checkoutKeep(indexDir, now, retention, sessionKeep); err != nil {
+	if err := checkoutKeep(indexDir, now, r.Unused, sessionKeep); err != nil {
 		return PrunedVersions{}, false, err
 	}
-	chunkIDs, versions := manifest.PruneVersions(now, retention, uses, sessionKeep, pruneBatch)
+	chunkIDs, versions := manifest.PruneVersions(now, r, uses, sessionKeep, pruneBatch)
 	if versions == 0 {
 		return PrunedVersions{}, false, nil
 	}
@@ -226,16 +244,11 @@ func RemoveStore(indexDir string, now time.Time, retention time.Duration) (int64
 // open path into it, and finds an empty store, which it fills afresh, instead
 // of a lock path whose directory is gone.
 func retireStore(indexDir string, now time.Time, retention time.Duration) (doomed string, err error) {
-	for _, l := range []*flock.Flock{lockFile(indexDir), fillLockFile(indexDir)} {
-		locked, lockErr := l.TryLock()
-		if lockErr != nil {
-			return "", fmt.Errorf("locking index store %s: %w", indexDir, lockErr)
-		}
-		if !locked {
-			return "", ErrLockBusy
-		}
-		defer func() { err = errors.Join(err, l.Unlock()) }()
+	release, err := tryLockStore(indexDir)
+	if err != nil {
+		return "", err
 	}
+	defer func() { err = errors.Join(err, release()) }()
 	last, err := StoreLastUse(indexDir)
 	if err != nil {
 		return "", err
@@ -265,11 +278,22 @@ func retireStore(indexDir string, now time.Time, retention time.Duration) (doome
 	return doomed, nil
 }
 
-// Stores lists the store directories under cacheRoot's index tree, and the
-// leftovers of removals a crash interrupted, which callers delete.
-func Stores(cacheRoot string) (stores, leftovers []string, err error) {
+// StoreTree is what lies under a cache root's index tree.
+type StoreTree struct {
+	Stores []string
+	// Interrupted are the leftovers of removals a crash interrupted, which
+	// callers delete.
+	Interrupted []string
+	// Retired are store directories RemoveStore emptied, holding only their
+	// lock files (see RemoveRetiredStore).
+	Retired []string
+}
+
+// Stores lists what lies under cacheRoot's index tree.
+func Stores(cacheRoot string) (StoreTree, error) {
+	var tree StoreTree
 	root := filepath.Join(cacheRoot, storeSubdir)
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) && path == root {
 				return filepath.SkipAll
@@ -281,20 +305,48 @@ func Stores(cacheRoot string) (stores, leftovers []string, err error) {
 		}
 		if strings.HasPrefix(d.Name(), ".") {
 			if strings.HasSuffix(d.Name(), prunedSuffix) {
-				leftovers = append(leftovers, path)
+				tree.Interrupted = append(tree.Interrupted, path)
 			}
 			return filepath.SkipDir
 		}
 		if isStoreDir(path) {
-			stores = append(stores, path)
+			tree.Stores = append(tree.Stores, path)
+			return filepath.SkipDir
+		}
+		retired, err := isRetiredStore(path)
+		if err != nil {
+			return err
+		}
+		if retired {
+			tree.Retired = append(tree.Retired, path)
 			return filepath.SkipDir
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("listing index stores under %s: %w", root, err)
+		return StoreTree{}, fmt.Errorf("listing index stores under %s: %w", root, err)
 	}
-	return stores, leftovers, nil
+	return tree, nil
+}
+
+// isRetiredStore reports whether dir holds its two lock files and nothing
+// else.
+func isRetiredStore(dir string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	locks := 0
+	for _, entry := range entries {
+		if entry.IsDir() || (entry.Name() != ".lock" && entry.Name() != ".fill.lock") {
+			return false, nil
+		}
+		locks++
+	}
+	return locks > 0, nil
 }
 
 func isStoreDir(path string) bool {

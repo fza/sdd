@@ -14,7 +14,12 @@ import (
 	"github.com/networkteam/sdd/internal/index"
 )
 
-const retention = 90 * 24 * time.Hour
+const (
+	retention = 90 * 24 * time.Hour
+	replaced  = 14 * 24 * time.Hour
+)
+
+var retentions = index.Retention{Unused: retention, Replaced: replaced}
 
 func version(hash, derivation string, at time.Time, chunks ...string) index.EntryVersion {
 	return index.EntryVersion{Hash: hash, Derivation: derivation, ChunkIDs: chunks, IndexedAt: at}
@@ -26,6 +31,8 @@ func TestPruneVersions(t *testing.T) {
 	long := now.Add(-retention - time.Hour)
 	recent := now.Add(-time.Hour)
 	older := long.Add(-time.Hour)
+	pastReplaced := now.Add(-replaced - time.Hour)
+	withinReplaced := now.Add(-replaced + time.Hour)
 	const cur = index.DerivationCurrent
 
 	cases := []struct {
@@ -43,6 +50,42 @@ func TestPruneVersions(t *testing.T) {
 				version("a", cur, older, "e#a"), version("b", cur, long, "e#b"),
 			}}},
 			dropped: []string{"e#a"}, versions: 1,
+		},
+		{
+			name: "a version replaced longer ago than the replaced retention goes",
+			entries: map[string]index.EntryState{"e": {Versions: []index.EntryVersion{
+				version("a", cur, older, "e#a"), version("b", cur, pastReplaced, "e#b"),
+			}}},
+			dropped: []string{"e#a"}, versions: 1,
+		},
+		{
+			name: "a version replaced within the replaced retention stays",
+			entries: map[string]index.EntryState{"e": {Versions: []index.EntryVersion{
+				version("a", cur, older, "e#a"), version("b", cur, withinReplaced, "e#b"),
+			}}},
+		},
+		{
+			name: "an older format goes once unused for the replaced retention",
+			entries: map[string]index.EntryState{
+				"e": {Versions: []index.EntryVersion{version("a", "", pastReplaced, "e#v-abcdef01#summary"), version("b", cur, older, "e#b")}},
+				"f": {Versions: []index.EntryVersion{version("c", "", pastReplaced, "f#summary")}},
+			},
+			dropped: []string{"e#v-abcdef01#summary", "f#summary"}, versions: 2,
+		},
+		{
+			name: "an older format used within the replaced retention stays",
+			entries: map[string]index.EntryState{"e": {Versions: []index.EntryVersion{
+				version("a", "", older, "e#summary"), version("b", cur, older, "e#b"),
+			}}},
+			uses: map[string]time.Time{index.GroupLegacy: withinReplaced},
+		},
+		{
+			name: "a newer rule's versions stay until unused for the unused retention",
+			entries: map[string]index.EntryState{
+				"e": {Versions: []index.EntryVersion{version("a", "v2", pastReplaced, "e#a")}},
+				"f": {Versions: []index.EntryVersion{version("c", "v3", older, "f#c")}},
+			},
+			dropped: []string{"f#c"}, versions: 1,
 		},
 		{
 			name: "a version replaced recently stays",
@@ -111,7 +154,7 @@ func TestPruneVersions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			m := &index.Manifest{Version: 1, Entries: tc.entries}
-			dropped, versions := m.PruneVersions(now, retention, tc.uses, index.NewKeepSet(tc.keep), tc.limit)
+			dropped, versions := m.PruneVersions(now, retentions, tc.uses, index.NewKeepSet(tc.keep), tc.limit)
 			if !slices.Equal(dropped, tc.dropped) || versions != tc.versions {
 				t.Errorf("pruned %v (%d versions), want %v (%d versions)", dropped, versions, tc.dropped, tc.versions)
 			}
@@ -157,7 +200,7 @@ func TestPruneStoreRemovesExpiredRows(t *testing.T) {
 	current := version("b", index.DerivationCurrent, now.Add(-retention-time.Hour), "e#v-b#summary")
 	dir := storeWithVersions(t, old, current)
 
-	pruned, err := index.PruneStore(t.Context(), dir, now, retention, nil)
+	pruned, err := index.PruneStore(t.Context(), dir, now, retentions, nil)
 	if err != nil {
 		t.Fatalf("pruning: %v", err)
 	}
@@ -189,7 +232,7 @@ func TestPruneStoreKeepsWhatAnotherCheckoutReads(t *testing.T) {
 		if err := index.RecordCheckout(dir, "/work/tree", map[string]string{"e": "a"}, now); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := index.PruneStore(t.Context(), dir, now, retention, nil); err != nil {
+		if _, err := index.PruneStore(t.Context(), dir, now, retentions, nil); err != nil {
 			t.Fatal(err)
 		}
 		if index.DocumentsSize(dir, old.ChunkIDs) == 0 {
@@ -203,7 +246,7 @@ func TestPruneStoreKeepsWhatAnotherCheckoutReads(t *testing.T) {
 		if err := index.RecordCheckout(dir, "/work/tree", map[string]string{"e": "a"}, long); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := index.PruneStore(t.Context(), dir, now, retention, nil); err != nil {
+		if _, err := index.PruneStore(t.Context(), dir, now, retentions, nil); err != nil {
 			t.Fatal(err)
 		}
 		if index.DocumentsSize(dir, old.ChunkIDs) != 0 {
@@ -249,7 +292,7 @@ func TestPruneStoreSkipsALockedStore(t *testing.T) {
 		version("b", index.DerivationCurrent, now.Add(-retention-time.Hour), "e#v-b#summary"))
 
 	err := index.ReadStore(t.Context(), dir, func(*index.Index) error {
-		pruned, err := index.PruneStore(t.Context(), dir, now, retention, nil)
+		pruned, err := index.PruneStore(t.Context(), dir, now, retentions, nil)
 		if !errors.Is(err, index.ErrLockBusy) {
 			t.Errorf("pruning a store another process reads should report it busy, got %v", err)
 		}
@@ -388,19 +431,23 @@ func TestStores(t *testing.T) {
 	root := t.TempDir()
 	store := filepath.Join(root, "index", "github.com", "o", "r", "abc123")
 	leftover := filepath.Join(root, "index", "github.com", "o", "r", ".def456.pruned")
-	for _, dir := range []string{filepath.Join(store, "chromem"), leftover} {
+	retired := filepath.Join(root, "index", "github.com", "o", "r", "fed654")
+	for _, dir := range []string{filepath.Join(store, "chromem"), leftover, retired} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	stores, leftovers, err := index.Stores(root)
+	if err := os.WriteFile(filepath.Join(retired, ".lock"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := index.Stores(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(stores, []string{store}) || !slices.Equal(leftovers, []string{leftover}) {
-		t.Errorf("listing should find the store and the interrupted removal, got %v and %v", stores, leftovers)
+	if !slices.Equal(tree.Stores, []string{store}) || !slices.Equal(tree.Interrupted, []string{leftover}) || !slices.Equal(tree.Retired, []string{retired}) {
+		t.Errorf("listing should find the store, the interrupted removal and the retired store, got %+v", tree)
 	}
-	if stores, _, err := index.Stores(t.TempDir()); err != nil || len(stores) != 0 {
-		t.Errorf("a cache without an index tree should list nothing, got %v, %v", stores, err)
+	if tree, err := index.Stores(t.TempDir()); err != nil || len(tree.Stores) != 0 {
+		t.Errorf("a cache without an index tree should list nothing, got %v, %v", tree.Stores, err)
 	}
 }
