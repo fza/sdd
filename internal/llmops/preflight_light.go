@@ -454,7 +454,7 @@ func joinInts(values []int) string {
 const DeepCompactID = "the entries listed below the prefilter's threshold"
 
 // DeepCompactBlock lists entries one line each, ID and brief, with the count
-// and the call that opens one (20261109-004506-d-cpt-udz, D29).
+// and the call that opens one.
 func DeepCompactBlock(entries []*model.Entry) model.DeepReadingBlock {
 	var b strings.Builder
 	fmt.Fprintf(&b, "---\n\n## Listed below the prefilter's threshold (%d)\n\nThe prefilter's calibrated judge scored these below the threshold its recall bound holds at: one line each, ID and title. Open one with show when its title bears on the draft.\n", len(entries))

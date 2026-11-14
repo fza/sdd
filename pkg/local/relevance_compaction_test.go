@@ -82,9 +82,8 @@ func TestFilesystemRelevanceStore_CompactionMergesSmallSegmentsAndDropsDuplicate
 }
 
 // Segments left under .sdd/relevance/ never ride an sdd commit, neither new
-// ones nor the removal of tracked ones; the user commits their removal
-// (20261114-105752-d-tac-tnk). An event channel's segment rides the same
-// commit.
+// ones nor the removal of tracked ones; the user commits their removal. An
+// event channel's segment rides the same commit.
 func TestRelevanceSegments_LeftoverInTheRepositoryStaysOutOfTheCommit(t *testing.T) {
 	repo := newGitRepository(t)
 	repo.write(".sdd/relevance/tracked.seg", "tracked\n")

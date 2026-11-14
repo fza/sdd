@@ -87,8 +87,7 @@ func verifierReading(t *testing.T, x *deepExchange) string {
 // Once the prefilter's calibration holds, the verifier inspects the
 // structural entries and those scoring at or above the threshold as blocks
 // and gets every other listed entry as one line, the audit share back as
-// blocks (20261109-004506-d-cpt-udz, D29, D33, D36). Each pair is scored
-// once: publish writes the scores to the ledger.
+// blocks. Each pair is scored once: publish writes the scores to the ledger.
 func TestCaptureDeep_ACalibratedReadingHidesWhatScoresBelowTheThreshold(t *testing.T) {
 	scorer := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
 	store := laneLedger(t, true)
