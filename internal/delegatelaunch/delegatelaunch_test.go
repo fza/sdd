@@ -3,9 +3,11 @@ package delegatelaunch_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -332,6 +334,57 @@ func TestRun_SubagentIsNoHeadlessLaunch(t *testing.T) {
 	test.FakeAgents(t)
 
 	refused(t, settings(t, "subagent"), firstRound(), `verify.runner "subagent" is no headless runner`)
+}
+
+// Every runner hands Started the PID of the CLI it started.
+func TestRun_HandsStartedTheCLIsPID(t *testing.T) {
+	answers := map[string]string{
+		"claude": `{"is_error":false,"session_id":"claude-7"}`,
+		"codex":  `{"type":"thread.started","thread_id":"codex-3"}`,
+		"driver": `{"driver_state":"pane-4"}`,
+	}
+	for runner, answer := range answers {
+		t.Run(runner, func(t *testing.T) {
+			agents := test.FakeAgents(t, runner)
+			test.AgentAnswers(t, agents, runner, answer, "", 0)
+			launchSettings := settings(t, runner)
+			launchSettings.Driver = model.VerifierDriver{Command: filepath.Join(agents, "driver")}
+			round := firstRound()
+			var pids []int
+			round.Started = func(pid int) error {
+				pids = append(pids, pid)
+				return nil
+			}
+
+			launch(t, launchSettings, round)
+
+			if call := test.LastAgentCall(t, agents, runner); len(pids) != 1 || pids[0] != call.PID {
+				t.Fatalf("Started should get the PID of the CLI the round ran once, got %v for %d", pids, call.PID)
+			}
+		})
+	}
+}
+
+// A Started that fails stops the CLI it was handed and fails the round.
+func TestRun_AFailingStartedStopsTheCLI(t *testing.T) {
+	agents := test.FakeAgents(t, "claude")
+	test.AgentHangs(t, agents, "claude")
+	round := firstRound()
+	var pid int
+	round.Started = func(started int) error {
+		pid = started
+		return errors.New("the child ended")
+	}
+
+	began := time.Now()
+	refused(t, settings(t, "claude"), round, "recording the claude process: the child ended")
+
+	if time.Since(began) > 5*time.Second {
+		t.Fatal("the round should stop the CLI at once, not wait for it to end")
+	}
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("the CLI should be stopped, got %v", err)
+	}
 }
 
 func TestRun_CodexReportingNoSessionFailsTheFirstRound(t *testing.T) {

@@ -238,8 +238,14 @@ func TestCaptureDeep_AFallbackVerifierResumesHeadlessForARevision(t *testing.T) 
 		}
 	}
 	round := launcher.NextRound(t)
-	if round.Launch.Session != first.Launch.Session || round.Launch.Runner != sdd.DelegateLaunchFallback || round.Round.Resume != "cli-session" {
-		t.Fatalf("the revision should resume the fallback verifier through sdd's launch, got round %+v of %s by %q", round.Round, round.Launch.Session, round.Launch.Runner)
+	fallbacks := 0
+	for _, launch := range launcher.Launches() {
+		if launch.Runner == sdd.DelegateLaunchFallback {
+			fallbacks++
+		}
+	}
+	if round.Launch.Session != first.Launch.Session || fallbacks != 2 || round.Round.Resume != "cli-session" {
+		t.Fatalf("the revision should resume the fallback verifier through sdd's launch, got round %+v of %s and %d fallback launches", round.Round, round.Launch.Session, fallbacks)
 	}
 	x.pickUpRevision(t)
 	x.delegate.Answer(t, x.child, "read", "judge", map[string]any{"findings": []any{}}, "")

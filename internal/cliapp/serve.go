@@ -70,7 +70,7 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				return err
 			}
 			watch.guards = append(watch.guards, (&strayGuard{}).check)
-			application, identity, err := buildServedApplication(ctx, watch)
+			application, identity, err := buildServedApplication(ctx, cmd, watch)
 			if err != nil {
 				return err
 			}
@@ -523,8 +523,12 @@ func servedConfigLayers(sddDir string) (model.ConfigLayers, []string, error) {
 
 // buildServedApplication composes the application whose every call resolves
 // against the project watch serves at that moment.
-func buildServedApplication(ctx context.Context, watch *configWatch) (*sdd.Application, sdd.RequestIdentity, error) {
-	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: servedAccess{watch}, Sessions: servedSessions{watch}, StagedBlobs: servedBlobs{watch}, DelegateLauncher: headlessLauncher{watch: watch}})
+func buildServedApplication(ctx context.Context, cmd *cli.Command, watch *configWatch) (*sdd.Application, sdd.RequestIdentity, error) {
+	processes, err := newRoundProcesses(cmd)
+	if err != nil {
+		return nil, sdd.RequestIdentity{}, err
+	}
+	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: servedAccess{watch}, Sessions: servedSessions{watch}, StagedBlobs: servedBlobs{watch}, DelegateLauncher: headlessLauncher{watch: watch}, RoundProcesses: processes})
 	if err != nil {
 		return nil, sdd.RequestIdentity{}, err
 	}

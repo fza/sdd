@@ -2,11 +2,13 @@ package cliapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/networkteam/sdd/internal/delegatelaunch"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/roundproc"
 	sdd "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -47,8 +49,22 @@ func (l headlessLauncher) LaunchDelegate(_ context.Context, launch sdd.DelegateL
 		return sdd.DelegateRun{}, err
 	}
 	round := func(ctx context.Context, round sdd.DelegateRound) (sdd.DelegateRoundEnd, error) {
+		var started func(pid int) error
+		if round.AgentStarted != nil {
+			started = func(pid int) error {
+				agent, err := roundproc.Identify(pid)
+				// An agent that ended at once left nothing running to stop.
+				if errors.Is(err, roundproc.ErrEnded) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				return round.AgentStarted(ctx, sdd.RoundProcess(agent))
+			}
+		}
 		launched, err := delegatelaunch.Run(ctx, settings, delegatelaunch.Round{
-			Session: string(launch.Session), Instance: launch.Instance, Number: round.Number, Prompt: round.Prompt, Resume: round.Resume,
+			Session: string(launch.Session), Instance: launch.Instance, Number: round.Number, Prompt: round.Prompt, Resume: round.Resume, Started: started,
 		})
 		return sdd.DelegateRoundEnd{Session: launched.Session, Message: launched.Message}, err
 	}

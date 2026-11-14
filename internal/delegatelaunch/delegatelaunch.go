@@ -55,6 +55,9 @@ type Round struct {
 	Prompt   string
 	// Resume is the session the previous round reported; empty on the first.
 	Resume string
+	// Started, when set, is handed the PID of the agent CLI or driver once
+	// it runs; an error stops it and fails the round.
+	Started func(pid int) error
 }
 
 // Launched is what a round reports: the session to resume next round, the
@@ -160,7 +163,7 @@ func runClaude(ctx context.Context, settings Settings, round Round) (Launched, e
 	if err != nil {
 		return Launched{}, err
 	}
-	out, err := run(ctx, settings.WorkDir, nil, "claude", args, round.Prompt)
+	out, err := run(ctx, settings.WorkDir, nil, "claude", args, round.Prompt, round.Started)
 	if err != nil {
 		return Launched{}, err
 	}
@@ -211,7 +214,7 @@ func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
 }
 
 func runCodex(ctx context.Context, settings Settings, round Round) (Launched, error) {
-	out, runErr := run(ctx, settings.WorkDir, codex.ScrubbedEnv(os.Environ()), "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "")
+	out, runErr := run(ctx, settings.WorkDir, codex.ScrubbedEnv(os.Environ()), "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "", round.Started)
 	launched := Launched{Session: round.Resume}
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		var event struct {
@@ -276,7 +279,7 @@ func runDriver(ctx context.Context, settings Settings, round Round) (string, err
 	if err != nil {
 		return "", err
 	}
-	out, err := run(ctx, settings.WorkDir, nil, settings.Driver.Command, settings.Driver.Args, string(request))
+	out, err := run(ctx, settings.WorkDir, nil, settings.Driver.Command, settings.Driver.Args, string(request), round.Started)
 	if err != nil {
 		return "", err
 	}
@@ -291,7 +294,7 @@ func runDriver(ctx context.Context, settings Settings, round Round) (string, err
 }
 
 // run runs name in dir with env, the inherited environment when nil.
-func run(ctx context.Context, dir string, env []string, name string, args []string, stdin string) ([]byte, error) {
+func run(ctx context.Context, dir string, env []string, name string, args []string, stdin string, started func(pid int) error) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = env
@@ -300,7 +303,21 @@ func run(ctx context.Context, dir string, env []string, name string, args []stri
 	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
+	err := cmd.Start()
+	if err == nil && started != nil {
+		if startedErr := started(cmd.Process.Pid); startedErr != nil {
+			killErr := cmd.Process.Kill()
+			if errors.Is(killErr, os.ErrProcessDone) {
+				killErr = nil
+			}
+			// Reaps the process killed above; its error is that kill.
+			_ = cmd.Wait()
+			return nil, errors.Join(fmt.Errorf("recording the %s process: %w", name, startedErr), killErr)
+		}
+	}
+	if err == nil {
+		err = cmd.Wait()
+	}
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("%s did not end its round in time: %w", name, ctx.Err())
 	}

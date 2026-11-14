@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/networkteam/slogutils"
@@ -29,7 +28,8 @@ const workflowDelegateLaunchCode = "workflow_delegate_launch"
 // the harness. It is called once the dispatching operation's own writes are
 // done: on the fork, and each time the dispatching move sends the delegate its
 // next input. It answers at once, taking the launch on or leaving it to the
-// harness, and sdd runs the round it returns in the background, so the
+// harness. sdd runs the round it took on in a process of its own
+// (RoundProcesses), which asks the launcher again for the round to run, so the
 // dispatching call never waits for a round: that move's next call picks the
 // delegate's deliveries up, and takes a failed round to the waiting gate's
 // delegateEnded route, or else fails with the round's error.
@@ -47,7 +47,8 @@ type DelegateLaunch struct {
 	Project ProjectID
 	// Runner is the runner the project configures for this delegate: claude,
 	// codex or driver, or DelegateLaunchFallback where the harness reported
-	// no subagent tool; empty leaves the runner to the composition.
+	// no subagent tool; empty leaves the runner to the composition. A round's
+	// process asks with the runner the launch reported.
 	Runner string
 }
 
@@ -58,6 +59,46 @@ type DelegateLaunch struct {
 type DelegateRun struct {
 	Runner string
 	Round  func(ctx context.Context, round DelegateRound) (DelegateRoundEnd, error)
+}
+
+// RoundProcesses runs each round sdd launches in a process of its own, which
+// outlives the server that launched it and records the round's outcome itself
+// (20261114-160323-d-tac-n0n). Any process of the composition answers for a
+// round's process later: whether it still runs, and stopping it.
+type RoundProcesses interface {
+	// Log is the file the process of round writes its output and its log
+	// to, which a failure of the round names.
+	Log(round LaunchedRound) string
+	// Start starts the process that runs round through RunLaunchedRound, in a
+	// process group of its own, and returns it once it runs.
+	Start(ctx context.Context, round LaunchedRound) (RoundProcess, error)
+	// Alive reports whether process still runs: no process with its PID, or
+	// one that started at another time, is gone.
+	Alive(ctx context.Context, process RoundProcess) (bool, error)
+	// Stop ends a running process with its whole process group, the agent CLI
+	// it runs included. A process already gone leaves its group to agent, the
+	// agent CLI it recorded, zero when none: Stop ends the group only while
+	// agent still runs in it.
+	Stop(ctx context.Context, process, agent RoundProcess) error
+}
+
+// RoundProcess is a round's process: its PID and its start stamp, which tells
+// it from a later process that took the same PID.
+type RoundProcess struct {
+	PID     int
+	Started string
+}
+
+// LaunchedRound is a round sdd launched, as its process runs it: the child
+// handles, the project, the runner the launch reported and the round's number
+// from 1.
+type LaunchedRound struct {
+	Session   SessionID
+	Instance  string
+	Procedure string
+	Project   ProjectID
+	Runner    string
+	Number    int
 }
 
 // DelegateRoundEnd is what a round that ended reports: the launcher's own
@@ -74,6 +115,9 @@ type DelegateRound struct {
 	Number int
 	Prompt string
 	Resume string
+	// AgentStarted, when set, records the agent CLI or driver the round
+	// started, once it runs; the round stops with its error.
+	AgentStarted func(ctx context.Context, agent RoundProcess) error
 }
 
 // DelegateLaunchFallback asks the launcher for the first headless runner of
@@ -114,42 +158,102 @@ type WorkflowDispatch struct {
 
 // delegateLaunchRecord is one launched round's outcome, kept with the child
 // session: the launcher's session to resume, or the error the round failed
-// with.
+// with, and when it ended.
 type delegateLaunchRecord struct {
+	Round   int       `json:"round"`
+	Session string    `json:"session"`
+	Runner  string    `json:"runner,omitempty"`
+	Error   string    `json:"error,omitempty"`
+	Ended   time.Time `json:"ended,omitzero"`
+}
+
+const (
+	// workflowDelegateRoundCode marks a launched round's launch record, kept
+	// before sdd starts the round's process.
+	workflowDelegateRoundCode = "workflow_delegate_round"
+	// workflowDelegateRoundProcessCode marks the record of the process a
+	// launched round runs in, kept once it runs.
+	workflowDelegateRoundProcessCode = "workflow_delegate_round_process"
+	// workflowDelegateRoundAgentCode marks the record of the agent CLI a
+	// launched round's process started, kept once it runs.
+	workflowDelegateRoundAgentCode = "workflow_delegate_round_agent"
+)
+
+// delegateRoundStart is a launched round's launch record, with the process
+// and the agent CLI recorded for it once they run (zero until then).
+type delegateRoundStart struct {
+	Round      int           `json:"round"`
+	Runner     string        `json:"runner"`
+	LaunchedAt time.Time     `json:"launched_at"`
+	Timeout    time.Duration `json:"timeout"`
+	Log        string        `json:"log"`
+
+	process RoundProcess
+	agent   RoundProcess
+}
+
+// delegateRoundProcess records a process of a launched round.
+type delegateRoundProcess struct {
 	Round   int    `json:"round"`
-	Session string `json:"session"`
-	Runner  string `json:"runner,omitempty"`
-	Error   string `json:"error,omitempty"`
+	PID     int    `json:"pid"`
+	Started string `json:"started"`
 }
 
-// delegateRounds orders the background rounds of each child: a round starts
-// once the child's previous round ended, so it resumes that round's session.
-type delegateRounds struct {
-	mu   sync.Mutex
-	last map[SessionID]chan struct{}
+// delegateRoundLog is what a child session keeps of its launched rounds.
+type delegateRoundLog struct {
+	starts   []delegateRoundStart
+	outcomes []delegateLaunchRecord
 }
 
-// follow registers done as the child's latest round and returns the round it
-// waits for, nil when none.
-func (r *delegateRounds) follow(child SessionID, done chan struct{}) chan struct{} {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.last == nil {
-		r.last = map[SessionID]chan struct{}{}
+func (l delegateRoundLog) start(round int) (delegateRoundStart, bool) {
+	if start := l.launched(round); start != nil {
+		return *start, true
 	}
-	previous := r.last[child]
-	r.last[child] = done
-	return previous
+	return delegateRoundStart{}, false
 }
 
-// settle forgets the child's rounds once done is still its latest.
-func (r *delegateRounds) settle(child SessionID, done chan struct{}) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.last[child] == done {
-		delete(r.last, child)
+func (l delegateRoundLog) launched(round int) *delegateRoundStart {
+	for i := range l.starts {
+		if l.starts[i].Round == round {
+			return &l.starts[i]
+		}
 	}
+	return nil
 }
+
+func (l delegateRoundLog) outcome(round int) (delegateLaunchRecord, bool) {
+	for _, outcome := range l.outcomes {
+		if outcome.Round == round {
+			return outcome, true
+		}
+	}
+	return delegateLaunchRecord{}, false
+}
+
+// pending is the earliest launched round without an outcome, nil when none.
+func (l delegateRoundLog) pending() *delegateRoundStart {
+	for _, start := range l.starts {
+		if _, ok := l.outcome(start.Round); !ok {
+			return &start
+		}
+	}
+	return nil
+}
+
+// next is the number the child's next round takes.
+func (l delegateRoundLog) next() int {
+	last := 0
+	for _, start := range l.starts {
+		last = max(last, start.Round)
+	}
+	for _, outcome := range l.outcomes {
+		last = max(last, outcome.Round)
+	}
+	return last + 1
+}
+
+// roundPoll is how often a round's process looks for the record it waits for.
+const roundPoll = 250 * time.Millisecond
 
 // workflowCourier carries the engine's deliveries to the other session of a
 // fork. A session the current operation already holds receives directly, so
@@ -443,79 +547,313 @@ func delegateContinuePrompt(session SessionID, instance string) string {
 }
 
 // launchDelegate hands the delegate's launch to the launcher and, once the
-// launcher took it on, runs its round in the background, outliving the call
-// that launched it and bounded by timeout; it returns the launch that runs.
+// launcher took it on, starts the round's process and records the round's
+// start with the child, which the process waits for; it returns the runner
+// that runs.
 func (a *Application) launchDelegate(ctx context.Context, identity RequestIdentity, child SessionID, instance, procedure string, project ProjectID, configured string, timeout time.Duration) (string, error) {
 	run, err := a.launcher.LaunchDelegate(ctx, DelegateLaunch{Session: child, Instance: instance, Procedure: procedure, Project: project, Runner: configured})
 	if err != nil {
 		return "", fmt.Errorf("launching the delegate for %s: %w", child, err)
 	}
-	done := make(chan struct{})
-	previous := a.rounds.follow(child, done)
-	background := context.WithoutCancel(ctx)
-	go func() {
-		defer close(done)
-		defer a.rounds.settle(child, done)
-		if previous != nil {
-			<-previous
-		}
-		err := a.runDelegateRound(background, identity, child, instance, run, timeout)
-		if err != nil {
-			slogutils.FromContext(background).Error("recording a delegate round", "session", child, "error", err)
-		}
-	}()
+	log, _, err := a.childRounds(ctx, identity, child)
+	if err != nil {
+		return "", err
+	}
+	round := LaunchedRound{Session: child, Instance: instance, Procedure: procedure, Project: project, Runner: run.Runner, Number: log.next()}
+	// Recorded before the process starts, so a server that dies in between
+	// leaves a round the wait step can fail (20261114-160323-d-tac-n0n).
+	launched := delegateRoundStart{Round: round.Number, Runner: run.Runner, LaunchedAt: a.now().UTC().Round(0), Timeout: timeout, Log: a.processes.Log(round)}
+	recorded, err := a.appendDelegateRecord(ctx, identity, child, workflowDelegateRoundCode, launched, nil)
+	if err == nil && !recorded {
+		err = fmt.Errorf("the delegate %s ended before its round %d started", child, round.Number)
+	}
+	if err != nil {
+		return "", err
+	}
+	process, err := a.processes.Start(ctx, round)
+	if err != nil {
+		return "", fmt.Errorf("starting the process of round %d of the delegate %s: %w", round.Number, child, err)
+	}
+	recorded, err = a.appendDelegateRecord(ctx, identity, child, workflowDelegateRoundProcessCode, delegateRoundProcess{Round: round.Number, PID: process.PID, Started: process.Started}, roundSettled(round.Number))
+	if err == nil && !recorded {
+		err = fmt.Errorf("round %d of the delegate %s ended before its process was recorded", round.Number, child)
+	}
+	if err != nil {
+		return "", errors.Join(err, a.processes.Stop(ctx, process, RoundProcess{}))
+	}
 	return run.Runner, nil
 }
 
-// runDelegateRound runs one round within timeout and keeps its outcome with
-// the child: the launcher's session, so the next round resumes it, or the
-// error, which the dispatching move's next call fails with. A failed round
-// ends the child. A child that ended during the round keeps nothing: it has
-// no round left.
-func (a *Application) runDelegateRound(ctx context.Context, identity RequestIdentity, child SessionID, instance string, run DelegateRun, timeout time.Duration) error {
-	_, _, stored, err := a.resolveSession(ctx, identity, child)
-	if err != nil {
+// roundSettled holds once round has its outcome.
+func roundSettled(round int) func(delegateRoundLog) bool {
+	return func(log delegateRoundLog) bool {
+		_, ok := log.outcome(round)
+		return ok
+	}
+}
+
+// RunLaunchedRound runs a round sdd launched, in the process RoundProcesses
+// started for it, whose PID is pid. It waits for the record of its process and
+// for the round before it to record its outcome, whose session it resumes;
+// runs the round through the launcher until its deadline; and records the
+// outcome with the child: the launcher's session, or the error, which also
+// ends the child. A round before it whose process ended without an outcome,
+// ran past its timeout or never started fails this one. A child that ended
+// meanwhile has no round left and keeps nothing.
+func (a *Application) RunLaunchedRound(ctx context.Context, identity RequestIdentity, round LaunchedRound, pid int) error {
+	if a.launcher == nil {
+		return errors.New("sdd: running a launched round needs the composition's DelegateLauncher")
+	}
+	start, err := a.awaitRoundStart(ctx, identity, round, pid)
+	if err != nil || start == nil {
 		return err
 	}
-	records, err := delegateLaunches(stored.Events)
-	if err != nil {
-		return err
+	log := slogutils.FromContext(ctx).With("session", round.Session, "round", round.Number, "runner", start.Runner)
+	log.Info("running the launched delegate round")
+	var previous delegateLaunchRecord
+	var roundErr error
+	for {
+		check, err := a.checkRounds(ctx, identity, round.Session)
+		if err != nil || check.ended {
+			return err
+		}
+		if _, done := check.log.outcome(round.Number); done {
+			return nil
+		}
+		if check.pending == nil || check.pending.Round >= round.Number {
+			previous, _ = check.log.outcome(round.Number - 1)
+			break
+		}
+		if check.lapse != model.RoundRunning {
+			roundErr = errors.New(lapseCause(fmt.Sprintf("round %d", check.pending.Round), check.lapse, *check.pending))
+			break
+		}
+		if err := pause(ctx); err != nil {
+			return err
+		}
 	}
-	delivered, err := delegateDeliveries(stored.Events)
-	if err != nil {
-		return err
-	}
-	round := DelegateRound{Number: len(records) + 1, Prompt: delegatePrompt(child, instance)}
-	if n := len(records); n > 0 && records[n-1].Session != "" {
-		round.Resume = records[n-1].Session
-		round.Prompt = delegateContinuePrompt(child, instance)
-	}
-	end, roundErr := roundWithin(ctx, run, round, timeout)
+	var end DelegateRoundEnd
 	if roundErr == nil {
-		idle, err := a.idleRound(ctx, identity, child, delivered, end.Message)
+		end, roundErr, err = a.runRound(ctx, identity, round, *start, previous)
 		if err != nil {
 			return err
 		}
-		if idle != "" {
-			roundErr = errors.New(idle)
+	}
+	record := delegateLaunchRecord{Round: round.Number, Session: end.Session, Runner: start.Runner, Ended: a.now().UTC().Round(0)}
+	if roundErr != nil {
+		record = delegateLaunchRecord{Round: round.Number, Runner: start.Runner, Error: fmt.Sprintf("the delegate's round %d (%s) failed: %v", round.Number, start.Runner, roundErr), Ended: record.Ended}
+		log.Warn("the launched delegate round failed", "err", roundErr)
+	} else {
+		log.Info("the launched delegate round ended", "resume", end.Session)
+	}
+	recorded, err := a.recordDelegateRound(ctx, identity, round.Session, record)
+	if err != nil || !recorded || roundErr == nil {
+		return err
+	}
+	return a.endDelegate(ctx, identity, round.Session, record.Error)
+}
+
+// awaitRoundStart waits for the record of the round's process, which names
+// this process; nil once the child ended or the round has its outcome first.
+func (a *Application) awaitRoundStart(ctx context.Context, identity RequestIdentity, round LaunchedRound, pid int) (*delegateRoundStart, error) {
+	limit := a.now().Add(model.RoundOutcomeMargin)
+	for {
+		log, ended, err := a.childRounds(ctx, identity, round.Session)
+		if err != nil || ended || roundSettled(round.Number)(log) {
+			return nil, err
+		}
+		if start, ok := log.start(round.Number); ok && start.process.PID != 0 {
+			if start.process.PID != pid {
+				return nil, fmt.Errorf("round %d of the delegate %s is recorded with process %d, not with this one (%d)", round.Number, round.Session, start.process.PID, pid)
+			}
+			return &start, nil
+		}
+		if a.now().After(limit) {
+			return nil, fmt.Errorf("round %d of the delegate %s was not recorded as started within %s", round.Number, round.Session, model.RoundOutcomeMargin)
+		}
+		if err := pause(ctx); err != nil {
+			return nil, err
 		}
 	}
-	record := delegateLaunchRecord{Round: round.Number, Session: end.Session, Runner: run.Runner}
-	if roundErr != nil {
-		record = delegateLaunchRecord{Round: round.Number, Runner: run.Runner, Error: fmt.Sprintf("the delegate's round %d (%s) failed: %v", round.Number, run.Runner, roundErr)}
+}
+
+// runRound runs the round through the launcher until its deadline, resuming
+// the session the previous round reported. roundErr is why the round failed;
+// err is a failure to run it at all.
+func (a *Application) runRound(ctx context.Context, identity RequestIdentity, round LaunchedRound, start delegateRoundStart, previous delegateLaunchRecord) (end DelegateRoundEnd, roundErr, err error) {
+	run, launchErr := a.launcher.LaunchDelegate(ctx, DelegateLaunch{Session: round.Session, Instance: round.Instance, Procedure: round.Procedure, Project: round.Project, Runner: start.Runner})
+	if launchErr != nil {
+		return DelegateRoundEnd{}, launchErr, nil
 	}
-	ended, err := a.recordDelegateRound(ctx, identity, child, record)
-	if err != nil || ended || roundErr == nil {
+	_, _, stored, err := a.resolveSession(ctx, identity, round.Session)
+	if err != nil {
+		return DelegateRoundEnd{}, nil, err
+	}
+	delivered, err := delegateDeliveries(stored.Events)
+	if err != nil {
+		return DelegateRoundEnd{}, nil, err
+	}
+	next := DelegateRound{Number: round.Number, Prompt: delegatePrompt(round.Session, round.Instance)}
+	next.AgentStarted = func(ctx context.Context, agent RoundProcess) error {
+		recorded, err := a.appendDelegateRecord(ctx, identity, round.Session, workflowDelegateRoundAgentCode, delegateRoundProcess{Round: round.Number, PID: agent.PID, Started: agent.Started}, roundSettled(round.Number))
+		if err == nil && !recorded {
+			err = fmt.Errorf("round %d of the delegate %s ended before its agent CLI was recorded", round.Number, round.Session)
+		}
+		return err
+	}
+	if previous.Session != "" {
+		next.Resume = previous.Session
+		next.Prompt = delegateContinuePrompt(round.Session, round.Instance)
+	}
+	deadline := model.RoundDeadline(start.LaunchedAt, previous.Ended, start.Timeout)
+	end, roundErr = roundWithin(ctx, run, next, deadline.Sub(a.now()), start.Timeout)
+	if roundErr != nil {
+		return end, roundErr, nil
+	}
+	idle, err := a.idleRound(ctx, identity, round.Session, delivered, end.Message)
+	if err != nil || idle == "" {
+		return end, nil, err
+	}
+	return end, errors.New(idle), nil
+}
+
+// lapseCause names why the launched round that recorded no outcome failed,
+// and its process's log; subject names the round.
+func lapseCause(subject string, lapse model.RoundLapse, round delegateRoundStart) string {
+	var cause string
+	switch lapse {
+	case model.RoundPastTimeout:
+		cause = fmt.Sprintf("%s ran past verify.round_timeout (%s) without recording an outcome", subject, round.Timeout)
+	case model.RoundNeverStarted:
+		cause = fmt.Sprintf("%s's process never started: it was not recorded as running within %s of the launch", subject, model.RoundOutcomeMargin)
+	default:
+		cause = subject + "'s process ended without recording an outcome"
+	}
+	return fmt.Sprintf("%s (its log: %s)", cause, round.Log)
+}
+
+func pause(ctx context.Context) error {
+	timer := time.NewTimer(roundPoll)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// roundCheck is a child's earliest launched round without an outcome, and
+// whether it lapsed.
+type roundCheck struct {
+	ended   bool
+	log     delegateRoundLog
+	pending *delegateRoundStart
+	lapse   model.RoundLapse
+}
+
+// checkRounds decides the child's earliest round without an outcome by its
+// process and its deadline.
+func (a *Application) checkRounds(ctx context.Context, identity RequestIdentity, child SessionID) (roundCheck, error) {
+	log, ended, err := a.childRounds(ctx, identity, child)
+	if err != nil || ended {
+		return roundCheck{ended: ended, log: log}, err
+	}
+	pending := log.pending()
+	if pending == nil {
+		return roundCheck{log: log}, nil
+	}
+	started := pending.process.PID != 0
+	alive := false
+	if started {
+		if a.processes == nil {
+			return roundCheck{}, fmt.Errorf("round %d of the delegate %s runs in a process this composition cannot check: it has no RoundProcesses", pending.Round, child)
+		}
+		alive, err = a.processes.Alive(ctx, pending.process)
+		if err != nil {
+			return roundCheck{}, fmt.Errorf("checking the process of round %d of the delegate %s: %w", pending.Round, child, err)
+		}
+	}
+	// Read again: a process that recorded its outcome and ended in between
+	// did not lapse, nor did one recorded as running in between.
+	log, ended, err = a.childRounds(ctx, identity, child)
+	if err != nil || ended {
+		return roundCheck{ended: ended, log: log}, err
+	}
+	if again := log.pending(); again == nil || again.Round != pending.Round || again.process != pending.process {
+		return roundCheck{log: log, pending: again}, nil
+	}
+	previous, _ := log.outcome(pending.Round - 1)
+	round := model.PendingRound{Launched: pending.LaunchedAt, Deadline: model.RoundDeadline(pending.LaunchedAt, previous.Ended, pending.Timeout), Started: started, Alive: alive}
+	return roundCheck{log: log, pending: pending, lapse: model.LapsedRound(round, a.now())}, nil
+}
+
+// failLapsedRound fails the child's round that lapsed without an outcome as
+// its process would have: the error recorded and the child ended. A round
+// whose process was recorded is stopped first: one past its timeout with its
+// process group, one whose process is gone with the agent CLI it left
+// running.
+func (a *Application) failLapsedRound(ctx context.Context, identity RequestIdentity, child SessionID) error {
+	check, err := a.checkRounds(ctx, identity, child)
+	if err != nil || check.ended || check.pending == nil || check.lapse == model.RoundRunning {
+		return err
+	}
+	pending := check.pending
+	if check.lapse == model.RoundPastTimeout || check.lapse == model.RoundProcessGone {
+		if err := a.processes.Stop(ctx, pending.process, pending.agent); err != nil {
+			return fmt.Errorf("stopping the process of round %d of the delegate %s: %w", pending.Round, child, err)
+		}
+	}
+	record := delegateLaunchRecord{Round: pending.Round, Runner: pending.Runner, Ended: a.now().UTC().Round(0),
+		Error: fmt.Sprintf("the delegate's round %d (%s) failed: %s", pending.Round, pending.Runner, lapseCause("the round", check.lapse, *pending))}
+	recorded, err := a.recordDelegateRound(ctx, identity, child, record)
+	if err != nil || !recorded {
 		return err
 	}
 	return a.endDelegate(ctx, identity, child, record.Error)
 }
 
-// roundWithin runs one round, stopped once it runs past timeout: its context
-// ends, which stops a headless runner's process, and the round fails without
-// waiting on a runner that keeps running.
-func roundWithin(ctx context.Context, run DelegateRun, round DelegateRound, timeout time.Duration) (DelegateRoundEnd, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+// stopRounds stops the process of every round of the ended child events
+// belong to that recorded no outcome. A round whose process was never
+// recorded has none to stop: a process that runs unrecorded finds the child
+// ended and runs nothing.
+func (a *Application) stopRounds(ctx context.Context, child SessionID, events []StoredEvent) error {
+	log, err := delegateRoundsOf(events)
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, start := range log.starts {
+		if _, ok := log.outcome(start.Round); ok || start.process.PID == 0 {
+			continue
+		}
+		if a.processes == nil {
+			return fmt.Errorf("round %d of the delegate %s runs in a process this composition cannot stop: it has no RoundProcesses", start.Round, child)
+		}
+		if err := a.processes.Stop(ctx, start.process, start.agent); err != nil {
+			failures = append(failures, fmt.Errorf("stopping the process of round %d of the delegate %s: %w", start.Round, child, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// childRounds reads what the child keeps of its launched rounds, and whether
+// it ended.
+func (a *Application) childRounds(ctx context.Context, identity RequestIdentity, child SessionID) (delegateRoundLog, bool, error) {
+	_, _, stored, err := a.resolveSession(ctx, identity, child)
+	if err != nil {
+		return delegateRoundLog{}, false, err
+	}
+	log, err := delegateRoundsOf(stored.Events)
+	return log, stored.Metadata.Ended != nil, err
+}
+
+// roundWithin runs one round, stopped once it runs for longer than remaining,
+// what its timeout leaves it: its context ends, which stops a headless
+// runner's process, and the round fails without waiting on a runner that
+// keeps running.
+func roundWithin(ctx context.Context, run DelegateRun, round DelegateRound, remaining, timeout time.Duration) (DelegateRoundEnd, error) {
+	ctx, cancel := context.WithTimeout(ctx, remaining)
 	defer cancel()
 	type ended struct {
 		end DelegateRoundEnd
@@ -577,35 +915,51 @@ func delegateDeliveries(events []StoredEvent) (int, error) {
 }
 
 // recordDelegateRound appends a round's outcome to the child session,
-// reporting whether the child had ended already.
+// reporting whether it did: a child that ended, or a round that has its
+// outcome already, keeps no other.
 func (a *Application) recordDelegateRound(ctx context.Context, identity RequestIdentity, child SessionID, record delegateLaunchRecord) (bool, error) {
+	return a.appendDelegateRecord(ctx, identity, child, workflowDelegateLaunchCode, record, roundSettled(record.Round))
+}
+
+// appendDelegateRecord appends record under code to the child session,
+// unless the child ended or kept holds for what it keeps already; it reports
+// whether it appended.
+func (a *Application) appendDelegateRecord(ctx context.Context, identity RequestIdentity, child SessionID, code string, record any, kept func(delegateRoundLog) bool) (bool, error) {
 	payload, err := json.Marshal(record)
 	if err != nil {
 		return false, err
 	}
-	for attempt := 0; ; attempt++ {
+	// The delegate's agent and the round's process write the child too.
+	const attempts = 3
+	for attempt := 1; ; attempt++ {
 		_, _, stored, err := a.resolveSession(ctx, identity, child)
 		if err != nil {
 			return false, err
 		}
 		if stored.Metadata.Ended != nil {
-			return true, nil
+			return false, nil
+		}
+		if kept != nil {
+			log, err := delegateRoundsOf(stored.Events)
+			if err != nil || kept(log) {
+				return false, err
+			}
 		}
 		metadata := stored.Metadata
 		metadata.UpdatedAt = a.now().UTC().Round(0)
-		_, err = a.sessions.Append(ctx, child, stored.Version, SessionAppend{Metadata: &metadata, Events: []StoredEvent{{CodecVersion: SessionCodecVersion, Code: workflowDelegateLaunchCode, Payload: payload}}})
-		var appErr *ApplicationError
-		if err != nil && attempt == 0 && errors.As(err, &appErr) && appErr.Code == ErrorSessionConflict {
+		_, err = a.sessions.Append(ctx, child, stored.Version, SessionAppend{Metadata: &metadata, Events: []StoredEvent{{CodecVersion: SessionCodecVersion, Code: code, Payload: payload}}})
+		if attempt < attempts && isSessionConflict(err) {
 			continue
 		}
-		return false, err
+		return err == nil, err
 	}
 }
 
 // failedRounds ends the fork of a delegate the instance dispatched whose
-// background round failed, so the move can report the failure and dispatch
-// afresh. The call fails with the round's error, unless the move waits at a
-// gate whose delegateEnded route takes the failure on.
+// launched round failed, so the move can report the failure and dispatch
+// afresh. A round without an outcome whose process is gone, or that ran past
+// its timeout, fails here. The call fails with the round's error, unless the
+// move waits at a gate whose delegateEnded route takes the failure on.
 func (w *WorkflowSession) failedRounds(ctx context.Context, identity RequestIdentity, instance string) error {
 	routed := false
 	if inst, ok := w.session.Instance(instance); ok {
@@ -617,7 +971,11 @@ func (w *WorkflowSession) failedRounds(ctx context.Context, identity RequestIden
 		if live.Instance != instance {
 			continue
 		}
-		_, _, stored, err := w.app.resolveSession(ctx, identity, SessionID(live.Fork.Child.Session))
+		child := SessionID(live.Fork.Child.Session)
+		if err := w.app.failLapsedRound(ctx, identity, child); err != nil {
+			return err
+		}
+		_, _, stored, err := w.app.resolveSession(ctx, identity, child)
 		if err != nil {
 			return err
 		}
@@ -640,21 +998,52 @@ func (w *WorkflowSession) failedRounds(ctx context.Context, identity RequestIden
 }
 
 func delegateLaunches(events []StoredEvent) ([]delegateLaunchRecord, error) {
-	var records []delegateLaunchRecord
+	log, err := delegateRoundsOf(events)
+	return log.outcomes, err
+}
+
+func delegateRoundsOf(events []StoredEvent) (delegateRoundLog, error) {
+	var log delegateRoundLog
 	for _, stored := range events {
-		if stored.Code != workflowDelegateLaunchCode {
+		switch stored.Code {
+		case workflowDelegateLaunchCode, workflowDelegateRoundCode, workflowDelegateRoundProcessCode, workflowDelegateRoundAgentCode:
+		default:
 			continue
 		}
 		if !SupportedSessionCodecVersion(stored.CodecVersion) {
-			return nil, &ApplicationError{Code: ErrorMigrationRequired, Message: "unsupported delegate launch event codec", Version: stored.CodecVersion}
+			return delegateRoundLog{}, &ApplicationError{Code: ErrorMigrationRequired, Message: "unsupported delegate launch event codec", Version: stored.CodecVersion}
 		}
-		var record delegateLaunchRecord
-		if err := json.Unmarshal(stored.Payload, &record); err != nil {
-			return nil, fmt.Errorf("decoding delegate launch event: %w", err)
+		switch stored.Code {
+		case workflowDelegateRoundCode:
+			var start delegateRoundStart
+			if err := json.Unmarshal(stored.Payload, &start); err != nil {
+				return delegateRoundLog{}, fmt.Errorf("decoding delegate round start event: %w", err)
+			}
+			log.starts = append(log.starts, start)
+		case workflowDelegateRoundProcessCode, workflowDelegateRoundAgentCode:
+			var process delegateRoundProcess
+			if err := json.Unmarshal(stored.Payload, &process); err != nil {
+				return delegateRoundLog{}, fmt.Errorf("decoding delegate round process event: %w", err)
+			}
+			start := log.launched(process.Round)
+			if start == nil {
+				return delegateRoundLog{}, fmt.Errorf("a process of round %d is recorded before the round's launch", process.Round)
+			}
+			recorded := RoundProcess{PID: process.PID, Started: process.Started}
+			if stored.Code == workflowDelegateRoundAgentCode {
+				start.agent = recorded
+			} else {
+				start.process = recorded
+			}
+		default:
+			var record delegateLaunchRecord
+			if err := json.Unmarshal(stored.Payload, &record); err != nil {
+				return delegateRoundLog{}, fmt.Errorf("decoding delegate launch event: %w", err)
+			}
+			log.outcomes = append(log.outcomes, record)
 		}
-		records = append(records, record)
 	}
-	return records, nil
+	return log, nil
 }
 
 // DelegateLaunches lists the launcher sessions kept with a delegate child

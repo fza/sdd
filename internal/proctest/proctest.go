@@ -26,6 +26,7 @@ import (
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 	localadapter "github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/test"
 )
 
 // PreflightFinding is a scripted pre-flight finding, marshaled in the shape
@@ -201,6 +202,7 @@ type config struct {
 	verifier    sdd.VerifierPolicy
 	window      *sdd.ModelWindow
 	launcher    sdd.DelegateLauncher
+	clock       sdd.Clock
 	checkout    fs.FS
 	hooks       sdd.HookCommands
 	relevance   sdd.RelevanceStore
@@ -251,6 +253,11 @@ func WithVerifier(policy sdd.VerifierPolicy, window, reserve int) Option {
 // through launcher, as a composition with headless launches does.
 func WithDelegateLauncher(launcher sdd.DelegateLauncher) Option {
 	return func(c *config) { c.launcher = launcher }
+}
+
+// WithClock makes clock the world's time source.
+func WithClock(clock sdd.Clock) Option {
+	return func(c *config) { c.clock = clock }
 }
 
 // WithCheckout gives the world's project a checkout the deep verifier's
@@ -365,8 +372,12 @@ type World struct {
 	// Sessions is the session store the application appends to.
 	Sessions sdd.SessionStore
 	LLM      *LLMScript
+	// Rounds runs the rounds a world with a delegate launcher launches.
+	Rounds *test.RoundProcesses
 
-	dropped map[string]bool
+	options  sdd.ApplicationOptions
+	sessions *test.ProcessSessions
+	dropped  map[string]bool
 }
 
 // DropBranch removes a registered branch's checkout: from here every read,
@@ -476,13 +487,35 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 	if err != nil {
 		t.Fatal(err)
 	}
-	application, err := sdd.NewApplication(sdd.ApplicationOptions{
-		Access: &accessResolver{runtime: runtime, participant: cfg.participant, dialogue: cfg.dialogue}, Sessions: sessions, StagedBlobs: blobs, DelegateLauncher: cfg.launcher,
-	})
+	world := &World{Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, Sessions: sessions, LLM: script, dropped: dropped}
+	world.options = sdd.ApplicationOptions{
+		Access: &accessResolver{runtime: runtime, participant: cfg.participant, dialogue: cfg.dialogue}, Sessions: sessions, StagedBlobs: blobs, DelegateLauncher: cfg.launcher, Clock: cfg.clock,
+	}
+	if cfg.launcher != nil {
+		world.Rounds = test.NewRoundProcesses(t)
+		world.options.RoundProcesses = world.Rounds
+		world.Rounds.Runs(world.options, world.Identity)
+	}
+	world.Restart(t)
+	return world
+}
+
+// Restart replaces the world's application with a fresh one over the same
+// stores, as a server that started anew; the one it replaces writes nothing
+// more.
+func (w *World) Restart(t *testing.T) {
+	t.Helper()
+	if w.sessions != nil {
+		w.sessions.Kill()
+	}
+	w.sessions = &test.ProcessSessions{SessionStore: w.options.Sessions}
+	options := w.options
+	options.Sessions = w.sessions
+	application, err := sdd.NewApplication(options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &World{App: application, Identity: sdd.RequestIdentity{Subject: "tester"}, GraphDir: cfg.graphDir, StagedBlobDir: stagedBlobDir, Sessions: sessions, LLM: script, dropped: dropped}
+	w.App = application
 }
 
 // Session wraps one workflow session on the world.

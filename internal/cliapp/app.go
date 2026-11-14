@@ -515,7 +515,7 @@ func New(options Options) *cli.Command {
 			if cmd.Bool("timing") {
 				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
 			}
-			if cmd.Args().First() == mergeEntryCommandName || cmd.Args().First() == mergeConfigCommandName {
+			if first := cmd.Args().First(); first == mergeEntryCommandName || first == mergeConfigCommandName || first == delegateRoundCommandName {
 				return ctx, nil
 			}
 
@@ -581,6 +581,7 @@ func New(options Options) *cli.Command {
 			dismissCmd(),
 			groundingCmd(),
 			serveCmd(options.LaunchCachePrune),
+			delegateRoundCmd(),
 			sessionsCmd(),
 			eventsCmd(),
 			relevanceCmd(),

@@ -20,6 +20,7 @@ import (
 	"github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/roundproc"
 )
 
 // CurrentHashSource supplies the current state hash of each entry in the
@@ -233,6 +234,15 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time, scheduled bool)
 		if err := h.secretRules.Update(ctx); err != nil {
 			log.Warn("fetching gitleaks' newest rule file", "err", err)
 		}
+	}
+
+	logs, freed, err := roundproc.PruneLogs(filepath.Join(h.stateRoot, roundproc.LogDirName), now, retention)
+	counts.Bytes += freed
+	if err != nil {
+		errs = append(errs, fmt.Errorf("pruning round logs: %w", err))
+	}
+	if logs > 0 {
+		log.Info("removed round logs", "logs", logs, "bytes", freed)
 	}
 
 	clones, err := h.registry.UnconnectedClones()

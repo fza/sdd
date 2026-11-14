@@ -1,10 +1,11 @@
 #!/bin/sh
-# A fake agent CLI. It records its working folder, arguments, environment and
-# stdin under FAKE_AGENT_DIR, then answers with the stdout, stderr and exit
+# A fake agent CLI. It records its PID, working folder, arguments, environment
+# and stdin under FAKE_AGENT_DIR, then answers with the stdout, stderr and exit
 # status the test left there for its name. A <name>.hang file makes it outlive
 # the round.
 record="$FAKE_AGENT_DIR/${0##*/}"
 {
+  printf 'pid=%s\n' "$$"
   printf 'cwd=%s\n' "$PWD"
   for arg in "$@"; do printf 'arg=%s\n' "$arg"; done
 } > "$record.call"
