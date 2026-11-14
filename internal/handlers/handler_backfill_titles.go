@@ -25,8 +25,8 @@ type TitlesLock interface {
 }
 
 // BackfillTitles titles the graph's untitled entries through the batch path
-// of Summarize and commits them as one `sdd: summarize N entries` commit
-// (20261105-233807-d-tac-831). A failure is recorded beside the blocked-sync
+// of Summarize and commits them as one `sdd: summarize N entries` commit.
+// A failure is recorded beside the blocked-sync
 // record for the sync notice, never failing the trigger; a run that succeeds
 // clears it.
 func (h *Handler) BackfillTitles(ctx context.Context, cmd *command.BackfillTitlesCmd) error {

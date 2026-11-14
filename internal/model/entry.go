@@ -488,7 +488,7 @@ func TitleBackfill(entries []*Entry) (withSummary, titleOnly int) {
 }
 
 // TitleBackfillBatch is the most untitled entries one background backfill
-// titles (20261105-233807-d-tac-831); the rest wait for a later trigger.
+// titles; the rest wait for a later trigger.
 const TitleBackfillBatch = 10
 
 // UntitledNewestFirst returns up to limit entries without a title, newest

@@ -15,7 +15,7 @@ import (
 )
 
 // initGraphRepo sets up a code repository whose graph lives in the graph
-// repository cmd.GraphRepo (20261106-202055-d-tac-eyl): the graph is cloned
+// repository cmd.GraphRepo: the graph is cloned
 // into sdd's own clone, set up or refreshed there and pushed; the code
 // repository receives graph_repo, the stock guard and the agent surfaces in
 // one commit.

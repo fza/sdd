@@ -96,7 +96,7 @@ type BaseConfig struct {
 	// project where the same person deliberately uses another spelling.
 	Participant string `yaml:"participant,omitempty"`
 	// Connected is the writing side's gate on capturing into a connected
-	// graph (20261106-201216-d-cpt-aim).
+	// graph.
 	Connected ConnectedConfig `yaml:"connected,omitempty"`
 }
 
@@ -161,8 +161,8 @@ type PerRepoConfig struct {
 	// PointerKeys and LocalPointerKeys.
 	ProjectDir string `yaml:"project_dir,omitempty"`
 	// GraphRepo points a code repository at the repository holding its graph,
-	// which sdd reads and writes only through the clone it owns
-	// (20261106-201216-d-cpt-aim). Beside project_dir it wins.
+	// which sdd reads and writes only through the clone it owns. Beside
+	// project_dir it wins.
 	GraphRepo RepoID `yaml:"graph_repo,omitempty"`
 	// Inbound is the receiving graph's gate on captures written from another
 	// project; only the committed .sdd/config.yaml sets it.
@@ -184,7 +184,7 @@ var LocalPointerKeys = []string{"project_dir"}
 
 // GraphRepoPointerKeys are the keys a committed config may set beside
 // graph_repo: the pointer keys, project_dir for older builds and graph_dir for
-// the stock guard (20261106-202055-d-tac-eyl).
+// the stock guard.
 var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents"}
 
 // TopLevelKeys returns the top-level keys of a YAML mapping, in file order.

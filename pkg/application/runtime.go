@@ -68,9 +68,8 @@ type GraphSync interface {
 	// SyncBlocked reads what blocks sync of branch, nil while sync proceeds.
 	SyncBlocked(ctx context.Context, branch string) (*SyncBlocked, error)
 	// BackfillTitles titles the untitled entries of branch's graph through
-	// runner and records a failure for the sync notice
-	// (20261105-233807-d-tac-831); it returns at once while another backfill
-	// runs in the checkout.
+	// runner and records a failure for the sync notice; it returns at once
+	// while another backfill runs in the checkout.
 	BackfillTitles(ctx context.Context, branch string, trigger SyncTrigger, runner llm.Runner) error
 }
 

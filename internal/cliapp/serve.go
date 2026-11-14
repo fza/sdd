@@ -242,7 +242,7 @@ type cachedDependencies struct {
 	closure  *finders.Finder
 	build    func(repos.Cache, *model.PerRepoConfig) (*sdd.ProjectRuntime, error)
 	// writer, connected and clones serve a capture into a dependency: the
-	// gates of 20261106-201216-d-cpt-aim decide, and the capture writes
+	// connected.write and inbound.accept gates decide, and the capture writes
 	// through the dependency's sdd-owned clone, built by buildWritable.
 	writer        sdd.RepoID
 	connected     model.ConnectedConfig

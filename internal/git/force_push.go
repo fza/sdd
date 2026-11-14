@@ -16,10 +16,9 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// An upstream force push in the sdd-owned graph clone
-// (20261106-202055-d-tac-eyl): the clone follows the rewrite locally, keeps
-// sdd's title and summary changes to entries that survive it, and sets aside
-// the entries and attachments sdd had not pushed.
+// An upstream force push in the sdd-owned graph clone: the clone follows the
+// rewrite locally, keeps sdd's title and summary changes to entries that
+// survive it, and sets aside the entries and attachments sdd had not pushed.
 
 const (
 	fetchedTipFile  = "sdd-upstream"

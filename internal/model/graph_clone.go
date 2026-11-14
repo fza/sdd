@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// The sdd-owned clone of a graph repository (20261106-202055-d-tac-eyl):
+// The sdd-owned clone of a graph repository:
 // one partial sparse clone per repository id that only sdd works in.
 const (
 	// GraphCloneMarker sits at the clone's root and tells a person that hand

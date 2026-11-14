@@ -24,7 +24,7 @@ type GraphCloneGit interface {
 
 // GraphClones owns the sdd-owned clone of every graph repository this
 // machine reads or writes, one per repository id under
-// <DataRoot>/repos/<repo-id>/ (20261106-201216-d-cpt-aim).
+// <DataRoot>/repos/<repo-id>/.
 type GraphClones struct {
 	root string
 	git  GraphCloneGit

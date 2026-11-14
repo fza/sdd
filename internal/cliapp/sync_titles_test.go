@@ -9,7 +9,7 @@ import (
 )
 
 // An explicit sync titles the untitled entries before it returns, under
-// either sync mode (20261105-233807-d-tac-831).
+// either sync mode.
 func TestExplicitSyncBackfillsTitles(t *testing.T) {
 	for _, tc := range []struct {
 		mode string

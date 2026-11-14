@@ -84,7 +84,7 @@ func syncCmd() *cli.Command {
 }
 
 // backfillTitles titles the untitled entries of graphDir after an explicit
-// sync, waiting for it (20261105-233807-d-tac-831). A failure is recorded and
+// sync, waiting for it. A failure is recorded and
 // printed as the sync banner, as a blocked sync is, and leaves the sync
 // itself successful.
 func backfillTitles(ctx context.Context, cmd *cli.Command, graphDir string) error {

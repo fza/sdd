@@ -21,9 +21,8 @@ const (
 	SyncBlockedFetchFailed  SyncBlockedKind = "fetch-failed"
 	SyncBlockedPushFailed   SyncBlockedKind = "push-failed"
 	SyncBlockedGraphMissing SyncBlockedKind = "graph-missing"
-	// SyncBlockedTitles records a failed background title backfill
-	// (20261105-233807-d-tac-831). It blocks no sync; the record only carries
-	// the failure to the sync notice.
+	// SyncBlockedTitles records a failed background title backfill. It blocks
+	// no sync; the record only carries the failure to the sync notice.
 	SyncBlockedTitles SyncBlockedKind = "titles-failed"
 )
 

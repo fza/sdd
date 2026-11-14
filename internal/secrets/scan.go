@@ -345,8 +345,7 @@ func shannonEntropy(data string) float64 {
 const genericAPIKeyRule = "generic-api-key"
 
 // credentialShaped reports whether a generic-api-key value carries a digit or
-// mixed-case letters; prose shaped like an assignment carries neither
-// (20261101-021050-d-tac-jac).
+// mixed-case letters; prose shaped like an assignment carries neither.
 func credentialShaped(value string) bool {
 	var lower, upper bool
 	for _, r := range value {

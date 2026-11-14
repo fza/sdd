@@ -37,8 +37,7 @@ type SummarizeCmd struct {
 	OnSkipped func(id string)
 	// Backfill titles only untitled entries, newest first and at most
 	// model.TitleBackfillBatch of them; each is re-read under the graph lock
-	// before it is written and skipped when it gained a title meanwhile
-	// (20261105-233807-d-tac-831).
+	// before it is written and skipped when it gained a title meanwhile.
 	Backfill bool
 }
 

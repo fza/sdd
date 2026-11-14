@@ -7,8 +7,7 @@ import (
 )
 
 // SyncBlockedSetAside holds entries an upstream force push set aside in the
-// sdd-owned graph clone until an agent re-captures or discards each
-// (20261106-202055-d-tac-eyl).
+// sdd-owned graph clone until an agent re-captures or discards each.
 const SyncBlockedSetAside SyncBlockedKind = "set-aside"
 
 // SetAside is what upstream force pushes set aside in the sdd-owned graph

@@ -20,7 +20,7 @@ type SetAsideJudge interface {
 // settleSetAside re-adds every entry an upstream force push set aside that
 // supersedes or refines an entry, names only entries the graph holds, and
 // passes the mechanical pre-flight; the rest is the block it returns, nil
-// once nothing is left (20261106-202055-d-tac-eyl).
+// once nothing is left.
 func (h *Handler) settleSetAside(ctx context.Context) (*model.SyncBlocked, error) {
 	if h.graphClone == nil {
 		return nil, nil
