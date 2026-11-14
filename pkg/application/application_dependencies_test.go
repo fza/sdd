@@ -38,6 +38,9 @@ func (noBlobStore) Open(context.Context, sdd.SessionRef, string) (io.ReadCloser,
 	return io.NopCloser(strings.NewReader("")), nil
 }
 func (noBlobStore) DeleteStaged(context.Context, sdd.SessionRef) error { return nil }
+func (noBlobStore) DeleteBlob(context.Context, sdd.SessionRef, string) error {
+	return nil
+}
 
 type noSessionStore struct{}
 

@@ -288,3 +288,7 @@ func (b servedBlobs) Open(ctx context.Context, ref sdd.SessionRef, id string) (i
 func (b servedBlobs) DeleteStaged(ctx context.Context, ref sdd.SessionRef) error {
 	return b.store().DeleteStaged(ctx, ref)
 }
+
+func (b servedBlobs) DeleteBlob(ctx context.Context, ref sdd.SessionRef, id string) error {
+	return b.store().DeleteBlob(ctx, ref, id)
+}
