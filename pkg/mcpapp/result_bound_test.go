@@ -15,6 +15,7 @@ import (
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
+	"github.com/networkteam/sdd/test"
 )
 
 // boundedResults fails the test for every result whose text content, what
@@ -245,6 +246,62 @@ func TestANoProofAgentReachesEveryWaitingLane(t *testing.T) {
 			})
 		}
 	}
+}
+
+// A follow-up that lists in reread a lane the result before sent, by its name
+// or its tag, serves that lane in full rather than as its pointer.
+func TestAFollowUpRereadServesASentLaneInFull(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reread func(tag string) string
+	}{
+		{"by name", func(string) string { return "lane first" }},
+		{"by tag", func(tag string) string { return tag }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newTestServer(t, nil, writeLaneStepGraph(t, wideLanes("first", "second", "third")...), "")
+			cs, _ := boundedConnect(t, env.srv, false)
+			session := openSession(t, cs).Session
+			var serve mcpserver.ServeResult
+			call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step"}, &serve)
+			requireWaitingLane(t, serve)
+			first := firstLaneProof(t, serve.Instructions)
+			call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "reread": []any{tc.reread(first.Tag)}}, &serve)
+			if !strings.Contains(test.Untagged(serve.Instructions), "Lane first holds a line of its guidance.") {
+				t.Fatalf("the reread lane should serve in full, got %.600q", serve.Instructions)
+			}
+		})
+	}
+}
+
+// A follow-up proving a lane the result before sent with a wrong word serves
+// that lane in full, as its proof notice says.
+func TestAFollowUpWrongProofServesASentLaneInFull(t *testing.T) {
+	env := newTestServer(t, nil, writeLaneStepGraph(t, wideLanes("first", "second", "third")...), "")
+	cs, _ := boundedConnect(t, env.srv, false)
+	session := openSession(t, cs).Session
+	var serve mcpserver.ServeResult
+	call(t, cs, "start_procedure", map[string]any{"session": session, "canonical": "wide-step"}, &serve)
+	requireWaitingLane(t, serve)
+	wrong := model.Proof{Tag: firstLaneProof(t, serve.Instructions).Tag, Word: "where"}
+	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "held": []any{wrong.String()}}, &serve)
+	if !strings.Contains(test.Untagged(serve.Instructions), "Lane first holds a line of its guidance.") {
+		t.Errorf("the lane whose proof failed should serve in full, got %.600q", serve.Instructions)
+	}
+	if !strings.Contains(serve.ProofNotice, wrong.String()+" (not the word after that tag)") {
+		t.Errorf("the proof notice should name the failed proof, got %q", serve.ProofNotice)
+	}
+}
+
+// firstLaneProof reads the proof of lane first from instructions that serve
+// it in full ahead of lane second.
+func firstLaneProof(t *testing.T, instructions string) model.Proof {
+	t.Helper()
+	end := strings.Index(instructions, "Lane second holds")
+	if end < 0 {
+		t.Fatalf("the instructions should serve lane second after lane first, got %.300q", instructions)
+	}
+	return proofOf(t, instructions[:end], "lane first")
 }
 
 // followWaitingLanes calls next with no report on a serve whose lanes wait

@@ -74,7 +74,9 @@ func (s *Session) BeginCall(held []model.Proof, reread []string) {
 
 // Holds reports whether the call in flight holds the piece, with the tag it
 // holds it under: received earlier in this call, or proved by tag and word.
-// An entry also counts as held when the proved piece carried it whole.
+// An entry also counts as held when the proved piece carried it whole. A
+// piece the deferral the call follows sent counts as held without a proof,
+// unless the call lists it in reread or proves its tag with a wrong word.
 func (s *Session) Holds(p Piece) (string, bool) {
 	if tag, ok := s.call.issued[p]; ok {
 		return tag, true
@@ -99,7 +101,11 @@ func (s *Session) Holds(p Piece) (string, bool) {
 			return proof.Tag, true
 		}
 	}
-	return "", false
+	tag, ok := s.call.followed[p]
+	if !ok || s.call.reread[tag] || slices.ContainsFunc(s.call.held, func(proof model.Proof) bool { return proof.Tag == tag }) {
+		return "", false
+	}
+	return tag, true
 }
 
 // FailedProof is a proof the call carries that holds no piece: Issued
@@ -260,20 +266,10 @@ func (s *Session) foldAnchor(record any) {
 // serve of its step that left lanes waiting past the result bound: the
 // pieces the deferral sent count as held in it, without a proof, as the
 // result before carried them, so an agent listing no proofs still reaches the
-// waiting lanes, by a plain next and by a report alike. Called before the
-// serve composes, so the entries it carries print as pointers too.
+// waiting lanes, by a plain next and by a report alike (Holds). Called before
+// the serve composes, so the entries it carries print as pointers too.
 func (s *Session) FollowDeferral(instance string) {
-	sent, ok := s.deferred[instance]
-	if !ok {
-		return
-	}
-	if s.call.issued == nil {
-		s.call.issued, s.call.covered = map[Piece]string{}, map[string]string{}
-	}
-	for p, tag := range sent {
-		s.call.issued[p] = tag
-	}
-	s.call.followed = sent
+	s.call.followed = s.deferred[instance]
 }
 
 // EndDeferral ends the instance's deferral. Every serve of the instance
