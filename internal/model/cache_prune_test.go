@@ -32,6 +32,30 @@ func TestResolveCacheRetention(t *testing.T) {
 	}
 }
 
+func TestResolveReplacedRetention(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		raw     string
+		want    time.Duration
+		wantErr bool
+	}{
+		{raw: "", want: 14 * 24 * time.Hour},
+		{raw: "3d", want: 3 * 24 * time.Hour},
+		{raw: "36h", want: 36 * time.Hour},
+		{raw: "-1h", wantErr: true},
+		{raw: "later", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			t.Parallel()
+			got, err := model.ResolveReplacedRetention(model.IndexConfig{ReplacedRetention: tc.raw})
+			if (err != nil) != tc.wantErr || got != tc.want {
+				t.Errorf("retention resolved to %v, %v; want %v, error %v", got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestCachePruneStatusDue(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)

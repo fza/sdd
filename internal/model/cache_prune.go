@@ -44,6 +44,32 @@ func ResolveCacheRetention(cfg CacheConfig) (time.Duration, error) {
 	return d, nil
 }
 
+// DefaultReplacedRetention is how long replaced index data survives the
+// daily sweep after its replacement or last use (20261114-095140-d-cpt-ad4).
+const DefaultReplacedRetention = "14d"
+
+// IndexConfig holds the machine-global search index settings; user-global
+// only, for the reason CacheConfig is.
+type IndexConfig struct {
+	// ReplacedRetention is days ("14d") or a Go duration. Empty means
+	// DefaultReplacedRetention.
+	ReplacedRetention string `yaml:"replaced_retention,omitempty"`
+}
+
+// ResolveReplacedRetention returns the effective index.replaced_retention. A
+// value that does not parse is a config error the caller must surface.
+func ResolveReplacedRetention(cfg IndexConfig) (time.Duration, error) {
+	raw := strings.TrimSpace(cfg.ReplacedRetention)
+	if raw == "" {
+		raw = DefaultReplacedRetention
+	}
+	d, err := parseDaysOrDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("index.replaced_retention: %q is not a positive duration; use days (%q) or a Go duration (%q)", raw, "14d", "336h")
+	}
+	return d, nil
+}
+
 // CachePruneStatus is the record of the latest background pruning run.
 type CachePruneStatus struct {
 	// LaunchedAt is when a command last started a background run; StartedAt

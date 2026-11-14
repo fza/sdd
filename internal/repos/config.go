@@ -95,6 +95,7 @@ type GlobalConfig struct {
 	Repos []ConnectedRepo `yaml:"repos,omitempty"`
 
 	Cache model.CacheConfig `yaml:"cache,omitempty"`
+	Index model.IndexConfig `yaml:"index,omitempty"`
 }
 
 // ConnectedRepo names one connection: the canonical repo identity and the

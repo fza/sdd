@@ -134,3 +134,16 @@ func TestConfigSetCacheRetention(t *testing.T) {
 		t.Error("a per-repo retention should be refused: the cache is machine-global")
 	}
 }
+
+func TestConfigSetIndexReplacedRetention(t *testing.T) {
+	f := newAppFixture(t)
+	if r := f.run(t, "config", "set", "index.replaced_retention", "7d"); r.err != nil {
+		t.Errorf("a valid retention should be accepted globally: %v\n%s", r.err, r.stderr)
+	}
+	if r := f.run(t, "config", "set", "index.replaced_retention", "later"); r.err == nil || !strings.Contains(r.err.Error(), "positive duration") {
+		t.Error("an invalid retention should be refused")
+	}
+	if r := f.run(t, "config", "set", "--local", "index.replaced_retention", "7d"); r.err == nil || !strings.Contains(r.err.Error(), "not a valid per-repo config key") {
+		t.Error("a per-repo retention should be refused: the index is machine-global")
+	}
+}
