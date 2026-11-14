@@ -36,8 +36,7 @@ const (
 // crash interrupted is finished by the next run.
 const prunedSuffix = ".pruned"
 
-// Retention bounds how long pruning keeps index data
-// (20261114-095140-d-cpt-ad4).
+// Retention bounds how long pruning keeps index data.
 type Retention struct {
 	// Unused is cache.retention: a store nothing used, versions of a rule
 	// newer than this binary's, and checkout records.

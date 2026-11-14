@@ -12,7 +12,7 @@ import (
 
 // PruneRecords drops the records of repositories the gate has neither admitted
 // an operation for nor leased within retention, and whose next allowed times
-// have passed, and reports how many went (20261114-095140-d-cpt-ad4).
+// have passed, and reports how many went.
 func (g *Gate) PruneRecords(ctx context.Context, now time.Time, retention time.Duration) (int, error) {
 	unlock, err := g.store.lock(ctx, false)
 	if err != nil {

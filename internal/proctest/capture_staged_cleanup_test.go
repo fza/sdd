@@ -65,8 +65,7 @@ func TestCapture_APendingWriteKeepsItsStagedAttachments(t *testing.T) {
 }
 
 // A staged attachment goes once the entry using it is published, and the
-// session's other staged attachments when the session ends
-// (20261114-095140-d-cpt-ad4, rule 1).
+// session's other staged attachments when the session ends.
 func TestCapture_PublicationAndSessionEndFreeStagedAttachments(t *testing.T) {
 	for _, scenario := range []struct {
 		name string

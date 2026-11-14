@@ -347,8 +347,7 @@ func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSettin
 	var ignored []IgnoredSetting
 	if source != ConfigSourceGlobal {
 		ignored = append(ignored, misplacedGitLimits(layer.Sync)...)
-		// The daily sweep collects every project's sessions under one value
-		// (20261114-095140-d-cpt-ad4).
+		// The daily sweep collects every project's sessions under one value.
 		if layer.Sessions.Retention != "" {
 			ignored = append(ignored, IgnoredSetting{Key: "sessions.retention", Reason: globalOnlyReason})
 		}

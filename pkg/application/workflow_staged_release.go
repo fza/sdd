@@ -9,8 +9,7 @@ import (
 )
 
 // workflowStagedBlobReleasedCode records a staged attachment deleted once the
-// entry using it was published (20261114-095140-d-cpt-ad4, rule 1): its handle
-// no longer names a staged file.
+// entry using it was published: its handle no longer names a staged file.
 const workflowStagedBlobReleasedCode = "workflow_staged_blob_released"
 
 type stagedBlobRelease struct {
@@ -137,7 +136,7 @@ func claimHandles(claims map[string]bool, inst *engine.Instance, staged map[stri
 }
 
 // freeEndedSession deletes an ended session's staged files but those claims
-// names (20261114-095140-d-cpt-ad4, rule 1).
+// names.
 func (a *Application) freeEndedSession(ctx context.Context, ref SessionRef, events []StoredEvent, claims map[string]bool) error {
 	if len(claims) == 0 {
 		return a.blobs.DeleteStaged(ctx, ref)

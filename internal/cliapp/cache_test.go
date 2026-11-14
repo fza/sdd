@@ -153,7 +153,7 @@ func TestConfigSetIndexReplacedRetention(t *testing.T) {
 }
 
 // Session collection runs in the daily sweep, also with no server running,
-// and no longer when sdd serve starts (20261114-095140-d-cpt-ad4).
+// and no longer when sdd serve starts.
 func TestTheSweepCollectsSessionsAndServeDoesNot(t *testing.T) {
 	f := newAppFixture(t)
 	location := localadapter.StoreLocation{

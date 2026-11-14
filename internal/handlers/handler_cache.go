@@ -362,8 +362,8 @@ func (h *CacheHandler) pruneRecords(ctx context.Context, now time.Time, retentio
 	return errs
 }
 
-// pruneIndex applies the index rules of 20261114-095140-d-cpt-ad4 to every
-// store, the longest pass, which the run limit cuts short first.
+// pruneIndex applies the index retention rules to every store, the longest
+// pass, which the run limit cuts short first.
 func (h *CacheHandler) pruneIndex(ctx context.Context, now time.Time, r index.Retention, keepFor func(string) (map[string]string, error), counts *model.CachePruneCounts) []error {
 	log := slogutils.FromContext(ctx)
 	var errs []error
