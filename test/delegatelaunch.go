@@ -48,6 +48,8 @@ type AgentCall struct {
 	Dir   string
 	Args  []string
 	Stdin string
+	// Env holds the agent's environment as NAME=value lines.
+	Env []string
 }
 
 // LastAgentCall reads how the fake agent called name was last called.
@@ -72,6 +74,11 @@ func LastAgentCall(t testing.TB, dir, name string) AgentCall {
 		t.Fatal(err)
 	}
 	call.Stdin = string(stdin)
+	env, err := os.ReadFile(filepath.Join(dir, name+".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call.Env = strings.Split(strings.TrimSuffix(string(env), "\n"), "\n")
 	return call
 }
 
