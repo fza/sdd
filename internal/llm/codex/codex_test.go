@@ -31,6 +31,7 @@ func fakeCLI(t *testing.T, events string) string {
 	script := "#!/bin/sh\n" +
 		"for a in \"$@\"; do printf '%s\\0' \"$a\"; done > '" + dir + "/args'\n" +
 		"pwd > '" + dir + "/cwd'\n" +
+		"env > '" + dir + "/env'\n" +
 		"prev=''\nfor a in \"$@\"; do if [ \"$prev\" = --output-schema ]; then cp \"$a\" '" + dir + "/schema'; fi; prev=\"$a\"; done\n" +
 		"cat > '" + dir + "/stdin'\n" +
 		"cat '" + dir + "/events.jsonl'\n"
@@ -125,6 +126,40 @@ func TestRunLeavesCodexDefaults(t *testing.T) {
 	args := recordedArgs(t, dir)
 	if slices.Contains(args, "-m") || slices.Contains(args, "--output-schema") || strings.Contains(strings.Join(args, " "), "model_reasoning_effort") {
 		t.Errorf("empty model and effort and no schema should pass none of them, got %q", args)
+	}
+}
+
+// The child answers on the Codex login, never on a key or endpoint the
+// invoking shell happens to export; the rest of the environment passes.
+func TestRunLeavesInheritedCredentialsOut(t *testing.T) {
+	dir := fakeCLI(t, answered)
+	t.Setenv("OPENAI_API_KEY", "sk-inherited")
+	t.Setenv("CODEX_API_KEY", "inherited")
+	t.Setenv("OPENAI_BASE_URL", "https://inherited.example")
+	t.Setenv("CODEX_HOME", "/home/codex")
+
+	if _, err := codex.NewRunner("", "").Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	env := strings.Split(recorded(t, dir, "env"), "\n")
+	for _, name := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"} {
+		if slices.ContainsFunc(env, func(entry string) bool { return strings.HasPrefix(entry, name+"=") }) {
+			t.Errorf("an inherited credential should not reach the child, got %s", name)
+		}
+	}
+	if !slices.Contains(env, "CODEX_HOME=/home/codex") || !slices.Contains(env, "PATH="+os.Getenv("PATH")) {
+		t.Error("the child should keep the rest of the environment")
+	}
+}
+
+func TestScrubbedEnv(t *testing.T) {
+	env := []string{"PATH=/bin", "OPENAI_API_KEY=sk-1", "CODEX_API_KEY=c-1", "OPENAI_BASE_URL=https://x", "OPENAI_API_KEY_HINT=sk-look-alike", "OTHER_API_KEY=o-1"}
+
+	got := codex.ScrubbedEnv(env)
+
+	if want := []string{"PATH=/bin", "OPENAI_API_KEY_HINT=sk-look-alike", "OTHER_API_KEY=o-1"}; !slices.Equal(got, want) {
+		t.Errorf("only the credential variables, matched by name, should go, got %q", got)
 	}
 }
 

@@ -12,11 +12,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/networkteam/sdd/internal/llm/codex"
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -158,7 +160,7 @@ func runClaude(ctx context.Context, settings Settings, round Round) (Launched, e
 	if err != nil {
 		return Launched{}, err
 	}
-	out, err := run(ctx, settings.WorkDir, "claude", args, round.Prompt)
+	out, err := run(ctx, settings.WorkDir, nil, "claude", args, round.Prompt)
 	if err != nil {
 		return Launched{}, err
 	}
@@ -181,13 +183,15 @@ func runClaude(ctx context.Context, settings Settings, round Round) (Launched, e
 }
 
 // CodexArgs are the flags of a headless codex round (V-D18): exec with JSON
-// events in a read-only sandbox, no project instructions (a zero byte budget
-// for AGENTS.md), sdd as an MCP server whose tools run unasked, since exec's
-// approval policy never asks and refuses every tool needing approval, and
-// the round's prompt; a later round resumes the first round's session.
+// events in a read-only sandbox, without the user's config.toml (its MCP
+// servers, profiles and provider) or execpolicy rules, no project
+// instructions (a zero byte budget for AGENTS.md), sdd as the only MCP
+// server, whose tools run unasked since exec's approval policy never asks and
+// refuses every tool needing approval, and the round's prompt; a later round
+// resumes the first round's session.
 func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
 	args := []string{
-		"exec", "--json", "--sandbox", "read-only",
+		"exec", "--json", "--sandbox", "read-only", "--ignore-user-config", "--ignore-rules",
 		"-c", "project_doc_max_bytes=0",
 		"-c", "mcp_servers.sdd.command=" + strconv.Quote(sdd),
 		"-c", `mcp_servers.sdd.args=["serve"]`,
@@ -206,7 +210,7 @@ func CodexArgs(sdd, resume, prompt string, agent model.VerifierAgent) []string {
 }
 
 func runCodex(ctx context.Context, settings Settings, round Round) (Launched, error) {
-	out, runErr := run(ctx, settings.WorkDir, "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "")
+	out, runErr := run(ctx, settings.WorkDir, codex.ScrubbedEnv(os.Environ()), "codex", CodexArgs(settings.SDD, round.Resume, round.Prompt, settings.Codex), "")
 	launched := Launched{Session: round.Resume}
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		var event struct {
@@ -271,7 +275,7 @@ func runDriver(ctx context.Context, settings Settings, round Round) (string, err
 	if err != nil {
 		return "", err
 	}
-	out, err := run(ctx, settings.WorkDir, settings.Driver.Command, settings.Driver.Args, string(request))
+	out, err := run(ctx, settings.WorkDir, nil, settings.Driver.Command, settings.Driver.Args, string(request))
 	if err != nil {
 		return "", err
 	}
@@ -285,9 +289,11 @@ func runDriver(ctx context.Context, settings Settings, round Round) (string, err
 	return *answer.DriverState, nil
 }
 
-func run(ctx context.Context, dir, name string, args []string, stdin string) ([]byte, error) {
+// run runs name in dir with env, the inherited environment when nil.
+func run(ctx context.Context, dir string, env []string, name string, args []string, stdin string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	cmd.Env = env
 	cmd.Stdin = strings.NewReader(stdin)
 	// A killed agent's own children may still hold its output open.
 	cmd.WaitDelay = 5 * time.Second

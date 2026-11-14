@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,25 @@ import (
 
 // provider is the name this runner reports in its identity.
 const provider = "codex"
+
+// credentialEnvVars name the variables codex prefers over the signed-in
+// account: an inherited key or endpoint would silently answer on another
+// account or service, with nothing in the output saying which one answered.
+var credentialEnvVars = []string{"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"}
+
+// ScrubbedEnv returns env for a codex child without the credential variables,
+// matched by name.
+func ScrubbedEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if slices.Contains(credentialEnvVars, name) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
 
 // Runner invokes codex exec with JSON events and maps the final agent message
 // and the turn's usage into the common llm.Result.
@@ -61,7 +81,8 @@ func execArgs(model, effort, schemaFile string) []string {
 }
 
 // Run executes codex exec in a working directory of its own, so no project's
-// instructions or files reach a prompt that needs none of them. SystemPrompt
+// instructions or files reach a prompt that needs none of them, and without
+// the credential variables ScrubbedEnv removes. SystemPrompt
 // and UserPrompt are concatenated onto stdin. A ResponseSchema goes to
 // --output-schema, and the final message must be JSON.
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
@@ -80,6 +101,7 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	}
 	cmd := exec.CommandContext(ctx, "codex", execArgs(r.model, r.effort, schemaFile)...)
 	cmd.Dir = workDir
+	cmd.Env = ScrubbedEnv(os.Environ())
 	cmd.Stdin = strings.NewReader(req.Combined())
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
