@@ -37,6 +37,9 @@ type agentMemory struct {
 	holdNext bool
 	named    []string
 	sent     []string
+	// lined and unlined name, per call, the tool whose result carried a
+	// hold_next field or none.
+	lined, unlined []string
 }
 
 // guideExampleProof is the worked proof the proof guide shows; its tag was
@@ -97,7 +100,15 @@ func (m *agentMemory) lastSent() []string {
 	return slices.Sorted(slices.Values(m.sent))
 }
 
-func (m *agentMemory) keep(res *mcp.CallToolResult) {
+// results reports the tools whose results carried a hold_next field and
+// those whose results carried none, one name per call.
+func (m *agentMemory) results() (lined, unlined []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Clone(m.lined), slices.Clone(m.unlined)
+}
+
+func (m *agentMemory) keep(tool string, res *mcp.CallToolResult) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, content := range res.Content {
@@ -113,8 +124,13 @@ func (m *agentMemory) keep(res *mcp.CallToolResult) {
 		}
 	}
 	if fields, ok := res.StructuredContent.(map[string]any); ok && !res.IsError {
-		line, _ := fields["hold_next"].(string)
+		line, lined := fields["hold_next"].(string)
 		m.named = holdNextTags(line)
+		if lined {
+			m.lined = append(m.lined, tool)
+		} else {
+			m.unlined = append(m.unlined, tool)
+		}
 	}
 }
 
@@ -129,6 +145,10 @@ func holdNextTags(line string) []string {
 func (m *agentMemory) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		params, ok := req.GetParams().(*mcp.CallToolParams)
+		tool := ""
+		if ok {
+			tool = params.Name
+		}
 		if ok && provingTools[params.Name] {
 			if args, ok := params.Arguments.(map[string]any); ok {
 				if _, own := args["held"]; !own {
@@ -146,7 +166,7 @@ func (m *agentMemory) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 		if !ok || err != nil {
 			return res, err
 		}
-		m.keep(result)
+		m.keep(tool, result)
 		if m.raw {
 			return res, nil
 		}

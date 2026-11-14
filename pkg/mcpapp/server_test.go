@@ -435,6 +435,19 @@ func connect(t *testing.T, srv *mcpserver.Server, transports ...mcp.Transport) *
 // across connections.
 func connectAs(t *testing.T, srv *mcpserver.Server, memory *agentMemory, transports ...mcp.Transport) *mcp.ClientSession {
 	t.Helper()
+	return connectClient(t, srv, memory, otherClient, transports...)
+}
+
+// Claude Code reports claudeClient as its client name, interactive and as
+// claude -p; otherClient stands for every other MCP client.
+const (
+	claudeClient = "claude-code"
+	otherClient  = "test-client"
+)
+
+// connectClient connects as connectAs does, under the client name name.
+func connectClient(t *testing.T, srv *mcpserver.Server, memory *agentMemory, name string, transports ...mcp.Transport) *mcp.ClientSession {
+	t.Helper()
 	ctx := t.Context()
 	var transport mcp.Transport
 	switch len(transports) {
@@ -449,7 +462,7 @@ func connectAs(t *testing.T, srv *mcpserver.Server, memory *agentMemory, transpo
 	default:
 		t.Fatal("connect accepts at most one transport")
 	}
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: name, Version: "test"}, nil)
 	client.AddSendingMiddleware(memory.middleware)
 	cs, err := client.Connect(ctx, transport, nil)
 	if err != nil {
