@@ -28,7 +28,7 @@ func projectRelevanceStore(sddDir, stateRoot, repoKey string, cfg *model.PerRepo
 	if err != nil {
 		return nil, err
 	}
-	used := usedRelevanceStore{relevanceStore: store, stateRoot: stateRoot, repoKey: repoKey}
+	used := usedRelevanceStore{relevanceStore: store, stateRoot: stateRoot, repoKey: repoKey, now: time.Now}
 	if err := used.mark(); err != nil {
 		return nil, err
 	}
@@ -41,10 +41,11 @@ func projectRelevanceStore(sddDir, stateRoot, repoKey string, cfg *model.PerRepo
 type usedRelevanceStore struct {
 	relevanceStore
 	stateRoot, repoKey string
+	now                func() time.Time
 }
 
 func (s usedRelevanceStore) mark() error {
-	return localadapter.MarkProjectUsed(s.stateRoot, s.repoKey, time.Now())
+	return localadapter.MarkProjectUsed(s.stateRoot, s.repoKey, s.now())
 }
 
 func (s usedRelevanceStore) Append(ctx context.Context, segment []byte) error {
