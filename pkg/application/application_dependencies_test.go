@@ -151,9 +151,8 @@ func (unreadableGraphStore) ReadAttachmentPage(context.Context, string, string, 
 
 // TestUnreadableDependencyFailsOnlyReadsSelectingIt: base declares a and b, a
 // declares d, d declares c, and b's snapshot cannot be read. Reads naming a
-// succeed; a read naming c is refused as no direct dependency
-// (20261113-235859-d-cpt-l3m); a read selecting b, alone
-// or through all repos, fails (20260903-153224-s-cpt-ir1).
+// succeed; a read naming c is refused as no direct dependency; a read
+// selecting b, alone or through all repos, fails (20260903-153224-s-cpt-ir1).
 func TestUnreadableDependencyFailsOnlyReadsSelectingIt(t *testing.T) {
 	llm := pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
 		return pkgllm.Result{Identity: pkgllm.Identity{Provider: "test", Model: "test"}}, nil

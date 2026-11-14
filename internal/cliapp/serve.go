@@ -292,7 +292,7 @@ func (d *connectedDependencies) resolve(ctx context.Context, repoID sdd.RepoID) 
 }
 
 // resolveMember resolves a project this process serves beyond its home: one
-// of the served project's direct dependencies (20261113-235859-d-cpt-l3m),
+// of the served project's direct dependencies,
 // never a repo merely connected on this machine.
 func (d *connectedDependencies) resolveMember(ctx context.Context, repoID sdd.RepoID) (*sdd.ProjectRuntime, error) {
 	if d == nil {

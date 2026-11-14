@@ -13,9 +13,8 @@ import (
 )
 
 // furtherReadFinder is newReadFinder whose graphs resolve the refs a direct
-// dependency holds into repos beyond the direct dependencies
-// (20261113-235859-d-cpt-l3m). settle waits for a fetch on a miss the read
-// stopped waiting for; call it once the read is out.
+// dependency holds into repos beyond the direct dependencies. settle waits for a
+// fetch on a miss the read stopped waiting for; call it once the read is out.
 func furtherReadFinder(ctx context.Context, errWriter io.Writer) (f *finders.Finder, settle func(), err error) {
 	f, err = newReadFinder()
 	if err != nil {

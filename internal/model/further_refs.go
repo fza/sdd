@@ -23,7 +23,7 @@ const (
 const RefMissRetry = 24 * time.Hour
 
 // RefMiss records a completed fetch of Repo whose clone, at Commit, still
-// lacked EntryID (20261113-235859-d-cpt-l3m).
+// lacked EntryID.
 type RefMiss struct {
 	Repo    RepoID    `json:"repo"`
 	EntryID string    `json:"entry_id"`

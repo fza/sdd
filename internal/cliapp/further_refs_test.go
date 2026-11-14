@@ -30,7 +30,7 @@ func refEntry(refs ...string) string {
 
 // newFurtherRepos connects deep, which only dep declares, and dep, which the
 // local repo declares; each dep entry refs one entry of deep or of nowhere,
-// which no machine connects (20261113-235859-d-cpt-l3m).
+// which no machine connects.
 func newFurtherRepos(t *testing.T, f *appFixture) (deepSource string) {
 	t.Helper()
 	deepSource = newDependencyRepo(t, f, "example.test/deep", nil, map[string]string{"2026/08/01-100000-s-tac-pre.md": furtherGap("Zanzibar present summary.")})

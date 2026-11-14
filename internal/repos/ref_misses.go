@@ -87,7 +87,7 @@ func (c Clone) Holds(id string) (bool, error) {
 }
 
 // RefMisses is the machine state of refs beyond the direct dependencies a
-// completed fetch still did not find (20261113-235859-d-cpt-l3m), kept beside
+// completed fetch still did not find, kept beside
 // the git gate's record.
 type RefMisses struct {
 	dir string

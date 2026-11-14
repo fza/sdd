@@ -680,7 +680,7 @@ func (a *Application) snapshotWithDependencyPolicy(ctx context.Context, identity
 			return nil, readErr
 		}
 	}
-	// Only the direct dependencies are members (20261113-235859-d-cpt-l3m).
+	// Only the direct dependencies are members.
 	multi := model.NewMultiGraph(local, append([]RepoID(nil), runtime.options.Dependencies...), func(repoID RepoID) (*model.Graph, error) {
 		member := members[repoID]
 		return member.graph, member.err

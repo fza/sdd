@@ -49,10 +49,10 @@ func writeRepoConfig(t *testing.T, dir, content string) {
 	}
 }
 
-// TestRefreshDependencies refreshes the local repo's direct dependencies only
-// (20261113-235859-d-cpt-l3m): dep's round runs, deep, which only dep
-// declares, is never synced; the failed round and the missing connection are
-// reported and the refresh still succeeds.
+// TestRefreshDependencies refreshes the local repo's direct dependencies only:
+// dep's round runs, deep, which only dep declares, is never synced; the
+// failed round and the missing connection are reported and the refresh still
+// succeeds.
 func TestRefreshDependencies(t *testing.T) {
 	loc := repos.Locations{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), CacheRoot: t.TempDir(), DataRoot: t.TempDir()}
 	reg := repos.NewRegistry(loc)

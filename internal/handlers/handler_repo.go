@@ -344,7 +344,7 @@ func (h *Handler) PrepareCrossRepoSearch(ctx context.Context, q query.SearchQuer
 }
 
 // RefreshDependencies refreshes the clone of each of the local repo's direct
-// dependencies the command selects (20261113-235859-d-cpt-l3m): made on
+// dependencies the command selects: made on
 // first use, else its sync round when its lease asks for one. What the
 // refresh cannot do is reported through the command's callbacks; a repo
 // beyond the direct dependencies is refused.

@@ -26,7 +26,7 @@ func newHorizonRepos(t *testing.T, f *appFixture) {
 }
 
 // TestCLIReadsReachDirectDependenciesOnly: every read beyond the local graph
-// reaches dep, never deep nor stray (20261113-235859-d-cpt-l3m).
+// reaches dep, never deep nor stray.
 func TestCLIReadsReachDirectDependenciesOnly(t *testing.T) {
 	f := newAppFixture(t)
 	newHorizonRepos(t, f)

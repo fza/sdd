@@ -38,7 +38,7 @@ type Reader interface {
 	SkillStatus(ctx context.Context, q query.SkillStatusQuery) (*query.SkillStatusResult, error)
 	SchemaStatus(ctx context.Context, q query.SchemaStatusQuery) (*query.SchemaStatusResult, error)
 	// LocalRepoID and DirectDependencies name the local repo and the
-	// dependencies every refresh and sync reaches (20261113-235859-d-cpt-l3m).
+	// dependencies every refresh and sync reaches.
 	LocalRepoID() (model.RepoID, error)
 	DirectDependencies() ([]model.RepoID, error)
 }
