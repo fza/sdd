@@ -123,8 +123,8 @@ func (c *RepoRemoveCmd) Validate() error {
 }
 
 // RepoSyncCmd runs the sync round of connected repos through their
-// sdd-owned clones (20261107-095427-d-tac-yux): the named repos, or every
-// connected repo when RepoIDs is empty. A repo without a clone is cloned.
+// sdd-owned clones: the named repos, or every connected repo when RepoIDs is
+// empty. A repo without a clone is cloned.
 type RepoSyncCmd struct {
 	RepoIDs []model.RepoID
 

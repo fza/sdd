@@ -346,8 +346,7 @@ func (c CLI) withRemote(ctx context.Context, operation func(remote string) error
 
 // fetchClone fetches the clone's upstream over the working protocol with the
 // full contents of the new commits, and backfills the contents a merge of the
-// upstream still lacks, so the merge runs without the remote
-// (20261107-224549-d-tac-r9q, 20261108-104247-d-tac-k6f).
+// upstream still lacks, so the merge runs without the remote.
 func (c CLI) fetchClone(ctx context.Context) error {
 	previous, err := c.fetchedTip(ctx)
 	if err != nil {

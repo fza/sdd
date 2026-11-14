@@ -179,7 +179,7 @@ func TestGraphClonesWithoutGateRefuseToClone(t *testing.T) {
 
 // A wider cone fetches contents, so it changes only inside a gate admission:
 // at the clone in the clone's own, later in a fetch the gate admits, and a
-// deferred one waits without failing the keep (20261107-224549-d-tac-r9q).
+// deferred one waits without failing the keep.
 func TestConeChangesRunInsideAGateAdmission(t *testing.T) {
 	git := &countingGit{files: map[string]string{".sdd/config.yaml": "graph_dir: decisions\n"}}
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)

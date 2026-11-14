@@ -15,7 +15,7 @@ import (
 )
 
 // SyncLock serializes every sync path on one graph repository across
-// processes (20261028-175735-d-tac-k4y).
+// processes.
 type SyncLock interface {
 	// TryLock takes the lock when it is free; release is nil when another
 	// holder has it.
@@ -99,7 +99,7 @@ func (h *Handler) fetchUpstream(ctx context.Context, cmd *command.FetchGraphCmd)
 // SyncRound runs one automatic sync round under the sync lock: fetch, merge
 // upstream graph commits, publish local ones, and record what blocks them,
 // removing the record once nothing does. While a conflict is recorded only an
-// explicit round fetches, merges or pushes (20261028-201909-d-tac-fxp).
+// explicit round fetches, merges or pushes.
 func (h *Handler) SyncRound(ctx context.Context, cmd *command.SyncRoundCmd) error {
 	if h.syncMode != model.SyncModeAuto {
 		return nil
@@ -215,7 +215,7 @@ func (h *Handler) heldPull(ctx context.Context) *heldPull {
 
 // publish pushes the graph commits ahead of upstream and records what holds
 // them back. A push the upstream rejects is retried once after merging what
-// upstream gained, by the pull rules (20261027-221041-d-tac-8b7). With
+// upstream gained, by the pull rules. With
 // commits waiting the push, its retry and the fetch the retry needs are one
 // push admission of the git gate; a deferred push leaves them waiting,
 // unrecorded, and reports blocked so nothing is cleared.
@@ -499,7 +499,7 @@ func (h *Handler) ClaimSyncNotice(_ context.Context, cmd *command.ClaimSyncNotic
 }
 
 // ReleaseSyncOwner gives up the session's ownership of the blocked sync, so
-// the next agent to call owns the fix (20261028-233037-d-tac-1mc).
+// the next agent to call owns the fix.
 func (h *Handler) ReleaseSyncOwner(_ context.Context, cmd *command.ReleaseSyncOwnerCmd) error {
 	if h.syncRecord == nil {
 		return nil
@@ -532,7 +532,7 @@ type syncReport struct {
 
 // WithSyncReport scopes blocked-sync reporting to one invocation: emit
 // receives each blocked state once, however many sync paths the invocation
-// runs (20261028-204922-d-tac-gcl). Without one, blocks are logged at info.
+// runs. Without one, blocks are logged at info.
 func WithSyncReport(ctx context.Context, emit func(model.SyncBlocked)) context.Context {
 	return context.WithValue(ctx, syncReportKey{}, &syncReport{reported: map[model.SyncBlockedKind]bool{}, emit: emit})
 }

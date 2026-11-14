@@ -14,8 +14,7 @@ import (
 const EntryMergeDriver = "sdd-entry"
 
 // MergeResolvedKeys are the frontmatter fields sdd derives from an entry's
-// body, so either side's value is valid when a merge meets two
-// (20261030-085158-d-tac-vyt).
+// body, so either side's value is valid when a merge meets two.
 var MergeResolvedKeys = []string{"title", "summary"}
 
 // FrontmatterField is one top-level frontmatter key as written: its decoded

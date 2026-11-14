@@ -32,7 +32,7 @@ type GraphCloneGit interface {
 // GraphClones owns the sdd-owned clone of every graph and connected
 // repository this machine reads or writes, one per repository id under
 // <DataRoot>/repos/<repo-id>/ (20261106-201216-d-cpt-aim). A clone passes
-// the gate as a fetch, a publish as a push (20261107-095427-d-tac-yux).
+// the gate as a fetch, a publish as a push.
 type GraphClones struct {
 	dataRoot string
 	git      GraphCloneGit

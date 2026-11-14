@@ -10,7 +10,7 @@ import (
 )
 
 // Built-in git limits, the same for every remote host, and the floors below
-// which a configured cooldown is ignored (20261107-095427-d-tac-yux).
+// which a configured cooldown is ignored.
 const (
 	DefaultGitFetchCooldown               = 5 * time.Minute
 	DefaultGitPushCooldown                = 30 * time.Second

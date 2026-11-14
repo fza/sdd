@@ -255,7 +255,7 @@ func IsUpstreamDeletion(stages []string) bool {
 // GitSupportsLazyFetchBar reports whether the git printing versionOutput
 // (`git version`) runs `git backfill` over a revision range with the
 // boundary commits' contents, which git does from 2.55; only then can a clone
-// bar lazy fetches outside the gate (20261108-104247-d-tac-k6f). Unreadable
+// bar lazy fetches outside the gate. Unreadable
 // output reports false.
 func GitSupportsLazyFetchBar(versionOutput string) bool {
 	fields := strings.Fields(versionOutput)

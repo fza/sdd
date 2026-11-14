@@ -183,8 +183,7 @@ func graphSyncOptions(ctx context.Context, graphDir string, opts handlers.Option
 }
 
 // withSyncBanner scopes blocked-sync reporting to one command: each blocked
-// state prints once, as a plain line rather than a warning
-// (20261028-204922-d-tac-gcl).
+// state prints once, as a plain line rather than a warning.
 func withSyncBanner(ctx context.Context, w io.Writer) context.Context {
 	return handlers.WithSyncReport(ctx, func(block model.SyncBlocked) {
 		fmt.Fprintf(w, "%s; `sdd info` shows the record and how to clear it\n", block.Banner())

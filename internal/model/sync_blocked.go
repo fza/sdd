@@ -8,7 +8,7 @@ import (
 )
 
 // SyncBlockedKind names why automatic sync of the graph repository cannot
-// proceed (20261028-201909-d-tac-fxp).
+// proceed.
 type SyncBlockedKind string
 
 const (
@@ -42,8 +42,7 @@ type SyncBlocked struct {
 	OwnerSeen   time.Time       `json:"owner_seen,omitzero"`
 }
 
-// OwnerLease is how long a block stays owned without a call from its owner
-// (20261028-233037-d-tac-1mc).
+// OwnerLease is how long a block stays owned without a call from its owner.
 const OwnerLease = 15 * time.Minute
 
 // HeldPullBlock is the blocked state a held pull verdict stands for, and

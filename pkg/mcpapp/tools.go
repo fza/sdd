@@ -342,8 +342,7 @@ type ReadAttachmentResult struct {
 }
 
 // SyncNoticeField carries, on every result, the blocked-sync notice while
-// automatic sync of the graph repository cannot proceed
-// (20261028-201909-d-tac-fxp).
+// automatic sync of the graph repository cannot proceed.
 type SyncNoticeField struct {
 	SyncNotice string `json:"sync_notice,omitempty" jsonschema:"set while automatic sync of the graph repository is blocked, the background title backfill failed, or the last sync round of a connected repository failed: one line each naming which and since when or why, plus the fix steps when this session owns the fix. Plain status, not a tool error; act on it as it says"`
 }

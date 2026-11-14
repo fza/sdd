@@ -19,7 +19,7 @@ import (
 // a non-empty localConfigPath stands in for every checkout's
 // .sdd/config.local.yaml. The git network operations sync starts pass a gate
 // keeping its record in stateDir, under the limits the global config sets as
-// read now (20261107-095427-d-tac-yux).
+// read now.
 func NewRepositoryTargets(ctx context.Context, project app.ProjectID, serverCheckout, globalConfigPath, localConfigPath, stateDir string) (*GitWorktreeAcquirer, error) {
 	limitsConfig, err := repos.LoadConfigFrom(globalConfigPath)
 	if err != nil {

@@ -48,7 +48,7 @@ type syncBlockedJSON struct {
 }
 
 // RenderInfoJSON writes the session framing as one JSON object for tools
-// that drive sdd (20261027-122627-d-tac-2cx), with what blocks automatic sync
+// that drive sdd, with what blocks automatic sync
 // when block is set. Its owner is named only while the lease is live, as in
 // RenderSyncBlocked.
 func RenderInfoJSON(w io.Writer, result *query.InfoResult, block *model.SyncBlocked, now time.Time) error {

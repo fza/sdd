@@ -26,7 +26,7 @@ type ProjectRepositories interface {
 }
 
 // setUpProject runs a plain init in projectRoot, which holds no sdd project
-// yet, giving it the repository of its own it needs (20261029-130154-d-tac-frl).
+// yet, giving it the repository of its own it needs.
 // Every refusal comes before the first write.
 func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget) error {
 	if h.projectRepos == nil || h.repositoryAt == nil {
@@ -91,8 +91,7 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 }
 
 // refreshProject runs the existing project's own init with the settings it
-// records, so the project stays as current as the work repository
-// (20261029-132740-d-tac-g32).
+// records, so the project stays as current as the work repository.
 func (h *Handler) refreshProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, projectCfg *model.PerRepoConfig) error {
 	if h.projectRepos == nil || h.repositoryAt == nil {
 		return fmt.Errorf("refreshing the project at %s needs a git adapter for it", cmd.ProjectDir)

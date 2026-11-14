@@ -1906,7 +1906,7 @@ func initCmd() *cli.Command {
 				projectDir = recordedFiles.ProjectDir
 			}
 			// Only a path typed or chosen here may name a project to set up; a
-			// recorded one names a shared project to clone (20261029-132422-d-tac-2sn).
+			// recorded one names a shared project to clone.
 			setUpProject := cmd.IsSet("project-dir")
 			graphRepoAddress := strings.TrimSpace(cmd.String("graph-repo"))
 			var graphRepo model.RepoID
@@ -1943,7 +1943,7 @@ func initCmd() *cli.Command {
 			// which a pointing repository is not.
 			projectSDDDir := sddDir
 			// A pointer at a folder holding no sdd project sets that project
-			// up first, asking what a fresh init asks (20261029-130154-d-tac-frl).
+			// up first, asking what a fresh init asks.
 			projectMissing := false
 			if graphRepo != "" {
 				locations, err := repos.DefaultLocations()

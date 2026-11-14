@@ -59,8 +59,8 @@ func withWriteGate(action cli.ActionFunc) cli.ActionFunc {
 
 // withContributionGuard refuses a graph write contribution mode does not
 // allow: with `contribution` set in the machine-local config, entries are
-// written only on a feature branch cut from that ref
-// (20261027-092131-d-tac-t7g). Without the key the action runs unchanged.
+// written only on a feature branch cut from that ref. Without the key the
+// action runs unchanged.
 func withContributionGuard(action cli.ActionFunc) cli.ActionFunc {
 	return func(ctx context.Context, cmd *cli.Command) error {
 		cfg, err := loadConfig()

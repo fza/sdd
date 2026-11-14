@@ -17,7 +17,7 @@ import (
 
 // initPointer sets up a work repository whose graph lives in the sdd project
 // at cmd.ProjectDir, running the project's own init first: a set-up when the
-// project is missing, a refresh otherwise (20261029-132740-d-tac-g32). The
+// project is missing, a refresh otherwise. The
 // project owns every setting, the graph, meta.json and runtime state, so this
 // repository receives only the pointer config, the agents' skills and
 // registrations, and the project's gitignore entries.

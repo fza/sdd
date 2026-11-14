@@ -12,8 +12,7 @@ import (
 )
 
 // ConnectedSync runs the sync rounds of the connected repositories a project
-// reaches, each through its sdd-owned clone and the git gate
-// (20261107-095427-d-tac-yux).
+// reaches, each through its sdd-owned clone and the git gate.
 type ConnectedSync interface {
 	SyncRepos(ctx context.Context, request SyncReposRequest) ([]RepoSyncOutcome, error)
 }

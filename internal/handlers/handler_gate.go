@@ -16,7 +16,7 @@ type UpstreamLocator interface {
 }
 
 // gated runs op as one operation of kind against the remote remote names,
-// when the git gate admits it (20261107-095427-d-tac-yux). A deferral
+// when the git gate admits it. A deferral
 // returns *gitgate.DeferredError without running op.
 func (h *Handler) gated(ctx context.Context, kind gitgate.Kind, remote UpstreamLocator, op func(ctx context.Context) error) error {
 	if h.gate == nil {
