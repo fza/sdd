@@ -62,7 +62,7 @@ func TestTheDoorsServeWithinTheResultBound(t *testing.T) {
 				cs, bound := boundedConnect(t, tc.server(t), false)
 				defer func() { t.Logf("largest results: %v", bound.largest) }()
 				opening := openSession(t, cs)
-				if size := jsonSize(t, opening); size > model.MaxServeChars {
+				if size := serveSize(t, opening); size > model.MaxServeChars {
 					t.Fatalf("the opening, its proof guide included, should cost at most %d characters, got %d", model.MaxServeChars, size)
 				}
 				if !strings.Contains(opening.Instructions, "list in held every tag") {
@@ -72,7 +72,7 @@ func TestTheDoorsServeWithinTheResultBound(t *testing.T) {
 				if door == "resume_session" {
 					var resumed mcpserver.ResumeSessionResult
 					call(t, cs, "resume_session", map[string]any{"session": opening.Session}, &resumed)
-					if size := jsonSize(t, resumed); size > model.MaxServeChars {
+					if size := serveSize(t, resumed); size > model.MaxServeChars {
 						t.Fatalf("the resume should cost at most %d characters, got %d", model.MaxServeChars, size)
 					}
 					instructions, text = resumed.Instructions, resumed.Instructions+"\n\n"+resumed.Framing

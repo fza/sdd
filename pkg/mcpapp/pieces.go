@@ -13,7 +13,7 @@ import (
 // Proofs is what a call lists about the pieces served to it before; the
 // engine decides from them which piece serves as its pointer.
 type Proofs struct {
-	Held   []string `json:"held,omitempty" jsonschema:"for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). List the tags from every earlier result, not only the last. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word"`
+	Held   []string `json:"held,omitempty" jsonschema:"for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). List the tags from every earlier result, not only the last; the unproved field names those you have not proved since. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word"`
 	Reread []string `json:"reread,omitempty" jsonschema:"tags or piece names of served pieces you no longer see; they serve in full again"`
 }
 
@@ -25,6 +25,24 @@ func heldName(name, tag string) string {
 		return name
 	}
 	return model.TagName(tag) + " for " + name
+}
+
+const unprovedLead = "Earlier pieces you have not proved since, newest first. For each whose text you still see, list in held its tag and the word right after that tag in the full text you were served, never a word of this line, as tag:word; never guess a word. The pieces: "
+
+// unprovedLine names the pieces of list, newest first, as many as fit room
+// characters of a result, the instruction to prove them leading.
+func unprovedLine(list []sdd.UnprovedPiece, room int) string {
+	items := make([]string, 0, len(list))
+	for _, piece := range list {
+		items = append(items, heldName(piece.Name, piece.Tag))
+	}
+	for ; len(items) > 0; items = items[:len(items)-1] {
+		line := unprovedLead + strings.Join(items, "; ")
+		if model.ServedChars(line) <= room {
+			return line
+		}
+	}
+	return ""
 }
 
 // proofNotice names the proofs of a call that failed, so the agent corrects
