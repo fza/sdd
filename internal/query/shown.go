@@ -11,8 +11,7 @@ import (
 )
 
 // ShownEntries is the result in its public data form, the one input of the
-// show renderers and the application's structured show result
-// (20261101-182333-d-tac-jiy).
+// show renderers and the application's structured show result.
 func (r *ShowResult) ShownEntries() ([]types.ShownEntry, error) {
 	var shown []types.ShownEntry
 	for _, group := range r.Groups {
