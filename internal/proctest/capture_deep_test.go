@@ -357,7 +357,7 @@ func TestCaptureDeep_OwnerFindingGoesToTheUser(t *testing.T) {
 	proctest.RequireStep(t, serve, "deepProposal")
 	serve = session.Answer(t, x.instance, "deepProposal", "accept", nil, "")
 	proctest.RequireStep(t, serve, "deepUser")
-	if serve.PendingChooser == nil || serve.PendingChooser.Kind != "user" || !strings.Contains(serve.Instructions, "f1 (only the user can settle it)") {
+	if serve.PendingChooser == nil || serve.PendingChooser.Kind != "user" || !strings.Contains(serve.Instructions, "f1, only the user can settle it") {
 		t.Fatalf("the open point should go to the user, got %+v:\n%s", serve.PendingChooser, serve.Instructions)
 	}
 	serve = session.Answer(t, x.instance, "deepUser", "settle", nil, "it is in scope")
@@ -389,7 +389,7 @@ func TestCaptureDeep_ThreeDeliveriesThenTheUser(t *testing.T) {
 	session.Refresh(t)
 	serve := session.Answer(t, x.instance, "deepProposal", "escalate", nil, "")
 	proctest.RequireStep(t, serve, "deepUser")
-	if !strings.Contains(serve.Instructions, "the verifier holds") || !strings.Contains(serve.Instructions, "the drafter contests: the subject is in the ref") {
+	if want := "- f1, contested, and the verifier holds it\n  draft: the draft as it stands; the drafter: the subject is in the ref\n  verifier: the gap names no subject; a reader of the entry alone cannot tell\n  verifier's edit: replace \"observes something.\" with \"observes a subject.\"\n"; !strings.Contains(test.Untagged(serve.Instructions), want) {
 		t.Fatalf("the user should see both positions of the open point:\n%s", serve.Instructions)
 	}
 }
