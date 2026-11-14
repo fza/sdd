@@ -39,6 +39,20 @@ func holdNextLine(tags []string, room int) string {
 	return ""
 }
 
+// proofNotice names the proofs of a call that failed, so the agent corrects
+// or drops them.
+func proofNotice(failed []sdd.FailedProof) string {
+	names := make([]string, 0, len(failed))
+	for _, f := range failed {
+		reason := "no such tag"
+		if f.Issued {
+			reason = "not the word after that tag"
+		}
+		names = append(names, f.Proof+" ("+reason+")")
+	}
+	return fmt.Sprintf("these held proofs failed, so their pieces served in full: %s. Send the word right after the tag in its full text, or leave the tag out", strings.Join(names, ", "))
+}
+
 // heldLine is the pointer to pieces the call holds and the way to have them
 // again.
 func heldLine(names []string) string {

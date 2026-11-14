@@ -89,5 +89,6 @@ held on every call: exactly those tags whose text you still see, each with the
 word right after it in that text, as tag:word
 ("… dialogue ⟦gn9p⟧ first …" → gn9p:first). A proved piece serves as a short
 pointer. A tag left out serves its whole text into your context again. Never
-guess a word: a wrong proof costs the same. List in reread the tag or name of
-a piece you no longer see: it serves in full again.`
+guess a word: a wrong proof costs the same, and proof_notice names it.
+List in reread the tag or name of a piece you no longer see: it serves in full
+again.`

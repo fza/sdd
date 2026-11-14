@@ -39,6 +39,10 @@ type agentMemory struct {
 	sent     []string
 }
 
+// guideExampleProof is the worked proof the proof guide shows; its tag was
+// never issued, so an agent proving it would only draw a proof notice.
+const guideExampleProof = "gn9p:first"
+
 func newAgentMemory() *agentMemory { return &agentMemory{held: map[string]string{}} }
 
 func untagged(res *mcp.CallToolResult) error {
@@ -102,6 +106,9 @@ func (m *agentMemory) keep(res *mcp.CallToolResult) {
 			continue
 		}
 		for _, proof := range model.ReadAnchors(text.Text) {
+			if proof.String() == guideExampleProof {
+				continue
+			}
 			m.held[proof.Tag] = proof.Word
 		}
 	}

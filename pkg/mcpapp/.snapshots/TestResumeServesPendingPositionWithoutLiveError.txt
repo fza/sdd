@@ -38,8 +38,9 @@ instructions: |
   word right after it in that text, as tag:word
   ("… dialogue first …" → gn9p:first). A proved piece serves as a short
   pointer. A tag left out serves its whole text into your context again. Never
-  guess a word: a wrong proof costs the same. List in reread the tag or name of
-  a piece you no longer see: it serves in full again.
+  guess a word: a wrong proof costs the same, and proof_notice names it.
+  List in reread the tag or name of a piece you no longer see: it serves in full
+  again.
 
   (2 framing blocks wait, as this result would run past its size bound: recentMovement, health. Call next with instance i_1 and no report to have them before you act)
 open_instances:
