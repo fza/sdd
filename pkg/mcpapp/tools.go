@@ -963,7 +963,7 @@ func (s *toolSet) stageAttachment(ctx context.Context, req *mcp.CallToolRequest,
 
 // refuseSingleFileStaging answers a stage_attachment call carrying the
 // single-file fields ahead of the schema check, whose refusal would not name
-// files (20261114-121413-d-tac-n6r).
+// files.
 func refuseSingleFileStaging(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		call, ok := req.(*mcp.CallToolRequest)
