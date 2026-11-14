@@ -21,7 +21,7 @@ func TestSweepStore(t *testing.T) {
 
 	// orphans adds two rows the manifest does not name, one aged past
 	// leftoverAge, and returns their paths.
-	orphans := func(t *testing.T, dir, namedRow string) (aged, young string) {
+	orphans := func(t *testing.T, namedRow string) (aged, young string) {
 		t.Helper()
 		chromem := filepath.Dir(namedRow)
 		aged, young = filepath.Join(chromem, "deadbeef.gob"), filepath.Join(chromem, "feedface.gob")
@@ -37,7 +37,7 @@ func TestSweepStore(t *testing.T) {
 	t.Run("orphan rows and staging dirs older than a day go", func(t *testing.T) {
 		dir := storeWithVersions(t, named)
 		namedRow := rowFile(t, dir)
-		agedRow, youngRow := orphans(t, dir, namedRow)
+		agedRow, youngRow := orphans(t, namedRow)
 		agedStage, youngStage := filepath.Join(dir, ".entry-1"), filepath.Join(dir, ".entry-2")
 		for _, stage := range []string{agedStage, youngStage} {
 			if err := os.MkdirAll(stage, 0o755); err != nil {
@@ -62,7 +62,7 @@ func TestSweepStore(t *testing.T) {
 
 	t.Run("a store a fill holds is skipped", func(t *testing.T) {
 		dir := storeWithVersions(t, named)
-		agedRow, _ := orphans(t, dir, rowFile(t, dir))
+		agedRow, _ := orphans(t, rowFile(t, dir))
 		fill := flock.New(filepath.Join(dir, ".fill.lock"))
 		if _, err := fill.TryLock(); err != nil {
 			t.Fatal(err)
