@@ -399,8 +399,8 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Fn:  func(ctx *engine.Context) error { return w.writeDeepVerdict(ctx, "verified", "") },
 		},
 		{
-			Doc: engine.FuncDoc{Name: "recordDeepSettled", Doc: "Records the user's settling of the open points as the deep verdict over the current draft.", Reads: captureDraftFields, Writes: []string{fieldDeepVerdict}},
-			Fn:  func(ctx *engine.Context) error { return w.writeDeepVerdict(ctx, "settled", "") },
+			Doc: engine.FuncDoc{Name: "recordDeepSettled", Doc: "Records the user's settling of the open points as the deep verdict over the current draft, and has the writing guide's judgment cover it.", Reads: append(slices.Clone(captureDraftFields), "guideFindings"), Writes: []string{fieldDeepVerdict, fieldGuideBase}},
+			Fn:  w.recordDeepSettled,
 		},
 		{
 			Doc: engine.FuncDoc{Name: "settleDeepEdit", Doc: "Records the user's edit within what the deep exchange settled as the deep verdict over the current draft, and has the writing guide's judgment cover it.", Reads: append(slices.Clone(captureDraftFields), "guideFindings"), Writes: []string{fieldDeepVerdict, fieldGuideBase}},

@@ -37,6 +37,26 @@ func TestCaptureDeep_TheGuideLeavesAnAcceptedProposalAlone(t *testing.T) {
 	}
 }
 
+// The user's revision at an open point settles the exchange, so the playback
+// confirming it runs no delta check.
+func TestCaptureDeep_TheUsersRevisionAtAnOpenPointGetsNoDeltaCheck(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-guide-owner", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	x.judge(t, []any{map[string]any{
+		"verdict": "whether this gap is in scope is the owner's call", "axis": "aspiration", "severity": "medium", "owner": true,
+		"pointers": []any{map[string]any{"field": "body", "quote": "observes something"}},
+	}})
+	x.pickUp(t)
+	session.Answer(t, x.instance, "deepAnswer", "accept", nil, "")
+	proctest.RequireStep(t, session.Answer(t, x.instance, "deepProposal", "accept", nil, ""), "deepUser")
+	serve := session.Answer(t, x.instance, "deepUser", "revise", map[string]any{"body": "A tactical gap in scope: the fixture observes something."}, "it is in scope, say so")
+	proctest.RequireStep(t, serve, "playback")
+	proctest.RequireStep(t, session.Answer(t, x.instance, "playback", "confirm", nil, "yes"), "verifySummary")
+	if got := world.LLM.Calls("writing-guide"); got != 1 {
+		t.Fatalf("the user's settling revision should get no delta check, the guide ran %d times", got)
+	}
+}
+
 // A later adjust of the user's gets its delta check, of the lines the user
 // changed only, not the ones the accepted proposal wrote.
 func TestCaptureDeep_TheDeltaCheckAfterAnAcceptedProposalJudgesTheUsersLines(t *testing.T) {
