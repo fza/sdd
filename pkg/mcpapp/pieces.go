@@ -24,7 +24,25 @@ func heldName(name, tag string) string {
 	if tag == "" {
 		return name
 	}
-	return name + " " + model.AnchorMark(tag)
+	return name + " (" + model.TagName(tag) + ")"
+}
+
+const unprovedLead = "Earlier pieces you have not proved since, newest first. For each whose text you still see, list in held its tag and the word right after that tag in the text, as tag:word; never guess a word: "
+
+// unprovedLine names the pieces of list, newest first, as many as fit room
+// characters of a result, the instruction to prove them leading.
+func unprovedLine(list []sdd.UnprovedPiece, room int) string {
+	items := make([]string, 0, len(list))
+	for _, piece := range list {
+		items = append(items, heldName(piece.Name, piece.Tag))
+	}
+	for ; len(items) > 0; items = items[:len(items)-1] {
+		line := unprovedLead + strings.Join(items, "; ")
+		if model.ServedChars(line) <= room {
+			return line
+		}
+	}
+	return ""
 }
 
 // heldLine is the pointer to pieces the call holds and the way to have them
@@ -147,7 +165,7 @@ func serveReportSchema(ss *shellSession, serve *sdd.WorkflowServe) (map[string]a
 	served := maps.Clone(fields)
 	if piece.Held {
 		delete(served, "properties")
-		served["held_properties"] = fmt.Sprintf("you hold these %s as %s — list the tag in reread to have them again, or resume_session re-serves them in full", name, model.AnchorMark(piece.Tag))
+		served["held_properties"] = fmt.Sprintf("you hold these %s (%s); list the tag in reread to have them again, or resume_session re-serves them in full", name, model.TagName(piece.Tag))
 	} else {
 		served["properties"] = tagged
 	}

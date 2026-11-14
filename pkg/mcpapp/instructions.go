@@ -89,6 +89,7 @@ after it, as tag:word ("… dialogue ⟦gn9p⟧ first …" → gn9p:first). That
 then serves as a short pointer. Proofs never carry over: list the tags from
 every earlier result, not only the last, as a piece served many calls ago (the
 type-system overview, a framing block, an entry) serves in full again on any
-call without its proof. List in reread the tag or name of a piece you
-no longer see: it serves in full again. Never guess a word: a missing or wrong
-proof costs only the full text.`
+call without its proof. Each result's unproved field names, by name and tag,
+the earlier pieces you have not proved since. List in reread the tag or name of
+a piece you no longer see: it serves in full again. Never guess a word: a
+missing or wrong proof costs only the full text.`

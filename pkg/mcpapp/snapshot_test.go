@@ -35,13 +35,18 @@ func snapshotResponse(t *testing.T, res *mcp.CallToolResult) {
 		}
 		writeValue(&sb, value, 0)
 	}
-	cupaloy.New(cupaloy.SnapshotFileExtension(".txt")).SnapshotT(t, anyTag.ReplaceAllString(aliasSessions(sb.String()), "⟦tag⟧"))
+	text := anyTag.ReplaceAllString(aliasSessions(sb.String()), "⟦tag⟧")
+	cupaloy.New(cupaloy.SnapshotFileExtension(".txt")).SnapshotT(t, anyNamedTag.ReplaceAllString(text, "tag <tag>)"))
 }
 
 var sessionHandle = regexp.MustCompile(`s_\d{8}-\d{6}-[0-9a-f]{32}`)
 
-// anyTag names a pointer's tag, which is drawn per serve.
-var anyTag = regexp.MustCompile(`⟦[0-9a-z]{4}⟧`)
+// anyTag and anyNamedTag name a tag as placed in text and as a pointer or the
+// unproved list names it; both are drawn per serve.
+var (
+	anyTag      = regexp.MustCompile(`⟦[0-9a-z]{4}⟧`)
+	anyNamedTag = regexp.MustCompile(`\btag [0-9a-z]{4}\)`)
+)
 
 func aliasSessions(text string) string {
 	aliases := map[string]string{}

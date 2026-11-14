@@ -18,6 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/networkteam/sdd/internal/basefacts"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/serveview"
@@ -399,11 +400,13 @@ type ResultNotices struct {
 	SyncNotice  string `json:"sync_notice,omitempty" jsonschema:"set when automatic sync of the graph repository becomes blocked, the background title backfill fails, or a connected repository's last sync round fails, and whenever that notice changes. One line each: which, and since when or why, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Plain status, not a tool error; act on it as it says"`
 	CacheNotice string `json:"cache_notice,omitempty" jsonschema:"set once after sdd's background cache pruning failed: the error and where to look. Plain status, not a tool error; pass it on to the user"`
 	HostNotice  string `json:"host_notice,omitempty" jsonschema:"set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values"`
+	Unproved    string `json:"unproved,omitempty" jsonschema:"the pieces earlier results served in full that you have not proved since, newest first, each by name and tag; prove each whose text you still see in held"`
 }
 
 func (f *ResultNotices) setSyncNotice(notice string)  { f.SyncNotice = notice }
 func (f *ResultNotices) setCacheNotice(notice string) { f.CacheNotice = notice }
 func (f *ResultNotices) setHostNotice(notice string)  { f.HostNotice = notice }
+func (f *ResultNotices) setUnproved(line string)      { f.Unproved = line }
 
 // SyncBlockedResult is the blocked-sync record info shows.
 type SyncBlockedResult struct {
@@ -1411,7 +1414,7 @@ func toolBoundary[In, Out any](s *Server, handler func(context.Context, *mcp.Cal
 		var syncNotice, cacheNotice string
 		if slot.claim != nil {
 			var claimErr error
-			syncNotice, claimErr = slot.claim(ctx)
+			syncNotice, claimErr = slot.claim(ctx, err != nil)
 			err = errors.Join(err, claimErr)
 		}
 		if s.cacheNotice != nil {
@@ -1434,6 +1437,13 @@ func toolBoundary[In, Out any](s *Server, handler func(context.Context, *mcp.Cal
 		if carrier, ok := any(&out).(interface{ setHostNotice(string) }); ok {
 			carrier.setHostNotice(hostNotice)
 		}
+		if carrier, ok := any(&out).(interface{ setUnproved(string) }); ok && len(slot.unproved) > 0 {
+			cost, err := resultChars(out)
+			if err != nil {
+				return res, out, err
+			}
+			carrier.setUnproved(unprovedLine(slot.unproved, model.MaxResultChars-cost-len(`,"unproved":""`)))
+		}
 		return res, out, err
 	}
 }
@@ -1449,9 +1459,12 @@ type syncNoticeKey struct{}
 
 // syncNoticeSlot lets the call's session, once attached, name how its
 // blocked-sync notice is claimed after the handler ran, so the notice
-// reflects what the call itself recorded.
+// reflects what the call itself recorded; the claim leaves the session's
+// unproved pieces in unproved. A failed call records no proofs, so a
+// refused report writes nothing.
 type syncNoticeSlot struct {
-	claim func(context.Context) (string, error)
+	claim    func(ctx context.Context, failed bool) (string, error)
+	unproved []sdd.UnprovedPiece
 }
 
 func (s *Server) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession) {
@@ -1460,11 +1473,16 @@ func (s *Server) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, 
 		return
 	}
 	identity := s.requestIdentity(req)
-	slot.claim = func(ctx context.Context) (string, error) {
+	slot.claim = func(ctx context.Context, failed bool) (string, error) {
 		ss.mu.Lock()
 		defer ss.mu.Unlock()
 		notice := ss.root.ServeNotice("sync notice", ss.root.SyncNotice(ctx, identity))
-		return notice, ss.root.RecordServed(ctx, identity)
+		if failed {
+			ss.root.DropProved()
+		}
+		err := ss.root.RecordServed(ctx, identity)
+		slot.unproved = ss.root.Unproved()
+		return notice, err
 	}
 }
 

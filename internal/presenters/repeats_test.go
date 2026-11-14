@@ -103,7 +103,7 @@ func TestRenderSearch_HeldHitPrintsAsPointer(t *testing.T) {
 	var buf bytes.Buffer
 	presenters.RenderSearch(&buf, []types.SearchHit{local, remote}, heldOnly(local.ID, remote.ID))
 	got := buf.String()
-	if !strings.Contains(got, local.ID+" — Held entry. (held as ⟦ab12⟧)") || strings.Contains(got, "local-snippet") {
+	if !strings.Contains(got, local.ID+" — Held entry. (held as tag ab12)") || strings.Contains(got, "local-snippet") {
 		t.Errorf("a held local hit should print as its pointer without citations:\n%s", got)
 	}
 	if !strings.Contains(got, "remote-snippet") || strings.Contains(got, remote.ID+" — ") {

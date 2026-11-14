@@ -2570,6 +2570,22 @@ func jsonSize(t *testing.T, v any) int {
 	return len(raw)
 }
 
+// serveSize is what a serve takes of its result: the unproved list rides in
+// the room model.MaxServeChars leaves under the result bound, as notices do.
+func serveSize(t *testing.T, v any) int {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "unproved")
+	return jsonSize(t, fields)
+}
+
 // TestServedMemoryIsPerAgentContext pins the served memory under the anchor
 // proof (d-cpt-aen, 20261112-075604-d-tac-t4r): the session ledger keeps the
 // issued tags, but only a call proving a piece gets its pointer. The agent

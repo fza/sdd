@@ -128,6 +128,31 @@ func (w *WorkflowSession) ServeEntry(id, body string) string {
 	return served.Anchor.Render(body)
 }
 
+// UnprovedPiece is a piece an earlier call served in full under Tag that no
+// call proved since (20261113-121039-d-tac-ca2).
+type UnprovedPiece struct {
+	Name string
+	Tag  string
+}
+
+// Unproved lists the pieces earlier calls served in full that no call proved
+// since, newest first, capped. A finished session lists none.
+func (w *WorkflowSession) Unproved() []UnprovedPiece {
+	if w.Finished() {
+		return nil
+	}
+	listed := w.session.Unproved()
+	pieces := make([]UnprovedPiece, 0, len(listed))
+	for _, piece := range listed {
+		pieces = append(pieces, UnprovedPiece{Name: piece.Name, Tag: piece.Tag})
+	}
+	return pieces
+}
+
+// DropProved keeps what the call's proofs proved out of the record, for a
+// call that failed.
+func (w *WorkflowSession) DropProved() { w.session.DropProved() }
+
 // RecordServed logs the anchors the call issued. A finished session records
 // nothing: its last serve is the one that ended it.
 func (w *WorkflowSession) RecordServed(ctx context.Context, identity RequestIdentity) error {
