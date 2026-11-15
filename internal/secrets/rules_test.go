@@ -1,6 +1,8 @@
 package secrets_test
 
 import (
+	"encoding/json"
+	"os"
 	"slices"
 	"testing"
 
@@ -8,19 +10,31 @@ import (
 	"github.com/networkteam/sdd/test"
 )
 
+// gitleaks.toml in the package folder is the file the package embeds.
 func TestTheBuiltinRuleFileReadsStrictly(t *testing.T) {
-	builtin, err := secrets.BuiltinRuleFile()
+	data, err := os.ReadFile("gitleaks.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stampData, err := os.ReadFile("gitleaks.source.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stamp struct {
+		Tag string `json:"tag"`
+	}
+	err = json.Unmarshal(stampData, &stamp)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	set, err := secrets.ParseRules(builtin.Data)
+	set, err := secrets.ParseRules(data)
 
 	if err != nil {
 		t.Fatalf("the built-in file should decode strictly and compile whole: %v", err)
 	}
-	if builtin.Tag == "" || len(set.RuleIDs()) == 0 {
-		t.Errorf("the built-in file should carry its release tag and its rules, got tag %q", builtin.Tag)
+	if stamp.Tag == "" || len(set.RuleIDs()) == 0 {
+		t.Errorf("the built-in file should carry its release tag and its rules, got tag %q", stamp.Tag)
 	}
 }
 

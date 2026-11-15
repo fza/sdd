@@ -3,7 +3,6 @@ package secrets
 import (
 	"bytes"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -15,43 +14,6 @@ import (
 
 //go:embed gitleaks.toml
 var builtinTOML []byte
-
-//go:embed gitleaks.source.json
-var builtinSourceJSON []byte
-
-// RuleFile is one copy of gitleaks' config/gitleaks.toml and the release tag
-// it was published under.
-type RuleFile struct {
-	Tag  string
-	Data []byte
-}
-
-// BuiltinStamp records where the built-in rule file came from; the refresh
-// program writes it beside gitleaks.toml.
-type BuiltinStamp struct {
-	Repository string `json:"repository"`
-	File       string `json:"file"`
-	Tag        string `json:"tag"`
-	Commit     string `json:"commit"`
-}
-
-var builtinStamp = sync.OnceValues(func() (BuiltinStamp, error) {
-	var stamp BuiltinStamp
-	err := json.Unmarshal(builtinSourceJSON, &stamp)
-	if err != nil {
-		return BuiltinStamp{}, fmt.Errorf("decoding the built-in rule file's stamp: %w", err)
-	}
-	return stamp, nil
-})
-
-// BuiltinRuleFile is the rule file compiled into the binary.
-func BuiltinRuleFile() (RuleFile, error) {
-	stamp, err := builtinStamp()
-	if err != nil {
-		return RuleFile{}, err
-	}
-	return RuleFile{Tag: stamp.Tag, Data: builtinTOML}, nil
-}
 
 // The built-in file is trusted (its tests compile every pattern), so it loads
 // without compiling: a rule's patterns compile on first need.
