@@ -37,6 +37,9 @@ type ProjectRuntimeOptions struct {
 	SearchIndex SearchIndexStore
 	LLM         llm.Runner
 	Finalizers  []MutationFinalizer
+	// Hooks runs the hooks configured for the person running sdd at the
+	// engine's events in this project's sessions; nil runs none.
+	Hooks HookCommands
 	// ExcludeEmbeddedFromIndex mirrors the CLI's excludeEmbedded semantics for
 	// the vector index: connected-repo runtimes set it so binary-shipped base
 	// entries embed once per machine (in the base store) rather than once per

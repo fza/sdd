@@ -270,7 +270,7 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 	if err != nil {
 		return nil, nil, err
 	}
-	w.session = w.engine.NewSession(string(id), info.Participant, w.sink)
+	w.session = w.engine.NewSession(string(id), info.Participant, w.sink, engine.WithHooks(&workflowHooks{workflow: w}))
 	canonical := strings.TrimSpace(request.Shell)
 	if canonical == "" {
 		canonical = DefaultShellCanonical
@@ -351,7 +351,7 @@ func (a *Application) replayWorkflow(ctx context.Context, identity RequestIdenti
 		return nil, err
 	}
 	resolve := func(canonical string) (*engine.Spec, error) { return w.loadProcedure(canonical) }
-	w.session, err = w.engine.ReplaySession(string(stored.Metadata.ID), stored.Metadata.Participant, events, resolve, w.sink)
+	w.session, err = w.engine.ReplaySession(string(stored.Metadata.ID), stored.Metadata.Participant, events, resolve, w.sink, engine.WithHooks(&workflowHooks{workflow: w}))
 	if err != nil {
 		return nil, fmt.Errorf("replaying session %s: %w", stored.Metadata.ID, err)
 	}
