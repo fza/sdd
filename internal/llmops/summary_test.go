@@ -3,6 +3,7 @@ package llmops_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -246,5 +247,64 @@ func TestPairedDescriptionClaimsOnlyWhatTheEntrySays(t *testing.T) {
 	want := "Claim only what the entry itself states: add no cause, consequence, actor or example it does not name, and never lend it a related entry's claims."
 	if !strings.Contains(description.Request.SystemPrompt, want) {
 		t.Errorf("the prompt should hold every summary claim to the entry:\n%s", description.Request.SystemPrompt)
+	}
+}
+
+func pairedAnswer(summary string) string {
+	return `{"title": "daemon project removal", "summary": "` + summary + `"}`
+}
+
+func sentenceOfWords(n int) string {
+	return strings.TrimSpace(strings.Repeat("word ", n)) + "."
+}
+
+func TestDescribeRepairsALongFirstSentence(t *testing.T) {
+	entry, graph := titledFixture()
+	long := sentenceOfWords(llmops.MaxFirstSentenceWords+5) + " It relates to s-tac-rel."
+	short := "The daemon project is removed. It relates to s-tac-rel."
+	runner := &scriptedRunner{replies: []string{pairedAnswer(long), pairedAnswer(short)}}
+
+	got, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false)
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+	if got.Summary != short {
+		t.Errorf("the repaired summary should be used, got %q", got.Summary)
+	}
+	if len(runner.requests) != 2 {
+		t.Fatalf("a long first sentence should cost exactly one repair call, got %d calls", len(runner.requests))
+	}
+	repair := runner.requests[1].UserPrompt
+	for _, want := range []string{fmt.Sprintf("%d words", llmops.MaxFirstSentenceWords+5), fmt.Sprintf("%d-word", llmops.MaxFirstSentenceWords), long} {
+		if !strings.Contains(repair, want) {
+			t.Errorf("the repair call should name the first sentence's length, the limit and the answer it repairs (%q):\n%s", want, repair)
+		}
+	}
+}
+
+func TestDescribeRefusesAFirstSentenceTheRepairLeavesLong(t *testing.T) {
+	entry, graph := titledFixture()
+	long := pairedAnswer(sentenceOfWords(llmops.MaxFirstSentenceWords + 1))
+	runner := &scriptedRunner{replies: []string{long, long}}
+
+	_, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false)
+	if !errors.Is(err, llmops.ErrLongFirstSentence) {
+		t.Fatalf("a first sentence still too long after the repair should fail the description, got %v", err)
+	}
+	if len(runner.requests) != 2 {
+		t.Errorf("only one repair call should be made, got %d calls", len(runner.requests))
+	}
+}
+
+func TestDescribeLeavesAFirstSentenceAtTheLimitAlone(t *testing.T) {
+	entry, graph := titledFixture()
+	runner := &scriptedRunner{replies: []string{pairedAnswer(sentenceOfWords(llmops.MaxFirstSentenceWords))}}
+
+	_, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false)
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+	if len(runner.requests) != 1 {
+		t.Errorf("a first sentence within the limit should need no repair call, got %d calls", len(runner.requests))
 	}
 }

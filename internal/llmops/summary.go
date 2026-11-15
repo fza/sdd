@@ -20,6 +20,15 @@ var summaryTemplates embed.FS
 // a title and a summary and is not to be regenerated.
 var ErrDescribed = errors.New("entry already holds a title and a summary")
 
+// ErrLongFirstSentence is returned when a summary's first sentence still
+// exceeds MaxFirstSentenceWords after the one repair call.
+var ErrLongFirstSentence = errors.New("summary's first sentence is too long")
+
+// MaxFirstSentenceWords bounds the sentence brief listings render alone as the
+// entry's name. Above it the sentence is a paragraph, the lede-stuffing failure
+// the summary contract exists to prevent.
+const MaxFirstSentenceWords = 25
+
 // DescriptionResult holds a generated title and, from the paired call, a
 // generated summary. A title-only answer leaves Summary empty: the stored
 // summary stays as it is, since it may have been corrected by hand.
@@ -83,11 +92,65 @@ func Describe(ctx context.Context, runner llm.Runner, entry *model.Entry, graph 
 	if err != nil {
 		return DescriptionResult{}, err
 	}
-	output, err := runner.Run(ctx, description.Request)
+	return description.Run(ctx, runner)
+}
+
+// Run makes the call and parses its answer. A summary whose first sentence
+// exceeds MaxFirstSentenceWords gets one repair call naming its length.
+func (d *Description) Run(ctx context.Context, runner llm.Runner) (DescriptionResult, error) {
+	output, err := runner.Run(ctx, d.Request)
 	if err != nil {
-		return DescriptionResult{}, fmt.Errorf("running %s call: %w", description.Request.Purpose, err)
+		return DescriptionResult{}, fmt.Errorf("running %s call: %w", d.Request.Purpose, err)
 	}
-	return description.Parse(output.Text)
+	result, err := d.Parse(output.Text)
+	if err != nil {
+		return DescriptionResult{}, err
+	}
+	words := firstSentenceWords(result.Summary)
+	if words <= MaxFirstSentenceWords {
+		return result, nil
+	}
+
+	repair, err := d.repairRequest(output.Text, words)
+	if err != nil {
+		return DescriptionResult{}, err
+	}
+	output, err = runner.Run(ctx, repair)
+	if err != nil {
+		return DescriptionResult{}, fmt.Errorf("running %s repair call: %w", d.Request.Purpose, err)
+	}
+	result, err = d.Parse(output.Text)
+	if err != nil {
+		return DescriptionResult{}, err
+	}
+	words = firstSentenceWords(result.Summary)
+	if words > MaxFirstSentenceWords {
+		return DescriptionResult{}, fmt.Errorf("%w: %d words after the repair call, limit %d", ErrLongFirstSentence, words, MaxFirstSentenceWords)
+	}
+	return result, nil
+}
+
+func (d *Description) repairRequest(answer string, words int) (llm.Request, error) {
+	tmpl, err := template.ParseFS(summaryTemplates, "summary_templates/*.tmpl")
+	if err != nil {
+		return llm.Request{}, fmt.Errorf("parsing summary templates: %w", err)
+	}
+	var repairB strings.Builder
+	err = tmpl.ExecuteTemplate(&repairB, "summary_repair_user", struct {
+		Answer string
+		Words  int
+		Limit  int
+	}{Answer: strings.TrimSpace(answer), Words: words, Limit: MaxFirstSentenceWords})
+	if err != nil {
+		return llm.Request{}, fmt.Errorf("executing summary_repair_user template: %w", err)
+	}
+	repair := d.Request
+	repair.UserPrompt = d.Request.UserPrompt + "\n\n" + strings.TrimSpace(repairB.String())
+	return repair, nil
+}
+
+func firstSentenceWords(summary string) int {
+	return len(strings.Fields(model.FirstSentence(summary)))
 }
 
 // parseSummaryResponse reads a paired call's answer. Both fields are

@@ -32,3 +32,13 @@ Respond with one JSON object and nothing else: `{"title": "...", "summary": "...
 {{ .RelatedEntries }}
 {{ end -}}
 {{- end }}
+
+{{ define "summary_repair_user" -}}
+## Your previous answer
+
+{{ .Answer }}
+
+## Repair
+
+That summary's first sentence runs {{ .Words }} words, over the {{ .Limit }}-word limit. Answer again with the same JSON object. Cut the first sentence to the entry's single most important meaning by leaving material out, never by packing clauses in: what you leave out belongs in the remaining sentences or stays in the body. Every other rule still holds.
+{{- end }}
