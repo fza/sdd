@@ -389,6 +389,10 @@ func TestCaptureGrounding_PrefilterScoresRideTheReadingToTheLedger(t *testing.T)
 			}
 			serve = session.Report(t, instance, captureDraft())
 			proctest.RequireStep(t, serve, "playback")
+			session.Gather(t, instance)
+			if !tc.fail && scorer.scored == first {
+				t.Fatal("a gather after the draft changed scored no candidate: scores of the earlier draft should not answer it")
+			}
 			entry := confirmCapture(t, world, session, instance)
 
 			segments, err := store.Segments(t.Context())

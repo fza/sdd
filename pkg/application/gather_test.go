@@ -220,6 +220,22 @@ func TestGather_SearchModeRunsTheWrittenQueriesAndTopicListings(t *testing.T) {
 	}
 }
 
+// A superseded entry or an actor record matching a search never becomes a
+// candidate, so it takes none of the search's slots.
+func TestGather_SearchHitsCountOnlyCandidates(t *testing.T) {
+	f := newGatherFixture(t)
+	f.seed(t)
+	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: gatherSearchSize}, &countingEmbeddings{})
+
+	result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha.", Kind: "gap", Terms: []string{"alpha"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, `keyword "alpha": 2 entries`) {
+		t.Fatalf("the alpha search should count the live alpha gap and the successor alone:\n%s", result.Text)
+	}
+}
+
 func TestGather_CutsNoTextAndDropsNoListItem(t *testing.T) {
 	f := newGatherFixture(t)
 	long := strings.Repeat("A long brief sentence part that keeps on going ", 30) + "and ends here."

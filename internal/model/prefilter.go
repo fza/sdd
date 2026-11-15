@@ -2,6 +2,8 @@ package model
 
 import (
 	"cmp"
+	"crypto/sha256"
+	"encoding/hex"
 	"math"
 	"slices"
 	"strings"
@@ -27,26 +29,37 @@ const (
 )
 
 // PrefilterPayload is what one gather's prefilter adds to a capture's
-// reading: the judge, the direction its scores answer from the draft, and a
-// score byte per candidate.
+// reading: the judge, the direction its scores answer from the draft, the
+// draft they answer (RelevanceSubjectHash), and a score byte per candidate.
 type PrefilterPayload struct {
 	Judge   string           `json:"judge"`
 	Forward bool             `json:"forward,omitempty"`
+	Subject string           `json:"subject,omitempty"`
 	Scores  map[string]uint8 `json:"scores,omitempty"`
 	// Audit names the set-aside candidates shown blind as lines to judge.
 	Audit []string `json:"audit,omitempty"`
 }
 
-// readingScores is the reading's fold of prefilter scores per judge.
+// RelevanceSubjectHash keys the scores a judge gave against one draft text
+// (RelevanceText): a revised draft has its candidates scored again.
+func RelevanceSubjectHash(subject string) string {
+	sum := sha256.Sum256([]byte(subject))
+	return hex.EncodeToString(sum[:8])
+}
+
+// readingScores is the reading's fold of one judge's prefilter scores, all
+// against the latest draft it scored.
 type readingScores struct {
 	forward bool
+	subject string
 	scores  map[string]uint8
 }
 
-// Scores returns the scores judge gave inside the reading, and whether they
-// answer only from the draft to each candidate.
-func (r *Reading) Scores(judge string) (map[string]uint8, bool) {
-	if r == nil || r.scores[judge] == nil {
+// Scores returns the scores judge gave inside the reading against the draft
+// subject keys, and whether they answer only from the draft to each
+// candidate. Scores against an earlier draft are none.
+func (r *Reading) Scores(judge, subject string) (map[string]uint8, bool) {
+	if r == nil || r.scores[judge] == nil || r.scores[judge].subject != subject {
 		return nil, false
 	}
 	held := r.scores[judge]
@@ -61,8 +74,8 @@ func (r *Reading) foldPrefilter(p *PrefilterPayload) {
 		r.scores = map[string]*readingScores{}
 	}
 	held := r.scores[p.Judge]
-	if held == nil {
-		held = &readingScores{forward: p.Forward, scores: map[string]uint8{}}
+	if held == nil || held.subject != p.Subject {
+		held = &readingScores{forward: p.Forward, subject: p.Subject, scores: map[string]uint8{}}
 		r.scores[p.Judge] = held
 	}
 	if r.audit == nil {

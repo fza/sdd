@@ -157,7 +157,11 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	case len(live) < policy.BriefAllBelow:
 		reads = append(reads, model.GroundingRead{Mode: model.GroundingBriefs, IDs: liveIDs})
 	case strings.TrimSpace(request.Draft) != "" || request.Query != "" || len(request.Terms) > 0:
-		searched, err := a.gatherSearches(ctx, runtime, selected, request)
+		candidate := make(map[string]bool, len(live))
+		for _, e := range live {
+			candidate[e.ID] = true
+		}
+		searched, err := a.gatherSearches(ctx, runtime, selected, request, candidate)
 		if err != nil {
 			return GatherResult{}, err
 		}
@@ -197,10 +201,11 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	if len(split.NotRelevant) > 0 {
 		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideJudged, IDs: split.NotRelevant})
 	}
-	held, _ := request.reading.Scores(judge)
+	var held map[string]uint8
 	subject := ""
 	if strings.TrimSpace(request.Draft) != "" {
 		subject = model.RelevanceText(request.Kind, request.Topics, "", request.Draft)
+		held, _ = request.reading.Scores(judge, model.RelevanceSubjectHash(subject))
 	}
 
 	pass, err := runPrefilter(ctx, runtime, policy, subject, graph, split.Undecided, held)
@@ -262,14 +267,17 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	result.Text = strings.TrimRight(rendered.String(), "\n")
 	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Shown: slices.Clone(result.SummaryIDs), Corpus: served.Corpus}
 	if len(pass.fresh) > 0 || len(audit) > 0 {
-		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: runtime.options.Prefilter.Scorer != nil && runtime.options.Prefilter.Scorer.Direction() == relevance.Forward, Scores: pass.fresh, Audit: audit}
+		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: runtime.options.Prefilter.Scorer != nil && runtime.options.Prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Audit: audit}
 	}
 	return result, nil
 }
 
 // gatherSearches runs the semantic search and the keyword searches. The
-// embedder is checked before the query writer spends any LLM tokens.
-func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntime, selected *readSnapshotSelection, request GatherRequest) ([]model.GroundingRead, error) {
+// embedder is checked before the query writer spends any LLM tokens. Each
+// search lists up to gatherSearchLimit hits among candidate, the live entries
+// that can become candidates, so closed entries and records of who takes part
+// never take a slot.
+func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntime, selected *readSnapshotSelection, request GatherRequest, candidate map[string]bool) ([]model.GroundingRead, error) {
 	explicit := request.Query != "" || len(request.Terms) > 0
 	if !explicit || request.Query != "" {
 		if err := checkEmbedder(ctx, runtime); err != nil {
@@ -291,7 +299,9 @@ func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntim
 	defer target.state.closed.Store(true)
 	run := func(q query.SearchQuery) ([]string, error) {
 		q.SyncMode = request.SyncMode
-		q.Limit = gatherSearchLimit
+		// Hits outside candidate are dropped after the search, so it fetches a
+		// margin over the slots it fills.
+		q.Limit = gatherSearchLimit * 5
 		found, _, err := a.searchTarget(ctx, target, q)
 		if err != nil {
 			return nil, err
@@ -307,7 +317,7 @@ func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntim
 		})
 		var ids []string
 		for _, hit := range found.Entries {
-			if hit.Entry != nil && len(ids) < gatherSearchLimit {
+			if hit.Entry != nil && candidate[hit.Entry.ID] && len(ids) < gatherSearchLimit {
 				ids = append(ids, hit.Entry.ID)
 			}
 		}

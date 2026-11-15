@@ -742,12 +742,12 @@ func (w *WorkflowSession) verifierLanes(ctx *engine.Context, reading *captureRea
 	}
 	structural := model.VerifierStructural(graph, verifierDraft, reading.listed, reading.full, storeVerdictIDs(ctx.Store))
 	prefilter := runtime.options.Prefilter
-	held, _ := ctx.Reading.Scores(prefilter.Judge)
+	subject := model.RelevanceText(draft.Kind, draft.Topics, "", draft.Body)
+	held, _ := ctx.Reading.Scores(prefilter.Judge, model.RelevanceSubjectHash(subject))
 	scores := maps.Clone(held)
 	if scores == nil {
 		scores = map[string]uint8{}
 	}
-	subject := model.RelevanceText(draft.Kind, draft.Topics, "", draft.Body)
 	var pending []relevance.Candidate
 	for _, id := range reading.listed {
 		if _, scored := scores[id]; !scored && !structural[id] && graph.ByID[id] != nil {
@@ -764,7 +764,7 @@ func (w *WorkflowSession) verifierLanes(ctx *engine.Context, reading *captureRea
 		}
 		if len(scored.fresh) > 0 {
 			maps.Copy(scores, scored.fresh)
-			payload := &model.PrefilterPayload{Judge: prefilter.Judge, Forward: prefilter.Scorer.Direction() == relevance.Forward, Scores: scored.fresh}
+			payload := &model.PrefilterPayload{Judge: prefilter.Judge, Forward: prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: scored.fresh}
 			if err := w.session.Record(engine.Read{Tool: "verify", Instance: ctx.Instance, Grounding: model.ReadPayload{Prefilter: payload}}); err != nil {
 				return model.VerifierLanes{}, err
 			}

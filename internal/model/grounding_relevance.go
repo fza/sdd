@@ -11,7 +11,8 @@ import (
 // with its code, as opened when the reading served them in full; every
 // other entry the reading showed is opened when served in full, else
 // dismissed implicitly; an audit sample carries the audit bit; every
-// prefilter score the reading holds is kept with its judge.
+// prefilter score the reading holds, from the latest draft its judge scored
+// against, is kept with its judge.
 func CaptureRelevance(entryID string, reading *Reading, answered []string, verdicts []GroundingVerdict) (RelevanceBatch, error) {
 	var batch RelevanceBatch
 	if reading == nil {
