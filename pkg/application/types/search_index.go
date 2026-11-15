@@ -9,6 +9,10 @@ type ProjectID string
 // is not a ProjectID: AccessResolver.ResolveDependency maps one to the other.
 type RepoID string
 
+// FreeText marks RepoID as a config value outside any fixed set; its shape is
+// checked where it is used.
+func (RepoID) FreeText() {}
+
 // IndexNamespace keys one reconciled vector index. The fingerprint pins the
 // embedding model (and thus the dimensionality), so dimensions are not part
 // of the identity — stores enforce vector-length consistency per namespace

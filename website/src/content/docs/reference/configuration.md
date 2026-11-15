@@ -94,6 +94,7 @@ sdd init                                           # repeat in the work reposito
 
 - Keys are dotted paths, such as `llm.api_keys.openai`.
 - `set` refuses a key that does not belong in the target file, such as `graph_dir` without `--local`.
+- `set` refuses an empty value, since `unset` removes a key, and a value outside a setting's fixed set, such as `embedding.provider voyage` or `skill_scope machine`. The refusal names the allowed values, and the file stays unchanged.
 - `set` writes `8`, `0.5`, `true` and `false` as numbers and booleans, and everything else as text. Edit list values, such as `supported_agents`, in the file.
 - `set` and `unset` change only the named key and keep the rest of the file, comments included.
 - No command writes `.sdd/config.yaml` directly. `sdd init` creates it, `sdd repo add` and `sdd repo remove` change `dependencies`, and you edit the rest by hand and commit it.

@@ -197,7 +197,7 @@ type EmbeddingConfig struct {
 	// Provider names the embedder transport: "openai" (OpenAI-compatible
 	// /v1/embeddings) or "ollama" (/api/embeddings). Empty disables vector
 	// search — the CLI falls back to text-mode-only.
-	Provider string `yaml:"provider,omitempty"`
+	Provider EmbeddingProvider `yaml:"provider,omitempty"`
 	// Model is the provider-specific embedding model identifier
 	// (e.g. "text-embedding-3-small", "nomic-embed-text").
 	Model string `yaml:"model,omitempty"`
@@ -253,6 +253,13 @@ type EmbeddingConfig struct {
 	// stays empty for query-only models (Qwen3, BGE) and untemplated
 	// models (OpenAI).
 	DocumentTemplate string `yaml:"document_template,omitempty"`
+}
+
+// EmbeddingProvider names the embedder transport.
+type EmbeddingProvider string
+
+func (EmbeddingProvider) AllowedValues() []string {
+	return []string{"openai", "ollama"}
 }
 
 // LLMConfig holds settings for LLM provider selection, model choice, and
