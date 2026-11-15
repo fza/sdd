@@ -229,6 +229,9 @@ func TestIndexHandlerFillClearsPreviousCapWhenReembedCompletes(t *testing.T) {
 			if err := wide.Build(context.Background(), &command.BuildIndexCmd{}); err != nil {
 				t.Fatalf("Build: %v", err)
 			}
+			if loadCapManifest(t, indexDir).PrevMaxRunes != nil {
+				t.Fatal("a completed first fill should leave no previous cap pending")
+			}
 			if tc.interrupted {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
