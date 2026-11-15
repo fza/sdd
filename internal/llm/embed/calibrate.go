@@ -19,6 +19,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/networkteam/slogutils"
+
 	pkgembed "github.com/networkteam/sdd/pkg/llm/embed"
 )
 
@@ -41,11 +43,14 @@ const (
 // Calibration is what one serving endpoint allows: Method names how the input
 // limit was found, LimitTokens is the largest accepted count, TokensPerRune is
 // the worst observed ratio, and MaxRunes is the quantised cap sizing uses.
+// Unverified marks a cap a control probe decided (see attempt), which the
+// next load probes once more (see LoadOrCalibrate).
 type Calibration struct {
 	Method        string  `json:"method"`
 	LimitTokens   int     `json:"limit_tokens"`
 	TokensPerRune float64 `json:"tokens_per_rune"`
 	MaxRunes      int     `json:"max_runes"`
+	Unverified    bool    `json:"unverified,omitempty"`
 }
 
 // Quantise rounds runes down to a multiple of CapQuantum.
@@ -58,7 +63,7 @@ func Quantise(runes int) int {
 // that truncates silently shows a count stuck at its limit; one that rejects
 // over-limit input is bisected between the last accepted size and the first
 // rejection. A probe that gets no answer is retried once (see attempt), so a
-// passing blip neither lowers the cap nor gets stored.
+// passing blip fails the calibration or leaves its cap unverified.
 func Calibrate(ctx context.Context, emb pkgembed.Embedder) (Calibration, error) {
 	latinTokens, err := shortProbe(ctx, emb, repeatRunes("word ", latinProbeRunes))
 	if err != nil {
@@ -73,7 +78,7 @@ func Calibrate(ctx context.Context, emb pkgembed.Embedder) (Calibration, error) 
 	}
 	worst := math.Max(float64(latinTokens)/latinProbeRunes, float64(cjkTokens)/cjkProbeRunes)
 
-	method, limit, err := findLimit(ctx, emb, latinTokens)
+	method, limit, unverified, err := findLimit(ctx, emb, latinTokens)
 	if err != nil {
 		return Calibration{}, err
 	}
@@ -81,92 +86,103 @@ func Calibrate(ctx context.Context, emb pkgembed.Embedder) (Calibration, error) 
 	if maxRunes < CapQuantum {
 		return Calibration{}, fmt.Errorf("calibrated limit of %d tokens leaves no room for a %d-rune cap", limit, CapQuantum)
 	}
-	return Calibration{Method: method, LimitTokens: limit, TokensPerRune: worst, MaxRunes: maxRunes}, nil
+	return Calibration{Method: method, LimitTokens: limit, TokensPerRune: worst, MaxRunes: maxRunes, Unverified: unverified}, nil
 }
 
-func findLimit(ctx context.Context, emb pkgembed.Embedder, latinTokens int) (string, int, error) {
-	overflowTokens, refused, err := attempt(ctx, emb, repeatRunes("word ", overflowProbeRunes), repeatRunes("word ", latinProbeRunes))
+func findLimit(ctx context.Context, emb pkgembed.Embedder, latinTokens int) (method string, limit int, unverified bool, err error) {
+	overflowTokens, v, err := attempt(ctx, emb, repeatRunes("word ", overflowProbeRunes), repeatRunes("word ", latinProbeRunes))
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
-	if !refused {
+	if v == accepted {
 		expected := float64(overflowProbeRunes) * float64(latinTokens) / latinProbeRunes
 		if float64(overflowTokens) < plateauFraction*expected {
-			return "plateau", overflowTokens, nil
+			return "plateau", overflowTokens, false, nil
 		}
-		return "unbounded", overflowTokens, nil
+		return "unbounded", overflowTokens, false, nil
 	}
+	unverified = v == refusedByControl
 	lo, loTokens, hi := latinProbeRunes, latinTokens, overflowProbeRunes
 	for hi-lo > bisectTolerance {
 		mid := (lo + hi) / 2
-		tokens, refused, err := attempt(ctx, emb, repeatRunes("word ", mid), repeatRunes("word ", lo))
+		tokens, v, err := attempt(ctx, emb, repeatRunes("word ", mid), repeatRunes("word ", lo))
 		if err != nil {
-			return "", 0, err
+			return "", 0, false, err
 		}
-		if refused {
+		if v != accepted {
+			unverified = unverified || v == refusedByControl
 			hi = mid
 			continue
 		}
 		lo, loTokens = mid, tokens
 	}
-	return "bisect", loTokens, nil
+	return "bisect", loTokens, unverified, nil
 }
 
 // shortProbe sends a probe every endpoint must accept: a refusal fails the
 // calibration.
 func shortProbe(ctx context.Context, emb pkgembed.Embedder, text string) (int, error) {
-	tokens, refused, err := attempt(ctx, emb, text, "")
+	tokens, v, err := attempt(ctx, emb, text, "")
 	if err != nil {
 		return 0, err
 	}
-	if refused {
+	if v != accepted {
 		return 0, fmt.Errorf("the endpoint refused %d runes", utf8.RuneCountInString(text))
 	}
 	return tokens, nil
 }
+
+type verdict int
+
+const (
+	accepted verdict = iota
+	refused
+	refusedByControl
+)
 
 // attempt sends one probe and reads its outcome. An answer that is an error
 // is a refusal. Any other failure gets the probe sent once more, and an answer
 // decides. A second failure that may be the endpoint's answer to this input,
 // a dropped connection (endpoints that drop over-long input) or a server
 // error, counts as a refusal only when control, a size the endpoint accepted,
-// is still answered. Any other second failure, or a failed control, leaves
-// the outcome open, which fails the calibration so nothing is stored and the
-// next fill probes again.
-func attempt(ctx context.Context, emb pkgembed.Embedder, text, control string) (tokens int, refused bool, err error) {
-	tokens, err = probe(ctx, emb, text)
+// is still answered: refusedByControl, as a blip on both sends reads the same.
+// Any other second failure, or a failed control, leaves the outcome open,
+// which fails the calibration so nothing is stored and the next fill probes
+// again.
+func attempt(ctx context.Context, emb pkgembed.Embedder, text, control string) (int, verdict, error) {
+	tokens, err := probe(ctx, emb, text)
 	if err == nil {
-		return tokens, false, nil
+		return tokens, accepted, nil
 	}
 	if ctx.Err() != nil {
-		return 0, false, ctx.Err()
+		return 0, refused, ctx.Err()
 	}
 	if probeFailure(err) == answered {
-		return 0, true, nil
+		return 0, refused, nil
 	}
 	tokens, err = probe(ctx, emb, text)
 	if err == nil {
-		return tokens, false, nil
+		return tokens, accepted, nil
 	}
 	if ctx.Err() != nil {
-		return 0, false, ctx.Err()
+		return 0, refused, ctx.Err()
 	}
 	switch probeFailure(err) {
 	case answered:
-		return 0, true, nil
+		return 0, refused, nil
 	case dropped:
 		if control == "" {
 			break
 		}
 		_, controlErr := probe(ctx, emb, control)
 		if controlErr == nil {
-			return 0, true, nil
+			return 0, refusedByControl, nil
 		}
 		if ctx.Err() != nil {
-			return 0, false, ctx.Err()
+			return 0, refused, ctx.Err()
 		}
 	}
-	return 0, false, fmt.Errorf("calibration probe of %d runes got no answer twice: %w", utf8.RuneCountInString(text), err)
+	return 0, refused, fmt.Errorf("calibration probe of %d runes got no answer twice: %w", utf8.RuneCountInString(text), err)
 }
 
 type failure int
@@ -220,8 +236,9 @@ func repeatRunes(unit string, n int) string {
 }
 
 // LoadOrCalibrate returns the calibration stored under dir for key, probing
-// emb and storing the result when none exists. key identifies the serving
-// endpoint (fingerprint, URL and path), so the vector store is never touched.
+// emb and storing the result when none exists, and probing once more when the
+// stored one is unverified (see reverify). key identifies the serving endpoint
+// (fingerprint, URL and path), so the vector store is never touched.
 func LoadOrCalibrate(ctx context.Context, emb pkgembed.Embedder, dir, key string) (Calibration, error) {
 	sum := sha256.Sum256([]byte(key))
 	path := filepath.Join(dir, "calibration-"+hex.EncodeToString(sum[:])[:16]+".json")
@@ -234,6 +251,9 @@ func LoadOrCalibrate(ctx context.Context, emb pkgembed.Embedder, dir, key string
 		if err := markCalibrationUsed(path, time.Now()); err != nil {
 			return Calibration{}, err
 		}
+		if cal.Unverified {
+			return reverify(ctx, emb, path, cal)
+		}
 		return cal, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
@@ -244,6 +264,32 @@ func LoadOrCalibrate(ctx context.Context, emb pkgembed.Embedder, dir, key string
 		return Calibration{}, err
 	}
 	if err := writeAtomic(path, cal); err != nil {
+		return Calibration{}, err
+	}
+	return cal, nil
+}
+
+// reverify probes the endpoint of an unverified calibration once more. An
+// open outcome keeps stored, still unverified, for the next load. A cap at
+// least as high is stored verified; a lower one is stored as found.
+func reverify(ctx context.Context, emb pkgembed.Embedder, path string, stored Calibration) (Calibration, error) {
+	cal, err := Calibrate(ctx, emb)
+	if ctx.Err() != nil {
+		return Calibration{}, ctx.Err()
+	}
+	if err != nil {
+		slogutils.FromContext(ctx).Info("calibration re-probe got no answer, keeping the unverified cap", "max_runes", stored.MaxRunes, "error", err)
+		return stored, nil
+	}
+	switch {
+	case cal.MaxRunes == stored.MaxRunes:
+		cal = stored
+		cal.Unverified = false
+	case cal.MaxRunes > stored.MaxRunes:
+		cal.Unverified = false
+	}
+	err = writeAtomic(path, cal)
+	if err != nil {
 		return Calibration{}, err
 	}
 	return cal, nil

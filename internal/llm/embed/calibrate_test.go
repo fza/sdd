@@ -493,3 +493,101 @@ func TestCalibrateBisectsAnEndpointThatRefusesOverLimitInputWithAServerError(t *
 		t.Errorf("a server error only over the limit should count as the endpoint's refusal, got %q with %d runes", cal.Method, cal.MaxRunes)
 	}
 }
+
+// blipAt drops the first two probes of exactly runes Latin runes, then
+// answers as an endpoint with a 2048-token limit.
+func blipAt(runes int) func(text string) (int, error) {
+	limited := limitedEndpoint(errors.New("input exceeds the model limit"))
+	drops := 0
+	return func(text string) (int, error) {
+		if !cjkText(text) && utf8.RuneCountInString(text) == runes && drops < 2 {
+			drops++
+			return 0, droppedConnection()
+		}
+		return limited(text)
+	}
+}
+
+func TestLoadOrCalibrateReprobesACapTheControlProbeDecided(t *testing.T) {
+	t.Parallel()
+	const key = "fp|http://endpoint.test|/v1/embeddings"
+	answering := func() *countingEmbedder {
+		return &countingEmbedder{tokensFor: limitedEndpoint(errors.New("input exceeds the model limit"))}
+	}
+	dropping := func() *countingEmbedder {
+		return &countingEmbedder{tokensFor: limitedEndpoint(droppedConnection())}
+	}
+
+	t.Run("a higher result replaces the cap", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		first, err := localembed.LoadOrCalibrate(context.Background(), &countingEmbedder{tokensFor: blipAt(5750)}, dir, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first.MaxRunes >= 1792 {
+			t.Fatalf("a blip the control probe reads as a refusal should lower the first cap, got %d", first.MaxRunes)
+		}
+		next := answering()
+		second, err := localembed.LoadOrCalibrate(context.Background(), next, dir, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next.calls == 0 || second.MaxRunes != 1792 {
+			t.Errorf("the next fill should probe again and store the higher cap, %d probes, cap %d", next.calls, second.MaxRunes)
+		}
+		after := answering()
+		third, err := localembed.LoadOrCalibrate(context.Background(), after, dir, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after.calls != 0 || third.MaxRunes != 1792 {
+			t.Errorf("a verified cap should load without probing, %d probes, cap %d", after.calls, third.MaxRunes)
+		}
+	})
+
+	t.Run("the same result keeps the cap and verifies it", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		if _, err := localembed.LoadOrCalibrate(context.Background(), dropping(), dir, key); err != nil {
+			t.Fatal(err)
+		}
+		next := dropping()
+		second, err := localembed.LoadOrCalibrate(context.Background(), next, dir, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next.calls == 0 || second.MaxRunes != 1792 {
+			t.Errorf("the next fill should probe again and keep the cap, %d probes, cap %d", next.calls, second.MaxRunes)
+		}
+		after := dropping()
+		if _, err := localembed.LoadOrCalibrate(context.Background(), after, dir, key); err != nil {
+			t.Fatal(err)
+		}
+		if after.calls != 0 {
+			t.Errorf("a cap the re-probe confirmed should load without probing, %d probes", after.calls)
+		}
+	})
+
+	t.Run("an open re-probe keeps the cap to verify", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		if _, err := localembed.LoadOrCalibrate(context.Background(), dropping(), dir, key); err != nil {
+			t.Fatal(err)
+		}
+		second, err := localembed.LoadOrCalibrate(context.Background(), &countingEmbedder{tokensFor: failingPastShortProbes(refusedConnection())}, dir, key)
+		if err != nil {
+			t.Fatalf("an open re-probe should keep the stored cap: %v", err)
+		}
+		if second.MaxRunes != 1792 {
+			t.Errorf("an open re-probe should keep the stored cap, got %d", second.MaxRunes)
+		}
+		after := dropping()
+		if _, err := localembed.LoadOrCalibrate(context.Background(), after, dir, key); err != nil {
+			t.Fatal(err)
+		}
+		if after.calls == 0 {
+			t.Error("a cap an open re-probe left unverified should be probed on the next fill")
+		}
+	})
+}
