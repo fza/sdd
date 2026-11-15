@@ -36,7 +36,8 @@ type InitCmd struct {
 
 	// SetUpProject allows init to set up a missing project at ProjectDir. Only
 	// a path the caller typed qualifies: a recorded project_dir names a shared
-	// project to clone, never one to create.
+	// project to clone, never one to create. It also lets ProjectDir rewrite the
+	// committed pointer.
 	SetUpProject bool
 
 	// DefaultBranch is the concrete Git branch persisted for ordinary engine

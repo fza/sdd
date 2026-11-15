@@ -73,6 +73,11 @@ func TestResolveProject(t *testing.T) {
 			wantError: "itself sets project_dir",
 		},
 		{
+			name:      "an absolute project_dir in the committed file",
+			work:      map[string]string{"config.yaml": "project_dir: /srv/project\n"},
+			wantError: "an absolute project_dir belongs in",
+		},
+		{
 			name:      "a project pointing on through its local file",
 			work:      map[string]string{"config.yaml": "project_dir: ../project\n"},
 			project:   map[string]string{"config.yaml": "graph_dir: .sdd/graph\n", "config.local.yaml": "project_dir: ../elsewhere\n"},

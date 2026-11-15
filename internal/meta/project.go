@@ -50,6 +50,10 @@ func ResolveProject(workRoot string) (Project, error) {
 	if err != nil {
 		return Project{}, err
 	}
+	// A committed path is every clone's, so it may not name one machine's folder.
+	if committed != nil && filepath.IsAbs(committed.ProjectDir) {
+		return Project{}, fmt.Errorf("%s sets project_dir %s; an absolute project_dir belongs in %s, the committed one is relative to the repository", committedPath, committed.ProjectDir, localPath)
+	}
 	root := projectDir
 	if !filepath.IsAbs(root) {
 		root = filepath.Join(workRoot, root)

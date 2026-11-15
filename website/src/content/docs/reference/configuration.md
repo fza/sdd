@@ -36,14 +36,14 @@ The graph can live in an sdd project of its own, beside the repository where the
 
 ```yaml
 # work repository: .sdd/config.yaml, committed
-project_dir: ../app-sdd       # folder holding the project's .sdd/, relative to this repository's root or absolute
+project_dir: ../app-sdd       # folder holding the project's .sdd/, relative to this repository's root
 skill_scope: project
 supported_agents: [claude]
 ```
 
 ```yaml
 # work repository: .sdd/config.local.yaml, gitignored
-project_dir: /home/ada/src/app-sdd   # this machine's checkout of the project
+project_dir: /home/ada/src/app-sdd   # this machine's checkout of the project; absolute paths only here
 ```
 
 ```text

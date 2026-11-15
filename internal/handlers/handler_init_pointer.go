@@ -85,13 +85,22 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		}
 	}
 
+	// The committed pointer is every clone's: relative, and changed only by a typed
+	// --project-dir, never by the machine-local override init followed.
+	committedDir := cmd.ProjectDir
+	if filepath.IsAbs(committedDir) {
+		rel, relErr := filepath.Rel(cmd.RepoRoot, committedDir)
+		if relErr == nil {
+			committedDir = filepath.ToSlash(rel)
+		}
+	}
 	var touched []string
 	if !configExisted {
 		err = os.MkdirAll(sddDir, 0o755)
 		if err != nil {
 			return fmt.Errorf("creating %s: %w", sddDir, err)
 		}
-		err = os.WriteFile(configPath, []byte(model.FormatPointerConfig(model.PerRepoConfig{ProjectDir: cmd.ProjectDir, SkillScope: effectiveScope, SupportedAgents: effectiveAgents})), 0o644)
+		err = os.WriteFile(configPath, []byte(model.FormatPointerConfig(model.PerRepoConfig{ProjectDir: committedDir, SkillScope: effectiveScope, SupportedAgents: effectiveAgents})), 0o644)
 		if err != nil {
 			return fmt.Errorf("writing %s: %w", configPath, err)
 		}
@@ -104,8 +113,8 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		// changes: a repeat init leaves the file byte-identical.
 		updated := existing
 		var setErr error
-		if recorded.ProjectDir != cmd.ProjectDir {
-			updated, setErr = model.SetYAMLField(updated, "project_dir", cmd.ProjectDir)
+		if cmd.SetUpProject && recorded.ProjectDir != committedDir {
+			updated, setErr = model.SetYAMLField(updated, "project_dir", committedDir)
 			if setErr != nil {
 				return fmt.Errorf("updating %s: %w", configPath, setErr)
 			}

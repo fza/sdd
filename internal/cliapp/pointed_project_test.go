@@ -531,3 +531,37 @@ func TestConfigSetLocalProjectDirIsRefusedInAProject(t *testing.T) {
 		t.Error("a refused write should leave the local file unchanged")
 	}
 }
+
+// A committed pointer holds no machine's path: an absolute --project-dir is
+// recorded relative to the work repository.
+func TestInitRecordsAnAbsoluteProjectDirRelative(t *testing.T) {
+	work, project := pointedRepos(t)
+	if err := os.RemoveAll(filepath.Join(work, ".sdd")); err != nil {
+		t.Fatal(err)
+	}
+
+	runApp(t, work, "init", "--project-dir", project, "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	written := readFile(t, filepath.Join(work, ".sdd", "config.yaml"))
+	if !strings.Contains(written, "project_dir: ../work-sdd\n") {
+		t.Errorf("the committed pointer should be relative:\n%s", written)
+	}
+}
+
+// A repeat init that follows a machine-local project_dir leaves the committed
+// pointer as every clone has it.
+func TestInitKeepsTheCommittedPointerUnderALocalOverride(t *testing.T) {
+	work, project := pointedRepos(t)
+	moved := filepath.Join(filepath.Dir(project), "elsewhere")
+	if err := os.Rename(project, moved); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: "+moved+"\n")
+	committed := readFile(t, filepath.Join(work, ".sdd", "config.yaml"))
+
+	runApp(t, work, "init", "--scope", "project", "--participant", "Ada")
+
+	if readFile(t, filepath.Join(work, ".sdd", "config.yaml")) != committed {
+		t.Error("the committed pointer should stay unchanged")
+	}
+}
