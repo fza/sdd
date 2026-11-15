@@ -38,13 +38,29 @@ func (s *Session) checkUnattended(inst *Instance, step *Step, choice, userWords 
 	case u == nil:
 		return nil
 	case inst.unattendedSpent(step):
-		return fmt.Errorf("%s is parked: a person answers it after resume_session %s", step.ID, s.ID)
+		return fmt.Errorf("%s is parked: a person answers it after resume_session %s in a session whose dialogue.mode is guided (sdd config set --local dialogue.mode guided)", step.ID, s.ID)
 	case userWords != "":
 		return fmt.Errorf("%s refuses user words in an autonomous session (%s)", step.ID, unattendedRule(u))
 	case choice != u.Answer:
 		return fmt.Errorf("%s refuses %q in an autonomous session (%s)", step.ID, choice, unattendedRule(u))
 	}
 	return nil
+}
+
+// RefuseUnattendedAbandon refuses abandoning a running instance that waits at
+// an unattended step of an autonomous session: dropping a blocked move is the
+// user's, as overriding its check is, so an agent alone parks it instead. A
+// session torn down by its handle is not asked.
+func (s *Session) RefuseUnattendedAbandon(instanceID string) error {
+	inst, ok := s.instances[instanceID]
+	if !ok || inst.Status != StatusRunning {
+		return nil
+	}
+	step := inst.currentStep()
+	if step == nil || s.unattendedAt(step) == nil {
+		return nil
+	}
+	return fmt.Errorf("%s at %s is not abandoned in an autonomous session: a person drops it, after resume_session %s in a session whose dialogue.mode is guided; until then it parks", instanceID, step.ID, s.ID)
 }
 
 func unattendedRule(u *Unattended) string {
