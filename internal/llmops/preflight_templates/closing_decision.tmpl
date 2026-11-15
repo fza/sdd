@@ -9,6 +9,7 @@ A decision is being created that claims to close one or more entries. Most often
 2. **No silent additions**: decision must not introduce commitments not grounded in referenced signals. Strategic synthesis is allowed; unrelated scope is not.
 3. {{ template "layer_check" . }}
 {{ if .ClosesKind "fact" "insight" "contract" "aspiration" }}4. **Retirement rationale** (applies only when closed target's kind is `fact`, `insight`, `contract`, or `aspiration`): decision narrative must state **why** target is being retired. Check only that the reason is present, not whether it is correct.
+{{ end }}{{ if .Settled }}5. **Settled justification** (applies only to a directive with `Intent: settled`): apply "Settled-directive justification" above as a check of its own.
 {{ end }}
 ## Calibration
 
@@ -16,7 +17,9 @@ A decision closing a signal must address what signal identifies. Apply contract 
 
 - `high`: decision claims to close a signal with a specific quantitative target but misses it without justification (e.g. signal requires ≤30s for default catch-up; decision delivers ~1m and does not explain the shortfall).
 - `medium`: decision addresses most of signal; one concern is silent without acknowledgment (possible intentional scope narrowing, worth naming).
-- `low`: rationale is present but thin; a sentence explaining why would help future readers.
+- `medium`: the layer clearly mismatches what the body is about (check 3).
+{{ if .Settled }}- `medium` `settled-unjustified`: a settled directive whose body states no reason it needs no follow-up (check 5).
+{{ end }}- `low`: rationale is present but thin; a sentence explaining why would help future readers.
 - No finding: a plan omits a structural ritual (e.g. explicit CQRS decomposition table) required by an active contract. Contracts express intent, not rigid form; small tactical plans don't need decomposition tables. A decision introduces synthesized design direction (e.g. "agent-neutral abstraction") beyond what signal literally requested. Decisions synthesize: the grounding test is "does the signal motivate a response?", not "is the exact direction pre-established?".
 {{ if .ClosesKind "fact" "insight" "contract" "aspiration" }}
 ### Retirement-rationale calibration (when closing a stable-kind entry)

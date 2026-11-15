@@ -213,11 +213,6 @@ Set verdict to "fail" when any check fails, and name each problem concretely.`,
 	return nil, lastErr
 }
 
-// maxFirstSentenceWords bounds the sentence brief listings render alone as the
-// entry's name. Above it the sentence is a paragraph, which is the lede-stuffing
-// failure the summary contract exists to prevent.
-const maxFirstSentenceWords = 25
-
 // checkSummaryMechanics runs the hard checks no judge is needed for. These are
 // the semantic failures that record as success rows (s-tac-k7d): empty or
 // whitespace output, runaway or degenerate length, and the self-ID bug.
@@ -233,7 +228,7 @@ func checkSummaryMechanics(entryID, summary string) []string {
 		problems = append(problems, fmt.Sprintf("summary runaway length (%d words; the ceiling is three sentences)", words))
 	}
 	if first := model.FirstSentence(summary); first != "" {
-		if firstWords := len(strings.Fields(first)); firstWords > maxFirstSentenceWords {
+		if firstWords := len(strings.Fields(first)); firstWords > llmops.MaxFirstSentenceWords {
 			problems = append(problems, fmt.Sprintf("first sentence runs %d words; brief listings render it alone, so it carries one meaning in the shortest sentence that carries it", firstWords))
 		}
 	}
