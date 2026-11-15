@@ -145,7 +145,7 @@ func (e specimenExpect) checkPreflight(content string, r *llmops.PreflightResult
 		if string(f.Severity) != e.Severity {
 			continue
 		}
-		for _, excerpt := range citedExcerpts(f.Observation) {
+		for _, excerpt := range append([]string{f.Quote}, citedExcerpts(f.Observation)...) {
 			if llmops.QuoteLocatesIn(content, excerpt, e.Passage) {
 				return nil
 			}
