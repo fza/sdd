@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/networkteam/sdd/internal/filestamp"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -19,8 +21,23 @@ import (
 // wip/: the CLI resolves WIP markers lazily (GraphFinder.WIPMarkers) only when
 // a layout needs them, so a plain graph load never touches or fails on them.
 type filesystemSource struct {
-	dir string
+	dir   string
+	cache GraphCache
 }
+
+// GraphCache keeps a graph directory's raw documents between processes. Load
+// answers only for exactly the file stamps the documents were saved under;
+// any other stamps, and any cache it cannot verify, are a miss. The documents
+// still pass the single ParseEntry gate on every load, so a hit hands
+// buildGraph the same bytes a fresh read would.
+type GraphCache interface {
+	Load(dir string, stamps map[string]filestamp.Stamp) (GraphDocuments, bool, error)
+	Save(dir string, stamps map[string]filestamp.Stamp, docs GraphDocuments) error
+}
+
+// runtimeDirName holds a graph store's locks and lineage. Its files never
+// become entries, so they do not count toward the graph's stamps.
+const runtimeDirName = ".sdd-runtime"
 
 // GraphDocuments walks the graph directory and reads every entry file as raw
 // canonical content. File-read and walk errors are hard failures; files that
@@ -33,6 +50,9 @@ func (s filesystemSource) GraphDocuments() (GraphDocuments, error) {
 	var docs GraphDocuments
 	var paths []string
 	dirs := map[string]bool{}
+	now := time.Now()
+	stamps := map[string]filestamp.Stamp{}
+	proven := s.cache != nil
 	walkErr := filepath.WalkDir(s.dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -51,6 +71,18 @@ func (s filesystemSource) GraphDocuments() (GraphDocuments, error) {
 			dirs[rel] = true
 			return nil
 		}
+		if proven && !strings.HasPrefix(rel, runtimeDirName+string(filepath.Separator)) {
+			info, err := os.Lstat(path)
+			if err != nil {
+				return fmt.Errorf("stamping %s: %w", path, err)
+			}
+			stamp := filestamp.Of(info)
+			// A symlink's target can change without its stamp changing.
+			if !stamp.Proves(now) || info.Mode()&fs.ModeSymlink != 0 {
+				proven = false
+			}
+			stamps[rel] = stamp
+		}
 		if !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}
@@ -66,6 +98,15 @@ func (s filesystemSource) GraphDocuments() (GraphDocuments, error) {
 	if walkErr != nil {
 		return GraphDocuments{}, fmt.Errorf("walking graph dir: %w", walkErr)
 	}
+	if proven {
+		cached, hit, err := s.cache.Load(s.dir, stamps)
+		if err != nil {
+			return GraphDocuments{}, fmt.Errorf("loading the graph cache: %w", err)
+		}
+		if hit {
+			return cached, nil
+		}
+	}
 	errs := make([]error, len(paths))
 	forEachConcurrently(len(paths), func(i int) {
 		data, err := os.ReadFile(paths[i])
@@ -78,6 +119,13 @@ func (s filesystemSource) GraphDocuments() (GraphDocuments, error) {
 	})
 	if err := errors.Join(errs...); err != nil {
 		return GraphDocuments{}, err
+	}
+	// The stamps were taken before the reads, so a file written in between is
+	// saved under its earlier stamp and misses on the next load.
+	if proven {
+		if err := s.cache.Save(s.dir, stamps, docs); err != nil {
+			return GraphDocuments{}, fmt.Errorf("saving the graph cache: %w", err)
+		}
 	}
 	return docs, nil
 }
@@ -116,7 +164,7 @@ func (s filesystemSource) scanAttachments(id string, dirs map[string]bool) []str
 // callers are untouched; the graph's directory is recorded for provenance and
 // lazy WIP resolution.
 func (f *Finder) LoadGraph(dir string) (*model.Graph, error) {
-	docs, err := filesystemSource{dir: dir}.GraphDocuments()
+	docs, err := filesystemSource{dir: dir, cache: f.graphCache}.GraphDocuments()
 	if err != nil {
 		return nil, err
 	}
