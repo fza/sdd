@@ -81,7 +81,8 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	}
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = workDir
-	cmd.Env = env
+	// Go sets PWD itself only for a nil Env.
+	cmd.Env = append(env, "PWD="+workDir)
 	cmd.Stdin = strings.NewReader(req.Combined())
 	out, runErr := cmd.Output()
 	if runErr != nil && ctx.Err() == context.DeadlineExceeded {

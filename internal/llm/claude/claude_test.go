@@ -16,6 +16,27 @@ import (
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
+// TestMain lets the test binary stand in for claude when started under that
+// name: unlike a shell, it reads PWD as the runner set it.
+func TestMain(m *testing.M) {
+	if filepath.Base(os.Args[0]) == "claude" {
+		pwdStandIn()
+		return
+	}
+	os.Exit(m.Run())
+}
+
+func pwdStandIn() {
+	report := "PWD names another directory: " + os.Getenv("PWD")
+	pwd, errPWD := os.Stat(os.Getenv("PWD"))
+	cwd, errCwd := os.Stat(".")
+	if errPWD == nil && errCwd == nil && os.SameFile(pwd, cwd) {
+		report = "PWD names the working directory"
+	}
+	answer, _ := json.Marshal(map[string]string{"result": report})
+	_, _ = os.Stdout.Write(answer)
+}
+
 // problemChars are the characters that broke the checks' JSON output before.
 const problemChars = "„Code einlösen“ «zitiert» ‚einfach‘ “English” an ASCII \" quote, Options{Zebra: true}, C:\\Projekte\\de.json, ^Code\\s+[A-Z0-9]{8}$, a line\nbreak, <b> & 🎉"
 
@@ -346,6 +367,32 @@ func flagValue(args []string, flag string) (string, bool) {
 		return "", false
 	}
 	return args[i+1], true
+}
+
+// The CLI reads PWD for its directory; an inherited one would name the
+// project the call started in.
+func TestChildPWDNamesItsDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a symlink to the test binary")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(self, filepath.Join(dir, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PWD", t.TempDir())
+
+	res, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Text != "PWD names the working directory" {
+		t.Errorf("the child's PWD should name its own working directory, got %q", res.Text)
+	}
 }
 
 // The child runs in a directory of its own, away from the project the call
