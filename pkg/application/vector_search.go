@@ -34,15 +34,7 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 	}
 
 	if request.SyncMode != query.SearchSyncNone {
-		maxRunes, err := r.fillRunes(ctx, namespace)
-		if err != nil {
-			return nil, err
-		}
-		hashes, err := r.currentEntryHashes(ctx, snapshot.graph.Entries, attachments, maxRunes)
-		if err != nil {
-			return nil, err
-		}
-		if err := r.reconcileSearchSnapshot(ctx, snapshot, attachments, namespace, hashes, maxRunes, ReconcileSearchIndexCmd{}); err != nil {
+		if err := r.fillForSearch(ctx, snapshot, attachments, namespace); err != nil {
 			return nil, err
 		}
 	}
@@ -94,6 +86,26 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 		return nil, err
 	}
 	return hybridResult(text, vector, limit), nil
+}
+
+// fillForSearch embeds the entries the namespace's store lacks before a
+// search, unless another process is filling it: the search then reads the
+// index as it stands.
+func (r *ProjectRuntime) fillForSearch(ctx context.Context, snapshot *Snapshot, attachments GraphStore, namespace IndexNamespace) (err error) {
+	release, busy, err := r.beginFill(ctx, namespace, false)
+	if err != nil || busy {
+		return err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	maxRunes, err := r.fillRunes(ctx, namespace)
+	if err != nil {
+		return err
+	}
+	hashes, err := r.currentEntryHashes(ctx, snapshot.graph.Entries, attachments, maxRunes)
+	if err != nil {
+		return err
+	}
+	return r.reconcileSearchSnapshot(ctx, snapshot, attachments, namespace, hashes, maxRunes, ReconcileSearchIndexCmd{})
 }
 
 // storedMaxRunes are the rune caps the namespace's store reads under, newest

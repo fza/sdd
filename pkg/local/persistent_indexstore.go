@@ -64,7 +64,25 @@ var (
 	_ app.SearchIndexEntryManifest = (*PersistentSearchIndexStore)(nil)
 	_ app.SearchIndexRunes         = (*PersistentSearchIndexStore)(nil)
 	_ app.SearchIndexRunesRecorder = (*PersistentSearchIndexStore)(nil)
+	_ app.SearchIndexFillLock      = (*PersistentSearchIndexStore)(nil)
 )
+
+// BeginFill takes the namespace store's fill lock, the one a CLI fill holds,
+// so serve and the CLI never fill one store at once.
+func (s *PersistentSearchIndexStore) BeginFill(ctx context.Context, namespace app.IndexNamespace, wait bool) (func() error, error) {
+	dir, err := s.storeDir(namespace)
+	if err != nil {
+		return nil, err
+	}
+	session, err := index.BeginFill(ctx, dir, wait)
+	if errors.Is(err, index.ErrFillBusy) {
+		return nil, app.ErrSearchIndexFillBusy
+	}
+	if err != nil {
+		return nil, err
+	}
+	return session.Close, nil
+}
 
 // ReadMaxRunes reports the rune caps the namespace's store reads under, read
 // from its manifest. A manifest that predates the cap reads uncapped.

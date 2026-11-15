@@ -2,7 +2,10 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/handlers"
@@ -31,6 +34,11 @@ func (r *ProjectRuntime) ReconcileSearchIndex(ctx context.Context, cmd Reconcile
 	}
 	defer selected.releaseInto(&err)
 	snapshot := selected.snapshot
+	release, _, err := r.beginFill(ctx, namespace, true)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, release()) }()
 	maxRunes, err := r.fillRunes(ctx, namespace)
 	if err != nil {
 		return err
@@ -40,6 +48,25 @@ func (r *ProjectRuntime) ReconcileSearchIndex(ctx context.Context, cmd Reconcile
 		return err
 	}
 	return r.reconcileSearchSnapshot(ctx, snapshot, selected.store, namespace, hashes, maxRunes, cmd)
+}
+
+// beginFill takes the namespace's fill lock when the store has one. With wait
+// false a fill another process runs reports busy, and the caller searches the
+// index as it stands.
+func (r *ProjectRuntime) beginFill(ctx context.Context, namespace IndexNamespace, wait bool) (release func() error, busy bool, err error) {
+	lock, ok := r.options.SearchIndex.(SearchIndexFillLock)
+	if !ok {
+		return func() error { return nil }, false, nil
+	}
+	release, err = lock.BeginFill(ctx, namespace, wait)
+	if errors.Is(err, ErrSearchIndexFillBusy) {
+		slogutils.FromContext(ctx).Info("search index fill running in another process, skipping", "project", namespace.Project)
+		return nil, true, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return release, false, nil
 }
 
 func (r *ProjectRuntime) indexNamespace() (IndexNamespace, error) {

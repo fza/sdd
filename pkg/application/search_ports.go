@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 
 	"github.com/networkteam/sdd/pkg/application/types"
 )
@@ -46,6 +47,17 @@ type SearchIndexRunesRecorder interface {
 	RecordMaxRunes(context.Context, IndexNamespace, int) error
 	SettleMaxRunes(context.Context, IndexNamespace, int) error
 }
+
+// SearchIndexFillLock is an optional store capability admitting one filler per
+// namespace across processes. BeginFill returns ErrSearchIndexFillBusy at once
+// while another filler holds the namespace, unless wait is set; release ends
+// the fill. A store without it lets fills overlap.
+type SearchIndexFillLock interface {
+	BeginFill(ctx context.Context, namespace IndexNamespace, wait bool) (release func() error, err error)
+}
+
+// ErrSearchIndexFillBusy reports that another process fills the namespace.
+var ErrSearchIndexFillBusy = errors.New("sdd: another process is filling the search index")
 
 type SearchEntryVersion = types.SearchEntryVersion
 type SearchEntryDescriptor = types.SearchEntryDescriptor
