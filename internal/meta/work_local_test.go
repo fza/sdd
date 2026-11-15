@@ -83,16 +83,19 @@ func TestProjectLocalConfigPathIsTheWorkLocalOfAPointedProject(t *testing.T) {
 }
 
 // The work repository's local file is machine-local too: it may only raise
-// the verify mode the shared layers set.
-func TestResolveConfigRefusesAWorkLocalLoweringVerify(t *testing.T) {
+// the verify mode the shared layers set, so a read ignores a lower one.
+func TestResolveConfigIgnoresAWorkLocalLoweringVerify(t *testing.T) {
 	root := t.TempDir()
 	work, project := filepath.Join(root, "work"), filepath.Join(root, "project")
 	writeConfig(t, work, "config.yaml", "project_dir: ../project\n")
 	writeConfig(t, work, "config.local.yaml", "verify:\n  mode: prose\n")
 	writeConfig(t, project, "config.yaml", "graph_dir: .sdd/graph\nverify:\n  mode: deep\n")
 
-	_, err := meta.ResolveConfig(model.BaseConfig{}, meta.SDDDir(project), meta.LocalConfigPath(meta.SDDDir(work), ""))
-	if err == nil {
-		t.Fatal("a work local lowering verify.mode should be refused")
+	cfg, err := meta.ResolveConfig(model.BaseConfig{}, meta.SDDDir(project), meta.LocalConfigPath(meta.SDDDir(work), ""))
+	if err != nil {
+		t.Fatalf("a work local lowering verify.mode should not fail the read: %v", err)
+	}
+	if got := cfg.Verify.ResolvedMode(); got != model.VerifyDeep {
+		t.Fatalf("the shared mode should apply over the ignored work local one, got %q", got)
 	}
 }

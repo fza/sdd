@@ -100,7 +100,7 @@ func TestMergeBaseConfig_VerifyKindsMergeKeyByKey(t *testing.T) {
 	}
 }
 
-func TestCheckVerifyLayers_LocalMayOnlyRaiseEachKind(t *testing.T) {
+func TestHonoredVerifyLayers_LocalMayOnlyRaiseEachKind(t *testing.T) {
 	committed := &model.PerRepoConfig{}
 	committed.Verify = model.VerifyConfig{Mode: model.VerifyProse, Kinds: map[model.Kind]model.VerifyMode{"done": model.VerifyDeep}}
 	for _, tc := range []struct {
@@ -115,7 +115,7 @@ func TestCheckVerifyLayers_LocalMayOnlyRaiseEachKind(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			local := &model.PerRepoConfig{}
 			local.Verify = tc.local
-			err := model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
+			err := checkVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
 			if tc.want == "" {
 				if err != nil {
 					t.Fatalf("a machine-local kind raising its mode should pass: %v", err)
@@ -131,7 +131,7 @@ func TestCheckVerifyLayers_LocalMayOnlyRaiseEachKind(t *testing.T) {
 	global.Verify.Mode = model.VerifyDeep
 	local := &model.PerRepoConfig{}
 	local.Verify.Kinds = map[model.Kind]model.VerifyMode{"gap": model.VerifyDeep}
-	err := model.CheckVerifyLayers(global, nil, local, verifierFiles)
+	err := checkVerifyLayers(global, nil, local, verifierFiles)
 	if err != nil {
 		t.Fatalf("naming a kind locally turns the built-in caps off, which only raises the capped kinds: %v", err)
 	}

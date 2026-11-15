@@ -38,7 +38,7 @@ func TestResolveConfig_AnUnknownVerifyModeLeavesTheLayerBelow(t *testing.T) {
 	}
 }
 
-func TestResolveConfig_RefusesALocalLoweringTheVerifier(t *testing.T) {
+func TestResolveConfig_IgnoresALocalLoweringTheVerifier(t *testing.T) {
 	sddDir := t.TempDir()
 	err := os.WriteFile(filepath.Join(sddDir, "config.yaml"), []byte("verify:\n  mode: deep\n"), 0o644)
 	if err != nil {
@@ -48,9 +48,27 @@ func TestResolveConfig_RefusesALocalLoweringTheVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = meta.ResolveConfig(model.BaseConfig{}, sddDir, "")
-	if err == nil || !strings.Contains(err.Error(), filepath.Join(sddDir, "config.local.yaml")) || !strings.Contains(err.Error(), "verify.mode prose") {
-		t.Fatalf("a local layer lowering the mode should be refused naming the file and key, got %v", err)
+	cfg, err := meta.ResolveConfig(model.BaseConfig{}, sddDir, "")
+	if err != nil {
+		t.Fatalf("a local layer lowering the mode should not fail the read: %v", err)
+	}
+	if got := cfg.Verify.ResolvedMode(); got != model.VerifyDeep {
+		t.Fatalf("the shared mode should apply over the ignored local one, got %q", got)
+	}
+}
+
+func TestResolveConfig_IgnoresACommittedDriver(t *testing.T) {
+	sddDir := t.TempDir()
+	err := os.WriteFile(filepath.Join(sddDir, "config.yaml"), []byte("verify:\n  driver:\n    command: run-it\n"), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := meta.ResolveConfig(model.BaseConfig{}, sddDir, "")
+	if err != nil {
+		t.Fatalf("a committed driver should not fail the read: %v", err)
+	}
+	if cfg.Verify.Driver.Command != "" {
+		t.Fatal("a committed driver command should never be honored")
 	}
 }
 

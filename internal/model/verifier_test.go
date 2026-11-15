@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,30 @@ var verifierFiles = map[model.ConfigValueSource]string{
 	model.ConfigSourceGlobal:  "global.yaml",
 	model.ConfigSourceProject: ".sdd/config.yaml",
 	model.ConfigSourceLocal:   ".sdd/config.local.yaml",
+}
+
+// checkVerifyLayers is the first value HonoredVerifyLayers drops, as an
+// error; nil when it drops none.
+func checkVerifyLayers(global model.BaseConfig, committed, local *model.PerRepoConfig, files map[model.ConfigValueSource]string) error {
+	_, _, _, dropped := model.HonoredVerifyLayers(global, committed, local, files)
+	if len(dropped) == 0 {
+		return nil
+	}
+	return errors.New(dropped[0].Reason)
+}
+
+// A read drops what a layer may not set where it stands and resolves the
+// rest: the shared value stands in for a loosening local one.
+func TestHonoredVerifyLayers_KeepsTheSharedValueForADroppedLocalOne(t *testing.T) {
+	committed, local := verifyLayer(model.VerifyDeep, ""), verifyLayer(model.VerifyProse, "")
+	_, honoredCommitted, honoredLocal, dropped := model.HonoredVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
+	if len(dropped) != 1 || dropped[0].Key != "verify.mode" || dropped[0].Source != model.ConfigSourceLocal {
+		t.Fatalf("the loosening local verify.mode should be dropped from the local layer, got %+v", dropped)
+	}
+	resolved := model.MergeConfig(honoredCommitted, honoredLocal)
+	if resolved.Verify.Mode != model.VerifyDeep || local.Verify.Mode != model.VerifyProse {
+		t.Fatalf("the committed mode should resolve and the caller's layer stay untouched, got %q and %q", resolved.Verify.Mode, local.Verify.Mode)
+	}
 }
 
 func verifyLayer(mode model.VerifyMode, skip model.VerifierSkip) *model.PerRepoConfig {
@@ -43,7 +68,7 @@ func TestVerifyModeSetsEnforcementAndVerifier(t *testing.T) {
 			if got := block.VerifierPolicy().Mode; got != tc.verifier {
 				t.Errorf("the verifier mode should follow the mode, got %s", got)
 			}
-			err := model.CheckVerifyLayers(model.BaseConfig{}, verifyLayer(tc.mode, ""), nil, verifierFiles)
+			err := checkVerifyLayers(model.BaseConfig{}, verifyLayer(tc.mode, ""), nil, verifierFiles)
 			if err != nil {
 				t.Errorf("every mode should resolve: %v", err)
 			}
@@ -64,7 +89,7 @@ func TestParseVerifyMode(t *testing.T) {
 	}
 }
 
-func TestCheckVerifyLayers_LocalMayOnlyTighten(t *testing.T) {
+func TestHonoredVerifyLayers_LocalMayOnlyTighten(t *testing.T) {
 	committed := verifyLayer(model.VerifyProse, model.VerifierSkipFailure)
 	for _, tc := range []struct {
 		name  string
@@ -76,25 +101,25 @@ func TestCheckVerifyLayers_LocalMayOnlyTighten(t *testing.T) {
 		{"looser skip", verifyLayer("", model.VerifierSkipWeighed), "verify.skip weighed is refused in the machine-local config"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := model.CheckVerifyLayers(model.BaseConfig{}, committed, tc.local, verifierFiles)
+			err := checkVerifyLayers(model.BaseConfig{}, committed, tc.local, verifierFiles)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), ".sdd/config.local.yaml") || !strings.Contains(err.Error(), "in .sdd/config.yaml") {
 				t.Fatalf("want a refusal naming %q and both files, got %v", tc.want, err)
 			}
 		})
 	}
 
-	unsetShared := model.CheckVerifyLayers(model.BaseConfig{}, nil, verifyLayer(model.VerifyGrounding, ""), verifierFiles)
+	unsetShared := checkVerifyLayers(model.BaseConfig{}, nil, verifyLayer(model.VerifyGrounding, ""), verifierFiles)
 	if unsetShared == nil || !strings.Contains(unsetShared.Error(), "may only raise the prose the shared layers resolve to") {
 		t.Fatalf("with no shared mode the default prose should bound the local layer, got %v", unsetShared)
 	}
 
-	raised := model.CheckVerifyLayers(model.BaseConfig{}, committed, verifyLayer(model.VerifyDeep, model.VerifierSkipNever), verifierFiles)
+	raised := checkVerifyLayers(model.BaseConfig{}, committed, verifyLayer(model.VerifyDeep, model.VerifierSkipNever), verifierFiles)
 	if raised != nil {
 		t.Fatalf("a local layer raising mode and tightening skip resolves: %v", raised)
 	}
 }
 
-func TestCheckVerifyLayers_CommittedWinsOverGlobal(t *testing.T) {
+func TestHonoredVerifyLayers_CommittedWinsOverGlobal(t *testing.T) {
 	global := model.BaseConfig{}
 	global.Verify.Mode = model.VerifyDeep
 	committed := verifyLayer(model.VerifyProse, "")
@@ -102,17 +127,17 @@ func TestCheckVerifyLayers_CommittedWinsOverGlobal(t *testing.T) {
 	if merged.Verify.VerifierPolicy().Mode != model.VerifierProse {
 		t.Fatalf("the committed mode should win over the global one, got %s", merged.Verify.VerifierPolicy().Mode)
 	}
-	err := model.CheckVerifyLayers(global, committed, nil, verifierFiles)
+	err := checkVerifyLayers(global, committed, nil, verifierFiles)
 	if err != nil {
 		t.Fatalf("committed prose over global deep resolves: %v", err)
 	}
-	err = model.CheckVerifyLayers(global, committed, verifyLayer(model.VerifyProse, ""), verifierFiles)
+	err = checkVerifyLayers(global, committed, verifyLayer(model.VerifyProse, ""), verifierFiles)
 	if err != nil {
 		t.Fatalf("a local value equal to the committed one resolves: %v", err)
 	}
 }
 
-func TestCheckVerifyLayers_PassesUnknownValues(t *testing.T) {
+func TestHonoredVerifyLayers_PassesUnknownValues(t *testing.T) {
 	local := verifyLayer("deeep", "sometimes")
 	local.Verify.Runner = "robot"
 	local.Verify.Claude.Effort = "ultra"
@@ -128,7 +153,7 @@ func TestCheckVerifyLayers_PassesUnknownValues(t *testing.T) {
 		{"local under a deep committed mode", model.BaseConfig{}, verifyLayer(model.VerifyDeep, model.VerifierSkipNever), local},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := model.CheckVerifyLayers(tc.global, tc.committed, tc.local, verifierFiles)
+			err := checkVerifyLayers(tc.global, tc.committed, tc.local, verifierFiles)
 			if err != nil {
 				t.Fatalf("a read should pass a value it does not know: %v", err)
 			}
@@ -196,7 +221,7 @@ func TestIgnoredSettings_ReportsUnknownVerifyValues(t *testing.T) {
 
 // A config naming the removed codex runner is refused on read, though an
 // unknown runner only leaves the layer below.
-func TestCheckVerifyLayers_RefusesTheRemovedCodexRunner(t *testing.T) {
+func TestRefuseRemovedRunner(t *testing.T) {
 	for name, layers := range map[string]struct {
 		global           model.BaseConfig
 		committed, local *model.PerRepoConfig
@@ -207,7 +232,7 @@ func TestCheckVerifyLayers_RefusesTheRemovedCodexRunner(t *testing.T) {
 		"machine-local": {local: &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Runner: "codex"}}}, file: ".sdd/config.local.yaml"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := model.CheckVerifyLayers(layers.global, layers.committed, layers.local, verifierFiles)
+			err := model.RefuseRemovedRunner(layers.global, layers.committed, layers.local, verifierFiles)
 			if err == nil || !strings.Contains(err.Error(), layers.file+": verify.runner codex") || !strings.Contains(err.Error(), "Claude Code") {
 				t.Fatalf("a codex runner should be refused naming its file and value, got %v", err)
 			}
@@ -222,12 +247,12 @@ func TestVerifierPolicyDefaults(t *testing.T) {
 	}
 }
 
-func TestCheckVerifyLayers_RunnerIsPersonal(t *testing.T) {
+func TestHonoredVerifyLayers_RunnerIsPersonal(t *testing.T) {
 	committed := verifyLayer(model.VerifyDeep, "")
 	committed.Verify.Runner = model.VerifierRunnerClaude
 	local := &model.PerRepoConfig{}
 	local.Verify.Runner = model.VerifierRunnerSubagent
-	err := model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
+	err := checkVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
 	if err != nil {
 		t.Fatalf("a machine-local runner may differ from the committed one: %v", err)
 	}
@@ -245,24 +270,24 @@ func TestCheckVerifyLayers_RunnerIsPersonal(t *testing.T) {
 	}
 }
 
-func TestCheckVerifyLayers_DriverStaysOffTheCommittedConfig(t *testing.T) {
+func TestHonoredVerifyLayers_DriverStaysOffTheCommittedConfig(t *testing.T) {
 	committed := verifyLayer(model.VerifyDeep, "")
 	committed.Verify.Driver = model.VerifierDriver{Command: "/opt/driver"}
-	err := model.CheckVerifyLayers(model.BaseConfig{}, committed, nil, verifierFiles)
+	err := checkVerifyLayers(model.BaseConfig{}, committed, nil, verifierFiles)
 	if err == nil || !strings.Contains(err.Error(), ".sdd/config.yaml: verify.driver is refused in the committed config") {
 		t.Fatalf("a committed driver should be refused naming the key, got %v", err)
 	}
 
 	committed.Verify.Driver = model.VerifierDriver{}
 	committed.Verify.Runner = model.VerifierRunnerDriver
-	err = model.CheckVerifyLayers(model.BaseConfig{}, committed, nil, verifierFiles)
+	err = checkVerifyLayers(model.BaseConfig{}, committed, nil, verifierFiles)
 	if err == nil || !strings.Contains(err.Error(), "verify.runner driver needs verify.driver.command") {
 		t.Fatalf("a driver runner without a command should be refused naming the key, got %v", err)
 	}
 
 	global := model.BaseConfig{}
 	global.Verify.Driver = model.VerifierDriver{Command: "/opt/driver", Args: []string{"--round"}}
-	err = model.CheckVerifyLayers(global, committed, nil, verifierFiles)
+	err = checkVerifyLayers(global, committed, nil, verifierFiles)
 	if err != nil {
 		t.Fatalf("a driver from the user-global config serves a committed driver runner: %v", err)
 	}
@@ -323,7 +348,7 @@ func TestVerifierAgentLayersPerField(t *testing.T) {
 	committed.Verify.Claude = model.ClaudeAgent{Model: "opus", Effort: "high"}
 	local := &model.PerRepoConfig{}
 	local.Verify.Claude = model.ClaudeAgent{Effort: "max"}
-	err := model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
+	err := checkVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles)
 	if err != nil {
 		t.Fatalf("machine-local model and effort may differ from the committed ones: %v", err)
 	}
@@ -387,14 +412,14 @@ func TestVerifyRoundTimeout(t *testing.T) {
 	committed.Verify.RoundTimeout = "20m"
 	local := &model.PerRepoConfig{}
 	local.Verify.RoundTimeout = "5m"
-	if err := model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles); err != nil {
+	if err := checkVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles); err != nil {
 		t.Fatalf("a machine-local round_timeout may differ from the committed one: %v", err)
 	}
 	if got := model.MergeConfig(committed, local).Verify.VerifierPolicy().RoundTimeout; got != 5*time.Minute {
 		t.Fatalf("the machine-local round_timeout should win, got %s", got)
 	}
 	local.Verify.RoundTimeout = "soon"
-	if err := model.CheckVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles); err != nil {
+	if err := checkVerifyLayers(model.BaseConfig{}, committed, local, verifierFiles); err != nil {
 		t.Fatalf("a read should pass a round_timeout that is no duration: %v", err)
 	}
 	if got := model.MergeConfig(committed, local).Verify.VerifierPolicy().RoundTimeout; got != 20*time.Minute {

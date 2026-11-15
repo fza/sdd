@@ -446,29 +446,79 @@ func mergeVerifierAgent(base, overlay VerifierAgent) VerifierAgent {
 	return base
 }
 
-// CheckVerifyLayers refuses a verify configuration that cannot hold: a
-// machine-local value loosening what the user-global and committed layers
-// set, a driver in the committed config, or a driver runner no layer names a
-// command for. It judges the known values only, as a read does;
-// VerifyKeyRefusal also refuses an unknown one on write. files names the
-// file behind each layer; the refusal names the key, and the file of every
-// layer it judges.
-func CheckVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
-	err := refuseRemovedRunner(global, committed, local, files)
-	if err != nil {
-		return err
-	}
-	global.Verify = global.Verify.KnownValues()
-	problems := verifyLayerProblems(global, knownVerifyLayer(committed), knownVerifyLayer(local), files)
-	if len(problems) == 0 {
-		return nil
-	}
-	return problems[0].err
+// LayerSetting is an ignored setting with the layer it stands in.
+type LayerSetting struct {
+	Source ConfigValueSource
+	IgnoredSetting
 }
 
-// VerifyKeyRefusal is CheckVerifyLayers judging only key: the first refusal
-// under key or a block holding it, so a value elsewhere never blocks a write
-// to key (20260921-174543-d-cpt-tv9).
+// HonoredVerifyLayers drops the known verify values a layer may not set where
+// it stands: a machine-local value loosening what the user-global and
+// committed layers set, a driver in the committed config, a driver runner no
+// layer names a command for (V-D19). A read resolves the rest and warns of
+// each one it dropped, so one misplaced value never stops sdd for everyone
+// reading the layer (20260921-174543-d-cpt-tv9); a write refuses it
+// (VerifyKeyRefusal). files names the file behind each layer; each reason
+// names the key and the files it judges.
+func HonoredVerifyLayers(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) (BaseConfig, *PerRepoConfig, *PerRepoConfig, []LayerSetting) {
+	global.Verify = global.Verify.KnownValues()
+	committed, local = knownVerifyLayer(committed), knownVerifyLayer(local)
+	var dropped []LayerSetting
+	for {
+		problems := verifyLayerProblems(global, committed, local, files)
+		if len(problems) == 0 {
+			return global, committed, local, dropped
+		}
+		problem := problems[0]
+		source, ok := dropVerifyValue(problem.key, &global, committed, local)
+		if !ok {
+			return global, committed, local, dropped
+		}
+		dropped = append(dropped, LayerSetting{Source: source, IgnoredSetting: IgnoredSetting{Key: problem.key, Reason: problem.err.Error()}})
+	}
+}
+
+// dropVerifyValue clears the value a verify layer problem under key stands
+// on, in the layer holding it; false when no layer holds one to clear.
+func dropVerifyValue(key string, global *BaseConfig, committed, local *PerRepoConfig) (ConfigValueSource, bool) {
+	switch {
+	case key == "verify.driver" && committed != nil:
+		committed.Verify.Driver = VerifierDriver{}
+		return ConfigSourceProject, true
+	case key == "verify.mode" && local != nil:
+		local.Verify.Mode = ""
+		return ConfigSourceLocal, true
+	case key == "verify.skip" && local != nil:
+		local.Verify.Skip = ""
+		return ConfigSourceLocal, true
+	case strings.HasPrefix(key, "verify.kinds.") && local != nil:
+		kind := Kind(strings.TrimPrefix(key, "verify.kinds."))
+		if _, ok := local.Verify.Kinds[kind]; !ok {
+			return "", false
+		}
+		local.Verify.Kinds = maps.Clone(local.Verify.Kinds)
+		delete(local.Verify.Kinds, kind)
+		return ConfigSourceLocal, true
+	case key == "verify.runner":
+		switch {
+		case local != nil && local.Verify.Runner != "":
+			local.Verify.Runner = ""
+			return ConfigSourceLocal, true
+		case committed != nil && committed.Verify.Runner != "":
+			committed.Verify.Runner = ""
+			return ConfigSourceProject, true
+		case global.Verify.Runner != "":
+			global.Verify.Runner = ""
+			return ConfigSourceGlobal, true
+		}
+	}
+	return "", false
+}
+
+// VerifyKeyRefusal is the write side of HonoredVerifyLayers, unknown values
+// included, judging only key: the first refusal under key or a block holding
+// it, so a value elsewhere never blocks a write to key
+// (20260921-174543-d-cpt-tv9).
 func VerifyKeyRefusal(key string, global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
 	for _, problem := range verifyLayerProblems(global, committed, local, files) {
 		if key == problem.key || strings.HasPrefix(key, problem.key+".") {
@@ -483,7 +533,9 @@ func VerifyKeyRefusal(key string, global BaseConfig, committed, local *PerRepoCo
 // have written, it is refused on read.
 const removedCodexRunner VerifierRunner = "codex"
 
-func refuseRemovedRunner(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
+// RefuseRemovedRunner refuses a layer naming the removed codex runner, on
+// read as on write; files names the file behind each layer.
+func RefuseRemovedRunner(global BaseConfig, committed, local *PerRepoConfig, files map[ConfigValueSource]string) error {
 	runners := map[ConfigValueSource]VerifierRunner{ConfigSourceGlobal: global.Verify.Runner}
 	if committed != nil {
 		runners[ConfigSourceProject] = committed.Verify.Runner
