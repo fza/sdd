@@ -28,6 +28,9 @@ func TestCapture_CredentialRoutesToRevise(t *testing.T) {
 	if !strings.Contains(serve.Instructions, "looks like a credential") {
 		t.Errorf("guideReview should name the credential refusal:\n%s", serve.Instructions)
 	}
+	if strings.Contains(serve.Instructions, "on ''") {
+		t.Errorf("a finding without a quote should render no quote:\n%s", serve.Instructions)
+	}
 	serve = session.Answer(t, instance, "guideReview", "proceed", nil, "")
 	proctest.RequireStep(t, serve, "playback")
 	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
