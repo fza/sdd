@@ -173,6 +173,29 @@ func TestServeTellsASessionOpenedBeforeItStartedOfAChange(t *testing.T) {
 	})
 }
 
+// A session that made no call across several rebuilds is told each change
+// on its next call.
+func TestServeJoinsTheChangesASessionMissed(t *testing.T) {
+	fixture := newAppFixture(t)
+	committed := readFixtureFile(t, filepath.Join(fixture.root, ".sdd", "config.yaml"))
+	fixture.serve(t, func(client *mcp.ClientSession) {
+		idle := openServedSession(t, client)
+		busy := openServedSession(t, client)
+
+		fixture.write(t, ".sdd/config.yaml", strings.Replace(committed, "language: de", "language: en", 1))
+		callServedOK(t, client, "info", map[string]any{"session": busy})
+		fixture.write(t, ".sdd/config.local.yaml", "participant: Other Author\n")
+		callServedOK(t, client, "info", map[string]any{"session": busy})
+
+		told := callServedOK(t, client, "info", map[string]any{"session": idle})
+		for _, change := range []string{"- language: de -> en", "- participant: Local Author -> Other Author"} {
+			if !strings.Contains(told.HostNotice, change) {
+				t.Errorf("a session should be told every change it missed, got %q", told.HostNotice)
+			}
+		}
+	})
+}
+
 // Every session open at a change is told it once, on its own next call; a
 // call naming no session is told it once too, and a session opened after
 // the change is not told it.
