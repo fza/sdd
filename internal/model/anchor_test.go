@@ -49,6 +49,70 @@ func TestPlaceAnchorStandsBeforeAContentWord(t *testing.T) {
 	}
 }
 
+// A challenge asks for the content word right after a word that occurs once
+// in the text: a function word after the prompt could be guessed from the
+// pointer line alone, a repeated prompt names no one word.
+func TestChallengeAnswersAreContentWords(t *testing.T) {
+	text := "The parser reads the file and the cache of the index in the end, then writes the result to the store for the next run with the old marker.\nEach worker takes a lock and the queue drains into the archive."
+	content := map[string]bool{}
+	for _, w := range strings.Fields("parser reads file cache index end writes result store next run old marker worker takes lock queue drains archive") {
+		content[w] = true
+	}
+	challenges := 0
+	for seed := range uint64(200) {
+		anchor, ok := model.PlaceAnchor(text, "ab12", seeded(seed))
+		if !ok {
+			t.Fatal("a text with content words should take an anchor")
+		}
+		if len(anchor.Challenges) > model.AnchorChallenges {
+			t.Fatalf("an anchor should carry at most its challenge count, got %d", len(anchor.Challenges))
+		}
+		answers := map[string]bool{strings.ToLower(anchor.Word): true}
+		for _, c := range anchor.Challenges {
+			challenges++
+			if !content[c.Answer] || !strings.Contains(text, c.Prompt+" "+c.Answer) {
+				t.Fatalf("a challenge answer should be the content word right after its prompt, got %q after %q", c.Answer, c.Prompt)
+			}
+			if strings.Count(text, c.Prompt) != 1 {
+				t.Fatalf("a challenge prompt should occur once in the text, got %q", c.Prompt)
+			}
+			if answers[strings.ToLower(c.Answer)] {
+				t.Fatalf("each proof of an anchor should name another word, got %q twice", c.Answer)
+			}
+			answers[strings.ToLower(c.Answer)] = true
+		}
+	}
+	if challenges == 0 {
+		t.Fatal("a text with content-word pairs should yield challenges")
+	}
+}
+
+// A word that also occurs inside another token, as "user" in "user's", is
+// no prompt: the agent could not tell which spot it names.
+func TestChallengePromptsOccurOnceAsAWord(t *testing.T) {
+	text := "Settling them is the user's call; the user actually decides each review."
+	for seed := range uint64(100) {
+		anchor, ok := model.PlaceAnchor(text, "ab12", seeded(seed))
+		if !ok {
+			t.Fatal("a text with content words should take an anchor")
+		}
+		for _, c := range anchor.Challenges {
+			if c.Prompt == "user" {
+				t.Fatalf("a word occurring inside another token should not be a prompt, got %+v", c)
+			}
+		}
+	}
+}
+
+func TestNextProofQuotesThePrompt(t *testing.T) {
+	if got := model.NextProof("ab12", "graph"); got != `next proof ab12:<the word right after "graph">` {
+		t.Errorf("the next proof should name the tag and quote the prompt, got %q", got)
+	}
+	if got := model.NextProof("ab12", ""); got != "" {
+		t.Errorf("without a prompt there should be no next proof, got %q", got)
+	}
+}
+
 func TestPlaceAnchorRefusesTextWithoutContentWords(t *testing.T) {
 	for _, text := range []string{"", "a to of", "`code only`", "20260705-010751-d-tac-dbk", "key:"} {
 		if _, ok := model.PlaceAnchor(text, "ab12", seeded(1)); ok {

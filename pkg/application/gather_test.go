@@ -269,7 +269,7 @@ func TestGather_HeldEntryPrintsAsPointer(t *testing.T) {
 	f.seed(t)
 	application := f.app(t, sdd.GroundingPolicy{BriefAllBelow: 10_000}, nil)
 
-	result, err := gather(t, application, sdd.GatherRequest{Held: func(id string) (string, bool) { return "ab12", id == gatherBeta }})
+	result, err := gather(t, application, sdd.GatherRequest{Held: func(id string) (string, string, bool) { return "ab12", "", id == gatherBeta }})
 	if err != nil {
 		t.Fatal(err)
 	}

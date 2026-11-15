@@ -58,9 +58,10 @@ const (
 	// reads past it.
 	EventServedBlocks EventType = "served_blocks"
 	// EventAnchors records the anchors a call issued for the pieces it served
-	// in full, so a restarted server still checks their proofs (Piece), and
-	// the tags its proofs proved (Unproved). No instance: the served memory is
-	// session-level like the read set.
+	// in full, with their challenges, the tags its proofs proved (Unproved)
+	// and the proofs its pointers spent, so a restarted server still checks
+	// their proofs (Piece). No instance: the served memory is session-level
+	// like the read set.
 	EventAnchors EventType = "anchors"
 	// EventDeferred records that a serve of an instance left lanes waiting
 	// past the result bound, with the pieces it sent, or, with ended set, that
@@ -1406,16 +1407,7 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		}
 
 	case EventAnchors:
-		proved, _ := ev.Data["proved"].([]any)
-		for _, tag := range proved {
-			if tag, ok := tag.(string); ok {
-				s.foldProved([]string{tag})
-			}
-		}
-		anchors, _ := ev.Data["anchors"].([]any)
-		for _, record := range anchors {
-			s.foldAnchor(record)
-		}
+		s.foldAnchors(ev.Data)
 
 	case EventDeferred:
 		s.foldDeferral(ev.Instance, ev.Data)

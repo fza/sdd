@@ -135,7 +135,9 @@ summary: A locally superseded posture, written mid-session.
 	if !strings.Contains(afterWrite.Framing, "House rules") {
 		t.Fatalf("the changed principles lane must re-serve with the new words, got %q", afterWrite.Framing)
 	}
-	if strings.Contains(afterWrite.Framing, "Local participant:") {
+	// A pointer naming no next proof spent the block's last challenge, so it
+	// serves in full again whatever the write changed.
+	if strings.Contains(unchanged.Framing, "framing info ⟦") && strings.Contains(afterWrite.Framing, "Local participant:") {
 		t.Errorf("the unchanged info block must stay stubbed (per-lane dedup), got %q", afterWrite.Framing)
 	}
 }

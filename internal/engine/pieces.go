@@ -28,6 +28,10 @@ type Served struct {
 	// full earlier in the same call: the caller serves its pointer, under Tag.
 	Held bool
 	Tag  string
+	// Next is the word, once in the piece's text, whose follower the next
+	// proof of Tag names; empty when the pointer rests on no proof, as the
+	// call's proof still holds, or when the piece serves in full next time.
+	Next string
 	// Anchor is the fresh anchor to render into the piece served in full; its
 	// Tag is empty when the text took none.
 	Anchor model.Anchor
@@ -37,10 +41,41 @@ type Served struct {
 // rnd; false when the content holds no word to anchor.
 type AnchorPlacer func(tag string, rnd model.RandomSource) (model.Anchor, bool)
 
+// issuedAnchor is a tag served with a piece: proof number step names the
+// word after the tag, each later one a challenge's answer, so a proof
+// replayed from an earlier call never holds.
 type issuedAnchor struct {
-	piece  Piece
-	word   string
-	covers []string
+	piece      Piece
+	word       string
+	covers     []string
+	challenges []model.Challenge
+	step       int
+}
+
+// answer is the word the anchor's next proof names; false once its
+// challenges are spent.
+func (a issuedAnchor) answer() (string, bool) {
+	if a.step == 0 {
+		return a.word, true
+	}
+	if a.step-1 < len(a.challenges) {
+		return a.challenges[a.step-1].Answer, true
+	}
+	return "", false
+}
+
+// proves reports whether word answers the anchor's next proof.
+func (a issuedAnchor) proves(word string) bool {
+	answer, ok := a.answer()
+	return ok && model.ProofWordMatches(answer, word)
+}
+
+// promptAfter is the prompt the proof after proof number step answers.
+func (a issuedAnchor) promptAfter(step int) string {
+	if step < len(a.challenges) {
+		return a.challenges[step].Prompt
+	}
+	return ""
 }
 
 // pieceCall is what one tool call carries and has served so far.
@@ -59,25 +94,37 @@ type pieceCall struct {
 	since      int
 	proved     map[Piece]bool
 	provedTags []string
+	// proven are the tags the call's proofs answer as the call began, with
+	// their proof step then, so a proof the call spends still holds for the
+	// rest of it and is spent once; spent are those a pointer of the call
+	// rested on.
+	proven map[string]int
+	spent  map[string]bool
 }
 
 // pendingAnchor is a piece the call served in full, not yet recorded;
 // changed marks one that serves once per change of its content.
 type pendingAnchor struct {
-	piece   Piece
-	tag     string
-	word    string
-	covers  []string
-	changed bool
+	piece      Piece
+	tag        string
+	word       string
+	covers     []string
+	challenges []model.Challenge
+	changed    bool
 }
 
 // BeginCall starts a call carrying the proofs an agent lists for pieces it
 // still holds and the tags or piece names it lists in reread, which serve in
 // full.
 func (s *Session) BeginCall(held []model.Proof, reread []string) {
-	s.call = pieceCall{held: held, reread: map[string]bool{}, since: s.servedSeq}
+	s.call = pieceCall{held: held, reread: map[string]bool{}, since: s.servedSeq, proven: map[string]int{}}
 	for _, r := range reread {
 		s.call.reread[strings.ToLower(strings.Trim(strings.TrimSpace(r), "⟦⟧"))] = true
+	}
+	for _, proof := range held {
+		if issued, ok := s.anchors[proof.Tag]; ok && issued.proves(proof.Word) {
+			s.call.proven[proof.Tag] = issued.step
+		}
 	}
 	s.call.provedTags, s.call.proved = s.provedPieces()
 }
@@ -88,32 +135,56 @@ func (s *Session) BeginCall(held []model.Proof, reread []string) {
 // piece the deferral the call follows sent counts as held without a proof,
 // unless the call lists it in reread or proves its tag with a wrong word.
 func (s *Session) Holds(p Piece) (string, bool) {
+	tag, _, ok := s.holds(p)
+	return tag, ok
+}
+
+// Point is Holds for a pointer the call serves: the proof it rests on is
+// spent once the call records, and Next names the word whose follower the
+// following proof names.
+func (s *Session) Point(p Piece) Served {
+	tag, proved, ok := s.holds(p)
+	if !ok {
+		return Served{}
+	}
+	if !proved {
+		return Served{Held: true, Tag: tag}
+	}
+	if s.call.spent == nil {
+		s.call.spent = map[string]bool{}
+	}
+	s.call.spent[tag] = true
+	return Served{Held: true, Tag: tag, Next: s.anchors[tag].promptAfter(s.call.proven[tag])}
+}
+
+// holds is Holds reporting too whether a proof of the call holds p.
+func (s *Session) holds(p Piece) (string, bool, bool) {
 	if tag, ok := s.call.issued[p]; ok {
-		return tag, true
+		return tag, false, true
 	}
 	if tag, ok := s.call.covered[p.key()]; ok {
-		return tag, true
+		return tag, false, true
 	}
 	if s.call.full || s.call.reread[strings.ToLower(p.Name)] {
-		return "", false
+		return "", false, false
 	}
 	for _, proof := range s.call.held {
 		if s.call.reread[proof.Tag] {
 			continue
 		}
-		issued, ok := s.anchors[proof.Tag]
-		if !ok || !model.ProofWordMatches(issued.word, proof.Word) {
+		if _, proven := s.call.proven[proof.Tag]; !proven {
 			continue
 		}
+		issued := s.anchors[proof.Tag]
 		if issued.piece == p || slices.Contains(issued.covers, p.key()) {
-			return proof.Tag, true
+			return proof.Tag, true, true
 		}
 	}
 	tag, ok := s.call.followed[p]
 	if !ok || s.call.reread[tag] || slices.ContainsFunc(s.call.held, func(proof model.Proof) bool { return proof.Tag == tag }) {
-		return "", false
+		return "", false, false
 	}
-	return tag, true
+	return tag, false, true
 }
 
 // FailedProof is a proof the call carries that holds no piece: Issued
@@ -124,21 +195,35 @@ type FailedProof struct {
 }
 
 // FailedProofs lists the proofs the call carries whose tag the session never
-// issued or whose word is not the one after the tag; a tag the call also
-// lists in reread is left out.
+// issued or whose word its tag never asked for; a tag the call also lists in
+// reread is left out. A spent proof is no failure: its piece serves in full
+// under a fresh tag, as after a last challenge.
 func (s *Session) FailedProofs() []FailedProof {
 	var failed []FailedProof
 	for _, proof := range s.call.held {
 		if s.call.reread[proof.Tag] {
 			continue
 		}
-		issued, ok := s.anchors[proof.Tag]
-		if ok && model.ProofWordMatches(issued.word, proof.Word) {
+		anchor, issued := s.anchors[proof.Tag]
+		if issued && anchor.askedFor(proof.Word) {
 			continue
 		}
-		failed = append(failed, FailedProof{Proof: proof, Issued: ok})
+		failed = append(failed, FailedProof{Proof: proof, Issued: issued})
 	}
 	return failed
+}
+
+// askedFor reports whether word answers one of the anchor's proofs up to its
+// current one, spent ones included.
+func (a issuedAnchor) askedFor(word string) bool {
+	for step := 0; step <= a.step; step++ {
+		at := a
+		at.step = step
+		if at.proves(word) {
+			return true
+		}
+	}
+	return false
 }
 
 // ServePiece decides how the call in flight serves p: its pointer when the
@@ -150,8 +235,8 @@ func (s *Session) ServePiece(p Piece, carried []Piece, place AnchorPlacer) Serve
 	for i, c := range carried {
 		covers[i] = c.key()
 	}
-	if tag, ok := s.Holds(p); ok {
-		return Served{Held: true, Tag: tag}
+	if served := s.Point(p); served.Held {
+		return served
 	}
 	tag := s.freshTag()
 	anchor, ok := place(tag, s.random())
@@ -167,7 +252,7 @@ func (s *Session) ServePiece(p Piece, carried []Piece, place AnchorPlacer) Serve
 			s.call.covered[id] = tag
 		}
 	}
-	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, tag: tag, word: anchor.Word, covers: covers})
+	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, tag: tag, word: anchor.Word, covers: covers, challenges: anchor.Challenges})
 	return Served{Anchor: anchor}
 }
 
@@ -239,8 +324,9 @@ func (s *Session) unissue(p pendingAnchor) {
 }
 
 // RecordAnchors logs the anchors the call issued since the last record, so a
-// restarted server still checks their proofs, and the tags its proofs proved,
-// which take their pieces off the unproved list.
+// restarted server still checks their proofs, the tags its proofs proved,
+// which take their pieces off the unproved list, and spends the proofs its
+// pointers rested on.
 func (s *Session) RecordAnchors() {
 	proved := s.call.provedTags
 	s.call.provedTags = nil
@@ -263,11 +349,26 @@ func (s *Session) RecordAnchors() {
 		if len(p.covers) > 0 {
 			record["covers"] = p.covers
 		}
+		if len(p.challenges) > 0 {
+			challenges := make([]any, len(p.challenges))
+			for i, c := range p.challenges {
+				challenges[i] = []any{c.Prompt, c.Answer}
+			}
+			record["challenges"] = challenges
+		}
 		s.foldAnchor(record)
 		records = append(records, record)
 	}
 	s.call.pending = nil
-	if len(records) == 0 && len(proved) == 0 {
+	steps := map[string]any{}
+	for _, tag := range slices.Sorted(maps.Keys(s.call.spent)) {
+		if step, ok := s.call.proven[tag]; ok && s.anchors[tag].step == step {
+			steps[tag] = step + 1
+		}
+	}
+	s.call.spent = nil
+	s.foldSteps(steps)
+	if len(records) == 0 && len(proved) == 0 && len(steps) == 0 {
 		return
 	}
 	data := map[string]any{}
@@ -277,7 +378,44 @@ func (s *Session) RecordAnchors() {
 	if len(proved) > 0 {
 		data["proved"] = proved
 	}
+	if len(steps) > 0 {
+		data["steps"] = steps
+	}
 	s.appendEvent("", EventAnchors, data)
+}
+
+// foldAnchors folds an anchors event: the tags its proofs proved, the
+// anchors it issued, then the proofs it spent.
+func (s *Session) foldAnchors(data map[string]any) {
+	proved, _ := data["proved"].([]any)
+	for _, tag := range proved {
+		if tag, ok := tag.(string); ok {
+			s.foldProved([]string{tag})
+		}
+	}
+	anchors, _ := data["anchors"].([]any)
+	for _, record := range anchors {
+		s.foldAnchor(record)
+	}
+	steps, _ := data["steps"].(map[string]any)
+	s.foldSteps(steps)
+}
+
+// foldSteps sets each tag's proof step, the number of its proofs spent.
+func (s *Session) foldSteps(steps map[string]any) {
+	for tag, v := range steps {
+		issued, ok := s.anchors[tag]
+		if !ok {
+			continue
+		}
+		switch n := v.(type) {
+		case int:
+			issued.step = n
+		case float64:
+			issued.step = int(n)
+		}
+		s.anchors[tag] = issued
+	}
 }
 
 func (s *Session) foldAnchor(record any) {
@@ -304,6 +442,18 @@ func (s *Session) foldAnchor(record any) {
 			if id, ok := v.(string); ok {
 				issued.covers = append(issued.covers, id)
 			}
+		}
+	}
+	challenges, _ := fields["challenges"].([]any)
+	for _, v := range challenges {
+		pair, _ := v.([]any)
+		if len(pair) != 2 {
+			continue
+		}
+		prompt, _ := pair[0].(string)
+		answer, _ := pair[1].(string)
+		if prompt != "" && answer != "" {
+			issued.challenges = append(issued.challenges, model.Challenge{Prompt: prompt, Answer: answer})
 		}
 	}
 	if s.anchors == nil {
@@ -471,10 +621,11 @@ func (s *Session) provedPieces() ([]string, map[Piece]bool) {
 	var tags []string
 	pieces := map[Piece]bool{}
 	for _, proof := range s.call.held {
-		issued, ok := s.anchors[proof.Tag]
-		if s.call.reread[proof.Tag] || !ok || !model.ProofWordMatches(issued.word, proof.Word) {
+		_, proven := s.call.proven[proof.Tag]
+		if s.call.reread[proof.Tag] || !proven {
 			continue
 		}
+		issued := s.anchors[proof.Tag]
 		if len(s.listedUnder(issued)) > 0 {
 			tags = append(tags, proof.Tag)
 		}
@@ -487,9 +638,10 @@ func (s *Session) provedPieces() ([]string, map[Piece]bool) {
 }
 
 // DropProved keeps what the call's proofs proved out of the record, for a
-// call that failed: its pieces stay listed.
+// call that failed: its pieces stay listed, and its proofs stay unspent, as
+// no pointer of it reached the agent.
 func (s *Session) DropProved() {
-	s.call.provedTags, s.call.proved = nil, nil
+	s.call.provedTags, s.call.proved, s.call.spent = nil, nil, nil
 }
 
 // listedUnder names the listed pieces a proof of issued takes off the

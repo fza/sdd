@@ -111,7 +111,7 @@ func RenderLateEntries(w io.Writer, g *model.Graph, late []*model.Entry, repeats
 
 // GatherPointer is the pointer an entry held under tag prints as.
 func GatherPointer(e *model.Entry, tag string) string {
-	return pointerText(e.ID, model.EntryBrief(e), tag)
+	return pointerText(e.ID, model.EntryBrief(e), tag, "")
 }
 
 func gatherLine(g *model.Graph, candidate model.GatherCandidate, r *Repeats) string {

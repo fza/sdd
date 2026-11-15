@@ -288,7 +288,7 @@ func TestAFollowUpWrongProofServesASentLaneInFull(t *testing.T) {
 	if !strings.Contains(test.Untagged(serve.Instructions), "Lane first holds a line of its guidance.") {
 		t.Errorf("the lane whose proof failed should serve in full, got %.600q", serve.Instructions)
 	}
-	if !strings.Contains(serve.ProofNotice, wrong.String()+" (not the word after that tag)") {
+	if !strings.Contains(serve.ProofNotice, wrong.String()+" (not the word its proof asks for)") {
 		t.Errorf("the proof notice should name the failed proof, got %q", serve.ProofNotice)
 	}
 }

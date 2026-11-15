@@ -3,7 +3,11 @@ package mcpapp_test
 import (
 	"context"
 	"encoding/json"
+	"regexp"
+	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -25,6 +29,9 @@ var provingTools = map[string]bool{
 type agentMemory struct {
 	mu   sync.Mutex
 	held map[string]string
+	// texts holds, per tag, the result text it came in, where the agent looks
+	// up a next proof.
+	texts map[string]string
 	// forget drops every proof before the next call, as a lossy compaction
 	// would.
 	forget bool
@@ -35,7 +42,9 @@ type agentMemory struct {
 // never issued, so an agent proving it would only draw a proof notice.
 const guideExampleProof = "gn9p:first"
 
-func newAgentMemory() *agentMemory { return &agentMemory{held: map[string]string{}} }
+func newAgentMemory() *agentMemory {
+	return &agentMemory{held: map[string]string{}, texts: map[string]string{}}
+}
 
 func untagged(res *mcp.CallToolResult) error {
 	for _, content := range res.Content {
@@ -80,13 +89,106 @@ func (m *agentMemory) keep(res *mcp.CallToolResult) {
 		if !ok {
 			continue
 		}
+		fields := resultStrings(text.Text)
 		for _, proof := range model.ReadAnchors(text.Text) {
 			if proof.String() == guideExampleProof {
 				continue
 			}
 			m.held[proof.Tag] = proof.Word
+			m.texts[proof.Tag] = text.Text
+			for _, field := range fields {
+				if strings.Contains(field, model.AnchorMark(proof.Tag)) {
+					m.texts[proof.Tag] = field
+				}
+			}
+		}
+		for _, next := range nextProof.FindAllStringSubmatch(text.Text, -1) {
+			if answer, ok := wordAfter(m.texts[next[1]], next[1], next[2]); ok {
+				m.held[next[1]] = answer
+			}
 		}
 	}
+}
+
+// nextProof is a pointer's next proof as served text carries it, raw or
+// JSON-escaped.
+var nextProof = regexp.MustCompile(`next proof ([0-9a-z]{4}):(?:<|\\u003c)the word right after \\?"(.+?)\\?"(?:>|\\u003e)`)
+
+// wordAfter reads the word right after prompt in the piece tag marks, as the
+// agent looks it up in the text it holds: a result carries several pieces,
+// so it reads within the "## " section holding the tag, and there the
+// occurrence nearest the tag is the piece's own.
+func wordAfter(text, tag, prompt string) (string, bool) {
+	mark := strings.Index(text, model.AnchorMark(tag))
+	if mark < 0 {
+		return "", false
+	}
+	if start := strings.LastIndex(text[:mark], "\n## "); start >= 0 {
+		text, mark = text[start:], mark-start
+	}
+	if end := strings.Index(text[mark:], "\n## "); end >= 0 {
+		text = text[:mark+end]
+	}
+	best := -1
+	for from := 0; ; {
+		i := strings.Index(text[from:], prompt)
+		if i < 0 {
+			break
+		}
+		at := from + i
+		after := text[at+len(prompt):]
+		before, _ := utf8.DecodeLastRuneInString(text[:at])
+		next, _ := utf8.DecodeRuneInString(after)
+		whole := !unicode.IsLetter(before) && !unicode.IsLetter(next)
+		if whole && (best < 0 || abs(at-mark) < abs(best-mark)) {
+			best = at
+		}
+		from = at + len(prompt)
+	}
+	if best < 0 {
+		return "", false
+	}
+	rest := strings.TrimLeft(test.Untagged(text[best+len(prompt):]), " \t")
+	end := strings.IndexFunc(rest, func(r rune) bool { return !unicode.IsLetter(r) })
+	if end < 0 {
+		end = len(rest)
+	}
+	return rest[:end], end > 0
+}
+
+// resultStrings decodes a JSON result into its string values, the text the
+// agent reads; a text that is no JSON is its own one string.
+func resultStrings(text string) []string {
+	var decoded any
+	err := json.Unmarshal([]byte(text), &decoded)
+	if err != nil {
+		return []string{text}
+	}
+	var out []string
+	var walk func(any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case string:
+			out = append(out, v)
+		case map[string]any:
+			for _, item := range v {
+				walk(item)
+			}
+		case []any:
+			for _, item := range v {
+				walk(item)
+			}
+		}
+	}
+	walk(decoded)
+	return out
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func (m *agentMemory) middleware(next mcp.MethodHandler) mcp.MethodHandler {

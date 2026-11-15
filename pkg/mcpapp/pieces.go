@@ -13,16 +13,19 @@ import (
 // Proofs is what a call lists about the pieces served to it before; the
 // engine decides from them which piece serves as its pointer.
 type Proofs struct {
-	Held   []string `json:"held,omitempty" jsonschema:"for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first). List the tags from every earlier result, not only the last; the unproved field names those you have not proved since. A proved piece serves as a short pointer; a tag left out serves its whole text again. Never guess a word"`
+	Held   []string `json:"held,omitempty" jsonschema:"for each served piece whose text you still see: its tag and the word right after the tag in that text, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or, once its pointer names a next proof, the word that proof asks for, looked up in that text. List the tags from every earlier result, not only the last; the unproved field names those you have not proved since. A proved piece serves as a short pointer; a proof works once; a tag left out serves its whole text again. Never guess a word"`
 	Reread []string `json:"reread,omitempty" jsonschema:"tags or piece names of served pieces you no longer see; they serve in full again"`
 }
 
 // heldName names a held piece in a pointer by the tag it is held under, then
 // its name: an agent read the name's first word as the proof word when the
-// tag followed it.
-func heldName(name, tag string) string {
+// tag followed it. next is the word whose follower the next proof names.
+func heldName(name, tag, next string) string {
 	if tag == "" {
 		return name
+	}
+	if proof := model.NextProof(tag, next); proof != "" {
+		return model.TagName(tag) + " for " + name + " (" + proof + ")"
 	}
 	return model.TagName(tag) + " for " + name
 }
@@ -34,7 +37,7 @@ const unprovedLead = "Earlier pieces you have not proved since, newest first. Fo
 func unprovedLine(list []sdd.UnprovedPiece, room int) string {
 	items := make([]string, 0, len(list))
 	for _, piece := range list {
-		items = append(items, heldName(piece.Name, piece.Tag))
+		items = append(items, heldName(piece.Name, piece.Tag, ""))
 	}
 	for ; len(items) > 0; items = items[:len(items)-1] {
 		line := unprovedLead + strings.Join(items, "; ")
@@ -52,17 +55,17 @@ func proofNotice(failed []sdd.FailedProof) string {
 	for _, f := range failed {
 		reason := "no such tag"
 		if f.Issued {
-			reason = "not the word after that tag"
+			reason = "not the word its proof asks for"
 		}
 		names = append(names, f.Proof+" ("+reason+")")
 	}
-	return fmt.Sprintf("these held proofs failed, so their pieces served in full: %s. Send the word right after the tag in its full text, or leave the tag out", strings.Join(names, ", "))
+	return fmt.Sprintf("these held proofs failed, so their pieces served in full: %s. A proof works once: send the word the tag's last next proof asked for, else the word right after the tag, in its full text, or leave the tag out", strings.Join(names, ", "))
 }
 
 // heldLine is the pointer to pieces the call holds and the way to have them
 // again.
 func heldLine(names []string) string {
-	return fmt.Sprintf("(held: %s — prove a tag with the word after it in the full text you were served, never a word of this line; list a tag in reread to have its text again, or resume_session re-serves this position in full)", strings.Join(names, ", "))
+	return fmt.Sprintf("(held: %s — prove each tag with the word its next proof asks for, else the word after the tag, in the full text you were served, never a word of this line; list a tag in reread to have its text again, or resume_session re-serves this position in full)", strings.Join(names, ", "))
 }
 
 // composeInstructions serves the step's first keep lanes: a lane the call
@@ -89,7 +92,7 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, p
 		}
 		served := ss.root.ServeText(name, lane.Text, carried(pageFull, lane.Text))
 		if served.Held {
-			held = append(held, heldName(name, served.Tag))
+			held = append(held, heldName(name, served.Tag, served.Next))
 			continue
 		}
 		fresh = append(fresh, served.Text)
@@ -121,14 +124,14 @@ func carried(ids []string, text string) []string {
 // composeFraming serves the framing blocks per block: a graph write that
 // changes one block (the recent-moves lane) re-serves that block alone, never
 // the stable aspirations or directives (I6). A block the call holds is left
-// out, as the agent named it itself; a pointer on every serve would be the
-// repeat it saves. A block holds the entries it carries in full; a
+// out, as the agent named it itself, except for the next proof its pointer
+// asks for (heldLine). A block holds the entries it carries in full; a
 // block is never cut for them. Only the first keep blocks serve; the rest
 // wait, as instruction lanes do past the result bound.
 func composeFraming(ss *shellSession, blocks []types.ServeLane, keep int) framingServed {
 	var (
-		result framingServed
-		served []string
+		result       framingServed
+		served, held []string
 	)
 	for _, block := range blocks {
 		if block.Text == "" {
@@ -139,12 +142,20 @@ func composeFraming(ss *shellSession, blocks []types.ServeLane, keep int) framin
 			result.waiting = append(result.waiting, block.Name)
 			continue
 		}
-		piece := ss.root.ServeText("framing "+block.Name, block.Text, ss.root.FramingFullIDs(block.Text))
-		if !piece.Held {
+		name := "framing " + block.Name
+		piece := ss.root.ServeText(name, block.Text, ss.root.FramingFullIDs(block.Text))
+		switch {
+		case !piece.Held:
 			served = append(served, piece.Text)
+		case piece.Next != "":
+			held = append(held, heldName(name, piece.Tag, piece.Next))
 		}
 	}
-	result.text, result.fresh = strings.Join(served, "\n\n"), len(served)
+	result.fresh = len(served)
+	if len(held) > 0 {
+		served = append(served, heldLine(held))
+	}
+	result.text = strings.Join(served, "\n\n")
 	return result
 }
 
@@ -184,7 +195,7 @@ func serveReportSchema(ss *shellSession, serve *sdd.WorkflowServe) (map[string]a
 	served := maps.Clone(fields)
 	if piece.Held {
 		delete(served, "properties")
-		served["held_properties"] = fmt.Sprintf("you hold %s for these %s — prove the tag with the word after it in the full schema you were served, never a word here; list the tag in reread to have them again, or resume_session re-serves them in full", model.TagName(piece.Tag), name)
+		served["held_properties"] = fmt.Sprintf("you hold %s — prove the tag with the word its next proof asks for, else the word after the tag, in the full schema you were served, never a word here; list the tag in reread to have them again, or resume_session re-serves them in full", heldName("these "+name, piece.Tag, piece.Next))
 	} else {
 		served["properties"] = tagged
 	}
@@ -226,15 +237,18 @@ func withSchemaAt(schema map[string]any, path []string, node map[string]any) map
 	return out
 }
 
-// serveVocabulary serves the graph's vocabulary table, left out while the
-// call holds it.
-func serveVocabulary(ss *shellSession, vocabulary string) string {
+// serveVocabulary serves the graph's vocabulary table, reporting whether in
+// full; while the call holds it, only the next proof its pointer asks for.
+func serveVocabulary(ss *shellSession, vocabulary string) (string, bool) {
 	if vocabulary == "" {
-		return ""
+		return "", false
 	}
 	piece := ss.root.ServeText("vocabulary", vocabulary, nil)
-	if piece.Held {
-		return ""
+	if !piece.Held {
+		return piece.Text, true
 	}
-	return piece.Text
+	if piece.Next == "" {
+		return "", false
+	}
+	return heldLine([]string{heldName("vocabulary", piece.Tag, piece.Next)}), false
 }

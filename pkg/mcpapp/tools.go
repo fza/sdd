@@ -1853,8 +1853,9 @@ func (s *toolSet) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss
 		return ServeResult{}, servedCount{}, err
 	}
 	vocabularyMark := ss.root.ServeMark()
-	res.Vocabulary = serveVocabulary(ss, vocabulary)
-	if held.vocabularyWaits && res.Vocabulary != "" {
+	var vocabularyFull bool
+	res.Vocabulary, vocabularyFull = serveVocabulary(ss, vocabulary)
+	if held.vocabularyWaits && vocabularyFull {
 		ss.root.WithdrawServedSince(vocabularyMark)
 		res.Vocabulary, count.vocabularyWaits = "", true
 		res.Instructions += "\n\n(the vocabulary table waits, as this result would run past its size bound. Call next with this instance and no report to have it before you act; it serves the step again)"
@@ -2064,7 +2065,7 @@ func openThreadsRoot(ss *shellSession) string {
 	}
 	piece := ss.root.ServeText("open threads", intro, nil)
 	if piece.Held {
-		return openThreadsReminder + " " + heldLine([]string{heldName("open threads", piece.Tag)}) + "\n" + body
+		return openThreadsReminder + " " + heldLine([]string{heldName("open threads", piece.Tag, piece.Next)}) + "\n" + body
 	}
 	return piece.Text + "\n" + body
 }

@@ -88,11 +88,11 @@ again later? resume_session with this handle re-serves this list in full.`
 const proofGuide = `Every piece served in full (instruction lane, framing block, report schema,
 entry) carries a tag, such as ⟦k3f9⟧, before one of its words. On each later
 call, list in held every tag whose text you still see, with the word right
-after it, as tag:word ("… dialogue ⟦gn9p⟧ first …" → gn9p:first). That piece
-then serves as a short pointer. Proofs never carry over: list the tags from
-every earlier result, not only the last, as a piece served many calls ago (the
-type-system overview, a framing block, an entry) serves in full again on any
-call without its proof; each result's unproved field lists those you have not
-proved since. List in reread the tag or name of a piece you no longer see, or
-of one a split result's follow-up points at without a proof: it serves in full
-again. Never guess a word: a missing or wrong proof costs only the full text.`
+after it, as tag:word ("… dialogue ⟦gn9p⟧ first …" → gn9p:first); that piece
+then serves as a short pointer. A proof works once: the pointer names the
+next, as next proof gn9p:<the word right after "check">; look that word up in
+the piece's text. List the tags of every earlier result, not only the last;
+each result's unproved field lists those you have not proved since.
+List in reread the tag or name of a piece you no longer see, or of one a split
+result's follow-up points at without a proof: it serves in full again. Never
+guess a word: a missing or wrong proof costs only the full text.`

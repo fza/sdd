@@ -13,13 +13,13 @@ import (
 )
 
 func heldOnly(ids ...string) *presenters.Repeats {
-	return &presenters.Repeats{Held: func(id string) (string, bool) {
+	return &presenters.Repeats{Held: func(id string) (string, string, bool) {
 		for _, held := range ids {
 			if held == id {
-				return "ab12", true
+				return "ab12", "", true
 			}
 		}
-		return "", false
+		return "", "", false
 	}, Anchor: func(_, body string) string { return "⟦zz99⟧ " + body }}
 }
 

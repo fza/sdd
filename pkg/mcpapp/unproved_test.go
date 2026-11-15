@@ -59,7 +59,7 @@ func TestResultsListUnprovedPieces(t *testing.T) {
 
 	var proved mcpserver.ShowResult
 	call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}, "held": []any{entryProof.String()}}, &proved)
-	if !strings.Contains(proved.Entries, "(held as tag "+entryProof.Tag+")") || strings.Contains(proved.Entries, "⟦") {
+	if !strings.Contains(proved.Entries, "(held as tag "+entryProof.Tag) || strings.Contains(proved.Entries, "⟦") {
 		t.Fatalf("a proved entry should serve its pointer naming its bare tag:\n%s", proved.Entries)
 	}
 	if !equalNames(listedNames(proved.Unproved), names) {

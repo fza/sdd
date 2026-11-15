@@ -13,8 +13,9 @@ import (
 // carries its tag. A nil Repeats, or one without Held, serves everything in
 // full, as the CLI does.
 type Repeats struct {
-	// Held reports whether the call holds the entry, with its tag.
-	Held func(id string) (tag string, held bool)
+	// Held reports whether the call holds the entry, with its tag and the
+	// word whose follower its next proof names (model.Challenge).
+	Held func(id string) (tag, next string, held bool)
 	// Anchor returns an entry body served in full with its tag placed.
 	Anchor  func(id, body string) string
 	pointed bool
@@ -26,12 +27,12 @@ func (r *Repeats) pointer(id, brief string) (string, bool) {
 	if r == nil || r.Held == nil || brief == "" {
 		return "", false
 	}
-	tag, held := r.Held(id)
+	tag, next, held := r.Held(id)
 	if !held {
 		return "", false
 	}
 	r.pointed = true
-	return pointerText(id, brief, tag), true
+	return pointerText(id, brief, tag, next), true
 }
 
 // anchor returns body as an entry served in full prints it.
@@ -63,10 +64,13 @@ func (r *Repeats) WriteWayBack(w io.Writer) {
 }
 
 // pointerText is the pointer a held entry prints as: its ID, its brief,
-// never cut, and the tag it is held under.
-func pointerText(id, brief, tag string) string {
+// never cut, the tag it is held under and how the next call proves it.
+func pointerText(id, brief, tag, next string) string {
 	if tag == "" {
 		return fmt.Sprintf("%s — %s (served in full above)", id, brief)
+	}
+	if proof := model.NextProof(tag, next); proof != "" {
+		return fmt.Sprintf("%s — %s (held as %s; %s)", id, brief, model.TagName(tag), proof)
 	}
 	return fmt.Sprintf("%s — %s (held as %s)", id, brief, model.TagName(tag))
 }

@@ -3,6 +3,7 @@ package mcpapp_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -67,9 +68,9 @@ func TestAHeldLanePointerLeavesNoWordAfterItsTag(t *testing.T) {
 		t.Fatalf("each lane served in full should carry one tag, got %v in:\n%s", proofs, serve.Instructions)
 	}
 	call(t, cs, "next", map[string]any{"session": session, "instance": serve.Instance, "held": []any{proofs[0].String()}}, &serve)
-	want := "(held: tag " + proofs[0].Tag + " for lane first — prove a tag with the word after it in the full text you were served, never a word of this line;"
-	if !strings.Contains(serve.Instructions, want) {
-		t.Errorf("the pointer should name the tag first and send the agent to the full text, want %q in:\n%s", want, serve.Instructions)
+	pointer := regexp.MustCompile(`\(held: tag ` + proofs[0].Tag + ` for lane first(?: \(next proof ` + proofs[0].Tag + `:<the word right after "[^"]+">\))? — prove each tag with the word its next proof asks for, else the word after the tag, in the full text you were served, never a word of this line;`)
+	if !pointer.MatchString(serve.Instructions) {
+		t.Errorf("the pointer should name the tag first, its next proof, and send the agent to the full text, in:\n%s", serve.Instructions)
 	}
 }
 
@@ -92,7 +93,7 @@ func TestAFailedProofIsNamedBesideTheFullText(t *testing.T) {
 	if !strings.Contains(serve.Instructions, "Lane first holds a line of its guidance.") {
 		t.Errorf("the lane whose proof failed should serve in full, got %.300q", serve.Instructions)
 	}
-	for _, want := range []string{wrong.String() + " (not the word after that tag)", unknown.String() + " (no such tag)"} {
+	for _, want := range []string{wrong.String() + " (not the word its proof asks for)", unknown.String() + " (no such tag)"} {
 		if !strings.Contains(serve.ProofNotice, want) {
 			t.Errorf("the proof notice should name %q, got %q", want, serve.ProofNotice)
 		}
