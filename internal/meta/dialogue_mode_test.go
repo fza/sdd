@@ -63,3 +63,38 @@ func TestReadConfigLayersDropsTheCommittedDialogueMode(t *testing.T) {
 		t.Errorf("the committed layer's dialogue mode should be dropped, got %q", committed.Dialogue.Mode)
 	}
 }
+
+// Locating the project and its graph reads past a refused dialogue.mode in
+// the machine-local layer; the config load still refuses it.
+func TestLayoutReadsPassAnUnknownDialogueMode(t *testing.T) {
+	root := t.TempDir()
+	sddDir := meta.SDDDir(root)
+	if err := os.MkdirAll(sddDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sddDir, "config.yaml"), []byte("graph_dir: decisions\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sddDir, meta.LocalConfigFileName), []byte("dialogue:\n  mode: autonomous\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	project, err := meta.ResolveProject(root, nil)
+	if err != nil {
+		t.Fatalf("project resolution should not judge the dialogue mode: %v", err)
+	}
+	if project.Root != root {
+		t.Errorf("the project should resolve to its own root, got %q", project.Root)
+	}
+	layout, err := meta.ReadLayoutConfig(sddDir, "")
+	if err != nil {
+		t.Fatalf("the layout read should not judge the dialogue mode: %v", err)
+	}
+	if layout.GraphDir != "decisions" {
+		t.Errorf("the layout read should carry the graph dir, got %q", layout.GraphDir)
+	}
+	_, err = meta.ReadConfig(sddDir, "")
+	if err == nil {
+		t.Error("the config load should still refuse the dialogue mode")
+	}
+}

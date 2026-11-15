@@ -117,6 +117,28 @@ func ResolveConfig(global model.BaseConfig, sddDir, localConfigPath string) (*mo
 // layers for per-value provenance; everything else wants ReadConfig's
 // merged result.
 func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.PerRepoConfig, err error) {
+	return readConfigLayers(sddDir, localConfigPath, readPersonalConfigFile)
+}
+
+// ReadLayoutConfig is ReadConfig for the keys that locate a project and its
+// graph: it reads past a value sdd refuses, which the command's own config
+// load judges, so `sdd config set` still finds the file to repair it.
+func ReadLayoutConfig(sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
+	committed, local, err := readLayoutLayers(sddDir, localConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	if committed == nil && local == nil {
+		return nil, nil
+	}
+	return model.MergeConfig(committed, local), nil
+}
+
+func readLayoutLayers(sddDir, localConfigPath string) (committed, local *model.PerRepoConfig, err error) {
+	return readConfigLayers(sddDir, localConfigPath, readConfigFile)
+}
+
+func readConfigLayers(sddDir, localConfigPath string, readPersonal func(path string) (*model.PerRepoConfig, error)) (committed, local *model.PerRepoConfig, err error) {
 	if sddDir != "" {
 		committedPath := filepath.Join(sddDir, "config.yaml")
 		committed, err = readConfigFile(committedPath)
@@ -132,7 +154,7 @@ func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.P
 	// layer — joining an empty dir would read a path relative to the cwd.
 	if sddDir != "" || localConfigPath != "" {
 		localPath := LocalConfigPath(sddDir, localConfigPath)
-		local, err = readPersonalConfigFile(localPath)
+		local, err = readPersonal(localPath)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -142,7 +164,7 @@ func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.P
 			return nil, nil, err
 		}
 		if under != "" {
-			own, err := readPersonalConfigFile(under)
+			own, err := readPersonal(under)
 			if err != nil {
 				return nil, nil, err
 			}

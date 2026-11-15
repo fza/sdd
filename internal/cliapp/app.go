@@ -513,7 +513,8 @@ func New(options Options) *cli.Command {
 				Level: level,
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
-			currentGate = &invocationGate{ctx: ctx}
+			configWrite := writesConfig(cmd.Args())
+			currentGate = &invocationGate{ctx: ctx, configWrite: configWrite}
 			if cmd.Bool("timing") {
 				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
 			}
@@ -523,13 +524,13 @@ func New(options Options) *cli.Command {
 
 			warnUnknownConfigKeys(ctx)
 			err := useSecretRules(ctx)
-			if err != nil {
+			if err != nil && !repairingConfig(configWrite, err) {
 				return ctx, err
 			}
 
 			if checksStrays(cmd.Args().First()) {
 				err := strayRefusal(ctx)
-				if err != nil {
+				if err != nil && !repairingConfig(configWrite, err) {
 					return ctx, err
 				}
 			}
@@ -1738,7 +1739,7 @@ func ensureGraphClone(clones *repos.GraphClones, project meta.Project) error {
 // the repository holding the project's .sdd/, so a graph kept apart is a
 // project of its own that the work repository names with project_dir.
 func requireGraphInsideRepository(project meta.Project) error {
-	cfg, err := meta.ReadConfig(project.SDDDir(), project.LocalConfigPath(localConfigOverride))
+	cfg, err := meta.ReadLayoutConfig(project.SDDDir(), project.LocalConfigPath(localConfigOverride))
 	if err != nil {
 		return err
 	}

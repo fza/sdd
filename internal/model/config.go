@@ -431,6 +431,13 @@ func (u SecretRulesUpdate) Validate() error {
 	return fmt.Errorf("%w: %q is not %s", ErrUnknownSecretRulesUpdate, u, oneOf(u.AllowedValues()))
 }
 
+// IsRefusedConfigValue reports whether err is a load refusing a value of a
+// key sdd knows, the one fault `sdd config set` and `unset` write past so the
+// file can be repaired through them.
+func IsRefusedConfigValue(err error) bool {
+	return errors.Is(err, ErrUnknownDialogueMode) || errors.Is(err, ErrUnknownSecretRulesUpdate)
+}
+
 // ResolveSecretRulesUpdate returns the effective secrets.rules_update. A value
 // sdd does not know falls back to the default, as an unset one does; the
 // global config load refuses one before it gets here.

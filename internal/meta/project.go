@@ -50,7 +50,7 @@ func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, erro
 	sddDir := SDDDir(workRoot)
 	committedPath := filepath.Join(sddDir, "config.yaml")
 	localPath := LocalConfigPath(sddDir, "")
-	committed, local, err := ReadConfigLayers(sddDir, localPath)
+	committed, local, err := readLayoutLayers(sddDir, localPath)
 	if err != nil {
 		return Project{}, err
 	}
@@ -92,7 +92,7 @@ func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, erro
 // resolves it.
 func ResolveSwitchedProject(workRoot string, repoID model.RepoID, graphClone func(model.RepoID) (string, error)) (Project, error) {
 	sddDir := SDDDir(workRoot)
-	committed, local, err := ReadConfigLayers(sddDir, LocalConfigPath(sddDir, ""))
+	committed, local, err := readLayoutLayers(sddDir, LocalConfigPath(sddDir, ""))
 	if err != nil {
 		return Project{}, err
 	}

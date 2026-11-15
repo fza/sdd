@@ -12,10 +12,11 @@ import (
 // invocationGate is the git gate of one command invocation, built on first
 // use from the state root and the limits of the user-global config.
 type invocationGate struct {
-	ctx  context.Context
-	once sync.Once
-	gate *gitgate.Gate
-	err  error
+	ctx         context.Context
+	configWrite bool
+	once        sync.Once
+	gate        *gitgate.Gate
+	err         error
 }
 
 // currentGate is replaced by the root command's Before on every run, so a
@@ -36,6 +37,10 @@ func (g *invocationGate) get() (*gitgate.Gate, error) {
 			return
 		}
 		global, err := repos.LoadConfigFrom(loc.ConfigPath)
+		if repairingConfig(g.configWrite, err) {
+			// A config write runs no git, so the default limits serve it.
+			global, err = &repos.GlobalConfig{}, nil
+		}
 		if err != nil {
 			g.err = err
 			return
