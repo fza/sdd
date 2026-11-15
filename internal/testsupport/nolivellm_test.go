@@ -1,4 +1,4 @@
-package test_test
+package testsupport_test
 
 import (
 	"net/http"
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/networkteam/sdd/test"
+	"github.com/networkteam/sdd/internal/testsupport"
 )
 
 // probeEnv names the call a re-executed test binary makes under the guard.
@@ -16,7 +16,7 @@ const probeEnv = "SDD_TEST_NOLIVELLM_PROBE"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(probeEnv) != "" {
-		test.RunWithoutLiveLLMs(m)
+		testsupport.RunWithoutLiveLLMs(m)
 	}
 	os.Exit(m.Run())
 }
@@ -27,8 +27,9 @@ func TestRunWithoutLiveLLMs(t *testing.T) {
 		wantErr string
 	}{
 		{probe: "none"},
-		{probe: "claude", wantErr: "tests started an LLM CLI"},
-		{probe: "codex", wantErr: "tests started an LLM CLI"},
+		{probe: "claude", wantErr: "tests started an installed CLI"},
+		{probe: "codex", wantErr: "tests started an installed CLI"},
+		{probe: "sdd", wantErr: "tests started an installed CLI"},
 		{probe: "ollama", wantErr: "tests called a live Ollama"},
 	}
 	for _, tc := range cases {
@@ -49,8 +50,9 @@ func TestRunWithoutLiveLLMs(t *testing.T) {
 	}
 }
 
-// TestProbe runs only in the re-executed binary. It makes harmless calls, so
-// a broken guard reaching a live CLI or Ollama changes nothing there.
+// TestProbe runs only in the re-executed binary. Its calls are harmless, and
+// it runs a CLI only from the guard's stand-ins, so a broken guard never
+// starts an installed one.
 func TestProbe(t *testing.T) {
 	switch os.Getenv(probeEnv) {
 	case "":
@@ -66,6 +68,10 @@ func TestProbe(t *testing.T) {
 				t.Errorf("%s should point into the run's own temporary directory, got %q", name, os.Getenv(name))
 			}
 		}
+		if filepath.Dir(os.Getenv("GIT_CONFIG_GLOBAL")) != root || os.Getenv("GIT_CONFIG_NOSYSTEM") != "1" {
+			t.Errorf("git should read neither the user's nor the system's config, got GIT_CONFIG_GLOBAL=%q GIT_CONFIG_NOSYSTEM=%q",
+				os.Getenv("GIT_CONFIG_GLOBAL"), os.Getenv("GIT_CONFIG_NOSYSTEM"))
+		}
 	case "ollama":
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost:11434/api/version", nil)
 		if err != nil {
@@ -76,6 +82,15 @@ func TestProbe(t *testing.T) {
 			_ = resp.Body.Close()
 		}
 	default:
-		_ = exec.CommandContext(t.Context(), os.Getenv(probeEnv), "--version").Run()
+		name := os.Getenv(probeEnv)
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		standIns := filepath.Join(filepath.Dir(os.Getenv("GIT_CONFIG_GLOBAL")), "bin")
+		if filepath.Dir(path) != standIns {
+			t.Fatalf("refusing to run %s from outside the guard's stand-ins: %s", name, path)
+		}
+		_ = exec.CommandContext(t.Context(), path, "--version").Run()
 	}
 }

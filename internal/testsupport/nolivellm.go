@@ -1,5 +1,5 @@
-// Package test holds support shared by the module's tests.
-package test
+// Package testsupport holds support shared by the module's tests.
+package testsupport
 
 import (
 	_ "embed"
@@ -15,17 +15,19 @@ import (
 )
 
 //go:embed fixtures/nolivellm/cli.sh
-var failingLLMCLI []byte
+var failingCLI []byte
 
 // ollamaPort is the port of Ollama's default endpoint, which sdd falls back to
 // when a config names the ollama provider without an endpoint.
 const ollamaPort = "11434"
 
 // RunWithoutLiveLLMs runs a package's tests with the XDG base directories in
-// a temporary directory, claude and codex CLIs first on PATH that fail every
-// call and an HTTP transport that refuses Ollama's default port. It fails the
-// run when a test reached a CLI or Ollama: a live CLI runs the developer's own
-// hooks, and those must never see the developer's real data.
+// a temporary directory, the user's and the system's git config ignored,
+// claude, codex and sdd first on PATH as stand-ins that fail every call, and
+// an HTTP transport that refuses Ollama's default port. It fails the run when
+// a test reached a stand-in or Ollama: a live CLI runs the developer's own
+// hooks, and those must never see the developer's real data. A test needing
+// the sdd binary calls the one it built by path.
 func RunWithoutLiveLLMs(m *testing.M) {
 	dir, err := os.MkdirTemp("", "sdd-test-llm-")
 	if err != nil {
@@ -34,17 +36,26 @@ func RunWithoutLiveLLMs(m *testing.M) {
 	}
 	bin := filepath.Join(dir, "bin")
 	err = os.Mkdir(bin, 0o755)
-	for _, name := range []string{"claude", "codex"} {
+	for _, name := range []string{"claude", "codex", "sdd"} {
 		if err == nil {
-			err = os.WriteFile(filepath.Join(bin, name), failingLLMCLI, 0o755)
+			err = os.WriteFile(filepath.Join(bin, name), failingCLI, 0o755)
 		}
 	}
+	gitConfig := filepath.Join(dir, "gitconfig")
 	if err == nil {
-		err = os.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		err = os.WriteFile(gitConfig, nil, 0o644)
+	}
+	env := map[string]string{
+		"PATH":                bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"GIT_CONFIG_GLOBAL":   gitConfig,
+		"GIT_CONFIG_NOSYSTEM": "1",
 	}
 	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+		env[name] = filepath.Join(dir, strings.ToLower(name))
+	}
+	for name, value := range env {
 		if err == nil {
-			err = os.Setenv(name, filepath.Join(dir, strings.ToLower(name)))
+			err = os.Setenv(name, value)
 		}
 	}
 	if err != nil {
@@ -57,7 +68,7 @@ func RunWithoutLiveLLMs(m *testing.M) {
 	calls, err := os.ReadFile(filepath.Join(bin, "calls"))
 	switch {
 	case err == nil:
-		fmt.Fprintf(os.Stderr, "tests started an LLM CLI; pass the input that needs no model call or a fake provider:\n%s", calls)
+		fmt.Fprintf(os.Stderr, "tests started an installed CLI; pass the input that needs no model call, a fake provider or the built binary's path:\n%s", calls)
 		code = 1
 	case !errors.Is(err, fs.ErrNotExist):
 		fmt.Fprintln(os.Stderr, err)

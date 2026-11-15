@@ -3,9 +3,9 @@ package mcpapp_test
 import (
 	"testing"
 
-	"github.com/networkteam/sdd/test"
+	"github.com/networkteam/sdd/internal/testsupport"
 )
 
 func TestMain(m *testing.M) {
-	test.RunWithoutLiveLLMs(m)
+	testsupport.RunWithoutLiveLLMs(m)
 }
