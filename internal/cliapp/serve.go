@@ -21,6 +21,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
@@ -372,11 +373,16 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if cfg == nil || cfg.DefaultBranch == "" {
 		return nil, "", sdd.RequestIdentity{}, fmt.Errorf("default_branch is required in .sdd/config.yaml before serving mutation tools")
 	}
+	layout, err := resolveProject()
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Branches: targets, Base: targets,
 		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
-		LLM: runner,
+		LLM:   runner,
+		Hooks: hooks.New(hooks.Sources{GlobalConfig: locations.ConfigPath, Project: layout}),
 	})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
