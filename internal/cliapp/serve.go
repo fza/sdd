@@ -83,7 +83,10 @@ func serveCmd() *cli.Command {
 				LocalIdentity: identity,
 				LocalClient:   transport == "stdio",
 				Version:       cmd.Root().Version,
-				BeforeCall:    watch.admit,
+				BeforeCall: func(ctx context.Context, session string) (context.Context, mcpserver.Notices, error) {
+					call, notice, err := watch.admit(ctx, session)
+					return call, mcpserver.Notices{Config: notice}, err
+				},
 			})
 			if err != nil {
 				return err

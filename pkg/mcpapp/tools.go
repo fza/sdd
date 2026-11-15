@@ -73,7 +73,7 @@ type AbandonArgs struct {
 }
 
 type AbandonResult struct {
-	HostNoticeField
+	NoticesField
 	Abandoned bool   `json:"abandoned"`
 	Session   string `json:"session,omitempty" jsonschema:"the torn-down session, on teardown by handle"`
 	Label     string `json:"label,omitempty" jsonschema:"the torn-down session's subject label"`
@@ -92,7 +92,7 @@ type ParkArgs struct {
 }
 
 type ParkResult struct {
-	HostNoticeField
+	NoticesField
 	Parked       bool       `json:"parked"`
 	Instance     string     `json:"instance"`
 	Procedure    string     `json:"procedure"`
@@ -170,7 +170,7 @@ func cancellationResult(cancelled *sdd.WorkflowCancellation) *CancellationResult
 // ServeResult is the loop's uniform response shape: where the instance
 // stands, what advances it, and the material to work with.
 type ServeResult struct {
-	HostNoticeField
+	NoticesField
 	Session          string                  `json:"session,omitempty" jsonschema:"session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool"`
 	Project          string                  `json:"project,omitempty" jsonschema:"the project this instance works in — the session's home project unless the move was started in a dependency"`
 	Projects         []ProjectResult         `json:"projects,omitempty" jsonschema:"start_session only: the principal's accessible projects, served with status project-required when several exist and none was passed — no session opened yet"`
@@ -220,7 +220,7 @@ type ResumeSessionArgs struct {
 }
 
 type ResumeSessionResult struct {
-	HostNoticeField
+	NoticesField
 	Session          string                  `json:"session" jsonschema:"session handle (the session ID)"`
 	Project          string                  `json:"project,omitempty" jsonschema:"the project this session is bound to"`
 	Participant      string                  `json:"participant,omitempty"`
@@ -240,7 +240,7 @@ type BindBranchArgs struct {
 }
 
 type BindBranchResult struct {
-	HostNoticeField
+	NoticesField
 	Branch string `json:"branch,omitempty" jsonschema:"the now-effective branch binding; empty after clear"`
 	Status string `json:"status"`
 }
@@ -260,7 +260,7 @@ type SearchReplaceArg struct {
 }
 
 type StageAttachmentResult struct {
-	HostNoticeField
+	NoticesField
 	Handle string `json:"handle" jsonschema:"attachment handle; pass it in a report's attachments field"`
 }
 
@@ -283,7 +283,7 @@ type SearchArgs struct {
 }
 
 type SearchResult struct {
-	HostNoticeField
+	NoticesField
 	Coverage []sdd.SearchCoverage `json:"coverage,omitempty" jsonschema:"published entry coverage for each fixed search snapshot"`
 	Notice   string               `json:"notice,omitempty" jsonschema:"readable incomplete-indexing notice"`
 	Results  string               `json:"results" jsonschema:"matching entries with citations"`
@@ -298,7 +298,7 @@ type ViewArgs struct {
 }
 
 type ViewResult struct {
-	HostNoticeField
+	NoticesField
 	Sections string `json:"sections"`
 	Hint     string `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, served once per connection"`
 }
@@ -312,7 +312,7 @@ type ShowArgs struct {
 }
 
 type ShowResult struct {
-	HostNoticeField
+	NoticesField
 	Entries string `json:"entries"`
 }
 
@@ -327,7 +327,7 @@ type ReadAttachmentArgs struct {
 }
 
 type ReadAttachmentResult struct {
-	HostNoticeField
+	NoticesField
 	Name       string   `json:"name"`
 	Content    string   `json:"content"`
 	Offset     int64    `json:"offset"`
@@ -344,7 +344,7 @@ type InfoArgs struct {
 }
 
 type InfoResult struct {
-	HostNoticeField
+	NoticesField
 	Project     string `json:"project,omitempty" jsonschema:"the session's project ID"`
 	Participant string `json:"participant,omitempty" jsonschema:"configured local participant (canonical name)"`
 	Language    string `json:"language,omitempty" jsonschema:"configured graph language; empty = English"`
@@ -357,13 +357,26 @@ type RegistryArgs struct {
 	Class   string `json:"class,omitempty" jsonschema:"filter: predicate, query, or command"`
 }
 
-// HostNoticeField carries, once, what the host tells the agent beside a
-// result, such as the config keys that changed since the previous call.
-type HostNoticeField struct {
-	HostNotice string `json:"host_notice,omitempty" jsonschema:"set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values"`
+// Notices holds what the host tells the agent beside a result, at most one
+// notice per kind, each kind omitted when empty.
+type Notices struct {
+	Config string `json:"config,omitempty" jsonschema:"set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values"`
 }
 
-func (f *HostNoticeField) setHostNotice(notice string) { f.HostNotice = notice }
+func (n Notices) texts() []string {
+	var texts []string
+	if n.Config != "" {
+		texts = append(texts, n.Config)
+	}
+	return texts
+}
+
+// NoticesField carries a result's notices, the field omitted when none is set.
+type NoticesField struct {
+	Notices Notices `json:"notices,omitzero" jsonschema:"what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error"`
+}
+
+func (f *NoticesField) setNotices(notices Notices) { f.Notices = notices }
 
 type RegistryFuncResult struct {
 	Name   string   `json:"name"`
@@ -374,7 +387,7 @@ type RegistryFuncResult struct {
 }
 
 type RegistryResult struct {
-	HostNoticeField
+	NoticesField
 	Functions []RegistryFuncResult `json:"functions"`
 }
 
@@ -1205,12 +1218,12 @@ func (s *toolSet) registryDocs(ctx context.Context, req *mcp.CallToolRequest, ar
 // toolBoundary is where an error meets the agent: a coded application error
 // is rendered with its code leading the text, so a refusal is identified by
 // its code rather than its prose (d-cpt-s2i). Uncoded errors pass unchanged.
-// The host's BeforeCall runs first and refuses the call, or hands it a notice.
-func toolBoundary[In, Out any](before func(context.Context, *mcp.CallToolRequest) (context.Context, string, error), handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
+// The host's BeforeCall runs first and refuses the call, or hands it notices.
+func toolBoundary[In, Out any](before func(context.Context, *mcp.CallToolRequest) (context.Context, Notices, error), handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		var res *mcp.CallToolResult
 		var out Out
-		call, notice, err := before(ctx, req)
+		call, notices, err := before(ctx, req)
 		if call == nil {
 			call = ctx
 		}
@@ -1221,14 +1234,15 @@ func toolBoundary[In, Out any](before func(context.Context, *mcp.CallToolRequest
 		if err != nil && errors.As(err, &coded) && coded.Code != "" {
 			err = fmt.Errorf("%s: %w", coded.Code, err)
 		}
-		if notice == "" {
+		texts := notices.texts()
+		if len(texts) == 0 {
 			return res, out, err
 		}
 		if err != nil {
-			return res, out, fmt.Errorf("%w\n\n%s", err, notice)
+			return res, out, fmt.Errorf("%w\n\n%s", err, strings.Join(texts, "\n\n"))
 		}
-		if carrier, ok := any(&out).(interface{ setHostNotice(string) }); ok {
-			carrier.setHostNotice(notice)
+		if carrier, ok := any(&out).(interface{ setNotices(Notices) }); ok {
+			carrier.setNotices(notices)
 		}
 		return res, out, err
 	}
@@ -1236,9 +1250,9 @@ func toolBoundary[In, Out any](before func(context.Context, *mcp.CallToolRequest
 
 // beforeCall runs the host's BeforeCall for the session the call names, ""
 // for a call that names none.
-func (s *toolSet) beforeCall(ctx context.Context, req *mcp.CallToolRequest) (context.Context, string, error) {
+func (s *toolSet) beforeCall(ctx context.Context, req *mcp.CallToolRequest) (context.Context, Notices, error) {
 	if s.before == nil {
-		return ctx, "", nil
+		return ctx, Notices{}, nil
 	}
 	var named struct {
 		Session string `json:"session"`
@@ -1246,7 +1260,7 @@ func (s *toolSet) beforeCall(ctx context.Context, req *mcp.CallToolRequest) (con
 	if req != nil && req.Params != nil && len(req.Params.Arguments) > 0 {
 		err := json.Unmarshal(req.Params.Arguments, &named)
 		if err != nil {
-			return ctx, "", fmt.Errorf("reading the session the call names: %w", err)
+			return ctx, Notices{}, fmt.Errorf("reading the session the call names: %w", err)
 		}
 	}
 	return s.before(ctx, strings.TrimSpace(named.Session))

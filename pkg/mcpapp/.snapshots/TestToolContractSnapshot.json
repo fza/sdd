@@ -144,16 +144,23 @@
             "array"
           ]
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
-        },
         "instructions": {
           "type": "string"
         },
         "label": {
           "description": "the torn-down session's subject label",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "session": {
           "description": "the torn-down session, on teardown by handle",
@@ -197,9 +204,16 @@
           "description": "the now-effective branch binding; empty after clear",
           "type": "string"
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "status": {
           "type": "string"
@@ -231,13 +245,20 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
-        },
         "language": {
           "description": "configured graph language; empty = English",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "participant": {
           "description": "configured local participant (canonical name)",
@@ -489,10 +510,6 @@
           "description": "one line: what advances the instance from here",
           "type": "string"
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
-        },
         "instance": {
           "type": "string"
         },
@@ -508,6 +525,17 @@
             "null",
             "array"
           ]
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
@@ -803,15 +831,22 @@
             "object"
           ]
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
-        },
         "instance": {
           "type": "string"
         },
         "instructions": {
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "parked": {
           "type": "boolean"
@@ -885,10 +920,6 @@
         "content": {
           "type": "string"
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
-        },
         "more": {
           "type": "boolean"
         },
@@ -897,6 +928,17 @@
         },
         "next_offset": {
           "type": "integer"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "offset": {
           "type": "integer"
@@ -984,9 +1026,16 @@
             "array"
           ]
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         }
       },
       "required": [
@@ -1086,16 +1135,23 @@
         "framing": {
           "type": "string"
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
-        },
         "instructions": {
           "type": "string"
         },
         "label": {
           "description": "the session's subject label, when one was recorded",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "open_instances": {
           "description": "current serve for every running instance; the session shell's serve carries the open-threads block",
@@ -1288,10 +1344,6 @@
                 "description": "one line: what advances the instance from here",
                 "type": "string"
               },
-              "host_notice": {
-                "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-                "type": "string"
-              },
               "instance": {
                 "type": "string"
               },
@@ -1307,6 +1359,17 @@
                   "null",
                   "array"
                 ]
+              },
+              "notices": {
+                "additionalProperties": false,
+                "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+                "properties": {
+                  "config": {
+                    "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
               },
               "open_threads": {
                 "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
@@ -1659,13 +1722,20 @@
             "array"
           ]
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
-        },
         "notice": {
           "description": "readable incomplete-indexing notice",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "results": {
           "description": "matching entries with citations",
@@ -1728,9 +1798,16 @@
         "entries": {
           "type": "string"
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         }
       },
       "required": [
@@ -1799,9 +1876,16 @@
           "description": "attachment handle; pass it in a report's attachments field",
           "type": "string"
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         }
       },
       "required": [
@@ -2036,10 +2120,6 @@
           "description": "one line: what advances the instance from here",
           "type": "string"
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
-        },
         "instance": {
           "type": "string"
         },
@@ -2055,6 +2135,17 @@
             "null",
             "array"
           ]
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
@@ -2435,10 +2526,6 @@
           "description": "one line: what advances the instance from here",
           "type": "string"
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
-        },
         "instance": {
           "type": "string"
         },
@@ -2454,6 +2541,17 @@
             "null",
             "array"
           ]
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
@@ -2669,9 +2767,16 @@
           "description": "one-line pointer to the view layout grammar, served once per connection",
           "type": "string"
         },
-        "host_notice": {
-          "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key). Plain status, not a tool error; carry on under the new values",
-          "type": "string"
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "sections": {
           "type": "string"

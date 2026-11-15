@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -26,20 +27,20 @@ type scriptedBeforeCall struct {
 	sessions []string
 }
 
-func (h *scriptedBeforeCall) hook(ctx context.Context, session string) (context.Context, string, error) {
+func (h *scriptedBeforeCall) hook(ctx context.Context, session string) (context.Context, mcpserver.Notices, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.sessions = append(h.sessions, session)
 	if h.err != nil {
-		return ctx, "", h.err
+		return ctx, mcpserver.Notices{}, h.err
 	}
 	ctx = context.WithValue(ctx, pinnedKey{}, len(h.sessions))
 	if len(h.notices) == 0 {
-		return ctx, "", nil
+		return ctx, mcpserver.Notices{}, nil
 	}
 	notice := h.notices[0]
 	h.notices = h.notices[1:]
-	return ctx, notice, nil
+	return ctx, mcpserver.Notices{Config: notice}, nil
 }
 
 // pinRecorder records the call number each principal resolution ran under.
@@ -80,8 +81,8 @@ func TestBeforeCallContextReachesTheApplication(t *testing.T) {
 
 func TestBeforeCallWithoutAContextKeepsTheCalls(t *testing.T) {
 	env := newTestServer(t, nil, "", "", func(opts *testServerOptions) {
-		opts.MCP.BeforeCall = func(context.Context, string) (context.Context, string, error) {
-			return nil, "", nil
+		opts.MCP.BeforeCall = func(context.Context, string) (context.Context, mcpserver.Notices, error) {
+			return nil, mcpserver.Notices{}, nil
 		}
 	})
 	cs := connect(t, env.srv)
@@ -130,8 +131,8 @@ func TestBeforeCallNoticeRidesOnTheResult(t *testing.T) {
 
 	hook.queue("config changed, now in force:\n- language: de -> en")
 	opened := callRaw(t, cs, "start_session", map[string]any{})
-	if opened["host_notice"] != "config changed, now in force:\n- language: de -> en" {
-		t.Errorf("the hook's notice should ride on the result, got %v", opened["host_notice"])
+	if got := noticeOf(opened, "config"); got != "config changed, now in force:\n- language: de -> en" {
+		t.Errorf("the hook's notice should ride on the result under its kind, got %v", got)
 	}
 	session, _ := opened["session"].(string)
 	if session == "" {
@@ -139,8 +140,8 @@ func TestBeforeCallNoticeRidesOnTheResult(t *testing.T) {
 	}
 
 	resumed := callRaw(t, cs, "resume_session", map[string]any{"session": " " + session + " "})
-	if _, ok := resumed["host_notice"]; ok {
-		t.Errorf("a call without a notice should omit host_notice, got %v", resumed["host_notice"])
+	if _, ok := resumed["notices"]; ok {
+		t.Errorf("a call without a notice should omit notices, got %v", resumed["notices"])
 	}
 	if got := hook.seen(); len(got) != 2 || got[0] != "" || got[1] != session {
 		t.Errorf("the hook should get the session each call names, none for start_session, got %q", got)
@@ -198,8 +199,8 @@ func TestBeforeCallCoversRegisteredTools(t *testing.T) {
 
 	hook.queue("config changed, now in force:\n- language: de -> en")
 	opened := callRaw(t, cs, "start_session", map[string]any{})
-	if opened["host_notice"] != "config changed, now in force:\n- language: de -> en" {
-		t.Errorf("a host registering SDD's tools should get the same hook, got %v", opened["host_notice"])
+	if got := noticeOf(opened, "config"); got != "config changed, now in force:\n- language: de -> en" {
+		t.Errorf("a host registering SDD's tools should get the same hook, got %v", got)
 	}
 }
 
@@ -247,8 +248,8 @@ func TestBeforeCallRunsForEveryTool(t *testing.T) {
 	}
 }
 
-// Every tool declares host_notice, so a notice reaches reads as well as steps.
-func TestEveryToolDeclaresHostNotice(t *testing.T) {
+// Every tool declares notices.config, so a notice reaches reads as well as steps.
+func TestEveryToolDeclaresNotices(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
 
@@ -262,14 +263,32 @@ func TestEveryToolDeclaresHostNotice(t *testing.T) {
 			t.Fatal(err)
 		}
 		var schema struct {
-			Properties map[string]any `json:"properties"`
+			Required   []string `json:"required"`
+			Properties map[string]struct {
+				Required   []string       `json:"required"`
+				Properties map[string]any `json:"properties"`
+			} `json:"properties"`
 		}
 		err = json.Unmarshal(encoded, &schema)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := schema.Properties["host_notice"]; !ok {
-			t.Errorf("%s should declare host_notice in its output schema", tool.Name)
+		notices, ok := schema.Properties["notices"]
+		if !ok {
+			t.Errorf("%s should declare notices in its output schema", tool.Name)
+			continue
+		}
+		if _, ok := notices.Properties["config"]; !ok {
+			t.Errorf("%s should declare notices.config in its output schema", tool.Name)
+		}
+		if slices.Contains(schema.Required, "notices") || slices.Contains(notices.Required, "config") {
+			t.Errorf("%s should leave notices and each of its kinds optional", tool.Name)
 		}
 	}
+}
+
+// noticeOf returns the notice of kind a result carries, nil for none.
+func noticeOf(result map[string]any, kind string) any {
+	notices, _ := result["notices"].(map[string]any)
+	return notices[kind]
 }

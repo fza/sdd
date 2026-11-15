@@ -30,8 +30,8 @@ func TestServeFollowsAChangeThatKeepsSizeAndMtime(t *testing.T) {
 			t.Fatal(err)
 		}
 		served := callServedOK(t, client, "info", map[string]any{"session": session})
-		if served.Language != "en" || !strings.Contains(served.HostNotice, "- language: de -> en") {
-			t.Errorf("a same-size write keeping the mtime should take effect, got language %q, notice %q", served.Language, served.HostNotice)
+		if served.Language != "en" || !strings.Contains(served.Notices.Config, "- language: de -> en") {
+			t.Errorf("a same-size write keeping the mtime should take effect, got language %q, notice %q", served.Language, served.Notices.Config)
 		}
 	})
 }
@@ -70,8 +70,8 @@ func TestServeFollowsARetargetedConfigSymlink(t *testing.T) {
 			t.Fatal(err)
 		}
 		served := callServedOK(t, client, "info", map[string]any{"session": session})
-		if !strings.Contains(served.HostNotice, "- participant: Local Author -> Local Editor") {
-			t.Errorf("a retargeted symlink should take effect, got %q", served.HostNotice)
+		if !strings.Contains(served.Notices.Config, "- participant: Local Author -> Local Editor") {
+			t.Errorf("a retargeted symlink should take effect, got %q", served.Notices.Config)
 		}
 	})
 }
@@ -129,7 +129,7 @@ func TestServeFollowsAChangeUnderConcurrentCalls(t *testing.T) {
 				if outcome.Language != "en" {
 					t.Errorf("every call after the change should see it, got language %q", outcome.Language)
 				}
-				if strings.Contains(outcome.HostNotice, "- language: de -> en") {
+				if strings.Contains(outcome.Notices.Config, "- language: de -> en") {
 					told++
 				}
 			}

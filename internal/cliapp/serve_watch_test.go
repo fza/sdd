@@ -13,9 +13,11 @@ import (
 // toolOutcome is a tool call's structured result, or the error text the call
 // ended with.
 type toolOutcome struct {
-	Session    string `json:"session"`
-	Language   string `json:"language"`
-	HostNotice string `json:"host_notice"`
+	Session  string `json:"session"`
+	Language string `json:"language"`
+	Notices  struct {
+		Config string `json:"config"`
+	} `json:"notices"`
 
 	failure string
 }
@@ -87,13 +89,13 @@ func TestServeFollowsAConfigChangeWithoutAReconnect(t *testing.T) {
 		if info.Language != "en" {
 			t.Errorf("the running session should follow the changed key, got language %q", info.Language)
 		}
-		if !strings.Contains(info.HostNotice, "- language: de -> en") {
-			t.Errorf("the next result should name the changed key with its old and new value, got %q", info.HostNotice)
+		if !strings.Contains(info.Notices.Config, "- language: de -> en") {
+			t.Errorf("the next result should name the changed key with its old and new value, got %q", info.Notices.Config)
 		}
 
 		again := callServedOK(t, client, "info", map[string]any{"session": session})
-		if again.HostNotice != "" {
-			t.Errorf("a change should be told once, got %q", again.HostNotice)
+		if again.Notices.Config != "" {
+			t.Errorf("a change should be told once, got %q", again.Notices.Config)
 		}
 	})
 }
@@ -112,8 +114,8 @@ func TestServeFollowsConfigFilesThatAppearOrVanish(t *testing.T) {
 
 		fixture.write(t, ".sdd/config.local.yaml", "participant: Local Author\n")
 		resumed := callServedOK(t, client, "resume_session", map[string]any{"session": session})
-		if !strings.Contains(resumed.HostNotice, "- participant: Global Author -> Local Author") {
-			t.Errorf("a config file created while serving should take effect, got %q", resumed.HostNotice)
+		if !strings.Contains(resumed.Notices.Config, "- participant: Global Author -> Local Author") {
+			t.Errorf("a config file created while serving should take effect, got %q", resumed.Notices.Config)
 		}
 
 		err := os.Remove(local)
@@ -121,8 +123,8 @@ func TestServeFollowsConfigFilesThatAppearOrVanish(t *testing.T) {
 			t.Fatal(err)
 		}
 		resumed = callServedOK(t, client, "resume_session", map[string]any{"session": session})
-		if !strings.Contains(resumed.HostNotice, "- participant: Local Author -> Global Author") {
-			t.Errorf("a config file removed while serving should stop taking effect, got %q", resumed.HostNotice)
+		if !strings.Contains(resumed.Notices.Config, "- participant: Local Author -> Global Author") {
+			t.Errorf("a config file removed while serving should stop taking effect, got %q", resumed.Notices.Config)
 		}
 	})
 }
@@ -155,8 +157,8 @@ func TestServeRefusesCallsWhileAConfigFileIsUnreadable(t *testing.T) {
 			t.Fatal(err)
 		}
 		resumed := callServedOK(t, client, "resume_session", map[string]any{"session": session})
-		if !strings.Contains(resumed.HostNotice, "- participant: Global Author -> Local Author") {
-			t.Errorf("the file made readable should take effect, got %q", resumed.HostNotice)
+		if !strings.Contains(resumed.Notices.Config, "- participant: Global Author -> Local Author") {
+			t.Errorf("the file made readable should take effect, got %q", resumed.Notices.Config)
 		}
 	})
 }
@@ -182,8 +184,8 @@ func TestServeRefusesEveryCallWhileAConfigFileIsBroken(t *testing.T) {
 		if resumed.failure != "" {
 			t.Fatalf("a fixed config should serve again: %s", resumed.failure)
 		}
-		if !strings.Contains(resumed.HostNotice, "- language: de -> en") {
-			t.Errorf("the first call served again should name the change, got %q", resumed.HostNotice)
+		if !strings.Contains(resumed.Notices.Config, "- language: de -> en") {
+			t.Errorf("the first call served again should name the change, got %q", resumed.Notices.Config)
 		}
 	})
 }
@@ -201,8 +203,8 @@ func TestServeTellsASessionOpenedBeforeItStartedOfAChange(t *testing.T) {
 	fixture.serve(t, func(client *mcp.ClientSession) {
 		fixture.write(t, ".sdd/config.yaml", strings.Replace(committed, "language: de", "language: en", 1))
 		told := callServedOK(t, client, "info", map[string]any{"session": session})
-		if !strings.Contains(told.HostNotice, "- language: de -> en") {
-			t.Errorf("a session opened before serve started should be told the change, got %q", told.HostNotice)
+		if !strings.Contains(told.Notices.Config, "- language: de -> en") {
+			t.Errorf("a session opened before serve started should be told the change, got %q", told.Notices.Config)
 		}
 	})
 }
@@ -223,8 +225,8 @@ func TestServeJoinsTheChangesASessionMissed(t *testing.T) {
 
 		told := callServedOK(t, client, "info", map[string]any{"session": idle})
 		for _, change := range []string{"- language: de -> en", "- participant: Local Author -> Other Author"} {
-			if !strings.Contains(told.HostNotice, change) {
-				t.Errorf("a session should be told every change it missed, got %q", told.HostNotice)
+			if !strings.Contains(told.Notices.Config, change) {
+				t.Errorf("a session should be told every change it missed, got %q", told.Notices.Config)
 			}
 		}
 	})
@@ -243,25 +245,25 @@ func TestServeTellsEveryOpenSessionOfAChangeOnce(t *testing.T) {
 		fixture.write(t, ".sdd/config.yaml", strings.Replace(committed, "language: de", "language: en", 1))
 		for _, session := range []string{first, second} {
 			told := callServedOK(t, client, "info", map[string]any{"session": session})
-			if !strings.Contains(told.HostNotice, "- language: de -> en") {
-				t.Errorf("each open session should be told the change on its next call, got %q", told.HostNotice)
+			if !strings.Contains(told.Notices.Config, "- language: de -> en") {
+				t.Errorf("each open session should be told the change on its next call, got %q", told.Notices.Config)
 			}
 			again := callServedOK(t, client, "info", map[string]any{"session": session})
-			if again.HostNotice != "" {
-				t.Errorf("a session should be told a change once, got %q", again.HostNotice)
+			if again.Notices.Config != "" {
+				t.Errorf("a session should be told a change once, got %q", again.Notices.Config)
 			}
 		}
 
 		opened := callServedOK(t, client, "start_session", map[string]any{})
-		if !strings.Contains(opened.HostNotice, "- language: de -> en") {
-			t.Errorf("the next call naming no session should be told the change, got %q", opened.HostNotice)
+		if !strings.Contains(opened.Notices.Config, "- language: de -> en") {
+			t.Errorf("the next call naming no session should be told the change, got %q", opened.Notices.Config)
 		}
 		later := callServedOK(t, client, "info", map[string]any{"session": opened.Session})
-		if later.HostNotice != "" {
-			t.Errorf("a session opened after the change should not be told it, got %q", later.HostNotice)
+		if later.Notices.Config != "" {
+			t.Errorf("a session opened after the change should not be told it, got %q", later.Notices.Config)
 		}
-		if again := callServedOK(t, client, "start_session", map[string]any{}); again.HostNotice != "" {
-			t.Errorf("calls naming no session should be told a change once, got %q", again.HostNotice)
+		if again := callServedOK(t, client, "start_session", map[string]any{}); again.Notices.Config != "" {
+			t.Errorf("calls naming no session should be told a change once, got %q", again.Notices.Config)
 		}
 	})
 }
