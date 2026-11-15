@@ -333,6 +333,10 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
+	// A server that writes no session for a while still uses its project.
+	if err := localadapter.MarkProjectUsed(locations.StateRoot, persistentIndexRepoKey(cfg, stableRepoRoot), time.Now()); err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
 	project := sessionStoreProject(cfg)
 	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: graphDir})
 	if err != nil {

@@ -222,6 +222,9 @@ func TestTheSweepCollectsSessionsAndServeDoesNot(t *testing.T) {
 	if _, err := os.Stat(log); err != nil {
 		t.Fatalf("sdd serve should no longer collect sessions when it starts: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(f.root, "state", "sdd", "used", "example.test", "cli.stamp")); err != nil {
+		t.Errorf("a served project should be stamped as used, so the sweep keeps its state: %v", err)
+	}
 	r := f.run(t, "cache", "prune")
 	if r.err != nil {
 		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)
@@ -231,5 +234,41 @@ func TestTheSweepCollectsSessionsAndServeDoesNot(t *testing.T) {
 	}
 	if !strings.Contains(r.stdout, "1 sessions") {
 		t.Errorf("the run should count the session, stdout:\n%s", r.stdout)
+	}
+}
+
+// Opening a project records its checkout, so retiring the unused project keeps
+// the staged attachments of a session still open in that checkout's
+// .sdd/sessions.
+func TestTheSweepKeepsTheStagedAttachmentsOfAnOpenInRepoSession(t *testing.T) {
+	f := newAppFixture(t)
+	inRepo, err := localadapter.NewFilesystemSessionStoreAt(filepath.Join(f.root, ".sdd", "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := sdd.SessionMetadata{ID: "s_inrepo", Subject: "local", Project: "local", Participant: "Local Author", UpdatedAt: time.Now().UTC().Round(0)}
+	if _, err := inRepo.Create(t.Context(), metadata); err != nil {
+		t.Fatal(err)
+	}
+	staged := filepath.Join(f.root, "state", "sdd", "staged-blobs", "example.test", "cli")
+	blobs, err := localadapter.NewFilesystemStagedBlobStoreAt(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := blobs.Stage(t.Context(), sdd.SessionRef{Subject: "local", Session: "s_inrepo"}, "evidence.md", strings.NewReader("evidence")); err != nil {
+		t.Fatal(err)
+	}
+
+	f.serve(t, func(*mcp.ClientSession) {})
+	unused := time.Now().Add(-200 * 24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(f.root, "state", "sdd", "used", "example.test", "cli.stamp"), unused, unused); err != nil {
+		t.Fatal(err)
+	}
+	if r := f.run(t, "cache", "prune"); r.err != nil {
+		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(staged, "local", "s_inrepo")); err != nil {
+		t.Errorf("the staged attachments of a session open in the checkout should stay: %v", err)
 	}
 }

@@ -27,7 +27,7 @@ func (s *recordingStateSweep) Sweep(_ context.Context, _ time.Time, session, unu
 // and cache.retention, and counts what that sweep removed.
 func TestCacheHandlerPruneSweepsTheStateFolder(t *testing.T) {
 	f := newPruneFixture(t, "sessions:\n  retention: 1d\ncache:\n  retention: 30d\n")
-	state := &recordingStateSweep{swept: model.CachePruneCounts{Sessions: 2, Unreadable: 1, Bytes: 10}}
+	state := &recordingStateSweep{swept: model.CachePruneCounts{Sessions: 2, Projects: 1, Unreadable: 1, Bytes: 10}}
 	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc), State: state,
 	})
@@ -38,7 +38,7 @@ func TestCacheHandlerPruneSweepsTheStateFolder(t *testing.T) {
 	if state.session != 24*time.Hour || state.unused != 30*24*time.Hour {
 		t.Errorf("the state sweep should run under the global retentions, got %v and %v", state.session, state.unused)
 	}
-	if counts.Sessions != 2 || counts.Unreadable != 1 || counts.Clones != 1 {
+	if counts.Sessions != 2 || counts.Projects != 1 || counts.Unreadable != 1 || counts.Clones != 1 {
 		t.Errorf("the run should count what the state sweep removed beside the rest, got %+v", counts)
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
+
 	sdd "github.com/networkteam/sdd/pkg/application"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
@@ -73,13 +75,13 @@ func (f stateFixture) session(t *testing.T, key string, id sdd.SessionID, ended 
 	}
 }
 
-func (f stateFixture) sweep(t *testing.T) (removed struct{ Sessions, Unreadable int }) {
+func (f stateFixture) sweep(t *testing.T) (removed struct{ Sessions, Projects, Unreadable int }) {
 	t.Helper()
 	counts, err := localadapter.StateSweep{StateRoot: f.root}.Sweep(t.Context(), f.now, sweepSessionRetention, sweepUnusedRetention)
 	if err != nil {
 		t.Fatalf("sweeping: %v", err)
 	}
-	removed.Sessions, removed.Unreadable = counts.Sessions, counts.Unreadable
+	removed.Sessions, removed.Projects, removed.Unreadable = counts.Sessions, counts.Projects, counts.Unreadable
 	return removed
 }
 
@@ -144,5 +146,320 @@ func TestStateSweepCollectsPastTheFirstPage(t *testing.T) {
 
 	if removed.Sessions != 205 {
 		t.Errorf("the sweep should collect every ended session across pages, removed %d", removed.Sessions)
+	}
+}
+
+func (f stateFixture) used(t *testing.T, key string, at time.Time) {
+	t.Helper()
+	if err := localadapter.MarkProjectUsed(f.root, key, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The session folder and staged attachments of a project unused for
+// cache.retention go; open sessions, sessions not yet collected, a held lock
+// and attachments a session elsewhere owns stay.
+func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
+	f := newStateFixture(t)
+	long := f.now.Add(-sweepUnusedRetention - time.Hour)
+	const (
+		unused     = "github.com/acme/unused"
+		unusedOpen = "github.com/acme/paused"
+		used       = "github.com/acme/used"
+		retained   = "github.com/acme/retained"
+		unstamped  = "github.com/acme/unstamped"
+		locked     = "github.com/acme/locked"
+		legacy     = "github.com/acme/legacy"
+	)
+	f.session(t, unused, "s_ended", long)
+	f.used(t, unused, long)
+	f.session(t, retained, "s_recent", f.now.Add(-time.Hour))
+	f.used(t, retained, long)
+	f.session(t, unstamped, "s_fresh", time.Time{})
+	lockDir := filepath.Join(f.root, "sessions", filepath.FromSlash(locked))
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	held := flock.New(filepath.Join(lockDir, "s_gone.lock"))
+	if _, err := held.TryLock(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Unlock() }()
+	f.used(t, locked, long)
+	// s_open is open in another project, so it owns these attachments.
+	legacyArea := filepath.Join(f.location(legacy).StagedBlobs, "local", "s_open")
+	if err := os.MkdirAll(legacyArea, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyArea, "0123456789abcdef0123456789abcdef.blob"), []byte("evidence"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.used(t, legacy, long)
+	f.session(t, unusedOpen, "s_open", time.Time{})
+	f.used(t, unusedOpen, long)
+	f.session(t, used, "s_used", time.Time{})
+	f.used(t, used, f.now.Add(-sweepUnusedRetention+time.Hour))
+
+	removed := f.sweep(t)
+
+	if removed.Projects != 1 {
+		t.Errorf("the one unused project without sessions should lose its state, got %+v", removed)
+	}
+	for dir, wantKept := range map[string]bool{
+		f.location(unused).Sessions: false, f.location(unused).StagedBlobs: false,
+		f.location(used).Sessions: true, f.location(unstamped).Sessions: true, lockDir: true, legacyArea: true,
+	} {
+		if _, err := os.Stat(dir); (err == nil) != wantKept {
+			t.Errorf("%s kept should be %v, stat says %v", dir, wantKept, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "used", "github.com", "acme", "unused.stamp")); err == nil {
+		t.Error("a retired project's use stamp should go with its state")
+	}
+	if !f.logExists(t, unusedOpen, "s_open") || !f.stagedExists(t, unusedOpen, "s_open") {
+		t.Error("an open session and its attachments stay however long the project was unused")
+	}
+	if !f.logExists(t, retained, "s_recent") || !f.stagedExists(t, retained, "s_recent") {
+		t.Error("an ended session not yet collected keeps its attachments however long the project was unused")
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "used", "github.com", "acme", "retained.stamp")); err != nil {
+		t.Errorf("the use stamp should stay while a session remains: %v", err)
+	}
+}
+
+// A project whose last session ended without using it, as a long-running
+// server or a cache.retention below sessions.retention allows, loses its
+// session folder on the sweep that collects that session.
+func TestStateSweepRetiresAnUnusedProjectOnceItsLastSessionIsCollected(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "github.com/acme/unused"
+	f.used(t, key, f.now.Add(-sweepUnusedRetention-time.Hour))
+	f.session(t, key, "s_ended", f.now.Add(-sweepSessionRetention+time.Hour))
+
+	f.sweep(t)
+	if !f.logExists(t, key, "s_ended") {
+		t.Fatal("an ended session within sessions.retention should stay")
+	}
+	later := f
+	later.now = f.now.Add(2 * time.Hour)
+	removed := later.sweep(t)
+
+	if removed.Sessions != 1 || removed.Projects != 1 {
+		t.Errorf("the later sweep should collect the session and retire the project, got %+v", removed)
+	}
+	if _, err := os.Stat(f.location(key).Sessions); err == nil {
+		t.Error("the session folder of a project unused for cache.retention should go once its last session is collected")
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "sessions", "github.com")); err == nil {
+		t.Error("the emptied parent folders of the key should go too")
+	}
+}
+
+// inRepoSession writes a session an earlier sdd logged into checkout's
+// .sdd/sessions, ended at ended unless that is zero, and stages one attachment
+// of it in the project's state folder, where sdd stages for every location.
+func (f stateFixture) inRepoSession(t *testing.T, key, checkout string, id sdd.SessionID, ended time.Time) {
+	t.Helper()
+	sessions, err := localadapter.NewFilesystemSessionStoreAt(filepath.Join(checkout, ".sdd", "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := sdd.SessionMetadata{ID: id, Subject: "local", Project: "local", Participant: "Christopher", UpdatedAt: f.now.Add(-200 * 24 * time.Hour)}
+	if _, err := sessions.Create(t.Context(), metadata); err != nil {
+		t.Fatal(err)
+	}
+	blobs, err := localadapter.NewFilesystemStagedBlobStore(f.location(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := blobs.Stage(t.Context(), sdd.SessionRef{Subject: "local", Session: id}, "evidence.md", strings.NewReader("evidence")); err != nil {
+		t.Fatal(err)
+	}
+	if !ended.IsZero() {
+		f.endInRepoSession(t, checkout, id, ended)
+	}
+}
+
+func (f stateFixture) endInRepoSession(t *testing.T, checkout string, id sdd.SessionID, ended time.Time) {
+	t.Helper()
+	sessions, err := localadapter.NewFilesystemSessionStoreAt(filepath.Join(checkout, ".sdd", "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := sessions.Load(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := stored.Metadata
+	metadata.Ended = &sdd.SessionEnd{Act: sdd.SessionConcluded, EndedAt: ended}
+	payload, err := json.Marshal(metadata.Ended)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessions.Append(t.Context(), id, stored.Version, sdd.SessionAppend{Metadata: &metadata, Events: []sdd.StoredEvent{{CodecVersion: sdd.SessionCodecVersion, Code: sdd.SessionEndedEventCode, Payload: payload}}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Retiring an unused project keeps the staged attachments of a session still
+// open in the .sdd/sessions of any checkout sdd opened the project from, or
+// whose log there it cannot read; an ended session's, or those of a checkout
+// gone from disk, go.
+func TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions(t *testing.T) {
+	long := 3 * sweepUnusedRetention
+	for _, tc := range []struct {
+		name     string
+		prepare  func(t *testing.T, f stateFixture, key, checkout string)
+		wantKept bool
+	}{
+		{name: "open", wantKept: true, prepare: func(t *testing.T, f stateFixture, key, checkout string) {
+			f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
+		}},
+		{name: "unreadable", wantKept: true, prepare: func(t *testing.T, f stateFixture, key, checkout string) {
+			f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
+			if err := os.WriteFile(filepath.Join(checkout, ".sdd", "sessions", "s_inrepo.jsonl"), []byte("{not json\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "open in a second checkout", wantKept: true, prepare: func(t *testing.T, f stateFixture, key, checkout string) {
+			f.inRepoSession(t, key, checkout, "s_first", f.now.Add(-time.Hour))
+			second := t.TempDir()
+			if err := localadapter.RecordCheckout(f.root, key, second); err != nil {
+				t.Fatal(err)
+			}
+			f.inRepoSession(t, key, second, "s_inrepo", time.Time{})
+		}},
+		{name: "ended", prepare: func(t *testing.T, f stateFixture, key, checkout string) {
+			f.inRepoSession(t, key, checkout, "s_inrepo", f.now.Add(-time.Hour))
+		}},
+		{name: "checkout gone", prepare: func(t *testing.T, f stateFixture, key, checkout string) {
+			f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
+			if err := os.RemoveAll(checkout); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			const key = "github.com/acme/paused"
+			checkout := t.TempDir()
+			if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+				t.Fatal(err)
+			}
+			f.used(t, key, f.now.Add(-long))
+			tc.prepare(t, f, key, checkout)
+
+			f.sweep(t)
+
+			if kept := f.stagedExists(t, key, "s_inrepo"); kept != tc.wantKept {
+				t.Errorf("the staged attachments of the in-repo session kept should be %v", tc.wantKept)
+			}
+			record := filepath.Join(f.root, "checkouts", "github.com", "acme", "paused.list")
+			if _, err := os.Stat(record); (err == nil) != tc.wantKept {
+				t.Errorf("the checkout record should stay exactly while staged attachments do, stat says %v", err)
+			}
+		})
+	}
+}
+
+// A retired project whose staged attachments an open in-repo session kept is
+// swept again, through its checkout record, and loses them once that session
+// ends.
+func TestStateSweepRemovesTheKeptStagedAttachmentsOnceTheInRepoSessionEnds(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "github.com/acme/paused"
+	checkout := t.TempDir()
+	if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+		t.Fatal(err)
+	}
+	f.used(t, key, f.now.Add(-3*sweepUnusedRetention))
+	f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
+
+	f.sweep(t)
+	if !f.stagedExists(t, key, "s_inrepo") {
+		t.Fatal("an open in-repo session should keep its staged attachments")
+	}
+	f.endInRepoSession(t, checkout, "s_inrepo", f.now)
+	later := f
+	later.now = f.now.Add(time.Hour)
+	later.sweep(t)
+
+	if f.stagedExists(t, key, "s_inrepo") {
+		t.Error("the staged attachments should go once the in-repo session ended")
+	}
+}
+
+func TestRecordCheckoutRecordsEachCheckoutOnce(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "local/abcdef012345"
+	for _, checkout := range []string{"/work/app", "/work/app-feature", "/work/app"} {
+		if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+			t.Fatal(err)
+		}
+	}
+	content, err := os.ReadFile(filepath.Join(f.root, "checkouts", "local", "abcdef012345.list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(content), "/work/app\n/work/app-feature\n"; got != want {
+		t.Errorf("the record should list each checkout once, got %q, want %q", got, want)
+	}
+}
+
+func TestMarkProjectUsedRefreshesOnceADay(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "local/abcdef012345"
+	f.used(t, key, f.now.Add(-48*time.Hour))
+	f.used(t, key, f.now.Add(-47*time.Hour))
+	stamp := filepath.Join(f.root, "used", "local", "abcdef012345.stamp")
+	info, err := os.Stat(stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(f.now.Add(-48 * time.Hour)) {
+		t.Error("a use within a day of the stamp should leave it alone")
+	}
+	f.used(t, key, f.now)
+	if info, err := os.Stat(stamp); err != nil || !info.ModTime().Equal(f.now) {
+		t.Errorf("a use a day after the stamp should refresh it, got %v, %v", info.ModTime(), err)
+	}
+}
+
+// A session written through the store locations sdd resolves stamps its
+// project as used, an in-tree session the primary location's project.
+func TestSessionWritesRefreshTheProjectsUseStamp(t *testing.T) {
+	stateRoot, checkout := t.TempDir(), t.TempDir()
+	sddDir := filepath.Join(checkout, ".sdd")
+	locations, err := localadapter.SessionLocations(stateRoot, sddDir, "github.com/acme/app", checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := filepath.Join(stateRoot, "used", "github.com", "acme", "app.stamp")
+	for _, location := range []localadapter.StoreLocation{locations[0], locations[len(locations)-1]} {
+		if location.UseStamp != stamp {
+			t.Errorf("%s should stamp the project's use, stamps %q", location.Name, location.UseStamp)
+		}
+	}
+	sessions, err := localadapter.NewFilesystemSessionStore(locations...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := sdd.SessionMetadata{ID: "s_new", Subject: "local", Project: "github.com/acme/app", Participant: "Christopher", UpdatedAt: time.Now().UTC()}
+	created, err := sessions.Create(t.Context(), metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stamp); err != nil {
+		t.Fatalf("creating a session should stamp the project: %v", err)
+	}
+	stale := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(stamp, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessions.Append(t.Context(), "s_new", created.Version, sdd.SessionAppend{Events: []sdd.StoredEvent{{CodecVersion: sdd.SessionCodecVersion, Code: "test.event"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(stamp); err != nil || !info.ModTime().After(stale.Add(time.Hour)) {
+		t.Errorf("appending to a session should refresh a day-old stamp, got %v, %v", info.ModTime(), err)
 	}
 }

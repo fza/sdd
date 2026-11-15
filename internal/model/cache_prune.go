@@ -119,6 +119,9 @@ type CachePruneCounts struct {
 	Leftovers int
 	// Sessions are ended sessions removed with their staged attachments.
 	Sessions int
+	// Projects are unused projects whose session folder or staged
+	// attachments went.
+	Projects int
 	// Unreadable counts session logs kept because they could not be read.
 	Unreadable int
 	Bytes      int64
@@ -133,6 +136,7 @@ func (c *CachePruneCounts) Add(o CachePruneCounts) {
 	c.Records += o.Records
 	c.Leftovers += o.Leftovers
 	c.Sessions += o.Sessions
+	c.Projects += o.Projects
 	c.Unreadable += o.Unreadable
 	c.Bytes += o.Bytes
 }

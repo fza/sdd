@@ -42,6 +42,7 @@ type wireCounts struct {
 	Records    int   `json:"records,omitempty"`
 	Leftovers  int   `json:"leftovers,omitempty"`
 	Sessions   int   `json:"sessions,omitempty"`
+	Projects   int   `json:"projects,omitempty"`
 	Unreadable int   `json:"unreadable_sessions,omitempty"`
 	Bytes      int64 `json:"bytes,omitempty"`
 }
@@ -49,14 +50,14 @@ type wireCounts struct {
 func toWire(c model.CachePruneCounts) wireCounts {
 	return wireCounts{
 		Versions: c.Versions, Stores: c.Stores, Snapshots: c.Snapshots, Clones: c.Clones, Records: c.Records,
-		Leftovers: c.Leftovers, Sessions: c.Sessions, Unreadable: c.Unreadable, Bytes: c.Bytes,
+		Leftovers: c.Leftovers, Sessions: c.Sessions, Projects: c.Projects, Unreadable: c.Unreadable, Bytes: c.Bytes,
 	}
 }
 
 func (w wireCounts) counts() model.CachePruneCounts {
 	return model.CachePruneCounts{
 		Versions: w.Versions, Stores: w.Stores, Snapshots: w.Snapshots, Clones: w.Clones, Records: w.Records,
-		Leftovers: w.Leftovers, Sessions: w.Sessions, Unreadable: w.Unreadable, Bytes: w.Bytes,
+		Leftovers: w.Leftovers, Sessions: w.Sessions, Projects: w.Projects, Unreadable: w.Unreadable, Bytes: w.Bytes,
 	}
 }
 

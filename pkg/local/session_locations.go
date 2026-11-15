@@ -18,6 +18,9 @@ type StoreLocation struct {
 	StagedBlobs string
 	Subject     string
 	Project     app.ProjectID
+	// UseStamp is the project's use stamp (MarkProjectUsed) a session write
+	// here refreshes; empty stamps nothing.
+	UseStamp string
 }
 
 // SessionLocations returns every location sdd has ever written sessions to,
@@ -47,7 +50,10 @@ func SessionLocations(stateRoot, sddDir string, repoID app.RepoID, stableRoot st
 		Subject:     "local",
 		Project:     "local",
 	}
+	// An in-tree session stages its attachments in the primary location, so
+	// a write to it is a use of the primary's project.
 	if repoID == "" {
+		inTree.UseStamp = identityless.UseStamp
 		return []StoreLocation{identityless, inTree}, nil
 	}
 
@@ -55,6 +61,7 @@ func SessionLocations(stateRoot, sddDir string, repoID app.RepoID, stableRoot st
 	if err != nil {
 		return nil, err
 	}
+	inTree.UseStamp = identified.UseStamp
 	return []StoreLocation{identified, identityless, inTree}, nil
 }
 
@@ -67,8 +74,12 @@ func stateLocation(stateRoot, key string, project app.ProjectID, name string) (S
 	if err != nil {
 		return StoreLocation{}, err
 	}
+	stamp, err := projectStampPath(stateRoot, key)
+	if err != nil {
+		return StoreLocation{}, err
+	}
 	return StoreLocation{
-		Name: name, Sessions: sessions, StagedBlobs: blobs, Subject: "local", Project: project,
+		Name: name, Sessions: sessions, StagedBlobs: blobs, Subject: "local", Project: project, UseStamp: stamp,
 	}, nil
 }
 

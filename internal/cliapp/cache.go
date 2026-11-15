@@ -36,8 +36,9 @@ func cacheCmd() *cli.Command {
 command or by a running sdd serve. It removes the ended sessions of every
 project after sessions.retention (default ` + model.DefaultSessionRetention + `); replaced index data
 after index.replaced_retention (default ` + model.DefaultReplacedRetention + `); unused index stores,
-graph snapshots and embedder calibrations after cache.retention (default
-` + model.DefaultCacheRetention + `); graph snapshots of vanished folders and clones sdd repo remove
+graph snapshots, embedder calibrations and the session folder and staged
+attachments of an unused project after cache.retention (default ` + model.DefaultCacheRetention + `);
+graph snapshots of vanished folders and clones sdd repo remove
 dropped that the repos list no longer names at once; and crash leftovers a
 day old. All three keys live in the user-global config. Open sessions,
 unreadable session logs and the versions any checkout read within
@@ -175,5 +176,5 @@ type stateSweeper struct{ sweep localadapter.StateSweep }
 
 func (s stateSweeper) Sweep(ctx context.Context, now time.Time, sessionRetention, unusedRetention time.Duration) (model.CachePruneCounts, error) {
 	swept, err := s.sweep.Sweep(ctx, now, sessionRetention, unusedRetention)
-	return model.CachePruneCounts{Sessions: swept.Sessions, Unreadable: swept.Unreadable, Bytes: swept.Bytes}, err
+	return model.CachePruneCounts{Sessions: swept.Sessions, Projects: swept.Projects, Unreadable: swept.Unreadable, Bytes: swept.Bytes}, err
 }

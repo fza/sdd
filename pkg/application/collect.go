@@ -39,6 +39,22 @@ func CollectSessionsIn(ctx context.Context, sessions SessionStore, blobs StagedB
 	return collectSessions(ctx, legacyEndStore{sessions}, blobs, now, cmd)
 }
 
+// OpenSessionsIn lists the sessions of a store no Application composes that
+// have not ended, with the ones it cannot read, whose ending it cannot tell.
+func OpenSessionsIn(ctx context.Context, sessions SessionStore) ([]SessionID, error) {
+	page, err := legacyEndStore{sessions}.List(ctx, SessionFilter{})
+	if err != nil {
+		return nil, err
+	}
+	open := page.Unreadable
+	for _, session := range page.Sessions {
+		if validateStoredSession(session) != nil || session.Metadata.Ended == nil {
+			open = append(open, session.Metadata.ID)
+		}
+	}
+	return open, nil
+}
+
 func collectSessions(ctx context.Context, sessions SessionStore, blobs StagedBlobStore, now time.Time, cmd CollectSessionsCmd) (CollectSessionsResult, error) {
 	endedBefore := now.UTC().Add(-cmd.Retention)
 	page, err := sessions.List(ctx, SessionFilter{EndedBefore: &endedBefore, After: cmd.After, Limit: cmd.Limit})

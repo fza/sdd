@@ -78,6 +78,9 @@ func (s *FilesystemSessionStore) Create(_ context.Context, metadata app.SessionM
 		return app.StoredSession{}, err
 	}
 	defer unlock(lock)
+	if err := markUsed(location.UseStamp, time.Now()); err != nil {
+		return app.StoredSession{}, err
+	}
 
 	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, fs.ErrExist) {
@@ -200,6 +203,9 @@ func (s *FilesystemSessionStore) Append(
 		return 0, err
 	}
 	defer unlock(lock)
+	if err := markUsed(located.UseStamp, time.Now()); err != nil {
+		return 0, err
+	}
 
 	stored, lines, err := readSessionLog(located, name, id)
 	if err != nil {
