@@ -11,6 +11,7 @@ import (
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/secrets"
 )
 
 // fieldPreflightCut holds the error of a pre-flight model answer cut at the
@@ -44,6 +45,19 @@ func (w *WorkflowSession) recordPreflightSkip(ctx *engine.Context) error {
 		}
 	}
 	return ctx.Store.WriteEngine(fieldPreflightSkip, model.DeepSkipFailure)
+}
+
+// credentialFinding is the category of a credential refusal served as a
+// finding: the write refuses a credential whatever the pre-flight says.
+const credentialFinding = "credential"
+
+// credentialGuideFinding serves a credential refusal of the draft as a guide
+// finding the agent revises, instead of an operation error.
+func credentialGuideFinding(err error) (query.GuideFinding, bool) {
+	if !errors.Is(err, secrets.ErrCredential) {
+		return query.GuideFinding{}, false
+	}
+	return query.GuideFinding{Reasoning: err.Error(), Axis: credentialFinding, Quote: secrets.RefusedPassage(err), Repair: "remove the credential from the draft", Severity: query.GuideSubstantive}, true
 }
 
 var captureDraftFields = []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "actorKind", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch", "skipGrounding"}
@@ -86,6 +100,8 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 		for _, warning := range validation.Warnings {
 			result.Findings = append(result.Findings, Finding{Severity: string(query.SeverityHigh), Category: "validation", Observation: warning.Message})
 		}
+	case errors.Is(err, secrets.ErrCredential):
+		result.Findings = append(result.Findings, Finding{Severity: string(query.SeverityHigh), Category: credentialFinding, Observation: err.Error() + "; an override cannot lift it, revise the draft"})
 	case errors.As(err, &coded) && coded.Code == ErrorAnswerCut:
 		cut = coded.Error()
 	case errors.As(err, &coded) && coded.Code == ErrorTimedOut:
@@ -246,7 +262,7 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 	if err != nil {
 		return false, false, err
 	}
-	current, accepted, mechanicalOnly := false, false, false
+	current, accepted, mechanicalOnly, credential := false, false, false, false
 	checkedBranch := ""
 	selected := workflowStoreStrings(ctx.Store, "attachments")
 	staged := make(map[string]string)
@@ -300,14 +316,24 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 				if err := json.Unmarshal(encoded, &findings); err != nil {
 					return false, false, err
 				}
+				credential = false
 				for _, finding := range findings {
 					if finding.Severity == string(query.SeverityHigh) {
 						accepted = false
 					}
+					if finding.Category == credentialFinding {
+						credential = true
+					}
 				}
 			}
+			// An override of a credential sends the draft back through the
+			// pre-flight, which serves the refusal again.
 			if name == "recordOverride" && current {
-				accepted = true
+				if credential {
+					current = false
+				} else {
+					accepted = true
+				}
 			}
 		}
 	}

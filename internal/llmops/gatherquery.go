@@ -8,6 +8,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -46,7 +47,8 @@ func GatherQuery(ctx context.Context, runner llm.Runner, draft GatherQueryDraft)
 	if err := gatherQueryTemplate.ExecuteTemplate(&user, "gather_query_user", data); err != nil {
 		return GatherQueries{}, fmt.Errorf("rendering the gather-query prompt: %w", err)
 	}
-	result, err := runner.Run(ctx, llm.Request{
+	marked := secrets.WithNewParts(ctx, secrets.Part{Where: "draft", Text: draft.Text}, secrets.Part{Where: "topics", Text: data.Topics})
+	result, err := runner.Run(marked, llm.Request{
 		Purpose:        llm.PurposeGatherQuery,
 		SystemPrompt:   strings.TrimSpace(sys.String()),
 		UserPrompt:     strings.TrimSpace(user.String()),

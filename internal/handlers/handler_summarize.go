@@ -155,7 +155,10 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) (err
 			titleOnly := description.TitleOnly()
 
 			// LLM calls without the graph lock; the injected runner bounds them.
-			result, err := description.Run(ctx, h.llmRunner)
+			// The entry is stored, so the prompts carry no new parts; the
+			// generated title and summary are checked before the write.
+			stored := secrets.WithNoNewParts(ctx)
+			result, err := description.Run(stored, h.llmRunner)
 			if err != nil {
 				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
 			}
@@ -166,7 +169,7 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) (err
 				return fmt.Errorf("rendering title for %s: %w", entry.ID, err)
 			}
 			if retitle != nil {
-				retitled, err := retitle.Run(ctx, h.llmRunner)
+				retitled, err := retitle.Run(stored, h.llmRunner)
 				if err != nil {
 					return fmt.Errorf("titling %s: %w", entry.ID, err)
 				}

@@ -41,6 +41,12 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 			return
 		}
 		stdinSaved = true
+		// The save can run before the credential check, on any early error.
+		err := secrets.CheckFile(stdinAtt.Target, stdinAtt.Data)
+		if err != nil {
+			fmt.Fprintf(h.stderr, "stdin attachment not saved: %v\n", err)
+			return
+		}
 		path, err := saveStdinAttachment(h.stdinTmpDir(), stdinAtt.Target, stdinAtt.Data)
 		if err != nil {
 			fmt.Fprintf(h.stderr, "warning: could not save stdin attachment: %v\n", err)
@@ -118,8 +124,6 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	// credential is refused before either runs.
 	err = refuseCredentials(entry, cmd)
 	if err != nil {
-		// A credential is never kept, not even in the stdin retry copy.
-		stdinSaved = true
 		return err
 	}
 

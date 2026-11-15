@@ -12,6 +12,7 @@ import (
 	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/test"
 )
@@ -95,7 +96,7 @@ func TestFallbackStaysWithinTheCallTimeout(t *testing.T) {
 			}
 
 			started := time.Now()
-			_, err = runner.Run(context.Background(), llm.Request{Purpose: purpose, UserPrompt: "x", ResponseSchema: json.RawMessage(`{"type":"object","properties":{"findings":{"type":"array"}},"required":["findings"]}`)})
+			_, err = runner.Run(secrets.WithNoNewParts(context.Background()), llm.Request{Purpose: purpose, UserPrompt: "x", ResponseSchema: json.RawMessage(`{"type":"object","properties":{"findings":{"type":"array"}},"required":["findings"]}`)})
 			elapsed := time.Since(started)
 			if err == nil {
 				t.Fatal("refused request and fallback should share one timeout")

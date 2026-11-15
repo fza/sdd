@@ -8,6 +8,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
 )
@@ -49,7 +50,8 @@ func (b *RelevanceBridge) Score(ctx context.Context, request relevance.Request) 
 	if err := relevanceTemplate.ExecuteTemplate(&user, "relevance_user", data); err != nil {
 		return relevance.Result{}, fmt.Errorf("rendering the relevance prompt: %w", err)
 	}
-	result, err := b.runner.Run(ctx, llm.Request{
+	// The candidate is a stored entry; the subject is the draft.
+	result, err := b.runner.Run(secrets.WithNewParts(ctx, secrets.Part{Where: "draft", Text: request.Subject}), llm.Request{
 		Purpose: llm.PurposeRelevance, SystemPrompt: b.system, UserPrompt: strings.TrimSpace(user.String()), ResponseSchema: relevanceSchema,
 	})
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -40,7 +41,7 @@ func runOnce(t *testing.T, cfg model.LLMConfig) llm.Result {
 	if err != nil {
 		t.Fatalf("New(%+v): %v", cfg, err)
 	}
-	res, err := runner.Run(t.Context(), llm.Request{Purpose: llm.PurposeSummarize, UserPrompt: "U"})
+	res, err := runner.Run(secrets.WithNoNewParts(t.Context()), llm.Request{Purpose: llm.PurposeSummarize, UserPrompt: "U"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

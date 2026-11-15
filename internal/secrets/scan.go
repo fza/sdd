@@ -15,9 +15,12 @@ import (
 	"unicode"
 )
 
+// Finding locates a match by rule, line and the byte column it starts at on
+// that line, both counted from 1, never by its text.
 type Finding struct {
 	RuleID string
 	Line   int
+	Column int
 }
 
 type allowlist struct {
@@ -172,7 +175,7 @@ func (r *rule) find(path, text string, global []allowlist) []Finding {
 			return nil
 		}
 		if r.regex == nil {
-			return []Finding{{RuleID: r.ID, Line: 1}}
+			return []Finding{{RuleID: r.ID, Line: 1, Column: 1}}
 		}
 	}
 	if r.regex == nil {
@@ -198,7 +201,9 @@ func (r *rule) find(path, text string, global []allowlist) []Finding {
 		if allowed(global, path, secret, match, line) || allowed(r.Allowlists, path, secret, match, line) {
 			continue
 		}
-		findings = append(findings, Finding{RuleID: r.ID, Line: strings.Count(text[:bounds[0]], "\n") + 1})
+		start := bounds[0] + strings.Index(text[bounds[0]:bounds[1]], match)
+		column := start - strings.LastIndexByte(text[:start], '\n')
+		findings = append(findings, Finding{RuleID: r.ID, Line: strings.Count(text[:start], "\n") + 1, Column: column})
 	}
 	return findings
 }

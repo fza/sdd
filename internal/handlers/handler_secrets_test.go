@@ -114,6 +114,55 @@ func TestNewEntryRefusesACredentialBeforeAnyModelCall(t *testing.T) {
 	}
 }
 
+// A dry run failing before the credential check, here on an unknown
+// supersede target, keeps no stdin retry copy of a credential either.
+func TestNewEntryKeepsNoStdinCopyHoldingACredential(t *testing.T) {
+	sddDir := filepath.Join(t.TempDir(), ".sdd")
+	h := handlers.New(handlers.Options{
+		GraphDir: t.TempDir(), SDDDir: sddDir, Reader: &fakeReader{preflightResult: &query.PreflightResult{}},
+		LLMRunner: &trippingRunner{t: t}, Stderr: &bytes.Buffer{},
+	})
+
+	err := h.NewEntry(context.Background(), &command.NewEntryCmd{
+		Type: model.TypeSignal, Layer: model.LayerTactical, Description: "A gap worth recording.", Summary: "A gap.", Title: "Gap",
+		DryRun: true, Supersedes: []string{"20260101-120000-s-tac-gon"},
+		Attachments: []command.Attachment{{Source: "-", Target: "log.txt", Data: []byte(fixtureCredential(t, "github-pat") + "\n")}},
+	})
+
+	if err == nil {
+		t.Fatal("the dry run should fail on the unknown supersede target")
+	}
+	if _, statErr := os.Stat(sddDir); !os.IsNotExist(statErr) {
+		t.Error("a stdin attachment holding a credential should never be kept")
+	}
+}
+
+// A dry run refused for a credential in the body still keeps a clean stdin
+// attachment for the retry.
+func TestNewEntryKeepsACleanStdinCopyOnARefusal(t *testing.T) {
+	sddDir := filepath.Join(t.TempDir(), ".sdd")
+	h := handlers.New(handlers.Options{
+		GraphDir: t.TempDir(), SDDDir: sddDir, Reader: &fakeReader{preflightResult: &query.PreflightResult{}},
+		LLMRunner: &trippingRunner{t: t}, Stderr: &bytes.Buffer{},
+	})
+
+	err := h.NewEntry(context.Background(), &command.NewEntryCmd{
+		Type: model.TypeSignal, Layer: model.LayerTactical, Description: "Setup notes:\n" + fixtureCredential(t, "github-pat"), Summary: "A gap.", Title: "Gap",
+		DryRun:      true,
+		Attachments: []command.Attachment{{Source: "-", Target: "log.txt", Data: []byte("A clean log line.\n")}},
+	})
+
+	if !errors.Is(err, secrets.ErrCredential) {
+		t.Fatalf("the body should be refused as holding a credential: %v", err)
+	}
+	if _, statErr := os.Stat(sddDir); statErr != nil {
+		t.Fatalf("the clean stdin attachment should be kept for the retry: %v", statErr)
+	}
+	if files := graphFiles(t, sddDir); len(files) != 1 {
+		t.Errorf("the clean stdin attachment should be kept for the retry, kept %v", files)
+	}
+}
+
 func TestNewEntryRefusesAGeneratedSummaryHoldingACredential(t *testing.T) {
 	graphDir := t.TempDir()
 	runner := &stubRunner{text: fixtureCredential(t, "gitlab-pat")}
@@ -173,6 +222,21 @@ func TestSummarizeRefusesACredential(t *testing.T) {
 				t.Error("a refused summary should leave the entry untouched")
 			}
 		})
+	}
+}
+
+// Summarizing a stored entry reaches a guarded runner: the entry is stored, so
+// its prompt is marked as holding no new parts, a hit in its body included.
+func TestSummarizeSendsAStoredEntryPastTheGuard(t *testing.T) {
+	graphDir := t.TempDir()
+	writeEntryFile(t, graphDir, summarizedEntry, "---\ntype: signal\nlayer: process\nkind: gap\n---\n\nThe old notes held "+fixtureCredential(t, "slack-bot-token")+".\n")
+	runner := &stubRunner{text: "Old notes held a token."}
+	h := handlers.New(handlers.Options{GraphDir: graphDir, Reader: &graphReader{}, Committer: &recordingCommitter{}, LLMRunner: secrets.GuardRunner(runner)})
+
+	err := h.Summarize(context.Background(), &command.SummarizeCmd{EntryIDs: []string{summarizedEntry}})
+
+	if err != nil || runner.calls == 0 {
+		t.Fatalf("the stored entry should be summarized: %v, %d calls", err, runner.calls)
 	}
 }
 
