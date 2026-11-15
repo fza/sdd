@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 )
@@ -37,11 +38,52 @@ type Manifest struct {
 	// distinguish legacy single-version entries from multi-version ones.
 	Version int                   `json:"version"`
 	Entries map[string]EntryState `json:"entries"`
-	// MaxRunes is the rune cap every row in this store was chunked under. Zero
+	RuneCaps
+}
+
+// RuneCaps records the rune caps a store's rows are chunked under.
+type RuneCaps struct {
+	// MaxRunes is the rune cap the store's rows are chunked under. Zero
 	// means the rows predate the cap. Readers take the cap from here, never
 	// from a fresh calibration, so a row hash they compute matches the rows
 	// written.
 	MaxRunes int `json:"max_runes,omitempty"`
+	// PrevMaxRunes is the cap MaxRunes replaced, held while a fill re-embeds
+	// the store under MaxRunes so rows not yet re-embedded stay fresh to
+	// readers. Nil when no re-embed is pending; zero means uncapped.
+	PrevMaxRunes *int `json:"prev_max_runes,omitempty"`
+}
+
+// SetMaxRunes records maxRunes as the cap rows are chunked under, holding the
+// cap it replaces as PrevMaxRunes until SettleMaxRunes, reporting whether the
+// caps changed.
+func (m *RuneCaps) SetMaxRunes(maxRunes int) bool {
+	if m.MaxRunes == maxRunes {
+		return false
+	}
+	prev := m.MaxRunes
+	m.PrevMaxRunes = &prev
+	m.MaxRunes = maxRunes
+	return true
+}
+
+// SettleMaxRunes drops PrevMaxRunes once every entry is published under
+// maxRunes, reporting whether the caps changed.
+func (m *RuneCaps) SettleMaxRunes(maxRunes int) bool {
+	if m.PrevMaxRunes == nil || m.MaxRunes != maxRunes {
+		return false
+	}
+	m.PrevMaxRunes = nil
+	return true
+}
+
+// ReadMaxRunes returns the caps a reader hashes an entry under to match its
+// stored versions: MaxRunes, then PrevMaxRunes while a re-embed is pending.
+func (m *RuneCaps) ReadMaxRunes() []int {
+	if m.PrevMaxRunes == nil {
+		return []int{m.MaxRunes}
+	}
+	return []int{m.MaxRunes, *m.PrevMaxRunes}
 }
 
 // EntryState is one entry's set of stored versions. See Manifest for the
@@ -136,6 +178,11 @@ func (s EntryState) HasVersion(hash, fingerprint string) bool {
 	return false
 }
 
+// HasHash reports whether the entry has a stored version under the state hash.
+func (m *Manifest) HasHash(entryID, hash string) bool {
+	return slices.ContainsFunc(m.Entries[entryID].Versions, func(v EntryVersion) bool { return v.Hash == hash })
+}
+
 // AllChunkIDs returns every chunk ID across all of the entry's versions.
 func (s EntryState) AllChunkIDs() []string {
 	var out []string
@@ -164,14 +211,14 @@ func LoadManifest(indexDir string) (*Manifest, error) {
 // reading a manifest of thousands of entries.
 func parseManifest(data []byte) (*Manifest, error) {
 	var decoded struct {
-		Version  int                           `json:"version"`
-		Entries  map[string]entryStateDecoding `json:"entries"`
-		MaxRunes int                           `json:"max_runes"`
+		Version int                           `json:"version"`
+		Entries map[string]entryStateDecoding `json:"entries"`
+		RuneCaps
 	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return nil, fmt.Errorf("parse manifest: %w", err)
 	}
-	m := Manifest{Version: decoded.Version, MaxRunes: decoded.MaxRunes, Entries: make(map[string]EntryState, len(decoded.Entries))}
+	m := Manifest{Version: decoded.Version, RuneCaps: decoded.RuneCaps, Entries: make(map[string]EntryState, len(decoded.Entries))}
 	for id, state := range decoded.Entries {
 		m.Entries[id] = state.state()
 	}

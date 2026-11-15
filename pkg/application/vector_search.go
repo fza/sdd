@@ -33,18 +33,12 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 		return nil, err
 	}
 
-	var maxRunes int
 	if request.SyncMode != query.SearchSyncNone {
-		maxRunes, err = r.fillRunes(ctx, namespace)
-	} else {
-		maxRunes, err = r.storedMaxRunes(ctx, namespace)
-	}
-	if err != nil {
-		return nil, err
-	}
-	var hashes map[string]string
-	if request.SyncMode != query.SearchSyncNone {
-		hashes, err = r.currentEntryHashes(ctx, snapshot.graph.Entries, attachments, maxRunes)
+		maxRunes, err := r.fillRunes(ctx, namespace)
+		if err != nil {
+			return nil, err
+		}
+		hashes, err := r.currentEntryHashes(ctx, snapshot.graph.Entries, attachments, maxRunes)
 		if err != nil {
 			return nil, err
 		}
@@ -73,19 +67,17 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 		return nil, err
 	}
 
-	if request.SyncMode == query.SearchSyncNone {
-		candidates := candidateSet(snapshot.graph, request, r.options.ExcludeEmbeddedFromIndex)
-		var entries []*model.Entry
-		for _, hit := range hits {
-			if entry, ok := candidates[hit.EntryID]; ok && hit.EntryHash != "" {
-				entries = append(entries, entry)
-				delete(candidates, hit.EntryID)
-			}
+	candidates := candidateSet(snapshot.graph, request, r.options.ExcludeEmbeddedFromIndex)
+	var entries []*model.Entry
+	for _, hit := range hits {
+		if entry, ok := candidates[hit.EntryID]; ok && hit.EntryHash != "" {
+			entries = append(entries, entry)
+			delete(candidates, hit.EntryID)
 		}
-		hashes, err = r.currentEntryHashes(ctx, entries, attachments, maxRunes)
-		if err != nil {
-			return nil, err
-		}
+	}
+	hashes, err := r.readableEntryHashes(ctx, entries, attachments, namespace)
+	if err != nil {
+		return nil, err
 	}
 	vector := r.vectorResult(snapshot.graph, request, hits, hashes)
 	if len(request.Terms) == 0 {
@@ -98,14 +90,14 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 	return hybridResult(text, vector, limit), nil
 }
 
-// storedMaxRunes is the rune cap the namespace's store was chunked under, for
-// reads. A store without the SearchIndexRunes capability reports zero.
-func (r *ProjectRuntime) storedMaxRunes(ctx context.Context, namespace IndexNamespace) (int, error) {
+// storedMaxRunes are the rune caps the namespace's store reads under, newest
+// first. A store without the SearchIndexRunes capability reads uncapped.
+func (r *ProjectRuntime) storedMaxRunes(ctx context.Context, namespace IndexNamespace) ([]int, error) {
 	runes, ok := r.options.SearchIndex.(SearchIndexRunes)
 	if !ok {
-		return 0, nil
+		return []int{0}, nil
 	}
-	return runes.MaxRunes(ctx, namespace)
+	return runes.ReadMaxRunes(ctx, namespace)
 }
 
 // fillRunes is the rune cap a write chunks under, recorded on the store before
@@ -119,7 +111,7 @@ func (r *ProjectRuntime) fillRunes(ctx context.Context, namespace IndexNamespace
 	if err != nil {
 		return 0, err
 	}
-	if stored == maxRunes {
+	if stored[0] == maxRunes {
 		return maxRunes, nil
 	}
 	recorder, ok := r.options.SearchIndex.(SearchIndexRunesRecorder)
@@ -130,6 +122,26 @@ func (r *ProjectRuntime) fillRunes(ctx context.Context, namespace IndexNamespace
 		return 0, fmt.Errorf("sdd: recording the rune cap: %w", err)
 	}
 	return maxRunes, nil
+}
+
+// settleRunes drops the cap a fill under maxRunes replaced, once the fill has
+// published every entry of its snapshot.
+func (r *ProjectRuntime) settleRunes(ctx context.Context, namespace IndexNamespace, maxRunes int) error {
+	stored, err := r.storedMaxRunes(ctx, namespace)
+	if err != nil {
+		return err
+	}
+	if len(stored) < 2 {
+		return nil
+	}
+	recorder, ok := r.options.SearchIndex.(SearchIndexRunesRecorder)
+	if !ok {
+		return errors.New("sdd: the search index store reads under a replaced rune cap it cannot settle")
+	}
+	if err := recorder.SettleMaxRunes(ctx, namespace, maxRunes); err != nil {
+		return fmt.Errorf("sdd: settling the rune cap: %w", err)
+	}
+	return nil
 }
 
 // fillMaxRunes is the rune cap a fill chunks and hashes under. It refuses to
@@ -165,6 +177,38 @@ func (r *ProjectRuntime) currentEntryHashes(ctx context.Context, entries []*mode
 		hashes[entry.ID] = hash
 	}
 	return hashes, nil
+}
+
+// readableEntryHashes maps entries to the version a search of the namespace's
+// store reads (chunking.ReadableEntryHash).
+func (r *ProjectRuntime) readableEntryHashes(ctx context.Context, entries []*model.Entry, store GraphStore, namespace IndexNamespace) (map[string]string, error) {
+	caps, err := r.storedMaxRunes(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	attachments := graphStoreAttachmentReader{store: store}
+	hashes := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		if !chunking.IncludeEntry(entry, r.options.ExcludeEmbeddedFromIndex) {
+			continue
+		}
+		hash, err := chunking.ReadableEntryHash(ctx, entry, attachments, caps, func(hash string) (bool, error) {
+			return r.entryPublished(ctx, SearchEntryVersion{Namespace: namespace, EntryID: entry.ID, EntryHash: hash})
+		})
+		if err != nil {
+			return nil, err
+		}
+		hashes[entry.ID] = hash
+	}
+	return hashes, nil
+}
+
+func (r *ProjectRuntime) entryPublished(ctx context.Context, version SearchEntryVersion) (bool, error) {
+	store, ok := r.options.SearchIndex.(SearchIndexEntryStore)
+	if !ok {
+		return false, errors.New("sdd: the search index store reads under more than one rune cap but cannot report entry publication")
+	}
+	return store.EntryPublished(ctx, version)
 }
 
 // vectorResult rolls chunk hits up to per-entry results, resolving each hit's

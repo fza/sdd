@@ -61,5 +61,8 @@ func (r *ProjectRuntime) reconcileSearchSnapshot(ctx context.Context, snapshot *
 		ExcludeEmbedded: r.options.ExcludeEmbeddedFromIndex,
 		MaxRunes:        maxRunes,
 	}
-	return h.Reconcile(ctx, cmd)
+	if err := h.Reconcile(ctx, cmd); err != nil {
+		return err
+	}
+	return r.settleRunes(ctx, namespace, maxRunes)
 }
