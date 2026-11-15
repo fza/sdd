@@ -170,6 +170,8 @@ func (r *rule) find(path, text string, global []allowlist) []Finding {
 		return nil
 	}
 	var findings []Finding
+	// Matches arrive in order, so the line number advances from the last one.
+	counted, lineNumber := 0, 1
 	for _, bounds := range r.regex.FindAllStringIndex(text, -1) {
 		match := strings.Trim(text[bounds[0]:bounds[1]], "\n")
 		secret := r.secret(match)
@@ -186,7 +188,9 @@ func (r *rule) find(path, text string, global []allowlist) []Finding {
 		if allowed(global, path, secret, match, line) || allowed(r.Allowlists, path, secret, match, line) {
 			continue
 		}
-		findings = append(findings, Finding{RuleID: r.ID, Line: strings.Count(text[:bounds[0]], "\n") + 1})
+		lineNumber += strings.Count(text[counted:bounds[0]], "\n")
+		counted = bounds[0]
+		findings = append(findings, Finding{RuleID: r.ID, Line: lineNumber})
 	}
 	return findings
 }

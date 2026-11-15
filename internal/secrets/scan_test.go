@@ -76,13 +76,21 @@ func TestScanReportsTheLineOfTheMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	findings, err := secrets.Scan("first line\nsecond line\n" + string(content))
+	token := strings.TrimSpace(string(content))
+
+	findings, err := secrets.Scan("first line\nsecond line\n" + token + "\nfourth line\n" + token + "\n")
 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(findings) == 0 || findings[0].Line != 3 {
-		t.Errorf("the finding should point at the line holding the token: %+v", findings)
+	var lines []int
+	for _, finding := range findings {
+		if finding.RuleID == "github-pat" {
+			lines = append(lines, finding.Line)
+		}
+	}
+	if !slices.Equal(lines, []int{3, 5}) {
+		t.Errorf("each finding should point at the line holding its token: %+v", findings)
 	}
 }
 
