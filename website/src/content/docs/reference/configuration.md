@@ -263,13 +263,14 @@ sdd runs `claude -p` isolated:
 - With `llm.claude_cli.credentials: login`, the default, no user, project or local settings file loads (`--setting-sources ""`), since a settings file's `env` block and `apiKeyHelper` apply even in safe mode; managed policy settings still apply. The environment holds only these variables, matched without regard to case:
   - `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TMP`, `TEMP`, `TERM`, `COLORTERM`
   - `LANG` and `LC_*`, and the `XDG_*` directories
-  - proxy and CA: `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`
+  - proxy: `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `ALL_PROXY`
+  - CA and client certificates: `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_USE_SYSTEM_CA`, `CLAUDE_CODE_CERT_STORE`, `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY`, `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE`
   - on Windows: `SystemRoot`, `SystemDrive`, `windir`, `ComSpec`, `PATHEXT`, `APPDATA`, `LOCALAPPDATA`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `USERNAME`, `ProgramData`, `ProgramFiles`
   - the login's own: `CLAUDE_CONFIG_DIR`, `ANTHROPIC_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`
 
   Everything else stays out: API keys, tokens, endpoints, provider switches, host-managed credentials, and model aliases such as `ANTHROPIC_DEFAULT_SONNET_MODEL`, since sdd names the model with `llm.model`. So does `ANTHROPIC_PROFILE`, which picks an Anthropic Console profile over your claude.ai login. Claude Code keeps adding variables that move a call off the login: a list of what to remove misses each new one, while a list of what to keep fails closed, and a variable the call needs but lacks makes it fail loudly. A setup that needs another variable, such as a Console profile, sets `llm.claude_cli.credentials: env`.
 
-An exported key or provider switch then cannot move the call off your Claude Code login. To use an API key, set `llm.claude_cli.credentials: env`, or use `provider: anthropic`. With `env`, `claude -p` loads your settings and can also run on another provider such as Bedrock or Vertex. If your settings' `env` block sets what the network needs, such as `HTTPS_PROXY` or `NODE_EXTRA_CA_CERTS`, `login` mode leaves it out: export those variables, or use `env`.
+An exported key or provider switch then cannot move the call off your Claude Code login. To use an API key, set `llm.claude_cli.credentials: env`, or use `provider: anthropic`. With `env`, `claude -p` loads your settings and can also run on another provider such as Bedrock or Vertex. If your settings' `env` block sets what the network needs, such as `HTTPS_PROXY` or `NODE_EXTRA_CA_CERTS`, `login` mode leaves it out: export those variables, which the allow list passes, or use `env`.
 
 `claude-cli` needs Claude Code 2.1.169 or later, the first version with `--safe-mode`. An older `claude` stops with `unknown option`, and sdd shows that message.
 
