@@ -36,7 +36,7 @@ func repoCmd() *cli.Command {
 					if cmd.Args().Len() != 1 {
 						return fmt.Errorf("usage: sdd repo add <clone-url>")
 					}
-					h, err := repoHandler(cmd.ErrWriter)
+					h, err := repoHandler(ctx, cmd.ErrWriter)
 					if err != nil {
 						return err
 					}
@@ -138,7 +138,7 @@ func repoCmd() *cli.Command {
 					if cmd.Args().Len() != 1 {
 						return fmt.Errorf("usage: sdd repo remove <repo-id>")
 					}
-					h, err := repoHandler(cmd.ErrWriter)
+					h, err := repoHandler(ctx, cmd.ErrWriter)
 					if err != nil {
 						return err
 					}
@@ -162,7 +162,7 @@ func repoCmd() *cli.Command {
 				Usage:     "Force-pull connected repo caches (all, or the named repos)",
 				ArgsUsage: "[repo-id ...]",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					h, err := repoHandler(cmd.ErrWriter)
+					h, err := repoHandler(ctx, cmd.ErrWriter)
 					if err != nil {
 						return err
 					}
@@ -181,8 +181,8 @@ func repoCmd() *cli.Command {
 // repoHandler builds the handler for repo commands: a read finder for
 // handler construction plus the connected-repos manager the repo
 // operations run through.
-func repoHandler(errWriter io.Writer) (*handlers.Handler, error) {
-	reader, err := newReadFinder()
+func repoHandler(ctx context.Context, errWriter io.Writer) (*handlers.Handler, error) {
+	reader, err := newReadFinder(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +228,7 @@ func repoIDArgs(args []string) []model.RepoID {
 // refreshDependencies refreshes the dependency closure's caches ahead of a
 // read that reaches beyond the local graph.
 func refreshDependencies(ctx context.Context, errWriter io.Writer) error {
-	h, err := repoHandler(errWriter)
+	h, err := repoHandler(ctx, errWriter)
 	if err != nil {
 		return err
 	}

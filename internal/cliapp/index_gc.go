@@ -60,7 +60,7 @@ that version has stopped.`,
 			},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			stores, emb, reader, err := selectIndexStores(cmd)
+			stores, emb, reader, err := selectIndexStores(ctx, cmd)
 			if err != nil {
 				return err
 			}
@@ -116,7 +116,7 @@ that version has stopped.`,
 // uses: cross-repo work runs in the shared global vector space. Connected
 // caches are read as they are; nothing is pulled, and a repo without a cache
 // has no store to clean, so it is skipped with a note.
-func selectIndexStores(cmd *cli.Command) ([]indexStore, handlers.IndexEmbedder, *finders.Finder, error) {
+func selectIndexStores(ctx context.Context, cmd *cli.Command) ([]indexStore, handlers.IndexEmbedder, *finders.Finder, error) {
 	repoSelection := repoIDArgs(cmd.StringSlice("repo"))
 	allRepos := cmd.Bool("all-repos")
 	crossRepo := allRepos || len(repoSelection) > 0
@@ -142,7 +142,7 @@ func selectIndexStores(cmd *cli.Command) ([]indexStore, handlers.IndexEmbedder, 
 	if err != nil {
 		return nil, emb, nil, err
 	}
-	reader, err := newReadFinder()
+	reader, err := newReadFinder(ctx)
 	if err != nil {
 		return nil, emb, nil, err
 	}

@@ -170,7 +170,7 @@ var readOnlyRunner pkgllm.RunnerFunc = func(context.Context, pkgllm.Request) (pk
 // loadConfig established that absence is the world state, so the effective
 // config is the empty one — resolved here explicitly because a nil config
 // on the finder means a wiring fault and errors (s-tac-uya).
-func newReadFinder() (*finders.Finder, error) {
+func newReadFinder(ctx context.Context) (*finders.Finder, error) {
 	cfg, err := loadConfig()
 	if err != nil {
 		return nil, err
@@ -262,7 +262,7 @@ func loadConfig() (*model.PerRepoConfig, error) {
 // not silent. A finder that will not build is left to the command itself,
 // which resolves the same config and reports the failure properly.
 func warnUnknownConfigKeys(ctx context.Context) {
-	f, err := newReadFinder()
+	f, err := newReadFinder(ctx)
 	if err != nil {
 		return
 	}
@@ -444,12 +444,12 @@ func setCommandStreams(cmd *cli.Command, reader io.Reader, writer, errWriter io.
 	}
 }
 
-func loadGraph(cmd *cli.Command) (*model.Graph, error) {
+func loadGraph(ctx context.Context, cmd *cli.Command) (*model.Graph, error) {
 	dir, err := resolveGraphDir(cmd)
 	if err != nil {
 		return nil, err
 	}
-	f, err := newReadFinder()
+	f, err := newReadFinder(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +461,7 @@ func infoCmd() *cli.Command {
 		Name:  "info",
 		Usage: "Show session framing — participant, language, search capability",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			f, err := newReadFinder()
+			f, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -517,7 +517,7 @@ func statsCmd() *cli.Command {
 				since = &cutoff
 			}
 
-			f, err := newReadFinder()
+			f, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -583,12 +583,12 @@ func showCmd() *cli.Command {
 				}
 			}
 
-			g, err := loadGraph(cmd)
+			g, err := loadGraph(ctx, cmd)
 			if err != nil {
 				return err
 			}
 
-			f, err := newReadFinder()
+			f, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -984,7 +984,7 @@ func rewriteCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			reader, err := newReadFinder()
+			reader, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -1020,7 +1020,7 @@ func lintCmd() *cli.Command {
 						}
 					},
 				}
-				reader, err := newReadFinder()
+				reader, err := newReadFinder(ctx)
 				if err != nil {
 					return err
 				}
@@ -1035,7 +1035,7 @@ func lintCmd() *cli.Command {
 				}
 			}
 
-			g, err := loadGraph(cmd)
+			g, err := loadGraph(ctx, cmd)
 			if err != nil {
 				return err
 			}
@@ -1684,7 +1684,7 @@ func initCmd() *cli.Command {
 				},
 			}
 
-			reader, err := newReadFinder()
+			reader, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -1799,7 +1799,7 @@ func wipStartCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			reader, err := newReadFinder()
+			reader, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -1855,7 +1855,7 @@ func wipDoneCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			reader, err := newReadFinder()
+			reader, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -1880,7 +1880,7 @@ func wipListCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			f, err := newReadFinder()
+			f, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}

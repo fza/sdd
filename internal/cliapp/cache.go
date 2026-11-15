@@ -37,7 +37,7 @@ cache.retention always stay. sdd index gc removes more on request.`,
 				}
 				var keep handlers.CurrentHashSource
 				if graphDir, err := resolveGraphDir(cmd); err == nil {
-					reader, err := newReadFinder()
+					reader, err := newReadFinder(ctx)
 					if err != nil {
 						return err
 					}

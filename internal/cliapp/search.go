@@ -246,7 +246,7 @@ func indexCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			reader, err := newReadFinder()
+			reader, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -437,7 +437,7 @@ func searchCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				reader, err := newReadFinder()
+				reader, err := newReadFinder(ctx)
 				if err != nil {
 					return err
 				}
@@ -461,7 +461,7 @@ func searchCmd() *cli.Command {
 			}
 
 			stopGraph := timing.Start(ctx, "graph-load")
-			g, err := loadGraph(cmd)
+			g, err := loadGraph(ctx, cmd)
 			stopGraph()
 			if err != nil {
 				return err
@@ -588,7 +588,7 @@ func searchCmd() *cli.Command {
 				// Side effects first (closure refresh + member index fill, the
 				// cross-repo analog of the local lazy-fill above), then the pure
 				// cross-graph read over the refreshed closure.
-				reader, err := newReadFinder()
+				reader, err := newReadFinder(ctx)
 				if err != nil {
 					return nil, err
 				}

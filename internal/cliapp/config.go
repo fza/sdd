@@ -30,7 +30,7 @@ func configCmd() *cli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return runEffectiveConfig(cmd, "")
+			return runEffectiveConfig(ctx, cmd, "")
 		},
 		Commands: []*cli.Command{
 			{
@@ -41,7 +41,7 @@ func configCmd() *cli.Command {
 					if cmd.Args().Len() > 1 {
 						return fmt.Errorf("usage: sdd config get [<key-or-prefix>]")
 					}
-					return runConfigGet(cmd.Writer, cmd.Args().First())
+					return runConfigGet(ctx, cmd.Writer, cmd.Args().First())
 				},
 			},
 			{
@@ -93,8 +93,8 @@ func configCmd() *cli.Command {
 // effectiveConfigResult builds the provenance view shared by the bare
 // command and `get`. Outside an sdd repo the per-repo layers are simply
 // absent — global settings and defaults still resolve.
-func effectiveConfigResult(key string) (*query.EffectiveConfigResult, error) {
-	f, err := newReadFinder()
+func effectiveConfigResult(ctx context.Context, key string) (*query.EffectiveConfigResult, error) {
+	f, err := newReadFinder(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -105,8 +105,8 @@ func effectiveConfigResult(key string) (*query.EffectiveConfigResult, error) {
 	return f.EffectiveConfig(query.EffectiveConfigQuery{SDDDir: sddDir, Key: key})
 }
 
-func runEffectiveConfig(cmd *cli.Command, key string) error {
-	result, err := effectiveConfigResult(key)
+func runEffectiveConfig(ctx context.Context, cmd *cli.Command, key string) error {
+	result, err := effectiveConfigResult(ctx, key)
 	if err != nil {
 		return err
 	}
@@ -121,13 +121,13 @@ func runEffectiveConfig(cmd *cli.Command, key string) error {
 	// The effective table answers "what will happen", and a setting that does
 	// nothing is part of that answer.
 	if key == "" {
-		return printUnknownConfigKeys(cmd.ErrWriter)
+		return printUnknownConfigKeys(ctx, cmd.ErrWriter)
 	}
 	return nil
 }
 
-func printUnknownConfigKeys(errWriter io.Writer) error {
-	f, err := newReadFinder()
+func printUnknownConfigKeys(ctx context.Context, errWriter io.Writer) error {
+	f, err := newReadFinder(ctx)
 	if err != nil {
 		return err
 	}
@@ -149,8 +149,8 @@ func printUnknownConfigKeys(errWriter io.Writer) error {
 	return nil
 }
 
-func runConfigGet(writer io.Writer, key string) error {
-	result, err := effectiveConfigResult(key)
+func runConfigGet(ctx context.Context, writer io.Writer, key string) error {
+	result, err := effectiveConfigResult(ctx, key)
 	if err != nil {
 		return err
 	}
