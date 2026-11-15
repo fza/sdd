@@ -115,5 +115,39 @@ func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.Unkno
 			result.Ignored = append(result.Ignored, query.IgnoredConfigSetting{File: l.path, Key: setting.Key, Reason: setting.Reason})
 		}
 	}
+	if q.SDDDir == "" {
+		return result, nil
+	}
+	misplaced, err := f.misplacedVerifyValues(q)
+	if err != nil {
+		return nil, err
+	}
+	result.Ignored = append(result.Ignored, misplaced...)
 	return result, nil
+}
+
+// misplacedVerifyValues reports the verify values ResolveConfig drops for
+// where they stand across the layers.
+func (f *Finder) misplacedVerifyValues(q query.UnknownConfigKeysQuery) ([]query.IgnoredConfigSetting, error) {
+	var global model.BaseConfig
+	files := meta.ConfigLayerFiles(q.SDDDir, q.LocalConfigPath)
+	if f.repos != nil {
+		gcfg, err := f.repos.Load()
+		if err != nil {
+			return nil, err
+		}
+		global = gcfg.BaseConfig
+		files[model.ConfigSourceGlobal] = f.repos.ConfigPath()
+	}
+	committed, local, err := meta.ReadConfigLayers(q.SDDDir, q.LocalConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	_, _, _, dropped := model.HonoredVerifyLayers(global, committed, local, files)
+	misplaced := make([]query.IgnoredConfigSetting, 0, len(dropped))
+	for _, d := range dropped {
+		file := files[d.Source]
+		misplaced = append(misplaced, query.IgnoredConfigSetting{File: file, Key: d.Key, Reason: strings.TrimPrefix(d.Reason, file+": ")})
+	}
+	return misplaced, nil
 }

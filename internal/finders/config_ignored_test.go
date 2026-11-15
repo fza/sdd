@@ -97,3 +97,38 @@ func TestUnknownConfigKeysReportsGitLimitsOutsideTheGlobalConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestUnknownConfigKeysReportsMisplacedVerifyValues(t *testing.T) {
+	dir := t.TempDir()
+	sddDir := filepath.Join(dir, ".sdd")
+	if err := os.MkdirAll(sddDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	committedPath := filepath.Join(sddDir, "config.yaml")
+	localPath := filepath.Join(sddDir, "config.local.yaml")
+	if err := os.WriteFile(committedPath, []byte("verify:\n  mode: deep\n  driver:\n    command: run-it\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte("verify:\n  mode: prose\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := finders.New(finders.Options{Repos: repos.NewRegistry(repos.Locations{ConfigPath: filepath.Join(dir, "global.yaml"), CacheRoot: filepath.Join(dir, "cache")})})
+
+	result, err := f.UnknownConfigKeys(query.UnknownConfigKeysQuery{SDDDir: sddDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, s := range result.Ignored {
+		got[s.Key] = s.File
+		if strings.HasPrefix(s.Reason, s.File) {
+			t.Errorf("the reason should not repeat the file it names, got %+v", s)
+		}
+	}
+	if got["verify.driver"] != committedPath {
+		t.Errorf("a committed driver should be reported in the committed file, got %+v", result.Ignored)
+	}
+	if got["verify.mode"] != localPath {
+		t.Errorf("a local mode lowering the shared one should be reported in the local file, got %+v", result.Ignored)
+	}
+}

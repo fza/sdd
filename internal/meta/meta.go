@@ -94,10 +94,7 @@ func ResolveConfig(global model.BaseConfig, sddDir, localConfigPath string) (*mo
 	if err != nil {
 		return nil, err
 	}
-	err = model.CheckVerifyLayers(global, committed, local, ConfigLayerFiles(sddDir, localConfigPath))
-	if err != nil {
-		return nil, err
-	}
+	global, committed, local, _ = model.HonoredVerifyLayers(global, committed, local, ConfigLayerFiles(sddDir, localConfigPath))
 	var fileCfg *model.PerRepoConfig
 	if committed != nil || local != nil {
 		fileCfg = model.MergeConfig(committed, local)
