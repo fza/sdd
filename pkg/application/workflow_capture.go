@@ -14,7 +14,9 @@ import (
 	"github.com/networkteam/sdd/internal/secrets"
 )
 
-var captureDraftFields = []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch"}
+const credentialFinding = "credential"
+
+var captureDraftFields =[]string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch"}
 
 func captureAttachments(draft *EntryDraft, staged map[string]string) error {
 	for _, filename := range draft.AttachmentHandles {
@@ -48,7 +50,7 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 			result.Findings = append(result.Findings, Finding{Severity: string(query.SeverityHigh), Category: "validation", Observation: warning.Message})
 		}
 	} else if errors.Is(err, secrets.ErrCredential) {
-		result.Findings = append(result.Findings, Finding{Severity: string(query.SeverityHigh), Category: "credential", Observation: err.Error()})
+		result.Findings = append(result.Findings, Finding{Severity: string(query.SeverityHigh), Category: credentialFinding, Observation: err.Error() + "; an override cannot lift it, revise the draft"})
 	} else if err != nil {
 		return err
 	}
@@ -165,7 +167,7 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 	if err != nil {
 		return false, false, err
 	}
-	current, accepted := false, false
+	current, accepted, credential := false, false, false
 	checkedBranch := ""
 	selected := workflowStoreStrings(ctx.Store, "attachments")
 	staged := make(map[string]string)
@@ -217,14 +219,24 @@ func (w *WorkflowSession) capturePreflightState(ctx *engine.Context) (bool, bool
 				if err := json.Unmarshal(encoded, &findings); err != nil {
 					return false, false, err
 				}
+				credential = false
 				for _, finding := range findings {
 					if finding.Severity == string(query.SeverityHigh) {
 						accepted = false
 					}
+					if finding.Category == credentialFinding {
+						credential = true
+					}
 				}
 			}
+			// The write refuses a credential whatever the pre-flight says, so an
+			// override sends the draft back through the write gate instead.
 			if name == "recordOverride" && current {
-				accepted = true
+				if credential {
+					current = false
+				} else {
+					accepted = true
+				}
 			}
 		}
 	}

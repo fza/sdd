@@ -28,8 +28,8 @@ func TestCapture_CredentialRoutesToRevise(t *testing.T) {
 	if !strings.Contains(serve.Instructions, "looks like a credential") {
 		t.Errorf("guideReview should name the credential refusal:\n%s", serve.Instructions)
 	}
-	if strings.Contains(serve.Instructions, "on ''") {
-		t.Errorf("a finding without a quote should render no quote:\n%s", serve.Instructions)
+	if !strings.Contains(serve.Instructions, "credential on 'body'") {
+		t.Errorf("the guide finding should quote the part holding the credential:\n%s", serve.Instructions)
 	}
 	serve = session.Answer(t, instance, "guideReview", "proceed", nil, "")
 	proctest.RequireStep(t, serve, "playback")
@@ -40,6 +40,13 @@ func TestCapture_CredentialRoutesToRevise(t *testing.T) {
 	}
 	if world.LLM.Calls("writing-guide") != 0 || world.LLM.Calls("preflight") != 0 {
 		t.Fatal("a draft holding a credential must reach no model")
+	}
+
+	// An override cannot lift a credential: the draft comes back to revise.
+	serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "write it anyway")
+	proctest.RequireStep(t, serve, "reviseOrOverride")
+	if !strings.Contains(serve.Instructions, "an override cannot lift it") {
+		t.Errorf("reviseOrOverride should say an override cannot lift the credential:\n%s", serve.Instructions)
 	}
 
 	serve = session.Answer(t, instance, "reviseOrOverride", "revise", map[string]any{"body": "A tactical gap: the fixture observes something."}, "drop the token")

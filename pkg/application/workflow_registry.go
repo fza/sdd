@@ -351,7 +351,7 @@ func (w *WorkflowSession) runWorkflowWritingGuide(ctx *engine.Context) error {
 	}
 	findings, err := w.app.WritingGuideCheck(w.ctx, w.identity, w.instanceProject(ctx.Instance), w.draftFromStore(ctx.Store))
 	if errors.Is(err, secrets.ErrCredential) {
-		findings = []GuideFinding{{Reasoning: err.Error(), Axis: "credential", Repair: "remove the credential from the draft", Severity: string(query.GuideSubstantive)}}
+		findings = []GuideFinding{{Reasoning: err.Error(), Axis: credentialFinding, Quote: secrets.RefusedPart(err), Repair: "remove the credential from the draft", Severity: string(query.GuideSubstantive)}}
 	} else if err != nil {
 		return fmt.Errorf("writingGuide: %w", err)
 	}

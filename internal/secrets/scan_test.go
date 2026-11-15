@@ -142,10 +142,11 @@ func TestCheckEntryNamesThePart(t *testing.T) {
 		name  string
 		entry model.Entry
 		where string
+		line  string
 	}{
-		{name: "body", entry: model.Entry{Content: "Setup:\n" + token}, where: "the body"},
-		{name: "summary", entry: model.Entry{Summary: token}, where: "the summary"},
-		{name: "frontmatter", entry: model.Entry{Aliases: []string{token}}, where: "the frontmatter"},
+		{name: "body", entry: model.Entry{Content: "Setup:\n" + token}, where: "the body", line: "line 2)"},
+		{name: "summary", entry: model.Entry{Summary: token}, where: "the summary", line: "line 1)"},
+		{name: "frontmatter field", entry: model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Aliases: []string{"first", token}}, where: "the frontmatter field aliases", line: "line 3)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -154,8 +155,11 @@ func TestCheckEntryNamesThePart(t *testing.T) {
 			if !errors.Is(err, secrets.ErrCredential) {
 				t.Fatalf("the entry should be refused as holding a credential: %v", err)
 			}
-			if !strings.Contains(err.Error(), tc.where) || !strings.Contains(err.Error(), "gitlab-pat") {
+			if !strings.Contains(err.Error(), tc.where+" looks like") || !strings.Contains(err.Error(), "gitlab-pat") {
 				t.Errorf("the refusal should name the part and the rule: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.line) {
+				t.Errorf("the refusal should give the line within the part: %v", err)
 			}
 			if strings.Contains(err.Error(), token) {
 				t.Error("the refusal must never repeat the credential")

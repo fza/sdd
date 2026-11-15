@@ -44,16 +44,36 @@ func CheckEntry(entry *model.Entry) error {
 // Part is one piece of text, named as the user knows it ("body", "summary").
 type Part struct{ Where, Text string }
 
-// EntryParts splits an entry into its summary, body and remaining
-// frontmatter, so a finding's line points into the part it names.
+// EntryParts splits an entry into its summary, body and each other
+// frontmatter field, so a finding's line points into the part it names.
 func EntryParts(entry *model.Entry) []Part {
 	rest := *entry
 	rest.Summary = ""
-	return []Part{
+	parts := []Part{
 		{Where: "summary", Text: entry.Summary},
 		{Where: "body", Text: entry.Content},
-		{Where: "frontmatter", Text: model.FormatFrontmatter(&rest)},
 	}
+	return append(parts, frontmatterFields(model.FormatFrontmatter(&rest))...)
+}
+
+// frontmatterFields cuts rendered frontmatter at each top-level key: the user
+// wrote a field, never the frontmatter sdd renders from it.
+func frontmatterFields(frontmatter string) []Part {
+	var fields []Part
+	for _, line := range strings.SplitAfter(frontmatter, "\n") {
+		content := strings.TrimRight(line, "\n")
+		if content == "---" || content == "" {
+			continue
+		}
+		key, _, found := strings.Cut(content, ":")
+		if found && !strings.HasPrefix(content, " ") && !strings.HasPrefix(content, "-") {
+			fields = append(fields, Part{Where: "frontmatter field " + key})
+		}
+		if len(fields) > 0 {
+			fields[len(fields)-1].Text += line
+		}
+	}
+	return fields
 }
 
 // ScanEntry scans an entry part by part and returns the first part holding
@@ -97,10 +117,20 @@ func refusal(where string, findings []Finding) error {
 	if len(findings) == 0 {
 		return nil
 	}
-	return &refusalError{description: Describe(where, findings)}
+	return &refusalError{where: where, description: Describe(where, findings)}
 }
 
-type refusalError struct{ description string }
+// RefusedPart is the part a write refusal names, such as "body"; empty when
+// err is no write refusal.
+func RefusedPart(err error) string {
+	var refusal *refusalError
+	if errors.As(err, &refusal) {
+		return refusal.where
+	}
+	return ""
+}
+
+type refusalError struct{ where, description string }
 
 func (e *refusalError) Error() string {
 	return "refusing to write: " + e.description + "; the graph is shared and immutable"
