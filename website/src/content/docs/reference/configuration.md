@@ -265,7 +265,8 @@ sdd runs `claude -p` isolated:
   - `LANG` and `LC_*`, and the `XDG_*` directories
   - proxy: `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `ALL_PROXY`
   - CA and client certificates: `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_USE_SYSTEM_CA`, `CLAUDE_CODE_CERT_STORE`, `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY`, `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE`
-  - on Windows: `SystemRoot`, `SystemDrive`, `windir`, `ComSpec`, `PATHEXT`, `APPDATA`, `LOCALAPPDATA`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `USERNAME`, `ProgramData`, `ProgramFiles`
+  - on Windows: `SystemRoot`, `SystemDrive`, `windir`, `ComSpec`, `PATHEXT`, `APPDATA`, `LOCALAPPDATA`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `USERNAME`, `ProgramData`, `ProgramFiles`, and Claude Code's `CLAUDE_CODE_GIT_BASH_PATH`
+  - Claude Code's temporary directory: `CLAUDE_CODE_TMPDIR`
   - the login's own: `CLAUDE_CONFIG_DIR`, `ANTHROPIC_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`
 
   Everything else stays out: API keys, tokens, endpoints, provider switches, host-managed credentials, and model aliases such as `ANTHROPIC_DEFAULT_SONNET_MODEL`, since sdd names the model with `llm.model`. So does `ANTHROPIC_PROFILE`, which picks an Anthropic Console profile over your claude.ai login. Claude Code keeps adding variables that move a call off the login: a list of what to remove misses each new one, while a list of what to keep fails closed, and a variable the call needs but lacks makes it fail loudly. A setup that needs another variable, such as a Console profile, sets `llm.claude_cli.credentials: env`.

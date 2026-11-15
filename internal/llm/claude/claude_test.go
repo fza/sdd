@@ -167,6 +167,8 @@ func TestRunCredentials(t *testing.T) {
 		"USERNAME",
 		"PROGRAMDATA",
 		"PROGRAMFILES",
+		"CLAUDE_CODE_GIT_BASH_PATH",
+		"CLAUDE_CODE_TMPDIR",
 		"CLAUDE_CONFIG_DIR",
 		"ANTHROPIC_CONFIG_DIR",
 		"Anthropic_Config_Dir",
