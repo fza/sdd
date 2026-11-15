@@ -53,7 +53,7 @@ func (f *Finder) EffectiveConfig(q query.EffectiveConfigQuery) (*query.Effective
 }
 
 // UnknownConfigKeys reports the keys sdd read past because it does not know
-// them, and the settings it reads past where they stand — the one computation
+// them, and the settings it reads past where they stand: the one computation
 // behind every surface that says so, rather than each deciding for itself.
 func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.UnknownConfigKeysResult, error) {
 	type layer struct {
