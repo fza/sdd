@@ -14,6 +14,12 @@ type SearchEntryVersion struct {
 	EntryHash string
 }
 
+// SearchEntryPublication is one complete entry version and its chunks.
+type SearchEntryPublication struct {
+	Version SearchEntryVersion
+	Chunks  []IndexedChunk
+}
+
 // SearchEntryDescriptor identifies exact retained input, including attachments.
 // The host must retain SourceRevision until all work using it is finished.
 type SearchEntryDescriptor struct {
