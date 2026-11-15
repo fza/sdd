@@ -196,6 +196,28 @@ func TestCommit_OnlyDeletedPathsStagesNothingElse(t *testing.T) {
 	}
 }
 
+// A path with glob characters names that one file, not every file it matches.
+func TestCommit_TakesPathsLiterally(t *testing.T) {
+	dir := newTestRepo(t)
+	for _, name := range []string{"note*.txt", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("note\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Chdir(dir)
+	if err := (CLI{}).Commit("note", "note*.txt"); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	if files := commitFiles(t, dir); !slices.Equal(files, []string{"note*.txt"}) {
+		t.Errorf("the commit should record only the named file; files = %v", files)
+	}
+	if tracked := strings.Fields(runGit(t, dir, "ls-files")); slices.Contains(tracked, "notes.txt") {
+		t.Errorf("a file the name only matches as a glob should stay out of the index; tracked = %v", tracked)
+	}
+}
+
 // git commit with an empty pathspec records the whole index, so a commit naming
 // no path is refused.
 func TestCommit_RefusesNoPaths(t *testing.T) {

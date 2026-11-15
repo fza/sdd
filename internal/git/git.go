@@ -104,7 +104,7 @@ func (CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) {
 	for _, path := range paths {
 		// Only stdout lists changes: git warns on stderr about a path whose
 		// folder does not exist yet.
-		cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
+		cmd := exec.CommandContext(ctx, "git", "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		status, err := cmd.Output()
@@ -177,6 +177,8 @@ func (RemovalCommitter) Commit(message string, paths ...string) error {
 func runDetached(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// sdd names files, never patterns: a glob character stays part of the name.
+	cmd.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return out, fmt.Errorf("git %s: timed out after %s (a commit signer or credential helper may be blocking on input)", args[0], commitTimeout)
