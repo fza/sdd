@@ -47,8 +47,8 @@ sdd skips a key it does not know, including a key in a file where it does not be
 - `set` and `unset` change only the named key and keep the rest of the file, comments included.
 - No command writes `.sdd/config.yaml` directly. `sdd init` creates it, `sdd repo add` and `sdd repo remove` change `dependencies`, and you edit the rest by hand and commit it.
 
-:::note[Restart your agent after a change]
-Your agent starts the sdd server, `sdd serve`, which reads the configuration once when it starts. Restart the agent after a change so the server picks it up. In Claude Code it is enough to run `/mcp` and restart the sdd server there. sdd commands in a terminal read the configuration on every run.
+:::note[A running server follows config changes]
+Your agent starts the sdd server, `sdd serve`. Before each tool call it checks the config files. After a change it answers with the new configuration and names the settings that changed; a file that fails to load refuses every call until it is fixed. This includes the `llm` settings: the next call goes to the language model they name. sdd commands in a terminal read the configuration on every run.
 :::
 
 ## Keys
