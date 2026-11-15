@@ -1288,10 +1288,9 @@ func resolveProject() (meta.Project, error) {
 	return project, nil
 }
 
-// requireGraphInsideRepository refuses a graph_dir leading into another
-// repository: graph commits, the schema stamp and engine branches all belong to
-// the repository holding the project's .sdd/, so a graph kept apart is a
-// project of its own that the work repository names with project_dir.
+// requireGraphInsideRepository refuses a project placed where its work
+// repository cannot point at it, and a graph_dir leading out of the project's
+// repository.
 func requireGraphInsideRepository(project meta.Project) error {
 	cfg, err := meta.ReadConfig(project.SDDDir())
 	if err != nil {
@@ -1304,19 +1303,7 @@ func requireGraphInsideRepository(project meta.Project) error {
 			return err
 		}
 	}
-	graphDir := meta.ResolveGraphDir(project.Root, cfg)
-	if meta.WithinDir(project.Root, graphDir) {
-		return nil
-	}
-	projectRepo := git.RepoRootFor(project.Root)
-	graphRepo := git.RepoRootFor(graphDir)
-	if graphRepo == "" {
-		return fmt.Errorf("graph_dir in %s leads to %s, outside the project and outside any repository; keep the graph inside the project", project.SDDDir(), graphDir)
-	}
-	if graphRepo == projectRepo {
-		return nil
-	}
-	return fmt.Errorf("graph_dir in %s leads into %s, a repository separate from %s; make the graph a project of its own (`sdd init` there) and set project_dir to that repository's root instead", project.SDDDir(), graphRepo, projectRepo)
+	return meta.RequireGraphInProjectRepository(project.SDDDir(), project.Root, meta.ResolveGraphDir(project.Root, cfg), git.RepoRootFor)
 }
 
 // promptGraphDir runs an interactive prompt for the graph directory. Empty

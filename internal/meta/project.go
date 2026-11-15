@@ -134,6 +134,27 @@ func RequireProjectApart(subject, workRoot, workRepo, projectRoot string) error 
 	return nil
 }
 
+// RequireGraphInProjectRepository refuses a graph_dir, set in sddDir and
+// resolved to graphDir, that leads out of the project at projectRoot into no
+// repository or into one other than the project's: graph commits, the schema
+// stamp and engine branches all belong to the repository holding the
+// project's .sdd/. rootOf returns the root of the repository holding a path,
+// empty when there is none.
+func RequireGraphInProjectRepository(sddDir, projectRoot, graphDir string, rootOf func(string) string) error {
+	if WithinDir(projectRoot, graphDir) {
+		return nil
+	}
+	graphRepo := rootOf(graphDir)
+	if graphRepo == "" {
+		return fmt.Errorf("graph_dir in %s leads to %s, outside the project and outside any repository; keep the graph inside the project", sddDir, graphDir)
+	}
+	projectRepo := rootOf(projectRoot)
+	if projectRepo != "" && SameDir(graphRepo, projectRepo) {
+		return nil
+	}
+	return fmt.Errorf("graph_dir in %s leads into %s, a repository separate from %s; make the graph a project of its own (`sdd init` there) and set project_dir to that repository's root instead", sddDir, graphRepo, projectRepo)
+}
+
 // WithinDir reports whether path is dir or lies below it. Folders on disk
 // compare by identity, so a symlink or a spelling a case-insensitive
 // filesystem accepts names the folder it leads to; the parts of either path

@@ -21,6 +21,15 @@ type ProjectRepositories interface {
 	RemoteURL(dir string) string
 }
 
+// repoRootOf returns the root of the repository holding dir; empty when there
+// is none or the handler reaches no repositories by path.
+func (h *Handler) repoRootOf(dir string) string {
+	if h.projectRepos == nil {
+		return ""
+	}
+	return h.projectRepos.RootOf(dir)
+}
+
 // setUpProject runs a plain init in projectRoot, which holds no sdd project
 // yet, giving it the repository of its own it needs.
 func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget, changed *bool) error {
