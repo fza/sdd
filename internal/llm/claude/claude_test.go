@@ -20,8 +20,8 @@ const problemChars = "„Code einlösen“ «zitiert» ‚einfach‘ “English�
 
 const wireSchema = `{"type":"object","properties":{"reasoning":{"type":"string"},"axis":{"type":"string","enum":["form"]}},"required":["reasoning","axis"],"additionalProperties":false}`
 
-// fakeCLI puts a claude executable on PATH that records its arguments and
-// stdin into dir and prints response as the CLI's JSON output.
+// fakeCLI puts a claude executable on PATH that records its arguments,
+// environment and stdin into dir and prints response as the CLI's JSON output.
 func fakeCLI(t *testing.T, response string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -30,6 +30,7 @@ func fakeCLI(t *testing.T, response string) string {
 	}
 	script := "#!/bin/sh\n" +
 		"for a in \"$@\"; do printf '%s\\0' \"$a\"; done > '" + dir + "/args'\n" +
+		"env > '" + dir + "/env'\n" +
 		"cat > '" + dir + "/stdin'\n" +
 		"cat '" + dir + "/response.json'\n"
 	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
@@ -46,6 +47,65 @@ func recordedArgs(t *testing.T, dir string) []string {
 		t.Fatal(err)
 	}
 	return strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+}
+
+func recordedEnvNames(t *testing.T, dir string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, "env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for line := range strings.Lines(string(raw)) {
+		if name, _, found := strings.Cut(line, "="); found {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// In login mode no variable that picks the provider, the endpoint or the
+// credential reaches the child, only the login's own token; env mode passes
+// every one of them through.
+func TestRunCredentialEnvironment(t *testing.T) {
+	providerVars := []string{
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_FOUNDRY_API_KEY",
+		"ANTHROPIC_VERTEX_BASE_URL",
+		"ANTHROPIC_CUSTOM_HEADERS",
+		"CLAUDE_CODE_USE_BEDROCK",
+		"CLAUDE_CODE_USE_FOUNDRY",
+	}
+	keptVars := []string{"CLAUDE_CODE_OAUTH_TOKEN", "SDD_TEST_UNRELATED"}
+	for _, tc := range []struct {
+		name          string
+		credentials   model.ClaudeCLICredentials
+		providerAlive bool
+	}{
+		{"login drops the provider variables", model.ClaudeCLICredentialsLogin, false},
+		{"env passes them through", model.ClaudeCLICredentialsEnv, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := fakeCLI(t, `{"type":"result","result":"ok","usage":{}}`)
+			for _, name := range slices.Concat(providerVars, keptVars) {
+				t.Setenv(name, "sk-ant-value")
+			}
+			if _, err := claude.NewRunner("sonnet", tc.credentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			names := recordedEnvNames(t, dir)
+			for _, name := range providerVars {
+				if slices.Contains(names, name) != tc.providerAlive {
+					t.Errorf("%s should reach the child only with credentials env", name)
+				}
+			}
+			for _, name := range keptVars {
+				if !slices.Contains(names, name) {
+					t.Errorf("%s should reach the child in every mode", name)
+				}
+			}
+		})
+	}
 }
 
 // A structured request hands the schema to --json-schema byte for byte and
@@ -143,8 +203,7 @@ func flagValue(args []string, flag string) (string, bool) {
 
 // What the child process actually sees is the whole point of the isolation, and
 // it is not inferable from the adapter's own state. A stand-in binary on PATH
-// reports its working directory and credential environment back
-// through the response the runner parses.
+// reports its working directory back through the response the runner parses.
 func TestChildRunsIsolated(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the stand-in binary is a shell script")
@@ -153,16 +212,12 @@ func TestChildRunsIsolated(t *testing.T) {
 	binDir := t.TempDir()
 	script := filepath.Join(binDir, "claude")
 	body := `#!/bin/sh
-printf '{"result":"cwd=%s key=%s token=%s base=%s","usage":{"input_tokens":1,"output_tokens":2}}\n' \
-  "$PWD" "${ANTHROPIC_API_KEY-absent}" "${ANTHROPIC_AUTH_TOKEN-absent}" "${ANTHROPIC_BASE_URL-absent}"
+printf '{"result":"cwd=%s","usage":{"input_tokens":1,"output_tokens":2}}\n' "$PWD"
 `
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatalf("writing stand-in binary: %v", err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("ANTHROPIC_API_KEY", "sk-should-not-reach-the-child")
-	t.Setenv("ANTHROPIC_AUTH_TOKEN", "should-not-reach-the-child")
-	t.Setenv("ANTHROPIC_BASE_URL", "https://should-not-reach-the-child")
 
 	invocationDir, err := os.Getwd()
 	if err != nil {
@@ -172,12 +227,6 @@ printf '{"result":"cwd=%s key=%s token=%s base=%s","usage":{"input_tokens":1,"ou
 	res, err := claude.NewRunner("claude-sonnet-4-6", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "x"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
-	}
-
-	for _, credential := range []string{"key=", "token=", "base="} {
-		if valueOf(res.Text, credential) != "absent" {
-			t.Errorf("credential %s must be absent from the child's environment, not empty or set: %q", credential, res.Text)
-		}
 	}
 
 	childDir := valueOf(res.Text, "cwd=")

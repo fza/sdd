@@ -35,18 +35,14 @@ func (r *Runner) identity() llm.Identity {
 	return llm.Identity{Provider: "claude-cli", Model: r.model}
 }
 
-// scrubbedEnvVars name the credentials that redirect the CLI away from the
-// signed-in account. This transport exists to answer on that account, so an
-// inherited key would silently move the bill to an API balance with nothing in
-// the output saying which credential answered. A setup authenticating the CLI
-// by key says so with llm.claude_cli.credentials: env.
-var scrubbedEnvVars = []string{
-	"ANTHROPIC_API_KEY",
-	"ANTHROPIC_AUTH_TOKEN",
-	"ANTHROPIC_BASE_URL",
-	"CLAUDE_CODE_USE_BEDROCK",
-	"CLAUDE_CODE_USE_VERTEX",
-}
+// scrubbedEnvPrefixes name the variables that redirect the CLI away from the
+// signed-in account: keys, tokens, endpoints, headers and provider switches.
+// This transport exists to answer on that account, so an inherited one would
+// silently move the bill with nothing in the output saying which credential
+// answered. Matching the families, not a list, keeps up with providers the CLI
+// adds. A setup authenticating the CLI otherwise says so with
+// llm.claude_cli.credentials: env.
+var scrubbedEnvPrefixes = []string{"ANTHROPIC_", "CLAUDE_CODE_USE_"}
 
 // Run executes claude -p --output-format json and parses the JSON response.
 // The claude CLI accepts a single stdin payload, so SystemPrompt and
@@ -139,7 +135,7 @@ func scrubbedEnv(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, entry := range env {
 		name, _, _ := strings.Cut(entry, "=")
-		if slices.Contains(scrubbedEnvVars, name) {
+		if slices.ContainsFunc(scrubbedEnvPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) }) {
 			continue
 		}
 		out = append(out, entry)
