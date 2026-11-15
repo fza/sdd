@@ -61,8 +61,8 @@ func serveCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			watch, err := newConfigWatch(watched, func(previous *servedProject) (*servedProject, error) {
-				return buildServedProject(cmd, previous)
+			watch, err := newConfigWatch(watched, func(previous *servedProject, reads []configRead) (*servedProject, error) {
+				return buildServedProject(cmd, previous, reads)
 			})
 			if err != nil {
 				return err
@@ -318,20 +318,41 @@ func servedConfigFiles() ([]string, error) {
 	return []string{loc.ConfigPath, filepath.Join(sddDir, "config.yaml"), filepath.Join(sddDir, "config.local.yaml")}, nil
 }
 
-func servedConfigLayers(sddDir string) (model.ConfigLayers, error) {
-	loc, err := repos.DefaultLocations()
+// servedConfigLayers parses the reads of the files servedConfigFiles names,
+// in its order.
+func servedConfigLayers(reads []configRead) (model.ConfigLayers, error) {
+	for _, read := range reads {
+		if read.err != nil {
+			return model.ConfigLayers{}, read.err
+		}
+	}
+	var (
+		layers model.ConfigLayers
+		err    error
+	)
+	if reads[0].found {
+		global, err := repos.ParseConfigFile(reads[0].path, reads[0].data)
+		if err != nil {
+			return model.ConfigLayers{}, err
+		}
+		layers.Global = global.BaseConfig
+	}
+	layers.Project, err = perRepoLayer(reads[1])
 	if err != nil {
 		return model.ConfigLayers{}, err
 	}
-	global, err := repos.LoadConfigFrom(loc.ConfigPath)
+	layers.Local, err = perRepoLayer(reads[2])
 	if err != nil {
 		return model.ConfigLayers{}, err
 	}
-	committed, local, err := meta.ReadConfigLayers(sddDir)
-	if err != nil {
-		return model.ConfigLayers{}, err
+	return layers, nil
+}
+
+func perRepoLayer(read configRead) (*model.PerRepoConfig, error) {
+	if !read.found {
+		return nil, nil
 	}
-	return model.ConfigLayers{Global: global.BaseConfig, Project: committed, Local: local}, nil
+	return meta.ParseConfigFile(read.path, read.data)
 }
 
 // buildServedApplication composes the application whose every call resolves
@@ -349,24 +370,21 @@ func buildServedApplication(ctx context.Context, watch *configWatch) (*sdd.Appli
 	return application, identity, nil
 }
 
-// buildServedProject resolves the project serve answers calls with from the
-// config files as they are now, its LLM client included.
-func buildServedProject(cmd *cli.Command, previous *servedProject) (*servedProject, error) {
-	graphDir, err := resolveGraphDir(cmd)
-	if err != nil {
-		return nil, err
-	}
+// buildServedProject resolves the project serve answers calls with from one
+// read of its config files, its LLM client included.
+func buildServedProject(cmd *cli.Command, previous *servedProject, reads []configRead) (*servedProject, error) {
 	sddDir, err := resolveSDDDir()
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := loadConfig()
+	layers, err := servedConfigLayers(reads)
 	if err != nil {
 		return nil, err
 	}
-	layers, err := servedConfigLayers(sddDir)
-	if err != nil {
-		return nil, err
+	cfg := layers.Effective()
+	graphDir, ok := graphDirFlag(cmd)
+	if !ok {
+		graphDir = meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)
 	}
 	registry, _, err := defaultRepos()
 	if err != nil {
@@ -499,19 +517,25 @@ func buildServedClients(cmd *cli.Command, previous *servedProject, layers model.
 			clients.embedders = previous.clients.embedders
 		}
 	}
+	cfg := layers.Effective()
 	if clients.llm == nil {
-		runner, err := newRunner(cmd, "")
+		runner, err := composeRunner(llmConfigWithFlags(cmd, cfg))
 		if err != nil {
 			return nil, err
 		}
 		clients.llm = &servedRunner{runner}
 	}
 	if clients.embedders == nil {
-		local, err := buildEmbedder(cmd)
+		embedding := embeddingConfigWithFlags(cmd, cfg)
+		local, err := configuredEmbedder(embedding)
 		if err != nil {
 			return nil, err
 		}
-		cross, err := crossRepoEmbedder(cmd)
+		// As crossRepoEmbedder: the user-global embedding wins when set.
+		if layers.Global.Embedding.Provider != "" {
+			embedding = layers.Global.Embedding
+		}
+		cross, err := configuredEmbedder(embedding)
 		if err != nil {
 			return nil, err
 		}

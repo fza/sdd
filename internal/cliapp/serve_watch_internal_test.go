@@ -2,16 +2,22 @@ package cliapp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/urfave/cli/v3"
 
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	pkgllm "github.com/networkteam/sdd/pkg/llm"
 )
 
 // namedSessions tells apart the session stores of two builds.
@@ -26,11 +32,8 @@ func languageWatch(t *testing.T) (*configWatch, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeWatched(t, path, "de")
-	watch, err := newConfigWatch([]string{path}, func(*servedProject) (*servedProject, error) {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
+	watch, err := newConfigWatch([]string{path}, func(_ *servedProject, reads []configRead) (*servedProject, error) {
+		data := reads[0].data
 		return &servedProject{
 			sessions: &namedSessions{name: string(data)},
 			layers:   model.ConfigLayers{Project: &model.PerRepoConfig{Language: string(data)}},
@@ -167,4 +170,72 @@ func TestServedClientsFollowOnlyTheirOwnKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// A rebuild derives the whole project from the one read its stamps came
+// from: an edit landing after that read reaches neither the config, the
+// layers nor the LLM runner.
+func TestServedProjectComesFromOneRead(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"} {
+		t.Setenv(name, filepath.Join(root, name))
+	}
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		models = append(models, req.Model)
+		mu.Unlock()
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+	project := func(language, llmModel string) {
+		writeFile(t, filepath.Join(root, ".sdd", "config.yaml"), "default_branch: main\nlanguage: "+language+"\n")
+		writeFile(t, filepath.Join(root, ".sdd", "config.local.yaml"), "llm:\n  provider: openai\n  model: "+llmModel+"\n  endpoint: "+server.URL+
+			"\n  api_keys:\n    openai: op-notarealkeyaaaaaaaaaa\n  retry:\n    max_attempts: 1\n")
+	}
+	project("de", "read-model")
+	paths, err := servedConfigFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := readConfigFiles(paths)
+	project("en", "edited-model")
+
+	command := &cli.Command{Name: "serve", Action: func(ctx context.Context, cmd *cli.Command) error {
+		built, err := buildServedProject(cmd, nil, reads)
+		if err != nil {
+			return err
+		}
+		if built.cfg.Language != "de" || built.layers.Project.Language != "de" {
+			t.Errorf("the config and the layers should come from the read, got %q and %q", built.cfg.Language, built.layers.Project.Language)
+		}
+		_, _ = built.clients.llm.Run(ctx, pkgllm.Request{UserPrompt: "ping"})
+		mu.Lock()
+		defer mu.Unlock()
+		if len(models) == 0 || slices.ContainsFunc(models, func(model string) bool { return model != "read-model" }) {
+			t.Errorf("the runner should call the model the read named, called %q", models)
+		}
+		return nil
+	}}
+	err = command.Run(t.Context(), []string{"serve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	err := os.MkdirAll(filepath.Dir(path), 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeWatched(t, path, content)
 }

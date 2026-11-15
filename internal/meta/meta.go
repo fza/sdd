@@ -69,17 +69,11 @@ func ReadConfig(sddDir string) (*model.PerRepoConfig, error) {
 // file exists — with global settings present, a repo without config files
 // still resolves to them.
 func ResolveConfig(global model.BaseConfig, sddDir string) (*model.PerRepoConfig, error) {
-	fileCfg, err := ReadConfig(sddDir)
+	committed, local, err := ReadConfigLayers(sddDir)
 	if err != nil {
 		return nil, err
 	}
-	if fileCfg == nil {
-		if global.IsZero() {
-			return nil, nil
-		}
-		return &model.PerRepoConfig{BaseConfig: global}, nil
-	}
-	return model.MergeConfig(&model.PerRepoConfig{BaseConfig: global}, fileCfg), nil
+	return model.ConfigLayers{Global: global, Project: committed, Local: local}.Effective(), nil
 }
 
 // ReadConfigLayers returns the two per-repo config layers separately —
@@ -107,6 +101,12 @@ func readConfigFile(path string) (*model.PerRepoConfig, error) {
 		}
 		return nil, err
 	}
+	return ParseConfigFile(path, data)
+}
+
+// ParseConfigFile parses the content read from the per-repo config file at
+// path.
+func ParseConfigFile(path string, data []byte) (*model.PerRepoConfig, error) {
 	cfg, err := model.ParseConfig(data)
 	if err != nil {
 		// The path names which file carries the offense — the parse error

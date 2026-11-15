@@ -15,6 +15,18 @@ type ConfigLayers struct {
 	Local   *PerRepoConfig
 }
 
+// Effective merges the layers into the config they resolve to: nil when the
+// global base is empty and neither per-repo layer exists.
+func (l ConfigLayers) Effective() *PerRepoConfig {
+	if l.Project == nil && l.Local == nil {
+		if l.Global.IsZero() {
+			return nil
+		}
+		return &PerRepoConfig{BaseConfig: l.Global}
+	}
+	return MergeConfig(&PerRepoConfig{BaseConfig: l.Global}, MergeConfig(l.Project, l.Local))
+}
+
 func (l ConfigLayers) values() []ConfigValue {
 	return effectiveConfigValues(l.Global, l.Project, l.Local, false)
 }

@@ -3,7 +3,9 @@ package cliapp
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"slices"
 	"strings"
@@ -34,15 +36,39 @@ type fileStamp struct {
 	sum      [sha256.Size]byte
 }
 
-// stampFiles stamps a file it cannot read as unreadable; the build that
-// follows reads it again and fails loud on anything but its absence.
-func stampFiles(paths []string) []fileStamp {
-	stamps := make([]fileStamp, 0, len(paths))
+// configRead is one read of a watched file. A rebuild derives everything
+// from the reads its stamps were taken from, so an edit landing during the
+// rebuild cannot mix two versions into one project.
+type configRead struct {
+	path  string
+	data  []byte
+	found bool
+	// err is a failure other than absence; the build fails loud on it.
+	err error
+}
+
+func readConfigFiles(paths []string) []configRead {
+	reads := make([]configRead, 0, len(paths))
 	for _, path := range paths {
-		stamp := fileStamp{path: path}
+		read := configRead{path: path}
 		data, err := os.ReadFile(path)
-		if err == nil {
-			stamp.readable, stamp.sum = true, sha256.Sum256(data)
+		switch {
+		case err == nil:
+			read.data, read.found = data, true
+		case !errors.Is(err, fs.ErrNotExist):
+			read.err = err
+		}
+		reads = append(reads, read)
+	}
+	return reads
+}
+
+func stampFiles(reads []configRead) []fileStamp {
+	stamps := make([]fileStamp, 0, len(reads))
+	for _, read := range reads {
+		stamp := fileStamp{path: read.path, readable: read.found}
+		if read.found {
+			stamp.sum = sha256.Sum256(read.data)
 		}
 		stamps = append(stamps, stamp)
 	}
@@ -63,7 +89,7 @@ type servedProjectKey struct{}
 // never keeps the old config silently.
 type configWatch struct {
 	watched []string
-	build   func(previous *servedProject) (*servedProject, error)
+	build   func(previous *servedProject, reads []configRead) (*servedProject, error)
 
 	mu      sync.Mutex
 	current *servedProject
@@ -77,9 +103,10 @@ type configWatch struct {
 	toldNoneOf int
 }
 
-func newConfigWatch(watched []string, build func(previous *servedProject) (*servedProject, error)) (*configWatch, error) {
-	stamps := stampFiles(watched)
-	project, err := build(nil)
+func newConfigWatch(watched []string, build func(previous *servedProject, reads []configRead) (*servedProject, error)) (*configWatch, error) {
+	reads := readConfigFiles(watched)
+	stamps := stampFiles(reads)
+	project, err := build(nil, reads)
 	if err != nil {
 		return nil, err
 	}
@@ -108,14 +135,15 @@ func (w *configWatch) admit(ctx context.Context, session string) (context.Contex
 }
 
 func (w *configWatch) follow() error {
-	stamps := stampFiles(w.watched)
+	reads := readConfigFiles(w.watched)
+	stamps := stampFiles(reads)
 	// A broken build retries on every call, so a transient failure clears
 	// without another edit.
 	if w.broken == nil && slices.Equal(stamps, w.stamps) {
 		return nil
 	}
 	w.stamps = stamps
-	next, err := w.build(w.current)
+	next, err := w.build(w.current, reads)
 	if err != nil {
 		w.broken = err
 		return err
