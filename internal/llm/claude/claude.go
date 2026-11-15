@@ -48,8 +48,9 @@ var scrubbedEnvPrefixes = []string{"ANTHROPIC_", "CLAUDE_CODE_USE_"}
 // scrubbedEnvVars hand the CLI a key or gateway token outside both families.
 var scrubbedEnvVars = []string{"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR"}
 
-// loginEnvVars pick which signed-in profile answers, so they stay.
-var loginEnvVars = []string{"ANTHROPIC_PROFILE", "ANTHROPIC_CONFIG_DIR"}
+// keptEnvVars only locate the Anthropic profiles; ANTHROPIC_PROFILE, which
+// picks one over the claude.ai login, is scrubbed with the rest.
+var keptEnvVars = []string{"ANTHROPIC_CONFIG_DIR"}
 
 // Run executes claude -p --output-format json and parses the JSON response.
 // The claude CLI accepts a single stdin payload, so SystemPrompt and
@@ -190,7 +191,7 @@ func scrubbedEnv(env []string) []string {
 }
 
 func scrubbed(name string) bool {
-	if slices.Contains(loginEnvVars, name) {
+	if slices.Contains(keptEnvVars, name) {
 		return false
 	}
 	return slices.Contains(scrubbedEnvVars, name) ||
