@@ -114,3 +114,49 @@ func TestGatherCreditsTheNamedCapture(t *testing.T) {
 		t.Fatalf("a refused gather should log no read: %+v", reads)
 	}
 }
+
+// A view or show paged past the result bound logs its bodies as full reads
+// only once every page has served: refsInspected must not pass on a body the
+// agent never got.
+func TestAPagedReadLogsItsBodiesOnlyOnceEveryPageServed(t *testing.T) {
+	dir, ids, _ := largeGraph(t)
+	for _, tc := range []struct {
+		tool  string
+		field string
+		args  map[string]any
+	}{
+		{tool: "view", field: "sections", args: map[string]any{"layout": "active:n(12):as-bodies"}},
+		{tool: "show", field: "entries", args: map[string]any{"ids": ids[:12]}},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			env := newTestServer(t, nil, dir, "")
+			cs := connect(t, env.srv)
+			tc.args["session"] = openSession(t, cs).Session
+			text := func(result map[string]any) string { s, _ := result[tc.field].(string); return s }
+
+			page := callRaw(t, cs, tc.tool, tc.args)
+			if !strings.Contains(text(page), "for the next;") {
+				t.Fatalf("the read should page past the result bound, got %.200q", text(page))
+			}
+			full := func() []any {
+				var listed []any
+				for _, read := range readEvents(t, env, tc.args["session"].(string), tc.tool) {
+					ids, _ := read.Data["full"].([]any)
+					listed = append(listed, ids...)
+				}
+				return listed
+			}
+			if listed := full(); len(listed) > 0 {
+				t.Fatalf("a body on a page not served yet should not count as read in full: %v", listed)
+			}
+
+			for n := 2; strings.Contains(text(page), "for the next;"); n++ {
+				tc.args["page"] = n
+				page = callRaw(t, cs, tc.tool, tc.args)
+			}
+			if listed := full(); len(listed) != 12 {
+				t.Fatalf("every body should count as read in full once its last page served, got %d: %v", len(listed), listed)
+			}
+		})
+	}
+}

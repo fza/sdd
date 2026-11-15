@@ -1059,7 +1059,7 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 	}
 	defer ss.mu.Unlock()
 	if args.Page > 1 {
-		sections, err := heldPage(ss, "view", args.Page)
+		sections, err := s.heldPageRead(ctx, req, ss, "view", args.Page)
 		return nil, ViewResult{Sections: sections}, err
 	}
 	project, branch, branchFromSession, err := s.readScope(ctx, req, ss, args.Project)
@@ -1074,9 +1074,6 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 	}
 	hint := viewHint(ss)
 	sections := presenters.ViewText(result.ViewSections, ss.repeats())
-	if err := s.logRootRead(ctx, req, ss, "view", result.FullIDs, result.SummaryIDs); err != nil {
-		return nil, ViewResult{}, err
-	}
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, ViewResult{}, err
 	}
@@ -1092,7 +1089,10 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 			sections = msg + "\n\n" + sections
 		}
 	}
-	sections = pagedText(ss, "view", sections)
+	sections, err = s.pagedRead(ctx, req, ss, "view", sections, result.FullIDs, result.SummaryIDs)
+	if err != nil {
+		return nil, ViewResult{}, err
+	}
 	return nil, ViewResult{Sections: sections, Hint: hint}, nil
 
 }
@@ -1229,7 +1229,7 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 	}
 	defer ss.mu.Unlock()
 	if args.Page > 1 {
-		entries, err := heldPage(ss, "show", args.Page)
+		entries, err := s.heldPageRead(ctx, req, ss, "show", args.Page)
 		return nil, ShowResult{Entries: entries}, err
 	}
 	up := sdd.DefaultShowUpDepth
@@ -1250,9 +1250,6 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 	if err != nil {
 		return nil, ShowResult{}, err
 	}
-	if err := s.logRootRead(ctx, req, ss, "show", result.FullIDs, result.SummaryIDs); err != nil {
-		return nil, ShowResult{}, err
-	}
 	entries, err := presenters.ShowText(result.Items, ss.repeats())
 	if err != nil {
 		return nil, ShowResult{}, err
@@ -1260,7 +1257,11 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, ShowResult{}, err
 	}
-	return nil, ShowResult{Entries: pagedText(ss, "show", entries)}, nil
+	entries, err = s.pagedRead(ctx, req, ss, "show", entries, result.FullIDs, result.SummaryIDs)
+	if err != nil {
+		return nil, ShowResult{}, err
+	}
+	return nil, ShowResult{Entries: entries}, nil
 }
 
 func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args GatherArgs) (*mcp.CallToolResult, GatherResult, error) {
