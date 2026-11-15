@@ -95,3 +95,22 @@ func requireOnlyKeys(path string, allowed []string) error {
 	}
 	return fmt.Errorf("%s sets %s, but a repository with project_dir may set only %s; move the rest into the project's own .sdd/ config", path, strings.Join(misplaced, ", "), strings.Join(allowed, ", "))
 }
+
+// ResolvedPath resolves symlinks in path, through its nearest existing
+// ancestor when path does not exist yet.
+func ResolvedPath(path string) string {
+	path = filepath.Clean(path)
+	var rest []string
+	for {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			return filepath.Join(append([]string{resolved}, rest...)...)
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return filepath.Join(append([]string{path}, rest...)...)
+		}
+		rest = append([]string{filepath.Base(path)}, rest...)
+		path = parent
+	}
+}

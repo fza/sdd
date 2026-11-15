@@ -303,8 +303,8 @@ func committedProjectDir(cmd *command.InitCmd) (string, error) {
 	if !filepath.IsAbs(cmd.ProjectDir) {
 		return cmd.ProjectDir, nil
 	}
-	repoRoot := resolvedPath(cmd.RepoRoot)
-	rel, err := filepath.Rel(repoRoot, resolvedPath(cmd.ProjectDir))
+	repoRoot := meta.ResolvedPath(cmd.RepoRoot)
+	rel, err := filepath.Rel(repoRoot, meta.ResolvedPath(cmd.ProjectDir))
 	if err != nil {
 		return "", fmt.Errorf("--project-dir %s: %w", cmd.ProjectDir, err)
 	}
@@ -313,23 +313,4 @@ func committedProjectDir(cmd *command.InitCmd) (string, error) {
 		return "", fmt.Errorf("--project-dir %s lies outside %s, beside which a committed pointer names its project; pass it relative to the repository, or set the absolute path as project_dir in %s", cmd.ProjectDir, filepath.Dir(repoRoot), filepath.Join(cmd.RepoRoot, model.SDDDirName, "config.local.yaml"))
 	}
 	return rel, nil
-}
-
-// resolvedPath resolves symlinks in path, through its nearest existing
-// ancestor when path does not exist yet.
-func resolvedPath(path string) string {
-	path = filepath.Clean(path)
-	var rest []string
-	for {
-		resolved, err := filepath.EvalSymlinks(path)
-		if err == nil {
-			return filepath.Join(append([]string{resolved}, rest...)...)
-		}
-		parent := filepath.Dir(path)
-		if parent == path {
-			return filepath.Join(append([]string{path}, rest...)...)
-		}
-		rest = append([]string{filepath.Base(path)}, rest...)
-		path = parent
-	}
 }
