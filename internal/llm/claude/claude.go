@@ -52,6 +52,21 @@ var scrubbedEnvVars = []string{"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "CLAUDE_CO
 // picks one over the claude.ai login, is scrubbed with the rest.
 var keptEnvVars = []string{"ANTHROPIC_CONFIG_DIR"}
 
+// parentSessionEnvVars are what a Claude Code session hands its child
+// processes, sdd's server among them. Inherited, they would make the call
+// count itself as a nested session of that one, take over its session ID and
+// reach its messaging inbox; the call belongs to sdd, so every mode drops them.
+var parentSessionEnvVars = []string{
+	"CLAUDECODE",
+	"CLAUDE_CODE_SESSION_ID",
+	"CLAUDE_CODE_CHILD_SESSION",
+	"CLAUDE_CODE_SESSION_ATTENDED",
+	"CLAUDE_PID",
+	"CLAUDE_EFFORT",
+	"CLAUDE_CODE_MESSAGING_SOCKET",
+	"CLAUDE_CODE_MESSAGING_TOKEN",
+}
+
 // Run executes claude -p --output-format json and parses the JSON response.
 // The claude CLI accepts a single stdin payload, so SystemPrompt and
 // UserPrompt are concatenated — prompt caching is not available through this
@@ -73,9 +88,9 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	if len(req.ResponseSchema) > 0 {
 		args = append(args, "--json-schema", string(req.ResponseSchema))
 	}
-	env := os.Environ()
+	env := withoutVars(os.Environ(), func(name string) bool { return slices.Contains(parentSessionEnvVars, name) })
 	if r.credentials != model.ClaudeCLICredentialsEnv {
-		env = scrubbedEnv(env)
+		env = withoutVars(env, scrubbed)
 		// A settings file's env block and apiKeyHelper apply even under --safe-mode.
 		args = append(args, "--setting-sources", "")
 	}
@@ -177,23 +192,17 @@ func (r *Runner) failure(runErr error, resp claudeResponse) error {
 	return err
 }
 
-// scrubbedEnv returns env without the credential variables, matched by name so
-// a variable whose value merely looks like a key is left alone.
-func scrubbedEnv(env []string) []string {
-	out := make([]string, 0, len(env))
-	for _, entry := range env {
+// withoutVars returns env without the variables drop names, matched by name so
+// a variable whose value merely looks like a key is left alone, and without
+// regard to case, as Windows reads the names. drop sees the name upper-cased.
+func withoutVars(env []string, drop func(name string) bool) []string {
+	return slices.DeleteFunc(env, func(entry string) bool {
 		name, _, _ := strings.Cut(entry, "=")
-		if scrubbed(name) {
-			continue
-		}
-		out = append(out, entry)
-	}
-	return out
+		return drop(strings.ToUpper(name))
+	})
 }
 
-// scrubbed matches without regard to case, as Windows reads the names.
 func scrubbed(name string) bool {
-	name = strings.ToUpper(name)
 	if slices.Contains(keptEnvVars, name) {
 		return false
 	}

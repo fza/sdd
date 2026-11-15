@@ -123,6 +123,17 @@ func TestRunCredentials(t *testing.T) {
 		"Claude_Code_Api_Key_File_Descriptor",
 	}
 	keptVars := []string{"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "ANTHROPIC_CONFIG_DIR", "Anthropic_Config_Dir", "SDD_TEST_UNRELATED"}
+	// What a Claude Code session hands its own child processes, sdd's server among them.
+	parentSessionVars := []string{
+		"CLAUDECODE",
+		"CLAUDE_CODE_SESSION_ID",
+		"CLAUDE_CODE_CHILD_SESSION",
+		"CLAUDE_CODE_SESSION_ATTENDED",
+		"CLAUDE_PID",
+		"CLAUDE_EFFORT",
+		"CLAUDE_CODE_MESSAGING_SOCKET",
+		"CLAUDE_CODE_MESSAGING_TOKEN",
+	}
 	for _, tc := range []struct {
 		name          string
 		credentials   model.ClaudeCLICredentials
@@ -133,7 +144,7 @@ func TestRunCredentials(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := fakeCLI(t, `{"type":"result","result":"ok","usage":{}}`)
-			for _, name := range slices.Concat(providerVars, keptVars) {
+			for _, name := range slices.Concat(providerVars, keptVars, parentSessionVars) {
 				t.Setenv(name, "sk-ant-value")
 			}
 			if _, err := claude.NewRunner("sonnet", tc.credentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
@@ -148,6 +159,11 @@ func TestRunCredentials(t *testing.T) {
 			for _, name := range keptVars {
 				if !slices.Contains(names, name) {
 					t.Errorf("%s should reach the child in every mode", name)
+				}
+			}
+			for _, name := range parentSessionVars {
+				if slices.Contains(names, name) {
+					t.Errorf("%s should reach the child in no mode: the call is no part of the session that started sdd", name)
 				}
 			}
 			sources, found := flagValue(recordedArgs(t, dir), "--setting-sources")
