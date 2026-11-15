@@ -839,3 +839,32 @@ func TestSearchSnapshotKeepsDecodedRowsAcrossManifestChanges(t *testing.T) {
 		t.Errorf("a search after another entry was published should reuse the rows it decoded and read only the new ones, found %d", got)
 	}
 }
+
+func TestSearchSnapshotDecodesARowAgainWhenItsVersionChanges(t *testing.T) {
+	indexDir := t.TempDir()
+	write := func(hash string, vector []float32) {
+		t.Helper()
+		err := index.WriteStore(t.Context(), indexDir, func(idx *index.Index) error {
+			row := fillRow("entry-a", vector)
+			row.EntryHash = hash
+			if err := idx.UpsertEntry(t.Context(), "entry-a", []string{row.ChunkID}, []index.Row{row}); err != nil {
+				return err
+			}
+			manifest := &index.Manifest{Version: 1, Entries: map[string]index.EntryState{}}
+			manifest.AddVersion("entry-a", index.EntryVersion{Hash: hash, Fingerprint: row.ModelFingerprint, ChunkIDs: []string{row.ChunkID}})
+			return manifest.Save(indexDir)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("h-first", []float32{1, 0, 0, 0})
+	if hits := snapshotQuery(t, indexDir, []float32{1, 0, 0, 0}, 1); len(hits) != 1 || hits[0].EntryHash != "h-first" {
+		t.Fatalf("the first search should read the first version, got %+v", hits)
+	}
+	write("h-second", []float32{0, 1, 0, 0})
+	hits := snapshotQuery(t, indexDir, []float32{0, 1, 0, 0}, 1)
+	if len(hits) != 1 || hits[0].EntryHash != "h-second" || hits[0].Score < 0.99 {
+		t.Errorf("a row the manifest names under a new version should be decoded again, got %+v", hits)
+	}
+}

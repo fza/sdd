@@ -284,9 +284,6 @@ func (v *storeView) snapshotLocked(ctx context.Context) (*snapshotData, bool, er
 	for _, id := range missing {
 		cached, ok := v.rowFiles[id]
 		row := cached.row
-		if ok && cached.version != v.published[id] {
-			ok = false
-		}
 		if !ok {
 			var err error
 			row, err = readRowFile(v.dir, id)
