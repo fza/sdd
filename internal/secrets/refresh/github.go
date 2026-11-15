@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -49,14 +50,14 @@ func (g *gitHub) LatestTag(ctx context.Context) (string, error) {
 	return release.TagName, nil
 }
 
-// RuleFile downloads config/gitleaks.toml at a release tag.
-func (g *gitHub) RuleFile(ctx context.Context, tag string) ([]byte, error) {
-	if !releaseTag(tag) {
-		return nil, fmt.Errorf("%q is no release version", tag)
+// RuleFile downloads config/gitleaks.toml at a commit.
+func (g *gitHub) RuleFile(ctx context.Context, commit string) ([]byte, error) {
+	if !commitSHA.MatchString(commit) {
+		return nil, fmt.Errorf("%q is no commit hash", commit)
 	}
-	data, err := g.get(ctx, gitHubRaw+"/"+gitleaksRepo+"/"+tag+"/"+gitleaksRulePath, "", maxRuleFileSize)
+	data, err := g.get(ctx, gitHubRaw+"/"+gitleaksRepo+"/"+commit+"/"+gitleaksRulePath, "", maxRuleFileSize)
 	if err != nil {
-		return nil, fmt.Errorf("downloading gitleaks' rule file at %s: %w", tag, err)
+		return nil, fmt.Errorf("downloading gitleaks' rule file at %s: %w", commit, err)
 	}
 	return data, nil
 }
@@ -70,8 +71,14 @@ func (g *gitHub) TagCommit(ctx context.Context, tag string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("asking for the commit of gitleaks %s: %w", tag, err)
 	}
-	return strings.TrimSpace(string(body)), nil
+	commit := strings.TrimSpace(string(body))
+	if !commitSHA.MatchString(commit) {
+		return "", fmt.Errorf("gitleaks %s points at %q, which is no commit hash", tag, commit)
+	}
+	return commit, nil
 }
+
+var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 func (g *gitHub) get(ctx context.Context, url, accept string, limit int64) (_ []byte, err error) {
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)

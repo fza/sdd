@@ -64,7 +64,12 @@ func run(ctx context.Context, dir string, out io.Writer) error {
 		fmt.Fprintf(out, "the built-in rule file is gitleaks %s, the latest release is %s: nothing to do\n", stamp.Tag, tag)
 		return nil
 	}
-	fetched, err := github.RuleFile(ctx, tag)
+	// A tag can move; the file is read at the commit the stamp records.
+	commit, err := github.TagCommit(ctx, tag)
+	if err != nil {
+		return err
+	}
+	fetched, err := github.RuleFile(ctx, commit)
 	if err != nil {
 		return err
 	}
@@ -79,10 +84,6 @@ func run(ctx context.Context, dir string, out io.Writer) error {
 	previous, err := secrets.ParseRules(current)
 	if err != nil {
 		return fmt.Errorf("%s: %w", rulesPath, err)
-	}
-	commit, err := github.TagCommit(ctx, tag)
-	if err != nil {
-		return err
 	}
 
 	err = os.WriteFile(rulesPath, fetched, 0o644)
