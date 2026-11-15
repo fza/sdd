@@ -2,6 +2,7 @@ package finders
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -47,7 +48,7 @@ func MultiSearch(ctx context.Context, local *SearchFinder, q query.SearchQuery) 
 	}
 	logger := slogutils.FromContext(ctx)
 	for _, repoID := range repoIDs {
-		member, closeIndex, err := searchMember(ctx, q, repoID, local)
+		member, closeIndex, busy, err := searchMember(ctx, q, repoID, local)
 		if err != nil {
 			return nil, err
 		}
@@ -57,6 +58,10 @@ func MultiSearch(ctx context.Context, local *SearchFinder, q query.SearchQuery) 
 		}
 		mq := q
 		mq.Repos, mq.AllRepos = nil, false
+		if busy {
+			logger.Warn("dependency search index busy; searching it by text", "repo", repoID, "bound", local.lockBound)
+			mq = mq.TextFallback()
+		}
 		mres, err := member.Search(ctx, mq)
 		closeIndex()
 		if err != nil {
@@ -83,39 +88,44 @@ func MultiSearch(ctx context.Context, local *SearchFinder, q query.SearchQuery) 
 // repo's cache graph dir and per-repo index (vector mode only), and the
 // function releasing that index once the member search ran. A nil finder means
 // the repo is not available — not connected or not cached — which the caller
-// reports.
-func searchMember(ctx context.Context, q query.SearchQuery, repoID model.RepoID, local *SearchFinder) (*SearchFinder, func(), error) {
+// reports. busy reports a member index held past the local finder's lock
+// bound; the finder then has no index and the caller searches it by text.
+func searchMember(ctx context.Context, q query.SearchQuery, repoID model.RepoID, local *SearchFinder) (_ *SearchFinder, closeIndex func(), busy bool, _ error) {
 	member, err := local.graph.MemberGraph(repoID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	if member == nil {
-		return nil, nil, nil
+		return nil, nil, false, nil
 	}
 	cacheDir, err := local.repos.CacheDir(repoID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	graphDir, err := repos.Cache{RepoID: repoID, Dir: cacheDir}.GraphDir()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	var store VectorIndex
-	closeIndex := func() {}
+	closeIndex = func() {}
 	if q.Phrase != "" && local.embedder != nil {
 		// The member index is the same machine-global store the repo's own
 		// checkout uses — keyed by (repo-id, fingerprint), embedded once.
 		storeDir := index.StoreDir(local.repos.CacheRoot(), index.RepoKey(repoID, cacheDir), local.embedder.Fingerprint())
-		snapshot, err := index.OpenSearchSnapshot(ctx, storeDir, 0)
-		if err != nil {
-			return nil, nil, fmt.Errorf("opening index for %s: %w", repoID, err)
+		snapshot, err := index.OpenSearchSnapshot(ctx, storeDir, local.lockBound)
+		switch {
+		case errors.Is(err, index.ErrLockBusy):
+			busy = true
+		case err != nil:
+			return nil, nil, false, fmt.Errorf("opening index for %s: %w", repoID, err)
+		default:
+			store, closeIndex = snapshot, func() { _ = snapshot.Close() }
 		}
-		store, closeIndex = snapshot, func() { _ = snapshot.Close() }
 	}
 	return NewSearchFinder(SearchFinderOptions{
 		Graph:      member,
 		GraphDir:   graphDir,
 		Embedder:   local.embedder,
 		IndexStore: store,
-	}), closeIndex, nil
+	}), closeIndex, busy, nil
 }

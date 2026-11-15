@@ -574,11 +574,12 @@ func searchCmd() *cli.Command {
 					}
 				}
 				opts := finders.SearchFinderOptions{
-					Graph:      g,
-					GraphDir:   graphDir,
-					Embedder:   emb,
-					IndexStore: idxStore,
-					Repos:      reg,
+					Graph:          g,
+					GraphDir:       graphDir,
+					Embedder:       emb,
+					IndexStore:     idxStore,
+					Repos:          reg,
+					IndexLockBound: searchLockBound,
 				}
 				if !crossRepo {
 					defer timing.Start(ctx, "search")()

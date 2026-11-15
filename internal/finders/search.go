@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/networkteam/sdd/internal/chunking"
 	"github.com/networkteam/sdd/internal/index"
@@ -33,6 +34,7 @@ type SearchFinder struct {
 	indexStore VectorIndex     // nil disables vector and hybrid modes
 	repos      *repos.Registry // nil disables cross-repo search
 	closure    []model.RepoID
+	lockBound  time.Duration
 }
 
 // SearchFinderOptions configures NewSearchFinder. Graph is the graph the
@@ -50,6 +52,10 @@ type SearchFinderOptions struct {
 	// Closure is the dependency closure cross-repo search selects from
 	// (Finder.DependencyClosure).
 	Closure []model.RepoID
+	// IndexLockBound caps how long a member index of a cross-repo search waits
+	// for its read lock; a member held past it is searched by text. Zero
+	// waits until the context ends.
+	IndexLockBound time.Duration
 }
 
 // VectorIndex is the store a vector search scans: index.SearchSnapshot on the
@@ -68,6 +74,7 @@ func NewSearchFinder(opts SearchFinderOptions) *SearchFinder {
 		indexStore: opts.IndexStore,
 		repos:      opts.Repos,
 		closure:    opts.Closure,
+		lockBound:  opts.IndexLockBound,
 	}
 }
 
