@@ -127,10 +127,3 @@ func boundedPage(page ReadAttachmentResult) ReadAttachmentResult {
 	page.NextOffset, page.More = page.Offset+int64(len(page.Content)), true
 	return page
 }
-
-func boolRank(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}

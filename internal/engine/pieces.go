@@ -158,14 +158,41 @@ func (s *Session) DropPiecesSince(mark int) {
 		return
 	}
 	for _, dropped := range s.call.pending[mark:] {
-		delete(s.call.issued, dropped.piece)
-		for _, id := range dropped.covers {
-			if s.call.covered[id] == dropped.tag {
-				delete(s.call.covered, id)
-			}
-		}
+		s.unissue(dropped)
 	}
 	s.call.pending = s.call.pending[:mark]
+}
+
+// KeepDelivered withdraws the pieces served in full after mark whose placed
+// tag delivered, the text a result carries of them, does not hold: text
+// composed into a part the result left out or left waiting. Empty delivered
+// withdraws every one, as DropPiecesSince does.
+func (s *Session) KeepDelivered(mark int, delivered string) {
+	if delivered == "" {
+		s.DropPiecesSince(mark)
+		return
+	}
+	if mark < 0 || mark > len(s.call.pending) {
+		return
+	}
+	kept := s.call.pending[:mark]
+	for _, p := range s.call.pending[mark:] {
+		if p.changed || (p.tag != "" && strings.Contains(delivered, model.AnchorMark(p.tag)+" ")) {
+			kept = append(kept, p)
+			continue
+		}
+		s.unissue(p)
+	}
+	s.call.pending = kept
+}
+
+func (s *Session) unissue(p pendingAnchor) {
+	delete(s.call.issued, p.piece)
+	for _, id := range p.covers {
+		if s.call.covered[id] == p.tag {
+			delete(s.call.covered, id)
+		}
+	}
 }
 
 // RecordAnchors logs the anchors the call issued since the last record, so a
