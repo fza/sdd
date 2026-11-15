@@ -137,7 +137,7 @@ type PerRepoConfig struct {
 	// ProjectDir points a work repository at the sdd project that holds its
 	// graph, kept in a repository of its own: the folder holding that
 	// project's .sdd/, relative to the folder holding this .sdd/ or absolute.
-	// A repository setting it carries no project settings of its own — see
+	// A repository setting it carries no project settings of its own; see
 	// PointerKeys and LocalPointerKeys.
 	ProjectDir string `yaml:"project_dir,omitempty"`
 }
