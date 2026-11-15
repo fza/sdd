@@ -159,6 +159,18 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 			mention:    "reads as more than one path",
 		},
 		{
+			name:       "graph directory outside any repository",
+			projectDir: "../work-sdd",
+			args:       []string{"--language", "en", "--graph-dir", "../norepo/graph"},
+			mention:    "outside any repository",
+		},
+		{
+			name:       "graph directory in the work repository",
+			projectDir: "../work-sdd",
+			args:       []string{"--language", "en", "--graph-dir", "../work/graph"},
+			mention:    "a repository separate from",
+		},
+		{
 			name:       "work repository itself",
 			projectDir: ".",
 			args:       []string{"--language", "en"},

@@ -32,6 +32,14 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 	if err != nil {
 		return fmt.Errorf("--graph-dir: %w", err)
 	}
+	graphDir := meta.ResolveGraphDir(projectRoot, &model.PerRepoConfig{GraphDir: cmd.GraphDir})
+	if !meta.WithinDir(projectRoot, graphDir) {
+		graphRepo := h.projectRepos.RootOf(graphDir)
+		if graphRepo == "" {
+			return fmt.Errorf("--graph-dir leads to %s, outside the project and outside any repository; keep the graph inside the project", graphDir)
+		}
+		return fmt.Errorf("--graph-dir leads into %s, a repository separate from the project at %s; keep the graph inside the project", graphRepo, projectRoot)
+	}
 	root := h.projectRepos.RootOf(projectRoot)
 	if root == "" {
 		err := os.MkdirAll(projectRoot, 0o755)
