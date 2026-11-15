@@ -198,7 +198,18 @@ func (f *appFixture) serveWith(t *testing.T, options *mcp.ClientOptions, check f
 		}
 	}()
 
-	client, err := mcp.NewClient(&mcp.Implementation{Name: "cli-test", Version: "test"}, options).Connect(ctx, &mcp.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
+	var client *mcp.ClientSession
+	var err error
+	connected := make(chan struct{})
+	go func() {
+		client, err = mcp.NewClient(&mcp.Implementation{Name: "cli-test", Version: "test"}, options).Connect(ctx, &mcp.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
+		close(connected)
+	}()
+	select {
+	case <-connected:
+	case <-done:
+		t.Fatalf("sdd serve ended before answering the MCP handshake: %v\n%s", runErr, stderr.String())
+	}
 	if err != nil {
 		t.Fatalf("initialize CLI MCP: %v", err)
 	}

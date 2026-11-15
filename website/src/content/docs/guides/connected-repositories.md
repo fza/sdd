@@ -161,3 +161,4 @@ This removes the `repo_id` from `dependencies` and commits the change. It refuse
 | `declares repo_id …, but its clone URL derives …` | The URL points to a fork, a mirror or another repository | Use the URL of the repository that declares that `repo_id` |
 | `sdd lint` reports a reference into a repository that is not a declared dependency | The dependency was removed with `--force` | Declare it again with `sdd repo add` |
 | Every read warns that a pull failed with a non-fast-forward error | The other repository rewrote its history | Delete the clone directory under `~/.local/share/sdd/repos/` and run `sdd repo sync` to clone it again |
+| `dependency <repo_id> has no clone on this machine yet` or `serving checkout is missing` from your agent's `sdd` server | The clone is gone and the git limits defer cloning it again | `sdd repo sync <repo_id>`. The server serves the new clone on the next call |

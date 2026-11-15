@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
+	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/gitgate"
@@ -72,6 +75,11 @@ func (g *GraphClones) ensure(ctx context.Context, repoID model.RepoID, source mo
 	if err != nil {
 		return "", false, err
 	}
+	unlock, err := g.lockEnsure(ctx, repoID)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { err = errors.Join(err, unlock()) }()
 	if !IsCloned(dir) {
 		err = g.clone(ctx, repoID, source, dir)
 		if err != nil {
@@ -84,6 +92,26 @@ func (g *GraphClones) ensure(ctx context.Context, repoID model.RepoID, source mo
 		return "", false, err
 	}
 	return dir, cloned, nil
+}
+
+// ensureLockPoll is how often a caller waiting for another's clone of the
+// same repository retries its lock.
+const ensureLockPoll = 100 * time.Millisecond
+
+// lockEnsure holds the lock of repoID's clone while one process makes or
+// keeps it, so a second waits instead of clearing the first one's staging.
+func (g *GraphClones) lockEnsure(ctx context.Context, repoID model.RepoID) (unlock func() error, err error) {
+	locks := filepath.Join(g.dataRoot, "repos", ".locks")
+	err = os.MkdirAll(locks, 0o755)
+	if err != nil {
+		return nil, fmt.Errorf("creating %s: %w", locks, err)
+	}
+	lock := flock.New(filepath.Join(locks, url.PathEscape(string(repoID))+".lock"))
+	_, err = lock.TryLockContext(ctx, ensureLockPoll)
+	if err != nil {
+		return nil, fmt.Errorf("waiting for another clone of %s: %w", repoID, err)
+	}
+	return lock.Unlock, nil
 }
 
 // Stage clones cloneURL into a fresh directory beside the clones, for a
@@ -118,11 +146,16 @@ func (g *GraphClones) Stage(ctx context.Context, cloneURL string) (staged string
 
 // Place moves a staged clone to where the clone of repoID lives and keeps
 // it; a clone already there stays and the staged one is left to its remove.
-func (g *GraphClones) Place(ctx context.Context, staged string, repoID model.RepoID) (string, error) {
-	dir, err := g.Dir(repoID)
+func (g *GraphClones) Place(ctx context.Context, staged string, repoID model.RepoID) (dir string, err error) {
+	dir, err = g.Dir(repoID)
 	if err != nil {
 		return "", err
 	}
+	unlock, err := g.lockEnsure(ctx, repoID)
+	if err != nil {
+		return "", err
+	}
+	defer func() { err = errors.Join(err, unlock()) }()
 	if !IsCloned(dir) {
 		err = os.MkdirAll(filepath.Dir(dir), 0o755)
 		if err != nil {

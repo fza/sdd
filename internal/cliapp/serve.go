@@ -57,7 +57,7 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				Sources: cli.EnvVars("SDD_SERVE_TOKEN"),
 			},
 		),
-		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
+		Action: withPendingGraphClone(withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = handlers.WithoutSyncReport(ctx)
 			watch, err := newConfigWatch(func() (string, error) { return resolveGraphDir(cmd) }, func() (*servedProject, error) {
 				return buildServedProject(ctx, cmd, "")
@@ -90,34 +90,44 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 				go runCachePruneTimer(timerCtx, launchCachePrune)
 				cacheNotice = serveCacheNotice
 			}
-			transport := cmd.String("transport")
-			srv, err := mcpserver.New(mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll,
+			return runMCPServerWith(ctx, cmd, mcpserver.Options{
 				Application:   application,
 				LocalIdentity: identity,
-				LocalClient:   transport == "stdio",
-				Version:       cmd.Root().Version,
 				CacheNotice:   cacheNotice,
 				BeforeCall:    watch.admit,
 			})
-			if err != nil {
-				return err
-			}
+		})),
+	}
+}
 
-			switch transport {
-			case "stdio":
-				return srv.Run(ctx, commandTransport(cmd.Reader, cmd.Writer))
-			case "http":
-				token := cmd.String("auth-token")
-				if token == "" {
-					return fmt.Errorf("transport=http requires --auth-token (or SDD_SERVE_TOKEN) — the write path must not be open to anyone who can reach the address")
-				}
-				addr := cmd.String("addr")
-				fmt.Fprintf(cmd.ErrWriter, "sdd serve: listening on http://%s (bearer token required)\n", addr)
-				return runLocalHTTP(ctx, addr, token, srv)
-			default:
-				return fmt.Errorf("invalid transport %q: use stdio or http", cmd.String("transport"))
-			}
-		}),
+func runMCPServer(ctx context.Context, cmd *cli.Command, application *sdd.Application, identity sdd.RequestIdentity) error {
+	return runMCPServerWith(ctx, cmd, mcpserver.Options{Application: application, LocalIdentity: identity})
+}
+
+// runMCPServerWith serves options over the command's transport.
+func runMCPServerWith(ctx context.Context, cmd *cli.Command, options mcpserver.Options) error {
+	transport := cmd.String("transport")
+	options.SearchSyncMode = sdd.SearchSyncAll
+	options.LocalClient = transport == "stdio"
+	options.Version = cmd.Root().Version
+	srv, err := mcpserver.New(options)
+	if err != nil {
+		return err
+	}
+
+	switch transport {
+	case "stdio":
+		return srv.Run(ctx, commandTransport(cmd.Reader, cmd.Writer))
+	case "http":
+		token := cmd.String("auth-token")
+		if token == "" {
+			return fmt.Errorf("transport=http requires --auth-token (or SDD_SERVE_TOKEN) — the write path must not be open to anyone who can reach the address")
+		}
+		addr := cmd.String("addr")
+		fmt.Fprintf(cmd.ErrWriter, "sdd serve: listening on http://%s (bearer token required)\n", addr)
+		return runLocalHTTP(ctx, addr, token, srv)
+	default:
+		return fmt.Errorf("invalid transport %q: use stdio or http", cmd.String("transport"))
 	}
 }
 
@@ -244,7 +254,14 @@ func (d *connectedDependencies) resolve(ctx context.Context, repoID sdd.RepoID) 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if runtime := d.runtimes[repoID]; runtime != nil {
-		return runtime, nil
+		dir, err := d.registry.CloneDir(repoID)
+		if err != nil {
+			return nil, err
+		}
+		if repos.IsCloned(dir) {
+			return runtime, nil
+		}
+		delete(d.runtimes, repoID)
 	}
 	global, err := d.registry.Load()
 	if err != nil {
@@ -257,7 +274,8 @@ func (d *connectedDependencies) resolve(ctx context.Context, repoID sdd.RepoID) 
 	dir, _, err := d.manager.Ensure(ctx, repo)
 	var deferred *gitgate.DeferredError
 	if errors.As(err, &deferred) {
-		return nil, dependencyUnavailable()
+		message := fmt.Sprintf("dependency %s has no clone on this machine yet; run `sdd repo sync %s`", repoID, repoID)
+		return nil, &sdd.ApplicationError{Code: sdd.ErrorProjectUnavailable, Message: message, Cause: err}
 	}
 	if err != nil {
 		return nil, err
