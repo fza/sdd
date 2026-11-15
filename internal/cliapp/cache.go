@@ -139,7 +139,7 @@ func runCachePruneTimer(ctx context.Context, launch func(dir, logPath string) er
 			return
 		case <-ticker.C:
 			backgroundCachePrune(ctx, launch, false)
-			useSecretRules(ctx)
+			secrets.Active().Recheck(ctx)
 		}
 	}
 }
@@ -150,26 +150,23 @@ func secretRulesDir(loc repos.Locations) string {
 
 // useSecretRules points credential scans at the rule file
 // secrets.rules_update allows: the copies the daily pass fetches while it is
-// daily, the built-in file while it is off. Called again in a running server,
-// it picks up a copy fetched since. A config it cannot read leaves the rules
-// in use, as the command reading that config fails on its own.
-func useSecretRules(ctx context.Context) {
-	log := slogutils.FromContext(ctx)
+// daily, the built-in file while it is off. serve calls it again on every
+// config rebuild; its hourly timer only rechecks for a newly fetched copy.
+func useSecretRules(ctx context.Context) error {
 	loc, err := repos.DefaultLocations()
 	if err != nil {
-		log.Warn("secret rules: resolving the cache dir", "err", err)
-		return
+		return err
 	}
 	cfg, err := repos.LoadConfigFrom(loc.ConfigPath)
 	if err != nil {
-		log.Warn("secret rules: reading the global config", "err", err)
-		return
+		return err
 	}
 	dir := ""
 	if model.ResolveSecretRulesUpdate(cfg.Secrets) == model.SecretRulesDaily {
 		dir = secretRulesDir(loc)
 	}
 	secrets.Use(ctx, dir)
+	return nil
 }
 
 // serveCacheNotice is the MCP server's CacheNotice: a failed run's notice,

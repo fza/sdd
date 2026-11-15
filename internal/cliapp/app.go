@@ -522,7 +522,10 @@ func New(options Options) *cli.Command {
 			}
 
 			warnUnknownConfigKeys(ctx)
-			useSecretRules(ctx)
+			err := useSecretRules(ctx)
+			if err != nil {
+				return ctx, err
+			}
 
 			if checksStrays(cmd.Args().First()) {
 				err := strayRefusal(ctx)
