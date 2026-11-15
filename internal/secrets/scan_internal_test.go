@@ -3,9 +3,10 @@ package secrets
 import "testing"
 
 // Clean text must not pay for the rule set: a rule's pattern compiles only
-// once one of its keywords occurs.
+// once one of its keywords occurs. The set is its own, since other tests
+// compile the shared built-in one.
 func TestScanCompilesNoPatternForTextWithoutKeywords(t *testing.T) {
-	set, err := builtinRules()
+	set, err := decodeRules(builtinTOML)
 	if err != nil {
 		t.Fatal(err)
 	}
