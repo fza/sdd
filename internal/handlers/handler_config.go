@@ -45,7 +45,7 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 			return nil, fmt.Errorf("%q is not a valid %s config key", cmd.Key, layer)
 		}
 		if err := model.UnmarshalYAML(patched, probe); err != nil {
-			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
+			return nil, fmt.Errorf("%s is not valid for the %s config: %w", cmd.Key, layer, err)
 		}
 		return patched, nil
 	})
