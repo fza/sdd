@@ -673,6 +673,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		workflow.CutRepeats()
 		ss.root = workflow
 	}
+	ss.playbacks = nil
 	s.noteSyncSession(ctx, req, ss)
 	if ss.root.Finished() {
 		ss.mu.Unlock()
@@ -1659,6 +1660,8 @@ func (s *toolSet) toRootServeResultWithin(ctx context.Context, req *mcp.CallTool
 	if err := recordDeferral(ss, serve, held, res); err != nil {
 		return ServeResult{}, err
 	}
+	ss.notePlayback(serve, held.keep)
+	ss.notePlayback(serve.Base, held.base)
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return ServeResult{}, err
 	}
@@ -1893,6 +1896,7 @@ func (s *toolSet) toBaseServeResult(ctx context.Context, req *mcp.CallToolReques
 			return nil, err
 		}
 	}
+	ss.notePlayback(serve, keep)
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, err
 	}
@@ -1961,6 +1965,8 @@ func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, s
 			continue
 		}
 		deferred = append(deferred, deferredInstances(serve, held)...)
+		ss.notePlayback(serve, held.keep)
+		ss.notePlayback(serve.Base, held.base)
 		spent += cost
 		result.Open = append(result.Open, mapped)
 	}

@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -154,6 +155,56 @@ steps:
       options:
           - {choice: confirm, to: end(completed)}`
 
+// A host replays the session before each call; the unserved mark and its
+// playback both ride the log.
+func TestDraftServe_UnservedChangeSurvivesAReplay(t *testing.T) {
+	content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: unservedproc\n" +
+		unservedDraftMachine + "\n---\n\nunserved draft procedure\n\n## unit: playback\n\nPlay the draft back.\n"
+	entry, err := model.ParseEntry("20260826-140000-d-prc-uns.md", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := engine.ParseSpec(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
+	log := &recordingSink{}
+	replay := func() *engine.Session {
+		t.Helper()
+		sess, err := eng.ReplaySession("s_unserved", "tester", log.events, func(string) (*engine.Spec, error) { return spec, nil }, log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sess
+	}
+	sv, err := eng.NewSession("s_unserved", "tester", log).Start(spec, map[string]any{"body": "first draft"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := sv.Instance
+	if err := replay().Update(instance, map[string]any{"body": "second draft"}); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := replay()
+	sv, err = sess.Answer(instance, "playback", "confirm", nil, "yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Status != engine.StatusRunning || !strings.Contains(sv.Instructions, "not answered") || !sv.PlaysBack {
+		t.Fatalf("an answer over an unserved change should be refused after a replay too, got %s %q", sv.Status, sv.Instructions)
+	}
+	sess.RecordPlayback(instance)
+	sv, err = replay().Answer(instance, "playback", "confirm", nil, "yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Status != engine.StatusCompleted {
+		t.Errorf("an answer after the change was played back should apply after a replay, got %s", sv.Status)
+	}
+}
+
 func TestDraftServe_AnswerOverAnUnservedChangeServesItInstead(t *testing.T) {
 	content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: unservedproc\n" +
 		unservedDraftMachine + "\n---\n\nunserved draft procedure\n\n## unit: playback\n\nPlay the draft back.\n"
@@ -181,12 +232,85 @@ func TestDraftServe_AnswerOverAnUnservedChangeServesItInstead(t *testing.T) {
 	if sv.Status != engine.StatusRunning || !strings.Contains(sv.UnitText, "second draft") || !strings.Contains(sv.Instructions, "not answered") {
 		t.Fatalf("an answer over an unserved change should serve the change and not apply, got %s %q", sv.Status, sv.Instructions)
 	}
+	sv, err = sess.Answer(sv.Instance, "playback", "confirm", nil, "yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Status != engine.StatusRunning || !sv.PlaysBack {
+		t.Fatalf("an answer over a change served but not delivered should be refused again, got %s", sv.Status)
+	}
 
+	sess.RecordPlayback(sv.Instance)
 	sv, err = sess.Answer(sv.Instance, "playback", "confirm", nil, "yes")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sv.Status != engine.StatusCompleted {
 		t.Errorf("an answer once the change was served should apply, got %s", sv.Status)
+	}
+}
+
+// A serve that fails after rendering the draft delivered nothing, so it must
+// leave the change unserved.
+func TestDraftServe_FailedServeLeavesTheChangeUnserved(t *testing.T) {
+	const machine = `state:
+    body: {type: prose, desc: the draft}
+steps:
+    - id: review
+      serveDelta: [body]
+      guard: reviewHolds
+      transitions:
+          - otherwise: end(completed)`
+	content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: failedserveproc\n" +
+		machine + "\n---\n\nfailed serve procedure\n\n## unit: review\n\nReview the draft.\n"
+	entry, err := model.ParseEntry("20260826-140000-d-prc-fsv.md", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := engine.ParseSpec(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := false
+	registry := engine.NewRegistry()
+	err = registry.RegisterPredicate(engine.Predicate{
+		Doc: engine.FuncDoc{Name: "reviewHolds"},
+		Fn: func(*engine.Context) (bool, error) {
+			if broken {
+				return false, errors.New("the check is unavailable")
+			}
+			return false, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &recordingSink{}
+	sess := engine.New(registry, engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_failed_serve", "tester", sink)
+	sv, err := sess.Start(spec, map[string]any{"body": "first draft"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := sv.Instance
+	if err := sess.Update(instance, map[string]any{"body": "second draft"}); err != nil {
+		t.Fatal(err)
+	}
+
+	broken = true
+	if _, err := sess.Serve(instance); err == nil {
+		t.Fatal("a serve whose guard fails to evaluate should fail")
+	}
+	for _, ev := range sink.events {
+		if ev.Event == engine.EventServed && ev.Data["playedBack"] == true {
+			t.Fatalf("a failed serve should log no playback, got %+v", ev)
+		}
+	}
+	broken = false
+	sv, err = sess.Serve(instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sv.PlaysBack {
+		t.Error("the serve after a failed one should still play the change back")
 	}
 }

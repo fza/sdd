@@ -518,6 +518,19 @@ func (s *Session) ReadDepthOf(id string) ReadDepth {
 	return s.reads[id]
 }
 
+// RecordPlayback logs that a serve marked PlaysBack reached its consumer, so
+// the instance's draft change counts as played back.
+func (s *Session) RecordPlayback(instance string) {
+	inst, ok := s.instances[instance]
+	if !ok || !inst.unservedDraft {
+		return
+	}
+	s.appendEvent(inst.ID, EventServed, map[string]any{"step": inst.Step, "playedBack": true})
+	if s.sinkErr == nil {
+		inst.unservedDraft = false
+	}
+}
+
 // Reorient records the consumer's request for the session's position and
 // makes the call in flight serve every piece in full.
 func (s *Session) Reorient() {
@@ -759,7 +772,7 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 	if inst, ok := s.instances[instanceID]; ok {
 		at = inst.Step
 	}
-	inst, err := s.report(instanceID, fields)
+	inst, err := s.report(instanceID, fields, false)
 	if err != nil {
 		return nil, err
 	}
@@ -776,13 +789,14 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 // Update applies state fields as Report does but serves nothing, so the
 // draft an agent was last served stays the base the next serve diffs
 // against. For state a shell keeps in step with something outside the
-// session, such as a staged file.
+// session, such as a staged file. The log marks the change unserved, so a
+// replayed session refuses the next answer over it as well.
 func (s *Session) Update(instanceID string, fields map[string]any) error {
-	_, err := s.report(instanceID, fields)
+	_, err := s.report(instanceID, fields, true)
 	return err
 }
 
-func (s *Session) report(instanceID string, fields map[string]any) (*Instance, error) {
+func (s *Session) report(instanceID string, fields map[string]any, unserved bool) (*Instance, error) {
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
@@ -810,12 +824,16 @@ func (s *Session) report(instanceID string, fields map[string]any) (*Instance, e
 		v, _ := inst.Store.Get(name)
 		logged[name] = v
 	}
-	s.appendEvent(inst.ID, EventReport, map[string]any{
-		"step":   inst.Step,
-		"fields": logged,
-	})
+	data := map[string]any{"step": inst.Step, "fields": logged}
+	if unserved {
+		data["unserved"] = true
+	}
+	s.appendEvent(inst.ID, EventReport, data)
 	if err := s.checkSink(); err != nil {
 		return nil, err
+	}
+	if unserved {
+		inst.unservedDraft = true
 	}
 	if err := s.sendFills(inst, written); err != nil {
 		return nil, err
@@ -891,6 +909,9 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 		// change instead and the answer is not applied.
 		sv, err := s.serve(inst)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.checkSink(); err != nil {
 			return nil, err
 		}
 		sv.Diagnostics = append(sv.Diagnostics, "not answered: draft changed since last served. Play the change back, then answer again")
@@ -1223,6 +1244,9 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		if _, err := inst.Store.WriteState(declaredState(inst.Spec, fields)); err != nil {
 			return err
 		}
+		if ev.Data["unserved"] == true {
+			inst.unservedDraft = true
+		}
 		s.clearCancellation(inst.ID)
 		if inst.retiredStep != "" || inst.currentStep().Op == "" {
 			inst.interactionStep = inst.loggedStep()
@@ -1399,7 +1423,17 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 	case EventParked:
 		return s.replayParked(ev)
 
-	case EventServed, EventServedBlocks, EventReoriented, EventModel:
+	case EventServed:
+		// Forensic only, but for a delivered playback of an unserved change.
+		if ev.Data["playedBack"] == true {
+			inst, err := s.replayInstance(ev)
+			if err != nil {
+				return err
+			}
+			inst.unservedDraft = false
+		}
+
+	case EventServedBlocks, EventReoriented, EventModel:
 		// Forensic only — no state effect.
 
 	default:

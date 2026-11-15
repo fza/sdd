@@ -552,13 +552,19 @@ func (w *World) Resume(t *testing.T, sessionID sdd.SessionID, connID string) (*S
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Session{World: w, WF: workflow, ID: sessionID}, result
+	session := &Session{World: w, WF: workflow, ID: sessionID}
+	for i := range result.Open {
+		if _, err := session.deliver(t, &result.Open[i], nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return session, result
 }
 
 // Start starts a procedure instance; params may seed declared params and state.
 func (s *Session) Start(t *testing.T, canonical string, params map[string]any) *sdd.WorkflowServe {
 	t.Helper()
-	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params})
+	serve, err := s.StartErr(t, canonical, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -568,7 +574,8 @@ func (s *Session) Start(t *testing.T, canonical string, params map[string]any) *
 // StartErr is Start for tests asserting the failure.
 func (s *Session) StartErr(t *testing.T, canonical string, params map[string]any) (*sdd.WorkflowServe, error) {
 	t.Helper()
-	return s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params})
+	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params})
+	return s.deliver(t, serve, err)
 }
 
 // Stage places bytes in the session's staged scratch and returns the handle.
@@ -619,6 +626,7 @@ func (s *Session) StageItem(t *testing.T, item sdd.StageItem) (sdd.StagedFile, e
 func (s *Session) StartChild(t *testing.T, canonical string, params map[string]any, parent string) *sdd.WorkflowServe {
 	t.Helper()
 	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params, Parent: parent})
+	serve, err = s.deliver(t, serve, err)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,7 +637,8 @@ func (s *Session) StartChild(t *testing.T, canonical string, params map[string]a
 // error a refused start or launch gives.
 func (s *Session) StartChildErr(t *testing.T, canonical string, params map[string]any, parent string) (*sdd.WorkflowServe, error) {
 	t.Helper()
-	return s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params, Parent: parent})
+	serve, err := s.WF.Start(t.Context(), s.World.Identity, sdd.WorkflowStartRequest{Canonical: canonical, Params: params, Parent: parent})
+	return s.deliver(t, serve, err)
 }
 
 // Report sends state fields to the instance's current step.
@@ -645,7 +654,8 @@ func (s *Session) Report(t *testing.T, instance string, fields map[string]any) *
 // ReportErr is Report for tests asserting the failure.
 func (s *Session) ReportErr(t *testing.T, instance string, fields map[string]any) (*sdd.WorkflowServe, error) {
 	t.Helper()
-	return s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: fields})
+	serve, err := s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: fields})
+	return s.deliver(t, serve, err)
 }
 
 // Answer answers the pending chooser.
@@ -668,7 +678,18 @@ func (s *Session) AnswerErr(t *testing.T, instance, chooser, choice string, fiel
 	if userWords != "" {
 		report["userWords"] = userWords
 	}
-	return s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: report})
+	serve, err := s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: report})
+	return s.deliver(t, serve, err)
+}
+
+// deliver records the playback a returned serve carries, as the MCP server
+// does once its response is complete.
+func (s *Session) deliver(t *testing.T, serve *sdd.WorkflowServe, err error) (*sdd.WorkflowServe, error) {
+	t.Helper()
+	if err != nil || serve == nil {
+		return serve, err
+	}
+	return serve, s.WF.RecordPlayback(t.Context(), s.World.Identity, serve, serve.Base)
 }
 
 // Decide answers a delegable chooser the agent decides itself in an
@@ -689,7 +710,8 @@ func (s *Session) DecideErr(t *testing.T, instance, chooser, choice string, fiel
 	if fields != nil {
 		report["fields"] = fields
 	}
-	return s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: report})
+	serve, err := s.WF.Advance(t.Context(), s.World.Identity, sdd.WorkflowAdvanceRequest{Instance: instance, Report: report})
+	return s.deliver(t, serve, err)
 }
 
 // Gather runs the grounding read inside instance, opening ids in full, as the

@@ -162,6 +162,9 @@ type WorkflowServe struct {
 	Framing []string
 	// Parked is set when an autonomous session parked the move for a person.
 	Parked *WorkflowParked
+	// PlaysBack is set when the serve carries a draft change not yet played
+	// back; the caller that delivers it records that with RecordPlayback.
+	PlaysBack bool
 }
 
 // WorkflowParked is where an autonomous session parked a move: the step, the
@@ -565,6 +568,22 @@ func joinKinds(kinds []model.Kind) string {
 
 func (w *WorkflowSession) ID() SessionID { return w.binding.SessionID }
 
+// RecordPlayback logs that serves marked PlaysBack reached their consumer.
+// Until then a confirm over their change is refused and the change served
+// again, so a serve the consumer never got is never taken as played back.
+func (w *WorkflowSession) RecordPlayback(ctx context.Context, identity RequestIdentity, serves ...*WorkflowServe) error {
+	if w.Finished() {
+		return nil
+	}
+	w.setOperation(ctx, identity)
+	for _, serve := range serves {
+		if serve != nil && serve.PlaysBack {
+			w.session.RecordPlayback(serve.Instance)
+		}
+	}
+	return w.session.SinkErr()
+}
+
 // Reorient records the consumer's request for the session's position; the
 // call in flight serves every piece in full.
 func (w *WorkflowSession) Reorient(ctx context.Context, identity RequestIdentity) error {
@@ -833,6 +852,9 @@ func (w *WorkflowSession) ServeShell(ctx context.Context, identity RequestIdenti
 	if err != nil {
 		return nil, err
 	}
+	if err := w.session.SinkErr(); err != nil {
+		return nil, err
+	}
 	return w.publicServe(serve)
 }
 
@@ -860,6 +882,9 @@ func (w *WorkflowSession) resumeResult() (WorkflowResumeResult, error) {
 		}
 		serve, err := w.session.Serve(inst.ID)
 		if err != nil {
+			return WorkflowResumeResult{}, err
+		}
+		if err := w.session.SinkErr(); err != nil {
 			return WorkflowResumeResult{}, err
 		}
 		// The collected projection is the honest-surfacing half of the
@@ -1679,6 +1704,7 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		InstructionLanes: append([]types.ServeLane(nil), serve.Lanes...),
 		Sizes:            append([]types.PartSize(nil), serve.Sizes...),
 		Framing:          slices.Clone(serve.Framing),
+		PlaysBack:        serve.PlaysBack,
 	}
 	if pending := w.pendingOperation(); pending != nil && pending.Instance == serve.Instance {
 		result.PendingOperation = pending
@@ -1826,7 +1852,9 @@ func (s *workflowSink) Append(event engine.Event) (uint64, error) {
 	// A serve is a pure read: its forensic served marker never reaches the
 	// durable log, so re-serving (ServeShell/ServeAll) writes nothing
 	// and each engine operation appends only its own event with the stamp.
-	if event.Event == engine.EventServed {
+	// The one kept marker records a delivered playback (RecordPlayback),
+	// which a replay must know.
+	if event.Event == engine.EventServed && event.Data["playedBack"] != true {
 		return 0, nil
 	}
 	w := s.workflow

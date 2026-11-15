@@ -82,6 +82,11 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, p
 			waiting = append(waiting, lane.Name)
 			continue
 		}
+		// A playback recorded delivered holds the draft itself, never its pointer.
+		if serve.PlaysBack && lane.Name == "draft" {
+			fresh = append(fresh, lane.Text)
+			continue
+		}
 		served := ss.root.ServeText(name, lane.Text, carried(pageFull, lane.Text))
 		if served.Held {
 			held = append(held, heldName(name, served.Tag))
