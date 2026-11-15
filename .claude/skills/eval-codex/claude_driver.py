@@ -2,7 +2,7 @@
 """Drive a real Claude Code agent through headless `claude -p` against a scratch
 SDD repository, one user turn per invocation.
 
-  claude_driver.py setup REPO [--task TEXT]      scratch repo: git, sdd init for Claude, anchor directive, code
+  claude_driver.py setup REPO [--task TEXT]      scratch repo: git, sdd init for Claude, participant, anchor directive, code
   claude_driver.py start REPO MESSAGE [opts]     new Claude session, first user turn
   claude_driver.py say REPO MESSAGE              next user turn, resuming the same session
   claude_driver.py log REPO [--turn N] [--max N] what the sdd tools served, in full, subagents included

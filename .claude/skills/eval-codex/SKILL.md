@@ -18,7 +18,7 @@ Tests prove the mechanism. This skill checks the experience: whether an agent th
 `driver.py` next to this file, stdlib Python:
 
 ```
-python3 driver.py setup  <repo> [--task TEXT] [--summary TEXT]   fresh repo: git, sdd init for Codex, a code module, the task as a pending directive
+python3 driver.py setup  <repo> [--task TEXT] [--summary TEXT]   fresh repo: git, sdd init for Codex, the user as participant, a code module, the task as a pending directive
 python3 driver.py start  <repo> "<first user message>" [--model M] [--effort E] [--provider opper --env-file F] [--idle-timeout SECONDS]
 python3 driver.py say    <repo> "<next user message>"
 python3 driver.py stop   <repo>                                   end the run: app-server and sdd server
@@ -26,7 +26,7 @@ python3 driver.py log    <repo> [--turn N] [--max CHARS]          everything the
 python3 driver.py status <repo>                                   branches, worktrees, history, WIP markers per branch
 ```
 
-`setup` prints the anchor directive's ID. `start` and `say` run one turn each and print the sdd tool calls with the served position (procedure, step, missing fields), the shell commands with exit codes, and the agent's final message. The full transcript lands in `<repo>.eval/`.
+`setup` prints the participant entry's and the anchor directive's IDs. `start` and `say` run one turn each and print the sdd tool calls with the served position (procedure, step, missing fields), the subagent launches, the shell commands with exit codes, and the agent's final message. The full transcript lands in `<repo>.eval/`.
 
 What the driver fixes for every run:
 
