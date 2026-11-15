@@ -318,28 +318,39 @@ func TestRetireUnconnectedClone(t *testing.T) {
 
 func TestRetireUnconnectedCloneKeepsAClonesHoldingAConnectedOne(t *testing.T) {
 	cases := []struct {
-		name   string
-		nested bool
+		name      string
+		connected string
+		nested    bool
+		gitFile   bool
 	}{
-		{name: "a connected clone inside it", nested: true},
-		{name: "a connected repo below its path, not cloned yet"},
+		{name: "a connected clone inside it", connected: "git.example.com/foo/bar", nested: true},
+		{name: "a connected repo below its path, not cloned yet", connected: "git.example.com/foo/bar"},
+		{name: "a connected worktree below it, its ID cased otherwise", connected: "git.example.com/FOO/bar", nested: true, gitFile: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}
-			config := "repos:\n  - repo_id: git.example.com/foo/bar\n    clone_url: git@git.example.com:foo/bar.git\n"
+			config := "repos:\n  - repo_id: " + tc.connected + "\n    clone_url: git@git.example.com:foo/bar.git\n"
 			if err := os.WriteFile(loc.ConfigPath, []byte(config), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			clone := filepath.Join(loc.CacheRoot, "git.example.com", "foo")
 			inner := filepath.Join(clone, "bar", ".git")
 			dirs := []string{filepath.Join(clone, ".git")}
-			if tc.nested {
+			if tc.nested && !tc.gitFile {
 				dirs = append(dirs, inner)
 			}
 			for _, dir := range dirs {
 				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.gitFile {
+				if err := os.MkdirAll(filepath.Dir(inner), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(inner, []byte("gitdir: /elsewhere\n"), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -23,7 +23,8 @@ var ErrClonesBusy = errors.New("connected-repo clones are being changed by anoth
 var ErrCloneHoldsClones = errors.New("clone holds other clones")
 
 // clonesLockWait bounds how long connecting a repo waits for a cache pruning
-// run, which holds the lock only to re-check and rename one clone.
+// run, which holds the lock to re-check one clone, scan its worktree for
+// clones inside (see holdsClones) and rename it.
 const clonesLockWait = 30 * time.Second
 
 func (r *Registry) clonesLock() (*flock.Flock, error) {
@@ -114,12 +115,14 @@ func (r *Registry) RetireUnconnectedClone(path string) (retired string, err erro
 }
 
 // holdsClones returns ErrCloneHoldsClones when a connected repo's ID lies
-// below repoID, or a directory below path holds a .git directory: repo IDs
-// may nest, and the walk that finds clones stops at the outer one.
+// below repoID, in any case as a case-insensitive file system places it, or a
+// directory below path holds a .git directory: repo IDs may nest, and the walk
+// that finds clones stops at the outer one. The walk skips .git contents and
+// ends at the first clone it finds.
 func holdsClones(path string, repoID model.RepoID, cfg *GlobalConfig) error {
-	prefix := string(repoID) + "/"
+	prefix := strings.ToLower(string(repoID) + "/")
 	for _, repo := range cfg.Repos {
-		if strings.HasPrefix(string(repo.RepoID), prefix) {
+		if strings.HasPrefix(strings.ToLower(string(repo.RepoID)), prefix) {
 			return fmt.Errorf("%w: %s lies below the clone of %s, which stays", ErrCloneHoldsClones, repo.RepoID, repoID)
 		}
 	}
