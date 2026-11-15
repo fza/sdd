@@ -174,21 +174,21 @@ func TestMissingGraphDirectoryNeverSyncsAnotherRepository(t *testing.T) {
 	}
 }
 
-func TestSyncIntervalIsPerPersonAndFloored(t *testing.T) {
+func TestTheRetiredSyncIntervalIsReadPastSilently(t *testing.T) {
 	root := canonicalTemp(t)
 	if err := os.MkdirAll(filepath.Join(root, ".sdd", "graph"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	initRepo(t, root)
 	writeFile(t, filepath.Join(root, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/interval\nlanguage: en\nsync:\n  interval: 5m\n")
-	writeFile(t, filepath.Join(root, ".sdd", "config.local.yaml"), "participant: Ada\n")
+	writeFile(t, filepath.Join(root, ".sdd", "config.local.yaml"), "participant: Ada\nsync:\n  interval: often\n")
 
 	out, err := runAppErr(t, root, "view", "--layout", "layer(tac):as-list")
 	if err != nil {
-		t.Fatalf("a committed interval should not stop a command: %v\n%s", err, out)
+		t.Fatalf("a retired interval should not stop a command: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "ignoring config setting") || !strings.Contains(out, "sync.interval") || !strings.Contains(out, "config.yaml") {
-		t.Errorf("a committed interval should be reported naming file and key, got %q", out)
+	if strings.Contains(out, "sync.interval") {
+		t.Errorf("a retired interval should raise no warning, got %q", out)
 	}
 	for _, value := range []string{"30s", "often", "2m"} {
 		out, err := runAppErr(t, root, "config", "set", "--local", "sync.interval", value)

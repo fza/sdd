@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/command"
@@ -19,10 +20,11 @@ func TestCacheHandlerPruneFetchesSecretRulesPerSetting(t *testing.T) {
 		config    string
 		scheduled bool
 		fetches   bool
+		fails     bool
 	}{
 		{name: "daily by default", scheduled: true, fetches: true},
 		{name: "daily", config: "secrets:\n  rules_update: daily\n", scheduled: true, fetches: true},
-		{name: "an unknown value means the default", config: "secrets:\n  rules_update: weekly\n", scheduled: true, fetches: true},
+		{name: "an unknown value fails the pass", config: "secrets:\n  rules_update: weekly\n", scheduled: true, fetches: false, fails: true},
 		{name: "off", config: "secrets:\n  rules_update: \"off\"\n", scheduled: true, fetches: false},
 		{name: "a run by hand", scheduled: false, fetches: false},
 	}
@@ -40,7 +42,11 @@ func TestCacheHandlerPruneFetchesSecretRulesPerSetting(t *testing.T) {
 
 			err := h.Prune(t.Context(), &command.PruneCacheCmd{Scheduled: tc.scheduled})
 
-			if err != nil {
+			if tc.fails {
+				if err == nil || !strings.Contains(err.Error(), "secrets.rules_update") {
+					t.Errorf("the pass should fail naming the setting, got %v", err)
+				}
+			} else if err != nil {
 				t.Fatal(err)
 			}
 			if fetched := len(releases.Requests()) > 0; fetched != tc.fetches {

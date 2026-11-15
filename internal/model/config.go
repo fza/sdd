@@ -89,10 +89,6 @@ const (
 	// is empty or unparseable.
 	DefaultSyncCooldown = "15m"
 
-	// MinSyncInterval is the shortest sync.interval a timer runs at, so a
-	// typo cannot make every server hammer the remote.
-	MinSyncInterval = time.Minute
-
 	// DefaultSessionRetention is how long an ended engine session's log is
 	// kept before collection removes it. Sessions are scaffolding, but a
 	// dialogue that has just ended is exactly the one worth reading when
@@ -269,11 +265,8 @@ type SyncConfig struct {
 	Cooldown string `yaml:"cooldown,omitempty"`
 	// Mode chooses whether graph commits are pushed and upstream graph
 	// commits pulled automatically. Empty means SyncModeManual.
-	Mode SyncMode `yaml:"mode,omitempty"`
-	// Interval is how often a running `sdd serve` syncs the graph repository
-	// under automatic sync. Go duration string, at least MinSyncInterval;
-	// empty means no timer.
-	Interval string `yaml:"interval,omitempty"`
+	Mode     SyncMode `yaml:"mode,omitempty"`
+	Interval string   `yaml:"interval,omitempty"`
 }
 
 // SyncMode is the sync.mode setting. It is set per person: only the
@@ -366,14 +359,9 @@ func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSettin
 		if layer.Secrets.RulesUpdate != "" {
 			ignored = append(ignored, IgnoredSetting{Key: secretRulesUpdateKey, Reason: globalOnlyReason})
 		}
-	} else if update := layer.Secrets.RulesUpdate; update != "" && !isClosedValue(update) {
-		ignored = append(ignored, IgnoredSetting{Key: secretRulesUpdateKey, Reason: fmt.Sprintf("%q is not %s", update, oneOf(update.AllowedValues()))})
 	}
 	if reason := ignoredSyncMode(layer.Sync.Mode, committed); reason != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "sync.mode", Reason: reason})
-	}
-	if reason := ignoredSyncInterval(layer.Sync.Interval, committed); reason != "" {
-		ignored = append(ignored, IgnoredSetting{Key: "sync.interval", Reason: reason})
 	}
 	if committed && layer.Dialogue.Mode != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "dialogue.mode", Reason: personalOnlyReason})
@@ -395,23 +383,6 @@ func ignoredSyncMode(mode SyncMode, committed bool) string {
 		return personalOnlyReason
 	case !slices.Contains(mode.AllowedValues(), string(mode)):
 		return fmt.Sprintf("%q is not %s", mode, oneOf(mode.AllowedValues()))
-	}
-	return ""
-}
-
-func ignoredSyncInterval(interval string, committed bool) string {
-	if interval == "" {
-		return ""
-	}
-	if committed {
-		return personalOnlyReason
-	}
-	d, err := time.ParseDuration(interval)
-	if err != nil {
-		return fmt.Sprintf("%q is not a duration such as 5m", interval)
-	}
-	if d < MinSyncInterval {
-		return fmt.Sprintf("%s is below the %s minimum", interval, MinSyncInterval)
 	}
 	return ""
 }
@@ -471,9 +442,23 @@ func (SecretRulesUpdate) AllowedValues() []string {
 	return closedValues(SecretRulesDaily, SecretRulesOff)
 }
 
+// ErrUnknownSecretRulesUpdate reports a secrets.rules_update value sdd does
+// not know.
+var ErrUnknownSecretRulesUpdate = errors.New("unknown " + secretRulesUpdateKey)
+
+// Validate refuses a value other than the AllowedValues; empty is unset. The
+// user-global config carrying one fails to load: read past, the daily pass
+// would fetch rule files the person may have meant to turn off.
+func (u SecretRulesUpdate) Validate() error {
+	if u == "" || isClosedValue(u) {
+		return nil
+	}
+	return fmt.Errorf("%w: %q is not %s", ErrUnknownSecretRulesUpdate, u, oneOf(u.AllowedValues()))
+}
+
 // ResolveSecretRulesUpdate returns the effective secrets.rules_update. A value
-// sdd does not know falls back to the default, as an unset one does;
-// IgnoredSettings warns about it.
+// sdd does not know falls back to the default, as an unset one does; the
+// global config load refuses one before it gets here.
 func ResolveSecretRulesUpdate(cfg SecretsConfig) SecretRulesUpdate {
 	if cfg.RulesUpdate == "" || !isClosedValue(cfg.RulesUpdate) {
 		return DefaultSecretRulesUpdate
