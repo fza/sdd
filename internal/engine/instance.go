@@ -153,6 +153,10 @@ type Serve struct {
 	// Cancellation is the current cancellation this serve lands, rendered as
 	// its own lane; nil on every other serve.
 	Cancellation *CancellationServe
+	// PlaysBack is set when the serve carries a draft change no delivered
+	// serve played back yet; whoever delivers it records that with
+	// RecordPlayback.
+	PlaysBack bool
 }
 
 // ServeLane is defined in pkg/application/types — the exported surface names
@@ -551,10 +555,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 			inst.draftServed = map[string]map[string]string{}
 		}
 		inst.draftServed[step.ID] = cur
-		if inst.unservedDraft {
-			inst.unservedDraft = false
-			s.appendEvent(inst.ID, EventServed, map[string]any{"step": step.ID, "playedBack": true})
-		}
+		sv.PlaysBack = inst.unservedDraft
 	}
 	if len(cuts) > 0 {
 		lanes = append(lanes, ServeLane{Name: "cuts", Text: renderCuts(cuts)})

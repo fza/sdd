@@ -517,7 +517,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		}
 		ss.root = workflow
 	}
-	ss.pending, ss.seen = nil, nil
+	ss.resetServed()
 	if ss.root.Finished() {
 		ss.mu.Unlock()
 		s.sessions.evict(id)
@@ -674,6 +674,9 @@ func (s *toolSet) abandon(ctx context.Context, req *mcp.CallToolRequest, args Ab
 		}
 		out.Base = base
 	}
+	if err := ss.flushServed(ctx, identity); err != nil {
+		return nil, AbandonResult{}, err
+	}
 	return nil, out, nil
 }
 
@@ -707,6 +710,9 @@ func (s *toolSet) park(ctx context.Context, req *mcp.CallToolRequest, args ParkA
 			return nil, ParkResult{}, err
 		}
 		out.Base = base
+	}
+	if err := ss.flushServed(ctx, identity); err != nil {
+		return nil, ParkResult{}, err
 	}
 	return nil, out, nil
 }
@@ -1261,6 +1267,9 @@ func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest,
 	if ss.root.IsShell(serve.Instance) {
 		res.OpenThreads = openThreadsRoot(ss)
 	}
+	if serve.PlaysBack {
+		ss.playbacks = append(ss.playbacks, serve)
+	}
 	return res, nil
 }
 
@@ -1270,7 +1279,8 @@ func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest,
 // whole-step reminder (d-tac-87o).
 func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe) string {
 	lanes := serve.InstructionLanes
-	if len(lanes) == 0 {
+	// A playback is whole in every response that may record it delivered.
+	if len(lanes) == 0 || serve.PlaysBack {
 		return serve.Instructions
 	}
 	var fresh, withheld []string
@@ -1302,6 +1312,19 @@ func reportSchemaStub(serve *sdd.WorkflowServe) map[string]any {
 // what it served in full into the session ledger. The shell's open-work block
 // lists this dialogue's own threads only; other dialogues never appear.
 func (s *toolSet) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (ServeResult, error) {
+	res, err := s.rootServeBody(ctx, req, ss, serve)
+	if err != nil {
+		return ServeResult{}, err
+	}
+	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
+		return ServeResult{}, err
+	}
+	return res, nil
+}
+
+// rootServeBody is toRootServeResult leaving the record to a call that
+// composes several serves.
+func (s *toolSet) rootServeBody(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (ServeResult, error) {
 	res, err := s.serveResultBody(ctx, req, ss, serve)
 	if err != nil {
 		return ServeResult{}, err
@@ -1327,20 +1350,15 @@ func (s *toolSet) toRootServeResult(ctx context.Context, req *mcp.CallToolReques
 		}
 		res.Base = base
 	}
-	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
-		return ServeResult{}, err
-	}
 	return res, nil
 }
 
 // toBaseServeResult maps a serve onto the base_junction landing, which
 // carries no schema or vocabulary — so neither is recorded as served here.
+// The caller records what it served.
 func (s *toolSet) toBaseServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (*BaseServe, error) {
 	body, err := s.serveResultBody(ctx, req, ss, serve)
 	if err != nil {
-		return nil, err
-	}
-	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, err
 	}
 	return rootBaseServe(body), nil
@@ -1385,7 +1403,7 @@ func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, s
 			omitted = append(omitted, fmt.Sprintf("%s (%s at %s)", serve.Instance, serve.Procedure, serve.Step))
 			continue
 		}
-		mapped, err := s.toRootServeResult(ctx, req, ss, serve)
+		mapped, err := s.rootServeBody(ctx, req, ss, serve)
 		if err != nil {
 			return ResumeSessionResult{}, err
 		}

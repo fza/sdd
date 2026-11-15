@@ -350,6 +350,19 @@ func (s *Session) RecordServed(hashes []string) {
 	s.appendEvent("", EventServedBlocks, map[string]any{"hashes": fresh})
 }
 
+// RecordPlayback logs that a serve marked PlaysBack reached its consumer, so
+// the instance's draft change counts as played back.
+func (s *Session) RecordPlayback(instance string) {
+	inst, ok := s.instances[instance]
+	if !ok || !inst.unservedDraft {
+		return
+	}
+	s.appendEvent(inst.ID, EventServed, map[string]any{"step": inst.Step, "playedBack": true})
+	if s.sinkErr == nil {
+		inst.unservedDraft = false
+	}
+}
+
 // Reorient records the consumer's request for the session's position and
 // clears the served set, so the position re-serves in full.
 func (s *Session) Reorient() {

@@ -666,3 +666,31 @@ func TestCapture_ConfirmReadsAStagedFileAgain(t *testing.T) {
 		t.Errorf("the entry should carry the edited file, got %q", entry.Content)
 	}
 }
+
+// A playback whose mark another writer's append displaced fails loud, so the
+// client never takes a playback the log does not hold.
+func TestCapture_PlaybackOnAStaleSessionFails(t *testing.T) {
+	_, session := newCaptureWorld(t, "staged-body-stale-playback")
+	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+	instance := session.Start(t, "capture", nil).Instance
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	session.Stage(t, handle, []byte(unseenStagedBody))
+	other := &proctest.Session{World: session.World, WF: session.WF, ID: session.ID}
+	other.Refresh(t)
+	other.LogRead(t, "show", []string{captureRefID}, nil)
+
+	position, err := session.WF.ServeAll(t.Context(), session.World.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var playbacks []*sdd.WorkflowServe
+	for i := range position.Open {
+		playbacks = append(playbacks, &position.Open[i])
+	}
+	if err := session.WF.RecordPlayback(t.Context(), session.World.Identity, playbacks...); err == nil {
+		t.Fatal("a playback whose mark cannot be appended should fail")
+	}
+	if _, err := session.WF.ServeAll(t.Context(), session.World.Identity); err == nil {
+		t.Error("a serve after the failed mark should fail too")
+	}
+}
