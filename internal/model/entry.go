@@ -456,7 +456,7 @@ func (e *Entry) ListingTitle() string {
 // TitleRule is the guidance every title writer follows, the title model and
 // an agent writing a title alike, rendered from here into each surface that
 // states it.
-const TitleRule = "A title names the entry's subject for a reader scanning a list of entries: a noun phrase of 3 to 8 plain words, at most 50 characters, starting with a capital letter, like \"Daemon project removal\". Write a command, identifier, file or package name, and any other name whose own spelling starts with a lowercase letter, as a backtick code span in its own casing wherever it appears; a title naming one first opens with the code span, like \"`sdd` info JSON output\" or \"`macOS` signing failure\"."
+const TitleRule = "A title names the entry's subject for a reader scanning a list of entries: a noun phrase of 3 to 8 plain words, at most 50 characters, starting with a capital letter, like \"Daemon project removal\". Write code terms (a command, identifier, file or package name) and proper nouns (a product, tool, service or company name) as backtick code spans in their own casing wherever they appear; a title naming one first opens with the code span, like \"`sdd` info JSON output\", \"`macOS` signing failure\" or \"`GitHub` token rotation\"."
 
 // CapitalizeTitle starts a title with a capital letter, whatever wrote it:
 // listings show titles in a column, and a mix of cases reads as noise there.
