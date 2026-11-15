@@ -61,6 +61,19 @@ func TestCapture_BodyFromStagedFile(t *testing.T) {
 	}
 }
 
+// The inline-body paragraph is for auto sessions only; a guided capture serves
+// the staged-body guidance right after the body rules.
+func TestCapture_GuidedSessionServesTheStagedBodyGuidance(t *testing.T) {
+	_, session := newCaptureWorld(t, "staged-body-guided")
+	serve := session.Start(t, "capture", nil)
+	if !strings.Contains(serve.Instructions, "visible in the body's narrative. Body drafted in a file the user reviews?") {
+		t.Errorf("a guided capture should serve the staged-body guidance after the body rules:\n%s", serve.Instructions)
+	}
+	if strings.Contains(serve.Instructions, "No user reviews the draft here") {
+		t.Error("a guided capture should not serve the auto-mode inline-body paragraph")
+	}
+}
+
 func TestCapture_NoServedSchemaNamesTheBodyHash(t *testing.T) {
 	entries, err := baseprocedures.Entries()
 	if err != nil {
