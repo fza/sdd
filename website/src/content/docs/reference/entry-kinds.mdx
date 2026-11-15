@@ -153,6 +153,8 @@ Printed and posted the spring newsletter, completing the mailing activity; the f
 
 An actor declares who a participant is: a person, a team or an AI model family, any identity the project attributes work to. Its canonical name is the one the record already uses for them; it also lists any aliases they sign or chat under and says in a sentence who they are and what they bring from outside. Someone who took part once needs no actor; listing them among that entry's participants is enough.
 
+An optional `actor_kind` field says whether the participant is `human` or `machine`. Left unset, the kind is unknown, never human, and a supersede may not change a kind the chain already declares.
+
 <Fragment slot="ends">
 
 When the identity shifts, such as a changed name or a new alias, a new actor entry supersedes it. When the participant leaves, an entry stating why, usually a directive, closes it, and that also retires every role they held. The canonical name is never reused for anyone else, and an actor closes nothing itself.
