@@ -369,8 +369,6 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 		return fmt.Errorf("no connected repos — add one with `sdd repo add <clone-url>`")
 	}
 
-	// An overlapping pair predates the AddRepo check; neither side is synced,
-	// the rest are, and the run still fails naming each pair.
 	var overlaps []error
 	for _, repoID := range targets {
 		repo, ok := cfg.Connected(repoID)
@@ -378,7 +376,7 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 			return fmt.Errorf("repo %q is not connected", repoID)
 		}
 		if err := cfg.CheckOverlap(repoID); err != nil {
-			overlaps = append(overlaps, fmt.Errorf("not syncing: %w; drop one of them from repos in %s", err, h.repos.Registry().ConfigPath()))
+			overlaps = append(overlaps, h.overlapSkipped(err))
 			continue
 		}
 		cacheDir, err := h.repos.Registry().CacheDir(repoID)
@@ -399,6 +397,13 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 		}
 	}
 	return errors.Join(overlaps...)
+}
+
+// overlapSkipped is the error for a repo of an overlapping pair connected
+// before AddRepo checked overlap: syncing either side writes into the other's
+// clone, so callers skip both, refresh the rest and return the joined errors.
+func (h *Handler) overlapSkipped(err error) error {
+	return fmt.Errorf("not syncing: %w; drop one of them from repos in %s", err, h.repos.Registry().ConfigPath())
 }
 
 // freshenReferencedRepos refreshes the caches of every repo a ref set
@@ -648,10 +653,15 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposF
 		return false, err
 	}
 	logger := slogutils.FromContext(ctx)
+	var overlaps []error
 	for _, repoID := range cmd.RepoIDs {
 		repo, ok := cfg.Connected(repoID)
 		if !ok {
 			logger.Debug("repo not connected; skipping cache refresh", "repo", repoID)
+			continue
+		}
+		if err := cfg.CheckOverlap(repoID); err != nil {
+			overlaps = append(overlaps, h.overlapSkipped(err))
 			continue
 		}
 		cacheDir, err := h.repos.Registry().CacheDir(repoID)
@@ -679,7 +689,7 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposF
 		}
 		changed = changed || pulled
 	}
-	return changed, nil
+	return changed, errors.Join(overlaps...)
 }
 
 // emitPhase fires an optional phase callback, guarding the nil case at the one

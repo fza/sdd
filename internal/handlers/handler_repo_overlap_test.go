@@ -117,6 +117,40 @@ func TestRepoAdd_ReplacesAStaleCacheWithTheClone(t *testing.T) {
 	}
 }
 
+func TestEnsureReposFresh_SkipsOverlappingReposAndRefreshesTheRest(t *testing.T) {
+	root := t.TempDir()
+	loc := repos.Locations{
+		ConfigPath: filepath.Join(root, "config", "sdd", "config.yaml"),
+		CacheRoot:  filepath.Join(root, "cache"),
+	}
+	reg := repos.NewRegistry(loc)
+	repostest.WriteConfig(t, loc.ConfigPath, &repos.GlobalConfig{Repos: []repos.ConnectedRepo{
+		{RepoID: "github.com/org", CloneURL: "/srv/org"},
+		{RepoID: "github.com/org/repo", CloneURL: "/srv/repo"},
+		{RepoID: "github.com/other/repo", CloneURL: "/srv/other"},
+	}})
+	h := handlers.New(handlers.Options{Repos: repos.NewManager(reg, declaringGit{})})
+
+	changed, err := h.EnsureReposFresh(context.Background(), command.EnsureReposFreshCmd{
+		RepoIDs: []model.RepoID{"github.com/org", "github.com/org/repo", "github.com/other/repo"},
+	})
+	if err == nil || !strings.Contains(err.Error(), `"github.com/org"`) || !strings.Contains(err.Error(), `"github.com/org/repo"`) {
+		t.Errorf("EnsureReposFresh should fail naming the overlapping pair, got %v", err)
+	}
+	if !changed {
+		t.Error("EnsureReposFresh should report the disjoint repo's clone as a change")
+	}
+	for id, want := range map[model.RepoID]bool{"github.com/org": false, "github.com/org/repo": false, "github.com/other/repo": true} {
+		dir, err := reg.CacheDir(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if repos.IsCloned(dir) != want {
+			t.Errorf("EnsureReposFresh should clone %s only when it overlaps no other repo", id)
+		}
+	}
+}
+
 func TestRepoSync_SkipsOverlappingReposAndSyncsTheRest(t *testing.T) {
 	root := t.TempDir()
 	loc := repos.Locations{
