@@ -253,7 +253,15 @@ llm:
   model: claude-sonnet-4-6
 ```
 
-sdd runs `claude -p` isolated: without tools or MCP servers, with `--safe-mode`, with `--no-session-persistence` so no transcript of the draft stays under `~/.claude`, in an empty temporary directory, and by default without any `ANTHROPIC_*` or `CLAUDE_CODE_USE_*` variable in its environment. Those variables carry API keys, tokens, endpoints and provider switches; `CLAUDE_CODE_OAUTH_TOKEN` belongs to the login and stays. By default `claude -p` also loads none of your settings files (`--setting-sources ""`), since their `env` block and `apiKeyHelper` apply even in safe mode. Your project's instruction files, skills, hooks and servers stay out of the prompt, and an exported key or provider switch cannot move the call off your Claude Code login. To use an API key, set `llm.claude_cli.credentials: env`, or use `provider: anthropic`. With `env`, `claude -p` can also run on another provider such as Bedrock or Vertex.
+sdd runs `claude -p` isolated:
+
+- `--tools ""` and `--strict-mcp-config`: no built-in tools and no MCP servers.
+- `--safe-mode`: instruction files, skills, plugins, hooks and your other customizations stay out of the prompt.
+- `--no-session-persistence`: no transcript of the draft stays under `~/.claude`.
+- An empty temporary working directory, removed after the call, so no project file is in reach either.
+- With `llm.claude_cli.credentials: login`, the default: no `ANTHROPIC_*` or `CLAUDE_CODE_USE_*` variable in the environment, and no settings file loaded (`--setting-sources ""`). Those variables carry API keys, tokens, endpoints and provider switches, and a settings file's `env` block and `apiKeyHelper` apply even in safe mode. `CLAUDE_CODE_OAUTH_TOKEN` belongs to the login and stays.
+
+An exported key or provider switch then cannot move the call off your Claude Code login. To use an API key, set `llm.claude_cli.credentials: env`, or use `provider: anthropic`. With `env`, `claude -p` loads your settings and can also run on another provider such as Bedrock or Vertex.
 
 `claude-cli` needs Claude Code 2.1.169 or later, the first version with `--safe-mode`. An older `claude` stops with `unknown option`, and sdd shows that message.
 
