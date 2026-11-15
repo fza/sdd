@@ -3,12 +3,14 @@
 
 This check applies **only** when proposed entry is a `kind: directive` decision carrying `Intent: settled` (shown beneath proposed decision). If proposed entry is any other type, any other decision kind, or a directive whose intent is `pending`, `guiding`, or unspecified, skip this section entirely and emit nothing for it.
 
-A `settled` directive is **born terminal**. It commits to something that needs no follow-up and carries no closing edge. It never enters the normal "open until a done signal closes it" lifecycle. So body must say *why* it is complete on capture: what was decided, and why no further action follows (e.g. "keep X as-is", "no action needed because Y", an intake item dismissed with its reason). Without that justification, a reader cannot tell a deliberate born-terminal decision from one that dropped its follow-up.
+A `settled` directive is **born terminal**. It commits to something that needs no follow-up and carries no closing edge. It never enters the normal "open until a done signal closes it" lifecycle. So body must say *why* it is complete on capture: what was decided, and a reason no further action follows (e.g. "keep X as-is: Y never reaches its limit, so nothing needs building", "no action needed because Y", an intake item dismissed with its reason). Without that reason, a reader cannot tell a deliberate born-terminal decision from one that dropped its follow-up.
+
+A choice alone is not a reason, even one phrased as keeping or using what exists. "Use the existing retry helper for the upload client." names a choice and states no reason nothing follows: it draws the finding. Look for a sentence that gives the why; a body with none is unjustified however settled its choice sounds.
 
 ### Rubric
 
-- `medium` `settled-unjustified`: directive is `intent: settled`, but its body does not justify the terminality. It states no reason decision needs no follow-up. Name what's missing.
-- No finding: body makes the terminality self-evident. It states decision and why nothing further is required (a question put to rest, a deliberate "keep as-is", an intake dismissal with rationale).
+- `medium` `settled-unjustified`: directive is `intent: settled`, but its body states no reason the decision needs no follow-up. Name what's missing.
+- No finding: body states the decision and a reason nothing further is required (a question put to rest with its answer, a deliberate "keep as-is" with why it stays, an intake dismissal with rationale).
 
 Severity is at most `medium`: an unjustified settled directive is worth surfacing for dialogue, not blocking. Emit at most one `settled-unjustified` finding.
 {{ end }}
