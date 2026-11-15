@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	upstream "github.com/teilomillet/gollm"
@@ -29,6 +30,15 @@ type Runner struct {
 	model    string
 	variant  string
 	useCache bool
+
+	// ollama sizes num_ctx per call: Ollama cuts a prompt longer than its
+	// context without an error. gollm reads options from the client on every
+	// attempt, so each num_ctx gets a client of its own and calls of one size
+	// run side by side.
+	ollama        bool
+	ollamaMu      sync.Mutex
+	ollamaClients map[int]upstream.LLM
+	newClient     func() (upstream.LLM, error)
 }
 
 // NewRunner constructs a gollm-backed Runner from an LLMConfig. Provider
@@ -113,34 +123,68 @@ func NewRunner(cfg model.LLMConfig) (*Runner, error) {
 		opts = append(opts, upstream.SetTimeout(d))
 	}
 
-	client, err := upstream.NewLLM(opts...)
-	if err != nil {
-		// gollm validates ollama by probing the endpoint; on failure it
-		// reports a generic apikey validation error. Rewrap as a targeted
-		// "unreachable" message so users see the actionable hint.
-		if cfg.Provider == "ollama" && strings.Contains(err.Error(), "apikey") {
-			endpoint := cfg.OllamaEndpoint
-			if endpoint == "" {
-				endpoint = "http://localhost:11434"
+	newClient := func() (upstream.LLM, error) {
+		client, err := upstream.NewLLM(opts...)
+		if err != nil {
+			// gollm validates ollama by probing the endpoint; on failure it
+			// reports a generic apikey validation error. Rewrap as a targeted
+			// "unreachable" message so users see the actionable hint.
+			if cfg.Provider == "ollama" && strings.Contains(err.Error(), "apikey") {
+				endpoint := cfg.OllamaEndpoint
+				if endpoint == "" {
+					endpoint = "http://localhost:11434"
+				}
+				return nil, fmt.Errorf("gollm ollama: provider unreachable at %s (is Ollama running?)", endpoint)
 			}
-			return nil, fmt.Errorf("gollm ollama: provider unreachable at %s (is Ollama running?)", endpoint)
+			return nil, fmt.Errorf("gollm: creating client: %w", err)
 		}
-		return nil, fmt.Errorf("gollm: creating client: %w", err)
+		// Behaviour-affecting params go to the provider verbatim; gollm forwards
+		// unknown option keys straight into the request body.
+		for _, k := range sortedKeys(cfg.Params) {
+			client.SetOption(k, cfg.Params[k])
+		}
+		return client, nil
+	}
+	client, err := newClient()
+	if err != nil {
+		return nil, err
 	}
 
-	// Behaviour-affecting params go to the provider verbatim; gollm forwards
-	// unknown option keys straight into the request body.
-	for _, k := range sortedKeys(cfg.Params) {
-		client.SetOption(k, cfg.Params[k])
+	runner := &Runner{
+		client:    client,
+		provider:  cfg.Provider,
+		model:     cfg.Model,
+		variant:   canonicalVariant(cfg.Params),
+		useCache:  useCache,
+		ollama:    cfg.Provider == "ollama",
+		newClient: newClient,
 	}
+	if runner.ollama {
+		client.SetOption("options", map[string]any{"num_ctx": ollamaMinContext})
+		runner.ollamaClients = map[int]upstream.LLM{ollamaMinContext: client}
+	}
+	return runner, nil
+}
 
-	return &Runner{
-		client:   client,
-		provider: cfg.Provider,
-		model:    cfg.Model,
-		variant:  canonicalVariant(cfg.Params),
-		useCache: useCache,
-	}, nil
+// clientFor returns the client a call of req goes through: for Ollama the
+// one carrying its num_ctx, created on first use.
+func (r *Runner) clientFor(req llm.Request) (upstream.LLM, error) {
+	if !r.ollama {
+		return r.client, nil
+	}
+	size := ollamaContextSize(req)
+	r.ollamaMu.Lock()
+	defer r.ollamaMu.Unlock()
+	if client, ok := r.ollamaClients[size]; ok {
+		return client, nil
+	}
+	client, err := r.newClient()
+	if err != nil {
+		return nil, err
+	}
+	client.SetOption("options", map[string]any{"num_ctx": size})
+	r.ollamaClients[size] = client
+	return client, nil
 }
 
 // canonicalVariant renders the behaviour-affecting params as a stable label —
@@ -195,10 +239,14 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 		genOpts = append(genOpts, upstream.WithResponseSchema(req.ResponseSchema))
 	}
 
-	resp, err := r.client.GenerateWithUsage(ctx, prompt, genOpts...)
+	client, err := r.clientFor(req)
+	if err != nil {
+		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: err}
+	}
+	resp, err := client.GenerateWithUsage(ctx, prompt, genOpts...)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			err = fmt.Errorf("gollm %s: timed out", r.provider)
+			err = fmt.Errorf("gollm %s: timed out: %w", r.provider, ctx.Err())
 		} else {
 			err = fmt.Errorf("gollm %s: %w", r.provider, err)
 		}
@@ -244,4 +292,24 @@ func needsAPIKey(provider string) bool {
 	default:
 		return true
 	}
+}
+
+// ollamaOutputReserve is the answer room an Ollama call's num_ctx keeps
+// beside its prompt, in tokens.
+const ollamaOutputReserve = 8192
+
+// ollamaMinContext is the smallest num_ctx an Ollama call carries.
+const ollamaMinContext = 16384
+
+// ollamaContextSize is the num_ctx an Ollama call carries: the prompt at 3
+// characters a token plus the answer reserve, rounded up to a power of two.
+// Ollama reloads the model when num_ctx changes, so calls of similar size
+// share one value.
+func ollamaContextSize(req llm.Request) int {
+	need := (len(req.SystemPrompt)+len(req.UserPrompt))/3 + 1 + ollamaOutputReserve
+	size := ollamaMinContext
+	for size < need {
+		size *= 2
+	}
+	return size
 }
