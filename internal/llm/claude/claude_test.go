@@ -128,7 +128,7 @@ func TestChildRunsIsolated(t *testing.T) {
 	script := filepath.Join(binDir, "claude")
 	body := `#!/bin/sh
 printf '{"result":"args=%s cwd=%s key=%s token=%s base=%s","usage":{"input_tokens":1,"output_tokens":2}}\n' \
-  "$*" "$PWD" "${ANTHROPIC_API_KEY:-absent}" "${ANTHROPIC_AUTH_TOKEN:-absent}" "${ANTHROPIC_BASE_URL:-absent}"
+  "$*" "$PWD" "${ANTHROPIC_API_KEY-absent}" "${ANTHROPIC_AUTH_TOKEN-absent}" "${ANTHROPIC_BASE_URL-absent}"
 `
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatalf("writing stand-in binary: %v", err)
@@ -151,13 +151,10 @@ printf '{"result":"args=%s cwd=%s key=%s token=%s base=%s","usage":{"input_token
 	if !strings.Contains(res.Text, "--safe-mode") {
 		t.Errorf("the child must run in safe mode, got %q", res.Text)
 	}
-	for _, leaked := range []string{"key=sk-should-not-reach-the-child", "token=should-not-reach-the-child", "base=https://should-not-reach-the-child"} {
-		if strings.Contains(res.Text, leaked) {
-			t.Errorf("credential reached the child: %q", res.Text)
+	for _, credential := range []string{"key=", "token=", "base="} {
+		if valueOf(res.Text, credential) != "absent" {
+			t.Errorf("credential %s must be absent from the child's environment, not empty or set: %q", credential, res.Text)
 		}
-	}
-	if !strings.Contains(res.Text, "key=absent") {
-		t.Errorf("ANTHROPIC_API_KEY must be absent, not empty or set: %q", res.Text)
 	}
 
 	childDir := valueOf(res.Text, "cwd=")
