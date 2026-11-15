@@ -87,6 +87,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `llm.timeout` | `2m` | Time limit for one model call. |
 | `llm.extract_timeout` | `1m` | Time limit for the reformat call that follows a check response that does not parse. |
 | `llm.params.<name>` | None | Provider settings that sdd adds unchanged to every request body, such as `reasoning_effort` set to `low`. `claude-cli` ignores them. |
+| `llm.structured_output` | `auto` | How the checks ask `openai` and `ollama` for JSON: `json_schema`, `json_object` or `auto`. See [structured output modes](#structured-output-modes). |
 | `llm.rate_limit_rps` | See below | Maximum requests per second to `anthropic` or `openai`. Raise it on a higher account tier or for a gateway that allows more. |
 | `llm.retry.max_attempts` | `5` | Attempts per call, counting the first. `1` turns retries off. |
 | `llm.retry.base_delay` | `2s` | Wait before the first retry. The wait grows with each further retry. |
@@ -156,7 +157,7 @@ sdd calls the language model three times when it records an entry:
 - The summary step writes the entry's one-line summary.
 
 :::caution[The model must support structured output]
-The writing check and the pre-flight check ask the model for a fixed response format, a JSON schema the provider must enforce. sdd sends the schema through each provider's structured output feature and never falls back to reading free text, so a provider or model without structured output fails the checks. Ollama Cloud ignores the schema and does not work. The summary is plain text and works with any model.
+The writing check and the pre-flight check ask the model for a fixed response format, a JSON schema. By default sdd sends the schema through each provider's structured output feature; for a model that cannot take it, the [`json_object` mode](#structured-output-modes) asks for any JSON object and checks the answer against the schema itself. sdd never passes on an answer that does not match the schema, so a model that answers in neither form fails the checks. Ollama Cloud ignores the schema and does not work. The summary is plain text and works with any model.
 :::
 
 | Provider | Sends requests to | Schema sent as | API key |
@@ -166,7 +167,17 @@ The writing check and the pre-flight check ask the model for a fixed response fo
 | `ollama` | The Ollama server at `llm.ollama_endpoint` | The `format` field | Optional |
 | `claude-cli` | The local `claude` command, run as `claude -p` | `--json-schema` | None, uses your Claude Code login |
 
-A gateway or compatible service must honor the schema field in the third column for the checks to work.
+A gateway or compatible service must honor the schema field in the third column for the checks to work, unless `llm.structured_output` is `json_object`.
+
+### Structured output modes
+
+`llm.structured_output` picks how the writing check and the pre-flight check ask for JSON:
+
+- `json_schema` sends the schema for the provider to enforce.
+- `json_object` asks for any JSON object (`response_format: {"type": "json_object"}` on `openai`, `format: json` on `ollama`), states the schema in the system prompt and validates the answer against it locally. An answer that is not one JSON object matching the schema fails the call like an empty answer does.
+- `auto`, the default, sends `json_schema`. When the endpoint answers 400 because the model does not support JSON schema mode (code `model_not_capable`, or a message naming `json_schema` or `json_object`), the call is retried once in `json_object` mode, and that endpoint and model stay on `json_object` for the rest of the process. Any other 400 fails the call. The retry runs inside the call's `llm.timeout` (or `llm.extract_timeout`).
+
+Some OpenAI-compatible services serve a model in `json_object` mode only, while another service accepts `json_schema` for the same model. `claude-cli` ignores the setting.
 
 ### Anthropic
 
