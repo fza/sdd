@@ -147,6 +147,7 @@ func TestCheckEntryNamesThePart(t *testing.T) {
 		{name: "body", entry: model.Entry{Content: "Setup:\n" + token}, where: "the body", line: "line 2)"},
 		{name: "summary", entry: model.Entry{Summary: token}, where: "the summary", line: "line 1)"},
 		{name: "frontmatter field", entry: model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Aliases: []string{"first", token}}, where: "the frontmatter field aliases", line: "line 3)"},
+		{name: "block scalar with a blank line", entry: model.Entry{Type: model.TypeSignal, Kind: model.KindGap, Refs: []model.Ref{{ID: "20260101-120000-s-tac-aaa", Kind: "addresses", Desc: "first\n\n" + token}}}, where: "the frontmatter field refs", line: "line 7)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -165,6 +166,45 @@ func TestCheckEntryNamesThePart(t *testing.T) {
 				t.Error("the refusal must never repeat the credential")
 			}
 		})
+	}
+}
+
+func TestRefusedPassageLocatesTheCredential(t *testing.T) {
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "positive/github-pat.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sample := strings.TrimSpace(string(content))
+	findings, err := secrets.Scan(sample)
+	if err != nil || len(findings) == 0 {
+		t.Fatalf("the sample should hold a credential: %v", err)
+	}
+	column := findings[0].Column
+	for _, finding := range findings {
+		column = min(column, finding.Column)
+	}
+	match := sample[column:]
+
+	t.Run("words before it", func(t *testing.T) {
+		passage := secrets.RefusedPassage(secrets.CheckText("body", "intro\nThe old notes held "+sample+" for weeks."))
+
+		if !strings.HasPrefix(passage, "The old notes held") {
+			t.Errorf("the passage should be the words before the credential on its line, got %q", passage)
+		}
+		held, err := secrets.Scan(passage)
+		if err != nil || len(held) != 0 {
+			t.Errorf("the passage must not hold the credential: %v", ruleIDs(held))
+		}
+	})
+	t.Run("nothing before it", func(t *testing.T) {
+		passage := secrets.RefusedPassage(secrets.CheckText("body", "Setup:\n"+match))
+
+		if passage != "body" {
+			t.Errorf("a credential opening its line should be located by the part name, got %q", passage)
+		}
+	})
+	if passage := secrets.RefusedPassage(secrets.CheckText("body", "A clean body.")); passage != "" {
+		t.Errorf("clean text should have no refused passage, got %q", passage)
 	}
 }
 

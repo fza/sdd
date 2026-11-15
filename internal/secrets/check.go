@@ -18,7 +18,7 @@ func CheckText(where, text string) error {
 	if err != nil {
 		return err
 	}
-	return refusal(where, findings)
+	return refusal(Part{Where: where, Text: text}, findings)
 }
 
 // CheckFile refuses a file holding a credential, judged with the rules scoped
@@ -28,17 +28,17 @@ func CheckFile(name string, content []byte) error {
 	if err != nil {
 		return err
 	}
-	return refusal(fileWhere(name), findings)
+	return refusal(Part{Where: fileWhere(name), Text: string(content)}, findings)
 }
 
 // CheckEntry refuses an entry whose summary, body or any other
 // frontmatter value holds a credential.
 func CheckEntry(entry *model.Entry) error {
-	where, findings, err := ScanEntry(entry)
+	part, findings, err := scanParts(EntryParts(entry))
 	if err != nil {
 		return err
 	}
-	return refusal(where, findings)
+	return refusal(part, findings)
 }
 
 // Part is one piece of text, named as the user knows it ("body", "summary").
@@ -57,12 +57,13 @@ func EntryParts(entry *model.Entry) []Part {
 }
 
 // frontmatterFields cuts rendered frontmatter at each top-level key: the user
-// wrote a field, never the frontmatter sdd renders from it.
+// wrote a field, never the frontmatter sdd renders from it. Blank lines stay,
+// so a line number inside a block scalar holds.
 func frontmatterFields(frontmatter string) []Part {
 	var fields []Part
 	for _, line := range strings.SplitAfter(frontmatter, "\n") {
 		content := strings.TrimRight(line, "\n")
-		if content == "---" || content == "" {
+		if content == "---" {
 			continue
 		}
 		key, _, found := strings.Cut(content, ":")
@@ -79,20 +80,21 @@ func frontmatterFields(frontmatter string) []Part {
 // ScanEntry scans an entry part by part and returns the first part holding
 // any finding.
 func ScanEntry(entry *model.Entry) (string, []Finding, error) {
-	return scanParts(EntryParts(entry))
+	part, findings, err := scanParts(EntryParts(entry))
+	return part.Where, findings, err
 }
 
-func scanParts(parts []Part) (string, []Finding, error) {
+func scanParts(parts []Part) (Part, []Finding, error) {
 	for _, part := range parts {
 		findings, err := Scan(part.Text)
 		if err != nil {
-			return "", nil, err
+			return Part{}, nil, err
 		}
 		if len(findings) > 0 {
-			return part.Where, findings, nil
+			return part, findings, nil
 		}
 	}
-	return "", nil, nil
+	return Part{}, nil, nil
 }
 
 // Describe names where a credential was found and by which rules, never the
@@ -113,24 +115,44 @@ func fileWhere(name string) string {
 	return "attachment " + name
 }
 
-func refusal(where string, findings []Finding) error {
+func refusal(part Part, findings []Finding) error {
 	if len(findings) == 0 {
 		return nil
 	}
-	return &refusalError{where: where, description: Describe(where, findings)}
+	return &refusalError{where: part.Where, passage: passageBefore(part.Text, findings), description: Describe(part.Where, findings)}
 }
 
-// RefusedPart is the part a write refusal names, such as "body"; empty when
-// err is no write refusal.
-func RefusedPart(err error) string {
-	var refusal *refusalError
-	if errors.As(err, &refusal) {
-		return refusal.where
+// passageBefore is the text on the first finding's line before its earliest
+// match: words that locate the credential without holding it.
+func passageBefore(text string, findings []Finding) string {
+	line, column := findings[0].Line, findings[0].Column
+	for _, finding := range findings {
+		if finding.Line == line {
+			column = min(column, finding.Column)
+		}
 	}
-	return ""
+	lines := strings.Split(text, "\n")
+	if line > len(lines) {
+		return ""
+	}
+	return strings.TrimSpace(lines[line-1][:column])
 }
 
-type refusalError struct{ where, description string }
+// RefusedPassage locates what a write refusal refused: the draft's words just
+// before the credential, else the part's name, such as "body"; empty when err
+// is no write refusal.
+func RefusedPassage(err error) string {
+	var refusal *refusalError
+	if !errors.As(err, &refusal) {
+		return ""
+	}
+	if refusal.passage != "" {
+		return refusal.passage
+	}
+	return refusal.where
+}
+
+type refusalError struct{ where, passage, description string }
 
 func (e *refusalError) Error() string {
 	return "refusing to write: " + e.description + "; the graph is shared and immutable"
