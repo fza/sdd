@@ -7,11 +7,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
+	"unicode/utf8"
 
 	pkgembed "github.com/networkteam/sdd/pkg/llm/embed"
 )
@@ -51,22 +56,26 @@ func Quantise(runes int) int {
 // A provider that reports no token count gets FallbackMaxRunes. A provider
 // that truncates silently shows a count stuck at its limit; one that rejects
 // over-limit input is bisected between the last accepted size and the first
-// rejection, so a transport error during bisection reads as a rejection.
+// rejection. A probe a network error ends is retried once (see attempt), so a
+// passing blip neither lowers the cap nor gets stored.
 func Calibrate(ctx context.Context, emb pkgembed.Embedder) (Calibration, error) {
-	latinTokens, err := probe(ctx, emb, repeatRunes("word ", latinProbeRunes))
+	latinTokens, err := shortProbe(ctx, emb, repeatRunes("word ", latinProbeRunes))
 	if err != nil {
 		return Calibration{}, fmt.Errorf("calibration latin probe: %w", err)
 	}
 	if latinTokens == 0 {
 		return Calibration{Method: "unreported", MaxRunes: FallbackMaxRunes}, nil
 	}
-	cjkTokens, err := probe(ctx, emb, repeatRunes("字", cjkProbeRunes))
+	cjkTokens, err := shortProbe(ctx, emb, repeatRunes("字", cjkProbeRunes))
 	if err != nil {
 		return Calibration{}, fmt.Errorf("calibration cjk probe: %w", err)
 	}
 	worst := math.Max(float64(latinTokens)/latinProbeRunes, float64(cjkTokens)/cjkProbeRunes)
 
-	method, limit := findLimit(ctx, emb, latinTokens)
+	method, limit, err := findLimit(ctx, emb, latinTokens)
+	if err != nil {
+		return Calibration{}, err
+	}
 	maxRunes := Quantise(int(math.Floor(float64(limit) * safetyMargin / worst)))
 	if maxRunes < CapQuantum {
 		return Calibration{}, fmt.Errorf("calibrated limit of %d tokens leaves no room for a %d-rune cap", limit, CapQuantum)
@@ -74,26 +83,96 @@ func Calibrate(ctx context.Context, emb pkgembed.Embedder) (Calibration, error) 
 	return Calibration{Method: method, LimitTokens: limit, TokensPerRune: worst, MaxRunes: maxRunes}, nil
 }
 
-func findLimit(ctx context.Context, emb pkgembed.Embedder, latinTokens int) (string, int) {
-	overflowTokens, err := probe(ctx, emb, repeatRunes("word ", overflowProbeRunes))
-	if err == nil {
+func findLimit(ctx context.Context, emb pkgembed.Embedder, latinTokens int) (string, int, error) {
+	overflowTokens, refused, err := attempt(ctx, emb, repeatRunes("word ", overflowProbeRunes))
+	if err != nil {
+		return "", 0, err
+	}
+	if !refused {
 		expected := float64(overflowProbeRunes) * float64(latinTokens) / latinProbeRunes
 		if float64(overflowTokens) < plateauFraction*expected {
-			return "plateau", overflowTokens
+			return "plateau", overflowTokens, nil
 		}
-		return "unbounded", overflowTokens
+		return "unbounded", overflowTokens, nil
 	}
 	lo, loTokens, hi := latinProbeRunes, latinTokens, overflowProbeRunes
 	for hi-lo > bisectTolerance {
 		mid := (lo + hi) / 2
-		tokens, err := probe(ctx, emb, repeatRunes("word ", mid))
+		tokens, refused, err := attempt(ctx, emb, repeatRunes("word ", mid))
 		if err != nil {
+			return "", 0, err
+		}
+		if refused {
 			hi = mid
 			continue
 		}
 		lo, loTokens = mid, tokens
 	}
-	return "bisect", loTokens
+	return "bisect", loTokens, nil
+}
+
+// shortProbe sends a probe every endpoint must accept: a refusal fails the
+// calibration.
+func shortProbe(ctx context.Context, emb pkgembed.Embedder, text string) (int, error) {
+	tokens, refused, err := attempt(ctx, emb, text)
+	if err != nil {
+		return 0, err
+	}
+	if refused {
+		return 0, fmt.Errorf("the endpoint refused %d runes", utf8.RuneCountInString(text))
+	}
+	return tokens, nil
+}
+
+// attempt sends one probe and reads its outcome. An answer that is an error
+// is a refusal. A probe a network error ends is sent once more: an answer
+// decides, a dropped connection again counts as a refusal (endpoints that
+// drop over-long input), and a second timeout leaves the outcome open, which
+// fails the calibration so nothing is stored and the next fill probes again.
+func attempt(ctx context.Context, emb pkgembed.Embedder, text string) (tokens int, refused bool, err error) {
+	tokens, err = probe(ctx, emb, text)
+	if err == nil {
+		return tokens, false, nil
+	}
+	if ctx.Err() != nil {
+		return 0, false, ctx.Err()
+	}
+	if probeFailure(err) == answered {
+		return 0, true, nil
+	}
+	tokens, err = probe(ctx, emb, text)
+	if err == nil {
+		return tokens, false, nil
+	}
+	if ctx.Err() != nil {
+		return 0, false, ctx.Err()
+	}
+	if probeFailure(err) == timedOut {
+		return 0, false, fmt.Errorf("calibration probe of %d runes got no answer twice: %w", utf8.RuneCountInString(text), err)
+	}
+	return 0, true, nil
+}
+
+type failure int
+
+const (
+	answered failure = iota
+	dropped
+	timedOut
+)
+
+// probeFailure tells an endpoint's answer from a network failure: a request
+// error without a transport error underneath is the endpoint's answer.
+func probeFailure(err error) failure {
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return timedOut
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) || errors.As(err, &netErr) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) {
+		return dropped
+	}
+	return answered
 }
 
 func probe(ctx context.Context, emb pkgembed.Embedder, text string) (int, error) {

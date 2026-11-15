@@ -3,9 +3,11 @@ package embed_test
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -265,5 +267,100 @@ func TestLoadOrCalibrateRefreshesUseOnceADay(t *testing.T) {
 	}
 	if _, err := os.Stat(stray); err != nil {
 		t.Errorf("pruning should leave a file that is no calibration: %v", err)
+	}
+}
+
+// limitedEndpoint answers like an endpoint with a 2048-token limit that fails
+// over-limit input with overLimit, costing one token per CJK rune.
+func limitedEndpoint(overLimit error) func(text string) (int, error) {
+	return func(text string) (int, error) {
+		if cjkText(text) {
+			return utf8.RuneCountInString(text), nil
+		}
+		if latinTokens(text) > 2048 {
+			return 0, overLimit
+		}
+		return latinTokens(text), nil
+	}
+}
+
+func droppedConnection() error {
+	return &url.Error{Op: "Post", URL: "http://endpoint.test/v1/embeddings", Err: syscall.ECONNRESET}
+}
+
+func timedOutRequest() error {
+	return &url.Error{Op: "Post", URL: "http://endpoint.test/v1/embeddings", Err: os.ErrDeadlineExceeded}
+}
+
+func TestCalibrateRetriesAProbeANetworkErrorEnds(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		tokensFor func(text string) (int, error)
+	}{
+		{
+			name: "a connection dropped once inside the limit",
+			tokensFor: func() func(string) (int, error) {
+				dropped := false
+				limited := limitedEndpoint(errors.New("input exceeds the model limit"))
+				return func(text string) (int, error) {
+					if !dropped && !cjkText(text) && utf8.RuneCountInString(text) > 1000 && latinTokens(text) <= 2048 {
+						dropped = true
+						return 0, droppedConnection()
+					}
+					return limited(text)
+				}
+			}(),
+		},
+		{
+			name: "a request timed out once inside the limit",
+			tokensFor: func() func(string) (int, error) {
+				timedOut := false
+				limited := limitedEndpoint(errors.New("input exceeds the model limit"))
+				return func(text string) (int, error) {
+					if !timedOut && !cjkText(text) && utf8.RuneCountInString(text) > 1000 && latinTokens(text) <= 2048 {
+						timedOut = true
+						return 0, timedOutRequest()
+					}
+					return limited(text)
+				}
+			}(),
+		},
+		{
+			name:      "an endpoint that drops the connection on over-limit input",
+			tokensFor: limitedEndpoint(droppedConnection()),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cal, err := localembed.Calibrate(context.Background(), &countingEmbedder{tokensFor: tc.tokensFor})
+			if err != nil {
+				t.Fatalf("Calibrate: %v", err)
+			}
+			if cal.Method != "bisect" || cal.MaxRunes != 1792 {
+				t.Errorf("a passing network error should leave the cap the endpoint's limit gives, got %q with %d runes", cal.Method, cal.MaxRunes)
+			}
+		})
+	}
+}
+
+func TestLoadOrCalibrateStoresNothingWhenAProbeStaysUnanswered(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	unanswered := limitedEndpoint(timedOutRequest())
+	if _, err := localembed.LoadOrCalibrate(context.Background(), &countingEmbedder{tokensFor: unanswered}, dir, "fp|http://endpoint.test|/v1/embeddings"); err == nil {
+		t.Fatal("a probe that times out twice leaves the limit open and should fail the calibration")
+	}
+	if files, err := filepath.Glob(filepath.Join(dir, "calibration-*.json")); err != nil || len(files) != 0 {
+		t.Fatalf("a failed calibration should store nothing, found %v, %v", files, err)
+	}
+	next := &countingEmbedder{tokensFor: limitedEndpoint(errors.New("input exceeds the model limit"))}
+	cal, err := localembed.LoadOrCalibrate(context.Background(), next, dir, "fp|http://endpoint.test|/v1/embeddings")
+	if err != nil {
+		t.Fatalf("LoadOrCalibrate: %v", err)
+	}
+	if next.calls == 0 || cal.MaxRunes != 1792 {
+		t.Errorf("the next fill should probe again and store the limit it finds, %d probes, cap %d", next.calls, cal.MaxRunes)
 	}
 }

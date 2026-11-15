@@ -350,7 +350,7 @@ A search waits at most 5 seconds for an index another process writes, then print
 
 #### Input limit
 
-Each embedding endpoint accepts a limited input, in tokens. On its first fill, sdd measures that limit with three requests: 1000 Latin characters, 1000 CJK characters and 20,000 Latin characters. An endpoint that cuts long input off or refuses it costs up to nine more requests. sdd then cuts every chunk to 90 percent of the limit, counted for the costliest text, and stores the result per embedding setup, `embedding.endpoint` and `embedding.path` in `calibration/` beside the index. An endpoint that reports no token counts gets a cap of 2048 characters. A changed cap embeds every entry once more. Searches keep finding every entry meanwhile.
+Each embedding endpoint accepts a limited input, in tokens. On its first fill, sdd measures that limit with three requests: 1000 Latin characters, 1000 CJK characters and 20,000 Latin characters. An endpoint that cuts long input off or refuses it costs up to nine more requests. A request a network error ends is sent once more: a connection dropped twice counts as a refusal, and a request that times out twice fails the fill without storing a limit. sdd then cuts every chunk to 90 percent of the limit, counted for the costliest text, and stores the result per embedding setup, `embedding.endpoint` and `embedding.path` in `calibration/` beside the index. An endpoint that reports no token counts gets a cap of 2048 characters. A changed cap embeds every entry once more. Searches keep finding every entry meanwhile.
 
 #### Cleanup
 
