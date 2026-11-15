@@ -16,7 +16,7 @@ import (
 
 const credentialFinding = "credential"
 
-var captureDraftFields =[]string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch"}
+var captureDraftFields = []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch"}
 
 func captureAttachments(draft *EntryDraft, staged map[string]string) error {
 	for _, filename := range draft.AttachmentHandles {
