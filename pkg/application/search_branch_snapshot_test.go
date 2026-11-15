@@ -37,7 +37,8 @@ func TestSearchPinnedReadPreservesAuthorizedBranch(t *testing.T) {
 		Targets: sdd.TargetAcquirerFunc(func(_ context.Context, target sdd.MutationTarget) (*sdd.AcquiredTarget, error) {
 			return &sdd.AcquiredTarget{Target: target, Graph: reader, Release: func() error { return nil }}, nil
 		}),
-		LLM: llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) { return llm.Result{}, nil }),
+		LLM:     llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) { return llm.Result{}, nil }),
+		RuneCap: testRuneCap,
 		Embedder: embed.EmbedderFunc{Space: "test-space", Run: func(_ context.Context, req embed.Request) (embed.Result, error) {
 			result := embed.Result{Vectors: make([][]float32, len(req.Texts))}
 			for i := range result.Vectors {

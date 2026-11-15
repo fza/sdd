@@ -20,7 +20,8 @@ A later row overrides an earlier one: local wins over project, project wins over
 | Keys | Belong in | Notes |
 | --- | --- | --- |
 | `participant`, `llm.*`, `embedding.*`, `sync.*` | User-global | Any file works. Use the local file to override a value for one project. A value in the project file applies to everyone on the project and overrides their user-global value. |
-| `sessions.retention` | User-global | sdd currently ignores it in the project files. |
+| `sessions.retention` | User-global | One daily pass collects the sessions of every project on the machine. sdd ignores it in the project files with a warning, and `sdd config set --local` refuses it. |
+| `cache.retention`, `index.replaced_retention` | User-global | The cache is shared by every project on the machine. sdd ignores them in the project files, and `sdd config set --local` refuses them. |
 | `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
 
@@ -112,7 +113,8 @@ Default rate limits:
 | `embedding.provider` | None | `openai` or `ollama`. Without a provider, search matches keywords only. |
 | `embedding.model` | None | Embedding model, such as `text-embedding-3-small` or `qwen3-embedding:8b`. Required with a provider. |
 | `embedding.api_keys.openai` | None | API key, required for `openai`. sdd does not fall back to `llm.api_keys.openai`. |
-| `embedding.endpoint` | `https://api.openai.com` | Base URL of an OpenAI-compatible embeddings service, for `openai` only. sdd appends `/v1/embeddings`, so leave `/v1` off. |
+| `embedding.endpoint` | `https://api.openai.com` | Base URL of an OpenAI-compatible embeddings service, for `openai` only. sdd appends `embedding.path`, so leave the path off. |
+| `embedding.path` | `/v1/embeddings` | Request path sdd appends to `embedding.endpoint`, for `openai` only. Starts with `/` and holds no scheme or host; sdd refuses anything else. `ollama` ignores it. |
 | `embedding.ollama_endpoint` | `http://localhost:11434` | Ollama server for the `ollama` provider. Independent of `llm.ollama_endpoint`. |
 | `embedding.timeout` | `2m` | Time limit for one request. |
 | `embedding.batch_size` | `100` for `openai`, `64` for `ollama` | Texts sent in one request. |
@@ -126,7 +128,16 @@ Default rate limits:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `sync.cooldown` | `15m` | Every sdd command except `sdd init` runs `git fetch` in the background at most once per this interval, and reports when your branch is behind or ahead of its upstream. An invalid value counts as `15m`. |
-| `sessions.retention` | `14d` | When `sdd serve` starts, it deletes the logs of sessions that ended longer ago than this. Accepts days, such as `14d`, or a duration, such as `336h`. Set it in the user-global file. An invalid value stops `sdd serve` from starting. |
+| `sessions.retention` | `14d` | The daily `sdd cache prune` deletes the logs and staged attachments of sessions, in every project, that ended longer ago than this. Open sessions and logs sdd cannot read stay. Accepts days, such as `14d`, or a duration, such as `336h`. Set it in the user-global file. An invalid value fails the prune run. |
+
+### Cache
+
+Both keys accept days, such as `90d`, or a duration, such as `2160h`. `sdd config set` refuses any other value. See [the search index](#the-search-index) for what `sdd cache prune` deletes.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `cache.retention` | `90d` | `sdd cache prune` deletes an index store, a graph snapshot or an embedding calibration nothing used for longer than this, and the session folder and staged attachments of a project unused that long. Also how long a checkout's record keeps the index versions it reads. |
+| `index.replaced_retention` | `14d` | `sdd cache prune` deletes an index version replaced longer ago than this, versions of an older index format unused that long, and the index store of an embedding setup another one replaced. |
 
 ### Connected repositories
 
@@ -278,7 +289,7 @@ embedding:
 
 ### OpenAI-compatible services
 
-For another service that implements `POST /v1/embeddings`, set `embedding.endpoint` to its base URL without `/v1`. The `openai` provider always sends `embedding.api_keys.openai`, so for a service without authentication, set any value.
+For another service that implements the OpenAI embeddings API, set `embedding.endpoint` to its base URL without a path. sdd posts to `/v1/embeddings` under it. For a gateway that serves the route elsewhere, set `embedding.path` too, such as `/v3/compat/embeddings`. The `openai` provider always sends `embedding.api_keys.openai`, so for a service without authentication, set any value.
 
 ```bash
 sdd config set embedding.provider openai
@@ -335,13 +346,37 @@ A changed `query_template` applies to the next search. A changed `document_templ
 
 The index lives in `~/.cache/sdd/index/`, or `$XDG_CACHE_HOME/sdd/index/` when that variable is set, with one directory per project and embedding setup. A project's directory is named after its `repo_id`, or after a hash of the repository path when it has none.
 
-The index only grows. It keeps every embedded version of every entry, so sdd versions that share it do not remove each other's work. `sdd index gc` lists the stored versions by group, `sdd index gc --drop <group>` deletes one group, and `--drop stale` deletes every version this checkout does not search.
+A search waits at most 5 seconds for an index another process writes, then prints `sdd: search index busy for 5s; falling back to text search` and matches the query's words as text. A search that finds another process filling the index prints `sdd: another process is filling the search index; searching the index as it stands` and searches without waiting. `sdd index` waits for that fill, and searches through `sdd serve` skip it as the terminal does. A connected repository's index held past 5 seconds is searched by text. Without a terminal, a fill longer than 15 seconds prints its progress on stderr, at most every 15 seconds.
+
+#### Input limit
+
+Each embedding endpoint accepts a limited input, in tokens. On its first fill, sdd measures that limit with three requests: 1000 Latin characters, 1000 CJK characters and 20,000 Latin characters. An endpoint that cuts long input off or refuses it costs up to nine more requests, plus the repeats below. A request that fails without an HTTP error answer (a dropped connection, a server error, a timeout, a refused connection, a failed name lookup, a rate limit, an unknown error) is sent once more. A connection dropped twice, or a server error twice, counts as a refusal only if one more request at the last accepted size succeeds, and the next fill measures that limit once more, one process at a time and at most every 10 minutes: a limit at least as high is kept for good, a lower one replaces it, and a failed measurement keeps it to measure again. Any other repeated failure, or a failed request at the last accepted size, fails the fill without storing a limit. sdd then cuts every chunk to 90 percent of the limit, counted for the costliest text, and stores the result per embedding setup, `embedding.endpoint` and `embedding.path` in `calibration/` beside the index. An endpoint that reports no token counts gets a cap of 2048 characters. A changed cap embeds every entry once more. Searches keep finding every entry meanwhile.
+
+#### Cleanup
+
+sdd runs `sdd cache prune` in the background at most once a day. Any command except `sdd cache` starts it as its own process when the last run started or was launched a day ago or more, and a running `sdd serve` checks every hour. The command never waits for it, and the run prints nothing; its output goes to `~/.local/state/sdd/cache-prune.log`, replaced per run. A failed background run is reported once: as a warning by the next command, or in `notices.cache` on the next MCP tool result. `sdd cache prune` deletes what nothing needs and reports the bytes freed:
+
+- after `sessions.retention`: ended sessions of every project, with their staged attachments
+- after `index.replaced_retention`: replaced index versions, versions of older index formats, the index store of an embedding setup another one replaced
+- after `cache.retention`: unused index stores, graph snapshots and calibrations
+- after `cache.retention`: the session folder of a project no session-store write and no `sdd serve` start used, once no session log is left in it, and its staged attachments once no session on the machine owns them, a session open in a checkout the project was opened from included
+- at once: graph snapshots of directories that no longer exist, and clones of repositories `sdd repo remove` dropped under the same config file that `repos` no longer names
+- a clone missing from `repos` alone stays, and so does every clone of a repository `repos` names
+- a dropped clone holding another clone, or the path of a repository `repos` names, stays, with a warning
+- with `repos` missing or empty, or the XDG directories set only in part, a run that would remove a clone removes none and fails
+- leftovers of killed processes older than a day
+
+It never deletes an open session, a session log it cannot read, or a version any checkout read within `cache.retention`, and it skips an index store another process holds. One run per machine at a time, at most 5 minutes: a background run that finds another running exits quietly, and `sdd cache prune` started by hand fails with `another cache pruning run is in progress`. `sdd info` shows the last run. `sdd cache prune` reports a failed run as its error.
+
+`sdd index gc` lists the stored versions by group, `sdd index gc --drop <group>` deletes one group, and `--drop stale` deletes every version no search of this checkout reads.
 
 ## Environment variables
 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `XDG_CONFIG_HOME` | `~/.config` | The user-global file is `$XDG_CONFIG_HOME/sdd/config.yaml`. |
-| `XDG_CACHE_HOME` | `~/.cache` | Search indexes and clones of connected repositories live under `$XDG_CACHE_HOME/sdd`. |
-| `XDG_STATE_HOME` | `~/.local/state` | Session logs live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
+| `XDG_CACHE_HOME` | `~/.cache` | Search indexes, embedding calibrations, graph snapshots and clones of connected repositories live under `$XDG_CACHE_HOME/sdd`. |
+| `XDG_STATE_HOME` | `~/.local/state` | Session logs, project use stamps and the record and log of the last `sdd cache prune` live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
+| `SDD_GRAPH_CACHE` | On | Every command keeps a snapshot of each graph it loads under `$XDG_CACHE_HOME/sdd/graph`, and reads it while no graph file changed. A cache dir sdd cannot write costs one warning and no failure. `off` reads every entry file, for sandboxes and read-only homes. |
+| `SDD_TIMING` | Off | Any true value prints one line on stderr per ended phase of a command, `timing: <phase> <duration>ms at <offset>ms`. Same as `--timing`. |
 | `SDD_SERVE_TOKEN` | None | The bearer token `sdd serve --transport http` requires on every request. Same as `--auth-token`. |

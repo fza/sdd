@@ -17,7 +17,6 @@ import (
 	"github.com/urfave/cli/v3"
 
 	sdd "github.com/networkteam/sdd/pkg/application"
-	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
@@ -32,7 +31,7 @@ import (
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
-func serveCmd() *cli.Command {
+func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 	return &cli.Command{
 		Name:  "serve",
 		Usage: "Run the workflow MCP server: dialogue-loop tools over stdio or HTTP",
@@ -78,11 +77,13 @@ func serveCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			retention, err := model.ResolveSessionRetention(cfg)
-			if err != nil {
-				return err
+			var cacheNotice func(context.Context) string
+			if launchCachePrune != nil {
+				timerCtx, stopTimer := context.WithCancel(ctx)
+				defer stopTimer()
+				go runCachePruneTimer(timerCtx, launchCachePrune)
+				cacheNotice = serveCacheNotice
 			}
-			collectSessions(ctx, application, retention)
 
 			transport := cmd.String("transport")
 			srv, err := mcpserver.New(mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll,
@@ -90,6 +91,7 @@ func serveCmd() *cli.Command {
 				LocalIdentity: identity,
 				LocalClient:   transport == "stdio",
 				Version:       cmd.Root().Version,
+				CacheNotice:   cacheNotice,
 			})
 			if err != nil {
 				return err
@@ -331,6 +333,10 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
+	// A server that writes no session for a while still uses its project.
+	if err := localadapter.MarkProjectUsed(locations.StateRoot, persistentIndexRepoKey(cfg, stableRepoRoot), time.Now()); err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
 	project := sessionStoreProject(cfg)
 	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: graphDir})
 	if err != nil {
@@ -360,10 +366,12 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	// use still routes correctly. No process-local memory store in production.
 	cacheRoot := registry.CacheRoot()
 	baseRepoKey := persistentIndexRepoKey(cfg, stableRepoRoot)
-	baseIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, baseRepoKey)
+	baseIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, baseRepoKey).WithCheckout(graphDir)
 	var embeddings embed.Embedder
+	var runeCap func(context.Context) (int, error)
 	if localEmbedder.Embedder != nil {
 		embeddings = localEmbedder
+		runeCap = localEmbedder.MaxRunes
 	}
 	targets, err := localadapter.NewRepositoryTargets(project, filepath.Dir(sddDir), locations.ConfigPath)
 	if err != nil {
@@ -375,15 +383,17 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Branches: targets, Base: targets,
-		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
+		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
 		LLM: runner,
 	})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
 	var memberEmbedder embed.Embedder
+	var memberRuneCap func(context.Context) (int, error)
 	if crossEmbedder.Embedder != nil {
 		memberEmbedder = crossEmbedder
+		memberRuneCap = crossEmbedder.MaxRunes
 	}
 	access := &localRuntimeAccess{
 		project: project, participant: participant, runtime: runtime,
@@ -403,11 +413,11 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 			// connected-repository storage contract) and exclude embedded entries,
 			// so binary-shipped base facts embed once per machine in the base
 			// store, not once per connected repo.
-			memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(cache.RepoID), cacheRoot, index.RepoKey(cache.RepoID, cache.Dir))
+			memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(cache.RepoID), cacheRoot, index.RepoKey(cache.RepoID, cache.Dir)).WithCheckout(graphDir)
 			return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 				Project: sdd.ProjectRef{ID: sdd.ProjectID(cache.RepoID), DisplayName: string(cache.RepoID)}, Graph: memberGraph,
 				Language: dependencyCfg.Language, Dependencies: dependencyCfg.Dependencies,
-				Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), LLM: runner,
+				Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), RuneCap: memberRuneCap, LLM: runner,
 				ExcludeEmbeddedFromIndex: true,
 			})
 		}},
@@ -421,43 +431,6 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		return nil, "", sdd.RequestIdentity{}, err
 	}
 	return application, project, identity, nil
-}
-
-// collectSessions runs one reclamation pass at startup. This is the trigger
-// rather than a command because the store is being opened anyway and collection
-// involves no procedure and no served instruction, so it stays host-neutral by
-// construction.
-//
-// CollectSessions itself returns its error, so a composition calling it on a
-// schedule can act on one. This adapter cannot: over stdio a server that exits
-// leaves the agent with a dead pipe and no way to act, which is worse than the
-// unreclaimed disk it would be reporting. So startup logs and serves.
-func collectSessions(ctx context.Context, application *sdd.Application, retention time.Duration) {
-	const pageSize = 200
-	log := slogutils.FromContext(ctx)
-	cmd := sdd.CollectSessionsCmd{Retention: retention, Limit: pageSize}
-	var total sdd.CollectSessionsResult
-	for {
-		result, err := application.CollectSessions(ctx, cmd)
-		if err != nil {
-			log.Warn("session collection did not complete", "err", err, "after", cmd.After)
-			return
-		}
-		total.RemovedSessions = append(total.RemovedSessions, result.RemovedSessions...)
-		total.RemovedStaged = append(total.RemovedStaged, result.RemovedStaged...)
-		total.Skipped = append(total.Skipped, result.Skipped...)
-		if result.Next == "" {
-			break
-		}
-		cmd.After = result.Next
-	}
-	if len(total.RemovedSessions) > 0 || len(total.RemovedStaged) > 0 {
-		log.Info("collected session scaffolding",
-			"sessions", len(total.RemovedSessions),
-			"staged_sessions", len(total.RemovedStaged),
-			"skipped", len(total.Skipped),
-		)
-	}
 }
 
 func optionalSearchIndex(embeddings embed.Embedder, index sdd.SearchIndexStore) sdd.SearchIndexStore {

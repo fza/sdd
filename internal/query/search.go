@@ -1,6 +1,13 @@
 package query
 
-import "github.com/networkteam/sdd/internal/model"
+import (
+	"regexp"
+	"slices"
+	"strings"
+	"unicode"
+
+	"github.com/networkteam/sdd/internal/model"
+)
 
 // SearchMode is derived from the SearchQuery's input shape: text-only,
 // vector-only, or hybrid (when both --term and --query are supplied).
@@ -83,6 +90,30 @@ func (q SearchQuery) Mode() SearchMode {
 	default:
 		return SearchModeText
 	}
+}
+
+// TextFallback is the query answered by text search alone, for when the
+// vector index cannot be read: the phrase becomes one more term, an
+// alternation of its words, so entries rank by how many of them they carry.
+func (q SearchQuery) TextFallback() SearchQuery {
+	if q.Phrase == "" {
+		return q
+	}
+	var words []string
+	for _, word := range strings.FieldsFunc(strings.ToLower(q.Phrase), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if len([]rune(word)) >= 3 && !slices.Contains(words, word) {
+			words = append(words, word)
+		}
+	}
+	term := regexp.QuoteMeta(strings.TrimSpace(q.Phrase))
+	if len(words) > 0 {
+		term = "(" + strings.Join(words, "|") + ")"
+	}
+	q.Terms = append(slices.Clone(q.Terms), term)
+	q.Phrase = ""
+	return q
 }
 
 // EffectiveLimit returns Limit or DefaultSearchLimit when zero.

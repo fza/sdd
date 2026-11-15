@@ -53,21 +53,24 @@ func (f *Finder) EffectiveConfig(q query.EffectiveConfigQuery) (*query.Effective
 }
 
 // UnknownConfigKeys reports the keys sdd read past because it does not know
-// them — the one computation behind every surface that says so, rather than
-// each deciding for itself what counts as unknown.
+// them, and the settings it reads past where they stand: the one computation
+// behind every surface that says so, rather than each deciding for itself.
 func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.UnknownConfigKeysResult, error) {
 	type layer struct {
-		path string
-		typ  reflect.Type
+		path   string
+		typ    reflect.Type
+		source model.ConfigValueSource
 	}
 	var layers []layer
 	if f.repos != nil {
-		layers = append(layers, layer{f.repos.ConfigPath(), reflect.TypeFor[repos.GlobalConfig]()})
+		layers = append(layers, layer{f.repos.ConfigPath(), reflect.TypeFor[repos.GlobalConfig](), model.ConfigSourceGlobal})
 	}
 	if q.SDDDir != "" {
-		for _, name := range []string{"config.yaml", "config.local.yaml"} {
-			layers = append(layers, layer{filepath.Join(q.SDDDir, name), reflect.TypeFor[model.PerRepoConfig]()})
-		}
+		perRepo := reflect.TypeFor[model.PerRepoConfig]()
+		layers = append(layers,
+			layer{filepath.Join(q.SDDDir, "config.yaml"), perRepo, model.ConfigSourceProject},
+			layer{filepath.Join(q.SDDDir, "config.local.yaml"), perRepo, model.ConfigSourceLocal},
+		)
 	}
 
 	result := &query.UnknownConfigKeysResult{}
@@ -85,6 +88,13 @@ func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.Unkno
 		}
 		for _, k := range keys {
 			result.Keys = append(result.Keys, query.UnknownConfigKey{File: l.path, Key: k})
+		}
+		var settings model.BaseConfig
+		if err := model.UnmarshalYAML(data, &settings); err != nil {
+			return nil, err
+		}
+		for _, setting := range model.IgnoredSettings(settings, l.source) {
+			result.Ignored = append(result.Ignored, query.IgnoredConfigSetting{File: l.path, Key: setting.Key, Reason: setting.Reason})
 		}
 	}
 	return result, nil

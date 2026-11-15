@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/model"
@@ -14,19 +15,20 @@ import (
 // does not belong in that file before anything lands on disk.
 func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) error {
 	var (
-		file  configFile
-		probe any
-		typ   reflect.Type
-		layer string
-		err   error
+		file   configFile
+		probe  any
+		typ    reflect.Type
+		layer  string
+		source model.ConfigValueSource
+		err    error
 	)
 	switch cmd.Target {
 	case "global":
 		file, err = h.globalConfigFile()
-		probe, typ, layer = &repos.GlobalConfig{}, reflect.TypeFor[repos.GlobalConfig](), "global"
+		probe, typ, layer, source = &repos.GlobalConfig{}, reflect.TypeFor[repos.GlobalConfig](), "global", model.ConfigSourceGlobal
 	case "local":
 		file, err = h.localConfigFile()
-		probe, typ, layer = &model.PerRepoConfig{}, reflect.TypeFor[model.PerRepoConfig](), "per-repo"
+		probe, typ, layer, source = &model.PerRepoConfig{}, reflect.TypeFor[model.PerRepoConfig](), "per-repo", model.ConfigSourceLocal
 	default:
 		return fmt.Errorf("unknown config target %q (use global or local)", cmd.Target)
 	}
@@ -46,6 +48,32 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 		}
 		if err := model.UnmarshalYAML(patched, probe); err != nil {
 			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
+		}
+		if cmd.Key == "embedding.path" {
+			if err := model.ValidateEmbeddingPath(cmd.Value); err != nil {
+				return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
+			}
+		}
+		if global, ok := probe.(*repos.GlobalConfig); ok {
+			var err error
+			switch cmd.Key {
+			case "cache.retention":
+				_, err = model.ResolveCacheRetention(global.Cache)
+			case "index.replaced_retention":
+				_, err = model.ResolveReplacedRetention(global.Index)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
+			}
+		}
+		var settings model.BaseConfig
+		if err := model.UnmarshalYAML(patched, &settings); err != nil {
+			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
+		}
+		for _, ignored := range model.IgnoredSettings(settings, source) {
+			if ignored.Key == cmd.Key || strings.HasPrefix(cmd.Key, ignored.Key+".") {
+				return nil, fmt.Errorf("%s is not valid for the %s config: %s", cmd.Key, layer, ignored.Reason)
+			}
 		}
 		return patched, nil
 	})

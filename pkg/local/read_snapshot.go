@@ -60,7 +60,7 @@ func (s *FilesystemGraphStore) AcquireSnapshot(ctx context.Context, q app.Snapsh
 		return nil, err
 	}
 	defer unlock(lock)
-	revision, err := graphDirectoryRevision(s.dir)
+	revision, err := s.revisions.current(s.dir)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func (s *FilesystemGraphStore) AcquireSnapshot(ctx context.Context, q app.Snapsh
 	if err != nil {
 		return nil, err
 	}
-	after, err := graphDirectoryRevision(s.dir)
+	after, err := s.revisions.current(s.dir)
 	if err != nil {
 		return nil, err
 	}

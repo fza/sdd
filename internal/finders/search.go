@@ -9,12 +9,14 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/networkteam/sdd/internal/chunking"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/timing"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 )
 
@@ -29,9 +31,10 @@ type SearchFinder struct {
 	graph      *model.Graph // the graph filtered and resolved against
 	graphDir   string
 	embedder   embed.Embedder  // nil disables vector and hybrid modes
-	indexStore *index.Index    // nil disables vector and hybrid modes
+	indexStore VectorIndex     // nil disables vector and hybrid modes
 	repos      *repos.Registry // nil disables cross-repo search
 	closure    []model.RepoID
+	lockBound  time.Duration
 }
 
 // SearchFinderOptions configures NewSearchFinder. Graph is the graph the
@@ -44,11 +47,22 @@ type SearchFinderOptions struct {
 	Graph      *model.Graph
 	GraphDir   string
 	Embedder   embed.Embedder
-	IndexStore *index.Index
+	IndexStore VectorIndex
 	Repos      *repos.Registry
 	// Closure is the dependency closure cross-repo search selects from
 	// (Finder.DependencyClosure).
 	Closure []model.RepoID
+	// IndexLockBound caps how long a member index of a cross-repo search waits
+	// for its read lock; a member held past it is searched by text. Zero
+	// waits until the context ends.
+	IndexLockBound time.Duration
+}
+
+// VectorIndex is the store a vector search scans: index.SearchSnapshot on the
+// CLI path, index.Index over an in-memory store.
+type VectorIndex interface {
+	Query(ctx context.Context, embedding []float32, nResults int) ([]index.Hit, error)
+	Path() string
 }
 
 // NewSearchFinder constructs a SearchFinder.
@@ -60,6 +74,7 @@ func NewSearchFinder(opts SearchFinderOptions) *SearchFinder {
 		indexStore: opts.IndexStore,
 		repos:      opts.Repos,
 		closure:    opts.Closure,
+		lockBound:  opts.IndexLockBound,
 	}
 }
 
@@ -243,7 +258,9 @@ func (f *SearchFinder) runVector(ctx context.Context, q query.SearchQuery) ([]qu
 	if q.Phrase == "" {
 		return nil, errors.New("vector search requires a non-empty --query phrase")
 	}
+	stopEmbed := timing.Start(ctx, "query-embed")
 	embedded, err := f.embedder.Embed(ctx, embed.Request{Purpose: embed.PurposeQuery, Texts: []string{q.Phrase}})
+	stopEmbed()
 	if err != nil {
 		return nil, fmt.Errorf("embedding query phrase: %w", err)
 	}
@@ -271,6 +288,7 @@ func (f *SearchFinder) runVector(ctx context.Context, q query.SearchQuery) ([]qu
 		return nil, fmt.Errorf("vector query: %w", err)
 	}
 
+	defer timing.Start(ctx, "rank")()
 	candidates := f.candidates(q)
 	candidateSet := make(map[string]*model.Entry, len(candidates))
 	for _, e := range candidates {
@@ -362,8 +380,8 @@ func (f *SearchFinder) candidates(q query.SearchQuery) []*model.Entry {
 // entry's current state hash — the read-time gate that keeps the shared,
 // version-accumulating store from surfacing stale citations. The current hash
 // is computed once per hit entry (attachments read from disk, as the indexer
-// does) and cached; the manifest is loaded once, and only when a legacy row
-// (no entry_hash metadata) needs it.
+// does) and cached; the manifest is the snapshot's, else loaded once when
+// needed.
 type versionFreshness struct {
 	indexDir    string // "" disables manifest fallback (an in-memory index, tests)
 	attachments chunking.AttachmentReader
@@ -371,16 +389,49 @@ type versionFreshness struct {
 	manifest    *index.Manifest
 }
 
+// snapshotManifest is a VectorIndex that knows the manifest its rows were
+// selected from.
+type snapshotManifest interface {
+	Manifest() *index.Manifest
+}
+
 func (f *SearchFinder) newVersionFreshness() *versionFreshness {
-	dir := ""
-	if f.indexStore != nil {
-		dir = f.indexStore.Path()
-	}
-	return &versionFreshness{
-		indexDir:    dir,
+	freshness := &versionFreshness{
 		attachments: chunking.DiskAttachmentReader{GraphDir: f.graphDir},
 		current:     map[string]string{},
 	}
+	if f.indexStore != nil {
+		freshness.indexDir = f.indexStore.Path()
+		// Versions resolve against the store as the search read it: a
+		// re-embed committing after the snapshot opened must not make the
+		// snapshot's rows look stale.
+		if snapshot, ok := f.indexStore.(snapshotManifest); ok {
+			freshness.manifest = snapshot.Manifest()
+		}
+	}
+	return freshness
+}
+
+// loadManifest reads the store's manifest once. Callers check indexDir first.
+func (v *versionFreshness) loadManifest() (*index.Manifest, error) {
+	if v.manifest == nil {
+		m, err := index.LoadManifest(v.indexDir)
+		if err != nil {
+			return nil, err
+		}
+		v.manifest = m
+	}
+	return v.manifest, nil
+}
+
+// readManifest is the manifest whose caps and versions decide which version
+// a search reads, never a fresh calibration. A store with no manifest (an
+// in-memory index) reads as one with no cap and no versions: uncapped hashes.
+func (v *versionFreshness) readManifest() (*index.Manifest, error) {
+	if v.indexDir == "" {
+		return &index.Manifest{}, nil
+	}
+	return v.loadManifest()
 }
 
 func (v *versionFreshness) fresh(ctx context.Context, entry *model.Entry, hit index.Hit) (bool, error) {
@@ -390,14 +441,11 @@ func (v *versionFreshness) fresh(ctx context.Context, entry *model.Entry, hit in
 			// No manifest to resolve a legacy row's version — keep the hit.
 			return true, nil
 		}
-		if v.manifest == nil {
-			m, err := index.LoadManifest(v.indexDir)
-			if err != nil {
-				return false, err
-			}
-			v.manifest = m
+		m, err := v.loadManifest()
+		if err != nil {
+			return false, err
 		}
-		version = v.manifest.VersionHashForChunk(hit.EntryID, hit.ChunkID)
+		version = m.VersionHashForChunk(hit.EntryID, hit.ChunkID)
 		if version == "" {
 			// Unresolvable version — keep the hit rather than drop it blindly.
 			return true, nil
@@ -405,12 +453,15 @@ func (v *versionFreshness) fresh(ctx context.Context, entry *model.Entry, hit in
 	}
 	cur, ok := v.current[entry.ID]
 	if !ok {
-		h, err := chunking.EntryStateHash(ctx, entry, v.attachments)
+		m, err := v.readManifest()
 		if err != nil {
 			return false, err
 		}
-		cur = h
-		v.current[entry.ID] = h
+		cur, err = chunking.ReadableManifestHash(ctx, entry, v.attachments, m)
+		if err != nil {
+			return false, err
+		}
+		v.current[entry.ID] = cur
 	}
 	return version == cur, nil
 }

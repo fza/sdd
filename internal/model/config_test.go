@@ -261,17 +261,17 @@ func TestMergeConfig_RetryOverlay(t *testing.T) {
 }
 
 func TestResolveSessionRetention(t *testing.T) {
-	retention := func(raw string) *PerRepoConfig {
-		return &PerRepoConfig{BaseConfig: BaseConfig{Sessions: SessionsConfig{Retention: raw}}}
+	retention := func(raw string) SessionsConfig {
+		return SessionsConfig{Retention: raw}
 	}
 	cases := []struct {
 		name    string
-		cfg     *PerRepoConfig
+		cfg     SessionsConfig
 		want    time.Duration
 		wantErr bool
 	}{
-		{"nil config uses default", nil, 14 * 24 * time.Hour, false},
-		{"empty value uses default", &PerRepoConfig{}, 14 * 24 * time.Hour, false},
+		{"empty value uses default", SessionsConfig{}, 14 * 24 * time.Hour, false},
+		{"blank value uses default", retention("  "), 14 * 24 * time.Hour, false},
 		{"days", retention("1d"), 24 * time.Hour, false},
 		{"go duration", retention("336h"), 336 * time.Hour, false},
 		{"garbage is a config error", retention("not-a-duration"), 0, true},
@@ -315,6 +315,27 @@ func TestResolveSyncCooldown(t *testing.T) {
 			got := ResolveSyncCooldown(tc.cfg).Milliseconds()
 			if got != tc.wantMS {
 				t.Errorf("got %d ms, want %d ms", got, tc.wantMS)
+			}
+		})
+	}
+}
+
+func TestMergeConfig_EmbeddingPath(t *testing.T) {
+	cases := []struct {
+		name    string
+		base    string
+		overlay string
+		want    string
+	}{
+		{name: "overlay sets path", base: "", overlay: "/v3/compat/embeddings", want: "/v3/compat/embeddings"},
+		{name: "empty overlay keeps base path", base: "/v3/compat/embeddings", overlay: "", want: "/v3/compat/embeddings"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := &PerRepoConfig{BaseConfig: BaseConfig{Embedding: EmbeddingConfig{Path: tc.base}}}
+			overlay := &PerRepoConfig{BaseConfig: BaseConfig{Embedding: EmbeddingConfig{Path: tc.overlay}}}
+			if got := MergeConfig(base, overlay).Embedding.Path; got != tc.want {
+				t.Errorf("Path = %q, want %q", got, tc.want)
 			}
 		})
 	}

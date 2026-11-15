@@ -3,6 +3,7 @@ package cliapp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/graphcache"
 	"github.com/networkteam/sdd/internal/handlers"
 	localembed "github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/llm/factory"
@@ -26,6 +28,7 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/timing"
 	sddapp "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/slogutils"
@@ -38,6 +41,10 @@ type Options struct {
 	Reader    io.Reader
 	Writer    io.Writer
 	ErrWriter io.Writer
+	// LaunchCachePrune starts the daily background `sdd cache prune
+	// --scheduled` in dir, detached, with its output in logPath. Nil launches
+	// nothing: an in-process host or a test runs no background pass.
+	LaunchCachePrune func(dir, logPath string) error
 }
 
 // resolveLLMConfig builds the effective LLMConfig for a command from the
@@ -167,7 +174,7 @@ var readOnlyRunner pkgllm.RunnerFunc = func(context.Context, pkgllm.Request) (pk
 // loadConfig established that absence is the world state, so the effective
 // config is the empty one — resolved here explicitly because a nil config
 // on the finder means a wiring fault and errors (s-tac-uya).
-func newReadFinder() (*finders.Finder, error) {
+func newReadFinder(ctx context.Context) (*finders.Finder, error) {
 	cfg, err := loadConfig()
 	if err != nil {
 		return nil, err
@@ -179,12 +186,31 @@ func newReadFinder() (*finders.Finder, error) {
 	if err != nil {
 		return nil, err
 	}
+	graphCache, err := defaultGraphCache(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return finders.New(finders.Options{
 		PreflightRunner: readOnlyRunner,
 		Config:          cfg,
 		Repos:           reg,
 		GitHistory:      git.CLI{},
+		GraphCache:      graphCache,
 	}), nil
+}
+
+// defaultGraphCache keeps loaded graphs under the user cache root, a cache no
+// read fails on (graphcache.Optional). Setting SDD_GRAPH_CACHE=off loads every
+// graph from its files.
+func defaultGraphCache(ctx context.Context) (finders.GraphCache, error) {
+	if os.Getenv("SDD_GRAPH_CACHE") == "off" {
+		return nil, nil
+	}
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		return nil, err
+	}
+	return graphcache.NewOptional(graphcache.New(filepath.Join(loc.CacheRoot, "graph")), slogutils.FromContext(ctx)), nil
 }
 
 // defaultRepos builds the connected-repos dependencies from the XDG default
@@ -241,7 +267,7 @@ func loadConfig() (*model.PerRepoConfig, error) {
 // not silent. A finder that will not build is left to the command itself,
 // which resolves the same config and reports the failure properly.
 func warnUnknownConfigKeys(ctx context.Context) {
-	f, err := newReadFinder()
+	f, err := newReadFinder(ctx)
 	if err != nil {
 		return
 	}
@@ -256,6 +282,9 @@ func warnUnknownConfigKeys(ctx context.Context) {
 	log := slogutils.FromContext(ctx)
 	for _, k := range result.Keys {
 		log.Warn("ignoring unknown config key", "key", k.Key, "file", k.File)
+	}
+	for _, s := range result.Ignored {
+		log.Warn("ignoring config setting", "key", s.Key, "file", s.File, "reason", s.Reason)
 	}
 }
 
@@ -336,6 +365,11 @@ func New(options Options) *cli.Command {
 				Aliases: []string{"vv"},
 				Usage:   "Enable debug-level logging",
 			},
+			&cli.BoolFlag{
+				Name:    "timing",
+				Usage:   "Print how long each phase of the command takes to stderr",
+				Sources: cli.EnvVars("SDD_TIMING"),
+			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 			if cmd.Bool("version") {
@@ -357,15 +391,29 @@ func New(options Options) *cli.Command {
 				Level: level,
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
+			if cmd.Bool("timing") {
+				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
+			}
 
 			warnUnknownConfigKeys(ctx)
 
+			// sdd cache is the pass itself. sdd serve shows a failed pass
+			// through its tool results instead.
+			if first := cmd.Args().First(); options.LaunchCachePrune != nil && first != cacheCommandName {
+				stopPrune := timing.Start(ctx, "cache-prune-check")
+				backgroundCachePrune(ctx, options.LaunchCachePrune, first != "serve")
+				stopPrune()
+			}
+
 			// Background sync check runs on every command except `sdd init`
 			// (bootstrap may precede remote configuration — sync would emit
-			// spurious warnings). Cooldown-bound and timeout-bound internally;
-			// any failure logs at Debug and does not affect the command.
-			if cmd.Args().First() != "init" {
+			// spurious warnings) and `sdd cache`, which touches no graph.
+			// Cooldown-bound and timeout-bound internally; any failure logs
+			// at Debug and does not affect the command.
+			if first := cmd.Args().First(); first != "init" && first != cacheCommandName {
+				stopSync := timing.Start(ctx, "sync-check")
 				runSyncCheck(ctx)
+				stopSync()
 				// Participant-missing nudge (AC 8): one-line stderr
 				// warning naming `sdd init` as the fix. Suppressed for
 				// `sdd init` itself (it's the resolution path) and
@@ -391,8 +439,9 @@ func New(options Options) *cli.Command {
 			lintCmd(),
 			summarizeCmd(),
 			indexCmd(),
+			cacheCmd(),
 			searchCmd(),
-			serveCmd(),
+			serveCmd(options.LaunchCachePrune),
 			sessionsCmd(),
 			syncCmd(),
 			repoCmd(),
@@ -411,12 +460,12 @@ func setCommandStreams(cmd *cli.Command, reader io.Reader, writer, errWriter io.
 	}
 }
 
-func loadGraph(cmd *cli.Command) (*model.Graph, error) {
+func loadGraph(ctx context.Context, cmd *cli.Command) (*model.Graph, error) {
 	dir, err := resolveGraphDir(cmd)
 	if err != nil {
 		return nil, err
 	}
-	f, err := newReadFinder()
+	f, err := newReadFinder(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +477,7 @@ func infoCmd() *cli.Command {
 		Name:  "info",
 		Usage: "Show session framing — participant, language, search capability",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			f, err := newReadFinder()
+			f, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -437,7 +486,7 @@ func infoCmd() *cli.Command {
 				return err
 			}
 			presenters.RenderInfo(cmd.Writer, result)
-			return nil
+			return renderCachePruneStatus(cmd.Writer)
 		},
 	}
 }
@@ -484,7 +533,7 @@ func statsCmd() *cli.Command {
 				since = &cutoff
 			}
 
-			f, err := newReadFinder()
+			f, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -550,12 +599,12 @@ func showCmd() *cli.Command {
 				}
 			}
 
-			g, err := loadGraph(cmd)
+			g, err := loadGraph(ctx, cmd)
 			if err != nil {
 				return err
 			}
 
-			f, err := newReadFinder()
+			f, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -951,7 +1000,7 @@ func rewriteCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			reader, err := newReadFinder()
+			reader, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -987,7 +1036,7 @@ func lintCmd() *cli.Command {
 						}
 					},
 				}
-				reader, err := newReadFinder()
+				reader, err := newReadFinder(ctx)
 				if err != nil {
 					return err
 				}
@@ -1002,7 +1051,7 @@ func lintCmd() *cli.Command {
 				}
 			}
 
-			g, err := loadGraph(cmd)
+			g, err := loadGraph(ctx, cmd)
 			if err != nil {
 				return err
 			}
@@ -1169,6 +1218,8 @@ func summarizeCmd() *cli.Command {
 	}
 }
 
+var errNoProject = errors.New("no .sdd/ directory found; run 'sdd init' first")
+
 // resolveGraphDir determines the graph directory from the --graph-dir flag
 // or by discovering .sdd/config.yaml. Errors if neither is available.
 func resolveGraphDir(cmd *cli.Command) (string, error) {
@@ -1187,7 +1238,7 @@ func resolveGraphDir(cmd *cli.Command) (string, error) {
 	}
 	repoRoot := meta.DiscoverRoot(cwd)
 	if repoRoot == "" {
-		return "", fmt.Errorf("no .sdd/ directory found; run 'sdd init' first")
+		return "", errNoProject
 	}
 	sddDir := meta.SDDDir(repoRoot)
 	cfg, err := meta.ReadConfig(sddDir)
@@ -1649,7 +1700,7 @@ func initCmd() *cli.Command {
 				},
 			}
 
-			reader, err := newReadFinder()
+			reader, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -1764,7 +1815,7 @@ func wipStartCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			reader, err := newReadFinder()
+			reader, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -1820,7 +1871,7 @@ func wipDoneCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			reader, err := newReadFinder()
+			reader, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}
@@ -1845,7 +1896,7 @@ func wipListCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			f, err := newReadFinder()
+			f, err := newReadFinder(ctx)
 			if err != nil {
 				return err
 			}

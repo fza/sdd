@@ -2,10 +2,13 @@ package local
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/networkteam/slogutils"
 
 	"github.com/networkteam/sdd/internal/index"
 	app "github.com/networkteam/sdd/pkg/application"
@@ -18,14 +21,12 @@ import (
 // lazy embedder that only reports its dimensionality on first use still routes
 // correctly.
 //
-// Reads hold a generation-checked snapshot cache: each read acquires the shared
-// lock, stats the store's write generation, reuses the held snapshot when it is
-// unchanged, and reloads only after an actual write. Steady state is therefore
-// lock + stat + in-memory query — a full reload happens only when the CLI or
-// another process has written. The cache is guarded by mu (a long-running
-// server serves concurrent reads); the generation check happens under the read
-// lock so a writer between stat and query cannot be missed. Writes still reopen
-// under the exclusive lock (index.WriteStore).
+// Searches read the store's mapped segments through index.OpenSearchSnapshot,
+// which keeps them across requests while the store is unchanged and maps only
+// segments that appeared since; the server never decodes the row files a
+// segment holds. Writes reopen under the exclusive lock (index.WriteStore) and
+// then refresh the segments, so a search rarely meets a row only its file
+// holds.
 //
 // Reconciliation is monotonic: it accumulates chunks for immutable-entry
 // versions and never deletes based on request filters — the sanctioned delete
@@ -34,13 +35,13 @@ type PersistentSearchIndexStore struct {
 	project   app.ProjectID
 	cacheRoot string
 	repoKey   string
+	checkout  string
 	now       func() time.Time
 
 	mu        sync.Mutex
 	manifests map[string]*index.ManifestCache
-	caches    map[string]*index.SnapshotCache // per store dir
-	// reloads counts fresh snapshot loads, for tests that assert the cache
-	// reuses a snapshot until a write bumps the generation.
+	// reloads counts rebuilt search snapshots, for tests that assert a search
+	// reuses the row set until a write changes the store.
 	reloads atomic.Int64
 }
 
@@ -54,7 +55,6 @@ func NewPersistentSearchIndexStore(project app.ProjectID, cacheRoot, repoKey str
 		cacheRoot: cacheRoot,
 		repoKey:   repoKey,
 		now:       time.Now,
-		caches:    map[string]*index.SnapshotCache{},
 		manifests: map[string]*index.ManifestCache{},
 	}
 }
@@ -62,7 +62,96 @@ func NewPersistentSearchIndexStore(project app.ProjectID, cacheRoot, repoKey str
 var (
 	_ app.SearchIndexStore         = (*PersistentSearchIndexStore)(nil)
 	_ app.SearchIndexEntryManifest = (*PersistentSearchIndexStore)(nil)
+	_ app.SearchIndexRunes         = (*PersistentSearchIndexStore)(nil)
+	_ app.SearchIndexRunesRecorder = (*PersistentSearchIndexStore)(nil)
+	_ app.SearchIndexFillLock      = (*PersistentSearchIndexStore)(nil)
 )
+
+// BeginFill takes the namespace store's fill lock, the one a CLI fill holds,
+// so serve and the CLI never fill one store at once.
+func (s *PersistentSearchIndexStore) BeginFill(ctx context.Context, namespace app.IndexNamespace, wait bool) (func() error, error) {
+	dir, err := s.storeDir(namespace)
+	if err != nil {
+		return nil, err
+	}
+	session, err := index.BeginFill(ctx, dir, wait)
+	if errors.Is(err, index.ErrFillBusy) {
+		return nil, app.ErrSearchIndexFillBusy
+	}
+	if err != nil {
+		return nil, err
+	}
+	return session.Close, nil
+}
+
+// ReadMaxRunes reports the rune caps the namespace's store reads under, read
+// from its manifest. A manifest that predates the cap reads uncapped.
+func (s *PersistentSearchIndexStore) ReadMaxRunes(_ context.Context, namespace app.IndexNamespace) ([]int, error) {
+	dir, err := s.storeDir(namespace)
+	if err != nil {
+		return nil, err
+	}
+	manifest, err := s.readManifest(dir)
+	if err != nil {
+		return nil, err
+	}
+	return manifest.ReadMaxRunes(), nil
+}
+
+// RecordMaxRunes writes the rune cap the namespace's rows are chunked under to
+// its manifest, keeping the cap it replaces until SettleMaxRunes.
+func (s *PersistentSearchIndexStore) RecordMaxRunes(ctx context.Context, namespace app.IndexNamespace, maxRunes int) error {
+	return s.updateRuneCaps(ctx, namespace, func(caps *index.RuneCaps) bool {
+		return caps.SetMaxRunes(maxRunes)
+	})
+}
+
+// SettleMaxRunes drops the replaced cap once every entry is published under
+// maxRunes.
+func (s *PersistentSearchIndexStore) SettleMaxRunes(ctx context.Context, namespace app.IndexNamespace, maxRunes int) error {
+	return s.updateRuneCaps(ctx, namespace, func(caps *index.RuneCaps) bool {
+		return caps.SettleMaxRunes(maxRunes)
+	})
+}
+
+// updateRuneCaps saves the namespace's manifest when update changes its caps.
+func (s *PersistentSearchIndexStore) updateRuneCaps(ctx context.Context, namespace app.IndexNamespace, update func(*index.RuneCaps) bool) error {
+	dir, err := s.storeDir(namespace)
+	if err != nil {
+		return err
+	}
+	return index.WriteStore(ctx, dir, func(*index.Index) error {
+		manifest, err := index.LoadManifest(dir)
+		if err != nil {
+			return err
+		}
+		if !update(&manifest.RuneCaps) {
+			return nil
+		}
+		return manifest.Save(dir)
+	})
+}
+
+// WithCheckout names the graph directory this adapter serves, so every
+// reconcile records the versions that checkout reads and cache pruning keeps
+// them. Without it nothing is recorded.
+func (s *PersistentSearchIndexStore) WithCheckout(graphDir string) *PersistentSearchIndexStore {
+	s.checkout = graphDir
+	return s
+}
+
+// RecordCheckout records hashes as the versions this adapter's checkout
+// currently reads from the namespace's store.
+func (s *PersistentSearchIndexStore) RecordCheckout(_ context.Context, namespace app.IndexNamespace, hashes map[string]string) error {
+	if s.checkout == "" {
+		return nil
+	}
+	dir, err := s.storeDir(namespace)
+	if err != nil {
+		return err
+	}
+	return index.RecordCheckout(dir, s.checkout, hashes, s.now())
+}
 
 // storeDir resolves the store directory for a namespace, validating that the
 // namespace's project matches this adapter and that a fingerprint is present.
@@ -164,7 +253,7 @@ func (s *PersistentSearchIndexStore) Reconcile(ctx context.Context, namespace ap
 		group.rows = append(group.rows, rowFromChunk(upsert, namespace.Fingerprint))
 	}
 
-	return index.WriteStore(ctx, dir, func(idx *index.Index) error {
+	if err := index.WriteStore(ctx, dir, func(idx *index.Index) error {
 		manifest, err := index.LoadManifest(dir)
 		if err != nil {
 			return err
@@ -190,10 +279,27 @@ func (s *PersistentSearchIndexStore) Reconcile(ctx context.Context, namespace ap
 			})
 		}
 		return manifest.Save(dir)
-	})
+	}); err != nil {
+		return err
+	}
+	return refreshSegments(ctx, dir)
 }
 
-// Nearest opens a fresh read snapshot per operation and maps index hits back to
+// refreshSegments folds a write's rows into the search segments. A store busy
+// with another writer is left to that writer's refresh, as a CLI fill does.
+func refreshSegments(ctx context.Context, dir string) error {
+	err := index.RefreshSegments(ctx, dir)
+	if errors.Is(err, index.ErrLockBusy) {
+		slogutils.FromContext(ctx).Info("index store busy, search segments left to the next write", "index", dir)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("refreshing search segments: %w", err)
+	}
+	return nil
+}
+
+// Nearest searches each namespace's store snapshot and maps index hits back to
 // scored chunk hits with complete citation data.
 func (s *PersistentSearchIndexStore) Nearest(ctx context.Context, namespaces []app.IndexNamespace, vector []float32, limit int) ([]app.ScoredChunkHit, error) {
 	if len(vector) == 0 {
@@ -205,39 +311,16 @@ func (s *PersistentSearchIndexStore) Nearest(ctx context.Context, namespaces []a
 		if err != nil {
 			return nil, err
 		}
-		var hits []index.Hit
-		reloaded, err := s.queryCached(ctx, dir, func(idx *index.Index) error {
-			var qerr error
-			hits, qerr = idx.Query(ctx, vector, limit)
-			return qerr
-		})
+		hits, err := s.query(ctx, dir, vector, limit)
 		if err != nil {
 			return nil, err
 		}
-		if reloaded {
-			s.reloads.Add(1)
-		}
-		// Resolve each hit's version. A new (versioned) row carries entry_hash
-		// metadata directly; a legacy v1 row does not, so its version is
-		// recovered from the manifest. The manifest is loaded once, and only
-		// when some hit needs it, so an all-versioned store never reads it.
-		var manifest *index.Manifest
 		for _, hit := range hits {
-			entryHash := hit.EntryHash
-			if entryHash == "" {
-				if manifest == nil {
-					manifest, err = index.LoadManifest(dir)
-					if err != nil {
-						return nil, err
-					}
-				}
-				entryHash = manifest.VersionHashForChunk(hit.EntryID, hit.ChunkID)
-			}
 			result = append(result, app.ScoredChunkHit{
 				Namespace:            namespace,
 				ChunkID:              hit.ChunkID,
 				EntryID:              hit.EntryID,
-				EntryHash:            entryHash,
+				EntryHash:            hit.EntryHash,
 				ContentHash:          hit.ContentHash,
 				Score:                float64(hit.Score),
 				Body:                 hit.Body,
@@ -252,20 +335,16 @@ func (s *PersistentSearchIndexStore) Nearest(ctx context.Context, namespaces []a
 	return result, nil
 }
 
-// queryCached runs fn against the store snapshot for dir through the
-// generation-checked cache, reloading only when the store changed since the
-// last read. The adapter mutex guards the shared per-dir cache and is held
-// across the query (a local server's searches are infrequent); the shared file
-// lock and the generation check live inside index.ReadCached.
-func (s *PersistentSearchIndexStore) queryCached(ctx context.Context, dir string, fn func(*index.Index) error) (reloaded bool, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cache := s.caches[dir]
-	if cache == nil {
-		cache = &index.SnapshotCache{}
-		s.caches[dir] = cache
+func (s *PersistentSearchIndexStore) query(ctx context.Context, dir string, vector []float32, limit int) (_ []index.Hit, err error) {
+	snapshot, err := index.OpenSearchSnapshot(ctx, dir, 0)
+	if err != nil {
+		return nil, err
 	}
-	return index.ReadCached(ctx, dir, cache, fn)
+	defer func() { err = errors.Join(err, snapshot.Close()) }()
+	if snapshot.Rebuilt() {
+		s.reloads.Add(1)
+	}
+	return snapshot.Query(ctx, vector, limit)
 }
 
 // rowFromChunk maps an application IndexedChunk to an index.Row, carrying the

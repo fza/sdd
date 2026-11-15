@@ -112,7 +112,7 @@ func TestEntryIndexingExerciseWorker(t *testing.T) {
 	observed := embed.Observed(embed.Bounded(tracked, 2*time.Minute), stats)
 	documents := embed.Batched(observed, 32)
 	store := exerciseStore{PersistentSearchIndexStore: local.NewPersistentSearchIndexStore("exercise", filepath.Join(root, "index"), "exercise"), fail: os.Getenv("SDD_INDEX_EXERCISE_FAIL") == "1"}
-	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{Project: sdd.ProjectRef{ID: "exercise"}, Graph: graph, SearchIndex: store, Embedder: documents, ExcludeEmbeddedFromIndex: true, LLM: llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) { return llm.Result{}, nil })})
+	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{Project: sdd.ProjectRef{ID: "exercise"}, Graph: graph, SearchIndex: store, RuneCap: testRuneCap, Embedder: documents, ExcludeEmbeddedFromIndex: true, LLM: llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) { return llm.Result{}, nil })})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -54,6 +54,9 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	// ensure the committed declaration. Errors when that too is already in
 	// place, so a true no-op still reads as "nothing to do".
 	if existing, ok := cfg.ConnectedByURL(cmd.CloneURL); ok {
+		if err := h.repos.ClearDisconnected(existing.RepoID); err != nil {
+			return err
+		}
 		declared, err := h.declareDependency(existing.RepoID, cmd)
 		if err != nil {
 			return err
@@ -114,15 +117,12 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	if err := os.MkdirAll(filepath.Dir(cacheDir), 0o755); err != nil {
 		return fmt.Errorf("creating cache dir: %w", err)
 	}
-	if err := os.RemoveAll(cacheDir); err != nil {
-		return fmt.Errorf("clearing stale cache at %s: %w", cacheDir, err)
+	unlock, err := h.repos.Registry().LockClones(ctx)
+	if err != nil {
+		return err
 	}
-	if err := os.Rename(cloneDir, cacheDir); err != nil {
-		return fmt.Errorf("moving clone into cache: %w", err)
-	}
-
-	repo.RepoID = declared
-	if err := h.connectRepo(repo); err != nil {
+	connectErr := h.placeAndConnect(cloneDir, cacheDir, repo, declared)
+	if err := errors.Join(connectErr, unlock()); err != nil {
 		return err
 	}
 	if _, err := h.declareDependency(declared, cmd); err != nil {
@@ -132,6 +132,23 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 		cmd.OnAdded(declared, cacheDir)
 	}
 	return nil
+}
+
+// placeAndConnect moves the clone into the cache and connects the repo, under
+// the clone lock the caller holds, so cache pruning never sees the clone
+// in place before its repo is connected.
+func (h *Handler) placeAndConnect(cloneDir, cacheDir string, repo repos.ConnectedRepo, declared model.RepoID) error {
+	if err := os.RemoveAll(cacheDir); err != nil {
+		return fmt.Errorf("clearing stale cache at %s: %w", cacheDir, err)
+	}
+	if err := os.Rename(cloneDir, cacheDir); err != nil {
+		return fmt.Errorf("moving clone into cache: %w", err)
+	}
+	repo.RepoID = declared
+	if err := h.repos.ClearDisconnected(declared); err != nil {
+		return err
+	}
+	return h.connectRepo(repo)
 }
 
 // declareDependency ensures repoID is listed in the committed dependencies
@@ -215,7 +232,8 @@ func (h *Handler) declareDependency(repoID model.RepoID, cmd *command.RepoAddCmd
 // resolve-or-block), unless Force is set, in which case the stranded refs are
 // named through OnStranded before the removal proceeds. The per-user global
 // connection and its cache are left untouched — machine-level teardown is a
-// separate command surface, out of scope here.
+// separate command surface, out of scope here — and a disconnection record
+// lets cache pruning remove the cache once the connection is gone.
 func (h *Handler) RepoRemove(ctx context.Context, cmd *command.RepoRemoveCmd) error {
 	if err := cmd.Validate(); err != nil {
 		return fmt.Errorf("invalid command: %w", err)
@@ -276,10 +294,31 @@ func (h *Handler) RepoRemove(ctx context.Context, cmd *command.RepoRemoveCmd) er
 			return fmt.Errorf("committing dependency removal: %w", err)
 		}
 	}
+	if err := h.markDisconnected(cmd.RepoID); err != nil {
+		return err
+	}
 	if cmd.OnRemoved != nil {
 		cmd.OnRemoved(cmd.RepoID)
 	}
 	return nil
+}
+
+// markDisconnected records a removed dependency this machine connects, the
+// only record that lets cache pruning remove its clone once the user-global
+// repos list no longer names it. A handler without the connected-repos
+// manager knows no connection to record.
+func (h *Handler) markDisconnected(repoID model.RepoID) error {
+	if h.repos == nil {
+		return nil
+	}
+	cfg, err := h.repos.Registry().Load()
+	if err != nil {
+		return err
+	}
+	if _, connected := cfg.Connected(repoID); !connected {
+		return nil
+	}
+	return h.repos.MarkDisconnected(repoID)
 }
 
 // strandedRefs scans the current graph for local entries that hold a
@@ -559,7 +598,7 @@ func (h *Handler) BuildConnectedIndexes(ctx context.Context, repoIDs []model.Rep
 		}
 		// One machine-global store per (repo-id, fingerprint): the same
 		// index the repo's own checkout would use, embedded once. The handler
-		// loads and locks the store itself at write time (index.WriteStore).
+		// loads and locks the store itself at write time (index.FillSession).
 		idxDir := index.StoreDir(h.repos.Registry().CacheRoot(), index.RepoKey(repoID, cacheDir), embedder.Fingerprint())
 		ih := NewIndexHandler(IndexHandlerOptions{
 			GraphDir:        graphDir,

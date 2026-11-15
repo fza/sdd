@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -33,6 +34,11 @@ type Locations struct {
 	// StateRoot is the base directory for durable machine-local state
 	// (default $XDG_STATE_HOME/sdd).
 	StateRoot string
+	// MixedXDG names the XDG base directory variables set while others fall
+	// back to the home directory; empty when one source set all three roots.
+	// Mixed roots pair one repos list with another's clones, so cache
+	// pruning removes no clone under them.
+	MixedXDG string
 }
 
 // DefaultLocations resolves the conventional locations: the XDG base
@@ -45,6 +51,20 @@ func DefaultLocations() (Locations, error) {
 	cfgBase := os.Getenv("XDG_CONFIG_HOME")
 	cacheBase := os.Getenv("XDG_CACHE_HOME")
 	stateBase := os.Getenv("XDG_STATE_HOME")
+	var set, unset []string
+	for _, v := range []struct{ name, value string }{
+		{"XDG_CONFIG_HOME", cfgBase}, {"XDG_CACHE_HOME", cacheBase}, {"XDG_STATE_HOME", stateBase},
+	} {
+		if v.value == "" {
+			unset = append(unset, v.name)
+		} else {
+			set = append(set, v.name)
+		}
+	}
+	mixed := ""
+	if len(set) > 0 && len(unset) > 0 {
+		mixed = fmt.Sprintf("%s set, %s not", strings.Join(set, ", "), strings.Join(unset, ", "))
+	}
 	if cfgBase == "" || cacheBase == "" || stateBase == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -67,6 +87,7 @@ func DefaultLocations() (Locations, error) {
 		ConfigPath: filepath.Join(cfgBase, "sdd", "config.yaml"),
 		CacheRoot:  filepath.Join(cacheBase, "sdd"),
 		StateRoot:  filepath.Join(stateBase, "sdd"),
+		MixedXDG:   mixed,
 	}, nil
 }
 
@@ -86,6 +107,9 @@ type GlobalConfig struct {
 	// committed per-repo `dependencies` list declares what a graph needs;
 	// this list resolves how — which is why it is global-only.
 	Repos []ConnectedRepo `yaml:"repos,omitempty"`
+
+	Cache model.CacheConfig `yaml:"cache,omitempty"`
+	Index model.IndexConfig `yaml:"index,omitempty"`
 }
 
 // ConnectedRepo names one connection: the canonical repo identity and the

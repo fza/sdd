@@ -8,9 +8,9 @@ import (
 )
 
 // TestPersistentStoreReusesSnapshotUntilWrite is the counter-verified proof of
-// the generation-checked snapshot cache: repeated reads of an unchanged store
-// reload the snapshot exactly once, and a write bumps the generation so the
-// next read reloads exactly once more.
+// the search snapshot reuse: repeated reads of an unchanged store build the
+// row set exactly once, and a write changes the store so the next read builds
+// it exactly once more.
 func TestPersistentStoreReusesSnapshotUntilWrite(t *testing.T) {
 	cacheRoot := canonicalTempDir(t)
 	const project = app.ProjectID("gen")

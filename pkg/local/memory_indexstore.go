@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/networkteam/sdd/internal/index"
 	app "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/application/types"
 )
@@ -18,10 +19,47 @@ type MemorySearchIndexStore struct {
 	mu        sync.RWMutex
 	chunks    map[app.IndexNamespace]map[string]app.IndexedChunk
 	published map[app.SearchEntryVersion]bool
+	runeCaps  map[app.IndexNamespace]index.RuneCaps
 }
 
+var (
+	_ app.SearchIndexRunes         = (*MemorySearchIndexStore)(nil)
+	_ app.SearchIndexRunesRecorder = (*MemorySearchIndexStore)(nil)
+)
+
 func NewMemorySearchIndexStore() *MemorySearchIndexStore {
-	return &MemorySearchIndexStore{chunks: map[app.IndexNamespace]map[string]app.IndexedChunk{}, published: map[app.SearchEntryVersion]bool{}}
+	return &MemorySearchIndexStore{chunks: map[app.IndexNamespace]map[string]app.IndexedChunk{}, published: map[app.SearchEntryVersion]bool{}, runeCaps: map[app.IndexNamespace]index.RuneCaps{}}
+}
+
+// ReadMaxRunes reports the rune caps recorded for the namespace, uncapped when
+// none is.
+func (s *MemorySearchIndexStore) ReadMaxRunes(_ context.Context, namespace app.IndexNamespace) ([]int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	caps := s.runeCaps[namespace]
+	return caps.ReadMaxRunes(), nil
+}
+
+// RecordMaxRunes records the rune cap the namespace's rows are chunked under,
+// keeping the cap it replaces until SettleMaxRunes.
+func (s *MemorySearchIndexStore) RecordMaxRunes(_ context.Context, namespace app.IndexNamespace, maxRunes int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	caps := s.runeCaps[namespace]
+	caps.SetMaxRunes(maxRunes)
+	s.runeCaps[namespace] = caps
+	return nil
+}
+
+// SettleMaxRunes drops the replaced cap once every entry is published under
+// maxRunes.
+func (s *MemorySearchIndexStore) SettleMaxRunes(_ context.Context, namespace app.IndexNamespace, maxRunes int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	caps := s.runeCaps[namespace]
+	caps.SettleMaxRunes(maxRunes)
+	s.runeCaps[namespace] = caps
+	return nil
 }
 
 func (s *MemorySearchIndexStore) Manifest(_ context.Context, namespace app.IndexNamespace) ([]app.StoredChunkRef, error) {

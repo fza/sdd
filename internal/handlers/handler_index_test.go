@@ -75,8 +75,17 @@ func (f *fakeEmbedder) Embed(_ context.Context, req embed.Request) (embed.Result
 // bootstrap procedure). Raise it if the embedded set ever outgrows this.
 const fakeBatchSize = 128
 
-func indexEmbedder(f *fakeEmbedder) IndexEmbedder {
-	return IndexEmbedder{Embedder: f, BatchSize: fakeBatchSize}
+// indexEmbedder calibrates the fake endpoint into a per-test directory before
+// the test counts its calls, so the probe is not counted as a batch. The fake
+// reports no token count, so the calibrated cap is the fallback one.
+func indexEmbedder(t *testing.T, f *fakeEmbedder) IndexEmbedder {
+	t.Helper()
+	emb := IndexEmbedder{Embedder: f, BatchSize: fakeBatchSize, CalibrationDir: t.TempDir(), CalibrationKey: "fake"}
+	if _, err := emb.MaxRunes(context.Background()); err != nil {
+		t.Fatalf("calibrating fake embedder: %v", err)
+	}
+	f.calls, f.totalInputs = 0, 0
+	return emb
 }
 func (f *fakeEmbedder) Fingerprint() string {
 	if f.fingerprint == "" {
@@ -136,7 +145,7 @@ func TestIndexHandler_Build(t *testing.T) {
 	h := NewIndexHandler(IndexHandlerOptions{
 		GraphDir: graphDir,
 		IndexDir: indexDir,
-		Embedder: indexEmbedder(emb),
+		Embedder: indexEmbedder(t, emb),
 		Reader:   readFinderFor(t),
 	})
 
@@ -187,7 +196,7 @@ func TestIndexHandler_BuildFiresOnBatchStart(t *testing.T) {
 	h := NewIndexHandler(IndexHandlerOptions{
 		GraphDir: graphDir,
 		IndexDir: indexDir,
-		Embedder: indexEmbedder(emb),
+		Embedder: indexEmbedder(t, emb),
 		Reader:   readFinderFor(t),
 	})
 
@@ -241,7 +250,7 @@ func TestIndexHandler_BuildSkipsUnchanged(t *testing.T) {
 	h := NewIndexHandler(IndexHandlerOptions{
 		GraphDir: graphDir,
 		IndexDir: indexDir,
-		Embedder: indexEmbedder(emb),
+		Embedder: indexEmbedder(t, emb),
 		Reader:   readFinderFor(t),
 	})
 
@@ -278,7 +287,7 @@ func TestIndexHandler_BuildForceReindexes(t *testing.T) {
 	h := NewIndexHandler(IndexHandlerOptions{
 		GraphDir: graphDir,
 		IndexDir: indexDir,
-		Embedder: indexEmbedder(emb),
+		Embedder: indexEmbedder(t, emb),
 		Reader:   readFinderFor(t),
 	})
 
@@ -307,7 +316,7 @@ func TestIndexHandler_LazyFillCoversMissingEntries(t *testing.T) {
 	h := NewIndexHandler(IndexHandlerOptions{
 		GraphDir: graphDir,
 		IndexDir: indexDir,
-		Embedder: indexEmbedder(emb),
+		Embedder: indexEmbedder(t, emb),
 		Reader:   readFinderFor(t),
 	})
 
@@ -348,7 +357,7 @@ func TestIndexHandler_BuildPicksUpEntryEdits(t *testing.T) {
 	h := NewIndexHandler(IndexHandlerOptions{
 		GraphDir: graphDir,
 		IndexDir: indexDir,
-		Embedder: indexEmbedder(emb),
+		Embedder: indexEmbedder(t, emb),
 		Reader:   readFinderFor(t),
 	})
 	if err := h.Build(context.Background(), &command.BuildIndexCmd{}); err != nil {
@@ -391,7 +400,7 @@ func TestIndexHandler_WritesNeverDeleteVersions(t *testing.T) {
 	h := NewIndexHandler(IndexHandlerOptions{
 		GraphDir: graphDir,
 		IndexDir: indexDir,
-		Embedder: indexEmbedder(emb),
+		Embedder: indexEmbedder(t, emb),
 		Reader:   readFinderFor(t),
 		Now:      func() time.Time { return clock },
 	})
@@ -468,7 +477,7 @@ func TestIndexHandler_ForceKeepsOtherDerivations(t *testing.T) {
 	seedForeignVersion(t, indexDir, id)
 
 	emb := &fakeEmbedder{}
-	h := NewIndexHandler(IndexHandlerOptions{GraphDir: graphDir, IndexDir: indexDir, Embedder: indexEmbedder(emb), Reader: readFinderFor(t)})
+	h := NewIndexHandler(IndexHandlerOptions{GraphDir: graphDir, IndexDir: indexDir, Embedder: indexEmbedder(t, emb), Reader: readFinderFor(t)})
 	if err := h.Build(context.Background(), &command.BuildIndexCmd{}); err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -503,7 +512,7 @@ func TestIndexHandler_DropVersions(t *testing.T) {
 	seedForeignVersion(t, indexDir, id)
 
 	emb := &fakeEmbedder{}
-	h := NewIndexHandler(IndexHandlerOptions{GraphDir: graphDir, IndexDir: indexDir, Embedder: indexEmbedder(emb), Reader: readFinderFor(t)})
+	h := NewIndexHandler(IndexHandlerOptions{GraphDir: graphDir, IndexDir: indexDir, Embedder: indexEmbedder(t, emb), Reader: readFinderFor(t)})
 	if err := h.Build(context.Background(), &command.BuildIndexCmd{}); err != nil {
 		t.Fatalf("build: %v", err)
 	}

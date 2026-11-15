@@ -13,13 +13,17 @@ import (
 	pkgembed "github.com/networkteam/sdd/pkg/llm/embed"
 )
 
-const defaultOpenAIEndpoint = "https://api.openai.com"
+const (
+	defaultOpenAIEndpoint = "https://api.openai.com"
+	defaultOpenAIPath     = "/v1/embeddings"
+)
 
 // openaiEmbedder implements embed.Embedder against the
-// `POST {endpoint}/v1/embeddings` API contract used by OpenAI and
+// `POST {endpoint}{path}` API contract used by OpenAI and
 // OpenAI-compatible self-hosted services.
 type openaiEmbedder struct {
 	endpoint         string
+	path             string
 	apiKey           string
 	identity         llm.Identity
 	dimensions       int // 0 means "use model native"
@@ -37,8 +41,16 @@ func newOpenAI(cfg model.EmbeddingConfig) (pkgembed.Embedder, error) {
 	if endpoint == "" {
 		endpoint = defaultOpenAIEndpoint
 	}
+	if err := model.ValidateEmbeddingPath(cfg.Path); err != nil {
+		return nil, err
+	}
+	path := cfg.Path
+	if path == "" {
+		path = defaultOpenAIPath
+	}
 	return &openaiEmbedder{
 		endpoint:         endpoint,
+		path:             path,
 		apiKey:           apiKey,
 		identity:         llm.Identity{Provider: "openai", Model: cfg.Model},
 		dimensions:       cfg.Dimensions,
@@ -97,7 +109,7 @@ func (e *openaiEmbedder) request(ctx context.Context, texts []string) (result pk
 	if err != nil {
 		return pkgembed.Result{}, fmt.Errorf("marshal request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.endpoint+"/v1/embeddings", bytes.NewReader(buf))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.endpoint+e.path, bytes.NewReader(buf))
 	if err != nil {
 		return pkgembed.Result{}, fmt.Errorf("build request: %w", err)
 	}
@@ -114,14 +126,14 @@ func (e *openaiEmbedder) request(ctx context.Context, texts []string) (result pk
 
 	var decoded openaiEmbedResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return pkgembed.Result{}, fmt.Errorf("decode openai response (status %d): %w", resp.StatusCode, err)
+		return pkgembed.Result{}, withStatus(resp.StatusCode, fmt.Errorf("decode openai response (status %d): %w", resp.StatusCode, err))
 	}
 	if resp.StatusCode != http.StatusOK {
 		if decoded.Error != nil {
-			return pkgembed.Result{}, fmt.Errorf("openai embed error (status %d, %s/%s): %s",
-				resp.StatusCode, decoded.Error.Type, decoded.Error.Code, decoded.Error.Message)
+			return pkgembed.Result{}, withStatus(resp.StatusCode, fmt.Errorf("openai embed error (status %d, %s/%s): %s",
+				resp.StatusCode, decoded.Error.Type, decoded.Error.Code, decoded.Error.Message))
 		}
-		return pkgembed.Result{}, fmt.Errorf("openai embed status %d", resp.StatusCode)
+		return pkgembed.Result{}, withStatus(resp.StatusCode, fmt.Errorf("openai embed status %d", resp.StatusCode))
 	}
 	if len(decoded.Data) != len(texts) {
 		return pkgembed.Result{}, fmt.Errorf("openai returned %d embeddings for %d inputs", len(decoded.Data), len(texts))
