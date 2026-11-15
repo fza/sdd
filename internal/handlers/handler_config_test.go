@@ -30,6 +30,37 @@ func newConfigTestHandler(t *testing.T) (*Handler, string, string) {
 	return h, globalPath, sddDir
 }
 
+// The value may be a secret typed into argv; a rejection names the key only.
+func TestConfigSet_RejectionOmitsTheValue(t *testing.T) {
+	cases := []struct {
+		name, target, key, value string
+	}{
+		{name: "type mismatch", target: "local", key: "llm.api_keys", value: "sk-test-123456"},
+		{name: "type mismatch in the global config", target: "global", key: "llm.api_keys", value: "sk-test-123456"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, globalPath, sddDir := newConfigTestHandler(t)
+
+			err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: tc.target, Key: tc.key, Value: tc.value})
+			if err == nil {
+				t.Fatal("the value should be rejected")
+			}
+			if strings.Contains(err.Error(), "sk-test") {
+				t.Errorf("the error should not show the value: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Errorf("the error should name the key: %v", err)
+			}
+			for _, path := range []string{globalPath, filepath.Join(sddDir, "config.local.yaml")} {
+				if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+					t.Errorf("a rejected write should create no file, found %s", path)
+				}
+			}
+		})
+	}
+}
+
 func TestConfigSet_GlobalCreatesAndPreservesComments(t *testing.T) {
 	h, globalPath, _ := newConfigTestHandler(t)
 

@@ -71,7 +71,7 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 			return nil, err
 		}
 		if err := model.UnmarshalYAML(patched, probe); err != nil {
-			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
+			return nil, fmt.Errorf("%s is not valid for the %s config: %w", cmd.Key, layer, err)
 		}
 		if global, ok := probe.(*repos.GlobalConfig); ok {
 			var err error
@@ -82,12 +82,12 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 				_, err = model.ResolveReplacedRetention(global.Index)
 			}
 			if err != nil {
-				return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
+				return nil, fmt.Errorf("%s is not valid for the %s config: %w", cmd.Key, layer, err)
 			}
 		}
 		var settings model.BaseConfig
 		if err := model.UnmarshalYAML(patched, &settings); err != nil {
-			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
+			return nil, fmt.Errorf("%s is not valid for the %s config: %w", cmd.Key, layer, err)
 		}
 		ignoredSettings := model.IgnoredSettings(settings, source)
 		if source == model.ConfigSourceGlobal {
@@ -95,7 +95,7 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 		}
 		for _, ignored := range ignoredSettings {
 			if ignored.Key == cmd.Key || strings.HasPrefix(cmd.Key, ignored.Key+".") {
-				return nil, fmt.Errorf("%s = %s is not valid for the %s config: %s", cmd.Key, cmd.Value, layer, ignored.Reason)
+				return nil, fmt.Errorf("%s is not valid for the %s config: %s", cmd.Key, layer, ignored.Reason)
 			}
 		}
 		if strings.HasPrefix(cmd.Key, "verify.") {
