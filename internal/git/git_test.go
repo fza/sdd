@@ -174,6 +174,28 @@ func TestCommit_RecordsATrackedPathMissingFromDisk(t *testing.T) {
 	}
 }
 
+// A commit naming only deleted paths stages nothing: a bare `git add --all --`
+// would stage the whole tree.
+func TestCommit_OnlyDeletedPathsStagesNothingElse(t *testing.T) {
+	dir := newTestRepo(t)
+	runGit(t, dir, "rm", "-q", "seed.txt")
+	if err := os.WriteFile(filepath.Join(dir, "unrelated.txt"), []byte("unrelated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(dir)
+	if err := (CLI{}).Commit("remove seed", "seed.txt"); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	if files := commitFiles(t, dir); !slices.Equal(files, []string{"seed.txt"}) {
+		t.Errorf("the commit should record only the deletion; files = %v", files)
+	}
+	if tracked := strings.Fields(runGit(t, dir, "ls-files")); slices.Contains(tracked, "unrelated.txt") {
+		t.Errorf("an unrelated untracked file should stay out of the index; tracked = %v", tracked)
+	}
+}
+
 // A commit meeting another process's index lock waits for it to clear rather
 // than failing: concurrent captures hold the lock briefly.
 func TestCommit_WaitsOutAHeldIndexLock(t *testing.T) {
