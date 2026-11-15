@@ -30,7 +30,7 @@ func TestCapture_NeverSuppliesTheWhyOrTheIntent(t *testing.T) {
 	proctest.RequireStep(t, serve, "playback")
 	wants := []string{
 		`Mark to the user, as your inference ("my inference: …"), every sentence of elaboration in the draft that the user did not say. Go sentence by sentence and mark each one, in every revised draft too.`,
-		"A decision's reason and a directive's intent are never inference: show the user their quoted words from the draft block.",
+		"A decision's reason and a directive's intent are never inference: show the user their quoted words from the draft block, and never name the posture.",
 	}
 	playback := test.Untagged(serve.Instructions)
 	for _, want := range wants {
