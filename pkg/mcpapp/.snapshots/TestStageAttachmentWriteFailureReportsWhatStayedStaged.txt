@@ -1,0 +1,3 @@
+isError: true
+content: files item 2 "b.md" failed after the check, so the call stopped: disk full; this item was not staged; staged before it and still staged: "a.md"
+
