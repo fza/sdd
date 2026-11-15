@@ -22,9 +22,12 @@ type StagedBlob struct {
 // StagedBlobStore owns immutable scratch bytes scoped to a session. Stage's
 // metadata describes the upload response; filename references belong in session
 // events. DeleteStaged removes every resource before its session is deleted and
-// must succeed when that session's resources are already gone.
+// must succeed when that session's resources are already gone. DeleteBlob
+// removes one blob once nothing needs it, and must succeed when it is already
+// gone.
 type StagedBlobStore interface {
 	Stage(context.Context, SessionRef, string, io.Reader) (StagedBlob, error)
 	Open(context.Context, SessionRef, string) (io.ReadCloser, error)
 	DeleteStaged(context.Context, SessionRef) error
+	DeleteBlob(context.Context, SessionRef, string) error
 }

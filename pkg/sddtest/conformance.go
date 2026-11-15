@@ -432,6 +432,21 @@ func RunStagedBlobStoreTests(t *testing.T, factory func(*testing.T) StagedBlobSt
 	if err != nil {
 		t.Fatalf("Stage other session: %v", err)
 	}
+	if err := fixture.Store.DeleteBlob(t.Context(), fixture.Session, replacement.ID); err != nil {
+		t.Fatalf("DeleteBlob: %v", err)
+	}
+	if reader, err := fixture.Store.Open(t.Context(), fixture.Session, replacement.ID); err == nil {
+		_ = reader.Close()
+		t.Fatal("Open after DeleteBlob succeeded")
+	}
+	if err := fixture.Store.DeleteBlob(t.Context(), fixture.Session, replacement.ID); err != nil {
+		t.Fatalf("second DeleteBlob: %v", err)
+	}
+	reader, err = fixture.Store.Open(t.Context(), fixture.Session, blob.ID)
+	if err != nil {
+		t.Fatalf("DeleteBlob removed another blob of the session: %v", err)
+	}
+	_ = reader.Close()
 	if err := fixture.Store.DeleteStaged(t.Context(), fixture.Session); err != nil {
 		t.Fatalf("DeleteStaged: %v", err)
 	}

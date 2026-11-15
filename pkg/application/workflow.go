@@ -1152,6 +1152,13 @@ func (a *Application) AbandonWorkflowSession(ctx context.Context, identity Reque
 	if _, err := a.sessions.Append(ctx, request.SessionID, stored.Version, appendData); err != nil {
 		return WorkflowAbandonResult{}, err
 	}
+	claims, err := w.pendingClaims("")
+	if err == nil {
+		err = a.freeEndedSession(ctx, SessionRef{Subject: stored.Metadata.Subject, Session: request.SessionID}, stored.Events, claims)
+	}
+	if err != nil {
+		return result, fmt.Errorf("session %s ended; freeing its staged files: %w", request.SessionID, err)
+	}
 	return result, nil
 }
 
@@ -1547,11 +1554,31 @@ func (w *WorkflowSession) appendStoredEventsOnce(events []StoredEvent) error {
 		return err
 	}
 	w.binding.Version = next
+	if stored.Metadata.Ended != nil || metadata.Ended == nil {
+		return nil
+	}
+	claims, err := w.pendingClaims("")
+	if err == nil {
+		err = w.app.freeEndedSession(w.ctx, SessionRef{Subject: w.binding.Subject, Session: w.ID()}, stored.Events, claims)
+	}
+	if err != nil {
+		return fmt.Errorf("session %s ended; freeing its staged files: %w", w.ID(), err)
+	}
 	return nil
 }
 
 func (w *WorkflowSession) restoreStagedBlobs(events []StoredEvent) error {
 	for _, stored := range events {
+		if stored.Code == workflowStagedBlobReleasedCode {
+			release, err := decodeStagedBlobRelease(stored)
+			if err != nil {
+				return err
+			}
+			if releaseStaged(w.staged, release) {
+				w.recordSource(release.Handle, "")
+			}
+			continue
+		}
 		if stored.Code != workflowStagedBlobCode {
 			continue
 		}

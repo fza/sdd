@@ -213,6 +213,14 @@ func (s *memoryStagedBlobStore) DeleteStaged(_ context.Context, session sdd.Sess
 	return nil
 }
 
+// DeleteBlob removes one blob of the session; a missing one is success.
+func (s *memoryStagedBlobStore) DeleteBlob(_ context.Context, session sdd.SessionRef, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.areas[session], id)
+	return nil
+}
+
 func (s *memoryStagedBlobStore) lookup(session sdd.SessionRef, id string) ([]byte, error) {
 	area, exists := s.areas[session]
 	if !exists {
