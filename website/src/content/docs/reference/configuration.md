@@ -80,7 +80,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `skill_scope` | Asked by `sdd init` | `project` installs the skill into the repository, such as `.claude/skills/`. `user` installs it into your home directory, such as `~/.claude/skills/`. |
 | `supported_agents` | `[claude]` | The agents `sdd init` installs the skill for: `claude`, `codex` or both. |
 | `dependencies` | None | The `repo_id`s of other graphs this graph references. See [connected repositories](#connected-repositories). |
-| `project_dir` | None | Set in a work repository only: the folder holding the sdd project's `.sdd/`, relative to the repository root or absolute. See [a graph in its own repository](/sdd/guides/graph-repository/). |
+| `project_dir` | None | Set in a work repository only: the folder holding the sdd project's `.sdd/`, relative to the repository root; an absolute path only in `.sdd/config.local.yaml`. See [a graph in its own repository](/sdd/guides/graph-repository/). |
 
 ### Participant
 

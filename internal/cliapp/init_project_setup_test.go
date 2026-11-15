@@ -345,7 +345,11 @@ func TestInitRefreshesAProjectOnADetachedHead(t *testing.T) {
 // resolves like the canonical one.
 func TestInitSetsUpAProjectAtAnAbsolutePathThroughASymlink(t *testing.T) {
 	work, _ := workRepository(t)
-	project := filepath.Join(t.TempDir(), "work-sdd")
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Dir(work), link); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(link, "work-sdd")
 
 	runApp(t, work, "init", "--project-dir", project, "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
 
