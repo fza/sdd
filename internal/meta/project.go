@@ -56,7 +56,8 @@ func ResolveProject(workRoot string) (Project, error) {
 	}
 	root := projectDir
 	if !filepath.IsAbs(root) {
-		root = filepath.Join(workRoot, root)
+		// init records project_dir against the real folders.
+		root = filepath.Join(ResolvedPath(workRoot), root)
 	}
 	root = filepath.Clean(root)
 	targetCommitted, targetLocal, err := ReadConfigLayers(SDDDir(root))
@@ -115,12 +116,104 @@ func ResolvedPath(path string) string {
 	}
 }
 
-// WithinDir reports whether path is dir or lies below it, both resolved
-// through symlinks.
+// RequireProjectApart refuses a project at projectRoot that a work tree at
+// workRoot cannot point at: one inside the repository holding the work tree,
+// a repository of its own nested there included; one containing the work
+// tree; or one inside another repository rather than at its root. subject
+// opens the refusal, naming where the project came from. rootOf returns the
+// root of the repository holding a path, empty when there is none.
+func RequireProjectApart(subject, workRoot, projectRoot string, rootOf func(string) string) error {
+	outer := rootOf(workRoot)
+	if outer == "" {
+		outer = workRoot
+	}
+	if WithinDir(outer, projectRoot) {
+		return fmt.Errorf("%s lies inside the repository at %s; the project needs a repository of its own", subject, outer)
+	}
+	if WithinDir(projectRoot, workRoot) {
+		return fmt.Errorf("%s contains the work repository at %s; the project needs a repository of its own beside it", subject, workRoot)
+	}
+	projectRepo := rootOf(projectRoot)
+	if projectRepo != "" && !SameDir(projectRepo, projectRoot) {
+		return fmt.Errorf("%s lies inside the repository at %s; the project needs a repository of its own", subject, projectRepo)
+	}
+	return nil
+}
+
+// RequireGraphInProjectRepository refuses a graph_dir, set in sddDir and
+// resolved to graphDir, that leads out of the project at projectRoot into no
+// repository or into one other than the project's: graph commits, the schema
+// stamp and engine branches all belong to the repository holding the
+// project's .sdd/. rootOf returns the root of the repository holding a path,
+// empty when there is none.
+func RequireGraphInProjectRepository(sddDir, projectRoot, graphDir string, rootOf func(string) string) error {
+	if WithinDir(projectRoot, graphDir) {
+		return nil
+	}
+	graphRepo := rootOf(graphDir)
+	if graphRepo == "" {
+		return fmt.Errorf("graph_dir in %s leads to %s, outside the project and outside any repository; keep the graph inside the project", sddDir, graphDir)
+	}
+	projectRepo := rootOf(projectRoot)
+	if projectRepo != "" && SameDir(graphRepo, projectRepo) {
+		return nil
+	}
+	return fmt.Errorf("graph_dir in %s leads into %s, a repository separate from %s; make the graph a project of its own (`sdd init` there) and set project_dir to that repository's root instead", sddDir, graphRepo, projectRepo)
+}
+
+// WithinDir reports whether path is dir or lies below it. Folders on disk
+// compare by identity, so a symlink or a spelling a case-insensitive
+// filesystem accepts names the folder it leads to; the parts of either path
+// not yet created compare by name.
 func WithinDir(dir, path string) bool {
-	rel, err := filepath.Rel(ResolvedPath(dir), ResolvedPath(path))
+	dirBase, dirRest := splitExisting(ResolvedPath(dir))
+	dirInfo, err := os.Stat(dirBase)
 	if err != nil {
 		return false
 	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	ancestor := ResolvedPath(path)
+	var below []string
+	for {
+		info, err := os.Stat(ancestor)
+		if err == nil && os.SameFile(dirInfo, info) {
+			return len(below) >= len(dirRest) && slices.Equal(below[:len(dirRest)], dirRest)
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return false
+		}
+		below = append([]string{filepath.Base(ancestor)}, below...)
+		ancestor = parent
+	}
+}
+
+// SameDir reports whether a and b name one folder on disk.
+func SameDir(a, b string) bool {
+	infoA, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	infoB, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(infoA, infoB)
+}
+
+// splitExisting splits path into its nearest existing ancestor and the names
+// below it.
+func splitExisting(path string) (string, []string) {
+	var rest []string
+	for {
+		_, err := os.Stat(path)
+		if err == nil {
+			return path, rest
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return path, rest
+		}
+		rest = append([]string{filepath.Base(path)}, rest...)
+		path = parent
+	}
 }

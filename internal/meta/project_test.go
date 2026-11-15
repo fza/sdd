@@ -106,7 +106,7 @@ func TestResolveProject(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if project.Root != filepath.Join(root, tc.wantRoot) {
+			if !meta.SameDir(project.Root, filepath.Join(root, tc.wantRoot)) {
 				t.Errorf("the project root should be the %s folder, got %s", tc.wantRoot, project.Root)
 			}
 			if project.WorkRoot != work {
@@ -116,6 +116,28 @@ func TestResolveProject(t *testing.T) {
 				t.Error("Pointed should report whether the project lives elsewhere")
 			}
 		})
+	}
+}
+
+// init records project_dir against the real folders, so a work root reached
+// through a symlink resolves it from where the work root really lies.
+func TestResolveProjectFromASymlinkedWorkRoot(t *testing.T) {
+	realDir := filepath.Join(t.TempDir(), "real")
+	writeConfig(t, filepath.Join(realDir, "work"), "config.yaml", "project_dir: ../project\n")
+	writeConfig(t, filepath.Join(realDir, "project"), "config.yaml", "graph_dir: .sdd/graph\n")
+	link := filepath.Join(t.TempDir(), "wl")
+	err := os.Symlink(filepath.Join(realDir, "work"), link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	project, err := meta.ResolveProject(link)
+
+	if err != nil {
+		t.Fatalf("the project beside the real work root should resolve: %v", err)
+	}
+	if !meta.SameDir(project.Root, filepath.Join(realDir, "project")) {
+		t.Errorf("the project should be found beside the real work root, got %s", project.Root)
 	}
 }
 
@@ -132,25 +154,37 @@ func TestResolveProjectReportsAMissingProject(t *testing.T) {
 }
 
 func TestWithinDir(t *testing.T) {
-	root := t.TempDir()
-	link := filepath.Join(t.TempDir(), "link")
-	err := os.Symlink(root, link)
+	root := filepath.Join(t.TempDir(), "outer")
+	err := os.Mkdir(root, 0o755)
 	if err != nil {
 		t.Fatal(err)
 	}
+	link := filepath.Join(t.TempDir(), "link")
+	err = os.Symlink(root, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCase := filepath.Join(filepath.Dir(root), "OUTER")
+	_, err = os.Stat(otherCase)
+	caseInsensitive := err == nil
 	cases := []struct {
-		name   string
-		path   string
-		within bool
+		name          string
+		path          string
+		within        bool
+		needsCaseFold bool
 	}{
 		{name: "the folder itself", path: root, within: true},
 		{name: "a folder below, not yet created", path: filepath.Join(root, "a", "b"), within: true},
 		{name: "a folder below, through a symlink", path: filepath.Join(link, "a"), within: true},
+		{name: "a folder below, spelled in other case", path: filepath.Join(otherCase, "a"), within: true, needsCaseFold: true},
 		{name: "a sibling sharing the name's prefix", path: root + "-sdd", within: false},
 		{name: "the parent folder", path: filepath.Dir(root), within: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.needsCaseFold && !caseInsensitive {
+				t.Skip("the temporary filesystem tells names apart by case")
+			}
 			got := meta.WithinDir(root, tc.path)
 			if got != tc.within {
 				t.Error("the path should be judged by where it really lies")
