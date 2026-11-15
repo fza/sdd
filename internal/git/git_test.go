@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -128,5 +129,47 @@ func TestRemovalCommit_ScopesToPathspec(t *testing.T) {
 	}
 	if !slices.Contains(tracked, "unrelated.txt") {
 		t.Errorf("unrelated.txt no longer staged after scoped commit; tracked = %v", tracked)
+	}
+}
+
+// A commit meeting another process's index lock waits for it to clear rather
+// than failing: concurrent captures hold the lock briefly.
+func TestCommit_WaitsOutAHeldIndexLock(t *testing.T) {
+	dir := newTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "touched.txt"), []byte("touched\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(dir, ".git", "index.lock")
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		released <- os.Remove(lock)
+	}()
+
+	t.Chdir(dir)
+	if err := (CLI{}).Commit("touch", "touched.txt"); err != nil {
+		t.Fatalf("a commit should succeed once the index lock clears: %v", err)
+	}
+	if err := <-released; err != nil {
+		t.Fatal(err)
+	}
+	if files := commitFiles(t, dir); !slices.Contains(files, "touched.txt") {
+		t.Errorf("the commit should record the touched file, got %v", files)
+	}
+}
+
+// A failure other than the index lock is not retried.
+func TestCommit_FailsAtOnceOnOtherErrors(t *testing.T) {
+	dir := newTestRepo(t)
+	t.Chdir(dir)
+	start := time.Now()
+	if err := (CLI{}).Commit("nothing", "absent.txt"); err == nil {
+		t.Fatal("staging a path that does not exist should fail")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("a failure unrelated to the index lock should return without waiting, took %s", elapsed)
 	}
 }

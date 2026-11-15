@@ -35,12 +35,12 @@ const commitTimeout = 30 * time.Second
 // Commit stages exactly the given paths and commits them, detached from any
 // controlling terminal. It is the production handlers.Committer for the
 // auto-commit paths (sdd new, summarize, init, ...).
-func (CLI) Commit(message string, paths ...string) error {
+func (c CLI) Commit(message string, paths ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), commitTimeout)
 	defer cancel()
 
 	addArgs := append([]string{"add", "--all", "--"}, paths...)
-	if out, err := runDetached(ctx, addArgs...); err != nil {
+	if out, err := c.RunPastIndexLock(ctx, addArgs...); err != nil {
 		return fmt.Errorf("git add: %s (%w)", out, err)
 	}
 
@@ -48,11 +48,32 @@ func (CLI) Commit(message string, paths ...string) error {
 	// Without `-- <paths>`, `git commit` records the whole index, sweeping any
 	// pre-staged unrelated work into the CLI's own commit.
 	commitArgs := append([]string{"commit", "-m", message, "--"}, paths...)
-	if out, err := runDetached(ctx, commitArgs...); err != nil {
+	if out, err := c.RunPastIndexLock(ctx, commitArgs...); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
 
 	return nil
+}
+
+// RunPastIndexLock runs git with args, detached like Commit, and returns its
+// combined output. It retries while another process holds the repository's
+// index lock, which clears when that process finishes; a graph written beside
+// concurrent captures meets it routinely. Retries stop with ctx, so the
+// caller's timeout bounds the wait. Any other failure returns at once.
+func (CLI) RunPastIndexLock(ctx context.Context, args ...string) ([]byte, error) {
+	delay := 100 * time.Millisecond
+	for {
+		out, err := runDetached(ctx, args...)
+		if err == nil || !strings.Contains(string(out), "index.lock") {
+			return out, err
+		}
+		select {
+		case <-ctx.Done():
+			return out, err
+		case <-time.After(delay):
+		}
+		delay = min(2*delay, 2*time.Second)
+	}
 }
 
 // HasCommitMessage reports whether any reachable commit contains text. It is
