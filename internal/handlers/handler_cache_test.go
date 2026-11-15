@@ -130,7 +130,7 @@ func newPruneFixture(t *testing.T, config string) pruneFixture {
 func (f pruneFixture) handler(keep handlers.CurrentHashSource) *handlers.CacheHandler {
 	return handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
-		Keep: keep,
+		State: &recordingStateSweep{}, Keep: keep,
 	})
 }
 
@@ -458,7 +458,7 @@ func TestCacheHandlerPruneKeepsAClonesNoRepoRemoveDropped(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(clone, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc)})
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), State: &recordingStateSweep{}})
 	if err := h.Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
 		t.Fatalf("pruning: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestCacheHandlerPruneRefusesAMissingConfig(t *testing.T) {
 	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
 		t.Fatal(err)
 	}
-	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc)})
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), State: &recordingStateSweep{}})
 	err := h.Prune(t.Context(), &command.PruneCacheCmd{})
 	if !errors.Is(err, repos.ErrClonePassRefused) {
 		t.Errorf("the run should fail with the refused clone pass, got %v", err)
@@ -514,7 +514,7 @@ func TestCacheHandlerPruneKeepsADroppedCloneHoldingAConnectedOne(t *testing.T) {
 	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("git.example.com/foo"); err != nil {
 		t.Fatal(err)
 	}
-	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc)})
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), State: &recordingStateSweep{}})
 	if err := h.Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
 		t.Fatalf("a clone kept for the clone it holds should not fail the run: %v", err)
 	}

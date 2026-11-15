@@ -27,13 +27,20 @@ type CurrentHashSource interface {
 	CurrentHashes(ctx context.Context, maxRunes int) (map[string]string, error)
 }
 
-// CacheHandlerOptions configures NewCacheHandler. CacheRoot, StateRoot and
-// Registry are required; Keep is nil outside an sdd checkout; Now defaults to
-// time.Now.
+// StateSweeper tends the per-project state under the state root: sessions
+// past sessionRetention and projects unused for unusedRetention.
+type StateSweeper interface {
+	Sweep(ctx context.Context, now time.Time, sessionRetention, unusedRetention time.Duration) (model.CachePruneCounts, error)
+}
+
+// CacheHandlerOptions configures NewCacheHandler. CacheRoot, StateRoot,
+// Registry and State are required; Keep is nil outside an sdd checkout; Now
+// defaults to time.Now.
 type CacheHandlerOptions struct {
 	CacheRoot string
 	StateRoot string
 	Registry  *repos.Registry
+	State     StateSweeper
 	Keep      CurrentHashSource
 	Now       func() time.Time
 }
@@ -43,12 +50,13 @@ type CacheHandler struct {
 	cacheRoot string
 	stateRoot string
 	registry  *repos.Registry
+	state     StateSweeper
 	keep      CurrentHashSource
 	now       func() time.Time
 }
 
 func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
-	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, keep: opts.Keep, now: opts.Now}
+	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, state: opts.State, keep: opts.Keep, now: opts.Now}
 	if h.now == nil {
 		h.now = time.Now
 	}
@@ -125,6 +133,10 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 	if err != nil {
 		return counts, err
 	}
+	sessionRetention, err := model.ResolveSessionRetention(cfg.Sessions)
+	if err != nil {
+		return counts, err
+	}
 	// An entry's state hash depends on the rune cap a store was chunked
 	// under, so the checkout's current versions are hashed once per cap.
 	keepByCap := map[int]map[string]string{}
@@ -162,6 +174,16 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 	counts.Records += calibrations
 	if err != nil {
 		errs = append(errs, err)
+	}
+
+	if h.state == nil {
+		errs = append(errs, errors.New("cache pruning has no sweeper for the state folder"))
+	} else {
+		swept, err := h.state.Sweep(ctx, now, sessionRetention, retention)
+		counts.Add(swept)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("sweeping the state folder: %w", err))
+		}
 	}
 
 	clones, err := h.registry.UnconnectedClones()

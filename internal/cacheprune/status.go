@@ -35,13 +35,29 @@ const (
 const updateWait = time.Second
 
 type wireCounts struct {
-	Versions  int   `json:"versions,omitempty"`
-	Stores    int   `json:"stores,omitempty"`
-	Snapshots int   `json:"snapshots,omitempty"`
-	Clones    int   `json:"clones,omitempty"`
-	Records   int   `json:"records,omitempty"`
-	Leftovers int   `json:"leftovers,omitempty"`
-	Bytes     int64 `json:"bytes,omitempty"`
+	Versions   int   `json:"versions,omitempty"`
+	Stores     int   `json:"stores,omitempty"`
+	Snapshots  int   `json:"snapshots,omitempty"`
+	Clones     int   `json:"clones,omitempty"`
+	Records    int   `json:"records,omitempty"`
+	Leftovers  int   `json:"leftovers,omitempty"`
+	Sessions   int   `json:"sessions,omitempty"`
+	Unreadable int   `json:"unreadable_sessions,omitempty"`
+	Bytes      int64 `json:"bytes,omitempty"`
+}
+
+func toWire(c model.CachePruneCounts) wireCounts {
+	return wireCounts{
+		Versions: c.Versions, Stores: c.Stores, Snapshots: c.Snapshots, Clones: c.Clones, Records: c.Records,
+		Leftovers: c.Leftovers, Sessions: c.Sessions, Unreadable: c.Unreadable, Bytes: c.Bytes,
+	}
+}
+
+func (w wireCounts) counts() model.CachePruneCounts {
+	return model.CachePruneCounts{
+		Versions: w.Versions, Stores: w.Stores, Snapshots: w.Snapshots, Clones: w.Clones, Records: w.Records,
+		Leftovers: w.Leftovers, Sessions: w.Sessions, Unreadable: w.Unreadable, Bytes: w.Bytes,
+	}
 }
 
 type wireStatus struct {
@@ -75,11 +91,7 @@ func Load(stateRoot string) (model.CachePruneStatus, error) {
 	}
 	return model.CachePruneStatus{
 		LaunchedAt: w.LaunchedAt, StartedAt: w.StartedAt, FinishedAt: w.FinishedAt,
-		Removed: model.CachePruneCounts{
-			Versions: w.Removed.Versions, Stores: w.Removed.Stores, Snapshots: w.Removed.Snapshots,
-			Clones: w.Removed.Clones, Records: w.Removed.Records, Leftovers: w.Removed.Leftovers, Bytes: w.Removed.Bytes,
-		},
-		Error: w.Error, Reported: w.Reported,
+		Removed: w.Removed.counts(), Error: w.Error, Reported: w.Reported,
 	}, nil
 }
 
@@ -108,11 +120,7 @@ func Update(ctx context.Context, stateRoot string, change func(*model.CachePrune
 func save(stateRoot string, s model.CachePruneStatus) error {
 	data, err := json.MarshalIndent(wireStatus{
 		LaunchedAt: s.LaunchedAt, StartedAt: s.StartedAt, FinishedAt: s.FinishedAt,
-		Removed: wireCounts{
-			Versions: s.Removed.Versions, Stores: s.Removed.Stores, Snapshots: s.Removed.Snapshots,
-			Clones: s.Removed.Clones, Records: s.Removed.Records, Leftovers: s.Removed.Leftovers, Bytes: s.Removed.Bytes,
-		},
-		Error: s.Error, Reported: s.Reported,
+		Removed: toWire(s.Removed), Error: s.Error, Reported: s.Reported,
 	}, "", "  ")
 	if err != nil {
 		return err

@@ -17,7 +17,7 @@ import (
 func TestUpdateKeepsTheRunOnRecord(t *testing.T) {
 	stateRoot := t.TempDir()
 	started := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
-	removed := model.CachePruneCounts{Versions: 1, Stores: 2, Snapshots: 3, Clones: 4, Records: 5, Leftovers: 6, Bytes: 7}
+	removed := model.CachePruneCounts{Versions: 1, Stores: 2, Snapshots: 3, Clones: 4, Records: 5, Leftovers: 6, Sessions: 8, Unreadable: 9, Bytes: 7}
 	err := cacheprune.Update(t.Context(), stateRoot, func(s *model.CachePruneStatus) {
 		s.LaunchedAt, s.StartedAt, s.FinishedAt = started.Add(-time.Second), started, started.Add(time.Minute)
 		s.Removed, s.Error, s.Reported = removed, "removing clone: permission denied", true

@@ -17,6 +17,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/repos"
+	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
 const (
@@ -30,14 +31,16 @@ func cacheCmd() *cli.Command {
 		Usage: "Manage the machine-global cache",
 		Commands: []*cli.Command{{
 			Name:  "prune",
-			Usage: "Delete cache data past its retention now",
+			Usage: "Delete cache and state data past its retention now",
 			Description: `sdd runs this in the background at most once a day, started by any
-command or by a running sdd serve. It removes replaced index data after
-index.replaced_retention (default ` + model.DefaultReplacedRetention + `); unused index stores, graph
-snapshots and embedder calibrations after cache.retention (default ` + model.DefaultCacheRetention + `);
-graph snapshots of vanished folders and clones sdd repo remove dropped that
-the repos list no longer names at once; and crash leftovers a day old. Both
-keys live in the user-global config. Versions any checkout read within
+command or by a running sdd serve. It removes the ended sessions of every
+project after sessions.retention (default ` + model.DefaultSessionRetention + `); replaced index data
+after index.replaced_retention (default ` + model.DefaultReplacedRetention + `); unused index stores,
+graph snapshots and embedder calibrations after cache.retention (default
+` + model.DefaultCacheRetention + `); graph snapshots of vanished folders and clones sdd repo remove
+dropped that the repos list no longer names at once; and crash leftovers a
+day old. All three keys live in the user-global config. Open sessions,
+unreadable session logs and the versions any checkout read within
 cache.retention always stay. One run at a time per machine: a run started by
 hand while another runs fails. A failed background run is reported once, by
 the next command or MCP tool result, and sdd info shows the last run. sdd
@@ -66,6 +69,7 @@ index gc removes more on request.`,
 				}
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), Keep: keep,
+					State: stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
 				})
 				scheduled := cmd.Bool(scheduledFlag)
 				return h.Prune(ctx, &command.PruneCacheCmd{
@@ -164,4 +168,12 @@ func renderCachePruneStatus(w io.Writer) error {
 	}
 	presenters.RenderCachePruneStatus(w, status)
 	return nil
+}
+
+// stateSweeper is the local state sweep as the cache handler counts it.
+type stateSweeper struct{ sweep localadapter.StateSweep }
+
+func (s stateSweeper) Sweep(ctx context.Context, now time.Time, sessionRetention, unusedRetention time.Duration) (model.CachePruneCounts, error) {
+	swept, err := s.sweep.Sweep(ctx, now, sessionRetention, unusedRetention)
+	return model.CachePruneCounts{Sessions: swept.Sessions, Unreadable: swept.Unreadable, Bytes: swept.Bytes}, err
 }

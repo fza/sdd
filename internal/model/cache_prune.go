@@ -117,5 +117,22 @@ type CachePruneCounts struct {
 	// Leftovers are what killed writers left: index staging dirs, orphan
 	// rows and retired stores.
 	Leftovers int
-	Bytes     int64
+	// Sessions are ended sessions removed with their staged attachments.
+	Sessions int
+	// Unreadable counts session logs kept because they could not be read.
+	Unreadable int
+	Bytes      int64
+}
+
+// Add adds what another part of a run removed.
+func (c *CachePruneCounts) Add(o CachePruneCounts) {
+	c.Versions += o.Versions
+	c.Stores += o.Stores
+	c.Snapshots += o.Snapshots
+	c.Clones += o.Clones
+	c.Records += o.Records
+	c.Leftovers += o.Leftovers
+	c.Sessions += o.Sessions
+	c.Unreadable += o.Unreadable
+	c.Bytes += o.Bytes
 }

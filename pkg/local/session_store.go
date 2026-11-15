@@ -162,7 +162,10 @@ func (s *FilesystemSessionStore) List(_ context.Context, filter app.SessionFilte
 		if err != nil {
 			// A log this binary cannot read may belong to a newer version.
 			// Skipping it keeps every other session listed; it is never
-			// treated as garbage.
+			// treated as garbage, only named.
+			if !errors.Is(err, app.ErrSessionNotFound) {
+				page.Unreadable = append(page.Unreadable, id)
+			}
 			continue
 		}
 		if filter.Matches(stored.Metadata) {
