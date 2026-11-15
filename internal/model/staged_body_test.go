@@ -20,8 +20,11 @@ func TestSplitStagedBody(t *testing.T) {
 		{name: "a byte order mark before the first delimiter counts", content: "\uFEFF---\nlayer: tactical\n---\nBody\n", wantHeader: true, wantBody: "Body\n"},
 		{name: "a byte order mark without a header stays out of the body", content: "\uFEFFBody\n", wantBody: "Body\n"},
 		{name: "a delimiter with trailing spaces is no delimiter", content: "--- \nlayer: tactical\n---\nBody\n", wantBody: "--- \nlayer: tactical\n---\nBody\n"},
-		{name: "a block that is no valid YAML still splits off", content: "---\n: : :\n---\nBody\n", wantBody: "Body\n"},
-		{name: "a block that is no mapping still splits off", content: "---\n- a\n---\nBody\n", wantBody: "Body\n"},
+		{name: "a block that is no valid YAML is body", content: "---\n: : :\n---\nBody\n", wantBody: "---\n: : :\n---\nBody\n"},
+		{name: "a block that is no mapping is body", content: "---\n- a\n---\nBody\n", wantBody: "---\n- a\n---\nBody\n"},
+		{name: "a mapping without a compared key is body", content: "---\ntitle: Draft\n---\nBody\n", wantBody: "---\ntitle: Draft\n---\nBody\n"},
+		{name: "a markdown rule opening the body keeps its first section", content: "---\nThe first section.\n\n---\nThe second section.\n", wantBody: "---\nThe first section.\n\n---\nThe second section.\n"},
+		{name: "a compared key beside other keys makes a header", content: "---\ntitle: Draft\nlayer: tac\n---\nBody\n", wantHeader: true, wantBody: "Body\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -67,7 +70,7 @@ func TestStagedHeaderMismatch(t *testing.T) {
 		{name: "a differing topic list is named", header: "topics: [agent/ux]\n", wantKey: "topics"},
 		{name: "closes holding no entry IDs are another shape", header: "closes: [gar]\n"},
 		{name: "a key the report does not state is not compared", header: "intent: settled\n"},
-		{name: "keys outside the report fields are ignored", header: "kind: gap\ntitle: anything\n"},
+		{name: "keys outside the report fields are ignored", header: "kind: gap\ntitle: anything\nconfidence: high\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,7 +14,8 @@ import (
 
 // StageItem is one file of a staging call. It takes exactly one source:
 // Content stages the given bytes; Path stages the file read from that local
-// path and keeps the path, so a playback confirm reads it again; Patches edits
+// path through ApplicationOptions.ReadLocalFile and keeps the path, so a
+// playback confirm reads it again; Patches edits
 // the file staged under Name before the call with ordered exact search-replace
 // pairs.
 type StageItem struct {
@@ -92,11 +92,14 @@ func (w *WorkflowSession) checkStageItem(ctx context.Context, identity RequestId
 	write := stageWrite{name: item.Name, content: item.Content}
 	switch {
 	case item.Path != "":
+		if w.app.readLocalFile == nil {
+			return stageWrite{}, fmt.Errorf("path: this server shares no filesystem with its clients; pass the file as content")
+		}
 		write.source, err = filepath.Abs(item.Path)
 		if err != nil {
 			return stageWrite{}, fmt.Errorf("path %s: %w", item.Path, err)
 		}
-		write.content, err = os.ReadFile(write.source)
+		write.content, err = w.app.readLocalFile(write.source)
 		if err != nil {
 			return stageWrite{}, fmt.Errorf("reading %s: %w", write.source, err)
 		}

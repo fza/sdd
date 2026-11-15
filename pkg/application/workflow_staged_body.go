@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
@@ -91,7 +90,7 @@ func (w *WorkflowSession) stagedBodyFields(ctx context.Context, identity Request
 // file a capture takes its body from states a field otherwise than the
 // capture holds it, before the answer is recorded.
 func (w *WorkflowSession) checkStagedHeaderAtConfirm(ctx context.Context, identity RequestIdentity, inst *engine.Instance, chooser, choice string) error {
-	if !takesStagedBody(inst) || !callsConfirmPlayback(inst.Spec, chooser, choice) {
+	if !takesStagedBody(inst) || !callsConfirmPlayback(inst, chooser, choice) {
 		return nil
 	}
 	bound, _ := inst.Store.Get(fieldBodyHandle)
@@ -107,8 +106,13 @@ func (w *WorkflowSession) checkStagedHeaderAtConfirm(ctx context.Context, identi
 	return stagedHeaderAgrees(header, handle, inst, nil)
 }
 
-func callsConfirmPlayback(spec *engine.Spec, chooser, choice string) bool {
-	for _, step := range spec.Steps {
+// callsConfirmPlayback reports whether the answer confirms the playback the
+// instance is pending at; an answer at another step is the engine's to refuse.
+func callsConfirmPlayback(inst *engine.Instance, chooser, choice string) bool {
+	if inst.Step != chooser {
+		return false
+	}
+	for _, step := range inst.Spec.Steps {
 		if step.ID != chooser {
 			continue
 		}
@@ -247,16 +251,16 @@ func (w *WorkflowSession) recordSource(handle, source string) {
 // then plays it back instead of confirming the older copy. A file gone since
 // leaves the staged copy standing.
 func (w *WorkflowSession) stageFromSource(ctx context.Context, identity RequestIdentity, inst *engine.Instance, chooser, choice string) error {
-	if !takesStagedBody(inst) || !callsConfirmPlayback(inst.Spec, chooser, choice) {
+	if !takesStagedBody(inst) || !callsConfirmPlayback(inst, chooser, choice) {
 		return nil
 	}
 	bound, _ := inst.Store.Get(fieldBodyHandle)
 	handle, _ := bound.(string)
 	source := w.stagedFrom[handle]
-	if source == "" {
+	if source == "" || w.app.readLocalFile == nil {
 		return nil
 	}
-	content, err := os.ReadFile(source)
+	content, err := w.app.readLocalFile(source)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}

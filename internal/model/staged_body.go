@@ -12,10 +12,11 @@ import (
 var StagedHeaderKeys = []string{"entryKind", "layer", "confidence", "intent", "refs", "topics", "closes", "supersedes"}
 
 // SplitStagedBody splits a staged body file into its header and its body. A
-// file whose first line is `---` and that holds a second such line opens with
-// a header block, and the body is everything after the second line; any other
-// file is all body, without a leading byte order mark. header is nil when
-// there is no block or the block is no YAML mapping.
+// file whose first line is `---` opens with a header block when a second such
+// line closes a YAML mapping holding one of StagedHeaderKeys; the body is then
+// everything after the second line. Any other file is all body, so a markdown
+// body opening with a `---` rule keeps its first section. A leading byte order
+// mark never reaches the body. header is nil when there is no block.
 func SplitStagedBody(content string) (header map[string]any, body string) {
 	content = strings.TrimPrefix(content, "\uFEFF")
 	lines := strings.SplitAfter(content, "\n")
@@ -26,12 +27,14 @@ func SplitStagedBody(content string) (header map[string]any, body string) {
 		if !isHeaderDelimiter(lines[i]) {
 			continue
 		}
-		body = strings.Join(lines[i+1:], "")
 		var parsed map[string]any
 		if err := yaml.Unmarshal([]byte(strings.Join(lines[1:i], "")), &parsed); err != nil {
-			return nil, body
+			return nil, content
 		}
-		return parsed, body
+		if !slices.ContainsFunc(StagedHeaderKeys, func(key string) bool { _, ok := parsed[key]; return ok }) {
+			return nil, content
+		}
+		return parsed, strings.Join(lines[i+1:], "")
 	}
 	return nil, content
 }

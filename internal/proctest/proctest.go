@@ -136,6 +136,7 @@ type config struct {
 	entries     []*model.Entry
 	branchDirs  map[string]string
 	finalizers  []sdd.MutationFinalizer
+	wrapBlobs   func(sdd.StagedBlobStore) sdd.StagedBlobStore
 }
 
 // Option configures NewWorld.
@@ -156,6 +157,11 @@ func WithParticipant(name string) Option { return func(c *config) { c.participan
 // WithFinalizers configures required completion after publication.
 func WithFinalizers(finalizers ...sdd.MutationFinalizer) Option {
 	return func(c *config) { c.finalizers = append(c.finalizers, finalizers...) }
+}
+
+// WithStagedBlobs wraps the world's staged blob store, e.g. to fail a delete.
+func WithStagedBlobs(wrap func(sdd.StagedBlobStore) sdd.StagedBlobStore) Option {
+	return func(c *config) { c.wrapBlobs = wrap }
 }
 
 // WithBranchDir registers an additional branch backed by its own graph dir —
@@ -302,9 +308,13 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 		t.Fatal(err)
 	}
 	stagedBlobDir := t.TempDir()
-	blobs, err := localadapter.NewFilesystemStagedBlobStoreAt(stagedBlobDir)
+	filesystemBlobs, err := localadapter.NewFilesystemStagedBlobStoreAt(stagedBlobDir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var blobs sdd.StagedBlobStore = filesystemBlobs
+	if cfg.wrapBlobs != nil {
+		blobs = cfg.wrapBlobs(blobs)
 	}
 	script := &LLMScript{Summary: "A generated summary."}
 	options := sdd.ProjectRuntimeOptions{
@@ -331,7 +341,7 @@ func NewWorld(t *testing.T, opts ...Option) *World {
 		t.Fatal(err)
 	}
 	application, err := sdd.NewApplication(sdd.ApplicationOptions{
-		Access: &accessResolver{runtime: runtime, participant: cfg.participant}, Sessions: sessions, StagedBlobs: blobs,
+		Access: &accessResolver{runtime: runtime, participant: cfg.participant}, Sessions: sessions, StagedBlobs: blobs, ReadLocalFile: os.ReadFile,
 	})
 	if err != nil {
 		t.Fatal(err)

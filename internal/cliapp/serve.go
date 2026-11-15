@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -74,7 +75,14 @@ func serveCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			application, _, identity, err := buildLocalApplication(ctx, cmd, dir, sddDir, cfg, reg, runner)
+			transport := cmd.String("transport")
+			// Only a stdio client shares this filesystem; an HTTP client must
+			// never stage a file of the server's by naming its path.
+			var readLocalFile func(string) ([]byte, error)
+			if transport == "stdio" {
+				readLocalFile = os.ReadFile
+			}
+			application, _, identity, err := buildLocalApplication(ctx, cmd, dir, sddDir, cfg, reg, runner, readLocalFile)
 			if err != nil {
 				return err
 			}
@@ -84,7 +92,6 @@ func serveCmd() *cli.Command {
 			}
 			collectSessions(ctx, application, retention)
 
-			transport := cmd.String("transport")
 			srv, err := mcpserver.New(mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll,
 				Application:   application,
 				LocalIdentity: identity,
@@ -309,7 +316,7 @@ func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principa
 	return a.dependencies.resolve(dependency)
 }
 
-func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddDir string, cfg *model.PerRepoConfig, registry *repos.Registry, runner pkgllm.Runner) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
+func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddDir string, cfg *model.PerRepoConfig, registry *repos.Registry, runner pkgllm.Runner, readLocalFile func(string) ([]byte, error)) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
 	displayName := filepath.Base(filepath.Dir(sddDir))
 	participant := ""
 	language := ""
@@ -412,7 +419,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 			})
 		}},
 	}
-	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: access, Sessions: sessions, StagedBlobs: blobs})
+	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: access, Sessions: sessions, StagedBlobs: blobs, ReadLocalFile: readLocalFile})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}

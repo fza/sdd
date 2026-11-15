@@ -394,7 +394,7 @@ func newTestServerConfig(t *testing.T, findings []query.Finding, graphDir, sessi
 		t.Fatal(err)
 	}
 	opts := testServerOptions{
-		Application: sdd.ApplicationOptions{Access: rootAccess{runtime: runtime}, Sessions: sessions, StagedBlobs: blobs, Clock: sdd.ClockFunc(func() time.Time { return now })},
+		Application: sdd.ApplicationOptions{Access: rootAccess{runtime: runtime}, Sessions: sessions, StagedBlobs: blobs, Clock: sdd.ClockFunc(func() time.Time { return now }), ReadLocalFile: os.ReadFile},
 		MCP:         mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll, LocalIdentity: sdd.RequestIdentity{Subject: "tester"}, Version: "test"},
 	}
 	for _, m := range mutate {

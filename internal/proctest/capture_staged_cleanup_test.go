@@ -3,6 +3,7 @@ package proctest_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -146,6 +147,68 @@ func TestCapture_AnAttachmentAnotherCaptureNamesStaysStaged(t *testing.T) {
 	publish(second.Instance)
 	if got := stagedBlobs(t, world, session); got != 0 {
 		t.Errorf("the last capture naming the attachment should free it once published, %d staged", got)
+	}
+}
+
+// The file a capture takes its body from is freed once its entry is
+// published, and kept while another running capture names it.
+func TestCapture_PublicationFreesTheStagedBodyFile(t *testing.T) {
+	world, session := newCaptureWorld(t, "staged-body-release")
+	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+	attaching := session.Start(t, "capture", nil)
+	draft := captureDraft()
+	draft["attachments"] = []any{handle}
+	session.Report(t, attaching.Instance, draft)
+	bound := session.Start(t, "capture", nil)
+	session.Report(t, bound.Instance, stagedBodyDraft(handle))
+	publish := func(instance string) {
+		t.Helper()
+		serve := session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+		proctest.RequireStep(t, serve, "verifySummary")
+		session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	}
+	publish(attaching.Instance)
+	if got := stagedBlobs(t, world, session); got != 1 {
+		t.Errorf("a file a running capture takes its body from should stay staged, %d staged", got)
+	}
+	publish(bound.Instance)
+	if got := stagedBlobs(t, world, session); got != 0 {
+		t.Errorf("publication should free the file the entry's body came from, %d staged", got)
+	}
+}
+
+// failingDeleteStaged fails freeing a whole session's staged files.
+type failingDeleteStaged struct{ sdd.StagedBlobStore }
+
+func (failingDeleteStaged) DeleteStaged(context.Context, sdd.SessionRef) error {
+	return errors.New("disk gone")
+}
+
+// A failed free at conclude reports the session as ended: the end is durable
+// and the conclude stands, only the cleanup failed.
+func TestCapture_ConcludeReportsAFailedFreeAfterTheSessionEnded(t *testing.T) {
+	world, session := newCaptureWorld(t, "staged-conclude-free", proctest.WithStagedBlobs(func(store sdd.StagedBlobStore) sdd.StagedBlobStore {
+		return failingDeleteStaged{store}
+	}))
+	session.Stage(t, "notes.md", []byte("Notes."))
+	shell, err := session.WF.ServeShell(t.Context(), world.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serve, err := session.AnswerErr(t, shell.Instance, "junction", "conclude", nil, "that is all")
+	if err == nil || !strings.Contains(err.Error(), "ended; freeing its staged files: disk gone") {
+		t.Fatalf("a failed free should be reported after the session ended, got %v", err)
+	}
+	if serve == nil {
+		t.Fatal("the conclude should stand beside the failed free")
+	}
+	proctest.RequireStatus(t, serve, "completed")
+	stored, err := world.Sessions.Load(t.Context(), session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Metadata.Ended == nil {
+		t.Error("the session should be recorded as ended")
 	}
 }
 

@@ -247,7 +247,7 @@ type StageAttachmentArgs struct {
 type StageFileArg struct {
 	Name    string             `json:"name" jsonschema:"target filename (plain name, no paths)"`
 	Content string             `json:"content,omitempty" jsonschema:"file content to stage (UTF-8 text)"`
-	Path    string             `json:"path,omitempty" jsonschema:"local file path to stage instead of inline content; read again before a playback confirms a body staged from it"`
+	Path    string             `json:"path,omitempty" jsonschema:"local file path to stage instead of inline content, for a server sharing the client's filesystem (stdio); read again before a playback confirms a body staged from it"`
 	Patches []SearchReplaceArg `json:"patches,omitempty" jsonschema:"edit the file staged under name before this call in place: ordered exact search-replace pairs applied atomically — each old must match exactly once, a failing pair refuses the whole call. Pass instead of content/path"`
 }
 

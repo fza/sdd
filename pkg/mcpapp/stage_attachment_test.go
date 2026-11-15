@@ -122,6 +122,27 @@ func TestStageAttachmentRefusesTheWholeCallOnAFailingFile(t *testing.T) {
 	}
 }
 
+func TestStageAttachmentRefusesAPathOnAServerSharingNoFilesystem(t *testing.T) {
+	env := newTestServer(t, nil, "", "", func(o *testServerOptions) {
+		o.Application.ReadLocalFile = nil
+	})
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+	path := filepath.Join(t.TempDir(), "server-side.md")
+	err := os.WriteFile(path, []byte("a file of the server's\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg := callExpectError(t, cs, "stage_attachment", map[string]any{"session": session, "files": []map[string]any{{"name": "a.md", "path": path}}})
+	if !strings.Contains(msg, `files item 1 "a.md"`) || !strings.Contains(msg, "pass the file as content") {
+		t.Fatalf("a path should be refused when the server shares no filesystem with its clients, got %q", msg)
+	}
+	if handles := stagedOf(t, cs, session, "a.md"); len(handles) != 0 {
+		t.Errorf("a refused path should stage nothing, got %v", handles)
+	}
+}
+
 func TestStageAttachmentRefusesACallWithoutFiles(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)

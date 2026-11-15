@@ -1739,7 +1739,7 @@
                 ]
               },
               "path": {
-                "description": "local file path to stage instead of inline content; read again before a playback confirms a body staged from it",
+                "description": "local file path to stage instead of inline content, for a server sharing the client's filesystem (stdio); read again before a playback confirms a body staged from it",
                 "type": "string"
               }
             },

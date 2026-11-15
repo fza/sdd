@@ -43,6 +43,10 @@ type ApplicationOptions struct {
 	// EntrySuffix supplies the random part of a new entry ID; nil draws it
 	// from the system's randomness (d-cpt-t8i).
 	EntrySuffix func(length int) (string, error)
+	// ReadLocalFile reads a file by the path a client names, for a composition
+	// whose clients share its filesystem. nil refuses staging by path, so a
+	// remote client can never stage a file of the server's.
+	ReadLocalFile func(path string) ([]byte, error)
 }
 
 // Application resolves current access and dispatches protocol-neutral SDD
@@ -56,6 +60,7 @@ type Application struct {
 	clock         Clock
 	prepareSearch func(context.Context, SearchTarget) error
 	entrySuffix   func(length int) (string, error)
+	readLocalFile func(path string) ([]byte, error)
 }
 
 func NewApplication(options ApplicationOptions) (*Application, error) {
@@ -83,6 +88,7 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		clock:         clock,
 		prepareSearch: options.PrepareSearch,
 		entrySuffix:   suffix,
+		readLocalFile: options.ReadLocalFile,
 	}, nil
 }
 

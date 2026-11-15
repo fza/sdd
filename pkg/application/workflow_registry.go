@@ -442,7 +442,7 @@ func (w *WorkflowSession) runWorkflowNewEntry(ctx *engine.Context) error {
 	if err := ctx.Store.WriteEngine("entryId", result.EntryID); err != nil {
 		return err
 	}
-	if err := w.releasePublished(ctx.Instance, draft.Attachments); err != nil {
+	if err := w.releasePublished(ctx.Instance, publishedFiles(ctx.Store, staged, draft.Attachments)); err != nil {
 		return fmt.Errorf("newEntry: entry %s is written: freeing its staged attachments: %w", result.EntryID, err)
 	}
 	w.session.LogRead("newEntry", []string{result.EntryID}, nil)

@@ -237,6 +237,9 @@ type WorkflowSession struct {
 	// stagedFrom holds the file each handle was staged from, read again
 	// before a playback confirm (stageFromSource).
 	stagedFrom map[string]string
+	// endedUnfreed marks an append that ended the session; the operation
+	// frees the staged files once it returns (freeIfEnded).
+	endedUnfreed bool
 	// instanceProjects holds the recorded per-instance targets; an instance
 	// absent here derives its project from its parent, then the home.
 	instanceProjects map[string]ProjectID
@@ -614,6 +617,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	if err != nil {
 		return nil, err
 	}
+	if err := w.freeIfEnded(ctx); err != nil {
+		return result, err
+	}
 	if serve.Status != engine.StatusRunning {
 		// The shell ending is the dialogue ending: its serve carries the way on
 		// rather than a spent position with nothing to do. Any other instance
@@ -701,6 +707,9 @@ func (w *WorkflowSession) Abandon(ctx context.Context, identity RequestIdentity,
 	}
 	if err := w.session.SinkErr(); err != nil {
 		return WorkflowAbandonResult{}, err
+	}
+	if err := w.freeIfEnded(ctx); err != nil {
+		return result, err
 	}
 	base, err := w.ServeShell(ctx, identity)
 	if err != nil {
@@ -1152,11 +1161,7 @@ func (a *Application) AbandonWorkflowSession(ctx context.Context, identity Reque
 	if _, err := a.sessions.Append(ctx, request.SessionID, stored.Version, appendData); err != nil {
 		return WorkflowAbandonResult{}, err
 	}
-	claims, err := w.pendingClaims("")
-	if err == nil {
-		err = a.freeEndedSession(ctx, SessionRef{Subject: stored.Metadata.Subject, Session: request.SessionID}, stored.Events, claims)
-	}
-	if err != nil {
+	if err := a.blobs.DeleteStaged(ctx, SessionRef{Subject: stored.Metadata.Subject, Session: request.SessionID}); err != nil {
 		return result, fmt.Errorf("session %s ended; freeing its staged files: %w", request.SessionID, err)
 	}
 	return result, nil
@@ -1554,15 +1559,8 @@ func (w *WorkflowSession) appendStoredEventsOnce(events []StoredEvent) error {
 		return err
 	}
 	w.binding.Version = next
-	if stored.Metadata.Ended != nil || metadata.Ended == nil {
-		return nil
-	}
-	claims, err := w.pendingClaims("")
-	if err == nil {
-		err = w.app.freeEndedSession(w.ctx, SessionRef{Subject: w.binding.Subject, Session: w.ID()}, stored.Events, claims)
-	}
-	if err != nil {
-		return fmt.Errorf("session %s ended; freeing its staged files: %w", w.ID(), err)
+	if stored.Metadata.Ended == nil && metadata.Ended != nil {
+		w.endedUnfreed = true
 	}
 	return nil
 }

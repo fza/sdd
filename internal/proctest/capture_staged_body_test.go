@@ -486,6 +486,32 @@ func TestCapture_ConfirmRereadDuringAnUnfinishedOperationIsRefused(t *testing.T)
 	}
 }
 
+// A playback confirm answered while the capture sits at another step is the
+// engine's to refuse; the file it was staged from is not read into it first.
+func TestCapture_ConfirmAtAnotherStepLeavesTheStagedFileAlone(t *testing.T) {
+	world, session := newCaptureWorld(t, "staged-body-wrong-step")
+	world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "high", Category: "test-block", Observation: "Review this finding."}}
+	path := filepath.Join(t.TempDir(), "draft.md")
+	if err := os.WriteFile(path, []byte(stagedBodyFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handle := session.StageFrom(t, "draft.md", path)
+	instance := session.Start(t, "capture", nil).Instance
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	proctest.RequireStep(t, session.Answer(t, instance, "playback", "confirm", nil, "capture it"), "reviseOrOverride")
+
+	if err := os.WriteFile(path, []byte(unseenStagedBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "capture it"); err == nil {
+		t.Fatal("a confirm at another step should be refused")
+	}
+	page, _, err := session.WF.ReadStagedAttachment(t.Context(), session.World.Identity, handle, 0, 0)
+	if err != nil || string(page.Content) != stagedBodyFile {
+		t.Errorf("a refused confirm should leave the staged file as it was, got %q (%v)", page.Content, err)
+	}
+}
+
 func TestCapture_RestageInACallOfSeveralFilesStagesNone(t *testing.T) {
 	_, session := newCaptureWorld(t, "staged-body-pending-batch", proctest.WithFinalizers(&captureCompletionFailure{}))
 	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
