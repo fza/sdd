@@ -1,6 +1,8 @@
 package model
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"sort"
@@ -173,6 +175,13 @@ func WordAfterAnchor(text, tag string) (string, bool) {
 		return "", false
 	}
 	return leadingWord(text[i+len(mark):])
+}
+
+// EntryHash keys an entry's stored text, so a proof of the entry served
+// before an edit in place stops holding it.
+func EntryHash(e *Entry) string {
+	sum := sha256.Sum256([]byte(e.Summary + "\n\n" + e.Content))
+	return hex.EncodeToString(sum[:8])
 }
 
 // placedAnchorTag is an anchor tag as Render places it, with its space.

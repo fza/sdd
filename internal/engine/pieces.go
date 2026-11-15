@@ -12,11 +12,15 @@ import (
 // Piece is one unit of the served memory: a
 // lane, a framing block, a report schema, an entry served in full. Name is
 // what an agent names in reread, an entry's ID for an entry; Hash keys the
-// content and stays empty for an entry, whose body never changes.
+// content, an entry's model.EntryHash, so a piece edited in place since it
+// was served serves in full again.
 type Piece struct {
 	Name string
 	Hash string
 }
+
+// key is how a piece another piece carries whole is named in its covers.
+func (p Piece) key() string { return p.Name + "@" + p.Hash }
 
 // Served is how the call in flight serves a piece.
 type Served struct {
@@ -79,10 +83,8 @@ func (s *Session) Holds(p Piece) (string, bool) {
 	if tag, ok := s.call.issued[p]; ok {
 		return tag, true
 	}
-	if p.Hash == "" {
-		if tag, ok := s.call.covered[p.Name]; ok {
-			return tag, true
-		}
+	if tag, ok := s.call.covered[p.key()]; ok {
+		return tag, true
 	}
 	if s.call.full || s.call.reread[strings.ToLower(p.Name)] {
 		return "", false
@@ -95,7 +97,7 @@ func (s *Session) Holds(p Piece) (string, bool) {
 		if !ok || !model.ProofWordMatches(issued.word, proof.Word) {
 			continue
 		}
-		if issued.piece == p || (p.Hash == "" && slices.Contains(issued.covers, p.Name)) {
+		if issued.piece == p || slices.Contains(issued.covers, p.key()) {
 			return proof.Tag, true
 		}
 	}
@@ -104,9 +106,13 @@ func (s *Session) Holds(p Piece) (string, bool) {
 
 // ServePiece decides how the call in flight serves p: its pointer when the
 // call holds it, otherwise in full under a fresh tag place puts into the
-// content. covers names the entries the piece carries whole, held from then
+// content. carried are the entries the piece carries whole, held from then
 // on under the same tag. The issued anchor is recorded by RecordAnchors.
-func (s *Session) ServePiece(p Piece, covers []string, place AnchorPlacer) Served {
+func (s *Session) ServePiece(p Piece, carried []Piece, place AnchorPlacer) Served {
+	covers := make([]string, len(carried))
+	for i, c := range carried {
+		covers[i] = c.key()
+	}
 	if tag, ok := s.Holds(p); ok {
 		return Served{Held: true, Tag: tag}
 	}
@@ -124,7 +130,7 @@ func (s *Session) ServePiece(p Piece, covers []string, place AnchorPlacer) Serve
 			s.call.covered[id] = tag
 		}
 	}
-	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, tag: tag, word: anchor.Word, covers: slices.Clone(covers)})
+	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, tag: tag, word: anchor.Word, covers: covers})
 	return Served{Anchor: anchor}
 }
 

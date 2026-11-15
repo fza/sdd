@@ -360,3 +360,34 @@ func TestHeldFieldShowsAWorkedProof(t *testing.T) {
 		t.Fatal("some tool should take proofs in held")
 	}
 }
+
+// An entry edited in place since it was served is no longer held: its proof
+// rests on text the agent no longer has, so it serves in full again.
+func TestNoRepeatServesAnEntryEditedInPlaceInFull(t *testing.T) {
+	graphDir := writeFixtureGraph(t)
+	env := newTestServer(t, nil, graphDir, "")
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+
+	var first mcpserver.ShowResult
+	call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &first)
+	if strings.Contains(first.Entries, pointerMark) {
+		t.Fatalf("the first show should serve the entry in full:\n%s", first.Entries)
+	}
+	edited := strings.Replace(gapEntry, "on identical input.", "on identical input, edited in place.", 1)
+	if err := os.WriteFile(filepath.Join(graphDir, "2026/06/01-100000-s-tac-aaa.md"), []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var again mcpserver.ShowResult
+	call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &again)
+	if strings.Contains(again.Entries, pointerMark) || !strings.Contains(again.Entries, "edited in place") {
+		t.Fatalf("an entry edited since it was served should serve in full again:\n%s", again.Entries)
+	}
+
+	var held mcpserver.ShowResult
+	call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}}, &held)
+	if !strings.Contains(held.Entries, pointerMark) {
+		t.Fatalf("the edited entry served in full should be held again:\n%s", held.Entries)
+	}
+}

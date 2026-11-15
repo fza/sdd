@@ -34,13 +34,18 @@ func (w *WorkflowSession) BeginCall(held, reread []string) error {
 		proofs = append(proofs, proof)
 	}
 	w.session.BeginCall(proofs, reread)
+	// An entry piece keys on the entry's current text (entryPiece), so the
+	// call reads the graph as it stands, edits since the last call included.
+	if w.graphs != nil {
+		w.graphs.Invalidate()
+	}
 	return nil
 }
 
 // ServeText serves a piece of text named name. covers names the entries the
 // text carries whole, which its proof holds too.
 func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPiece {
-	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(text)}, covers,
+	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(text)}, w.entryPieces(covers),
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
 			return model.PlaceAnchor(text, tag, rnd)
 		})
@@ -115,13 +120,13 @@ func (w *WorkflowSession) ServeNotice(name, text string) string {
 // it holds it under: proved by the entry's own tag or by a piece that
 // carried it whole.
 func (w *WorkflowSession) HoldsEntry(id string) (string, bool) {
-	return w.session.Holds(engine.Piece{Name: id})
+	return w.session.Holds(w.entryPiece(id))
 }
 
 // ServeEntry returns an entry's rendered body served in full, its tag
 // placed.
 func (w *WorkflowSession) ServeEntry(id, body string) string {
-	served := w.session.ServePiece(engine.Piece{Name: id}, nil,
+	served := w.session.ServePiece(w.entryPiece(id), nil,
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
 			return model.PlaceAnchor(body, tag, rnd)
 		})
@@ -156,6 +161,28 @@ func (w *WorkflowSession) repeats() *presenters.Repeats {
 		return nil
 	}
 	return &presenters.Repeats{Held: w.HoldsEntry, Anchor: w.ServeEntry}
+}
+
+// entryPiece is the piece an entry of the session's graph serves as, keyed
+// by its stored text. An entry the graph does not hold keys on its ID alone.
+func (w *WorkflowSession) entryPiece(id string) engine.Piece {
+	g, err := w.graphs.Current()
+	if err != nil {
+		return engine.Piece{Name: id}
+	}
+	e, ok := g.ByID[id]
+	if !ok {
+		return engine.Piece{Name: id}
+	}
+	return engine.Piece{Name: id, Hash: model.EntryHash(e)}
+}
+
+func (w *WorkflowSession) entryPieces(ids []string) []engine.Piece {
+	pieces := make([]engine.Piece, len(ids))
+	for i, id := range ids {
+		pieces[i] = w.entryPiece(id)
+	}
+	return pieces
 }
 
 func contentHash(text string) string {
