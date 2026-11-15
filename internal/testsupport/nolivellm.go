@@ -21,6 +21,11 @@ var failingCLI []byte
 // when a config names the ollama provider without an endpoint.
 const ollamaPort = "11434"
 
+// guardDirEnv names the guard's directory to the test binaries a guarded run
+// starts, so they record into it instead of setting up a guard of their own:
+// a child killed mid-run then leaves no directory and loses no call.
+const guardDirEnv = "SDD_TEST_GUARD_DIR"
+
 // RunWithoutLiveLLMs runs a package's tests with the XDG base directories in
 // a temporary directory, the user's and the system's git config ignored,
 // claude, codex and sdd first on PATH as stand-ins that fail every call, and
@@ -29,6 +34,10 @@ const ollamaPort = "11434"
 // hooks, and those must never see the developer's real data. A test needing
 // the sdd binary calls the one it built by path.
 func RunWithoutLiveLLMs(m *testing.M) {
+	if dir := os.Getenv(guardDirEnv); dir != "" {
+		http.DefaultTransport = &ollamaRefuser{next: http.DefaultTransport, calls: filepath.Join(dir, "bin", "calls")}
+		os.Exit(m.Run())
+	}
 	dir, err := os.MkdirTemp("", "sdd-test-llm-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -46,6 +55,7 @@ func RunWithoutLiveLLMs(m *testing.M) {
 		err = os.WriteFile(gitConfig, nil, 0o644)
 	}
 	env := map[string]string{
+		guardDirEnv:           dir,
 		"PATH":                bin + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"GIT_CONFIG_GLOBAL":   gitConfig,
 		"GIT_CONFIG_NOSYSTEM": "1",
@@ -62,20 +72,15 @@ func RunWithoutLiveLLMs(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	ollama := &ollamaRefuser{next: http.DefaultTransport}
-	http.DefaultTransport = ollama
+	http.DefaultTransport = &ollamaRefuser{next: http.DefaultTransport, calls: filepath.Join(bin, "calls")}
 	code := m.Run()
 	calls, err := os.ReadFile(filepath.Join(bin, "calls"))
 	switch {
 	case err == nil:
-		fmt.Fprintf(os.Stderr, "tests started an installed CLI; pass the input that needs no model call, a fake provider or the built binary's path:\n%s", calls)
+		fmt.Fprintf(os.Stderr, "tests reached an installed CLI or a live Ollama; pass the input that needs no model call, a fake provider, an ollama_endpoint served by a fake or the built binary's path:\n%s", calls)
 		code = 1
 	case !errors.Is(err, fs.ErrNotExist):
 		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	if refused := ollama.refused(); refused != "" {
-		fmt.Fprintf(os.Stderr, "tests called a live Ollama; give the config an ollama_endpoint served by a fake:\n%s", refused)
 		code = 1
 	}
 	err = os.RemoveAll(dir)
@@ -88,8 +93,8 @@ func RunWithoutLiveLLMs(m *testing.M) {
 
 type ollamaRefuser struct {
 	next  http.RoundTripper
+	calls string
 	mu    sync.Mutex
-	calls []string
 }
 
 func (o *ollamaRefuser) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -99,18 +104,22 @@ func (o *ollamaRefuser) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Body != nil {
 		_ = req.Body.Close()
 	}
-	call := req.Method + " " + req.URL.String()
-	o.mu.Lock()
-	o.calls = append(o.calls, call)
-	o.mu.Unlock()
-	return nil, fmt.Errorf("%s: no live Ollama runs in tests", call)
+	call := "ollama " + req.Method + " " + req.URL.String()
+	refused := fmt.Errorf("%s: no live Ollama runs in tests", call)
+	err := o.record(call)
+	if err != nil {
+		return nil, errors.Join(refused, err)
+	}
+	return nil, refused
 }
 
-func (o *ollamaRefuser) refused() string {
+func (o *ollamaRefuser) record(call string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if len(o.calls) == 0 {
-		return ""
+	f, err := os.OpenFile(o.calls, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
 	}
-	return strings.Join(o.calls, "\n") + "\n"
+	_, err = fmt.Fprintln(f, call)
+	return errors.Join(err, f.Close())
 }

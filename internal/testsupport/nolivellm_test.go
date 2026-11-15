@@ -11,8 +11,12 @@ import (
 	"github.com/networkteam/sdd/internal/testsupport"
 )
 
-// probeEnv names the call a re-executed test binary makes under the guard.
-const probeEnv = "SDD_TEST_NOLIVELLM_PROBE"
+const (
+	// probeEnv names the call a re-executed test binary makes under the guard.
+	probeEnv = "SDD_TEST_NOLIVELLM_PROBE"
+	// guardDirEnv hands a guarded run's directory to the binaries it starts.
+	guardDirEnv = "SDD_TEST_GUARD_DIR"
+)
 
 func TestMain(m *testing.M) {
 	if os.Getenv(probeEnv) != "" {
@@ -22,32 +26,60 @@ func TestMain(m *testing.M) {
 }
 
 func TestRunWithoutLiveLLMs(t *testing.T) {
+	const reached = "tests reached an installed CLI or a live Ollama"
 	cases := []struct {
-		probe   string
-		wantErr string
+		probe    string
+		wantCall string
 	}{
 		{probe: "none"},
-		{probe: "claude", wantErr: "tests started an installed CLI"},
-		{probe: "codex", wantErr: "tests started an installed CLI"},
-		{probe: "sdd", wantErr: "tests started an installed CLI"},
-		{probe: "ollama", wantErr: "tests called a live Ollama"},
+		{probe: "claude", wantCall: "claude --version"},
+		{probe: "codex", wantCall: "codex --version"},
+		{probe: "sdd", wantCall: "sdd --version"},
+		{probe: "ollama", wantCall: "ollama GET http://localhost:11434/api/version"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.probe, func(t *testing.T) {
-			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestProbe$")
-			cmd.Env = append(os.Environ(), probeEnv+"="+tc.probe)
-			out, err := cmd.CombinedOutput()
-			if tc.wantErr == "" {
+			out, err := probe(t, tc.probe, "")
+			if tc.wantCall == "" {
 				if err != nil {
 					t.Fatalf("a run making no live call should pass: %v\n%s", err, out)
 				}
 				return
 			}
-			if err == nil || !strings.Contains(string(out), tc.wantErr) {
+			if err == nil || !strings.Contains(out, reached) || !strings.Contains(out, tc.wantCall) {
 				t.Fatalf("a run making a live call should fail and name it: %v\n%s", err, out)
 			}
 		})
 	}
+}
+
+func TestRunWithoutLiveLLMsRecordsIntoTheStartingRun(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := probe(t, "ollama", dir)
+	if err != nil {
+		t.Fatalf("a started run should leave the check to the run that started it: %v\n%s", err, out)
+	}
+	calls, err := os.ReadFile(filepath.Join(dir, "bin", "calls"))
+	if err != nil || !strings.Contains(string(calls), "ollama GET http://localhost:11434/api/version") {
+		t.Fatalf("a started run should record its calls into the starting run's directory: %v %q", err, calls)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Errorf("a started run should set up no guard of its own: %v %v", err, entries)
+	}
+}
+
+// probe re-runs the test binary under the guard, as a run started by the
+// guarded run owning guardDir, or as a run of its own when guardDir is empty.
+func probe(t *testing.T, call, guardDir string) (string, error) {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestProbe$")
+	cmd.Env = append(os.Environ(), probeEnv+"="+call, guardDirEnv+"="+guardDir)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 // TestProbe runs only in the re-executed binary. Its calls are harmless, and
