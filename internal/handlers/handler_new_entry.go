@@ -41,6 +41,11 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 			return
 		}
 		stdinSaved = true
+		err := secrets.CheckFile(stdinAtt.Target, stdinAtt.Data)
+		if err != nil {
+			fmt.Fprintf(h.stderr, "stdin attachment not saved: %v\n", err)
+			return
+		}
 		path, err := saveStdinAttachment(h.stdinTmpDir(), stdinAtt.Target, stdinAtt.Data)
 		if err != nil {
 			fmt.Fprintf(h.stderr, "warning: could not save stdin attachment: %v\n", err)

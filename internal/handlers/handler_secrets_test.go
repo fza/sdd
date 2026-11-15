@@ -113,6 +113,29 @@ func TestNewEntryRefusesACredentialBeforeAnyModelCall(t *testing.T) {
 	}
 }
 
+// A dry run failing before the credential check, here on an unknown
+// supersede target, keeps no stdin retry copy of a credential either.
+func TestNewEntryKeepsNoStdinCopyHoldingACredential(t *testing.T) {
+	sddDir := filepath.Join(t.TempDir(), ".sdd")
+	h := handlers.New(handlers.Options{
+		GraphDir: t.TempDir(), SDDDir: sddDir, Reader: &fakeReader{preflightResult: &query.PreflightResult{}},
+		LLMRunner: &trippingRunner{t: t}, Stderr: &bytes.Buffer{},
+	})
+
+	err := h.NewEntry(context.Background(), &command.NewEntryCmd{
+		Type: model.TypeSignal, Layer: model.LayerTactical, Description: "A gap worth recording.", Summary: "A gap.",
+		DryRun: true, Supersedes: []string{"20260101-120000-s-tac-gon"},
+		Attachments: []command.Attachment{{Source: "-", Target: "log.txt", Data: []byte(fixtureCredential(t, "github-pat") + "\n")}},
+	})
+
+	if err == nil {
+		t.Fatal("the dry run should fail on the unknown supersede target")
+	}
+	if _, statErr := os.Stat(sddDir); !os.IsNotExist(statErr) {
+		t.Error("a stdin attachment holding a credential should never be kept")
+	}
+}
+
 func TestNewEntryRefusesAGeneratedSummaryHoldingACredential(t *testing.T) {
 	graphDir := t.TempDir()
 	runner := &stubRunner{text: fixtureCredential(t, "gitlab-pat")}
