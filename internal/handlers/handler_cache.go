@@ -232,6 +232,9 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		case errors.Is(err, repos.ErrCloneInUse):
 			log.Info("clone kept", "clone", dir, "reason", err)
 			continue
+		case errors.Is(err, repos.ErrCloneHoldsClones):
+			log.Warn("clone kept", "clone", dir, "reason", err)
+			continue
 		case err != nil:
 			errs = append(errs, err)
 			continue
