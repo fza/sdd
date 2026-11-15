@@ -19,8 +19,8 @@ var preflightLightSchema = mustSchema("preflight_light.json")
 
 var preflightLightExtraction = extraction{
 	purpose:        llm.PurposePreflightExtract,
-	responseSchema: preflightLightSchema,
-	schema:         `{"findings":[{"observation":"...","basis":["<entry id>"],"category":"short-hyphenated-tag","severity":"high|medium|low"}]}`,
+	responseSchema: withAnalysisFlag(preflightLightSchema),
+	schema:         `{"analysis":true,"findings":[{"observation":"...","basis":["<entry id>"],"category":"short-hyphenated-tag","severity":"high|medium|low"}]}`,
 	scaleTemplate:  "severity_scale",
 }
 
