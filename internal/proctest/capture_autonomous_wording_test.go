@@ -112,8 +112,8 @@ func TestCaptureWording_GuideReviewNamesSubstantiveFindings(t *testing.T) {
 
 func TestCaptureWording_LightVerdictNamesSetAsideFindings(t *testing.T) {
 	for _, mode := range []wordingMode{
-		{name: "autonomous", options: []proctest.Option{proctest.WithAutonomousDialogue()}, want: []string{"Name each `medium` finding you set aside in what you report."}, unwanted: []string{"to the user in your own words"}},
-		{name: "guided", guided: true, want: []string{"Name each `medium` finding you set aside to the user in your own words."}, unwanted: []string{"in what you report"}},
+		{name: "autonomous", options: []proctest.Option{proctest.WithAutonomousDialogue()}, want: []string{"Set aside a finding only a person can settle.", "Name each `medium` finding you set aside in what you report."}, unwanted: []string{"to the user in your own words", "Ask the user"}},
+		{name: "guided", guided: true, want: []string{"Ask the user where only they can settle a finding.", "Name each `medium` finding you set aside to the user in your own words."}, unwanted: []string{"in what you report", "only a person can settle"}},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			world, session := newCaptureWorld(t, "light-wording-"+mode.name, append([]proctest.Option{proctest.WithGroundingEnforced(),
