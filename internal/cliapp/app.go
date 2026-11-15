@@ -1603,8 +1603,12 @@ func initCmd() *cli.Command {
 					graphDir = model.DefaultGraphDir
 				}
 
-				graphRepoRoot := git.RepoRootFor(meta.ResolveGraphDir(repoRoot, &model.PerRepoConfig{GraphDir: graphDir}))
-				if graphRepoRoot != "" && graphRepoRoot != repoRoot {
+				absGraphDir := meta.ResolveGraphDir(repoRoot, &model.PerRepoConfig{GraphDir: graphDir})
+				graphRepoRoot := git.RepoRootFor(absGraphDir)
+				if graphRepoRoot == "" {
+					return fmt.Errorf("--graph-dir leads to %s, outside the project and outside any repository; keep the graph inside the project", absGraphDir)
+				}
+				if graphRepoRoot != repoRoot {
 					return fmt.Errorf("--graph-dir leads into %s, a repository separate from %s; point this repository at it with --project-dir instead", graphRepoRoot, repoRoot)
 				}
 				remoteURL = git.RemoteURL(repoRoot)
