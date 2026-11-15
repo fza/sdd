@@ -23,7 +23,7 @@ func TestServeOpensSessionsInTheConfiguredDialogueMode(t *testing.T) {
 		{name: "local config", file: ".sdd/config.local.yaml", mode: "auto", wantAutonomous: true},
 		{name: "global config", file: "config/sdd/config.yaml", mode: "auto", wantAutonomous: true},
 		{name: "committed config", file: ".sdd/config.yaml", mode: "auto"},
-		{name: "former autonomous value", file: ".sdd/config.local.yaml", mode: "autonomous"},
+		{name: "unknown value in the committed config", file: ".sdd/config.yaml", mode: "autonomous"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -45,6 +45,36 @@ func TestServeOpensSessionsInTheConfiguredDialogueMode(t *testing.T) {
 			})
 			if got := strings.Contains(opening, "working on your own"); got != tc.wantAutonomous {
 				t.Errorf("only auto in a person's own config should open the session autonomous, got autonomous=%v", got)
+			}
+		})
+	}
+}
+
+// A dialogue mode sdd does not know in a person's config stops the server
+// before any session opens guided in its place.
+func TestServeRefusesAnUnknownDialogueMode(t *testing.T) {
+	cases := []struct {
+		name string
+		file string
+		args []string
+	}{
+		{name: "local config", file: ".sdd/config.local.yaml"},
+		{name: "global config", file: "config/sdd/config.yaml"},
+		{name: "local config flag", file: "override.yaml", args: []string{"--local-config", "override.yaml"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newAppFixture(t)
+			fixture.write(t, tc.file, "participant: Ada\ndialogue:\n  mode: autonomous\n")
+
+			result := fixture.run(t, append(tc.args, "serve", "--transport", "stdio")...)
+			if result.err == nil {
+				t.Fatal("serve should refuse a config carrying an unknown dialogue mode")
+			}
+			for _, part := range []string{tc.file, "autonomous", "guided or auto"} {
+				if !strings.Contains(result.err.Error(), part) {
+					t.Errorf("the refusal should name the file, the value and the valid values, missing %q: %v", part, result.err)
+				}
 			}
 		})
 	}

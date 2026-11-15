@@ -132,7 +132,7 @@ func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.P
 	// layer — joining an empty dir would read a path relative to the cwd.
 	if sddDir != "" || localConfigPath != "" {
 		localPath := LocalConfigPath(sddDir, localConfigPath)
-		local, err = readConfigFile(localPath)
+		local, err = readPersonalConfigFile(localPath)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -142,7 +142,7 @@ func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.P
 			return nil, nil, err
 		}
 		if under != "" {
-			own, err := readConfigFile(under)
+			own, err := readPersonalConfigFile(under)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -201,6 +201,20 @@ func readConfigFile(path string) (*model.PerRepoConfig, error) {
 	if err != nil {
 		// The path names which file carries the offense — the parse error
 		// itself already names the key and line.
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// readPersonalConfigFile reads a machine-local layer, which alone among the
+// per-repo layers sets dialogue.mode.
+func readPersonalConfigFile(path string) (*model.PerRepoConfig, error) {
+	cfg, err := readConfigFile(path)
+	if err != nil || cfg == nil {
+		return cfg, err
+	}
+	err = cfg.Dialogue.Mode.Validate()
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return cfg, nil

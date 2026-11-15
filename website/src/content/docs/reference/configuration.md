@@ -91,7 +91,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `dialogue.mode` | `guided` | Who takes the choices an engine session would put to you. `guided`: you confirm each step. `auto`: your agent takes them and asks you only when a check fails. sdd reads it from the user-global file and `.sdd/config.local.yaml` only. `sdd init` asks for it, or takes `--dialogue-mode`, and writes it to the local file. Any other value is ignored with a warning and the session runs guided; a local value does so even when the user-global file sets `auto`. |
+| `dialogue.mode` | `guided` | Who takes the choices an engine session would put to you. `guided`: you confirm each step. `auto`: your agent takes them and asks you only when a check fails. sdd reads it from the user-global file and the machine-local file, `.sdd/config.local.yaml` or the `--local-config` file, only; in `.sdd/config.yaml` it is ignored with a warning. `sdd init` asks for it, or takes `--dialogue-mode`, and writes it to the local file. Any other value in a file sdd reads it from fails every command with an error naming the file, the value and the valid values. |
 
 ### Language model
 
