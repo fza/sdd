@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -459,6 +460,14 @@ func New(options Options) *cli.Command {
 				abs, err := filepath.Abs(path)
 				if err != nil {
 					return ctx, fmt.Errorf("resolving --local-config %q: %w", path, err)
+				}
+				// A missing file is a mistyped path, never an empty layer; only
+				// `config set` may start one.
+				args := cmd.Args().Slice()
+				_, statErr := os.Stat(abs)
+				startsOne := len(args) > 1 && args[0] == "config" && args[1] == "set"
+				if errors.Is(statErr, fs.ErrNotExist) && !startsOne {
+					return ctx, fmt.Errorf("--local-config %s does not exist; create it, or write a key to it with `sdd config set --local`", abs)
 				}
 				localConfigOverride = abs
 			}

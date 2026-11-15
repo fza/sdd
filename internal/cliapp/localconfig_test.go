@@ -55,6 +55,9 @@ func TestLocalConfigFlagRedirectsInitParticipant(t *testing.T) {
 	runGit(t, f.root, "add", ".")
 	runGit(t, f.root, "commit", "-q", "-m", "chore: seed")
 	override := filepath.Join(t.TempDir(), "override-config.yaml")
+	if err := os.WriteFile(override, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	result := f.run(t, "--local-config", override, "init", "--scope", "project", "--agents", "claude", "--participant", "Ada")
 	if result.err != nil {
@@ -91,5 +94,31 @@ func TestLocalConfigOverrideDoesNotLeakBetweenRuns(t *testing.T) {
 	result := f.run(t, "config", "get", "participant")
 	if !strings.Contains(result.stdout, "Local Author") {
 		t.Errorf("a run without the flag must read the repo's own layer: %s", result.stdout)
+	}
+}
+
+// A mistyped override fails the run instead of dropping the local layer.
+func TestLocalConfigFlagNamingAMissingFileFails(t *testing.T) {
+	f := newAppFixture(t)
+	missing := filepath.Join(t.TempDir(), "absent.yaml")
+
+	result := f.run(t, "--local-config", missing, "config")
+
+	if result.err == nil || !strings.Contains(result.err.Error(), missing) {
+		t.Fatalf("a missing override should fail naming its path, got %v", result.err)
+	}
+}
+
+// Writing a key starts a new override file, which reads then go through.
+func TestLocalConfigSetStartsAMissingOverride(t *testing.T) {
+	f := newAppFixture(t)
+	override := filepath.Join(t.TempDir(), "new.yaml")
+
+	if result := f.run(t, "--local-config", override, "config", "set", "--local", "participant", "Ada"); result.err != nil {
+		t.Fatalf("config set --local should create the override: %v\n%s", result.err, result.stderr)
+	}
+	result := f.run(t, "--local-config", override, "config", "get", "participant")
+	if result.err != nil || !strings.Contains(result.stdout, "Ada") {
+		t.Errorf("the new override should be read: %v %s", result.err, result.stdout)
 	}
 }
