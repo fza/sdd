@@ -24,7 +24,7 @@ type ProjectRepositories interface {
 
 // setUpProject runs a plain init in projectRoot, which holds no sdd project
 // yet, giving it the repository of its own it needs.
-func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget) error {
+func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget, changed *bool) error {
 	if !cmd.SetUpProject || h.projectRepos == nil || h.committerAt == nil {
 		return fmt.Errorf("%s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", cmd.ProjectDir, meta.ErrNotAProject, cmd.ProjectDir)
 	}
@@ -61,7 +61,7 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 	projectCmd.Scope = scope
 	projectCmd.ScopeExplicit = true
 	projectCmd.Targets = agents
-	err = project.Init(ctx, &projectCmd)
+	err = project.initRepo(ctx, &projectCmd, changed)
 	if err != nil {
 		return fmt.Errorf("setting up the project in %s: %w", projectRoot, err)
 	}

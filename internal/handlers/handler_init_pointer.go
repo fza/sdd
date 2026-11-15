@@ -19,7 +19,7 @@ import (
 // runtime state, so this repository receives only the pointer config, the
 // agents' skills and registrations, and a gitignore entry for the local file
 // that may override project_dir.
-func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
+func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed *bool) error {
 	if cmd.Bump {
 		return fmt.Errorf("--bump raises the project's minimum_version; run it in %s", cmd.ProjectDir)
 	}
@@ -75,7 +75,7 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 	}
 
 	if projectCfg == nil {
-		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents)
+		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents, changed)
 		if err != nil {
 			return err
 		}
@@ -154,16 +154,16 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	err = writeParticipant(projectSDDDir, cmd)
+	err = writeParticipant(projectSDDDir, cmd, changed)
 	if err != nil {
 		return err
 	}
-	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(configExisted))
+	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(configExisted), changed)
 }
 
 // writeParticipant records cmd.Participant in sddDir's config.local.yaml,
 // keeping every other key in that file.
-func writeParticipant(sddDir string, cmd *command.InitCmd) error {
+func writeParticipant(sddDir string, cmd *command.InitCmd, changed *bool) error {
 	if cmd.Participant == "" {
 		return nil
 	}
@@ -183,6 +183,7 @@ func writeParticipant(sddDir string, cmd *command.InitCmd) error {
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", configLocalPath, err)
 	}
+	*changed = true
 	// Not committed: config.local.yaml is gitignored, so staging it would fail
 	// the commit.
 	if cmd.OnParticipantWritten != nil {
@@ -231,8 +232,8 @@ func (h *Handler) persistSupportedAgents(ctx context.Context, cmd *command.InitC
 
 // installAgentSurfaces installs or refreshes the skill bundle, sweeps what the
 // bundle stopped shipping, registers the MCP server, and commits everything
-// touched inside cmd.RepoRoot.
-func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string, commitMessage string) error {
+// touched inside cmd.RepoRoot, setting *changed when it touched anything.
+func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string, commitMessage string, changed *bool) error {
 	for _, target := range agents {
 		err := h.InstallSkills(ctx, &command.InstallSkillsCmd{
 			Target:          target,
@@ -272,6 +273,7 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 		}
 	}
 
+	*changed = *changed || len(touched) > 0
 	// Skill files installed under the user-global scope sit outside the repo's
 	// git tree.
 	if h.committer == nil {
