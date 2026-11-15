@@ -88,7 +88,7 @@ func TestRenderView_MultipleSectionsSeparatedByBlankLine(t *testing.T) {
 
 func renderView(r *query.ViewResult) string {
 	var buf bytes.Buffer
-	presenters.RenderView(&buf, r)
+	presenters.RenderView(&buf, r.ViewSections(""))
 	return buf.String()
 }
 

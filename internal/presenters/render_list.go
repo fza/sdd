@@ -3,40 +3,38 @@ package presenters
 import (
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // renderAsList writes one entry-line per entry in the flat list. Reuses
-// the canonical EntryLine format shared with `sdd search` so output stays
+// the canonical entry line shared with `sdd search` so output stays
 // consistent across surfaces.
-// When the section is ranked (FlatList.Scores populated and aligned),
-// each line carries a `{score: X.XXX}` segment via EntryLineWithScore.
-// by(date) leaves Scores nil, falling back to plain EntryLine — sort
-// without per-entry rendering noise.
+// When the section is ranked (ViewList.Ranked), each line carries a
+// `{score: X.XXX}` segment. by(date) sorts without scoring, falling back to
+// the plain line — sort without per-entry rendering noise.
 //
-// When the section used expand(refs) (FlatList.RefExpansions populated and
-// aligned), each entry's resolved outgoing refs render as indented sub-lines
-// beneath it.
-func renderAsList(w io.Writer, g *model.Graph, flat model.FlatList, brief bool) {
-	scored := len(flat.Scores) == len(flat.Entries) && len(flat.Scores) > 0
-	expanded := len(flat.RefExpansions) == len(flat.Entries)
-	for i, e := range flat.Entries {
+// When the section used expand(refs) (ViewList.RefsExpanded), each entry's
+// resolved outgoing refs render as indented sub-lines beneath it.
+func renderAsList(w io.Writer, list types.ViewList, brief bool) {
+	for _, item := range list.Items {
 		switch {
 		case brief:
-			EntryLineBrief(w, e, g)
-		case scored:
-			EntryLineWithScore(w, e, g, flat.Scores[i])
+			writeEntryLineBrief(w, item.Entry)
+		case list.Ranked:
+			writeEntryLine(w, item.Entry, item.Score)
 		default:
-			EntryLine(w, e, g)
+			writeEntryLine(w, item.Entry, math.NaN())
 		}
-		if expanded {
-			for _, ref := range flat.RefExpansions[i] {
+		if list.RefsExpanded {
+			for _, ref := range item.Refs {
 				writeRefExpansion(w, ref)
 			}
-			if len(flat.RefExpansionDropped) == len(flat.Entries) && flat.RefExpansionDropped[i] > 0 {
-				fmt.Fprintf(w, "    → +%d more refs\n", flat.RefExpansionDropped[i])
+			if item.RefsDropped > 0 {
+				fmt.Fprintf(w, "    → +%d more refs\n", item.RefsDropped)
 			}
 		}
 	}
@@ -61,7 +59,7 @@ func writeSectionCut(w io.Writer, dropped int, pull string) {
 //
 //	→ grounds 20260101-100000-d-cpt-aaa {status: active}
 //	→ depends-on 20260101-100000-d-tac-bbb {status: closed-by <id>}: "why this ref exists"
-func writeRefExpansion(w io.Writer, ref model.RefExpansion) {
+func writeRefExpansion(w io.Writer, ref types.ViewRef) {
 	var sb strings.Builder
 	sb.WriteString("    → ")
 	sb.WriteString(refVerb(ref.Kind))
@@ -69,9 +67,9 @@ func writeRefExpansion(w io.Writer, ref model.RefExpansion) {
 	sb.WriteString(ref.ID)
 	if ref.UnresolvedRepo != "" {
 		sb.WriteString(" [unresolved: repo ")
-		sb.WriteString(string(ref.UnresolvedRepo))
+		sb.WriteString(ref.UnresolvedRepo)
 		sb.WriteString("]")
-	} else if s := FormatStatusTrail(ref.Status, ref.SupersedePath); s != "" {
+	} else if s := formatStatusTrail(ref.DerivedStatus); s != "" {
 		sb.WriteString(" ")
 		sb.WriteString(s)
 	}
@@ -87,9 +85,9 @@ func writeRefExpansion(w io.Writer, ref model.RefExpansion) {
 // refVerb maps a ref kind to its sub-line verb. Unknown (legacy bare-string)
 // refs render with the generic `refs` verb so they stay legible without a
 // captured kind; every capturable kind renders as its own verb.
-func refVerb(k model.RefKind) string {
-	if k == model.RefKindUnknown || k == "" {
+func refVerb(kind string) string {
+	if kind == string(model.RefKindUnknown) || kind == "" {
 		return "refs"
 	}
-	return string(k)
+	return kind
 }

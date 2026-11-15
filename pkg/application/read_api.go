@@ -38,8 +38,12 @@ type ViewRequest struct {
 }
 
 type ViewResult struct {
-	Project  ProjectRef
+	Project ProjectRef
+	// Sections is ViewSections rendered as text.
 	Sections string
+	// ViewSections are the layout's sections as data, the local graph's
+	// first, then each queried dependency's, tagged with its repo.
+	ViewSections []ViewSection
 	// MatchedCount is the total primary units the layout produced across the
 	// local graph and any queried dependency repos. Zero means the pipeline
 	// matched nothing — surfaces distinguish an empty result from a failure
