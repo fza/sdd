@@ -513,7 +513,7 @@ func New(options Options) *cli.Command {
 				Level: level,
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
-			configWrite := writesConfig(cmd.Args())
+			configWrite := writesConfig(cmd)
 			currentGate = &invocationGate{ctx: ctx, configWrite: configWrite}
 			if cmd.Bool("timing") {
 				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
