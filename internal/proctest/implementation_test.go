@@ -499,12 +499,14 @@ func TestImplementation_HoldCaptureFollowsSessionBinding(t *testing.T) {
 		t.Fatalf("hold dispatch should seed widenReport, missing = %v", child.Missing)
 	}
 	entryID := driveCapture(t, session, child.Instance, map[string]any{
-		"body":       "The output format is JSON lines, one record per entry.",
-		"entryKind":  "directive",
-		"layer":      "tactical",
-		"intent":     "pending",
-		"refs":       []any{map[string]any{"id": implAnchorID, "kind": "addresses"}},
-		"confidence": "medium",
+		"body":        "The output format is JSON lines, one record per entry.",
+		"entryKind":   "directive",
+		"layer":       "tactical",
+		"intent":      "pending",
+		"reasonWords": "readers parse one record at a time",
+		"intentWords": "build it with this feature",
+		"refs":        []any{map[string]any{"id": implAnchorID, "kind": "addresses"}},
+		"confidence":  "medium",
 	})
 	if !entryOnDisk(t, featureDir, entryID) {
 		t.Fatalf("hold capture %s should land on the session-bound store", entryID)
