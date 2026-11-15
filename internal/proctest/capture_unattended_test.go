@@ -91,8 +91,8 @@ func TestUnattended_ASecondBlockParksTheCapture(t *testing.T) {
 	if serve.PendingChooser != nil || serve.ReportSchema != nil {
 		t.Errorf("a parked serve should offer the agent no answer, got %+v and %v", serve.PendingChooser, serve.ReportSchema)
 	}
-	if _, err := session.DecideErr(t, instance, "reviseOrOverride", "revise", map[string]any{"body": "Another try."}, "once more"); err == nil || !strings.Contains(err.Error(), "reviseOrOverride is parked") {
-		t.Fatalf("a parked step should refuse the agent's further answers, got %v", err)
+	if _, err := session.DecideErr(t, instance, "reviseOrOverride", "revise", map[string]any{"body": "Another try."}, "once more"); err == nil || !strings.Contains(err.Error(), "reviseOrOverride is parked") || !strings.Contains(err.Error(), "dialogue.mode guided") {
+		t.Fatalf("a parked step should refuse the agent's further answers and name the guided mode a person answers in, got %v", err)
 	}
 }
 

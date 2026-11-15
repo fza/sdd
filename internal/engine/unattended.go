@@ -38,7 +38,7 @@ func (s *Session) checkUnattended(inst *Instance, step *Step, choice, userWords 
 	case u == nil:
 		return nil
 	case inst.unattendedSpent(step):
-		return fmt.Errorf("%s is parked: a person answers it after resume_session %s", step.ID, s.ID)
+		return fmt.Errorf("%s is parked: a person answers it after resume_session %s in a session whose dialogue.mode is guided (sdd config set --local dialogue.mode guided)", step.ID, s.ID)
 	case userWords != "":
 		return fmt.Errorf("%s refuses user words in an autonomous session (%s)", step.ID, unattendedRule(u))
 	case choice != u.Answer:
