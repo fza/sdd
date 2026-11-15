@@ -194,7 +194,7 @@ func (s *Session) Retry(instance string, ref uint64) (*Serve, error) {
 	}
 	if !s.intentDone {
 		to := s.intent.To
-		if err := s.runCommand(inst, s.intent.Command, to); err != nil {
+		if err := s.runCommand(inst, s.intent.Command, to, nil); err != nil {
 			return nil, err
 		}
 		inst.opDone = true
