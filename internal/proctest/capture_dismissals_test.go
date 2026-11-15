@@ -150,3 +150,13 @@ func TestCaptureDismissals_LightReadingMarksImplicitDismissals(t *testing.T) {
 		t.Fatalf("the light reading should mark the brief left unanswered:\n%s", prompt)
 	}
 }
+
+// The assemble instructions name the four states every shown entry ends in.
+func TestCaptureDismissals_AssembleNamesTheFourStates(t *testing.T) {
+	_, session := newGroundingWorld(t, "dismissals-served")
+	serve := session.Start(t, "capture", nil)
+	proctest.RequireStep(t, serve, "assemble")
+	if !strings.Contains(serve.Instructions, "every entry shown ends referenced, opened, dismissed in `verdicts`") || !strings.Contains(serve.Instructions, "or else implicitly at publish") {
+		t.Fatalf("the assemble step should state the four states a shown entry ends in:\n%s", serve.Instructions)
+	}
+}
