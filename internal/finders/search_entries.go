@@ -23,7 +23,8 @@ type SearchEntriesFinder struct {
 	Store           EntryPublicationReader
 	ExcludeEmbedded bool
 	EntryIDs        []string
-	// MaxRunes is the store's recorded cap (its manifest's MaxRunes).
+	// MaxRunes is the cap a fill chunks under: the endpoint's calibrated cap,
+	// so publication is checked for the versions a fill would write.
 	MaxRunes int
 }
 

@@ -133,28 +133,6 @@ func Open(indexDir string) (*Index, error) {
 	return loadStore(indexDir)
 }
 
-// OpenWithin is Open with a bound on the wait for the shared lock: it returns
-// ErrLockBusy when a writer still holds the store after bound.
-func OpenWithin(ctx context.Context, indexDir string, bound time.Duration) (*Index, error) {
-	if indexDir == "" {
-		return nil, errors.New("index dir is required")
-	}
-	if err := useStoreDir(indexDir); err != nil {
-		return nil, err
-	}
-	waitCtx, cancel := context.WithTimeout(ctx, bound)
-	defer cancel()
-	l := lockFile(indexDir)
-	if _, err := l.TryRLockContext(waitCtx, boundedRetryInterval); err != nil {
-		if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
-			return nil, ErrLockBusy
-		}
-		return nil, fmt.Errorf("acquiring index read lock at %s: %w", indexDir, err)
-	}
-	defer func() { _ = l.Unlock() }()
-	return loadStore(indexDir)
-}
-
 // loadStore opens or creates the chromem store under indexDir WITHOUT taking
 // any lock. Callers must already hold the store lock (see Open, ReadStore,
 // WriteStore) — loading a snapshot outside the lock is the open/load race the

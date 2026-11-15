@@ -93,7 +93,7 @@ func snapshotQuery(t *testing.T, indexDir string, query []float32, n int) []inde
 
 func chromemQuery(t *testing.T, indexDir string, query []float32, n int) []index.Hit {
 	t.Helper()
-	idx, err := index.OpenWithin(t.Context(), indexDir, time.Second)
+	idx, err := index.Open(indexDir)
 	if err != nil {
 		t.Fatalf("opening the store: %v", err)
 	}

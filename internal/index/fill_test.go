@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/networkteam/sdd/internal/index"
 )
@@ -27,7 +26,7 @@ func publish(ctx context.Context, idx *index.Index, manifest *index.Manifest, in
 
 func countRows(t *testing.T, indexDir string) int {
 	t.Helper()
-	idx, err := index.OpenWithin(t.Context(), indexDir, time.Second)
+	idx, err := index.Open(indexDir)
 	if err != nil {
 		t.Fatalf("reading the store: %v", err)
 	}
@@ -51,39 +50,6 @@ func TestBeginFillAdmitsOneFillerAtATime(t *testing.T) {
 		t.Errorf("a fill should be admitted once the first closes, got %v", err)
 	} else {
 		_ = next.Close()
-	}
-}
-
-func TestOpenWithinGivesUpOnAHeldStore(t *testing.T) {
-	indexDir := t.TempDir()
-	locked, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
-	go func() {
-		done <- index.WriteStore(t.Context(), indexDir, func(*index.Index) error {
-			close(locked)
-			select {
-			case <-release:
-			case <-time.After(5 * time.Second):
-			}
-			return nil
-		})
-	}()
-	<-locked
-
-	start := time.Now()
-	_, err := index.OpenWithin(t.Context(), indexDir, 200*time.Millisecond)
-	elapsed := time.Since(start)
-	close(release)
-	if writeErr := <-done; writeErr != nil {
-		t.Fatal(writeErr)
-	}
-	if !errors.Is(err, index.ErrLockBusy) {
-		t.Errorf("a held store should report busy, got %v", err)
-	}
-	if elapsed > 2*time.Second {
-		t.Errorf("the wait should end at the bound, took %s", elapsed)
-	}
-	if _, err := index.OpenWithin(t.Context(), indexDir, 200*time.Millisecond); err != nil {
-		t.Errorf("a released store should open, got %v", err)
 	}
 }
 
