@@ -182,7 +182,7 @@ func newReadFinder(ctx context.Context) (*finders.Finder, error) {
 	if err != nil {
 		return nil, err
 	}
-	graphCache, err := defaultGraphCache()
+	graphCache, err := defaultGraphCache(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -195,9 +195,10 @@ func newReadFinder(ctx context.Context) (*finders.Finder, error) {
 	}), nil
 }
 
-// defaultGraphCache keeps loaded graphs under the user cache root. Setting
-// SDD_GRAPH_CACHE=off loads every graph from its files.
-func defaultGraphCache() (finders.GraphCache, error) {
+// defaultGraphCache keeps loaded graphs under the user cache root, a cache no
+// read fails on (graphcache.Optional). Setting SDD_GRAPH_CACHE=off loads every
+// graph from its files.
+func defaultGraphCache(ctx context.Context) (finders.GraphCache, error) {
 	if os.Getenv("SDD_GRAPH_CACHE") == "off" {
 		return nil, nil
 	}
@@ -205,7 +206,7 @@ func defaultGraphCache() (finders.GraphCache, error) {
 	if err != nil {
 		return nil, err
 	}
-	return graphcache.New(filepath.Join(loc.CacheRoot, "graph")), nil
+	return graphcache.NewOptional(graphcache.New(filepath.Join(loc.CacheRoot, "graph")), slogutils.FromContext(ctx)), nil
 }
 
 // defaultRepos builds the connected-repos dependencies from the XDG default

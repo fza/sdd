@@ -7,7 +7,7 @@ import "testing"
 func TestGraphCacheSwitchesOff(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("SDD_GRAPH_CACHE", "off")
-	cache, err := defaultGraphCache()
+	cache, err := defaultGraphCache(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -16,7 +16,7 @@ func TestGraphCacheSwitchesOff(t *testing.T) {
 	}
 
 	t.Setenv("SDD_GRAPH_CACHE", "")
-	cache, err = defaultGraphCache()
+	cache, err = defaultGraphCache(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

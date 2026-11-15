@@ -372,6 +372,6 @@ It never deletes a version any checkout read within `cache.retention`, and it sk
 | `XDG_CONFIG_HOME` | `~/.config` | The user-global file is `$XDG_CONFIG_HOME/sdd/config.yaml`. |
 | `XDG_CACHE_HOME` | `~/.cache` | Search indexes, embedding calibrations, graph snapshots and clones of connected repositories live under `$XDG_CACHE_HOME/sdd`. |
 | `XDG_STATE_HOME` | `~/.local/state` | Session logs and the record of the last `sdd cache prune` live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
-| `SDD_GRAPH_CACHE` | On | Every command keeps a snapshot of each graph it loads under `$XDG_CACHE_HOME/sdd/graph`, and reads it while no graph file changed. `off` reads every entry file. |
+| `SDD_GRAPH_CACHE` | On | Every command keeps a snapshot of each graph it loads under `$XDG_CACHE_HOME/sdd/graph`, and reads it while no graph file changed. A cache dir sdd cannot write costs one warning and no failure. `off` reads every entry file, for sandboxes and read-only homes. |
 | `SDD_TIMING` | Off | Any true value prints one line on stderr per ended phase of a command, `timing: <phase> <duration>ms at <offset>ms`. Same as `--timing`. |
 | `SDD_SERVE_TOKEN` | None | The bearer token `sdd serve --transport http` requires on every request. Same as `--auth-token`. |
