@@ -2,7 +2,9 @@ package gollm_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,6 +63,7 @@ func TestIncompleteAnswerIsReportedApartFromAProviderFault(t *testing.T) {
 		name      string
 		behaviour testsupport.OpenAIBehaviour
 		mode      model.StructuredOutputMode
+		schema    json.RawMessage
 		sentinel  error
 		message   string
 	}{
@@ -74,6 +77,7 @@ func TestIncompleteAnswerIsReportedApartFromAProviderFault(t *testing.T) {
 			name:      "answer cut mid-JSON in json_object mode",
 			behaviour: testsupport.OpenAIBehaviour{Answer: `{"findings":[`, FinishReason: "length", ReasoningTokens: 7602},
 			mode:      model.StructuredOutputJSONObject,
+			schema:    findingsSchema,
 			sentinel:  gollmrunner.ErrAnswerCut,
 			message:   "gollm openai: answer cut at the token cap: finish_reason=length, reasoning 7602 tokens, content 13 chars",
 		},
@@ -88,7 +92,10 @@ func TestIncompleteAnswerIsReportedApartFromAProviderFault(t *testing.T) {
 			server := testsupport.NewOpenAIServer(t, tc.behaviour)
 			runner := newStructuredRunner(t, server.URL, "glm-5.3-flash", tc.mode)
 
-			_, err := runner.Run(context.Background(), llm.Request{UserPrompt: "USER"})
+			_, err := runner.Run(context.Background(), llm.Request{UserPrompt: "USER", ResponseSchema: tc.schema})
+			if tc.mode == model.StructuredOutputJSONObject && !slices.Equal(server.ResponseFormats(), []string{"json_object"}) {
+				t.Errorf("the request should run in json_object mode, got %v", server.ResponseFormats())
+			}
 			if !errors.Is(err, tc.sentinel) {
 				t.Fatalf("the failure should name why the answer is missing, got %v", err)
 			}
