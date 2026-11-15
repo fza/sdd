@@ -1211,6 +1211,9 @@ func toolBoundary[In, Out any](before func(context.Context, *mcp.CallToolRequest
 		var res *mcp.CallToolResult
 		var out Out
 		call, notice, err := before(ctx, req)
+		if call == nil {
+			call = ctx
+		}
 		if err == nil {
 			res, out, err = handler(call, req, in)
 		}

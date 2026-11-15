@@ -78,6 +78,20 @@ func TestBeforeCallContextReachesTheApplication(t *testing.T) {
 	}
 }
 
+func TestBeforeCallWithoutAContextKeepsTheCalls(t *testing.T) {
+	env := newTestServer(t, nil, "", "", func(opts *testServerOptions) {
+		opts.MCP.BeforeCall = func(context.Context, string) (context.Context, string, error) {
+			return nil, "", nil
+		}
+	})
+	cs := connect(t, env.srv)
+
+	res := callResult(t, cs, "start_session", map[string]any{})
+	if res.IsError {
+		t.Errorf("a hook returning no context should leave the call its own, got %q", contentText(res))
+	}
+}
+
 func (h *scriptedBeforeCall) queue(notices ...string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
