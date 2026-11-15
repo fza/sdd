@@ -116,6 +116,10 @@ func (r *Registry) ListedClones() ([]Clone, error) {
 	return clones, nil
 }
 
+// ErrClonePassRefused reports a clone pass that cannot trust the repos list
+// it would judge clones against; the wrapping error says why.
+var ErrClonePassRefused = errors.New("refusing to remove clones")
+
 // UnconnectedClone is a clone whose repository the user-global repos list
 // does not name.
 type UnconnectedClone struct {
@@ -126,11 +130,17 @@ type UnconnectedClone struct {
 	Owned bool
 }
 
-// UnconnectedClones lists the sdd-owned clones and the leftover cache clones
-// whose repository the user-global repos list does not name. A clone is a
+// UnconnectedClones lists the clones a cache pruning run may remove: the
+// sdd-owned clones of repositories `sdd repo remove` dropped (see
+// Disconnected) that the user-global repos list no longer names, the clones
+// an earlier run retired, and the leftover cache clones the list does not
+// name. A repos list missing from the list proves nothing about a clone, so
+// an sdd-owned clone without a disconnection record stays. A clone is a
 // directory holding .git below a top-level directory named like a host: repo
 // IDs open with a dotted hostname, which keeps the index and graph caches
-// beside them out of the walk.
+// beside them out of the walk. It returns ErrClonePassRefused, listing
+// nothing, when the locations come from mixed XDG sources or the config file
+// is missing or lists no repos while a clone would go.
 func (r *Registry) UnconnectedClones() ([]UnconnectedClone, error) {
 	if r.loc.DataRoot == "" {
 		return nil, errors.New("listing clones: no data root for the sdd-owned clones")
@@ -143,11 +153,71 @@ func (r *Registry) UnconnectedClones() ([]UnconnectedClone, error) {
 	if err != nil {
 		return nil, err
 	}
+	owned, err = r.disconnectedOnly(owned)
+	if err != nil {
+		return nil, err
+	}
 	cached, err := unconnectedClonesUnder(r.loc.CacheRoot, cfg, false)
 	if err != nil {
 		return nil, err
 	}
-	return append(owned, cached...), nil
+	clones := append(owned, cached...)
+	err = r.trustRepoList(cfg, clones)
+	if err != nil {
+		return nil, err
+	}
+	return clones, nil
+}
+
+func (r *Registry) disconnectedOnly(clones []UnconnectedClone) ([]UnconnectedClone, error) {
+	var kept []UnconnectedClone
+	for _, clone := range clones {
+		if isRetiredClone(clone.Dir) {
+			kept = append(kept, clone)
+			continue
+		}
+		dropped, err := r.Disconnected(clone.RepoID)
+		if err != nil {
+			return nil, err
+		}
+		if dropped {
+			kept = append(kept, clone)
+		}
+	}
+	return kept, nil
+}
+
+// trustRepoList refuses a repos list that may not be this machine's while a
+// clone other than a retired one would go.
+func (r *Registry) trustRepoList(cfg *GlobalConfig, clones []UnconnectedClone) error {
+	judged := 0
+	for _, clone := range clones {
+		if !isRetiredClone(clone.Dir) {
+			judged++
+		}
+	}
+	if judged == 0 {
+		return nil
+	}
+	if r.loc.MixedXDG != "" {
+		return fmt.Errorf("%w: the XDG base directories come from mixed sources (%s) while %d clones under %s would go; set all four or none", ErrClonePassRefused, r.loc.MixedXDG, judged, r.loc.DataRoot)
+	}
+	_, err := os.Stat(r.loc.ConfigPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w: %s does not exist while %d clones under %s would go; check XDG_CONFIG_HOME", ErrClonePassRefused, r.loc.ConfigPath, judged, r.loc.DataRoot)
+	}
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", r.loc.ConfigPath, err)
+	}
+	if len(cfg.Repos) == 0 {
+		return fmt.Errorf("%w: %s lists no repos while %d clones under %s would go; delete them by hand if they should go", ErrClonePassRefused, r.loc.ConfigPath, judged, r.loc.DataRoot)
+	}
+	return nil
+}
+
+func isRetiredClone(dir string) bool {
+	base := filepath.Base(dir)
+	return strings.HasPrefix(base, ".") && strings.HasSuffix(base, ".pruned")
 }
 
 func unconnectedClonesUnder(base string, cfg *GlobalConfig, owned bool) ([]UnconnectedClone, error) {

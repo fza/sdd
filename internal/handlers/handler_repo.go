@@ -53,6 +53,9 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	// ensure the committed declaration. Errors when that too is already in
 	// place, so a true no-op still reads as "nothing to do".
 	if existing, ok := cfg.ConnectedByURL(cmd.CloneURL); ok {
+		if err := h.repos.ClearDisconnected(existing.RepoID); err != nil {
+			return err
+		}
 		declared, err := h.declareDependency(ctx, existing.RepoID, cmd)
 		if err != nil {
 			return err
@@ -118,6 +121,10 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 // before its repo is connected.
 func (h *Handler) placeAndConnect(ctx context.Context, staged string, repo repos.ConnectedRepo) (string, error) {
 	cloneDir, err := h.repos.Place(ctx, staged, repo)
+	if err != nil {
+		return "", err
+	}
+	err = h.repos.ClearDisconnected(repo.RepoID)
 	if err != nil {
 		return "", err
 	}
@@ -266,10 +273,27 @@ func (h *Handler) RepoRemove(ctx context.Context, cmd *command.RepoRemoveCmd) er
 			return fmt.Errorf("committing dependency removal: %w", err)
 		}
 	}
+	if err := h.markDisconnected(cmd.RepoID); err != nil {
+		return err
+	}
 	if cmd.OnRemoved != nil {
 		cmd.OnRemoved(cmd.RepoID)
 	}
 	return nil
+}
+
+// markDisconnected records a removed dependency this machine connects, the
+// only record that lets cache pruning remove its clone. A handler without the
+// connected-repos manager knows no connection to record.
+func (h *Handler) markDisconnected(repoID model.RepoID) error {
+	if h.repos == nil {
+		return nil
+	}
+	_, connected, err := h.repos.Registry().Clone(repoID)
+	if err != nil || !connected {
+		return err
+	}
+	return h.repos.MarkDisconnected(repoID)
 }
 
 // strandedRefs scans the current graph for local entries that hold a

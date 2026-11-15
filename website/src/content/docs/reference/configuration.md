@@ -493,13 +493,15 @@ Once a day sdd starts `sdd cache prune` in the background, detached from the com
 | The index of an embedding setup you switched away from | `index.replaced_retention` after its last use, once the project's index under another setup was used later. Switching back afterwards embeds the graph again. |
 | A whole index nothing uses | After `cache.retention`. |
 | Graph snapshots, the git gate's record of a repository, embedding calibrations | After `cache.retention` without use. |
-| A clone under `~/.local/share/sdd/repos/` | Once the user-global `repos` list no longer names it, unless it holds unpushed commits or sdd fetched or pushed it within `cache.retention`. Listed clones stay and get `git gc --auto`. |
+| A clone under `~/.local/share/sdd/repos/` | Once `sdd repo remove` dropped its repository and the user-global `repos` list no longer names it, unless it holds unpushed commits or sdd fetched or pushed it within `cache.retention`. A clone no `sdd repo remove` dropped stays, `graph_repo` clones included; delete it by hand. Listed clones stay and get `git gc --auto`. |
 | The log of a verifier round | After `cache.retention`. |
 | What a killed process left: git trace files, unfinished clones, unfinished index writes, emptied index folders, empty folders of old cache clones | One day after, once no lock holds it. |
 
 A session log sdd cannot read stays, with its staged attachments: it may belong to a newer sdd. The run reports how many it kept.
 
 While `secrets.rules_update` is `daily`, the background run also asks GitHub for gitleaks' latest release and fetches its rule file into `~/.cache/sdd/secret-rules/` when it is newer than the one in use ([credential scan](/sdd/working-modes/#capture)). Each request gives up after 20 seconds. A failed or rejected fetch keeps the rule file in use, is logged as a warning and does not stop the run; `sdd info` shows it with its reason. `sdd cache prune` by hand fetches nothing.
+
+The run removes no clone and fails when a clone would go while the user-global config file is missing or lists no repos, or while some of `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_DATA_HOME` are set and others are not. Set all four or none.
 
 `sdd index gc` stays for deliberate cleanup beyond these rules.
 

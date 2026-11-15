@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -35,6 +36,11 @@ type Locations struct {
 	// DataRoot is the base directory for the sdd-owned clones of graph and
 	// connected repositories (default $XDG_DATA_HOME/sdd).
 	DataRoot string
+	// MixedXDG names the XDG base directory variables set while others fall
+	// back to the home directory; empty when one source set all four roots.
+	// Mixed roots pair one repos list with another's clones, so cache
+	// pruning removes no clone under them.
+	MixedXDG string
 }
 
 // DefaultLocations resolves the conventional locations: the XDG base
@@ -48,6 +54,20 @@ func DefaultLocations() (Locations, error) {
 	cacheBase := os.Getenv("XDG_CACHE_HOME")
 	stateBase := os.Getenv("XDG_STATE_HOME")
 	dataBase := os.Getenv("XDG_DATA_HOME")
+	var set, unset []string
+	for _, v := range []struct{ name, value string }{
+		{"XDG_CONFIG_HOME", cfgBase}, {"XDG_CACHE_HOME", cacheBase}, {"XDG_STATE_HOME", stateBase}, {"XDG_DATA_HOME", dataBase},
+	} {
+		if v.value == "" {
+			unset = append(unset, v.name)
+		} else {
+			set = append(set, v.name)
+		}
+	}
+	mixed := ""
+	if len(set) > 0 && len(unset) > 0 {
+		mixed = fmt.Sprintf("%s set, %s not", strings.Join(set, ", "), strings.Join(unset, ", "))
+	}
 	if cfgBase == "" || cacheBase == "" || stateBase == "" || dataBase == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -74,6 +94,7 @@ func DefaultLocations() (Locations, error) {
 		CacheRoot:  filepath.Join(cacheBase, "sdd"),
 		StateRoot:  filepath.Join(stateBase, "sdd"),
 		DataRoot:   filepath.Join(dataBase, "sdd"),
+		MixedXDG:   mixed,
 	}, nil
 }
 

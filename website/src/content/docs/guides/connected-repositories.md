@@ -148,7 +148,7 @@ A fetch that completes without the entry is remembered in `~/.local/state/sdd/re
 sdd repo remove github.com/acme/platform
 ```
 
-This removes the `repo_id` from `dependencies` and commits the change. It refuses while any entry in your graph references the repository and lists those references. `--force` removes the dependency anyway and names each reference it leaves unresolvable. The connection in your user-global config and the clone stay in place.
+This removes the `repo_id` from `dependencies` and commits the change. It refuses while any entry in your graph references the repository and lists those references. `--force` removes the dependency anyway and names each reference it leaves unresolvable. The connection in your user-global config and the clone stay in place. Once you also delete the repository from `repos` in that config, the [daily sweep](/sdd/reference/configuration/#the-daily-sweep) removes the clone. A clone no `sdd repo remove` dropped stays.
 
 ## When something does not resolve
 
