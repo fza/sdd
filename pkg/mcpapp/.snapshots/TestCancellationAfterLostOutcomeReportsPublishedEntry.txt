@@ -112,7 +112,7 @@ report_schema:
           type: array
       type: object
     userWords:
-      description: the user's answer, relayed verbatim
+      description: the user's own message verbatim, never yours
       type: string
   required:
     - choice

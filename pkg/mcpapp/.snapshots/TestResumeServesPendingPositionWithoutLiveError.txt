@@ -94,7 +94,7 @@ open_instances:
           description: the pending chooser's step id — copy it verbatim from pending_chooser.chooser
           type: string
         userWords:
-          description: the user's answer, relayed verbatim
+          description: the user's own message verbatim, never yours
           type: string
       required:
         - choice
