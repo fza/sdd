@@ -35,30 +35,77 @@ type DescriptionResult struct {
 type Description struct {
 	Request   llm.Request
 	titleOnly bool
+	// keepsTitle marks a paired call whose title the caller supplied and
+	// keeps, so its generated title is never re-run.
+	keepsTitle    bool
+	entry         *model.Entry
+	graph         *model.Graph
+	language      string
+	similarTitles []string
 }
 
 // NewDescription chooses the call an entry needs: with no summary, or with
 // regenerate set, the paired title-and-summary call over the full entry; with
 // a summary but no title, the title-only call over the stored summary.
 // configuredLanguage is the graph's authoring language locale code (empty =
-// English default).
-func NewDescription(entry *model.Entry, graph *model.Graph, configuredLanguage string, regenerate bool) (*Description, error) {
+// English default). similarTitles are the titles of the entries nearest the
+// entry's body, which the new title must not conflict with.
+func NewDescription(entry *model.Entry, graph *model.Graph, configuredLanguage string, regenerate bool, similarTitles []string) (*Description, error) {
+	d := &Description{entry: entry, graph: graph, language: configuredLanguage, similarTitles: similarTitles}
 	switch {
 	case regenerate || entry.Summary == "":
-		req, err := renderSummaryTemplates(llm.PurposeSummarize, "summary", summarySchema, newSummaryContext(entry, graph, configuredLanguage))
+		sctx := newSummaryContext(entry, graph, configuredLanguage)
+		sctx.SimilarTitles = similarTitles
+		req, err := renderSummaryTemplates(llm.PurposeSummarize, "summary", summarySchema, sctx)
 		if err != nil {
 			return nil, fmt.Errorf("rendering summary prompt: %w", err)
 		}
-		return &Description{Request: req}, nil
+		d.Request, d.keepsTitle = req, !regenerate && entry.Title != ""
+		return d, nil
 	case entry.Title == "":
-		req, err := renderSummaryTemplates(llm.PurposeTitle, "title", titleSchema, newTitleContext(entry, graph, configuredLanguage))
+		sctx := newTitleContext(entry, graph, configuredLanguage)
+		sctx.SimilarTitles = similarTitles
+		req, err := renderSummaryTemplates(llm.PurposeTitle, "title", titleSchema, sctx)
 		if err != nil {
 			return nil, fmt.Errorf("rendering title prompt: %w", err)
 		}
-		return &Description{Request: req, titleOnly: true}, nil
+		d.Request, d.titleOnly = req, true
+		return d, nil
 	default:
 		return nil, fmt.Errorf("describing %s: %w", entry.ID, ErrDescribed)
 	}
+}
+
+// Retitle is the one re-run of the title-only call for an answer whose title
+// repeats another entry's title in the graph: the repeated title leads the
+// similar titles, the last of them dropped. The answer's summary, or the
+// stored one, is what the re-run titles. Nil when the title repeats none.
+func (d *Description) Retitle(result DescriptionResult) (*Description, error) {
+	if d.keepsTitle {
+		return nil, nil
+	}
+	repeated, ok := model.RepeatedTitle(d.graph.Entries, result.Title, d.entry.ID)
+	if !ok {
+		return nil, nil
+	}
+	retitled := *d.entry
+	retitled.Title = ""
+	if result.Summary != "" {
+		retitled.Summary = result.Summary
+	}
+	return NewDescription(&retitled, d.graph, d.language, false, leadTitle(repeated, d.similarTitles))
+}
+
+// leadTitle puts title first in titles, dropping a repeat of it and capping
+// the list at model.SimilarTitleCount.
+func leadTitle(title string, titles []string) []string {
+	out := []string{title}
+	for _, t := range titles {
+		if !strings.EqualFold(strings.TrimSpace(t), strings.TrimSpace(title)) {
+			out = append(out, t)
+		}
+	}
+	return out[:min(len(out), model.SimilarTitleCount)]
 }
 
 // TitleOnly reports whether the call writes the title alone.
@@ -75,19 +122,37 @@ func (d *Description) Parse(output string) (DescriptionResult, error) {
 	return parseSummaryResponse(output)
 }
 
-// Describe builds, runs and parses an entry's description in one step.
-// Summaries are derived on demand with no staleness tracking (d-cpt-4qi): the
-// caller decides when to regenerate.
-func Describe(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string, regenerate bool) (DescriptionResult, error) {
-	description, err := NewDescription(entry, graph, configuredLanguage, regenerate)
+// Run runs the call and parses its answer.
+func (d *Description) Run(ctx context.Context, runner llm.Runner) (DescriptionResult, error) {
+	output, err := runner.Run(ctx, d.Request)
+	if err != nil {
+		return DescriptionResult{}, fmt.Errorf("running %s call: %w", d.Request.Purpose, err)
+	}
+	return d.Parse(output.Text)
+}
+
+// Describe builds, runs and parses an entry's description in one step, with
+// the one title re-run Retitle asks for. Summaries are derived on demand with
+// no staleness tracking (d-cpt-4qi): the caller decides when to regenerate.
+func Describe(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string, regenerate bool, similarTitles []string) (DescriptionResult, error) {
+	description, err := NewDescription(entry, graph, configuredLanguage, regenerate, similarTitles)
 	if err != nil {
 		return DescriptionResult{}, err
 	}
-	output, err := runner.Run(ctx, description.Request)
+	result, err := description.Run(ctx, runner)
 	if err != nil {
-		return DescriptionResult{}, fmt.Errorf("running %s call: %w", description.Request.Purpose, err)
+		return DescriptionResult{}, err
 	}
-	return description.Parse(output.Text)
+	retitle, err := description.Retitle(result)
+	if err != nil || retitle == nil {
+		return result, err
+	}
+	retitled, err := retitle.Run(ctx, runner)
+	if err != nil {
+		return DescriptionResult{}, err
+	}
+	result.Title = retitled.Title
+	return result, nil
 }
 
 // parseSummaryResponse reads a paired call's answer. Both fields are
@@ -152,6 +217,7 @@ type summaryContext struct {
 	ConfiguredLanguage string
 	StoredSummary      string
 	TitleRule          string
+	SimilarTitles      []string
 }
 
 func newSummaryContext(entry *model.Entry, graph *model.Graph, configuredLanguage string) *summaryContext {

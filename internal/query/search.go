@@ -76,6 +76,35 @@ type SearchQuery struct {
 	// into per-repo search members; these fields carry the caller's intent.
 	Repos    []model.RepoID
 	AllRepos bool
+
+	// Titled keeps only entries that carry a title; Exclude drops entries
+	// by full ID.
+	Titled  bool
+	Exclude []string
+}
+
+// SimilarTitles is the vector query for the titled entries whose content lies
+// nearest entry's body, the entry itself left out. False for an entry with no
+// body to search by.
+func SimilarTitles(entry *model.Entry) (SearchQuery, bool) {
+	if strings.TrimSpace(entry.Content) == "" {
+		return SearchQuery{}, false
+	}
+	return SearchQuery{
+		SyncMode: SearchSyncNone,
+		Phrase:   entry.Content,
+		Titled:   true,
+		Exclude:  []string{entry.ID},
+		Limit:    model.SimilarTitleCount,
+	}, true
+}
+
+// Admits reports whether an entry passes the Titled and Exclude gates.
+func (q SearchQuery) Admits(e *model.Entry) bool {
+	if q.Titled && e.Title == "" {
+		return false
+	}
+	return !slices.Contains(q.Exclude, e.ID)
 }
 
 // Mode resolves the SearchQuery's input shape to a SearchMode.
@@ -139,6 +168,15 @@ func (q SearchQuery) EffectiveMaxCitations() int {
 type SearchResult struct {
 	Mode    SearchMode
 	Entries []SearchEntry
+}
+
+// Titles lists the titles of the result's entries in rank order.
+func (r *SearchResult) Titles() []string {
+	titles := make([]string, 0, len(r.Entries))
+	for _, e := range r.Entries {
+		titles = append(titles, e.Entry.Title)
+	}
+	return titles
 }
 
 // SearchEntry pairs a graph entry with its score and one-or-more

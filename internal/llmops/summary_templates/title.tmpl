@@ -29,4 +29,16 @@ Respond with one JSON object and nothing else: `{"title": "..."}`.
 
 {{ .RelatedEntries }}
 {{ end -}}
+{{ template "similar_titles" . }}
+{{- end }}
+
+{{ define "similar_titles" -}}
+{{ if .SimilarTitles }}
+## Titles of the most similar entries
+
+The new title must not conflict with any of these titles: it must not repeat one or be mistakable for one. Name what sets this entry apart.
+
+{{ range .SimilarTitles }}- {{ . }}
+{{ end }}
+{{- end }}
 {{- end }}

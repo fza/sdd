@@ -260,7 +260,7 @@ func checkSummaryMechanics(entryID, summary string) []string {
 func TestSummarizeJudgeCalibration(t *testing.T) {
 	tc := summarizeCases()[0]
 	graph := model.NewGraph(append([]*model.Entry{tc.entry}, tc.related...))
-	description, err := llmops.NewDescription(tc.entry, graph, "", true)
+	description, err := llmops.NewDescription(tc.entry, graph, "", true, nil)
 	if err != nil {
 		t.Fatalf("rendering source material: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestSummarizeEval(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 			defer cancel()
-			result, err := llmops.Describe(ctx, candidate, tc.entry, graph, "", true)
+			result, err := llmops.Describe(ctx, candidate, tc.entry, graph, "", true, nil)
 			if err != nil {
 				t.Fatalf("Describe failed: %v", err)
 			}
@@ -318,7 +318,7 @@ func TestSummarizeEval(t *testing.T) {
 			}
 
 			// The judge sees exactly what the candidate saw.
-			description, err := llmops.NewDescription(tc.entry, graph, "", true)
+			description, err := llmops.NewDescription(tc.entry, graph, "", true, nil)
 			if err != nil {
 				t.Fatalf("rendering source material for judge: %v", err)
 			}

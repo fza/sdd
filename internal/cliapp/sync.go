@@ -165,6 +165,10 @@ func backfillTitles(ctx context.Context, cmd *cli.Command, graphDir string) erro
 	if err != nil {
 		return err
 	}
+	opts, err = withTitleSearch(cmd, opts)
+	if err != nil {
+		return err
+	}
 	return handlers.New(opts).BackfillTitles(ctx, &command.BackfillTitlesCmd{SDDDir: sddDir})
 }
 

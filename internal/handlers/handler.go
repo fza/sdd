@@ -16,6 +16,7 @@ import (
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
 	"github.com/networkteam/sdd/pkg/llm"
+	"github.com/networkteam/sdd/pkg/llm/embed"
 )
 
 // Reader is the handler-side view of the finder. It bundles every read
@@ -124,6 +125,8 @@ type Handler struct {
 	localConfigPath string
 	reader          Reader
 	llmRunner       llm.Runner
+	embedder        embed.Embedder
+	searchIndex     SearchIndexOpener
 	committer       Committer
 	tracker         Tracker
 	brancher        Brancher
@@ -218,6 +221,10 @@ type Options struct {
 	// (config `language`, empty = English default). Summaries are written
 	// in it regardless of the source material's language.
 	Language string
+	// Embedder and SearchIndex, both set, show a title call the titles of
+	// the entries nearest the entry's body; either nil leaves them out.
+	Embedder    embed.Embedder
+	SearchIndex SearchIndexOpener
 }
 
 // New constructs a Handler with the given options.
@@ -228,6 +235,8 @@ func New(opts Options) *Handler {
 		localConfigPath: opts.LocalConfigPath,
 		reader:          opts.Reader,
 		llmRunner:       opts.LLMRunner,
+		embedder:        opts.Embedder,
+		searchIndex:     opts.SearchIndex,
 		committer:       opts.Committer,
 		tracker:         opts.Tracker,
 		brancher:        opts.Brancher,

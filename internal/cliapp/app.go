@@ -1073,6 +1073,10 @@ func newCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			opts, err = withTitleSearch(cmd, opts)
+			if err != nil {
+				return err
+			}
 			handler := handlers.New(opts)
 
 			return handler.NewEntry(ctx, ncmd)
@@ -1483,6 +1487,10 @@ func summarizeHandler(ctx context.Context, cmd *cli.Command) (*handlers.Handler,
 		Changes:   graphGit(dir),
 		Language:  configLanguage(cfg),
 	})
+	if err != nil {
+		return nil, err
+	}
+	opts, err = withTitleSearch(cmd, opts)
 	if err != nil {
 		return nil, err
 	}

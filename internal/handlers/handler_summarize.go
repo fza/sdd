@@ -12,6 +12,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/secrets"
@@ -32,7 +33,7 @@ import (
 //
 // When cmd.ExplicitText or cmd.ExplicitTitle is set, the LLM is bypassed
 // entirely: the supplied text is written on a single named entry.
-func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) error {
+func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) (err error) {
 	graph, err := h.reader.CurrentGraph(h.graphDir)
 	if err != nil {
 		return fmt.Errorf("loading graph: %w", err)
@@ -120,29 +121,56 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 		cmd.OnPlanned(len(planned))
 	}
 
+	var finder *finders.SearchFinder
+	if len(planned) > 0 {
+		var closeSearch func() error
+		finder, closeSearch, err = h.openTitleSearch(ctx, graph)
+		if err != nil {
+			return err
+		}
+		defer func() { err = errors.Join(err, closeSearch()) }()
+	}
+
 	for _, entry := range planned {
 		regenerate := !isAll || cmd.Force
 		g.Go(func() error {
 
-			// Render prompt under read lock — other workers may be writing
-			// their own entries' summaries concurrently, and those feed
-			// neighbor prose into this prompt.
+			// Search and render under read lock — other workers may be
+			// writing their own entries' summaries and titles concurrently,
+			// and those feed this prompt and the search's candidates.
 			graphMu.RLock()
-			description, renderErr := llmops.NewDescription(entry, graph, h.language, regenerate)
+			titles, searchErr := similarTitles(ctx, finder, entry)
+			var description *llmops.Description
+			var renderErr error
+			if searchErr == nil {
+				description, renderErr = llmops.NewDescription(entry, graph, h.language, regenerate, titles)
+			}
 			graphMu.RUnlock()
+			if searchErr != nil {
+				return searchErr
+			}
 			if renderErr != nil {
 				return fmt.Errorf("rendering summary for %s: %w", entry.ID, renderErr)
 			}
 			titleOnly := description.TitleOnly()
 
-			// LLM call without the graph lock; the injected runner bounds it.
-			output, err := h.llmRunner.Run(ctx, description.Request)
+			// LLM calls without the graph lock; the injected runner bounds them.
+			result, err := description.Run(ctx, h.llmRunner)
 			if err != nil {
 				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
 			}
-			result, err := description.Parse(output.Text)
+			graphMu.RLock()
+			retitle, err := description.Retitle(result)
+			graphMu.RUnlock()
 			if err != nil {
-				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
+				return fmt.Errorf("rendering title for %s: %w", entry.ID, err)
+			}
+			if retitle != nil {
+				retitled, err := retitle.Run(ctx, h.llmRunner)
+				if err != nil {
+					return fmt.Errorf("titling %s: %w", entry.ID, err)
+				}
+				result.Title = retitled.Title
 			}
 			err = secrets.CheckText("title", result.Title)
 			if err == nil && !titleOnly {

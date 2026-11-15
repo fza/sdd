@@ -569,7 +569,7 @@ func Test_NewDescription_OmitsDerivedStatus(t *testing.T) {
 	}
 	graph := model.NewGraph([]*model.Entry{sig, dec})
 
-	description, err := NewDescription(dec, graph, "", false)
+	description, err := NewDescription(dec, graph, "", false, nil)
 	if err != nil {
 		t.Fatalf("NewDescription: %v", err)
 	}
@@ -617,7 +617,7 @@ func Test_NewDescription_OmitsIntent(t *testing.T) {
 		Kind: model.KindDirective, Intent: model.IntentSettled, Content: "decision content",
 	}
 	graph := model.NewGraph([]*model.Entry{dec})
-	description, err := NewDescription(dec, graph, "", false)
+	description, err := NewDescription(dec, graph, "", false, nil)
 	if err != nil {
 		t.Fatalf("NewDescription: %v", err)
 	}
