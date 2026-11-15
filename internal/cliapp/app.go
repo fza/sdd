@@ -469,6 +469,18 @@ func New(options Options) *cli.Command {
 				if errors.Is(statErr, fs.ErrNotExist) && !startsOne {
 					return ctx, fmt.Errorf("--local-config %s does not exist; create it, or write a key to it with `sdd config set --local`", abs)
 				}
+				// The layer holds personal settings and secrets, so a file a
+				// repository could commit is refused, judged by the file a symlink names.
+				resolved := meta.ResolvedPath(abs)
+				if repoRoot := git.RepoRootFor(filepath.Dir(resolved)); repoRoot != "" {
+					ignored, err := git.Ignored(repoRoot, resolved)
+					if err != nil {
+						return ctx, err
+					}
+					if !ignored {
+						return ctx, fmt.Errorf("--local-config %s lies in the repository at %s and is not ignored there; add it to .gitignore or keep it outside the repository", abs, repoRoot)
+					}
+				}
 				localConfigOverride = abs
 			}
 			level := slog.LevelWarn

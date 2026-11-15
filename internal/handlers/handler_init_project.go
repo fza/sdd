@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 )
 
@@ -146,33 +147,14 @@ func (h *Handler) runProjectInit(ctx context.Context, cmd *command.InitCmd, proj
 // as macOS's /var → /private/var, resolving path's nearest existing ancestor
 // when path does not exist yet.
 func within(path, dir string) bool {
-	rel, err := filepath.Rel(resolveExisting(dir), resolveExisting(path))
+	rel, err := filepath.Rel(meta.ResolvedPath(dir), meta.ResolvedPath(path))
 	if err != nil {
 		return false
 	}
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
-// resolveExisting resolves symlinks in path's nearest existing ancestor and
-// appends the rest unchanged.
-func resolveExisting(path string) string {
-	path = filepath.Clean(path)
-	rest := ""
-	for {
-		resolved, err := filepath.EvalSymlinks(path)
-		if err == nil {
-			return filepath.Join(resolved, rest)
-		}
-		parent := filepath.Dir(path)
-		if parent == path {
-			return filepath.Join(path, rest)
-		}
-		rest = filepath.Join(filepath.Base(path), rest)
-		path = parent
-	}
-}
-
 // sameDir reports whether a and b name one directory, through symlinks.
 func sameDir(a, b string) bool {
-	return resolveExisting(a) == resolveExisting(b)
+	return meta.ResolvedPath(a) == meta.ResolvedPath(b)
 }

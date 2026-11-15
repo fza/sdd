@@ -616,3 +616,17 @@ func errExitCode(err error) int {
 	}
 	return -1
 }
+
+// Ignored reports whether the repository at root ignores path, which need not
+// exist yet.
+func Ignored(root, path string) (bool, error) {
+	err := exec.Command("git", "-C", root, "check-ignore", "-q", "--", path).Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("git check-ignore %s: %w", path, err)
+}
