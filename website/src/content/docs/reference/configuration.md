@@ -434,9 +434,9 @@ A failing `.start` hook holds its step: sdd runs it again on every call, and the
 
 ### Running a hook
 
-Hooks on one event run at once. A hook fails the call when it exits nonzero, outlives its timeout, or writes anything to stdout but nothing or `{"findings": [...]}`. A high finding holds the step like one of the step's own.
+Hooks on one event run at once. A hook fails the call when it exits nonzero, outlives its timeout, or writes anything to stdout but nothing or `{"findings": [...]}`. A high finding holds the step like one of the step's own. Medium and low findings go to your agent to weigh: after `capture.assemble` in a review of their own, after `capture.guide` with the writing guide's findings, and after `capture.preflight` among pre-flight's findings.
 
-The payload carries `event`, `time`, `project`, `branch`, `session`, `procedure`, `instance`, `step` and `phase` (`start`, `done` or `round`); `transition`, the step the procedure moves to, when a step is done; `findings`, the step's findings so far, on a step with a findings channel; `draft` during a capture, with `type`, `kind`, `layer`, `refs`, `topics`, `body`, `attachments`, `body_hash`, `supersedes` and `closes` (entry ID lists); and `entry`, the written entry's ID, on `entry.written`. A finding has `severity` (`high`, `medium` or `low`), `category` and `observation`.
+The payload carries `event`, `time`, `project`, `branch`, `session`, `procedure`, `instance`, `step` and `phase` (`start` or `done`, or `round` on a step that declares rounds, which no shipped step does yet); `transition`, the step the procedure moves to, when a step is done; `findings`, the step's findings so far, on a step with a findings channel; `draft` during a capture, with `type`, `kind`, `layer`, `refs`, `topics`, `body`, `attachments`, `body_hash`, `supersedes` and `closes` (entry ID lists); and `entry`, the written entry's ID, on `entry.written`. A finding has `severity` (`high`, `medium` or `low`), `category` and `observation`.
 
 A Vale check on every capture draft:
 
