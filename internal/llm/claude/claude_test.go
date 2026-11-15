@@ -45,7 +45,7 @@ func fakeCLIExiting(t *testing.T, response, stderr string, code int) string {
 	script := "#!/bin/sh\n" +
 		"for a in \"$@\"; do printf '%s\\0' \"$a\"; done > '" + dir + "/args'\n" +
 		"env > '" + dir + "/env'\n" +
-		"printf '%s' \"$PWD\" > '" + dir + "/cwd'\n" +
+		"printf '%s' \"$(pwd -P)\" > '" + dir + "/cwd'\n" +
 		"cat > '" + dir + "/stdin'\n" +
 		"cat '" + dir + "/response.json'\n" +
 		"cat '" + dir + "/stderr' >&2\n" +
@@ -351,9 +351,15 @@ func flagValue(args []string, flag string) (string, bool) {
 // The child runs in a directory of its own, away from the project the call
 // started in, and the directory goes with the call, failed or not.
 func TestChildRunsIsolated(t *testing.T) {
-	invocationDir, err := os.Getwd()
+	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Getwd: %v", err)
+	}
+	// The stand-in records its physical directory, so the invocation's is
+	// compared resolved too.
+	invocationDir, err := filepath.EvalSymlinks(wd)
+	if err != nil {
+		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		name string
@@ -371,7 +377,7 @@ func TestChildRunsIsolated(t *testing.T) {
 				t.Fatal(err)
 			}
 			childDir := string(raw)
-			if sameDir(t, childDir, invocationDir) {
+			if childDir == invocationDir {
 				t.Errorf("the child ran in the invocation's directory (%s), loading the project's own context", childDir)
 			}
 			if _, err := os.Stat(childDir); !os.IsNotExist(err) {
@@ -381,20 +387,6 @@ func TestChildRunsIsolated(t *testing.T) {
 	}
 }
 
-// A temporary directory resolves through symlinks on macOS, so the comparison
-// is made on resolved paths.
-func sameDir(t *testing.T, a, b string) bool {
-	t.Helper()
-	ra, err := filepath.EvalSymlinks(a)
-	if err != nil {
-		ra = a
-	}
-	rb, err := filepath.EvalSymlinks(b)
-	if err != nil {
-		rb = b
-	}
-	return ra == rb
-}
 
 func mustJSON(s string) string {
 	b, _ := json.Marshal(s)
