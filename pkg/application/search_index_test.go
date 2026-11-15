@@ -28,7 +28,7 @@ func indexRuntime(t *testing.T, project sdd.ProjectID, index sdd.SearchIndexStor
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		ExcludeEmbeddedFromIndex: true,
 		Project:                  sdd.ProjectRef{ID: project}, Graph: staticGraphStore{snapshot: snapshot, attachment: "## Attachment\nBeta attachment content."},
-		SearchIndex: index, Embedder: embeddings, Dependencies: deps,
+		SearchIndex: index, RuneCap: testRuneCap, Embedder: embeddings, Dependencies: deps,
 		LLM: pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) { return pkgllm.Result{}, nil }),
 	})
 	if err != nil {
@@ -39,6 +39,8 @@ func indexRuntime(t *testing.T, project sdd.ProjectID, index sdd.SearchIndexStor
 
 type failingIndex struct {
 	sdd.SearchIndexStore
+	sdd.SearchIndexRunes
+	sdd.SearchIndexRunesRecorder
 	err error
 }
 
@@ -52,7 +54,11 @@ func TestReconcileSearchIndex(t *testing.T) {
 			memory := localadapter.NewMemorySearchIndexStore()
 			var index sdd.SearchIndexStore = memory
 			if legacy {
-				index = struct{ sdd.SearchIndexStore }{memory}
+				index = struct {
+					sdd.SearchIndexStore
+					sdd.SearchIndexRunes
+					sdd.SearchIndexRunesRecorder
+				}{memory, memory, memory}
 			}
 			embeddings := &countingEmbeddings{}
 			runtime := indexRuntime(t, "base", index, embeddings)
@@ -100,7 +106,8 @@ func TestReconcileSearchIndex(t *testing.T) {
 
 func TestReconcileSearchIndexFailureDoesNotReportSuccess(t *testing.T) {
 	want := errors.New("store unavailable")
-	index := failingIndex{SearchIndexStore: localadapter.NewMemorySearchIndexStore(), err: want}
+	memory := localadapter.NewMemorySearchIndexStore()
+	index := failingIndex{SearchIndexStore: memory, SearchIndexRunes: memory, SearchIndexRunesRecorder: memory, err: want}
 	runtime := indexRuntime(t, "base", index, &countingEmbeddings{})
 	called := false
 	err := runtime.ReconcileSearchIndex(t.Context(), sdd.ReconcileSearchIndexCmd{
@@ -161,7 +168,7 @@ func TestSearchWithoutSynchronizationUsesWarmIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	embeddings.reset()
-	runtime = indexRuntime(t, "base", failingIndex{SearchIndexStore: memory, err: errors.New("unexpected index write")}, embeddings)
+	runtime = indexRuntime(t, "base", failingIndex{SearchIndexStore: memory, SearchIndexRunes: memory, SearchIndexRunesRecorder: memory, err: errors.New("unexpected index write")}, embeddings)
 	app, err := sdd.NewApplication(sdd.ApplicationOptions{Access: &multiAccessResolver{base: runtime}, Sessions: noSessionStore{}, StagedBlobs: noBlobStore{}})
 	if err != nil {
 		t.Fatal(err)

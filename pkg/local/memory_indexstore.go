@@ -18,10 +18,31 @@ type MemorySearchIndexStore struct {
 	mu        sync.RWMutex
 	chunks    map[app.IndexNamespace]map[string]app.IndexedChunk
 	published map[app.SearchEntryVersion]bool
+	maxRunes  map[app.IndexNamespace]int
 }
 
+var (
+	_ app.SearchIndexRunes         = (*MemorySearchIndexStore)(nil)
+	_ app.SearchIndexRunesRecorder = (*MemorySearchIndexStore)(nil)
+)
+
 func NewMemorySearchIndexStore() *MemorySearchIndexStore {
-	return &MemorySearchIndexStore{chunks: map[app.IndexNamespace]map[string]app.IndexedChunk{}, published: map[app.SearchEntryVersion]bool{}}
+	return &MemorySearchIndexStore{chunks: map[app.IndexNamespace]map[string]app.IndexedChunk{}, published: map[app.SearchEntryVersion]bool{}, maxRunes: map[app.IndexNamespace]int{}}
+}
+
+// MaxRunes reports the rune cap recorded for the namespace, zero when none is.
+func (s *MemorySearchIndexStore) MaxRunes(_ context.Context, namespace app.IndexNamespace) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.maxRunes[namespace], nil
+}
+
+// RecordMaxRunes records the rune cap the namespace's rows are chunked under.
+func (s *MemorySearchIndexStore) RecordMaxRunes(_ context.Context, namespace app.IndexNamespace, maxRunes int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.maxRunes[namespace] = maxRunes
+	return nil
 }
 
 func (s *MemorySearchIndexStore) Manifest(_ context.Context, namespace app.IndexNamespace) ([]app.StoredChunkRef, error) {

@@ -37,6 +37,11 @@ type Manifest struct {
 	// distinguish legacy single-version entries from multi-version ones.
 	Version int                   `json:"version"`
 	Entries map[string]EntryState `json:"entries"`
+	// MaxRunes is the rune cap every row in this store was chunked under. Zero
+	// means the rows predate the cap. Readers take the cap from here, never
+	// from a fresh calibration, so a row hash they compute matches the rows
+	// written.
+	MaxRunes int `json:"max_runes,omitempty"`
 }
 
 // EntryState is one entry's set of stored versions. See Manifest for the
@@ -159,13 +164,14 @@ func LoadManifest(indexDir string) (*Manifest, error) {
 // reading a manifest of thousands of entries.
 func parseManifest(data []byte) (*Manifest, error) {
 	var decoded struct {
-		Version int                           `json:"version"`
-		Entries map[string]entryStateDecoding `json:"entries"`
+		Version  int                           `json:"version"`
+		Entries  map[string]entryStateDecoding `json:"entries"`
+		MaxRunes int                           `json:"max_runes"`
 	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return nil, fmt.Errorf("parse manifest: %w", err)
 	}
-	m := Manifest{Version: decoded.Version, Entries: make(map[string]EntryState, len(decoded.Entries))}
+	m := Manifest{Version: decoded.Version, MaxRunes: decoded.MaxRunes, Entries: make(map[string]EntryState, len(decoded.Entries))}
 	for id, state := range decoded.Entries {
 		m.Entries[id] = state.state()
 	}

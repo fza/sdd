@@ -61,7 +61,43 @@ func NewPersistentSearchIndexStore(project app.ProjectID, cacheRoot, repoKey str
 var (
 	_ app.SearchIndexStore         = (*PersistentSearchIndexStore)(nil)
 	_ app.SearchIndexEntryManifest = (*PersistentSearchIndexStore)(nil)
+	_ app.SearchIndexRunes         = (*PersistentSearchIndexStore)(nil)
+	_ app.SearchIndexRunesRecorder = (*PersistentSearchIndexStore)(nil)
 )
+
+// MaxRunes reports the rune cap the namespace's store was chunked under, read
+// from its manifest. Zero marks a store whose manifest predates the cap.
+func (s *PersistentSearchIndexStore) MaxRunes(_ context.Context, namespace app.IndexNamespace) (int, error) {
+	dir, err := s.storeDir(namespace)
+	if err != nil {
+		return 0, err
+	}
+	manifest, err := s.readManifest(dir)
+	if err != nil {
+		return 0, err
+	}
+	return manifest.MaxRunes, nil
+}
+
+// RecordMaxRunes writes the rune cap the namespace's rows are chunked under to
+// its manifest. A manifest already recording maxRunes is left unwritten.
+func (s *PersistentSearchIndexStore) RecordMaxRunes(ctx context.Context, namespace app.IndexNamespace, maxRunes int) error {
+	dir, err := s.storeDir(namespace)
+	if err != nil {
+		return err
+	}
+	return index.WriteStore(ctx, dir, func(*index.Index) error {
+		manifest, err := index.LoadManifest(dir)
+		if err != nil {
+			return err
+		}
+		if manifest.MaxRunes == maxRunes {
+			return nil
+		}
+		manifest.MaxRunes = maxRunes
+		return manifest.Save(dir)
+	})
+}
 
 // storeDir resolves the store directory for a namespace, validating that the
 // namespace's project matches this adapter and that a fingerprint is present.
