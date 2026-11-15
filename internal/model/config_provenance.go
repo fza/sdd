@@ -38,6 +38,8 @@ var configDefaults = map[string]string{
 	"sync.cooldown":   DefaultSyncCooldown,
 
 	"sessions.retention": DefaultSessionRetention,
+
+	secretRulesUpdateKey: string(DefaultSecretRulesUpdate),
 }
 
 // EffectiveConfigValues computes the effective config overlay with per-key

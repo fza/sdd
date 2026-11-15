@@ -17,6 +17,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/secrets"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -40,12 +41,14 @@ graph snapshots, embedder calibrations and the session folder and staged
 attachments of an unused project after cache.retention (default ` + model.DefaultCacheRetention + `);
 graph snapshots of vanished folders and clones sdd repo remove
 dropped that the repos list no longer names at once; and crash leftovers a
-day old. All three keys live in the user-global config. Open sessions,
-unreadable session logs and the versions any checkout read within
-cache.retention always stay. One run at a time per machine: a run started by
-hand while another runs fails. A failed background run is reported once, by
-the next command or MCP tool result, and sdd info shows the last run. sdd
-index gc removes more on request.`,
+day old. All three keys live in the user-global config. While
+secrets.rules_update is daily (the default), the background pass also fetches
+the rule file of gitleaks' newest release for credential scans; a run by hand
+fetches nothing. Open sessions, unreadable session logs and the versions any
+checkout read within cache.retention always stay. One run at a time per
+machine: a run started by hand while another runs fails. A failed background
+run is reported once, by the next command or MCP tool result, and sdd info
+shows the last run. sdd index gc removes more on request.`,
 			Flags: []cli.Flag{
 				&cli.BoolFlag{
 					Name:   scheduledFlag,
@@ -70,7 +73,8 @@ index gc removes more on request.`,
 				}
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), Keep: keep,
-					State: stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
+					State:       stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
+					SecretRules: secrets.NewUpdater(secretRulesDir(loc), secrets.NewGitHub("", "", nil), nil),
 				})
 				scheduled := cmd.Bool(scheduledFlag)
 				return h.Prune(ctx, &command.PruneCacheCmd{
@@ -135,8 +139,35 @@ func runCachePruneTimer(ctx context.Context, launch func(dir, logPath string) er
 			return
 		case <-ticker.C:
 			backgroundCachePrune(ctx, launch, false)
+			secrets.Active().Recheck(ctx)
 		}
 	}
+}
+
+func secretRulesDir(loc repos.Locations) string {
+	return filepath.Join(loc.CacheRoot, secrets.CacheDirName)
+}
+
+// useSecretRules points credential scans at the rule file
+// secrets.rules_update allows: the copies the daily pass fetches while it is
+// daily, the built-in file while it is off. The root command calls it on
+// every start, sdd serve's included; serve's hourly timer only rechecks for
+// a newly fetched copy.
+func useSecretRules(ctx context.Context) error {
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		return err
+	}
+	cfg, err := repos.LoadConfigFrom(loc.ConfigPath)
+	if err != nil {
+		return err
+	}
+	dir := ""
+	if model.ResolveSecretRulesUpdate(cfg.Secrets) == model.SecretRulesDaily {
+		dir = secretRulesDir(loc)
+	}
+	secrets.Use(ctx, dir)
+	return nil
 }
 
 // serveCacheNotice is the MCP server's CacheNotice: a failed run's notice,

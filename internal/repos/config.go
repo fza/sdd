@@ -134,6 +134,10 @@ func LoadConfigFrom(path string) (*GlobalConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing global config %s: %w", path, err)
 	}
+	err = cfg.Secrets.RulesUpdate.Validate()
+	if err != nil {
+		return nil, fmt.Errorf("global config %s: %w", path, err)
+	}
 	return cfg, nil
 }
 

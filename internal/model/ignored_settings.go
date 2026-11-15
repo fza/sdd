@@ -18,5 +18,9 @@ func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSettin
 	if source != ConfigSourceGlobal && layer.Sessions.Retention != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "sessions.retention", Reason: globalOnlyReason})
 	}
+	// The daily pass and every scan on the machine share one rule file.
+	if source != ConfigSourceGlobal && layer.Secrets.RulesUpdate != "" {
+		ignored = append(ignored, IgnoredSetting{Key: secretRulesUpdateKey, Reason: globalOnlyReason})
+	}
 	return ignored
 }

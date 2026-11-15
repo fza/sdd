@@ -28,6 +28,7 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/internal/timing"
 	sddapp "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
@@ -396,6 +397,10 @@ func New(options Options) *cli.Command {
 			}
 
 			warnUnknownConfigKeys(ctx)
+			err := useSecretRules(ctx)
+			if err != nil {
+				return ctx, err
+			}
 
 			// sdd cache is the pass itself. sdd serve shows a failed pass
 			// through its tool results instead.
@@ -485,8 +490,17 @@ func infoCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
+			rules, err := secrets.Active().Status()
+			if err != nil {
+				return err
+			}
 			presenters.RenderInfo(cmd.Writer, result)
-			return renderCachePruneStatus(cmd.Writer)
+			err = renderCachePruneStatus(cmd.Writer)
+			if err != nil {
+				return err
+			}
+			presenters.RenderSecretRules(cmd.Writer, rules)
+			return nil
 		},
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/secrets"
@@ -57,6 +58,21 @@ func TestParseRulesRefusesAnInvalidFile(t *testing.T) {
 				t.Error("the file should be refused")
 			}
 		})
+	}
+}
+
+func TestParseFetchedRulesNeedsEveryBuiltinRule(t *testing.T) {
+	_, err := secrets.ParseFetchedRules(testsupport.SecretRuleFixture(t, "one-rule.toml"))
+	if err == nil || !strings.Contains(err.Error(), "github-pat") {
+		t.Errorf("a copy lacking built-in rules should be refused naming them, got %v", err)
+	}
+
+	set, err := secrets.ParseFetchedRules(testsupport.NewerGitleaksRules(t))
+	if err != nil {
+		t.Fatalf("a copy keeping every built-in rule should pass: %v", err)
+	}
+	if !slices.Contains(set.RuleIDs(), "sdd-fixture-token") {
+		t.Error("the copy's added rule should be read")
 	}
 }
 

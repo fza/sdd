@@ -104,7 +104,19 @@ func (a *Application) infoForBranch(ctx context.Context, identity RequestIdentit
 	if err != nil {
 		return InfoResult{}, err
 	}
-	return a.infoFromRuntime(ctx, principal, runtime)
+	result, err := a.infoFromRuntime(ctx, principal, runtime)
+	if err != nil {
+		return InfoResult{}, err
+	}
+	rules, err := secrets.Active().Status()
+	if err != nil {
+		return InfoResult{}, fmt.Errorf("reading the secret rules in use: %w", err)
+	}
+	result.SecretRules = SecretRules{
+		Source: rules.Source, Tag: rules.Tag, Update: string(rules.Update), Unused: rules.Unused,
+		LastAccepted: rules.LastAccepted, LastChecked: rules.LastChecked, LastFailure: rules.LastFailure, LastFailureAt: rules.LastFailureAt,
+	}
+	return result, nil
 }
 
 func (a *Application) infoFromRuntime(ctx context.Context, principal Principal, runtime *ProjectRuntime) (InfoResult, error) {

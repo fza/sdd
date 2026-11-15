@@ -1,6 +1,8 @@
 package application
 
 import (
+	"time"
+
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/pkg/application/types"
 )
@@ -24,6 +26,24 @@ type InfoResult struct {
 	Participant string
 	Language    string
 	Search      string
+	// SecretRules names the credential rule file this process scans with.
+	SecretRules SecretRules
+}
+
+// SecretRules is the gitleaks rule file credential scans use: the built-in
+// copy or one the daily pass fetched, and how fetching went.
+type SecretRules struct {
+	// Source is "built-in" or "fetched"; Tag is its gitleaks release.
+	Source string
+	Tag    string
+	// Update is the effective secrets.rules_update: daily or off.
+	Update string
+	// Unused says why a fetched copy on disk is not in use.
+	Unused        string
+	LastAccepted  time.Time
+	LastChecked   time.Time
+	LastFailure   string
+	LastFailureAt time.Time
 }
 
 type ViewRequest struct {

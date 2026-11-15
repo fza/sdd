@@ -272,12 +272,69 @@
           "description": "available retrieval modes: text or vector,text",
           "type": "string"
         },
+        "secretRules": {
+          "additionalProperties": false,
+          "description": "the gitleaks rule file credential scans use",
+          "properties": {
+            "lastAccepted": {
+              "description": "when the fetched copy in use was accepted",
+              "type": "string"
+            },
+            "lastChecked": {
+              "description": "when the daily pass last found no newer release",
+              "type": "string"
+            },
+            "lastFailure": {
+              "additionalProperties": false,
+              "description": "the last failed or rejected fetch",
+              "properties": {
+                "at": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "at",
+                "reason"
+              ],
+              "type": [
+                "null",
+                "object"
+              ]
+            },
+            "source": {
+              "description": "built-in or fetched",
+              "type": "string"
+            },
+            "tag": {
+              "description": "the gitleaks release the rule file came from",
+              "type": "string"
+            },
+            "unused": {
+              "description": "why a fetched copy on disk is not in use",
+              "type": "string"
+            },
+            "update": {
+              "description": "secrets.rules_update: daily or off",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "tag",
+            "update"
+          ],
+          "type": "object"
+        },
         "version": {
           "type": "string"
         }
       },
       "required": [
-        "search"
+        "search",
+        "secretRules"
       ],
       "type": "object"
     }

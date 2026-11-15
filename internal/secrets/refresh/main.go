@@ -10,7 +10,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -21,14 +20,6 @@ import (
 
 	"github.com/networkteam/sdd/internal/secrets"
 )
-
-// sourceStamp is gitleaks.source.json: where the built-in rule file came from.
-type sourceStamp struct {
-	Repository string `json:"repository"`
-	File       string `json:"file"`
-	Tag        string `json:"tag"`
-	Commit     string `json:"commit"`
-}
 
 func main() {
 	dir := flag.String("dir", filepath.Join("internal", "secrets"), "folder holding gitleaks.toml and gitleaks.source.json")
@@ -49,13 +40,13 @@ func run(ctx context.Context, dir string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	var stamp sourceStamp
+	var stamp secrets.BuiltinStamp
 	err = json.Unmarshal(data, &stamp)
 	if err != nil {
 		return fmt.Errorf("decoding %s: %w", stampPath, err)
 	}
 
-	github := &gitHub{client: http.DefaultClient}
+	github := secrets.NewGitHub("", "", nil)
 	tag, err := github.LatestTag(ctx)
 	if err != nil {
 		return err

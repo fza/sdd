@@ -42,21 +42,30 @@ type CacheHandlerOptions struct {
 	Registry  *repos.Registry
 	State     StateSweeper
 	Keep      CurrentHashSource
-	Now       func() time.Time
+	// SecretRules fetches gitleaks' newest rule file in a scheduled pass
+	// while secrets.rules_update is daily; nil fetches nothing.
+	SecretRules SecretRulesUpdater
+	Now         func() time.Time
+}
+
+// SecretRulesUpdater fetches a newer credential rule file when there is one.
+type SecretRulesUpdater interface {
+	Update(ctx context.Context) error
 }
 
 // CacheHandler runs the machine-global cache pruning.
 type CacheHandler struct {
-	cacheRoot string
-	stateRoot string
-	registry  *repos.Registry
-	state     StateSweeper
-	keep      CurrentHashSource
-	now       func() time.Time
+	cacheRoot   string
+	stateRoot   string
+	registry    *repos.Registry
+	state       StateSweeper
+	keep        CurrentHashSource
+	secretRules SecretRulesUpdater
+	now         func() time.Time
 }
 
 func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
-	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, state: opts.State, keep: opts.Keep, now: opts.Now}
+	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, state: opts.State, keep: opts.Keep, secretRules: opts.SecretRules, now: opts.Now}
 	if h.now == nil {
 		h.now = time.Now
 	}
@@ -103,7 +112,7 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 	}
 	runCtx, cancel := context.WithTimeout(ctx, model.CachePruneRunLimit)
 	defer cancel()
-	counts, runErr := h.prune(runCtx, now)
+	counts, runErr := h.prune(runCtx, now, cmd.Scheduled)
 	if cmd.OnPruned != nil {
 		cmd.OnPruned(counts)
 	}
@@ -119,7 +128,7 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 	return errors.Join(runErr, recordErr)
 }
 
-func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePruneCounts, error) {
+func (h *CacheHandler) prune(ctx context.Context, now time.Time, scheduled bool) (model.CachePruneCounts, error) {
 	var counts model.CachePruneCounts
 	cfg, err := h.registry.Load()
 	if err != nil {
@@ -183,6 +192,15 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		counts.Add(swept)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("sweeping the state folder: %w", err))
+		}
+	}
+
+	if scheduled && h.secretRules != nil && model.ResolveSecretRulesUpdate(cfg.Secrets) == model.SecretRulesDaily {
+		// The updater records a failure where sdd info shows it; scans keep
+		// the copy in use, so the pass goes on.
+		err := h.secretRules.Update(ctx)
+		if err != nil {
+			log.Warn("fetching gitleaks' newest rule file", "err", err)
 		}
 	}
 
