@@ -56,7 +56,7 @@ func serveCmd() *cli.Command {
 				Sources: cli.EnvVars("SDD_SERVE_TOKEN"),
 			},
 		),
-		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
+		Action: withPendingGraphClone(withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			dir, err := resolveGraphDir(cmd)
 			if err != nil {
 				return err
@@ -102,33 +102,36 @@ func serveCmd() *cli.Command {
 				return err
 			}
 			collectSessions(ctx, application, retention)
+			return runMCPServer(ctx, cmd, application, identity)
+		})),
+	}
+}
 
-			transport := cmd.String("transport")
-			srv, err := mcpserver.New(mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll,
-				Application:   application,
-				LocalIdentity: identity,
-				LocalClient:   transport == "stdio",
-				Version:       cmd.Root().Version,
-			})
-			if err != nil {
-				return err
-			}
+func runMCPServer(ctx context.Context, cmd *cli.Command, application *sdd.Application, identity sdd.RequestIdentity) error {
+	transport := cmd.String("transport")
+	srv, err := mcpserver.New(mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll,
+		Application:   application,
+		LocalIdentity: identity,
+		LocalClient:   transport == "stdio",
+		Version:       cmd.Root().Version,
+	})
+	if err != nil {
+		return err
+	}
 
-			switch transport {
-			case "stdio":
-				return srv.Run(ctx, commandTransport(cmd.Reader, cmd.Writer))
-			case "http":
-				token := cmd.String("auth-token")
-				if token == "" {
-					return fmt.Errorf("transport=http requires --auth-token (or SDD_SERVE_TOKEN) — the write path must not be open to anyone who can reach the address")
-				}
-				addr := cmd.String("addr")
-				fmt.Fprintf(cmd.ErrWriter, "sdd serve: listening on http://%s (bearer token required)\n", addr)
-				return runLocalHTTP(ctx, addr, token, srv)
-			default:
-				return fmt.Errorf("invalid transport %q: use stdio or http", cmd.String("transport"))
-			}
-		}),
+	switch transport {
+	case "stdio":
+		return srv.Run(ctx, commandTransport(cmd.Reader, cmd.Writer))
+	case "http":
+		token := cmd.String("auth-token")
+		if token == "" {
+			return fmt.Errorf("transport=http requires --auth-token (or SDD_SERVE_TOKEN) — the write path must not be open to anyone who can reach the address")
+		}
+		addr := cmd.String("addr")
+		fmt.Fprintf(cmd.ErrWriter, "sdd serve: listening on http://%s (bearer token required)\n", addr)
+		return runLocalHTTP(ctx, addr, token, srv)
+	default:
+		return fmt.Errorf("invalid transport %q: use stdio or http", cmd.String("transport"))
 	}
 }
 

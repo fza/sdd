@@ -1623,29 +1623,12 @@ func resolveSDDDir() (string, error) {
 }
 
 func resolveProject() (meta.Project, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return meta.Project{}, fmt.Errorf("getting working directory: %w", err)
-	}
-	workRoot := meta.DiscoverRoot(cwd)
-	if workRoot == "" {
-		return meta.Project{}, errNoProject
-	}
-	locations, err := repos.DefaultLocations()
-	if err != nil {
-		return meta.Project{}, err
-	}
-	gate, err := commandGate()
-	if err != nil {
-		return meta.Project{}, err
-	}
-	clones := repos.NewGraphClones(locations, git.GraphClones{}, gate)
-	project, err := meta.ResolveProject(workRoot, clones.Dir)
+	project, clones, err := discoverProject()
 	if err != nil {
 		return meta.Project{}, err
 	}
 	if project.GraphRepo != "" {
-		err = ensureGraphClone(clones, project)
+		err = ensureGraphClone(context.Background(), clones, project)
 		if err != nil {
 			return meta.Project{}, err
 		}
@@ -1657,6 +1640,33 @@ func resolveProject() (meta.Project, error) {
 	return project, nil
 }
 
+// discoverProject finds the project governing the working directory without
+// making its graph clone.
+func discoverProject() (meta.Project, *repos.GraphClones, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return meta.Project{}, nil, fmt.Errorf("getting working directory: %w", err)
+	}
+	workRoot := meta.DiscoverRoot(cwd)
+	if workRoot == "" {
+		return meta.Project{}, nil, errNoProject
+	}
+	locations, err := repos.DefaultLocations()
+	if err != nil {
+		return meta.Project{}, nil, err
+	}
+	gate, err := commandGate()
+	if err != nil {
+		return meta.Project{}, nil, err
+	}
+	clones := repos.NewGraphClones(locations, git.GraphClones{}, gate)
+	project, err := meta.ResolveProject(workRoot, clones.Dir)
+	if err != nil {
+		return meta.Project{}, nil, err
+	}
+	return project, clones, nil
+}
+
 // keptGraphClones holds the clones this process already made ready: every
 // command resolves its project several times, and one upkeep per process is
 // what "before every operation" asks of a command.
@@ -1664,13 +1674,13 @@ var keptGraphClones sync.Map
 
 // ensureGraphClone clones the graph repository project names when this
 // machine holds no clone yet and keeps it otherwise (20261106-202055-d-tac-eyl).
-func ensureGraphClone(clones *repos.GraphClones, project meta.Project) error {
+func ensureGraphClone(ctx context.Context, clones *repos.GraphClones, project meta.Project) error {
 	_, kept := keptGraphClones.Load(project.Root)
 	if kept {
 		return nil
 	}
 	h := handlers.New(handlers.Options{GraphClones: clones})
-	err := h.EnsureGraphClone(context.Background(), &command.EnsureGraphCloneCmd{RepoID: project.GraphRepo, CodeOrigin: git.RemoteURL(project.WorkRoot)})
+	err := h.EnsureGraphClone(ctx, &command.EnsureGraphCloneCmd{RepoID: project.GraphRepo, CodeOrigin: git.RemoteURL(project.WorkRoot)})
 	if err != nil {
 		return fmt.Errorf("graph_repo %s: %w", project.GraphRepo, err)
 	}
