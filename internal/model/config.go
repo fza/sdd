@@ -268,7 +268,7 @@ type LLMConfig struct {
 	// Provider selects the runner implementation: "claude-cli" (default, uses
 	// the logged-in Claude Code session) or a gollm-supported provider name
 	// such as "anthropic", "openai", "ollama".
-	Provider string `yaml:"provider,omitempty"`
+	Provider LLMProvider `yaml:"provider,omitempty"`
 	// Model is the provider-specific model identifier.
 	Model string `yaml:"model,omitempty"`
 	// Timeout is a Go duration string (e.g. "2m") applied per LLM call.
@@ -724,4 +724,11 @@ func yamlScalar(s string) string {
 		return strconv.Quote(s)
 	}
 	return strings.TrimSuffix(string(out), "\n")
+}
+
+// LLMProvider names the runner implementation.
+type LLMProvider string
+
+func (LLMProvider) AllowedValues() []string {
+	return []string{"claude-cli", "anthropic", "openai", "ollama"}
 }

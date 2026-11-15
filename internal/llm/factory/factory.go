@@ -93,7 +93,7 @@ func effectiveRPS(cfg model.LLMConfig) float64 {
 // Haiku 200 RPM. OpenAI tier 1 varies per model; cheap mini/nano families
 // get higher throughput than frontier models. Users on higher tiers
 // override via the llm.rate_limit_rps config setting.
-func providerDefaultRPS(provider, modelName string) float64 {
+func providerDefaultRPS(provider model.LLMProvider, modelName string) float64 {
 	name := strings.ToLower(modelName)
 	switch provider {
 	case "anthropic":
@@ -125,11 +125,11 @@ func buildProvider(cfg model.LLMConfig) (llm.Runner, error) {
 	case "anthropic", "openai", "ollama":
 		return gollmrunner.NewRunner(cfg)
 	default:
-		return nil, fmt.Errorf("unknown llm provider %q (supported: claude-cli, anthropic, openai, ollama)", cfg.Provider)
+		return nil, fmt.Errorf("unknown llm provider %q (supported: %s)", cfg.Provider, strings.Join(cfg.Provider.AllowedValues(), ", "))
 	}
 }
 
-func isRemote(provider string) bool {
+func isRemote(provider model.LLMProvider) bool {
 	switch provider {
 	case "anthropic", "openai":
 		return true

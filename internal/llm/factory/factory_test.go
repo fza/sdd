@@ -48,7 +48,7 @@ func TestNew_InvalidTimeout(t *testing.T) {
 func TestNew_RemoteProviderMissingAPIKey(t *testing.T) {
 	for _, provider := range []string{"anthropic", "openai"} {
 		t.Run(provider, func(t *testing.T) {
-			_, err := New(model.LLMConfig{Provider: provider, Model: "m"})
+			_, err := New(model.LLMConfig{Provider: model.LLMProvider(provider), Model: "m"})
 			if err == nil {
 				t.Fatalf("expected error when api key missing for %s", provider)
 			}
@@ -116,7 +116,7 @@ func TestProviderDefaultRPS(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		got := providerDefaultRPS(c.provider, c.model)
+		got := providerDefaultRPS(model.LLMProvider(c.provider), c.model)
 		if got != c.want {
 			t.Errorf("providerDefaultRPS(%q, %q) = %v; want %v", c.provider, c.model, got, c.want)
 		}

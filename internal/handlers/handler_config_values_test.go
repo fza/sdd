@@ -61,6 +61,7 @@ func TestConfigSetRefusesAValueOutsideTheAllowedSet(t *testing.T) {
 		{"global", "embedding.provider", "voyage", "openai or ollama", "openai"},
 		{"local", "embedding.provider", "voyage", "openai or ollama", "ollama"},
 		{"local", "skill_scope", "machine", "user or project", "project"},
+		{"local", "llm.provider", "voyage", "claude-cli, anthropic, openai or ollama", "ollama"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.target+" "+tc.key, func(t *testing.T) {

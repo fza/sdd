@@ -55,7 +55,7 @@ func NewRunner(cfg model.LLMConfig) (*Runner, error) {
 	}
 
 	opts := []upstream.ConfigOption{
-		upstream.SetProvider(cfg.Provider),
+		upstream.SetProvider(string(cfg.Provider)),
 		upstream.SetModel(cfg.Model),
 		upstream.SetMaxRetries(maxAttempts - 1),
 		upstream.SetRetryDelay(baseDelay),
@@ -68,8 +68,8 @@ func NewRunner(cfg model.LLMConfig) (*Runner, error) {
 	}
 
 	// API key is required for remote providers.
-	if needsAPIKey(cfg.Provider) {
-		key := cfg.APIKeys[cfg.Provider]
+	if needsAPIKey(string(cfg.Provider)) {
+		key := cfg.APIKeys[string(cfg.Provider)]
 		if key == "" {
 			return nil, fmt.Errorf("gollm: api key missing for provider %q — run `sdd config set llm.api_keys.%s <key>`", cfg.Provider, cfg.Provider)
 		}
@@ -136,7 +136,7 @@ func NewRunner(cfg model.LLMConfig) (*Runner, error) {
 
 	return &Runner{
 		client:   client,
-		provider: cfg.Provider,
+		provider: string(cfg.Provider),
 		model:    cfg.Model,
 		variant:  canonicalVariant(cfg.Params),
 		useCache: useCache,
