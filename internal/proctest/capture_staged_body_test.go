@@ -290,13 +290,19 @@ func TestCapture_RestagedBodyReopensConfirmedPlayback(t *testing.T) {
 }
 
 func TestCapture_HeaderDisagreeingAtTheConfirmIsRefused(t *testing.T) {
+	const ambiguous = "reads both as a header and as markdown"
 	tests := []struct {
 		name    string
 		file    string
 		wantKey string
 	}{
 		{name: "a plain header", file: "---\nconfidence: high\n---\nA tactical gap with a header.\n", wantKey: `"confidence"`},
-		{name: "a header holding comment lines", file: "---\n# header\nentryKind: gap\nlayer: ops\n---\nA tactical gap with a commented header.\n", wantKey: `"layer"`},
+		{name: "a comment line before the keys", file: "---\n# header\nentryKind: gap\nlayer: ops\n---\nA tactical gap.\n", wantKey: ambiguous},
+		{name: "a comment line before a blank line", file: "---\n# c\n\nlayer: tac\n---\nA tactical gap.\n", wantKey: ambiguous},
+		{name: "a comment line before an indented item", file: "---\nrefs:\n# c\n  - a\n---\nA tactical gap.\n", wantKey: ambiguous},
+		{name: "a comment line before an item at the margin", file: "---\nrefs:\n# c\n- a\n---\nA tactical gap.\n", wantKey: ambiguous},
+		{name: "a comment line before a quoted key", file: "---\n# c\n\"layer\": tac\n---\nA tactical gap.\n", wantKey: ambiguous},
+		{name: "a heading before a line shaped like a key", file: "---\n# Context\nlayer: the tactical layer is where this lives\n---\nRest\n", wantKey: ambiguous},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -308,7 +314,7 @@ func TestCapture_HeaderDisagreeingAtTheConfirmIsRefused(t *testing.T) {
 
 			_, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "capture it")
 			if err == nil || !strings.Contains(err.Error(), tt.wantKey) {
-				t.Fatalf("a confirm while header and fields disagree should be refused naming the key, got %v", err)
+				t.Fatalf("a confirm over a header that disagrees or cannot be checked should be refused naming why, got %v", err)
 			}
 			position, err := session.WF.ServeAll(t.Context(), session.World.Identity)
 			if err != nil {

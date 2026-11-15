@@ -82,7 +82,7 @@ func (w *WorkflowSession) stagedBodyFields(ctx context.Context, identity Request
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", fieldBodyHandle, err)
 	}
-	_, body := model.SplitStagedBody(string(content))
+	_, body, _ := model.SplitStagedBody(string(content))
 	return map[string]any{fieldBodyHandle: handle, fieldBody: body, fieldBodyHash: stagedSHA256(content)}, nil
 }
 
@@ -102,7 +102,10 @@ func (w *WorkflowSession) checkStagedHeaderAtConfirm(ctx context.Context, identi
 	if err != nil {
 		return fmt.Errorf("%s: %w", fieldBodyHandle, err)
 	}
-	header, _ := model.SplitStagedBody(string(content))
+	header, _, ambiguous := model.SplitStagedBody(string(content))
+	if ambiguous {
+		return fmt.Errorf("the staged file %q opens with a --- block that reads both as a header and as markdown, as a line in it starts with \"#\": drop those lines to keep it a header, or start the body without a --- block; then re-stage the file and confirm", handle)
+	}
 	return stagedHeaderAgrees(header, handle, inst, nil)
 }
 
@@ -202,7 +205,7 @@ func (w *WorkflowSession) checkRestagedBody(handle string) error {
 // capture taking its body from the handle, so a playback confirmed before
 // the staging no longer holds.
 func (w *WorkflowSession) syncRestagedBody(handle string, content []byte) ([]string, error) {
-	_, body := model.SplitStagedBody(string(content))
+	_, body, _ := model.SplitStagedBody(string(content))
 	hash := stagedSHA256(content)
 	var synced []string
 	for _, inst := range w.boundCaptures(handle) {

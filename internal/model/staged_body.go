@@ -1,7 +1,6 @@
 package model
 
 import (
-	"regexp"
 	"slices"
 	"strings"
 
@@ -14,34 +13,37 @@ var StagedHeaderKeys = []string{"entryKind", "layer", "confidence", "intent", "r
 
 // SplitStagedBody splits a staged body file into its header and its body. A
 // file whose first line is `---` opens with a header block when a second such
-// line closes a YAML mapping holding one of StagedHeaderKeys and no markdown
-// heading (see holdsHeading); the body is then everything after the second
-// line. Any other file is all body, so a markdown body opening with a `---`
-// rule keeps its first section. A leading byte order mark never reaches the
-// body. header is nil when there is no block.
-func SplitStagedBody(content string) (header map[string]any, body string) {
+// line closes a YAML mapping holding one of StagedHeaderKeys; the body is then
+// everything after the second line. Any other file is all body, so a markdown
+// body opening with a `---` rule keeps its first section. A leading byte order
+// mark never reaches the body. header is nil when there is no block.
+//
+// A header block holding a line that opens with `#` at the margin is
+// ambiguous: a YAML comment, but also a markdown heading. Such a file is all
+// body and ambiguous is true, for the confirm to refuse.
+func SplitStagedBody(content string) (header map[string]any, body string, ambiguous bool) {
 	content = strings.TrimPrefix(content, "\uFEFF")
 	lines := strings.SplitAfter(content, "\n")
 	if !isHeaderDelimiter(lines[0]) {
-		return nil, content
+		return nil, content, false
 	}
 	for i := 1; i < len(lines); i++ {
 		if !isHeaderDelimiter(lines[i]) {
 			continue
 		}
-		if holdsHeading(lines[1:i]) {
-			return nil, content
-		}
 		var parsed map[string]any
 		if err := yaml.Unmarshal([]byte(strings.Join(lines[1:i], "")), &parsed); err != nil {
-			return nil, content
+			return nil, content, false
 		}
 		if !slices.ContainsFunc(StagedHeaderKeys, func(key string) bool { _, ok := parsed[key]; return ok }) {
-			return nil, content
+			return nil, content, false
 		}
-		return parsed, strings.Join(lines[i+1:], "")
+		if slices.ContainsFunc(lines[1:i], func(line string) bool { return strings.HasPrefix(line, "#") }) {
+			return nil, content, true
+		}
+		return parsed, strings.Join(lines[i+1:], ""), false
 	}
-	return nil, content
+	return nil, content, false
 }
 
 // StagedHeaderMismatch names the first of StagedHeaderKeys whose header value
@@ -151,28 +153,6 @@ func stagedRefForm(item any) (string, bool) {
 	}
 	return strings.Join(parts[:], "\x00"), true
 }
-
-// holdsHeading reports whether a block reads as markdown rather than YAML: a
-// line opening with `#` at the margin is a YAML comment but also a heading,
-// and it is a heading when a blank line or prose follows it. An indented `#`
-// line belongs to the value above it.
-func holdsHeading(block []string) bool {
-	for i, line := range block {
-		if !strings.HasPrefix(line, "#") {
-			continue
-		}
-		if i+1 == len(block) {
-			return false
-		}
-		next := strings.TrimRight(block[i+1], "\r\n")
-		if strings.TrimSpace(next) == "" || (!strings.HasPrefix(next, "#") && !headerKeyLine.MatchString(next)) {
-			return true
-		}
-	}
-	return false
-}
-
-var headerKeyLine = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*:(\s|$)`)
 
 func isHeaderDelimiter(line string) bool {
 	return strings.TrimRight(line, "\r\n") == "---"

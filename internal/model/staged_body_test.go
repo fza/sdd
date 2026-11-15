@@ -24,21 +24,52 @@ func TestSplitStagedBody(t *testing.T) {
 		{name: "a block that is no mapping is body", content: "---\n- a\n---\nBody\n", wantBody: "---\n- a\n---\nBody\n"},
 		{name: "a mapping without a compared key is body", content: "---\ntitle: Draft\n---\nBody\n", wantBody: "---\ntitle: Draft\n---\nBody\n"},
 		{name: "a markdown rule opening the body keeps its first section", content: "---\nThe first section.\n\n---\nThe second section.\n", wantBody: "---\nThe first section.\n\n---\nThe second section.\n"},
-		{name: "a markdown heading in the block keeps it body", content: "---\n# Context\n\nlayer: the tactical layer is where this lives\n---\nRest\n", wantBody: "---\n# Context\n\nlayer: the tactical layer is where this lives\n---\nRest\n"},
 		{name: "a compared key beside other keys makes a header", content: "---\ntitle: Draft\nlayer: tac\n---\nBody\n", wantHeader: true, wantBody: "Body\n"},
-		{name: "a comment line before the keys makes a header", content: "---\n# header\nentryKind: gap\nlayer: tac\n---\nBody\n", wantHeader: true, wantBody: "Body\n"},
-		{name: "a comment line closing the keys makes a header", content: "---\nlayer: tac\n# trailing\n---\nBody\n", wantHeader: true, wantBody: "Body\n"},
 		{name: "a block scalar line opening with a hash makes a header", content: "---\nlayer: tac\nintent: |\n  # x\n---\nBody\n", wantHeader: true, wantBody: "Body\n"},
-		{name: "a hash line before prose keeps the block body", content: "---\n# Context\nThe gist: short\nlayer: tac\n---\nRest\n", wantBody: "---\n# Context\nThe gist: short\nlayer: tac\n---\nRest\n"},
+		{name: "a hash line in a block without a compared key is body", content: "---\n# Context\nThe gist: short\n---\nRest\n", wantBody: "---\n# Context\nThe gist: short\n---\nRest\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			header, body := model.SplitStagedBody(tt.content)
+			header, body, ambiguous := model.SplitStagedBody(tt.content)
 			if (header != nil) != tt.wantHeader {
 				t.Errorf("header presence should match the block, got %v", header)
 			}
 			if body != tt.wantBody {
 				t.Errorf("body should be the text after the block:\n%q\nwant\n%q", body, tt.wantBody)
+			}
+			if ambiguous {
+				t.Error("a block reading one way only should not be ambiguous")
+			}
+		})
+	}
+}
+
+// A block holding a compared key and a hash line at the margin reads as a
+// commented header and as a markdown heading alike.
+func TestSplitStagedBodyAmbiguous(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{name: "a heading before a blank line and a key", content: "---\n# Context\n\nlayer: the tactical layer is where this lives\n---\nRest\n"},
+		{name: "a heading before a line shaped like a key", content: "---\n# Context\nlayer: the tactical layer is where this lives\n---\nRest\n"},
+		{name: "a heading before prose and a key", content: "---\n# Context\nThe gist: short\nlayer: tac\n---\nRest\n"},
+		{name: "a comment line before the keys", content: "---\n# header\nentryKind: gap\nlayer: tac\n---\nBody\n"},
+		{name: "a comment line closing the keys", content: "---\nlayer: tac\n# trailing\n---\nBody\n"},
+		{name: "a comment line before a blank line", content: "---\n# c\n\nlayer: tac\n---\nBody\n"},
+		{name: "a comment line before an indented item", content: "---\nrefs:\n# c\n  - a\n---\nBody\n"},
+		{name: "a comment line before an item at the margin", content: "---\nrefs:\n# c\n- a\n---\nBody\n"},
+		{name: "a comment line before a quoted key", content: "---\n# c\n\"layer\": tac\n---\nBody\n"},
+		{name: "CRLF lines", content: "---\r\n# c\r\nlayer: tac\r\n---\r\nBody\r\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			header, body, ambiguous := model.SplitStagedBody(tt.content)
+			if !ambiguous {
+				t.Fatal("the block should be ambiguous")
+			}
+			if header != nil || body != tt.content {
+				t.Errorf("an ambiguous block should leave the whole file body, got header %v, body %q", header, body)
 			}
 		})
 	}
@@ -79,7 +110,7 @@ func TestStagedHeaderMismatch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			header, _ := model.SplitStagedBody("---\n" + tt.header + "---\nBody\n")
+			header, _, _ := model.SplitStagedBody("---\n" + tt.header + "---\nBody\n")
 			if header == nil {
 				t.Fatal("the test header should parse")
 			}
