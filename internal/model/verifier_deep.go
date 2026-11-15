@@ -1,6 +1,7 @@
 package model
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,13 +71,47 @@ type DeepSource struct {
 	Kind  string `json:"kind"`
 	Ref   string `json:"ref"`
 	Quote string `json:"quote,omitempty"`
+	// formless marks a string an earlier build stored that fits no kind's
+	// form; that build checked none, so it is carried as a file unchecked.
+	formless bool
 }
 
 var deepCommitRef = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
+// UnmarshalJSON also reads the plain string an earlier build stored as a
+// source: the first of url, entry, commit and file whose form it fits.
+func (s *DeepSource) UnmarshalJSON(data []byte) error {
+	if bytes.HasPrefix(bytes.TrimSpace(data), []byte(`"`)) {
+		var ref string
+		err := json.Unmarshal(data, &ref)
+		if err != nil {
+			return err
+		}
+		*s = deepSourceOf(ref)
+		return nil
+	}
+	type object DeepSource
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode((*object)(s))
+}
+
+func deepSourceOf(ref string) DeepSource {
+	for _, kind := range []string{DeepSourceURL, DeepSourceEntry, DeepSourceCommit, DeepSourceFile} {
+		source := DeepSource{Kind: kind, Ref: ref}
+		if source.Validate() == nil {
+			return source
+		}
+	}
+	return DeepSource{Kind: DeepSourceFile, Ref: ref, formless: true}
+}
+
 // Validate checks the source's form: a known kind, a path inside the
 // checkout, a commit hash, an http or https URL, or a full entry ID.
 func (s DeepSource) Validate() error {
+	if s.formless {
+		return nil
+	}
 	switch s.Kind {
 	case DeepSourceFile:
 		if !fs.ValidPath(s.Ref) || s.Ref == "." {

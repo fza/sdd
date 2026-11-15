@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"strconv"
@@ -170,6 +171,46 @@ func TestCheckDeepFindings_ALookupFailureIsAnError(t *testing.T) {
 	_, err := model.CheckDeepFindings(deepBase, []model.DeepFinding{evidence(model.DeepSource{Kind: "commit", Ref: "4aeb2c4e"})}, failing)
 	if err == nil || !strings.Contains(err.Error(), "git is gone") {
 		t.Fatalf("a lookup failure should surface as an error, got %v", err)
+	}
+}
+
+// An earlier build stored each source as a plain string; such a finding
+// decodes with the kind the string's form denotes and encodes as an object.
+func TestDeepFinding_DecodesSourcesStoredAsStrings(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		source   string
+		wantKind string
+	}{
+		{"file path", "internal/foo.go", model.DeepSourceFile},
+		{"entry ID", "20261109-004729-d-cpt-xs5", model.DeepSourceEntry},
+		{"short commit hash", "4aeb2c4e", model.DeepSourceCommit},
+		{"full commit hash", "4aeb2c4e4aeb2c4e4aeb2c4e4aeb2c4e4aeb2c4e", model.DeepSourceCommit},
+		{"URL", "https://example.com/spec", model.DeepSourceURL},
+		{"string of no kind's form", "/abs/path/foo.go", model.DeepSourceFile},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stored := `{"verdict":"v","axis":"evidence","severity":"medium","sources":[` + strconv.Quote(tc.source) + `]}`
+			var finding model.DeepFinding
+			err := json.Unmarshal([]byte(stored), &finding)
+			if err != nil {
+				t.Fatalf("a finding with a string source should decode: %v", err)
+			}
+			if len(finding.Sources) != 1 || finding.Sources[0].Kind != tc.wantKind || finding.Sources[0].Ref != tc.source {
+				t.Fatalf("the string should become a source of the kind it denotes, keeping it as ref, got %+v", finding.Sources)
+			}
+			err = finding.Validate()
+			if err != nil {
+				t.Fatalf("a finding an earlier build accepted should validate: %v", err)
+			}
+			encoded, err := json.Marshal(finding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(encoded), `"sources":[{"kind":`) {
+				t.Fatalf("the source should encode as an object, got %s", encoded)
+			}
+		})
 	}
 }
 
