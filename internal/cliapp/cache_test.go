@@ -1,7 +1,6 @@
 package cliapp_test
 
 import (
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/cacheprune"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/repos"
 )
 
 func TestCachePruneCommandReportsItsFailureAsItsError(t *testing.T) {
@@ -51,7 +51,13 @@ func TestCachePruneCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.write(t, "config/sdd/config.yaml", "participant: Global Author\nrepos:\n  - repo_id: github.com/acme/kept\n    clone_url: git@github.com:acme/kept.git\n")
-	f.write(t, "cache/sdd/.disconnected/"+url.PathEscape("github.com/acme/dropped"), "")
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
+		t.Fatal(err)
+	}
 	r := f.run(t, "cache", "prune")
 	if r.err != nil {
 		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)

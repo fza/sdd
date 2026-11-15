@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -44,9 +45,10 @@ func (r *Registry) LockClones(ctx context.Context) (func() error, error) {
 // RetireUnconnectedClone renames the clone at path out of the cache when the
 // user-global config, read again under the clone lock, still names no repo
 // for it and its disconnection record still stands, and returns where it went;
-// "" when the repo is connected again. The caller deletes the returned
-// directory, outside the lock. It returns ErrClonesBusy when another process
-// holds the lock.
+// "" when the repo is connected again. A clone an earlier run retired is
+// returned as it is. The caller deletes the returned directory, outside the
+// lock. It returns ErrClonesBusy when another process holds the lock, and
+// ErrClonePassRefused on a repos list UnconnectedClones would refuse.
 func (r *Registry) RetireUnconnectedClone(path string) (retired string, err error) {
 	lock, err := r.clonesLock()
 	if err != nil {
@@ -60,12 +62,12 @@ func (r *Registry) RetireUnconnectedClone(path string) (retired string, err erro
 		return "", ErrClonesBusy
 	}
 	defer func() { err = errors.Join(err, lock.Unlock()) }()
+	if filepath.Dir(path) == r.retiredClonesDir() {
+		return path, nil
+	}
 	cfg, err := r.Load()
 	if err != nil {
 		return "", err
-	}
-	if isRetiredClone(path) {
-		return path, nil
 	}
 	repoID, err := r.cloneRepoID(path)
 	if err != nil {
@@ -78,7 +80,15 @@ func (r *Registry) RetireUnconnectedClone(path string) (retired string, err erro
 	if err != nil || !dropped {
 		return "", err
 	}
-	retired = filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".pruned")
+	err = r.trustRepoList(cfg, 1)
+	if err != nil {
+		return "", err
+	}
+	err = os.MkdirAll(r.retiredClonesDir(), 0o755)
+	if err != nil {
+		return "", fmt.Errorf("creating %s: %w", r.retiredClonesDir(), err)
+	}
+	retired = filepath.Join(r.retiredClonesDir(), url.PathEscape(string(repoID)))
 	if err := os.RemoveAll(retired); err != nil {
 		return "", fmt.Errorf("removing %s: %w", retired, err)
 	}

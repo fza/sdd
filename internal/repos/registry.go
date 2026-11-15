@@ -93,14 +93,14 @@ var ErrClonePassRefused = errors.New("refusing to remove clones")
 // UnconnectedClones lists the clones a cache pruning run may remove: the
 // clones of repositories `sdd repo remove` dropped (see Disconnected) that the
 // user-global repos list no longer names, and the clones an earlier run
-// retired. A repo missing from the list proves nothing about a clone, as a
-// process may read another machine's or another user's config root, so a
-// clone without a disconnection record stays. A clone is a directory holding
-// .git below a top-level directory named like a host: repo IDs open with a
-// dotted hostname, which keeps the index and graph caches beside them out of
-// the walk. It returns ErrClonePassRefused, listing nothing, when the
-// locations come from mixed XDG sources, or the config file is missing or
-// lists no repos, while a clone would go.
+// retired but did not delete. A repo missing from the list proves nothing
+// about a clone, as a process may read another machine's or another user's
+// config root, so a clone without a disconnection record stays. A clone is a
+// directory holding .git below a top-level directory named like a host: repo
+// IDs open with a dotted hostname, which keeps the index and graph caches
+// beside them out of the walk. It returns ErrClonePassRefused, listing
+// nothing, when the locations come from mixed XDG sources, or the config file
+// is missing or lists no repos, while a recorded clone would go.
 func (r *Registry) UnconnectedClones() ([]string, error) {
 	cfg, err := r.Load()
 	if err != nil {
@@ -113,7 +113,10 @@ func (r *Registry) UnconnectedClones() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing clone caches: %w", err)
 	}
-	var stale []string
+	stale, err := r.retiredClones()
+	if err != nil {
+		return nil, err
+	}
 	judged := 0
 	for _, host := range hosts {
 		if !host.IsDir() || strings.HasPrefix(host.Name(), ".") || !strings.Contains(host.Name(), ".") {
@@ -126,10 +129,6 @@ func (r *Registry) UnconnectedClones() ([]string, error) {
 			}
 			if _, statErr := os.Stat(filepath.Join(path, ".git")); statErr != nil {
 				return nil
-			}
-			if isRetiredClone(path) {
-				stale = append(stale, path)
-				return filepath.SkipDir
 			}
 			repoID, err := r.cloneRepoID(path)
 			if err != nil {
@@ -187,7 +186,28 @@ func (r *Registry) cloneRepoID(path string) (model.RepoID, error) {
 	return model.RepoID(filepath.ToSlash(rel)), nil
 }
 
-func isRetiredClone(dir string) bool {
-	base := filepath.Base(dir)
-	return strings.HasPrefix(base, ".") && strings.HasSuffix(base, ".pruned")
+// retiredClonesDirName holds the clones RetireUnconnectedClone moved out of
+// the cache until they are deleted. '~' is no repo ID character, so no clone
+// can live under it.
+const retiredClonesDirName = ".clones~retired"
+
+func (r *Registry) retiredClonesDir() string {
+	return filepath.Join(r.loc.CacheRoot, retiredClonesDirName)
+}
+
+func (r *Registry) retiredClones() ([]string, error) {
+	entries, err := os.ReadDir(r.retiredClonesDir())
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("listing retired clones: %w", err)
+	}
+	var retired []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			retired = append(retired, filepath.Join(r.retiredClonesDir(), entry.Name()))
+		}
+	}
+	return retired, nil
 }
