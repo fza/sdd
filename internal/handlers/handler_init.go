@@ -253,7 +253,7 @@ func (h *Handler) initRepo(ctx context.Context, cmd *command.InitCmd, changed *b
 	// gitignore entry is not emitted anymore; existing entries are harmless
 	// and left alone.
 	graphRuntimeEntry := filepath.ToSlash(filepath.Join(graphDir, ".sdd-runtime")) + "/"
-	gitignoreEntries := []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/", graphRuntimeEntry}
+	gitignoreEntries := []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/", ".sdd/hooks/local/", graphRuntimeEntry}
 	gitignoreAdded, err := ensureGitignoreEntries(gitignorePath, gitignoreEntries)
 	if err != nil {
 		log.Warn("could not update .gitignore", "path", gitignorePath, "err", err)
