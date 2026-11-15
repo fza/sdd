@@ -3,6 +3,7 @@ package llmops_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -197,5 +198,34 @@ func TestPreflightLight_DropsBasisIDsThePromptNeverCarried(t *testing.T) {
 	}
 	if got := result.Findings[0].Basis; len(got) != 1 || got[0] != served.ID {
 		t.Fatalf("only IDs the prompt carried should stay in the basis, got %v", got)
+	}
+}
+
+// The light calls share the reformat's analysis flag: a strict provider can
+// only report an analysis the extraction schema lets it name.
+func TestPreflightLight_ReformatFlagsWhetherTheFirstAnswerHoldsAnalysis(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		first      string
+		reformat   string
+		noAnalysis bool
+	}{
+		{"refusal", "I'm sorry, but I can't help with reviewing this entry.", `{"analysis":false,"findings":[]}`, true},
+		{"analysis with nothing to report", "Nothing in the reading conflicts with the draft.", `{"analysis":true,"findings":[]}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &scriptedRunner{replies: []string{tc.first, tc.reformat}}
+
+			_, err := llmops.PreflightLight(t.Context(), runner, lightDraft, lightGraph(t), "", llmops.LightReading{}, 1_000_000)
+			if errors.Is(err, llmops.ErrNoAnalysis) != tc.noAnalysis {
+				t.Fatalf("the reformat's analysis flag should decide the light call, got %v", err)
+			}
+			if !tc.noAnalysis && err != nil {
+				t.Fatalf("an analysis with nothing to report should pass, got %v", err)
+			}
+			if _, flagged := schemaProperties(t, runner.requests[1].ResponseSchema)["analysis"]; !flagged {
+				t.Error("the light extraction schema must let the reformat say the answer holds no analysis")
+			}
+		})
 	}
 }
