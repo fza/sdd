@@ -55,16 +55,9 @@ var loginKeptEnvVars = []string{
 // launch, and reach its messaging inbox; the call belongs to sdd, so every mode
 // drops them.
 var parentSessionEnvVars = []string{
-	"CLAUDECODE",
-	"CLAUDE_CODE_SESSION_ID",
-	"CLAUDE_CODE_CHILD_SESSION",
-	"CLAUDE_CODE_SESSION_ATTENDED",
-	"CLAUDE_PID",
-	"CLAUDE_EFFORT",
-	"CLAUDE_CODE_MESSAGING_SOCKET",
-	"CLAUDE_CODE_MESSAGING_TOKEN",
-	"CLAUDE_CODE_ENTRYPOINT",
-	"CLAUDE_CODE_EXECPATH",
+	"CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ATTENDED",
+	"CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN",
+	"CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH",
 }
 
 // Run executes claude -p --output-format json and parses the JSON response.
