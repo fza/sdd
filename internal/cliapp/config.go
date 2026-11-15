@@ -105,7 +105,17 @@ func effectiveConfigResult(key string) (*query.EffectiveConfigResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return f.EffectiveConfig(query.EffectiveConfigQuery{SDDDir: sddDir, Key: key})
+	q := query.EffectiveConfigQuery{SDDDir: sddDir, Key: key}
+	if sddDir != "" {
+		project, err := resolveProject()
+		if err != nil {
+			return nil, err
+		}
+		if project.Pointed() {
+			q.WorkSDDDir = meta.SDDDir(project.WorkRoot)
+		}
+	}
+	return f.EffectiveConfig(q)
 }
 
 func runEffectiveConfig(cmd *cli.Command, key string) error {

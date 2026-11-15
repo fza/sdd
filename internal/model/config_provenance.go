@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -15,6 +16,10 @@ const (
 	ConfigSourceGlobal  ConfigValueSource = "global"
 	ConfigSourceProject ConfigValueSource = "project"
 	ConfigSourceLocal   ConfigValueSource = "local"
+	// ConfigSourceWork and ConfigSourceWorkLocal are the work repository's
+	// layers in a project_dir layout, which contribute only hooks.
+	ConfigSourceWork      ConfigValueSource = "work"
+	ConfigSourceWorkLocal ConfigValueSource = "work local"
 )
 
 // ConfigValue is one effective config entry: a dotted key, its rendered
@@ -46,6 +51,19 @@ var configDefaults = map[string]string{
 // schema declaration order; map-valued keys (api_keys) expand to one entry
 // per map key with per-key provenance. Nil layers are treated as empty.
 func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []ConfigValue {
+	return EffectiveConfigValuesWithWork(global, WorkConfigLayers{}, project, local)
+}
+
+// WorkConfigLayers are the work repository's config layers in a project_dir
+// layout; nil layers are absent.
+type WorkConfigLayers struct {
+	Committed, Local *PerRepoConfig
+}
+
+// EffectiveConfigValuesWithWork is EffectiveConfigValues with a work
+// repository's layers, whose hooks list between the global and the
+// project's.
+func EffectiveConfigValuesWithWork(global BaseConfig, work WorkConfigLayers, project, local *PerRepoConfig) []ConfigValue {
 	layers := []struct {
 		cfg    *PerRepoConfig
 		source ConfigValueSource
@@ -60,6 +78,8 @@ func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []C
 		switch leaf.kind {
 		case leafMap:
 			out = append(out, effectiveMapEntries(leaf, layers)...)
+		case leafConcat:
+			out = append(out, concatenatedEntries(leaf, concatLayers(layers, work))...)
 		default:
 			set := false
 			var val ConfigValue
@@ -94,6 +114,9 @@ const (
 	leafScalar configLeafKind = iota
 	leafSlice
 	leafMap
+	// leafConcat is a slice whose layers MergeConfig concatenates, marked
+	// `sdd:"concat"` on the field.
+	leafConcat
 )
 
 type configLeaf struct {
@@ -125,7 +148,9 @@ func collectConfigLeaves(t reflect.Type, prefix []string, index []int) []configL
 		case f.Type.Kind() == reflect.Struct:
 			leaves = append(leaves, collectConfigLeaves(f.Type, append(append([]string{}, prefix...), tag), idx)...)
 		case f.Type.Kind() == reflect.Map:
-			leaves = append(leaves, configLeaf{path: joinPath(prefix, tag), index: idx, kind: leafMap, secret: isSecretField(f)})
+			leaves = append(leaves, configLeaf{path: joinPath(prefix, tag), index: idx, kind: leafMap, secret: hasSDDMarker(f, "secret")})
+		case f.Type.Kind() == reflect.Slice && hasSDDMarker(f, "concat"):
+			leaves = append(leaves, configLeaf{path: joinPath(prefix, tag), index: idx, kind: leafConcat})
 		case f.Type.Kind() == reflect.Slice:
 			leaves = append(leaves, configLeaf{path: joinPath(prefix, tag), index: idx, kind: leafSlice})
 		default:
@@ -135,14 +160,50 @@ func collectConfigLeaves(t reflect.Type, prefix []string, index []int) []configL
 	return leaves
 }
 
-// isSecretField reports whether a field carries the `sdd:"secret"` marker.
-func isSecretField(f reflect.StructField) bool {
+// hasSDDMarker reports whether a field's `sdd` tag carries marker.
+func hasSDDMarker(f reflect.StructField, marker string) bool {
 	for _, part := range strings.Split(f.Tag.Get("sdd"), ",") {
-		if strings.TrimSpace(part) == "secret" {
+		if strings.TrimSpace(part) == marker {
 			return true
 		}
 	}
 	return false
+}
+
+// concatenatedEntries lists a concatenated slice's items as MergeConfig
+// joins them, global first, each item keyed by its position and labelled with
+// the layer that sets it. A struct item lists one entry per key it sets, by
+// the yaml keys a person writes.
+func concatenatedEntries(leaf configLeaf, layers []struct {
+	cfg    *PerRepoConfig
+	source ConfigValueSource
+}) []ConfigValue {
+	var out []ConfigValue
+	position := 0
+	for i := len(layers) - 1; i >= 0; i-- {
+		layer := layers[i]
+		if layer.cfg == nil {
+			continue
+		}
+		items := leafValue(reflect.ValueOf(*layer.cfg), leaf.index)
+		for j := 0; j < items.Len(); j++ {
+			key := fmt.Sprintf("%s.%d", leaf.path, position)
+			position++
+			item := items.Index(j)
+			if item.Kind() != reflect.Struct {
+				out = append(out, ConfigValue{Key: key, Value: renderConfigValue(item), Source: layer.source})
+				continue
+			}
+			for f := 0; f < item.NumField(); f++ {
+				tag := strings.Split(item.Type().Field(f).Tag.Get("yaml"), ",")
+				if tag[0] == "" || tag[0] == "-" || (item.Field(f).IsZero() && slices.Contains(tag[1:], "omitempty")) {
+					continue
+				}
+				out = append(out, ConfigValue{Key: key + "." + tag[0], Value: renderConfigValue(item.Field(f)), Source: layer.source})
+			}
+		}
+	}
+	return out
 }
 
 func joinPath(prefix []string, tag string) string {
@@ -229,4 +290,21 @@ func ParseConfigScalar(s string) any {
 		return f
 	}
 	return s
+}
+
+// concatLayers places the work repository's layers between the global layer
+// and the project's, keeping the local-first order of layers.
+func concatLayers(layers []struct {
+	cfg    *PerRepoConfig
+	source ConfigValueSource
+}, work WorkConfigLayers) []struct {
+	cfg    *PerRepoConfig
+	source ConfigValueSource
+} {
+	last := len(layers) - 1
+	out := append(slices.Clone(layers[:last]), []struct {
+		cfg    *PerRepoConfig
+		source ConfigValueSource
+	}{{work.Local, ConfigSourceWorkLocal}, {work.Committed, ConfigSourceWork}}...)
+	return append(out, layers[last])
 }
