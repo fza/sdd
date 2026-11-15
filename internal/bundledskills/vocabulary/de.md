@@ -31,14 +31,10 @@ Diese Referenz übersetzt SDD-Begriffe ins Deutsche, wenn das Skill die Graph-In
 
 ## Layer (Ebenen)
 
-| Englisch (kanonisch) | Deutsch        | Denkebene |
-|----------------------|----------------|-----------|
-| strategic (`stg`)    | strategisch    | Warum existiert das? In welche Richtung? |
-| conceptual (`cpt`)   | konzeptionell  | Welcher Ansatz? Kernideen und Grenzen |
-| tactical (`tac`)     | taktisch       | Wie umsetzen? Strukturen und Trade-offs |
-| operational (`ops`)  | operativ       | Umsetzung. Einzelne Implementierungsschritte |
-| process (`prc`)      | Prozess        | Wie arbeiten wir? Verträge, Review-Regeln, Release-Prozess |
-
+| Englisch (kanonisch) | Deutsch | Worum es geht |
+|----------------------|---------|---------------|
+{{ range .Layers }}| {{ .Layer }} (`{{ .Abbrev }}`) | {{ .German.Name }} | {{ .German.Definition }}, z. B. {{ .German.Example }} |
+{{ end }}
 ## Status (abgeleitet)
 
 | Englisch      | Deutsch        |

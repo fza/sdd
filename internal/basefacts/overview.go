@@ -15,7 +15,7 @@ import (
 const OverviewFactID = "20260812-180000-s-prc-typ"
 
 // overviewTemplate is the whole-entry template for the overview fact. The kind
-// lists render from the model's enumeration at named placeholders, so a new
+// lists and the layer meanings render from the model at named placeholders, so a new
 // kind appears in the served fact the moment it is declared — and fails the
 // build until its question is written.
 //
@@ -67,7 +67,7 @@ func overviewFactContent() (string, error) {
 		return "", fmt.Errorf("parsing overview fact template: %w", err)
 	}
 	var rendered strings.Builder
-	data := struct{ SignalKinds, DecisionKinds string }{signalKinds, decisionKinds}
+	data := struct{ SignalKinds, DecisionKinds, Layers string }{signalKinds, decisionKinds, model.LayerGuide()}
 	if err := tmpl.Execute(&rendered, data); err != nil {
 		return "", fmt.Errorf("rendering overview fact template: %w", err)
 	}

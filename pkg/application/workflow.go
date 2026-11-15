@@ -527,6 +527,8 @@ func (a *Application) newWorkflow(ctx context.Context, identity RequestIdentity,
 		"kindAuthoringFactIDs": basefacts.AuthoringFactIDs(),
 		"signalKinds":          joinKinds(model.SignalKindValues()),
 		"decisionKinds":        joinKinds(model.DecisionKindValues()),
+		"layerGuide":           model.LayerGuide(),
+		"layerGist":            model.LayerGist(),
 	}))
 	return w, nil
 }
