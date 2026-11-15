@@ -115,6 +115,21 @@ func ResolvedPath(path string) string {
 	}
 }
 
+// RequireProjectApart refuses a project at projectRoot that a work tree at
+// workRoot cannot point at: one sharing workRepo, the repository holding the
+// work tree, or one containing the work tree. projectRepo is the repository
+// holding the project; either repository is empty when there is none. subject
+// opens the refusal, naming where the project came from.
+func RequireProjectApart(subject, workRoot, workRepo, projectRoot, projectRepo string) error {
+	if projectRepo != "" && projectRepo == workRepo {
+		return fmt.Errorf("%s lies inside the repository at %s; the project needs a repository of its own", subject, workRepo)
+	}
+	if WithinDir(projectRoot, workRoot) {
+		return fmt.Errorf("%s contains the work repository at %s; the project needs a repository of its own beside it", subject, workRoot)
+	}
+	return nil
+}
+
 // WithinDir reports whether path is dir or lies below it, both resolved
 // through symlinks.
 func WithinDir(dir, path string) bool {

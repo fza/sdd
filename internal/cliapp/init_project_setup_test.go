@@ -256,3 +256,44 @@ func TestInitFollowsTheAdviceForARecordedPointerAtAMissingProject(t *testing.T) 
 		t.Fatalf("the work repository should capture into the new project, got %v", entries)
 	}
 }
+
+// Pointing at an existing project placed where no later command accepts it is
+// refused before init writes anything, on either side.
+func TestInitRefusesAnExistingProjectPlacedAgainstTheWorkRepository(t *testing.T) {
+	cases := []struct {
+		name       string
+		projectDir string
+		repoized   bool
+		mention    string
+	}{
+		{name: "folder containing the work repository", projectDir: "..", mention: "contains the work repository"},
+		{name: "repository containing the work repository", projectDir: "..", repoized: true, mention: "contains the work repository"},
+		{name: "folder inside the work repository", projectDir: "sub", mention: "lies inside the repository"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work, _ := workRepository(t)
+			projectRoot := filepath.Join(work, tc.projectDir)
+			writeFile(t, filepath.Join(projectRoot, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/placed\ndefault_branch: main\nlanguage: en\n")
+			if tc.repoized {
+				initRepo(t, projectRoot)
+			}
+			statusBefore := gitIn(t, work, "status", "--porcelain", "--untracked-files=all")
+
+			_, err := runAppErr(t, work, "init", "--project-dir", tc.projectDir, "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+			if err == nil || !strings.Contains(err.Error(), tc.mention) {
+				t.Errorf("the pointer should be refused naming the fix: %v", err)
+			}
+			if subject := headSubject(t, work); subject != "seed" {
+				t.Errorf("a refused pointer should commit nothing in the work repository, HEAD is %q", subject)
+			}
+			if status := gitIn(t, work, "status", "--porcelain", "--untracked-files=all"); status != statusBefore {
+				t.Errorf("a refused pointer should write nothing in the work repository:\n%s", status)
+			}
+			if _, statErr := os.Stat(filepath.Join(projectRoot, ".sdd", "config.local.yaml")); statErr == nil {
+				t.Error("a refused pointer should record no participant with the project")
+			}
+		})
+	}
+}

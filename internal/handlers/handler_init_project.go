@@ -40,9 +40,6 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 		}
 		return fmt.Errorf("--graph-dir leads into %s, a repository separate from the project at %s; keep the graph inside the project", graphRepo, projectRoot)
 	}
-	if !sameDir(projectRoot, cmd.RepoRoot) && meta.WithinDir(projectRoot, cmd.RepoRoot) {
-		return fmt.Errorf("--project-dir %s contains the work repository at %s; the project needs a repository of its own beside it", cmd.ProjectDir, cmd.RepoRoot)
-	}
 	root := h.projectRepos.RootOf(projectRoot)
 	if root == "" {
 		err := os.MkdirAll(projectRoot, 0o755)
@@ -53,7 +50,7 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 		if err != nil {
 			return err
 		}
-	} else if !sameDir(root, projectRoot) || sameDir(root, cmd.RepoRoot) {
+	} else if !sameDir(root, projectRoot) {
 		return fmt.Errorf("--project-dir %s lies inside the repository at %s; the project needs a repository of its own", cmd.ProjectDir, root)
 	}
 
