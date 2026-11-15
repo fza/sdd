@@ -192,6 +192,10 @@ type Step struct {
 	// what changed after — prose fields as content diffs, lists item-level,
 	// scalars whole (20260826-120330-d-tac-8f8).
 	ServeDelta []string
+	// Findings names the engine-written field, in pre-flight's finding
+	// format, that is this gate's findings channel: findings the hooks on
+	// the step being done report join it.
+	Findings string
 }
 
 // Terminal transition targets. A procedure ends by transitioning to one of
@@ -282,6 +286,7 @@ type stepYAML struct {
 	Transitions []transitionYAML `yaml:"transitions"`
 	Goal        string           `yaml:"goal"`
 	ServeDelta  []string         `yaml:"serveDelta"`
+	Findings    string           `yaml:"findings"`
 }
 
 // decodeStrict re-encodes a retained YAML node and decodes it with unknown
@@ -463,6 +468,9 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 				addProblem("%s: serveDelta names %q, which is not declared in state", prefix, f)
 			}
 		}
+		if _, declared := spec.State[step.Findings]; declared {
+			addProblem("%s: findings names %q, which is declared state; a findings channel is engine-written", prefix, step.Findings)
+		}
 		for _, o := range step.Options {
 			if !IsEndTarget(o.To) && spec.StepByID[o.To] == nil {
 				addProblem("%s: option %q target %q is not a step or end(...)", prefix, o.Choice, o.To)
@@ -571,6 +579,7 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		Chooser:    ChooserGate,
 		Goal:       sy.Goal,
 		ServeDelta: sy.ServeDelta,
+		Findings:   sy.Findings,
 	}
 
 	switch sy.Chooser {
@@ -581,6 +590,12 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		step.Chooser = ChooserUser
 	default:
 		addProblem("%s: unknown chooser %q (gate, agent, or user)", prefix, sy.Chooser)
+	}
+	if sy.Findings != "" && step.Chooser != ChooserGate {
+		addProblem("%s: findings applies only to a gate", prefix)
+	}
+	if sy.Findings != "" && !isValidFuncName(sy.Findings) {
+		addProblem("%s: findings names %q, not a field name (identifiers only)", prefix, sy.Findings)
 	}
 
 	for _, f := range sy.Collect {
