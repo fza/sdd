@@ -40,6 +40,20 @@ func mustSchema(name string) json.RawMessage {
 	return json.RawMessage(buf.Bytes())
 }
 
+// withAnalysisFlag is a check's schema with a required boolean "analysis"
+// property ahead of its findings, for the extraction call to say the text it
+// reformats holds no analysis. Spliced into the compact bytes rather than
+// re-encoded, which would reorder the findings' properties.
+func withAnalysisFlag(schema json.RawMessage) json.RawMessage {
+	const head = `{"type":"object","properties":{`
+	const required = `"required":["findings"]`
+	if !bytes.HasPrefix(schema, []byte(head)) || bytes.Count(schema, []byte(required)) != 1 {
+		panic(fmt.Sprintf("response schema has no top-level findings shape to flag: %s", schema))
+	}
+	flagged := append([]byte(head+`"analysis":{"type":"boolean"},`), schema[len(head):]...)
+	return bytes.Replace(flagged, []byte(required), []byte(`"required":["analysis","findings"]`), 1)
+}
+
 // findingEnum returns the closed value set a findings schema declares for one
 // property of a finding, so the parser accepts exactly what the schema allows.
 func findingEnum(schema json.RawMessage, property string) map[string]bool {

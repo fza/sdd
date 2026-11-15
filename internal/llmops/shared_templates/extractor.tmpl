@@ -5,7 +5,7 @@ Reformat the analysis below into JSON. Do not evaluate it. Do not add, remove, r
 
 {{ .Scale }}
 
-A finding the analysis withdraws is no finding: drop it. Nothing to report is {"findings": []}.
+A finding the analysis withdraws is no finding: drop it. An analysis with nothing to report is {"analysis": true, "findings": []}. Text that is no analysis at all, such as a refusal, an error message or page, or an unrelated reply, is {"analysis": false, "findings": []}.
 
 Output the JSON object alone: no prose, no code fences.
 {{- end }}

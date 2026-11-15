@@ -54,7 +54,7 @@ func TestPreflightPassesOnEndpointServingJSONObjectOnly(t *testing.T) {
 func TestPreflightReformatsAJSONObjectAnswerOutsideTheSchema(t *testing.T) {
 	server := test.NewOpenAIServer(t, test.OpenAIBehaviour{Answers: []string{
 		`{"findings":[{"observation":"The signal states one observation.","quote":"The pre-flight runs against an endpoint","category":"scope","severity":"none"}]}`,
-		`{"findings":[{"observation":"The signal states one observation.","quote":"The pre-flight runs against an endpoint","category":"scope","severity":"low"}]}`,
+		`{"analysis":true,"findings":[{"observation":"The signal states one observation.","quote":"The pre-flight runs against an endpoint","category":"scope","severity":"low"}]}`,
 	}})
 	cfg := openAIConfig(server.URL)
 	cfg.StructuredOutput = model.StructuredOutputJSONObject
