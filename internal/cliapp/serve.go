@@ -637,7 +637,10 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 	// time, so a lazy embedder that reveals its dimensionality only on first
 	// use still routes correctly. No process-local memory store in production.
 	cacheRoot := registry.CacheRoot()
-	baseRepoKey := persistentIndexRepoKey(cfg, stableRepoRoot)
+	baseRepoKey, err := persistentIndexRepoKey(cfg, stableRepoRoot)
+	if err != nil {
+		return nil, err
+	}
 	baseIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, baseRepoKey).WithCheckout(graphDir)
 	var embeddings embed.Embedder
 	var runeCap func(context.Context) (int, error)

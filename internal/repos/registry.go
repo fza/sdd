@@ -56,11 +56,7 @@ func (r *Registry) CloneDir(repoID model.RepoID) (string, error) {
 // LegacyCacheDir is where an earlier sdd kept the read-only cache clone of
 // repoID, for removing it and migrating the index it may still hold.
 func (r *Registry) LegacyCacheDir(repoID model.RepoID) (string, error) {
-	err := model.ValidateRepoID(repoID)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(r.loc.CacheRoot, filepath.FromSlash(string(repoID))), nil
+	return confinedClonePath(r.loc.CacheRoot, repoID)
 }
 
 // Clone returns a connected repo's clone; ok is false when the repo is not
@@ -295,9 +291,35 @@ func unconnectedClonesUnder(base string, cfg *GlobalConfig, owned bool) ([]Uncon
 }
 
 func cloneDir(dataRoot string, repoID model.RepoID) (string, error) {
+	return confinedClonePath(filepath.Join(dataRoot, "repos"), repoID)
+}
+
+// confinedClonePath joins repoID below root. Clones are placed, cleared and
+// written through that path, so one at or above root, or reaching through a
+// symlink below it, is refused.
+func confinedClonePath(root string, repoID model.RepoID) (string, error) {
 	err := model.ValidateRepoID(repoID)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dataRoot, "repos", filepath.FromSlash(string(repoID))), nil
+	dir := filepath.Join(root, filepath.FromSlash(string(repoID)))
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("repo ID %q resolves outside %s", repoID, root)
+	}
+	component := root
+	for _, seg := range strings.Split(rel, string(filepath.Separator)) {
+		component = filepath.Join(component, seg)
+		info, err := os.Lstat(component)
+		if errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("checking the clone path of %s: %w", repoID, err)
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return "", fmt.Errorf("repo ID %q resolves through the symlink %s", repoID, component)
+		}
+	}
+	return dir, nil
 }

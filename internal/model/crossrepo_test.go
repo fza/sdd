@@ -49,6 +49,9 @@ func TestValidateRepoID(t *testing.T) {
 		"github.com/re po",    // invalid char
 		"github.com/repo/",    // trailing empty segment
 		"git@github.com/repo", // invalid char (@)
+		"evil.example/..",     // parent segment
+		"evil.example/../..",  // parent segments reaching above the root
+		"evil.example/./repo", // current-directory segment
 	}
 	for _, id := range invalid {
 		if err := ValidateRepoID(id); err == nil {

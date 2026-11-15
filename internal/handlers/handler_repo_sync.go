@@ -104,6 +104,10 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 			}
 			continue
 		}
+		if err := cfg.CheckOverlap(repoID); err != nil {
+			outcomes[i] = &model.RepoSyncOutcome{RepoID: repoID, State: model.RepoRefused, Reason: h.overlapSkipped(err).Error()}
+			continue
+		}
 		host, size, err := h.repos.Slots(ctx, repo)
 		if err != nil {
 			outcomes[i] = h.failedOutcome(ctx, repo, err)
@@ -294,6 +298,10 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposF
 			logger.Debug("repo not connected; skipping its refresh", "repo", repoID)
 			continue
 		}
+		if err := cfg.CheckOverlap(repoID); err != nil {
+			failures = append(failures, h.overlapSkipped(err))
+			continue
+		}
 		outcome, reported, err := h.demandConnected(ctx, repo, cmd)
 		switch {
 		case err != nil:
@@ -309,6 +317,13 @@ func (h *Handler) EnsureReposFresh(ctx context.Context, cmd command.EnsureReposF
 		}
 	}
 	return changed, errors.Join(failures...)
+}
+
+// overlapSkipped is the error for a repo of an overlapping pair connected
+// before AddRepo checked overlap: syncing either side writes into the other's
+// clone, so callers skip both and sync the rest.
+func (h *Handler) overlapSkipped(err error) error {
+	return fmt.Errorf("not syncing: %w; drop one of them from repos in %s", err, h.repos.Registry().ConfigPath())
 }
 
 // demandConnected clones repo on first use, then renews its lease and runs
@@ -445,6 +460,10 @@ func (h *Handler) fetchOnMiss(ctx context.Context, graph *model.Graph, refs []mo
 	for _, repoID := range stale {
 		repo, ok := cfg.Connected(repoID)
 		if !ok {
+			continue
+		}
+		if err := cfg.CheckOverlap(repoID); err != nil {
+			logger.Warn("fetch-on-miss: "+h.overlapSkipped(err).Error(), "repo", repoID)
 			continue
 		}
 		outcome, reported := h.syncConnected(ctx, repo, connectedSync{})

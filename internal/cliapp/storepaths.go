@@ -48,7 +48,14 @@ func resolveSessionLocations(
 }
 
 // persistentIndexRepoKey keys the machine-global vector index. It follows the
-// repository identity directly, independent of where sessions are found.
-func persistentIndexRepoKey(cfg *model.PerRepoConfig, stableRoot string) string {
-	return index.RepoKey(repoIDOf(cfg), stableRoot)
+// repository identity directly, independent of where sessions are found. The
+// key is joined below machine-global roots, so an invalid repo_id is refused.
+func persistentIndexRepoKey(cfg *model.PerRepoConfig, stableRoot string) (string, error) {
+	repoID := repoIDOf(cfg)
+	if repoID != "" {
+		if err := model.ValidateRepoID(repoID); err != nil {
+			return "", fmt.Errorf("invalid repo_id for the index store: %w", err)
+		}
+	}
+	return index.RepoKey(repoID, stableRoot), nil
 }

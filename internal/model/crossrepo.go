@@ -60,7 +60,8 @@ func CrossRepoIDs(ids []string) []RepoID {
 
 // ValidateRepoID checks that repoID is URL-shaped: a dotted hostname
 // followed by at least one path segment (host/path, the Go-module
-// convention), each segment limited to letters, digits, '.', '-' and '_'.
+// convention), each segment limited to letters, digits, '.', '-' and '_'
+// and never "." or "..", so the id nests below any root it is joined to.
 func ValidateRepoID(repoID RepoID) error {
 	if repoID == "" {
 		return fmt.Errorf("repo ID is empty")
@@ -72,6 +73,9 @@ func ValidateRepoID(repoID RepoID) error {
 	for _, seg := range segments {
 		if seg == "" {
 			return fmt.Errorf("repo ID %q has an empty path segment", repoID)
+		}
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("repo ID %q has a %q path segment", repoID, seg)
 		}
 		for _, c := range seg {
 			if !isRepoIDChar(c) {
@@ -93,6 +97,17 @@ func isRepoIDChar(c rune) bool {
 		return true
 	}
 	return false
+}
+
+// RepoIDsOverlap reports whether two repo IDs, compared case-insensitively,
+// are equal or one nests inside the other: their clones would share a path
+// on a case-insensitive filesystem, or one would sit inside the other.
+func RepoIDsOverlap(a, b RepoID) bool {
+	short, long := strings.ToLower(string(a)), strings.ToLower(string(b))
+	if len(short) > len(long) {
+		short, long = long, short
+	}
+	return short == long || strings.HasPrefix(long, short+"/")
 }
 
 // DeriveRepoID normalizes a git remote URL to the canonical URL-shaped repo

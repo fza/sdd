@@ -120,5 +120,9 @@ func workingRelevanceDir(sddDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return relevanceLedgerDir(locations.StateRoot, persistentIndexRepoKey(cfg, stableRepoRoot)), nil
+	key, err := persistentIndexRepoKey(cfg, stableRepoRoot)
+	if err != nil {
+		return "", err
+	}
+	return relevanceLedgerDir(locations.StateRoot, key), nil
 }
