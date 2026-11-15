@@ -8,6 +8,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -91,6 +92,40 @@ func (CLI) RunPastIndexLock(ctx context.Context, args ...string) ([]byte, error)
 		}
 		delay = min(2*delay, 2*time.Second)
 	}
+}
+
+// Uncommitted returns the paths git status reports a change under: staged,
+// modified, removed, or untracked and not ignored.
+func (CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) {
+	var out []string
+	for _, path := range paths {
+		// Only stdout lists changes: git warns on stderr about a path whose
+		// folder does not exist yet.
+		cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		status, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("git status: %s (%w)", stderr.Bytes(), err)
+		}
+		if len(status) > 0 {
+			out = append(out, path)
+		}
+	}
+	return out, nil
+}
+
+// Ignored reports whether an ignore rule matches path. git check-ignore
+// leaves tracked paths out, so a tracked path counts as not ignored.
+func (CLI) Ignored(ctx context.Context, path string) (bool, error) {
+	out, err := exec.CommandContext(ctx, "git", "check-ignore", "--quiet", "--", path).CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
+	if errExitCode(err) == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("git check-ignore: %s (%w)", out, err)
 }
 
 // HasCommitMessage reports whether any reachable commit contains text. It is

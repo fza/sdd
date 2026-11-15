@@ -419,12 +419,8 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	// scope (outside the repo) are filtered out — they aren't part of the
 	// repo's git tree.
 	if h.committer != nil {
-		commitPaths := filterRepoPaths(cmd.RepoRoot, touched)
-		if len(commitPaths) > 0 {
-			msg := initCommitMessage(sddExisted)
-			if err := h.committer.Commit(msg, commitPaths...); err != nil {
-				return fmt.Errorf("git commit: %w", err)
-			}
+		if err := h.commitInit(ctx, cmd.RepoRoot, touched, initCommitMessage(sddExisted)); err != nil {
+			return err
 		}
 	}
 
