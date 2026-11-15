@@ -55,8 +55,15 @@ func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []C
 		{&PerRepoConfig{BaseConfig: global}, ConfigSourceGlobal},
 	}
 
-	var out []ConfigValue
 	provider := ""
+	for _, layer := range layers {
+		if layer.cfg != nil && layer.cfg.LLM.Provider != "" {
+			provider = layer.cfg.LLM.Provider
+			break
+		}
+	}
+
+	var out []ConfigValue
 	for _, leaf := range collectConfigLeaves(reflect.TypeFor[PerRepoConfig](), nil, nil) {
 		switch leaf.kind {
 		case leafMap:
@@ -85,9 +92,6 @@ func EffectiveConfigValues(global BaseConfig, project, local *PerRepoConfig) []C
 					continue
 				}
 				val = ConfigValue{Key: leaf.path, Value: def, Source: ConfigSourceDefault}
-			}
-			if leaf.path == "llm.provider" {
-				provider = val.Value
 			}
 			out = append(out, val)
 		}
