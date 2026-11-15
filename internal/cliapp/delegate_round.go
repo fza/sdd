@@ -2,6 +2,7 @@ package cliapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -133,7 +134,8 @@ func delegateRoundCmd() *cli.Command {
 				Session: sdd.SessionID(cmd.String("session")), Instance: cmd.String("instance"), Procedure: cmd.String("procedure"),
 				Project: sdd.ProjectID(cmd.String("project")), Runner: cmd.String("runner"), Number: int(cmd.Int("round")),
 			}
-			return application.RunLaunchedRound(ctx, identity, round, os.Getpid())
+			err = application.RunLaunchedRound(ctx, identity, round, os.Getpid())
+			return errors.Join(err, roundproc.EndOwnGroup())
 		},
 	}
 }
