@@ -271,7 +271,7 @@ func (s *FillSession) Commit(ctx context.Context, fn func(*Index, *Manifest) err
 	}
 	// Under the same exclusive lock, so every reader finds the batch in
 	// segments instead of decoding its row files.
-	if err := viewFor(s.indexDir).refresh(); err != nil {
+	if err := viewFor(s.indexDir).refresh(ctx); err != nil {
 		return fmt.Errorf("refreshing search segments at %s: %w", s.indexDir, err)
 	}
 	return nil

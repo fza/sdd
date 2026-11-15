@@ -81,7 +81,7 @@ func TestReleaseStaleDropsSegmentsAMergeDeleted(t *testing.T) {
 			return err
 		}
 		defer func() { _ = lock.Unlock() }()
-		return other.refresh()
+		return other.refresh(t.Context())
 	}(); err != nil {
 		t.Fatal(err)
 	}

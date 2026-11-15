@@ -249,7 +249,7 @@ func TestSearchSnapshotReadsRowsMissingFromSegments(t *testing.T) {
 	}
 }
 
-func TestSearchSnapshotRejectsACorruptSegment(t *testing.T) {
+func TestSearchSnapshotReplacesACorruptSegment(t *testing.T) {
 	tests := []struct {
 		name    string
 		content []byte
@@ -264,11 +264,22 @@ func TestSearchSnapshotRejectsACorruptSegment(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(indexDir, "segments"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(indexDir, "segments", "broken.seg"), tt.content, 0o644); err != nil {
+			broken := filepath.Join(indexDir, "segments", "broken.seg")
+			if err := os.WriteFile(broken, tt.content, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := index.OpenSearchSnapshot(t.Context(), indexDir, time.Second); !errors.Is(err, index.ErrSegmentCorrupt) {
-				t.Errorf("a corrupt segment should be reported, got %v", err)
+			if got := len(snapshotQuery(t, indexDir, segmentVector(1), 10)); got != 2 {
+				t.Errorf("a search should read past a corrupt segment from the row files, found %d rows", got)
+			}
+			if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+				t.Fatalf("a refresh should replace a corrupt segment: %v", err)
+			}
+			if _, err := os.Stat(broken); !os.IsNotExist(err) {
+				t.Errorf("the corrupt segment should be removed, stat says %v", err)
+			}
+			removeRowFiles(t, indexDir)
+			if got := len(snapshotQuery(t, indexDir, segmentVector(1), 10)); got != 2 {
+				t.Errorf("the rebuilt segment should hold every published row, found %d", got)
 			}
 		})
 	}
@@ -604,8 +615,15 @@ func TestSearchSnapshotSurvivesATruncatedSegment(t *testing.T) {
 	if _, err := snapshot.Query(t.Context(), segmentVector(1), 10); !errors.Is(err, index.ErrSegmentCorrupt) {
 		t.Errorf("a search over a truncated mapping should report a corrupt segment, got %v", err)
 	}
-	if _, err := index.OpenSearchSnapshot(t.Context(), indexDir, time.Second); !errors.Is(err, index.ErrSegmentCorrupt) {
-		t.Errorf("the next search should map the segment afresh and report it corrupt, got %v", err)
+	if got := len(snapshotQuery(t, indexDir, segmentVector(1), 10)); got != 6 {
+		t.Errorf("the next search should read past the truncated segment from the row files, found %d rows", got)
+	}
+	if err := index.RefreshSegments(t.Context(), indexDir); err != nil {
+		t.Fatalf("a refresh should replace the truncated segment: %v", err)
+	}
+	removeRowFiles(t, indexDir)
+	if got := len(snapshotQuery(t, indexDir, segmentVector(1), 10)); got != 6 {
+		t.Errorf("the rebuilt segment should hold every published row, found %d", got)
 	}
 }
 

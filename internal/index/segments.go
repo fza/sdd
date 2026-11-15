@@ -436,7 +436,7 @@ func RefreshSegments(ctx context.Context, indexDir string) error {
 	if err := lockWithin(ctx, lock.TryRLockContext); err != nil {
 		return err
 	}
-	needed, err := view.refreshNeeded()
+	needed, err := view.refreshNeeded(ctx)
 	if err := errors.Join(err, lock.Unlock()); err != nil {
 		return err
 	}
@@ -447,7 +447,7 @@ func RefreshSegments(ctx context.Context, indexDir string) error {
 		return err
 	}
 	defer func() { _ = lock.Unlock() }()
-	return view.refresh()
+	return view.refresh(ctx)
 }
 
 func lockWithin(ctx context.Context, tryLock func(context.Context, time.Duration) (bool, error)) error {
@@ -640,7 +640,7 @@ func Prepare(ctx context.Context, indexDir string, bound time.Duration) (err err
 	view := viewFor(indexDir)
 	view.mu.Lock()
 	defer view.mu.Unlock()
-	if err := view.syncLocked(); err != nil {
+	if err := view.syncLocked(ctx); err != nil {
 		return err
 	}
 	_, _, err = view.snapshotLocked(ctx)

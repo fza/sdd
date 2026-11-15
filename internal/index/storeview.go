@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/networkteam/slogutils"
+
 	"github.com/networkteam/sdd/internal/timing"
 )
 
@@ -123,7 +125,7 @@ func sameFileIdentity(a, b fs.FileInfo) bool {
 // syncLocked brings the view up to the store on disk: the manifest when its
 // file changed, and the mapped segments when the segment names changed —
 // mapping only names it has not mapped and releasing names that are gone.
-func (v *storeView) syncLocked() error {
+func (v *storeView) syncLocked(ctx context.Context) error {
 	if _, err := v.manifestLocked(); err != nil {
 		return errors.Join(err, v.resetLocked())
 	}
@@ -147,6 +149,14 @@ func (v *storeView) syncLocked() error {
 		}
 		segment, err := openSegment(filepath.Join(segmentsDir(v.dir), name))
 		if errors.Is(err, errForeignFormat) {
+			foreign[name] = true
+			continue
+		}
+		// Segments are derived from the row files and the manifest, so a
+		// damaged one is skipped like a foreign one and the next refresh
+		// replaces it.
+		if errors.Is(err, ErrSegmentCorrupt) {
+			slogutils.FromContext(ctx).Warn("index segment damaged, reading its rows from the row files until the next refresh rebuilds it", "segment", name, "err", err)
 			foreign[name] = true
 			continue
 		}
@@ -190,10 +200,10 @@ func (v *storeView) foreignPathsLocked() []string {
 	return paths
 }
 
-func (v *storeView) refreshNeeded() (bool, error) {
+func (v *storeView) refreshNeeded(ctx context.Context) (bool, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if err := v.syncLocked(); err != nil {
+	if err := v.syncLocked(ctx); err != nil {
 		return false, err
 	}
 	plan, err := planRefresh(v.dir, v.orderedSegmentsLocked(), v.foreignPathsLocked(), v.published)
@@ -205,10 +215,10 @@ func (v *storeView) refreshNeeded() (bool, error) {
 
 // refresh writes the planned segment. The caller holds the exclusive lock; the
 // view picks up the changed segment names on its next sync.
-func (v *storeView) refresh() error {
+func (v *storeView) refresh(ctx context.Context) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if err := v.syncLocked(); err != nil {
+	if err := v.syncLocked(ctx); err != nil {
 		return err
 	}
 	plan, err := planRefresh(v.dir, v.orderedSegmentsLocked(), v.foreignPathsLocked(), v.published)
@@ -227,7 +237,7 @@ func (v *storeView) acquire(ctx context.Context) (*SearchSnapshot, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	stopRead := timing.Start(ctx, "index-segments-read")
-	err := v.syncLocked()
+	err := v.syncLocked(ctx)
 	stopRead()
 	if err != nil {
 		return nil, err
