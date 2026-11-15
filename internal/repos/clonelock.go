@@ -4,16 +4,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gofrs/flock"
+
+	"github.com/networkteam/sdd/internal/model"
 )
 
 // ErrClonesBusy reports that another process holds the clone lock.
 var ErrClonesBusy = errors.New("connected-repo clones are being changed by another process")
+
+// ErrCloneHoldsClones reports a clone holding another clone, or the path of a
+// connected repo, below it, which retiring it would take along.
+var ErrCloneHoldsClones = errors.New("clone holds other clones")
 
 // clonesLockWait bounds how long connecting a repo waits for a cache pruning
 // run, which holds the lock only to re-check and rename one clone.
@@ -47,8 +54,9 @@ func (r *Registry) LockClones(ctx context.Context) (func() error, error) {
 // for it and its disconnection record still stands, and returns where it went;
 // "" when the repo is connected again. A clone an earlier run retired is
 // returned as it is. The caller deletes the returned directory, outside the
-// lock. It returns ErrClonesBusy when another process holds the lock, and
-// ErrClonePassRefused on a repos list UnconnectedClones would refuse.
+// lock. It returns ErrClonesBusy when another process holds the lock,
+// ErrClonePassRefused on a repos list UnconnectedClones would refuse, and
+// ErrCloneHoldsClones for a clone retiring would take another one along.
 func (r *Registry) RetireUnconnectedClone(path string) (retired string, err error) {
 	lock, err := r.clonesLock()
 	if err != nil {
@@ -84,11 +92,15 @@ func (r *Registry) RetireUnconnectedClone(path string) (retired string, err erro
 	if err != nil {
 		return "", err
 	}
+	err = holdsClones(path, repoID, cfg)
+	if err != nil {
+		return "", err
+	}
 	err = os.MkdirAll(r.retiredClonesDir(), 0o755)
 	if err != nil {
 		return "", fmt.Errorf("creating %s: %w", r.retiredClonesDir(), err)
 	}
-	retired = filepath.Join(r.retiredClonesDir(), url.PathEscape(string(repoID)))
+	retired = filepath.Join(r.retiredClonesDir(), entryName(repoID))
 	if err := os.RemoveAll(retired); err != nil {
 		return "", fmt.Errorf("removing %s: %w", retired, err)
 	}
@@ -99,4 +111,41 @@ func (r *Registry) RetireUnconnectedClone(path string) (retired string, err erro
 		return "", err
 	}
 	return retired, nil
+}
+
+// holdsClones returns ErrCloneHoldsClones when a connected repo's ID lies
+// below repoID, or a directory below path holds a .git directory: repo IDs
+// may nest, and the walk that finds clones stops at the outer one.
+func holdsClones(path string, repoID model.RepoID, cfg *GlobalConfig) error {
+	prefix := string(repoID) + "/"
+	for _, repo := range cfg.Repos {
+		if strings.HasPrefix(string(repo.RepoID), prefix) {
+			return fmt.Errorf("%w: %s lies below the clone of %s, which stays", ErrCloneHoldsClones, repo.RepoID, repoID)
+		}
+	}
+	var inner string
+	err := filepath.WalkDir(path, func(dir string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return err
+		}
+		if d.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		if dir == path {
+			return nil
+		}
+		info, statErr := os.Lstat(filepath.Join(dir, ".git"))
+		if statErr == nil && info.IsDir() {
+			inner = dir
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("looking for clones inside %s: %w", path, err)
+	}
+	if inner != "" {
+		return fmt.Errorf("%w: %s holds the clone %s, and stays", ErrCloneHoldsClones, path, inner)
+	}
+	return nil
 }

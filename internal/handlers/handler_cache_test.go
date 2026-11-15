@@ -450,3 +450,30 @@ func TestCacheHandlerPruneRefusesAMissingConfig(t *testing.T) {
 		t.Error("the refusal should be recorded for sdd info")
 	}
 }
+
+// A dropped clone holding a connected one stays with it, and the run goes on.
+func TestCacheHandlerPruneKeepsADroppedCloneHoldingAConnectedOne(t *testing.T) {
+	root := t.TempDir()
+	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}
+	config := "repos:\n  - repo_id: git.example.com/foo/bar\n    clone_url: git@git.example.com:foo/bar.git\n"
+	if err := os.WriteFile(loc.ConfigPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outer := filepath.Join(loc.CacheRoot, "git.example.com", "foo")
+	inner := filepath.Join(outer, "bar")
+	for _, dir := range []string{outer, inner} {
+		if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("git.example.com/foo"); err != nil {
+		t.Fatal(err)
+	}
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc)})
+	if err := h.Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatalf("a clone kept for the clone it holds should not fail the run: %v", err)
+	}
+	if !exists(t, filepath.Join(inner, ".git")) || !exists(t, filepath.Join(outer, ".git")) {
+		t.Error("a dropped clone holding a connected one should stay, and the connected one with it")
+	}
+}
