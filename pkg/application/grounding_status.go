@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
@@ -91,18 +93,30 @@ func (a *Application) RescoreRelevance(ctx context.Context, identity RequestIden
 		}
 		batches, oversize := relevance.Plan(prefilter.Scorer, model.EntryRelevanceText(graph, subject), candidates)
 		result.Unanswered += len(oversize)
-		for _, indexes := range batches {
-			request := relevance.Request{Subject: model.EntryRelevanceText(graph, subject)}
+		requests := make([]relevance.Request, len(batches))
+		answers := make([]relevance.Result, len(batches))
+		group, groupCtx := errgroup.WithContext(ctx)
+		group.SetLimit(prefilterInFlight)
+		for b, indexes := range batches {
+			requests[b].Subject = model.EntryRelevanceText(graph, subject)
 			for _, index := range indexes {
-				request.Candidates = append(request.Candidates, candidates[index])
+				requests[b].Candidates = append(requests[b].Candidates, candidates[index])
 			}
-			scored, err := prefilter.Scorer.Score(ctx, request)
-			if err == nil {
-				err = relevance.CheckResult(request, scored)
-			}
-			if err != nil {
-				return RescoreResult{}, fmt.Errorf("sdd: rescoring the labelled pairs of %s: %w", subjectID, err)
-			}
+			group.Go(func() error {
+				scored, err := prefilter.Scorer.Score(groupCtx, requests[b])
+				if err == nil {
+					err = relevance.CheckResult(requests[b], scored)
+				}
+				answers[b] = scored
+				return err
+			})
+		}
+		err = group.Wait()
+		if err != nil {
+			return RescoreResult{}, fmt.Errorf("sdd: rescoring the labelled pairs of %s: %w", subjectID, err)
+		}
+		for b, request := range requests {
+			scored := answers[b]
 			for i, candidate := range request.Candidates {
 				pair := model.NewRelevancePair(subjectID, candidate.ID)
 				direction := model.DirectionBoth

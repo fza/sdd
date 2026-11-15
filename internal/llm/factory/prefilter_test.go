@@ -28,8 +28,8 @@ func TestNewPrefilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generate.Judge != "generate:haiku" || generate.Scorer.MaxBatch() != 0 {
-		t.Fatalf("judge %q: the generate bridge should fan a batch out per pair", generate.Judge)
+	if generate.Judge != "generate:haiku" || generate.Scorer.MaxBatch() != 1 {
+		t.Fatalf("judge %q: the generate bridge should rate each pair in a call of its own", generate.Judge)
 	}
 	for name, tc := range map[string]struct {
 		cfg  model.LLMPrefilterConfig

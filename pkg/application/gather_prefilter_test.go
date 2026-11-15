@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/relevance"
@@ -19,12 +20,13 @@ import (
 
 const gatherJudge = "test:scripted"
 
-// scriptedScorer scores candidates from a table, 0.5 for any other, and
-// fails the candidates it is told to.
+// scriptedScorer scores candidates from a table, 0.5 for any other, fails
+// the candidates it is told to and holds slow ones until the call ends.
 type scriptedScorer struct {
 	mu      sync.Mutex
 	scores  map[string]float64
 	fail    map[string]bool
+	slow    map[string]bool
 	failAll bool
 	// short answers one score fewer than asked.
 	short    bool
@@ -37,7 +39,13 @@ func (s *scriptedScorer) MaxBatch() int                     { return s.maxBatch 
 func (s *scriptedScorer) MaxInputTokens() int               { return 0 }
 func (s *scriptedScorer) MaxPairTokens() int                { return 0 }
 
-func (s *scriptedScorer) Score(_ context.Context, request llmrelevance.Request) (llmrelevance.Result, error) {
+func (s *scriptedScorer) Score(ctx context.Context, request llmrelevance.Request) (llmrelevance.Result, error) {
+	for _, candidate := range request.Candidates {
+		if s.slow[candidate.ID] {
+			<-ctx.Done()
+			return llmrelevance.Result{}, ctx.Err()
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests = append(s.requests, request)
@@ -200,6 +208,39 @@ func TestGather_PrefilterFailureLeavesEveryAffectedCandidateToJudge(t *testing.T
 				if line == "" || strings.Contains(line, "score") || !strings.HasPrefix(line, "- ") {
 					t.Fatalf("failed candidate %s should be listed to judge, unscored:\n%s", id, result.Text)
 				}
+			}
+		})
+	}
+}
+
+// A one-pair scorer fanned out per candidate, as the generate protocol
+// composes it, rates each candidate in a call of its own: a failed or slow
+// call costs only its candidate, under a deadline of its own.
+func TestGather_PerItemPrefilterLosesOnlyTheLostCall(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail map[string]bool
+		slow map[string]bool
+	}{
+		{name: "one call fails", fail: map[string]bool{gatherBeta: true}},
+		{name: "one call outlasts its deadline", slow: map[string]bool{gatherBeta: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := &scriptedScorer{fail: tc.fail, slow: tc.slow, maxBatch: 1, scores: map[string]float64{gatherAlpha: 0.95, gatherBeta: 0.0, gatherUnrelated: 0.0}}
+			f := newGatherFixture(t)
+			f.seed(t)
+			f.prefilter = sdd.Prefilter{Scorer: llmrelevance.Bounded(llmrelevance.PerItem(inner, 4), 200*time.Millisecond), Judge: gatherJudge}
+			f.relevance = calibratedLedger(t)
+			application := f.app(t, prefilterPolicy(1), nil)
+			result, err := gather(t, application, sdd.GatherRequest{Draft: "A draft about alpha."})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(result.Text, "prefilter: partial") || !strings.Contains(result.Text, ", 1 unanswered and left to judge (") {
+				t.Fatalf("one lost call should cost only its candidate and leave the pass partial:\n%s", result.Text)
+			}
+			if !slices.Contains(result.FullIDs, gatherAlpha) {
+				t.Fatalf("the answered calls should keep their scores: %v", result.FullIDs)
 			}
 		})
 	}
