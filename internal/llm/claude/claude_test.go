@@ -67,8 +67,7 @@ func TestRunWithResponseSchema(t *testing.T) {
 	}
 
 	args := recordedArgs(t, dir)
-	i := slices.Index(args, "--json-schema")
-	if i < 0 || i+1 >= len(args) || args[i+1] != wireSchema {
+	if schema, _ := flagValue(args, "--json-schema"); schema != wireSchema {
 		t.Errorf("--json-schema not passed byte for byte: %q", args)
 	}
 	stdin, err := os.ReadFile(filepath.Join(dir, "stdin"))
@@ -116,9 +115,35 @@ func TestRunWithoutResponseSchema(t *testing.T) {
 	}
 }
 
+// Each flag keeps something out of the call: the built-in tools, the configured
+// MCP servers, the user's customizations.
+func TestRunIsolationFlags(t *testing.T) {
+	dir := fakeCLI(t, `{"type":"result","result":"ok","usage":{}}`)
+	if _, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	args := recordedArgs(t, dir)
+	for _, flag := range []string{"--strict-mcp-config", "--safe-mode"} {
+		if !slices.Contains(args, flag) {
+			t.Errorf("claude -p should run with %s, got %q", flag, args)
+		}
+	}
+	if value, found := flagValue(args, "--tools"); !found || value != "" {
+		t.Errorf("claude -p should run with no built-in tools, got %q", args)
+	}
+}
+
+func flagValue(args []string, flag string) (string, bool) {
+	i := slices.Index(args, flag)
+	if i < 0 || i+1 >= len(args) {
+		return "", false
+	}
+	return args[i+1], true
+}
+
 // What the child process actually sees is the whole point of the isolation, and
 // it is not inferable from the adapter's own state. A stand-in binary on PATH
-// reports its arguments, working directory and credential environment back
+// reports its working directory and credential environment back
 // through the response the runner parses.
 func TestChildRunsIsolated(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -128,8 +153,8 @@ func TestChildRunsIsolated(t *testing.T) {
 	binDir := t.TempDir()
 	script := filepath.Join(binDir, "claude")
 	body := `#!/bin/sh
-printf '{"result":"args=%s cwd=%s key=%s token=%s base=%s","usage":{"input_tokens":1,"output_tokens":2}}\n' \
-  "$*" "$PWD" "${ANTHROPIC_API_KEY-absent}" "${ANTHROPIC_AUTH_TOKEN-absent}" "${ANTHROPIC_BASE_URL-absent}"
+printf '{"result":"cwd=%s key=%s token=%s base=%s","usage":{"input_tokens":1,"output_tokens":2}}\n' \
+  "$PWD" "${ANTHROPIC_API_KEY-absent}" "${ANTHROPIC_AUTH_TOKEN-absent}" "${ANTHROPIC_BASE_URL-absent}"
 `
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatalf("writing stand-in binary: %v", err)
@@ -149,9 +174,6 @@ printf '{"result":"args=%s cwd=%s key=%s token=%s base=%s","usage":{"input_token
 		t.Fatalf("Run: %v", err)
 	}
 
-	if !strings.Contains(res.Text, "--safe-mode") {
-		t.Errorf("the child must run in safe mode, got %q", res.Text)
-	}
 	for _, credential := range []string{"key=", "token=", "base="} {
 		if valueOf(res.Text, credential) != "absent" {
 			t.Errorf("credential %s must be absent from the child's environment, not empty or set: %q", credential, res.Text)
