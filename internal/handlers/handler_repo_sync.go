@@ -90,6 +90,10 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 	slots := map[string]chan struct{}{}
 	var wg sync.WaitGroup
 	for i, repoID := range targets {
+		if inProject && repoID == home {
+			outcomes[i] = h.syncOwnGraph(ctx, home, mode)
+			continue
+		}
 		if inProject && !slices.Contains(direct, repoID) {
 			outcomes[i] = &model.RepoSyncOutcome{RepoID: repoID, State: model.RepoRefused, Reason: model.NotDirectDependency(string(repoID), string(home)).Error()}
 			continue
@@ -127,6 +131,23 @@ func (h *Handler) RepoSync(ctx context.Context, cmd *command.RepoSyncCmd) error 
 		}
 	}
 	return nil
+}
+
+// syncOwnGraph syncs the project's own graph as its graph clone, the one a
+// graph_repo project resolves to; a graph kept in the checkout is no clone
+// and `sdd sync` syncs it.
+func (h *Handler) syncOwnGraph(ctx context.Context, home model.RepoID, mode connectedSync) *model.RepoSyncOutcome {
+	repo := repos.ConnectedRepo{RepoID: home}
+	dir, err := h.repos.Registry().CloneDir(home)
+	if err != nil {
+		return h.failedOutcome(ctx, repo, err)
+	}
+	if !repos.IsCloned(dir) {
+		return &model.RepoSyncOutcome{RepoID: home, State: model.RepoSkipped, Reason: "this project's own graph; `sdd sync` syncs it"}
+	}
+	mode.clone = false
+	outcome, _ := h.syncConnected(ctx, repo, mode)
+	return &outcome
 }
 
 // project names the local repo and its direct dependencies; a handler built
