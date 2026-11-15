@@ -358,7 +358,8 @@ Each embedding endpoint accepts a limited input, in tokens. On its first fill, s
 
 - after `index.replaced_retention`: replaced index versions, versions of older index formats, the index store of an embedding setup another one replaced
 - after `cache.retention`: unused index stores, graph snapshots and calibrations
-- at once: graph snapshots of directories that no longer exist, clones of repositories no longer in `repos`
+- at once: graph snapshots of directories that no longer exist, and clones of repositories `sdd repo remove` dropped that `repos` no longer names
+- a clone missing from `repos` alone stays; with `repos` missing or empty, or the XDG directories set only in part, the run removes no clone and fails
 - leftovers of killed processes older than a day
 
 It never deletes a version any checkout read within `cache.retention`, and it skips an index store another process holds. One run per machine at a time, at most 5 minutes. `sdd info` shows the last run. `sdd cache prune` reports a failed run as its error.
