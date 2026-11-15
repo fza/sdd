@@ -149,6 +149,50 @@ func TestBeforeCallCoversRegisteredTools(t *testing.T) {
 	}
 }
 
+func TestBeforeCallRunsForEveryTool(t *testing.T) {
+	hook := &scriptedBeforeCall{}
+	env := newTestServer(t, nil, "", "", withBeforeCall(hook))
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+
+	res, err := cs.ListTools(t.Context(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook.refuse(errors.New("refused by the host"))
+	for _, tool := range res.Tools {
+		encoded, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema struct {
+			Required   []string `json:"required"`
+			Properties map[string]struct {
+				Type json.RawMessage `json:"type"`
+			} `json:"properties"`
+		}
+		err = json.Unmarshal(encoded, &schema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		args := map[string]any{}
+		if _, ok := schema.Properties["session"]; ok {
+			args["session"] = session
+		}
+		for _, name := range schema.Required {
+			if strings.Contains(string(schema.Properties[name].Type), "array") {
+				args[name] = []string{"x"}
+			} else if name != "session" {
+				args[name] = "x"
+			}
+		}
+		refused := callResult(t, cs, tool.Name, args)
+		if !refused.IsError || !strings.Contains(contentText(refused), "refused by the host") {
+			t.Errorf("%s should run the hook before its handler, got %q", tool.Name, contentText(refused))
+		}
+	}
+}
+
 // Every tool declares host_notice, so a notice reaches reads as well as steps.
 func TestEveryToolDeclaresHostNotice(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
