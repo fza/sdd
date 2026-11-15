@@ -1,5 +1,5 @@
-{{ define "layer_check" }}**Layer appropriateness**: the layer names what the entry is about:
+{{ define "layer_check" }}**Layer appropriateness**: compare the proposed entry's `Layer` with the layer its body is about, by these meanings:
 
 {{ .LayerGuide }}
 
-   A rule or behaviour of one module or component, a gap in it included, belongs at `tactical`, not `operational`. A single work step or task belongs at `operational`, not `tactical`. A specific implementation detail is never `strategic`; a broad directional observation is never `operational`. Report a clear mismatch as `medium`, naming the layer the entry belongs at. A borderline call is no finding.{{ end }}
+   A rule or behaviour of one module or component, a gap in it included, belongs at `tactical`, not `operational`: a body stating how a component behaves is tactical even when one change carries it out. A single work step or task belongs at `operational`, not `tactical`: its body names the step to take. A specific implementation detail is never `strategic`; a broad directional observation is never `operational`. Report a clear mismatch as `medium`, naming the layer the entry belongs at. A borderline call is no finding.{{ end }}
