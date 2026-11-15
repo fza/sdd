@@ -24,6 +24,14 @@ type shellSession struct {
 	// playbacks are the serves of the call in flight whose result holds the
 	// change they play back, recorded with the anchors.
 	playbacks []*sdd.WorkflowServe
+	// pageReads holds, per tool, the full reads of its paged result waiting
+	// on the pages not yet served.
+	pageReads map[string]pageRead
+}
+
+type pageRead struct {
+	full     []string
+	unserved map[int]bool
 }
 
 // repeats is the no-repeat rule over what the call proves it holds.

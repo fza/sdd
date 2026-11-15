@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/networkteam/sdd/internal/engine"
+	"github.com/networkteam/sdd/internal/model"
 )
 
 // WorkflowGatherRequest asks for a grounding serve inside the session.
@@ -24,7 +25,7 @@ type WorkflowGatherRequest struct {
 // count for the capture's grounding.
 func (w *WorkflowSession) Gather(ctx context.Context, identity RequestIdentity, request WorkflowGatherRequest) (GatherResult, error) {
 	w.setOperation(ctx, identity)
-	gather := GatherRequest{SyncMode: request.SyncMode, Draft: request.Draft, Topics: request.Topics, IDs: request.IDs}
+	gather := GatherRequest{SyncMode: request.SyncMode, Draft: model.StripAnchorTags(request.Draft), Topics: request.Topics, IDs: request.IDs}
 	if repeats := w.repeats(); repeats != nil {
 		gather.Held, gather.Anchor = repeats.Held, repeats.Anchor
 	}

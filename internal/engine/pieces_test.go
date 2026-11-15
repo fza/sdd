@@ -22,7 +22,7 @@ func newPieceSession(sink engine.EventSink) *engine.Session {
 	return engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)}).NewSession("s_pieces", "tester", sink)
 }
 
-func servedInFull(t *testing.T, session *engine.Session, piece engine.Piece, covers ...string) model.Proof {
+func servedInFull(t *testing.T, session *engine.Session, piece engine.Piece, covers ...engine.Piece) model.Proof {
 	t.Helper()
 	served := session.ServePiece(piece, covers, placeIn(pieceText))
 	if served.Held || served.Anchor.Tag == "" {
@@ -88,7 +88,7 @@ func TestServePieceHoldsTheEntriesAProvedPieceCarried(t *testing.T) {
 	carried := engine.Piece{Name: "20260101-000000-s-tac-aaa"}
 	session := newPieceSession(nil)
 	session.BeginCall(nil, nil)
-	proof := servedInFull(t, session, framing, carried.Name)
+	proof := servedInFull(t, session, framing, carried)
 	if _, held := session.Holds(carried); !held {
 		t.Error("an entry the piece just served carries should be held within the call")
 	}
@@ -104,6 +104,9 @@ func TestServePieceHoldsTheEntriesAProvedPieceCarried(t *testing.T) {
 	}
 	if _, held := session.Holds(engine.Piece{Name: "20260101-000000-s-tac-bbb"}); held {
 		t.Error("an entry the piece did not carry should not be held")
+	}
+	if _, held := session.Holds(engine.Piece{Name: carried.Name, Hash: "edited"}); held {
+		t.Error("an entry edited since the piece carried it should not be held")
 	}
 }
 
@@ -125,7 +128,7 @@ func TestAnchorsSurviveARestart(t *testing.T) {
 	var log bytes.Buffer
 	session := newPieceSession(engine.NewWriterSink(&log))
 	session.BeginCall(nil, nil)
-	proof := servedInFull(t, session, lane, entry.Name)
+	proof := servedInFull(t, session, lane, entry)
 	session.RecordAnchors()
 	log.WriteString(`{"v":1,"seq":99,"event":"served_blocks","data":{"hashes":["written-before-the-anchor-proof"]}}` + "\n")
 
@@ -258,7 +261,7 @@ func TestUnprovedDropsWhatACallProvesOrServesAgain(t *testing.T) {
 	servedInFull(t, session, again)
 	wrongProof := servedInFull(t, session, wrong)
 	servedInFull(t, session, entry)
-	framingProof := servedInFull(t, session, framing, entry.Name)
+	framingProof := servedInFull(t, session, framing, entry)
 	session.RecordAnchors()
 
 	session.BeginCall([]model.Proof{proof, framingProof, {Tag: wrongProof.Tag, Word: "elsewhere"}}, nil)

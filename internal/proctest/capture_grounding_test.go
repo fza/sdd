@@ -539,8 +539,12 @@ func TestCaptureGrounding_LateEntryHeldPrintsAsItsPointer(t *testing.T) {
 			late := &model.Entry{ID: "20260603-090000-s-tac-lat", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
 				Summary: "A gap that landed after the confirm.", Content: "A gap that landed after the confirm."}
 			proctest.WriteEntry(t, world.GraphDir, late)
+			err := session.WF.BeginCall(nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
 			proofs := model.ReadAnchors(session.WF.ServeEntry(late.ID, late.Content))
-			err := session.WF.RecordServed(t.Context(), world.Identity)
+			err = session.WF.RecordServed(t.Context(), world.Identity)
 			if err != nil {
 				t.Fatal(err)
 			}

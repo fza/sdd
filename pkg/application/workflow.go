@@ -724,6 +724,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	if request.Report != nil && len(request.Report) == 0 {
 		return nil, fmt.Errorf("report must not be empty")
 	}
+	if request.Report != nil {
+		request.Report = stripAnchorTags(request.Report).(map[string]any)
+	}
 	if w.Finished() {
 		return nil, w.finishedError()
 	}
@@ -863,7 +866,83 @@ func (w *WorkflowSession) ServeAll(ctx context.Context, identity RequestIdentity
 	return w.resumeResult()
 }
 
+// ServeAllWithin is ServeAll handing each running instance's serve to deliver
+// as it renders, the session shell last, and leaving Open empty. deliver
+// returns the text the caller's result carries of the serve, empty for one
+// it leaves out; head is the resume without its moves. What the serve issued
+// that this text does not carry is withdrawn before the next instance
+// renders, so no later move points at text the agent never got.
+func (w *WorkflowSession) ServeAllWithin(ctx context.Context, identity RequestIdentity, deliver func(head WorkflowResumeResult, serve WorkflowServe) (string, error)) (WorkflowResumeResult, error) {
+	w.setOperation(ctx, identity)
+	result, err := w.resumeHead()
+	if err != nil {
+		return WorkflowResumeResult{}, err
+	}
+	var moves, shell []*engine.Instance
+	for _, inst := range w.session.Instances() {
+		if w.IsShell(inst.ID) {
+			shell = append(shell, inst)
+		} else {
+			moves = append(moves, inst)
+		}
+	}
+	for _, inst := range append(moves, shell...) {
+		if inst.Status != engine.StatusRunning {
+			continue
+		}
+		mark := w.session.PieceMark()
+		ws, err := w.resumeServe(inst)
+		if err != nil {
+			return WorkflowResumeResult{}, err
+		}
+		delivered, err := deliver(result, *ws)
+		if err != nil {
+			return WorkflowResumeResult{}, err
+		}
+		w.session.KeepDelivered(mark, delivered)
+	}
+	return result, nil
+}
+
 func (w *WorkflowSession) resumeResult() (WorkflowResumeResult, error) {
+	result, err := w.resumeHead()
+	if err != nil {
+		return WorkflowResumeResult{}, err
+	}
+	for _, inst := range w.session.Instances() {
+		if inst.Status != engine.StatusRunning {
+			continue
+		}
+		ws, err := w.resumeServe(inst)
+		if err != nil {
+			return WorkflowResumeResult{}, err
+		}
+		result.Open = append(result.Open, *ws)
+	}
+	return result, nil
+}
+
+func (w *WorkflowSession) resumeServe(inst *engine.Instance) (*WorkflowServe, error) {
+	serve, err := w.session.Serve(inst.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := w.session.SinkErr(); err != nil {
+		return nil, err
+	}
+	// The collected projection is the honest-surfacing half of the
+	// re-entry contract: a resuming agent sees the values this instance
+	// already holds. It rides the resume path alone — publicServe stays
+	// state-free so door, next, and base-junction serves are unchanged.
+	ws, err := w.publicServe(serve)
+	if err != nil {
+		return nil, err
+	}
+	ws.Collected = inst.Store.Collected()
+	return ws, nil
+}
+
+func (w *WorkflowSession) resumeHead() (WorkflowResumeResult, error) {
 	cancelled, err := w.session.Cancellation()
 	if err != nil {
 		return WorkflowResumeResult{}, err
@@ -875,28 +954,6 @@ func (w *WorkflowSession) resumeResult() (WorkflowResumeResult, error) {
 		if inst, ok := w.session.Instance(cancelled.Intent.Instance); !ok || inst.Status != engine.StatusRunning {
 			result.Instructions = engine.CancellationNotice(cancelled)
 		}
-	}
-	for _, inst := range w.session.Instances() {
-		if inst.Status != engine.StatusRunning {
-			continue
-		}
-		serve, err := w.session.Serve(inst.ID)
-		if err != nil {
-			return WorkflowResumeResult{}, err
-		}
-		if err := w.session.SinkErr(); err != nil {
-			return WorkflowResumeResult{}, err
-		}
-		// The collected projection is the honest-surfacing half of the
-		// re-entry contract: a resuming agent sees the values this instance
-		// already holds. It rides the resume path alone — publicServe stays
-		// state-free so door, next, and base-junction serves are unchanged.
-		ws, err := w.publicServe(serve)
-		if err != nil {
-			return WorkflowResumeResult{}, err
-		}
-		ws.Collected = inst.Store.Collected()
-		result.Open = append(result.Open, *ws)
 	}
 	return result, nil
 }

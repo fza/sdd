@@ -34,6 +34,11 @@ func (w *WorkflowSession) BeginCall(held, reread []string) error {
 		proofs = append(proofs, proof)
 	}
 	w.session.BeginCall(proofs, reread)
+	// An entry piece keys on the entry's current text (entryPiece), so the
+	// call reads the graph as it stands, edits since the last call included.
+	if w.graphs != nil {
+		w.graphs.Invalidate()
+	}
 	return nil
 }
 
@@ -58,7 +63,7 @@ func (w *WorkflowSession) FailedProofs() []FailedProof {
 // ServeText serves a piece of text named name. covers names the entries the
 // text carries whole, which its proof holds too.
 func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPiece {
-	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(text)}, covers,
+	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(text)}, w.entryPieces(covers),
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
 			return model.PlaceAnchor(text, tag, rnd)
 		})
@@ -133,13 +138,13 @@ func (w *WorkflowSession) ServeNotice(name, text string) string {
 // it holds it under: proved by the entry's own tag or by a piece that
 // carried it whole.
 func (w *WorkflowSession) HoldsEntry(id string) (string, bool) {
-	return w.session.Holds(engine.Piece{Name: id})
+	return w.session.Holds(w.entryPiece(id))
 }
 
 // ServeEntry returns an entry's rendered body served in full, its tag
 // placed.
 func (w *WorkflowSession) ServeEntry(id, body string) string {
-	served := w.session.ServePiece(engine.Piece{Name: id}, nil,
+	served := w.session.ServePiece(w.entryPiece(id), nil,
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
 			return model.PlaceAnchor(body, tag, rnd)
 		})
@@ -201,7 +206,64 @@ func (w *WorkflowSession) repeats() *presenters.Repeats {
 	return &presenters.Repeats{Held: w.HoldsEntry, Anchor: w.ServeEntry}
 }
 
+// entryPiece is the piece an entry of the session's graph serves as, keyed
+// by its stored text. An entry the graph does not hold keys on its ID alone.
+func (w *WorkflowSession) entryPiece(id string) engine.Piece {
+	g, err := w.graphs.Current()
+	if err != nil {
+		return engine.Piece{Name: id}
+	}
+	e, ok := g.ByID[id]
+	if !ok {
+		return engine.Piece{Name: id}
+	}
+	return engine.Piece{Name: id, Hash: model.EntryHash(e)}
+}
+
+func (w *WorkflowSession) entryPieces(ids []string) []engine.Piece {
+	pieces := make([]engine.Piece, len(ids))
+	for i, id := range ids {
+		pieces[i] = w.entryPiece(id)
+	}
+	return pieces
+}
+
 func contentHash(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
+}
+
+// stripAnchorTags takes the anchor tags out of every string in a value an
+// agent reports.
+func stripAnchorTags(value any) any {
+	switch v := value.(type) {
+	case string:
+		return model.StripAnchorTags(v)
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			out[key] = stripAnchorTags(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = stripAnchorTags(item)
+		}
+		return out
+	case []string:
+		out := make([]string, len(v))
+		for i, item := range v {
+			out[i] = model.StripAnchorTags(item)
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(v))
+		for i, item := range v {
+			out[i] = stripAnchorTags(item).(map[string]any)
+		}
+		return out
+	default:
+		return value
+	}
 }

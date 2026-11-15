@@ -1,7 +1,6 @@
 package mcpapp
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -954,11 +953,14 @@ func (s *toolSet) resumeSession(ctx context.Context, req *mcp.CallToolRequest, a
 	if err := ss.root.Reorient(ctx, identity); err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
-	result, err := ss.root.ServeAll(ctx, identity)
+	var moves resumeMoves
+	source, err := ss.root.ServeAllWithin(ctx, identity, func(head sdd.WorkflowResumeResult, serve sdd.WorkflowServe) (string, error) {
+		return s.mapResumeMove(ctx, req, ss, &moves, head, serve)
+	})
 	if err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
-	mapped, err := s.mapRootResume(ctx, req, ss, result)
+	mapped, err := s.mapRootResume(ctx, req, ss, source, moves)
 	return nil, mapped, err
 }
 
@@ -1119,7 +1121,7 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 	}
 	defer ss.mu.Unlock()
 	if args.Page > 1 {
-		sections, err := heldPage(ss, "view", args.Page)
+		sections, err := s.heldPageRead(ctx, req, ss, "view", args.Page)
 		return nil, ViewResult{Sections: sections}, err
 	}
 	project, branch, branchFromSession, err := s.readScope(ctx, req, ss, args.Project)
@@ -1134,9 +1136,6 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 	}
 	hint := viewHint(ss)
 	sections := presenters.ViewText(result.ViewSections, ss.repeats())
-	if err := s.logRootRead(ctx, req, ss, "view", result.FullIDs, result.SummaryIDs); err != nil {
-		return nil, ViewResult{}, err
-	}
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, ViewResult{}, err
 	}
@@ -1152,7 +1151,10 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 			sections = msg + "\n\n" + sections
 		}
 	}
-	sections = pagedText(ss, "view", sections)
+	sections, err = s.pagedRead(ctx, req, ss, "view", sections, result.FullIDs, result.SummaryIDs)
+	if err != nil {
+		return nil, ViewResult{}, err
+	}
 	return nil, ViewResult{Sections: sections, Hint: hint}, nil
 
 }
@@ -1289,7 +1291,7 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 	}
 	defer ss.mu.Unlock()
 	if args.Page > 1 {
-		entries, err := heldPage(ss, "show", args.Page)
+		entries, err := s.heldPageRead(ctx, req, ss, "show", args.Page)
 		return nil, ShowResult{Entries: entries}, err
 	}
 	up := sdd.DefaultShowUpDepth
@@ -1310,9 +1312,6 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 	if err != nil {
 		return nil, ShowResult{}, err
 	}
-	if err := s.logRootRead(ctx, req, ss, "show", result.FullIDs, result.SummaryIDs); err != nil {
-		return nil, ShowResult{}, err
-	}
 	entries, err := presenters.ShowText(result.Items, ss.repeats())
 	if err != nil {
 		return nil, ShowResult{}, err
@@ -1320,7 +1319,11 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, ShowResult{}, err
 	}
-	return nil, ShowResult{Entries: pagedText(ss, "show", entries)}, nil
+	entries, err = s.pagedRead(ctx, req, ss, "show", entries, result.FullIDs, result.SummaryIDs)
+	if err != nil {
+		return nil, ShowResult{}, err
+	}
+	return nil, ShowResult{Entries: entries}, nil
 }
 
 func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args GatherArgs) (*mcp.CallToolResult, GatherResult, error) {
@@ -1911,7 +1914,16 @@ func rootBaseServe(result ServeResult) *BaseServe {
 	}
 }
 
-func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, source sdd.WorkflowResumeResult) (ResumeSessionResult, error) {
+// resumeMoves is what a resume's moves mapped to as they rendered.
+type resumeMoves struct {
+	open              []ServeResult
+	started           bool
+	spent             int
+	shell             string
+	omitted, deferred []string
+}
+
+func resumeHeadResult(ss *shellSession, source sdd.WorkflowResumeResult) ResumeSessionResult {
 	result := ResumeSessionResult{
 		Session: string(source.Session), Project: string(ss.root.Project()),
 		Participant: source.Participant, Label: source.Label, Branch: source.Branch,
@@ -1920,60 +1932,71 @@ func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, s
 	if source.Instructions != "" {
 		result.Instructions += "\n\n" + source.Instructions
 	}
+	return result
+}
+
+// mapResumeMove maps one move of a resume as it renders, the session shell
+// last, which takes what room is left: its lanes wait sooner than a move is
+// omitted. Whole-instance granularity is the only legitimate cut on a resume
+// projection (d-tac-qwc): an instance past the count or the result bound is
+// named instead. It returns the text the result carries of the move, empty
+// for one omitted; ServeAllWithin withdraws what that text does not carry.
+func (s *toolSet) mapResumeMove(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, moves *resumeMoves, head sdd.WorkflowResumeResult, serve sdd.WorkflowServe) (string, error) {
+	if !moves.started {
+		spent, err := resultChars(resumeHeadResult(ss, head))
+		if err != nil {
+			return "", err
+		}
+		moves.started, moves.spent = true, spent
+	}
+	if ss.root.IsShell(serve.Instance) {
+		moves.shell = serve.Instance
+	}
+	// The instance holding an unfinished operation is the position the
+	// resume exists to re-serve; it is never the one cut for size.
+	pending := head.PendingOperation != nil && head.PendingOperation.Instance == serve.Instance
+	name := fmt.Sprintf("%s (%s at %s)", serve.Instance, serve.Procedure, serve.Step)
+	if !pending && len(moves.open) >= maxResumeOpenInstances {
+		moves.omitted = append(moves.omitted, name)
+		return "", nil
+	}
+	mapped, held, err := s.boundedServe(ctx, req, ss, &serve, serveBudget-moves.spent, false)
+	if err != nil {
+		return "", err
+	}
+	mapped.Framing = ""
+	cost, err := resultChars(mapped)
+	if err != nil {
+		return "", err
+	}
+	if !pending && len(moves.open) > 0 && moves.spent+cost > serveBudget {
+		moves.omitted = append(moves.omitted, name)
+		return "", nil
+	}
+	moves.deferred = append(moves.deferred, deferredInstances(&serve, held)...)
+	ss.notePlayback(&serve, held.keep)
+	ss.notePlayback(serve.Base, held.base)
+	moves.spent += cost
+	moves.open = append(moves.open, mapped)
+	delivered, err := json.Marshal(mapped)
+	if err != nil {
+		return "", fmt.Errorf("measuring a resumed move: %w", err)
+	}
+	return string(delivered), nil
+}
+
+func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, source sdd.WorkflowResumeResult, moves resumeMoves) (ResumeSessionResult, error) {
+	result := resumeHeadResult(ss, source)
 	framing, err := ss.root.FramingBlocks(ctx, s.requestIdentity(req))
 	if err != nil {
 		return ResumeSessionResult{}, err
 	}
-	// Whole-instance granularity is the only legitimate cut on a resume
-	// projection (d-tac-qwc): an instance past the count or the result bound
-	// is named instead, and what its mapping served is withdrawn, so the
-	// serve that does deliver it serves it in full.
-	var omitted, deferred []string
-	spent, err := resultChars(result)
-	if err != nil {
-		return ResumeSessionResult{}, err
-	}
-	// The moves map before the session shell, which takes what room is left:
-	// its lanes wait sooner than a move is omitted.
-	open := slices.Clone(source.Open)
-	slices.SortStableFunc(open, func(a, b sdd.WorkflowServe) int {
-		return cmp.Compare(boolRank(ss.root.IsShell(a.Instance)), boolRank(ss.root.IsShell(b.Instance)))
-	})
-	for i := range open {
-		serve := &open[i]
-		// The instance holding an unfinished operation is the position the
-		// resume exists to re-serve; it is never the one cut for size.
-		pending := source.PendingOperation != nil && source.PendingOperation.Instance == serve.Instance
-		name := fmt.Sprintf("%s (%s at %s)", serve.Instance, serve.Procedure, serve.Step)
-		if !pending && len(result.Open) >= maxResumeOpenInstances {
-			omitted = append(omitted, name)
-			continue
-		}
-		mark := ss.root.ServeMark()
-		mapped, held, err := s.boundedServe(ctx, req, ss, serve, serveBudget-spent, false)
-		if err != nil {
-			return ResumeSessionResult{}, err
-		}
-		mapped.Framing = ""
-		cost, err := resultChars(mapped)
-		if err != nil {
-			return ResumeSessionResult{}, err
-		}
-		if !pending && len(result.Open) > 0 && spent+cost > serveBudget {
-			ss.root.WithdrawServedSince(mark)
-			omitted = append(omitted, name)
-			continue
-		}
-		deferred = append(deferred, deferredInstances(serve, held)...)
-		ss.notePlayback(serve, held.keep)
-		ss.notePlayback(serve.Base, held.base)
-		spent += cost
-		result.Open = append(result.Open, mapped)
-	}
+	result.Open = moves.open
+	omitted, deferred := moves.omitted, moves.deferred
 	if len(omitted) > 0 {
 		result.Instructions += fmt.Sprintf("\n\n%d open moves omitted here for size — each resumes at its current step through next: %s", len(omitted), strings.Join(omitted, "; "))
 	}
-	shell, err := resumeFraming(ss, source, framing, &result)
+	shell, err := resumeFraming(ss, moves.shell, framing, &result)
 	if err != nil {
 		return ResumeSessionResult{}, err
 	}
@@ -1992,13 +2015,7 @@ func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, s
 // resumeFraming composes the resume's framing into the room its moves leave:
 // the last blocks that do not fit wait, named with the session shell's next
 // call, which serves them. It returns the shell's instance where blocks wait.
-func resumeFraming(ss *shellSession, source sdd.WorkflowResumeResult, framing []types.ServeLane, result *ResumeSessionResult) (string, error) {
-	shell := ""
-	for _, open := range source.Open {
-		if ss.root.IsShell(open.Instance) {
-			shell = open.Instance
-		}
-	}
+func resumeFraming(ss *shellSession, shell string, framing []types.ServeLane, result *ResumeSessionResult) (string, error) {
 	instructions := result.Instructions
 	mark := ss.root.ServeMark()
 	for keep := len(framing); ; keep-- {

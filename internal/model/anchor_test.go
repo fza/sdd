@@ -137,3 +137,18 @@ func TestPlaceAnchorKeepsAnotherTagsWord(t *testing.T) {
 		}
 	}
 }
+
+func TestStripAnchorTags(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"a placed tag", "serve each entry ⟦q7m2⟧ once per session", "serve each entry once per session"},
+		{"at the start", "⟦ab12⟧ Draft one entry", "Draft one entry"},
+		{"no tag", "Draft one entry", "Draft one entry"},
+		{"brackets that are no tag", "a ⟦notes⟧ stays", "a ⟦notes⟧ stays"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := model.StripAnchorTags(tc.in); got != tc.want {
+				t.Errorf("StripAnchorTags(%q) = %q, should take out only placed tags", tc.in, got)
+			}
+		})
+	}
+}

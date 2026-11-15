@@ -1,8 +1,11 @@
 package mcpapp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -38,6 +41,45 @@ func pagedText(ss *shellSession, tool, text string) string {
 	}
 	ss.pages[tool] = model.SplitServed(text, textBudget-500)
 	return pageText(ss, tool, 1)
+}
+
+// pagedRead is pagedText for a read that logs the entries it serves: a paged
+// result logs its bodies as read in full only once every page has served,
+// so refsInspected never passes on a body the agent did not get.
+func (s *toolSet) pagedRead(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, tool, text string, full, summary []string) (string, error) {
+	text = pagedText(ss, tool, text)
+	delete(ss.pageReads, tool)
+	if pages := len(ss.pages[tool]); pages > 1 && len(full) > 0 {
+		unserved := map[int]bool{}
+		for page := 2; page <= pages; page++ {
+			unserved[page] = true
+		}
+		if ss.pageReads == nil {
+			ss.pageReads = map[string]pageRead{}
+		}
+		ss.pageReads[tool] = pageRead{full: full, unserved: unserved}
+		full = nil
+	}
+	return text, s.logRootRead(ctx, req, ss, tool, full, summary)
+}
+
+// heldPageRead is heldPage for a read pagedRead logged, logging its bodies
+// once the last page not yet served serves.
+func (s *toolSet) heldPageRead(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, tool string, page int) (string, error) {
+	text, err := heldPage(ss, tool, page)
+	if err != nil {
+		return "", err
+	}
+	pending, ok := ss.pageReads[tool]
+	if !ok {
+		return text, nil
+	}
+	delete(pending.unserved, page)
+	if len(pending.unserved) > 0 {
+		return text, nil
+	}
+	delete(ss.pageReads, tool)
+	return text, s.logRootRead(ctx, req, ss, tool, pending.full, nil)
 }
 
 // heldPage serves a later page of tool's last paged result.
@@ -84,11 +126,4 @@ func boundedPage(page ReadAttachmentResult) ReadAttachmentResult {
 	page.Content = model.SplitServed(page.Content, textBudget)[0]
 	page.NextOffset, page.More = page.Offset+int64(len(page.Content)), true
 	return page
-}
-
-func boolRank(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }
