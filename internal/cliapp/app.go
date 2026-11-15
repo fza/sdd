@@ -1297,18 +1297,18 @@ func requireGraphInsideRepository(project meta.Project) error {
 	if err != nil {
 		return err
 	}
-	projectRepo := git.RepoRootFor(project.Root)
-	if project.Pointed() && projectRepo != "" && projectRepo == git.RepoRootFor(project.WorkRoot) {
-		return fmt.Errorf("project_dir in %s names %s, inside the repository at %s; the project needs a repository of its own", meta.SDDDir(project.WorkRoot), project.Root, projectRepo)
-	}
-	if project.Pointed() && meta.WithinDir(project.Root, project.WorkRoot) {
-		return fmt.Errorf("project_dir in %s names %s, which contains the work repository; the project needs a repository of its own beside it", meta.SDDDir(project.WorkRoot), project.Root)
+	if project.Pointed() {
+		subject := fmt.Sprintf("project_dir in %s names %s, which", meta.SDDDir(project.WorkRoot), project.Root)
+		err = meta.RequireProjectApart(subject, project.WorkRoot, git.RepoRootFor(project.WorkRoot), project.Root)
+		if err != nil {
+			return err
+		}
 	}
 	graphDir := meta.ResolveGraphDir(project.Root, cfg)
-	rel, err := filepath.Rel(project.Root, graphDir)
-	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if meta.WithinDir(project.Root, graphDir) {
 		return nil
 	}
+	projectRepo := git.RepoRootFor(project.Root)
 	graphRepo := git.RepoRootFor(graphDir)
 	if graphRepo == "" {
 		return fmt.Errorf("graph_dir in %s leads to %s, outside the project and outside any repository; keep the graph inside the project", project.SDDDir(), graphDir)

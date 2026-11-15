@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/meta"
@@ -40,9 +39,6 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 		}
 		return fmt.Errorf("--graph-dir leads into %s, a repository separate from the project at %s; keep the graph inside the project", graphRepo, projectRoot)
 	}
-	if !sameDir(projectRoot, cmd.RepoRoot) && meta.WithinDir(projectRoot, cmd.RepoRoot) {
-		return fmt.Errorf("--project-dir %s contains the work repository at %s; the project needs a repository of its own beside it", cmd.ProjectDir, cmd.RepoRoot)
-	}
 	root := h.projectRepos.RootOf(projectRoot)
 	if root == "" {
 		err := os.MkdirAll(projectRoot, 0o755)
@@ -53,7 +49,7 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 		if err != nil {
 			return err
 		}
-	} else if !sameDir(root, projectRoot) || sameDir(root, cmd.RepoRoot) {
+	} else if !meta.SameDir(root, projectRoot) {
 		return fmt.Errorf("--project-dir %s lies inside the repository at %s; the project needs a repository of its own", cmd.ProjectDir, root)
 	}
 
@@ -77,18 +73,4 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 		return fmt.Errorf("setting up the project in %s: %w", projectRoot, err)
 	}
 	return nil
-}
-
-// sameDir reports whether a and b name one directory, through symlinks such as
-// macOS's /var → /private/var.
-func sameDir(a, b string) bool {
-	resolvedA, err := filepath.EvalSymlinks(a)
-	if err != nil {
-		return false
-	}
-	resolvedB, err := filepath.EvalSymlinks(b)
-	if err != nil {
-		return false
-	}
-	return resolvedA == resolvedB
 }
