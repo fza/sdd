@@ -26,14 +26,15 @@ type servedProject struct {
 	clients  *servedClients
 }
 
-// fileStamp is what serve compares to tell a config file changed, appeared
-// or vanished. It hashes the content: a retargeted symlink, a copy keeping
+// fileStamp is what serve compares to tell a config file changed, appeared,
+// vanished or failed to read. It hashes the content: a retargeted symlink, a copy keeping
 // mtimes, or a same-size write within one mtime tick leaves size and mtime
 // as they were.
 type fileStamp struct {
-	path     string
-	readable bool
-	sum      [sha256.Size]byte
+	path   string
+	found  bool
+	failed bool
+	sum    [sha256.Size]byte
 }
 
 // configRead is one read of a watched file. A rebuild derives everything
@@ -66,7 +67,7 @@ func readConfigFiles(paths []string) []configRead {
 func stampFiles(reads []configRead) []fileStamp {
 	stamps := make([]fileStamp, 0, len(reads))
 	for _, read := range reads {
-		stamp := fileStamp{path: read.path, readable: read.found}
+		stamp := fileStamp{path: read.path, found: read.found, failed: read.err != nil}
 		if read.found {
 			stamp.sum = sha256.Sum256(read.data)
 		}

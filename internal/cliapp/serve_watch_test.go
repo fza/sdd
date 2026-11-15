@@ -127,6 +127,40 @@ func TestServeFollowsConfigFilesThatAppearOrVanish(t *testing.T) {
 	})
 }
 
+// A config file that appears unreadable refuses calls like a broken one.
+func TestServeRefusesCallsWhileAConfigFileIsUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file of mode 000")
+	}
+	fixture := newAppFixture(t)
+	local := filepath.Join(fixture.root, ".sdd", "config.local.yaml")
+	err := os.Remove(local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.serve(t, func(client *mcp.ClientSession) {
+		session := openServedSession(t, client)
+
+		err := os.WriteFile(local, []byte("participant: Local Author\n"), 0o000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refused := callServed(t, client, "resume_session", map[string]any{"session": session})
+		if !strings.Contains(refused.failure, "config.local.yaml") {
+			t.Errorf("an unreadable config file should refuse the call naming the file, got %q", refused.failure)
+		}
+
+		err = os.Chmod(local, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resumed := callServedOK(t, client, "resume_session", map[string]any{"session": session})
+		if !strings.Contains(resumed.HostNotice, "- participant: Global Author -> Local Author") {
+			t.Errorf("the file made readable should take effect, got %q", resumed.HostNotice)
+		}
+	})
+}
+
 // A config file left broken refuses every call with its name and parse error
 // until it is fixed; the change made meanwhile is told once served again.
 func TestServeRefusesEveryCallWhileAConfigFileIsBroken(t *testing.T) {
