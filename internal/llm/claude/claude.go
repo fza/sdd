@@ -34,8 +34,13 @@ func (r *Runner) identity() llm.Identity {
 // UserPrompt are concatenated — prompt caching is not available through this
 // transport. A ResponseSchema goes to --json-schema, and the structured output
 // the CLI validated against it becomes the text.
+//
+// The calls are text reviews, so the CLI runs with no tools at all: `--tools ""`
+// removes the built-in ones and `--strict-mcp-config` the configured MCP
+// servers, whose tool definitions would otherwise load in full into every
+// prompt. A draft's text then has nothing to act through.
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
-	args := []string{"-p", "--model", r.model, "--output-format", "json"}
+	args := []string{"-p", "--tools", "", "--strict-mcp-config", "--model", r.model, "--output-format", "json"}
 	if len(req.ResponseSchema) > 0 {
 		args = append(args, "--json-schema", string(req.ResponseSchema))
 	}
