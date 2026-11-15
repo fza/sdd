@@ -49,3 +49,21 @@ func TestSimilarTitles_NeedsABodyToSearchBy(t *testing.T) {
 		t.Error("the query should admit another titled entry")
 	}
 }
+
+func TestSimilarTitles_LeavesTheLinkedEntriesOut(t *testing.T) {
+	entry := &model.Entry{
+		ID: "20260101-100000-d-tac-aaa", Content: "A body.",
+		Refs:       []model.Ref{{ID: "20260101-100000-s-tac-ref"}},
+		Closes:     []string{"20260101-100000-s-tac-cls"},
+		Supersedes: []string{"20260101-100000-d-tac-sup"},
+	}
+	q, ok := query.SimilarTitles(entry)
+	if !ok {
+		t.Fatal("an entry with a body should have a query")
+	}
+	for _, id := range []string{"20260101-100000-s-tac-ref", "20260101-100000-s-tac-cls", "20260101-100000-d-tac-sup"} {
+		if q.Admits(&model.Entry{ID: id, Title: "Linked"}) {
+			t.Errorf("the query should leave out %s, which the prompt lists as a linked entry", id)
+		}
+	}
+}

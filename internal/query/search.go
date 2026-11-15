@@ -84,17 +84,20 @@ type SearchQuery struct {
 }
 
 // SimilarTitles is the vector query for the titled entries whose content lies
-// nearest entry's body, the entry itself left out. False for an entry with no
-// body to search by.
+// nearest entry's body. The entry itself and the entries it refs, closes and
+// supersedes are left out: the title prompt lists those apart, under a rule of
+// their own. False for an entry with no body to search by.
 func SimilarTitles(entry *model.Entry) (SearchQuery, bool) {
 	if strings.TrimSpace(entry.Content) == "" {
 		return SearchQuery{}, false
 	}
+	exclude := append([]string{entry.ID}, model.RefIDs(entry.Refs)...)
+	exclude = append(append(exclude, entry.Closes...), entry.Supersedes...)
 	return SearchQuery{
 		SyncMode: SearchSyncNone,
 		Phrase:   entry.Content,
 		Titled:   true,
-		Exclude:  []string{entry.ID},
+		Exclude:  exclude,
 		Limit:    model.SimilarTitleCount,
 	}, true
 }

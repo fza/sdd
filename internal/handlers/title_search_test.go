@@ -348,3 +348,31 @@ func TestSummarize_OpensNoIndexWithNothingToDescribe(t *testing.T) {
 		t.Errorf("a run with nothing to describe should not open the index, opened %d", opener.opened)
 	}
 }
+
+func TestSummarize_LeavesTheLinkedEntriesOutOfTheSimilarTitles(t *testing.T) {
+	graphDir := t.TempDir()
+	writeTitleGraph(t, graphDir)
+	linked := &model.Entry{
+		ID: describedEntry, Type: model.TypeSignal, Layer: model.LayerTactical, Kind: model.KindGap,
+		Title: "Segment mapping", Summary: "Segments map once.", Content: describedBody,
+		Refs: []model.Ref{{ID: nearestIDs[2], Kind: model.RefKindRelated, Desc: "the first neighbour"}},
+	}
+	writeEntryFile(t, graphDir, describedEntry, model.FormatFrontmatter(linked)+"\n"+linked.Content+"\n")
+	runner := &promptRunner{titles: []string{"Fresh title"}}
+	embedder := &queryEmbedder{}
+	h := handlers.New(handlers.Options{
+		GraphDir: graphDir, Reader: &graphReader{}, Committer: &recordingCommitter{},
+		LLMRunner: runner, Embedder: embedder.embedder(), SearchIndex: &indexOpener{index: rankedIndex{}},
+	})
+	err := h.Summarize(context.Background(), &command.SummarizeCmd{EntryIDs: []string{describedEntry}})
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	want := []string{"Neighbour title 2", "Neighbour title 3", "Neighbour title 4", "Neighbour title 5", "Neighbour title 6"}
+	if got := listedTitles(runner.requests[0].UserPrompt); !slices.Equal(got, want) {
+		t.Errorf("a ref'd entry should be listed as linked only, not among the similar titles, got %q", got)
+	}
+	if !strings.Contains(runner.requests[0].UserPrompt, "Title: Neighbour title 1") {
+		t.Errorf("the ref'd entry should still be listed as linked:\n%s", runner.requests[0].UserPrompt)
+	}
+}
