@@ -26,6 +26,10 @@ func TestSplitStagedBody(t *testing.T) {
 		{name: "a markdown rule opening the body keeps its first section", content: "---\nThe first section.\n\n---\nThe second section.\n", wantBody: "---\nThe first section.\n\n---\nThe second section.\n"},
 		{name: "a markdown heading in the block keeps it body", content: "---\n# Context\n\nlayer: the tactical layer is where this lives\n---\nRest\n", wantBody: "---\n# Context\n\nlayer: the tactical layer is where this lives\n---\nRest\n"},
 		{name: "a compared key beside other keys makes a header", content: "---\ntitle: Draft\nlayer: tac\n---\nBody\n", wantHeader: true, wantBody: "Body\n"},
+		{name: "a comment line before the keys makes a header", content: "---\n# header\nentryKind: gap\nlayer: tac\n---\nBody\n", wantHeader: true, wantBody: "Body\n"},
+		{name: "a comment line closing the keys makes a header", content: "---\nlayer: tac\n# trailing\n---\nBody\n", wantHeader: true, wantBody: "Body\n"},
+		{name: "a block scalar line opening with a hash makes a header", content: "---\nlayer: tac\nintent: |\n  # x\n---\nBody\n", wantHeader: true, wantBody: "Body\n"},
+		{name: "a hash line before prose keeps the block body", content: "---\n# Context\nThe gist: short\nlayer: tac\n---\nRest\n", wantBody: "---\n# Context\nThe gist: short\nlayer: tac\n---\nRest\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

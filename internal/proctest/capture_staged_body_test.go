@@ -290,24 +290,36 @@ func TestCapture_RestagedBodyReopensConfirmedPlayback(t *testing.T) {
 }
 
 func TestCapture_HeaderDisagreeingAtTheConfirmIsRefused(t *testing.T) {
-	_, session := newCaptureWorld(t, "staged-body-header-confirm")
-	handle := session.Stage(t, "draft.md", []byte("---\nconfidence: high\n---\nA tactical gap with a header.\n"))
-	serve := session.Start(t, "capture", nil)
-	instance := serve.Instance
-	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	tests := []struct {
+		name    string
+		file    string
+		wantKey string
+	}{
+		{name: "a plain header", file: "---\nconfidence: high\n---\nA tactical gap with a header.\n", wantKey: `"confidence"`},
+		{name: "a header holding comment lines", file: "---\n# header\nentryKind: gap\nlayer: ops\n---\nA tactical gap with a commented header.\n", wantKey: `"layer"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, session := newCaptureWorld(t, "staged-body-header-confirm")
+			handle := session.Stage(t, "draft.md", []byte(tt.file))
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+			proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
 
-	_, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "capture it")
-	if err == nil || !strings.Contains(err.Error(), `"confidence"`) {
-		t.Fatalf("a confirm while header and fields disagree should be refused naming the key, got %v", err)
-	}
-	position, err := session.WF.ServeAll(t.Context(), session.World.Identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, open := range position.Open {
-		if open.Instance == instance && open.Step != "playback" {
-			t.Errorf("a refused confirm should leave the capture at playback, got %q", open.Step)
-		}
+			_, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "capture it")
+			if err == nil || !strings.Contains(err.Error(), tt.wantKey) {
+				t.Fatalf("a confirm while header and fields disagree should be refused naming the key, got %v", err)
+			}
+			position, err := session.WF.ServeAll(t.Context(), session.World.Identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, open := range position.Open {
+				if open.Instance == instance && open.Step != "playback" {
+					t.Errorf("a refused confirm should leave the capture at playback, got %q", open.Step)
+				}
+			}
+		})
 	}
 }
 

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 
@@ -13,10 +14,11 @@ var StagedHeaderKeys = []string{"entryKind", "layer", "confidence", "intent", "r
 
 // SplitStagedBody splits a staged body file into its header and its body. A
 // file whose first line is `---` opens with a header block when a second such
-// line closes a YAML mapping holding one of StagedHeaderKeys; the body is then
-// everything after the second line. Any other file is all body, so a markdown
-// body opening with a `---` rule keeps its first section. A leading byte order
-// mark never reaches the body. header is nil when there is no block.
+// line closes a YAML mapping holding one of StagedHeaderKeys and no markdown
+// heading (see holdsHeading); the body is then everything after the second
+// line. Any other file is all body, so a markdown body opening with a `---`
+// rule keeps its first section. A leading byte order mark never reaches the
+// body. header is nil when there is no block.
 func SplitStagedBody(content string) (header map[string]any, body string) {
 	content = strings.TrimPrefix(content, "\uFEFF")
 	lines := strings.SplitAfter(content, "\n")
@@ -27,9 +29,7 @@ func SplitStagedBody(content string) (header map[string]any, body string) {
 		if !isHeaderDelimiter(lines[i]) {
 			continue
 		}
-		// A `#` line is a YAML comment but a markdown heading: a block holding
-		// one is body.
-		if slices.ContainsFunc(lines[1:i], func(line string) bool { return strings.HasPrefix(strings.TrimSpace(line), "#") }) {
+		if holdsHeading(lines[1:i]) {
 			return nil, content
 		}
 		var parsed map[string]any
@@ -151,6 +151,28 @@ func stagedRefForm(item any) (string, bool) {
 	}
 	return strings.Join(parts[:], "\x00"), true
 }
+
+// holdsHeading reports whether a block reads as markdown rather than YAML: a
+// line opening with `#` at the margin is a YAML comment but also a heading,
+// and it is a heading when a blank line or prose follows it. An indented `#`
+// line belongs to the value above it.
+func holdsHeading(block []string) bool {
+	for i, line := range block {
+		if !strings.HasPrefix(line, "#") {
+			continue
+		}
+		if i+1 == len(block) {
+			return false
+		}
+		next := strings.TrimRight(block[i+1], "\r\n")
+		if strings.TrimSpace(next) == "" || (!strings.HasPrefix(next, "#") && !headerKeyLine.MatchString(next)) {
+			return true
+		}
+	}
+	return false
+}
+
+var headerKeyLine = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*:(\s|$)`)
 
 func isHeaderDelimiter(line string) bool {
 	return strings.TrimRight(line, "\r\n") == "---"
