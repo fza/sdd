@@ -327,26 +327,71 @@ func TestCacheHandlerPruneLeavesARunningPassAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = held.Unlock() }()
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err != nil {
+		t.Errorf("a scheduled run while another runs should leave quietly, got %v", err)
+	}
 	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); !errors.Is(err, handlers.ErrCachePruneRunning) {
 		t.Errorf("a run by hand while another runs should be refused, got %v", err)
 	}
 	if !exists(t, f.staleClone) {
 		t.Error("a second run while one holds the run lock should do nothing")
 	}
+	status, err := cacheprune.Load(f.loc.StateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.StartedAt.IsZero() {
+		t.Errorf("a run refused the run lock should record no start, got %+v", status)
+	}
+}
+
+func TestCacheHandlerPruneRunsOncePerDayWhenScheduled(t *testing.T) {
+	f := newPruneFixture(t, "")
+	if err := cacheprune.Update(t.Context(), f.loc.StateRoot, func(s *model.CachePruneStatus) { s.StartedAt = time.Now().Add(-time.Hour) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(t, f.staleClone) {
+		t.Error("a scheduled run within a day of the last should do nothing")
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(t, f.staleClone) {
+		t.Error("a run by hand should prune regardless of the last run")
+	}
 }
 
 func TestCacheHandlerPruneRecordsAFailure(t *testing.T) {
-	f := newPruneFixture(t, "cache:\n  retention: soon\n")
-	err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{})
-	if err == nil {
-		t.Fatal("a run on an invalid retention should fail")
-	}
-	status, loadErr := cacheprune.Load(f.loc.StateRoot)
-	if loadErr != nil {
-		t.Fatal(loadErr)
-	}
-	if status.Error == "" || !strings.Contains(status.Error, "cache.retention") {
-		t.Errorf("the failure should be recorded for sdd info, got %+v", status)
+	for _, tc := range []struct {
+		name         string
+		scheduled    bool
+		wantReported bool
+	}{
+		{name: "by hand", wantReported: true},
+		{name: "scheduled", scheduled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPruneFixture(t, "cache:\n  retention: soon\n")
+			err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{Scheduled: tc.scheduled})
+			if err == nil {
+				t.Fatal("a run on an invalid retention should fail")
+			}
+			status, loadErr := cacheprune.Load(f.loc.StateRoot)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if status.Error == "" || !strings.Contains(status.Error, "cache.retention") {
+				t.Errorf("the failure should be recorded for sdd info, got %+v", status)
+			}
+			// A run by hand showed its failure as the command's error; a
+			// scheduled one leaves it for the next command to report.
+			if status.Reported != tc.wantReported {
+				t.Errorf("the failure should be marked reported: %v", tc.wantReported)
+			}
+		})
 	}
 }
 

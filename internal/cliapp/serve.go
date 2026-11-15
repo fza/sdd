@@ -32,7 +32,7 @@ import (
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
-func serveCmd() *cli.Command {
+func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 	return &cli.Command{
 		Name:  "serve",
 		Usage: "Run the workflow MCP server: dialogue-loop tools over stdio or HTTP",
@@ -84,12 +84,21 @@ func serveCmd() *cli.Command {
 			}
 			collectSessions(ctx, application, retention)
 
+			var cacheNotice func(context.Context) string
+			if launchCachePrune != nil {
+				timerCtx, stopTimer := context.WithCancel(ctx)
+				defer stopTimer()
+				go runCachePruneTimer(timerCtx, launchCachePrune)
+				cacheNotice = serveCacheNotice
+			}
+
 			transport := cmd.String("transport")
 			srv, err := mcpserver.New(mcpserver.Options{SearchSyncMode: sdd.SearchSyncAll,
 				Application:   application,
 				LocalIdentity: identity,
 				LocalClient:   transport == "stdio",
 				Version:       cmd.Root().Version,
+				CacheNotice:   cacheNotice,
 			})
 			if err != nil {
 				return err

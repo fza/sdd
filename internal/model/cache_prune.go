@@ -11,6 +11,9 @@ const (
 	// an unused index store, snapshot or calibration after its last use, and
 	// a newer derivation rule's versions after that rule's last use.
 	DefaultCacheRetention = "90d"
+	// CachePruneInterval is the least time between two background pruning
+	// runs on one machine.
+	CachePruneInterval = 24 * time.Hour
 	// CachePruneRunLimit bounds one pruning run, so a hung run cannot hold
 	// the machine's run lock for good; what it did not reach waits for the
 	// next run.
@@ -72,12 +75,35 @@ func ResolveReplacedRetention(cfg IndexConfig) (time.Duration, error) {
 
 // CachePruneStatus is the record of the latest cache pruning run.
 type CachePruneStatus struct {
+	// LaunchedAt is when a command last started a background run; StartedAt
+	// when a run last began work. Either keeps the next launch a day away.
+	LaunchedAt time.Time
 	StartedAt  time.Time
 	FinishedAt time.Time
 	Removed    CachePruneCounts
 	// Error is the failure of the latest finished run, empty when it
 	// succeeded.
 	Error string
+	// Reported marks a failure some command has already shown.
+	Reported bool
+}
+
+// Due reports whether a background run should start at now.
+func (s CachePruneStatus) Due(now time.Time) bool {
+	last := s.LaunchedAt
+	if s.StartedAt.After(last) {
+		last = s.StartedAt
+	}
+	return now.Sub(last) >= CachePruneInterval
+}
+
+// FailureNotice is the one line a command shows for a failed run nobody was
+// told about yet, empty otherwise.
+func (s CachePruneStatus) FailureNotice() string {
+	if s.Error == "" || s.Reported {
+		return ""
+	}
+	return fmt.Sprintf("background cache pruning failed at %s: %s; see sdd info", s.FinishedAt.Format(time.RFC3339), s.Error)
 }
 
 // CachePruneCounts tallies what one run deleted.

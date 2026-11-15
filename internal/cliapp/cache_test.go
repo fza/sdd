@@ -1,6 +1,7 @@
 package cliapp_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,9 +9,77 @@ import (
 	"time"
 
 	"github.com/networkteam/sdd/internal/cacheprune"
+	"github.com/networkteam/sdd/internal/cliapp"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 )
+
+// runWithPrune runs one command with a recording launcher in place of the
+// detached process.
+func (f *appFixture) runWithPrune(t *testing.T, launched *[]string, args ...string) appResult {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	command := cliapp.New(cliapp.Options{
+		Version: appVersion, Reader: strings.NewReader(""), Writer: &stdout, ErrWriter: &stderr,
+		LaunchCachePrune: func(dir, _ string) error { *launched = append(*launched, dir); return nil },
+	})
+	err := command.Run(t.Context(), append([]string{"sdd"}, args...))
+	return appResult{stdout: stdout.String(), stderr: stderr.String(), err: err}
+}
+
+func TestCommandsLaunchTheDailyCachePruneOnce(t *testing.T) {
+	f := newAppFixture(t)
+	var launched []string
+	for range 3 {
+		if r := f.runWithPrune(t, &launched, "show", appEntryID); r.err != nil {
+			t.Fatalf("show: %v\n%s", r.err, r.stderr)
+		}
+	}
+	if len(launched) != 1 || launched[0] != f.root {
+		t.Errorf("three commands should launch one pass from the working directory, launched %v", launched)
+	}
+	if r := f.run(t, "show", appEntryID); r.err != nil {
+		t.Fatalf("show: %v\n%s", r.err, r.stderr)
+	}
+	status, err := cacheprune.Load(filepath.Join(f.root, "state", "sdd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.LaunchedAt.IsZero() {
+		t.Error("the launch should be on record, so the next command starts none")
+	}
+}
+
+func TestCachePruneLaunchesNoSecondPass(t *testing.T) {
+	f := newAppFixture(t)
+	var launched []string
+	if r := f.runWithPrune(t, &launched, "cache", "prune"); r.err != nil {
+		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)
+	}
+	if len(launched) != 0 {
+		t.Errorf("sdd cache prune is the pass itself and should launch none, launched %v", launched)
+	}
+	if r := f.runWithPrune(t, &launched, "show", appEntryID); r.err != nil {
+		t.Fatalf("show: %v\n%s", r.err, r.stderr)
+	}
+	if len(launched) != 0 {
+		t.Errorf("a pass run by hand counts as the day's pass, launched %v", launched)
+	}
+}
+
+func TestScheduledCachePrunePrintsNothing(t *testing.T) {
+	f := newAppFixture(t)
+	r := f.run(t, "cache", "prune", "--scheduled")
+	if r.err != nil {
+		t.Fatalf("cache prune --scheduled: %v\n%s", r.err, r.stderr)
+	}
+	if r.stdout != "" {
+		t.Errorf("a background pass should print nothing, stdout:\n%s", r.stdout)
+	}
+	if info := f.run(t, "info"); !strings.Contains(info.stdout, "Cache pruning: last run") {
+		t.Errorf("the background pass should still be on record, stdout:\n%s", info.stdout)
+	}
+}
 
 func TestCachePruneCommandReportsItsFailureAsItsError(t *testing.T) {
 	f := newAppFixture(t)
@@ -18,25 +87,35 @@ func TestCachePruneCommandReportsItsFailureAsItsError(t *testing.T) {
 	if r := f.run(t, "cache", "prune"); r.err == nil || !strings.Contains(r.err.Error(), "cache.retention") {
 		t.Fatalf("a run on an invalid retention should fail with its cause, got %v", r.err)
 	}
-	if next := f.run(t, "show", appEntryID); strings.Contains(next.stderr, "cache pruning") {
+	var launched []string
+	if next := f.runWithPrune(t, &launched, "show", appEntryID); strings.Contains(next.stderr, "cache pruning") {
 		t.Errorf("a later command should not repeat the run's failure, stderr:\n%s", next.stderr)
 	}
 }
 
-func TestInfoShowsAFailedCachePrune(t *testing.T) {
+func TestCommandsReportAFailedCachePruneOnce(t *testing.T) {
 	f := newAppFixture(t)
 	stateRoot := filepath.Join(f.root, "state", "sdd")
 	err := cacheprune.Update(t.Context(), stateRoot, func(s *model.CachePruneStatus) {
-		s.StartedAt, s.FinishedAt, s.Error = time.Now(), time.Now(), "removing clone: permission denied"
+		s.LaunchedAt, s.FinishedAt, s.Error = time.Now(), time.Now(), "removing clone: permission denied"
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next := f.run(t, "show", appEntryID); next.err != nil || strings.Contains(next.stderr, "permission denied") {
-		t.Errorf("a recorded failure should neither fail nor reach another command, got %v, stderr:\n%s", next.err, next.stderr)
+	var launched []string
+	first := f.runWithPrune(t, &launched, "show", appEntryID)
+	second := f.runWithPrune(t, &launched, "show", appEntryID)
+	if first.err != nil || second.err != nil {
+		t.Fatalf("a failed pass must not fail the command: %v, %v", first.err, second.err)
+	}
+	if !strings.Contains(first.stderr, "permission denied") {
+		t.Errorf("the first command should report the failed pass, stderr:\n%s", first.stderr)
+	}
+	if strings.Contains(second.stderr, "permission denied") {
+		t.Errorf("the failure should be reported once, second stderr:\n%s", second.stderr)
 	}
 	if info := f.run(t, "info"); !strings.Contains(info.stdout, "Cache pruning: failed") || !strings.Contains(info.stdout, "permission denied") {
-		t.Errorf("sdd info should show the failed run, stdout:\n%s", info.stdout)
+		t.Errorf("sdd info should keep showing the failed pass, stdout:\n%s", info.stdout)
 	}
 }
 

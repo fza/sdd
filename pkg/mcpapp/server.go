@@ -33,6 +33,10 @@ type Options struct {
 	// Version is the SDD version the info tool reports, and the server
 	// implementation version under New.
 	Version string
+	// CacheNotice returns, once, the host's notice of a failed background
+	// cache pruning run; the next tool result carries it as notices.cache.
+	// Nil when the host prunes nothing.
+	CacheNotice func(context.Context) string
 }
 
 // toolSet carries what SDD's tool handlers need, independent of the server
@@ -43,6 +47,7 @@ type toolSet struct {
 	localIdentity  sdd.RequestIdentity
 	local          bool
 	version        string
+	cacheNotice    func(context.Context) string
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
 	// event acts on a session (d-cpt-aen).
@@ -62,6 +67,7 @@ func newToolSet(opts Options) (*toolSet, error) {
 		localIdentity:  opts.LocalIdentity,
 		local:          opts.LocalClient,
 		version:        opts.Version,
+		cacheNotice:    opts.CacheNotice,
 		sessions:       newSessionCache(),
 	}, nil
 }

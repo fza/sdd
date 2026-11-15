@@ -55,11 +55,13 @@ func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
 	return h
 }
 
-// ErrCachePruneRunning refuses a pass while another process runs one.
+// ErrCachePruneRunning refuses a pass asked for by hand while another process
+// runs one; a scheduled pass leaves quietly instead.
 var ErrCachePruneRunning = errors.New("another cache pruning run is in progress")
 
 // Prune runs one pruning pass over the whole cache and records its result in
-// the pruning status, failure included, so sdd info shows it.
+// the pruning status, failure included, so sdd info shows it and, for a
+// scheduled pass, the next command reports it.
 func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (err error) {
 	if err := os.MkdirAll(h.stateRoot, 0o755); err != nil {
 		return fmt.Errorf("creating state dir: %w", err)
@@ -70,11 +72,24 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 		return fmt.Errorf("locking cache pruning: %w", err)
 	}
 	if !locked {
+		if cmd.Scheduled {
+			slogutils.FromContext(ctx).Info("cache pruning already running in another process")
+			return nil
+		}
 		return ErrCachePruneRunning
 	}
 	defer func() { err = errors.Join(err, run.Unlock()) }()
 
 	now := h.now()
+	if cmd.Scheduled {
+		status, err := cacheprune.Load(h.stateRoot)
+		if err != nil {
+			return err
+		}
+		if now.Sub(status.StartedAt) < model.CachePruneInterval {
+			return nil
+		}
+	}
 	if err := cacheprune.Update(ctx, h.stateRoot, func(s *model.CachePruneStatus) { s.StartedAt = now }); err != nil {
 		return err
 	}
@@ -87,9 +102,10 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 	recordErr := cacheprune.Update(context.WithoutCancel(ctx), h.stateRoot, func(s *model.CachePruneStatus) {
 		s.FinishedAt = h.now()
 		s.Removed = counts
-		s.Error = ""
+		s.Error, s.Reported = "", false
 		if runErr != nil {
-			s.Error = runErr.Error()
+			// A run by hand shows its failure as its own error.
+			s.Error, s.Reported = runErr.Error(), !cmd.Scheduled
 		}
 	})
 	return errors.Join(runErr, recordErr)

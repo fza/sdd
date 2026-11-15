@@ -151,6 +151,17 @@
           "description": "the torn-down session's subject label",
           "type": "string"
         },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
         "session": {
           "description": "the torn-down session, on teardown by handle",
           "type": "string"
@@ -193,6 +204,17 @@
           "description": "the now-effective branch binding; empty after clear",
           "type": "string"
         },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
         "status": {
           "type": "string"
         }
@@ -226,6 +248,17 @@
         "language": {
           "description": "configured graph language; empty = English",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "participant": {
           "description": "configured local participant (canonical name)",
@@ -492,6 +525,17 @@
             "null",
             "array"
           ]
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
@@ -793,6 +837,17 @@
         "instructions": {
           "type": "string"
         },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
         "parked": {
           "type": "boolean"
         },
@@ -873,6 +928,17 @@
         },
         "next_offset": {
           "type": "integer"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "offset": {
           "type": "integer"
@@ -959,6 +1025,17 @@
             "null",
             "array"
           ]
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
         }
       },
       "required": [
@@ -1064,6 +1141,17 @@
         "label": {
           "description": "the session's subject label, when one was recorded",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "open_instances": {
           "description": "current serve for every running instance; the session shell's serve carries the open-threads block",
@@ -1627,6 +1715,17 @@
           "description": "readable incomplete-indexing notice",
           "type": "string"
         },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
         "results": {
           "description": "matching entries with citations",
           "type": "string"
@@ -1687,6 +1786,17 @@
       "properties": {
         "entries": {
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
         }
       },
       "required": [
@@ -1754,6 +1864,17 @@
         "handle": {
           "description": "attachment handle; pass it in a report's attachments field",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
         }
       },
       "required": [
@@ -2003,6 +2124,17 @@
             "null",
             "array"
           ]
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
@@ -2399,6 +2531,17 @@
             "array"
           ]
         },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
           "type": "string"
@@ -2612,6 +2755,17 @@
         "hint": {
           "description": "one-line pointer to the view layout grammar, served once per connection",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "cache": {
+              "description": "set once after sdd's background cache pruning failed: the error and where to look; pass it on to the user",
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "sections": {
           "type": "string"

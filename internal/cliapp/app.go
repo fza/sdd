@@ -41,6 +41,10 @@ type Options struct {
 	Reader    io.Reader
 	Writer    io.Writer
 	ErrWriter io.Writer
+	// LaunchCachePrune starts the daily background `sdd cache prune
+	// --scheduled` in dir, detached, with its output in logPath. Nil launches
+	// nothing: an in-process host or a test runs no background pass.
+	LaunchCachePrune func(dir, logPath string) error
 }
 
 // resolveLLMConfig builds the effective LLMConfig for a command from the
@@ -390,6 +394,14 @@ func New(options Options) *cli.Command {
 
 			warnUnknownConfigKeys(ctx)
 
+			// sdd cache is the pass itself. sdd serve shows a failed pass
+			// through its tool results instead.
+			if first := cmd.Args().First(); options.LaunchCachePrune != nil && first != cacheCommandName {
+				stopPrune := timing.Start(ctx, "cache-prune-check")
+				backgroundCachePrune(ctx, options.LaunchCachePrune, first != "serve")
+				stopPrune()
+			}
+
 			// Background sync check runs on every command except `sdd init`
 			// (bootstrap may precede remote configuration — sync would emit
 			// spurious warnings) and `sdd cache`, which touches no graph.
@@ -426,7 +438,7 @@ func New(options Options) *cli.Command {
 			indexCmd(),
 			cacheCmd(),
 			searchCmd(),
-			serveCmd(),
+			serveCmd(options.LaunchCachePrune),
 			sessionsCmd(),
 			syncCmd(),
 			repoCmd(),
