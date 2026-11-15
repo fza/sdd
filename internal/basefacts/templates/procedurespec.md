@@ -83,7 +83,7 @@ Guards name checks, `inject` names queries, `op` and `call` name commands — an
 
 ## Dispatching another procedure
 
-A step never starts another procedure, and no command does. The handoff lives in the unit's prose: the instruction tells the running agent to start the named procedure as a sub-move of this run, and the product comes back the same way — the agent reports it into a field this spec declares, and the next gate holds on that field. Nothing else flows back: the child writes nothing into this run's store, so the reported field is the only bridge.
+A step never starts another procedure, and no command does. The handoff lives in the unit's prose: the instruction tells the running agent to start the named procedure as a sub-move of this run, and the product comes back the same way — the agent reports it into a field this spec declares, and the next gate holds on that field. Nothing else flows back from a child that declares no delivery: it writes nothing into this run's store, so the reported field is the only bridge.
 
 An option's `dispatch` block declares seeding for that handoff, never the start itself: `dispatch: {procedure: <canonical>, seed: {<child field>: <parent field>}}` on the answered option arms the mapping, and the next procedure started under this run receives each value into the *state* field it declares under the child name — a value passed explicitly at start wins, and an empty source seeds nothing.
 

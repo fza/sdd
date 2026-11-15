@@ -46,6 +46,9 @@ type Context struct {
 	// was served at (refsInspected evaluates it). Nil means nothing was
 	// served; reading a nil map is safe.
 	Reads map[string]ReadDepth
+	// Arrived lists the fields the current await gate holds a delivery for
+	// that it has not consumed yet.
+	Arrived []string
 }
 
 // PredicateFunc is a pure check over the store (and graph): no side effects,

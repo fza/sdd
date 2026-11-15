@@ -53,6 +53,23 @@ type Instance struct {
 	// answered option declared one; empty means the seed applies to whatever is
 	// dispatched next (a generic junction like engage's move).
 	dispatchProcedure string
+	// dispatchReceive and dispatchSend are the delegate mappings the same
+	// answered option declared, recorded on the fork its next task starts.
+	dispatchReceive map[string]string
+	dispatchSend    map[string]string
+	// forkPending marks a delegate dispatch answered whose fork is not
+	// recorded yet, so a delegateEnded route does not fire before it.
+	forkPending bool
+	// forks are the delegate child sessions this instance dispatched.
+	forks []*Fork
+	// unconsumed marks the fields holding a delivery no await gate has taken
+	// yet.
+	unconsumed map[string]bool
+	// sent counts the deliveries this instance sent, interim the delegate's
+	// accepted interim ones, which the round cap bounds.
+	sent     int
+	interim  int
+	exchange []ExchangeItem
 	// draftServed holds, per step, the serveDelta snapshot last served to this
 	// instance — the engine-owned base later serves diff against. In-memory
 	// only, deliberately: a process restart or resume forgets it, so those
@@ -150,6 +167,10 @@ type Serve struct {
 	// Cancellation is the current cancellation this serve lands, rendered as
 	// its own lane; nil on every other serve.
 	Cancellation *CancellationServe
+	// Dispatches names the procedure the chooser answer this serve follows
+	// dispatches, so the shell forks a delegating task in the answering call
+	// (20260829-122157-d-cpt-zpe); empty on every other serve.
+	Dispatches string
 }
 
 // ServeLane is defined in pkg/application/types — the exported surface names
@@ -228,7 +249,11 @@ func (s *Session) funcContext(inst *Instance) (*Context, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving current graph: %w", err)
 	}
-	return &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads}, nil
+	ctx := &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads}
+	if step := inst.currentStep(); step != nil {
+		ctx.Arrived = inst.arrived(step)
+	}
+	return ctx, nil
 }
 
 // cascade advances gate steps until something stops them — a failing
@@ -264,6 +289,19 @@ func (s *Session) cascade(inst *Instance) error {
 				return nil // stalled: guard holds the gate
 			}
 		}
+		if s.roundCapReached(inst, step) {
+			s.endInstance(inst, fmt.Sprintf("round cap %d reached", inst.Spec.Rounds))
+			return s.checkSink()
+		}
+		if len(step.Await) > 0 && inst.awaitHeld(step) {
+			if step.DelegateEnded == "" || inst.forkPending || inst.liveFork() {
+				return nil // stalled: the linked session has not delivered yet
+			}
+			if err := s.transitionWith(inst, step.DelegateEnded, false, nil); err != nil {
+				return err
+			}
+			continue
+		}
 
 		if step.Op != "" && !inst.opDone {
 			if err := s.runCommand(inst, step.Op, ""); err != nil {
@@ -272,13 +310,10 @@ func (s *Session) cascade(inst *Instance) error {
 			inst.opDone = true
 		}
 
-		fired := false
+		to := ""
 		for _, t := range step.Transitions {
 			if t.Otherwise {
-				if err := s.transitionTo(inst, t.To, false); err != nil {
-					return err
-				}
-				fired = true
+				to = t.To
 				break
 			}
 			ok, _, err := s.evalGuard(inst, t.When)
@@ -286,15 +321,21 @@ func (s *Session) cascade(inst *Instance) error {
 				return err
 			}
 			if ok {
-				if err := s.transitionTo(inst, t.To, false); err != nil {
-					return err
-				}
-				fired = true
+				to = t.To
 				break
 			}
 		}
-		if !fired {
+		if to == "" {
 			return nil // stalled: the serve names what's missing
+		}
+		if len(step.Deliver) > 0 {
+			proceed, err := s.deliver(inst, step, to)
+			if err != nil || !proceed {
+				return err
+			}
+		}
+		if err := s.transitionWith(inst, to, false, step.Await); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -409,6 +450,11 @@ func (s *Session) runCommand(inst *Instance, name, to string) error {
 	if ctx.Intent != nil {
 		s.intentDone = true
 	}
+	// A send-mapped value the command wrote reaches the live forks as a
+	// reported one does.
+	if err := s.sendFills(inst, slices.Sorted(maps.Keys(writes))); err != nil {
+		return err
+	}
 	if cmd.MutatesGraph {
 		s.engine.Graphs.Invalidate()
 	}
@@ -419,6 +465,12 @@ func (s *Session) runCommand(inst *Instance, name, to string) error {
 // transition. The reopen flag marks the edit-after-confirm return to a
 // chooser.
 func (s *Session) transitionTo(inst *Instance, to string, reopen bool) error {
+	return s.transitionWith(inst, to, reopen, nil)
+}
+
+// transitionWith is transitionTo leaving an await gate, whose consumed
+// deliveries the transition event records for replay.
+func (s *Session) transitionWith(inst *Instance, to string, reopen bool, consumed []string) error {
 	if err := s.checkSink(); err != nil {
 		return err
 	}
@@ -427,10 +479,14 @@ func (s *Session) transitionTo(inst *Instance, to string, reopen bool) error {
 	if reopen {
 		data["reopen"] = true
 	}
+	if len(consumed) > 0 {
+		data["consumed"] = consumed
+	}
 	s.appendEvent(inst.ID, EventTransition, data)
 	if err := s.checkSink(); err != nil {
 		return err
 	}
+	inst.consume(consumed)
 
 	switch to {
 	case EndCompleted:
@@ -529,7 +585,14 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		sv.Sizes = []PartSize{{Part: "operation", Bytes: len(sv.Instructions)}}
 		return sv, nil
 	}
-	sv.ReportSchema = inst.Spec.ReportSchemaForStep(step)
+	switch {
+	case len(step.Await) == 0:
+		sv.ReportSchema = inst.Spec.ReportSchemaForStep(step)
+	case len(step.Collect) > 0:
+		// A gate awaiting a delivery takes only what it collects; one that
+		// collects nothing takes no report.
+		sv.ReportSchema = inst.Spec.collectSchema(step)
+	}
 	sv.Missing = s.missingFields(inst, step)
 
 	unitName := step.ID
@@ -542,6 +605,10 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 	lanes, sizes, cuts, err := s.renderUnit(inst, step)
 	if err != nil {
 		return nil, err
+	}
+	if lane, exchangeCuts := s.exchangeLane(inst); lane != nil {
+		lanes = append(lanes, *lane)
+		cuts = append(cuts, exchangeCuts...)
 	}
 	if len(step.ServeDelta) > 0 {
 		cur := draftSnapshot(inst, step.ServeDelta)
@@ -594,7 +661,11 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 				sv.Failing = failing
 			}
 		}
-		if len(sv.Failing) == 0 && len(sv.Missing) == 0 && len(step.Transitions) > 0 {
+		awaiting := len(step.Await) > 0 && inst.awaitHeld(step)
+		if awaiting {
+			sv.Failing = append(sv.Failing, FailedPredicate{Name: "await", Message: s.awaitDiagnostic(inst, step)})
+		}
+		if !awaiting && len(sv.Failing) == 0 && len(sv.Missing) == 0 && len(step.Transitions) > 0 {
 			// The gate didn't cascade, its guard holds, and no collect field
 			// is missing — the transitions' own predicates hold it. Name
 			// those.

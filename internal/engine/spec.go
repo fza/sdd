@@ -53,6 +53,10 @@ type Spec struct {
 	// through the same query mechanism a step's inject uses. Empty on moves and
 	// on shells that declare none (which then serve info-only framing).
 	Framing []InjectCall
+	// Rounds is a delegate task's round cap: the most interim deliveries it
+	// makes before it concludes. Zero on every procedure without an interim
+	// delivery.
+	Rounds int
 }
 
 // VarDecl declares one typed variable. The desc seeds both the generated
@@ -159,8 +163,16 @@ type Dispatch struct {
 	Procedure string
 	// Seed maps child field ← parent field: the key is the field the child
 	// declares as state, the value is this parent's own declared field carrying
-	// the evidence. Required — a Dispatch with no seed has nothing to carry.
+	// the evidence.
 	Seed map[string]string
+	// Receive maps parent field ← child field for a delegate that runs in a
+	// forked child session: each value the child delivers lands in the parent
+	// field named here, so the child never depends on the parent's names.
+	Receive map[string]string
+	// Send maps child field ← parent field: each time the parent writes the
+	// named field, its value is delivered into the child field the child's
+	// gate awaits. A Dispatch carries at least one of Seed, Receive and Send.
+	Send map[string]string
 }
 
 // Transition is one ordered {when, to} entry; the final entry may be an
@@ -195,6 +207,27 @@ type Step struct {
 	// Delegable hands a user chooser to the agent in an autonomous session;
 	// an unmarked one stays the user's in every mode.
 	Delegable bool
+	// Deliver names the state fields a task's gate delivers into the
+	// dispatching instance when one of its transitions fires: a transition to
+	// end(completed) is the final delivery, any other step an interim one
+	// that leaves the child running.
+	Deliver []string
+	// Await names the state fields a gate waits for from the linked session:
+	// it holds until each holds a delivery not yet consumed, and passing
+	// consumes them. Only a delivery fills an awaited field.
+	Await []string
+	// AwaitAny holds the gate only until one field of Await holds a delivery
+	// not yet consumed; passing consumes every field Await names. Its
+	// transitions read Context.Arrived to tell which one came.
+	AwaitAny bool
+	// DelegateEnded is where a dispatching side's await gate goes once its
+	// instance holds no live delegate fork, so nothing is left to deliver what
+	// it awaits; without it the gate keeps waiting.
+	DelegateEnded string
+	// DelegateGone names the field the dispatching agent reports at such a
+	// gate once its delegate ended without delivering: the report ends the
+	// instance's live forks with it as their reason, so DelegateEnded applies.
+	DelegateGone string
 }
 
 // Terminal transition targets. A procedure ends by transitioning to one of
@@ -265,6 +298,8 @@ type optionYAML struct {
 type dispatchYAML struct {
 	Procedure string            `yaml:"procedure"`
 	Seed      map[string]string `yaml:"seed"`
+	Receive   map[string]string `yaml:"receive"`
+	Send      map[string]string `yaml:"send"`
 }
 
 type transitionYAML struct {
@@ -274,18 +309,23 @@ type transitionYAML struct {
 }
 
 type stepYAML struct {
-	ID          string           `yaml:"id"`
-	Collect     []string         `yaml:"collect"`
-	Inject      []injectYAML     `yaml:"inject"`
-	Render      string           `yaml:"render"`
-	Chooser     string           `yaml:"chooser"`
-	Options     []optionYAML     `yaml:"options"`
-	Guard       string           `yaml:"guard"`
-	Op          string           `yaml:"op"`
-	Transitions []transitionYAML `yaml:"transitions"`
-	Goal        string           `yaml:"goal"`
-	ServeDelta  []string         `yaml:"serveDelta"`
-	Delegable   bool             `yaml:"delegable"`
+	ID            string           `yaml:"id"`
+	Collect       []string         `yaml:"collect"`
+	Inject        []injectYAML     `yaml:"inject"`
+	Render        string           `yaml:"render"`
+	Chooser       string           `yaml:"chooser"`
+	Options       []optionYAML     `yaml:"options"`
+	Guard         string           `yaml:"guard"`
+	Op            string           `yaml:"op"`
+	Transitions   []transitionYAML `yaml:"transitions"`
+	Goal          string           `yaml:"goal"`
+	ServeDelta    []string         `yaml:"serveDelta"`
+	Delegable     bool             `yaml:"delegable"`
+	Deliver       []string         `yaml:"deliver"`
+	Await         []string         `yaml:"await"`
+	AwaitAny      []string         `yaml:"awaitAny"`
+	DelegateEnded string           `yaml:"delegateEnded"`
+	DelegateGone  string           `yaml:"delegateGone"`
 }
 
 // decodeStrict re-encodes a retained YAML node and decodes it with unknown
@@ -354,6 +394,10 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 		addProblem("serveBudget: must be non-negative, got %d", raw.ServeBudget)
 	}
 	spec.ServeBudget = raw.ServeBudget
+	if raw.Rounds < 0 {
+		addProblem("rounds: must be non-negative, got %d", raw.Rounds)
+	}
+	spec.Rounds = raw.Rounds
 
 	var paramsYAML, stateYAML map[string]varDeclYAML
 	if err := decodeStrict(&raw.Params, &paramsYAML); err != nil {
@@ -462,6 +506,24 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 				addProblem("%s: transition target %q is not a step or end(...)", prefix, t.To)
 			}
 		}
+		if ended := step.DelegateEnded; ended != "" {
+			switch {
+			case len(step.Await) == 0:
+				addProblem("%s: delegateEnded applies only to an await gate", prefix)
+			case spec.Class == model.ProcedureClassTask:
+				addProblem("%s: delegateEnded applies to the dispatching side; a task's await waits for the move that dispatched it, which outlives it", prefix)
+			case !IsEndTarget(ended) && spec.StepByID[ended] == nil:
+				addProblem("%s: delegateEnded target %q is not a step or end(...)", prefix, ended)
+			}
+		}
+		if gone := step.DelegateGone; gone != "" {
+			if step.DelegateEnded == "" {
+				addProblem("%s: delegateGone applies only to a gate with a delegateEnded route", prefix)
+			}
+			if !slices.ContainsFunc(step.Collect, func(c CollectField) bool { return c.Name == gone }) {
+				addProblem("%s: delegateGone names %q, which the step does not collect", prefix, gone)
+			}
+		}
 		for _, f := range step.ServeDelta {
 			if _, ok := spec.State[f]; !ok {
 				addProblem("%s: serveDelta names %q, which is not declared in state", prefix, f)
@@ -477,8 +539,13 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 				}
 			}
 			if o.Dispatch != nil {
-				if len(o.Dispatch.Seed) == 0 {
-					addProblem("%s: option %q dispatch: needs a seed mapping (child field <- parent field)", prefix, o.Choice)
+				if len(o.Dispatch.Seed)+len(o.Dispatch.Receive)+len(o.Dispatch.Send) == 0 {
+					addProblem("%s: option %q dispatch: needs a seed, receive or send mapping", prefix, o.Choice)
+				}
+				for parentField, child := range o.Dispatch.Receive {
+					if _, isState := spec.State[parentField]; !isState {
+						addProblem("%s: option %q dispatch receives %q into %q, which is not a declared state field of this procedure", prefix, o.Choice, child, parentField)
+					}
 				}
 				// The source side of each seed mapping (the parent field) must
 				// be one this spec declares — a mistyped source would silently
@@ -520,6 +587,47 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 		if spec.Class == model.ProcedureClassTask && step.Chooser == ChooserUser {
 			addProblem("%s: a task procedure has no user present — user choosers are not allowed (dispatch resolves its inputs as params)", prefix)
 		}
+		for _, f := range step.Deliver {
+			if _, ok := spec.State[f]; !ok {
+				addProblem("%s: deliver names %q, which is not declared in state", prefix, f)
+			}
+		}
+		if len(step.Deliver) > 0 && spec.Class != model.ProcedureClassTask {
+			addProblem("%s: only a task procedure delivers into the instance that dispatched it", prefix)
+		}
+		for _, f := range step.Await {
+			if _, ok := spec.State[f]; !ok {
+				addProblem("%s: await names %q, which is not declared in state", prefix, f)
+			}
+		}
+		if (len(step.Deliver) > 0 || len(step.Await) > 0) && step.Chooser != ChooserGate {
+			addProblem("%s: deliver and await apply to gate steps only", prefix)
+		}
+	}
+
+	// A field only a delivery fills is never collected: a report writing it
+	// would let the agent stand in for the other side of the exchange.
+	for _, step := range spec.Steps {
+		prefix := "steps." + step.ID
+		for _, c := range step.Collect {
+			if spec.DeliveryOnly(c.Name) {
+				addProblem("%s: collects %q, which only a delivery fills", prefix, c.Name)
+			}
+		}
+		for _, o := range step.Options {
+			for _, c := range o.Collect {
+				if spec.DeliveryOnly(c.Name) {
+					addProblem("%s: option %q collects %q, which only a delivery fills", prefix, o.Choice, c.Name)
+				}
+			}
+		}
+	}
+	interim := spec.hasInterimDelivery()
+	if interim && spec.Rounds == 0 {
+		addProblem("rounds: a task with an interim delivery declares its round cap")
+	}
+	if spec.Rounds > 0 && !interim {
+		addProblem("rounds: declared without an interim delivery, so no round ever counts")
 	}
 
 	// Each lane must parse as a template on its own — a lane marker that
@@ -569,13 +677,17 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 	prefix := "steps." + sy.ID
 
 	step := &Step{
-		ID:         sy.ID,
-		Render:     sy.Render,
-		Op:         sy.Op,
-		Chooser:    ChooserGate,
-		Goal:       sy.Goal,
-		ServeDelta: sy.ServeDelta,
-		Delegable:  sy.Delegable,
+		ID:            sy.ID,
+		Render:        sy.Render,
+		Op:            sy.Op,
+		Chooser:       ChooserGate,
+		Goal:          sy.Goal,
+		ServeDelta:    sy.ServeDelta,
+		Delegable:     sy.Delegable,
+		Deliver:       sy.Deliver,
+		Await:         sy.Await,
+		DelegateEnded: sy.DelegateEnded,
+		DelegateGone:  sy.DelegateGone,
 	}
 
 	switch sy.Chooser {
@@ -586,6 +698,15 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		step.Chooser = ChooserUser
 	default:
 		addProblem("%s: unknown chooser %q (gate, agent, or user)", prefix, sy.Chooser)
+	}
+	if len(sy.AwaitAny) > 0 {
+		switch {
+		case len(sy.Await) > 0:
+			addProblem("%s: await and awaitAny exclude each other", prefix)
+		case len(sy.AwaitAny) < 2:
+			addProblem("%s: awaitAny names at least two fields; await waits for one", prefix)
+		}
+		step.Await, step.AwaitAny = sy.AwaitAny, true
 	}
 	if sy.Delegable && step.Chooser != ChooserUser {
 		addProblem("%s: delegable applies only to a user chooser", prefix)
@@ -637,7 +758,7 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		}
 		opt := Option{Choice: oy.Choice, Call: oy.Call, To: oy.To}
 		if oy.Dispatch != nil {
-			opt.Dispatch = &Dispatch{Procedure: oy.Dispatch.Procedure, Seed: oy.Dispatch.Seed}
+			opt.Dispatch = &Dispatch{Procedure: oy.Dispatch.Procedure, Seed: oy.Dispatch.Seed, Receive: oy.Dispatch.Receive, Send: oy.Dispatch.Send}
 		}
 		for _, f := range oy.Collect {
 			cf, err := parseCollectField(f)
@@ -882,6 +1003,38 @@ func (s *Spec) Validate(reg *Registry) []string {
 			}
 		}
 	}
+
+	// A send source is a declared field or one a command of this procedure
+	// writes: a mistyped source would carry nothing.
+	written := map[string]bool{}
+	for _, step := range s.Steps {
+		names := []string{step.Op}
+		for _, o := range step.Options {
+			names = append(names, o.Call)
+		}
+		for _, name := range names {
+			if cmd, ok := reg.Command(name); ok {
+				for _, w := range cmd.Doc.Writes {
+					written[w] = true
+				}
+			}
+		}
+	}
+	for _, step := range s.Steps {
+		for _, o := range step.Options {
+			if o.Dispatch == nil {
+				continue
+			}
+			for _, child := range slices.Sorted(maps.Keys(o.Dispatch.Send)) {
+				parentField := o.Dispatch.Send[child]
+				_, isState := s.State[parentField]
+				_, isParam := s.Params[parentField]
+				if !isState && !isParam && !written[parentField] {
+					addProblem("steps.%s: option %q dispatch sends %q from %q, which is no declared param or state field of this procedure and no command of it writes", step.ID, o.Choice, child, parentField)
+				}
+			}
+		}
+	}
 	return problems
 }
 
@@ -919,4 +1072,66 @@ func (s *Spec) stateNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// Delegates reports whether the procedure delivers into the instance that
+// dispatched it, so it runs in a forked delegate session rather than beside
+// its parent (20260827-232430-d-cpt-voa).
+func (s *Spec) Delegates() bool {
+	return len(s.DeliveredFields()) > 0
+}
+
+// DeliveredFields lists every state field a step of the procedure delivers.
+func (s *Spec) DeliveredFields() []string {
+	set := map[string]bool{}
+	for _, step := range s.Steps {
+		for _, f := range step.Deliver {
+			set[f] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(set))
+}
+
+// AwaitedFields lists every state field a gate of the procedure awaits.
+func (s *Spec) AwaitedFields() []string {
+	set := map[string]bool{}
+	for _, step := range s.Steps {
+		for _, f := range step.Await {
+			set[f] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(set))
+}
+
+// DeliveryOnly reports whether only a delivery may fill the field: a gate
+// awaits it, or a dispatch receives a delegate's value into it.
+func (s *Spec) DeliveryOnly(name string) bool {
+	if slices.Contains(s.AwaitedFields(), name) {
+		return true
+	}
+	for _, step := range s.Steps {
+		for _, o := range step.Options {
+			if o.Dispatch == nil {
+				continue
+			}
+			if _, ok := o.Dispatch.Receive[name]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Spec) hasInterimDelivery() bool {
+	for _, step := range s.Steps {
+		if len(step.Deliver) == 0 {
+			continue
+		}
+		for _, t := range step.Transitions {
+			if !IsEndTarget(t.To) {
+				return true
+			}
+		}
+	}
+	return false
 }

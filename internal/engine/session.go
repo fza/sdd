@@ -219,7 +219,14 @@ type Session struct {
 	// DialogueSource names the config layer that set it.
 	DialogueMode   model.DialogueMode
 	DialogueSource string
+	// Lineage names the dispatching instance of a delegate child session; nil
+	// on every session a user dialogue opened.
+	Lineage *Link
 
+	courier Courier
+	// received holds the IDs of accepted deliveries, so a repeated one lands
+	// once.
+	received  map[string]bool
 	engine    *Engine
 	sink      EventSink
 	now       func() time.Time
@@ -242,6 +249,9 @@ type Session struct {
 	intentStore *Store
 	intentDone  bool
 	cancelled   *MutationCancellation
+	// progressing counts the transitions in flight that passed
+	// checkProgression, which Readmit checks again after a fold.
+	progressing int
 }
 
 // SessionOption configures a session.
@@ -271,12 +281,16 @@ func (e *Engine) NewSession(id, participant string, sink EventSink, opts ...Sess
 		instances:   map[string]*Instance{},
 		reads:       map[string]ReadDepth{},
 		served:      map[string]bool{},
+		received:    map[string]bool{},
 	}
 	for _, o := range opts {
 		o(s)
 	}
 	if sink != nil {
 		meta := map[string]any{"participant": participant}
+		if s.Lineage != nil {
+			meta["parent"] = linkData(*s.Lineage)
+		}
 		// A guided session's header stays as it always was; an absent mode
 		// reads back as guided.
 		if s.DialogueMode == model.DialogueAuto {
@@ -408,6 +422,7 @@ func (s *Session) Park(instanceID, note string) error {
 	if err := s.checkProgression(); err != nil {
 		return err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return fmt.Errorf("instance %q not found in session", instanceID)
@@ -466,8 +481,12 @@ func (s *Session) Start(spec *Spec, params map[string]any, parent string) (*Serv
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
+	defer s.endProgression()
 	if len(spec.Steps) == 0 {
 		return nil, fmt.Errorf("procedure %s: no steps", spec.Canonical)
+	}
+	if err := s.startDelegateCheck(spec); err != nil {
+		return nil, err
 	}
 	if parent != "" {
 		if _, ok := s.instances[parent]; !ok {
@@ -550,23 +569,15 @@ func (s *Session) seedFromParent(inst *Instance, parent string) (map[string]any,
 		return nil, nil // the pending seed was declared for a different child procedure
 	}
 
+	values, err := seedValues(p, inst.Spec)
+	if err != nil {
+		return nil, err
+	}
 	seed := make(map[string]any)
-	for _, childField := range slices.Sorted(maps.Keys(p.dispatchSeed)) {
-		parentField := p.dispatchSeed[childField]
-		if _, declared := inst.Spec.State[childField]; !declared {
-			target := "not declared"
-			if _, isParam := inst.Spec.Params[childField]; isParam {
-				target = "declared under params, not state"
-			}
-			return nil, fmt.Errorf("dispatch seed %q ← parent %q cannot land: field %q is %s in %s — a seeded field must be declared state", childField, parentField, childField, target, inst.Spec.Canonical)
-		}
+	for childField, v := range values {
 		if inst.Store.Has(childField) {
 			continue // already set on this instance — never overwrite
 		}
-		if !p.Store.Has(parentField) {
-			continue // the parent has no evidence to hand down under this name
-		}
-		v, _ := p.Store.Get(parentField)
 		seed[childField] = v
 	}
 
@@ -577,6 +588,28 @@ func (s *Session) seedFromParent(inst *Instance, parent string) (map[string]any,
 		return nil, fmt.Errorf("seeding from parent %s: %w", parent, err)
 	}
 	return seed, nil
+}
+
+// seedValues reads the values the parent's armed dispatch seed hands to a
+// child of spec: one per seed mapping whose parent field holds a value.
+func seedValues(p *Instance, spec *Spec) (map[string]any, error) {
+	values := make(map[string]any)
+	for _, childField := range slices.Sorted(maps.Keys(p.dispatchSeed)) {
+		parentField := p.dispatchSeed[childField]
+		if _, declared := spec.State[childField]; !declared {
+			target := "not declared"
+			if _, isParam := spec.Params[childField]; isParam {
+				target = "declared under params, not state"
+			}
+			return nil, fmt.Errorf("dispatch seed %q ← parent %q cannot land: field %q is %s in %s; a seeded field must be declared state", childField, parentField, childField, target, spec.Canonical)
+		}
+		if !p.Store.Has(parentField) {
+			continue // the parent has no evidence to hand down under this name
+		}
+		v, _ := p.Store.Get(parentField)
+		values[childField] = v
+	}
+	return values, nil
 }
 
 // recordDispatchSeed sets the parent instance's dispatch context to exactly
@@ -590,12 +623,17 @@ func (s *Session) seedFromParent(inst *Instance, parent string) (map[string]any,
 // Not consume-once: a junction that fans out several children — evaluate
 // recording several findings — seeds each until another option changes it.
 func recordDispatchSeed(inst *Instance, opt *Option) {
-	if opt.Dispatch != nil && len(opt.Dispatch.Seed) > 0 {
+	if opt.Dispatch != nil {
 		inst.dispatchSeed = opt.Dispatch.Seed
+		inst.dispatchReceive = opt.Dispatch.Receive
+		inst.dispatchSend = opt.Dispatch.Send
 		inst.dispatchProcedure = opt.Dispatch.Procedure
+		inst.forkPending = len(opt.Dispatch.Receive)+len(opt.Dispatch.Send) > 0
 		return
 	}
 	inst.dispatchSeed = nil
+	inst.dispatchReceive = nil
+	inst.dispatchSend = nil
 	inst.dispatchProcedure = ""
 }
 
@@ -606,6 +644,7 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return nil, fmt.Errorf("instance %q not found in session", instanceID)
@@ -615,6 +654,9 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 	}
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("empty report — send state fields or a chooser answer")
+	}
+	if err := rejectDeliveryOnly(inst.Spec, fields); err != nil {
+		return nil, err
 	}
 
 	written, err := inst.Store.WriteState(fields)
@@ -631,6 +673,12 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 		"fields": logged,
 	})
 	if err := s.checkSink(); err != nil {
+		return nil, err
+	}
+	if err := s.sendFills(inst, written); err != nil {
+		return nil, err
+	}
+	if err := s.endGoneForks(inst, written); err != nil {
 		return nil, err
 	}
 	s.clearCancellation(inst.ID)
@@ -667,6 +715,7 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return nil, fmt.Errorf("instance %q not found in session", instanceID)
@@ -760,13 +809,25 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 			return nil, err
 		}
 	}
+	// The option's command judges the answer first, so a refused answer
+	// sends its delegate nothing.
+	if err := s.sendFills(inst, slices.Sorted(maps.Keys(fields))); err != nil {
+		return nil, err
+	}
 	if err := s.transitionTo(inst, opt.To, false); err != nil {
 		return nil, err
 	}
 	if err := s.cascade(inst); err != nil {
 		return nil, err
 	}
-	return s.serve(inst)
+	sv, err := s.serve(inst)
+	if err != nil {
+		return nil, err
+	}
+	if opt.Dispatch != nil {
+		sv.Dispatches = opt.Dispatch.Procedure
+	}
+	return sv, nil
 }
 
 // Serve re-serves the instance's current position without advancing it —
@@ -822,6 +883,7 @@ func (s *Session) Abandon(instanceID, reason string) error {
 	if err := s.checkProgression(); err != nil {
 		return err
 	}
+	defer s.endProgression()
 	inst, ok := s.instances[instanceID]
 	if !ok {
 		return fmt.Errorf("instance %q not found in session", instanceID)
@@ -855,19 +917,44 @@ type SpecResolver func(canonical string) (*Spec, error)
 // it on.
 func (e *Engine) ReplaySession(id, participant string, events []Event, resolve SpecResolver, sink EventSink, opts ...SessionOption) (*Session, error) {
 	s := e.NewSession(id, participant, nil, opts...)
+	err := s.fold(events, resolve)
+	if err != nil {
+		return nil, err
+	}
+	s.sink = sink
+	return s, nil
+}
+
+// Fold applies events another writer logged past the position the session
+// holds, as replay applies them, so a long-lived holder continues on the log
+// as it now stands. pending, when not nil, is the event being appended:
+// already applied in memory, it takes the sequence after the folded events.
+func (s *Session) Fold(events []Event, resolve SpecResolver, pending *Event) error {
+	err := s.fold(events, resolve)
+	if err != nil {
+		return err
+	}
+	if pending != nil {
+		s.seq++
+		pending.Seq = s.seq
+	}
+	return nil
+}
+
+func (s *Session) fold(events []Event, resolve SpecResolver) error {
 	for _, ev := range events {
 		if ev.V != LogVersion {
-			return nil, fmt.Errorf("session log event seq %d has version %d, this sdd speaks version %d — sessions do not survive an sdd upgrade mid-flight", ev.Seq, ev.V, LogVersion)
+			return fmt.Errorf("session log event seq %d has version %d, this sdd speaks version %d — sessions do not survive an sdd upgrade mid-flight", ev.Seq, ev.V, LogVersion)
 		}
 		if ev.Seq > s.seq {
 			s.seq = ev.Seq
 		}
-		if err := s.applyEvent(ev, resolve); err != nil {
-			return nil, fmt.Errorf("replaying seq %d (%s): %w", ev.Seq, ev.Event, err)
+		err := s.applyEvent(ev, resolve)
+		if err != nil {
+			return fmt.Errorf("replaying seq %d (%s): %w", ev.Seq, ev.Event, err)
 		}
 	}
-	s.sink = sink
-	return s, nil
+	return nil
 }
 
 func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
@@ -880,6 +967,13 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			s.DialogueMode = model.DialogueAuto
 			s.DialogueSource, _ = ev.Data["dialogueSource"].(string)
 		}
+		if parent, ok := ev.Data["parent"].(map[string]any); ok {
+			lineage := linkFrom(parent)
+			s.Lineage = &lineage
+		}
+
+	case EventForked, EventForkEnded, EventDelivered, EventReceived:
+		return s.applyDeliveryEvent(ev)
 
 	case EventLabeled:
 		if l, ok := ev.Data["label"].(string); ok {
@@ -1018,6 +1112,12 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			return err
 		}
 		to, _ := ev.Data["to"].(string)
+		switch consumed := ev.Data["consumed"].(type) {
+		case []string:
+			inst.consume(consumed)
+		case []any:
+			inst.consume(asStrings(consumed))
+		}
 		switch {
 		case IsEndTarget(to):
 			// The paired completed/abandoned event carries the terminal

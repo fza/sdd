@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -50,6 +51,18 @@ func (s *Spec) ReportSchemaForStep(step *Step) map[string]any {
 	}
 	if len(required) > 0 {
 		schema["required"] = required
+	}
+	return schema
+}
+
+// collectSchema is ReportSchemaForStep cut to the fields the step collects.
+func (s *Spec) collectSchema(step *Step) map[string]any {
+	schema := s.ReportSchemaForStep(step)
+	properties, _ := schema["properties"].(map[string]any)
+	for name := range properties {
+		if !slices.ContainsFunc(step.Collect, func(c CollectField) bool { return c.Name == name }) {
+			delete(properties, name)
+		}
 	}
 	return schema
 }
@@ -189,8 +202,9 @@ func procedureSpecSchema() map[string]any {
 				"properties": map[string]any{
 					"procedure": map[string]any{"type": "string"},
 					"seed":      map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+					"receive":   map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+					"send":      map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
 				},
-				"required":             []string{"seed"},
 				"additionalProperties": false,
 			},
 		},
@@ -226,6 +240,10 @@ func procedureSpecSchema() map[string]any {
 			"serveBudget": map[string]any{
 				"type": "integer", "minimum": 0,
 				"description": "declared worst-case serve total in bytes; a larger total than the engine default silences the authoring-arithmetic finding and records the trade",
+			},
+			"rounds": map[string]any{
+				"type": "integer", "minimum": 0,
+				"description": "a task's round cap: the most interim deliveries its delegate session makes before it concludes; required on a task with an interim delivery",
 			},
 		},
 		"required":             []string{"steps"},
