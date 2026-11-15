@@ -11,11 +11,26 @@ import (
 )
 
 var (
-	// The value sits between " `" and the last "` into ", and may hold
-	// backticks itself.
-	valueMismatch = regexp.MustCompile("(?s)^(line \\d+: cannot unmarshal \\S+) `.*` into (.+)$")
-	errorLine     = regexp.MustCompile(`^line (\d+): `)
+	mismatchHead = regexp.MustCompile(`^line \d+: cannot unmarshal`)
+	errorLine    = regexp.MustCompile(`^line (\d+): `)
 )
+
+// redactValue cuts the value out of a type mismatch: yaml.v3 quotes it from
+// the first " `" after the tag to the last "` into ", and either part may
+// hold backticks. A mismatch of another shape keeps only its head.
+func redactValue(message string) string {
+	head := mismatchHead.FindString(message)
+	if head == "" || !strings.Contains(message, "`") {
+		return message
+	}
+	rest := message[len(head):]
+	open := strings.Index(rest, " `")
+	end := strings.LastIndex(rest, "` into ")
+	if open < 0 || end <= open {
+		return head
+	}
+	return head + rest[:open] + " into " + rest[end+len("` into "):]
+}
 
 // withoutValues rewrites a YAML type error to name the key and line of each
 // mismatch instead of the value: a value in the wrong place may be a secret,
@@ -28,9 +43,7 @@ func withoutValues(data []byte, err error) error {
 	keys := keysByLine(data)
 	messages := make([]string, 0, len(typeErr.Errors))
 	for _, message := range typeErr.Errors {
-		if parts := valueMismatch.FindStringSubmatch(message); parts != nil {
-			message = parts[1] + " into " + parts[2]
-		}
+		message = redactValue(message)
 		match := errorLine.FindStringSubmatch(message)
 		if match != nil {
 			line, _ := strconv.Atoi(match[1])
