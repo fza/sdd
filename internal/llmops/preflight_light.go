@@ -31,6 +31,9 @@ type LightReading struct {
 	Full     []string
 	Listed   []string
 	SetAside []LightSetAside
+	// Shown names the entries the reading showed the author; a listed one
+	// left unanswered is implicitly dismissed.
+	Shown []string
 }
 
 // LightSetAside is one verdict of the author's: entries set aside with a
@@ -167,6 +170,8 @@ func lightItems(entry *model.Entry, graph *model.Graph, reading LightReading) []
 		seen[id] = true
 		if _, aside := codes[id]; aside {
 			role = model.LightRoleSetAside
+		} else if role == model.LightRoleBrief && slices.Contains(reading.Shown, id) {
+			role = model.LightRoleImplicit
 		}
 		text := model.EntryBrief(e)
 		if role == model.LightRoleFull {

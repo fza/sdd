@@ -35,6 +35,9 @@ const (
 	LightRoleFull     LightRole = "read in full"
 	LightRoleBrief    LightRole = "brief"
 	LightRoleSetAside LightRole = "set aside"
+	// LightRoleImplicit is an entry the reading showed and the capture left
+	// unanswered, which publish dismisses implicitly.
+	LightRoleImplicit LightRole = "implicitly dismissed"
 )
 
 // LightItem is one reading entry as a light call carries it: a header never

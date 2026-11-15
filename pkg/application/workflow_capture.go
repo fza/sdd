@@ -346,6 +346,7 @@ func instanceReading(ctx *engine.Context) *captureReading {
 		return reading
 	}
 	reading.full = ctx.Reading.Full()
+	reading.shown = ctx.Reading.Shown()
 	seen := map[string]bool{}
 	for _, read := range ctx.Reading.Reads {
 		for _, id := range read.IDs {

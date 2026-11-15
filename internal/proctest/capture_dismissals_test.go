@@ -6,12 +6,14 @@ package proctest_test
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	"github.com/networkteam/sdd/internal/relevance"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/local"
 )
 
@@ -117,5 +119,34 @@ func TestCaptureDismissals_PublishFlipsAPairTheEntryJoins(t *testing.T) {
 	verdict, ok := foldLedger(t, store).Reader(pair)
 	if !ok || verdict.Code != model.ReaderImplicit || !verdict.Flipped || model.LabelKind(verdict) != model.LabelPositive {
 		t.Fatalf("the implicit pair both refs join should flip to bearing, got %+v, %v", verdict, ok)
+	}
+}
+
+// The deep verifier's reading marks a brief the drafter was shown and left
+// unanswered as implicitly dismissed, and leaves an answered one unmarked.
+func TestCaptureDismissals_DeepReadingMarksImplicitDismissals(t *testing.T) {
+	world, session := newDeepWorld(t, "dismissals-deep", sdd.VerifierPolicy{})
+	x := startDeep(t, world, session, captureDraft())
+	reading := verifierReading(t, x)
+	if !strings.Contains(reading, "ID: "+captureRef2ID+" | kind: gap | Status: open\nSummary: A signal no fixture session has read in full.\nRole in the reading: implicitly dismissed\n") {
+		t.Fatalf("the brief left unanswered should carry the implicit dismissal role:\n%s", reading)
+	}
+	if !strings.Contains(reading, "implicitly dismissed (shown, left unanswered") {
+		t.Fatalf("the verifier's instructions should describe the implicit role:\n%s", reading)
+	}
+}
+
+// The prose verifier's reading marks the same entries.
+func TestCaptureDismissals_LightReadingMarksImplicitDismissals(t *testing.T) {
+	world, session := newLightWorld(t, "dismissals-light")
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Gather(t, instance)
+	serve = session.Report(t, instance, captureDraft())
+	proctest.RequireStep(t, serve, "playback")
+	session.Answer(t, instance, "playback", "confirm", nil, "write it")
+	prompt := world.LLM.Prompts(llm.PurposePreflight)[0].UserPrompt
+	if !strings.Contains(prompt, "ID: "+captureRef2ID+"\n") || !strings.Contains(prompt, "Role in the reading: implicitly dismissed") {
+		t.Fatalf("the light reading should mark the brief left unanswered:\n%s", prompt)
 	}
 }

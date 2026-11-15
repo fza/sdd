@@ -633,6 +633,11 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 			codes[id] = verdict.Code
 		}
 	}
+	reading := instanceReading(ctx)
+	shown := map[string]bool{}
+	for _, id := range reading.shown {
+		shown[id] = true
+	}
 	seen := map[string]bool{}
 	var first, rest []model.DeepReadingBlock
 	block := func(id string, role model.LightRole, full bool) (model.DeepReadingBlock, bool) {
@@ -651,6 +656,8 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 		}
 		if _, aside := codes[id]; aside {
 			role = model.LightRoleSetAside
+		} else if role == model.LightRoleBrief && shown[id] {
+			role = model.LightRoleImplicit
 		}
 		return llmops.DeepReadingBlock(graph, e, role, codes[id], full, func(id string) bool { return inReading[id] }), true
 	}
@@ -661,7 +668,6 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 		}
 	}
 	targets = append(append(targets, workflowStoreStrings(ctx.Store, "supersedes")...), workflowStoreStrings(ctx.Store, "closes")...)
-	reading := instanceReading(ctx)
 	for _, ids := range [][]string{targets, reading.full, reading.listed} {
 		for _, id := range ids {
 			if graph.ByID[id] != nil {

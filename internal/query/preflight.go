@@ -25,6 +25,7 @@ type LightPreflight struct {
 	Full        []string
 	Listed      []string
 	SetAside    []model.GroundingVerdict
+	Shown       []string
 	BudgetChars int
 }
 
