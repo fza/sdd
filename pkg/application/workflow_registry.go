@@ -445,6 +445,14 @@ func (w *WorkflowSession) runWorkflowWritingGuide(ctx *engine.Context) error {
 		}
 	}
 	findings, err := w.app.WritingGuideCheck(w.ctx, w.identity, w.instanceProject(ctx.Instance), w.draftFromStore(ctx.Store))
+	refused, credential := credentialGuideFinding(err)
+	if credential {
+		err := ctx.Store.WriteEngine("guideFindings", []query.GuideFinding{refused})
+		if err != nil {
+			return fmt.Errorf("writingGuide: %w", err)
+		}
+		return writeGuideBase(ctx.Store)
+	}
 	if err != nil {
 		return fmt.Errorf("writingGuide: %w", err)
 	}

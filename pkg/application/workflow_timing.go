@@ -282,7 +282,10 @@ func (w *WorkflowSession) runWorkflowWritingGuideDelta(ctx *engine.Context) erro
 	guideFindings := []query.GuideFinding{}
 	if len(changed) > 0 {
 		findings, err := w.app.writingGuideCheck(w.ctx, w.identity, w.instanceProject(ctx.Instance), w.draftFromStore(ctx.Store), changed)
-		if err != nil {
+		refused, credential := credentialGuideFinding(err)
+		if credential {
+			guideFindings = append(guideFindings, refused)
+		} else if err != nil {
 			return fmt.Errorf("writingGuideDelta: %w", err)
 		}
 		for _, f := range findings {
