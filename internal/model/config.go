@@ -331,7 +331,7 @@ func UnmarshalYAML(data []byte, out any) error {
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
-		return err
+		return withoutValues(data, err)
 	}
 	return nil
 }
