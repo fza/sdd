@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/proctest"
+	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/application/types"
 )
 
@@ -322,6 +323,27 @@ func TestCapture_RestageDuringAnUnfinishedOperationIsRefused(t *testing.T) {
 	}
 }
 
+// The MCP server replays the session before every call, so the unserved
+// change must survive the replay.
+func TestCapture_RestageIsPlayedBackAcrossRefreshes(t *testing.T) {
+	_, session := newCaptureWorld(t, "staged-body-refresh-restage")
+	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+	instance := session.Start(t, "capture", nil).Instance
+	session.Refresh(t)
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	session.Refresh(t)
+	session.Stage(t, handle, []byte(unseenStagedBody))
+	session.Refresh(t)
+
+	serve := session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+	proctest.RequireStep(t, serve, "playback")
+	if !strings.Contains(serve.Instructions, "not answered") || !strings.Contains(serve.Instructions, "not yet played back") {
+		t.Fatalf("a confirm after a re-stage should play the change back instead:\n%s", serve.Instructions)
+	}
+	session.Refresh(t)
+	proctest.RequireStep(t, session.Answer(t, instance, "playback", "confirm", nil, "yes, that one"), "verifySummary")
+}
+
 func TestCapture_RestageAfterPublicationBindsNothing(t *testing.T) {
 	_, session := newCaptureWorld(t, "staged-body-published")
 	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
@@ -354,5 +376,33 @@ func TestCapture_RestagedBodySurvivesAResume(t *testing.T) {
 	entryID, _ := serve.Produced["entryId"].(string)
 	if entry := proctest.LoadEntry(t, world.GraphDir, entryID); !strings.Contains(entry.Content, "not yet played back") {
 		t.Errorf("the re-staged body should survive a resume, got %q", entry.Content)
+	}
+}
+
+// A playback whose mark another writer's append displaced fails loud, so the
+// client never takes a playback the log does not hold.
+func TestCapture_PlaybackOnAStaleSessionFails(t *testing.T) {
+	_, session := newCaptureWorld(t, "staged-body-stale-playback")
+	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+	instance := session.Start(t, "capture", nil).Instance
+	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	session.Stage(t, handle, []byte(unseenStagedBody))
+	other := &proctest.Session{World: session.World, WF: session.WF, ID: session.ID}
+	other.Refresh(t)
+	other.LogRead(t, "show", []string{captureRefID}, nil)
+
+	position, err := session.WF.ServeAll(t.Context(), session.World.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var playbacks []*sdd.WorkflowServe
+	for i := range position.Open {
+		playbacks = append(playbacks, &position.Open[i])
+	}
+	if err := session.WF.RecordPlayback(t.Context(), session.World.Identity, playbacks...); err == nil {
+		t.Fatal("a playback whose mark cannot be appended should fail")
+	}
+	if _, err := session.WF.ServeAll(t.Context(), session.World.Identity); err == nil {
+		t.Error("a serve after the failed mark should fail too")
 	}
 }

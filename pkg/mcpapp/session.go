@@ -22,6 +22,9 @@ type shellSession struct {
 	// composed; seen dedups within the call.
 	pending []string
 	seen    map[string]bool
+	// playbacks are the serves of the call in flight that play a change
+	// back, recorded with the hashes.
+	playbacks []*sdd.WorkflowServe
 }
 
 // servedBefore reports whether the session's consumer already holds a block
@@ -41,10 +44,18 @@ func (ss *shellSession) servedBefore(block string) bool {
 }
 
 // flushServed records what this call served in full into the session ledger.
+// It runs once, when the call's result is complete.
 func (ss *shellSession) flushServed(ctx context.Context, identity sdd.RequestIdentity) error {
-	hashes := ss.pending
-	ss.pending, ss.seen = nil, nil
-	return ss.root.RecordServed(ctx, identity, hashes)
+	hashes, playbacks := ss.pending, ss.playbacks
+	ss.resetServed()
+	if err := ss.root.RecordServed(ctx, identity, hashes); err != nil {
+		return err
+	}
+	return ss.root.RecordPlayback(ctx, identity, playbacks...)
+}
+
+func (ss *shellSession) resetServed() {
+	ss.pending, ss.seen, ss.playbacks = nil, nil, nil
 }
 
 func blockHash(block string) string {

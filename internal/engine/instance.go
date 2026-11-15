@@ -58,6 +58,9 @@ type Instance struct {
 	// only, deliberately: a process restart or resume forgets it, so those
 	// paths serve whole (20260826-120330-d-tac-8f8).
 	draftServed map[string]map[string]string
+	// unservedDraft marks state an Update wrote that no delivered serve has
+	// played back yet; unlike draftServed it is rebuilt on replay.
+	unservedDraft bool
 	// retiredStep is the logged position when the log placed the instance on
 	// a step its procedure no longer has (see ReplaySession).
 	retiredStep string
@@ -150,6 +153,10 @@ type Serve struct {
 	// Cancellation is the current cancellation this serve lands, rendered as
 	// its own lane; nil on every other serve.
 	Cancellation *CancellationServe
+	// PlaysBack is set when the serve carries a draft change no delivered
+	// serve played back yet; whoever delivers it records that with
+	// RecordPlayback.
+	PlaysBack bool
 }
 
 // ServeLane is defined in pkg/application/types — the exported surface names
@@ -548,6 +555,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 			inst.draftServed = map[string]map[string]string{}
 		}
 		inst.draftServed[step.ID] = cur
+		sv.PlaysBack = inst.unservedDraft
 	}
 	if len(cuts) > 0 {
 		lanes = append(lanes, ServeLane{Name: "cuts", Text: renderCuts(cuts)})
