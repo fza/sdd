@@ -85,3 +85,26 @@ func TestCaptureWording_SummaryCheckNamesTheDeepFindings(t *testing.T) {
 		})
 	}
 }
+
+func TestCaptureWording_GuideReviewNamesSubstantiveFindings(t *testing.T) {
+	for _, mode := range []wordingMode{
+		{name: "autonomous", options: []proctest.Option{proctest.WithAutonomousDialogue()}, want: []string{"Name each `substantive` finding you act on or dismiss in what you report."}, unwanted: []string{"to the user in your own words"}},
+		{name: "guided", guided: true, want: []string{"name to the user in your own words each `substantive` finding you dismiss"}, unwanted: []string{"in what you report"}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			world, session := newCaptureWorld(t, "guide-wording-"+mode.name, mode.options...)
+			world.LLM.GuideFindings = []proctest.GuideFinding{{
+				Reasoning: "the body leans on 'the earlier approach' without naming it",
+				Axis:      "stranding", Quote: "the earlier approach", Repair: "write-in", Severity: "substantive",
+			}}
+			serve := session.Start(t, "capture", nil)
+			serve = session.Report(t, serve.Instance, captureDraft())
+			if mode.guided {
+				proctest.RequireStep(t, serve, "playback")
+				serve = session.Answer(t, serve.Instance, "playback", "confirm", nil, "looks right")
+			}
+			proctest.RequireStep(t, serve, "guideReview")
+			requireWording(t, serve, mode)
+		})
+	}
+}
