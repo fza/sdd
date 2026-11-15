@@ -41,6 +41,9 @@ func newOpenAI(cfg model.EmbeddingConfig) (pkgembed.Embedder, error) {
 	if endpoint == "" {
 		endpoint = defaultOpenAIEndpoint
 	}
+	if err := model.ValidateEmbeddingPath(cfg.Path); err != nil {
+		return nil, err
+	}
 	path := cfg.Path
 	if path == "" {
 		path = defaultOpenAIPath

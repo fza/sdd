@@ -384,3 +384,17 @@ func TestOpenAIEmbedder_RequestPath(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAIEmbedder_RefusesAPathThatIsNoRequestPath(t *testing.T) {
+	t.Parallel()
+	_, err := localembed.New(model.EmbeddingConfig{
+		Provider: "openai",
+		Model:    "text-embedding-3-large",
+		Endpoint: "https://gateway.example",
+		Path:     "v3/compat/embeddings",
+		APIKeys:  map[string]string{"openai": "test-key"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "embedding.path") {
+		t.Errorf("a path without its leading slash would join into a broken URL and should be refused, got %v", err)
+	}
+}

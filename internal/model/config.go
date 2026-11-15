@@ -659,3 +659,16 @@ func parsePositiveDuration(raw, fallback string) time.Duration {
 	d, _ := time.ParseDuration(fallback)
 	return d
 }
+
+// ValidateEmbeddingPath checks embedding.path: empty, or a path starting with
+// one "/" and naming no scheme or host, since it is joined to
+// embedding.endpoint as is.
+func ValidateEmbeddingPath(path string) error {
+	if path == "" {
+		return nil
+	}
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.Contains(path, "://") {
+		return fmt.Errorf("embedding.path: %q is not a request path; use one starting with \"/\", such as %q, and put the scheme and host in embedding.endpoint", path, "/v1/embeddings")
+	}
+	return nil
+}

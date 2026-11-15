@@ -114,7 +114,7 @@ Default rate limits:
 | `embedding.model` | None | Embedding model, such as `text-embedding-3-small` or `qwen3-embedding:8b`. Required with a provider. |
 | `embedding.api_keys.openai` | None | API key, required for `openai`. sdd does not fall back to `llm.api_keys.openai`. |
 | `embedding.endpoint` | `https://api.openai.com` | Base URL of an OpenAI-compatible embeddings service, for `openai` only. sdd appends `embedding.path`, so leave the path off. |
-| `embedding.path` | `/v1/embeddings` | Request path sdd appends to `embedding.endpoint`, for `openai` only. Starts with `/`. `ollama` ignores it. |
+| `embedding.path` | `/v1/embeddings` | Request path sdd appends to `embedding.endpoint`, for `openai` only. Starts with `/` and holds no scheme or host; sdd refuses anything else. `ollama` ignores it. |
 | `embedding.ollama_endpoint` | `http://localhost:11434` | Ollama server for the `ollama` provider. Independent of `llm.ollama_endpoint`. |
 | `embedding.timeout` | `2m` | Time limit for one request. |
 | `embedding.batch_size` | `100` for `openai`, `64` for `ollama` | Texts sent in one request. |

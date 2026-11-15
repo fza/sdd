@@ -47,6 +47,11 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 		if err := model.UnmarshalYAML(patched, probe); err != nil {
 			return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
 		}
+		if cmd.Key == "embedding.path" {
+			if err := model.ValidateEmbeddingPath(cmd.Value); err != nil {
+				return nil, fmt.Errorf("%s = %s is not valid for the %s config: %w", cmd.Key, cmd.Value, layer, err)
+			}
+		}
 		if global, ok := probe.(*repos.GlobalConfig); ok {
 			var err error
 			switch cmd.Key {
