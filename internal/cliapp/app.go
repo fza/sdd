@@ -389,10 +389,6 @@ func New(options Options) *cli.Command {
 
 			warnUnknownConfigKeys(ctx)
 
-			if cmd.Args().First() != cacheCommandName {
-				warnCachePruneFailure(ctx)
-			}
-
 			// Background sync check runs on every command except `sdd init`
 			// (bootstrap may precede remote configuration — sync would emit
 			// spurious warnings) and `sdd cache`, which touches no graph.

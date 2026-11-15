@@ -11,7 +11,18 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-func TestCommandsReportAFailedCachePruneOnce(t *testing.T) {
+func TestCachePruneCommandReportsItsFailureAsItsError(t *testing.T) {
+	f := newAppFixture(t)
+	f.write(t, "config/sdd/config.yaml", "participant: Global Author\ncache:\n  retention: soon\n")
+	if r := f.run(t, "cache", "prune"); r.err == nil || !strings.Contains(r.err.Error(), "cache.retention") {
+		t.Fatalf("a run on an invalid retention should fail with its cause, got %v", r.err)
+	}
+	if next := f.run(t, "show", appEntryID); strings.Contains(next.stderr, "cache pruning") {
+		t.Errorf("a later command should not repeat the run's failure, stderr:\n%s", next.stderr)
+	}
+}
+
+func TestInfoShowsAFailedCachePrune(t *testing.T) {
 	f := newAppFixture(t)
 	stateRoot := filepath.Join(f.root, "state", "sdd")
 	err := cacheprune.Update(t.Context(), stateRoot, func(s *model.CachePruneStatus) {
@@ -20,30 +31,11 @@ func TestCommandsReportAFailedCachePruneOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := f.run(t, "show", appEntryID)
-	second := f.run(t, "show", appEntryID)
-	if first.err != nil || second.err != nil {
-		t.Fatalf("a failed pass must not fail the command: %v, %v", first.err, second.err)
+	if next := f.run(t, "show", appEntryID); next.err != nil || strings.Contains(next.stderr, "permission denied") {
+		t.Errorf("a recorded failure should neither fail nor reach another command, got %v, stderr:\n%s", next.err, next.stderr)
 	}
-	if !strings.Contains(first.stderr, "permission denied") {
-		t.Errorf("the first command should report the failed pass, stderr:\n%s", first.stderr)
-	}
-	if strings.Contains(second.stderr, "permission denied") {
-		t.Errorf("the failure should be reported once, second stderr:\n%s", second.stderr)
-	}
-	if info := f.run(t, "info"); !strings.Contains(info.stdout, "Cache pruning: failed") {
-		t.Errorf("sdd info should keep showing the failed pass, stdout:\n%s", info.stdout)
-	}
-}
-
-func TestCachePruneCommandReportsItsOwnFailureOnce(t *testing.T) {
-	f := newAppFixture(t)
-	f.write(t, "config/sdd/config.yaml", "participant: Global Author\ncache:\n  retention: soon\n")
-	if r := f.run(t, "cache", "prune"); r.err == nil || !strings.Contains(r.err.Error(), "cache.retention") {
-		t.Fatalf("a run on an invalid retention should fail with its cause, got %v", r.err)
-	}
-	if next := f.run(t, "show", appEntryID); strings.Contains(next.stderr, "cache pruning failed") {
-		t.Errorf("a failure the prune command reported should not be reported again, stderr:\n%s", next.stderr)
+	if info := f.run(t, "info"); !strings.Contains(info.stdout, "Cache pruning: failed") || !strings.Contains(info.stdout, "permission denied") {
+		t.Errorf("sdd info should show the failed run, stdout:\n%s", info.stdout)
 	}
 }
 

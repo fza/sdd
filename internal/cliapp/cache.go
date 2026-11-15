@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 
-	"github.com/networkteam/slogutils"
 	"github.com/urfave/cli/v3"
 
 	"github.com/networkteam/sdd/internal/cacheprune"
@@ -49,40 +48,13 @@ cache.retention always stay. sdd index gc removes more on request.`,
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), Keep: keep,
 				})
-				err = h.Prune(ctx, &command.PruneCacheCmd{
+				return h.Prune(ctx, &command.PruneCacheCmd{
 					OnPruned: func(c model.CachePruneCounts) {
 						presenters.RenderResultLine(cmd.Writer, "pruned the cache", presenters.CachePruneRemoved(c)+" · "+presenters.HumanBytes(c.Bytes)+" freed")
 					},
 				})
-				if err != nil {
-					// The error is this command's own report, so the next
-					// command does not repeat it.
-					if _, noticeErr := cacheprune.TakeFailureNotice(ctx, loc.StateRoot); noticeErr != nil {
-						return errors.Join(err, noticeErr)
-					}
-				}
-				return err
 			},
 		}},
-	}
-}
-
-// warnCachePruneFailure shows a failed pruning run no command has shown yet,
-// once. A problem reading the record is a warning too: the record is the
-// cache's upkeep, not the command's work.
-func warnCachePruneFailure(ctx context.Context) {
-	log := slogutils.FromContext(ctx)
-	loc, err := repos.DefaultLocations()
-	if err != nil {
-		log.Warn("cache pruning: resolving the state dir", "err", err)
-		return
-	}
-	notice, err := cacheprune.TakeFailureNotice(ctx, loc.StateRoot)
-	switch {
-	case err != nil:
-		log.Warn("cache pruning: reading its status", "err", err)
-	case notice != "":
-		log.Warn(notice)
 	}
 }
 

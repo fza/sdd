@@ -1,7 +1,6 @@
 package model_test
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -53,20 +52,5 @@ func TestResolveReplacedRetention(t *testing.T) {
 				t.Errorf("retention resolved to %v, %v; want %v, error %v", got, err, tc.want, tc.wantErr)
 			}
 		})
-	}
-}
-
-func TestCachePruneStatusFailureNotice(t *testing.T) {
-	t.Parallel()
-	failed := model.CachePruneStatus{Error: "permission denied", FinishedAt: time.Now()}
-	if notice := failed.FailureNotice(); !strings.Contains(notice, "permission denied") || !strings.Contains(notice, "sdd info") {
-		t.Errorf("an unreported failure should name the error and sdd info, got %q", notice)
-	}
-	failed.Reported = true
-	if notice := failed.FailureNotice(); notice != "" {
-		t.Errorf("a reported failure should not be shown again, got %q", notice)
-	}
-	if notice := (model.CachePruneStatus{}).FailureNotice(); notice != "" {
-		t.Errorf("a run without failure has no notice, got %q", notice)
 	}
 }

@@ -78,8 +78,6 @@ type CachePruneStatus struct {
 	// Error is the failure of the latest finished run, empty when it
 	// succeeded.
 	Error string
-	// Reported marks a failure some command has already shown.
-	Reported bool
 }
 
 // CachePruneCounts tallies what one run deleted.
@@ -94,24 +92,4 @@ type CachePruneCounts struct {
 	// rows and retired stores.
 	Leftovers int
 	Bytes     int64
-}
-
-// Add adds what another part of a run removed.
-func (c *CachePruneCounts) Add(o CachePruneCounts) {
-	c.Versions += o.Versions
-	c.Stores += o.Stores
-	c.Snapshots += o.Snapshots
-	c.Clones += o.Clones
-	c.Records += o.Records
-	c.Leftovers += o.Leftovers
-	c.Bytes += o.Bytes
-}
-
-// FailureNotice is the one line a command shows for a failed run nobody was
-// told about yet, empty otherwise.
-func (s CachePruneStatus) FailureNotice() string {
-	if s.Error == "" || s.Reported {
-		return ""
-	}
-	return fmt.Sprintf("cache pruning failed at %s: %s; see sdd info", s.FinishedAt.Format(time.RFC3339), s.Error)
 }

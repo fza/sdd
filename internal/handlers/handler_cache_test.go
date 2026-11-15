@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -341,8 +342,8 @@ func TestCacheHandlerPruneRecordsAFailure(t *testing.T) {
 	if loadErr != nil {
 		t.Fatal(loadErr)
 	}
-	if status.Error == "" || status.Reported || status.FailureNotice() == "" {
-		t.Errorf("the failure should be recorded for the next command to report, got %+v", status)
+	if status.Error == "" || !strings.Contains(status.Error, "cache.retention") {
+		t.Errorf("the failure should be recorded for sdd info, got %+v", status)
 	}
 }
 

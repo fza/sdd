@@ -59,8 +59,7 @@ func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
 var ErrCachePruneRunning = errors.New("another cache pruning run is in progress")
 
 // Prune runs one pruning pass over the whole cache and records its result in
-// the pruning status, failure included, so sdd info shows it and the next
-// command reports a failure no one has seen.
+// the pruning status, failure included, so sdd info shows it.
 func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (err error) {
 	if err := os.MkdirAll(h.stateRoot, 0o755); err != nil {
 		return fmt.Errorf("creating state dir: %w", err)
@@ -88,7 +87,7 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 	recordErr := cacheprune.Update(context.WithoutCancel(ctx), h.stateRoot, func(s *model.CachePruneStatus) {
 		s.FinishedAt = h.now()
 		s.Removed = counts
-		s.Error, s.Reported = "", false
+		s.Error = ""
 		if runErr != nil {
 			s.Error = runErr.Error()
 		}

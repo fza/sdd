@@ -361,7 +361,7 @@ Each embedding endpoint accepts a limited input, in tokens. On its first fill, s
 - at once: graph snapshots of directories that no longer exist, clones of repositories no longer in `repos`
 - leftovers of killed processes older than a day
 
-It never deletes a version any checkout read within `cache.retention`, and it skips an index store another process holds. One run per machine at a time, at most 5 minutes. `sdd info` shows the last run. A failed run is reported once: by `sdd cache prune` itself, or else as a warning by the next sdd command.
+It never deletes a version any checkout read within `cache.retention`, and it skips an index store another process holds. One run per machine at a time, at most 5 minutes. `sdd info` shows the last run. `sdd cache prune` reports a failed run as its error.
 
 `sdd index gc` lists the stored versions by group, `sdd index gc --drop <group>` deletes one group, and `--drop stale` deletes every version no search of this checkout reads.
 
