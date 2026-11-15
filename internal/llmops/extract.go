@@ -12,13 +12,18 @@ import (
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
+// ErrNoAnalysis marks a check whose first answer the extraction call found to
+// hold no analysis at all: a refusal, an error page, an unrelated reply.
+var ErrNoAnalysis = errors.New("the first answer holds no analysis")
+
 // extraction describes the second call a JSON-shaped check falls back to when
 // its first response does not parse. The prompt carries the unparseable text,
 // the target shape, and the severity scale, and nothing else: with no task
 // rubric in hand the model can only reformat, never reach a different verdict.
 type extraction struct {
 	purpose llm.Purpose
-	// responseSchema constrains the reformat to the shape the check declares.
+	// responseSchema constrains the reformat to the shape the check declares,
+	// plus the analysis flag.
 	responseSchema json.RawMessage
 	// schema is the target shape, written as one compact example line.
 	schema string
@@ -28,15 +33,15 @@ type extraction struct {
 
 var preflightExtraction = extraction{
 	purpose:        llm.PurposePreflightExtract,
-	responseSchema: preflightSchema,
-	schema:         `{"findings":[{"observation":"...","category":"short-hyphenated-tag","severity":"high|medium|low"}]}`,
+	responseSchema: withAnalysisFlag(preflightSchema),
+	schema:         `{"analysis":true,"findings":[{"observation":"...","category":"short-hyphenated-tag","severity":"high|medium|low"}]}`,
 	scaleTemplate:  "severity_scale",
 }
 
 var writingGuideExtraction = extraction{
 	purpose:        llm.PurposeWritingGuideExtract,
-	responseSchema: writingGuideSchema,
-	schema:         `{"findings":[{"reasoning":"...","axis":"stranding|dilution|conflation|pointing|form","quote":"...","repair":"cut|write-in|split|point|reword","severity":"substantive|minor"}]}`,
+	responseSchema: withAnalysisFlag(writingGuideSchema),
+	schema:         `{"analysis":true,"findings":[{"reasoning":"...","axis":"stranding|dilution|conflation|pointing|form","quote":"...","repair":"cut|write-in|split|point|reword","severity":"substantive|minor"}]}`,
 	scaleTemplate:  "guide_severity_scale",
 }
 
@@ -49,7 +54,8 @@ var writingGuideExtraction = extraction{
 //
 // Both responses failing is an error naming both attempts, because a checker
 // that cannot produce its own output shape has stopped working and must not
-// read as a clean result.
+// read as a clean result. So is a first answer the reformat finds to hold no
+// analysis: an empty findings list made from it would read as clean.
 func runJSONCheck[T any](ctx context.Context, runner llm.Runner, req llm.Request, spec extraction, parse func(string) (T, error)) (T, error) {
 	var zero T
 
@@ -79,11 +85,31 @@ func runJSONCheck[T any](ctx context.Context, runner llm.Runner, req llm.Request
 	if err != nil {
 		return zero, fmt.Errorf("extracting a verdict after %v: %w", firstErr, err)
 	}
+	if reportsNoAnalysis(second.Text) {
+		return zero, fmt.Errorf("%w: %v", ErrNoAnalysis, firstErr)
+	}
 	result, secondErr := parse(second.Text)
 	if secondErr != nil {
 		return zero, fmt.Errorf("unparseable in both phases: %v, then %w", firstErr, secondErr)
 	}
 	return result, nil
+}
+
+// reportsNoAnalysis reads the extraction answer's analysis flag. Only an
+// explicit false counts: a provider that ignores the schema and omits the flag
+// leaves the findings to the check's parser.
+func reportsNoAnalysis(text string) bool {
+	jsonText, err := extractJSONObject(text)
+	if err != nil {
+		return false
+	}
+	var answer struct {
+		Analysis *bool `json:"analysis"`
+	}
+	if err := json.Unmarshal([]byte(jsonText), &answer); err != nil {
+		return false
+	}
+	return answer.Analysis != nil && !*answer.Analysis
 }
 
 func renderExtractPrompt(spec extraction, priorOutput string) (llm.Request, error) {
