@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -111,6 +112,48 @@ func TestEngineRefusesAGeneratedSummaryHoldingACredential(t *testing.T) {
 	files, globErr := filepath.Glob(filepath.Join(f.graphDir, "*", "*", "*.md"))
 	if globErr != nil || len(files) != 0 {
 		t.Errorf("a refused capture should publish nothing: %v %v", files, globErr)
+	}
+}
+
+// A credential already stored in the graph reaches the model provider as
+// context of a new draft: it blocks neither a pre-flight that pulls the entry
+// in nor the capture that supersedes it. sdd lint reports it instead.
+func TestEngineSendsAStoredCredentialAsContext(t *testing.T) {
+	const storedID = "20260101-120000-s-tac-lek"
+	credential := fixtureCredential(t, "github-pat")
+	var preflights int
+	runner := secrets.GuardRunner(llm.RunnerFunc(func(_ context.Context, request llm.Request) (llm.Result, error) {
+		if request.Purpose == llm.PurposePreflight {
+			preflights++
+			return llm.Result{Text: `{"findings":[]}`}, nil
+		}
+		return llm.Result{Text: `{"title": "Replaced deployment notes", "summary": "The leaked deployment notes are replaced."}`}, nil
+	}))
+	f := newWriteFixture(t, writeFixtureOptions{Runner: runner})
+	stored := filepath.Join(f.graphDir, "2026", "01", "01-120000-s-tac-lek.md")
+	err := os.MkdirAll(filepath.Dir(stored), 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.WriteFile(stored, []byte("---\ntype: signal\nlayer: tactical\nkind: gap\nconfidence: high\nsummary: Deployment notes.\n---\n\nThe deployment notes held "+credential+".\n"), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := sdd.EntryDraft{Kind: "gap", Layer: "tactical", Confidence: "high", Body: "The deployment notes are replaced without the token.", Supersedes: []string{storedID}}
+
+	_, err = f.app.PreflightEntry(t.Context(), f.identity, "example", f.binding, draft)
+	if err != nil {
+		t.Fatalf("a pre-flight pulling in the stored entry should run: %v", err)
+	}
+	if preflights == 0 {
+		t.Error("the pre-flight should reach the model")
+	}
+	created, err := f.app.CreateEntry(t.Context(), f.identity, "example", f.binding, f.identifiedDraft(draft))
+	if err != nil {
+		t.Fatalf("the entry superseding the stored one should be published: %v", err)
+	}
+	if got := loadEntryByID(t, f.graphDir, created.EntryID).Supersedes; len(got) != 1 || got[0] != storedID {
+		t.Errorf("the published entry should supersede the stored one, supersedes %v", got)
 	}
 }
 

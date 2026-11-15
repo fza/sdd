@@ -2,25 +2,59 @@ package secrets
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 )
 
-// GuardRunner refuses every LLM request whose prompt holds a credential, so
-// nothing a draft, an entry or an attachment carries reaches the provider.
+type newPartsKey struct{}
+
+type newParts struct {
+	parts []Part
+	none  bool
+}
+
+// WithNewParts marks the parts of the requests made under ctx that are new to
+// the graph, such as a draft's body. GuardRunner scans only these.
+func WithNewParts(ctx context.Context, parts ...Part) context.Context {
+	marked, _ := ctx.Value(newPartsKey{}).(newParts)
+	marked.parts = append(slices.Clip(marked.parts), parts...)
+	return context.WithValue(ctx, newPartsKey{}, marked)
+}
+
+// WithNoNewParts marks the requests made under ctx as carrying stored text
+// alone, such as a summary of an entry already in the graph.
+func WithNoNewParts(ctx context.Context) context.Context {
+	marked, _ := ctx.Value(newPartsKey{}).(newParts)
+	marked.none = true
+	return context.WithValue(ctx, newPartsKey{}, marked)
+}
+
+// ErrUnmarked refuses a request whose caller never said which text is new; an
+// empty WithNewParts counts as unmarked, since a computed list may come out
+// empty by mistake.
+var ErrUnmarked = errors.New("refusing to send to the model provider: the request marks no new parts (secrets.WithNewParts, or secrets.WithNoNewParts for stored text alone)")
+
+// GuardRunner refuses every LLM request whose new parts (see WithNewParts)
+// hold a credential, and every request that marks none at all. Stored entries
+// a prompt carries as context pass: a hit in one would otherwise block every
+// request pulling it in, and sdd lint reports it.
 func GuardRunner(runner llm.Runner) llm.Runner {
 	return llm.RunnerFunc(func(ctx context.Context, req llm.Request) (llm.Result, error) {
-		for _, prompt := range []string{req.SystemPrompt, req.UserPrompt} {
-			findings, err := Scan(prompt)
-			if err != nil {
-				return llm.Result{}, err
-			}
-			if len(findings) > 0 {
-				return llm.Result{}, &providerRefusal{provider: "model", description: Describe("prompt", findings)}
-			}
+		marked, _ := ctx.Value(newPartsKey{}).(newParts)
+		if len(marked.parts) == 0 && !marked.none {
+			return llm.Result{}, ErrUnmarked
+		}
+		part, findings, err := scanParts(marked.parts)
+		if err != nil {
+			return llm.Result{}, err
+		}
+		if len(findings) > 0 {
+			return llm.Result{}, &providerRefusal{provider: "model", description: describePart(part, findings)}
 		}
 		return runner.Run(ctx, req)
 	})

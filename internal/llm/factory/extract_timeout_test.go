@@ -11,6 +11,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -31,7 +32,7 @@ func TestExtractionTimeoutNamesItsOwnSetting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = runner.Run(context.Background(), llm.Request{UserPrompt: "reformat", Purpose: llm.PurposeWritingGuideExtract})
+	_, err = runner.Run(secrets.WithNoNewParts(context.Background()), llm.Request{UserPrompt: "reformat", Purpose: llm.PurposeWritingGuideExtract})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("an extraction call outlasting its bound should fail as a deadline, got %v", err)
 	}
@@ -48,7 +49,7 @@ func TestCallerDeadlineOnExtractionIsNotBlamedOnTheSetting(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	_, err = runner.Run(ctx, llm.Request{UserPrompt: "reformat", Purpose: llm.PurposePreflightExtract})
+	_, err = runner.Run(secrets.WithNoNewParts(ctx), llm.Request{UserPrompt: "reformat", Purpose: llm.PurposePreflightExtract})
 	if err == nil || strings.Contains(err.Error(), "llm.extract_timeout") {
 		t.Errorf("a deadline the caller set should not point at llm.extract_timeout, got %v", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -114,7 +115,7 @@ func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, 
 			req := base
 			req.ResponseSchema = preflightLightSchema
 			req.UserPrompt = base.UserPrompt + "\n\n" + rules + "\n\n## Reading\n\n" + renderLightParts(call.Parts)
-			results[i], errs[i] = runJSONCheck(ctx, runner, req, preflightLightExtraction, func(output string) (*PreflightResult, error) {
+			results[i], errs[i] = runJSONCheck(secrets.WithNewParts(ctx, secrets.EntryParts(entry)...), runner, req, preflightLightExtraction, func(output string) (*PreflightResult, error) {
 				return parseLightResult(output, allowed)
 			})
 			if errs[i] == nil {

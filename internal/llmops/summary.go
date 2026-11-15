@@ -10,6 +10,7 @@ import (
 	"text/template"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -134,7 +135,10 @@ func (d *Description) Parse(output string) (DescriptionResult, error) {
 // Describe builds, runs and parses an entry's description in one step, with
 // the one title re-run Retitle asks for. Summaries are derived on demand with
 // no staleness tracking (d-cpt-4qi): the caller decides when to regenerate.
+// The entry is a draft new to the graph; a stored entry runs its Description
+// under secrets.WithNoNewParts instead.
 func Describe(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string, regenerate bool, similarTitles []string) (DescriptionResult, error) {
+	ctx = secrets.WithNewParts(ctx, secrets.EntryParts(entry)...)
 	description, err := NewDescription(entry, graph, configuredLanguage, regenerate, similarTitles)
 	if err != nil {
 		return DescriptionResult{}, err

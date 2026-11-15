@@ -64,7 +64,8 @@ func New(cfg model.LLMConfig) (llm.Runner, error) {
 		}
 	}
 
-	// Every prompt crosses this boundary, whatever produced it.
+	// Every request crosses this boundary and is refused unless its caller
+	// marks the text new to the graph (secrets.WithNewParts).
 	return secrets.GuardRunner(boundedPerPurpose(runner, timeout, extractTimeout)), nil
 }
 

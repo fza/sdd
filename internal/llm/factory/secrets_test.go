@@ -12,7 +12,7 @@ import (
 	"github.com/networkteam/sdd/test"
 )
 
-// Every runner the factory builds refuses a prompt holding a credential before
+// Every runner the factory builds refuses a draft holding a credential before
 // the provider sees it.
 func TestFactoryRunnerRefusesACredentialBeforeTheProvider(t *testing.T) {
 	content, err := fs.ReadFile(test.SecretFixtures(), "positive/slack-bot-token.txt")
@@ -25,10 +25,13 @@ func TestFactoryRunnerRefusesACredentialBeforeTheProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = runner.Run(t.Context(), llm.Request{Purpose: llm.PurposeSummarize, UserPrompt: "Context:\n" + strings.TrimSpace(string(content))})
+	body := "Context:\n" + strings.TrimSpace(string(content))
+	ctx := secrets.WithNewParts(t.Context(), secrets.Part{Where: "body", Text: body})
+
+	_, err = runner.Run(ctx, llm.Request{Purpose: llm.PurposeSummarize, UserPrompt: body})
 
 	if !errors.Is(err, secrets.ErrCredential) {
-		t.Fatalf("the prompt should be refused as holding a credential: %v", err)
+		t.Fatalf("the draft should be refused as holding a credential: %v", err)
 	}
 	if len(server.Requests()) != 0 {
 		t.Error("the provider must receive nothing")

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/llm/factory"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/test"
 )
@@ -46,7 +47,7 @@ func TestPreflightParamsTuneOnlyThePreflightCalls(t *testing.T) {
 				t.Fatalf("factory.New: %v", err)
 			}
 			for _, purpose := range purposes {
-				_, err := runner.Run(context.Background(), llm.Request{Purpose: purpose, UserPrompt: "hello"})
+				_, err := runner.Run(secrets.WithNoNewParts(context.Background()), llm.Request{Purpose: purpose, UserPrompt: "hello"})
 				if err != nil {
 					t.Fatalf("Run %s: %v", purpose, err)
 				}

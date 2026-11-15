@@ -176,6 +176,21 @@ func TestSummarizeRefusesACredential(t *testing.T) {
 	}
 }
 
+// Summarizing a stored entry reaches a guarded runner: the entry is stored, so
+// its prompt is marked as holding no new parts, a hit in its body included.
+func TestSummarizeSendsAStoredEntryPastTheGuard(t *testing.T) {
+	graphDir := t.TempDir()
+	writeEntryFile(t, graphDir, summarizedEntry, "---\ntype: signal\nlayer: process\nkind: gap\n---\n\nThe old notes held "+fixtureCredential(t, "slack-bot-token")+".\n")
+	runner := &stubRunner{text: "Old notes held a token."}
+	h := handlers.New(handlers.Options{GraphDir: graphDir, Reader: &graphReader{}, Committer: &recordingCommitter{}, LLMRunner: secrets.GuardRunner(runner)})
+
+	err := h.Summarize(context.Background(), &command.SummarizeCmd{EntryIDs: []string{summarizedEntry}})
+
+	if err != nil || runner.calls == 0 {
+		t.Fatalf("the stored entry should be summarized: %v, %d calls", err, runner.calls)
+	}
+}
+
 func TestStartWIPRefusesACredentialInTheDescription(t *testing.T) {
 	graphDir := t.TempDir()
 	writeSummarizePair(t, graphDir)

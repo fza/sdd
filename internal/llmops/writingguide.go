@@ -10,6 +10,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/mdcompose"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -94,7 +95,7 @@ func WritingGuideDelta(ctx context.Context, runner llm.Runner, entry *model.Entr
 		return nil, fmt.Errorf("rendering writing-guide prompt: %w", err)
 	}
 
-	result, err := runJSONCheck(ctx, runner, req, writingGuideExtraction, parseWritingGuideResult)
+	result, err := runJSONCheck(secrets.WithNewParts(ctx, secrets.EntryParts(entry)...), runner, req, writingGuideExtraction, parseWritingGuideResult)
 	if err != nil {
 		return nil, fmt.Errorf("running writing guide: %w", err)
 	}

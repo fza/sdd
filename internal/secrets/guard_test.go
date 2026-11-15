@@ -24,14 +24,19 @@ func credentialSample(t *testing.T) string {
 
 func TestGuardRunner(t *testing.T) {
 	credential := credentialSample(t)
+	stored := llm.Request{SystemPrompt: "Judge the draft.", UserPrompt: "Draft:\nA clean draft.\n\nStored context:\n" + credential}
 	cases := []struct {
 		name    string
-		request llm.Request
+		mark    func(context.Context) context.Context
 		refused bool
 	}{
-		{name: "credential in the user prompt", request: llm.Request{UserPrompt: "Context:\n" + credential}, refused: true},
-		{name: "credential in the system prompt", request: llm.Request{SystemPrompt: credential, UserPrompt: "Hi."}, refused: true},
-		{name: "clean prompt", request: llm.Request{SystemPrompt: "Judge the draft.", UserPrompt: "A clean draft."}},
+		{name: "credential in a new part", mark: func(ctx context.Context) context.Context {
+			return secrets.WithNewParts(ctx, secrets.Part{Where: "summary", Text: "A gap."}, secrets.Part{Where: "body", Text: "Setup:\nRun " + credential})
+		}, refused: true},
+		{name: "credential only in stored context", mark: func(ctx context.Context) context.Context {
+			return secrets.WithNewParts(ctx, secrets.Part{Where: "body", Text: "A clean draft."})
+		}},
+		{name: "stored text alone", mark: secrets.WithNoNewParts},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,11 +46,14 @@ func TestGuardRunner(t *testing.T) {
 				return llm.Result{Text: "ok"}, nil
 			}))
 
-			_, err := guarded.Run(t.Context(), tc.request)
+			_, err := guarded.Run(tc.mark(t.Context()), stored)
 
 			if tc.refused {
-				if !errors.Is(err, secrets.ErrCredential) || !strings.Contains(err.Error(), "refusing to send to the model provider") {
-					t.Errorf("the request should be refused before the provider: %v", err)
+				if !errors.Is(err, secrets.ErrCredential) || !strings.Contains(err.Error(), `refusing to send to the model provider: the body`) {
+					t.Errorf("the request should be refused before the provider, naming the part: %v", err)
+				}
+				if !strings.Contains(err.Error(), `line 2, column 12), after "Run export"`) {
+					t.Errorf("the refusal should locate the credential in its part and quote the words before it: %v", err)
 				}
 				if calls != 0 {
 					t.Error("a refused request must not reach the provider")
@@ -57,6 +65,33 @@ func TestGuardRunner(t *testing.T) {
 			}
 			if err != nil || calls != 1 {
 				t.Errorf("a clean request should pass through: %v, %d calls", err, calls)
+			}
+		})
+	}
+}
+
+// A request that marks no parts, or an empty list of them, is refused: an
+// operation that forgot to mark its draft must not pass it unscanned.
+func TestGuardRunnerRefusesAnUnmarkedRequest(t *testing.T) {
+	marks := map[string]func(context.Context) context.Context{
+		"no mark":    func(ctx context.Context) context.Context { return ctx },
+		"empty mark": func(ctx context.Context) context.Context { return secrets.WithNewParts(ctx) },
+	}
+	for name, mark := range marks {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			guarded := secrets.GuardRunner(llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {
+				calls++
+				return llm.Result{Text: "ok"}, nil
+			}))
+
+			_, err := guarded.Run(mark(t.Context()), llm.Request{UserPrompt: "A clean draft."})
+
+			if !errors.Is(err, secrets.ErrUnmarked) {
+				t.Errorf("an unmarked request should be refused: %v", err)
+			}
+			if calls != 0 {
+				t.Error("an unmarked request must not reach the provider")
 			}
 		})
 	}
