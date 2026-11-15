@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +79,9 @@ type BaseConfig struct {
 	// set once in the user-global config; a per-repo override covers a
 	// project where the same person deliberately uses another spelling.
 	Participant string `yaml:"participant,omitempty"`
+	// Hooks are files run at engine events; the layers concatenate, global
+	// first.
+	Hooks []HookConfig `yaml:"hooks,omitempty" sdd:"concat"`
 }
 
 // IsZero reports whether no base setting is set. Resolution uses it to
@@ -143,12 +147,14 @@ type PerRepoConfig struct {
 }
 
 // PointerKeys are the keys a committed config may set beside project_dir:
-// what concerns the agents working in the repository, not the graph.
-var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents"}
+// what concerns the agents working in the repository, not the graph, and
+// the hooks the repository ships.
+var PointerKeys = []string{"project_dir", "skill_scope", "supported_agents", "hooks"}
 
 // LocalPointerKeys are the keys a machine-local config may set beside
-// project_dir: only where this machine keeps the project's checkout.
-var LocalPointerKeys = []string{"project_dir"}
+// project_dir: where this machine keeps the project's checkout, and its own
+// hooks.
+var LocalPointerKeys = []string{"project_dir", "hooks"}
 
 // TopLevelKeys returns the top-level keys of a YAML mapping, in file order.
 // Empty input yields none.
@@ -386,6 +392,9 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	out.LLM = mergeLLMConfig(base.LLM, overlay.LLM)
 	out.Embedding = mergeEmbeddingConfig(base.Embedding, overlay.Embedding)
 	out.Sync = mergeSyncConfig(base.Sync, overlay.Sync)
+	if len(overlay.Hooks) > 0 {
+		out.Hooks = append(slices.Clip(base.Hooks), overlay.Hooks...)
+	}
 	return out
 }
 
