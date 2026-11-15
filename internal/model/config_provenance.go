@@ -37,6 +37,8 @@ var configDefaults = map[string]string{
 	"llm.concurrency": strconv.Itoa(DefaultLLMConcurrency),
 	"sync.cooldown":   DefaultSyncCooldown,
 
+	"llm.claude_cli.credentials": string(DefaultClaudeCLICredentials),
+
 	"sessions.retention": DefaultSessionRetention,
 }
 

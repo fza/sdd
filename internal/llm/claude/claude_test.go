@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/llm/claude"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -60,7 +61,7 @@ func TestRunWithResponseSchema(t *testing.T) {
 		UserPrompt:     "USER " + problemChars,
 		ResponseSchema: json.RawMessage(wireSchema),
 	}
-	res, err := claude.NewRunner("sonnet").Run(context.Background(), req)
+	res, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -94,7 +95,7 @@ func TestRunWithResponseSchema(t *testing.T) {
 // the free-text result.
 func TestRunWithResponseSchemaRequiresStructuredOutput(t *testing.T) {
 	fakeCLI(t, `{"type":"result","result":"{\"reasoning\":\"r\"}","usage":{}}`)
-	_, err := claude.NewRunner("sonnet").Run(context.Background(), llm.Request{UserPrompt: "U", ResponseSchema: json.RawMessage(wireSchema)})
+	_, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U", ResponseSchema: json.RawMessage(wireSchema)})
 	if err == nil || !strings.Contains(err.Error(), "no structured output") {
 		t.Fatalf("want a missing structured output error, got %v", err)
 	}
@@ -103,7 +104,7 @@ func TestRunWithResponseSchemaRequiresStructuredOutput(t *testing.T) {
 // A free-text request passes no schema and returns the CLI's result.
 func TestRunWithoutResponseSchema(t *testing.T) {
 	dir := fakeCLI(t, `{"type":"result","result":"SERVED","usage":{}}`)
-	res, err := claude.NewRunner("sonnet").Run(context.Background(), llm.Request{UserPrompt: "U"})
+	res, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -143,7 +144,7 @@ printf '{"result":"args=%s cwd=%s key=%s token=%s base=%s","usage":{"input_token
 		t.Fatalf("Getwd: %v", err)
 	}
 
-	res, err := claude.NewRunner("claude-sonnet-4-6").Run(context.Background(), llm.Request{UserPrompt: "x"})
+	res, err := claude.NewRunner("claude-sonnet-4-6", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "x"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

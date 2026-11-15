@@ -45,3 +45,58 @@ func TestClaudeRunsWithoutTools(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeCredentials(t *testing.T) {
+	credentials := []string{
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"ANTHROPIC_BASE_URL",
+		"CLAUDE_CODE_USE_BEDROCK",
+		"CLAUDE_CODE_USE_VERTEX",
+	}
+	for _, tc := range []struct {
+		name    string
+		setting model.ClaudeCLICredentials
+		passed  bool
+	}{
+		{"unset strips them", "", false},
+		{"login strips them", model.ClaudeCLICredentialsLogin, false},
+		{"env passes them through", model.ClaudeCLICredentialsEnv, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			report := `printf '{"result":"%s"}' "`
+			for _, name := range credentials {
+				report += name + `=${` + name + `-absent} `
+			}
+			fakeClaude(t, report+`"`)
+			for _, name := range credentials {
+				t.Setenv(name, "set")
+			}
+
+			runner, err := factory.New(model.LLMConfig{Provider: "claude-cli", ClaudeCLI: model.ClaudeCLIConfig{Credentials: tc.setting}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := runner.Run(context.Background(), llm.Request{UserPrompt: "review"})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			for _, name := range credentials {
+				want := name + "=absent "
+				if tc.passed {
+					want = name + "=set "
+				}
+				if !strings.Contains(res.Text, want) {
+					t.Errorf("%s should reach the child only with credentials env, got %q", name, res.Text)
+				}
+			}
+		})
+	}
+}
+
+func TestClaudeRefusesUnknownCredentials(t *testing.T) {
+	_, err := factory.New(model.LLMConfig{Provider: "claude-cli", ClaudeCLI: model.ClaudeCLIConfig{Credentials: "apikey"}})
+	if err == nil || !strings.Contains(err.Error(), "login") || !strings.Contains(err.Error(), "env") {
+		t.Errorf("an unknown credentials value should be refused, naming the allowed ones, got %v", err)
+	}
+}

@@ -13,18 +13,22 @@ import (
 
 	"github.com/networkteam/slogutils"
 
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
 // Runner invokes the claude CLI with --output-format json and maps the
 // response into the common llm.Result.
 type Runner struct {
-	model string
+	model       string
+	credentials model.ClaudeCLICredentials
 }
 
-// NewRunner returns an llm.Runner backed by the claude CLI.
-func NewRunner(model string) *Runner {
-	return &Runner{model: model}
+// NewRunner returns an llm.Runner backed by the claude CLI. Only
+// model.ClaudeCLICredentialsEnv keeps the Anthropic credentials in the child's
+// environment.
+func NewRunner(modelName string, credentials model.ClaudeCLICredentials) *Runner {
+	return &Runner{model: modelName, credentials: credentials}
 }
 
 func (r *Runner) identity() llm.Identity {
@@ -35,7 +39,7 @@ func (r *Runner) identity() llm.Identity {
 // signed-in account. This transport exists to answer on that account, so an
 // inherited key would silently move the bill to an API balance with nothing in
 // the output saying which credential answered. A setup authenticating the CLI
-// by key belongs on the anthropic provider, which sends the key deliberately.
+// by key says so with llm.claude_cli.credentials: env.
 var scrubbedEnvVars = []string{
 	"ANTHROPIC_API_KEY",
 	"ANTHROPIC_AUTH_TOKEN",
@@ -51,7 +55,7 @@ var scrubbedEnvVars = []string{
 // the CLI validated against it becomes the text.
 //
 // The process runs isolated: --safe-mode, no tools, a working directory of its
-// own, and no Anthropic credentials in its environment. Started inside a
+// own, and by default no Anthropic credentials in its environment. Started inside a
 // project tree the CLI loads that project's instruction files, skills, hooks
 // and configured servers, and every one of them counts against a prompt that
 // needs none of them. The calls are text reviews: `--tools ""` removes the
@@ -71,7 +75,10 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	}
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = workDir
-	cmd.Env = scrubbedEnv(os.Environ())
+	cmd.Env = os.Environ()
+	if r.credentials != model.ClaudeCLICredentialsEnv {
+		cmd.Env = scrubbedEnv(cmd.Env)
+	}
 	cmd.Stdin = strings.NewReader(req.Combined())
 	out, err := cmd.Output()
 	if err != nil {

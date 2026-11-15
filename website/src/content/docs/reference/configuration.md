@@ -90,6 +90,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `llm.retry.max_attempts` | `5` | Attempts per call, counting the first. `1` turns retries off. |
 | `llm.retry.base_delay` | `2s` | Wait before the first retry. The wait grows with each further retry. |
 | `llm.retry.max_delay` | `60s` | Longest wait between two retries. |
+| `llm.claude_cli.credentials` | `login` | What `claude-cli` authenticates with. `login` uses your Claude Code login and removes the Anthropic credential variables from the `claude -p` environment. `env` passes the environment through unchanged, so `claude -p` can run on an Anthropic API key, Bedrock or Vertex. See [Claude Code CLI](#claude-code-cli). |
 | `llm.concurrency` | `4` | Not applied in this version. `sdd summarize --all` takes its worker count from `--concurrency`, which defaults to 4. |
 
 sdd retries a call that failed with a temporary error, such as a rate limit or a dropped connection, and waits as long as the provider asks when it names a time. `claude-cli` ignores the rate limit and retry keys, since the `claude` command retries on its own.
@@ -252,7 +253,7 @@ llm:
   model: claude-sonnet-4-6
 ```
 
-sdd runs `claude -p` isolated: without tools or MCP servers, with `--safe-mode`, in an empty temporary directory, and without `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` in its environment. Your project's instruction files, skills, hooks and servers stay out of the prompt, and an exported key cannot move the call off your Claude Code login onto an API balance. To authenticate with an API key, use `provider: anthropic`.
+sdd runs `claude -p` isolated: without tools or MCP servers, with `--safe-mode`, in an empty temporary directory, and by default without `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` in its environment. Your project's instruction files, skills, hooks and servers stay out of the prompt, and an exported key cannot move the call off your Claude Code login onto an API balance. To use an API key, set `llm.claude_cli.credentials: env`, or use `provider: anthropic`. With `env`, `claude -p` can also run on Bedrock or Vertex.
 
 ## Embedding providers
 
