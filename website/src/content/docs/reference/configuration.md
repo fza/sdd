@@ -252,6 +252,8 @@ llm:
   model: claude-sonnet-4-6
 ```
 
+sdd runs `claude -p` isolated: without tools or MCP servers, with `--safe-mode`, in an empty temporary directory, and without `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` in its environment. Your project's instruction files, skills, hooks and servers stay out of the prompt, and an exported key cannot move the call off your Claude Code login onto an API balance. To authenticate with an API key, use `provider: anthropic`.
+
 ## Embedding providers
 
 An embedding model turns each entry into a vector, so search finds entries by meaning. Without one, search matches keywords. `sdd info` shows `Search: vector,text` with an embedding provider and `Search: text` without.
