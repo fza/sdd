@@ -45,6 +45,9 @@ func (r *Runner) identity() llm.Identity {
 // llm.claude_cli.credentials: env.
 var scrubbedEnvPrefixes = []string{"ANTHROPIC_", "CLAUDE_CODE_USE_"}
 
+// scrubbedEnvVars hand the CLI a key or gateway token outside both families.
+var scrubbedEnvVars = []string{"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR"}
+
 // loginEnvVars pick which signed-in profile answers, so they stay.
 var loginEnvVars = []string{"ANTHROPIC_PROFILE", "ANTHROPIC_CONFIG_DIR"}
 
@@ -184,12 +187,20 @@ func scrubbedEnv(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, entry := range env {
 		name, _, _ := strings.Cut(entry, "=")
-		if !slices.Contains(loginEnvVars, name) && slices.ContainsFunc(scrubbedEnvPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) }) {
+		if scrubbed(name) {
 			continue
 		}
 		out = append(out, entry)
 	}
 	return out
+}
+
+func scrubbed(name string) bool {
+	if slices.Contains(loginEnvVars, name) {
+		return false
+	}
+	return slices.Contains(scrubbedEnvVars, name) ||
+		slices.ContainsFunc(scrubbedEnvPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
 }
 
 // claudeResponse maps the JSON output of claude -p --output-format json.

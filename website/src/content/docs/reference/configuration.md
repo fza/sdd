@@ -259,7 +259,7 @@ sdd runs `claude -p` isolated:
 - `--safe-mode`: instruction files, skills, plugins, hooks and your other customizations stay out of the prompt.
 - `--no-session-persistence`: no transcript of the draft stays under `~/.claude`.
 - An empty temporary working directory, removed after the call, so no project file is in reach either.
-- With `llm.claude_cli.credentials: login`, the default: no `ANTHROPIC_*` or `CLAUDE_CODE_USE_*` variable in the environment, and no settings file loaded (`--setting-sources ""`). Those variables carry API keys, tokens, endpoints and provider switches, and a settings file's `env` block and `apiKeyHelper` apply even in safe mode. `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_PROFILE` and `ANTHROPIC_CONFIG_DIR` belong to the login and stay.
+- With `llm.claude_cli.credentials: login`, the default: no `ANTHROPIC_*` or `CLAUDE_CODE_USE_*` variable in the environment, no `CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR` or `CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR`, and no settings file loaded (`--setting-sources ""`). Those variables carry API keys, tokens, endpoints and provider switches, and a settings file's `env` block and `apiKeyHelper` apply even in safe mode. `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_PROFILE` and `ANTHROPIC_CONFIG_DIR` belong to the login and stay.
 
 An exported key or provider switch then cannot move the call off your Claude Code login. To use an API key, set `llm.claude_cli.credentials: env`, or use `provider: anthropic`. With `env`, `claude -p` loads your settings and can also run on another provider such as Bedrock or Vertex.
 
