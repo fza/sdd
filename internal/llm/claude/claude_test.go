@@ -116,14 +116,14 @@ func TestRunWithoutResponseSchema(t *testing.T) {
 }
 
 // Each flag keeps something out of the call: the built-in tools, the configured
-// MCP servers, the user's customizations.
+// MCP servers, the user's customizations, a transcript holding the draft.
 func TestRunIsolationFlags(t *testing.T) {
 	dir := fakeCLI(t, `{"type":"result","result":"ok","usage":{}}`)
 	if _, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	args := recordedArgs(t, dir)
-	for _, flag := range []string{"--strict-mcp-config", "--safe-mode"} {
+	for _, flag := range []string{"--strict-mcp-config", "--safe-mode", "--no-session-persistence"} {
 		if !slices.Contains(args, flag) {
 			t.Errorf("claude -p should run with %s, got %q", flag, args)
 		}

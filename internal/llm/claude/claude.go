@@ -61,7 +61,8 @@ var scrubbedEnvVars = []string{
 // needs none of them. The calls are text reviews: `--tools ""` removes the
 // built-in tools and `--strict-mcp-config` the configured MCP servers, whose
 // tool definitions would otherwise load in full into every prompt. A draft's
-// text then has nothing to act through.
+// text then has nothing to act through. `--no-session-persistence` keeps the
+// CLI from saving each call's transcript, the full draft, under ~/.claude.
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	workDir, err := os.MkdirTemp("", "sdd-claude-")
 	if err != nil {
@@ -69,7 +70,7 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
 
-	args := []string{"-p", "--safe-mode", "--tools", "", "--strict-mcp-config", "--model", r.model, "--output-format", "json"}
+	args := []string{"-p", "--safe-mode", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--model", r.model, "--output-format", "json"}
 	if len(req.ResponseSchema) > 0 {
 		args = append(args, "--json-schema", string(req.ResponseSchema))
 	}

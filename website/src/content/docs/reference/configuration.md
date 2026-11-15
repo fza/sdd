@@ -253,7 +253,7 @@ llm:
   model: claude-sonnet-4-6
 ```
 
-sdd runs `claude -p` isolated: without tools or MCP servers, with `--safe-mode`, in an empty temporary directory, and by default without `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` in its environment. Your project's instruction files, skills, hooks and servers stay out of the prompt, and an exported key cannot move the call off your Claude Code login onto an API balance. To use an API key, set `llm.claude_cli.credentials: env`, or use `provider: anthropic`. With `env`, `claude -p` can also run on Bedrock or Vertex.
+sdd runs `claude -p` isolated: without tools or MCP servers, with `--safe-mode`, with `--no-session-persistence` so no transcript of the draft stays under `~/.claude`, in an empty temporary directory, and by default without `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX` in its environment. Your project's instruction files, skills, hooks and servers stay out of the prompt, and an exported key cannot move the call off your Claude Code login onto an API balance. To use an API key, set `llm.claude_cli.credentials: env`, or use `provider: anthropic`. With `env`, `claude -p` can also run on Bedrock or Vertex.
 
 ## Embedding providers
 
