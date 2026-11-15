@@ -560,6 +560,23 @@ func recordDispatchSeed(inst *Instance, opt *Option) {
 // cascades. Reports can only write declared state fields; batched fields for
 // later steps are accepted. A report does not answer a pending chooser.
 func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, error) {
+	inst, err := s.report(instanceID, fields)
+	if err != nil {
+		return nil, err
+	}
+	return s.serve(inst)
+}
+
+// Update applies state fields as Report does but serves nothing, so the
+// draft an agent was last served stays the base the next serve diffs
+// against. For state a shell keeps in step with something outside the
+// session, such as a staged file.
+func (s *Session) Update(instanceID string, fields map[string]any) error {
+	_, err := s.report(instanceID, fields)
+	return err
+}
+
+func (s *Session) report(instanceID string, fields map[string]any) (*Instance, error) {
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
@@ -598,7 +615,7 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 	if err := s.cascade(inst); err != nil {
 		return nil, err
 	}
-	return s.serve(inst)
+	return inst, nil
 }
 
 // Answer resolves the pending chooser at the instance's current step: the
@@ -627,6 +644,18 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 	if chooser != step.ID {
 		return nil, fmt.Errorf("chooser %q is not pending — the pending chooser is %q (answers are validated: no early, late, or double answers)", chooser, step.ID)
 	}
+	if draftChangedUnserved(inst, step) {
+		// A draft written by Update since this step last served it was never
+		// shown: answering would confirm unseen text, so the step serves the
+		// change instead and the answer is not applied.
+		sv, err := s.serve(inst)
+		if err != nil {
+			return nil, err
+		}
+		sv.Diagnostics = append(sv.Diagnostics, "not answered: the draft changed since it was last served — play the change back and answer again")
+		sv.Instructions = ComposeInstructions(sv.UnitText, sv.Diagnostics)
+		return sv, nil
+	}
 
 	var opt *Option
 	for i := range step.Options {
@@ -651,7 +680,7 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 		allowed[cf.Name] = true
 	}
 	for name := range fields {
-		if !allowed[name] {
+		if !allowed[name] && !inst.Spec.State[name].HostSet {
 			return nil, fmt.Errorf("field %q is not collected by option %q", name, choice)
 		}
 	}

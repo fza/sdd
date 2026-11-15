@@ -75,6 +75,11 @@ type VarDecl struct {
 	// patch field itself is never stored (20260826-120330-d-tac-8f8). Requires
 	// an optional list<search-replace> declaration; validated at load.
 	PatchOf string
+	// HostSet marks a state field only the embedding host writes: no served
+	// schema, collect list, serveDelta or resume projection names it, and an
+	// answer may carry it beyond the option's collect list because the host
+	// merges it into the answer it forwards.
+	HostSet bool
 }
 
 // ChooserKind classifies who advances a step: the engine (gate,
@@ -215,6 +220,7 @@ type varDeclYAML struct {
 	Desc     string `yaml:"desc"`
 	Default  any    `yaml:"default"`
 	PatchOf  string `yaml:"patchOf"`
+	HostSet  bool   `yaml:"hostSet"`
 }
 
 type injectYAML struct {
@@ -394,6 +400,10 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 			addProblem("params.%s: default is not supported on params — params are supplied at start", name)
 			continue
 		}
+		if d.HostSet {
+			addProblem("params.%s: hostSet applies to state fields only", name)
+			continue
+		}
 		decl, err := parseVarDecl(name, d)
 		if err != nil {
 			addProblem("params.%s: %v", name, err)
@@ -459,8 +469,12 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 			}
 		}
 		for _, f := range step.ServeDelta {
-			if _, ok := spec.State[f]; !ok {
+			decl, ok := spec.State[f]
+			switch {
+			case !ok:
 				addProblem("%s: serveDelta names %q, which is not declared in state", prefix, f)
+			case decl.HostSet:
+				addProblem("%s: serveDelta names %q, which only the host sets", prefix, f)
 			}
 		}
 		for _, o := range step.Options {
@@ -468,8 +482,12 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 				addProblem("%s: option %q target %q is not a step or end(...)", prefix, o.Choice, o.To)
 			}
 			for _, c := range o.Collect {
-				if _, ok := spec.State[c.Name]; !ok {
+				decl, ok := spec.State[c.Name]
+				switch {
+				case !ok:
 					addProblem("%s: option %q collects %q, which is not declared in state", prefix, o.Choice, c.Name)
+				case decl.HostSet:
+					addProblem("%s: option %q collects %q, which only the host sets", prefix, o.Choice, c.Name)
 				}
 			}
 			if o.Dispatch != nil {
@@ -493,8 +511,12 @@ func ParseSpec(entry *model.Entry) (*Spec, error) {
 			}
 		}
 		for _, c := range step.Collect {
-			if _, ok := spec.State[c.Name]; !ok {
+			decl, ok := spec.State[c.Name]
+			switch {
+			case !ok:
 				addProblem("%s: collect names %q, which is not declared in state", prefix, c.Name)
+			case decl.HostSet:
+				addProblem("%s: collects %q, which only the host sets", prefix, c.Name)
 			}
 		}
 		if step.Render != "" {
@@ -542,7 +564,7 @@ func parseVarDecl(name string, d varDeclYAML) (VarDecl, error) {
 	if err != nil {
 		return VarDecl{}, err
 	}
-	decl := VarDecl{Type: t, Optional: d.Optional, Desc: d.Desc, PatchOf: d.PatchOf}
+	decl := VarDecl{Type: t, Optional: d.Optional, Desc: d.Desc, PatchOf: d.PatchOf, HostSet: d.HostSet}
 	if d.Default != nil {
 		dv, err := t.ValidateValue(d.Default)
 		if err != nil {
