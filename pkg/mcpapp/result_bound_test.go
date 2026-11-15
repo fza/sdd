@@ -297,11 +297,47 @@ func TestAFollowUpWrongProofServesASentLaneInFull(t *testing.T) {
 // it in full ahead of lane second.
 func firstLaneProof(t *testing.T, instructions string) model.Proof {
 	t.Helper()
-	end := strings.Index(instructions, "Lane second holds")
-	if end < 0 {
+	first, ok := firstLaneText(instructions)
+	if !ok {
 		t.Fatalf("the instructions should serve lane second after lane first, got %.300q", instructions)
 	}
-	return proofOf(t, instructions[:end], "lane first")
+	return proofOf(t, first, "lane first")
+}
+
+// firstLaneText cuts the instructions where lane second begins; false when
+// they serve no lane second.
+func firstLaneText(instructions string) (string, bool) {
+	end := 0
+	for line := range strings.Lines(instructions) {
+		if strings.HasPrefix(test.Untagged(line), "Lane second holds") {
+			return instructions[:end], true
+		}
+		end += len(line)
+	}
+	return "", false
+}
+
+// Lane second's tag lands on a random word of it, its first line's included:
+// the cut still leaves lane first with its own tag alone.
+func TestFirstLaneTextEndsBeforeLaneSecondWhereverItsTagLands(t *testing.T) {
+	first := "Lane first holds a ⟦aaaa⟧ line of its guidance.\nLane first holds a line of its guidance.\n\n"
+	for _, tc := range []struct{ name, second string }{
+		{"before lane", "⟦bbbb⟧ Lane second holds a line of its guidance.\nLane second holds a line of its guidance."},
+		{"before second", "Lane ⟦bbbb⟧ second holds a line of its guidance.\nLane second holds a line of its guidance."},
+		{"before holds", "Lane second ⟦bbbb⟧ holds a line of its guidance.\nLane second holds a line of its guidance."},
+		{"on a later line", "Lane second holds a line of its guidance.\nLane second holds a ⟦bbbb⟧ line of its guidance."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			second := tc.second
+			text, ok := firstLaneText(first + second)
+			if !ok {
+				t.Fatal("the instructions should be found to serve lane second")
+			}
+			if proofs := model.ReadAnchors(text); len(proofs) != 1 || proofs[0] != (model.Proof{Tag: "aaaa", Word: "line"}) {
+				t.Errorf("lane first's text should carry its own tag alone, got %v in %q", proofs, text)
+			}
+		})
+	}
 }
 
 // followWaitingLanes calls next with no report on a serve whose lanes wait

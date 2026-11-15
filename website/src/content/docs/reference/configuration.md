@@ -234,7 +234,7 @@ Other reads and the rounds `sdd serve` runs on its own never spend a credit. Eve
 | --- | --- | --- |
 | `secrets.rules_update` | `daily` | `daily`: the [daily sweep](#the-daily-sweep) fetches the rule file of gitleaks' latest release when it is newer than the one in use. `off`: sdd asks GitHub nothing and [scans for credentials](/sdd/working-modes/#capture) with the rule file built into sdd only, also when it fetched a newer one before. Read from the user-global file only. |
 
-`sdd config set` refuses any other value; read from a file, another value is ignored with a warning and `daily` applies.
+`sdd config set` refuses any other value. In the user-global file, another value fails every command with an error naming the file, the key, the value and the valid values. In a project or local file the key is ignored with a warning, whatever its value.
 
 ### Connected repositories
 

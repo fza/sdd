@@ -120,9 +120,10 @@ func LoadConfigFrom(path string) (*GlobalConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing global config %s: %w", path, err)
 	}
-	err = cfg.Dialogue.Mode.Validate()
-	if err != nil {
-		return nil, fmt.Errorf("global config %s: %w", path, err)
+	for _, err := range []error{cfg.Dialogue.Mode.Validate(), cfg.Secrets.RulesUpdate.Validate()} {
+		if err != nil {
+			return nil, fmt.Errorf("global config %s: %w", path, err)
+		}
 	}
 	return cfg, nil
 }

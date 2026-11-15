@@ -6,38 +6,23 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-func TestIgnoredSyncInterval(t *testing.T) {
-	cases := []struct {
-		name      string
-		interval  string
-		committed bool
-		ignored   bool
-	}{
-		{name: "unset"},
-		{name: "personal layer at the minimum", interval: "1m"},
-		{name: "personal layer above the minimum", interval: "10m"},
-		{name: "committed layer", interval: "5m", committed: true, ignored: true},
-		{name: "malformed", interval: "often", ignored: true},
-		{name: "below the minimum", interval: "30s", ignored: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := model.IgnoredSettings(model.BaseConfig{Sync: model.SyncConfig{Interval: tc.interval}}, layerOf(tc.committed))
-			if !tc.ignored {
+// The retired sync.interval is read from no layer, so no value in any layer
+// warns or fails: another sdd version on the machine may still read it.
+func TestSyncIntervalIsNeverReported(t *testing.T) {
+	for _, source := range []model.ConfigValueSource{model.ConfigSourceGlobal, model.ConfigSourceProject, model.ConfigSourceLocal} {
+		for _, interval := range []string{"5m", "often", "30s"} {
+			t.Run(string(source)+" "+interval, func(t *testing.T) {
+				got := model.IgnoredSettings(model.BaseConfig{Sync: model.SyncConfig{Interval: interval}}, source)
 				if len(got) != 0 {
-					t.Errorf("an interval the layer may set should be honored, got %v", got)
+					t.Errorf("the retired interval should raise no warning, got %v", got)
 				}
-				return
-			}
-			if len(got) != 1 || got[0].Key != "sync.interval" || got[0].Reason == "" {
-				t.Errorf("the interval should be reported as ignored with its key and a reason, got %v", got)
-			}
-		})
+			})
+		}
 	}
 }
 
 func TestIgnoredSettingsReportsEveryKey(t *testing.T) {
-	got := model.IgnoredSettings(model.BaseConfig{Sync: model.SyncConfig{Mode: model.SyncModeAuto, Interval: "5m"}}, model.ConfigSourceProject)
+	got := model.IgnoredSettings(model.BaseConfig{Sync: model.SyncConfig{Mode: model.SyncModeAuto}, Dialogue: model.DialogueConfig{Mode: model.DialogueAuto}}, model.ConfigSourceProject)
 	if len(got) != 2 {
 		t.Errorf("both personal-only keys in the committed layer should be reported, got %v", got)
 	}
