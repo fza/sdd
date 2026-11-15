@@ -22,6 +22,7 @@ import (
 type fakeReader struct {
 	preflightResult *query.PreflightResult
 	preflightErr    error
+	preflightCalls  int
 	graph           *model.Graph
 }
 
@@ -37,6 +38,7 @@ func (f *fakeReader) LoadWIPMarkers(_ string) ([]*model.WIPMarker, error) {
 }
 
 func (f *fakeReader) Preflight(ctx context.Context, g *model.Graph, q query.PreflightQuery) (*query.PreflightResult, error) {
+	f.preflightCalls++
 	return f.preflightResult, f.preflightErr
 }
 
