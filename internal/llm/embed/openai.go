@@ -126,14 +126,14 @@ func (e *openaiEmbedder) request(ctx context.Context, texts []string) (result pk
 
 	var decoded openaiEmbedResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return pkgembed.Result{}, fmt.Errorf("decode openai response (status %d): %w", resp.StatusCode, err)
+		return pkgembed.Result{}, withStatus(resp.StatusCode, fmt.Errorf("decode openai response (status %d): %w", resp.StatusCode, err))
 	}
 	if resp.StatusCode != http.StatusOK {
 		if decoded.Error != nil {
-			return pkgembed.Result{}, fmt.Errorf("openai embed error (status %d, %s/%s): %s",
-				resp.StatusCode, decoded.Error.Type, decoded.Error.Code, decoded.Error.Message)
+			return pkgembed.Result{}, withStatus(resp.StatusCode, fmt.Errorf("openai embed error (status %d, %s/%s): %s",
+				resp.StatusCode, decoded.Error.Type, decoded.Error.Code, decoded.Error.Message))
 		}
-		return pkgembed.Result{}, fmt.Errorf("openai embed status %d", resp.StatusCode)
+		return pkgembed.Result{}, withStatus(resp.StatusCode, fmt.Errorf("openai embed status %d", resp.StatusCode))
 	}
 	if len(decoded.Data) != len(texts) {
 		return pkgembed.Result{}, fmt.Errorf("openai returned %d embeddings for %d inputs", len(decoded.Data), len(texts))

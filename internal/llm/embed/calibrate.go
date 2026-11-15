@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -56,7 +57,7 @@ func Quantise(runes int) int {
 // A provider that reports no token count gets FallbackMaxRunes. A provider
 // that truncates silently shows a count stuck at its limit; one that rejects
 // over-limit input is bisected between the last accepted size and the first
-// rejection. A probe a network error ends is retried once (see attempt), so a
+// rejection. A probe that gets no answer is retried once (see attempt), so a
 // passing blip neither lowers the cap nor gets stored.
 func Calibrate(ctx context.Context, emb pkgembed.Embedder) (Calibration, error) {
 	latinTokens, err := shortProbe(ctx, emb, repeatRunes("word ", latinProbeRunes))
@@ -84,7 +85,7 @@ func Calibrate(ctx context.Context, emb pkgembed.Embedder) (Calibration, error) 
 }
 
 func findLimit(ctx context.Context, emb pkgembed.Embedder, latinTokens int) (string, int, error) {
-	overflowTokens, refused, err := attempt(ctx, emb, repeatRunes("word ", overflowProbeRunes))
+	overflowTokens, refused, err := attempt(ctx, emb, repeatRunes("word ", overflowProbeRunes), repeatRunes("word ", latinProbeRunes))
 	if err != nil {
 		return "", 0, err
 	}
@@ -98,7 +99,7 @@ func findLimit(ctx context.Context, emb pkgembed.Embedder, latinTokens int) (str
 	lo, loTokens, hi := latinProbeRunes, latinTokens, overflowProbeRunes
 	for hi-lo > bisectTolerance {
 		mid := (lo + hi) / 2
-		tokens, refused, err := attempt(ctx, emb, repeatRunes("word ", mid))
+		tokens, refused, err := attempt(ctx, emb, repeatRunes("word ", mid), repeatRunes("word ", lo))
 		if err != nil {
 			return "", 0, err
 		}
@@ -114,7 +115,7 @@ func findLimit(ctx context.Context, emb pkgembed.Embedder, latinTokens int) (str
 // shortProbe sends a probe every endpoint must accept: a refusal fails the
 // calibration.
 func shortProbe(ctx context.Context, emb pkgembed.Embedder, text string) (int, error) {
-	tokens, refused, err := attempt(ctx, emb, text)
+	tokens, refused, err := attempt(ctx, emb, text, "")
 	if err != nil {
 		return 0, err
 	}
@@ -125,11 +126,14 @@ func shortProbe(ctx context.Context, emb pkgembed.Embedder, text string) (int, e
 }
 
 // attempt sends one probe and reads its outcome. An answer that is an error
-// is a refusal. A probe a network error ends is sent once more: an answer
-// decides, a dropped connection again counts as a refusal (endpoints that
-// drop over-long input), and a second timeout leaves the outcome open, which
-// fails the calibration so nothing is stored and the next fill probes again.
-func attempt(ctx context.Context, emb pkgembed.Embedder, text string) (tokens int, refused bool, err error) {
+// is a refusal. Any other failure gets the probe sent once more, and an answer
+// decides. A second failure that may be the endpoint's answer to this input,
+// a dropped connection (endpoints that drop over-long input) or a server
+// error, counts as a refusal only when control, a size the endpoint accepted,
+// is still answered. Any other second failure, or a failed control, leaves
+// the outcome open, which fails the calibration so nothing is stored and the
+// next fill probes again.
+func attempt(ctx context.Context, emb pkgembed.Embedder, text, control string) (tokens int, refused bool, err error) {
 	tokens, err = probe(ctx, emb, text)
 	if err == nil {
 		return tokens, false, nil
@@ -147,30 +151,56 @@ func attempt(ctx context.Context, emb pkgembed.Embedder, text string) (tokens in
 	if ctx.Err() != nil {
 		return 0, false, ctx.Err()
 	}
-	if probeFailure(err) == timedOut {
-		return 0, false, fmt.Errorf("calibration probe of %d runes got no answer twice: %w", utf8.RuneCountInString(text), err)
+	switch probeFailure(err) {
+	case answered:
+		return 0, true, nil
+	case dropped:
+		if control == "" {
+			break
+		}
+		_, controlErr := probe(ctx, emb, control)
+		if controlErr == nil {
+			return 0, true, nil
+		}
+		if ctx.Err() != nil {
+			return 0, false, ctx.Err()
+		}
 	}
-	return 0, true, nil
+	return 0, false, fmt.Errorf("calibration probe of %d runes got no answer twice: %w", utf8.RuneCountInString(text), err)
 }
 
 type failure int
 
 const (
+	// answered is the endpoint's refusal of the input.
 	answered failure = iota
+	// dropped may be the endpoint's refusal of the input, or a blip.
 	dropped
-	timedOut
+	// unanswered says nothing about the input: a timeout, a refused
+	// connection, a failed lookup, a rate limit.
+	unanswered
 )
 
 // probeFailure tells an endpoint's answer from a network failure: a request
 // error without a transport error underneath is the endpoint's answer.
 func probeFailure(err error) failure {
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return timedOut
+	var status *statusError
+	if errors.As(err, &status) {
+		switch {
+		case status.status == http.StatusTooManyRequests:
+			return unanswered
+		case status.status >= http.StatusInternalServerError:
+			return dropped
+		}
+		return answered
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return dropped
 	}
 	var urlErr *url.Error
-	if errors.As(err, &urlErr) || errors.As(err, &netErr) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) {
-		return dropped
+	var netErr net.Error
+	if errors.As(err, &urlErr) || errors.As(err, &netErr) {
+		return unanswered
 	}
 	return answered
 }

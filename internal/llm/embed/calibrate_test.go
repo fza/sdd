@@ -2,17 +2,23 @@ package embed_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	localembed "github.com/networkteam/sdd/internal/llm/embed"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 )
@@ -362,5 +368,128 @@ func TestLoadOrCalibrateStoresNothingWhenAProbeStaysUnanswered(t *testing.T) {
 	}
 	if next.calls == 0 || cal.MaxRunes != 1792 {
 		t.Errorf("the next fill should probe again and store the limit it finds, %d probes, cap %d", next.calls, cal.MaxRunes)
+	}
+}
+
+func refusedConnection() error {
+	return &url.Error{Op: "Post", URL: "http://endpoint.test/v1/embeddings", Err: &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}}
+}
+
+func failedLookup() error {
+	return &url.Error{Op: "Post", URL: "http://endpoint.test/v1/embeddings", Err: &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "endpoint.test", IsNotFound: true}}}
+}
+
+// failingPastShortProbes answers the short probes, then fails every longer
+// one with err, as an endpoint does that goes away after the first requests.
+func failingPastShortProbes(err error) func(text string) (int, error) {
+	limited := limitedEndpoint(errors.New("input exceeds the model limit"))
+	return func(text string) (int, error) {
+		if !cjkText(text) && utf8.RuneCountInString(text) > 1000 {
+			return 0, err
+		}
+		return limited(text)
+	}
+}
+
+// openaiEndpoint serves OpenAI-shaped embeddings that cost a quarter token per
+// Latin rune and one per CJK rune, failing with the status statusFor returns
+// for a text unless it is 200.
+func openaiEndpoint(t *testing.T, statusFor func(text string) int) embed.Embedder {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Input []string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		text := body.Input[0]
+		w.Header().Set("Content-Type", "application/json")
+		if status := statusFor(text); status != http.StatusOK {
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": http.StatusText(status)}})
+			return
+		}
+		tokens := latinTokens(text)
+		if cjkText(text) {
+			tokens = utf8.RuneCountInString(text)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":  []map[string]any{{"embedding": []float32{0.1}}},
+			"usage": map[string]any{"prompt_tokens": tokens},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	emb, err := localembed.New(model.EmbeddingConfig{Provider: "openai", Model: "m", Endpoint: srv.URL, APIKeys: map[string]string{"openai": "k"}, RateLimitRPS: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return emb
+}
+
+// pastShortProbes fails every Latin probe past the short ones with status.
+func pastShortProbes(status int) func(text string) int {
+	return func(text string) int {
+		if !cjkText(text) && utf8.RuneCountInString(text) > 1000 {
+			return status
+		}
+		return http.StatusOK
+	}
+}
+
+func TestLoadOrCalibrateStoresNothingWhenTheEndpointIsUnreachable(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		emb  func(t *testing.T) embed.Embedder
+	}{
+		{name: "a refused connection", emb: func(*testing.T) embed.Embedder {
+			return &countingEmbedder{tokensFor: failingPastShortProbes(refusedConnection())}
+		}},
+		{name: "a failed lookup", emb: func(*testing.T) embed.Embedder {
+			return &countingEmbedder{tokensFor: failingPastShortProbes(failedLookup())}
+		}},
+		{name: "a rate limit", emb: func(t *testing.T) embed.Embedder {
+			return openaiEndpoint(t, pastShortProbes(http.StatusTooManyRequests))
+		}},
+		{name: "a server error on every request after the short probes", emb: func(t *testing.T) embed.Embedder {
+			var requests atomic.Int32
+			return openaiEndpoint(t, func(string) int {
+				if requests.Add(1) > 2 {
+					return http.StatusServiceUnavailable
+				}
+				return http.StatusOK
+			})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if _, err := localembed.LoadOrCalibrate(context.Background(), tc.emb(t), dir, "fp|http://endpoint.test|/v1/embeddings"); err == nil {
+				t.Error("a probe the endpoint gave no answer about should fail the calibration")
+			}
+			if files, err := filepath.Glob(filepath.Join(dir, "calibration-*.json")); err != nil || len(files) != 0 {
+				t.Errorf("a failed calibration should store nothing, found %v, %v", files, err)
+			}
+		})
+	}
+}
+
+func TestCalibrateBisectsAnEndpointThatRefusesOverLimitInputWithAServerError(t *testing.T) {
+	t.Parallel()
+	emb := openaiEndpoint(t, func(text string) int {
+		if !cjkText(text) && latinTokens(text) > 2048 {
+			return http.StatusInternalServerError
+		}
+		return http.StatusOK
+	})
+	cal, err := localembed.Calibrate(context.Background(), emb)
+	if err != nil {
+		t.Fatalf("Calibrate: %v", err)
+	}
+	if cal.Method != "bisect" || cal.MaxRunes != 1792 {
+		t.Errorf("a server error only over the limit should count as the endpoint's refusal, got %q with %d runes", cal.Method, cal.MaxRunes)
 	}
 }
