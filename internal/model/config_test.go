@@ -319,3 +319,24 @@ func TestResolveSyncCooldown(t *testing.T) {
 		})
 	}
 }
+
+func TestMergeConfig_EmbeddingPath(t *testing.T) {
+	cases := []struct {
+		name    string
+		base    string
+		overlay string
+		want    string
+	}{
+		{name: "overlay sets path", base: "", overlay: "/v3/compat/embeddings", want: "/v3/compat/embeddings"},
+		{name: "empty overlay keeps base path", base: "/v3/compat/embeddings", overlay: "", want: "/v3/compat/embeddings"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := &PerRepoConfig{BaseConfig: BaseConfig{Embedding: EmbeddingConfig{Path: tc.base}}}
+			overlay := &PerRepoConfig{BaseConfig: BaseConfig{Embedding: EmbeddingConfig{Path: tc.overlay}}}
+			if got := MergeConfig(base, overlay).Embedding.Path; got != tc.want {
+				t.Errorf("Path = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
