@@ -2,6 +2,7 @@ package cliapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -97,11 +98,14 @@ func embeddingFlags() []cli.Flag {
 	}
 }
 
+var errInvalidIndexRepoID = errors.New("invalid repo_id for the index store")
+
 // resolveIndexStore resolves the machine-global index store for the current
 // repo under the given embedder: <cacheRoot>/index/<repo-key>/<fp-hash>.
 // The repo key is the committed repo_id when declared — shared by the
 // checkout, its worktrees, and the connected-repo cache — else a hash of
-// the repo root. Returns ("", err) when no .sdd is found.
+// the repo root. Returns ("", err) when no .sdd is found, and an error
+// wrapping errInvalidIndexRepoID for a repo_id ValidateRepoID refuses.
 func resolveIndexStore(emb embed.Embedder) (string, error) {
 	sddDir, err := resolveSDDDir()
 	if err != nil {
@@ -117,7 +121,7 @@ func resolveIndexStore(emb embed.Embedder) (string, error) {
 	}
 	if repoID != "" {
 		if err := model.ValidateRepoID(repoID); err != nil {
-			return "", fmt.Errorf("invalid repo_id for the index store: %w", err)
+			return "", fmt.Errorf("%w: %w", errInvalidIndexRepoID, err)
 		}
 	}
 	loc, err := repos.DefaultLocations()

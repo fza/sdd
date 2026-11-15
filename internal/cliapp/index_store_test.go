@@ -19,3 +19,14 @@ func TestIndexStoreRefusesAnInvalidRepoID(t *testing.T) {
 		t.Errorf("index gc should create nothing outside the cache root: %v", err)
 	}
 }
+
+func TestLintReportsAnInvalidRepoIDForTheIndexStore(t *testing.T) {
+	f := newAppFixture(t)
+	f.write(t, ".sdd/config.yaml", "repo_id: example.test/../../../escaped\ngraph_dir: decisions\ndefault_branch: main\n"+
+		"embedding:\n  provider: ollama\n  model: test-model\n  ollama_endpoint: http://127.0.0.1:9\n")
+
+	result := f.run(t, "lint")
+	if !strings.Contains(result.stdout, `⚠ [invalid-repo-id]`) || !strings.Contains(result.stdout, `"example.test/../../../escaped"`) {
+		t.Errorf("lint should report the invalid repo_id as an error, stdout:\n%s", result.stdout)
+	}
+}
