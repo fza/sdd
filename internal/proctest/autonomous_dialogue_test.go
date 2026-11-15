@@ -86,3 +86,27 @@ func TestAutonomousDialogue_OverrideStaysTheUsers(t *testing.T) {
 	serve = session.Answer(t, serve.Instance, "reviseOrOverride", "override", nil, "override it, the finding does not apply")
 	proctest.RequireStep(t, serve, "verifySummary")
 }
+
+// No user reads an autonomous playback, so the sentences a guide revision
+// added are put to the agent's own check.
+func TestAutonomousDialogue_GuideRevisionPlaybackAddressesTheAgent(t *testing.T) {
+	world, session := newCaptureWorld(t, "autonomous-guide-added", proctest.WithAutonomousDialogue())
+	world.LLM.GuideFindings = []proctest.GuideFinding{{
+		Reasoning: "the body names no reason the gap matters", Axis: "stranding",
+		Quote: "the fixture observes something", Repair: "write-in", Severity: "substantive",
+	}}
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	serve = session.Report(t, instance, captureDraft())
+	proctest.RequireStep(t, serve, "guideReview")
+	serve = session.Answer(t, instance, "guideReview", "revise", map[string]any{"body": "A tactical gap: the fixture observes something.\n\nThe earlier approach failed under load."}, "")
+	proctest.RequireStep(t, serve, "playback")
+	if strings.Contains(serve.Instructions, "not your words") {
+		t.Errorf("an autonomous playback should not address a user about the revision, got:\n%s", serve.Instructions)
+	}
+	for _, want := range []string{"Added by your revision", `- "The earlier approach failed under load."`} {
+		if !strings.Contains(serve.Instructions, want) {
+			t.Errorf("an autonomous playback should put the revision's added sentences to the agent, missing %q:\n%s", want, serve.Instructions)
+		}
+	}
+}
