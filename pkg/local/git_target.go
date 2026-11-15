@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -90,6 +92,9 @@ func (a *GitWorktreeAcquirer) AcquireSnapshot(ctx context.Context, q app.Snapsho
 	return a.readFactory(ctx, checkout, q)
 }
 
+// ErrCheckoutMissing reports a serving checkout gone from disk.
+var ErrCheckoutMissing = errors.New("serving checkout is missing")
+
 // BaseBranch answers the branch the serving checkout has checked out at the
 // moment of the call — the unbound session's base (20260923-233057-d-cpt-ekd).
 // It is empty when the checkout has none: a detached HEAD, or a directory
@@ -100,6 +105,9 @@ func (a *GitWorktreeAcquirer) BaseBranch(ctx context.Context) (string, error) {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && (exit.ExitCode() == 1 || strings.Contains(string(output), "not a git repository")) {
 			return "", nil
+		}
+		if _, statErr := os.Stat(a.serverCheckout); errors.Is(statErr, fs.ErrNotExist) {
+			return "", fmt.Errorf("sdd: %w: %s; for a connected repository's clone run `sdd repo sync %s`", ErrCheckoutMissing, a.serverCheckout, a.project)
 		}
 		return "", fmt.Errorf("sdd: reading the serving checkout's branch: %s (%w)", strings.TrimSpace(string(output)), err)
 	}

@@ -255,7 +255,14 @@ func (d *connectedDependencies) resolve(ctx context.Context, repoID sdd.RepoID) 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if runtime := d.runtimes[repoID]; runtime != nil {
-		return runtime, nil
+		dir, err := d.registry.CloneDir(repoID)
+		if err != nil {
+			return nil, err
+		}
+		if repos.IsCloned(dir) {
+			return runtime, nil
+		}
+		delete(d.runtimes, repoID)
 	}
 	global, err := d.registry.Load()
 	if err != nil {
@@ -268,7 +275,8 @@ func (d *connectedDependencies) resolve(ctx context.Context, repoID sdd.RepoID) 
 	dir, _, err := d.manager.Ensure(ctx, repo)
 	var deferred *gitgate.DeferredError
 	if errors.As(err, &deferred) {
-		return nil, dependencyUnavailable()
+		message := fmt.Sprintf("dependency %s has no clone on this machine yet; run `sdd repo sync %s`", repoID, repoID)
+		return nil, &sdd.ApplicationError{Code: sdd.ErrorProjectUnavailable, Message: message, Cause: err}
 	}
 	if err != nil {
 		return nil, err
