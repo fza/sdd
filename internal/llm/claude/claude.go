@@ -51,7 +51,8 @@ var scrubbedEnvPrefixes = []string{"ANTHROPIC_", "CLAUDE_CODE_USE_"}
 // the CLI validated against it becomes the text.
 //
 // The process runs isolated: --safe-mode, no tools, a working directory of its
-// own, and by default no Anthropic credentials in its environment. Started inside a
+// own, and by default no Anthropic credentials from its environment or a
+// settings file. Started inside a
 // project tree the CLI loads that project's instruction files, skills, hooks
 // and configured servers, and every one of them counts against a prompt that
 // needs none of them. The calls are text reviews: `--tools ""` removes the
@@ -70,12 +71,15 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	if len(req.ResponseSchema) > 0 {
 		args = append(args, "--json-schema", string(req.ResponseSchema))
 	}
+	env := os.Environ()
+	if r.credentials != model.ClaudeCLICredentialsEnv {
+		env = scrubbedEnv(env)
+		// A settings file's env block and apiKeyHelper apply even under --safe-mode.
+		args = append(args, "--setting-sources", "")
+	}
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = workDir
-	cmd.Env = os.Environ()
-	if r.credentials != model.ClaudeCLICredentialsEnv {
-		cmd.Env = scrubbedEnv(cmd.Env)
-	}
+	cmd.Env = env
 	cmd.Stdin = strings.NewReader(req.Combined())
 	out, err := cmd.Output()
 	if err != nil {

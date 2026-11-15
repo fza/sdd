@@ -65,9 +65,10 @@ func recordedEnvNames(t *testing.T, dir string) []string {
 }
 
 // In login mode no variable that picks the provider, the endpoint or the
-// credential reaches the child, only the login's own token; env mode passes
-// every one of them through.
-func TestRunCredentialEnvironment(t *testing.T) {
+// credential reaches the child, only the login's own token, and no settings
+// file loads, since its env block and apiKeyHelper apply even in safe mode.
+// Env mode passes every one of them through.
+func TestRunCredentials(t *testing.T) {
 	providerVars := []string{
 		"ANTHROPIC_API_KEY",
 		"ANTHROPIC_FOUNDRY_API_KEY",
@@ -103,6 +104,10 @@ func TestRunCredentialEnvironment(t *testing.T) {
 				if !slices.Contains(names, name) {
 					t.Errorf("%s should reach the child in every mode", name)
 				}
+			}
+			sources, found := flagValue(recordedArgs(t, dir), "--setting-sources")
+			if loadsSettings := !found || sources != ""; loadsSettings != tc.providerAlive {
+				t.Errorf("settings files should load only with credentials env, got %q", recordedArgs(t, dir))
 			}
 		})
 	}
