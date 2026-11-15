@@ -118,8 +118,6 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	// credential is refused before either runs.
 	err = refuseCredentials(entry, cmd)
 	if err != nil {
-		// A credential is never kept, not even in the stdin retry copy.
-		stdinSaved = true
 		return err
 	}
 

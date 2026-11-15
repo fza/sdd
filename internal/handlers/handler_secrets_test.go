@@ -136,6 +136,32 @@ func TestNewEntryKeepsNoStdinCopyHoldingACredential(t *testing.T) {
 	}
 }
 
+// A dry run refused for a credential in the body still keeps a clean stdin
+// attachment for the retry.
+func TestNewEntryKeepsACleanStdinCopyOnARefusal(t *testing.T) {
+	sddDir := filepath.Join(t.TempDir(), ".sdd")
+	h := handlers.New(handlers.Options{
+		GraphDir: t.TempDir(), SDDDir: sddDir, Reader: &fakeReader{preflightResult: &query.PreflightResult{}},
+		LLMRunner: &trippingRunner{t: t}, Stderr: &bytes.Buffer{},
+	})
+
+	err := h.NewEntry(context.Background(), &command.NewEntryCmd{
+		Type: model.TypeSignal, Layer: model.LayerTactical, Description: "Setup notes:\n" + fixtureCredential(t, "github-pat"), Summary: "A gap.",
+		DryRun:      true,
+		Attachments: []command.Attachment{{Source: "-", Target: "log.txt", Data: []byte("A clean log line.\n")}},
+	})
+
+	if !errors.Is(err, secrets.ErrCredential) {
+		t.Fatalf("the body should be refused as holding a credential: %v", err)
+	}
+	if _, statErr := os.Stat(sddDir); statErr != nil {
+		t.Fatalf("the clean stdin attachment should be kept for the retry: %v", statErr)
+	}
+	if files := graphFiles(t, sddDir); len(files) != 1 {
+		t.Errorf("the clean stdin attachment should be kept for the retry, kept %v", files)
+	}
+}
+
 func TestNewEntryRefusesAGeneratedSummaryHoldingACredential(t *testing.T) {
 	graphDir := t.TempDir()
 	runner := &stubRunner{text: fixtureCredential(t, "gitlab-pat")}
