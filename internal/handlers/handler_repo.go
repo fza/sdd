@@ -106,6 +106,9 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	if _, exists := cfg.Connected(declared); exists {
 		return fmt.Errorf("repo %q is already connected", declared)
 	}
+	if err := cfg.CheckOverlap(declared); err != nil {
+		return err
+	}
 
 	cacheDir, err := h.repos.Registry().CacheDir(declared)
 	if err != nil {

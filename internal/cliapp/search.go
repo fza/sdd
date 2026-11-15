@@ -115,6 +115,11 @@ func resolveIndexStore(emb embed.Embedder) (string, error) {
 	if cfg != nil {
 		repoID = cfg.RepoID
 	}
+	if repoID != "" {
+		if err := model.ValidateRepoID(repoID); err != nil {
+			return "", fmt.Errorf("invalid repo_id for the index store: %w", err)
+		}
+	}
 	loc, err := repos.DefaultLocations()
 	if err != nil {
 		return "", err

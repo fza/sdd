@@ -99,6 +99,17 @@ func isRepoIDChar(c rune) bool {
 	return false
 }
 
+// RepoIDsOverlap reports whether two repo IDs, compared case-insensitively,
+// are equal or one nests inside the other: their clones would share a path
+// on a case-insensitive filesystem, or one would sit inside the other.
+func RepoIDsOverlap(a, b RepoID) bool {
+	short, long := strings.ToLower(string(a)), strings.ToLower(string(b))
+	if len(short) > len(long) {
+		short, long = long, short
+	}
+	return short == long || strings.HasPrefix(long, short+"/")
+}
+
 // DeriveRepoID normalizes a git remote URL to the canonical URL-shaped repo
 // identity (host/path). ssh and https forms of the same remote derive equal:
 // scheme, user info, and a trailing .git are stripped, the scp-like ssh form

@@ -1,7 +1,10 @@
 package repos
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -45,16 +48,31 @@ func (r *Registry) CacheRoot() string {
 }
 
 // CacheDir resolves a connected repo's clone location under the cache root.
-// The repo-id's host/path shape nests naturally under the root; a path that
-// resolves to the root or above it is refused, as RepoAdd clears it.
+// The repo-id's host/path shape nests naturally under the root. RepoAdd
+// clears the path and every clone write goes through it, so a path at or
+// above the root, or one reaching through a symlink below it, is refused.
 func (r *Registry) CacheDir(repoID model.RepoID) (string, error) {
 	if err := model.ValidateRepoID(repoID); err != nil {
 		return "", err
 	}
 	dir := filepath.Join(r.loc.CacheRoot, filepath.FromSlash(string(repoID)))
 	rel, err := filepath.Rel(r.loc.CacheRoot, dir)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
 		return "", fmt.Errorf("repo ID %q resolves outside the cache root %s", repoID, r.loc.CacheRoot)
+	}
+	component := r.loc.CacheRoot
+	for _, seg := range strings.Split(rel, string(filepath.Separator)) {
+		component = filepath.Join(component, seg)
+		info, err := os.Lstat(component)
+		if errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("checking the clone path of %s: %w", repoID, err)
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return "", fmt.Errorf("repo ID %q resolves through the symlink %s", repoID, component)
+		}
 	}
 	return dir, nil
 }
