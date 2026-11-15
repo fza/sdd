@@ -132,8 +132,13 @@ func buildGraph(docs GraphDocuments) (*model.Graph, []*model.WIPMarker, error) {
 		loadIssues = append(loadIssues, model.LoadIssue{Ref: issue.Ref, Message: issue.Message})
 	}
 	onDisk := make(map[string]bool, len(docs.Entries))
-	for _, doc := range docs.Entries {
-		entry, err := parseEntryDocument(doc)
+	parsed := make([]*model.Entry, len(docs.Entries))
+	parseErrs := make([]error, len(docs.Entries))
+	forEachConcurrently(len(docs.Entries), func(i int) {
+		parsed[i], parseErrs[i] = parseEntryDocument(docs.Entries[i])
+	})
+	for i, doc := range docs.Entries {
+		entry, err := parsed[i], parseErrs[i]
 		if err != nil {
 			// A malformed entry never aborts the build: it is recorded as a
 			// load issue on the graph and surfaced by read paths (lint, the

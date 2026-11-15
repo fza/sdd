@@ -1,6 +1,7 @@
 package finders
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -26,8 +27,12 @@ type filesystemSource struct {
 // do not match the ID layout are skipped (not the graph's concern). A file
 // whose content fails to parse is not detected here — the raw bytes flow to
 // buildGraph, whose single ParseEntry gate records the failure as a LoadIssue.
+// Files are read concurrently: each costs an open and a close, which dominate
+// a graph of thousands of small files.
 func (s filesystemSource) GraphDocuments() (GraphDocuments, error) {
 	var docs GraphDocuments
+	var paths []string
+	dirs := map[string]bool{}
 	walkErr := filepath.WalkDir(s.dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -38,42 +43,51 @@ func (s filesystemSource) GraphDocuments() (GraphDocuments, error) {
 		if meta.IsSDDMetaDir(d) {
 			return fs.SkipDir
 		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
-			return nil
-		}
-
 		rel, err := filepath.Rel(s.dir, path)
 		if err != nil {
 			return fmt.Errorf("getting relative path for %s: %w", path, err)
+		}
+		if d.IsDir() {
+			dirs[rel] = true
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".md") {
+			return nil
 		}
 		id, err := model.RelPathToID(rel)
 		if err != nil {
 			// Skip files that don't match the expected layout.
 			return nil
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("reading %s: %w", path, err)
-		}
-		docs.Entries = append(docs.Entries, EntryDocument{
-			ID:          id,
-			Raw:         data,
-			Attachments: s.scanAttachments(id),
-		})
+		docs.Entries = append(docs.Entries, EntryDocument{ID: id})
+		paths = append(paths, path)
 		return nil
 	})
 	if walkErr != nil {
 		return GraphDocuments{}, fmt.Errorf("walking graph dir: %w", walkErr)
 	}
+	errs := make([]error, len(paths))
+	forEachConcurrently(len(paths), func(i int) {
+		data, err := os.ReadFile(paths[i])
+		if err != nil {
+			errs[i] = fmt.Errorf("reading %s: %w", paths[i], err)
+			return
+		}
+		docs.Entries[i].Raw = data
+		docs.Entries[i].Attachments = s.scanAttachments(docs.Entries[i].ID, dirs)
+	})
+	if err := errors.Join(errs...); err != nil {
+		return GraphDocuments{}, err
+	}
 	return docs, nil
 }
 
 // scanAttachments lists the files in an entry's co-located attachment
-// directory, returning graph-relative paths. A missing directory (the common
-// case) yields none.
-func (s filesystemSource) scanAttachments(id string) []string {
+// directory, returning graph-relative paths. dirs holds every directory the
+// walk saw, so an entry without one (the common case) costs no lookup.
+func (s filesystemSource) scanAttachments(id string, dirs map[string]bool) []string {
 	attachRel, err := model.AttachDirRelPath(id)
-	if err != nil {
+	if err != nil || !dirs[filepath.Clean(attachRel)] {
 		return nil
 	}
 	files, err := os.ReadDir(filepath.Join(s.dir, attachRel))
