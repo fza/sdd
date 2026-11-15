@@ -104,8 +104,8 @@ func evalConfig(t *testing.T) model.LLMConfig {
 		}
 		cfg.APIKeys["anthropic"] = key
 	}
-	cfg.Provider = getenvOr("SDD_EVAL_PROVIDER", defaultEvalProvider(cfg))
-	cfg.Model = getenvOr("SDD_EVAL_MODEL", defaultEvalModel(cfg.Provider))
+	cfg.Provider = model.LLMProvider(getenvOr("SDD_EVAL_PROVIDER", defaultEvalProvider(cfg)))
+	cfg.Model = getenvOr("SDD_EVAL_MODEL", defaultEvalModel(string(cfg.Provider)))
 	cfg.Params = parseEvalParams(t, os.Getenv("SDD_EVAL_PARAMS"))
 	return cfg
 }
