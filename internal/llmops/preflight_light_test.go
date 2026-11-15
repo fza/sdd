@@ -163,6 +163,17 @@ func TestDeepReadingBlock(t *testing.T) {
 	}
 }
 
+func TestDeepCompactBlock_MarksOnlyImplicitDismissals(t *testing.T) {
+	shown := readingEntry("20261101-090000-s-tac-shn", "Shown and left unanswered.", "Body.", "capture/attachments")
+	listed := readingEntry("20261101-100000-s-tac-lst", "Listed only.", "Body.", "capture/attachments")
+	block := llmops.DeepCompactBlock([]*model.Entry{shown, listed}, func(id string) bool { return id == shown.ID })
+	_, lines, _ := strings.Cut(block.Text, "Open one with show when its title bears on the draft.\n\n")
+	want := shown.ID + "  Shown and left unanswered.  (implicitly dismissed)\n" + listed.ID + "  Listed only."
+	if block.ID != llmops.DeepCompactID || lines != want {
+		t.Errorf("each entry should keep one line, only the implicit one marked, got:\n%s", block.Text)
+	}
+}
+
 func TestPreflightLight_CarriesTheReadingWithHeadersAndAxes(t *testing.T) {
 	full := readingEntry("20261101-100000-s-tac-ful", "Attachments with one name collide.", "The writer keeps only one attachment per name.", "capture/attachments")
 	brief := readingEntry("20261101-110000-s-tac-brf", "Staging keeps every handle.", "Long body never served.", "capture/staging")

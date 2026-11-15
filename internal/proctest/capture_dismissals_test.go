@@ -15,6 +15,7 @@ import (
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/test"
 )
 
 func foldLedger(t *testing.T, store sdd.RelevanceStore) *model.RelevanceLedger {
@@ -158,5 +159,33 @@ func TestCaptureDismissals_AssembleNamesTheFourStates(t *testing.T) {
 	proctest.RequireStep(t, serve, "assemble")
 	if !strings.Contains(serve.Instructions, "every entry shown ends referenced, opened, dismissed in `verdicts`") || !strings.Contains(serve.Instructions, "or else implicitly at publish") {
 		t.Fatalf("the assemble step should state the four states a shown entry ends in:\n%s", serve.Instructions)
+	}
+}
+
+// The deep reading's one-line lane marks an entry the drafter was shown and
+// left unanswered, keeping one line per entry.
+func TestCaptureDismissals_DeepLaneMarksImplicitDismissals(t *testing.T) {
+	scorer := &test.ScriptedScorer{Scores: map[string]float64{laneRelevant: 0.9}}
+	world, session := newDeepWorld(t, "dismissals-deep-lane", sdd.VerifierPolicy{}, proctest.WithEntries(laneEntries()...),
+		proctest.WithRelevance(laneLedger(t, true)), proctest.WithPrefilter(sdd.Prefilter{Scorer: scorer, Judge: laneJudge}))
+	x := startDeep(t, world, session, captureDraft())
+	reading := verifierReading(t, x)
+	_, lane, ok := strings.Cut(reading, "## Listed below the prefilter's threshold (")
+	if !ok {
+		t.Fatalf("the calibrated reading should serve the one-line lane:\n%s", reading)
+	}
+	var marked int
+	for line := range strings.Lines(lane) {
+		id, title, isEntry := strings.Cut(strings.TrimSuffix(line, "\n"), "  ")
+		if !isEntry || !strings.HasPrefix(id, "20260603-") {
+			continue
+		}
+		if !strings.HasPrefix(title, "Low directive ") || !strings.HasSuffix(title, ".  (implicitly dismissed)") {
+			t.Fatalf("a lane entry shown and left unanswered should carry the implicit mark on its line, got %q", line)
+		}
+		marked++
+	}
+	if marked == 0 {
+		t.Fatalf("the lane should hold entries shown and left unanswered:\n%s", lane)
 	}
 }

@@ -707,7 +707,10 @@ func (w *WorkflowSession) deepReading(ctx *engine.Context, lead string, rules []
 		}
 	}
 	if len(hidden) > 0 {
-		rest = append(rest, llmops.DeepCompactBlock(hidden))
+		rest = append(rest, llmops.DeepCompactBlock(hidden, func(id string) bool {
+			_, aside := codes[id]
+			return shown[id] && !aside
+		}))
 	}
 	return model.DeepReadingPages(lead, rules, first, rest), served, nil
 }
