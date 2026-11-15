@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -59,6 +60,14 @@ func RunTestsAsSDD(m *testing.M) {
 			err = os.Setenv(name, filepath.Join(dir, strings.ToLower(strings.TrimPrefix(name, "XDG_"))))
 		}
 	}
+	// A signature or a background maintenance run on every commit costs each
+	// test run and is none of sdd's behaviour, whatever the developer's git
+	// config asks for.
+	for _, setting := range [][2]string{{"commit.gpgsign", "false"}, {"tag.gpgsign", "false"}, {"maintenance.auto", "false"}} {
+		if err == nil {
+			err = addGitConfig(setting[0], setting[1])
+		}
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -79,4 +88,27 @@ func RunTestsAsSDD(m *testing.M) {
 		code = 1
 	}
 	os.Exit(code)
+}
+
+// addGitConfig appends key=value to the git config the environment carries
+// for every git the process starts, after the settings it carries already.
+func addGitConfig(key, value string) error {
+	count := 0
+	raw := os.Getenv("GIT_CONFIG_COUNT")
+	if raw != "" {
+		var err error
+		count, err = strconv.Atoi(raw)
+		if err != nil {
+			return fmt.Errorf("reading GIT_CONFIG_COUNT %q: %w", raw, err)
+		}
+	}
+	err := errors.Join(
+		os.Setenv(fmt.Sprintf("GIT_CONFIG_KEY_%d", count), key),
+		os.Setenv(fmt.Sprintf("GIT_CONFIG_VALUE_%d", count), value),
+		os.Setenv("GIT_CONFIG_COUNT", strconv.Itoa(count+1)),
+	)
+	if err != nil {
+		return fmt.Errorf("setting git config %s: %w", key, err)
+	}
+	return nil
 }

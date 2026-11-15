@@ -29,4 +29,10 @@ func TestTestsRunApartFromTheMachine(t *testing.T) {
 	if filepath.Dir(sdd) != filepath.Dir(claude) {
 		t.Errorf("the sdd on PATH should be the stand-in beside claude's, got %s", sdd)
 	}
+	for _, key := range []string{"commit.gpgsign", "tag.gpgsign", "maintenance.auto"} {
+		out, err := exec.Command("git", "config", "--type=bool", "--get", key).Output()
+		if err != nil || strings.TrimSpace(string(out)) != "false" {
+			t.Errorf("git should run with %s off whatever the developer's config, got %q, %v", key, out, err)
+		}
+	}
 }
