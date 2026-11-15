@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	localembed "github.com/networkteam/sdd/internal/llm/embed"
@@ -180,5 +181,89 @@ func TestLoadOrCalibrate_MalformedFailsLoud(t *testing.T) {
 	}
 	if _, err := localembed.LoadOrCalibrate(context.Background(), emb, dir, key); err == nil {
 		t.Error("a malformed stored calibration should be an error")
+	}
+}
+
+func TestPruneCalibrations(t *testing.T) {
+	t.Parallel()
+	const retention = 90 * 24 * time.Hour
+	dir := t.TempDir()
+	emb := &countingEmbedder{tokensFor: func(string) (int, error) { return 0, nil }}
+	for _, key := range []string{"fp|http://used|/v1/embeddings", "fp|http://unused|/v1/embeddings"} {
+		if _, err := localembed.LoadOrCalibrate(context.Background(), emb, dir, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "calibration-*.json"))
+	if err != nil || len(files) != 2 {
+		t.Fatalf("two calibrations should be stored, got %v, %v", files, err)
+	}
+	old := time.Now().Add(-retention - time.Hour)
+	for _, path := range files {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := localembed.LoadOrCalibrate(context.Background(), emb, dir, "fp|http://used|/v1/embeddings"); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := localembed.PruneCalibrations(dir, time.Now(), retention)
+	if err != nil || removed != 1 {
+		t.Fatalf("only the calibration no load used within the retention should go, removed %d: %v", removed, err)
+	}
+	probes := emb.calls
+	if _, err := localembed.LoadOrCalibrate(context.Background(), emb, dir, "fp|http://used|/v1/embeddings"); err != nil {
+		t.Fatal(err)
+	}
+	if emb.calls != probes {
+		t.Error("the calibration a load used should stay")
+	}
+}
+
+func TestLoadOrCalibrateRefreshesUseOnceADay(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	dir := t.TempDir()
+	emb := &countingEmbedder{tokensFor: func(string) (int, error) { return 0, nil }}
+	const key = "fp|http://used|/v1/embeddings"
+	if _, err := localembed.LoadOrCalibrate(context.Background(), emb, dir, key); err != nil {
+		t.Fatal(err)
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "calibration-*.json"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("one calibration should be stored, got %v, %v", files, err)
+	}
+	stray := filepath.Join(dir, "notes.json")
+	if err := os.WriteFile(stray, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		lastUse   time.Time
+		refreshed bool
+	}{{now.Add(-time.Hour), false}, {now.Add(-25 * time.Hour), true}} {
+		if err := os.Chtimes(files[0], tc.lastUse, tc.lastUse); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := localembed.LoadOrCalibrate(context.Background(), emb, dir, key); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(files[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if refreshed := info.ModTime().After(tc.lastUse.Add(time.Minute)); refreshed != tc.refreshed {
+			t.Errorf("a calibration last used at %v refreshed should be %v, it is %v", tc.lastUse, tc.refreshed, info.ModTime())
+		}
+	}
+	old := now.Add(-365 * 24 * time.Hour)
+	if err := os.Chtimes(stray, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := localembed.PruneCalibrations(dir, now, 90*24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stray); err != nil {
+		t.Errorf("pruning should leave a file that is no calibration: %v", err)
 	}
 }

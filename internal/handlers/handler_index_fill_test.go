@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -194,6 +195,33 @@ func TestLazyFillLeavesConcurrentSearchesUnblocked(t *testing.T) {
 		if id := fmt.Sprintf("20260102-1000%02d-s-tac-f%02d", i, i); len(manifest.Entries[id].Versions) == 0 {
 			t.Errorf("the fill should complete, entry %s is not indexed", id)
 		}
+	}
+}
+
+func TestLazyFillRecordsTheVersionsItsCheckoutReads(t *testing.T) {
+	graphDir, indexDir := t.TempDir(), t.TempDir()
+	writeGraphEntry(t, graphDir, "20260101-100000-s-tac-aaa", "Alpha orchard notes", "The alpha entry is about apple orchards.")
+	if err := newFillHandler(graphDir, indexDir, &slowEmbedder{}).LazyFill(t.Context(), &command.LazyFillIndexCmd{}); err != nil {
+		t.Fatal(err)
+	}
+	records, err := filepath.Glob(filepath.Join(indexDir, "used", "checkouts", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("a fill should record the versions its checkout reads, found %d records", len(records))
+	}
+	manifest, err := index.LoadManifest(indexDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := manifest.Entries["20260101-100000-s-tac-aaa"].Versions[0].Hash
+	data, err := os.ReadFile(records[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), hash) {
+		t.Errorf("the record should hold the hash the fill indexed, got %s", data)
 	}
 }
 

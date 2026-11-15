@@ -123,7 +123,7 @@ func Open(indexDir string) (*Index, error) {
 		return nil, errors.New("index dir is required")
 	}
 	l := lockFile(indexDir)
-	if err := ensureStoreDir(indexDir); err != nil {
+	if err := useStoreDir(indexDir); err != nil {
 		return nil, err
 	}
 	if _, err := l.TryRLockContext(context.Background(), lockRetryInterval); err != nil {
@@ -139,7 +139,7 @@ func OpenWithin(ctx context.Context, indexDir string, bound time.Duration) (*Ind
 	if indexDir == "" {
 		return nil, errors.New("index dir is required")
 	}
-	if err := ensureStoreDir(indexDir); err != nil {
+	if err := useStoreDir(indexDir); err != nil {
 		return nil, err
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, bound)
@@ -186,6 +186,15 @@ func ensureStoreDir(indexDir string) error {
 		return fmt.Errorf("creating index dir: %w", err)
 	}
 	return nil
+}
+
+// useStoreDir is ensureStoreDir for a search, fill or write: the store is in
+// use, so its last-use stamp is refreshed (see markUsed).
+func useStoreDir(indexDir string) error {
+	if err := ensureStoreDir(indexDir); err != nil {
+		return err
+	}
+	return markUsed(indexDir, time.Now())
 }
 
 // OpenInMemory returns a non-persistent index. Used by tests.

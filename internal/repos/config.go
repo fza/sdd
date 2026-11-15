@@ -86,6 +86,9 @@ type GlobalConfig struct {
 	// committed per-repo `dependencies` list declares what a graph needs;
 	// this list resolves how — which is why it is global-only.
 	Repos []ConnectedRepo `yaml:"repos,omitempty"`
+
+	Cache model.CacheConfig `yaml:"cache,omitempty"`
+	Index model.IndexConfig `yaml:"index,omitempty"`
 }
 
 // ConnectedRepo names one connection: the canonical repo identity and the

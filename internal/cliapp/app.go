@@ -3,6 +3,7 @@ package cliapp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -388,11 +389,16 @@ func New(options Options) *cli.Command {
 
 			warnUnknownConfigKeys(ctx)
 
+			if cmd.Args().First() != cacheCommandName {
+				warnCachePruneFailure(ctx)
+			}
+
 			// Background sync check runs on every command except `sdd init`
 			// (bootstrap may precede remote configuration — sync would emit
-			// spurious warnings). Cooldown-bound and timeout-bound internally;
-			// any failure logs at Debug and does not affect the command.
-			if cmd.Args().First() != "init" {
+			// spurious warnings) and `sdd cache`, which touches no graph.
+			// Cooldown-bound and timeout-bound internally; any failure logs
+			// at Debug and does not affect the command.
+			if first := cmd.Args().First(); first != "init" && first != cacheCommandName {
 				stopSync := timing.Start(ctx, "sync-check")
 				runSyncCheck(ctx)
 				stopSync()
@@ -421,6 +427,7 @@ func New(options Options) *cli.Command {
 			lintCmd(),
 			summarizeCmd(),
 			indexCmd(),
+			cacheCmd(),
 			searchCmd(),
 			serveCmd(),
 			sessionsCmd(),
@@ -467,7 +474,7 @@ func infoCmd() *cli.Command {
 				return err
 			}
 			presenters.RenderInfo(cmd.Writer, result)
-			return nil
+			return renderCachePruneStatus(cmd.Writer)
 		},
 	}
 }
@@ -1199,6 +1206,8 @@ func summarizeCmd() *cli.Command {
 	}
 }
 
+var errNoProject = errors.New("no .sdd/ directory found; run 'sdd init' first")
+
 // resolveGraphDir determines the graph directory from the --graph-dir flag
 // or by discovering .sdd/config.yaml. Errors if neither is available.
 func resolveGraphDir(cmd *cli.Command) (string, error) {
@@ -1217,7 +1226,7 @@ func resolveGraphDir(cmd *cli.Command) (string, error) {
 	}
 	repoRoot := meta.DiscoverRoot(cwd)
 	if repoRoot == "" {
-		return "", fmt.Errorf("no .sdd/ directory found; run 'sdd init' first")
+		return "", errNoProject
 	}
 	sddDir := meta.SDDDir(repoRoot)
 	cfg, err := meta.ReadConfig(sddDir)

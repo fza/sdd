@@ -96,6 +96,9 @@ func (c *Cache) Load(dir string, stamps map[string]filestamp.Stamp) (finders.Gra
 	if saved.Dir != abs || !maps.Equal(saved.Stamps, stamps) {
 		return finders.GraphDocuments{}, false, nil
 	}
+	if err := markUsed(path, time.Now()); err != nil {
+		return finders.GraphDocuments{}, false, err
+	}
 	docs := finders.GraphDocuments{Entries: make([]finders.EntryDocument, len(saved.Entries))}
 	for i, saved := range saved.Entries {
 		docs.Entries[i] = finders.EntryDocument{ID: saved.ID, Raw: saved.Raw, Attachments: saved.Attachments}
@@ -144,6 +147,90 @@ func (c *Cache) Save(dir string, stamps map[string]filestamp.Stamp, docs finders
 		return err
 	}
 	return os.Rename(tempPath, path)
+}
+
+// markUsed refreshes a snapshot's modification time, its last use, at most
+// once per useRefresh, so a load of an unchanged graph keeps its snapshot.
+func markUsed(path string, now time.Time) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if now.Sub(info.ModTime()) < useRefresh {
+		return nil
+	}
+	if err := os.Chtimes(path, now, now); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("refreshing graph snapshot use: %w", err)
+	}
+	return nil
+}
+
+// useRefresh is how stale a snapshot's last use may grow before a load
+// refreshes it.
+const useRefresh = 24 * time.Hour
+
+// Prune deletes the snapshots whose graph directory no longer exists or that
+// nothing loaded or saved for longer than retention, returning how many went
+// and the bytes freed.
+func (c *Cache) Prune(now time.Time, retention time.Duration) (removed int, freed int64, err error) {
+	entries, err := os.ReadDir(c.root)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".graph") {
+			continue
+		}
+		path := filepath.Join(c.root, entry.Name())
+		info, err := entry.Info()
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return removed, freed, err
+		}
+		dir, readable, err := snapshotDir(path)
+		if err != nil {
+			return removed, freed, err
+		}
+		gone := now.Sub(info.ModTime()) > retention
+		if readable && !gone {
+			_, statErr := os.Stat(dir)
+			gone = errors.Is(statErr, os.ErrNotExist)
+		}
+		if !gone {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return removed, freed, err
+		}
+		removed++
+		freed += info.Size()
+	}
+	return removed, freed, nil
+}
+
+// snapshotDir reads the graph directory a snapshot was saved for; readable is
+// false for a file in another format or a damaged one.
+func snapshotDir(path string) (dir string, readable bool, err error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if len(data) < headerSize || [8]byte(data[:8]) != magic || data[8] != format {
+		return "", false, nil
+	}
+	var saved struct{ Dir string }
+	if err := gob.NewDecoder(bytes.NewReader(data[headerSize:])).Decode(&saved); err != nil || saved.Dir == "" {
+		return "", false, nil
+	}
+	return saved.Dir, true, nil
 }
 
 func (c *Cache) removeStrayTemps() error {

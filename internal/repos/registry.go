@@ -1,7 +1,12 @@
 package repos
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -79,4 +84,50 @@ func (r *Registry) SelectRepoIDs(named []model.RepoID, all bool) ([]model.RepoID
 		return nil, err
 	}
 	return cfg.SelectRepoIDs(named, all)
+}
+
+// UnconnectedClones lists the clone caches under the cache root whose
+// repository the user-global repos list no longer names. A clone is a
+// directory holding .git below a top-level directory named like a host: repo
+// IDs open with a dotted hostname, which keeps the index and graph caches
+// beside them out of the walk.
+func (r *Registry) UnconnectedClones() ([]string, error) {
+	cfg, err := r.Load()
+	if err != nil {
+		return nil, err
+	}
+	hosts, err := os.ReadDir(r.loc.CacheRoot)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("listing clone caches: %w", err)
+	}
+	var stale []string
+	for _, host := range hosts {
+		if !host.IsDir() || strings.HasPrefix(host.Name(), ".") || !strings.Contains(host.Name(), ".") {
+			continue
+		}
+		root := filepath.Join(r.loc.CacheRoot, host.Name())
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || !d.IsDir() {
+				return err
+			}
+			if _, statErr := os.Stat(filepath.Join(path, ".git")); statErr != nil {
+				return nil
+			}
+			rel, err := filepath.Rel(r.loc.CacheRoot, path)
+			if err != nil {
+				return err
+			}
+			if _, connected := cfg.Connected(model.RepoID(filepath.ToSlash(rel))); !connected {
+				stale = append(stale, path)
+			}
+			return filepath.SkipDir
+		})
+		if err != nil {
+			return nil, fmt.Errorf("listing clone caches under %s: %w", root, err)
+		}
+	}
+	return stale, nil
 }

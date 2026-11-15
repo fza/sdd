@@ -190,7 +190,7 @@ func BeginFill(ctx context.Context, indexDir string, wait bool) (*FillSession, e
 	if indexDir == "" {
 		return &FillSession{snapshot: OpenInMemory()}, nil
 	}
-	if err := ensureStoreDir(indexDir); err != nil {
+	if err := useStoreDir(indexDir); err != nil {
 		return nil, err
 	}
 	l := fillLockFile(indexDir)
@@ -283,7 +283,7 @@ func WriteStore(ctx context.Context, indexDir string, fn func(*Index) error) err
 	if indexDir == "" {
 		return fn(OpenInMemory())
 	}
-	if err := ensureStoreDir(indexDir); err != nil {
+	if err := useStoreDir(indexDir); err != nil {
 		return err
 	}
 	l := lockFile(indexDir)
@@ -318,7 +318,7 @@ func ReadStore(ctx context.Context, indexDir string, fn func(*Index) error) erro
 	if indexDir == "" {
 		return fn(OpenInMemory())
 	}
-	if err := ensureStoreDir(indexDir); err != nil {
+	if err := useStoreDir(indexDir); err != nil {
 		return err
 	}
 	l := lockFile(indexDir)

@@ -192,13 +192,6 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 	}
 	defer func() { err = errors.Join(err, session.Close()) }()
 
-	stopManifest := timing.Start(ctx, "fill-manifest")
-	manifest, err := session.Manifest()
-	stopManifest()
-	if err != nil {
-		return fmt.Errorf("loading manifest: %w", err)
-	}
-	fingerprint := h.embedder.Fingerprint()
 	maxRunes, err := h.embedder.MaxRunes(ctx)
 	if err != nil {
 		return fmt.Errorf("calibrating embedding endpoint: %w", err)
@@ -210,6 +203,18 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 	if err != nil {
 		return err
 	}
+	// Recorded before the plan reads the manifest, so a pruning session that
+	// starts after this sees the versions the plan will skip.
+	if err := index.RecordCheckout(h.indexDir, h.graphDir, currentHashes, time.Now()); err != nil {
+		return err
+	}
+	stopManifest := timing.Start(ctx, "fill-manifest")
+	manifest, err := session.Manifest()
+	stopManifest()
+	if err != nil {
+		return fmt.Errorf("loading manifest: %w", err)
+	}
+	fingerprint := h.embedder.Fingerprint()
 	var work []indexInput
 	skipped := 0
 	for _, entry := range g.Entries {
@@ -287,6 +292,17 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 		run.onComplete(indexed, skipped)
 	}
 	return nil
+}
+
+// CurrentHashes returns the state hash under maxRunes of every entry the
+// checkout's search reads, by entry ID: the versions cache pruning keeps
+// (CurrentHashSource).
+func (h *IndexHandler) CurrentHashes(ctx context.Context, maxRunes int) (map[string]string, error) {
+	g, err := h.reader.CurrentGraph(h.graphDir)
+	if err != nil {
+		return nil, fmt.Errorf("loading graph: %w", err)
+	}
+	return h.currentEntryHashes(ctx, g, maxRunes)
 }
 
 // currentEntryHashes maps every indexable entry of the graph to its state hash
