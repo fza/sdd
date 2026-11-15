@@ -199,3 +199,54 @@ func TestRetireUnconnectedClone(t *testing.T) {
 		}
 	})
 }
+
+// The XDG roots belong together only when one source set them all: a process
+// overriding some of them reaches the clones of another repos list.
+func TestUnconnectedClonesRefuseMixedXDGRoots(t *testing.T) {
+	cases := []struct {
+		name    string
+		unset   []string
+		refused bool
+	}{
+		{name: "all four roots from the environment"},
+		{name: "the data root from the home default", unset: []string{"XDG_DATA_HOME"}, refused: true},
+		{name: "the config root from the home default", unset: []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME"}, refused: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("HOME", filepath.Join(root, "home"))
+			for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+				t.Setenv(name, filepath.Join(root, name))
+			}
+			for _, name := range tc.unset {
+				t.Setenv(name, "")
+			}
+			loc, err := repos.DefaultLocations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(loc.ConfigPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			config := "repos:\n  - repo_id: github.com/acme/kept\n    clone_url: git@github.com:acme/kept.git\n"
+			if err := os.WriteFile(loc.ConfigPath, []byte(config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(loc.DataRoot, "repos", "github.com", "acme", "dropped", ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			registry := repos.NewRegistry(loc)
+			if err := repos.NewManager(registry, nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
+				t.Fatal(err)
+			}
+			_, err = registry.UnconnectedClones()
+			if refused := errors.Is(err, repos.ErrClonePassRefused); refused != tc.refused {
+				t.Errorf("the clone pass should refuse roots from mixed sources only, refused = %v, err %v", refused, err)
+			}
+			if !tc.refused && err != nil {
+				t.Errorf("listing should succeed, got %v", err)
+			}
+		})
+	}
+}

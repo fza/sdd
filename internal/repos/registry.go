@@ -139,8 +139,8 @@ type UnconnectedClone struct {
 // directory holding .git below a top-level directory named like a host: repo
 // IDs open with a dotted hostname, which keeps the index and graph caches
 // beside them out of the walk. It returns ErrClonePassRefused, listing
-// nothing, when the config file is missing or lists no repos while a clone
-// would go.
+// nothing, when the locations come from mixed XDG sources or the config file
+// is missing or lists no repos while a clone would go.
 func (r *Registry) UnconnectedClones() ([]UnconnectedClone, error) {
 	if r.loc.DataRoot == "" {
 		return nil, errors.New("listing clones: no data root for the sdd-owned clones")
@@ -198,6 +198,9 @@ func (r *Registry) trustRepoList(cfg *GlobalConfig, clones []UnconnectedClone) e
 	}
 	if judged == 0 {
 		return nil
+	}
+	if r.loc.MixedXDG != "" {
+		return fmt.Errorf("%w: the XDG base directories come from mixed sources (%s) while %d clones under %s would go; set all four or none", ErrClonePassRefused, r.loc.MixedXDG, judged, r.loc.DataRoot)
 	}
 	_, err := os.Stat(r.loc.ConfigPath)
 	if errors.Is(err, fs.ErrNotExist) {
