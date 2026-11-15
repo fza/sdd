@@ -5,6 +5,7 @@ package proctest_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -128,6 +129,41 @@ func TestHooks_PayloadCarriesTheStepTheDraftAndItsFindings(t *testing.T) {
 		!strings.Contains(draft["body"].(string), "the fixture observes something") || len(draft["body_hash"].(string)) != 64 {
 		t.Errorf("a capture event should carry the draft, got %v", draft)
 	}
+}
+
+func TestHooks_PayloadDraftCarriesItsLifecycleAndGroundingSkip(t *testing.T) {
+	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.preflight", Command: "status"}})
+	session.LogRead(t, "show", []string{captureRef2ID}, nil)
+	serve := session.Start(t, "capture", nil)
+	draft := lifecycleDraft()
+	draft["closes"] = []any{captureRefID}
+	draft["supersedes"] = []any{captureRef2ID}
+	draft["skipGrounding"] = true
+	session.Report(t, serve.Instance, draft)
+	session.Answer(t, serve.Instance, "playback", "confirm", nil, "capture it")
+
+	runs := scripted.RunsAt("capture.preflight")
+	if len(runs) != 1 {
+		t.Fatalf("the hook should run once at capture.preflight, ran %d times", len(runs))
+	}
+	payload, _ := runs[0].Payload["draft"].(map[string]any)
+	if !slices.Equal(payloadStrings(payload["supersedes"]), []string{captureRef2ID}) || !slices.Equal(payloadStrings(payload["closes"]), []string{captureRefID}) || payload["skip_grounding"] != true {
+		t.Errorf("the draft should carry what it supersedes and closes and its grounding skip, got %v", payload)
+	}
+}
+
+func payloadStrings(value any) []string {
+	var out []string
+	switch items := value.(type) {
+	case []string:
+		out = items
+	case []any:
+		for _, item := range items {
+			text, _ := item.(string)
+			out = append(out, text)
+		}
+	}
+	return out
 }
 
 func TestHooks_WildcardMatchesEveryProcedureAndStep(t *testing.T) {

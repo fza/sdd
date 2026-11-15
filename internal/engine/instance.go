@@ -61,6 +61,12 @@ type Instance struct {
 	// answer: replayed from the log, so the refusal of repeatedWords holds
 	// across a resume.
 	lastWords map[string]chosenWords
+	// unattended counts, per step, the agent's answers since a person last
+	// answered it; replayed from the log.
+	unattended map[string]int
+	// parking is the step an autonomous session parked the instance at,
+	// cleared by its next answer.
+	parking *Parking
 	// forkPending marks a delegate dispatch answered whose fork is not
 	// recorded yet, so a delegateEnded route does not fire before it.
 	forkPending bool
@@ -191,6 +197,8 @@ type Serve struct {
 	Dispatches string
 	// Framing is the step's declared framing blocks; nil carries them all.
 	Framing []string
+	// Parked is set when the serve parks the instance for a person.
+	Parked *Parking
 }
 
 // ServeLane is defined in pkg/application/types — the exported surface names
@@ -675,6 +683,10 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		sv.Sizes = []PartSize{{Part: "operation", Bytes: len(sv.Instructions)}}
 		return sv, nil
 	}
+	if s.unattendedAt(step) != nil && inst.unattendedSpent(step) {
+		s.park(inst, step, sv)
+		return sv, nil
+	}
 	switch {
 	case len(step.Await) == 0:
 		sv.ReportSchema = inst.Spec.ReportSchemaForStep(step, inst.Store)
@@ -790,6 +802,8 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		// under `fields` and the chooser is named where the answer needs it.
 		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.DialogueMode, inst.Store)
 		switch {
+		case s.unattendedAt(step) != nil:
+			sv.Goal = fmt.Sprintf("answer %q yourself with a one-line reason; nothing else passes here", step.Unattended.Answer)
 		case step.Chooser == ChooserUser && step.Delegable && s.DialogueMode == model.DialogueAuto:
 			sv.Goal = "decide yourself; answer with a one-line reason"
 		case step.Chooser == ChooserUser:

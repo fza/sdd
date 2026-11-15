@@ -160,6 +160,17 @@ type WorkflowServe struct {
 	// Framing names the framing blocks the served step carries, for
 	// FramingBlocksFor; nil carries them all.
 	Framing []string
+	// Parked is set when an autonomous session parked the move for a person.
+	Parked *WorkflowParked
+}
+
+// WorkflowParked is where an autonomous session parked a move: the step, the
+// one-line reason, since when, and the call a person resumes it with.
+type WorkflowParked struct {
+	Step   string
+	Reason string
+	Since  time.Time
+	Resume string
 }
 
 // ComposeInstructions joins host-recomposed unit text (e.g. the deduped lane
@@ -173,6 +184,9 @@ type WorkflowInstanceSummary struct {
 	Instance  string
 	Procedure string
 	Step      string
+	// Parked holds where an autonomous session parked the move; nil while it
+	// is not parked.
+	Parked *WorkflowParked
 }
 
 type WorkflowSessionSummary struct {
@@ -244,6 +258,9 @@ type WorkflowSession struct {
 	startProject ProjectID
 	// cutRepeats applies the no-repeat rule to the step serves (CutRepeats).
 	cutRepeats bool
+	// parked is the framing block naming the project's parked moves, set on
+	// a guided session's opening (parkedBlock).
+	parked string
 	// laneFull collects the entries the framing lane in render serves in full;
 	// framingFull keeps them per block of the last Framing call. framing is
 	// set while the lanes render.
@@ -300,6 +317,11 @@ func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity
 		return nil, nil, err
 	}
 	w.session = w.engine.NewSession(string(id), info.Participant, w.sink, engine.WithDialogue(model.DialogueMode(dialogue.Mode), dialogue.Source), engine.WithCourier(&workflowCourier{workflow: w}), engine.WithHooks(&workflowHooks{workflow: w}))
+	if !w.Autonomous() {
+		if w.parked, err = a.parkedBlock(ctx, identity, info.Project.ID, id); err != nil {
+			return nil, nil, err
+		}
+	}
 	canonical := strings.TrimSpace(request.Shell)
 	if canonical == "" {
 		canonical = DefaultShellCanonical
@@ -1097,6 +1119,9 @@ func (w *WorkflowSession) FramingBlocksFor(ctx context.Context, identity Request
 		return nil, err
 	}
 	blocks = append(blocks, lanes...)
+	if wants("parked") && w.parked != "" {
+		blocks = append(blocks, types.ServeLane{Name: "parked", Text: w.parked})
+	}
 	if wants("health") {
 		health, err := w.graphHealthBlock()
 		if err != nil {
@@ -1110,7 +1135,7 @@ func (w *WorkflowSession) FramingBlocksFor(ctx context.Context, identity Request
 }
 
 func (w *WorkflowSession) checkFramingNames(declared []string) error {
-	known := []string{"info", "health"}
+	known := []string{"info", "parked", "health"}
 	if inst, ok := w.session.Instance(w.shell); ok && w.shell != "" {
 		for _, call := range inst.Spec.Framing {
 			known = append(known, call.EffectiveID())
@@ -1355,6 +1380,33 @@ func (a *Application) ListWorkflowSessions(ctx context.Context, identity Request
 	}
 	sort.SliceStable(result, func(i, j int) bool { return result[i].LastActivity.After(result[j].LastActivity) })
 	return result, nil
+}
+
+// parkedBlock renders the moves an autonomous session parked in the project,
+// for the person whose session opens; empty when none waits.
+func (a *Application) parkedBlock(ctx context.Context, identity RequestIdentity, project ProjectID, opening SessionID) (string, error) {
+	sessions, err := a.ListWorkflowSessions(ctx, identity, project)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, session := range sessions {
+		for _, open := range session.Open {
+			if open.Parked == nil || session.Session == opening {
+				continue
+			}
+			title := session.Label
+			if title == "" {
+				title = "untitled"
+			}
+			fmt.Fprintf(&b, "\n- %q, %s parked at %s since %s: %s. Resume: %s", title, open.Procedure, open.Parked.Step,
+				open.Parked.Since.Local().Format("2006-01-02 15:04"), open.Parked.Reason, open.Parked.Resume)
+		}
+	}
+	if b.Len() == 0 {
+		return "", nil
+	}
+	return "Parked moves wait for a person. Tell the user about each:" + b.String(), nil
 }
 
 // AbandonWorkflowSession tears down a session by handle: it replays into a
@@ -1632,6 +1684,9 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		result.PendingOperation = pending
 	}
 	result.Cancellation = workflowCancellation(serve.Cancellation)
+	if parked := serve.Parked; parked != nil {
+		result.Parked = workflowParked(w.ID(), parked.Step, parked.Reason, parked.Since)
+	}
 	if serve.Chooser != nil {
 		chooser := &WorkflowChooser{Chooser: serve.Chooser.Chooser, Kind: ChooserKind(serve.Chooser.Kind)}
 		for _, option := range serve.Chooser.Options {
@@ -2027,6 +2082,7 @@ func deriveWorkflowSummary(id SessionID, events []engine.Event) WorkflowSessionS
 		step      string
 		running   bool
 		shell     bool
+		parked    *WorkflowParked
 	}
 	states := map[string]*state{}
 	var order []string
@@ -2053,8 +2109,17 @@ func deriveWorkflowSummary(id SessionID, events []engine.Event) WorkflowSessionS
 			}
 		case engine.EventTransition:
 			if item := states[event.Instance]; item != nil {
+				item.parked = nil
 				if to, ok := event.Data["to"].(string); ok && !engine.IsEndTarget(to) {
 					item.step = to
+				}
+			}
+		case engine.EventParked:
+			if item := states[event.Instance]; item != nil {
+				if held, _ := event.Data["held"].(bool); held {
+					step, _ := event.Data["step"].(string)
+					reason, _ := event.Data["reason"].(string)
+					item.parked = workflowParked(id, step, reason, event.TS)
 				}
 			}
 		case engine.EventMutationOutcome:
@@ -2075,9 +2140,13 @@ func deriveWorkflowSummary(id SessionID, events []engine.Event) WorkflowSessionS
 		if item == nil || !item.running || item.shell {
 			continue
 		}
-		result.Open = append(result.Open, WorkflowInstanceSummary{Instance: instance, Procedure: item.procedure, Step: item.step})
+		result.Open = append(result.Open, WorkflowInstanceSummary{Instance: instance, Procedure: item.procedure, Step: item.step, Parked: item.parked})
 	}
 	return result
+}
+
+func workflowParked(session SessionID, step, reason string, since time.Time) *WorkflowParked {
+	return &WorkflowParked{Step: step, Reason: reason, Since: since, Resume: "resume_session " + string(session)}
 }
 
 func workflowLabel(events []engine.Event) string {

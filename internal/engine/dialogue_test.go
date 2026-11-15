@@ -248,6 +248,21 @@ func TestDelegableOnlyOnAUserChooser(t *testing.T) {
 	requireProblem(t, parseFails(t, machine, "## unit: pick\n\nPick.\n"), "delegable applies only to a user chooser")
 }
 
+func TestUnattendedSpecProblems(t *testing.T) {
+	cases := []struct{ name, step, want string }{
+		{name: "agent chooser", step: "chooser: agent\n      unattended: {answer: go}", want: "unattended applies only to a user chooser"},
+		{name: "with delegable", step: "chooser: user\n      delegable: true\n      unattended: {answer: go}", want: "unattended and delegable exclude each other"},
+		{name: "negative limit", step: "chooser: user\n      unattended: {answer: go, limit: -1}", want: "unattended limit -1 is negative"},
+		{name: "unknown answer", step: "chooser: user\n      unattended: {answer: skip}", want: `unattended answer "skip" is not an option`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			machine := "steps:\n    - id: pick\n      " + tc.step + "\n      options:\n          - {choice: go, to: end(completed)}"
+			requireProblem(t, parseFails(t, machine, "## unit: pick\n\nPick.\n"), tc.want)
+		})
+	}
+}
+
 // A session follows a dialogue mode set while it runs: the next serve renders
 // for it, and every answer records the mode it was taken under.
 func TestSessionFollowsADialogueModeSetWhileItRuns(t *testing.T) {

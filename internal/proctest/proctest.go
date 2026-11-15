@@ -392,6 +392,12 @@ func (w *World) DropBranch(t *testing.T, branch string) {
 	w.dropped[branch] = true
 }
 
+// SetDialogue changes the dialogue mode the person's config sets, which a
+// session follows from its next call.
+func (w *World) SetDialogue(mode string) {
+	w.options.Access.(*accessResolver).dialogue = sdd.Dialogue{Mode: mode, Source: "config.local.yaml"}
+}
+
 type accessResolver struct {
 	runtime     *sdd.ProjectRuntime
 	participant string
