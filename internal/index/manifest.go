@@ -149,6 +149,10 @@ func LoadManifest(indexDir string) (*Manifest, error) {
 		}
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
+	return parseManifest(data)
+}
+
+func parseManifest(data []byte) (*Manifest, error) {
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse manifest: %w", err)

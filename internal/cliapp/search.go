@@ -22,6 +22,7 @@ import (
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/timing"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 )
 
@@ -394,7 +395,9 @@ func searchCmd() *cli.Command {
 			allRepos := cmd.Bool("all-repos")
 			crossRepo := allRepos || len(repoSelection) > 0
 
+			stopGraph := timing.Start(ctx, "graph-load")
 			g, err := loadGraph(cmd)
+			stopGraph()
 			if err != nil {
 				return err
 			}
@@ -410,6 +413,7 @@ func searchCmd() *cli.Command {
 				ih     *handlers.IndexHandler
 			)
 			needsVector := phrase != ""
+			stopSetup := timing.Start(ctx, "embedder-setup")
 			if needsVector {
 				if crossRepo {
 					emb, err = crossRepoEmbedder(cmd)
@@ -438,6 +442,7 @@ func searchCmd() *cli.Command {
 					Reader:   reader,
 				})
 			}
+			stopSetup()
 
 			reg, mgr, err := defaultRepos()
 			if err != nil {
@@ -507,10 +512,14 @@ func searchCmd() *cli.Command {
 					} else {
 						lazy = newPlainFillProgress(cmd.ErrWriter, time.Now).lazyFill()
 					}
+					lazy.Graph = g
 					lazy.OnFillBusy = func() {
 						_, _ = fmt.Fprintln(cmd.ErrWriter, "sdd: another process is filling the search index; searching the index as it stands")
 					}
-					if err := ih.LazyFill(ctx, lazy); err != nil {
+					stopFill := timing.Start(ctx, "lazy-fill")
+					err := ih.LazyFill(ctx, lazy)
+					stopFill()
+					if err != nil {
 						return nil, err
 					}
 				}
@@ -518,15 +527,20 @@ func searchCmd() *cli.Command {
 				// the chunks the fill just committed — the fill writes under the
 				// exclusive store lock, so a snapshot opened before it would miss
 				// the new rows.
-				var idxStore *index.Index
+				var idxStore finders.VectorIndex
 				if needsVector {
-					idxStore, err = index.OpenWithin(ctx, idxDir, searchLockBound)
-					if errors.Is(err, index.ErrLockBusy) {
+					stopOpen := timing.Start(ctx, "index-open")
+					snapshot, err := index.OpenSearchSnapshot(ctx, idxDir, searchLockBound)
+					stopOpen()
+					switch {
+					case errors.Is(err, index.ErrLockBusy):
 						_, _ = fmt.Fprintf(cmd.ErrWriter, "sdd: search index busy for %s; falling back to text search\n", searchLockBound)
-						sq, idxStore, err = sq.TextFallback(), nil, nil
-					}
-					if err != nil {
+						sq = sq.TextFallback()
+					case err != nil:
 						return nil, err
+					default:
+						defer func() { _ = snapshot.Close() }()
+						idxStore = snapshot
 					}
 				}
 				opts := finders.SearchFinderOptions{
@@ -537,6 +551,7 @@ func searchCmd() *cli.Command {
 					Repos:      reg,
 				}
 				if !crossRepo {
+					defer timing.Start(ctx, "search")()
 					return finders.NewSearchFinder(opts).Search(ctx, sq)
 				}
 				// Side effects first (closure refresh + member index fill, the
@@ -584,7 +599,9 @@ func searchCmd() *cli.Command {
 				return err
 			}
 
+			stopRender := timing.Start(ctx, "render")
 			presenters.RenderSearch(cmd.Writer, res, g)
+			stopRender()
 			return nil
 		},
 	}

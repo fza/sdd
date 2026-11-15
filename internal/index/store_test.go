@@ -140,57 +140,21 @@ func TestMigrateDir_MoveThenSkip(t *testing.T) {
 	}
 }
 
-func TestStoreGeneration(t *testing.T) {
+func TestBumpGenerationCountsWrites(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	if err := ensureStoreDir(dir); err != nil {
 		t.Fatal(err)
 	}
-
-	// Empty store (no marker, no manifest): generation 0.
-	if g, err := storeGeneration(dir); err != nil || g != 0 {
-		t.Fatalf("empty store generation = %d, %v; want 0", g, err)
+	for want := uint64(1); want <= 2; want++ {
+		if err := bumpGeneration(dir); err != nil {
+			t.Fatal(err)
+		}
+		got, present, err := readGenerationMarker(dir)
+		if err != nil || !present || got != want {
+			t.Fatalf("each write session should advance the marker by one, got %d (present %v): %v", got, present, err)
+		}
 	}
-
-	// Legacy store: a manifest but no marker. The identity fallback yields a
-	// stable non-zero token that an unchanged store keeps across reads.
-	m := &Manifest{Version: 1, Entries: map[string]EntryState{
-		"e": {Versions: []EntryVersion{{Hash: "h", Fingerprint: "fp", ChunkIDs: []string{"e#summary"}}}},
-	}}
-	if err := m.Save(dir); err != nil {
-		t.Fatal(err)
-	}
-	legacyGen, err := storeGeneration(dir)
-	if err != nil || legacyGen == 0 {
-		t.Fatalf("legacy (manifest, no marker) generation = %d, %v; want non-zero", legacyGen, err)
-	}
-	if again, _ := storeGeneration(dir); again != legacyGen {
-		t.Errorf("legacy generation not stable across reads: %d vs %d", again, legacyGen)
-	}
-
-	if err := bumpGeneration(dir); err != nil {
-		t.Fatal(err)
-	}
-	first, err := storeGeneration(dir)
-	if err != nil || first == legacyGen {
-		t.Fatalf("generation did not change: %v", err)
-	}
-	if err := bumpGeneration(dir); err != nil {
-		t.Fatal(err)
-	}
-	second, err := storeGeneration(dir)
-	if err != nil || second == first {
-		t.Fatalf("generation did not change: %v", err)
-	}
-	m.AddVersion("another", EntryVersion{Hash: "h2"})
-	if err := m.Save(dir); err != nil {
-		t.Fatal(err)
-	}
-	afterManifest, err := storeGeneration(dir)
-	if err != nil || afterManifest == second {
-		t.Fatalf("manifest publication without generation bump was missed: %v", err)
-	}
-
 }
 
 func TestMigrateDir_EmptyManifestIsNoop(t *testing.T) {

@@ -109,18 +109,19 @@ type searchOutcome struct {
 }
 
 // search runs what `sdd search --query` does against the store: the lazy
-// fill, then a bounded read of the index and a query on it.
+// fill, then a bounded snapshot of the index and a query on it.
 func search(ctx context.Context, h *handlers.IndexHandler, indexDir string) searchOutcome {
 	start := time.Now()
 	var outcome searchOutcome
 	outcome.err = h.LazyFill(ctx, &command.LazyFillIndexCmd{OnFillBusy: func() { outcome.busy = true }})
 	if outcome.err == nil {
-		var idx *index.Index
-		idx, outcome.err = index.OpenWithin(ctx, indexDir, readBound)
+		var snapshot *index.SearchSnapshot
+		snapshot, outcome.err = index.OpenSearchSnapshot(ctx, indexDir, readBound)
 		if outcome.err == nil {
 			var hits []index.Hit
-			hits, outcome.err = idx.Query(ctx, vectorsFor([]string{"alpha"})[0], 50)
+			hits, outcome.err = snapshot.Query(ctx, vectorsFor([]string{"alpha"})[0], 50)
 			outcome.hits = len(hits)
+			outcome.err = errors.Join(outcome.err, snapshot.Close())
 		}
 	}
 	outcome.elapsed, outcome.finished = time.Since(start), time.Now()
@@ -193,5 +194,43 @@ func TestLazyFillLeavesConcurrentSearchesUnblocked(t *testing.T) {
 		if id := fmt.Sprintf("20260102-1000%02d-s-tac-f%02d", i, i); len(manifest.Entries[id].Versions) == 0 {
 			t.Errorf("the fill should complete, entry %s is not indexed", id)
 		}
+	}
+}
+
+func TestLazyFillRefreshesSearchSegments(t *testing.T) {
+	graphDir, indexDir := t.TempDir(), t.TempDir()
+	writeGraphEntry(t, graphDir, "20260101-100000-s-tac-aaa", "Alpha orchard notes", "The alpha entry is about apple orchards.")
+	if err := newFillHandler(graphDir, indexDir, &slowEmbedder{}).LazyFill(t.Context(), &command.LazyFillIndexCmd{}); err != nil {
+		t.Fatal(err)
+	}
+	segments, err := filepath.Glob(filepath.Join(indexDir, "segments", "*.seg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(segments) == 0 {
+		t.Error("a fill should leave the rows it wrote in the search segments")
+	}
+}
+
+func TestLazyFillUsesTheGivenGraph(t *testing.T) {
+	graphDir, otherDir, indexDir := t.TempDir(), t.TempDir(), t.TempDir()
+	writeGraphEntry(t, graphDir, "20260101-100000-s-tac-aaa", "Alpha orchard notes", "The alpha entry is about apple orchards.")
+	writeGraphEntry(t, otherDir, "20260101-100001-s-tac-bbb", "Beta harbour notes", "The beta entry is about harbours.")
+	given, err := finders.New(finders.Options{PreflightRunner: noLLM{}, Config: &model.PerRepoConfig{}}).CurrentGraph(otherDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := newFillHandler(graphDir, indexDir, &slowEmbedder{}).LazyFill(t.Context(), &command.LazyFillIndexCmd{Graph: given}); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := index.LoadManifest(indexDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manifest.Entries["20260101-100001-s-tac-bbb"]; !ok {
+		t.Error("the fill should index the graph it was given")
+	}
+	if _, ok := manifest.Entries["20260101-100000-s-tac-aaa"]; ok {
+		t.Error("the fill should not load the graph again")
 	}
 }
