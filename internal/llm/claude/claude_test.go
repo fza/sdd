@@ -101,7 +101,7 @@ func TestRunCredentials(t *testing.T) {
 		"claude_code_use_vertex",
 		"Claude_Code_Api_Key_File_Descriptor",
 	}
-	keptVars := []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_CONFIG_DIR", "Anthropic_Config_Dir", "SDD_TEST_UNRELATED"}
+	keptVars := []string{"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "ANTHROPIC_CONFIG_DIR", "Anthropic_Config_Dir", "SDD_TEST_UNRELATED"}
 	for _, tc := range []struct {
 		name          string
 		credentials   model.ClaudeCLICredentials
