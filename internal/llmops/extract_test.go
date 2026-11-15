@@ -3,6 +3,8 @@ package llmops_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -57,8 +59,12 @@ func TestPreflightExtractsAfterAnUnparseableSeverity(t *testing.T) {
 	if !strings.Contains(extract.UserPrompt, "no finding") {
 		t.Error("the extraction call must carry the unparseable output verbatim")
 	}
-	if !bytes.Equal(extract.ResponseSchema, runner.requests[0].ResponseSchema) || len(extract.ResponseSchema) == 0 {
-		t.Error("the extraction call must declare the schema the check it rescues declares")
+	checkProperties, extractProperties := schemaProperties(t, runner.requests[0].ResponseSchema), schemaProperties(t, extract.ResponseSchema)
+	if !bytes.Equal(extractProperties["findings"], checkProperties["findings"]) || len(extractProperties["findings"]) == 0 {
+		t.Error("the extraction call must declare the findings shape the check it rescues declares")
+	}
+	if _, flagged := extractProperties["analysis"]; !flagged {
+		t.Error("the extraction schema must let the reformat say the answer holds no analysis")
 	}
 	if !strings.Contains(extract.SystemPrompt, "high") || !strings.Contains(extract.SystemPrompt, "medium") {
 		t.Error("the extraction call must carry the severity scale")
@@ -187,6 +193,64 @@ func TestPreflightDoesNotFallBackOnATransportFailure(t *testing.T) {
 	if len(runner.requests) != 1 {
 		t.Errorf("a transport failure must not spend a second call, got %d", len(runner.requests))
 	}
+}
+
+// A first answer that is no analysis at all has no findings to carry over; a
+// reformat into an empty findings list would read as a clean check.
+func TestPreflightFailsWhenTheFirstAnswerHoldsNoAnalysis(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		first    string
+		reformat string
+	}{
+		{"refusal", "I'm sorry, but I can't help with reviewing this entry.", `{"analysis":false,"findings":[]}`},
+		{"HTML error page", "<html><head><title>502 Bad Gateway</title></head><body><h1>502 Bad Gateway</h1></body></html>", `{"analysis":false,"findings":[]}`},
+		// A provider that ignores the schema may drop the flag; an empty
+		// reformat of an unparseable answer is then no evidence of a clean check.
+		{"flag omitted, no findings", "I'm sorry, but I can't help with reviewing this entry.", `{"findings":[]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &scriptedRunner{replies: []string{tc.first, tc.reformat}}
+
+			_, err := runPreflight(t, runner)
+			if !errors.Is(err, llmops.ErrNoAnalysis) {
+				t.Fatalf("a first answer holding no analysis must fail the check, got %v", err)
+			}
+			if !strings.Contains(err.Error(), "no JSON object found") {
+				t.Errorf("the error should name why the first answer did not parse, got %v", err)
+			}
+			if !strings.Contains(runner.requests[1].SystemPrompt, `"analysis": false`) {
+				t.Error("the extraction prompt must tell the reformat how to report no analysis")
+			}
+		})
+	}
+}
+
+func TestPreflightParsesFindingsWhenTheReformatOmitsTheFlag(t *testing.T) {
+	runner := &scriptedRunner{replies: []string{
+		"The ref holds; a low finding on its scope.",
+		`{"findings":[{"observation":"The ref holds.","category":"ref-applicability","severity":"low"}]}`,
+	}}
+
+	result, err := runPreflight(t, runner)
+	if err != nil {
+		t.Fatalf("findings from a reformat without the flag should still count: %v", err)
+	}
+	if len(result.Findings) != 1 || result.Findings[0].Category != "ref-applicability" {
+		t.Errorf("findings came from the wrong response: %+v", result.Findings)
+	}
+}
+
+func schemaProperties(t *testing.T, schema json.RawMessage) map[string]json.RawMessage {
+	t.Helper()
+	var decoded struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	err := json.Unmarshal(schema, &decoded)
+	if err != nil {
+		t.Fatalf("decoding response schema: %v", err)
+	}
+	return decoded.Properties
 }
 
 // A runner that enforces the shape itself rejects a malformed answer before
