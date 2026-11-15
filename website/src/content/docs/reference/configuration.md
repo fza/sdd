@@ -86,6 +86,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `llm.ollama_endpoint` | `http://localhost:11434` | Ollama server for the `ollama` provider. |
 | `llm.timeout` | `2m` | Time limit for one model call. |
 | `llm.extract_timeout` | `1m` | Time limit for the reformat call that follows a check response that does not parse. |
+| `llm.max_tokens` | `4096` | Output cap of one call to `anthropic`, `openai` or `ollama`. A reasoning model spends its thinking against the cap, so it needs a higher one. `0` sends no cap, except on `anthropic`, whose API requires one and gets 32000. |
 | `llm.params.<name>` | None | Provider settings that sdd adds unchanged to every request body, such as `reasoning_effort` set to `low`. `claude-cli` ignores them. |
 | `llm.structured_output` | `auto` | How the checks ask `openai` and `ollama` for JSON: `json_schema`, `json_object` or `auto`. See [structured output modes](#structured-output-modes). |
 | `llm.rate_limit_rps` | See below | Maximum requests per second to `anthropic` or `openai`. Raise it on a higher account tier or for a gateway that allows more. |

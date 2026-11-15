@@ -34,6 +34,7 @@ var configDefaults = map[string]string{
 	"graph_dir":       DefaultGraphDir,
 	"llm.provider":    DefaultLLMProvider,
 	"llm.model":       DefaultLLMModel,
+	"llm.max_tokens":  strconv.Itoa(DefaultLLMMaxTokens),
 	"llm.concurrency": strconv.Itoa(DefaultLLMConcurrency),
 	"sync.cooldown":   DefaultSyncCooldown,
 
@@ -205,6 +206,9 @@ func effectiveMapEntries(leaf configLeaf, layers []struct {
 }
 
 func renderConfigValue(v reflect.Value) string {
+	if v.Kind() == reflect.Pointer {
+		v = v.Elem()
+	}
 	if v.Kind() == reflect.Slice {
 		parts := make([]string, 0, v.Len())
 		for i := 0; i < v.Len(); i++ {
