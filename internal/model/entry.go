@@ -379,8 +379,8 @@ const (
 	ActorKindMachine ActorKind = "machine"
 )
 
-// ActorKindValues lists the actor kinds in canonical order, for flag help and
-// the kind's authoring fact.
+// ActorKindValues lists the actor kinds in canonical order, for the value
+// check, the capture report schema and the kind's authoring fact.
 func ActorKindValues() []ActorKind { return []ActorKind{ActorKindHuman, ActorKindMachine} }
 
 // IsValidActorKind reports whether s names an actor kind. The empty string is
