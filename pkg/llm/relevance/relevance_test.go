@@ -23,6 +23,10 @@ type fixedScorer struct {
 	requests  []relevance.Request
 	err       error
 	block     bool
+	// entered, when set, takes a signal per call, which then waits for
+	// release.
+	entered chan struct{}
+	release chan struct{}
 }
 
 func (f *fixedScorer) Direction() relevance.Direction { return relevance.Both }
@@ -34,6 +38,10 @@ func (f *fixedScorer) Score(ctx context.Context, request relevance.Request) (rel
 	f.mu.Lock()
 	f.requests = append(f.requests, request)
 	f.mu.Unlock()
+	if f.entered != nil {
+		f.entered <- struct{}{}
+		<-f.release
+	}
 	if f.block {
 		<-ctx.Done()
 		return relevance.Result{}, ctx.Err()
@@ -87,8 +95,8 @@ func TestPlan(t *testing.T) {
 func TestPerItem_FansABatchOutOneCandidatePerCall(t *testing.T) {
 	inner := &fixedScorer{maxBatch: 1, maxPair: 5}
 	scorer := relevance.PerItem(inner, 4)
-	if scorer.MaxBatch() != 0 || scorer.MaxPairTokens() != 5 {
-		t.Fatal("a per-item scorer should take a batch of any size and keep the pair window")
+	if scorer.MaxBatch() != 1 || scorer.MaxPairTokens() != 5 {
+		t.Fatal("a per-item scorer should plan each candidate into a call of its own and keep the pair window")
 	}
 	result, err := scorer.Score(t.Context(), relevance.Request{Subject: "s", Candidates: candidates("a", "bb", "ccc")})
 	if err != nil {
@@ -113,6 +121,26 @@ func TestPerItem_FansABatchOutOneCandidatePerCall(t *testing.T) {
 	if _, err := failing.Score(t.Context(), relevance.Request{Candidates: candidates("a", "b")}); err == nil {
 		t.Fatal("a failed call should fail the batch")
 	}
+}
+
+func TestPerItem_HoldsItsConcurrencyAcrossCalls(t *testing.T) {
+	inner := &fixedScorer{maxBatch: 1, entered: make(chan struct{}, 8), release: make(chan struct{})}
+	scorer := relevance.PerItem(inner, 2)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			_, _ = scorer.Score(t.Context(), relevance.Request{Subject: "s", Candidates: candidates("a")})
+		})
+	}
+	<-inner.entered
+	<-inner.entered
+	select {
+	case <-inner.entered:
+		t.Error("calls of their own should share the per-item concurrency")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(inner.release)
+	wg.Wait()
 }
 
 func TestBounded_EndsACallAtItsDeadline(t *testing.T) {

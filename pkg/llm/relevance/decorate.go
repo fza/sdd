@@ -68,20 +68,24 @@ func Observed(s Scorer, sink llm.StatsSink) Scorer {
 	}}
 }
 
-// PerItem turns a one-pair scorer into a batch scorer: each candidate of a
-// batch goes in its own call, at most concurrency at once. The batch fails
-// on the first failed call; its usage sums every call's.
+// PerItem fans a one-pair scorer out: each candidate goes in its own call, at
+// most concurrency at once across every request. It keeps the inner
+// MaxBatch, so Plan gives each candidate its own call and the decorators
+// around PerItem act per call. A request of several candidates fails on the
+// first failed call; its usage sums every call's.
 func PerItem(s Scorer, concurrency int) Scorer {
-	return perItem{inner: s, concurrency: max(concurrency, 1)}
+	concurrency = max(concurrency, 1)
+	return perItem{inner: s, concurrency: concurrency, slots: make(chan struct{}, concurrency)}
 }
 
 type perItem struct {
 	inner       Scorer
 	concurrency int
+	slots       chan struct{}
 }
 
 func (p perItem) Direction() Direction { return p.inner.Direction() }
-func (p perItem) MaxBatch() int        { return 0 }
+func (p perItem) MaxBatch() int        { return p.inner.MaxBatch() }
 func (p perItem) MaxInputTokens() int  { return p.inner.MaxInputTokens() }
 func (p perItem) MaxPairTokens() int   { return p.inner.MaxPairTokens() }
 
@@ -91,6 +95,12 @@ func (p perItem) Score(ctx context.Context, request Request) (Result, error) {
 	group.SetLimit(p.concurrency)
 	for i, candidate := range request.Candidates {
 		group.Go(func() error {
+			select {
+			case p.slots <- struct{}{}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			defer func() { <-p.slots }()
 			one := Request{Subject: request.Subject, Candidates: []Candidate{candidate}}
 			result, err := p.inner.Score(ctx, one)
 			if err != nil {
