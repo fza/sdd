@@ -69,6 +69,7 @@ func TestConfigSetRefusesAValueOutsideTheAllowedSet(t *testing.T) {
 		{"global", "llm_prefilter.protocol", "bm25", "systemone, cohere-rerank or generate", "generate"},
 		{"global", "llm_prefilter.structured_output", "xml", "json_schema, json_object or auto", "auto"},
 		{"local", "embedding.provider", "voyage", "openai or ollama", "ollama"},
+		{"local", "llm.provider", "voyage", "claude-cli, codex, anthropic, openai or ollama", "codex"},
 		{"local", "skill_scope", "machine", "user or project", "project"},
 		{"local", "events.channels.recheck.share", "s3", "local or git", "git"},
 	}
@@ -97,6 +98,20 @@ func TestConfigSetRefusesAValueOutsideTheAllowedSet(t *testing.T) {
 				t.Error("the allowed value should land in the file")
 			}
 		})
+	}
+}
+
+// llm_prefilter.provider names an API key entry under the direct protocols, so
+// the set llm.provider allows does not bind it.
+func TestConfigSetTakesAnyPrefilterKeyProvider(t *testing.T) {
+	h, paths := newConfigValuesHandler(t, configLayers{global: "participant: Ada\n", local: "participant: Ada\n"})
+
+	err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: "local", Key: "llm_prefilter.provider", Value: "opper"})
+	if err != nil {
+		t.Fatalf("a key provider name should be written: %v", err)
+	}
+	if !strings.Contains(readOrEmpty(t, paths.local), "opper") {
+		t.Error("the key provider should land in the file")
 	}
 }
 

@@ -183,7 +183,7 @@ func buildProvider(cfg model.LLMConfig) (llm.Runner, error) {
 	case "anthropic", "openai", "ollama":
 		return gollmrunner.NewRunner(cfg)
 	default:
-		return nil, fmt.Errorf("unknown llm provider %q (supported: claude-cli, codex, anthropic, openai, ollama)", cfg.Provider)
+		return nil, fmt.Errorf("unknown llm provider %q (supported: %s)", cfg.Provider, strings.Join(model.LLMProviders(), ", "))
 	}
 }
 

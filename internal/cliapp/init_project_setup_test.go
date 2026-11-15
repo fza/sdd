@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/test"
 )
 
@@ -344,7 +345,11 @@ func TestInitRefreshesAProjectOnADetachedHead(t *testing.T) {
 // resolves like the canonical one.
 func TestInitSetsUpAProjectAtAnAbsolutePathThroughASymlink(t *testing.T) {
 	work, _ := workRepository(t)
-	project := filepath.Join(t.TempDir(), "work-sdd")
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Dir(work), link); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(link, "work-sdd")
 
 	runApp(t, work, "init", "--project-dir", project, "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
 
@@ -466,5 +471,29 @@ func TestInitDefaultsTheGraphDirToTheLayout(t *testing.T) {
 				t.Error("init should set up no graph directory beside the one fitting the layout")
 			}
 		})
+	}
+}
+
+// The advice a recorded pointer at a missing project gives leads to a working
+// setup when followed.
+func TestInitFollowsTheAdviceForARecordedPointerAtAMissingProject(t *testing.T) {
+	work, project := workRepository(t)
+	writeFile(t, filepath.Join(work, ".sdd", "config.yaml"), "project_dir: ../work-sdd\nskill_scope: project\nsupported_agents: [claude]\n")
+
+	_, err := runAppErr(t, work, "init", "--participant", "Ada")
+	if err == nil || !strings.Contains(err.Error(), "sdd init --project-dir ../work-sdd") {
+		t.Fatalf("the recorded pointer should be refused with setup advice, got %v", err)
+	}
+
+	output, err := runAppErr(t, work, "init", "--project-dir", "../work-sdd", "--language", "en", "--participant", "Ada", "--verify-mode", "off")
+	if err != nil {
+		t.Fatalf("following the advice should set the project up: %v\n%s", err, output)
+	}
+	if !strings.Contains(readFile(t, filepath.Join(project, ".sdd", "config.yaml")), "language: en") {
+		t.Error("the project should be set up with the new settings")
+	}
+	captureSignal(t, work)
+	if entries := graphEntries(t, filepath.Join(project, model.GraphOnlyGraphDir)); len(entries) != 1 {
+		t.Fatalf("the work repository should capture into the new project, got %v", entries)
 	}
 }

@@ -238,6 +238,10 @@ func newReadFinder() (*finders.Finder, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newReadFinderFor(cfg)
+}
+
+func newReadFinderFor(cfg *model.PerRepoConfig) (*finders.Finder, error) {
 	if cfg == nil {
 		cfg = &model.PerRepoConfig{}
 	}
@@ -334,6 +338,11 @@ func localConfigLayer() (string, error) {
 		return "", err
 	}
 	project, err := resolveWorkProject(workRoot, repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir)
+	// A pointer at a missing project still names its own local file, the one
+	// `sdd init --project-dir` writes while setting that project up.
+	if errors.Is(err, meta.ErrNotAProject) {
+		return meta.LocalConfigPath(meta.SDDDir(workRoot), ""), nil
+	}
 	if err != nil {
 		return "", err
 	}
@@ -549,6 +558,7 @@ func New(options Options) *cli.Command {
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
 			configWrite := writesConfig(cmd)
+			repointing := repointsProject(cmd)
 			currentGate = &invocationGate{ctx: ctx, configWrite: configWrite}
 			if cmd.Bool("timing") {
 				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
@@ -559,13 +569,13 @@ func New(options Options) *cli.Command {
 
 			warnUnknownConfigKeys(ctx)
 			err := useSecretRules(ctx)
-			if err != nil && !repairingConfig(configWrite, err) {
+			if err != nil && !repairingConfig(configWrite, err) && !repointing {
 				return ctx, err
 			}
 
 			if checksStrays(cmd.Args().First()) {
 				err := strayRefusal(ctx)
-				if err != nil && !repairingConfig(configWrite, err) {
+				if err != nil && !repairingConfig(configWrite, err) && !repointing {
 					return ctx, err
 				}
 			}
@@ -1844,14 +1854,20 @@ func requireGraphInsideRepository(project meta.Project) error {
 	if err != nil {
 		return err
 	}
+	projectRepo := git.RepoRootFor(project.Root)
+	if project.Pointed() && projectRepo != "" && projectRepo == git.RepoRootFor(project.WorkRoot) {
+		return fmt.Errorf("project_dir in %s names %s, inside the repository at %s; the project needs a repository of its own", meta.SDDDir(project.WorkRoot), project.Root, projectRepo)
+	}
 	graphDir := meta.ResolveGraphDir(project.Root, cfg)
 	rel, err := filepath.Rel(project.Root, graphDir)
 	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil
 	}
 	graphRepo := git.RepoRootFor(graphDir)
-	projectRepo := git.RepoRootFor(project.Root)
-	if graphRepo == "" || projectRepo == "" || graphRepo == projectRepo {
+	if graphRepo == "" {
+		return fmt.Errorf("graph_dir in %s leads to %s, outside the project and outside any repository; keep the graph inside the project", project.SDDDir(), graphDir)
+	}
+	if projectRepo == "" || graphRepo == projectRepo {
 		return nil
 	}
 	return fmt.Errorf("graph_dir in %s leads into %s, a repository separate from %s; make the graph a project of its own (`sdd init` there) and set project_dir to that repository's root instead", project.SDDDir(), graphRepo, projectRepo)
@@ -2524,6 +2540,10 @@ func initCmd() *cli.Command {
 			}
 
 			reader, err := newReadFinder()
+			// The project this run sets up does not resolve yet.
+			if errors.Is(err, meta.ErrNotAProject) && projectMissing {
+				reader, err = newReadFinderFor(existingMerged)
+			}
 			if err != nil {
 				return err
 			}

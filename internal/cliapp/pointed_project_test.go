@@ -486,3 +486,178 @@ func TestPointedRepoAddDeclaresTheDependencyInTheProject(t *testing.T) {
 		t.Errorf("the work repository should gain no commit, HEAD is %q", subject)
 	}
 }
+
+// `config set --local project_dir` writes the work repository's own local
+// file, the one place a per-machine pointer lives, never the project's.
+func TestConfigSetLocalProjectDirWritesTheWorkRepository(t *testing.T) {
+	work, project := pointedRepos(t)
+	moved := filepath.Join(filepath.Dir(project), "elsewhere")
+	if err := os.Rename(project, moved); err != nil {
+		t.Fatal(err)
+	}
+	projectLocal := readFile(t, filepath.Join(moved, ".sdd", "config.local.yaml"))
+
+	output, err := runAppErr(t, work, "config", "set", "--local", "project_dir", moved)
+	if err != nil {
+		t.Fatalf("config set --local project_dir: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(readFile(t, filepath.Join(work, ".sdd", "config.local.yaml")), "project_dir: "+moved) {
+		t.Error("the pointer should land in the work repository's own local file")
+	}
+	if readFile(t, filepath.Join(moved, ".sdd", "config.local.yaml")) != projectLocal {
+		t.Error("the project's local file should stay unchanged")
+	}
+	captureSignal(t, work)
+	if entries := graphEntries(t, filepath.Join(moved, ".sdd", "graph")); len(entries) != 1 {
+		t.Fatalf("the capture should follow the new local project_dir, got %v", entries)
+	}
+}
+
+// A local project_dir naming a missing folder can be unset again.
+func TestConfigUnsetLocalProjectDirRepairsABrokenPointer(t *testing.T) {
+	work, _ := pointedRepos(t)
+	writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: ../missing\n")
+
+	output, err := runAppErr(t, work, "config", "unset", "--local", "project_dir")
+	if err != nil {
+		t.Fatalf("config unset --local project_dir should repair the pointer: %v\n%s", err, output)
+	}
+
+	if strings.Contains(readFile(t, filepath.Join(work, ".sdd", "config.local.yaml")), "project_dir") {
+		t.Error("the local pointer should be gone")
+	}
+}
+
+// A repository holding its own project cannot become a pointer by one local key.
+func TestConfigSetLocalProjectDirIsRefusedInAProject(t *testing.T) {
+	_, project := pointedRepos(t)
+	local := filepath.Join(project, ".sdd", "config.local.yaml")
+	before := readFile(t, local)
+
+	_, err := runAppErr(t, project, "config", "set", "--local", "project_dir", "../other")
+
+	if err == nil || !strings.Contains(err.Error(), "sdd init --project-dir") {
+		t.Fatalf("project_dir should be refused in a project naming the way to point, got %v", err)
+	}
+	if readFile(t, local) != before {
+		t.Error("a refused write should leave the local file unchanged")
+	}
+}
+
+// A committed pointer holds no machine's path: an absolute --project-dir is
+// recorded relative to the work repository.
+func TestInitRecordsAnAbsoluteProjectDirRelative(t *testing.T) {
+	work, project := pointedRepos(t)
+	if err := os.RemoveAll(filepath.Join(work, ".sdd")); err != nil {
+		t.Fatal(err)
+	}
+
+	runApp(t, work, "init", "--project-dir", project, "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	written := readFile(t, filepath.Join(work, ".sdd", "config.yaml"))
+	if !strings.Contains(written, "project_dir: ../work-sdd\n") {
+		t.Errorf("the committed pointer should be relative:\n%s", written)
+	}
+}
+
+// A repeat init that follows a machine-local project_dir leaves the committed
+// pointer as every clone has it.
+func TestInitKeepsTheCommittedPointerUnderALocalOverride(t *testing.T) {
+	work, project := pointedRepos(t)
+	moved := filepath.Join(filepath.Dir(project), "elsewhere")
+	if err := os.Rename(project, moved); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: "+moved+"\n")
+	committed := readFile(t, filepath.Join(work, ".sdd", "config.yaml"))
+
+	runApp(t, work, "init", "--scope", "project", "--participant", "Ada")
+
+	if readFile(t, filepath.Join(work, ".sdd", "config.yaml")) != committed {
+		t.Error("the committed pointer should stay unchanged")
+	}
+}
+
+// A typed absolute path spelled through a symlink still records the short
+// relative pointer the real folders give.
+func TestInitRecordsAnAbsoluteProjectDirThroughASymlinkRelative(t *testing.T) {
+	work, project := pointedRepos(t)
+	if err := os.RemoveAll(filepath.Join(work, ".sdd")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Dir(project), link); err != nil {
+		t.Fatal(err)
+	}
+
+	runApp(t, work, "init", "--project-dir", filepath.Join(link, "work-sdd"), "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	written := readFile(t, filepath.Join(work, ".sdd", "config.yaml"))
+	if !strings.Contains(written, "project_dir: ../work-sdd\n") {
+		t.Errorf("the committed pointer should be relative to the real folders:\n%s", written)
+	}
+}
+
+// A typed absolute path beyond the repository's parent would commit one
+// machine's layout, so it belongs in the local file.
+func TestInitRefusesToCommitAFarAbsoluteProjectDir(t *testing.T) {
+	work, _ := pointedRepos(t)
+	if err := os.RemoveAll(filepath.Join(work, ".sdd")); err != nil {
+		t.Fatal(err)
+	}
+	far := filepath.Join(canonicalTemp(t), "deep", "far-sdd")
+	if err := os.MkdirAll(filepath.Join(far, ".sdd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(far, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/far\ndefault_branch: main\nlanguage: en\n")
+	initRepo(t, far)
+
+	_, err := runAppErr(t, work, "init", "--project-dir", far, "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	if err == nil || !strings.Contains(err.Error(), "config.local.yaml") {
+		t.Fatalf("a far absolute project_dir should be refused naming the local file, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(work, ".sdd")); !os.IsNotExist(statErr) {
+		t.Errorf("a refused init should write nothing in the work repository, stat err = %v", statErr)
+	}
+}
+
+func TestGraphDirOutsideAnyRepositoryIsRefused(t *testing.T) {
+	project, _ := twoRepos(t)
+	outside := filepath.Join(canonicalTemp(t), "graph")
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: "+outside+"\nrepo_id: example.test/project\ndefault_branch: main\nverify:\n  mode: off\n")
+	writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
+
+	_, err := runAppErr(t, project,
+		"new", "signal", "tactical", "A graph outside any repository must be refused.",
+		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.", "--title", "Refused capture",
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "outside any repository") {
+		t.Fatalf("a graph_dir outside any repository should be refused: %v", err)
+	}
+}
+
+func TestProjectDirInsideTheWorkRepositoryIsRefused(t *testing.T) {
+	work, project := pointedRepos(t)
+	nested := filepath.Join(work, "graph-project")
+	if err := os.MkdirAll(filepath.Join(nested, ".sdd", "graph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(nested, ".sdd", "config.yaml"), readFile(t, filepath.Join(project, ".sdd", "config.yaml")))
+	writeFile(t, filepath.Join(nested, ".sdd", "config.local.yaml"), "participant: Ada\n")
+	writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: graph-project\n")
+
+	_, err := runAppErr(t, work,
+		"new", "signal", "tactical", "A project inside its work repository must be refused.",
+		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.", "--title", "Refused capture",
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "a repository of its own") {
+		t.Fatalf("a project_dir inside the work repository should be refused: %v", err)
+	}
+	if entries := graphEntries(t, filepath.Join(nested, ".sdd", "graph")); len(entries) != 0 {
+		t.Errorf("a refused capture should write nothing, found %v", entries)
+	}
+}

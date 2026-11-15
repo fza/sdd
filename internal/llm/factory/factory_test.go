@@ -122,3 +122,20 @@ func TestProviderDefaultRPS(t *testing.T) {
 		}
 	}
 }
+
+// The set config set allows for llm.provider is the set the factory builds.
+func TestBuildProviderTakesExactlyTheLLMProviders(t *testing.T) {
+	keys := map[string]string{"anthropic": "k", "openai": "k"}
+	for _, provider := range model.LLMProviders() {
+		t.Run(provider, func(t *testing.T) {
+			_, err := buildProvider(model.LLMConfig{Provider: provider, Model: "m", APIKeys: keys})
+			if err != nil && strings.Contains(err.Error(), "unknown llm provider") {
+				t.Fatalf("an allowed provider should build: %v", err)
+			}
+		})
+	}
+	_, err := buildProvider(model.LLMConfig{Provider: "voyage", Model: "m"})
+	if err == nil || !strings.Contains(err.Error(), "unknown llm provider") {
+		t.Fatalf("a provider outside the set should be refused, got %v", err)
+	}
+}

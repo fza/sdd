@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -122,6 +123,17 @@ func invokedCommand(root *cli.Command) *cli.Command {
 // handler still refuses writing one.
 func repairingConfig(configWrite bool, err error) bool {
 	return configWrite && model.IsRefusedConfigValue(err)
+}
+
+// repointsProject reports whether root runs `sdd config set|unset --local
+// project_dir`, which writes the work repository's own local file and so runs
+// past a project the pointer fails to name (configWriteLayer).
+func repointsProject(root *cli.Command) bool {
+	if !writesConfig(root) {
+		return false
+	}
+	cmd := invokedCommand(root)
+	return cmd.Bool("local") && cmd.Args().First() == "project_dir"
 }
 
 // effectiveConfigResult builds the provenance view shared by the bare
@@ -261,15 +273,11 @@ func printConfigEntries(writer io.Writer, entries []query.ConfigEntry) error {
 func runConfigSet(ctx context.Context, writer, errWriter io.Writer, set *command.ConfigSetCmd) error {
 	// sddDir is optional for global writes — `sdd config set` must work
 	// outside any repo (that is the point of the global layer).
-	sddDir, err := optionalSDDDir()
+	sddDir, localLayer, err := configWriteLayer(set.Target, set.Key)
 	if err != nil {
 		return err
 	}
 	_, mgr, err := defaultRepos()
-	if err != nil {
-		return err
-	}
-	localLayer, err := localConfigLayer()
 	if err != nil {
 		return err
 	}
@@ -293,15 +301,11 @@ func runConfigSet(ctx context.Context, writer, errWriter io.Writer, set *command
 
 func runConfigUnset(ctx context.Context, writer, errWriter io.Writer, target, key string) error {
 	// sddDir is optional for global writes, exactly as in runConfigSet.
-	sddDir, err := optionalSDDDir()
+	sddDir, localLayer, err := configWriteLayer(target, key)
 	if err != nil {
 		return err
 	}
 	_, mgr, err := defaultRepos()
-	if err != nil {
-		return err
-	}
-	localLayer, err := localConfigLayer()
 	if err != nil {
 		return err
 	}
@@ -316,4 +320,40 @@ func runConfigUnset(ctx context.Context, writer, errWriter io.Writer, target, ke
 	}
 	fmt.Fprintf(writer, "%s removed (%s)\n", key, target)
 	return nil
+}
+
+// configWriteLayer names the .sdd/ directory and local-layer file a config
+// write targets. project_dir is the one key of the work repository's own
+// local file, so it bypasses both the project a pointer names and
+// --local-config, and resolves no project a broken pointer fails to name.
+func configWriteLayer(target, key string) (sddDir, localLayer string, err error) {
+	if target != "local" || key != "project_dir" {
+		sddDir, err = optionalSDDDir()
+		if err != nil {
+			return "", "", err
+		}
+		localLayer, err = localConfigLayer()
+		return sddDir, localLayer, err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", "", fmt.Errorf("getting working directory: %w", err)
+	}
+	workRoot := meta.DiscoverRoot(cwd)
+	if workRoot == "" {
+		return "", "", errNoProject
+	}
+	workSDDDir := meta.SDDDir(workRoot)
+	pointers, err := meta.ReadLayoutConfig(workSDDDir, "")
+	if err != nil {
+		return "", "", err
+	}
+	switch {
+	case pointers != nil && pointers.ProjectDir != "":
+		return workSDDDir, "", nil
+	case pointers != nil && pointers.GraphRepo != "":
+		return "", "", fmt.Errorf("%s points at its graph through graph_repo, which project_dir does not override", workRoot)
+	default:
+		return "", "", fmt.Errorf("%s holds a project of its own; point a work repository at a project with `sdd init --project-dir <path>`, then project_dir in its .sdd/config.local.yaml overrides the path for this machine", workRoot)
+	}
 }

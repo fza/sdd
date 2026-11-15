@@ -66,19 +66,23 @@ func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, erro
 	if err != nil {
 		return Project{}, err
 	}
+	// A committed path is every clone's, so it may not name one machine's folder.
+	if committed != nil && filepath.IsAbs(committed.ProjectDir) {
+		return Project{}, fmt.Errorf("%s sets project_dir %s; an absolute project_dir belongs in %s, the committed one is relative to the repository", committedPath, committed.ProjectDir, localPath)
+	}
 	root := projectDir
 	if !filepath.IsAbs(root) {
 		root = filepath.Join(workRoot, root)
 	}
 	root = filepath.Clean(root)
-	target, err := readConfigFile(filepath.Join(SDDDir(root), "config.yaml"))
+	targetCommitted, targetLocal, err := readLayoutLayers(SDDDir(root), "")
 	if err != nil {
 		return Project{}, err
 	}
-	if target == nil {
+	if targetCommitted == nil {
 		return Project{}, fmt.Errorf("project_dir %s in %s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", projectDir, sddDir, ErrNotAProject, projectDir)
 	}
-	if target.ProjectDir != "" {
+	if model.MergeConfig(targetCommitted, targetLocal).ProjectDir != "" {
 		return Project{}, fmt.Errorf("project_dir %s in %s names a repository that itself sets project_dir; point at the project holding the graph", projectDir, sddDir)
 	}
 	return Project{Root: root, WorkRoot: workRoot}, nil

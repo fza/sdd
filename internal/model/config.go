@@ -648,6 +648,11 @@ func ParseStructuredOutputMode(value string) (StructuredOutputMode, error) {
 	}
 }
 
+// LLMProviders are the llm.provider values sdd builds a runner for.
+func LLMProviders() []string {
+	return []string{DefaultLLMProvider, LLMProviderCodex, "anthropic", "openai", "ollama"}
+}
+
 // ResolvedProvider is the provider a call runs on: Provider, else
 // DefaultLLMProvider.
 func (c LLMConfig) ResolvedProvider() string {

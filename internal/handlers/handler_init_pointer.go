@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/meta"
@@ -24,6 +25,16 @@ import (
 func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed *bool) error {
 	if cmd.Bump {
 		return fmt.Errorf("--bump raises the project's minimum_version; run it in %s", cmd.ProjectDir)
+	}
+	// Only a typed --project-dir writes the committed pointer; a recorded one,
+	// perhaps the local override, leaves it as every clone has it.
+	committedDir := cmd.ProjectDir
+	if cmd.SetUpProject {
+		typed, err := committedProjectDir(cmd)
+		if err != nil {
+			return err
+		}
+		committedDir = typed
 	}
 	projectRoot := cmd.ProjectDir
 	if !filepath.IsAbs(projectRoot) {
@@ -97,7 +108,7 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		if err != nil {
 			return fmt.Errorf("creating %s: %w", sddDir, err)
 		}
-		err = os.WriteFile(configPath, []byte(model.FormatPointerConfig(model.PerRepoConfig{ProjectDir: cmd.ProjectDir, SkillScope: effectiveScope, SupportedAgents: effectiveAgents})), 0o644)
+		err = os.WriteFile(configPath, []byte(model.FormatPointerConfig(model.PerRepoConfig{ProjectDir: committedDir, SkillScope: effectiveScope, SupportedAgents: effectiveAgents})), 0o644)
 		if err != nil {
 			return fmt.Errorf("writing %s: %w", configPath, err)
 		}
@@ -110,8 +121,8 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		// changes: a repeat init leaves the file byte-identical.
 		updated := existing
 		var setErr error
-		if recorded.ProjectDir != cmd.ProjectDir {
-			updated, setErr = model.SetYAMLField(updated, "project_dir", cmd.ProjectDir)
+		if cmd.SetUpProject && recorded.ProjectDir != committedDir {
+			updated, setErr = model.SetYAMLField(updated, "project_dir", committedDir)
 			if setErr != nil {
 				return fmt.Errorf("updating %s: %w", configPath, setErr)
 			}
@@ -349,4 +360,24 @@ func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, tou
 		return errors.Join(fmt.Errorf("git commit, which the next sdd init retries: %w", err), record.write(commitPaths))
 	}
 	return record.clear()
+}
+
+// committedProjectDir is the project_dir the committed pointer records: every
+// clone's, so relative. A typed absolute path becomes relative between the
+// real folders; one that leaves the repository's parent describes this
+// machine's layout and belongs in the local file.
+func committedProjectDir(cmd *command.InitCmd) (string, error) {
+	if !filepath.IsAbs(cmd.ProjectDir) {
+		return cmd.ProjectDir, nil
+	}
+	repoRoot := meta.ResolvedPath(cmd.RepoRoot)
+	rel, err := filepath.Rel(repoRoot, meta.ResolvedPath(cmd.ProjectDir))
+	if err != nil {
+		return "", fmt.Errorf("--project-dir %s: %w", cmd.ProjectDir, err)
+	}
+	rel = filepath.ToSlash(rel)
+	if strings.HasPrefix(rel, "../../") || rel == "../.." {
+		return "", fmt.Errorf("--project-dir %s lies outside %s, beside which a committed pointer names its project; pass it relative to the repository, or set the absolute path as project_dir in %s", cmd.ProjectDir, filepath.Dir(repoRoot), filepath.Join(cmd.RepoRoot, model.SDDDirName, meta.LocalConfigFileName))
+	}
+	return rel, nil
 }
