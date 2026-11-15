@@ -99,7 +99,7 @@ func TestShowResult_ShownEntriesChainItems(t *testing.T) {
 				Status: model.Status{Kind: model.StatusOpen},
 			},
 			want: types.ShownChainItem{
-				ID: gap.ID,Kind: "gap", Status: "open", Summary: "Reindexing is slow. It blocks.",
+				ID: gap.ID, Kind: "gap", Status: "open", Summary: "Reindexing is slow. It blocks.",
 				Relation: "refs", RefKind: "addresses", Desc: "what it answers", Depth: 1,
 				Relations: []string{"refs", "closes"}, KindLabel: "gap", FirstSentence: "Reindexing is slow.",
 				DerivedStatus: types.DerivedStatus{Kind: "open"},
@@ -140,7 +140,7 @@ func TestShowResult_ShownEntriesChainItems(t *testing.T) {
 			name: "an item shown elsewhere keeps where it was shown",
 			item: model.ShowTreeItem{Entry: gap, Depth: 1, ShownAbove: true},
 			want: types.ShownChainItem{
-				ID: gap.ID,Kind: "gap", Summary: "Reindexing is slow. It blocks.", Depth: 1,
+				ID: gap.ID, Kind: "gap", Summary: "Reindexing is slow. It blocks.", Depth: 1,
 				SeenInResponse: true, ShownAbove: true, KindLabel: "gap", FirstSentence: "Reindexing is slow.",
 			},
 		},
@@ -215,7 +215,7 @@ func TestSearchResult_Hits(t *testing.T) {
 				{Snippet: "notes", Breadcrumb: []string{"Approach", "Storage"}, SourceAttachmentPath: "notes.md", IsAttachment: true, Score: 0.5},
 			}},
 			want: []types.SearchHit{{
-				ID: gap.ID,Type: "signal", Kind: "gap", Layer: "tactical", Status: "closed-by " + done.ID, Score: 0.9,
+				ID: gap.ID, Type: "signal", Kind: "gap", Layer: "tactical", Status: "closed-by " + done.ID, Score: 0.9,
 				Confidence: "high", Participants: []string{"Christopher"}, Topics: []string{"search"},
 				DerivedStatus: types.DerivedStatus{Kind: "closed-by", By: done.ID}, BodyExcerpt: "Reindexing a large graph is slow.",
 				Citations: []types.SearchCitation{
