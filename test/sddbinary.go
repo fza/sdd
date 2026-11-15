@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/urfave/cli/v3"
@@ -21,7 +22,7 @@ var failingLLMCLI []byte
 // RunTestsAsSDD runs a package's tests, or, when git calls the test binary as
 // one of the merge drivers the sdd-owned graph clone passes per call (the
 // running binary names itself there), runs that sdd command instead. The
-// tests find claude and codex CLIs on PATH that fail every call, so a model
+// tests find claude, codex and sdd on PATH failing every call, so a model
 // call sdd falls back to never reaches a live model, and any such call fails
 // the package run.
 func RunTestsAsSDD(m *testing.M) {
@@ -43,13 +44,20 @@ func RunTestsAsSDD(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	for _, name := range []string{"claude", "codex"} {
+	for _, name := range []string{"claude", "codex", "sdd"} {
 		if err == nil {
 			err = os.WriteFile(filepath.Join(dir, name), failingLLMCLI, 0o755)
 		}
 	}
 	if err == nil {
 		err = os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	// A test overriding only some XDG directories keeps the rest here, not
+	// in the developer's own, whose clones a cache prune would judge.
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+		if err == nil {
+			err = os.Setenv(name, filepath.Join(dir, strings.ToLower(strings.TrimPrefix(name, "XDG_"))))
+		}
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -59,7 +67,7 @@ func RunTestsAsSDD(m *testing.M) {
 	calls, err := os.ReadFile(filepath.Join(dir, "calls"))
 	switch {
 	case err == nil:
-		fmt.Fprintf(os.Stderr, "tests started an LLM CLI; pass the input that needs no model call or a fake provider:\n%s", calls)
+		fmt.Fprintf(os.Stderr, "tests started an LLM CLI or the installed sdd; pass the input that needs neither, or a fake:\n%s", calls)
 		code = 1
 	case !errors.Is(err, fs.ErrNotExist):
 		fmt.Fprintln(os.Stderr, err)
