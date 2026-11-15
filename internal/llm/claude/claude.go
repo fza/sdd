@@ -139,13 +139,20 @@ var errReportedError = errors.New("reported an error")
 // answers: no login, or a rejected one.
 var loginFailureMarkers = []string{"/login", "authentication_error"}
 
-// failure describes a failed call by what the CLI reported: the result of an
-// is_error response and its stderr. In login mode a login failure names the
-// ways out, since a key exported for the CLI no longer reaches it.
+// failure describes a failed call by what the CLI reported: the result or
+// errors of an is_error response, its subtype when it says nothing else, and
+// its stderr. In login mode a login failure names the ways out, since a key
+// exported for the CLI no longer reaches it.
 func (r *Runner) failure(runErr error, resp claudeResponse) error {
 	var reported []string
-	if resp.IsError && resp.Result != "" {
-		reported = append(reported, resp.Result)
+	if resp.IsError {
+		if resp.Result != "" {
+			reported = append(reported, resp.Result)
+		}
+		reported = append(reported, resp.Errors...)
+		if len(reported) == 0 && resp.Subtype != "" {
+			reported = append(reported, resp.Subtype)
+		}
 	}
 	var exitErr *exec.ExitError
 	if errors.As(runErr, &exitErr) {
@@ -185,6 +192,8 @@ func scrubbedEnv(env []string) []string {
 // claudeResponse maps the JSON output of claude -p --output-format json.
 type claudeResponse struct {
 	Result           string                      `json:"result"`
+	Subtype          string                      `json:"subtype"`
+	Errors           []string                    `json:"errors"`
 	StructuredOutput json.RawMessage             `json:"structured_output"`
 	TotalCostUSD     float64                     `json:"total_cost_usd"`
 	DurationMs       int64                       `json:"duration_ms"`
