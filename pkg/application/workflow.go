@@ -241,6 +241,17 @@ type WorkflowSession struct {
 	// startProject is the project the instance being started targets, which
 	// the sink records in the same append as the engine's start event.
 	startProject ProjectID
+	// cutRepeats applies the no-repeat rule to the step serves (CutRepeats).
+	cutRepeats bool
+	// laneFull collects the entries the framing lane in render serves in full;
+	// framingFull keeps them per block of the last Framing call. framing is
+	// set while the lanes render.
+	laneFull    []string
+	framingFull map[string][]string
+	framing     bool
+	// stepFull collects the entries the verify reading page serves whole, until
+	// TakeStepFullIDs hands them on.
+	stepFull []string
 }
 
 func (a *Application) OpenWorkflow(ctx context.Context, identity RequestIdentity, project ProjectID, request WorkflowOpenRequest) (*WorkflowSession, *WorkflowServe, error) {
@@ -440,25 +451,8 @@ func joinKinds(kinds []model.Kind) string {
 
 func (w *WorkflowSession) ID() SessionID { return w.binding.SessionID }
 
-// ServedBefore reports whether the session's consumer already holds a block
-// with this content hash, derived from the session ledger (d-cpt-aen).
-func (w *WorkflowSession) ServedBefore(hash string) bool {
-	return w.session.ServedBefore(hash)
-}
-
-// RecordServed logs the content hashes of blocks just served in full. A
-// finished session records nothing: its last serve is the one that ended it.
-func (w *WorkflowSession) RecordServed(ctx context.Context, identity RequestIdentity, hashes []string) error {
-	if len(hashes) == 0 || w.Finished() {
-		return nil
-	}
-	w.setOperation(ctx, identity)
-	w.session.RecordServed(hashes)
-	return w.session.SinkErr()
-}
-
-// Reorient records the consumer's request for the session's position and
-// resets the served set, so the position re-serves in full.
+// Reorient records the consumer's request for the session's position; the
+// call in flight serves every piece in full.
 func (w *WorkflowSession) Reorient(ctx context.Context, identity RequestIdentity) error {
 	if w.Finished() {
 		return nil
@@ -568,6 +562,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	if request.Report != nil && len(request.Report) == 0 {
 		return nil, fmt.Errorf("report must not be empty")
 	}
+	if request.Report != nil {
+		request.Report = stripAnchorTags(request.Report).(map[string]any)
+	}
 	if w.Finished() {
 		return nil, w.finishedError()
 	}
@@ -650,14 +647,30 @@ func (w *WorkflowSession) ServeShell(ctx context.Context, identity RequestIdenti
 }
 
 func (w *WorkflowSession) ServeAll(ctx context.Context, identity RequestIdentity) (WorkflowResumeResult, error) {
+	result, _, err := w.ServeAllWithin(ctx, identity, nil)
+	return result, err
+}
+
+// ServeAllWithin is ServeAll keeping only the instances keep takes, asked in
+// order as each renders; it returns the others apart. An instance left out
+// withdraws the pieces it served, so a later instance serves them in full
+// rather than as a pointer to text the agent never got. A nil keep takes
+// every instance.
+func (w *WorkflowSession) ServeAllWithin(ctx context.Context, identity RequestIdentity, keep func(WorkflowServe) bool) (WorkflowResumeResult, []WorkflowServe, error) {
 	w.setOperation(ctx, identity)
-	return w.resumeResult()
+	return w.resumeWithin(keep)
 }
 
 func (w *WorkflowSession) resumeResult() (WorkflowResumeResult, error) {
+	result, _, err := w.resumeWithin(nil)
+	return result, err
+}
+
+func (w *WorkflowSession) resumeWithin(keep func(WorkflowServe) bool) (WorkflowResumeResult, []WorkflowServe, error) {
+	var omitted []WorkflowServe
 	cancelled, err := w.session.Cancellation()
 	if err != nil {
-		return WorkflowResumeResult{}, err
+		return WorkflowResumeResult{}, nil, err
 	}
 	result := WorkflowResumeResult{Session: w.ID(), Participant: w.session.Participant, Label: w.session.Label, Branch: w.branch, PendingOperation: w.pendingOperation(), Cancellation: workflowCancellation(cancelled)}
 	// The notice rides the instance it belongs to; the resume carries it
@@ -671,9 +684,10 @@ func (w *WorkflowSession) resumeResult() (WorkflowResumeResult, error) {
 		if inst.Status != engine.StatusRunning {
 			continue
 		}
+		mark := w.session.PieceMark()
 		serve, err := w.session.Serve(inst.ID)
 		if err != nil {
-			return WorkflowResumeResult{}, err
+			return WorkflowResumeResult{}, nil, err
 		}
 		// The collected projection is the honest-surfacing half of the
 		// re-entry contract: a resuming agent sees the values this instance
@@ -681,12 +695,17 @@ func (w *WorkflowSession) resumeResult() (WorkflowResumeResult, error) {
 		// state-free so door, next, and base-junction serves are unchanged.
 		ws, err := w.publicServe(serve)
 		if err != nil {
-			return WorkflowResumeResult{}, err
+			return WorkflowResumeResult{}, nil, err
 		}
 		ws.Collected = inst.Store.Collected()
+		if keep != nil && !keep(*ws) {
+			w.session.DropPiecesSince(mark)
+			omitted = append(omitted, *ws)
+			continue
+		}
 		result.Open = append(result.Open, *ws)
 	}
-	return result, nil
+	return result, omitted, nil
 }
 
 func (w *WorkflowSession) Abandon(ctx context.Context, identity RequestIdentity, instance, reason string) (WorkflowAbandonResult, error) {
@@ -738,6 +757,10 @@ func (w *WorkflowSession) Park(ctx context.Context, identity RequestIdentity, in
 
 func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestIdentity, filename string, content []byte) (string, error) {
 	w.setOperation(ctx, identity)
+	// A binary file is never rewritten: only text can hold a tag the agent copied.
+	if utf8.Valid(content) {
+		content = []byte(model.StripAnchorTags(string(content)))
+	}
 	blob, err := w.app.StageBlob(ctx, identity, w.project, SessionRef{Subject: w.binding.Subject, Session: w.binding.SessionID}, filename, content)
 	if err != nil {
 		return "", err
@@ -764,6 +787,13 @@ func (w *WorkflowSession) EditStagedAttachment(ctx context.Context, identity Req
 	if err != nil {
 		return err
 	}
+	// The staged file holds no tags, so a pair quoting one would never match;
+	// the result is staged again, which strips the new text.
+	stripped := make([]types.PatchPair, len(pairs))
+	for i, pair := range pairs {
+		stripped[i] = types.PatchPair{Old: model.StripAnchorTags(pair.Old), New: pair.New}
+	}
+	pairs = stripped
 	patched, err := textpatch.Apply(string(current), pairs)
 	if err != nil {
 		return fmt.Errorf("editing staged %q: %w (nothing applied; the staged file is unchanged)", handle, err)
@@ -1035,7 +1065,11 @@ func (w *WorkflowSession) framingLanes() ([]string, error) {
 		return nil, nil
 	}
 	var lanes []string
+	w.framingFull = map[string][]string{}
+	w.framing = true
+	defer func() { w.laneFull, w.framing = nil, false }()
 	for _, call := range inst.Spec.Framing {
+		w.laneFull = nil
 		result, cut, err := w.session.Inject(w.shell, call)
 		if err != nil {
 			return nil, fmt.Errorf("framing lane %s: %w", call.Fn, err)
@@ -1049,9 +1083,36 @@ func (w *WorkflowSession) framingLanes() ([]string, error) {
 		}
 		if text = strings.TrimSpace(text); text != "" {
 			lanes = append(lanes, text)
+			if cut == nil && len(w.laneFull) > 0 {
+				w.framingFull[text] = w.laneFull
+			}
 		}
 	}
 	return lanes, nil
+}
+
+// FramingFullIDs returns the entries a block of the last Framing call served
+// in full, whole: a lane cut for size names none.
+func (w *WorkflowSession) FramingFullIDs(block string) []string {
+	return w.framingFull[block]
+}
+
+// TakeStepFullIDs returns the entries the verify reading page served whole
+// since the last call, and forgets them: the lane carrying the page holds
+// them (ServeText's covers).
+func (w *WorkflowSession) TakeStepFullIDs() []string {
+	ids := w.stepFull
+	w.stepFull = nil
+	return ids
+}
+
+// CutRepeats applies the no-repeat rule to the step serves the session
+// renders, as the MCP surface serves them: an injected entry chain or
+// view prints an entry the call proves it holds as its pointer, and tags
+// every entry it serves in full. Framing lanes never cut (composeFraming in
+// the MCP surface). Off by default: the CLI never cuts.
+func (w *WorkflowSession) CutRepeats() {
+	w.cutRepeats = true
 }
 
 // framingCutNotice renders one framing lane's cut in this surface's register,

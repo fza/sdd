@@ -35,6 +35,8 @@ type ViewRequest struct {
 	// Budget bounds the view's scaling parts on the serve path; the zero
 	// value is unbounded — explicit pulls arrive complete (d-tac-rzi).
 	Budget types.ViewBudget
+	Held   func(id, hash string) (tag, next string, held bool) // as ShowRequest.Held
+	Anchor func(id, hash, body string) string                  // as ShowRequest.Anchor
 }
 
 type ViewResult struct {
@@ -50,6 +52,10 @@ type ViewResult struct {
 	// filter — so an empty participant() view can say what names exist rather
 	// than leaving an exact-match miss indistinguishable from no data.
 	KnownParticipants []string
+	// FullIDs and SummaryIDs name the local entries the sections served:
+	// bodies in full, entry rows as summary lines.
+	FullIDs    []string
+	SummaryIDs []string
 }
 
 type ShowRequest struct {
@@ -61,6 +67,12 @@ type ShowRequest struct {
 	// Budget bounds each direction's chain expansion on the serve path; the
 	// zero value is unbounded — explicit pulls arrive complete (d-tac-rzi).
 	Budget types.ShowTreeBudget
+	// Held reports whether the call proves it holds an entry in full, with
+	// the tag it holds it under; such an entry serves as its pointer. Nil
+	// serves everything in full, as the CLI does.
+	Held func(id, hash string) (tag, next string, held bool)
+	// Anchor returns an entry body served in full with its tag placed.
+	Anchor func(id, hash, body string) string
 }
 
 type ShowResult struct {
@@ -87,6 +99,8 @@ type SearchRequest struct {
 	MaxCitations      int
 	Repos             []RepoID
 	AllRepos          bool
+	Held              func(id, hash string) (tag, next string, held bool) // as ShowRequest.Held
+	Anchor            func(id, hash, body string) string                  // as ShowRequest.Anchor
 }
 
 type SearchResult struct {

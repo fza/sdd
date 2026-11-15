@@ -46,6 +46,9 @@ type Context struct {
 	// was served at (refsInspected evaluates it). Nil means nothing was
 	// served; reading a nil map is safe.
 	Reads map[string]ReadDepth
+	// Cap is the effective bound on the running inject's result: the spec's
+	// declaration over the query's registered default.
+	Cap serveview.Cap
 	// Arrived lists the fields the current await gate holds a delivery for
 	// that it has not consumed yet.
 	Arrived []string

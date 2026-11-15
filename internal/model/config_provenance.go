@@ -207,6 +207,9 @@ func effectiveMapEntries(leaf configLeaf, layers []struct {
 }
 
 func renderConfigValue(v reflect.Value) string {
+	if v.Kind() == reflect.Pointer {
+		v = v.Elem()
+	}
 	if v.Kind() == reflect.Slice {
 		parts := make([]string, 0, v.Len())
 		for i := 0; i < v.Len(); i++ {

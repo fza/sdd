@@ -71,10 +71,23 @@ func setDistinctive(t *testing.T, f reflect.Value) {
 		f.SetInt(7)
 	case reflect.Float64:
 		f.SetFloat(1.5)
+	case reflect.Bool:
+		f.SetBool(true)
 	case reflect.Map:
 		m := reflect.MakeMap(f.Type())
-		m.SetMapIndex(reflect.ValueOf("k"), reflect.ValueOf("v"))
+		key := reflect.New(f.Type().Key()).Elem()
+		setDistinctive(t, key)
+		value := reflect.New(f.Type().Elem()).Elem()
+		setDistinctive(t, value)
+		m.SetMapIndex(key, value)
 		f.Set(m)
+	case reflect.Slice:
+		item := reflect.New(f.Type().Elem()).Elem()
+		setDistinctive(t, item)
+		f.Set(reflect.Append(reflect.MakeSlice(f.Type(), 0, 1), item))
+	case reflect.Pointer:
+		f.Set(reflect.New(f.Type().Elem()))
+		setDistinctive(t, f.Elem())
 	case reflect.Struct:
 		for i := 0; i < f.NumField(); i++ {
 			setDistinctive(t, f.Field(i))

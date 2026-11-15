@@ -106,7 +106,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		return err
 	}
 	if err := registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes (line-boundary cut, honest notice; the cut's pull is the lane's own layout)."},
+		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes (line-boundary cut, honest notice; the cut's pull is the lane's own layout). Injected into a step served over MCP, an entry the consumer already holds in full prints as its pointer."},
 		ServeSafe: true,
 		Bound: engine.QueryBound{
 			Part: serveview.PartText,
@@ -125,9 +125,24 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if err != nil {
 				return nil, err
 			}
-			result, err := w.app.viewFromSnapshot(w.ctx, w.identity, view.runtime, view.snapshot, ViewRequest{Layout: layout, Budget: servedViewBudget})
+			request := ViewRequest{Layout: layout, Budget: servedViewBudget}
+			if !w.framing {
+				if repeats := w.repeats(); repeats != nil {
+					request.Held, request.Anchor = repeats.Held, repeats.Anchor
+				}
+			}
+			mark := w.session.PieceMark()
+			result, err := w.app.viewFromSnapshot(w.ctx, w.identity, view.runtime, view.snapshot, request)
 			if err != nil {
 				return nil, err
+			}
+			if w.framing {
+				w.laneFull = append(w.laneFull, result.FullIDs...)
+			}
+			// A line cut can drop a body the view rendered.
+			_, cut := serveview.BoundValue(result.Sections, ctx.Cap)
+			if cut != nil {
+				w.session.DropPiecesSince(mark)
 			}
 			return result.Sections, nil
 		},
@@ -138,7 +153,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		// Not serve-safe: it calls LogRead, so it writes a read event. It may
 		// inject into a step unit, but never as a framing lane (a serve must not
 		// write — I7); the spec loader enforces that.
-		Doc:   engine.FuncDoc{Name: "entryChains", Doc: "Entries with upstream/downstream chains for an explicit id arg or the store's anchor/targets. Args up, down: expansion depths; onceFull: serve nothing when every entry was already served in full this session; requireBody: fail when a primary resolves to an empty body. An explicit id resolves to its live supersession head before serving, so a project override wins and the read logs under the same ID the dedup checks. Chains are bounded per direction by the engine's entry-list budget; the cut renders as the same honest frontier the depth limit uses.", Reads: []string{"anchor", "targets"}},
+		Doc:   engine.FuncDoc{Name: "entryChains", Doc: "Entries with upstream/downstream chains for an explicit id arg or the store's anchor/targets. Args up, down: expansion depths; onceFull: serve nothing when the consumer holds every entry in full (over MCP proved by its anchor, elsewhere by the read ledger); requireBody: fail when a primary resolves to an empty body. An explicit id resolves to its live supersession head before serving, so a project override wins and the read logs under the same ID the dedup checks. Chains are bounded per direction by the engine's entry-list budget; the cut renders as the same honest frontier the depth limit uses. Served over MCP, an entry the consumer already holds in full prints as its pointer.", Reads: []string{"anchor", "targets"}},
 		Bound: engine.QueryBound{Part: serveview.PartEntryList},
 		Fn: func(ctx *engine.Context, args map[string]any) (any, error) {
 			var ids []string
@@ -156,7 +171,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if onceFull, _ := args["onceFull"].(bool); onceFull {
 				pending := ids[:0]
 				for _, id := range ids {
-					if ctx.Reads[workflowLiveHead(ctx.Graph, id)] != engine.ReadFull {
+					if !w.servedInFull(ctx, workflowLiveHead(ctx.Graph, id)) {
 						pending = append(pending, id)
 					}
 				}
@@ -175,13 +190,18 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 					}
 				}
 			}
+			var held func(id, hash string) (string, string, bool)
+			var anchor func(id, hash, body string) string
+			if repeats := w.repeats(); repeats != nil {
+				held, anchor = repeats.Held, repeats.Anchor
+			}
 			view, err := w.graphs.viewFor(ctx.Store)
 			if err != nil {
 				return nil, err
 			}
 			result, err := showFromSnapshot(view.runtime, view.snapshot, ShowRequest{
 				IDs: ids, UpDepth: workflowIntArg(args, "up", query.DefaultUpDepth), DownDepth: workflowIntArg(args, "down", query.DefaultDownDepth),
-				Budget: serveChainBudget,
+				Budget: serveChainBudget, Held: held, Anchor: anchor,
 			})
 			if err != nil {
 				return nil, err

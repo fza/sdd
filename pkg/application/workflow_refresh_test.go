@@ -18,7 +18,9 @@ func TestRefreshWorkflowPreservesAttachmentAndServedMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := workflow.RecordServed(t.Context(), identity, []string{"already-delivered"}); err != nil {
+	proof := proofOf(t, workflow.ServeText("lane step", servedLane, nil))
+	err = workflow.RecordServed(t.Context(), identity)
+	if err != nil {
 		t.Fatal(err)
 	}
 	before, err := sessions.Load(t.Context(), workflow.ID())
@@ -29,7 +31,11 @@ func TestRefreshWorkflowPreservesAttachmentAndServedMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replay == workflow || !replay.ServedBefore("already-delivered") {
+	err = replay.BeginCall([]string{proof}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay == workflow || !replay.ServeText("lane step", servedLane, nil).Held {
 		t.Fatal("refresh did not return an independent replay of served memory")
 	}
 	after, err := sessions.Load(t.Context(), workflow.ID())

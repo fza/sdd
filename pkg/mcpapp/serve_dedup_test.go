@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -18,21 +19,31 @@ import (
 // present exactly when that lane serves in full.
 const captureIntroProse = "Draft one entry — one idea, dialogue first."
 
-const withheldLanesPrefix = "(lanes served earlier this session: "
+const withheldLanesPrefix = "(held: "
 
-// withheldLanes extracts the lane names from a serve's withheld-lanes line;
-// nil when the line is absent.
+var heldLaneName = regexp.MustCompile(`^lane (\S+) ⟦[0-9a-z]{4}⟧(?: \(next proof [^)]*\))?$`)
+
+// withheldLanes extracts the lane names from a serve's held-lanes line; nil
+// when the line is absent.
 func withheldLanes(t *testing.T, instructions string) []string {
 	t.Helper()
 	_, rest, found := strings.Cut(instructions, withheldLanesPrefix)
 	if !found {
 		return nil
 	}
-	names, _, found := strings.Cut(rest, " — resume_session")
-	if !found {
-		t.Fatalf("withheld-lanes line lacks its resume_session breadcrumb: %q", instructions)
+	names, _, found := strings.Cut(rest, " — list a tag in reread")
+	if !found || !strings.Contains(rest, "resume_session") {
+		t.Fatalf("held-lanes line lacks its way back: %q", instructions)
 	}
-	return strings.Split(names, ", ")
+	var lanes []string
+	for _, name := range strings.Split(names, ", ") {
+		match := heldLaneName.FindStringSubmatch(name)
+		if match == nil {
+			t.Fatalf("a held lane should be named with its tag, got %q", name)
+		}
+		lanes = append(lanes, match[1])
+	}
+	return lanes
 }
 
 // requireWithheldLanes asserts the serve collapsed already-served lanes into
@@ -193,18 +204,22 @@ func TestReportSchemaDedup(t *testing.T) {
 
 	var resumed mcpserver.ResumeSessionResult
 	call(t, cs, "resume_session", map[string]any{"session": session}, &resumed)
-	fullCaptures := 0
+	// A capture the resume has no room for is named, not cut, and leaves the
+	// next one nothing to point at: every capture it keeps comes in full.
+	captures := 0
 	for _, open := range resumed.Open {
 		if open.Procedure != "capture" {
 			continue
 		}
-		if _, stub := open.ReportSchema["served_earlier"]; !stub {
-			requireFullReportSchema(t, "replayed capture", open.ReportSchema)
-			fullCaptures++
+		captures++
+		if _, stub := open.ReportSchema["served_earlier"]; stub {
+			t.Fatalf("resume_session must re-serve the capture report schema in full, got %+v", open.ReportSchema)
 		}
+		requireFullReportSchema(t, "replayed capture", open.ReportSchema)
 	}
-	if fullCaptures == 0 {
-		t.Fatalf("resume_session must re-serve the capture report schema in full, got %+v", resumed.Open)
+	captures += strings.Count(resumed.Instructions, "(capture at assemble)")
+	if captures != 2 {
+		t.Fatalf("both captures should be served in full or named as omitted, got %d:\n%s", captures, resumed.Instructions)
 	}
 }
 

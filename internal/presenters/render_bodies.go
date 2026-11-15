@@ -18,11 +18,15 @@ import (
 // would say the same thing twice. A body that opens with a heading contributes
 // that heading as the entry's title, with the identity line as its byline; a
 // body opening with prose takes the identity line as its header.
-func renderAsBodies(w io.Writer, bodies model.Bodies, entryLevel int) {
+func renderAsBodies(w io.Writer, bodies model.Bodies, entryLevel int, r *Repeats) {
 	marker := strings.Repeat("#", entryLevel)
 	for i, e := range bodies.Entries {
 		if i > 0 {
 			fmt.Fprintln(w)
+		}
+		if pointer, held := r.pointer(e); held {
+			fmt.Fprintf(w, "%s\n", pointer)
+			continue
 		}
 		identity := bodyIdentity(e)
 		title, body := mdcompose.SplitLeadingHeading(strings.TrimSpace(e.Content))
@@ -32,6 +36,7 @@ func renderAsBodies(w io.Writer, bodies model.Bodies, entryLevel int) {
 			fmt.Fprintf(w, "%s %s\n", marker, identity)
 		}
 		if body = strings.TrimSpace(mdcompose.DemoteTo(body, entryLevel+1)); body != "" {
+			body = r.anchor(e, body)
 			fmt.Fprintf(w, "\n%s\n", body)
 		}
 	}
