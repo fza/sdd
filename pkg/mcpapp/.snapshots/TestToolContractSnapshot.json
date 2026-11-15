@@ -1360,17 +1360,6 @@
                   "array"
                 ]
               },
-              "notices": {
-                "additionalProperties": false,
-                "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
-                "properties": {
-                  "config": {
-                    "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
-                    "type": "string"
-                  }
-                },
-                "type": "object"
-              },
               "open_threads": {
                 "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
                 "type": "string"

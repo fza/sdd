@@ -167,10 +167,16 @@ func cancellationResult(cancelled *sdd.WorkflowCancellation) *CancellationResult
 	return result
 }
 
+// ServeResponse is a ServeResult as a tool answers with it, carrying the
+// call's notices; the serves nested in resume_session carry none.
+type ServeResponse struct {
+	NoticesField
+	ServeResult
+}
+
 // ServeResult is the loop's uniform response shape: where the instance
 // stands, what advances it, and the material to work with.
 type ServeResult struct {
-	NoticesField
 	Session          string                  `json:"session,omitempty" jsonschema:"session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool"`
 	Project          string                  `json:"project,omitempty" jsonschema:"the project this instance works in — the session's home project unless the move was started in a dependency"`
 	Projects         []ProjectResult         `json:"projects,omitempty" jsonschema:"start_session only: the principal's accessible projects, served with status project-required when several exist and none was passed — no session opened yet"`
@@ -571,7 +577,7 @@ func noHandleError() error {
 
 // startSession opens a fresh dialogue: a new durable session under a new
 // handle, every call. Nothing is derived from the connection.
-func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, args StartSessionArgs) (*mcp.CallToolResult, ServeResult, error) {
+func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, args StartSessionArgs) (*mcp.CallToolResult, ServeResponse, error) {
 	identity := s.requestIdentity(req)
 	// The door is the one tool that takes a project. Left empty, the
 	// application infers a sole accessible project or reports the ambiguity,
@@ -585,15 +591,15 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 		var appErr *sdd.ApplicationError
 		if project == "" && errors.As(err, &appErr) && appErr.Code == sdd.ErrorProjectRequired {
 			result, err := s.serveProjects(ctx, identity)
-			return nil, result, err
+			return nil, ServeResponse{ServeResult: result}, err
 		}
-		return nil, ServeResult{}, err
+		return nil, ServeResponse{}, err
 	}
 	ss := s.sessions.put(&shellSession{root: workflow})
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	result, err := s.toRootServeResult(ctx, req, ss, serve)
-	return nil, result, err
+	return nil, ServeResponse{ServeResult: result}, err
 }
 
 // serveProjects is start_session's answer when the principal reaches several
@@ -620,13 +626,13 @@ func (s *toolSet) serveProjects(ctx context.Context, identity sdd.RequestIdentit
 	return result, nil
 }
 
-func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, args StartProcedureArgs) (*mcp.CallToolResult, ServeResult, error) {
+func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, args StartProcedureArgs) (*mcp.CallToolResult, ServeResponse, error) {
 	if strings.TrimSpace(args.Canonical) == "" {
-		return nil, ServeResult{}, toolError("canonical is required")
+		return nil, ServeResponse{}, toolError("canonical is required")
 	}
 	ss, err := s.attachedSession(ctx, req, args.Session)
 	if err != nil {
-		return nil, ServeResult{}, err
+		return nil, ServeResponse{}, err
 	}
 	defer ss.mu.Unlock()
 	identity := s.requestIdentity(req)
@@ -635,25 +641,25 @@ func (s *toolSet) startProcedure(ctx context.Context, req *mcp.CallToolRequest, 
 		Project: sdd.ProjectID(strings.TrimSpace(args.Project)),
 	})
 	if err != nil {
-		return nil, ServeResult{}, err
+		return nil, ServeResponse{}, err
 	}
 	result, err := s.toRootServeResult(ctx, req, ss, serve)
-	return nil, result, err
+	return nil, ServeResponse{ServeResult: result}, err
 }
 
-func (s *toolSet) next(ctx context.Context, req *mcp.CallToolRequest, args NextArgs) (*mcp.CallToolResult, ServeResult, error) {
+func (s *toolSet) next(ctx context.Context, req *mcp.CallToolRequest, args NextArgs) (*mcp.CallToolResult, ServeResponse, error) {
 	ss, err := s.attachedSession(ctx, req, args.Session)
 	if err != nil {
-		return nil, ServeResult{}, err
+		return nil, ServeResponse{}, err
 	}
 	defer ss.mu.Unlock()
 	if args.Instance == "" {
-		return nil, ServeResult{}, toolError("instance is required")
+		return nil, ServeResponse{}, toolError("instance is required")
 	}
 	identity := s.requestIdentity(req)
 	serve, err := ss.root.Advance(ctx, identity, sdd.WorkflowAdvanceRequest{Instance: args.Instance, Report: args.Report, Label: args.Label, RetryRef: args.RetryRef, CancelRef: args.CancelRef})
 	if err != nil {
-		return nil, ServeResult{}, err
+		return nil, ServeResponse{}, err
 	}
 	if ss.root.Finished() {
 		// The conclude serve is the dialogue's last; a finished session is
@@ -661,7 +667,7 @@ func (s *toolSet) next(ctx context.Context, req *mcp.CallToolRequest, args NextA
 		defer s.sessions.evict(ss.root.ID())
 	}
 	result, err := s.toRootServeResult(ctx, req, ss, serve)
-	return nil, result, err
+	return nil, ServeResponse{ServeResult: result}, err
 }
 
 func (s *toolSet) abandon(ctx context.Context, req *mcp.CallToolRequest, args AbandonArgs) (*mcp.CallToolResult, AbandonResult, error) {

@@ -249,6 +249,7 @@ func TestBeforeCallRunsForEveryTool(t *testing.T) {
 }
 
 // Every tool declares notices.config, so a notice reaches reads as well as steps.
+// Notices ride on the top-level result only, never on a serve nested in it.
 func TestEveryToolDeclaresNotices(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
@@ -267,6 +268,9 @@ func TestEveryToolDeclaresNotices(t *testing.T) {
 			Properties map[string]struct {
 				Required   []string       `json:"required"`
 				Properties map[string]any `json:"properties"`
+				Items      struct {
+					Properties map[string]any `json:"properties"`
+				} `json:"items"`
 			} `json:"properties"`
 		}
 		err = json.Unmarshal(encoded, &schema)
@@ -283,6 +287,11 @@ func TestEveryToolDeclaresNotices(t *testing.T) {
 		}
 		if slices.Contains(schema.Required, "notices") || slices.Contains(notices.Required, "config") {
 			t.Errorf("%s should leave notices and each of its kinds optional", tool.Name)
+		}
+		for name, property := range schema.Properties {
+			if _, ok := property.Items.Properties["notices"]; ok {
+				t.Errorf("%s should declare notices only on its top-level result, not in %s", tool.Name, name)
+			}
 		}
 	}
 }
