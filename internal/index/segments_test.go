@@ -761,3 +761,63 @@ func TestPrepareGivesUpOnAHeldStore(t *testing.T) {
 		t.Errorf("a store held by a writer should report busy, got %v", err)
 	}
 }
+
+func removeRowFiles(t *testing.T, indexDir string) {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(indexDir, "chromem", "*", "*.gob"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestFillSessionCommitLeavesEachBatchInSegments(t *testing.T) {
+	indexDir := t.TempDir()
+	session, err := index.BeginFill(t.Context(), indexDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = session.Close() }()
+	for n, entryID := range []string{"entry-a", "entry-b"} {
+		if err := session.Commit(t.Context(), func(idx *index.Index, manifest *index.Manifest) error {
+			return publish(t.Context(), idx, manifest, indexDir, entryID)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		removeRowFiles(t, indexDir)
+		snapshot, err := index.OpenSearchSnapshot(t.Context(), indexDir, time.Second)
+		if err != nil {
+			t.Fatalf("a search after commit %d should read the published rows from segments: %v", n+1, err)
+		}
+		count := snapshot.Count()
+		_ = snapshot.Close()
+		if count != n+1 {
+			t.Errorf("a search after commit %d should see every published row, saw %d", n+1, count)
+		}
+	}
+}
+
+func TestSearchSnapshotKeepsDecodedRowsAcrossManifestChanges(t *testing.T) {
+	indexDir := t.TempDir()
+	publishEntries(t, indexDir, "entry-a")
+	if got := len(snapshotQuery(t, indexDir, segmentVector(1), 10)); got != 2 {
+		t.Fatalf("the first search should find both rows of entry-a, found %d", got)
+	}
+	decoded, err := filepath.Glob(filepath.Join(indexDir, "chromem", "*", "*.gob"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishEntries(t, indexDir, "entry-b")
+	for _, path := range decoded {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(snapshotQuery(t, indexDir, segmentVector(1), 10)); got != 4 {
+		t.Errorf("a search after another entry was published should reuse the rows it decoded and read only the new ones, found %d", got)
+	}
+}

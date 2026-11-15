@@ -232,7 +232,8 @@ func (s *FillSession) Manifest() (*Manifest, error) {
 
 // Commit runs fn under the exclusive store lock against the session snapshot
 // and the manifest as it stands on disk, then bumps the store generation when
-// fn wrote. fn saves the manifest itself, after the rows it names.
+// fn wrote and refreshes the search segments. fn saves the manifest itself,
+// after the rows it names.
 func (s *FillSession) Commit(ctx context.Context, fn func(*Index, *Manifest) error) error {
 	if s.indexDir == "" {
 		manifest, err := LoadManifest(s.indexDir)
@@ -267,6 +268,11 @@ func (s *FillSession) Commit(ctx context.Context, fn func(*Index, *Manifest) err
 		if err := bumpGeneration(s.indexDir); err != nil {
 			return fmt.Errorf("bumping store generation at %s: %w", s.indexDir, err)
 		}
+	}
+	// Under the same exclusive lock, so every reader finds the batch in
+	// segments instead of decoding its row files.
+	if err := viewFor(s.indexDir).refresh(); err != nil {
+		return fmt.Errorf("refreshing search segments at %s: %w", s.indexDir, err)
 	}
 	return nil
 }

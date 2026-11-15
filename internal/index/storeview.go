@@ -43,7 +43,7 @@ type storeView struct {
 	foreign    map[string]bool
 	synced     bool
 	snapshot   *snapshotData
-	rowFiles   map[string]segmentRow
+	rowFiles   map[string]decodedRow
 	sweep      *time.Timer
 }
 
@@ -103,7 +103,13 @@ func (v *storeView) manifestLocked() (_ *Manifest, err error) {
 func (v *storeView) setManifestLocked(identity fs.FileInfo, manifest *Manifest) error {
 	v.manifestID, v.manifest = identity, manifest
 	v.published = publishedChunks(manifest)
-	v.rowFiles = nil
+	// A decoded row stays valid while the manifest names it under the same
+	// version.
+	for id, row := range v.rowFiles {
+		if version, ok := v.published[id]; !ok || version != row.version {
+			delete(v.rowFiles, id)
+		}
+	}
 	return v.dropSnapshotLocked()
 }
 
@@ -266,7 +272,11 @@ func (v *storeView) snapshotLocked(ctx context.Context) (*snapshotData, bool, er
 	}
 	sort.Strings(missing)
 	for _, id := range missing {
-		row, ok := v.rowFiles[id]
+		cached, ok := v.rowFiles[id]
+		row := cached.row
+		if ok && cached.version != v.published[id] {
+			ok = false
+		}
 		if !ok {
 			var err error
 			row, err = readRowFile(v.dir, id)
@@ -275,9 +285,9 @@ func (v *storeView) snapshotLocked(ctx context.Context) (*snapshotData, bool, er
 				return nil, false, errors.Join(err, data.release())
 			}
 			if v.rowFiles == nil {
-				v.rowFiles = map[string]segmentRow{}
+				v.rowFiles = map[string]decodedRow{}
 			}
-			v.rowFiles[id] = row
+			v.rowFiles[id] = decodedRow{version: v.published[id], row: row}
 		}
 		data.rows = append(data.rows, snapshotRow{id: id, version: v.published[id], vector: row.vector, payload: row.payload})
 	}
@@ -384,4 +394,11 @@ func ReleaseStale(indexDir string) error {
 	}
 	view.armSweepLocked()
 	return nil
+}
+
+// decodedRow is a row file's content as decoded for the manifest version that
+// named it.
+type decodedRow struct {
+	version string
+	row     segmentRow
 }
