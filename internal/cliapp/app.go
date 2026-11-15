@@ -174,6 +174,10 @@ func newReadFinder() (*finders.Finder, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newReadFinderFor(cfg)
+}
+
+func newReadFinderFor(cfg *model.PerRepoConfig) (*finders.Finder, error) {
 	if cfg == nil {
 		cfg = &model.PerRepoConfig{}
 	}
@@ -1769,6 +1773,10 @@ func initCmd() *cli.Command {
 			}
 
 			reader, err := newReadFinder()
+			// The project this run sets up does not resolve yet.
+			if errors.Is(err, meta.ErrNotAProject) && projectMissing {
+				reader, err = newReadFinderFor(existingMerged)
+			}
 			if err != nil {
 				return err
 			}

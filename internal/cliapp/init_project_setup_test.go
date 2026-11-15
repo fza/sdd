@@ -205,3 +205,27 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 		})
 	}
 }
+
+// The advice a recorded pointer at a missing project gives leads to a working
+// setup when followed.
+func TestInitFollowsTheAdviceForARecordedPointerAtAMissingProject(t *testing.T) {
+	work, project := workRepository(t)
+	writeFile(t, filepath.Join(work, ".sdd", "config.yaml"), "project_dir: ../work-sdd\nskill_scope: project\nsupported_agents: [claude]\n")
+
+	_, err := runAppErr(t, work, "init", "--participant", "Ada")
+	if err == nil || !strings.Contains(err.Error(), "sdd init --project-dir ../work-sdd") {
+		t.Fatalf("the recorded pointer should be refused with setup advice, got %v", err)
+	}
+
+	output, err := runAppErr(t, work, "init", "--project-dir", "../work-sdd", "--language", "en", "--participant", "Ada")
+	if err != nil {
+		t.Fatalf("following the advice should set the project up: %v\n%s", err, output)
+	}
+	if !strings.Contains(readFile(t, filepath.Join(project, ".sdd", "config.yaml")), "language: en") {
+		t.Error("the project should be set up with the new settings")
+	}
+	captureSignal(t, work)
+	if entries := graphEntries(t, filepath.Join(project, ".sdd", "graph")); len(entries) != 1 {
+		t.Fatalf("the work repository should capture into the new project, got %v", entries)
+	}
+}
