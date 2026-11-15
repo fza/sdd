@@ -9,36 +9,6 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-func TestIgnoredSettings(t *testing.T) {
-	cases := []struct {
-		name      string
-		mode      model.SyncMode
-		committed bool
-		ignored   bool
-	}{
-		{name: "unset in the committed layer", committed: true},
-		{name: "auto in the committed layer", mode: model.SyncModeAuto, committed: true, ignored: true},
-		{name: "manual in the committed layer", mode: model.SyncModeManual, committed: true, ignored: true},
-		{name: "auto in a personal layer", mode: model.SyncModeAuto},
-		{name: "manual in a personal layer", mode: model.SyncModeManual},
-		{name: "unknown value in a personal layer", mode: "always", ignored: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := model.IgnoredSettings(model.BaseConfig{Sync: model.SyncConfig{Mode: tc.mode}}, layerOf(tc.committed))
-			if !tc.ignored {
-				if len(got) != 0 {
-					t.Errorf("a setting the layer may make should be honored, got %v", got)
-				}
-				return
-			}
-			if len(got) != 1 || got[0].Key != "sync.mode" || got[0].Reason == "" {
-				t.Errorf("the setting should be reported as ignored with its key and a reason, got %v", got)
-			}
-		})
-	}
-}
-
 func TestHonoredCommittedDropsTheMode(t *testing.T) {
 	committed := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Sync: model.SyncConfig{Mode: model.SyncModeAuto, Cooldown: "5m"}}}
 	honored := model.HonoredCommitted(committed)
@@ -51,18 +21,6 @@ func TestHonoredCommittedDropsTheMode(t *testing.T) {
 	if model.HonoredCommitted(nil) != nil {
 		t.Error("an absent committed layer should stay absent")
 	}
-}
-
-func TestSyncModeEffectiveDefault(t *testing.T) {
-	for _, v := range model.EffectiveConfigValues(model.BaseConfig{}, nil, nil) {
-		if v.Key == "sync.mode" {
-			if v.Value != string(model.SyncModeManual) || v.Source != model.ConfigSourceDefault {
-				t.Errorf("an unset mode should show as the manual default, got %q from %v", v.Value, v.Source)
-			}
-			return
-		}
-	}
-	t.Error("the effective config should list sync.mode")
 }
 
 func TestDecidePush(t *testing.T) {

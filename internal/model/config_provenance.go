@@ -44,8 +44,6 @@ var configDefaults = map[string]string{
 	"llm.concurrency":      strconv.Itoa(DefaultLLMConcurrency),
 	"llm.extract_timeout":  DefaultLLMExtractTimeout.String(),
 	"llm.debug":            "false",
-	"sync.cooldown":        DefaultSyncCooldown,
-	"sync.mode":            string(SyncModeManual),
 	"dialogue.mode":        string(DialogueGuided),
 	"verify.mode":          string(DefaultVerifyMode),
 	"verify.skip":          string(VerifierSkipFailure),
@@ -126,6 +124,9 @@ func effectiveConfigValues(global BaseConfig, work WorkConfigLayers, project, lo
 
 	var out []ConfigValue
 	for _, leaf := range collectConfigLeaves(reflect.TypeFor[PerRepoConfig](), nil, nil) {
+		if _, retired := RetiredConfigKeys[leaf.path]; retired {
+			continue
+		}
 		switch leaf.kind {
 		case leafMap:
 			out = append(out, effectiveMapEntries(leaf, mask, layers)...)
