@@ -170,3 +170,13 @@ func servedInstance(serves []sdd.WorkflowServe, instance string) *sdd.WorkflowSe
 	}
 	return nil
 }
+
+// Dropping a blocked capture is the user's, as overriding its check is: an
+// agent in auto mode cannot abandon it.
+func TestUnattended_TheAgentCannotAbandonABlockedCapture(t *testing.T) {
+	world, session, instance := blockedAutonomousCapture(t, "unattended-abandon")
+	_, err := session.WF.Abandon(t.Context(), world.Identity, instance, "the finding holds")
+	if err == nil || !strings.Contains(err.Error(), "is not abandoned in an autonomous session") {
+		t.Fatalf("an agent should not abandon a capture blocked at an unattended step, got %v", err)
+	}
+}
