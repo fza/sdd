@@ -2,6 +2,8 @@ package cliapp
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -9,7 +11,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
@@ -34,22 +35,27 @@ type servedProject struct {
 	watched []string
 }
 
-// fileStamp is what serve compares to tell a config file changed, appeared
-// or vanished.
+// fileStamp is what serve compares to tell a config file changed, appeared,
+// vanished or failed to read. It hashes the content: a retargeted symlink, a
+// copy keeping mtimes, or a same-size write within one mtime tick leaves size
+// and mtime as they were.
 type fileStamp struct {
-	path    string
-	exists  bool
-	size    int64
-	modTime time.Time
+	path   string
+	found  bool
+	failed bool
+	sum    [sha256.Size]byte
 }
 
 func stampFiles(paths []string) []fileStamp {
 	stamps := make([]fileStamp, 0, len(paths))
 	for _, path := range paths {
 		stamp := fileStamp{path: path}
-		info, err := os.Stat(path)
-		if err == nil {
-			stamp.exists, stamp.size, stamp.modTime = true, info.Size(), info.ModTime()
+		data, err := os.ReadFile(path)
+		switch {
+		case err == nil:
+			stamp.found, stamp.sum = true, sha256.Sum256(data)
+		case !errors.Is(err, fs.ErrNotExist):
+			stamp.failed = true
 		}
 		stamps = append(stamps, stamp)
 	}
@@ -57,7 +63,7 @@ func stampFiles(paths []string) []fileStamp {
 }
 
 // configWatch keeps serve on its current config: before a call or a sync tick
-// it stats every config file, and a change, appearance or removal rebuilds
+// it reads every config file, and a change, appearance or removal rebuilds
 // the served project before the call is answered. A build that fails, a
 // broken file among them, refuses every call until a build succeeds; serve
 // never keeps the old config silently. A config naming another graph folder
