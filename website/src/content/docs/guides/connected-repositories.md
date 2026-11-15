@@ -67,7 +67,7 @@ sdd repo sync                            # your direct dependencies
 sdd repo sync github.com/acme/platform   # one repository
 ```
 
-In a project, `sdd repo sync` reaches only the repositories in its `dependencies`; outside a project it syncs every connected repository. It prints one line per repository: `synced`, `pushed`, `skipped (next HH:MM)`, `failed (<reason>, retry HH:MM)`, `refused (not connected)` or `refused (<repo_id> is not a direct dependency of <repo_id>)`. Inside a cooldown it runs the fetch or push anyway while the host has a [credit](/sdd/reference/configuration/#git-credits) left, and reports `skipped` once none is.
+In a project, `sdd repo sync` reaches only the repositories in its `dependencies`; outside a project it syncs every connected repository. Named, the project's own `repo_id` syncs its `graph_repo` clone, cloning it first when missing; a graph kept in the checkout reports `skipped`, since `sdd sync` syncs it. It prints one line per repository: `synced`, `pushed`, `skipped (next HH:MM)`, `failed (<reason>, retry HH:MM)`, `refused (not connected)` or `refused (<repo_id> is not a direct dependency of <repo_id>)`. Inside a cooldown it runs the fetch or push anyway while the host has a [credit](/sdd/reference/configuration/#git-credits) left, and reports `skipped` once none is.
 
 The same holds in the other direction. For another project to reference your entries, commit and push them.
 

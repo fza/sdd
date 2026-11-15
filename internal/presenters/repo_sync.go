@@ -12,6 +12,9 @@ func RepoSyncOutcome(outcome model.RepoSyncOutcome) string {
 	at := outcome.Next.Local().Format("15:04")
 	switch outcome.State {
 	case model.RepoSkipped:
+		if outcome.Next.IsZero() && outcome.Reason != "" {
+			return fmt.Sprintf("%s: skipped (%s)", outcome.RepoID, outcome.Reason)
+		}
 		return fmt.Sprintf("%s: skipped (next %s)", outcome.RepoID, at)
 	case model.RepoFailed:
 		if outcome.Next.IsZero() {
