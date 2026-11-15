@@ -8,9 +8,10 @@ import (
 // CaptureRelevance returns the records a published capture adds to
 // the relevance ledger, keyed to the entry it wrote: every ref,
 // supersede and close is referenced; every verdict sets its entries aside
-// with its code, as opened when the reading served them in full; an audit
-// sample carries the audit bit; every prefilter score the reading holds is
-// kept with its judge.
+// with its code, as opened when the reading served them in full; every
+// other entry the reading showed is opened when served in full, else
+// dismissed implicitly; an audit sample carries the audit bit; every
+// prefilter score the reading holds is kept with its judge.
 func CaptureRelevance(entryID string, reading *Reading, answered []string, verdicts []GroundingVerdict) (RelevanceBatch, error) {
 	var batch RelevanceBatch
 	if reading == nil {
@@ -40,6 +41,16 @@ func CaptureRelevance(entryID string, reading *Reading, answered []string, verdi
 			}
 			batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: code, Reason: reason, Audit: reading.audit[id]}})
 		}
+	}
+	for _, id := range reading.Shown() {
+		if id == entryID || seen[id] {
+			continue
+		}
+		code := ReaderImplicit
+		if reading.full[id] {
+			code = ReaderOpened
+		}
+		batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: code, Audit: reading.audit[id]}})
 	}
 	for _, judge := range slices.Sorted(maps.Keys(reading.scores)) {
 		held := reading.scores[judge]
