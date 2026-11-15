@@ -458,13 +458,17 @@ func joinInts(values []int) string {
 // entries the verifier's lane split hides.
 const DeepCompactID = "the entries listed below the prefilter's threshold"
 
-// DeepCompactBlock lists entries one line each, ID and brief, with the count
-// and the call that opens one.
-func DeepCompactBlock(entries []*model.Entry) model.DeepReadingBlock {
+// DeepCompactBlock lists entries one line each, ID and brief, an entry
+// implicit holds marked with that role, with the count and the call that
+// opens one.
+func DeepCompactBlock(entries []*model.Entry, implicit func(id string) bool) model.DeepReadingBlock {
 	var b strings.Builder
 	fmt.Fprintf(&b, "---\n\n## Listed below the prefilter's threshold (%d)\n\nThe prefilter's calibrated judge scored these below the threshold its recall bound holds at: one line each, ID and title. Open one with show when its title bears on the draft.\n", len(entries))
 	for _, e := range entries {
 		fmt.Fprintf(&b, "\n%s  %s", e.ID, model.EntryBrief(e))
+		if implicit(e.ID) {
+			fmt.Fprintf(&b, "  (%s)", model.LightRoleImplicit)
+		}
 	}
 	return model.DeepReadingBlock{ID: DeepCompactID, Text: b.String()}
 }
