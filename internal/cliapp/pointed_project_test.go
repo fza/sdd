@@ -565,3 +565,42 @@ func TestInitKeepsTheCommittedPointerUnderALocalOverride(t *testing.T) {
 		t.Error("the committed pointer should stay unchanged")
 	}
 }
+
+func TestGraphDirOutsideAnyRepositoryIsRefused(t *testing.T) {
+	project, _ := twoRepos(t)
+	outside := filepath.Join(canonicalTemp(t), "graph")
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: "+outside+"\nrepo_id: example.test/project\ndefault_branch: main\n")
+	writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
+
+	_, err := runAppErr(t, project,
+		"new", "signal", "tactical", "A graph outside any repository must be refused.",
+		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.",
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "outside any repository") {
+		t.Fatalf("a graph_dir outside any repository should be refused: %v", err)
+	}
+}
+
+func TestProjectDirInsideTheWorkRepositoryIsRefused(t *testing.T) {
+	work, project := pointedRepos(t)
+	nested := filepath.Join(work, "graph-project")
+	if err := os.MkdirAll(filepath.Join(nested, ".sdd", "graph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(nested, ".sdd", "config.yaml"), readFile(t, filepath.Join(project, ".sdd", "config.yaml")))
+	writeFile(t, filepath.Join(nested, ".sdd", "config.local.yaml"), "participant: Ada\n")
+	writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: graph-project\n")
+
+	_, err := runAppErr(t, work,
+		"new", "signal", "tactical", "A project inside its work repository must be refused.",
+		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.",
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "a repository of its own") {
+		t.Fatalf("a project_dir inside the work repository should be refused: %v", err)
+	}
+	if entries := graphEntries(t, filepath.Join(nested, ".sdd", "graph")); len(entries) != 0 {
+		t.Errorf("a refused capture should write nothing, found %v", entries)
+	}
+}
