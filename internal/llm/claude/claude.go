@@ -37,15 +37,16 @@ func (r *Runner) identity() llm.Identity {
 }
 
 // loginKeptEnvVars are the only variables of Claude's own name space that
-// login mode passes: the login's, and network and path settings. Every other
+// login mode passes: the login's, and TLS and path settings. Every other
 // ANTHROPIC_* or CLAUDE_* variable may move the call off the signed-in
 // account, and each one the reviews found sat in that name space; provider
 // credentials outside it, such as AWS_*, take effect only through a
 // CLAUDE_CODE_USE_* switch inside it.
 var loginKeptEnvVars = []string{
-	"CLAUDE_CONFIG_DIR", "ANTHROPIC_CONFIG_DIR",
-	"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+	"CLAUDE_CONFIG_DIR", "ANTHROPIC_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+	"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
 	"CLAUDE_CODE_CERT_STORE", "CLAUDE_CODE_CLIENT_CERT", "CLAUDE_CODE_CLIENT_KEY", "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+	"CLAUDE_CODE_DISABLE_LOOPED_CROSS_CERT_DROP", "CLAUDE_CODE_DISABLE_SELF_NAMED_CERT_DROP",
 	"CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CODE_TMPDIR",
 }
 

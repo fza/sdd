@@ -103,7 +103,7 @@ func recordedEnvNames(t *testing.T, dir string) []string {
 }
 
 // Login mode closes Claude's own name space but for the login's variables and
-// a few network and path ones, and loads no settings file, whose env block and
+// a few TLS and path ones, and loads no settings file, whose env block and
 // apiKeyHelper apply even in safe mode. Env mode passes it all. Neither mode
 // passes the markers of a Claude Code session that started sdd.
 func TestRunCredentials(t *testing.T) {
@@ -114,10 +114,10 @@ func TestRunCredentials(t *testing.T) {
 	}{
 		{"Anthropic keys, endpoints and profile", []string{"ANTHROPIC_API_KEY", "ANTHROPIC_VERTEX_BASE_URL", "ANTHROPIC_PROFILE"}, false, true},
 		{"provider switches", []string{"CLAUDE_CODE_USE_FOUNDRY"}, false, true},
-		{"Claude Code credential hand-offs", []string{"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "CLAUDE_CODE_HOST_CREDS_FILE", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CODE_API_BASE_URL"}, false, true},
+		{"Claude Code credential hand-offs", []string{"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "CLAUDE_CODE_HOST_CREDS_FILE", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CODE_API_BASE_URL", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN"}, false, true},
 		{"names in any case, as Windows reads them", []string{"Anthropic_Api_Key", "claude_code_use_vertex"}, false, true},
-		{"the login's own", []string{"CLAUDE_CONFIG_DIR", "ANTHROPIC_CONFIG_DIR", "Anthropic_Config_Dir", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN"}, true, true},
-		{"network and paths", []string{"CLAUDE_CODE_CERT_STORE", "CLAUDE_CODE_CLIENT_CERT", "CLAUDE_CODE_CLIENT_KEY", "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE", "CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CODE_TMPDIR"}, true, true},
+		{"the login's own", []string{"CLAUDE_CONFIG_DIR", "ANTHROPIC_CONFIG_DIR", "Anthropic_Config_Dir", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"}, true, true},
+		{"TLS and paths", []string{"CLAUDE_CODE_CERT_STORE", "CLAUDE_CODE_CLIENT_CERT", "CLAUDE_CODE_CLIENT_KEY", "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE", "CLAUDE_CODE_DISABLE_LOOPED_CROSS_CERT_DROP", "CLAUDE_CODE_DISABLE_SELF_NAMED_CERT_DROP", "CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CODE_TMPDIR"}, true, true},
 		{"outside Claude's name space", []string{"HTTPS_PROXY", "ALL_PROXY", "NODE_USE_SYSTEM_CA", "SystemRoot", "AWS_ACCESS_KEY_ID"}, true, true},
 		{"parent session markers", []string{"CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH"}, false, false},
 	}
