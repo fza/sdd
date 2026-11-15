@@ -215,6 +215,17 @@ func sameDir(t *testing.T, a, b string) bool {
 	return ra == rb
 }
 
+// A saved session would keep each call's transcript, the full draft, under ~/.claude.
+func TestRunSavesNoSession(t *testing.T) {
+	dir := fakeCLI(t, `{"type":"result","result":"SERVED","usage":{}}`)
+	if _, err := claude.NewRunner("sonnet", "").Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !slices.Contains(recordedArgs(t, dir), "--no-session-persistence") {
+		t.Errorf("claude -p should run without session persistence, got %q", recordedArgs(t, dir))
+	}
+}
+
 // The effort reaches --effort as written; none leaves the flag out.
 func TestRunPassesEffort(t *testing.T) {
 	dir := fakeCLI(t, `{"type":"result","result":"SERVED","usage":{}}`)
