@@ -163,3 +163,23 @@ func TestCaptureWording_VerifyHookReviewNamesSetAsideFindings(t *testing.T) {
 		})
 	}
 }
+
+func TestCaptureWording_PlaybackTellsTheUserOnlyWhenGuided(t *testing.T) {
+	told := []string{
+		"Compose what you present to the user from what you hold plus what the block confirms.",
+		"the entry is written with the local participant alone, so name that person to the user.",
+		"whatever confidence the block shows. Tell the user before they confirm.",
+	}
+	for _, mode := range []wordingMode{
+		{name: "autonomous", options: []proctest.Option{proctest.WithAutonomousDialogue()}, want: []string{"the entry is written with the local participant alone.", "whatever confidence the block shows."}, unwanted: append([]string{"Tell the user", "to the user"}, told...)},
+		{name: "guided", guided: true, want: told},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			_, session := newCaptureWorld(t, "playback-wording-"+mode.name, mode.options...)
+			serve := session.Start(t, "capture", nil)
+			serve = session.Report(t, serve.Instance, captureDraft())
+			proctest.RequireStep(t, serve, "playback")
+			requireWording(t, serve, mode)
+		})
+	}
+}
