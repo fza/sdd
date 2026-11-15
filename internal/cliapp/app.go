@@ -1359,6 +1359,9 @@ func requireGraphInsideRepository(project meta.Project) error {
 	if project.Pointed() && projectRepo != "" && projectRepo == git.RepoRootFor(project.WorkRoot) {
 		return fmt.Errorf("project_dir in %s names %s, inside the repository at %s; the project needs a repository of its own", meta.SDDDir(project.WorkRoot), project.Root, projectRepo)
 	}
+	if project.Pointed() && meta.WithinDir(project.Root, project.WorkRoot) {
+		return fmt.Errorf("project_dir in %s names %s, which contains the work repository; the project needs a repository of its own beside it", meta.SDDDir(project.WorkRoot), project.Root)
+	}
 	graphDir := meta.ResolveGraphDir(project.Root, cfg)
 	rel, err := filepath.Rel(project.Root, graphDir)
 	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {

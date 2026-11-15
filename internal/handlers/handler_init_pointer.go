@@ -34,14 +34,14 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 	}
 	projectRoot = filepath.Clean(projectRoot)
 	projectSDDDir := meta.SDDDir(projectRoot)
-	projectCfg, _, err := meta.ReadConfigLayers(projectSDDDir)
+	projectCfg, projectLocal, err := meta.ReadConfigLayers(projectSDDDir)
 	if err != nil {
 		return err
 	}
 	if projectCfg != nil && (cmd.GraphDir != "" || cmd.Language != "") {
 		return fmt.Errorf("--graph-dir and --language configure the project holding the graph; run `sdd init` with them in %s", cmd.ProjectDir)
 	}
-	if projectCfg != nil && projectCfg.ProjectDir != "" {
+	if model.MergeConfig(projectCfg, projectLocal).ProjectDir != "" {
 		return fmt.Errorf("%s sets project_dir itself; point at the project holding the graph", cmd.ProjectDir)
 	}
 	if projectCfg != nil {

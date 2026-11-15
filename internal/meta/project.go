@@ -114,3 +114,13 @@ func ResolvedPath(path string) string {
 		path = parent
 	}
 }
+
+// WithinDir reports whether path is dir or lies below it, both resolved
+// through symlinks.
+func WithinDir(dir, path string) bool {
+	rel, err := filepath.Rel(ResolvedPath(dir), ResolvedPath(path))
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
