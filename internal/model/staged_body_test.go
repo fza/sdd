@@ -24,6 +24,7 @@ func TestSplitStagedBody(t *testing.T) {
 		{name: "a block that is no mapping is body", content: "---\n- a\n---\nBody\n", wantBody: "---\n- a\n---\nBody\n"},
 		{name: "a mapping without a compared key is body", content: "---\ntitle: Draft\n---\nBody\n", wantBody: "---\ntitle: Draft\n---\nBody\n"},
 		{name: "a markdown rule opening the body keeps its first section", content: "---\nThe first section.\n\n---\nThe second section.\n", wantBody: "---\nThe first section.\n\n---\nThe second section.\n"},
+		{name: "a markdown heading in the block keeps it body", content: "---\n# Context\n\nlayer: the tactical layer is where this lives\n---\nRest\n", wantBody: "---\n# Context\n\nlayer: the tactical layer is where this lives\n---\nRest\n"},
 		{name: "a compared key beside other keys makes a header", content: "---\ntitle: Draft\nlayer: tac\n---\nBody\n", wantHeader: true, wantBody: "Body\n"},
 	}
 	for _, tt := range tests {

@@ -27,6 +27,11 @@ func SplitStagedBody(content string) (header map[string]any, body string) {
 		if !isHeaderDelimiter(lines[i]) {
 			continue
 		}
+		// A `#` line is a YAML comment but a markdown heading: a block holding
+		// one is body.
+		if slices.ContainsFunc(lines[1:i], func(line string) bool { return strings.HasPrefix(strings.TrimSpace(line), "#") }) {
+			return nil, content
+		}
 		var parsed map[string]any
 		if err := yaml.Unmarshal([]byte(strings.Join(lines[1:i], "")), &parsed); err != nil {
 			return nil, content
