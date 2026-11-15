@@ -62,7 +62,8 @@ app-sdd/                     # only sdd: commits
 ```
 
 - The project holds every setting, the graph, `meta.json`, sessions and stats. The work repository's `.sdd/config.yaml` may set only `project_dir`, `skill_scope` and `supported_agents`, and its `.sdd/config.local.yaml` only `project_dir`. sdd refuses any other key there and names the file and the key.
-- `project_dir` must name an initialised project that sets no `project_dir` of its own.
+- `project_dir` must name an initialised project that sets no `project_dir` of its own, in either of its files.
+- `sdd config set --local project_dir <path>` writes the work repository's own `.sdd/config.local.yaml`. In a repository holding its own project it is refused: point a repository with `sdd init --project-dir`.
 - Commands run in the work repository act on the project: captures commit there, `sdd serve` serves it, the write gate reads its `meta.json`, `sdd repo add` declares the dependency there, and `sdd sync --pull` pulls its repository.
 - The work stays in the work repository: `sdd init` installs the skills and registers the MCP server there, `sdd wip start` branches it, and closure evidence comes from its history.
 - A `graph_dir` leading into another repository is refused. Make that graph a project of its own and point at it with `project_dir`.

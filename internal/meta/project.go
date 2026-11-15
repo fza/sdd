@@ -55,14 +55,14 @@ func ResolveProject(workRoot string) (Project, error) {
 		root = filepath.Join(workRoot, root)
 	}
 	root = filepath.Clean(root)
-	target, err := readConfigFile(filepath.Join(SDDDir(root), "config.yaml"))
+	targetCommitted, targetLocal, err := ReadConfigLayers(SDDDir(root))
 	if err != nil {
 		return Project{}, err
 	}
-	if target == nil {
+	if targetCommitted == nil {
 		return Project{}, fmt.Errorf("project_dir %s in %s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", projectDir, sddDir, ErrNotAProject, projectDir)
 	}
-	if target.ProjectDir != "" {
+	if model.MergeConfig(targetCommitted, targetLocal).ProjectDir != "" {
 		return Project{}, fmt.Errorf("project_dir %s in %s names a repository that itself sets project_dir; point at the project holding the graph", projectDir, sddDir)
 	}
 	return Project{Root: root, WorkRoot: workRoot}, nil
