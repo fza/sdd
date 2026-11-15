@@ -97,7 +97,7 @@ func TestGraphRepoSyncMergesEveryUpstreamCommit(t *testing.T) {
 	captureSignal(t, code)
 	handEntry := ".sdd/graph/2026/11/07-150000-s-tac-hnd.md"
 	remote.Commit(t, "a person's own commit", map[string]string{
-		handEntry:          "---\ntype: signal\nlayer: tactical\nkind: gap\nconfidence: high\nparticipants: [Bo]\nsummary: Written in a person's own clone.\n---\n\nBy hand.\n",
+		handEntry:          "---\ntype: signal\nlayer: tactical\nkind: gap\nconfidence: high\nparticipants: [Bo]\nsummary: Written in a person's own clone.\ntitle: Hand-written entry\n---\n\nBy hand.\n",
 		"src/elsewhere.go": "package code\n",
 	})
 

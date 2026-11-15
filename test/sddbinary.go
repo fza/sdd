@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,14 +15,15 @@ import (
 	"github.com/networkteam/sdd/internal/cliapp"
 )
 
-//go:embed fixtures/noliveclaude/claude.sh
-var failingClaude []byte
+//go:embed fixtures/nolivellm/cli.sh
+var failingLLMCLI []byte
 
 // RunTestsAsSDD runs a package's tests, or, when git calls the test binary as
 // one of the merge drivers the sdd-owned graph clone passes per call (the
 // running binary names itself there), runs that sdd command instead. The
-// tests find a claude CLI on PATH that fails every call, so a model call
-// sdd falls back to never reaches a live model.
+// tests find claude and codex CLIs on PATH that fail every call, so a model
+// call sdd falls back to never reaches a live model, and any such call fails
+// the package run.
 func RunTestsAsSDD(m *testing.M) {
 	if len(os.Args) > 1 && (os.Args[1] == "merge-entry" || os.Args[1] == "merge-config") {
 		app := cliapp.New(cliapp.Options{Version: "test", Reader: os.Stdin, Writer: os.Stdout, ErrWriter: os.Stderr})
@@ -36,12 +38,16 @@ func RunTestsAsSDD(m *testing.M) {
 			os.Exit(1)
 		}
 	}
-	dir, err := os.MkdirTemp("", "sdd-test-claude-")
+	dir, err := os.MkdirTemp("", "sdd-test-llm-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	err = os.WriteFile(filepath.Join(dir, "claude"), failingClaude, 0o755)
+	for _, name := range []string{"claude", "codex"} {
+		if err == nil {
+			err = os.WriteFile(filepath.Join(dir, name), failingLLMCLI, 0o755)
+		}
+	}
 	if err == nil {
 		err = os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
@@ -50,6 +56,15 @@ func RunTestsAsSDD(m *testing.M) {
 		os.Exit(1)
 	}
 	code := m.Run()
+	calls, err := os.ReadFile(filepath.Join(dir, "calls"))
+	switch {
+	case err == nil:
+		fmt.Fprintf(os.Stderr, "tests started an LLM CLI; pass the input that needs no model call or a fake provider:\n%s", calls)
+		code = 1
+	case !errors.Is(err, fs.ErrNotExist):
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
 	err = os.RemoveAll(dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

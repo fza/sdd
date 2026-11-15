@@ -1,6 +1,8 @@
 package model_test
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -15,18 +17,49 @@ func TestDialogueModeAtConfigLoad(t *testing.T) {
 		{name: "unset", yaml: "participant: Ada\n", want: model.DialogueGuided},
 		{name: "guided", yaml: "dialogue:\n  mode: guided\n", want: model.DialogueGuided},
 		{name: "auto", yaml: "dialogue:\n  mode: auto\n", want: model.DialogueAuto},
-		{name: "unknown value", yaml: "dialogue:\n  mode: free\n", want: model.DialogueGuided},
-		{name: "former autonomous", yaml: "dialogue:\n  mode: autonomous\n", want: model.DialogueGuided},
-		{name: "wrong case", yaml: "dialogue:\n  mode: Auto\n", want: model.DialogueGuided},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, err := model.ParseConfig([]byte(tc.yaml))
 			if err != nil {
-				t.Fatalf("any mode value should load: %v", err)
+				t.Fatalf("a known mode should load: %v", err)
 			}
 			if got := model.ResolveDialogueMode(cfg); got != tc.want {
 				t.Errorf("only auto should hand choices to the agent, got %q", got)
+			}
+		})
+	}
+}
+
+func TestDialogueModeValidate(t *testing.T) {
+	cases := []struct {
+		name    string
+		mode    model.DialogueMode
+		refused bool
+	}{
+		{name: "unset"},
+		{name: "guided", mode: model.DialogueGuided},
+		{name: "auto", mode: model.DialogueAuto},
+		{name: "former autonomous", mode: "autonomous", refused: true},
+		{name: "unknown value", mode: "free", refused: true},
+		{name: "wrong case", mode: "Auto", refused: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.mode.Validate()
+			if !tc.refused {
+				if err != nil {
+					t.Errorf("a known or unset mode should pass: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, model.ErrUnknownDialogueMode) {
+				t.Fatalf("an unknown mode should be refused, got %v", err)
+			}
+			for _, part := range []string{string(tc.mode), "guided or auto"} {
+				if !strings.Contains(err.Error(), part) {
+					t.Errorf("the refusal should name the value and the valid values, missing %q: %v", part, err)
+				}
 			}
 		})
 	}
@@ -44,8 +77,7 @@ func TestIgnoredDialogueMode(t *testing.T) {
 		{name: "guided in the committed layer", mode: model.DialogueGuided, committed: true, ignored: true},
 		{name: "auto in a personal layer", mode: model.DialogueAuto},
 		{name: "guided in a personal layer", mode: model.DialogueGuided},
-		{name: "unknown value in a personal layer", mode: "free", ignored: true},
-		{name: "former autonomous in a personal layer", mode: "autonomous", ignored: true},
+		{name: "unknown value in the committed layer", mode: "autonomous", committed: true, ignored: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

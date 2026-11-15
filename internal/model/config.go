@@ -315,6 +315,19 @@ func DialogueModes() []DialogueMode {
 	return []DialogueMode{DialogueGuided, DialogueAuto}
 }
 
+// ErrUnknownDialogueMode reports a dialogue.mode value sdd does not know.
+var ErrUnknownDialogueMode = errors.New("unknown dialogue.mode")
+
+// Validate refuses a value other than the DialogueModes; empty is unset.
+// A personal layer carrying one fails to load: read past, the session would
+// run guided while the person asked for something else.
+func (m DialogueMode) Validate() error {
+	if m == "" || slices.Contains(DialogueModes(), m) {
+		return nil
+	}
+	return fmt.Errorf("%w: %q is not %s", ErrUnknownDialogueMode, m, oneOf(m.AllowedValues()))
+}
+
 // IgnoredSetting is a setting a config layer carries that sdd reads past:
 // a value it does not know, or a key that layer may not set.
 type IgnoredSetting struct {
@@ -362,8 +375,8 @@ func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSettin
 	if reason := ignoredSyncInterval(layer.Sync.Interval, committed); reason != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "sync.interval", Reason: reason})
 	}
-	if reason := ignoredDialogueMode(layer.Dialogue.Mode, committed); reason != "" {
-		ignored = append(ignored, IgnoredSetting{Key: "dialogue.mode", Reason: reason})
+	if committed && layer.Dialogue.Mode != "" {
+		ignored = append(ignored, IgnoredSetting{Key: "dialogue.mode", Reason: personalOnlyReason})
 	}
 	if committed && layer.LLM.Debug != nil {
 		ignored = append(ignored, IgnoredSetting{Key: "llm.debug", Reason: personalOnlyReason})
@@ -375,18 +388,6 @@ func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSettin
 const personalOnlyReason = "only the user-global config or config.local.yaml may set it"
 
 func ignoredSyncMode(mode SyncMode, committed bool) string {
-	switch {
-	case mode == "":
-		return ""
-	case committed:
-		return personalOnlyReason
-	case !slices.Contains(mode.AllowedValues(), string(mode)):
-		return fmt.Sprintf("%q is not %s", mode, oneOf(mode.AllowedValues()))
-	}
-	return ""
-}
-
-func ignoredDialogueMode(mode DialogueMode, committed bool) string {
 	switch {
 	case mode == "":
 		return ""

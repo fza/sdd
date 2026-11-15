@@ -13,7 +13,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-const strayEntry = "---\ntype: signal\nkind: gap\nlayer: tactical\nconfidence: high\nparticipants: [Ada]\nsummary: A stray entry.\n---\n\nA stray entry.\n"
+const strayEntry = "---\ntype: signal\nkind: gap\nlayer: tactical\nconfidence: high\nparticipants: [Ada]\nsummary: A stray entry.\ntitle: Stray entry\n---\n\nA stray entry.\n"
 
 // movedRepo is a repository whose graph moved from .sdd/graph to graph in a
 // commit carrying the move record.

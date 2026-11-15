@@ -50,7 +50,7 @@ func TestVerifyKindsSetTheModeOfACapture(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newAppFixture(t)
 			f.write(t, ".sdd/config.yaml", appCommittedConfig+tc.verify)
-			result := f.run(t, "new", "--confidence", "high", "--skip-preflight", "s", "tac", "An ungrounded gap.")
+			result := f.run(t, "new", "--confidence", "high", "--skip-preflight", "--summary", "An ungrounded gap.", "--title", "Ungrounded gap", "s", "tac", "An ungrounded gap.")
 			refused := result.err != nil && strings.Contains(result.err.Error(), "enforces grounding")
 			if refused != tc.grounded {
 				t.Errorf("sdd new should owe a grounding reading only where the gap's mode enforces one, got %v", result.err)
