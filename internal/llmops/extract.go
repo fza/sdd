@@ -95,21 +95,26 @@ func runJSONCheck[T any](ctx context.Context, runner llm.Runner, req llm.Request
 	return result, nil
 }
 
-// reportsNoAnalysis reads the extraction answer's analysis flag. Only an
-// explicit false counts: a provider that ignores the schema and omits the flag
-// leaves the findings to the check's parser.
+// reportsNoAnalysis reads the extraction answer's analysis flag. A provider
+// that ignores the schema may omit it: then a reformat with no findings is no
+// evidence the unparseable first answer was an analysis, and one with
+// findings goes to the check's parser.
 func reportsNoAnalysis(text string) bool {
 	jsonText, err := extractJSONObject(text)
 	if err != nil {
 		return false
 	}
 	var answer struct {
-		Analysis *bool `json:"analysis"`
+		Analysis *bool             `json:"analysis"`
+		Findings []json.RawMessage `json:"findings"`
 	}
 	if err := json.Unmarshal([]byte(jsonText), &answer); err != nil {
 		return false
 	}
-	return answer.Analysis != nil && !*answer.Analysis
+	if answer.Analysis == nil {
+		return len(answer.Findings) == 0
+	}
+	return !*answer.Analysis
 }
 
 func renderExtractPrompt(spec extraction, priorOutput string) (llm.Request, error) {

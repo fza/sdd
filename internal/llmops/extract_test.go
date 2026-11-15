@@ -199,14 +199,18 @@ func TestPreflightDoesNotFallBackOnATransportFailure(t *testing.T) {
 // reformat into an empty findings list would read as a clean check.
 func TestPreflightFailsWhenTheFirstAnswerHoldsNoAnalysis(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		first string
+		name     string
+		first    string
+		reformat string
 	}{
-		{"refusal", "I'm sorry, but I can't help with reviewing this entry."},
-		{"HTML error page", "<html><head><title>502 Bad Gateway</title></head><body><h1>502 Bad Gateway</h1></body></html>"},
+		{"refusal", "I'm sorry, but I can't help with reviewing this entry.", `{"analysis":false,"findings":[]}`},
+		{"HTML error page", "<html><head><title>502 Bad Gateway</title></head><body><h1>502 Bad Gateway</h1></body></html>", `{"analysis":false,"findings":[]}`},
+		// A provider that ignores the schema may drop the flag; an empty
+		// reformat of an unparseable answer is then no evidence of a clean check.
+		{"flag omitted, no findings", "I'm sorry, but I can't help with reviewing this entry.", `{"findings":[]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			runner := &scriptedRunner{replies: []string{tc.first, `{"analysis":false,"findings":[]}`}}
+			runner := &scriptedRunner{replies: []string{tc.first, tc.reformat}}
 
 			_, err := runPreflight(t, runner)
 			if !errors.Is(err, llmops.ErrNoAnalysis) {
@@ -219,6 +223,21 @@ func TestPreflightFailsWhenTheFirstAnswerHoldsNoAnalysis(t *testing.T) {
 				t.Error("the extraction prompt must tell the reformat how to report no analysis")
 			}
 		})
+	}
+}
+
+func TestPreflightParsesFindingsWhenTheReformatOmitsTheFlag(t *testing.T) {
+	runner := &scriptedRunner{replies: []string{
+		"The ref holds; a low finding on its scope.",
+		`{"findings":[{"observation":"The ref holds.","category":"ref-applicability","severity":"low"}]}`,
+	}}
+
+	result, err := runPreflight(t, runner)
+	if err != nil {
+		t.Fatalf("findings from a reformat without the flag should still count: %v", err)
+	}
+	if len(result.Findings) != 1 || result.Findings[0].Category != "ref-applicability" {
+		t.Errorf("findings came from the wrong response: %+v", result.Findings)
 	}
 }
 
