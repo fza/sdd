@@ -163,3 +163,34 @@ func TestCreateEntryFailsWhenTheSimilarSearchFails(t *testing.T) {
 		t.Errorf("no summary call should run without its similar titles, got %d", len(prompts.prompts))
 	}
 }
+
+func TestReplaceSummaryNormalizesTheCorrectedTitle(t *testing.T) {
+	f := newWriteFixture(t)
+	draft := f.identifiedDraft(sdd.EntryDraft{Kind: "gap", Layer: "tactical", Confidence: "high", Body: capturedBody})
+	created, err := f.app.CreateEntry(t.Context(), f.identity, "example", f.binding, draft)
+	if err != nil {
+		t.Fatalf("CreateEntry: %v", err)
+	}
+	replace := func(sequence uint64, title string) error {
+		_, err := f.app.ReplaceSummary(t.Context(), f.identity, "example", f.binding, sdd.SummaryReplacement{
+			Publication: sdd.PublicationKey{Session: f.binding.SessionID, Sequence: sequence, Discriminator: "summary"},
+			EntryID:     created.EntryID,
+			Title:       title,
+		})
+		return err
+	}
+	if err := replace(10, `  “corrected” "daemon" title!  `); err != nil {
+		t.Fatalf("ReplaceSummary: %v", err)
+	}
+	if got := loadEntryByID(t, f.graphDir, created.EntryID).Title; got != "Corrected daemon title" {
+		t.Errorf("the corrected title should be stored without quotes and trailing punctuation, got %q", got)
+	}
+	err = replace(11, ` „…“ `)
+	var appErr *sdd.ApplicationError
+	if !errors.As(err, &appErr) || appErr.Code != sdd.ErrorInvalidArgument {
+		t.Fatalf("a title of nothing but quotes and punctuation should be refused, got %v", err)
+	}
+	if got := loadEntryByID(t, f.graphDir, created.EntryID).Title; got != "Corrected daemon title" {
+		t.Errorf("a refused title should leave the stored one, got %q", got)
+	}
+}

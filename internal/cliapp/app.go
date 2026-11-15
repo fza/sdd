@@ -852,7 +852,7 @@ func newCmd() *cli.Command {
 				Name: "title",
 				// urfave/cli takes a usage's first backtick pair as the value
 				// placeholder; naming it keeps the title rule's code spans intact.
-				Usage: "Use `TITLE` instead of the generated title; a first letter that is not a backtick is capitalized. " + model.TitleRule,
+				Usage: "Use `TITLE` instead of the generated title; double quotes and trailing punctuation but a question mark are removed, and a first letter that is not a backtick is capitalized. " + model.TitleRule,
 			},
 			&cli.BoolFlag{
 				Name:  "dry-run",

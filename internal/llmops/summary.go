@@ -196,14 +196,14 @@ func parseTitleResponse(output string) (string, error) {
 }
 
 func cleanTitle(raw string) (string, error) {
-	title := strings.TrimRight(strings.TrimSpace(raw), ".")
+	title := model.NormalizeTitle(raw)
 	if title == "" {
 		return "", fmt.Errorf("answer carries an empty title")
 	}
 	if strings.ContainsAny(title, "\r\n") {
 		return "", fmt.Errorf("title %q spans more than one line", title)
 	}
-	return model.CapitalizeTitle(title), nil
+	return title, nil
 }
 
 // summaryContext holds all data needed to render the summary and title

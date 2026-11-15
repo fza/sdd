@@ -153,13 +153,14 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	}
 
 	var described *llmops.DescriptionResult
+	title := model.NormalizeTitle(cmd.Title)
 
 	// A caller-supplied summary is taken verbatim; only a missing title still
 	// costs a call.
-	if !cmd.DryRun && h.llmRunner != nil && (cmd.Summary == "" || cmd.Title == "") {
+	if !cmd.DryRun && h.llmRunner != nil && (cmd.Summary == "" || title == "") {
 		supplied := *entry
 		supplied.Summary = cmd.Summary
-		supplied.Title = cmd.Title
+		supplied.Title = title
 		g.Go(func() error {
 			result, err := h.describeNew(gctx, &supplied, graph)
 			if err != nil {
@@ -207,7 +208,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	// Apply the caller-supplied summary, or the one from the concurrent
 	// generation goroutine.
 	entry.Summary = cmd.Summary
-	entry.Title = model.CapitalizeTitle(cmd.Title)
+	entry.Title = title
 	if described != nil {
 		if entry.Summary == "" {
 			entry.Summary = described.Summary

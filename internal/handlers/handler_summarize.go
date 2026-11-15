@@ -298,9 +298,9 @@ func (h *Handler) summarizeExplicit(ctx context.Context, graph *model.Graph, idA
 		entry.Summary = summary
 	}
 	if cmd.ExplicitTitle != nil {
-		title := strings.TrimSpace(*cmd.ExplicitTitle)
+		title := model.NormalizeTitle(*cmd.ExplicitTitle)
 		if title == "" {
-			return fmt.Errorf("--title value is empty after trimming whitespace")
+			return fmt.Errorf("--title value is empty after trimming whitespace and trailing punctuation")
 		}
 		if strings.ContainsAny(title, "\r\n") {
 			return fmt.Errorf("--title value spans more than one line")
@@ -309,7 +309,7 @@ func (h *Handler) summarizeExplicit(ctx context.Context, graph *model.Graph, idA
 		if err != nil {
 			return err
 		}
-		entry.Title = model.CapitalizeTitle(title)
+		entry.Title = title
 	}
 
 	relPath, err := model.IDToRelPath(entry.ID)

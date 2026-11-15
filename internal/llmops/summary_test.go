@@ -127,6 +127,11 @@ func TestDescriptionsStateTheTitleRule(t *testing.T) {
 			if !strings.Contains(description.Request.SystemPrompt, model.TitleRule) {
 				t.Errorf("the prompt should state the title rule:\n%s", description.Request.SystemPrompt)
 			}
+			for _, want := range []string{"uses no quotation marks", "no trailing punctuation but a question mark"} {
+				if !strings.Contains(description.Request.SystemPrompt, want) {
+					t.Errorf("the prompt should say %q:\n%s", want, description.Request.SystemPrompt)
+				}
+			}
 			if strings.Contains(description.Request.SystemPrompt, "at most 32 characters") {
 				t.Errorf("the prompt should no longer cap titles at 32 characters:\n%s", description.Request.SystemPrompt)
 			}
@@ -181,6 +186,9 @@ func TestPairedDescriptionParsesTheAnswer(t *testing.T) {
 		{name: "paired answer", output: `{"title": "daemon project removal", "summary": "The daemon project is removed."}`, wantTitle: "Daemon project removal", wantSummary: "The daemon project is removed."},
 		{name: "answer wrapped in prose", output: "Here it is:\n```json\n{\"title\": \"daemon project removal\", \"summary\": \"The daemon project is removed.\"}\n```", wantTitle: "Daemon project removal", wantSummary: "The daemon project is removed."},
 		{name: "trailing period dropped from the title", output: `{"title": "daemon project removal.", "summary": "S."}`, wantTitle: "Daemon project removal", wantSummary: "S."},
+		{name: "trailing punctuation dropped from the title", output: `{"title": "daemon project removal …", "summary": "S."}`, wantTitle: "Daemon project removal", wantSummary: "S."},
+		{name: "a question mark kept", output: `{"title": "should the daemon go?", "summary": "S."}`, wantTitle: "Should the daemon go?", wantSummary: "S."},
+		{name: "only punctuation", output: `{"title": " … ", "summary": "S."}`, wantErr: "empty title"},
 		{name: "plain prose", output: "The daemon project is removed.", wantErr: "no JSON object"},
 		{name: "empty title", output: `{"title": " ", "summary": "S."}`, wantErr: "empty title"},
 		{name: "multi-line title", output: `{"title": "daemon\nremoval", "summary": "S."}`, wantErr: "more than one line"},
