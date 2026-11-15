@@ -2,7 +2,6 @@ package engine
 
 import (
 	"encoding/json"
-	"maps"
 	"slices"
 	"strings"
 
@@ -217,16 +216,9 @@ func compactJSON(v any) string {
 	return string(b)
 }
 
-// draftChangedUnserved reports whether the step's draft differs from the one
-// it last served this instance. Only a write that serves nothing (Update)
-// leaves them apart; a base forgotten by a restart reports no change.
+// draftChangedUnserved reports whether an Update changed the instance's draft
+// since it was last played back, at a step that plays a draft back. The mark
+// rides the log, so a replayed session holds it too.
 func draftChangedUnserved(inst *Instance, step *Step) bool {
-	if len(step.ServeDelta) == 0 {
-		return false
-	}
-	served, ok := inst.draftServed[step.ID]
-	if !ok {
-		return false
-	}
-	return !maps.Equal(served, draftSnapshot(inst, step.ServeDelta))
+	return len(step.ServeDelta) > 0 && inst.unservedDraft
 }

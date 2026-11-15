@@ -1450,7 +1450,9 @@ func (s *workflowSink) Append(event engine.Event) (uint64, error) {
 	// A serve is a pure read: its forensic served marker never reaches the
 	// durable log, so re-serving (ServeShell/ServeAll) writes nothing
 	// and each engine operation appends only its own event with the stamp.
-	if event.Event == engine.EventServed {
+	// The one kept marker records a serve playing an unserved change back,
+	// which a replay must know.
+	if event.Event == engine.EventServed && event.Data["playedBack"] != true {
 		return 0, nil
 	}
 	payload, err := json.Marshal(event)

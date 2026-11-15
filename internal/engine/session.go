@@ -560,7 +560,7 @@ func recordDispatchSeed(inst *Instance, opt *Option) {
 // cascades. Reports can only write declared state fields; batched fields for
 // later steps are accepted. A report does not answer a pending chooser.
 func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, error) {
-	inst, err := s.report(instanceID, fields)
+	inst, err := s.report(instanceID, fields, false)
 	if err != nil {
 		return nil, err
 	}
@@ -570,13 +570,14 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 // Update applies state fields as Report does but serves nothing, so the
 // draft an agent was last served stays the base the next serve diffs
 // against. For state a shell keeps in step with something outside the
-// session, such as a staged file.
+// session, such as a staged file. The log marks the change unserved, so a
+// replayed session refuses the next answer over it as well.
 func (s *Session) Update(instanceID string, fields map[string]any) error {
-	_, err := s.report(instanceID, fields)
+	_, err := s.report(instanceID, fields, true)
 	return err
 }
 
-func (s *Session) report(instanceID string, fields map[string]any) (*Instance, error) {
+func (s *Session) report(instanceID string, fields map[string]any, unserved bool) (*Instance, error) {
 	if err := s.checkProgression(); err != nil {
 		return nil, err
 	}
@@ -600,12 +601,16 @@ func (s *Session) report(instanceID string, fields map[string]any) (*Instance, e
 		v, _ := inst.Store.Get(name)
 		logged[name] = v
 	}
-	s.appendEvent(inst.ID, EventReport, map[string]any{
-		"step":   inst.Step,
-		"fields": logged,
-	})
+	data := map[string]any{"step": inst.Step, "fields": logged}
+	if unserved {
+		data["unserved"] = true
+	}
+	s.appendEvent(inst.ID, EventReport, data)
 	if err := s.checkSink(); err != nil {
 		return nil, err
+	}
+	if unserved {
+		inst.unservedDraft = true
 	}
 	s.clearCancellation(inst.ID)
 	if inst.currentStep().Op == "" {
@@ -650,6 +655,9 @@ func (s *Session) Answer(instanceID, chooser, choice string, fields map[string]a
 		// change instead and the answer is not applied.
 		sv, err := s.serve(inst)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.checkSink(); err != nil {
 			return nil, err
 		}
 		sv.Diagnostics = append(sv.Diagnostics, "not answered: the draft changed since it was last served — play the change back and answer again")
@@ -897,6 +905,9 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		if _, err := inst.Store.WriteState(declaredState(inst.Spec, fields)); err != nil {
 			return err
 		}
+		if ev.Data["unserved"] == true {
+			inst.unservedDraft = true
+		}
 		s.clearCancellation(inst.ID)
 		if inst.retiredStep != "" || inst.currentStep().Op == "" {
 			inst.interactionStep = inst.loggedStep()
@@ -1035,7 +1046,17 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 	case EventReoriented:
 		s.served = map[string]bool{}
 
-	case EventServed, EventParked:
+	case EventServed:
+		// Forensic only, but for the playback of an unserved change.
+		if ev.Data["playedBack"] == true {
+			inst, err := s.replayInstance(ev)
+			if err != nil {
+				return err
+			}
+			inst.unservedDraft = false
+		}
+
+	case EventParked:
 		// Forensic only — no state effect.
 
 	default:

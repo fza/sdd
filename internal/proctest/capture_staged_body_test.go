@@ -456,6 +456,58 @@ func TestCapture_RestageDuringAnUnfinishedOperationIsRefused(t *testing.T) {
 	}
 }
 
+// The MCP server replays the session before every call, so the served draft
+// an unserved change is checked against must survive the replay.
+func TestCapture_UnservedChangeIsPlayedBackAcrossRefreshes(t *testing.T) {
+	t.Run("re-stage before the confirm", func(t *testing.T) {
+		_, session := newCaptureWorld(t, "staged-body-refresh-restage")
+		handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
+		instance := session.Start(t, "capture", nil).Instance
+		session.Refresh(t)
+		proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+		session.Refresh(t)
+		session.Stage(t, handle, []byte(unseenStagedBody))
+		session.Refresh(t)
+
+		serve := session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+		proctest.RequireStep(t, serve, "playback")
+		if !hasDiagnostic(serve, "not answered") || !strings.Contains(serve.Instructions, "not yet played back") {
+			t.Fatalf("a confirm after a re-stage should play the change back instead, got %v\n%s", serve.Diagnostics, serve.Instructions)
+		}
+		session.Refresh(t)
+		proctest.RequireStep(t, session.Answer(t, instance, "playback", "confirm", nil, "yes, that one"), "verifySummary")
+	})
+	t.Run("file edited before the confirm", func(t *testing.T) {
+		world, session := newCaptureWorld(t, "staged-body-refresh-reread")
+		path := filepath.Join(t.TempDir(), "draft.md")
+		if err := os.WriteFile(path, []byte(stagedBodyFile), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		handle := session.StageFrom(t, "draft.md", path)
+		instance := session.Start(t, "capture", nil).Instance
+		session.Refresh(t)
+		proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+		session.Refresh(t)
+		if err := os.WriteFile(path, []byte(unseenStagedBody), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		serve := session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+		proctest.RequireStep(t, serve, "playback")
+		if !hasDiagnostic(serve, "not answered") || !strings.Contains(serve.Instructions, "not yet played back") {
+			t.Fatalf("a confirm over an edited file should play the edit back instead, got %v\n%s", serve.Diagnostics, serve.Instructions)
+		}
+		session.Refresh(t)
+		proctest.RequireStep(t, session.Answer(t, instance, "playback", "confirm", nil, "yes, the edited one"), "verifySummary")
+		session.Refresh(t)
+		serve = session.Answer(t, instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+		entryID, _ := serve.Produced["entryId"].(string)
+		if entry := proctest.LoadEntry(t, world.GraphDir, entryID); !strings.Contains(entry.Content, "not yet played back") {
+			t.Errorf("the entry should carry the edited file, got %q", entry.Content)
+		}
+	})
+}
+
 // The re-read at a confirm stages through the same write, so another
 // capture's unfinished write refuses it too and the staged copy stays.
 func TestCapture_ConfirmRereadDuringAnUnfinishedOperationIsRefused(t *testing.T) {

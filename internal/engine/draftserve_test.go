@@ -154,6 +154,54 @@ steps:
       options:
           - {choice: confirm, to: end(completed)}`
 
+// A host replays the session before each call; the unserved mark and its
+// playback both ride the log.
+func TestDraftServe_UnservedChangeSurvivesAReplay(t *testing.T) {
+	content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: unservedproc\n" +
+		unservedDraftMachine + "\n---\n\nunserved draft procedure\n\n## unit: playback\n\nPlay the draft back.\n"
+	entry, err := model.ParseEntry("20260826-140000-d-prc-uns.md", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := engine.ParseSpec(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := engine.New(engine.NewRegistry(), engine.StaticGraphs{Graph: model.NewGraph(nil)})
+	log := &recordingSink{}
+	replay := func() *engine.Session {
+		t.Helper()
+		sess, err := eng.ReplaySession("s_unserved", "tester", log.events, func(string) (*engine.Spec, error) { return spec, nil }, log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sess
+	}
+	sv, err := eng.NewSession("s_unserved", "tester", log).Start(spec, map[string]any{"body": "first draft"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := sv.Instance
+	if err := replay().Update(instance, map[string]any{"body": "second draft"}); err != nil {
+		t.Fatal(err)
+	}
+
+	sv, err = replay().Answer(instance, "playback", "confirm", nil, "yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Status != engine.StatusRunning || !strings.Contains(sv.Instructions, "not answered") {
+		t.Fatalf("an answer over an unserved change should be refused after a replay too, got %s %q", sv.Status, sv.Instructions)
+	}
+	sv, err = replay().Answer(instance, "playback", "confirm", nil, "yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.Status != engine.StatusCompleted {
+		t.Errorf("an answer after the change was played back should apply after a replay, got %s", sv.Status)
+	}
+}
+
 func TestDraftServe_AnswerOverAnUnservedChangeServesItInstead(t *testing.T) {
 	content := "---\ntype: decision\nlayer: prc\nkind: procedure\ncanonical: unservedproc\n" +
 		unservedDraftMachine + "\n---\n\nunserved draft procedure\n\n## unit: playback\n\nPlay the draft back.\n"

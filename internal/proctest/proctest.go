@@ -367,6 +367,17 @@ func (w *World) Open(t *testing.T, connID string) *Session {
 	return &Session{World: w, WF: workflow, ID: serve.Session}
 }
 
+// Refresh replays the session from its log into a fresh WorkflowSession, as
+// the MCP server does before every call.
+func (s *Session) Refresh(t *testing.T) {
+	t.Helper()
+	workflow, err := s.World.App.RefreshWorkflow(t.Context(), s.World.Identity, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.WF = workflow
+}
+
 // Resume loads a session by ID from another client, as a re-attached or
 // restarted client would.
 func (w *World) Resume(t *testing.T, sessionID sdd.SessionID, connID string) (*Session, sdd.WorkflowResumeResult) {

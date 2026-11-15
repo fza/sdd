@@ -58,6 +58,9 @@ type Instance struct {
 	// only, deliberately: a process restart or resume forgets it, so those
 	// paths serve whole (20260826-120330-d-tac-8f8).
 	draftServed map[string]map[string]string
+	// unservedDraft marks state an Update wrote that no serve has played back
+	// yet; unlike draftServed it is rebuilt on replay.
+	unservedDraft bool
 	// retiredStep is the logged position when the log placed the instance on
 	// a step its procedure no longer has (see ReplaySession).
 	retiredStep string
@@ -548,6 +551,10 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 			inst.draftServed = map[string]map[string]string{}
 		}
 		inst.draftServed[step.ID] = cur
+		if inst.unservedDraft {
+			inst.unservedDraft = false
+			s.appendEvent(inst.ID, EventServed, map[string]any{"step": step.ID, "playedBack": true})
+		}
 	}
 	if len(cuts) > 0 {
 		lanes = append(lanes, ServeLane{Name: "cuts", Text: renderCuts(cuts)})
