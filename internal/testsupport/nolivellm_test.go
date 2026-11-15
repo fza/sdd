@@ -125,6 +125,10 @@ func TestProbe(t *testing.T) {
 			t.Errorf("git should read neither the user's nor the system's config, got GIT_CONFIG_GLOBAL=%q GIT_CONFIG_NOSYSTEM=%q",
 				os.Getenv("GIT_CONFIG_GLOBAL"), os.Getenv("GIT_CONFIG_NOSYSTEM"))
 		}
+		out, err := exec.CommandContext(t.Context(), "git", "config", "--type=bool", "--get", "maintenance.auto").Output()
+		if err != nil || strings.TrimSpace(string(out)) != "false" {
+			t.Errorf("git should run with maintenance.auto off, got %q, %v", out, err)
+		}
 	case "ollama-allowed":
 		if _, ok := http.DefaultTransport.(*http.Transport); !ok {
 			t.Errorf("AllowOllama should leave the default transport unwrapped, got %T", http.DefaultTransport)

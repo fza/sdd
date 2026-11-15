@@ -110,12 +110,17 @@ func RunWithoutLiveLLMs(m *testing.M, opts ...Option) {
 	os.Exit(code)
 }
 
-// guardEnv is the environment a guarded run sets up in dir, PATH aside.
+// guardEnv is the environment a guarded run sets up in dir, PATH aside. Git
+// gets no user or system config, and no `git maintenance run --auto` after
+// each commit a test makes.
 func guardEnv(dir string) map[string]string {
 	env := map[string]string{
 		guardDirEnv:           dir,
 		"GIT_CONFIG_GLOBAL":   filepath.Join(dir, "gitconfig"),
 		"GIT_CONFIG_NOSYSTEM": "1",
+		"GIT_CONFIG_COUNT":    "1",
+		"GIT_CONFIG_KEY_0":    "maintenance.auto",
+		"GIT_CONFIG_VALUE_0":  "false",
 	}
 	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
 		env[name] = filepath.Join(dir, strings.ToLower(name))
