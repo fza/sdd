@@ -48,11 +48,7 @@ func SDDDir(repoRoot string) string {
 // the same PerRepoConfig schema, and carries genuinely machine-specific
 // overrides (API keys, endpoints).
 func ReadConfig(sddDir string) (*model.PerRepoConfig, error) {
-	base, err := readConfigFile(filepath.Join(sddDir, "config.yaml"))
-	if err != nil {
-		return nil, err
-	}
-	overlay, err := readConfigFile(filepath.Join(sddDir, "config.local.yaml"))
+	base, overlay, err := ReadConfigLayers(sddDir)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +92,7 @@ func ReadConfigLayers(sddDir string) (committed, local *model.PerRepoConfig, err
 	if err != nil {
 		return nil, nil, err
 	}
-	return committed, local, nil
+	return model.HonoredCommitted(committed), local, nil
 }
 
 func readConfigFile(path string) (*model.PerRepoConfig, error) {

@@ -257,6 +257,9 @@ func warnUnknownConfigKeys(ctx context.Context) {
 	for _, k := range result.Keys {
 		log.Warn("ignoring unknown config key", "key", k.Key, "file", k.File)
 	}
+	for _, s := range result.Ignored {
+		log.Warn("ignoring config setting", "key", s.Key, "file", s.File, "reason", s.Reason)
+	}
 }
 
 // resolveConfigAt mirrors loadConfig for an explicit .sdd dir — `sdd init`
@@ -1258,6 +1261,20 @@ func promptGraphDir(cmd *cli.Command, defaultValue string) (string, error) {
 	})
 }
 
+// promptDialogueMode asks whether this person's agents take the choices an
+// engine session otherwise puts to them.
+func promptDialogueMode(cmd *cli.Command) (model.DialogueMode, error) {
+	return tui.RunSelect(tui.SelectPrompt[model.DialogueMode]{
+		Reader: cmd.Reader,
+		Writer: cmd.Writer,
+		Header: "Who makes the choices during a session? (↑/↓ to navigate, enter to confirm)",
+		Options: []tui.SelectOption[model.DialogueMode]{
+			{Label: string(model.DialogueGuided), Hint: "you confirm each step", Value: model.DialogueGuided},
+			{Label: string(model.DialogueAuto), Hint: "your AI decides; a capture blocked twice waits for you", Value: model.DialogueAuto},
+		},
+	})
+}
+
 // promptParticipant runs an interactive prompt for the local participant name.
 // Empty input accepts the default; cancellation returns an error.
 func promptParticipant(cmd *cli.Command, defaultValue string) (string, error) {
@@ -1403,6 +1420,10 @@ func initCmd() *cli.Command {
 				Name:  "bump",
 				Usage: "Raise .sdd/meta.json minimum_version to this binary's version (released builds only)",
 			},
+			&cli.StringFlag{
+				Name:  "dialogue-mode",
+				Usage: "Your dialogue mode, guided or auto, recorded in the project's .sdd/config.local.yaml (prompted interactively while unset)",
+			},
 		},
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			// `--bump` cannot be honoured from a dev build — fail before
@@ -1445,8 +1466,10 @@ func initCmd() *cli.Command {
 				}
 			}
 			recordedParticipant := ""
+			var recordedDialogueMode model.DialogueMode
 			if existingMerged != nil {
 				recordedParticipant = existingMerged.Participant
+				recordedDialogueMode = existingMerged.Dialogue.Mode
 			}
 			languageFlag := strings.TrimSpace(cmd.String("language"))
 			participantFlag := strings.TrimSpace(cmd.String("participant"))
@@ -1543,6 +1566,14 @@ func initCmd() *cli.Command {
 				participant = prompted
 			}
 
+			dialogueMode := model.DialogueMode(strings.TrimSpace(cmd.String("dialogue-mode")))
+			if dialogueMode == "" && recordedDialogueMode == "" && cliout.IsTerminalReader(cmd.Reader) {
+				dialogueMode, err = promptDialogueMode(cmd)
+				if err != nil {
+					return fmt.Errorf("prompt: %w", err)
+				}
+			}
+
 			// Resolve agent targets: an explicit --agents flag wins; otherwise,
 			// on a fresh tree with a TTY, run the multi-select. On existing
 			// trees we pass nothing and let the handler honor the recorded
@@ -1574,6 +1605,7 @@ func initCmd() *cli.Command {
 				GraphDir:       graphDir,
 				DefaultBranch:  defaultBranch,
 				Participant:    participant,
+				DialogueMode:   dialogueMode,
 				Language:       language,
 				BinaryVersion:  cmd.Root().Version,
 				Targets:        targets,
@@ -1614,6 +1646,9 @@ func initCmd() *cli.Command {
 				},
 				OnParticipantWritten: func(path, name string) {
 					fmt.Fprintf(cmd.Writer, "  participant: %s → %s\n", name, path)
+				},
+				OnLocalSettingWritten: func(path, key, value string) {
+					fmt.Fprintf(cmd.Writer, "  %s: %s → %s\n", key, value, path)
 				},
 				OnRepoIDWritten: func(repoID model.RepoID) {
 					fmt.Fprintf(cmd.Writer, "  repo_id: %s\n", repoID)

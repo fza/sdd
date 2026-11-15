@@ -92,6 +92,21 @@ func OwnerOnly(_ context.Context, request SessionAccessRequest) error {
 	return nil
 }
 
+// Dialogue is the dialogue mode a principal's new sessions open in, and the
+// config layer that set it.
+type Dialogue struct {
+	// Mode is "guided" or "auto"; anything else opens guided.
+	Mode   string
+	Source string
+}
+
+// DialogueResolver is an optional AccessResolver extension. A resolver
+// without it opens every session guided, so compositions that never hand
+// choices to an agent need no change.
+type DialogueResolver interface {
+	ResolveDialogue(context.Context, Principal, ProjectID) (Dialogue, error)
+}
+
 // AccessResolver is the single identity, project-access, session-continuation,
 // and dependency authorization boundary. Implementations must resolve current
 // authorization from ctx on every call; previously returned principals and

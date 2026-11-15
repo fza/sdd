@@ -73,6 +73,7 @@ type BaseConfig struct {
 	Embedding EmbeddingConfig `yaml:"embedding,omitempty"`
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
+	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
 	// set once in the user-global config; a per-repo override covers a
@@ -144,6 +145,71 @@ type SyncConfig struct {
 	// Cooldown is the minimum interval between background git fetches. Go
 	// duration string (e.g. "15m", "1h"). Empty means DefaultSyncCooldown.
 	Cooldown string `yaml:"cooldown,omitempty"`
+}
+
+// DialogueConfig holds how engine sessions treat the choices procedures put
+// to the user.
+type DialogueConfig struct {
+	// Mode decides whether the agent may take those choices itself. Empty
+	// means DialogueGuided.
+	Mode DialogueMode `yaml:"mode,omitempty"`
+}
+
+// DialogueMode is the dialogue.mode setting. It is set per person: only the
+// user-global config and config.local.yaml may set it, and a value sdd must
+// not honor is read past as guided.
+type DialogueMode string
+
+const (
+	DialogueGuided DialogueMode = "guided"
+	DialogueAuto   DialogueMode = "auto"
+)
+
+// DialogueModes returns the values dialogue.mode takes.
+func DialogueModes() []DialogueMode {
+	return []DialogueMode{DialogueGuided, DialogueAuto}
+}
+
+// IgnoredSetting is a setting a config layer carries that sdd reads past:
+// a value it does not know, or a key that layer may not set.
+type IgnoredSetting struct {
+	Key    string
+	Reason string
+}
+
+// IgnoredSettings returns the settings in one config layer that sdd reads
+// past. committed marks the shared .sdd/config.yaml.
+func IgnoredSettings(layer BaseConfig, committed bool) []IgnoredSetting {
+	var ignored []IgnoredSetting
+	if reason := ignoredDialogueMode(layer.Dialogue.Mode, committed); reason != "" {
+		ignored = append(ignored, IgnoredSetting{Key: "dialogue.mode", Reason: reason})
+	}
+	return ignored
+}
+
+const personalOnlyReason = "only the user-global config or config.local.yaml may set it"
+
+func ignoredDialogueMode(mode DialogueMode, committed bool) string {
+	switch {
+	case mode == "":
+		return ""
+	case committed:
+		return personalOnlyReason
+	case mode != DialogueGuided && mode != DialogueAuto:
+		return fmt.Sprintf("%q is not %s or %s", mode, DialogueGuided, DialogueAuto)
+	}
+	return ""
+}
+
+// HonoredCommitted returns the committed layer without the settings only a
+// person's own config may make.
+func HonoredCommitted(committed *PerRepoConfig) *PerRepoConfig {
+	if committed == nil || committed.Dialogue.Mode == "" {
+		return committed
+	}
+	honored := *committed
+	honored.Dialogue.Mode = ""
+	return &honored
 }
 
 // SessionsConfig holds settings for engine session lifetime.
@@ -347,6 +413,9 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	out.LLM = mergeLLMConfig(base.LLM, overlay.LLM)
 	out.Embedding = mergeEmbeddingConfig(base.Embedding, overlay.Embedding)
 	out.Sync = mergeSyncConfig(base.Sync, overlay.Sync)
+	if overlay.Dialogue.Mode != "" {
+		out.Dialogue.Mode = overlay.Dialogue.Mode
+	}
 	return out
 }
 
@@ -596,7 +665,12 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"# Background sync — controls how often the CLI auto-fetches to detect graph\n" +
 		"# changes from collaborators. Go duration string.\n" +
 		"# sync:\n" +
-		"#   cooldown: " + DefaultSyncCooldown + "\n"
+		"#   cooldown: " + DefaultSyncCooldown + "\n" +
+		"\n" +
+		"# Dialogue, set per person: mode: auto lets the agent take the\n" +
+		"# choices an engine session otherwise puts to you.\n" +
+		"# dialogue:\n" +
+		"#   mode: " + string(DialogueGuided) + "\n"
 }
 
 // ResolveSessionRetention returns the effective session retention from cfg.
@@ -639,6 +713,14 @@ func ResolveSyncCooldown(cfg *PerRepoConfig) time.Duration {
 		raw = cfg.Sync.Cooldown
 	}
 	return parsePositiveDuration(raw, DefaultSyncCooldown)
+}
+
+// ResolveDialogueMode returns the effective dialogue mode from cfg.
+func ResolveDialogueMode(cfg *PerRepoConfig) DialogueMode {
+	if cfg != nil && cfg.Dialogue.Mode == DialogueAuto {
+		return DialogueAuto
+	}
+	return DialogueGuided
 }
 
 // parsePositiveDuration reads a configured duration, falling back to a baked

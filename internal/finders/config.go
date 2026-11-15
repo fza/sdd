@@ -53,21 +53,25 @@ func (f *Finder) EffectiveConfig(q query.EffectiveConfigQuery) (*query.Effective
 }
 
 // UnknownConfigKeys reports the keys sdd read past because it does not know
-// them — the one computation behind every surface that says so, rather than
-// each deciding for itself what counts as unknown.
+// them, and the settings it read past because it may not honor them where
+// they stand — the one computation behind every surface that says so, rather
+// than each deciding for itself what counts as unknown.
 func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.UnknownConfigKeysResult, error) {
 	type layer struct {
-		path string
-		typ  reflect.Type
+		path      string
+		typ       reflect.Type
+		committed bool
 	}
 	var layers []layer
 	if f.repos != nil {
-		layers = append(layers, layer{f.repos.ConfigPath(), reflect.TypeFor[repos.GlobalConfig]()})
+		layers = append(layers, layer{path: f.repos.ConfigPath(), typ: reflect.TypeFor[repos.GlobalConfig]()})
 	}
 	if q.SDDDir != "" {
-		for _, name := range []string{"config.yaml", "config.local.yaml"} {
-			layers = append(layers, layer{filepath.Join(q.SDDDir, name), reflect.TypeFor[model.PerRepoConfig]()})
-		}
+		perRepo := reflect.TypeFor[model.PerRepoConfig]()
+		layers = append(layers,
+			layer{path: filepath.Join(q.SDDDir, "config.yaml"), typ: perRepo, committed: true},
+			layer{path: filepath.Join(q.SDDDir, "config.local.yaml"), typ: perRepo},
+		)
 	}
 
 	result := &query.UnknownConfigKeysResult{}
@@ -85,6 +89,13 @@ func (f *Finder) UnknownConfigKeys(q query.UnknownConfigKeysQuery) (*query.Unkno
 		}
 		for _, k := range keys {
 			result.Keys = append(result.Keys, query.UnknownConfigKey{File: l.path, Key: k})
+		}
+		var settings model.BaseConfig
+		if err := model.UnmarshalYAML(data, &settings); err != nil {
+			return nil, err
+		}
+		for _, ignored := range model.IgnoredSettings(settings, l.committed) {
+			result.Ignored = append(result.Ignored, query.IgnoredConfigSetting{File: l.path, Key: ignored.Key, Reason: ignored.Reason})
 		}
 	}
 	return result, nil

@@ -7,6 +7,11 @@ handle, resume_session with this session's handle re-serves these moves with
 their current step and schema. Other open dialogues never appear on this
 surface — they are the user's to name, by handing over a handle.`
 
+const autonomousOpenThreadsIntro = `This dialogue's own open threads, in continuation order — finish or park
+each before you conclude the session. A move listed here resumes through next
+on its instance id; if you have lost that handle, resume_session with this
+session's handle re-serves these moves with their current step and schema.`
+
 const openThreadsReminder = "(this dialogue's own open threads, in continuation order — offer continuations as before)"
 
 // concludedThreadsIntro heads the same per-thread listing on a conclude serve,
@@ -17,3 +22,6 @@ const concludedThreadsIntro = `Threads this session leaves behind, unfinished. T
 them resumes, and nothing reopens them. Tell the user plainly what was left
 open — if any of it still matters, it is picked up in a new session by starting
 the move again.`
+
+const autonomousConcludedThreadsIntro = `Threads this session leaves behind, unfinished. The session is over: none of
+them resumes, and nothing reopens them. Name them in what you report.`

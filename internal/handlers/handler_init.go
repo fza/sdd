@@ -290,31 +290,9 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	// Write the participant into .sdd/config.local.yaml when a value was
-	// resolved by the caller. Preserves any other keys already present in
-	// the file (notably the llm: block from d-tac-bes) by operating on a
-	// yaml.Node tree rather than re-marshaling the Config struct.
-	if cmd.Participant != "" {
-		configLocalPath := filepath.Join(sddDir, "config.local.yaml")
-		existing, readErr := os.ReadFile(configLocalPath)
-		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
-			return fmt.Errorf("reading %s: %w", configLocalPath, readErr)
-		}
-		updated, err := model.SetYAMLField(existing, "participant", cmd.Participant)
-		if err != nil {
-			return fmt.Errorf("updating %s: %w", configLocalPath, err)
-		}
-		if !bytes.Equal(existing, updated) {
-			if err := os.WriteFile(configLocalPath, updated, 0o644); err != nil {
-				return fmt.Errorf("writing %s: %w", configLocalPath, err)
-			}
-			// Deliberately NOT appended to `touched`: config.local.yaml is
-			// gitignored, so staging it would fail the commit. The write
-			// is still recorded via OnParticipantWritten for CLI feedback.
-			if cmd.OnParticipantWritten != nil {
-				cmd.OnParticipantWritten(configLocalPath, cmd.Participant)
-			}
-		}
+	// The personal settings init resolved land in .sdd/config.local.yaml.
+	if err := writeLocalSettings(sddDir, cmd); err != nil {
+		return err
 	}
 
 	// Write .sdd/meta.json when absent. MinimumVersion is populated only on
@@ -1025,6 +1003,44 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 		}
 		if target != "" && cmd.OnIndexMigrated != nil {
 			cmd.OnIndexMigrated(legacy, target, moved)
+		}
+	}
+	return nil
+}
+
+// writeLocalSettings writes each personal setting init resolved into the
+// machine-local config, keeping the other keys of the file in place.
+func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
+	settings := []struct{ key, value string }{
+		{"participant", cmd.Participant},
+		{"dialogue.mode", string(cmd.DialogueMode)},
+	}
+	configLocalPath := filepath.Join(sddDir, "config.local.yaml")
+	for _, setting := range settings {
+		if setting.value == "" {
+			continue
+		}
+		existing, err := os.ReadFile(configLocalPath)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("reading %s: %w", configLocalPath, err)
+		}
+		updated, err := model.SetYAMLField(existing, setting.key, setting.value)
+		if err != nil {
+			return fmt.Errorf("updating %s: %w", configLocalPath, err)
+		}
+		if bytes.Equal(existing, updated) {
+			continue
+		}
+		if err := os.WriteFile(configLocalPath, updated, 0o644); err != nil {
+			return fmt.Errorf("writing %s: %w", configLocalPath, err)
+		}
+		// Not committed: config.local.yaml is gitignored, so staging it would
+		// fail the commit.
+		if setting.key == "participant" && cmd.OnParticipantWritten != nil {
+			cmd.OnParticipantWritten(configLocalPath, setting.value)
+		}
+		if setting.key != "participant" && cmd.OnLocalSettingWritten != nil {
+			cmd.OnLocalSettingWritten(configLocalPath, setting.key, setting.value)
 		}
 	}
 	return nil

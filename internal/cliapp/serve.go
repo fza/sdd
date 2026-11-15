@@ -204,6 +204,7 @@ func localBearerAuth(token string, next http.Handler) http.Handler {
 type localRuntimeAccess struct {
 	project      sdd.ProjectID
 	participant  string
+	dialogue     sdd.Dialogue
 	runtime      *sdd.ProjectRuntime
 	dependencies *cachedDependencies
 }
@@ -289,6 +290,12 @@ func (a *localRuntimeAccess) ResolveParticipant(context.Context, sdd.Principal, 
 	return a.participant, nil
 }
 
+// ResolveDialogue returns the dialogue mode read from the person's config
+// when the server started.
+func (a *localRuntimeAccess) ResolveDialogue(context.Context, sdd.Principal, sdd.ProjectID) (sdd.Dialogue, error) {
+	return a.dialogue, nil
+}
+
 func (a *localRuntimeAccess) ListProjects(context.Context, sdd.Principal) (sdd.ProjectList, error) {
 	return sdd.ProjectList{Projects: []sdd.ProjectSummary{{ProjectRef: a.runtime.Project(), CanRead: true, CanWrite: true, State: sdd.ProjectReady}}}, nil
 }
@@ -307,6 +314,33 @@ func (a *localRuntimeAccess) AuthorizeSession(ctx context.Context, request sdd.S
 
 func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principal, _ sdd.ProjectID, dependency sdd.RepoID) (*sdd.ProjectRuntime, error) {
 	return a.dependencies.resolve(dependency)
+}
+
+// localDialogue reads dialogue.mode and the layer that sets it; the
+// committed layer arrives without it.
+func localDialogue(sddDir string) (sdd.Dialogue, error) {
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		return sdd.Dialogue{}, err
+	}
+	global, err := repos.LoadConfigFrom(loc.ConfigPath)
+	if err != nil {
+		return sdd.Dialogue{}, err
+	}
+	committed, local, err := meta.ReadConfigLayers(sddDir)
+	if err != nil {
+		return sdd.Dialogue{}, err
+	}
+	sources := map[model.ConfigValueSource]string{
+		model.ConfigSourceGlobal: loc.ConfigPath,
+		model.ConfigSourceLocal:  filepath.Join(sddDir, "config.local.yaml"),
+	}
+	for _, value := range model.EffectiveConfigValues(global.BaseConfig, committed, local) {
+		if value.Key == "dialogue.mode" {
+			return sdd.Dialogue{Mode: value.Value, Source: sources[value.Source]}, nil
+		}
+	}
+	return sdd.Dialogue{Mode: string(model.DialogueGuided)}, nil
 }
 
 func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddDir string, cfg *model.PerRepoConfig, registry *repos.Registry, runner pkgllm.Runner) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
@@ -385,8 +419,12 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	if crossEmbedder.Embedder != nil {
 		memberEmbedder = crossEmbedder
 	}
+	dialogue, err := localDialogue(sddDir)
+	if err != nil {
+		return nil, "", sdd.RequestIdentity{}, err
+	}
 	access := &localRuntimeAccess{
-		project: project, participant: participant, runtime: runtime,
+		project: project, participant: participant, dialogue: dialogue, runtime: runtime,
 		dependencies: &cachedDependencies{registry: registry, closure: finders.New(finders.Options{Config: cfg, Repos: registry}), build: func(cache repos.Cache, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
 			// The cache as a project of its own: its committed config supplies
 			// the graph layout, the language, and the dependencies its horizon

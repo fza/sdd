@@ -1,0 +1,77 @@
+package finders_test
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/networkteam/sdd/internal/finders"
+	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/repos"
+)
+
+func TestUnknownConfigKeysReportsIgnoredDialogueMode(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+	sddDir := filepath.Join(dir, ".sdd")
+	files := map[string]string{
+		globalPath:                                 "dialogue:\n  mode: sometimes\n",
+		filepath.Join(sddDir, "config.yaml"):       "repo_id: example.com/r\ndialogue:\n  mode: auto\n",
+		filepath.Join(sddDir, "config.local.yaml"): "dialogue:\n  mode: auto\n",
+	}
+	for path, content := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := finders.New(finders.Options{Repos: repos.NewRegistry(repos.Locations{ConfigPath: globalPath, CacheRoot: filepath.Join(dir, "cache")})})
+
+	result, err := f.UnknownConfigKeys(query.UnknownConfigKeysQuery{SDDDir: sddDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, s := range result.Ignored {
+		if s.Key != "dialogue.mode" || s.Reason == "" {
+			t.Errorf("an ignored setting should name its key and why, got %+v", s)
+		}
+		got[s.File] = s.Reason
+	}
+	if _, ok := got[globalPath]; !ok {
+		t.Error("an unknown global value should be reported")
+	}
+	if _, ok := got[filepath.Join(sddDir, "config.yaml")]; !ok {
+		t.Error("a committed mode should be reported")
+	}
+	if _, ok := got[filepath.Join(sddDir, "config.local.yaml")]; ok {
+		t.Error("a local auto should be honored, not reported")
+	}
+}
+
+func TestUnknownConfigKeysReportsTheFormerAutonomousDialogueMode(t *testing.T) {
+	dir := t.TempDir()
+	sddDir := filepath.Join(dir, ".sdd")
+	localPath := filepath.Join(sddDir, "config.local.yaml")
+	if err := os.MkdirAll(sddDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte("dialogue:\n  mode: autonomous\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := finders.New(finders.Options{Repos: repos.NewRegistry(repos.Locations{ConfigPath: filepath.Join(dir, "global.yaml"), CacheRoot: filepath.Join(dir, "cache")})})
+
+	result, err := f.UnknownConfigKeys(query.UnknownConfigKeysQuery{SDDDir: sddDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Ignored) != 1 {
+		t.Fatalf("the former autonomous value should be reported once as ignored, got %+v", result.Ignored)
+	}
+	if got := result.Ignored[0]; got.File != localPath || got.Key != "dialogue.mode" || !strings.Contains(got.Reason, "guided or auto") {
+		t.Errorf("the ignored setting should name its file, its key and the allowed values, got %+v", got)
+	}
+}
