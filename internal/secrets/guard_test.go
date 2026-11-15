@@ -63,6 +63,25 @@ func TestGuardRunner(t *testing.T) {
 	}
 }
 
+// A request that marks no parts at all, not even none, is refused: an
+// operation that forgot to mark its draft must not pass it unscanned.
+func TestGuardRunnerRefusesAnUnmarkedRequest(t *testing.T) {
+	calls := 0
+	guarded := secrets.GuardRunner(llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) {
+		calls++
+		return llm.Result{Text: "ok"}, nil
+	}))
+
+	_, err := guarded.Run(t.Context(), llm.Request{UserPrompt: "A clean draft."})
+
+	if err == nil || !strings.Contains(err.Error(), "marks no new parts") {
+		t.Errorf("an unmarked request should be refused: %v", err)
+	}
+	if calls != 0 {
+		t.Error("an unmarked request must not reach the provider")
+	}
+}
+
 func TestGuardEmbedder(t *testing.T) {
 	credential := credentialSample(t)
 	cases := []struct {

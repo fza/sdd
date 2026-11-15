@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -13,19 +14,26 @@ import (
 type newPartsKey struct{}
 
 // WithNewParts marks the parts of the requests made under ctx that are new to
-// the graph, such as a draft's body. GuardRunner scans only these.
+// the graph, such as a draft's body. GuardRunner scans only these. A request
+// carrying stored entries alone marks none: WithNewParts(ctx).
 func WithNewParts(ctx context.Context, parts ...Part) context.Context {
 	marked, _ := ctx.Value(newPartsKey{}).([]Part)
 	return context.WithValue(ctx, newPartsKey{}, append(slices.Clip(marked), parts...))
 }
 
+// ErrUnmarked refuses a request whose caller never said which text is new.
+var ErrUnmarked = errors.New("refusing to send to the model provider: the request marks no new parts (secrets.WithNewParts)")
+
 // GuardRunner refuses every LLM request whose new parts (see WithNewParts)
-// hold a credential. Stored entries a prompt carries as context pass: a hit in
-// one would otherwise block every request pulling it in, and sdd lint reports
-// it.
+// hold a credential, and every request that marks none at all. Stored entries
+// a prompt carries as context pass: a hit in one would otherwise block every
+// request pulling it in, and sdd lint reports it.
 func GuardRunner(runner llm.Runner) llm.Runner {
 	return llm.RunnerFunc(func(ctx context.Context, req llm.Request) (llm.Result, error) {
-		parts, _ := ctx.Value(newPartsKey{}).([]Part)
+		parts, marked := ctx.Value(newPartsKey{}).([]Part)
+		if !marked {
+			return llm.Result{}, ErrUnmarked
+		}
 		where, findings, err := scanParts(parts)
 		if err != nil {
 			return llm.Result{}, err
