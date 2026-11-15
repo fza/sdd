@@ -264,11 +264,16 @@ sdd runs `claude -p` isolated:
 
 Every variable that moves a call off the login, such as a key, an endpoint, a provider switch, `ANTHROPIC_PROFILE` or a host-managed credential, sits in Claude's own name space. Provider credentials outside it, such as `AWS_*`, take effect only through a `CLAUDE_CODE_USE_*` switch inside it. To use an API key or another variable of that name space, set `llm.claude_cli.credentials: env`, or use `provider: anthropic`. With `env`, `claude -p` loads your settings and can also run on another provider such as Bedrock or Vertex. A proxy or CA set only in your settings' `env` block is left out in `login` mode: export it, or use `env`.
 
-One file-borne route stays open in `login` mode: an Anthropic Console profile. Claude Code looks for it in `ANTHROPIC_CONFIG_DIR`, else `$XDG_CONFIG_HOME/anthropic`, else `~/.config/anthropic`, under the name in `<dir>/active_config`, else `default`. A profile of type `oidc_federation` takes precedence over your stored claude.ai login and may carry its own `base_url`, so with one the calls run on that profile. A `user_oauth` profile answers only when no claude.ai login is stored. Without such a profile, `login` mode bills your Claude Code login.
+Two file-borne routes stay open in `login` mode:
+
+- The `env` map of Claude Code's global config, `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`. Claude Code applies it whatever `--setting-sources` says, so a key, endpoint or provider switch there moves the call off your login.
+- An Anthropic Console profile. Claude Code looks for it in `ANTHROPIC_CONFIG_DIR`, else `$XDG_CONFIG_HOME/anthropic`, else `~/.config/anthropic`, under the name in `<dir>/active_config`, else `default`. A profile of type `oidc_federation` takes precedence over your stored claude.ai login and may carry its own `base_url`, so with one the calls run on that profile, unless `CLAUDE_CODE_OAUTH_TOKEN` or its file descriptor is set. A `user_oauth` profile answers only when no claude.ai login is stored.
+
+Without either, `login` mode bills your Claude Code login.
 
 `claude-cli` needs Claude Code 2.1.169 or later, the first version with `--safe-mode`. An older `claude` stops with `unknown option`, and sdd shows that message.
 
-If you ran `claude-cli` on an exported `ANTHROPIC_API_KEY` without a Claude Code login, calls now fail with `Not logged in`. Sign in to Claude Code with `/login`, or set `llm.claude_cli.credentials: env`. With an Anthropic Console profile as described above, the calls run on that profile instead of failing. Any other `ANTHROPIC_*` or `CLAUDE_*` variable a setup relied on needs `llm.claude_cli.credentials: env` too.
+If you ran `claude-cli` on an exported `ANTHROPIC_API_KEY` without a Claude Code login, calls now fail with `Not logged in`. Sign in to Claude Code with `/login`, or set `llm.claude_cli.credentials: env`. With one of the two file-borne routes above, the calls run on it instead of failing. Any other `ANTHROPIC_*` or `CLAUDE_*` variable a setup relied on needs `llm.claude_cli.credentials: env` too.
 
 ## Embedding providers
 
