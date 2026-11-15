@@ -99,3 +99,12 @@ func TestManifestCapChangeKeepsPreviousCapUntilSettled(t *testing.T) {
 		})
 	}
 }
+
+func TestManifestCapChangeDuringAPendingReembedKeepsTheOldestCap(t *testing.T) {
+	caps := index.RuneCaps{MaxRunes: 4096}
+	caps.SetMaxRunes(1024)
+	caps.SetMaxRunes(512)
+	if got := caps.ReadMaxRunes(); !slices.Equal(got, []int{512, 4096}) {
+		t.Errorf("a second change before the re-embed settles should keep the cap every entry is still stored under, reads %v", got)
+	}
+}

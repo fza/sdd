@@ -56,13 +56,16 @@ type RuneCaps struct {
 
 // SetMaxRunes records maxRunes as the cap rows are chunked under, holding the
 // cap it replaces as PrevMaxRunes until SettleMaxRunes, reporting whether the
-// caps changed.
+// caps changed. While a re-embed is pending, PrevMaxRunes keeps the cap it
+// started from: most entries are still stored only under that one.
 func (m *RuneCaps) SetMaxRunes(maxRunes int) bool {
 	if m.MaxRunes == maxRunes {
 		return false
 	}
-	prev := m.MaxRunes
-	m.PrevMaxRunes = &prev
+	if m.PrevMaxRunes == nil {
+		prev := m.MaxRunes
+		m.PrevMaxRunes = &prev
+	}
 	m.MaxRunes = maxRunes
 	return true
 }
