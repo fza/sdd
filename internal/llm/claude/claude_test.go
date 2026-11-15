@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -24,15 +25,26 @@ const wireSchema = `{"type":"object","properties":{"reasoning":{"type":"string"}
 // environment and stdin into dir and prints response as the CLI's JSON output.
 func fakeCLI(t *testing.T, response string) string {
 	t.Helper()
+	return fakeCLIExiting(t, response, "", 0)
+}
+
+// fakeCLIExiting is fakeCLI that also prints stderr and exits with code.
+func fakeCLIExiting(t *testing.T, response, stderr string, code int) string {
+	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "response.json"), []byte(response), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stderr"), []byte(stderr), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	script := "#!/bin/sh\n" +
 		"for a in \"$@\"; do printf '%s\\0' \"$a\"; done > '" + dir + "/args'\n" +
 		"env > '" + dir + "/env'\n" +
 		"cat > '" + dir + "/stdin'\n" +
-		"cat '" + dir + "/response.json'\n"
+		"cat '" + dir + "/response.json'\n" +
+		"cat '" + dir + "/stderr' >&2\n" +
+		"exit " + strconv.Itoa(code) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +122,92 @@ func TestRunCredentials(t *testing.T) {
 				t.Errorf("settings files should load only with credentials env, got %q", recordedArgs(t, dir))
 			}
 		})
+	}
+}
+
+// A failed call says what the CLI reported, on stdout or stderr, and a login
+// failure in login mode names the ways to authenticate.
+func TestRunReportsCLIFailure(t *testing.T) {
+	const loginHint = "llm.claude_cli.credentials: env"
+	for _, tc := range []struct {
+		name        string
+		credentials model.ClaudeCLICredentials
+		stdout      string
+		stderr      string
+		code        int
+		reported    string
+		whole       bool
+		hinted      bool
+	}{
+		{
+			name:        "signed out",
+			credentials: model.ClaudeCLICredentialsLogin,
+			stdout:      `{"type":"result","is_error":true,"result":"Not logged in · Please run /login"}`,
+			code:        1,
+			reported:    "Not logged in · Please run /login",
+			hinted:      true,
+		},
+		{
+			name:        "rejected credential",
+			credentials: model.ClaudeCLICredentialsLogin,
+			stdout:      `{"type":"result","is_error":true,"result":"API Error: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\"}}"}`,
+			code:        1,
+			reported:    "authentication_error",
+			hinted:      true,
+		},
+		{
+			name:        "signed out with credentials env",
+			credentials: model.ClaudeCLICredentialsEnv,
+			stdout:      `{"type":"result","is_error":true,"result":"Not logged in · Please run /login"}`,
+			code:        1,
+			reported:    "Not logged in · Please run /login",
+		},
+		{
+			name:        "unknown option",
+			credentials: model.ClaudeCLICredentialsLogin,
+			stderr:      "error: unknown option '--safe-mode'\n",
+			code:        1,
+			reported:    "error: unknown option '--safe-mode'",
+		},
+		{
+			name:        "error result on a clean exit",
+			credentials: model.ClaudeCLICredentialsLogin,
+			stdout:      `{"type":"result","is_error":true,"result":"API Error: 500 overloaded"}`,
+			reported:    "claude -p: reported an error: API Error: 500 overloaded",
+			whole:       true,
+		},
+		{
+			name:        "silent exit",
+			credentials: model.ClaudeCLICredentialsLogin,
+			code:        1,
+			reported:    "claude -p: exit status 1",
+			whole:       true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeCLIExiting(t, tc.stdout, tc.stderr, tc.code)
+			_, err := claude.NewRunner("sonnet", tc.credentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
+			if err == nil {
+				t.Fatal("a call the CLI reports as failed should fail")
+			}
+			if tc.whole && err.Error() != tc.reported {
+				t.Errorf("the error should say what the CLI reported and nothing more, got %q", err)
+			}
+			if !strings.Contains(err.Error(), tc.reported) {
+				t.Errorf("the error should carry what the CLI reported, got %q", err)
+			}
+			if strings.Contains(err.Error(), loginHint) != tc.hinted {
+				t.Errorf("only a login failure in login mode should name the credentials setting, got %q", err)
+			}
+		})
+	}
+}
+
+func TestRunRefusesOutputThatIsNotJSON(t *testing.T) {
+	fakeCLI(t, "plain text")
+	_, err := claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
+	if err == nil || !strings.Contains(err.Error(), "parsing claude JSON response") {
+		t.Fatalf("output that is not JSON should fail as such, got %v", err)
 	}
 }
 

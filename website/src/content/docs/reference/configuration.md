@@ -255,6 +255,10 @@ llm:
 
 sdd runs `claude -p` isolated: without tools or MCP servers, with `--safe-mode`, with `--no-session-persistence` so no transcript of the draft stays under `~/.claude`, in an empty temporary directory, and by default without any `ANTHROPIC_*` or `CLAUDE_CODE_USE_*` variable in its environment. Those variables carry API keys, tokens, endpoints and provider switches; `CLAUDE_CODE_OAUTH_TOKEN` belongs to the login and stays. By default `claude -p` also loads none of your settings files (`--setting-sources ""`), since their `env` block and `apiKeyHelper` apply even in safe mode. Your project's instruction files, skills, hooks and servers stay out of the prompt, and an exported key or provider switch cannot move the call off your Claude Code login. To use an API key, set `llm.claude_cli.credentials: env`, or use `provider: anthropic`. With `env`, `claude -p` can also run on another provider such as Bedrock or Vertex.
 
+`claude-cli` needs Claude Code 2.1.169 or later, the first version with `--safe-mode`. An older `claude` stops with `unknown option`, and sdd shows that message.
+
+If you ran `claude-cli` on an exported `ANTHROPIC_API_KEY` without a Claude Code login, calls now fail with `Not logged in`. Sign in to Claude Code with `/login`, or set `llm.claude_cli.credentials: env`.
+
 ## Embedding providers
 
 An embedding model turns each entry into a vector, so search finds entries by meaning. Without one, search matches keywords. `sdd info` shows `Search: vector,text` with an embedding provider and `Search: text` without.

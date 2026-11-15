@@ -4,6 +4,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -81,19 +82,18 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	cmd.Dir = workDir
 	cmd.Env = env
 	cmd.Stdin = strings.NewReader(req.Combined())
-	out, err := cmd.Output()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			err = fmt.Errorf("claude -p timed out (increase with --preflight-timeout)")
-		} else {
-			err = fmt.Errorf("claude -p: %w", err)
-		}
-		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: err}
+	out, runErr := cmd.Output()
+	if runErr != nil && ctx.Err() == context.DeadlineExceeded {
+		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("claude -p timed out (increase with --preflight-timeout)")}
 	}
 
 	var resp claudeResponse
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("parsing claude JSON response: %w", err)}
+	parseErr := json.Unmarshal(out, &resp)
+	if runErr != nil || resp.IsError {
+		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: r.failure(runErr, resp)}
+	}
+	if parseErr != nil {
+		return llm.Result{}, &llm.Error{Identity: r.identity(), Err: fmt.Errorf("parsing claude JSON response: %w", parseErr)}
 	}
 	text := resp.Result
 	if len(req.ResponseSchema) > 0 {
@@ -131,6 +131,41 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 			CostUSD:           resp.TotalCostUSD,
 		},
 	}, nil
+}
+
+var errReportedError = errors.New("reported an error")
+
+// loginFailureMarkers are what the CLI reports when no credential it can use
+// answers: no login, or a rejected one.
+var loginFailureMarkers = []string{"/login", "authentication_error"}
+
+// failure describes a failed call by what the CLI reported: the result of an
+// is_error response and its stderr. In login mode a login failure names the
+// ways out, since a key exported for the CLI no longer reaches it.
+func (r *Runner) failure(runErr error, resp claudeResponse) error {
+	var reported []string
+	if resp.IsError && resp.Result != "" {
+		reported = append(reported, resp.Result)
+	}
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
+			reported = append(reported, stderr)
+		}
+	}
+	cause := runErr
+	if cause == nil {
+		cause = errReportedError
+	}
+	if len(reported) == 0 {
+		return fmt.Errorf("claude -p: %w", cause)
+	}
+	detail := strings.Join(reported, "; ")
+	err := fmt.Errorf("claude -p: %w: %s", cause, detail)
+	if r.credentials != model.ClaudeCLICredentialsEnv && slices.ContainsFunc(loginFailureMarkers, func(marker string) bool { return strings.Contains(detail, marker) }) {
+		return fmt.Errorf("%w (sign in to Claude Code with /login, or set llm.claude_cli.credentials: env to authenticate from the environment)", err)
+	}
+	return err
 }
 
 // scrubbedEnv returns env without the credential variables, matched by name so
