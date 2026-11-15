@@ -46,10 +46,14 @@ type Runner struct {
 	useCache bool
 
 	// ollama sizes num_ctx per call: Ollama cuts a prompt longer than its
-	// context without an error. The option lives on the shared client, so
-	// calls take turns setting it.
+	// context without an error. gollm reads options from the client on every
+	// attempt, so each num_ctx gets a client of its own and calls of one size
+	// run side by side.
 	ollama       bool
 	ollamaMu     sync.Mutex
+	formats      map[upstream.LLM]clientFormat
+	sized        map[sizedKey]upstream.LLM
+	newClient    clientFactory
 	outputTokens int
 
 	structured *structuredOutput
@@ -181,14 +185,17 @@ func NewRunner(cfg model.LLMConfig) (*Runner, error) {
 		host:         endpointHost(cfg.Provider, cfg.Model, cfgOpts),
 		useCache:     useCache,
 		ollama:       cfg.Provider == "ollama",
+		formats:      map[upstream.LLM]clientFormat{},
+		sized:        map[sizedKey]upstream.LLM{},
+		newClient:    newClient,
 		outputTokens: maxTokens,
 	}
 
-	runner.client, err = newClient("", nil)
+	runner.client, err = runner.buildClient("", nil)
 	if err != nil {
 		return nil, err
 	}
-	runner.structured, err = newStructuredOutput(cfg, mode, newClient)
+	runner.structured, err = newStructuredOutput(cfg, mode, runner.buildClient)
 	if err != nil {
 		return nil, err
 	}
@@ -287,9 +294,11 @@ func (r *Runner) generate(ctx context.Context, client upstream.LLM, req llm.Requ
 	prompt := upstream.NewPrompt(req.UserPrompt, opts...)
 
 	if r.ollama {
-		r.ollamaMu.Lock()
-		defer r.ollamaMu.Unlock()
-		client.SetOption("options", map[string]any{"num_ctx": ollamaContextSize(req, r.outputTokens)})
+		sized, err := r.sizedClient(client, ollamaContextSize(req, r.outputTokens))
+		if err != nil {
+			return llm.Result{}, &llm.Error{Identity: r.identity(), Err: err}
+		}
+		client = sized
 	}
 	resp, err := client.GenerateWithUsage(ctx, prompt, genOpts...)
 	if err != nil {
@@ -404,11 +413,68 @@ func needsAPIKey(provider string) bool {
 // with.
 const ollamaUncappedOutput = 8192
 
+// ollamaMinContext is the smallest num_ctx an Ollama call carries.
+const ollamaMinContext = 16384
+
 // ollamaContextSize is the num_ctx an Ollama call carries: the prompt at 3
-// characters a token, plus the output reserve.
+// characters a token plus the output reserve, rounded up to a power of two.
+// Ollama reloads the model when num_ctx changes, so calls of similar size
+// share one value.
 func ollamaContextSize(req llm.Request, outputTokens int) int {
 	if outputTokens <= 0 {
 		outputTokens = ollamaUncappedOutput
 	}
-	return (len(req.SystemPrompt)+len(req.UserPrompt))/3 + 1 + outputTokens
+	need := (len(req.SystemPrompt)+len(req.UserPrompt))/3 + 1 + outputTokens
+	size := ollamaMinContext
+	for size < need {
+		size *= 2
+	}
+	return size
+}
+
+// sizedKey names an Ollama client by the client it is built like and the
+// num_ctx it carries.
+type sizedKey struct {
+	base upstream.LLM
+	size int
+}
+
+// clientFormat is the format option a client was built with.
+type clientFormat struct {
+	key   string
+	value any
+}
+
+// buildClient builds a client with the format option; for Ollama it serves
+// as its own sized client at the smallest num_ctx.
+func (r *Runner) buildClient(formatKey string, formatValue any) (upstream.LLM, error) {
+	client, err := r.newClient(formatKey, formatValue)
+	if err != nil || !r.ollama {
+		return client, err
+	}
+	client.SetOption("options", map[string]any{"num_ctx": ollamaMinContext})
+	r.ollamaMu.Lock()
+	defer r.ollamaMu.Unlock()
+	r.formats[client] = clientFormat{key: formatKey, value: formatValue}
+	r.sized[sizedKey{base: client, size: ollamaMinContext}] = client
+	return client, nil
+}
+
+// sizedClient returns the client built like base that carries num_ctx size,
+// created on first use.
+func (r *Runner) sizedClient(base upstream.LLM, size int) (upstream.LLM, error) {
+	r.ollamaMu.Lock()
+	defer r.ollamaMu.Unlock()
+	key := sizedKey{base: base, size: size}
+	if client, ok := r.sized[key]; ok {
+		return client, nil
+	}
+	format := r.formats[base]
+	client, err := r.newClient(format.key, format.value)
+	if err != nil {
+		return nil, err
+	}
+	client.SetOption("options", map[string]any{"num_ctx": size})
+	r.sized[key] = client
+	return client, nil
 }
