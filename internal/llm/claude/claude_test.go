@@ -123,7 +123,6 @@ func TestRunCredentials(t *testing.T) {
 		"CLAUDE_CODE_HOST_CREDS_FILE",
 		"CLAUDE_CODE_HOST_AUTH_ENV_VAR",
 		"CLAUDE_CODE_HOST_GATEWAY_LINEAGE",
-		"CLAUDE_CODE_ENTRYPOINT",
 		"SDD_TEST_UNRELATED",
 		// Windows reads environment names without regard to case.
 		"Anthropic_Api_Key",
@@ -186,6 +185,8 @@ func TestRunCredentials(t *testing.T) {
 		"CLAUDE_EFFORT",
 		"CLAUDE_CODE_MESSAGING_SOCKET",
 		"CLAUDE_CODE_MESSAGING_TOKEN",
+		"CLAUDE_CODE_ENTRYPOINT",
+		"CLAUDE_CODE_EXECPATH",
 	}
 	for _, tc := range []struct {
 		name          string

@@ -61,7 +61,8 @@ var loginEnvPrefixes = []string{"LC_", "XDG_"}
 // parentSessionEnvVars are what a Claude Code session hands its child
 // processes, sdd's server among them. Inherited, they would make the call
 // count itself as a nested session of that one, take over its session ID and
-// reach its messaging inbox; the call belongs to sdd, so every mode drops them.
+// launch, and reach its messaging inbox; the call belongs to sdd, so every mode
+// drops them.
 var parentSessionEnvVars = []string{
 	"CLAUDECODE",
 	"CLAUDE_CODE_SESSION_ID",
@@ -71,6 +72,8 @@ var parentSessionEnvVars = []string{
 	"CLAUDE_EFFORT",
 	"CLAUDE_CODE_MESSAGING_SOCKET",
 	"CLAUDE_CODE_MESSAGING_TOKEN",
+	"CLAUDE_CODE_ENTRYPOINT",
+	"CLAUDE_CODE_EXECPATH",
 }
 
 // Run executes claude -p --output-format json and parses the JSON response.

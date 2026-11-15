@@ -259,7 +259,7 @@ sdd runs `claude -p` isolated:
 - `--safe-mode`: instruction files, skills, plugins, hooks and your other customizations stay out of the prompt.
 - `--no-session-persistence`: no transcript of the draft stays under `~/.claude`.
 - An empty temporary working directory, removed after the call, so no project file is in reach either.
-- In every mode, none of the session markers a Claude Code session hands the processes it starts: `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_PID`, `CLAUDE_EFFORT`, and its messaging inbox, `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`. When an agent started sdd, the call would otherwise count itself as part of that agent's session.
+- In every mode, none of the session markers a Claude Code session hands the processes it starts: `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_PID`, `CLAUDE_EFFORT`, its launch, `CLAUDE_CODE_ENTRYPOINT` and `CLAUDE_CODE_EXECPATH`, and its messaging inbox, `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`. When an agent started sdd, the call would otherwise count itself as part of that agent's session.
 - With `llm.claude_cli.credentials: login`, the default, no user, project or local settings file loads (`--setting-sources ""`), since a settings file's `env` block and `apiKeyHelper` apply even in safe mode; managed policy settings still apply. The environment holds only these variables, matched without regard to case:
   - `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TMP`, `TEMP`, `TERM`, `COLORTERM`
   - `LANG` and `LC_*`, and the `XDG_*` directories
