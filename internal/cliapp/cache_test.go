@@ -14,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/cacheprune"
 	"github.com/networkteam/sdd/internal/cliapp"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/repos"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
@@ -108,6 +109,18 @@ func TestCachePruneCommand(t *testing.T) {
 	runGit(t, owned, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-q", "--allow-empty", "-m", "sdd: first")
 	runGit(t, owned, "remote", "add", "origin", "git@github.com:acme/unused.git")
 	runGit(t, owned, "update-ref", "refs/remotes/origin/main", "HEAD")
+	undropped := filepath.Join(dataHome(f.root), "sdd", "repos", "github.com", "acme", "graph", ".git")
+	if err := os.MkdirAll(undropped, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.write(t, "config/sdd/config.yaml", "repos:\n  - repo_id: github.com/acme/kept\n    clone_url: git@github.com:acme/kept.git\n")
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("github.com/acme/unused"); err != nil {
+		t.Fatal(err)
+	}
 	r := f.run(t, "cache", "prune")
 	if r.err != nil {
 		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)
@@ -119,6 +132,9 @@ func TestCachePruneCommand(t *testing.T) {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
 			t.Errorf("the clone no connection names and nothing uses should be gone, stat of %s says %v", dir, err)
 		}
+	}
+	if _, err := os.Stat(undropped); err != nil {
+		t.Errorf("a clone no repo remove dropped should stay, stat says %v", err)
 	}
 	info := f.run(t, "info")
 	if !strings.Contains(info.stdout, "Cache pruning: last run") {
