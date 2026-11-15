@@ -3,6 +3,7 @@ package roundproc_test
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -176,5 +177,51 @@ func TestIdentify(t *testing.T) {
 	eventually(t, "the process ending", func() bool {
 		_, err := roundproc.Identify(process.PID)
 		return errors.Is(err, roundproc.ErrEnded)
+	})
+}
+
+// endGroupHelper runs as the started round: it leaves a child behind in its
+// group, as an agent CLI past its timeout does, and ends its own group.
+const endGroupHelper = "SDD_ROUNDPROC_END_GROUP_DIR"
+
+// A round's process ends what its round left in its group, and so leaves no
+// agent CLI child running after a timeout.
+func TestEndOwnGroupEndsLeftoverProcesses(t *testing.T) {
+	if dir := os.Getenv(endGroupHelper); dir != "" {
+		child := exec.Command("sleep", "30")
+		if err := child.Start(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "child"), []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := roundproc.EndOwnGroup(); err != nil {
+			t.Fatal(err)
+		}
+		_ = child.Wait()
+		return
+	}
+	if err := roundproc.EndOwnGroup(); err != nil {
+		t.Fatalf("a process that leads no group of its own should end nothing: %v", err)
+	}
+	dir := t.TempDir()
+	t.Setenv(endGroupHelper, dir)
+	process, err := roundproc.Start(dir, filepath.Join(dir, "round.log"), os.Args[0], "-test.run=^TestEndOwnGroupEndsLeftoverProcesses$")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-process.PID, syscall.SIGKILL) })
+	var child int
+	eventually(t, "the round leaving a child", func() bool {
+		out, err := os.ReadFile(filepath.Join(dir, "child"))
+		child, _ = strconv.Atoi(strings.TrimSpace(string(out)))
+		return err == nil && child > 0
+	})
+	eventually(t, "the left child ending", func() bool {
+		return errors.Is(syscall.Kill(child, 0), syscall.ESRCH)
+	})
+	eventually(t, "the round's process ending", func() bool {
+		alive, err := roundproc.Alive(process)
+		return err == nil && !alive
 	})
 }

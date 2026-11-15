@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"syscall"
 )
@@ -95,6 +96,22 @@ func Stop(process, member Process) error {
 		}
 	}
 	err = syscall.Kill(-process.PID, syscall.SIGKILL)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return err
+}
+
+// EndOwnGroup ends the processes left in the calling process's group once
+// its round is over, such as an agent CLI's children a timeout left: only a
+// process Start started leads a group of its own, so any other caller ends
+// nothing. The caller ignores the signal it sends its group.
+func EndOwnGroup() error {
+	if syscall.Getpgrp() != os.Getpid() {
+		return nil
+	}
+	signal.Ignore(syscall.SIGTERM)
+	err := syscall.Kill(-os.Getpid(), syscall.SIGTERM)
 	if errors.Is(err, syscall.ESRCH) {
 		return nil
 	}
