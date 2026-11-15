@@ -28,9 +28,13 @@ func fakeCLI(t *testing.T, response string) string {
 	return fakeCLIExiting(t, response, "", 0)
 }
 
-// fakeCLIExiting is fakeCLI that also prints stderr and exits with code.
+// fakeCLIExiting is fakeCLI that also records its working directory, prints
+// stderr and exits with code.
 func fakeCLIExiting(t *testing.T, response, stderr string, code int) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in binary is a shell script")
+	}
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "response.json"), []byte(response), 0o644); err != nil {
 		t.Fatal(err)
@@ -41,6 +45,7 @@ func fakeCLIExiting(t *testing.T, response, stderr string, code int) string {
 	script := "#!/bin/sh\n" +
 		"for a in \"$@\"; do printf '%s\\0' \"$a\"; done > '" + dir + "/args'\n" +
 		"env > '" + dir + "/env'\n" +
+		"printf '%s' \"$PWD\" > '" + dir + "/cwd'\n" +
 		"cat > '" + dir + "/stdin'\n" +
 		"cat '" + dir + "/response.json'\n" +
 		"cat '" + dir + "/stderr' >&2\n" +
@@ -338,53 +343,37 @@ func flagValue(args []string, flag string) (string, bool) {
 	return args[i+1], true
 }
 
-// What the child process actually sees is the whole point of the isolation, and
-// it is not inferable from the adapter's own state. A stand-in binary on PATH
-// reports its working directory back through the response the runner parses.
+// The child runs in a directory of its own, away from the project the call
+// started in, and the directory goes with the call, failed or not.
 func TestChildRunsIsolated(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in binary is a shell script")
-	}
-
-	binDir := t.TempDir()
-	script := filepath.Join(binDir, "claude")
-	body := `#!/bin/sh
-printf '{"result":"cwd=%s","usage":{"input_tokens":1,"output_tokens":2}}\n' "$PWD"
-`
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatalf("writing stand-in binary: %v", err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
 	invocationDir, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Getwd: %v", err)
 	}
+	for _, tc := range []struct {
+		name string
+		code int
+	}{
+		{"answered", 0},
+		{"failed", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := fakeCLIExiting(t, `{"type":"result","result":"ok","usage":{}}`, "", tc.code)
+			_, _ = claude.NewRunner("sonnet", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "U"})
 
-	res, err := claude.NewRunner("claude-sonnet-4-6", model.DefaultClaudeCLICredentials).Run(context.Background(), llm.Request{UserPrompt: "x"})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
+			raw, err := os.ReadFile(filepath.Join(dir, "cwd"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			childDir := string(raw)
+			if sameDir(t, childDir, invocationDir) {
+				t.Errorf("the child ran in the invocation's directory (%s), loading the project's own context", childDir)
+			}
+			if _, err := os.Stat(childDir); !os.IsNotExist(err) {
+				t.Errorf("working directory %s outlived the call (stat err %v)", childDir, err)
+			}
+		})
 	}
-
-	childDir := valueOf(res.Text, "cwd=")
-	if childDir == "" {
-		t.Fatalf("no working directory reported: %q", res.Text)
-	}
-	if sameDir(t, childDir, invocationDir) {
-		t.Errorf("the child ran in the invocation's directory (%s), loading the project's own context", childDir)
-	}
-	if _, err := os.Stat(childDir); !os.IsNotExist(err) {
-		t.Errorf("working directory %s outlived the call (stat err %v)", childDir, err)
-	}
-}
-
-func valueOf(text, key string) string {
-	_, rest, found := strings.Cut(text, key)
-	if !found {
-		return ""
-	}
-	value, _, _ := strings.Cut(rest, " ")
-	return value
 }
 
 // A temporary directory resolves through symlinks on macOS, so the comparison

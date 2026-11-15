@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -15,6 +16,9 @@ import (
 // fakeClaude puts a `claude` executable on PATH that runs the shell line then.
 func fakeClaude(t *testing.T, then string) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in binary is a shell script")
+	}
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" + then + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
