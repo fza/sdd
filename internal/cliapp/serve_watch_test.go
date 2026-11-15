@@ -154,6 +154,25 @@ func TestServeRefusesEveryCallWhileAConfigFileIsBroken(t *testing.T) {
 	})
 }
 
+// A session opened before serve started is told a change made while serve
+// runs.
+func TestServeTellsASessionOpenedBeforeItStartedOfAChange(t *testing.T) {
+	fixture := newAppFixture(t)
+	committed := readFixtureFile(t, filepath.Join(fixture.root, ".sdd", "config.yaml"))
+	var session string
+	fixture.serve(t, func(client *mcp.ClientSession) {
+		session = openServedSession(t, client)
+	})
+
+	fixture.serve(t, func(client *mcp.ClientSession) {
+		fixture.write(t, ".sdd/config.yaml", strings.Replace(committed, "language: de", "language: en", 1))
+		told := callServedOK(t, client, "info", map[string]any{"session": session})
+		if !strings.Contains(told.HostNotice, "- language: de -> en") {
+			t.Errorf("a session opened before serve started should be told the change, got %q", told.HostNotice)
+		}
+	})
+}
+
 // Every session open at a change is told it once, on its own next call; a
 // call naming no session is told it once too, and a session opened after
 // the change is not told it.
