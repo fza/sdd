@@ -66,6 +66,16 @@ func TestUncommitted(t *testing.T) {
 	ignored := writeIn(t, dir, ".claude/skills/SKILL.md", "a\n")
 	vanished := filepath.Join(dir, "gone.md")
 	notYetCreated := filepath.Join(dir, "later", "file.md")
+	// git warns on stderr, exit status 0, for a folder it cannot read.
+	locked := filepath.Join(dir, "locked")
+	if err := os.MkdirAll(filepath.Join(locked, "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	unreadable := filepath.Join(locked, "inner", "file.md")
 
 	cases := []struct {
 		name  string
@@ -76,6 +86,7 @@ func TestUncommitted(t *testing.T) {
 		{name: "drops an unchanged tracked path", paths: []string{unchanged, modified}, want: []string{modified}},
 		{name: "drops an ignored path", paths: []string{ignored}, want: nil},
 		{name: "drops a path that never existed", paths: []string{vanished, notYetCreated}, want: nil},
+		{name: "drops a path git warns about", paths: []string{unreadable}, want: nil},
 		{name: "keeps a directory with a change beneath it", paths: []string{filepath.Join(dir, "skills")}, want: []string{filepath.Join(dir, "skills")}},
 		{name: "nothing in, nothing out", paths: nil, want: nil},
 	}
