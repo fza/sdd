@@ -80,9 +80,10 @@ func ResolveConfig(global model.BaseConfig, sddDir string) (*model.PerRepoConfig
 
 // ReadConfigLayers returns the two per-repo config layers separately —
 // committed .sdd/config.yaml and machine-local .sdd/config.local.yaml —
-// each nil when its file is absent. The effective-config view needs the
-// layers for per-value provenance; everything else wants ReadConfig's
-// merged result.
+// each nil when its file is absent and each without the settings it may not
+// make (model.HonoredCommitted, model.HonoredLocal). The effective-config
+// view needs the layers for per-value provenance; everything else wants
+// ReadConfig's merged result.
 func ReadConfigLayers(sddDir string) (committed, local *model.PerRepoConfig, err error) {
 	committed, err = readConfigFile(filepath.Join(sddDir, "config.yaml"))
 	if err != nil {
@@ -92,7 +93,7 @@ func ReadConfigLayers(sddDir string) (committed, local *model.PerRepoConfig, err
 	if err != nil {
 		return nil, nil, err
 	}
-	return model.HonoredCommitted(committed), local, nil
+	return model.HonoredCommitted(committed), model.HonoredLocal(local), nil
 }
 
 func readConfigFile(path string) (*model.PerRepoConfig, error) {

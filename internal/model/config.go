@@ -141,6 +141,9 @@ type PerRepoConfig struct {
 	// dependency (clone URL, cache) is per-user and lives in the global
 	// config's repos list, never here.
 	Dependencies []RepoID `yaml:"dependencies,omitempty"`
+	// Events sets the sharing mode per event channel; only the committed
+	// .sdd/config.yaml sets it.
+	Events EventsConfig `yaml:"events,omitempty"`
 }
 
 // SyncConfig governs background sync awareness: the auto-fetch cooldown and
@@ -205,6 +208,17 @@ func ignoredDialogueMode(mode DialogueMode, committed bool) string {
 		return fmt.Sprintf("%q is not %s or %s", mode, DialogueGuided, DialogueAuto)
 	}
 	return ""
+}
+
+// HonoredLocal returns the machine-local layer without the settings only the
+// committed config sets.
+func HonoredLocal(local *PerRepoConfig) *PerRepoConfig {
+	if local == nil || len(local.Events.Channels) == 0 {
+		return local
+	}
+	honored := *local
+	honored.Events = EventsConfig{}
+	return &honored
 }
 
 // HonoredCommitted returns the committed layer without the settings only a
@@ -463,6 +477,7 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	if len(overlay.Dependencies) > 0 {
 		out.Dependencies = overlay.Dependencies
 	}
+	out.Events = mergeEventsConfig(base.Events, overlay.Events)
 	return &out
 }
 
