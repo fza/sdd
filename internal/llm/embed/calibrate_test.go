@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -582,12 +583,98 @@ func TestLoadOrCalibrateReprobesACapTheControlProbeDecided(t *testing.T) {
 		if second.MaxRunes != 1792 {
 			t.Errorf("an open re-probe should keep the stored cap, got %d", second.MaxRunes)
 		}
+		soon := dropping()
+		if _, err := localembed.LoadOrCalibrate(context.Background(), soon, dir, key); err != nil {
+			t.Fatal(err)
+		}
+		if soon.calls != 0 {
+			t.Errorf("an unverified cap should be probed again only after the cooldown, %d probes", soon.calls)
+		}
+		backdateReprobe(t, dir, time.Hour)
 		after := dropping()
 		if _, err := localembed.LoadOrCalibrate(context.Background(), after, dir, key); err != nil {
 			t.Fatal(err)
 		}
 		if after.calls == 0 {
-			t.Error("a cap an open re-probe left unverified should be probed on the next fill")
+			t.Error("a cap an open re-probe left unverified should be probed on a fill past the cooldown")
 		}
 	})
+
+	t.Run("parallel loads probe an unverified cap once", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		if _, err := localembed.LoadOrCalibrate(context.Background(), dropping(), dir, key); err != nil {
+			t.Fatal(err)
+		}
+		const loads = 8
+		embedders := make([]*countingEmbedder, loads)
+		var wg sync.WaitGroup
+		for i := range embedders {
+			embedders[i] = dropping()
+			wg.Go(func() {
+				if _, err := localembed.LoadOrCalibrate(context.Background(), embedders[i], dir, key); err != nil {
+					t.Error(err)
+				}
+			})
+		}
+		wg.Wait()
+		probing := 0
+		for _, emb := range embedders {
+			if emb.calls > 0 {
+				probing++
+			}
+		}
+		if probing != 1 {
+			t.Errorf("one of the parallel loads should re-probe, %d did", probing)
+		}
+	})
+}
+
+// backdateReprobe moves the last re-probe of the one calibration under dir
+// back by age.
+func backdateReprobe(t *testing.T, dir string, age time.Duration) {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "calibration-*.json"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("expected one calibration, found %v, %v", files, err)
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cal localembed.Calibration
+	if err := json.Unmarshal(data, &cal); err != nil {
+		t.Fatal(err)
+	}
+	if cal.ReprobedAt.IsZero() {
+		t.Fatal("the calibration should record its last re-probe")
+	}
+	cal.ReprobedAt = cal.ReprobedAt.Add(-age)
+	data, err = json.Marshal(cal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(files[0], data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCalibrateRetriesAnUnknownErrorOnce(t *testing.T) {
+	t.Parallel()
+	garbled := false
+	limited := limitedEndpoint(errors.New("input exceeds the model limit"))
+	emb := &countingEmbedder{tokensFor: func(text string) (int, error) {
+		if !garbled && !cjkText(text) && utf8.RuneCountInString(text) == 5750 {
+			garbled = true
+			return 0, errors.New("unexpected response")
+		}
+		return limited(text)
+	}}
+	cal, err := localembed.Calibrate(context.Background(), emb)
+	if err != nil {
+		t.Fatalf("Calibrate: %v", err)
+	}
+	if cal.MaxRunes != 1792 {
+		t.Errorf("one unknown error inside the limit should not lower the cap, got %d", cal.MaxRunes)
+	}
 }

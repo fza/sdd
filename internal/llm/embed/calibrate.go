@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/gofrs/flock"
 	"github.com/networkteam/slogutils"
 
 	pkgembed "github.com/networkteam/sdd/pkg/llm/embed"
@@ -46,11 +47,12 @@ const (
 // Unverified marks a cap a control probe decided (see attempt), which the
 // next load probes once more (see LoadOrCalibrate).
 type Calibration struct {
-	Method        string  `json:"method"`
-	LimitTokens   int     `json:"limit_tokens"`
-	TokensPerRune float64 `json:"tokens_per_rune"`
-	MaxRunes      int     `json:"max_runes"`
-	Unverified    bool    `json:"unverified,omitempty"`
+	Method        string    `json:"method"`
+	LimitTokens   int       `json:"limit_tokens"`
+	TokensPerRune float64   `json:"tokens_per_rune"`
+	MaxRunes      int       `json:"max_runes"`
+	Unverified    bool      `json:"unverified,omitempty"`
+	ReprobedAt    time.Time `json:"reprobed_at,omitzero"`
 }
 
 // Quantise rounds runes down to a multiple of CapQuantum.
@@ -140,9 +142,9 @@ const (
 	refusedByControl
 )
 
-// attempt sends one probe and reads its outcome. An answer that is an error
-// is a refusal. Any other failure gets the probe sent once more, and an answer
-// decides. A second failure that may be the endpoint's answer to this input,
+// attempt sends one probe and reads its outcome. An HTTP answer that is an
+// error is a refusal. Any other failure, an unknown error included, gets the
+// probe sent once more, and an answer decides. A second failure that may be the endpoint's answer to this input,
 // a dropped connection (endpoints that drop over-long input) or a server
 // error, counts as a refusal only when control, a size the endpoint accepted,
 // is still answered: refusedByControl, as a blip on both sends reads the same.
@@ -157,7 +159,8 @@ func attempt(ctx context.Context, emb pkgembed.Embedder, text, control string) (
 	if ctx.Err() != nil {
 		return 0, refused, ctx.Err()
 	}
-	if probeFailure(err) == answered {
+	var status *statusError
+	if probeFailure(err) == answered && errors.As(err, &status) {
 		return 0, refused, nil
 	}
 	tokens, err = probe(ctx, emb, text)
@@ -269,28 +272,78 @@ func LoadOrCalibrate(ctx context.Context, emb pkgembed.Embedder, dir, key string
 	return cal, nil
 }
 
-// reverify probes the endpoint of an unverified calibration once more. An
-// open outcome keeps stored, still unverified, for the next load. A cap at
-// least as high is stored verified; a lower one is stored as found.
-func reverify(ctx context.Context, emb pkgembed.Embedder, path string, stored Calibration) (Calibration, error) {
+// reprobeCooldown spaces the re-probes of an unverified cap. A stamp stored
+// with the calibration, rather than a memo in the process, also spaces them
+// across the separate processes CLI commands run in.
+const reprobeCooldown = 10 * time.Minute
+
+// reverify probes the endpoint of an unverified calibration once more, at
+// most once per reprobeCooldown and in one caller at a time: a caller that
+// finds the re-probe lock held, or the cooldown running, uses stored. An open
+// outcome keeps the cap unverified. A cap at least as high is stored
+// verified; a lower one is stored as found.
+func reverify(ctx context.Context, emb pkgembed.Embedder, path string, stored Calibration) (_ Calibration, err error) {
+	now := time.Now()
+	if now.Sub(stored.ReprobedAt) < reprobeCooldown {
+		return stored, nil
+	}
+	lock := flock.New(filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".lock"))
+	locked, err := lock.TryLock()
+	if err != nil {
+		return Calibration{}, fmt.Errorf("locking calibration %s: %w", path, err)
+	}
+	if !locked {
+		return stored, nil
+	}
+	defer func() { err = errors.Join(err, lock.Unlock()) }()
+	current, err := readCalibration(path)
+	if err != nil {
+		return Calibration{}, err
+	}
+	if !current.Unverified || now.Sub(current.ReprobedAt) < reprobeCooldown {
+		return current, nil
+	}
+	current.ReprobedAt = now
+	err = writeAtomic(path, current)
+	if err != nil {
+		return Calibration{}, err
+	}
 	cal, err := Calibrate(ctx, emb)
 	if ctx.Err() != nil {
 		return Calibration{}, ctx.Err()
 	}
 	if err != nil {
-		slogutils.FromContext(ctx).Info("calibration re-probe got no answer, keeping the unverified cap", "max_runes", stored.MaxRunes, "error", err)
-		return stored, nil
+		slogutils.FromContext(ctx).Info("calibration re-probe got no answer, keeping the unverified cap", "max_runes", current.MaxRunes, "error", err)
+		return current, nil
 	}
 	switch {
-	case cal.MaxRunes == stored.MaxRunes:
-		cal = stored
+	case cal.MaxRunes == current.MaxRunes:
+		cal = current
 		cal.Unverified = false
-	case cal.MaxRunes > stored.MaxRunes:
+	case cal.MaxRunes > current.MaxRunes:
 		cal.Unverified = false
+	}
+	if cal.Unverified {
+		cal.ReprobedAt = now
+	} else {
+		cal.ReprobedAt = time.Time{}
 	}
 	err = writeAtomic(path, cal)
 	if err != nil {
 		return Calibration{}, err
+	}
+	return cal, nil
+}
+
+func readCalibration(path string) (Calibration, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Calibration{}, fmt.Errorf("reading calibration %s: %w", path, err)
+	}
+	var cal Calibration
+	err = json.Unmarshal(data, &cal)
+	if err != nil {
+		return Calibration{}, fmt.Errorf("reading calibration %s: %w", path, err)
 	}
 	return cal, nil
 }
