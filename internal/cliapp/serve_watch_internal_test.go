@@ -239,3 +239,12 @@ func writeFile(t *testing.T, path, content string) {
 	}
 	writeWatched(t, path, content)
 }
+
+func TestServedConfigLayersNamesTheGlobalConfigOnAReadError(t *testing.T) {
+	reads := make([]configRead, servedConfigCount)
+	reads[globalConfigFile] = configRead{path: "/xdg/sdd/config.yaml", err: os.ErrPermission}
+	_, err := servedConfigLayers(reads)
+	if err == nil || !strings.Contains(err.Error(), "reading global config /xdg/sdd/config.yaml") {
+		t.Errorf("a global read error should name the global config, got %v", err)
+	}
+}

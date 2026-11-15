@@ -303,9 +303,16 @@ func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principa
 	return a.dependencies.resolve(dependency)
 }
 
+// The positions of the config files in what servedConfigFiles returns.
+const (
+	globalConfigFile = iota
+	committedConfigFile
+	localConfigFile
+	servedConfigCount
+)
+
 // servedConfigFiles names the config files serve resolves its config from,
-// existing or not: the user-global config and the project's committed and
-// machine-local layer.
+// existing or not.
 func servedConfigFiles() ([]string, error) {
 	loc, err := repos.DefaultLocations()
 	if err != nil {
@@ -315,33 +322,35 @@ func servedConfigFiles() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []string{loc.ConfigPath, filepath.Join(sddDir, "config.yaml"), filepath.Join(sddDir, "config.local.yaml")}, nil
+	paths := make([]string, servedConfigCount)
+	paths[globalConfigFile] = loc.ConfigPath
+	paths[committedConfigFile] = filepath.Join(sddDir, "config.yaml")
+	paths[localConfigFile] = filepath.Join(sddDir, "config.local.yaml")
+	return paths, nil
 }
 
-// servedConfigLayers parses the reads of the files servedConfigFiles names,
-// in its order.
+// servedConfigLayers parses the reads of the files servedConfigFiles names.
 func servedConfigLayers(reads []configRead) (model.ConfigLayers, error) {
-	for _, read := range reads {
-		if read.err != nil {
-			return model.ConfigLayers{}, read.err
-		}
-	}
 	var (
 		layers model.ConfigLayers
 		err    error
 	)
-	if reads[0].found {
-		global, err := repos.ParseConfigFile(reads[0].path, reads[0].data)
+	global := reads[globalConfigFile]
+	if global.err != nil {
+		return model.ConfigLayers{}, fmt.Errorf("reading global config %s: %w", global.path, global.err)
+	}
+	if global.found {
+		cfg, err := repos.ParseConfigFile(global.path, global.data)
 		if err != nil {
 			return model.ConfigLayers{}, err
 		}
-		layers.Global = global.BaseConfig
+		layers.Global = cfg.BaseConfig
 	}
-	layers.Project, err = perRepoLayer(reads[1])
+	layers.Project, err = perRepoLayer(reads[committedConfigFile])
 	if err != nil {
 		return model.ConfigLayers{}, err
 	}
-	layers.Local, err = perRepoLayer(reads[2])
+	layers.Local, err = perRepoLayer(reads[localConfigFile])
 	if err != nil {
 		return model.ConfigLayers{}, err
 	}
@@ -349,6 +358,9 @@ func servedConfigLayers(reads []configRead) (model.ConfigLayers, error) {
 }
 
 func perRepoLayer(read configRead) (*model.PerRepoConfig, error) {
+	if read.err != nil {
+		return nil, read.err
+	}
 	if !read.found {
 		return nil, nil
 	}
