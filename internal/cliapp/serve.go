@@ -58,13 +58,9 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 			},
 		),
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
-			runner, err := newRunner(cmd, "")
-			if err != nil {
-				return err
-			}
 			ctx = handlers.WithoutSyncReport(ctx)
 			watch, err := newConfigWatch(func() (string, error) { return resolveGraphDir(cmd) }, func() (*servedProject, error) {
-				return buildServedProject(ctx, cmd, runner)
+				return buildServedProject(ctx, cmd, "")
 			})
 			if err != nil {
 				return err
@@ -541,9 +537,11 @@ func buildServedApplication(ctx context.Context, cmd *cli.Command, watch *config
 }
 
 // buildServedProject resolves the project serve answers calls with from the
-// config layers as they are now. ctx is the server's, which the connected
-// dependencies the project builds later keep.
-func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Runner) (*servedProject, error) {
+// config layers as they are now. Its LLM client and the window sizing that
+// client's calls come from one resolved llm setting, timeoutFlag as in
+// newRunner. ctx is the server's, which the connected dependencies the
+// project builds later keep.
+func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag string) (*servedProject, error) {
 	graphDir, err := resolveGraphDir(cmd)
 	if err != nil {
 		return nil, err
@@ -641,6 +639,14 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	if cfg == nil || cfg.DefaultBranch == "" {
 		return nil, fmt.Errorf("default_branch is required in .sdd/config.yaml before serving mutation tools")
 	}
+	llmConfig, err := runnerConfig(cmd, timeoutFlag)
+	if err != nil {
+		return nil, err
+	}
+	runner, err := composedRunner(llmConfig)
+	if err != nil {
+		return nil, err
+	}
 	_, manager, err := defaultRepos()
 	if err != nil {
 		return nil, err
@@ -660,7 +666,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	connectedDeps := &connectedDependencies{registry: registry, manager: manager, home: home, rounds: rounds,
 		writer: sdd.RepoID(cfg.RepoID), connected: cfg.Connected,
 		build: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
-			return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, modelWindow(cfg.LLM), memberEmbedder, memberRuneCap, cacheRoot)
+			return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, modelWindow(llmConfig), memberEmbedder, memberRuneCap, cacheRoot)
 		}}
 	prefilter, err := projectPrefilter(cfg)
 	if err != nil {
@@ -681,7 +687,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
 		LLM:       runner,
 		Grounding: groundingPolicy(cfg),
-		Verifier:  verifierPolicy(cfg), Window: modelWindow(cfg.LLM), Checkout: os.DirFS(layout.WorkRoot),
+		Verifier:  verifierPolicy(cfg), Window: modelWindow(llmConfig), Checkout: os.DirFS(layout.WorkRoot),
 		Commits:   git.CLI{Dir: layout.WorkRoot},
 		Hooks:     hooks.New(hooks.Sources{GlobalConfig: locations.ConfigPath, Project: layout, LocalConfig: localConfigOverride}, hooks.NewStore(locations.StateRoot)),
 		Events:    events,

@@ -82,7 +82,7 @@ Without an embedding model, search by keyword still works. When you join a proje
 sdd config
 ```
 
-This lists every effective setting and where it comes from. The `sdd` server follows a change on the next tool call; only the `llm` settings need a restart of your agent.
+This lists every effective setting and where it comes from. The `sdd` server follows a change on the next tool call, so your agent needs no restart.
 
 ## 3. Set up the project
 
