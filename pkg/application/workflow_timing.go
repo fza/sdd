@@ -9,6 +9,7 @@ import (
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/textdiff"
 )
 
@@ -240,9 +241,13 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 	if err != nil {
 		return err
 	}
+	// The added and the removed list share one text allowance, so the
+	// playback's worst case stays within the capture's serve budget.
+	listBound := engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: serveview.Default().Cap(serveview.PartText).MaxBytes / 2}}
 	err = registry.RegisterQuery(engine.Query{
 		Doc:       engine.FuncDoc{Name: "guideAdded", Doc: "The sentences the last guide revision added to the body, quoted one per line, until the user confirms a draft after it.", Reads: []string{fieldGuideAdded, "body"}},
 		ServeSafe: true,
+		Bound:     listBound,
 		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
 			return guideRevisionList(ctx.Store, "sentences", true)
 		},
@@ -253,6 +258,7 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 	err = registry.RegisterQuery(engine.Query{
 		Doc:       engine.FuncDoc{Name: "guideRemoved", Doc: "The sentences the last guide revision removed from the body, quoted one per line, until the user confirms a draft after it.", Reads: []string{fieldGuideAdded, "body"}},
 		ServeSafe: true,
+		Bound:     listBound,
 		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
 			return guideRevisionList(ctx.Store, "removed", false)
 		},
