@@ -617,7 +617,39 @@ func (d *snapshotData) release() error {
 // until ctx ends). Rows the segments lack are decoded from their chromem files.
 // The rows are reused across calls in this process while the store's manifest
 // and segment files are unchanged.
-func OpenSearchSnapshot(ctx context.Context, indexDir string, bound time.Duration) (*SearchSnapshot, error) {
+func OpenSearchSnapshot(ctx context.Context, indexDir string, bound time.Duration) (_ *SearchSnapshot, err error) {
+	unlock, err := readLockWithin(ctx, indexDir, bound)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, unlock()) }()
+	return viewFor(indexDir).acquire(ctx)
+}
+
+// Prepare parses the store's manifest, maps its segments and builds the search
+// rows, so a fill, refresh and search later in this process find them ready
+// and the work overlaps whatever the caller does meanwhile. It waits for the
+// shared lock as OpenSearchSnapshot does.
+func Prepare(ctx context.Context, indexDir string, bound time.Duration) (err error) {
+	unlock, err := readLockWithin(ctx, indexDir, bound)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, unlock()) }()
+	defer timing.Start(ctx, "index-prepare")()
+	view := viewFor(indexDir)
+	view.mu.Lock()
+	defer view.mu.Unlock()
+	if err := view.syncLocked(); err != nil {
+		return err
+	}
+	_, _, err = view.snapshotLocked(ctx)
+	return err
+}
+
+// readLockWithin takes the store's shared lock, waiting at most bound
+// (ErrLockBusy past it; a bound of zero waits until ctx ends).
+func readLockWithin(ctx context.Context, indexDir string, bound time.Duration) (func() error, error) {
 	if indexDir == "" {
 		return nil, errors.New("index dir is required")
 	}
@@ -639,8 +671,7 @@ func OpenSearchSnapshot(ctx context.Context, indexDir string, bound time.Duratio
 		}
 		return nil, fmt.Errorf("acquiring index read lock at %s: %w", indexDir, err)
 	}
-	defer func() { _ = lock.Unlock() }()
-	return viewFor(indexDir).acquire(ctx)
+	return lock.Unlock, nil
 }
 
 // Path returns the store directory the snapshot was loaded from.
