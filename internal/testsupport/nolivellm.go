@@ -26,6 +26,21 @@ const ollamaPort = "11434"
 // a child killed mid-run then leaves no directory and loses no call.
 const guardDirEnv = "SDD_TEST_GUARD_DIR"
 
+var standIns = []string{"claude", "codex", "sdd"}
+
+// Option adjusts what RunWithoutLiveLLMs refuses.
+type Option func(*options)
+
+type options struct {
+	allowOllama bool
+}
+
+// AllowOllama lets requests to Ollama's default port through, for a live
+// evaluation a developer opts into; the rest of the guard stays on.
+func AllowOllama() Option {
+	return func(o *options) { o.allowOllama = true }
+}
+
 // RunWithoutLiveLLMs runs a package's tests with the XDG base directories in
 // a temporary directory, the user's and the system's git config ignored,
 // claude, codex and sdd first on PATH as stand-ins that fail every call, and
@@ -33,9 +48,18 @@ const guardDirEnv = "SDD_TEST_GUARD_DIR"
 // a test reached a stand-in or Ollama: a live CLI runs the developer's own
 // hooks, and those must never see the developer's real data. A test needing
 // the sdd binary calls the one it built by path.
-func RunWithoutLiveLLMs(m *testing.M) {
+func RunWithoutLiveLLMs(m *testing.M, opts ...Option) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 	if dir := os.Getenv(guardDirEnv); dir != "" {
-		http.DefaultTransport = &ollamaRefuser{next: http.DefaultTransport, calls: filepath.Join(dir, "bin", "calls")}
+		err := checkInherited(dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s=%s names no guard this process runs under: %v\n", guardDirEnv, dir, err)
+			os.Exit(1)
+		}
+		o.refuseOllama(filepath.Join(dir, "bin", "calls"))
 		os.Exit(m.Run())
 	}
 	dir, err := os.MkdirTemp("", "sdd-test-llm-")
@@ -45,24 +69,16 @@ func RunWithoutLiveLLMs(m *testing.M) {
 	}
 	bin := filepath.Join(dir, "bin")
 	err = os.Mkdir(bin, 0o755)
-	for _, name := range []string{"claude", "codex", "sdd"} {
+	for _, name := range standIns {
 		if err == nil {
 			err = os.WriteFile(filepath.Join(bin, name), failingCLI, 0o755)
 		}
 	}
-	gitConfig := filepath.Join(dir, "gitconfig")
 	if err == nil {
-		err = os.WriteFile(gitConfig, nil, 0o644)
+		err = os.WriteFile(filepath.Join(dir, "gitconfig"), nil, 0o644)
 	}
-	env := map[string]string{
-		guardDirEnv:           dir,
-		"PATH":                bin + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"GIT_CONFIG_GLOBAL":   gitConfig,
-		"GIT_CONFIG_NOSYSTEM": "1",
-	}
-	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
-		env[name] = filepath.Join(dir, strings.ToLower(name))
-	}
+	env := guardEnv(dir)
+	env["PATH"] = bin + string(os.PathListSeparator) + os.Getenv("PATH")
 	for name, value := range env {
 		if err == nil {
 			err = os.Setenv(name, value)
@@ -72,7 +88,7 @@ func RunWithoutLiveLLMs(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	http.DefaultTransport = &ollamaRefuser{next: http.DefaultTransport, calls: filepath.Join(bin, "calls")}
+	o.refuseOllama(filepath.Join(bin, "calls"))
 	code := m.Run()
 	calls, err := os.ReadFile(filepath.Join(bin, "calls"))
 	switch {
@@ -89,6 +105,48 @@ func RunWithoutLiveLLMs(m *testing.M) {
 		code = 1
 	}
 	os.Exit(code)
+}
+
+// guardEnv is the environment a guarded run sets up in dir, PATH aside.
+func guardEnv(dir string) map[string]string {
+	env := map[string]string{
+		guardDirEnv:           dir,
+		"GIT_CONFIG_GLOBAL":   filepath.Join(dir, "gitconfig"),
+		"GIT_CONFIG_NOSYSTEM": "1",
+	}
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+		env[name] = filepath.Join(dir, strings.ToLower(name))
+	}
+	return env
+}
+
+// checkInherited reports how this process's environment differs from the one
+// the guarded run owning dir hands to the processes it starts.
+func checkInherited(dir string) error {
+	var errs []error
+	bin := filepath.Join(dir, "bin")
+	first, _, _ := strings.Cut(os.Getenv("PATH"), string(os.PathListSeparator))
+	if first != bin {
+		errs = append(errs, fmt.Errorf("PATH starts with %q, not %q", first, bin))
+	}
+	for _, name := range standIns {
+		_, err := os.Stat(filepath.Join(bin, name))
+		if err != nil {
+			errs = append(errs, fmt.Errorf("stand-in %s: %w", name, err))
+		}
+	}
+	for name, want := range guardEnv(dir) {
+		if got := os.Getenv(name); got != want {
+			errs = append(errs, fmt.Errorf("%s is %q, not %q", name, got, want))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (o options) refuseOllama(calls string) {
+	if !o.allowOllama {
+		http.DefaultTransport = &ollamaRefuser{next: http.DefaultTransport, calls: calls}
+	}
 }
 
 type ollamaRefuser struct {

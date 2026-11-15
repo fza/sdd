@@ -19,60 +19,55 @@ const (
 )
 
 func TestMain(m *testing.M) {
-	if os.Getenv(probeEnv) != "" {
+	switch os.Getenv(probeEnv) {
+	case "":
+		os.Exit(m.Run())
+	case "ollama-allowed":
+		testsupport.RunWithoutLiveLLMs(m, testsupport.AllowOllama())
+	default:
 		testsupport.RunWithoutLiveLLMs(m)
 	}
-	os.Exit(m.Run())
 }
 
 func TestRunWithoutLiveLLMs(t *testing.T) {
 	const reached = "tests reached an installed CLI or a live Ollama"
 	cases := []struct {
+		name     string
 		probe    string
-		wantCall string
+		guardDir string
+		wantErr  []string
 	}{
-		{probe: "none"},
-		{probe: "claude", wantCall: "claude --version"},
-		{probe: "codex", wantCall: "codex --version"},
-		{probe: "sdd", wantCall: "sdd --version"},
-		{probe: "ollama", wantCall: "ollama GET http://localhost:11434/api/version"},
+		{name: "no live call", probe: "none"},
+		{name: "claude", probe: "claude", wantErr: []string{reached, "claude --version"}},
+		{name: "codex", probe: "codex", wantErr: []string{reached, "codex --version"}},
+		{name: "sdd", probe: "sdd", wantErr: []string{reached, "sdd --version"}},
+		{name: "ollama", probe: "ollama", wantErr: []string{reached, "ollama GET http://localhost:11434/api/version"}},
+		{name: "ollama allowed", probe: "ollama-allowed"},
+		{name: "a started run's call", probe: "nested", wantErr: []string{reached, "ollama GET http://localhost:11434/api/version"}},
+		{name: "a guard dir no guarded run set up", probe: "claude", guardDir: t.TempDir(), wantErr: []string{guardDirEnv}},
 	}
 	for _, tc := range cases {
-		t.Run(tc.probe, func(t *testing.T) {
-			out, err := probe(t, tc.probe, "")
-			if tc.wantCall == "" {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := probe(t, tc.probe, tc.guardDir)
+			if len(tc.wantErr) == 0 {
 				if err != nil {
-					t.Fatalf("a run making no live call should pass: %v\n%s", err, out)
+					t.Fatalf("a run making no refused call should pass: %v\n%s", err, out)
 				}
 				return
 			}
-			if err == nil || !strings.Contains(out, reached) || !strings.Contains(out, tc.wantCall) {
-				t.Fatalf("a run making a live call should fail and name it: %v\n%s", err, out)
+			if err == nil {
+				t.Fatalf("the run should fail:\n%s", out)
+			}
+			for _, want := range tc.wantErr {
+				if !strings.Contains(out, want) {
+					t.Errorf("the failure should name %q:\n%s", want, out)
+				}
 			}
 		})
 	}
 }
 
-func TestRunWithoutLiveLLMsRecordsIntoTheStartingRun(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	out, err := probe(t, "ollama", dir)
-	if err != nil {
-		t.Fatalf("a started run should leave the check to the run that started it: %v\n%s", err, out)
-	}
-	calls, err := os.ReadFile(filepath.Join(dir, "bin", "calls"))
-	if err != nil || !strings.Contains(string(calls), "ollama GET http://localhost:11434/api/version") {
-		t.Fatalf("a started run should record its calls into the starting run's directory: %v %q", err, calls)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 1 {
-		t.Errorf("a started run should set up no guard of its own: %v %v", err, entries)
-	}
-}
-
-// probe re-runs the test binary under the guard, as a run started by the
+// probe re-runs the test binary under the guard, as a run started by a
 // guarded run owning guardDir, or as a run of its own when guardDir is empty.
 func probe(t *testing.T, call, guardDir string) (string, error) {
 	t.Helper()
@@ -104,7 +99,7 @@ func TestProbe(t *testing.T) {
 			t.Errorf("git should read neither the user's nor the system's config, got GIT_CONFIG_GLOBAL=%q GIT_CONFIG_NOSYSTEM=%q",
 				os.Getenv("GIT_CONFIG_GLOBAL"), os.Getenv("GIT_CONFIG_NOSYSTEM"))
 		}
-	case "ollama":
+	case "ollama", "ollama-allowed":
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost:11434/api/version", nil)
 		if err != nil {
 			t.Fatal(err)
@@ -112,6 +107,13 @@ func TestProbe(t *testing.T) {
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
+		}
+	case "nested":
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestProbe$")
+		cmd.Env = append(os.Environ(), probeEnv+"=ollama")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("a started run should leave the check to the run that started it: %v\n%s", err, out)
 		}
 	default:
 		name := os.Getenv(probeEnv)

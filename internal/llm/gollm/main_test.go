@@ -8,7 +8,6 @@ import (
 	"github.com/networkteam/sdd/internal/testsupport"
 )
 
-// The ollama_eval build calls a live Ollama on purpose.
 func TestMain(m *testing.M) {
 	testsupport.RunWithoutLiveLLMs(m)
 }
