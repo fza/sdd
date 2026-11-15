@@ -493,7 +493,7 @@ Once a day sdd starts `sdd cache prune` in the background, detached from the com
 | The index of an embedding setup you switched away from | `index.replaced_retention` after its last use, once the project's index under another setup was used later. Switching back afterwards embeds the graph again. |
 | A whole index nothing uses | After `cache.retention`. |
 | Graph snapshots, the git gate's record of a repository, embedding calibrations | After `cache.retention` without use. |
-| A clone under `~/.local/share/sdd/repos/` | Once `sdd repo remove` dropped its repository and the user-global `repos` list no longer names it, unless it holds unpushed commits or sdd fetched or pushed it within `cache.retention`. A clone no `sdd repo remove` dropped stays, `graph_repo` clones included; delete it by hand. Listed clones stay and get `git gc --auto`. |
+| A clone under `~/.local/share/sdd/repos/`, or one an earlier sdd kept under `~/.cache/sdd` | Once `sdd repo remove` dropped its repository under the same user-global config file and the `repos` list in it no longer names it, unless it holds unpushed commits or sdd fetched or pushed it within `cache.retention`. A clone no `sdd repo remove` dropped stays, `graph_repo` clones included; delete it by hand. So does a clone holding another clone, or the place of a listed repo, inside it. Listed clones stay and get `git gc --auto`. |
 | The log of a verifier round | After `cache.retention`. |
 | What a killed process left: git trace files, unfinished clones, unfinished index writes, emptied index folders, empty folders of old cache clones | One day after, once no lock holds it. |
 

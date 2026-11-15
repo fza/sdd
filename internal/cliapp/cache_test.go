@@ -118,8 +118,10 @@ func TestCachePruneCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("github.com/acme/unused"); err != nil {
-		t.Fatal(err)
+	for _, repoID := range []model.RepoID{"github.com/acme/unused", "github.com/acme/dropped"} {
+		if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected(repoID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	r := f.run(t, "cache", "prune")
 	if r.err != nil {

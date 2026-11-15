@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 )
 
@@ -41,20 +42,21 @@ func TestUnconnectedClones(t *testing.T) {
 	}
 
 	registry := repos.NewRegistry(loc)
-	if err := repos.NewManager(registry, nil).MarkDisconnected("gitlab.example.org/team/graph"); err != nil {
-		t.Fatal(err)
+	for _, repoID := range []model.RepoID{"gitlab.example.org/team/graph", "gitlab.example.org/team/dropped"} {
+		if err := repos.NewManager(registry, nil).MarkDisconnected(repoID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	stale, err := registry.UnconnectedClones()
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []repos.UnconnectedClone{
-		{Dir: ownedRetired, RepoID: "gitlab.example.org/team/.old.pruned", Owned: true},
 		{Dir: ownedDropped, RepoID: "gitlab.example.org/team/graph", Owned: true},
 		{Dir: dropped, RepoID: "gitlab.example.org/team/dropped"},
 	}
 	if !slices.Equal(stale, want) {
-		t.Errorf("only disconnected sdd-owned clones, retired leftovers and unconnected cache clones should be listed, got %+v", stale)
+		t.Errorf("only disconnected clones the repos list does not name should be listed, got %+v", stale)
 	}
 }
 
@@ -110,7 +112,7 @@ func TestUnconnectedClonesNeedTheDataRoot(t *testing.T) {
 func TestRetireUnconnectedClone(t *testing.T) {
 	root := t.TempDir()
 	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data")}
-	if err := os.WriteFile(loc.ConfigPath, []byte("repos: []\n"), 0o600); err != nil {
+	if err := os.WriteFile(loc.ConfigPath, []byte(keptRepo), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cached := repos.UnconnectedClone{Dir: filepath.Join(loc.CacheRoot, "github.com", "acme", "readded"), RepoID: "github.com/acme/readded"}
@@ -121,7 +123,11 @@ func TestRetireUnconnectedClone(t *testing.T) {
 		}
 	}
 	registry := repos.NewRegistry(loc)
-	letGo := func(string) (func(), error) { return func() {}, nil }
+	for _, clone := range []repos.UnconnectedClone{cached, owned} {
+		if err := repos.NewManager(registry, nil).MarkDisconnected(clone.RepoID); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	t.Run("a clone connected since it was listed stays", func(t *testing.T) {
 		config := "repos:\n  - repo_id: github.com/acme/readded\n    clone_url: git@github.com:acme/readded.git\n"
@@ -135,7 +141,7 @@ func TestRetireUnconnectedClone(t *testing.T) {
 		if retired != "" {
 			t.Errorf("a connected clone should not be retired, retired to %s", retired)
 		}
-		if err := os.WriteFile(loc.ConfigPath, []byte("repos: []\n"), 0o600); err != nil {
+		if err := os.WriteFile(loc.ConfigPath, []byte(keptRepo), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	})
