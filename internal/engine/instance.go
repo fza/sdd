@@ -775,7 +775,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		sv.Goal = "report the missing fields"
 		switch {
 		case sv.Waiting:
-			sv.Goal = "wait for the delegate, then check again"
+			sv.Goal = "call next again for the delegate's delivery"
 		case len(sv.Failing) > 0:
 			sv.Goal = "fix what holds the gate, then report again"
 		}

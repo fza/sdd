@@ -540,11 +540,11 @@ func (s *Session) awaitDiagnostic(inst *Instance, step *Step) string {
 	if step.DelegateGone != "" {
 		gone = fmt.Sprintf(". Delegate ended without delivering? Report %s with what it returned", step.DelegateGone)
 	}
-	return fmt.Sprintf("waiting for the delegate to deliver %s; check again in %d seconds. Once landed, next with this instance and no report picks the delivery up%s", joined, awaitRecheckSeconds, gone)
+	return fmt.Sprintf("waiting for the delegate to deliver %s: call next with this instance and no report again, at most every %d seconds; it picks the delivery up once landed. Between calls, do not run sleep or a timer%s", joined, awaitRecheckSeconds, gone)
 }
 
-// awaitRecheckSeconds is how long a dispatching move waits between checks
-// for its delegate's delivery.
+// awaitRecheckSeconds paces a dispatching move's checks for its delegate's
+// delivery; next never blocks, so the agent is the only pacer.
 const awaitRecheckSeconds = 20
 
 // exchangeLane renders the full exchange a delegate instance took part in, so
