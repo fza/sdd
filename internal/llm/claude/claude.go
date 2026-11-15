@@ -116,7 +116,7 @@ func (r *Runner) invoke(ctx context.Context, prompt string, extra ...string) (cl
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
 
-	args := []string{"-p", "--safe-mode", "--tools", "", "--strict-mcp-config", "--model", r.model, "--output-format", "json"}
+	args := []string{"-p", "--safe-mode", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--model", r.model, "--output-format", "json"}
 	if r.effort != "" {
 		args = append(args, "--effort", r.effort)
 	}
