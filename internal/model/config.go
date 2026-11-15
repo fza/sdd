@@ -84,11 +84,6 @@ const (
 	// DefaultRetryMaxDelay caps backoff growth between retries.
 	DefaultRetryMaxDelay = "60s"
 
-	// DefaultSyncCooldown bounds how often background sync runs git fetch
-	// when last-fetch exceeds this duration. Applied when Config.Sync.Cooldown
-	// is empty or unparseable.
-	DefaultSyncCooldown = "15m"
-
 	// DefaultSessionRetention is how long an ended engine session's log is
 	// kept before collection removes it. Sessions are scaffolding, but a
 	// dialogue that has just ended is exactly the one worth reading when
@@ -260,18 +255,13 @@ type SyncConfig struct {
 	Default GitLimitsConfig            `yaml:"default,omitempty"`
 	Hosts   map[string]GitLimitsConfig `yaml:"hosts,omitempty"`
 
-	// Cooldown is the minimum interval between background git fetches. Go
-	// duration string (e.g. "15m", "1h"). Empty means DefaultSyncCooldown.
-	Cooldown string `yaml:"cooldown,omitempty"`
-	// Mode chooses whether graph commits are pushed and upstream graph
-	// commits pulled automatically. Empty means SyncModeManual.
+	Cooldown string   `yaml:"cooldown,omitempty"`
 	Mode     SyncMode `yaml:"mode,omitempty"`
 	Interval string   `yaml:"interval,omitempty"`
 }
 
-// SyncMode is the sync.mode setting. It is set per person: only the
-// user-global config and config.local.yaml may set it, and a value sdd must
-// not honor is read past as manual.
+// SyncMode is whether sdd pushes and pulls a graph repository on its own;
+// syncstate.Mode decides it, no config key does.
 type SyncMode string
 
 const (
@@ -360,9 +350,6 @@ func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSettin
 			ignored = append(ignored, IgnoredSetting{Key: secretRulesUpdateKey, Reason: globalOnlyReason})
 		}
 	}
-	if reason := ignoredSyncMode(layer.Sync.Mode, committed); reason != "" {
-		ignored = append(ignored, IgnoredSetting{Key: "sync.mode", Reason: reason})
-	}
 	if committed && layer.Dialogue.Mode != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "dialogue.mode", Reason: personalOnlyReason})
 	}
@@ -374,18 +361,6 @@ func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSettin
 }
 
 const personalOnlyReason = "only the user-global config or config.local.yaml may set it"
-
-func ignoredSyncMode(mode SyncMode, committed bool) string {
-	switch {
-	case mode == "":
-		return ""
-	case committed:
-		return personalOnlyReason
-	case !slices.Contains(mode.AllowedValues(), string(mode)):
-		return fmt.Sprintf("%q is not %s", mode, oneOf(mode.AllowedValues()))
-	}
-	return ""
-}
 
 // HonoredCommitted returns the committed layer without the settings only a
 // person's own config, or only the user-global config, may make.
