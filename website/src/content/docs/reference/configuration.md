@@ -86,9 +86,9 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `llm.ollama_endpoint` | `http://localhost:11434` | Ollama server for the `ollama` provider. |
 | `llm.timeout` | `2m` | Time limit for one model call. |
 | `llm.extract_timeout` | `1m` | Time limit for the reformat call that follows a check response that does not parse. |
-| `llm.max_tokens` | `4096` | Output cap of one call to `anthropic`, `openai` or `ollama`. A reasoning model spends its thinking against the cap, so it needs a higher one. `0` sends no cap, except on `anthropic`, whose API requires one and gets 32000. |
+| `llm.max_tokens` | `4096` | Output cap of one call to `anthropic` or `openai`. A reasoning model spends its thinking against the cap, so it needs a higher one. `0` sends no cap, except on `anthropic`, whose API requires one and gets 32000; a Claude model with a lower output limit needs an explicit cap. `ollama` uses the server's own limit. |
 | `llm.params.<name>` | None | Provider settings that sdd adds unchanged to every request body, such as `reasoning_effort` set to `low`. `claude-cli` ignores them. |
-| `llm.structured_output` | `auto` | How the checks ask `openai` and `ollama` for JSON: `json_schema`, `json_object` or `auto`. See [structured output modes](#structured-output-modes). |
+| `llm.structured_output` | `auto` | How the checks ask the model for JSON: `json_schema`, `json_object` or `auto`. `claude-cli` ignores it. See [structured output modes](#structured-output-modes). |
 | `llm.rate_limit_rps` | See below | Maximum requests per second to `anthropic` or `openai`. Raise it on a higher account tier or for a gateway that allows more. |
 | `llm.retry.max_attempts` | `5` | Attempts per call, counting the first. `1` turns retries off. |
 | `llm.retry.base_delay` | `2s` | Wait before the first retry. The wait grows with each further retry. |
@@ -97,7 +97,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 
 sdd retries a call that failed with a temporary error, such as a rate limit or a dropped connection, and waits as long as the provider asks when it names a time. `claude-cli` ignores the rate limit and retry keys, since the `claude` command retries on its own.
 
-When a checker's response does not parse, sdd makes one more call carrying the unparseable text and asking for the JSON alone, so a model that writes its conclusion into the `severity` field does not cost you the capture. A response that parses costs one call. `llm.extract_timeout` bounds the second call separately from `llm.timeout`, so a slipping endpoint cannot spend twice the configured timeout on one check. Both responses failing is an error naming both attempts.
+When a checker's response does not parse, sdd makes one more call carrying the unparseable text and asking for the JSON alone, so a model that writes its conclusion into the `severity` field does not cost you the capture. A response that parses costs one call. `llm.extract_timeout` bounds the second call separately from `llm.timeout`, so a slipping endpoint cannot spend twice the configured timeout on one check. Both responses failing is an error naming both attempts. A first response that holds no analysis at all, such as a refusal or an error page, fails the check too.
 
 Default rate limits:
 
@@ -175,8 +175,8 @@ A gateway or compatible service must honor the schema field in the third column 
 `llm.structured_output` picks how the writing check and the pre-flight check ask for JSON:
 
 - `json_schema` sends the schema for the provider to enforce.
-- `json_object` asks for any JSON object (`response_format: {"type": "json_object"}` on `openai`, `format: json` on `ollama`), states the schema in the system prompt and validates the answer against it locally. An answer that is not one JSON object matching the schema is never passed on: the check sends it to the reformat call described under [language model](#language-model), whose answer is validated the same way.
-- `auto`, the default, sends `json_schema`. When the endpoint answers 400 because the model does not support JSON schema mode (code `model_not_capable`, or a message naming `json_schema` or `json_object`), the call is retried once in `json_object` mode, and that endpoint and model stay on `json_object` for the rest of the process. Any other 400 fails the call. The retry runs inside the call's `llm.timeout` (or `llm.extract_timeout`).
+- `json_object` asks for any JSON object (`response_format: {"type": "json_object"}` on `openai`, `format: json` on `ollama`, no format field on other providers such as `anthropic`), states the schema in the system prompt and validates the answer against it locally. An answer that is not one JSON object matching the schema is never passed on: the check sends it to the reformat call described under [language model](#language-model), whose answer is validated the same way.
+- `auto`, the default, sends `json_schema`. When the endpoint answers 400 because the model does not support JSON schema mode (code `model_not_capable`, or a message naming `json_schema` or `json_object`), the call is retried once in `json_object` mode, and that endpoint and model stay on `json_object` for the rest of the process. The switch is logged at info level with the refusal it acted on. Any other 400 fails the call. The retry runs inside the call's `llm.timeout` (or `llm.extract_timeout`).
 
 Some OpenAI-compatible services serve a model in `json_object` mode only, while another service accepts `json_schema` for the same model. `claude-cli` ignores the setting.
 
