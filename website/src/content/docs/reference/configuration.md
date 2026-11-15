@@ -56,6 +56,7 @@ sdd skips a key it does not know, including a key in a file where it does not be
 - `set` refuses an empty value, and a value sdd would refuse or ignore when it reads the file: one outside a setting's fixed set, such as `verify.mode light`, or a `verify` value the layers do not allow together, such as a local `verify.mode` below the shared one. The refusal names the allowed values, and the file stays unchanged.
 - `set` writes `8`, `0.5`, `true` and `false` as numbers and booleans, and everything else as text. Edit list values, such as `supported_agents`, in the file.
 - `set` and `unset` change only the named key and keep the rest of the file, comments included.
+- `set` and `unset` run on a file whose only fault is a value sdd refuses to load, such as a `dialogue.mode` outside `guided` and `auto`, so you repair it through them. A file that does not parse still fails them.
 - No command writes `.sdd/config.yaml` directly. `sdd init` creates it, `sdd repo add` and `sdd repo remove` change `dependencies`, and you edit the rest by hand and commit it.
 
 :::note[Restart your agent after a change]
@@ -91,7 +92,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `dialogue.mode` | `guided` | Who takes the choices an engine session would put to you. `guided`: you confirm each step. `auto`: your agent takes them and asks you only when a check fails. sdd reads it from the user-global file and the machine-local file, `.sdd/config.local.yaml` or the `--local-config` file, only; in `.sdd/config.yaml` it is ignored with a warning. `sdd init` asks for it, or takes `--dialogue-mode`, and writes it to the local file. Any other value in a file sdd reads it from fails every command with an error naming the file, the value and the valid values. |
+| `dialogue.mode` | `guided` | Who takes the choices an engine session would put to you. `guided`: you confirm each step. `auto`: your agent takes them and asks you only when a check fails. sdd reads it from the user-global file and the machine-local file, `.sdd/config.local.yaml` or the `--local-config` file, only; in `.sdd/config.yaml` it is ignored with a warning. `sdd init` asks for it, or takes `--dialogue-mode`, and writes it to the local file. Any other value in a file sdd reads it from fails every command but `sdd config set` and `unset` with an error naming the file, the value and the valid values. |
 
 ### Language model
 
@@ -234,7 +235,7 @@ Other reads and the rounds `sdd serve` runs on its own never spend a credit. Eve
 | --- | --- | --- |
 | `secrets.rules_update` | `daily` | `daily`: the [daily sweep](#the-daily-sweep) fetches the rule file of gitleaks' latest release when it is newer than the one in use. `off`: sdd asks GitHub nothing and [scans for credentials](/sdd/working-modes/#capture) with the rule file built into sdd only, also when it fetched a newer one before. Read from the user-global file only. |
 
-`sdd config set` refuses any other value. In the user-global file, another value fails every command, and every call to a running `sdd serve`, with an error naming the file, the key, the value and the valid values. In a project or local file the key is ignored with a warning, whatever its value.
+`sdd config set` refuses any other value. In the user-global file, another value fails every command but `sdd config set` and `unset`, and every call to a running `sdd serve`, with an error naming the file, the key, the value and the valid values. In a project or local file the key is ignored with a warning, whatever its value.
 
 ### Connected repositories
 

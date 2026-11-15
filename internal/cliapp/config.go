@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/meta"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/urfave/cli/v3"
 )
@@ -94,6 +96,18 @@ func configCmd() *cli.Command {
 			},
 		},
 	}
+}
+
+// writesConfig reports whether the invocation is `sdd config set` or `unset`.
+func writesConfig(args cli.Args) bool {
+	return args.First() == "config" && slices.Contains([]string{"set", "unset"}, args.Get(1))
+}
+
+// repairingConfig reports whether a config write runs past err: a value sdd
+// refuses to load is what `sdd config set` and `unset` repair, and the
+// handler still refuses writing one.
+func repairingConfig(configWrite bool, err error) bool {
+	return configWrite && model.IsRefusedConfigValue(err)
 }
 
 // effectiveConfigResult builds the provenance view shared by the bare
