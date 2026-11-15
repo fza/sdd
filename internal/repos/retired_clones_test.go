@@ -129,7 +129,7 @@ func TestRetiredClonesWaitWhereNoRepoIDReaches(t *testing.T) {
 	if err := repos.NewManager(registry, nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
 		t.Fatal(err)
 	}
-	var retired []repos.UnconnectedClone
+	var retired []string
 	for _, clone := range []repos.UnconnectedClone{owned, cached} {
 		dir, err := registry.RetireUnconnectedClone(clone, letGo)
 		if err != nil {
@@ -144,13 +144,17 @@ func TestRetiredClonesWaitWhereNoRepoIDReaches(t *testing.T) {
 				t.Errorf("a retired clone should wait where no repo ID places a clone, got %s", dir)
 			}
 		}
-		retired = append(retired, repos.UnconnectedClone{Dir: dir, RepoID: clone.RepoID, Owned: clone.Owned})
+		retired = append(retired, dir)
 	}
 	stale, err := registry.UnconnectedClones()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stale) != 2 {
+	var listed []string
+	for _, clone := range stale {
+		listed = append(listed, clone.Dir)
+	}
+	if !slices.Equal(listed, retired) {
 		t.Fatalf("retired clones a run left behind should be listed for the next run, got %+v", stale)
 	}
 	for _, clone := range stale {
