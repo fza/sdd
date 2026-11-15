@@ -115,6 +115,15 @@ func TestCallsRenewTheLeaseOfTheProjectTheyWorkIn(t *testing.T) {
 			_, err := workflow.Start(t.Context(), f.alice, sdd.WorkflowStartRequest{Canonical: "capture", Project: "project-b"})
 			return err
 		}},
+		{name: "start_procedure under a parent in a dependency", dep: 1, call: func(t *testing.T, f leaseFixture, workflow *sdd.WorkflowSession) error {
+			parent, err := workflow.Start(t.Context(), f.alice, sdd.WorkflowStartRequest{Canonical: "engage", Project: "project-b"})
+			if err != nil {
+				return err
+			}
+			f.dep.clearDemands()
+			_, err = workflow.Start(t.Context(), f.alice, sdd.WorkflowStartRequest{Canonical: "capture", Parent: parent.Instance})
+			return err
+		}},
 		{name: "next on an instance in a dependency", dep: 1, call: func(t *testing.T, f leaseFixture, workflow *sdd.WorkflowSession) error {
 			serve, err := workflow.Start(t.Context(), f.alice, sdd.WorkflowStartRequest{Canonical: "capture", Project: "project-b"})
 			if err != nil {
