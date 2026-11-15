@@ -14,8 +14,11 @@ import (
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
-// scriptedBeforeCall answers each call with the next queued notice and error
-// and records the session every call named.
+type pinnedKey struct{}
+
+// scriptedBeforeCall answers each call with the next queued notice and error,
+// pins the call's number in its context, and records the session every call
+// named.
 type scriptedBeforeCall struct {
 	mu       sync.Mutex
 	notices  []string
@@ -23,19 +26,56 @@ type scriptedBeforeCall struct {
 	sessions []string
 }
 
-func (h *scriptedBeforeCall) hook(_ context.Context, session string) (string, error) {
+func (h *scriptedBeforeCall) hook(ctx context.Context, session string) (context.Context, string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.sessions = append(h.sessions, session)
 	if h.err != nil {
-		return "", h.err
+		return ctx, "", h.err
 	}
+	ctx = context.WithValue(ctx, pinnedKey{}, len(h.sessions))
 	if len(h.notices) == 0 {
-		return "", nil
+		return ctx, "", nil
 	}
 	notice := h.notices[0]
 	h.notices = h.notices[1:]
-	return notice, nil
+	return ctx, notice, nil
+}
+
+// pinRecorder records the call number each principal resolution ran under.
+type pinRecorder struct {
+	sdd.AccessResolver
+	mu   sync.Mutex
+	pins []any
+}
+
+func (r *pinRecorder) ResolvePrincipal(ctx context.Context, identity sdd.RequestIdentity) (sdd.Principal, error) {
+	r.mu.Lock()
+	r.pins = append(r.pins, ctx.Value(pinnedKey{}))
+	r.mu.Unlock()
+	return r.AccessResolver.ResolvePrincipal(ctx, identity)
+}
+
+func TestBeforeCallContextReachesTheApplication(t *testing.T) {
+	hook := &scriptedBeforeCall{}
+	recorder := &pinRecorder{}
+	env := newTestServer(t, nil, "", "", withBeforeCall(hook), func(opts *testServerOptions) {
+		recorder.AccessResolver = opts.Application.Access
+		opts.Application.Access = recorder
+	})
+	cs := connect(t, env.srv)
+
+	openSession(t, cs)
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if len(recorder.pins) == 0 {
+		t.Fatal("start_session should resolve its principal")
+	}
+	for _, pin := range recorder.pins {
+		if pin != 1 {
+			t.Errorf("the call should run under the context the hook returned, got %v", pin)
+		}
+	}
 }
 
 func (h *scriptedBeforeCall) queue(notices ...string) {

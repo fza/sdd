@@ -36,8 +36,9 @@ type Options struct {
 
 	// BeforeCall, when set, runs before every tool call with the session the
 	// call names, "" for none: an error refuses the call with it, a notice
-	// rides on the call's result in host_notice.
-	BeforeCall func(ctx context.Context, session string) (notice string, err error)
+	// rides on the call's result in host_notice, and the call runs under the
+	// context it returns.
+	BeforeCall func(ctx context.Context, session string) (call context.Context, notice string, err error)
 }
 
 // toolSet carries what SDD's tool handlers need, independent of the server
@@ -48,7 +49,7 @@ type toolSet struct {
 	localIdentity  sdd.RequestIdentity
 	local          bool
 	version        string
-	before         func(context.Context, string) (string, error)
+	before         func(context.Context, string) (context.Context, string, error)
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
 	// event acts on a session (d-cpt-aen).

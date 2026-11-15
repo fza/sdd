@@ -1206,13 +1206,13 @@ func (s *toolSet) registryDocs(ctx context.Context, req *mcp.CallToolRequest, ar
 // is rendered with its code leading the text, so a refusal is identified by
 // its code rather than its prose (d-cpt-s2i). Uncoded errors pass unchanged.
 // The host's BeforeCall runs first and refuses the call, or hands it a notice.
-func toolBoundary[In, Out any](before func(context.Context, *mcp.CallToolRequest) (string, error), handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
+func toolBoundary[In, Out any](before func(context.Context, *mcp.CallToolRequest) (context.Context, string, error), handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		var res *mcp.CallToolResult
 		var out Out
-		notice, err := before(ctx, req)
+		call, notice, err := before(ctx, req)
 		if err == nil {
-			res, out, err = handler(ctx, req, in)
+			res, out, err = handler(call, req, in)
 		}
 		var coded *sdd.ApplicationError
 		if err != nil && errors.As(err, &coded) && coded.Code != "" {
@@ -1233,9 +1233,9 @@ func toolBoundary[In, Out any](before func(context.Context, *mcp.CallToolRequest
 
 // beforeCall runs the host's BeforeCall for the session the call names, ""
 // for a call that names none.
-func (s *toolSet) beforeCall(ctx context.Context, req *mcp.CallToolRequest) (string, error) {
+func (s *toolSet) beforeCall(ctx context.Context, req *mcp.CallToolRequest) (context.Context, string, error) {
 	if s.before == nil {
-		return "", nil
+		return ctx, "", nil
 	}
 	var named struct {
 		Session string `json:"session"`
@@ -1243,7 +1243,7 @@ func (s *toolSet) beforeCall(ctx context.Context, req *mcp.CallToolRequest) (str
 	if req != nil && req.Params != nil && len(req.Params.Arguments) > 0 {
 		err := json.Unmarshal(req.Params.Arguments, &named)
 		if err != nil {
-			return "", fmt.Errorf("reading the session the call names: %w", err)
+			return ctx, "", fmt.Errorf("reading the session the call names: %w", err)
 		}
 	}
 	return s.before(ctx, strings.TrimSpace(named.Session))
