@@ -33,6 +33,7 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/networkteam/slogutils v0.4.0 // indirect
+	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/philippgille/chromem-go v0.7.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect

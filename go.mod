@@ -14,6 +14,7 @@ require (
 	github.com/gofrs/flock v0.13.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/networkteam/slogutils v0.4.0
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/teilomillet/gollm v0.1.11
 	github.com/urfave/cli/v3 v3.8.0
