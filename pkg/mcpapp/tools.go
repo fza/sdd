@@ -460,7 +460,7 @@ type InfoResult struct {
 	Language     string             `json:"language,omitempty" jsonschema:"configured graph language; empty = English"`
 	Search       string             `json:"search" jsonschema:"available retrieval modes: text or vector,text"`
 	Version      string             `json:"version,omitempty"`
-	GraphSchema  int                `json:"graphSchema,omitempty" jsonschema:"schema version the graph records; entries are written at it until an explicit sdd migrate"`
+	GraphSchema  int                `json:"graphSchema,omitempty" jsonschema:"schema version the graph records; entries are written at it"`
 	BinarySchema int                `json:"binarySchema,omitempty" jsonschema:"schema version this build writes by default"`
 	Contribution string             `json:"contribution,omitempty" jsonschema:"upstream ref the checkout contributes to; when set, graph writes are refused off a feature branch cut from it"`
 	SecretRules  SecretRulesResult  `json:"secretRules" jsonschema:"the gitleaks rule file credential scans use"`

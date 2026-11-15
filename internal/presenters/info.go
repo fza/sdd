@@ -81,14 +81,14 @@ func RenderInfoJSON(w io.Writer, result *query.InfoResult, block *model.SyncBloc
 }
 
 // SchemaLine names the graph's schema and, when the graph is older than the
-// binary, that writes keep the graph's schema until `sdd migrate`. Empty when
+// binary, that writes keep the graph's schema. Empty when
 // the graph's schema is unknown.
 func SchemaLine(graph, binary int) string {
 	if graph == 0 {
 		return ""
 	}
 	if graph < binary {
-		return fmt.Sprintf("Schema: graph %d, binary %d (writes keep schema %d until `sdd migrate`)", graph, binary, graph)
+		return fmt.Sprintf("Schema: graph %d, binary %d (writes keep schema %d)", graph, binary, graph)
 	}
 	return fmt.Sprintf("Schema: %d", graph)
 }

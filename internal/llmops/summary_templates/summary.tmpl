@@ -31,6 +31,7 @@ Respond with one JSON object and nothing else: `{"title": "...", "summary": "...
 
 {{ .RelatedEntries }}
 {{ end -}}
+{{ template "similar_titles" . }}
 {{- end }}
 
 {{ define "summary_repair_user" -}}

@@ -149,6 +149,31 @@ func (r *ProjectRuntime) fillMaxRunes(ctx context.Context) (int, error) {
 	return maxRunes, nil
 }
 
+// similarTitles returns the titles of the titled entries nearest entry's body,
+// searched without reconciling the index; none without an embedder.
+func (r *ProjectRuntime) similarTitles(ctx context.Context, snapshot *Snapshot, entry *model.Entry) ([]string, error) {
+	if r.options.Embedder == nil || r.options.SearchIndex == nil {
+		return nil, nil
+	}
+	namespace, err := r.indexNamespace()
+	if err != nil {
+		return nil, err
+	}
+	maxRunes, err := r.storedMaxRunes(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	request, ok := query.SimilarTitles(entry, maxRunes)
+	if !ok {
+		return nil, nil
+	}
+	result, err := r.vectorSearch(ctx, snapshot, r.options.Graph, request)
+	if err != nil {
+		return nil, fmt.Errorf("searching titles similar to %s: %w", entry.ID, err)
+	}
+	return result.Titles(), nil
+}
+
 // Reconciliation needs the full graph; no-sync search verifies only candidate
 // versions so unrelated attachments do not contribute to search I/O.
 func (r *ProjectRuntime) currentEntryHashes(ctx context.Context, entries []*model.Entry, store GraphStore, maxRunes int) (map[string]string, error) {
@@ -229,7 +254,7 @@ func (r *ProjectRuntime) vectorResult(graph *model.Graph, request query.SearchQu
 func candidateSet(graph *model.Graph, request query.SearchQuery, excludeEmbedded bool) map[string]*model.Entry {
 	out := map[string]*model.Entry{}
 	for _, entry := range graph.Filter(request.Filter) {
-		if !chunking.IncludeEntry(entry, excludeEmbedded) {
+		if !chunking.IncludeEntry(entry, excludeEmbedded) || !request.Admits(entry) {
 			continue
 		}
 		if !request.IncludeSuperseded && graph.DerivedStatus(entry).Kind == model.StatusSupersededBy {

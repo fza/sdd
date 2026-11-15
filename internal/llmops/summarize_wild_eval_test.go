@@ -176,7 +176,7 @@ func TestSummarizeWildSweep(t *testing.T) {
 	axisFails := map[string]int{}
 	mechFails, judgeFails, infraFails := 0, 0, 0
 	for _, entry := range sample {
-		description, err := llmops.NewDescription(entry, graph, "", true)
+		description, err := llmops.NewDescription(entry, graph, "", true, nil)
 		if err != nil {
 			t.Fatalf("rendering source for %s: %v", entry.ID, err)
 		}

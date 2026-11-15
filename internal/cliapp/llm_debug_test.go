@@ -20,14 +20,14 @@ func TestLLMDebugWritesATranscriptPerCall(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			project := newMigrateProject(t)
+			project := newUntitledProject(t)
 			writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), tc.local)
 			if tc.committed != "" {
 				committed := readFile(t, filepath.Join(project, ".sdd", "config.yaml"))
 				writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), strings.Replace(committed, "llm:\n", tc.committed, 1))
 			}
 
-			output, err := runReleased(t, project, "", "new", "s", "tac", "--confidence", "high", "--skip-preflight", "--summary", "S.", "A new gap.")
+			output, err := runReleased(t, project, "new", "s", "tac", "--confidence", "high", "--skip-preflight", "--summary", "S.", "A new gap.")
 			if err != nil {
 				t.Fatalf("the write should go through: %v\n%s", err, output)
 			}
@@ -42,7 +42,7 @@ func TestLLMDebugWritesATranscriptPerCall(t *testing.T) {
 				t.Fatalf("each call should leave a transcript, got %v (%v)", files, err)
 			}
 			transcript := readFile(t, filepath.Join(project, ".sdd", "tmp", "llm-debug", files[0].Name()))
-			for _, want := range []string{"- provider: ollama", "## User prompt", "## Response", "migrated title"} {
+			for _, want := range []string{"- provider: ollama", "## User prompt", "## Response", "filled title"} {
 				if !strings.Contains(transcript, want) {
 					t.Errorf("the transcript should carry %q:\n%s", want, transcript)
 				}

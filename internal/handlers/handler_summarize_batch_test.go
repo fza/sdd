@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,10 +21,13 @@ import (
 // title-only call with the title, counting invocations per purpose. It stands
 // in for the LLM so the batch summarize tests stay deterministic.
 type stubRunner struct {
-	mu    sync.Mutex
-	text  string
-	calls int
-	byUse map[llm.Purpose]int
+	mu   sync.Mutex
+	text string
+	// numbered appends the call's number to the title, so a batch's titles
+	// repeat none another call wrote.
+	numbered bool
+	calls    int
+	byUse    map[llm.Purpose]int
 }
 
 // stubTitle is the stub runner's lowercase answer; files carry it capitalized.
@@ -39,10 +43,14 @@ func (r *stubRunner) Run(_ context.Context, request llm.Request) (llm.Result, er
 		r.byUse = map[llm.Purpose]int{}
 	}
 	r.byUse[request.Purpose]++
+	title := stubTitle
+	if r.numbered {
+		title = fmt.Sprintf("%s %d", stubTitle, r.calls)
+	}
 	r.mu.Unlock()
-	answer := map[string]string{"title": stubTitle, "summary": r.text}
+	answer := map[string]string{"title": title, "summary": r.text}
 	if request.Purpose == llm.PurposeTitle {
-		answer = map[string]string{"title": stubTitle}
+		answer = map[string]string{"title": title}
 	}
 	data, err := json.Marshal(answer)
 	if err != nil {
@@ -102,7 +110,7 @@ func TestSummarize_All_FillsWhatIsMissing(t *testing.T) {
 	writeSummarizePair(t, graphDir)
 	writeTitledEntry(t, graphDir)
 
-	runner := &stubRunner{text: "GENERATED"}
+	runner := &stubRunner{text: "GENERATED", numbered: true}
 	h := handlers.New(handlers.Options{
 		GraphDir:  graphDir,
 		Reader:    &graphReader{},
@@ -157,7 +165,7 @@ func TestSummarize_AllForce_RegeneratesAll(t *testing.T) {
 	graphDir := t.TempDir()
 	writeSummarizePair(t, graphDir)
 
-	runner := &stubRunner{text: "GENERATED"}
+	runner := &stubRunner{text: "GENERATED", numbered: true}
 	h := handlers.New(handlers.Options{
 		GraphDir:  graphDir,
 		Reader:    &graphReader{},

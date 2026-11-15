@@ -67,11 +67,12 @@ func TestTitleBackfill(t *testing.T) {
 		{Summary: "S."},
 		{Summary: "S.", Title: "has both"},
 		{},
+		{Title: "title without summary"},
 		{Embedded: true, Summary: "S."},
 	}
 	withSummary, titleOnly := model.TitleBackfill(entries)
-	if withSummary != 1 || titleOnly != 1 {
-		t.Errorf("only the entry lacking both owes a paired call and only the summarized one a title call, got %d paired, %d title-only", withSummary, titleOnly)
+	if withSummary != 2 || titleOnly != 1 {
+		t.Errorf("every entry lacking a summary owes a paired call and only the summarized untitled one a title call, got %d paired, %d title-only", withSummary, titleOnly)
 	}
 }
 
@@ -112,5 +113,32 @@ func TestPhaseCounted(t *testing.T) {
 		if got := phase.Counted(); got != want {
 			t.Errorf("%s: only phases working through a known number of units are counted, got %v", phase, got)
 		}
+	}
+}
+
+func TestNormalizeTitle(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{in: "daemon project removal.", want: "Daemon project removal"},
+		{in: "  Daemon removal...  ", want: "Daemon removal"},
+		{in: "Daemon removal …", want: "Daemon removal"},
+		{in: "Daemon removal, ; : ! - – —", want: "Daemon removal"},
+		{in: "Should the daemon go?", want: "Should the daemon go?"},
+		{in: "Should the daemon go?!.", want: "Should the daemon go?"},
+		{in: "Info output of `sdd`", want: "Info output of `sdd`"},
+		{in: "Search index (beta).", want: "Search index (beta)"},
+		{in: `The "daemon" runs`, want: "The daemon runs"},
+		{in: "Die „Daemon“ Entfernung", want: "Die Daemon Entfernung"},
+		{in: "Le « démon » part.", want: "Le démon part"},
+		{in: "“Daemon removal”.", want: "Daemon removal"},
+		{in: "The team's daemon’s exit", want: "The team's daemon’s exit"},
+		{in: "Self-hosted runners", want: "Self-hosted runners"},
+		{in: "...", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			if got := model.NormalizeTitle(tc.in); got != tc.want {
+				t.Errorf("double quotes and trailing punctuation but a question mark should go, got %q", got)
+			}
+		})
 	}
 }

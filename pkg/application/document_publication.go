@@ -203,7 +203,10 @@ func (a *Application) ReplaceSummary(ctx context.Context, identity RequestIdenti
 		return DocumentPublication{}, err
 	}
 	canonical := current.Content
-	title := model.CapitalizeTitle(replacement.Title)
+	title := model.NormalizeTitle(replacement.Title)
+	if title == "" && replacement.Title != "" {
+		return DocumentPublication{}, &ApplicationError{Code: ErrorInvalidArgument, Message: "the title is empty once its quotes and trailing punctuation are removed"}
+	}
 	summaryReplaced := replacement.Summary == "" || entry.Summary == replacement.Summary
 	titleReplaced := title == "" || entry.Title == title
 	if replacement.ExpectedBlob == "" || GitBlobID(current.Content) == replacement.ExpectedBlob {

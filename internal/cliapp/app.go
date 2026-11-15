@@ -593,7 +593,6 @@ func New(options Options) *cli.Command {
 			wipCmd(),
 			lintCmd(),
 			summarizeCmd(),
-			migrateCmd(),
 			indexCmd(),
 			cacheCmd(),
 			searchCmd(),
@@ -972,7 +971,7 @@ func newCmd() *cli.Command {
 				Name: "title",
 				// urfave/cli takes a usage's first backtick pair as the value
 				// placeholder; naming it keeps the title rule's code spans intact.
-				Usage: "Use `TITLE` instead of the generated title; a first letter that is not a backtick is capitalized. " + model.TitleRule,
+				Usage: "Use `TITLE` instead of the generated title; double quotes and trailing punctuation but a question mark are removed, and a first letter that is not a backtick is capitalized. " + model.TitleRule,
 			},
 			&cli.BoolFlag{
 				Name:  "dry-run",
@@ -1197,6 +1196,10 @@ func newCmd() *cli.Command {
 				CloneRound: round,
 				Language:   configLanguage(cfg),
 			})
+			if err != nil {
+				return err
+			}
+			opts, err = withTitleSearch(cmd, opts)
 			if err != nil {
 				return err
 			}
@@ -1508,9 +1511,58 @@ func summarizeCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			return handler.Summarize(ctx, sumCmd)
+			if len(ids) > 0 {
+				return handler.Summarize(ctx, sumCmd)
+			}
+
+			out := cmd.ErrWriter
+			err = handler.CommitStrandedTitles(ctx, &command.CommitStrandedTitlesCmd{
+				OnCommitted: func(count int) {
+					fmt.Fprintf(out, "committed %d entries an earlier backfill titled but did not commit\n", count)
+				},
+			})
+			if err != nil {
+				return err
+			}
+			if !sumCmd.Force {
+				graph, err := loadGraph(cmd)
+				if err != nil {
+					return err
+				}
+				withSummary, titleOnly := model.TitleBackfill(graph.Entries)
+				fmt.Fprintf(out, "Backfill: %d entries get a title beside their stored summary, %d entries get a summary and a title -> %d model calls.\n", titleOnly, withSummary, titleOnly+withSummary)
+			}
+			if !cliout.IsInteractive(out) {
+				return handler.Summarize(ctx, sumCmd)
+			}
+			progress := newBackfillProgress(sumCmd)
+			_, err = tui.Interactive(ctx, transientViewPolicy(),
+				tui.View{Reader: cmd.Reader, Writer: out, InitialPhase: model.PhaseSummarizing, Progress: progress},
+				func(ctx context.Context) (struct{}, error) {
+					return struct{}{}, handler.Summarize(ctx, sumCmd)
+				})
+			return err
 		})),
 	}
+}
+
+// newBackfillProgress reroutes a backfill's per-entry callbacks onto a footer
+// reporter: on a terminal the bar replaces the line per entry.
+func newBackfillProgress(backfill *command.SummarizeCmd) *cliout.Reporter {
+	reporter := cliout.NewReporter()
+	reporter.SetUnit("entries")
+	backfill.OnPlanned = func(n int) {
+		reporter.SetPhase(model.PhaseSummarizing)
+		reporter.SetTotal(n)
+	}
+	advance := func(id, _ string) {
+		reporter.Add(1)
+		reporter.SetNote(id)
+	}
+	backfill.OnSummarized = advance
+	backfill.OnTitled = advance
+	backfill.OnSkipped = nil
+	return reporter
 }
 
 // summarizeHandler wires the handler summary generation runs on: the graph,
@@ -1561,6 +1613,10 @@ func summarizeHandler(ctx context.Context, cmd *cli.Command) (*handlers.Handler,
 		Changes:   graphGit(dir),
 		Language:  configLanguage(cfg),
 	})
+	if err != nil {
+		return nil, err
+	}
+	opts, err = withTitleSearch(cmd, opts)
 	if err != nil {
 		return nil, err
 	}

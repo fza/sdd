@@ -159,7 +159,7 @@ func TestSummarize_ExplicitTitle(t *testing.T) {
 			writeEntryFile(t, graphDir, id, "---\ntype: signal\nlayer: process\nkind: gap\nsummary: Stored summary.\n---\n\nBody.\n")
 			h := handlers.New(handlers.Options{GraphDir: graphDir, Reader: &graphReader{}, Committer: &messageRecordingCommitter{}})
 
-			title := "  hand-written title  "
+			title := "  hand-written title.  "
 			var titled string
 			err := h.Summarize(context.Background(), &command.SummarizeCmd{
 				EntryIDs: []string{id}, ExplicitText: tc.text, ExplicitTitle: &title,
@@ -169,7 +169,7 @@ func TestSummarize_ExplicitTitle(t *testing.T) {
 				t.Fatalf("Summarize: %v", err)
 			}
 			if titled != "Hand-written title" {
-				t.Errorf("the trimmed, capitalized title should be reported, got %q", titled)
+				t.Errorf("the title should be reported trimmed of its trailing punctuation and capitalized, got %q", titled)
 			}
 			written := readEntryFile(t, graphDir, id)
 			if !strings.Contains(written, "title: Hand-written title") || !strings.Contains(written, tc.wantSummary) {
@@ -201,7 +201,7 @@ func TestSummarize_ExplicitTitleKeepsALeadingCodeSpan(t *testing.T) {
 
 func TestSummarize_ExplicitTitleRefusesAnUnusableTitle(t *testing.T) {
 	const id = "20260427-120301-s-prc-tt2"
-	for name, title := range map[string]string{"multi-line": "first line\nsecond line", "blank": "   "} {
+	for name, title := range map[string]string{"multi-line": "first line\nsecond line", "blank": "   ", "punctuation only": " … "} {
 		t.Run(name, func(t *testing.T) {
 			graphDir := t.TempDir()
 			writeEntryFile(t, graphDir, id, "---\ntype: signal\nlayer: process\nkind: gap\n---\n\nBody.\n")
@@ -215,5 +215,25 @@ func TestSummarize_ExplicitTitleRefusesAnUnusableTitle(t *testing.T) {
 				t.Errorf("a refused title should not be written:\n%s", written)
 			}
 		})
+	}
+}
+
+func TestSummarize_ExplicitTitleKeepsAQuestionMark(t *testing.T) {
+	const id = "20260427-120304-s-prc-tt5"
+	graphDir := t.TempDir()
+	writeEntryFile(t, graphDir, id, "---\ntype: signal\nlayer: process\nkind: question\nsummary: Stored summary.\n---\n\nBody.\n")
+	h := handlers.New(handlers.Options{GraphDir: graphDir, Reader: &graphReader{}, Committer: &messageRecordingCommitter{}})
+
+	title := "Should the daemon go?"
+	err := h.Summarize(context.Background(), &command.SummarizeCmd{EntryIDs: []string{id}, ExplicitTitle: &title})
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	entry, err := model.ParseEntry(id+".md", readEntryFile(t, graphDir, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Title != title {
+		t.Errorf("a closing question mark should be kept, got %q", entry.Title)
 	}
 }

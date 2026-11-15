@@ -153,15 +153,16 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 
 	var described *llmops.DescriptionResult
 	var describeErr error
+	title := model.NormalizeTitle(cmd.Title)
 
 	// A caller-supplied summary is taken verbatim; only a missing title still
 	// costs a call.
-	if !cmd.DryRun && h.llmRunner != nil && (cmd.Summary == "" || cmd.Title == "") {
+	if !cmd.DryRun && h.llmRunner != nil && (cmd.Summary == "" || title == "") {
 		supplied := *entry
 		supplied.Summary = cmd.Summary
-		supplied.Title = cmd.Title
+		supplied.Title = title
 		g.Go(func() error {
-			result, err := llmops.Describe(gctx, h.llmRunner, &supplied, graph, h.language, false)
+			result, err := h.describeNew(gctx, &supplied, graph)
 			if err != nil {
 				// Not a group error: the entry is still written, then the
 				// failure surfaces like a failed commit.
@@ -209,7 +210,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	// Apply the caller-supplied summary, or the one from the concurrent
 	// generation goroutine.
 	entry.Summary = cmd.Summary
-	entry.Title = model.CapitalizeTitle(cmd.Title)
+	entry.Title = title
 	if described != nil {
 		if entry.Summary == "" {
 			entry.Summary = described.Summary
@@ -369,4 +370,20 @@ func writeNewFile(path string, data []byte) error {
 		return err
 	}
 	return closeErr
+}
+
+// describeNew writes the new entry's description, its title kept apart from
+// those of the entries nearest its body. A failed search fails the
+// description as a failed call does.
+func (h *Handler) describeNew(ctx context.Context, entry *model.Entry, graph *model.Graph) (_ llmops.DescriptionResult, err error) {
+	finder, closeSearch, err := h.openTitleSearch(ctx, graph)
+	if err != nil {
+		return llmops.DescriptionResult{}, err
+	}
+	defer func() { err = errors.Join(err, closeSearch()) }()
+	titles, err := similarTitles(ctx, finder, entry)
+	if err != nil {
+		return llmops.DescriptionResult{}, err
+	}
+	return llmops.Describe(ctx, h.llmRunner, entry, graph, h.language, false, titles)
 }

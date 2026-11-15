@@ -10,6 +10,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
+	"github.com/networkteam/sdd/pkg/llm/embed"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -31,6 +32,8 @@ type writeFixtureOptions struct {
 	// GraphSchema is the schema the graph's meta.json records; zero writes no
 	// meta.json, leaving the graph at the binary's schema.
 	GraphSchema int
+	Embedder    embed.Embedder
+	SearchIndex sdd.SearchIndexStore
 }
 
 func newWriteFixture(t *testing.T, options ...writeFixtureOptions) *writeFixture {
@@ -69,9 +72,14 @@ func newWriteFixture(t *testing.T, options ...writeFixtureOptions) *writeFixture
 	var graph sdd.GraphStore = baseGraph
 	var dependency *sdd.ProjectRuntime
 	var dependencies []sdd.RepoID
+	var embedder embed.Embedder
+	var searchIndex sdd.SearchIndexStore
 	for _, option := range options {
 		if option.Runner != nil {
 			runner = option.Runner
+		}
+		if option.Embedder != nil {
+			embedder, searchIndex = option.Embedder, option.SearchIndex
 		}
 		finalizers = append(finalizers, option.Finalizers...)
 		dependencies = append(dependencies, option.Dependencies...)
@@ -97,6 +105,7 @@ func newWriteFixture(t *testing.T, options ...writeFixtureOptions) *writeFixture
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: "example"}, DefaultBranch: "main", Graph: graph,
 		LLM: runner, Finalizers: finalizers, Dependencies: dependencies,
+		Embedder: embedder, SearchIndex: searchIndex,
 	})
 	if err != nil {
 		t.Fatal(err)
