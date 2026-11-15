@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -235,6 +236,9 @@ type WorkflowSession struct {
 	sink     *workflowSink
 	shell    string
 	staged   map[string]string
+	// stagedFrom holds the file each handle was staged from, read again
+	// before a playback confirm (stageFromSource).
+	stagedFrom map[string]string
 	// instanceProjects holds the recorded per-instance targets; an instance
 	// absent here derives its project from its parent, then the home.
 	instanceProjects map[string]ProjectID
@@ -410,7 +414,7 @@ func newAttachment(subject, clientName, clientVersion string, now time.Time) *At
 func (a *Application) newWorkflow(ctx context.Context, identity RequestIdentity, project ProjectID, binding SessionBinding, branch string) (*WorkflowSession, error) {
 	w := &WorkflowSession{
 		app: a, project: project, identity: identity, ctx: ctx, binding: binding, branch: branch,
-		staged: map[string]string{}, instanceProjects: map[string]ProjectID{},
+		staged: map[string]string{}, stagedFrom: map[string]string{}, instanceProjects: map[string]ProjectID{},
 	}
 	w.graphs = &workflowGraphs{workflow: w}
 	w.sink = &workflowSink{workflow: w}
@@ -733,6 +737,21 @@ func (w *WorkflowSession) Park(ctx context.Context, identity RequestIdentity, in
 // StageAttachment stages content under filename. A running capture taking its
 // body from that handle gets the new body and hash.
 func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestIdentity, filename string, content []byte) (StagedFile, error) {
+	return w.stage(ctx, identity, filename, "", content)
+}
+
+// StageAttachmentFrom stages the file at path under filename and keeps the
+// path: a playback confirm reads it again, so an edit made in place after
+// staging is played back instead of an older copy confirmed.
+func (w *WorkflowSession) StageAttachmentFrom(ctx context.Context, identity RequestIdentity, filename, path string) (StagedFile, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return StagedFile{}, fmt.Errorf("reading %s: %w", path, err)
+	}
+	return w.stage(ctx, identity, filename, path, content)
+}
+
+func (w *WorkflowSession) stage(ctx context.Context, identity RequestIdentity, filename, source string, content []byte) (StagedFile, error) {
 	w.setOperation(ctx, identity)
 	if err := w.checkRestagedBody(filename); err != nil {
 		return StagedFile{}, err
@@ -741,7 +760,11 @@ func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestI
 	if err != nil {
 		return StagedFile{}, err
 	}
-	payload, err := json.Marshal(map[string]string{"handle": filename, "blob_id": blob.ID})
+	item := map[string]string{"handle": filename, "blob_id": blob.ID}
+	if source != "" {
+		item["source"] = source
+	}
+	payload, err := json.Marshal(item)
 	if err != nil {
 		return StagedFile{}, err
 	}
@@ -749,6 +772,7 @@ func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestI
 		return StagedFile{}, err
 	}
 	w.staged[filename] = blob.ID
+	w.recordSource(filename, source)
 	bound, err := w.syncRestagedBody(filename, content)
 	if err != nil {
 		return StagedFile{}, err
@@ -1603,6 +1627,7 @@ func (w *WorkflowSession) restoreStagedBlobs(events []StoredEvent) error {
 		var item struct {
 			Handle string `json:"handle"`
 			BlobID string `json:"blob_id"`
+			Source string `json:"source"`
 		}
 		if err := json.Unmarshal(stored.Payload, &item); err != nil {
 			return fmt.Errorf("decoding staged blob event: %w", err)
@@ -1611,6 +1636,7 @@ func (w *WorkflowSession) restoreStagedBlobs(events []StoredEvent) error {
 			return fmt.Errorf("decoding staged blob event: handle and blob_id are required")
 		}
 		w.staged[item.Handle] = item.BlobID
+		w.recordSource(item.Handle, item.Source)
 	}
 	return nil
 }
