@@ -104,3 +104,23 @@ func TestRevisionCacheDoesNotRememberAGraphChangedJustNow(t *testing.T) {
 		t.Error("a file changed within the racy window should not be trusted to its stamp")
 	}
 }
+
+func TestRevisionCacheDoesNotRememberAGraphHoldingASymlink(t *testing.T) {
+	dir := t.TempDir()
+	writeGraphFile(t, dir, "2026/10/20-100000-s-tac-aaa.md", "alpha")
+	target := writeGraphFile(t, t.TempDir(), "outside.md", "outside")
+	if err := os.Symlink(target, filepath.Join(dir, "2026/10/link.md")); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(time.Hour)
+	var cache revisionCache
+
+	first := cachedRevision(t, &cache, dir, later)
+	if cache.revision != "" {
+		t.Error("a symlink's target can change without its stamp, so the graph should not be remembered")
+	}
+	writeGraphFile(t, filepath.Dir(target), "outside.md", "changed outside")
+	if again := cachedRevision(t, &cache, dir, later); again == first {
+		t.Error("a changed symlink target should change the revision")
+	}
+}

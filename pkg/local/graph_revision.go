@@ -73,7 +73,9 @@ func graphStamps(dir string, now time.Time) (map[string]filestamp.Stamp, bool, e
 			return err
 		}
 		stamp := filestamp.Of(info)
-		if !stamp.Proves(now) {
+		// The revision hashes a symlink's target, which can change without
+		// the link's stamp changing.
+		if !stamp.Proves(now) || info.Mode()&fs.ModeSymlink != 0 {
 			trusted = false
 		}
 		stamps[filename] = stamp
