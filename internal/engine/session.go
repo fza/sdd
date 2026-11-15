@@ -852,6 +852,9 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 		sort.Strings(choices)
 		return nil, fmt.Errorf("choice %q is not an option at %s (options: %s)", choice, step.ID, joinNames(choices))
 	}
+	if err := inst.repeatedWords(step.ID, choice, userWords); err != nil {
+		return nil, err
+	}
 
 	// Fields on an answer are limited to the option's collect list — the
 	// same state-only trust boundary as reports, narrowed further.
@@ -896,6 +899,7 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	if err := s.checkSink(); err != nil {
 		return nil, err
 	}
+	inst.recordWords(step.ID, choice, userWords)
 	inst.countUnattended(step, answeredBy, userWords)
 	s.clearCancellation(inst.ID)
 	inst.interactionStep = inst.Step
@@ -1167,8 +1171,9 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			words, _ := ev.Data["userWords"].(string)
 			answeredBy, _ := ev.Data["answeredBy"].(string)
 			inst.countUnattended(inst.Spec.StepByID[chooser], answeredBy, words)
+			choice, _ := ev.Data["choice"].(string)
+			inst.recordWords(chooser, choice, words)
 			if step := inst.Spec.StepByID[chooser]; step != nil {
-				choice, _ := ev.Data["choice"].(string)
 				for i := range step.Options {
 					if step.Options[i].Choice == choice {
 						recordDispatchSeed(inst, &step.Options[i])
