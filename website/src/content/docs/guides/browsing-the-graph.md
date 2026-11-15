@@ -71,7 +71,8 @@ Under each entry line, sdd shows the best matching passage, where it sits, such 
 | `focus` | the active focus decisions, with the entries each covers and their state |
 | `signals` | the open gaps and questions, grouped by kind |
 | `topic("product/vision")` | one topic's entries, ranked by heat |
-| `since("7d"):rank(by(date)):as-list` | everything recorded in the last seven days, newest first |
+| `since("7d"):rank(by(date)):as-list` | the live entries recorded in the last seven days, newest first |
+| `history:since("7d"):rank(by(date)):as-list` | everything recorded in the last seven days, closed, superseded and retired entries too |
 
 ```bash
 sdd view --layout='top(20)'
@@ -79,7 +80,7 @@ sdd view --layout='focus,signals'
 sdd view --layout='topic("product/vision"):brief'
 ```
 
-A comma starts another section, so `focus,signals` prints both lists. `brief` shortens each line to the ID, kind and first summary sentence. Quote topic paths, dates and names inside the layout, and wrap the whole layout in single quotes for the shell. `sdd view --help` lists every filter, ranking and output form, with examples.
+A section lists the live population, as `active` does, unless it adds `history` or names its entries with `id()`. A comma starts another section, so `focus,signals` prints both lists. `brief` shortens each line to the ID, kind and first summary sentence. Quote topic paths, dates and names inside the layout, and wrap the whole layout in single quotes for the shell. `sdd view --help` lists every filter, ranking and output form, with examples.
 
 A full line reads: ID, layer, kind and type, confidence, participants, status, score, topics, summary.
 

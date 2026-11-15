@@ -36,6 +36,17 @@ When a conversation grows long, the agent compacts it into a summary. The sdd se
 - If the agent carries on from memory instead, skipping steps or answering for you, remind it: "Resume the sdd session first."
 - If the summary lost the session ID, the agent cannot find the session by itself. Give it the ID, or start a new session with `/sdd`.
 
+sdd cannot tell whether a compaction happened, so it repeats a piece of text only while the agent proves it still holds it. Each piece sent in full, such as an instruction lane, a framing block, a report schema, the vocabulary table or an entry, carries a short tag such as `⟦k3f9⟧` before one of its words. On a later call the agent lists in `held`, for each piece it still sees, the tag and the word right after it, as `k3f9:once`. sdd then sends a short pointer instead of the text; an entry comes as its ID and brief with `(held as ⟦k3f9⟧; next proof k3f9:<the word right after "graph">)`. A proof works once: each pointer names the next one, the word after a word that occurs once in the piece's text near its tag, never a word such as "the" or "and" that could be guessed, so only an agent that still sees the text can answer it, and a proof copied from an earlier call never holds. After at most three pointers the piece comes back in full with a fresh tag. A missing or wrong proof, or a tag sdd never sent, brings the piece back in full with a fresh tag, so a summary that dropped a tag costs a re-read, not accuracy. An entry edited since it was sent is sent in full again. Tags in text the agent sends back, such as a quoted passage in a draft or a staged text file, are taken out. A subagent working on the same session holds no tags and gets the full text too. An agent that has lost a piece names its tag or name in `reread`, and sdd sends it in full again. Resuming a session sends every piece in full.
+
+```text
+1 → show {ids: [<entry>]}
+  ← … serve each entry ⟦q7m2⟧ once per session …
+2 → next {held: ["q7m2:once"]}
+  ← <entry> — no-repeat rule (held as ⟦q7m2⟧; next proof q7m2:<the word right after "serve">)
+3 → next {held: []}                       text lost in a compaction: no proof
+  ← … serve each entry ⟦h4zt⟧ once per session …   full text, fresh tag
+```
+
 In practice it often works better to avoid compaction in long work. Capture the current state, for example as progress notes on the implementation or a partial done, and continue in a fresh agent session.
 
 ## Resume a session in a fresh agent session
@@ -44,9 +55,25 @@ A session you did not wrap up stays open. In a new agent session, give the agent
 
 How best to hand work between agent sessions this way is still being worked out. Capturing the state as entries first is the safer path.
 
+## Parked captures
+
+Under `dialogue.mode: auto`, a capture that a check blocks a second time is parked: nothing is written and the session stays open at that step. The agent ends its turn with `parked at <step>: resume_session <session>`. `sdd sessions` marks it with the step and the reason:
+
+```text
+$ sdd sessions
+7f3c2a · idle · last 2026-11-15T03:10:00+01:00
+  - 9d1e4b: capture parked at reviseOrOverride · 9h ago · blocked again after 1 unattended revise
+```
+
+`sdd sessions --format json` lists every open move, parked or not, with `session`, `procedure`, `parked`, `step` and `since`, the park time or else the last activity, and `reason` for a parked move. Your next guided session names each parked capture when it opens. Resume the session in a guided dialogue to answer the step yourself.
+
 ## Wrap up sessions
 
 At a natural stop, the agent offers to wrap up and names every thread that is still open. Wrapping up ends the session for good: an open thread left behind cannot be resumed afterwards. Finish the threads worth finishing, drop the others with a reason, and keep the session open if something should continue. Leaving without wrapping up costs nothing; the session stays resumable by its ID.
+
+## Deep verification needs Claude Code
+
+`verify.mode: deep` has a second agent, run by Claude Code, check each draft. In Codex, a session under `deep`, or under a kind set to `deep` in `verify.kinds`, fails to start or resume and names the setting. For a project you work on in Codex, set it to `prose`, `grounding` or `off`, which work with every agent. Codex cannot run the verifier read-only, does not follow the served instructions reliably, and ends its turn while a verifier round still runs.
 
 ## In the dialogue
 
