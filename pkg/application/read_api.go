@@ -64,8 +64,10 @@ type ShowRequest struct {
 }
 
 type ShowResult struct {
-	Project    ProjectRef
+	Project ProjectRef
+	// Entries is Items rendered as text.
 	Entries    string
+	Items      []ShownEntry
 	FullIDs    []string
 	SummaryIDs []string
 }
@@ -92,8 +94,12 @@ type SearchRequest struct {
 type SearchResult struct {
 	Coverage []SearchCoverage
 	Notice   string
-	Project  ProjectRef
+	// Notices are the notices Notice joins, each on its own.
+	Notices []string
+	Project ProjectRef
+	// Results is Hits rendered as text, Notices following.
 	Results  string
+	Hits     []SearchHit
 	EntryIDs []string
 }
 

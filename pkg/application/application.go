@@ -298,9 +298,15 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 	if err != nil {
 		return ShowResult{}, err
 	}
-	var rendered bytes.Buffer
-	presenters.RenderShow(&rendered, showResult, presenters.ShowOptions{})
-	show := ShowResult{Project: runtime.options.Project, Entries: strings.TrimRight(rendered.String(), "\n")}
+	items, err := showResult.ShownEntries()
+	if err != nil {
+		return ShowResult{}, err
+	}
+	entries, err := presenters.ShowText(items)
+	if err != nil {
+		return ShowResult{}, err
+	}
+	show := ShowResult{Project: runtime.options.Project, Entries: entries, Items: items}
 	for _, group := range showResult.Groups {
 		if group.Primary != nil {
 			if group.PrimaryID != "" {
@@ -372,19 +378,16 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 	if limit := q.EffectiveLimit(); len(searchResult.Entries) > limit {
 		searchResult.Entries = searchResult.Entries[:limit]
 	}
-	var rendered bytes.Buffer
-	presenters.RenderSearch(&rendered, searchResult, snapshot.graph)
-	search := SearchResult{Project: runtime.options.Project, Results: strings.TrimRight(rendered.String(), "\n"), Coverage: coverage}
+	hits := searchResult.Hits(snapshot.graph)
+	search := SearchResult{Project: runtime.options.Project, Hits: hits, Coverage: coverage}
 	for _, member := range coverage {
 		if !member.Complete {
-			search.Notice = "Search indexing is incomplete for the selected snapshots. Available matches are shown; retry later."
-			if search.Results != "" {
-				search.Results += "\n\n"
-			}
-			search.Results += search.Notice
+			search.Notices = append(search.Notices, "Search indexing is incomplete for the selected snapshots. Available matches are shown; retry later.")
 			break
 		}
 	}
+	search.Notice = strings.Join(search.Notices, " ")
+	search.Results = presenters.SearchText(hits, search.Notices)
 	for _, entry := range searchResult.Entries {
 		if entry.Entry != nil {
 			search.EntryIDs = append(search.EntryIDs, entry.DisplayID())
