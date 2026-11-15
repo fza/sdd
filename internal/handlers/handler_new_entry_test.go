@@ -131,6 +131,64 @@ func TestNewEntry_CommitFailure_IsLoudAndDurable(t *testing.T) {
 	}
 }
 
+// failingRunner fails every LLM call, as an unreachable provider does.
+type failingRunner struct{}
+
+func (failingRunner) Run(_ context.Context, _ llm.Request) (llm.Result, error) {
+	return llm.Result{}, errors.New("provider unreachable")
+}
+
+// A failed summary generation surfaces like a failed commit: the entry is
+// written and committed without a summary, and the error propagates.
+func TestNewEntry_SummaryFailure_IsLoudAndDurable(t *testing.T) {
+	tmp := t.TempDir()
+	sddDir := filepath.Join(tmp, ".sdd")
+	if err := os.MkdirAll(sddDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	committer := &recordingCommitter{}
+	var reportedID string
+
+	h := handlers.New(handlers.Options{
+		GraphDir:  tmp,
+		SDDDir:    sddDir,
+		Reader:    &fakeReader{},
+		Committer: committer,
+		LLMRunner: failingRunner{},
+		Stderr:    &bytes.Buffer{},
+	})
+
+	cmd := &command.NewEntryCmd{
+		Type:          model.TypeSignal,
+		Layer:         model.LayerTactical,
+		Description:   "summary fails loud",
+		SkipPreflight: true,
+		OnNewEntry:    func(id, _ string) { reportedID = id },
+	}
+
+	err := h.NewEntry(context.Background(), cmd)
+	if err == nil || !strings.Contains(err.Error(), "provider unreachable") || !strings.Contains(err.Error(), "summar") {
+		t.Fatalf("the summary failure should propagate, naming the summary and its cause, got %v", err)
+	}
+	if reportedID == "" {
+		t.Fatal("OnNewEntry should fire so the durable entry is still reported")
+	}
+	if committer.calls != 1 {
+		t.Errorf("the written entry should still be committed, got %d commits", committer.calls)
+	}
+	if !strings.Contains(err.Error(), reportedID) {
+		t.Errorf("the error should name the entry to summarize later, got %v", err)
+	}
+	relPath, err := model.IDToRelPath(reportedID)
+	if err != nil {
+		t.Fatalf("IDToRelPath(%s): %v", reportedID, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmp, relPath)); statErr != nil {
+		t.Errorf("entry file should remain on disk after a summary failure: %v", statErr)
+	}
+}
+
 // TestNewEntry_DryRun_SavesStdinOnValidationFailure is the regression test for
 // d-prc-31v / d-tac-q5p: dry-run + validation failure must still save stdin.
 // The bug was that the reportSavedStdin call was placed after graph validation,

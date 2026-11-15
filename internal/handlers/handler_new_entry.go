@@ -10,8 +10,6 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/networkteam/slogutils"
-
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
@@ -154,6 +152,7 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	}
 
 	var described *llmops.DescriptionResult
+	var describeErr error
 
 	// A caller-supplied summary is taken verbatim; only a missing title still
 	// costs a call.
@@ -164,8 +163,10 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 		g.Go(func() error {
 			result, err := llmops.Describe(gctx, h.llmRunner, &supplied, graph, h.language, false)
 			if err != nil {
-				slogutils.FromContext(gctx).Warn("summary generation failed", "err", err)
-				return nil // non-fatal: entry is valid without a summary or title
+				// Not a group error: the entry is still written, then the
+				// failure surfaces like a failed commit.
+				describeErr = err
+				return nil
 			}
 			described = &result
 			return nil
@@ -272,10 +273,19 @@ func (h *Handler) NewEntry(ctx context.Context, cmd *command.NewEntryCmd) (retEr
 	if h.committer != nil {
 		msg := entry.CaptureCommitMessage()
 		if err := h.commitGraph(ctx, msg, commitPaths...); err != nil {
-			return fmt.Errorf("git commit: %w", err)
+			return errors.Join(fmt.Errorf("git commit: %w", err), summaryFailure(id, describeErr))
 		}
 	}
-	return nil
+	return summaryFailure(id, describeErr)
+}
+
+// summaryFailure names the written entry whose summary or title generation
+// failed, so the caller can fill it in later; nil when generation succeeded.
+func summaryFailure(id string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("entry %s is written without a generated summary or title (run sdd summarize %s): summarizing: %w", id, id, err)
 }
 
 // refuseCredentials scans what the write will hold: the entry with the
