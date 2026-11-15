@@ -9,7 +9,9 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
@@ -54,31 +57,21 @@ func serveCmd() *cli.Command {
 			},
 		),
 		Action: withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
-			dir, err := resolveGraphDir(cmd)
+			watched, err := servedConfigFiles()
 			if err != nil {
 				return err
 			}
-			sddDir, err := resolveSDDDir()
+			watch, err := newConfigWatch(watched, func(previous *servedProject, reads []configRead) (*servedProject, error) {
+				return buildServedProject(cmd, previous, reads)
+			})
 			if err != nil {
 				return err
 			}
-			runner, err := newRunner(cmd, "")
+			application, identity, err := buildServedApplication(ctx, watch)
 			if err != nil {
 				return err
 			}
-			cfg, err := loadConfig()
-			if err != nil {
-				return err
-			}
-			reg, _, err := defaultRepos()
-			if err != nil {
-				return err
-			}
-			application, _, identity, err := buildLocalApplication(ctx, cmd, dir, sddDir, cfg, reg, runner)
-			if err != nil {
-				return err
-			}
-			retention, err := model.ResolveSessionRetention(cfg)
+			retention, err := model.ResolveSessionRetention(watch.served().cfg)
 			if err != nil {
 				return err
 			}
@@ -90,6 +83,10 @@ func serveCmd() *cli.Command {
 				LocalIdentity: identity,
 				LocalClient:   transport == "stdio",
 				Version:       cmd.Root().Version,
+				BeforeCall: func(ctx context.Context, session string) (context.Context, mcpserver.Notices, error) {
+					call, notice, err := watch.admit(ctx, session)
+					return call, mcpserver.Notices{Config: notice}, err
+				},
 			})
 			if err != nil {
 				return err
@@ -309,7 +306,110 @@ func (a *localRuntimeAccess) ResolveDependency(_ context.Context, _ sdd.Principa
 	return a.dependencies.resolve(dependency)
 }
 
-func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddDir string, cfg *model.PerRepoConfig, registry *repos.Registry, runner pkgllm.Runner) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
+// The positions of the config files in what servedConfigFiles returns.
+const (
+	globalConfigFile = iota
+	committedConfigFile
+	localConfigFile
+	servedConfigCount
+)
+
+// servedConfigFiles names the config files serve resolves its config from,
+// existing or not.
+func servedConfigFiles() ([]string, error) {
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		return nil, err
+	}
+	sddDir, err := resolveSDDDir()
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, servedConfigCount)
+	paths[globalConfigFile] = loc.ConfigPath
+	paths[committedConfigFile] = filepath.Join(sddDir, "config.yaml")
+	paths[localConfigFile] = filepath.Join(sddDir, "config.local.yaml")
+	return paths, nil
+}
+
+// servedConfigLayers parses the reads of the files servedConfigFiles names.
+func servedConfigLayers(reads []configRead) (model.ConfigLayers, error) {
+	var (
+		layers model.ConfigLayers
+		err    error
+	)
+	global := reads[globalConfigFile]
+	if global.err != nil {
+		return model.ConfigLayers{}, fmt.Errorf("reading global config %s: %w", global.path, global.err)
+	}
+	if global.found {
+		cfg, err := repos.ParseConfigFile(global.path, global.data)
+		if err != nil {
+			return model.ConfigLayers{}, err
+		}
+		layers.Global = cfg.BaseConfig
+	}
+	layers.Project, err = perRepoLayer(reads[committedConfigFile])
+	if err != nil {
+		return model.ConfigLayers{}, err
+	}
+	layers.Local, err = perRepoLayer(reads[localConfigFile])
+	if err != nil {
+		return model.ConfigLayers{}, err
+	}
+	return layers, nil
+}
+
+func perRepoLayer(read configRead) (*model.PerRepoConfig, error) {
+	if read.err != nil {
+		return nil, read.err
+	}
+	if !read.found {
+		return nil, nil
+	}
+	return meta.ParseConfigFile(read.path, read.data)
+}
+
+// buildServedApplication composes the application whose every call resolves
+// against the project watch serves at that moment.
+func buildServedApplication(ctx context.Context, watch *configWatch) (*sdd.Application, sdd.RequestIdentity, error) {
+	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: servedAccess{watch}, Sessions: servedSessions{watch}, StagedBlobs: servedBlobs{watch}})
+	if err != nil {
+		return nil, sdd.RequestIdentity{}, err
+	}
+	identity := sdd.RequestIdentity{Subject: "local"}
+	_, err = application.Info(ctx, identity, watch.served().access.project, sdd.InfoRequest{})
+	if err != nil {
+		return nil, sdd.RequestIdentity{}, err
+	}
+	return application, identity, nil
+}
+
+// buildServedProject resolves the project serve answers calls with from one
+// read of its config files, its LLM client included.
+func buildServedProject(cmd *cli.Command, previous *servedProject, reads []configRead) (*servedProject, error) {
+	sddDir, err := resolveSDDDir()
+	if err != nil {
+		return nil, err
+	}
+	layers, err := servedConfigLayers(reads)
+	if err != nil {
+		return nil, err
+	}
+	cfg := layers.Effective()
+	graphDir, ok := graphDirFlag(cmd)
+	if !ok {
+		graphDir = meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)
+	}
+	registry, _, err := defaultRepos()
+	if err != nil {
+		return nil, err
+	}
+	clients, err := buildServedClients(cmd, previous, layers)
+	if err != nil {
+		return nil, err
+	}
+	runner, localEmbedder, crossEmbedder := clients.llm.Runner, clients.embedders.local, clients.embedders.cross
 	displayName := filepath.Base(filepath.Dir(sddDir))
 	participant := ""
 	language := ""
@@ -321,36 +421,28 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	}
 	locations, err := repos.DefaultLocations()
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, err
 	}
 	stableRepoRoot, err := git.StableRepoRoot(filepath.Dir(sddDir))
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, err
 	}
 	storeLocations, err := resolveSessionLocations(sddDir, cfg, locations)
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, err
 	}
 	project := sessionStoreProject(cfg)
 	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: project, GraphDir: graphDir})
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, err
 	}
 	sessions, err := localadapter.NewFilesystemSessionStore(storeLocations...)
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, err
 	}
 	blobs, err := localadapter.NewFilesystemStagedBlobStore(storeLocations...)
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
-	}
-	localEmbedder, err := buildEmbedder(cmd)
-	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
-	}
-	crossEmbedder, err := crossRepoEmbedder(cmd)
-	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, err
 	}
 	// The machine-global persistent store the CLI also builds and reads: one
 	// store per (repo-key, embedding fingerprint) under the cache root. The
@@ -367,10 +459,10 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 	}
 	targets, err := localadapter.NewRepositoryTargets(project, filepath.Dir(sddDir), locations.ConfigPath)
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, err
 	}
 	if cfg == nil || cfg.DefaultBranch == "" {
-		return nil, "", sdd.RequestIdentity{}, fmt.Errorf("default_branch is required in .sdd/config.yaml before serving mutation tools")
+		return nil, fmt.Errorf("default_branch is required in .sdd/config.yaml before serving mutation tools")
 	}
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
@@ -379,7 +471,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		LLM: runner,
 	})
 	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+		return nil, err
 	}
 	var memberEmbedder embed.Embedder
 	if crossEmbedder.Embedder != nil {
@@ -412,15 +504,63 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 			})
 		}},
 	}
-	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: access, Sessions: sessions, StagedBlobs: blobs})
-	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+	return &servedProject{access: access, cfg: cfg, sessions: sessions, blobs: blobs, layers: layers, clients: clients}, nil
+}
+
+// servedClients are the LLM runner and the embedders a served project calls.
+// A rebuild keeps each group whose keys did not change, and with it the rate
+// limit its calls are counted against.
+type servedClients struct {
+	llm       *servedRunner
+	embedders *servedEmbedders
+}
+
+type servedRunner struct{ pkgllm.Runner }
+
+type servedEmbedders struct{ local, cross handlers.IndexEmbedder }
+
+func buildServedClients(cmd *cli.Command, previous *servedProject, layers model.ConfigLayers) (*servedClients, error) {
+	clients := &servedClients{}
+	if previous != nil {
+		changes := model.ConfigChanges(previous.layers, layers)
+		if !changedUnder(changes, "llm.") {
+			clients.llm = previous.clients.llm
+		}
+		// The cross-repo embedder follows the user-global embedding alone,
+		// which a project layer can hide from the effective keys.
+		if !changedUnder(changes, "embedding.") && reflect.DeepEqual(previous.layers.Global.Embedding, layers.Global.Embedding) {
+			clients.embedders = previous.clients.embedders
+		}
 	}
-	identity := sdd.RequestIdentity{Subject: "local"}
-	if _, err := application.Info(ctx, identity, project, sdd.InfoRequest{}); err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
+	cfg := layers.Effective()
+	if clients.llm == nil {
+		runner, err := composeRunner(llmConfigWithFlags(cmd, cfg))
+		if err != nil {
+			return nil, err
+		}
+		clients.llm = &servedRunner{runner}
 	}
-	return application, project, identity, nil
+	if clients.embedders == nil {
+		embedding := embeddingConfigWithFlags(cmd, cfg)
+		local, err := configuredEmbedder(embedding)
+		if err != nil {
+			return nil, err
+		}
+		// As crossRepoEmbedder: the user-global embedding wins when set.
+		if layers.Global.Embedding.Provider != "" {
+			embedding = layers.Global.Embedding
+		}
+		cross, err := configuredEmbedder(embedding)
+		if err != nil {
+			return nil, err
+		}
+		clients.embedders = &servedEmbedders{local: local, cross: cross}
+	}
+	return clients, nil
+}
+
+func changedUnder(changes []model.ConfigChange, prefix string) bool {
+	return slices.ContainsFunc(changes, func(change model.ConfigChange) bool { return strings.HasPrefix(change.Key, prefix) })
 }
 
 // collectSessions runs one reclamation pass at startup. This is the trigger

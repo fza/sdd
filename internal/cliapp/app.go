@@ -51,11 +51,15 @@ type Options struct {
 // in any config layer propagates — broken config must not silently run on
 // defaults.
 func resolveLLMConfig(cmd *cli.Command) (model.LLMConfig, error) {
-	var cfg model.LLMConfig
 	fileCfg, err := loadConfig()
 	if err != nil {
-		return cfg, err
+		return model.LLMConfig{}, err
 	}
+	return llmConfigWithFlags(cmd, fileCfg), nil
+}
+
+func llmConfigWithFlags(cmd *cli.Command, fileCfg *model.PerRepoConfig) model.LLMConfig {
+	var cfg model.LLMConfig
 	if fileCfg != nil {
 		cfg = fileCfg.LLM
 	}
@@ -72,7 +76,7 @@ func resolveLLMConfig(cmd *cli.Command) (model.LLMConfig, error) {
 	if cmd.IsSet("concurrency") {
 		cfg.Concurrency = int(cmd.Int("concurrency"))
 	}
-	return cfg, nil
+	return cfg
 }
 
 // newRunner builds the composed llm.Runner this host injects everywhere: the
@@ -96,6 +100,10 @@ func newRunner(cmd *cli.Command, timeoutFlag string) (pkgllm.Runner, error) {
 			cfg.Timeout = d.String()
 		}
 	}
+	return composeRunner(cfg)
+}
+
+func composeRunner(cfg model.LLMConfig) (pkgllm.Runner, error) {
 	runner, err := factory.New(cfg)
 	if err != nil {
 		return nil, err
@@ -1181,11 +1189,7 @@ func summarizeCmd() *cli.Command {
 // resolveGraphDir determines the graph directory from the --graph-dir flag
 // or by discovering .sdd/config.yaml. Errors if neither is available.
 func resolveGraphDir(cmd *cli.Command) (string, error) {
-	// Explicit flag takes priority.
-	if dir := cmd.String("graph-dir"); dir != "" {
-		if !filepath.IsAbs(dir) {
-			dir, _ = filepath.Abs(dir)
-		}
+	if dir, ok := graphDirFlag(cmd); ok {
 		return dir, nil
 	}
 
@@ -1198,6 +1202,19 @@ func resolveGraphDir(cmd *cli.Command) (string, error) {
 		return "", fmt.Errorf("reading .sdd/config.yaml: %w", err)
 	}
 	return meta.ResolveGraphDir(project.Root, cfg), nil
+}
+
+// graphDirFlag is the absolute --graph-dir, which takes priority over the
+// config, and whether it was given.
+func graphDirFlag(cmd *cli.Command) (string, bool) {
+	dir := cmd.String("graph-dir")
+	if dir == "" {
+		return "", false
+	}
+	if !filepath.IsAbs(dir) {
+		dir, _ = filepath.Abs(dir)
+	}
+	return dir, true
 }
 
 // resolveParticipantsFlag is the shared fallback rule for capture commands.
