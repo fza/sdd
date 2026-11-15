@@ -36,27 +36,18 @@ func (r *Runner) identity() llm.Identity {
 	return llm.Identity{Provider: "claude-cli", Model: r.model}
 }
 
-// loginEnvVars and loginEnvPrefixes are all login mode passes to the CLI:
-// the system basics, locale, proxy and CA, the platform's must-haves and the
-// login's own variables. This transport exists to answer on the signed-in
-// account, and the CLI reads ever more variables that move a call off it:
-// keys, endpoints, provider switches, host-managed credentials. A deny list
-// fails open against each new one; an allow list fails closed, and a missing
-// variable fails the call loudly. A setup that needs another one says so with
-// llm.claude_cli.credentials: env.
-var loginEnvVars = []string{
-	"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TMPDIR", "TMP", "TEMP", "TERM", "COLORTERM",
-	"HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "ALL_PROXY",
-	"NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_USE_SYSTEM_CA", "CLAUDE_CODE_CERT_STORE",
-	"CLAUDE_CODE_CLIENT_CERT", "CLAUDE_CODE_CLIENT_KEY", "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
-	"SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "APPDATA", "LOCALAPPDATA", "USERPROFILE",
-	"HOMEDRIVE", "HOMEPATH", "USERNAME", "PROGRAMDATA", "PROGRAMFILES",
-	"CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CODE_TMPDIR",
+// loginKeptEnvVars are the only variables of Claude's own name space that
+// login mode passes: the login's, and network and path settings. Every other
+// ANTHROPIC_* or CLAUDE_* variable may move the call off the signed-in
+// account, and each one the reviews found sat in that name space; provider
+// credentials outside it, such as AWS_*, take effect only through a
+// CLAUDE_CODE_USE_* switch inside it.
+var loginKeptEnvVars = []string{
 	"CLAUDE_CONFIG_DIR", "ANTHROPIC_CONFIG_DIR",
 	"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+	"CLAUDE_CODE_CERT_STORE", "CLAUDE_CODE_CLIENT_CERT", "CLAUDE_CODE_CLIENT_KEY", "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+	"CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CODE_TMPDIR",
 }
-
-var loginEnvPrefixes = []string{"LC_", "XDG_"}
 
 // parentSessionEnvVars are what a Claude Code session hands its child
 // processes, sdd's server among them. Inherited, they would make the call
@@ -99,7 +90,7 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	}
 	env := withoutVars(os.Environ(), func(name string) bool { return slices.Contains(parentSessionEnvVars, name) })
 	if r.credentials != model.ClaudeCLICredentialsEnv {
-		env = withoutVars(env, func(name string) bool { return !loginEnv(name) })
+		env = withoutVars(env, loginDrops)
 		// A settings file's env block and apiKeyHelper apply even under --safe-mode.
 		args = append(args, "--setting-sources", "")
 	}
@@ -211,9 +202,9 @@ func withoutVars(env []string, drop func(name string) bool) []string {
 	})
 }
 
-func loginEnv(name string) bool {
-	return slices.Contains(loginEnvVars, name) ||
-		slices.ContainsFunc(loginEnvPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+func loginDrops(name string) bool {
+	claudes := strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_")
+	return claudes && !slices.Contains(loginKeptEnvVars, name)
 }
 
 // claudeResponse maps the JSON output of claude -p --output-format json.

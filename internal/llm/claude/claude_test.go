@@ -102,127 +102,51 @@ func recordedEnvNames(t *testing.T, dir string) []string {
 	return names
 }
 
-// In login mode only the allow-listed variables reach the child, none that
-// picks the provider, the endpoint or the credential, and no settings file
-// loads, since its env block and apiKeyHelper apply even in safe mode. Env
-// mode passes every one of them through.
+// Login mode closes Claude's own name space but for the login's variables and
+// a few network and path ones, and loads no settings file, whose env block and
+// apiKeyHelper apply even in safe mode. Env mode passes it all. Neither mode
+// passes the markers of a Claude Code session that started sdd.
 func TestRunCredentials(t *testing.T) {
-	providerVars := []string{
-		"ANTHROPIC_API_KEY",
-		"ANTHROPIC_FOUNDRY_API_KEY",
-		"ANTHROPIC_VERTEX_BASE_URL",
-		"ANTHROPIC_CUSTOM_HEADERS",
-		"ANTHROPIC_PROFILE",
-		"CLAUDE_CODE_USE_BEDROCK",
-		"CLAUDE_CODE_USE_FOUNDRY",
-		"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
-		"CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR",
-		"CLAUDE_CODE_GATEWAY_TOKEN",
-		"CLAUDE_CODE_API_BASE_URL",
-		"CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
-		"CLAUDE_CODE_HOST_CREDS_FILE",
-		"CLAUDE_CODE_HOST_AUTH_ENV_VAR",
-		"CLAUDE_CODE_HOST_GATEWAY_LINEAGE",
-		"SDD_TEST_UNRELATED",
-		// Windows reads environment names without regard to case.
-		"Anthropic_Api_Key",
-		"claude_code_use_vertex",
-	}
-	keptVars := []string{
-		"USER",
-		"LOGNAME",
-		"SHELL",
-		"LANG",
-		"LC_ALL",
-		"TMP",
-		"TEMP",
-		"TERM",
-		"COLORTERM",
-		"HTTPS_PROXY",
-		"https_proxy",
-		"HTTP_PROXY",
-		"NO_PROXY",
-		"ALL_PROXY",
-		"all_proxy",
-		"NODE_EXTRA_CA_CERTS",
-		"SSL_CERT_FILE",
-		"SSL_CERT_DIR",
-		"NODE_USE_SYSTEM_CA",
-		"CLAUDE_CODE_CERT_STORE",
-		"CLAUDE_CODE_CLIENT_CERT",
-		"CLAUDE_CODE_CLIENT_KEY",
-		"CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
-		"XDG_CONFIG_HOME",
-		"SystemRoot",
-		"SYSTEMDRIVE",
-		"WINDIR",
-		"ComSpec",
-		"PATHEXT",
-		"APPDATA",
-		"LOCALAPPDATA",
-		"USERPROFILE",
-		"HOMEDRIVE",
-		"HOMEPATH",
-		"USERNAME",
-		"PROGRAMDATA",
-		"PROGRAMFILES",
-		"CLAUDE_CODE_GIT_BASH_PATH",
-		"CLAUDE_CODE_TMPDIR",
-		"CLAUDE_CONFIG_DIR",
-		"ANTHROPIC_CONFIG_DIR",
-		"Anthropic_Config_Dir",
-		"CLAUDE_CODE_OAUTH_TOKEN",
-		"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
-		"CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
-	}
-	// What a Claude Code session hands its own child processes, sdd's server among them.
-	parentSessionVars := []string{
-		"CLAUDECODE",
-		"CLAUDE_CODE_SESSION_ID",
-		"CLAUDE_CODE_CHILD_SESSION",
-		"CLAUDE_CODE_SESSION_ATTENDED",
-		"CLAUDE_PID",
-		"CLAUDE_EFFORT",
-		"CLAUDE_CODE_MESSAGING_SOCKET",
-		"CLAUDE_CODE_MESSAGING_TOKEN",
-		"CLAUDE_CODE_ENTRYPOINT",
-		"CLAUDE_CODE_EXECPATH",
-	}
-	for _, tc := range []struct {
-		name          string
-		credentials   model.ClaudeCLICredentials
-		providerAlive bool
+	classes := []struct {
+		class          string
+		names          []string
+		inLogin, inEnv bool
 	}{
-		{"login drops the provider variables", model.ClaudeCLICredentialsLogin, false},
-		{"env passes them through", model.ClaudeCLICredentialsEnv, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+		{"Anthropic keys, endpoints and profile", []string{"ANTHROPIC_API_KEY", "ANTHROPIC_VERTEX_BASE_URL", "ANTHROPIC_PROFILE"}, false, true},
+		{"provider switches", []string{"CLAUDE_CODE_USE_FOUNDRY"}, false, true},
+		{"Claude Code credential hand-offs", []string{"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "CLAUDE_CODE_HOST_CREDS_FILE", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CODE_API_BASE_URL"}, false, true},
+		{"names in any case, as Windows reads them", []string{"Anthropic_Api_Key", "claude_code_use_vertex"}, false, true},
+		{"the login's own", []string{"CLAUDE_CONFIG_DIR", "ANTHROPIC_CONFIG_DIR", "Anthropic_Config_Dir", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN"}, true, true},
+		{"network and paths", []string{"CLAUDE_CODE_CERT_STORE", "CLAUDE_CODE_CLIENT_CERT", "CLAUDE_CODE_CLIENT_KEY", "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE", "CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CODE_TMPDIR"}, true, true},
+		{"outside Claude's name space", []string{"HTTPS_PROXY", "ALL_PROXY", "NODE_USE_SYSTEM_CA", "SystemRoot", "AWS_ACCESS_KEY_ID"}, true, true},
+		{"parent session markers", []string{"CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH"}, false, false},
+	}
+	for _, credentials := range []model.ClaudeCLICredentials{model.ClaudeCLICredentialsLogin, model.ClaudeCLICredentialsEnv} {
+		t.Run(string(credentials), func(t *testing.T) {
 			dir := fakeCLI(t, `{"type":"result","result":"ok","usage":{}}`)
-			for _, name := range slices.Concat(providerVars, keptVars, parentSessionVars) {
-				t.Setenv(name, "C")
+			for _, c := range classes {
+				for _, name := range c.names {
+					t.Setenv(name, "C")
+				}
 			}
-			t.Setenv("TMPDIR", t.TempDir())
-			if _, err := claude.NewRunner("sonnet", tc.credentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
+			if _, err := claude.NewRunner("sonnet", credentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
-			names := recordedEnvNames(t, dir)
-			for _, name := range providerVars {
-				if slices.Contains(names, name) != tc.providerAlive {
-					t.Errorf("%s should reach the child only with credentials env", name)
+			login := credentials == model.ClaudeCLICredentialsLogin
+			got := recordedEnvNames(t, dir)
+			for _, c := range classes {
+				want := c.inEnv
+				if login {
+					want = c.inLogin
 				}
-			}
-			for _, name := range slices.Concat(keptVars, []string{"PATH", "HOME", "TMPDIR"}) {
-				if !slices.Contains(names, name) {
-					t.Errorf("%s should reach the child in every mode", name)
-				}
-			}
-			for _, name := range parentSessionVars {
-				if slices.Contains(names, name) {
-					t.Errorf("%s should reach the child in no mode: the call is no part of the session that started sdd", name)
+				for _, name := range c.names {
+					if slices.Contains(got, name) != want {
+						t.Errorf("%s (%s): reaching the child should be %v", name, c.class, want)
+					}
 				}
 			}
 			sources, found := flagValue(recordedArgs(t, dir), "--setting-sources")
-			if loadsSettings := !found || sources != ""; loadsSettings != tc.providerAlive {
+			if loadsSettings := !found || sources != ""; loadsSettings == login {
 				t.Errorf("settings files should load only with credentials env, got %q", recordedArgs(t, dir))
 			}
 		})
