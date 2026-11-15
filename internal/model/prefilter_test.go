@@ -23,12 +23,70 @@ func TestWilsonLower_ReachesTheRecallFloorAtTheNamedCounts(t *testing.T) {
 func labelsWith(positives int, negatives int, negativeScore uint8) []model.RelevanceLabel {
 	var labels []model.RelevanceLabel
 	for i := range positives {
-		labels = append(labels, model.RelevanceLabel{Pair: model.NewRelevancePair("a", fmt.Sprintf("p%04d", i)), Score: 200, Kind: model.LabelPositive})
+		labels = append(labels, model.RelevanceLabel{Pair: model.NewRelevancePair("a", fmt.Sprintf("p%04d", i)), Score: 200, Kind: model.LabelPositive, Weight: 1})
 	}
 	for i := range negatives {
-		labels = append(labels, model.RelevanceLabel{Pair: model.NewRelevancePair("a", fmt.Sprintf("n%04d", i)), Score: negativeScore, Kind: model.LabelNegative})
+		labels = append(labels, model.RelevanceLabel{Pair: model.NewRelevancePair("a", fmt.Sprintf("n%04d", i)), Score: negativeScore, Kind: model.LabelNegative, Weight: 1})
 	}
 	return labels
+}
+
+func TestWilsonLowerWeighted_MatchesTheCountedBoundAtUnitWeights(t *testing.T) {
+	for _, tc := range []struct{ successes, n int }{{0, 0}, {189, 189}, {279, 280}, {5, 10}} {
+		if got, want := model.WilsonLowerWeighted(float64(tc.successes), float64(tc.n)), model.WilsonLower(tc.successes, tc.n); got != want {
+			t.Errorf("%d of %d: weighted bound %.6f should equal the counted bound %.6f", tc.successes, tc.n, got, want)
+		}
+	}
+	if model.WilsonLowerWeighted(189*0.25, 189*0.25) >= model.RecallFloor {
+		t.Error("189 positives at a quarter weight should not reach the recall floor")
+	}
+}
+
+func TestLabelWeight_FollowsTheReaderState(t *testing.T) {
+	cases := map[string]struct {
+		verdict model.ReaderVerdict
+		want    float64
+	}{
+		"referenced":         {model.ReaderVerdict{Code: model.ReaderReferenced}, model.WeightReferenced},
+		"opened":             {model.ReaderVerdict{Code: model.ReaderOpened, Reason: 1}, model.WeightOpened},
+		"explicit dismissal": {model.ReaderVerdict{Code: model.ReaderDismissed, Reason: 1}, model.WeightDismissed},
+		"implicit dismissal": {model.ReaderVerdict{Code: model.ReaderImplicit}, model.WeightImplicit},
+		"flipped":            {model.ReaderVerdict{Code: model.ReaderImplicit, Flipped: true}, model.WeightImplicit},
+		"none":               {model.ReaderVerdict{OpenedHidden: true}, 0},
+	}
+	for name, tc := range cases {
+		if got := model.LabelWeight(tc.verdict); got != tc.want {
+			t.Errorf("%s: weight %.2f, want %.2f", name, got, tc.want)
+		}
+	}
+	if model.WeightReferenced != 1 || model.WeightOpened != 0.5 || model.WeightDismissed != 1 || model.WeightImplicit != 0.25 {
+		t.Error("the weights should be 1 referenced, 0.5 opened, 1 explicit dismissal, 0.25 implicit dismissal")
+	}
+}
+
+// Calibration counts each label by its weight: positives a flip earned at a
+// quarter weight need four times as many labels to reach the recall bound,
+// and implicit negatives weigh a quarter against the relevant threshold.
+func TestCalibrate_CountsLabelsByWeight(t *testing.T) {
+	quarter := labelsWith(188*4, 0, 0)
+	for i := range quarter {
+		quarter[i].Weight = model.WeightImplicit
+	}
+	if got := model.Calibrate(quarter, nil, "j"); got.Valid {
+		t.Fatalf("thresholds %+v: quarter-weight positives weighing 188 fall short of the bound", got)
+	}
+	quarter = append(quarter, labelsWith(1, 0, 0)...)
+	if got := model.Calibrate(quarter, nil, "j"); !got.Valid {
+		t.Fatalf("thresholds %+v: one whole positive more should reach the bound", got)
+	}
+
+	judged := labelsWith(189, 0, 0)
+	for i := range 300 {
+		judged = append(judged, model.RelevanceLabel{Pair: model.NewRelevancePair("a", fmt.Sprintf("i%04d", i)), Score: 200, Kind: model.LabelNegative, Weight: model.WeightImplicit})
+	}
+	if got := model.Calibrate(judged, nil, "j"); got.Relevant != model.ScoreValue(200) {
+		t.Fatalf("thresholds %+v: 300 implicit negatives weigh 75 against 189 referenced pairs, which still dominate", got)
+	}
 }
 
 func TestCalibrate(t *testing.T) {
@@ -68,6 +126,9 @@ func TestLabelKind_FollowsTheReasonCodes(t *testing.T) {
 		"meta":        {model.ReaderVerdict{Code: model.ReaderDismissed, Reason: reason(model.VerdictMeta)}, model.LabelExcluded},
 		"other":       {model.ReaderVerdict{Code: model.ReaderDismissed, Reason: reason(model.VerdictOther)}, model.LabelCounted},
 		"unknown":     {model.ReaderVerdict{Code: model.ReaderDismissed, Reason: 99}, model.LabelExcluded},
+		"implicit":    {model.ReaderVerdict{Code: model.ReaderImplicit}, model.LabelNegative},
+		"flipped":     {model.ReaderVerdict{Code: model.ReaderImplicit, Flipped: true}, model.LabelPositive},
+		"opened only": {model.ReaderVerdict{Code: model.ReaderOpened}, model.LabelExcluded},
 	}
 	for name, tc := range cases {
 		if got := model.LabelKind(tc.verdict); got != tc.want {

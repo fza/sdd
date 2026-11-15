@@ -260,7 +260,7 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		return GatherResult{}, err
 	}
 	result.Text = strings.TrimRight(rendered.String(), "\n")
-	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Corpus: served.Corpus}
+	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Shown: slices.Clone(result.SummaryIDs), Corpus: served.Corpus}
 	if len(pass.fresh) > 0 || len(audit) > 0 {
 		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: runtime.options.Prefilter.Scorer != nil && runtime.options.Prefilter.Scorer.Direction() == relevance.Forward, Scores: pass.fresh, Audit: audit}
 	}

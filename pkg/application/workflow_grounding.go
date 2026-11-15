@@ -79,7 +79,7 @@ func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) e
 			}
 			err = w.session.Record(engine.Read{
 				Tool: "inject:lateEntries", Instance: ctx.Instance, Summary: late,
-				Grounding: model.ReadPayload{Reads: []model.GroundingRead{{Mode: model.GroundingLate, IDs: late}}},
+				Grounding: model.ReadPayload{Reads: []model.GroundingRead{{Mode: model.GroundingLate, IDs: late}}, Shown: late},
 			})
 			if err != nil {
 				return nil, err
@@ -242,17 +242,28 @@ func contextGraph(ctx *engine.Context) func() (*model.Graph, error) {
 }
 
 // storeCaptureRelevance writes the reader records of the capture and of its
-// deep verifier's findings, keyed to the entry it published, into the
-// project's relevance ledger.
+// deep verifier's findings, keyed to the entry it published, and the flips
+// of the implicit dismissals its references join, into the project's
+// relevance ledger.
 func (w *WorkflowSession) storeCaptureRelevance(ctx *engine.Context, project ProjectID, entryID string) error {
-	if ctx.Reading == nil || ctx.Reading.Corpus == nil {
-		return nil
-	}
 	runtime, err := w.targetRuntime(project, AccessWrite)
 	if err != nil {
 		return err
 	}
-	batch, err := model.CaptureRelevance(entryID, ctx.Reading, captureAnswered(ctx.Store), storeVerdicts(ctx.Store))
+	answered := captureAnswered(ctx.Store)
+	if len(answered) > 1 && runtime.options.Relevance != nil {
+		ledger, err := runtime.relevanceLedger(w.ctx)
+		if err != nil {
+			return err
+		}
+		if err := runtime.appendRelevance(w.ctx, model.RelevanceBatch{Readers: model.PairFlips(ledger, answered)}); err != nil {
+			return err
+		}
+	}
+	if ctx.Reading == nil || ctx.Reading.Corpus == nil {
+		return nil
+	}
+	batch, err := model.CaptureRelevance(entryID, ctx.Reading, answered, storeVerdicts(ctx.Store))
 	if err != nil {
 		return err
 	}

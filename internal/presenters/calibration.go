@@ -17,8 +17,9 @@ func RenderCalibration(w io.Writer, report model.CalibrationReport) {
 		sources += "; the report below reads the live labels alone (--exclude-replay)"
 	}
 	fmt.Fprintln(w, sources)
-	fmt.Fprintf(w, "labels: %d referenced, %d set aside (topic-only, other-scope, term-clash), %d other (counted only), %d excluded (covered, meta, unknown codes)\n",
+	fmt.Fprintf(w, "labels: %d referenced or flipped, %d set aside (topic-only, other-scope, term-clash, implicit), %d other (counted only), %d excluded (covered, meta, no or unknown codes); weights: referenced 1, opened 0.5, explicit dismissal 1, implicit dismissal 0.25\n",
 		report.Positive, report.Negative, report.Counted, report.Excluded)
+	fmt.Fprintf(w, "implicit dismissals: %d recorded, %d flipped to bearing (flip rate %.1f%%)\n", report.Implicit, report.Flipped, report.FlipRate()*100)
 	if report.Unscored > 0 {
 		fmt.Fprintf(w, "unscored: %d labelled pairs the judge has not scored; run `sdd grounding rescore` after a judge change\n", report.Unscored)
 	}

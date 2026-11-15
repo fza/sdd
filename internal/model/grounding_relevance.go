@@ -8,9 +8,10 @@ import (
 // CaptureRelevance returns the records a published capture adds to
 // the relevance ledger, keyed to the entry it wrote: every ref,
 // supersede and close is referenced; every verdict sets its entries aside
-// with its code, as opened when the reading served them in full; an audit
-// sample carries the audit bit; every prefilter score the reading holds is
-// kept with its judge.
+// with its code, as opened when the reading served them in full; every
+// other entry the reading showed is opened when served in full, else
+// dismissed implicitly; an audit sample carries the audit bit; every
+// prefilter score the reading holds is kept with its judge.
 func CaptureRelevance(entryID string, reading *Reading, answered []string, verdicts []GroundingVerdict) (RelevanceBatch, error) {
 	var batch RelevanceBatch
 	if reading == nil {
@@ -40,6 +41,16 @@ func CaptureRelevance(entryID string, reading *Reading, answered []string, verdi
 			}
 			batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: code, Reason: reason, Audit: reading.audit[id]}})
 		}
+	}
+	for _, id := range reading.Shown() {
+		if id == entryID || seen[id] {
+			continue
+		}
+		code := ReaderImplicit
+		if reading.full[id] {
+			code = ReaderOpened
+		}
+		batch.Readers = append(batch.Readers, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{Code: code, Audit: reading.audit[id]}})
 	}
 	for _, judge := range slices.Sorted(maps.Keys(reading.scores)) {
 		held := reading.scores[judge]
@@ -115,4 +126,29 @@ func VerifierRelevance(entryID string, reading *Reading, findings []DeepFinding,
 		records = append(records, ReaderRecord{Pair: NewRelevancePair(entryID, id), Verdict: ReaderVerdict{OpenedHidden: true}})
 	}
 	return records
+}
+
+// PairFlips returns the flips a published entry earns: for every two
+// entries it answers (refs, supersedes, closes) whose pair the ledger holds
+// as an unflipped implicit dismissal, a record flipping it to bearing. The
+// flip joins the held record, so the ledger stays append-only.
+func PairFlips(ledger *RelevanceLedger, answered []string) []ReaderRecord {
+	if ledger == nil {
+		return nil
+	}
+	ids := slices.DeleteFunc(slices.Clone(answered), func(id string) bool { return id == "" })
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	var flips []ReaderRecord
+	for i, a := range ids {
+		for _, b := range ids[i+1:] {
+			pair := NewRelevancePair(a, b)
+			held, ok := ledger.Reader(pair)
+			if !ok || held.Code != ReaderImplicit || held.Flipped {
+				continue
+			}
+			flips = append(flips, ReaderRecord{Pair: pair, Verdict: ReaderVerdict{Code: ReaderImplicit, Flipped: true, Source: held.Source}})
+		}
+	}
+	return flips
 }

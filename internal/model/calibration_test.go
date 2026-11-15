@@ -59,7 +59,18 @@ func driftLabels(count, misses int) []model.RelevanceLabel {
 		if i < misses {
 			kind = model.LabelPositive
 		}
-		labels = append(labels, model.RelevanceLabel{Pair: model.NewRelevancePair(fmt.Sprintf("20260101-%06d-s-tac-aud", i), fmt.Sprintf("20260601-%06d-d-tac-sub", i)), Score: 5, Kind: kind, Audit: true})
+		labels = append(labels, model.RelevanceLabel{Pair: model.NewRelevancePair(fmt.Sprintf("20260101-%06d-s-tac-aud", i), fmt.Sprintf("20260601-%06d-d-tac-sub", i)), Score: 5, Kind: kind, Audit: true, Weight: 1})
+	}
+	return labels
+}
+
+// implicitAudit turns every negative audit label into an implicit
+// dismissal: a sample shown blind and left unanswered.
+func implicitAudit(labels []model.RelevanceLabel) []model.RelevanceLabel {
+	for i := range labels {
+		if labels[i].Audit && labels[i].Kind == model.LabelNegative {
+			labels[i].Weight = model.WeightImplicit
+		}
 	}
 	return labels
 }
@@ -74,6 +85,7 @@ func TestDriftStepDue(t *testing.T) {
 	}{
 		{"too few audit labels", driftLabels(49, 10), nil, false},
 		{"misses at the limit", driftLabels(100, 2), nil, false},
+		{"misses among unanswered samples weigh more", implicitAudit(driftLabels(100, 2)), nil, true},
 		{"misses above the limit", driftLabels(100, 3), nil, true},
 		{"a step today already", driftLabels(100, 3), []model.DriftStep{{Judge: "j", At: now.Add(-23 * time.Hour), SetAside: 150}}, false},
 		{"a step yesterday", driftLabels(100, 3), []model.DriftStep{{Judge: "j", At: now.Add(-25 * time.Hour), SetAside: 150}}, true},
@@ -188,5 +200,31 @@ func TestCalibration_CountsOpenedHiddenEntriesWithoutDrift(t *testing.T) {
 	}
 	if report.AuditMisses != 1 || report.AuditCounted != 61 {
 		t.Fatalf("audit %d of %d: only the referenced audit sample is a miss, an opening adds nothing to the window", report.AuditMisses, report.AuditCounted)
+	}
+}
+
+func TestCalibration_ReportsTheFlipRate(t *testing.T) {
+	var batch model.RelevanceBatch
+	for i := range 4 {
+		pair := model.NewRelevancePair(fmt.Sprintf("20260101-%06d-s-tac-can", i), "20260601-000000-d-tac-sub")
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderImplicit, Flipped: i == 0}})
+		batch.Scores = append(batch.Scores, model.ScoreRecord{Pair: pair, Score: model.FilterScore{Judge: "j", Score: 10}})
+	}
+	batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: model.NewRelevancePair("20260101-000009-s-tac-ref", "20260601-000000-d-tac-sub"), Verdict: model.ReaderVerdict{Code: model.ReaderReferenced}})
+	ledger := model.NewRelevanceLedger(batch)
+	report := ledger.Calibration("j", false)
+	if report.Implicit != 4 || report.Flipped != 1 || report.FlipRate() != 0.25 {
+		t.Fatalf("implicit %d, flipped %d, rate %.2f: one flip of four implicit dismissals", report.Implicit, report.Flipped, report.FlipRate())
+	}
+	if report.Positive != 1 || report.Negative != 3 {
+		t.Fatalf("labels %d positive, %d negative: the flip should label its pair positive", report.Positive, report.Negative)
+	}
+	for _, label := range ledger.Labels("j") {
+		if label.Weight != model.WeightImplicit {
+			t.Fatalf("label %+v should carry the implicit weight", label)
+		}
+	}
+	if (model.CalibrationReport{}).FlipRate() != 0 {
+		t.Fatal("no implicit dismissal should report a zero rate")
 	}
 }

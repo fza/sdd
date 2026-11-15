@@ -52,3 +52,24 @@ func TestGroundingStatus_ExcludesReplayedLabelsOnRequest(t *testing.T) {
 		}
 	}
 }
+
+func TestGroundingStatus_ShowsTheFlipRate(t *testing.T) {
+	var batch model.RelevanceBatch
+	for i := range 4 {
+		pair := model.NewRelevancePair(fmt.Sprintf("20250101-%06d-s-tac-can", i), "20250601-000000-d-tac-sub")
+		batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderImplicit, Flipped: i == 0}})
+	}
+	store := localadapter.NewMemoryRelevanceStore()
+	if err := store.Append(t.Context(), relevance.Encode(batch)); err != nil {
+		t.Fatal(err)
+	}
+	f := prefilterFixture(t, &scriptedScorer{})
+	f.relevance = store
+	status, err := f.app(t, prefilterPolicy(1), nil).GroundingStatus(t.Context(), sdd.RequestIdentity{Subject: "tester"}, gatherProject, sdd.GroundingStatusRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "implicit dismissals: 4 recorded, 1 flipped to bearing (flip rate 25.0%)\n"; !strings.Contains(status.Text+"\n", want) {
+		t.Fatalf("status should name the implicit dismissals recorded, those flipped and the flip rate:\n%s", status.Text)
+	}
+}

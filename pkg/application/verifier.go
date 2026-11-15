@@ -136,7 +136,7 @@ func (r *ProjectRuntime) lightPreflight(ctx context.Context, reading *captureRea
 	if budget <= 0 {
 		return nil, fmt.Errorf("the model's %d-token window leaves no room beside the %d-token answer reserve: raise llm.context_tokens or lower llm.max_tokens", window.Tokens, window.OutputReserve)
 	}
-	return &query.LightPreflight{Full: reading.full, Listed: reading.listed, SetAside: reading.setAside, BudgetChars: budget}, nil
+	return &query.LightPreflight{Full: reading.full, Listed: reading.listed, SetAside: reading.setAside, Shown: reading.shown, BudgetChars: budget}, nil
 }
 
 // captureReading is the grounding reading of one capture instance as a light
@@ -145,4 +145,5 @@ type captureReading struct {
 	full     []string
 	listed   []string
 	setAside []model.GroundingVerdict
+	shown    []string
 }

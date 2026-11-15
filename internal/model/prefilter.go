@@ -81,15 +81,26 @@ func (r *Reading) foldPrefilter(p *PrefilterPayload) {
 // WilsonLower is the Wilson score interval's lower bound (95%) of the share
 // successes/n.
 func WilsonLower(successes, n int) float64 {
+	return WilsonLowerWeighted(float64(successes), float64(n))
+}
+
+// WilsonLowerWeighted is WilsonLower over weighted labels: n is the sum of
+// the labels' weights and successes the sum over the successful ones, so
+// with p = successes/n and z = 1.96 the bound is
+//
+//	(p + z²/2n - z·sqrt(p(1-p)/n + z²/4n²)) / (1 + z²/n)
+//
+// A label of weight w counts as w of a whole one: four implicit dismissals
+// at 0.25 move the bound as one explicit answer does.
+func WilsonLowerWeighted(successes, n float64) float64 {
 	if n <= 0 {
 		return 0
 	}
-	p := float64(successes) / float64(n)
+	p := min(max(successes/n, 0), 1)
 	z2 := wilsonZ * wilsonZ
-	nf := float64(n)
-	center := p + z2/(2*nf)
-	margin := wilsonZ * math.Sqrt(p*(1-p)/nf+z2/(4*nf*nf))
-	return (center - margin) / (1 + z2/nf)
+	center := p + z2/(2*n)
+	margin := wilsonZ * math.Sqrt(p*(1-p)/n+z2/(4*n*n))
+	return (center - margin) / (1 + z2/n)
 }
 
 // Label kinds: how a reader record counts as a calibration label.
@@ -100,8 +111,16 @@ const (
 	LabelExcluded = "excluded"
 )
 
+// Label weights by reader state: how much one label counts in calibration.
+const (
+	WeightReferenced = 1.0
+	WeightOpened     = 0.5
+	WeightDismissed  = 1.0
+	WeightImplicit   = 0.25
+)
+
 // RelevanceLabel is one judged pair a judge scored: the reader's answer as a
-// calibration label with the judge's score.
+// calibration label with the judge's score and the label's weight.
 type RelevanceLabel struct {
 	Pair   RelevancePair
 	Score  uint8
@@ -109,15 +128,22 @@ type RelevanceLabel struct {
 	Reason string
 	Audit  bool
 	Source ReaderSource
+	Weight float64
 }
 
-// LabelKind classifies a reader record: a reference is positive; a set-aside
-// coded topic-only, other-scope or term-clash is negative; other is counted
-// only; covered, meta and unknown codes are excluded.
+// LabelKind classifies a reader record: a reference and a flipped implicit
+// dismissal are positive; an implicit dismissal and a set-aside coded
+// topic-only, other-scope or term-clash are negative; other is counted only;
+// covered, meta, no code and unknown codes are excluded.
 func LabelKind(verdict ReaderVerdict) string {
 	switch verdict.Code {
 	case ReaderReferenced:
 		return LabelPositive
+	case ReaderImplicit:
+		if verdict.Flipped {
+			return LabelPositive
+		}
+		return LabelNegative
 	case ReaderNone:
 		return LabelExcluded
 	}
@@ -128,6 +154,22 @@ func LabelKind(verdict ReaderVerdict) string {
 		return LabelCounted
 	}
 	return LabelExcluded
+}
+
+// LabelWeight is the weight of a reader record's label by its state; a
+// flip keeps the implicit weight.
+func LabelWeight(verdict ReaderVerdict) float64 {
+	switch verdict.Code {
+	case ReaderReferenced:
+		return WeightReferenced
+	case ReaderOpened:
+		return WeightOpened
+	case ReaderDismissed:
+		return WeightDismissed
+	case ReaderImplicit:
+		return WeightImplicit
+	}
+	return 0
 }
 
 // Labels returns every pair with a reader record that judge scored, sorted
@@ -141,7 +183,7 @@ func (l *RelevanceLedger) Labels(judge string) []RelevanceLabel {
 			continue
 		}
 		verdict := l.readers[pair]
-		labels = append(labels, RelevanceLabel{Pair: pair, Score: score, Kind: LabelKind(verdict), Reason: VerdictReasonCode(verdict.Reason), Audit: verdict.Audit, Source: verdict.Source})
+		labels = append(labels, RelevanceLabel{Pair: pair, Score: score, Kind: LabelKind(verdict), Reason: VerdictReasonCode(verdict.Reason), Audit: verdict.Audit, Source: verdict.Source, Weight: LabelWeight(verdict)})
 	}
 	return labels
 }
@@ -162,31 +204,35 @@ func (l *RelevanceLedger) Unscored(judge string) []RelevancePair {
 	return pairs
 }
 
-// Calibrate computes a judge's thresholds from its labels: the set-aside
-// threshold is the highest score that keeps the Wilson lower bound of recall
-// over the positive labels at RecallFloor; the relevant threshold the lowest
-// score at and above which the referenced share's lower bound reaches
-// RelevantPrecision. Until the recall bound holds, the thresholds are invalid
-// and decide nothing. Drift steps cap the set-aside threshold; it never rises
-// above a step.
+// Calibrate computes a judge's thresholds from its labels, each counted by
+// its weight (WilsonLowerWeighted): the set-aside threshold is the highest
+// score that keeps the lower bound of weighted recall over the positive
+// labels at RecallFloor; the relevant threshold the lowest score at and
+// above which the weighted positive share's lower bound reaches
+// RelevantPrecision. Until the recall bound holds, the thresholds are
+// invalid and decide nothing. Drift steps cap the set-aside threshold; it
+// never rises above a step.
 func Calibrate(labels []RelevanceLabel, steps []DriftStep, judge string) RelevanceThresholds {
-	var positives []uint8
+	var positives []RelevanceLabel
+	total := 0.0
 	for _, label := range labels {
 		if label.Kind == LabelPositive {
-			positives = append(positives, label.Score)
+			positives = append(positives, label)
+			total += label.Weight
 		}
 	}
-	slices.Sort(positives)
-	n := len(positives)
+	slices.SortStableFunc(positives, func(a, b RelevanceLabel) int { return cmp.Compare(a.Score, b.Score) })
 	setAside := -1
-	for misses := 0; misses < n; misses++ {
-		if WilsonLower(n-misses, n) < RecallFloor {
+	missed := 0.0
+	for i, positive := range positives {
+		if WilsonLowerWeighted(total-missed, total) < RecallFloor {
 			break
 		}
-		if misses > 0 && positives[misses] == positives[misses-1] {
+		missed += positive.Weight
+		if i > 0 && positive.Score == positives[i-1].Score {
 			continue
 		}
-		setAside = int(positives[misses])
+		setAside = int(positive.Score)
 	}
 	if setAside < 0 {
 		return RelevanceThresholds{}
@@ -205,15 +251,16 @@ func relevantThreshold(labels []RelevanceLabel) float64 {
 	})
 	slices.SortFunc(judged, func(a, b RelevanceLabel) int { return cmp.Compare(b.Score, a.Score) })
 	relevant := 2.0
-	positive := 0
+	positive, weight := 0.0, 0.0
 	for i, label := range judged {
+		weight += label.Weight
 		if label.Kind == LabelPositive {
-			positive++
+			positive += label.Weight
 		}
 		if i+1 < len(judged) && judged[i+1].Score == label.Score {
 			continue
 		}
-		if WilsonLower(positive, i+1) >= RelevantPrecision {
+		if WilsonLowerWeighted(positive, weight) >= RelevantPrecision {
 			relevant = ScoreValue(label.Score)
 		}
 	}

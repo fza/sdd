@@ -8,13 +8,13 @@
 - `duplicates`: draft records what a live entry of the reading already records, so the capture adds a second entry for one claim instead of referencing or superseding the first.
 - `outdated`: draft states as current what a live entry has since changed or retired. Or it leans on an entry whose status is superseded or closed without naming the entry that replaced or closed it.
 - `strain`: two entries of the reading contradict each other on a point draft depends on. This is about the reading, not draft. Report it so the conflict can be resolved; never block draft for it alone.
-- `dismissal`: an entry the author set aside bears on draft after all. Its reason code does not hold, and the entry belongs in the refs, or draft should supersede or close it.
+- `dismissal`: an entry the author set aside bears on draft after all. Its reason code does not hold, and the entry belongs in the refs, or draft should supersede or close it. An entry implicitly dismissed counts as set aside: the author was shown it and left it unanswered.
 
 {{ if not .Rubric }}Each finding also carries `basis`, placed after its `observation`: the IDs of the entries in this prompt it rests on, from the reading or the referenced entries. Use an empty list for a finding about draft alone. Name only IDs that appear in this prompt.
 
 {{ end }}Severity on these axes:
 
-- `high`: draft outright duplicates a live entry, or states as current what a live entry retired.
+- `high`: draft outright duplicates a live entry, or states as current what a live entry retired, or an implicitly dismissed entry is a near-duplicate of draft.
 - `medium`: the overlap or the staleness is partial, or a set-aside entry plainly bears on draft.
 - `low`: a `strain` between two reading entries, and a weak overlap.
 

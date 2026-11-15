@@ -86,8 +86,8 @@ func TestCaptureDeep_AnOpenedHiddenEntryIsAMissOnlyUnderAFinding(t *testing.T) {
 	if got, _ := ledger.Reader(model.NewRelevancePair(entryID, missed)); got.Code != model.ReaderReferenced || !got.Audit {
 		t.Fatalf("the hidden basis = %+v: want a referenced audit sample, a miss", got)
 	}
-	if got, _ := ledger.Reader(model.NewRelevancePair(entryID, opened)); got.Code != model.ReaderNone || got.Audit || !got.OpenedHidden {
-		t.Fatalf("the hidden opening = %+v: want the opening flag alone", got)
+	if got, _ := ledger.Reader(model.NewRelevancePair(entryID, opened)); got.Code != model.ReaderImplicit || got.Audit || !got.OpenedHidden {
+		t.Fatalf("the hidden opening = %+v: want the drafter's implicit dismissal with the opening flag and no audit bit", got)
 	}
 	status, err := world.App.GroundingStatus(t.Context(), world.Identity, "proctest", sdd.GroundingStatusRequest{})
 	if err != nil {

@@ -3,6 +3,7 @@ package model
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"maps"
 	"slices"
 	"strconv"
 )
@@ -88,19 +89,22 @@ func idSetHash(sorted []string) string {
 }
 
 // ReadPayload is what one credited read adds to a capture's reading: the
-// reads as run, the entries served in full, and, on the first credited read,
-// the corpus mark.
+// reads as run, the entries served in full, the entries printed as briefs,
+// and, on the first credited read, the corpus mark.
 type ReadPayload struct {
-	Reads  []GroundingRead `json:"reads,omitempty"`
-	Full   []string        `json:"full,omitempty"`
-	Corpus *CorpusMark     `json:"corpus,omitempty"`
+	Reads []GroundingRead `json:"reads,omitempty"`
+	Full  []string        `json:"full,omitempty"`
+	// Shown names the entries printed as a brief or a pointer line, never
+	// those printed only as a set-aside ID or count.
+	Shown  []string    `json:"shown,omitempty"`
+	Corpus *CorpusMark `json:"corpus,omitempty"`
 	// Prefilter carries the scores the prefilter gave in this read.
 	Prefilter *PrefilterPayload `json:"prefilter,omitempty"`
 }
 
 // Empty reports whether the payload carries nothing to record.
 func (p ReadPayload) Empty() bool {
-	return len(p.Reads) == 0 && len(p.Full) == 0 && p.Corpus == nil && p.Prefilter == nil
+	return len(p.Reads) == 0 && len(p.Full) == 0 && len(p.Shown) == 0 && p.Corpus == nil && p.Prefilter == nil
 }
 
 // Reading is the record of the grounding reads that credit one capture
@@ -110,6 +114,7 @@ type Reading struct {
 	Corpus *CorpusMark
 	listed map[string]bool
 	full   map[string]bool
+	shown  map[string]bool
 	scores map[string]*readingScores
 	audit  map[string]bool
 }
@@ -120,6 +125,7 @@ func (r *Reading) Fold(p ReadPayload) {
 	if r.listed == nil {
 		r.listed = map[string]bool{}
 		r.full = map[string]bool{}
+		r.shown = map[string]bool{}
 	}
 	for _, read := range p.Reads {
 		r.Reads = append(r.Reads, GroundingRead{Mode: read.Mode, Text: read.Text, IDs: slices.Clone(read.IDs)})
@@ -133,6 +139,11 @@ func (r *Reading) Fold(p ReadPayload) {
 		if id != "" {
 			r.full[id] = true
 			r.listed[id] = true
+		}
+	}
+	for _, id := range p.Shown {
+		if id != "" {
+			r.shown[id] = true
 		}
 	}
 	r.foldPrefilter(p.Prefilter)
@@ -155,6 +166,20 @@ func (r *Reading) Full() []string {
 		return nil
 	}
 	return sortedKeys(r.full)
+}
+
+// Shown returns every entry the reading showed the agent, sorted: served in
+// full, or printed as a brief or pointer line.
+func (r *Reading) Shown() []string {
+	if r == nil {
+		return nil
+	}
+	shown := maps.Clone(r.full)
+	if shown == nil {
+		shown = map[string]bool{}
+	}
+	maps.Copy(shown, r.shown)
+	return sortedKeys(shown)
 }
 
 // IsListed reports whether a credited read surfaced id.

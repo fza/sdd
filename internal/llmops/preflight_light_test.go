@@ -114,6 +114,7 @@ func TestDeepReadingHeader(t *testing.T) {
 		{role: model.LightRoleFull, want: fields + "Role in the reading: read in full\n"},
 		{role: "declared target", want: fields + "Role in the reading: declared target\n"},
 		{role: model.LightRoleSetAside, code: model.VerdictCovered, want: fields + "Role in the reading: set aside (code: " + model.VerdictCovered + ")\n"},
+		{role: model.LightRoleImplicit, want: fields + "Role in the reading: implicitly dismissed\n"},
 	} {
 		t.Run(string(tc.role), func(t *testing.T) {
 			got := llmops.DeepReadingHeader(graph, entry, tc.role, tc.code)
@@ -285,5 +286,33 @@ func TestPreflightLight_DropsBasisIDsThePromptNeverCarried(t *testing.T) {
 	}
 	if got := result.Findings[0].Basis; len(got) != 1 || got[0] != served.ID {
 		t.Fatalf("only IDs the prompt carried should stay in the basis, got %v", got)
+	}
+}
+
+// A listed entry the reading showed and the author left unanswered carries
+// the implicit dismissal role, and the dismissal axis covers it.
+func TestPreflightLight_MarksImplicitDismissals(t *testing.T) {
+	shown := readingEntry("20261101-110000-s-tac-shw", "Staging keeps every handle.", "Body.", "capture/staging")
+	listed := readingEntry("20261101-120000-s-tac-lst", "Summary drift on long bodies.", "Body.", "capture/summary")
+	graph := lightGraph(t, shown, listed)
+	runner := &lightRunner{}
+	_, err := llmops.PreflightLight(t.Context(), runner, lightDraft, graph, "", llmops.LightReading{
+		Listed: []string{shown.ID, listed.ID}, Shown: []string{shown.ID},
+	}, 1_000_000, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := runner.prompts[0].UserPrompt
+	for _, want := range []string{
+		"ID: " + shown.ID, "Role in the reading: implicitly dismissed",
+		"An entry implicitly dismissed counts as set aside",
+		"or an implicitly dismissed entry is a near-duplicate of draft",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the light prompt should carry %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Count(prompt, "Role in the reading: implicitly dismissed") != 1 {
+		t.Errorf("only the shown entry should carry the implicit role:\n%s", prompt)
 	}
 }

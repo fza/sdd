@@ -37,7 +37,7 @@ func (gf *GraphFinder) Preflight(ctx context.Context, q query.PreflightQuery) (*
 	}
 	var llmResult *llmops.PreflightResult
 	if q.Light != nil {
-		reading := llmops.LightReading{Full: q.Light.Full, Listed: q.Light.Listed}
+		reading := llmops.LightReading{Full: q.Light.Full, Listed: q.Light.Listed, Shown: q.Light.Shown}
 		for _, verdict := range q.Light.SetAside {
 			reading.SetAside = append(reading.SetAside, llmops.LightSetAside{IDs: verdict.IDs, Code: verdict.Code})
 		}

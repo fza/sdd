@@ -108,3 +108,15 @@ func TestEncodeDecode_KeepsTheReplaySourceAndTheOpeningFlag(t *testing.T) {
 		t.Fatalf("readers %+v should keep each source and opening flag beside the audit bit", got.Readers)
 	}
 }
+
+func TestEncodeDecode_KeepsTheImplicitCodeAndTheFlip(t *testing.T) {
+	batch := sampleBatch()
+	batch.Readers[1].Verdict = model.ReaderVerdict{Code: model.ReaderImplicit, Flipped: true, Audit: true}
+	got, err := relevance.Decode(relevance.Encode(batch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Readers[1].Verdict != batch.Readers[1].Verdict || got.Readers[0].Verdict.Flipped {
+		t.Fatalf("readers %+v should keep the implicit code and the flip on its own record alone", got.Readers)
+	}
+}
