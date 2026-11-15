@@ -27,7 +27,7 @@ func preparedRuntime(t *testing.T, project sdd.ProjectID, dependencies ...sdd.Re
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project}, Graph: graph, Dependencies: dependencies, ExcludeEmbeddedFromIndex: true,
 		LLM:         llm.RunnerFunc(func(context.Context, llm.Request) (llm.Result, error) { return llm.Result{}, nil }),
-		SearchIndex: local.NewMemorySearchIndexStore(), Embedder: embed.EmbedderFunc{Space: "test-space", Run: func(_ context.Context, req embed.Request) (embed.Result, error) {
+		SearchIndex: local.NewMemorySearchIndexStore(), RuneCap: testRuneCap, Embedder: embed.EmbedderFunc{Space: "test-space", Run: func(_ context.Context, req embed.Request) (embed.Result, error) {
 			result := embed.Result{Vectors: make([][]float32, len(req.Texts))}
 			for i := range result.Vectors {
 				result.Vectors[i] = []float32{1, 1}

@@ -205,6 +205,10 @@ type EmbeddingConfig struct {
 	// the OpenAI public endpoint. Useful for self-hosted proxies that
 	// implement the same wire protocol.
 	Endpoint string `yaml:"endpoint,omitempty"`
+	// Path is the request path joined to Endpoint by the openai provider.
+	// Empty means "/v1/embeddings"; gateways that serve the route elsewhere
+	// set it explicitly.
+	Path string `yaml:"path,omitempty"`
 	// OllamaEndpoint overrides the default Ollama URL for the embedding
 	// adapter. Independent of LLMConfig.OllamaEndpoint so embedding and
 	// chat can target different instances.
@@ -439,6 +443,9 @@ func mergeEmbeddingConfig(base, overlay EmbeddingConfig) EmbeddingConfig {
 	}
 	if overlay.Endpoint != "" {
 		out.Endpoint = overlay.Endpoint
+	}
+	if overlay.Path != "" {
+		out.Path = overlay.Path
 	}
 	if overlay.OllamaEndpoint != "" {
 		out.OllamaEndpoint = overlay.OllamaEndpoint
@@ -731,4 +738,17 @@ type LLMProvider string
 
 func (LLMProvider) AllowedValues() []string {
 	return []string{"claude-cli", "anthropic", "openai", "ollama"}
+}
+
+// ValidateEmbeddingPath checks embedding.path: empty, or a path starting with
+// one "/" and naming no scheme or host, since it is joined to
+// embedding.endpoint as is.
+func ValidateEmbeddingPath(path string) error {
+	if path == "" {
+		return nil
+	}
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.Contains(path, "://") {
+		return fmt.Errorf("embedding.path: %q is not a request path; use one starting with \"/\", such as %q, and put the scheme and host in embedding.endpoint", path, "/v1/embeddings")
+	}
+	return nil
 }

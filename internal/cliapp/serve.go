@@ -452,10 +452,12 @@ func buildServedProject(cmd *cli.Command, previous *servedProject, reads []confi
 	// use still routes correctly. No process-local memory store in production.
 	cacheRoot := registry.CacheRoot()
 	baseRepoKey := persistentIndexRepoKey(cfg, stableRepoRoot)
-	baseIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, baseRepoKey)
+	baseIndex := localadapter.NewPersistentSearchIndexStore(project, cacheRoot, baseRepoKey).WithCheckout(graphDir)
 	var embeddings embed.Embedder
+	var runeCap func(context.Context) (int, error)
 	if localEmbedder.Embedder != nil {
 		embeddings = localEmbedder
+		runeCap = localEmbedder.MaxRunes
 	}
 	targets, err := localadapter.NewRepositoryTargets(project, filepath.Dir(sddDir), locations.ConfigPath)
 	if err != nil {
@@ -467,15 +469,17 @@ func buildServedProject(cmd *cli.Command, previous *servedProject, reads []confi
 	runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 		Project: sdd.ProjectRef{ID: project, DisplayName: displayName}, DefaultBranch: cfg.DefaultBranch, Language: language,
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Branches: targets, Base: targets,
-		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
+		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex), RuneCap: runeCap,
 		LLM: runner,
 	})
 	if err != nil {
 		return nil, err
 	}
 	var memberEmbedder embed.Embedder
+	var memberRuneCap func(context.Context) (int, error)
 	if crossEmbedder.Embedder != nil {
 		memberEmbedder = crossEmbedder
+		memberRuneCap = crossEmbedder.MaxRunes
 	}
 	access := &localRuntimeAccess{
 		project: project, participant: participant, runtime: runtime,
@@ -495,11 +499,11 @@ func buildServedProject(cmd *cli.Command, previous *servedProject, reads []confi
 			// connected-repository storage contract) and exclude embedded entries,
 			// so binary-shipped base facts embed once per machine in the base
 			// store, not once per connected repo.
-			memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(cache.RepoID), cacheRoot, index.RepoKey(cache.RepoID, cache.Dir))
+			memberIndex := localadapter.NewPersistentSearchIndexStore(sdd.ProjectID(cache.RepoID), cacheRoot, index.RepoKey(cache.RepoID, cache.Dir)).WithCheckout(graphDir)
 			return sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 				Project: sdd.ProjectRef{ID: sdd.ProjectID(cache.RepoID), DisplayName: string(cache.RepoID)}, Graph: memberGraph,
 				Language: dependencyCfg.Language, Dependencies: dependencyCfg.Dependencies,
-				Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), LLM: runner,
+				Embedder: memberEmbedder, SearchIndex: optionalSearchIndex(memberEmbedder, memberIndex), RuneCap: memberRuneCap, LLM: runner,
 				ExcludeEmbeddedFromIndex: true,
 			})
 		}},

@@ -69,6 +69,7 @@ func TestDefaultLocationsHonorXDG(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg-config")
 	t.Setenv("XDG_CACHE_HOME", "/tmp/xdg-cache")
 	t.Setenv("XDG_STATE_HOME", "/tmp/xdg-state")
+	t.Setenv("XDG_DATA_HOME", "/tmp/xdg-data")
 
 	loc, err := DefaultLocations()
 	if err != nil {
@@ -101,6 +102,7 @@ func TestDefaultLocationsRejectsRelativeStateHome(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg-config")
 	t.Setenv("XDG_CACHE_HOME", "/tmp/xdg-cache")
 	t.Setenv("XDG_STATE_HOME", "relative/state")
+	t.Setenv("XDG_DATA_HOME", "/tmp/xdg-data")
 	if _, err := DefaultLocations(); err == nil {
 		t.Fatal("relative XDG_STATE_HOME accepted")
 	}

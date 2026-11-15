@@ -29,6 +29,8 @@ type SearchIndexHandler struct {
 	Hashes          map[string]string
 	Attachments     chunking.AttachmentReader
 	ExcludeEmbedded bool
+	// MaxRunes is the rune cap the Hashes and the rows were chunked under.
+	MaxRunes        int
 	cmd             command.ReconcileSearchIndexCmd
 	entries, chunks int
 }
@@ -40,7 +42,7 @@ func (h *SearchIndexHandler) complete(ctx context.Context, entries []*model.Entr
 		for _, entry := range entries {
 			version := types.SearchEntryVersion{Namespace: h.Namespace, EntryID: entry.ID, EntryHash: hashes[entry.ID]}
 			if version.EntryHash == "" {
-				hash, err := chunking.EntryStateHash(ctx, entry, h.Attachments)
+				hash, err := chunking.EntryStateHashCapped(ctx, entry, h.Attachments, h.MaxRunes)
 				if err != nil {
 					yield(indexInput{}, err)
 					return
@@ -65,27 +67,32 @@ func (h *SearchIndexHandler) complete(ctx context.Context, entries []*model.Entr
 	if complete {
 		skip = nil
 	}
-	err := indexStream(ctx, inputs, h.Embedder, h.Attachments, textsplitter.NewSplitter(), skip,
-		func(ctx context.Context, entry *model.IndexWork) error {
+	err := indexStream(ctx, inputs, h.Embedder, h.Attachments, textsplitter.NewSplitter().WithMaxRunes(h.MaxRunes), skip,
+		func(ctx context.Context, batch []*model.IndexWork) error {
 			if complete {
-				if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {
-					return err
-				}
-				if err := publisher.PublishEntry(ctx, entry.Version, entry.Rows); err != nil {
+				if err := publishEntries(ctx, publisher, batch); err != nil {
 					return err
 				}
 			} else {
-				if len(entry.Rows) == 0 {
-					return nil
+				var rows []types.IndexedChunk
+				for _, entry := range batch {
+					rows = append(rows, entry.Rows...)
 				}
-				if err := h.Store.Reconcile(ctx, h.Namespace, h.Revision, entry.Rows, nil); err != nil {
-					return err
+				if len(rows) > 0 {
+					if err := h.Store.Reconcile(ctx, h.Namespace, h.Revision, rows, nil); err != nil {
+						return err
+					}
 				}
 			}
-			h.entries++
-			h.chunks += len(entry.Rows)
-			if h.cmd.OnEntryIndexed != nil {
-				h.cmd.OnEntryIndexed(entry.Version.EntryID, len(entry.Rows))
+			for _, entry := range batch {
+				if !complete && len(entry.Rows) == 0 {
+					continue
+				}
+				h.entries++
+				h.chunks += len(entry.Rows)
+				if h.cmd.OnEntryIndexed != nil {
+					h.cmd.OnEntryIndexed(entry.Version.EntryID, len(entry.Rows))
+				}
 			}
 			return nil
 		}, nil)
@@ -98,11 +105,30 @@ func (h *SearchIndexHandler) complete(ctx context.Context, entries []*model.Entr
 	}
 	return nil
 }
+
+// CheckoutRecorder is a search index store that records which versions the
+// reading checkout currently uses, so cache pruning keeps them.
+type CheckoutRecorder interface {
+	RecordCheckout(ctx context.Context, namespace types.IndexNamespace, hashes map[string]string) error
+}
+
 func (h *SearchIndexHandler) Reconcile(ctx context.Context, cmd command.ReconcileSearchIndexCmd) error {
 	slogutils.FromContext(ctx).DebugContext(ctx, "reconciling search index", "project", h.Namespace.Project)
 	namespace, hashes := h.Namespace, h.Hashes
 	h.cmd = cmd
 	h.entries, h.chunks = 0, 0
+	if recorder, ok := h.Store.(CheckoutRecorder); ok {
+		if hashes == nil {
+			computed, err := h.currentHashes(ctx)
+			if err != nil {
+				return err
+			}
+			hashes = computed
+		}
+		if err := recorder.RecordCheckout(ctx, namespace, hashes); err != nil {
+			return err
+		}
+	}
 	if manifestCap, ok := h.Store.(SearchIndexEntryManifest); ok {
 		indexed, err := manifestCap.IndexedEntries(ctx, namespace)
 		if err != nil {
@@ -125,6 +151,21 @@ func (h *SearchIndexHandler) Reconcile(ctx context.Context, cmd command.Reconcil
 		return h.complete(ctx, absent, hashes, nil)
 	}
 	return h.reconcileByChunkIdentity(ctx, namespace, hashes)
+}
+
+func (h *SearchIndexHandler) currentHashes(ctx context.Context) (map[string]string, error) {
+	hashes := map[string]string{}
+	for _, entry := range h.Graph.Entries {
+		if !chunking.IncludeEntry(entry, h.ExcludeEmbedded) {
+			continue
+		}
+		hash, err := chunking.EntryStateHashCapped(ctx, entry, h.Attachments, h.MaxRunes)
+		if err != nil {
+			return nil, err
+		}
+		hashes[entry.ID] = hash
+	}
+	return hashes, nil
 }
 
 func (h *SearchIndexHandler) reconcileByChunkIdentity(ctx context.Context, namespace types.IndexNamespace, hashes map[string]string) error {

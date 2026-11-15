@@ -35,8 +35,12 @@ type ProjectRuntimeOptions struct {
 	// alone holds: the Purpose and the prompts, or the texts.
 	Embedder    embed.Embedder
 	SearchIndex SearchIndexStore
-	LLM         llm.Runner
-	Finalizers  []MutationFinalizer
+	// RuneCap resolves the rune cap a fill chunks and hashes under: the
+	// embedding endpoint's calibrated cap, from the same calibration the CLI
+	// fill reads. A fill without it, or whose resolution fails, writes nothing.
+	RuneCap    func(context.Context) (int, error)
+	LLM        llm.Runner
+	Finalizers []MutationFinalizer
 	// ExcludeEmbeddedFromIndex mirrors the CLI's excludeEmbedded semantics for
 	// the vector index: connected-repo runtimes set it so binary-shipped base
 	// entries embed once per machine (in the base store) rather than once per

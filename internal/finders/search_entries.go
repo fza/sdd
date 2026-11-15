@@ -23,6 +23,9 @@ type SearchEntriesFinder struct {
 	Store           EntryPublicationReader
 	ExcludeEmbedded bool
 	EntryIDs        []string
+	// MaxRunes is the cap a fill chunks under: the endpoint's calibrated cap,
+	// so publication is checked for the versions a fill would write.
+	MaxRunes int
 }
 
 func (f SearchEntriesFinder) Discover(ctx context.Context, cursor query.SearchDiscoveryCursor) iter.Seq2[query.SearchEntryRequirement, error] {
@@ -53,7 +56,7 @@ func (f SearchEntriesFinder) Discover(ctx context.Context, cursor query.SearchDi
 			if !chunking.IncludeEntry(entry, f.ExcludeEmbedded) {
 				continue
 			}
-			hash, err := chunking.EntryStateHash(ctx, entry, f.Attachments)
+			hash, err := chunking.EntryStateHashCapped(ctx, entry, f.Attachments, f.MaxRunes)
 			if err != nil {
 				fail(err)
 				return

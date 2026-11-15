@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 )
@@ -37,6 +38,55 @@ type Manifest struct {
 	// distinguish legacy single-version entries from multi-version ones.
 	Version int                   `json:"version"`
 	Entries map[string]EntryState `json:"entries"`
+	RuneCaps
+}
+
+// RuneCaps records the rune caps a store's rows are chunked under.
+type RuneCaps struct {
+	// MaxRunes is the rune cap the store's rows are chunked under. Zero
+	// means the rows predate the cap. Readers take the cap from here, never
+	// from a fresh calibration, so a row hash they compute matches the rows
+	// written.
+	MaxRunes int `json:"max_runes,omitempty"`
+	// PrevMaxRunes is the cap MaxRunes replaced, held while a fill re-embeds
+	// the store under MaxRunes so rows not yet re-embedded stay fresh to
+	// readers. Nil when no re-embed is pending; zero means uncapped.
+	PrevMaxRunes *int `json:"prev_max_runes,omitempty"`
+}
+
+// SetMaxRunes records maxRunes as the cap rows are chunked under, holding the
+// cap it replaces as PrevMaxRunes until SettleMaxRunes, reporting whether the
+// caps changed. While a re-embed is pending, PrevMaxRunes keeps the cap it
+// started from: most entries are still stored only under that one.
+func (m *RuneCaps) SetMaxRunes(maxRunes int) bool {
+	if m.MaxRunes == maxRunes {
+		return false
+	}
+	if m.PrevMaxRunes == nil {
+		prev := m.MaxRunes
+		m.PrevMaxRunes = &prev
+	}
+	m.MaxRunes = maxRunes
+	return true
+}
+
+// SettleMaxRunes drops PrevMaxRunes once every entry is published under
+// maxRunes, reporting whether the caps changed.
+func (m *RuneCaps) SettleMaxRunes(maxRunes int) bool {
+	if m.PrevMaxRunes == nil || m.MaxRunes != maxRunes {
+		return false
+	}
+	m.PrevMaxRunes = nil
+	return true
+}
+
+// ReadMaxRunes returns the caps a reader hashes an entry under to match its
+// stored versions: MaxRunes, then PrevMaxRunes while a re-embed is pending.
+func (m *RuneCaps) ReadMaxRunes() []int {
+	if m.PrevMaxRunes == nil {
+		return []int{m.MaxRunes}
+	}
+	return []int{m.MaxRunes, *m.PrevMaxRunes}
 }
 
 // EntryState is one entry's set of stored versions. See Manifest for the
@@ -90,30 +140,32 @@ func (s EntryState) MarshalJSON() ([]byte, error) {
 	if len(s.Versions) == 1 {
 		return json.Marshal(s.Versions[0])
 	}
-	return json.Marshal(entryStateWire(s))
+	return json.Marshal(entryStateWire{Versions: append([]EntryVersion{}, s.Versions...)})
+}
+
+// entryStateDecoding reads either on-disk shape in one decode: the versions
+// list when its key is present, the flat fields otherwise.
+type entryStateDecoding struct {
+	Versions *[]EntryVersion `json:"versions"`
+	EntryVersion
+}
+
+func (d entryStateDecoding) state() EntryState {
+	if d.Versions != nil {
+		return EntryState{Versions: *d.Versions}
+	}
+	return EntryState{Versions: []EntryVersion{d.EntryVersion}}
 }
 
 // UnmarshalJSON loads either shape: a {"versions": [...]} object as-is, or a
 // legacy flat {hash, fingerprint, chunk_ids, indexed_at} object as the entry's
 // sole version.
 func (s *EntryState) UnmarshalJSON(data []byte) error {
-	var probe map[string]json.RawMessage
-	if err := json.Unmarshal(data, &probe); err != nil {
+	var decoded entryStateDecoding
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	if _, ok := probe["versions"]; ok {
-		var wire entryStateWire
-		if err := json.Unmarshal(data, &wire); err != nil {
-			return err
-		}
-		s.Versions = wire.Versions
-		return nil
-	}
-	var v EntryVersion
-	if err := json.Unmarshal(data, &v); err != nil {
-		return err
-	}
-	s.Versions = []EntryVersion{v}
+	*s = decoded.state()
 	return nil
 }
 
@@ -127,6 +179,11 @@ func (s EntryState) HasVersion(hash, fingerprint string) bool {
 		}
 	}
 	return false
+}
+
+// HasHash reports whether the entry has a stored version under the state hash.
+func (m *Manifest) HasHash(entryID, hash string) bool {
+	return slices.ContainsFunc(m.Entries[entryID].Versions, func(v EntryVersion) bool { return v.Hash == hash })
 }
 
 // AllChunkIDs returns every chunk ID across all of the entry's versions.
@@ -149,12 +206,24 @@ func LoadManifest(indexDir string) (*Manifest, error) {
 		}
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
-	var m Manifest
-	if err := json.Unmarshal(data, &m); err != nil {
+	return parseManifest(data)
+}
+
+// parseManifest decodes the entries without EntryState's UnmarshalJSON: a
+// value with its own decoder is scanned again for each entry, which dominates
+// reading a manifest of thousands of entries.
+func parseManifest(data []byte) (*Manifest, error) {
+	var decoded struct {
+		Version int                           `json:"version"`
+		Entries map[string]entryStateDecoding `json:"entries"`
+		RuneCaps
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		return nil, fmt.Errorf("parse manifest: %w", err)
 	}
-	if m.Entries == nil {
-		m.Entries = map[string]EntryState{}
+	m := Manifest{Version: decoded.Version, RuneCaps: decoded.RuneCaps, Entries: make(map[string]EntryState, len(decoded.Entries))}
+	for id, state := range decoded.Entries {
+		m.Entries[id] = state.state()
 	}
 	if m.Version == 0 {
 		m.Version = 1

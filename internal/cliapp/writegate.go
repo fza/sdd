@@ -43,7 +43,7 @@ func withWriteGate(action cli.ActionFunc) cli.ActionFunc {
 			return action(ctx, cmd)
 		}
 
-		f, err := newReadFinder()
+		f, err := newReadFinder(ctx)
 		if err != nil {
 			return err
 		}
