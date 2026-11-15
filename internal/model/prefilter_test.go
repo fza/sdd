@@ -117,3 +117,22 @@ func TestRelevanceText_KeepsTheWholeEntry(t *testing.T) {
 		t.Fatalf("text %q should hold kind, topics, title and the whole body", text)
 	}
 }
+
+// Scores answer the draft they were given against: a revised draft finds
+// none to reuse, and its own scores replace the earlier ones.
+func TestReadingScores_AnswerTheDraftTheyScored(t *testing.T) {
+	first, revised := model.RelevanceSubjectHash("gap\nthe first draft"), model.RelevanceSubjectHash("gap\nthe revised draft")
+	reading := &model.Reading{}
+	reading.Fold(model.ReadPayload{Prefilter: &model.PrefilterPayload{Judge: "j", Subject: first, Scores: map[string]uint8{"a": 200, "b": 10}}})
+	if scores, _ := reading.Scores("j", first); scores["a"] != 200 {
+		t.Fatalf("the scored draft should find its scores, got %v", scores)
+	}
+	if scores, _ := reading.Scores("j", revised); scores != nil {
+		t.Fatalf("a revised draft should find no scores to reuse, got %v", scores)
+	}
+	reading.Fold(model.ReadPayload{Prefilter: &model.PrefilterPayload{Judge: "j", Subject: revised, Scores: map[string]uint8{"a": 20}}})
+	scores, _ := reading.Scores("j", revised)
+	if scores["a"] != 20 || len(scores) != 1 {
+		t.Fatalf("the revised draft's scores should replace the earlier ones, got %v", scores)
+	}
+}

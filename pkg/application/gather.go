@@ -202,10 +202,11 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	if len(split.NotRelevant) > 0 {
 		setAside = append(setAside, model.GatherSetAside{Reason: model.SetAsideJudged, IDs: split.NotRelevant})
 	}
-	held, _ := request.reading.Scores(judge)
+	var held map[string]uint8
 	subject := ""
 	if strings.TrimSpace(request.Draft) != "" {
 		subject = model.RelevanceText(request.Kind, request.Topics, "", request.Draft)
+		held, _ = request.reading.Scores(judge, model.RelevanceSubjectHash(subject))
 	}
 	undecided := split.Undecided
 	var cosine cosinePass
@@ -284,10 +285,10 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 	result.Text = strings.TrimRight(rendered.String(), "\n")
 	result.payload = model.ReadPayload{Reads: reads, Full: slices.Clone(full), Corpus: served.Corpus}
 	if len(pass.fresh) > 0 || len(audit) > 0 {
-		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: runtime.options.Prefilter.Scorer != nil && runtime.options.Prefilter.Scorer.Direction() == relevance.Forward, Scores: pass.fresh, Audit: audit}
+		result.payload.Prefilter = &model.PrefilterPayload{Judge: judge, Forward: runtime.options.Prefilter.Scorer != nil && runtime.options.Prefilter.Scorer.Direction() == relevance.Forward, Subject: model.RelevanceSubjectHash(subject), Scores: pass.fresh, Audit: audit}
 	}
 	if len(cosine.scores) > 0 {
-		result.payload.Cosine = &model.PrefilterPayload{Judge: cosine.judge, Scores: cosine.scores}
+		result.payload.Cosine = &model.PrefilterPayload{Judge: cosine.judge, Subject: model.RelevanceSubjectHash(subject), Scores: cosine.scores}
 	}
 	return result, nil
 }
