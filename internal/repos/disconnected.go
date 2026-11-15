@@ -2,6 +2,8 @@ package repos
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,6 +64,22 @@ func resolvePath(path string) (string, error) {
 	return filepath.Join(dir, filepath.Base(abs)), nil
 }
 
+// maxEntryName keeps a repo's entry in a flat directory well inside the
+// 255-byte file name limit.
+const maxEntryName = 200
+
+// entryName names repoID's entry in a flat directory: its escaped ID, or the
+// hash of the ID when that outgrows a file name. A hash holds no '%', so it
+// never equals an escaped ID, which always escapes a '/'.
+func entryName(repoID model.RepoID) string {
+	escaped := url.PathEscape(string(repoID))
+	if len(escaped) <= maxEntryName {
+		return escaped
+	}
+	sum := sha256.Sum256([]byte(repoID))
+	return hex.EncodeToString(sum[:])
+}
+
 func disconnectedPath(dataRoot string, repoID model.RepoID) (string, error) {
 	err := model.ValidateRepoID(repoID)
 	if err != nil {
@@ -70,7 +88,7 @@ func disconnectedPath(dataRoot string, repoID model.RepoID) (string, error) {
 	if dataRoot == "" {
 		return "", errors.New("no data root for the sdd-owned clones")
 	}
-	return filepath.Join(dataRoot, "repos", disconnectedDirName, url.PathEscape(string(repoID))), nil
+	return filepath.Join(dataRoot, "repos", disconnectedDirName, entryName(repoID)), nil
 }
 
 // Disconnected reports whether `sdd repo remove` dropped repoID on this

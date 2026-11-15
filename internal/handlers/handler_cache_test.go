@@ -96,6 +96,9 @@ func newPruneFixture(t *testing.T, config string) pruneFixture {
 			t.Fatal(err)
 		}
 	}
+	if err := repos.NewManager(repos.NewRegistry(f.loc), nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
+		t.Fatal(err)
+	}
 
 	snapshots := graphcache.New(filepath.Join(f.loc.CacheRoot, "graph"))
 	f.keptGraph = t.TempDir()

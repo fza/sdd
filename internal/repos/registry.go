@@ -123,7 +123,8 @@ var ErrClonePassRefused = errors.New("refusing to remove clones")
 // UnconnectedClone is a clone whose repository the user-global repos list
 // does not name.
 type UnconnectedClone struct {
-	Dir    string
+	Dir string
+	// RepoID is empty for a clone an earlier run retired.
 	RepoID model.RepoID
 	// Owned marks an sdd-owned clone under <DataRoot>/repos; the others are
 	// cache clones an earlier sdd kept under the cache root.
@@ -131,16 +132,16 @@ type UnconnectedClone struct {
 }
 
 // UnconnectedClones lists the clones a cache pruning run may remove: the
-// sdd-owned clones of repositories `sdd repo remove` dropped (see
-// Disconnected) that the user-global repos list no longer names, the clones
-// an earlier run retired, and the leftover cache clones the list does not
-// name. A repos list missing from the list proves nothing about a clone, so
-// an sdd-owned clone without a disconnection record stays. A clone is a
-// directory holding .git below a top-level directory named like a host: repo
-// IDs open with a dotted hostname, which keeps the index and graph caches
-// beside them out of the walk. It returns ErrClonePassRefused, listing
-// nothing, when the locations come from mixed XDG sources or the config file
-// is missing or lists no repos while a clone would go.
+// sdd-owned and leftover cache clones of repositories `sdd repo remove`
+// dropped (see Disconnected) that the user-global repos list no longer
+// names, and the clones an earlier run retired but did not delete. A repo
+// missing from the list proves nothing about a clone, so a clone without a
+// disconnection record stays. A clone is a directory holding .git below a
+// top-level directory named like a host: repo IDs open with a dotted
+// hostname, which keeps the index and graph caches beside them out of the
+// walk. It returns ErrClonePassRefused, listing nothing, when the locations
+// come from mixed XDG sources or the config file is missing or lists no repos
+// while a recorded clone would go.
 func (r *Registry) UnconnectedClones() ([]UnconnectedClone, error) {
 	if r.loc.DataRoot == "" {
 		return nil, errors.New("listing clones: no data root for the sdd-owned clones")
@@ -149,56 +150,42 @@ func (r *Registry) UnconnectedClones() ([]UnconnectedClone, error) {
 	if err != nil {
 		return nil, err
 	}
-	owned, err := unconnectedClonesUnder(filepath.Join(r.loc.DataRoot, "repos"), cfg, true)
+	clones, err := r.retiredClones()
 	if err != nil {
 		return nil, err
 	}
-	owned, err = r.disconnectedOnly(owned)
-	if err != nil {
-		return nil, err
+	judged := 0
+	for _, owned := range []bool{true, false} {
+		found, err := unconnectedClonesUnder(r.clonesBase(owned), cfg, owned)
+		if err != nil {
+			return nil, err
+		}
+		for _, clone := range found {
+			if model.ValidateRepoID(clone.RepoID) != nil {
+				continue
+			}
+			dropped, err := r.Disconnected(clone.RepoID)
+			if err != nil {
+				return nil, err
+			}
+			if dropped {
+				clones = append(clones, clone)
+				judged++
+			}
+		}
 	}
-	cached, err := unconnectedClonesUnder(r.loc.CacheRoot, cfg, false)
-	if err != nil {
-		return nil, err
-	}
-	clones := append(owned, cached...)
-	err = r.trustRepoList(cfg, clones)
-	if err != nil {
-		return nil, err
+	if judged > 0 {
+		err = r.trustRepoList(cfg, judged)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return clones, nil
 }
 
-func (r *Registry) disconnectedOnly(clones []UnconnectedClone) ([]UnconnectedClone, error) {
-	var kept []UnconnectedClone
-	for _, clone := range clones {
-		if isRetiredClone(clone.Dir) {
-			kept = append(kept, clone)
-			continue
-		}
-		dropped, err := r.Disconnected(clone.RepoID)
-		if err != nil {
-			return nil, err
-		}
-		if dropped {
-			kept = append(kept, clone)
-		}
-	}
-	return kept, nil
-}
-
-// trustRepoList refuses a repos list that may not be this machine's while a
-// clone other than a retired one would go.
-func (r *Registry) trustRepoList(cfg *GlobalConfig, clones []UnconnectedClone) error {
-	judged := 0
-	for _, clone := range clones {
-		if !isRetiredClone(clone.Dir) {
-			judged++
-		}
-	}
-	if judged == 0 {
-		return nil
-	}
+// trustRepoList refuses a repos list that may not be this machine's while
+// judged clones would go.
+func (r *Registry) trustRepoList(cfg *GlobalConfig, judged int) error {
 	if r.loc.MixedXDG != "" {
 		return fmt.Errorf("%w: the XDG base directories come from mixed sources (%s) while %d clones under %s would go; set all four or none", ErrClonePassRefused, r.loc.MixedXDG, judged, r.loc.DataRoot)
 	}
@@ -215,9 +202,55 @@ func (r *Registry) trustRepoList(cfg *GlobalConfig, clones []UnconnectedClone) e
 	return nil
 }
 
-func isRetiredClone(dir string) bool {
-	base := filepath.Base(dir)
-	return strings.HasPrefix(base, ".") && strings.HasSuffix(base, ".pruned")
+// clonesBase is where the sdd-owned clones live, or the cache clones an
+// earlier sdd kept.
+func (r *Registry) clonesBase(owned bool) string {
+	if owned {
+		return filepath.Join(r.loc.DataRoot, "repos")
+	}
+	return r.loc.CacheRoot
+}
+
+// clonePath is where clone's repo places it, so a retirement moves only a
+// clone found where its repo ID puts it.
+func (r *Registry) clonePath(clone UnconnectedClone) (string, error) {
+	if clone.Owned {
+		return r.CloneDir(clone.RepoID)
+	}
+	return r.LegacyCacheDir(clone.RepoID)
+}
+
+// retiredClonesDirName holds the clones RetireUnconnectedClone moved out of
+// their place until they are deleted, beside them on the same file system.
+// '~' is no repo ID character, so no clone can live under it.
+const retiredClonesDirName = ".clones~retired"
+
+func (r *Registry) retiredClonesDir(owned bool) string {
+	return filepath.Join(r.clonesBase(owned), retiredClonesDirName)
+}
+
+func (r *Registry) isRetiredClone(clone UnconnectedClone) bool {
+	return filepath.Dir(clone.Dir) == r.retiredClonesDir(clone.Owned)
+}
+
+func (r *Registry) retiredClones() ([]UnconnectedClone, error) {
+	var retired []UnconnectedClone
+	for _, owned := range []bool{true, false} {
+		dir := r.retiredClonesDir(owned)
+		entries, err := os.ReadDir(dir)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("listing retired clones: %w", err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				retired = append(retired, UnconnectedClone{Dir: filepath.Join(dir, entry.Name()), Owned: owned})
+			}
+		}
+	}
+	return retired, nil
 }
 
 func unconnectedClonesUnder(base string, cfg *GlobalConfig, owned bool) ([]UnconnectedClone, error) {
