@@ -443,6 +443,36 @@ func TestCapture_RestageDuringAnUnfinishedOperationIsRefused(t *testing.T) {
 	}
 }
 
+// The re-read at a confirm stages through the same write, so another
+// capture's unfinished write refuses it too and the staged copy stays.
+func TestCapture_ConfirmRereadDuringAnUnfinishedOperationIsRefused(t *testing.T) {
+	_, session := newCaptureWorld(t, "staged-body-pending-reread", proctest.WithFinalizers(&captureCompletionFailure{}))
+	path := filepath.Join(t.TempDir(), "draft.md")
+	if err := os.WriteFile(path, []byte(stagedBodyFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handle := session.StageFrom(t, "draft.md", path)
+	bound := session.Start(t, "capture", nil).Instance
+	proctest.RequireStep(t, session.Report(t, bound, stagedBodyDraft(handle)), "playback")
+	other := session.Start(t, "capture", nil).Instance
+	proctest.RequireStep(t, session.Report(t, other, captureDraft()), "playback")
+	failed, err := session.AnswerErr(t, other, "playback", "confirm", nil, "capture it")
+	if err != nil || failed.PendingOperation == nil {
+		t.Fatalf("the failing finalizer should leave the write unfinished, got %v", err)
+	}
+
+	if err := os.WriteFile(path, []byte(unseenStagedBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AnswerErr(t, bound, "playback", "confirm", nil, "capture it"); err == nil || !strings.Contains(err.Error(), "unfinished") {
+		t.Fatalf("a confirm re-reading its file while another write is unfinished should be refused, got %v", err)
+	}
+	page, _, err := session.WF.ReadStagedAttachment(t.Context(), session.World.Identity, handle, 0, 0)
+	if err != nil || string(page.Content) != stagedBodyFile {
+		t.Errorf("a refused re-read should leave the staged file as it was, got %q (%v)", page.Content, err)
+	}
+}
+
 func TestCapture_RestageInACallOfSeveralFilesStagesNone(t *testing.T) {
 	_, session := newCaptureWorld(t, "staged-body-pending-batch", proctest.WithFinalizers(&captureCompletionFailure{}))
 	handle := session.Stage(t, "draft.md", []byte(stagedBodyFile))
