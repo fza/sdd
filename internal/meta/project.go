@@ -117,12 +117,13 @@ func ResolvedPath(path string) string {
 }
 
 // RequireProjectApart refuses a project at projectRoot that a work tree at
-// workRoot cannot point at: one inside workRepo, the repository holding the
-// work tree (empty when there is none), a repository of its own nested there
-// included, or one containing the work tree. subject opens the refusal,
-// naming where the project came from.
-func RequireProjectApart(subject, workRoot, workRepo, projectRoot string) error {
-	outer := workRepo
+// workRoot cannot point at: one inside the repository holding the work tree,
+// a repository of its own nested there included; one containing the work
+// tree; or one inside another repository rather than at its root. subject
+// opens the refusal, naming where the project came from. rootOf returns the
+// root of the repository holding a path, empty when there is none.
+func RequireProjectApart(subject, workRoot, projectRoot string, rootOf func(string) string) error {
+	outer := rootOf(workRoot)
 	if outer == "" {
 		outer = workRoot
 	}
@@ -131,6 +132,10 @@ func RequireProjectApart(subject, workRoot, workRepo, projectRoot string) error 
 	}
 	if WithinDir(projectRoot, workRoot) {
 		return fmt.Errorf("%s contains the work repository at %s; the project needs a repository of its own beside it", subject, workRoot)
+	}
+	projectRepo := rootOf(projectRoot)
+	if projectRepo != "" && !SameDir(projectRepo, projectRoot) {
+		return fmt.Errorf("%s lies inside the repository at %s; the project needs a repository of its own", subject, projectRepo)
 	}
 	return nil
 }

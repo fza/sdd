@@ -1298,7 +1298,7 @@ func requireGraphInsideRepository(project meta.Project) error {
 	}
 	if project.Pointed() {
 		subject := fmt.Sprintf("project_dir in %s names %s, which", meta.SDDDir(project.WorkRoot), project.Root)
-		err = meta.RequireProjectApart(subject, project.WorkRoot, git.RepoRootFor(project.WorkRoot), project.Root)
+		err = meta.RequireProjectApart(subject, project.WorkRoot, project.Root, git.RepoRootFor)
 		if err != nil {
 			return err
 		}

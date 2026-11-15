@@ -369,21 +369,22 @@ func TestInitRefusesAnExistingProjectPlacedAgainstTheWorkRepository(t *testing.T
 	cases := []struct {
 		name       string
 		projectDir string
-		repoized   bool
+		repo       string
 		mention    string
 	}{
 		{name: "folder containing the work repository", projectDir: "..", mention: "contains the work repository"},
-		{name: "repository containing the work repository", projectDir: "..", repoized: true, mention: "contains the work repository"},
+		{name: "repository containing the work repository", projectDir: "..", repo: "..", mention: "contains the work repository"},
 		{name: "folder inside the work repository", projectDir: "sub", mention: "lies inside the repository"},
-		{name: "repository of its own inside the work repository", projectDir: "nested", repoized: true, mention: "lies inside the repository"},
+		{name: "repository of its own inside the work repository", projectDir: "nested", repo: "nested", mention: "lies inside the repository"},
+		{name: "folder inside another repository", projectDir: "../mono/sub", repo: "../mono", mention: "lies inside the repository"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			work, _ := workRepository(t)
 			projectRoot := filepath.Join(work, tc.projectDir)
 			writeFile(t, filepath.Join(projectRoot, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/placed\ndefault_branch: main\nlanguage: en\n")
-			if tc.repoized {
-				initRepo(t, projectRoot)
+			if tc.repo != "" {
+				initRepo(t, filepath.Join(work, tc.repo))
 			}
 			statusBefore := gitIn(t, work, "status", "--porcelain", "--untracked-files=all")
 
