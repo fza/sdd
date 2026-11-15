@@ -83,16 +83,31 @@ func DriftWindowMisses(labels []RelevanceLabel) (misses, counted int) {
 // DriftStepDue returns the step the drift rule takes now: when the latest
 // audit labels, at least DriftMinimum, hold more than DriftMissShare
 // referenced samples and no step of the judge came within DriftInterval, the
-// set-aside threshold halves. It never rises.
+// set-aside threshold halves. It never rises. Only labels of captures after
+// the judge's last step count, so a window the last step already answered
+// never halves the threshold again.
 func DriftStepDue(labels []RelevanceLabel, steps []DriftStep, judge string, now time.Time) (DriftStep, bool) {
-	misses, counted := DriftWindowMisses(labels)
-	if counted < DriftMinimum || float64(misses)/float64(counted) <= DriftMissShare {
-		return DriftStep{}, false
-	}
+	var last time.Time
 	for _, step := range steps {
-		if step.Judge == judge && now.Sub(step.At) < DriftInterval {
+		if step.Judge != judge {
+			continue
+		}
+		if now.Sub(step.At) < DriftInterval {
 			return DriftStep{}, false
 		}
+		if step.At.After(last) {
+			last = step.At
+		}
+	}
+	since := labels
+	if !last.IsZero() {
+		// Entry IDs are stamped in the zone of the clock now comes from.
+		mark := last.In(now.Location()).Format("20060102-150405")
+		since = slices.DeleteFunc(slices.Clone(labels), func(label RelevanceLabel) bool { return label.Pair.B <= mark })
+	}
+	misses, counted := DriftWindowMisses(since)
+	if counted < DriftMinimum || float64(misses)/float64(counted) <= DriftMissShare {
+		return DriftStep{}, false
 	}
 	thresholds := Calibrate(labels, steps, judge)
 	if !thresholds.Valid {

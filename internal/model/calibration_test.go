@@ -76,7 +76,8 @@ func TestDriftStepDue(t *testing.T) {
 		{"misses at the limit", driftLabels(100, 2), nil, false},
 		{"misses above the limit", driftLabels(100, 3), nil, true},
 		{"a step today already", driftLabels(100, 3), []model.DriftStep{{Judge: "j", At: now.Add(-23 * time.Hour), SetAside: 150}}, false},
-		{"a step yesterday", driftLabels(100, 3), []model.DriftStep{{Judge: "j", At: now.Add(-25 * time.Hour), SetAside: 150}}, true},
+		{"a step yesterday over the same captures", driftLabels(100, 3), []model.DriftStep{{Judge: "j", At: now.Add(-25 * time.Hour), SetAside: 150}}, false},
+		{"a step before these captures", driftLabels(100, 3), []model.DriftStep{{Judge: "j", At: time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC), SetAside: 150}}, true},
 		{"another judge's step", driftLabels(100, 3), []model.DriftStep{{Judge: "k", At: now, SetAside: 1}}, true},
 	}
 	for _, tc := range cases {
@@ -104,6 +105,32 @@ func TestDriftStepDue(t *testing.T) {
 	}
 	if _, due := model.DriftStepDue(window, nil, "j", now); due {
 		t.Fatal("misses older than the latest 200 audit labels should not count")
+	}
+}
+
+// Entry IDs carry the writer's wall clock, so the step mark is read in the
+// clock's zone: east of UTC captures before a step stay answered, west of it
+// captures after a step count.
+func TestDriftStepDue_ReadsCaptureIDsInTheClocksZone(t *testing.T) {
+	stamped := func(at time.Time) []model.RelevanceLabel {
+		labels := driftLabels(100, 3)
+		for i := range 100 {
+			label := &labels[len(labels)-100+i]
+			label.Pair = model.NewRelevancePair(label.Pair.A, at.Add(time.Duration(i)*time.Second).Format("20060102-150405")+"-d-tac-sub")
+		}
+		return labels
+	}
+	east := time.FixedZone("UTC+9", 9*60*60)
+	eastStep := model.DriftStep{Judge: "j", At: time.Date(2026, 6, 1, 0, 30, 0, 0, time.UTC), SetAside: 150}
+	before := stamped(time.Date(2026, 6, 1, 9, 0, 0, 0, east))
+	if _, due := model.DriftStepDue(before, []model.DriftStep{eastStep}, "j", eastStep.At.Add(25*time.Hour).In(east)); due {
+		t.Error("captures written before the last step, east of UTC, should not count again")
+	}
+	west := time.FixedZone("UTC-8", -8*60*60)
+	westStep := model.DriftStep{Judge: "j", At: time.Date(2026, 6, 1, 17, 0, 0, 0, time.UTC), SetAside: 150}
+	after := stamped(time.Date(2026, 6, 1, 10, 0, 0, 0, west))
+	if _, due := model.DriftStepDue(after, []model.DriftStep{westStep}, "j", westStep.At.Add(25*time.Hour).In(west)); !due {
+		t.Error("captures written after the last step, west of UTC, should count")
 	}
 }
 
