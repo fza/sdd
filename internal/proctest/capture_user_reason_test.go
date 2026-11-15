@@ -130,6 +130,30 @@ func TestCapture_ReasonStatesWhyNeverWhat(t *testing.T) {
 	}
 }
 
+// A directive's posture is an SDD mechanic the user does not know: the agent
+// asks in the user's terms and maps the answer itself, wherever it asks.
+func TestCapture_IntentIsAskedInTheUsersTerms(t *testing.T) {
+	const noPosture = "never name the posture"
+	world := proctest.NewWorld(t)
+	session := world.Open(t, "intent-users-terms")
+	serve := session.Start(t, "capture", nil)
+	if !strings.Contains(test.Untagged(serve.Instructions), noPosture) {
+		t.Errorf("assemble should tell the agent to ask for the intent without naming the posture:\n%s", serve.Instructions)
+	}
+	draft := decisionDraft("directive")
+	draft["reasonWords"] = "empty input hid upstream bugs twice"
+	serve = session.Report(t, serve.Instance, draft)
+	requireUserWordsHeld(t, serve, "intentWords")
+	if !hasDiagnostic(serve, noPosture) {
+		t.Errorf("the missing intent words should send the agent to ask without naming the posture, got %v", serve.Diagnostics)
+	}
+	serve = session.Report(t, serve.Instance, map[string]any{"intentWords": "build it now"})
+	proctest.RequireStep(t, serve, "playback")
+	if !strings.Contains(test.Untagged(serve.Instructions), noPosture) {
+		t.Errorf("playback should tell the agent to show the intent without naming the posture:\n%s", serve.Instructions)
+	}
+}
+
 // The quoted words stay the user's: an answer that changes them quotes them
 // from what the user says in that answer, and a wording change to the draft
 // goes into the body instead.

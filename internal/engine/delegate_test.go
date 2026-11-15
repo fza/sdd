@@ -706,7 +706,8 @@ func TestAwaitGateTakesTheReportThatItsDelegateEnded(t *testing.T) {
 }
 
 // A dispatching move held only by its delegate's delivery serves one line:
-// what it waits for and when to check again.
+// what it waits for, and that the agent checks by calling next again, never by
+// a shell sleep or timer: next itself never blocks.
 func TestAwaitGateServesOneWaitingLine(t *testing.T) {
 	f := newExchange(t)
 
@@ -715,8 +716,11 @@ func TestAwaitGateServesOneWaitingLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sv.Waiting || strings.Contains(sv.Instructions, "\n") || !strings.Contains(sv.Instructions, "waiting for the delegate to deliver synthesis") || !strings.Contains(sv.Instructions, "in 20 seconds") {
-		t.Fatalf("a waiting move should serve one line naming what it waits for and when to check again, got %v %q", sv.Waiting, sv.Instructions)
+	if !sv.Waiting || strings.Contains(sv.Instructions, "\n") || !strings.Contains(sv.Instructions, "waiting for the delegate to deliver synthesis") {
+		t.Fatalf("a waiting move should serve one line naming what it waits for, got %v %q", sv.Waiting, sv.Instructions)
+	}
+	if !strings.Contains(sv.Instructions, "call next with this instance and no report again") || !strings.Contains(sv.Instructions, "do not run sleep or a timer") {
+		t.Fatalf("a waiting move should send the agent back to next and forbid a shell wait, got %q", sv.Instructions)
 	}
 }
 
