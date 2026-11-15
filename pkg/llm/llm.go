@@ -145,6 +145,9 @@ type MalformedAnswerError struct {
 }
 
 func (e *MalformedAnswerError) Error() string {
+	if e.Err == nil {
+		return "malformed answer"
+	}
 	return e.Err.Error()
 }
 
