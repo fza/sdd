@@ -11,6 +11,7 @@ import (
 	"github.com/networkteam/sdd/internal/engine"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/secrets"
 )
 
 var captureDraftFields = []string{"body", "entryKind", "layer", "refs", "topics", "index", "confidence", "intent", "attachments", "participants", "supersedes", "closes", "canonical", "class", "procedureSpec", "aliases", "roleActor", "involvement", "focusActors", "focusWhen", "captureBranch"}
@@ -46,6 +47,8 @@ func (w *WorkflowSession) runWorkflowPreflight(ctx *engine.Context) error {
 		for _, warning := range validation.Warnings {
 			result.Findings = append(result.Findings, Finding{Severity: string(query.SeverityHigh), Category: "validation", Observation: warning.Message})
 		}
+	} else if errors.Is(err, secrets.ErrCredential) {
+		result.Findings = append(result.Findings, Finding{Severity: string(query.SeverityHigh), Category: "credential", Observation: err.Error()})
 	} else if err != nil {
 		return err
 	}
