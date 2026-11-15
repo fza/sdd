@@ -31,6 +31,13 @@ func (s publishRefusingIndex) PublishEntry(ctx context.Context, version sdd.Sear
 const (
 	reembedFirstID  = "20260101-100000-s-tac-aaa"
 	reembedSecondID = "20260101-100001-s-tac-bbb"
+
+	// The first entry's body fits one chunk under the wide cap, whose snippet
+	// ends inside the first paragraph; the narrow cap splits the body.
+	reembedFirstParagraph  = "Alpha paragraph one explains the alpha matters at length, so that the snippet of one wide chunk ends well before the second paragraph begins and never shows any of its words."
+	reembedSecondParagraph = "Second alpha paragraph stands alone once the narrow cap splits the body."
+	// reembedSecondParagraphEnd shows only in a snippet of the narrow cap's chunks.
+	reembedSecondParagraphEnd = "the narrow cap splits the body."
 )
 
 func fixedRuneCap(maxRunes int) func(context.Context) (int, error) {
@@ -41,8 +48,10 @@ func fixedRuneCap(maxRunes int) func(context.Context) (int, error) {
 // serve-side re-embed under another cap that publishes the first entry only.
 func fillThenInterruptServeReembed(t *testing.T) (graphDir, cacheRoot string) {
 	t.Helper()
-	graphDir, cacheRoot = seedCounterGraph(t)
-	counterSearch(t, newRuneCapApp(t, graphDir, cacheRoot, fixedRuneCap(512)), "alpha")
+	graphDir, cacheRoot = t.TempDir(), t.TempDir()
+	writeCounterEntry(t, graphDir, reembedFirstID, "Alpha topic summary", "## Section\n"+reembedFirstParagraph+"\n\n"+reembedSecondParagraph)
+	writeCounterEntry(t, graphDir, reembedSecondID, "Beta topic summary", "## Section\nThe beta entry is about beta matters.")
+	counterSearch(t, newRuneCapApp(t, graphDir, cacheRoot, fixedRuneCap(4096)), "alpha")
 
 	refusing := publishRefusingIndex{PersistentSearchIndexStore: localadapter.NewPersistentSearchIndexStore(counterProject, cacheRoot, "counter/repo"), refuse: reembedSecondID}
 	reembed := newRuneCapAppWithIndex(t, graphDir, refusing, fixedRuneCap(256))
@@ -57,7 +66,7 @@ func fillThenInterruptServeReembed(t *testing.T) (graphDir, cacheRoot string) {
 func readerSearch(t *testing.T, graphDir, cacheRoot string) sdd.SearchResult {
 	t.Helper()
 	reader := newRuneCapApp(t, graphDir, cacheRoot, fixedRuneCap(256))
-	res, err := reader.Search(t.Context(), sdd.RequestIdentity{Subject: "christopher"}, counterProject, sdd.SearchRequest{SyncMode: sdd.SearchSyncNone, Phrase: "alpha beta", Limit: 10, MaxCitations: 3})
+	res, err := reader.Search(t.Context(), sdd.RequestIdentity{Subject: "christopher"}, counterProject, sdd.SearchRequest{SyncMode: sdd.SearchSyncNone, Phrase: "alpha beta", Limit: 10, MaxCitations: 10})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -74,22 +83,56 @@ func TestServeSearchDuringReembedUnderChangedCapFindsEveryEntry(t *testing.T) {
 	}
 }
 
-func TestServeSearchDuringReembedCitesOneVersionPerEntry(t *testing.T) {
+func TestServeSearchDuringReembedCitesOnlyTheReembeddedVersion(t *testing.T) {
 	graphDir, cacheRoot := fillThenInterruptServeReembed(t)
 	results := readerSearch(t, graphDir, cacheRoot).Results
-	if n := strings.Count(results, "The alpha entry is about alpha matters."); n != 1 {
-		t.Errorf("the re-embedded entry's body should be cited once, from one version, cited %d times in:\n%s", n, results)
+	if !strings.Contains(results, reembedSecondParagraphEnd) {
+		t.Errorf("the re-embedded entry should be cited from its version under the new cap:\n%s", results)
+	}
+	if n := strings.Count(results, reembedFirstParagraph[:40]); n != 1 {
+		t.Errorf("the re-embedded entry's first paragraph should be cited once, from one version, cited %d times in:\n%s", n, results)
 	}
 }
 
 func TestServeFillClearsPreviousCapWhenReembedCompletes(t *testing.T) {
-	graphDir, cacheRoot := fillThenInterruptServeReembed(t)
-	counterSearch(t, newRuneCapApp(t, graphDir, cacheRoot, fixedRuneCap(256)), "alpha")
-	manifest, err := index.LoadManifest(counterStoreDir(cacheRoot))
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name string
+		// completingCap is the cap of the fill that completes the re-embed.
+		completingCap int
+	}{
+		{name: "fill under the new cap", completingCap: 256},
+		{name: "fill back under the previous cap", completingCap: 4096},
 	}
-	if manifest.PrevMaxRunes != nil {
-		t.Errorf("store should drop the previous cap once the re-embed completes, holds %d", *manifest.PrevMaxRunes)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			graphDir, cacheRoot := fillThenInterruptServeReembed(t)
+			counterSearch(t, newRuneCapApp(t, graphDir, cacheRoot, fixedRuneCap(tc.completingCap)), "alpha")
+			manifest, err := index.LoadManifest(counterStoreDir(cacheRoot))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if manifest.PrevMaxRunes != nil {
+				t.Errorf("store should drop the previous cap once the re-embed completes, holds %d", *manifest.PrevMaxRunes)
+			}
+			if manifest.MaxRunes != tc.completingCap {
+				t.Errorf("store should record the completing fill's cap, records %d", manifest.MaxRunes)
+			}
+		})
+	}
+}
+
+func TestServeSearchDuringReembedWithoutPublicationSupportFails(t *testing.T) {
+	graphDir, cacheRoot := fillThenInterruptServeReembed(t)
+	store := localadapter.NewPersistentSearchIndexStore(counterProject, cacheRoot, "counter/repo")
+	withoutPublication := struct {
+		sdd.SearchIndexStore
+		sdd.SearchIndexEntryManifest
+		sdd.SearchIndexRunes
+		sdd.SearchIndexRunesRecorder
+	}{store, store, store, store}
+	reader := newRuneCapAppWithIndex(t, graphDir, withoutPublication, fixedRuneCap(256))
+	_, err := reader.Search(t.Context(), sdd.RequestIdentity{Subject: "christopher"}, counterProject, sdd.SearchRequest{SyncMode: sdd.SearchSyncNone, Phrase: "alpha beta", Limit: 10, MaxCitations: 3})
+	if err == nil {
+		t.Error("a search across two caps should fail on a store that cannot report which versions it published")
 	}
 }
