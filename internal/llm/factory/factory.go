@@ -12,6 +12,7 @@ import (
 	"github.com/networkteam/sdd/internal/llm/claude"
 	gollmrunner "github.com/networkteam/sdd/internal/llm/gollm"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -47,7 +48,8 @@ func New(cfg model.LLMConfig) (llm.Runner, error) {
 			timeout = d
 		}
 	}
-	return llm.Bounded(runner, timeout), nil
+	// Every prompt crosses this boundary, whatever produced it.
+	return secrets.GuardRunner(llm.Bounded(runner, timeout)), nil
 }
 
 // compose builds the provider adapter and its rate-limit wrap — everything

@@ -67,3 +67,25 @@ func TestNewRefusesACredential(t *testing.T) {
 		t.Errorf("a refused capture should commit nothing, HEAD is %q", subject)
 	}
 }
+
+// A credential-shaped --query phrase is searched literally, never embedded,
+// so it works without any embedding provider and says so on stderr.
+func TestSearchQueryWithACredentialSearchesLiterally(t *testing.T) {
+	f := newAppFixture(t)
+	f.write(t, ".sdd/config.yaml", noProviderConfig)
+	credential := secretFixture(t, "gitlab-pat")
+	f.write(t, "decisions/2026/01/01-120000-s-tac-lek.md",
+		"---\ntype: signal\nlayer: tactical\nkind: gap\nconfidence: high\nparticipants: [Local Author]\nsummary: A leaked token.\n---\n\nThe old notes held "+credential+".\n")
+
+	result := f.run(t, "search", "--query", credential, "--limit", "5", "--max-citations", "0")
+
+	if result.err != nil {
+		t.Fatalf("a literal search needs no embedding provider: %v\n%s", result.err, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "20260101-120000-s-tac-lek") {
+		t.Errorf("the literal search should find the entry holding the phrase:\n%s", result.stdout)
+	}
+	if !strings.Contains(result.stderr, "searched for it literally") {
+		t.Errorf("the output should say the phrase was searched literally:\n%s", result.stderr)
+	}
+}

@@ -39,6 +39,7 @@ SDD lets each party do what they're good at. Agents work with information and ru
 - Topics that cluster entries across kinds and layers
 - Focus decisions that commit the project's attention to a set of entries for a period
 - Model checks on every capture: a writing check on the draft and a pre-flight check against the graph
+- A credential scan with gitleaks' default rules on every graph write and every model or embedding request: text holding a credential is refused before any model sees it, and `sdd lint` lists credentials already in the graph
 - Search by keyword, by meaning, or both
 - Connected repositories: reference, search and traverse entries across graphs
 - Composable views that filter, rank and render the graph
