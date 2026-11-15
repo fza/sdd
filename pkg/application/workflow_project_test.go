@@ -17,7 +17,8 @@ import (
 // does in every composition but the local one; C is readable and declared by
 // B, so it lies beyond the home's direct dependencies.
 // Alice is a full member of A and B and reads C; B has no write authority of
-// its own, as a local dependency has today. verifiers sets a project's verify
+// its own, as a local dependency has today. Bob is a full member of A and
+// reads B. verifiers sets a project's verify
 // policy.
 func newDependencyFixture(t *testing.T, verifiers ...map[sdd.ProjectID]sdd.VerifierPolicy) (*sdd.Application, sdd.RequestIdentity) {
 	t.Helper()
@@ -77,6 +78,7 @@ Project B is readable as an authorized dependency.`), 0o644); err != nil {
 		runtimes: runtimes,
 		permissions: map[string]map[sdd.ProjectID]compositionPermission{
 			"alice": {"project-a": {read: true, write: true}, "project-b": {read: true, write: true}, "project-c": {read: true}},
+			"bob":   {"project-a": {read: true, write: true}, "project-b": {read: true}},
 		},
 		dependencies: map[sdd.RepoID]sdd.ProjectID{"example.test/b": "project-b", "example.test/c": "project-c"},
 	}
@@ -173,5 +175,29 @@ func TestInstanceTargetsDirectDependency(t *testing.T) {
 	}
 	if projects[explicit.Instance] != "project-b" || projects[home.Instance] != "project-a" || projects[child.Instance] != "project-b" {
 		t.Fatalf("resumed instance projects = %v, want the recorded and derived targets restored", projects)
+	}
+}
+
+// A capture started through a parent in a dependency the principal may only
+// read is refused at its start, as one naming that dependency is.
+func TestCaptureDerivingAReadOnlyDependencyIsRefusedAtStart(t *testing.T) {
+	application, _ := newDependencyFixture(t)
+	bob := sdd.RequestIdentity{Subject: "bob"}
+	workflow, _, err := application.OpenWorkflow(t.Context(), bob, "project-a", sdd.WorkflowOpenRequest{ClientName: "bob-mcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := workflow.Start(t.Context(), bob, sdd.WorkflowStartRequest{Canonical: "engage", Project: "project-b"})
+	if err != nil {
+		t.Fatalf("a read in the dependency should start: %v", err)
+	}
+	for _, request := range []sdd.WorkflowStartRequest{
+		{Canonical: "capture", Project: "project-b"},
+		{Canonical: "capture", Parent: parent.Instance},
+	} {
+		_, err := workflow.Start(t.Context(), bob, request)
+		if applicationErrorCode(err) != sdd.ErrorWriteDenied {
+			t.Errorf("a capture into the read-only dependency should be refused at its start, got %v for %+v", err, request)
+		}
 	}
 }

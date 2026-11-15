@@ -204,6 +204,9 @@ func TestEntriesShipOverviewFact(t *testing.T) {
 			t.Errorf("overview body missing kind %q in its generated lists", kind)
 		}
 	}
+	if !strings.Contains(fact.Content, model.LayerGuide()) {
+		t.Error("overview body should list the layers from the model's layer meanings")
+	}
 	if strings.Contains(fact.Content, "{{") {
 		t.Error("overview body contains an unrendered template placeholder")
 	}

@@ -527,6 +527,8 @@ func (a *Application) newWorkflow(ctx context.Context, identity RequestIdentity,
 		"kindAuthoringFactIDs": basefacts.AuthoringFactIDs(),
 		"signalKinds":          joinKinds(model.SignalKindValues()),
 		"decisionKinds":        joinKinds(model.DecisionKindValues()),
+		"layerGuide":           model.LayerGuide(),
+		"layerGist":            model.LayerGist(),
 	}))
 	return w, nil
 }
@@ -639,14 +641,20 @@ func (w *WorkflowSession) Start(ctx context.Context, identity RequestIdentity, r
 		return nil, err
 	}
 	w.demandProject(project)
-	// A move that publishes an entry into another project is refused at its
-	// start when it may not write there, not after the dialogue it costs.
-	if project != "" && publishesEntry(spec) {
-		err = w.authorizeTarget(project, AccessWrite)
+	// A move that publishes an entry into another project, named or derived
+	// from its parent, is refused at its start when it may not write there,
+	// not after the dialogue it costs.
+	target := project
+	derived := w.instanceProject(parent)
+	if target == "" && derived != w.project {
+		target = derived
+	}
+	if target != "" && publishesEntry(spec) {
+		err = w.authorizeTarget(target, AccessWrite)
 		if err != nil {
 			return nil, err
 		}
-		err = w.refuseClientIn(ctx, project)
+		err = w.refuseClientIn(ctx, target)
 		if err != nil {
 			return nil, err
 		}

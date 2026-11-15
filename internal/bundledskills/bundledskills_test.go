@@ -49,6 +49,20 @@ func TestVocabulary_German(t *testing.T) {
 	}
 }
 
+func TestVocabulary_GermanLayersRenderFromTheModel(t *testing.T) {
+	body, err := bundledskills.Vocabulary("de")
+	if err != nil {
+		t.Fatalf("Vocabulary: %v", err)
+	}
+	for _, m := range model.LayerMeanings() {
+		for _, term := range []string{m.German.Name, m.German.Definition, m.German.Example} {
+			if !bytes.Contains(body, []byte(term)) {
+				t.Errorf("the German layer table should carry the model's %s terms, missing %q", m.Layer, term)
+			}
+		}
+	}
+}
+
 func TestVocabulary_MissingLocale(t *testing.T) {
 	if _, err := bundledskills.Vocabulary("fr"); err == nil {
 		t.Fatal("expected an error for a locale the bundle does not ship")

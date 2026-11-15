@@ -96,10 +96,6 @@ Entries connect. Every entry carries typed references naming why it points at pr
 
 Every entry also names its **layer**, the depth of the thinking:
 
-- strategic: why, direction
-- conceptual: approach, shape
-- tactical: structures, trade-offs
-- operational: individual steps
-- process: how we work
+{{ .Layers }}
 
 This is the map, not the depth. Each kind has its own authoring fact with its meaning, make-up and craft. Pull it before drafting that kind. Two kinds compete and the tests above do not settle it? Discrimination fact `20260818-120000-s-prc-dsc` carries every remaining test, sorted by your situation.

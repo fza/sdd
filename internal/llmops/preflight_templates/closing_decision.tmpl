@@ -7,7 +7,7 @@ A decision is being created that claims to close one or more entries. Most often
 
 1. **Genuine resolution**: decision content must genuinely address each closed signal, not only reference it as context.
 2. **No silent additions**: decision must not introduce commitments not grounded in referenced signals. Strategic synthesis is allowed; unrelated scope is not.
-3. **Layer appropriateness**: decision's layer should match the scope of the commitment.
+3. {{ template "layer_check" . }}
 {{ if .ClosesKind "fact" "insight" "contract" "aspiration" }}4. **Retirement rationale** (applies only when closed target's kind is `fact`, `insight`, `contract`, or `aspiration`): decision narrative must state **why** target is being retired. Check only that the reason is present, not whether it is correct.
 {{ end }}
 ## Calibration

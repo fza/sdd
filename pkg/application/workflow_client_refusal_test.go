@@ -68,3 +68,21 @@ func TestCodexClientIsRefusedAMoveDerivingADeepDependency(t *testing.T) {
 		t.Fatalf("a Codex resume should pass once no move targets the deep dependency, got %v", err)
 	}
 }
+
+// A capture started through a parent in a deep dependency is refused at its
+// start, as one naming that dependency is.
+func TestCodexClientIsRefusedACaptureDerivingADeepDependency(t *testing.T) {
+	application, alice := newDependencyFixture(t, map[sdd.ProjectID]sdd.VerifierPolicy{"project-b": {Mode: "deep"}})
+	codex, _, err := application.OpenWorkflow(t.Context(), alice, "project-a", sdd.WorkflowOpenRequest{ClientName: "codex-mcp-client"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := codex.Start(t.Context(), alice, sdd.WorkflowStartRequest{Canonical: "engage", Project: "project-b"})
+	if err != nil {
+		t.Fatalf("a move that writes nothing should start in the deep dependency: %v", err)
+	}
+	_, err = codex.Start(t.Context(), alice, sdd.WorkflowStartRequest{Canonical: "capture", Parent: parent.Instance})
+	if err == nil || !strings.Contains(err.Error(), "verify.mode deep needs Claude Code") {
+		t.Fatalf("a Codex capture deriving the deep dependency should be refused naming the setting, got %v", err)
+	}
+}

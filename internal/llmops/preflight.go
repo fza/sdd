@@ -277,6 +277,10 @@ func (p *preflightContext) ClosesKind(kinds ...string) bool {
 	return slices.ContainsFunc(p.closedKinds, func(k model.Kind) bool { return slices.Contains(kinds, string(k)) })
 }
 
+// LayerGuide is the layer meanings the capture serves, so the layer check
+// judges by the same definitions.
+func (p *preflightContext) LayerGuide() string { return model.LayerGuide() }
+
 // Rubric reports the rules page PreflightRubric renders.
 func (p *preflightContext) Rubric() bool { return p.rubric }
 

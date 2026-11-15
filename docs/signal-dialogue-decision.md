@@ -29,8 +29,8 @@ The loop runs at five layers of abstraction. These are not org chart levels — 
 |-------|----------|---------|----------------------------|
 | **Strategic** | Why does this exist? What future are we shaping? | Long | Humans dominant, agents provide data/signals |
 | **Conceptual** | What approach? What are the key ideas and boundaries? | Medium | Heavy dialogue between humans and agents |
-| **Tactical** | How do we realize it? What structures and trade-offs? | Short | Agents can lead, humans review at decision points |
-| **Operational** | Making it happen, reacting to immediate signals | Near-instant | Agents largely autonomous within guardrails |
+| **Tactical** | How does a module or component behave? Its rules and structure | Short | Agents can lead, humans review at decision points |
+| **Operational** | One work step or task: rename a flag, bump a dependency, run a migration | Near-instant | Agents largely autonomous within guardrails |
 | **Process** | How do we work? Contracts, review rules, release process | Evolving | Team decides, system enforces |
 
 Signal → Dialogue → Decision happens at every layer. The matrix of layers x loop stages is the full picture — not a pipeline but a two-dimensional space where work happens concurrently.

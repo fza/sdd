@@ -218,14 +218,24 @@ func renderSkill(skill string, funcs template.FuncMap, data renderData) ([]model
 //go:embed vocabulary
 var vocabularyFS embed.FS
 
-// Vocabulary returns the bundled vocabulary for locale (e.g. "de").
+// Vocabulary returns the bundled vocabulary for locale (e.g. "de"), its layer
+// table rendered from model.LayerMeanings.
 func Vocabulary(locale string) ([]byte, error) {
 	full := path.Join("vocabulary", locale+".md")
 	data, err := vocabularyFS.ReadFile(full)
 	if err != nil {
 		return nil, fmt.Errorf("reading bundled vocabulary %s: %w", full, err)
 	}
-	return data, nil
+	tmpl, err := template.New(full).Option("missingkey=error").Parse(string(data))
+	if err != nil {
+		return nil, fmt.Errorf("parsing bundled vocabulary %s: %w", full, err)
+	}
+	var rendered bytes.Buffer
+	err = tmpl.Execute(&rendered, struct{ Layers []model.LayerMeaning }{model.LayerMeanings()})
+	if err != nil {
+		return nil, fmt.Errorf("rendering bundled vocabulary %s: %w", full, err)
+	}
+	return rendered.Bytes(), nil
 }
 
 // relUnder returns full expressed relative to root, with leading separators

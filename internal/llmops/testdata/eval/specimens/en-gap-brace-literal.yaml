@@ -8,6 +8,6 @@ expect:
 draft:
   type: signal
   kind: gap
-  layer: operational
+  layer: tactical
   content: |-
     The config loader ignores Options{Zebra: true} when it is passed after Options{Child: Child{Enabled: true}}, so the second literal silently wins and the zebra mode never activates. The same happens when both come from C:\sdd\config\zebra.yaml, whose keys the loader matches with ^options\.(zebra|child)$. Expected is that both literals apply.

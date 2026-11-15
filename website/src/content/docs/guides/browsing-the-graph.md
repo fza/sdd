@@ -16,7 +16,7 @@ Each entry is one markdown file under `.sdd/graph/`, filed by the date it was re
 This file holds the entry `20261107-123911-d-tac-ims`. The ID reads as date and time, type, layer and a random suffix:
 
 - type: `s` for a signal, something noticed, or `d` for a decision, something committed to
-- layer: `stg` strategic, `cpt` conceptual, `tac` tactical, `ops` operational, `prc` process
+- layer, what the entry is about: `stg` strategic, why the work exists and where it heads; `cpt` conceptual, the approach and its boundaries; `tac` tactical, how a module or component behaves, such as "the parser rejects empty input"; `ops` operational, one work step or task, such as renaming a flag; `prc` process, how we work
 
 The file starts with YAML frontmatter: type, kind, layer, confidence, references to other entries, participants, topics and the one-line summary. The entry text follows. An entry with attachments has a directory of the same name next to its file. `.sdd/graph/wip/` holds the markers for work in progress.
 

@@ -62,22 +62,10 @@ var TypeFromAbbrev = map[string]EntryType{
 }
 
 // LayerAbbrev maps full layer names to abbreviations used in IDs.
-var LayerAbbrev = map[Layer]string{
-	LayerStrategic:   "stg",
-	LayerConceptual:  "cpt",
-	LayerTactical:    "tac",
-	LayerOperational: "ops",
-	LayerProcess:     "prc",
-}
+var LayerAbbrev = layerAbbrevs()
 
 // LayerFromAbbrev maps abbreviations to full layer names.
-var LayerFromAbbrev = map[string]Layer{
-	"stg": LayerStrategic,
-	"cpt": LayerConceptual,
-	"tac": LayerTactical,
-	"ops": LayerOperational,
-	"prc": LayerProcess,
-}
+var LayerFromAbbrev = layersByAbbrev()
 
 // Kind is a sub-type classifier carried on signals and decisions. Its allowed
 // values depend on the entry's Type:
