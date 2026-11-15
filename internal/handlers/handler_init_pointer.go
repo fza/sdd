@@ -44,11 +44,7 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 	if model.MergeConfig(projectCfg, projectLocal).ProjectDir != "" {
 		return fmt.Errorf("%s sets project_dir itself; point at the project holding the graph", cmd.ProjectDir)
 	}
-	var projectRepo string
-	if h.projectRepos != nil {
-		projectRepo = h.projectRepos.RootOf(projectRoot)
-	}
-	err = meta.RequireProjectApart("--project-dir "+cmd.ProjectDir, cmd.RepoRoot, cmd.RepoRoot, projectRoot, projectRepo)
+	err = meta.RequireProjectApart("--project-dir "+cmd.ProjectDir, cmd.RepoRoot, cmd.RepoRoot, projectRoot)
 	if err != nil {
 		return err
 	}

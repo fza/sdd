@@ -153,6 +153,20 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 			mention:    "lies inside the repository",
 		},
 		{
+			name:       "repository of its own inside the work repository",
+			projectDir: "nested",
+			prepare: func(t *testing.T, work, project string) {
+				nested := filepath.Join(work, "nested")
+				err := os.MkdirAll(nested, 0o755)
+				if err != nil {
+					t.Fatal(err)
+				}
+				initRepo(t, nested)
+			},
+			args:    []string{"--language", "en"},
+			mention: "lies inside the repository",
+		},
+		{
 			name:       "graph directory reading as an ignore negation",
 			projectDir: "../work-sdd",
 			args:       []string{"--language", "en", "--graph-dir", "!graph"},
@@ -310,6 +324,7 @@ func TestInitRefusesAnExistingProjectPlacedAgainstTheWorkRepository(t *testing.T
 		{name: "folder containing the work repository", projectDir: "..", mention: "contains the work repository"},
 		{name: "repository containing the work repository", projectDir: "..", repoized: true, mention: "contains the work repository"},
 		{name: "folder inside the work repository", projectDir: "sub", mention: "lies inside the repository"},
+		{name: "repository of its own inside the work repository", projectDir: "nested", repoized: true, mention: "lies inside the repository"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
