@@ -398,7 +398,7 @@ func New(options Options) *cli.Command {
 
 			warnUnknownConfigKeys(ctx)
 			err := useSecretRules(ctx)
-			if err != nil {
+			if err != nil && !repairingConfig(writesConfig(cmd), err) {
 				return ctx, err
 			}
 

@@ -47,6 +47,7 @@ sdd skips a key it does not know, including a key in a file where it does not be
 - `set` refuses a key that does not belong in the target file, such as `graph_dir` without `--local`.
 - `set` writes `8`, `0.5`, `true` and `false` as numbers and booleans, and everything else as text. Edit list values, such as `supported_agents`, in the file.
 - `set` and `unset` change only the named key and keep the rest of the file, comments included.
+- `set` and `unset` run on a user-global file whose only fault is a value sdd refuses to load, such as a `secrets.rules_update` outside `daily` and `off`, so you repair it through them. A file that does not parse still fails them.
 - No command writes `.sdd/config.yaml` directly. `sdd init` creates it, `sdd repo add` and `sdd repo remove` change `dependencies`, and you edit the rest by hand and commit it.
 
 :::note[Restart your agent after a change]
@@ -146,7 +147,7 @@ Both keys accept days, such as `90d`, or a duration, such as `2160h`. `sdd confi
 | --- | --- | --- |
 | `secrets.rules_update` | `daily` | `daily`: the [daily cleanup](#cleanup) fetches the rule file of gitleaks' latest release when it is newer than the one in use. `off`: sdd asks GitHub nothing and [scans for credentials](/sdd/working-modes/#capture) with the rule file built into sdd only, also when it fetched a newer one before. Read from the user-global file only. |
 
-`sdd config set` refuses any other value. In the user-global file, another value fails every command with an error naming the file, the key, the value and the valid values. In a project or local file the key is ignored with a warning, whatever its value.
+`sdd config set` refuses any other value. In the user-global file, another value fails every command but `sdd config set` and `unset` with an error naming the file, the key, the value and the valid values. In a project or local file the key is ignored with a warning, whatever its value.
 
 ### Connected repositories
 

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/urfave/cli/v3"
 )
@@ -88,6 +90,32 @@ func configCmd() *cli.Command {
 			},
 		},
 	}
+}
+
+// writesConfig reports whether the invocation is `sdd config set` or `unset`.
+func writesConfig(root *cli.Command) bool {
+	lineage := invokedCommand(root).Lineage()
+	return len(lineage) == 3 && lineage[1].Name == "config" && slices.Contains([]string{"set", "unset"}, lineage[0].Name)
+}
+
+// invokedCommand follows the parsed arguments from root to the command that
+// runs, so flags between command names do not shift which one it is.
+func invokedCommand(root *cli.Command) *cli.Command {
+	cmd := root
+	for {
+		sub := cmd.Command(cmd.Args().First())
+		if sub == nil {
+			return cmd
+		}
+		cmd = sub
+	}
+}
+
+// repairingConfig reports whether a config write runs past err: a value sdd
+// refuses to load is what `sdd config set` and `unset` repair, and the
+// handler still refuses writing one.
+func repairingConfig(configWrite bool, err error) bool {
+	return configWrite && model.IsRefusedConfigValue(err)
 }
 
 // effectiveConfigResult builds the provenance view shared by the bare

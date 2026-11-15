@@ -671,3 +671,10 @@ func ValidateEmbeddingPath(path string) error {
 	}
 	return nil
 }
+
+// IsRefusedConfigValue reports whether err is a load refusing a value of a
+// key sdd knows, the one fault `sdd config set` and `unset` write past so the
+// file can be repaired through them.
+func IsRefusedConfigValue(err error) bool {
+	return errors.Is(err, ErrUnknownSecretRulesUpdate)
+}
