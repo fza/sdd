@@ -92,11 +92,7 @@ func workingApplication(ctx context.Context, cmd *cli.Command) (*sdd.Application
 // workingApplicationTimed is workingApplication with its LLM runner bounded
 // by the duration flag timeoutFlag names.
 func workingApplicationTimed(ctx context.Context, cmd *cli.Command, timeoutFlag string) (*sdd.Application, sdd.ProjectID, sdd.RequestIdentity, error) {
-	runner, err := newRunner(cmd, timeoutFlag)
-	if err != nil {
-		return nil, "", sdd.RequestIdentity{}, err
-	}
-	served, err := buildServedProject(ctx, cmd, runner)
+	served, err := buildServedProject(ctx, cmd, timeoutFlag)
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}

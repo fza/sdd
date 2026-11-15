@@ -99,8 +99,22 @@ func configCmd() *cli.Command {
 }
 
 // writesConfig reports whether the invocation is `sdd config set` or `unset`.
-func writesConfig(args cli.Args) bool {
-	return args.First() == "config" && slices.Contains([]string{"set", "unset"}, args.Get(1))
+func writesConfig(root *cli.Command) bool {
+	lineage := invokedCommand(root).Lineage()
+	return len(lineage) == 3 && lineage[1].Name == "config" && slices.Contains([]string{"set", "unset"}, lineage[0].Name)
+}
+
+// invokedCommand follows the parsed arguments from root to the command that
+// runs, so flags between command names do not shift which one it is.
+func invokedCommand(root *cli.Command) *cli.Command {
+	cmd := root
+	for {
+		sub := cmd.Command(cmd.Args().First())
+		if sub == nil {
+			return cmd
+		}
+		cmd = sub
+	}
 }
 
 // repairingConfig reports whether a config write runs past err: a value sdd

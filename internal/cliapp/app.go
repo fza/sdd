@@ -118,19 +118,33 @@ func resolveLLMConfig(cmd *cli.Command) (model.LLMConfig, error) {
 // timeoutFlag optionally names a per-command duration flag that overrides the
 // configured llm.timeout ("" means config or the factory default).
 func newRunner(cmd *cli.Command, timeoutFlag string) (pkgllm.Runner, error) {
-	cfg, err := resolveLLMConfig(cmd)
+	cfg, err := runnerConfig(cmd, timeoutFlag)
 	if err != nil {
 		return nil, err
+	}
+	return composedRunner(cfg)
+}
+
+// runnerConfig is the LLMConfig newRunner composes from.
+func runnerConfig(cmd *cli.Command, timeoutFlag string) (model.LLMConfig, error) {
+	cfg, err := resolveLLMConfig(cmd)
+	if err != nil {
+		return cfg, err
 	}
 	if timeoutFlag != "" {
 		d, err := resolveTimeout(cmd, timeoutFlag)
 		if err != nil {
-			return nil, err
+			return cfg, err
 		}
 		if d > 0 {
 			cfg.Timeout = d.String()
 		}
 	}
+	return cfg, nil
+}
+
+// composedRunner is newRunner over a resolved LLMConfig.
+func composedRunner(cfg model.LLMConfig) (pkgllm.Runner, error) {
 	runner, err := factory.New(cfg)
 	if err != nil {
 		return nil, err
@@ -513,7 +527,7 @@ func New(options Options) *cli.Command {
 				Level: level,
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
-			configWrite := writesConfig(cmd.Args())
+			configWrite := writesConfig(cmd)
 			currentGate = &invocationGate{ctx: ctx, configWrite: configWrite}
 			if cmd.Bool("timing") {
 				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))

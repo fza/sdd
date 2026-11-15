@@ -19,6 +19,8 @@ func TestConfigWritesRepairALayerCarryingARefusedValue(t *testing.T) {
 		{name: "secrets.rules_update set globally", file: "config/sdd/config.yaml", content: "participant: Global Author\nsecrets:\n  rules_update: weekly\n", repair: []string{"config", "set", "secrets.rules_update", "off"}},
 		{name: "dialogue.mode set locally", file: ".sdd/config.local.yaml", content: "participant: Local Author\ndialogue:\n  mode: autonomous\n", repair: []string{"config", "set", "--local", "dialogue.mode", "auto"}},
 		{name: "dialogue.mode unset locally", file: ".sdd/config.local.yaml", content: "participant: Local Author\ndialogue:\n  mode: autonomous\n", repair: []string{"config", "unset", "--local", "dialogue.mode"}},
+		{name: "dialogue.mode set after a config flag", file: "config/sdd/config.yaml", content: "participant: Global Author\ndialogue:\n  mode: autonomous\n", repair: []string{"config", "--format", "json", "set", "dialogue.mode", "auto"}},
+		{name: "dialogue.mode unset after a root flag", file: "config/sdd/config.yaml", content: "participant: Global Author\ndialogue:\n  mode: autonomous\n", repair: []string{"--verbose", "config", "--format=json", "unset", "dialogue.mode"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
