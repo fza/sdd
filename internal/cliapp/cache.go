@@ -28,9 +28,9 @@ func cacheCmd() *cli.Command {
 unused index stores, graph snapshots and embedder calibrations after
 cache.retention (default ` + model.DefaultCacheRetention + `); graph snapshots of vanished folders and clones
 sdd repo remove dropped that the repos list no longer names at once; and crash
-leftovers a day old. Both
-keys live in the user-global config. Versions any checkout read within
-cache.retention always stay. sdd index gc removes more on request.`,
+leftovers a day old. Both keys live in the user-global config. Versions any
+checkout read within cache.retention always stay. sdd index gc removes more
+on request.`,
 			Action: func(ctx context.Context, cmd *cli.Command) error {
 				loc, err := repos.DefaultLocations()
 				if err != nil {
