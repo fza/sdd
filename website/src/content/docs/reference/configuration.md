@@ -350,7 +350,7 @@ A search waits at most 5 seconds for an index another process writes, then print
 
 #### Input limit
 
-Each embedding endpoint accepts a limited input, in tokens. On its first fill, sdd measures that limit with three requests: 1000 Latin characters, 1000 CJK characters and 20,000 Latin characters. An endpoint that cuts long input off or refuses it costs up to nine more requests. A request a network error ends is sent once more: a connection dropped twice counts as a refusal, and a request that times out twice fails the fill without storing a limit. sdd then cuts every chunk to 90 percent of the limit, counted for the costliest text, and stores the result per embedding setup, `embedding.endpoint` and `embedding.path` in `calibration/` beside the index. An endpoint that reports no token counts gets a cap of 2048 characters. A changed cap embeds every entry once more. Searches keep finding every entry meanwhile.
+Each embedding endpoint accepts a limited input, in tokens. On its first fill, sdd measures that limit with three requests: 1000 Latin characters, 1000 CJK characters and 20,000 Latin characters. An endpoint that cuts long input off or refuses it costs up to nine more requests. A request that gets no answer is sent once more. A connection dropped twice, or a server error twice, counts as a refusal only if the last accepted size still gets an answer. A timeout, a refused connection, a failed name lookup or a rate limit, twice, fails the fill without storing a limit. sdd then cuts every chunk to 90 percent of the limit, counted for the costliest text, and stores the result per embedding setup, `embedding.endpoint` and `embedding.path` in `calibration/` beside the index. An endpoint that reports no token counts gets a cap of 2048 characters. A changed cap embeds every entry once more. Searches keep finding every entry meanwhile.
 
 #### Cleanup
 
@@ -358,8 +358,9 @@ Each embedding endpoint accepts a limited input, in tokens. On its first fill, s
 
 - after `index.replaced_retention`: replaced index versions, versions of older index formats, the index store of an embedding setup another one replaced
 - after `cache.retention`: unused index stores, graph snapshots and calibrations
-- at once: graph snapshots of directories that no longer exist, and clones of repositories `sdd repo remove` dropped that `repos` no longer names
-- a clone missing from `repos` alone stays; with `repos` missing or empty, or the XDG directories set only in part, the run removes no clone and fails
+- at once: graph snapshots of directories that no longer exist, and clones of repositories `sdd repo remove` dropped under the same config file that `repos` no longer names
+- a clone missing from `repos` alone stays, and so does every clone of a repository `repos` names
+- with `repos` missing or empty, or the XDG directories set only in part, a run that would remove a clone removes none and fails
 - leftovers of killed processes older than a day
 
 It never deletes a version any checkout read within `cache.retention`, and it skips an index store another process holds. One run per machine at a time, at most 5 minutes. `sdd info` shows the last run. `sdd cache prune` reports a failed run as its error.
