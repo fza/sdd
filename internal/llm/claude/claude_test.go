@@ -96,8 +96,12 @@ func TestRunCredentials(t *testing.T) {
 		"CLAUDE_CODE_USE_FOUNDRY",
 		"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
 		"CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR",
+		// Windows reads environment names without regard to case.
+		"Anthropic_Api_Key",
+		"claude_code_use_vertex",
+		"Claude_Code_Api_Key_File_Descriptor",
 	}
-	keptVars := []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_CONFIG_DIR", "SDD_TEST_UNRELATED"}
+	keptVars := []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_CONFIG_DIR", "Anthropic_Config_Dir", "SDD_TEST_UNRELATED"}
 	for _, tc := range []struct {
 		name          string
 		credentials   model.ClaudeCLICredentials

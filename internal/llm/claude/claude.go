@@ -190,7 +190,9 @@ func scrubbedEnv(env []string) []string {
 	return out
 }
 
+// scrubbed matches without regard to case, as Windows reads the names.
 func scrubbed(name string) bool {
+	name = strings.ToUpper(name)
 	if slices.Contains(keptEnvVars, name) {
 		return false
 	}
