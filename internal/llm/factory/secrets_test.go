@@ -29,7 +29,10 @@ func TestFactoryRunnerRefusesACredentialBeforeTheProvider(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(server.Close)
-	runner, err := factory.New(model.LLMConfig{Provider: "ollama", Model: "llama3", OllamaEndpoint: server.URL})
+	runner, err := factory.New(model.LLMConfig{
+		Provider: "openai", Model: "gpt-test", Endpoint: server.URL,
+		APIKeys: map[string]string{"openai": "sk-test-not-a-key"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

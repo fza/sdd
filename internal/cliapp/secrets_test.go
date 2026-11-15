@@ -14,7 +14,7 @@ import (
 // connection and configures no embedder, so a request that slips past the
 // guard fails instead of reaching a provider.
 const noProviderConfig = "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\n" +
-	"llm:\n  provider: ollama\n  model: llama3\n  ollama_endpoint: http://127.0.0.1:1\n"
+	"llm:\n  provider: openai\n  model: gpt-test\n  endpoint: http://127.0.0.1:1\n  api_keys:\n    openai: sk-test-not-a-key\n"
 
 func secretFixture(t *testing.T, rule string) string {
 	t.Helper()
