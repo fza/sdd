@@ -36,21 +36,24 @@ func (r *Runner) identity() llm.Identity {
 	return llm.Identity{Provider: "claude-cli", Model: r.model}
 }
 
-// scrubbedEnvPrefixes name the variables that redirect the CLI away from the
-// signed-in account: keys, tokens, endpoints, headers and provider switches.
-// This transport exists to answer on that account, so an inherited one would
-// silently move the bill with nothing in the output saying which credential
-// answered. Matching the families, not a list, keeps up with providers the CLI
-// adds. A setup authenticating the CLI otherwise says so with
+// loginEnvVars and loginEnvPrefixes are all login mode passes to the CLI:
+// the system basics, locale, proxy and CA, the platform's must-haves and the
+// login's own variables. This transport exists to answer on the signed-in
+// account, and the CLI reads ever more variables that move a call off it:
+// keys, endpoints, provider switches, host-managed credentials. A deny list
+// fails open against each new one; an allow list fails closed, and a missing
+// variable fails the call loudly. A setup that needs another one says so with
 // llm.claude_cli.credentials: env.
-var scrubbedEnvPrefixes = []string{"ANTHROPIC_", "CLAUDE_CODE_USE_"}
+var loginEnvVars = []string{
+	"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TMPDIR", "TMP", "TEMP", "TERM", "COLORTERM",
+	"HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
+	"SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "APPDATA", "LOCALAPPDATA", "USERPROFILE",
+	"HOMEDRIVE", "HOMEPATH", "USERNAME", "PROGRAMDATA", "PROGRAMFILES",
+	"CLAUDE_CONFIG_DIR", "ANTHROPIC_CONFIG_DIR",
+	"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+}
 
-// scrubbedEnvVars hand the CLI a key or gateway token outside both families.
-var scrubbedEnvVars = []string{"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR"}
-
-// keptEnvVars only locate the Anthropic profiles; ANTHROPIC_PROFILE, which
-// picks one over the claude.ai login, is scrubbed with the rest.
-var keptEnvVars = []string{"ANTHROPIC_CONFIG_DIR"}
+var loginEnvPrefixes = []string{"LC_", "XDG_"}
 
 // parentSessionEnvVars are what a Claude Code session hands its child
 // processes, sdd's server among them. Inherited, they would make the call
@@ -90,7 +93,7 @@ func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	}
 	env := withoutVars(os.Environ(), func(name string) bool { return slices.Contains(parentSessionEnvVars, name) })
 	if r.credentials != model.ClaudeCLICredentialsEnv {
-		env = withoutVars(env, scrubbed)
+		env = withoutVars(env, func(name string) bool { return !loginEnv(name) })
 		// A settings file's env block and apiKeyHelper apply even under --safe-mode.
 		args = append(args, "--setting-sources", "")
 	}
@@ -202,12 +205,9 @@ func withoutVars(env []string, drop func(name string) bool) []string {
 	})
 }
 
-func scrubbed(name string) bool {
-	if slices.Contains(keptEnvVars, name) {
-		return false
-	}
-	return slices.Contains(scrubbedEnvVars, name) ||
-		slices.ContainsFunc(scrubbedEnvPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+func loginEnv(name string) bool {
+	return slices.Contains(loginEnvVars, name) ||
+		slices.ContainsFunc(loginEnvPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
 }
 
 // claudeResponse maps the JSON output of claude -p --output-format json.

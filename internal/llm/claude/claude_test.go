@@ -102,10 +102,10 @@ func recordedEnvNames(t *testing.T, dir string) []string {
 	return names
 }
 
-// In login mode no variable that picks the provider, the endpoint or the
-// credential reaches the child, only the login's own token, and no settings
-// file loads, since its env block and apiKeyHelper apply even in safe mode.
-// Env mode passes every one of them through.
+// In login mode only the allow-listed variables reach the child, none that
+// picks the provider, the endpoint or the credential, and no settings file
+// loads, since its env block and apiKeyHelper apply even in safe mode. Env
+// mode passes every one of them through.
 func TestRunCredentials(t *testing.T) {
 	providerVars := []string{
 		"ANTHROPIC_API_KEY",
@@ -117,12 +117,56 @@ func TestRunCredentials(t *testing.T) {
 		"CLAUDE_CODE_USE_FOUNDRY",
 		"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
 		"CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR",
+		"CLAUDE_CODE_GATEWAY_TOKEN",
+		"CLAUDE_CODE_API_BASE_URL",
+		"CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
+		"CLAUDE_CODE_HOST_CREDS_FILE",
+		"CLAUDE_CODE_HOST_AUTH_ENV_VAR",
+		"CLAUDE_CODE_HOST_GATEWAY_LINEAGE",
+		"CLAUDE_CODE_ENTRYPOINT",
+		"SDD_TEST_UNRELATED",
 		// Windows reads environment names without regard to case.
 		"Anthropic_Api_Key",
 		"claude_code_use_vertex",
-		"Claude_Code_Api_Key_File_Descriptor",
 	}
-	keptVars := []string{"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "ANTHROPIC_CONFIG_DIR", "Anthropic_Config_Dir", "SDD_TEST_UNRELATED"}
+	keptVars := []string{
+		"USER",
+		"LOGNAME",
+		"SHELL",
+		"LANG",
+		"LC_ALL",
+		"TMP",
+		"TEMP",
+		"TERM",
+		"COLORTERM",
+		"HTTPS_PROXY",
+		"https_proxy",
+		"HTTP_PROXY",
+		"NO_PROXY",
+		"NODE_EXTRA_CA_CERTS",
+		"SSL_CERT_FILE",
+		"SSL_CERT_DIR",
+		"XDG_CONFIG_HOME",
+		"SystemRoot",
+		"SYSTEMDRIVE",
+		"WINDIR",
+		"ComSpec",
+		"PATHEXT",
+		"APPDATA",
+		"LOCALAPPDATA",
+		"USERPROFILE",
+		"HOMEDRIVE",
+		"HOMEPATH",
+		"USERNAME",
+		"PROGRAMDATA",
+		"PROGRAMFILES",
+		"CLAUDE_CONFIG_DIR",
+		"ANTHROPIC_CONFIG_DIR",
+		"Anthropic_Config_Dir",
+		"CLAUDE_CODE_OAUTH_TOKEN",
+		"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+		"CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+	}
 	// What a Claude Code session hands its own child processes, sdd's server among them.
 	parentSessionVars := []string{
 		"CLAUDECODE",
@@ -145,8 +189,9 @@ func TestRunCredentials(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := fakeCLI(t, `{"type":"result","result":"ok","usage":{}}`)
 			for _, name := range slices.Concat(providerVars, keptVars, parentSessionVars) {
-				t.Setenv(name, "sk-ant-value")
+				t.Setenv(name, "C")
 			}
+			t.Setenv("TMPDIR", t.TempDir())
 			if _, err := claude.NewRunner("sonnet", tc.credentials).Run(context.Background(), llm.Request{UserPrompt: "U"}); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -156,7 +201,7 @@ func TestRunCredentials(t *testing.T) {
 					t.Errorf("%s should reach the child only with credentials env", name)
 				}
 			}
-			for _, name := range keptVars {
+			for _, name := range slices.Concat(keptVars, []string{"PATH", "HOME", "TMPDIR"}) {
 				if !slices.Contains(names, name) {
 					t.Errorf("%s should reach the child in every mode", name)
 				}
