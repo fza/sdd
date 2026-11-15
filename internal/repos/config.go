@@ -167,10 +167,10 @@ func (c *GlobalConfig) AddRepo(repo ConnectedRepo) error {
 }
 
 // CheckOverlap refuses a repo ID whose clone would share or nest inside the
-// clone path of a connected repo (model.RepoIDsOverlap).
+// clone path of another connected repo (model.RepoIDsOverlap).
 func (c *GlobalConfig) CheckOverlap(repoID model.RepoID) error {
 	for _, r := range c.Repos {
-		if model.RepoIDsOverlap(repoID, r.RepoID) {
+		if r.RepoID != repoID && model.RepoIDsOverlap(repoID, r.RepoID) {
 			return fmt.Errorf("repo ID %q overlaps the connected repo %q: their clones would share or nest one path", repoID, r.RepoID)
 		}
 	}

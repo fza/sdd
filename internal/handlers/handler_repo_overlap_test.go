@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/command"
@@ -82,5 +84,68 @@ func TestRepoAdd_RefusesAnIDOverlappingAConnectedClone(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRepoAdd_ReplacesAStaleCacheWithTheClone(t *testing.T) {
+	root := t.TempDir()
+	loc := repos.Locations{
+		ConfigPath: filepath.Join(root, "config", "sdd", "config.yaml"),
+		CacheRoot:  filepath.Join(root, "cache"),
+	}
+	reg := repos.NewRegistry(loc)
+	repostest.WriteConfig(t, loc.ConfigPath, &repos.GlobalConfig{})
+	cacheDir, err := reg.CacheDir("github.com/org/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(cacheDir, "stale")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const url = "/srv/repo"
+	h := handlers.New(handlers.Options{Repos: repos.NewManager(reg, declaringGit{declares: map[string]model.RepoID{url: "github.com/org/repo"}})})
+
+	if err := h.RepoAdd(context.Background(), &command.RepoAddCmd{CloneURL: url}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, ".sdd", "config.yaml")); err != nil {
+		t.Errorf("the clone should sit in its cache dir: %v", err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("the stale cache should be cleared: %v", err)
+	}
+}
+
+func TestRepoSync_SkipsOverlappingReposAndSyncsTheRest(t *testing.T) {
+	root := t.TempDir()
+	loc := repos.Locations{
+		ConfigPath: filepath.Join(root, "config", "sdd", "config.yaml"),
+		CacheRoot:  filepath.Join(root, "cache"),
+	}
+	reg := repos.NewRegistry(loc)
+	repostest.WriteConfig(t, loc.ConfigPath, &repos.GlobalConfig{Repos: []repos.ConnectedRepo{
+		{RepoID: "github.com/org", CloneURL: "/srv/org"},
+		{RepoID: "github.com/org/repo", CloneURL: "/srv/repo"},
+		{RepoID: "github.com/other/repo", CloneURL: "/srv/other"},
+	}})
+	h := handlers.New(handlers.Options{Repos: repos.NewManager(reg, declaringGit{})})
+
+	var synced []model.RepoID
+	err := h.RepoSync(context.Background(), &command.RepoSyncCmd{OnSynced: func(id model.RepoID) { synced = append(synced, id) }})
+	if err == nil || !strings.Contains(err.Error(), `"github.com/org"`) || !strings.Contains(err.Error(), `"github.com/org/repo"`) {
+		t.Errorf("RepoSync should fail naming the overlapping pair, got %v", err)
+	}
+	if !slices.Equal(synced, []model.RepoID{"github.com/other/repo"}) {
+		t.Errorf("RepoSync should sync only the disjoint repo, synced %v", synced)
+	}
+	for _, id := range []model.RepoID{"github.com/org", "github.com/org/repo"} {
+		dir, err := reg.CacheDir(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if repos.IsCloned(dir) {
+			t.Errorf("RepoSync should not clone the overlapping repo %s", id)
+		}
 	}
 }
