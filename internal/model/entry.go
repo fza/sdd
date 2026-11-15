@@ -470,58 +470,6 @@ func CapitalizeTitle(title string) string {
 	return string(unicode.ToTitle(first)) + title[size:]
 }
 
-// Title length bounds. TitleRule asks for at most 50 characters; nothing
-// refuses a longer title, but one over TitleCutAbove characters is cut at the
-// first word boundary after TitleCutAt characters, so a runaway answer cannot
-// flood a listing.
-const (
-	TitleCutAbove = 80
-	TitleCutAt    = 60
-)
-
-// FitTitle is the form a model- or agent-written title takes: capitalized, and
-// cut with an ellipsis when it runs over TitleCutAbove characters and the cut
-// drops at least two words. A title a person passes with --title is stored
-// whole.
-func FitTitle(title string) string {
-	title = CapitalizeTitle(title)
-	runes := []rune(title)
-	if titleLength(runes) <= TitleCutAbove {
-		return title
-	}
-	boundary, counted := -1, 0
-	for i, r := range runes {
-		if counted >= TitleCutAt && unicode.IsSpace(r) {
-			boundary = i
-			break
-		}
-		if countsInTitleLength(r) {
-			counted++
-		}
-	}
-	if boundary < 0 || len(strings.Fields(string(runes[boundary:]))) < 2 {
-		return title
-	}
-	return strings.TrimRight(string(runes[:boundary]), " ,;:-") + "…"
-}
-
-// countsInTitleLength reports whether a character counts toward a title's
-// length: letters, digits and spaces do; backticks, punctuation and other
-// symbols do not, so code spans cost no extra length.
-func countsInTitleLength(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r)
-}
-
-func titleLength(runes []rune) int {
-	n := 0
-	for _, r := range runes {
-		if countsInTitleLength(r) {
-			n++
-		}
-	}
-	return n
-}
-
 // TitleBackfill counts what filling the missing titles of entries costs:
 // entries lacking a summary get summary and title from one call, whether or
 // not they hold a title; entries holding a summary but no title get a
