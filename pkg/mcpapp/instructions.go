@@ -88,6 +88,9 @@ const proofGuide = `Every piece served in full (instruction lane, framing block,
 entry) carries a tag, such as ⟦k3f9⟧, before one of its words. On each later
 call, list in held every tag whose text you still see, with the word right
 after it, as tag:word ("… dialogue ⟦gn9p⟧ first …" → gn9p:first). That piece
-then serves as a short pointer. List in reread the tag or name of a piece you
-no longer see: it serves in full again. Never guess a word: a missing or wrong
-proof costs only the full text.`
+then serves as a short pointer. A proof works once: the pointer names the next
+one, the word right after a word it quotes from that piece's text near its tag
+("next proof gn9p:<the word right after "dialogue">" → gn9p:first), so look
+the word up in the text, never in your earlier calls. List in reread the tag
+or name of a piece you no longer see: it serves in full again. Never guess a
+word: a missing or wrong proof costs only the full text.`

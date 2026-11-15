@@ -14,11 +14,13 @@ import (
 
 // ServedPiece is how a call serves one piece under the anchor proof:
 // when Held, the call proved it holds the piece
-// under Tag and gets its pointer; otherwise Text is the piece with its fresh
-// Tag placed, Tag empty when the text holds no word to anchor.
+// under Tag and gets its pointer, Next naming the word whose follower its
+// next proof names; otherwise Text is the piece with its fresh Tag placed,
+// Tag empty when the text holds no word to anchor.
 type ServedPiece struct {
 	Held bool
 	Tag  string
+	Next string
 	Text string
 }
 
@@ -50,7 +52,7 @@ func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPi
 			return model.PlaceAnchor(text, tag, rnd)
 		})
 	if served.Held {
-		return ServedPiece{Held: true, Tag: served.Tag}
+		return ServedPiece{Held: true, Tag: served.Tag, Next: served.Next}
 	}
 	return ServedPiece{Tag: served.Anchor.Tag, Text: served.Anchor.Render(text)}
 }
@@ -67,7 +69,7 @@ func (w *WorkflowSession) ServeSchema(name string, schema map[string]any) (Serve
 			return model.PlaceSchemaAnchor(schema, tag, rnd)
 		})
 	if served.Held {
-		return ServedPiece{Held: true, Tag: served.Tag}, nil, nil
+		return ServedPiece{Held: true, Tag: served.Tag, Next: served.Next}, nil, nil
 	}
 	return ServedPiece{Tag: served.Anchor.Tag}, served.Anchor.RenderSchema(schema), nil
 }
@@ -118,9 +120,12 @@ func (w *WorkflowSession) ServeNotice(name, text string) string {
 
 // HoldsEntry reports whether the call holds the entry in full, with the tag
 // it holds it under: proved by the entry's own tag or by a piece that
-// carried it whole.
-func (w *WorkflowSession) HoldsEntry(id string) (string, bool) {
-	return w.session.Holds(w.entryPiece(id))
+// carried it whole. A held entry serves as its pointer, so the proof it
+// rests on is spent and next names the word whose follower the next proof
+// names.
+func (w *WorkflowSession) HoldsEntry(id string) (tag, next string, held bool) {
+	served := w.session.Point(w.entryPiece(id))
+	return served.Tag, served.Next, served.Held
 }
 
 // ServeEntry returns an entry's rendered body served in full, its tag
@@ -148,7 +153,7 @@ func (w *WorkflowSession) RecordServed(ctx context.Context, identity RequestIden
 // proof while CutRepeats is on, by the read ledger otherwise.
 func (w *WorkflowSession) servedInFull(ctx *engine.Context, id string) bool {
 	if w.cutRepeats {
-		_, held := w.HoldsEntry(id)
+		_, held := w.session.Holds(w.entryPiece(id))
 		return held
 	}
 	return ctx.Reads[id] == engine.ReadFull

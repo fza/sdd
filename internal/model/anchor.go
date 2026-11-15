@@ -38,6 +38,81 @@ type Anchor struct {
 	Word   string
 	Offset int
 	Path   []string
+	// Challenges are the later proofs of the same piece, one per pointer
+	// served for it: a proof that worked never works twice, so only the text
+	// proves the piece again.
+	Challenges []Challenge
+}
+
+// AnchorChallenges is how many later proofs a piece served in full carries
+// before it serves in full again.
+const AnchorChallenges = 3
+
+// Challenge asks for the content word right after Prompt, a word that occurs
+// once in the piece's text.
+type Challenge struct {
+	Prompt string
+	Answer string
+}
+
+// pickChallenges draws up to n challenges from text: content words that occur
+// once in it, each with the content word right after it on the same line; a
+// function word there could be guessed without the text. It takes the ones
+// nearest at, the tag's offset, so the agent finds each prompt beside the tag,
+// and never one answering what the tag or an earlier challenge did.
+func pickChallenges(text string, at, n int) []Challenge {
+	words := contentWords(text)
+	// A prompt occurs once as a run of letters anywhere in the text, so no
+	// other spot, as "user" in "user's", reads as the one it names.
+	count := map[string]int{}
+	for _, run := range strings.FieldsFunc(text, func(r rune) bool { return !unicode.IsLetter(r) }) {
+		count[strings.ToLower(run)]++
+	}
+	type candidate struct {
+		challenge Challenge
+		distance  int
+	}
+	used := map[string]bool{}
+	if word, ok := leadingWord(text[at:]); ok {
+		used[strings.ToLower(word)] = true
+	}
+	var candidates []candidate
+	for i, w := range words {
+		if count[strings.ToLower(w.text)] != 1 || w.offset == at || i+1 == len(words) {
+			continue
+		}
+		rest := text[w.offset+len(w.text):]
+		gap := rest[:len(rest)-len(strings.TrimLeftFunc(rest, unicode.IsSpace))]
+		next := words[i+1]
+		if strings.Contains(gap, "\n") || next.offset != w.offset+len(w.text)+len(gap) {
+			continue
+		}
+		distance := w.offset - at
+		if distance < 0 {
+			distance = -distance
+		}
+		candidates = append(candidates, candidate{Challenge{Prompt: w.text, Answer: next.text}, distance})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].distance < candidates[j].distance })
+	var picked []Challenge
+	for _, c := range candidates {
+		answer := strings.ToLower(c.challenge.Answer)
+		if len(picked) == n || used[answer] {
+			continue
+		}
+		used[answer] = true
+		picked = append(picked, c.challenge)
+	}
+	return picked
+}
+
+// NextProof tells how the next call proves tag: the word right after next in
+// the piece's text (Challenge). Empty without a next challenge.
+func NextProof(tag, next string) string {
+	if next == "" {
+		return ""
+	}
+	return fmt.Sprintf("next proof %s:<the word right after %q>", tag, next)
 }
 
 // Proof is a call's claim that it holds a piece: a tag and the word after it.
@@ -68,7 +143,7 @@ func PlaceAnchor(text, tag string, rnd RandomSource) (Anchor, bool) {
 		return Anchor{}, false
 	}
 	w := words[rnd.IntN(len(words))]
-	return Anchor{Tag: tag, Word: w.text, Offset: w.offset}, true
+	return Anchor{Tag: tag, Word: w.text, Offset: w.offset, Challenges: pickChallenges(text, w.offset, AnchorChallenges)}, true
 }
 
 // Render returns text with the anchor's tag placed.
@@ -85,19 +160,22 @@ func (a Anchor) Render(text string) string {
 func PlaceSchemaAnchor(schema map[string]any, tag string, rnd RandomSource) (Anchor, bool) {
 	type spot struct {
 		path []string
+		text string
 		word textWord
 	}
 	var spots []spot
 	walkSchemaDescriptions(schema, nil, func(path []string, text string) {
 		for _, w := range contentWords(text) {
-			spots = append(spots, spot{path: path, word: w})
+			spots = append(spots, spot{path: path, text: text, word: w})
 		}
 	})
 	if len(spots) == 0 {
 		return Anchor{}, false
 	}
 	s := spots[rnd.IntN(len(spots))]
-	return Anchor{Tag: tag, Word: s.word.text, Offset: s.word.offset, Path: s.path}, true
+	// The challenges come from the description the tag sits in.
+	challenges := pickChallenges(s.text, s.word.offset, AnchorChallenges)
+	return Anchor{Tag: tag, Word: s.word.text, Offset: s.word.offset, Path: s.path, Challenges: challenges}, true
 }
 
 // RenderSchema returns a copy of schema with the anchor's tag placed in the

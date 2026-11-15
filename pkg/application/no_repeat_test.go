@@ -68,7 +68,7 @@ func holdEntry(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.Request
 }
 
 func heldPointer(id, tag string) string {
-	return id + " — A target for an explore step. (held as ⟦" + tag + "⟧)"
+	return id + " — A target for an explore step. (held as ⟦" + tag + "⟧"
 }
 
 // The no-repeat rule cuts an injected entry chain only once CutRepeats turned
@@ -125,7 +125,7 @@ func TestInjectedEntryChainsTagWhatTheyServe(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, held := workflow.HoldsEntry(id); held != tc.want {
+		if _, _, held := workflow.HoldsEntry(id); held != tc.want {
 			t.Fatalf("a later call should hold the target exactly when it proves it, held=%v with %v", held, tc.held)
 		}
 	}
@@ -215,7 +215,7 @@ func TestInjectedViewTagsWhatItServedInFull(t *testing.T) {
 		if tagged := len(model.ReadAnchors(instructions)) == 1; tagged != cut {
 			t.Fatalf("the target should carry a tag exactly with cuts on, cuts=%v:\n%s", cut, instructions)
 		}
-		if _, held := workflow.HoldsEntry(id); held != cut {
+		if _, _, held := workflow.HoldsEntry(id); held != cut {
 			t.Fatalf("the target served in full should count as served within the call exactly with cuts on, cuts=%v", cut)
 		}
 	}
@@ -292,7 +292,7 @@ func TestInjectedMixedViewHoldsOnlyWhenUncut(t *testing.T) {
 			if strings.Contains(test.Untagged(serve.Instructions), repeatTargetBody) != tc.held {
 				t.Fatalf("the step should serve the body whole only uncut:\n%s", serve.Instructions)
 			}
-			if _, held := workflow.HoldsEntry(id); held != tc.held {
+			if _, _, held := workflow.HoldsEntry(id); held != tc.held {
 				t.Fatalf("the target should count as served only when the step served the view uncut, held=%v", held)
 			}
 		})

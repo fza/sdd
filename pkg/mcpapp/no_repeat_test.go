@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/networkteam/sdd/internal/model"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
 )
 
@@ -286,6 +287,36 @@ func TestNoRepeatInjectedViews(t *testing.T) {
 			t.Fatalf("a show after the step served the gap should serve the pointer:\n%s", shown.Entries)
 		}
 	})
+}
+
+// A proof works once: an agent that kept its earlier proof past the pointer
+// it earned, as one carried over a compaction would, gets the entry in full.
+func TestNoRepeatSpentProofServesInFull(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	agent := newAgentMemory()
+	agent.raw = true
+	cs := connectAs(t, env.srv, agent)
+	session := openSession(t, cs).Session
+
+	var first mcpserver.ShowResult
+	call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}, "held": []string{}}, &first)
+	proofs := model.ReadAnchors(first.Entries)
+	if len(proofs) != 1 {
+		t.Fatalf("the entry served in full should carry one tag:\n%s", first.Entries)
+	}
+	held := []string{proofs[0].String()}
+
+	var pointed mcpserver.ShowResult
+	call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}, "held": held}, &pointed)
+	if !strings.Contains(pointed.Entries, pointerMark) {
+		t.Fatalf("the first proof should earn the pointer:\n%s", pointed.Entries)
+	}
+
+	var replayed mcpserver.ShowResult
+	call(t, cs, "show", map[string]any{"session": session, "ids": []string{fixtureGapID}, "held": held}, &replayed)
+	if !strings.Contains(replayed.Entries, "# body") || strings.Contains(replayed.Entries, pointerMark) {
+		t.Fatalf("a proof replayed after its pointer should serve the entry in full:\n%s", replayed.Entries)
+	}
 }
 
 // A held item that is no tag:word proof refuses the call rather than

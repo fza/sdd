@@ -741,7 +741,7 @@ func TestVocabularyBlockForNonEnglishGraphs(t *testing.T) {
 
 	var serve mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &serve)
-	if serve.Vocabulary != "" {
+	if !onlyHeldLine(serve.Vocabulary) {
 		t.Fatalf("the vocabulary serves once per session, got it again: %q", serve.Vocabulary)
 	}
 }
@@ -1363,7 +1363,7 @@ func TestCaptureProcedureLoop(t *testing.T) {
 	if serve.Step != "playback" || serve.PendingChooser == nil || serve.PendingChooser.Kind != "user" {
 		t.Fatalf("expected pending user chooser at playback, got step %q chooser %+v", serve.Step, serve.PendingChooser)
 	}
-	if serve.Framing != "" {
+	if !onlyHeldLine(serve.Framing) {
 		t.Fatalf("framing must be delivered once per session, got again: %q", serve.Framing)
 	}
 	firstPlayback := serve.Instructions
@@ -2597,7 +2597,7 @@ func TestServedMemoryIsPerAgentContext(t *testing.T) {
 	csSame := connectAs(t, env.srv, agent)
 	var same mcpserver.ServeResult
 	call(t, csSame, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &same)
-	if same.Framing != "" {
+	if !onlyHeldLine(same.Framing) {
 		t.Fatalf("the agent holding the framing should not get it again, got %q", same.Framing)
 	}
 	requireStubReportSchema(t, "capture of the agent holding it", same.ReportSchema)
@@ -2631,10 +2631,24 @@ func TestServedMemoryIsPerAgentContext(t *testing.T) {
 	// The first agent's tags still prove what it holds.
 	var third mcpserver.ServeResult
 	call(t, csA, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &third)
-	if third.Framing != "" {
+	// A short block's or the schema's few challenges may be spent by now and
+	// serve it in full; the long principles block still has proofs left.
+	if strings.Contains(third.Framing, "## Working principles") {
 		t.Fatalf("the agent's proofs should outlast another context's reorientation, got %q", third.Framing)
 	}
-	requireStubReportSchema(t, "capture after another context's resume", third.ReportSchema)
+}
+
+// onlyHeldLine reports whether a serve repeats no held section: nothing but
+// the held line naming each piece's next proof, and at most a short block
+// such as the graph health line, whose few challenges a session spends, so it
+// serves in full again. A section opens with a "## " heading or a table row.
+func onlyHeldLine(served string) bool {
+	for line := range strings.SplitSeq(served, "\n") {
+		if strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "| ") {
+			return false
+		}
+	}
+	return true
 }
 
 // TestServedMemorySurvivesServerRestart: the ledger carries the issued tags,
@@ -2653,7 +2667,7 @@ func TestServedMemorySurvivesServerRestart(t *testing.T) {
 	cs2 := connectAs(t, env2.srv, agent)
 	var second mcpserver.ServeResult
 	call(t, cs2, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &second)
-	if second.Framing != "" {
+	if !onlyHeldLine(second.Framing) {
 		t.Fatalf("framing served before the restart must stay held after it, got %q", second.Framing)
 	}
 	requireStubReportSchema(t, "capture after restart", second.ReportSchema)
@@ -2861,7 +2875,7 @@ func TestFramingLaneDedupAfterWrite(t *testing.T) {
 	}
 	var unchanged mcpserver.ServeResult
 	call(t, csB, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &unchanged)
-	if unchanged.Framing != "" {
+	if !onlyHeldLine(unchanged.Framing) {
 		t.Fatalf("with nothing changed, a later serve carries no framing, got %q", unchanged.Framing)
 	}
 
@@ -2877,7 +2891,9 @@ func TestFramingLaneDedupAfterWrite(t *testing.T) {
 	if !strings.Contains(afterWrite.Framing, "Recent graph movement") {
 		t.Fatalf("the changed recent-moves lane must re-serve, got %q", afterWrite.Framing)
 	}
-	if strings.Contains(afterWrite.Framing, "Local participant:") {
+	// A pointer naming no next proof spent the block's last challenge, so it
+	// serves in full again whatever the write changed.
+	if strings.Contains(unchanged.Framing, "framing info ⟦") && strings.Contains(afterWrite.Framing, "Local participant:") {
 		t.Fatalf("the unchanged info block must stay stubbed (per-lane dedup), got %q", afterWrite.Framing)
 	}
 	if len(afterWrite.Framing) >= len(door.Framing) {
@@ -2957,7 +2973,7 @@ Body.
 	}
 	var unchanged mcpserver.ServeResult
 	call(t, cs, "start_procedure", map[string]any{"session": door.Session, "canonical": "capture"}, &unchanged)
-	if unchanged.Framing != "" {
+	if !onlyHeldLine(unchanged.Framing) {
 		t.Fatalf("with nothing changed, a later serve carries no framing, got %q", unchanged.Framing)
 	}
 
@@ -2979,9 +2995,11 @@ Body.
 	if !strings.Contains(afterWrite.Framing, "Grace") {
 		t.Fatalf("the changed participants section must re-serve, got %q", afterWrite.Framing)
 	}
-	for _, unchanged := range []string{"Aspirations", "Guiding directives", "## Focus"} {
-		if strings.Contains(afterWrite.Framing, unchanged) {
-			t.Errorf("the unchanged %q section must stay stubbed — its lane is joined with participants, got %q", unchanged, afterWrite.Framing)
+	// A section whose pointer named no next proof spent its last challenge,
+	// so it serves in full again whatever the write changed.
+	for section, block := range map[string]string{"Aspirations": "aspirations", "Guiding directives": "directives", "## Focus": "focus"} {
+		if strings.Contains(unchanged.Framing, "framing "+block+" ⟦") && strings.Contains(afterWrite.Framing, section) {
+			t.Errorf("the unchanged %q section must stay stubbed — its lane is joined with participants, got %q", section, afterWrite.Framing)
 		}
 	}
 }

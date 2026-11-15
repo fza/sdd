@@ -28,6 +28,6 @@ type GatherResult struct {
 	// the way back (D34, R14), with the tag it is held under. Nil holds
 	// nothing, as the CLI serves. Anchor places the tag in a body served in
 	// full.
-	Held   func(id string) (tag string, held bool)
+	Held   func(id string) (tag, next string, held bool)
 	Anchor func(id, body string) string
 }

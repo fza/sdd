@@ -73,7 +73,7 @@ type GatherRequest struct {
 	// Held reports whether the consumer already holds an entry in full; such
 	// a candidate prints as a pointer (D34). Nil serves every line in full,
 	// as the CLI does (R14). Anchor places the tag in a body served in full.
-	Held   func(id string) (tag string, held bool)
+	Held   func(id string) (tag, next string, held bool)
 	Anchor func(id, body string) string
 	// since is the corpus mark of the capture's reading; the live entries it
 	// lacks are listed as landed since the reading began (D13).
@@ -254,9 +254,9 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		ToJudge: candidates, SetAside: setAside,
 	}
 	if request.Held != nil {
-		served.Held = func(id string) (string, bool) {
+		served.Held = func(id string) (string, string, bool) {
 			if slices.Contains(opened, id) {
-				return "", false
+				return "", "", false
 			}
 			return request.Held(id)
 		}

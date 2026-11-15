@@ -14,20 +14,7 @@ cancellation:
     entryId: 20260921-120000-s-tac-op1
     project: test
     source: base
-framing: |
-  ## Recent graph movement, newest 5
-
-    20261109-010000-d-prc-vfy process procedure decision Verify is the deep draft verifier, run as the delegate a capture dispatches once pre-flight leaves no high…
-    20260921-120000-s-tac-op1 tactical gap signal Test title
-    20260828-160000-s-prc-rfk process fact signal Reference kinds connect entries: a ref is a contextual pointer with no status effect, written on the source…
-    20260818-120000-s-prc-dsc process fact signal Tests that settle an entry's kind when two compete, sorted by the drafter's situation, not by pair.
-    20260818-110500-s-prc-ann process fact signal Annotation kind adds no proposition of its own: it lays topic labels over entries already written, so a…
-  (+28 more: call view with layout `skip(5):n(28):rank(by(date)):brief:as-list`)
-
-  Graph health: 3 warning(s), 0 unreadable entry/entries.
-  20260601-100000-s-tac-aaa: participant "Tester" does not match any actor canonical in the graph
-  20260704-120000-d-prc-tst: participant "Tester" does not match any actor canonical in the graph
-  20260921-120000-s-tac-op1: participant "Tester" does not match any actor canonical in the graph
+framing: <framing as its proofs serve it>
 goal: put the choice to the user; relay their answer verbatim
 instance: i_2
 instructions: |

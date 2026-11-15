@@ -14,6 +14,7 @@ cancellation:
     entryId: 20260921-120000-s-tac-op1
     project: test
     source: base
+framing: <framing as its proofs serve it>
 goal: put the choice to the user; relay their answer verbatim
 instance: i_2
 instructions: |
