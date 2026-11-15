@@ -39,6 +39,18 @@ var templatesFS embed.FS
 
 const templatesRoot = "templates"
 
+// agentsFS holds the harness subagent definition templates: one template per
+// definition, rendered to Markdown for Claude Code and to TOML for Codex.
+//
+//go:embed agents
+var agentsFS embed.FS
+
+const agentsRoot = "agents"
+
+// agentDefinitionExt is the file type each target reads subagent definitions
+// in.
+var agentDefinitionExt = map[model.AgentTarget]string{model.AgentClaude: ".md", model.AgentCodex: ".toml"}
+
 // templateExt is the extension carried by source template files. It is stripped
 // from the output path so a file at templates/sdd/SKILL.md.tmpl renders to the
 // bundle entry sdd/SKILL.md.
@@ -81,7 +93,38 @@ func Load(target model.AgentTarget) (*model.SkillBundle, error) {
 		}
 		bundle.Entries = append(bundle.Entries, entries...)
 	}
+	bundle.Agents, err = renderAgents(funcs, data, agentDefinitionExt[target])
+	if err != nil {
+		return nil, err
+	}
 	return bundle, nil
+}
+
+// renderAgents executes every subagent definition template for the target,
+// naming each output after its template with the target's file type.
+func renderAgents(funcs template.FuncMap, data renderData, ext string) ([]model.SkillBundleEntry, error) {
+	files, err := agentsFS.ReadDir(agentsRoot)
+	if err != nil {
+		return nil, fmt.Errorf("reading agent definition templates: %w", err)
+	}
+	var entries []model.SkillBundleEntry
+	for _, file := range files {
+		source := path.Join(agentsRoot, file.Name())
+		content, err := agentsFS.ReadFile(source)
+		if err != nil {
+			return nil, fmt.Errorf("reading embedded %s: %w", source, err)
+		}
+		tmpl, err := template.New(file.Name()).Funcs(funcs).Parse(string(content))
+		if err != nil {
+			return nil, fmt.Errorf("parsing template %s: %w", source, err)
+		}
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, data); err != nil {
+			return nil, fmt.Errorf("executing template %s: %w", source, err)
+		}
+		entries = append(entries, model.SkillBundleEntry{RelPath: strings.TrimSuffix(file.Name(), templateExt) + ext, Content: buf.Bytes()})
+	}
+	return entries, nil
 }
 
 // renderFuncs builds the template FuncMap bound to a specific target. inject
