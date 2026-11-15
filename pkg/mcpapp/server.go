@@ -33,6 +33,11 @@ type Options struct {
 	// Version is the SDD version the info tool reports, and the server
 	// implementation version under New.
 	Version string
+
+	// BeforeCall, when set, runs before every tool call with the session the
+	// call names, "" for none: an error refuses the call with it, a notice
+	// rides on the call's result in host_notice.
+	BeforeCall func(ctx context.Context, session string) (notice string, err error)
 }
 
 // toolSet carries what SDD's tool handlers need, independent of the server
@@ -43,6 +48,7 @@ type toolSet struct {
 	localIdentity  sdd.RequestIdentity
 	local          bool
 	version        string
+	before         func(context.Context, string) (string, error)
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
 	// event acts on a session (d-cpt-aen).
@@ -62,6 +68,7 @@ func newToolSet(opts Options) (*toolSet, error) {
 		localIdentity:  opts.LocalIdentity,
 		local:          opts.LocalClient,
 		version:        opts.Version,
+		before:         opts.BeforeCall,
 		sessions:       newSessionCache(),
 	}, nil
 }
