@@ -346,7 +346,7 @@ A changed `query_template` applies to the next search. A changed `document_templ
 
 The index lives in `~/.cache/sdd/index/`, or `$XDG_CACHE_HOME/sdd/index/` when that variable is set, with one directory per project and embedding setup. A project's directory is named after its `repo_id`, or after a hash of the repository path when it has none.
 
-A search waits at most 5 seconds for an index another process writes, then prints `sdd: search index busy for 5s; falling back to text search` and matches the query's words as text. A search that finds another process filling the index prints `sdd: another process is filling the search index; searching the index as it stands` and searches without waiting. `sdd index` waits for that fill. Without a terminal, a fill longer than 15 seconds prints its progress on stderr, at most every 15 seconds.
+A search waits at most 5 seconds for an index another process writes, then prints `sdd: search index busy for 5s; falling back to text search` and matches the query's words as text. A search that finds another process filling the index prints `sdd: another process is filling the search index; searching the index as it stands` and searches without waiting. `sdd index` waits for that fill, and searches through `sdd serve` skip it as the terminal does. A connected repository's index held past 5 seconds is searched by text. Without a terminal, a fill longer than 15 seconds prints its progress on stderr, at most every 15 seconds.
 
 #### Input limit
 
