@@ -225,7 +225,7 @@ func TestProjectDirMustNameAProjectThatDoesNotPointOn(t *testing.T) {
 					t.Fatal(err)
 				}
 			},
-			mention: "run `sdd init` there first",
+			mention: "clone the project there",
 		},
 		{
 			name: "the project points on",
@@ -387,29 +387,6 @@ func TestInitRefusesAPointerItCannotHonour(t *testing.T) {
 		args    []string
 		mention string
 	}{
-		{
-			name: "project not set up",
-			prepare: func(t *testing.T, work, project string) {
-				err := os.Remove(filepath.Join(project, ".sdd", "config.yaml"))
-				if err != nil {
-					t.Fatal(err)
-				}
-			},
-			args:    []string{"init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada"},
-			mention: "run `sdd init` there first",
-		},
-		{
-			name: "project not set up, fresh work repository",
-			prepare: func(t *testing.T, work, project string) {
-				removeWorkSDD(t, work)
-				err := os.Remove(filepath.Join(project, ".sdd", "config.yaml"))
-				if err != nil {
-					t.Fatal(err)
-				}
-			},
-			args:    []string{"init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada"},
-			mention: "run `sdd init` there first",
-		},
 		{
 			name: "project pointing on, fresh work repository",
 			prepare: func(t *testing.T, work, project string) {

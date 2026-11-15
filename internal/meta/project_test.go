@@ -64,7 +64,7 @@ func TestResolveProject(t *testing.T) {
 			name:      "a project that only has a local file",
 			work:      map[string]string{"config.yaml": "project_dir: ../project\n"},
 			project:   map[string]string{"config.local.yaml": "participant: Ada\n"},
-			wantError: "run `sdd init` there first",
+			wantError: "clone the project there",
 		},
 		{
 			name:      "a project pointing on",

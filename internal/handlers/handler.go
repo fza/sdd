@@ -78,18 +78,20 @@ type Puller interface {
 // Each public method corresponds to one command and lives in its own file
 // (handler_new_entry.go, etc.).
 type Handler struct {
-	graphDir  string
-	sddDir    string // path to .sdd/ directory; required for commands that write tmp files
-	reader    Reader
-	llmRunner llm.Runner
-	committer Committer
-	brancher  Brancher
-	mover     Mover
-	puller    Puller
-	repos     *repos.Manager
-	stderr    io.Writer
-	now       func() time.Time
-	language  string
+	graphDir     string
+	sddDir       string // path to .sdd/ directory; required for commands that write tmp files
+	reader       Reader
+	llmRunner    llm.Runner
+	committer    Committer
+	brancher     Brancher
+	mover        Mover
+	puller       Puller
+	repos        *repos.Manager
+	projectRepos ProjectRepositories
+	committerAt  func(dir string) Committer
+	stderr       io.Writer
+	now          func() time.Time
+	language     string
 }
 
 // Options configures a new Handler. Zero-valued fields get sensible defaults.
@@ -105,9 +107,13 @@ type Options struct {
 	// Repos owns the connected-repos side effects (clone, pull, config
 	// writes). Nil means no connected-repos support — repo commands fail
 	// loud, and cross-repo cache freshening is skipped.
-	Repos  *repos.Manager
-	Stderr io.Writer
-	Now    func() time.Time
+	Repos *repos.Manager
+	// ProjectRepositories and CommitterAt let a work repository's init set up
+	// its missing project in a repository of its own. Nil refuses that setup.
+	ProjectRepositories ProjectRepositories
+	CommitterAt         func(dir string) Committer
+	Stderr              io.Writer
+	Now                 func() time.Time
 	// Language is the graph's configured authoring language locale code
 	// (config `language`, empty = English default). Summaries are written
 	// in it regardless of the source material's language.
@@ -117,18 +123,20 @@ type Options struct {
 // New constructs a Handler with the given options.
 func New(opts Options) *Handler {
 	h := &Handler{
-		graphDir:  opts.GraphDir,
-		sddDir:    opts.SDDDir,
-		reader:    opts.Reader,
-		llmRunner: opts.LLMRunner,
-		committer: opts.Committer,
-		brancher:  opts.Brancher,
-		mover:     opts.Mover,
-		puller:    opts.Puller,
-		repos:     opts.Repos,
-		stderr:    opts.Stderr,
-		now:       opts.Now,
-		language:  opts.Language,
+		graphDir:     opts.GraphDir,
+		sddDir:       opts.SDDDir,
+		reader:       opts.Reader,
+		llmRunner:    opts.LLMRunner,
+		committer:    opts.Committer,
+		brancher:     opts.Brancher,
+		mover:        opts.Mover,
+		puller:       opts.Puller,
+		repos:        opts.Repos,
+		projectRepos: opts.ProjectRepositories,
+		committerAt:  opts.CommitterAt,
+		stderr:       opts.Stderr,
+		now:          opts.Now,
+		language:     opts.Language,
 	}
 	if h.stderr == nil {
 		h.stderr = os.Stderr

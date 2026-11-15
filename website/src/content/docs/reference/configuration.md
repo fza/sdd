@@ -67,6 +67,20 @@ app-sdd/                     # only sdd: commits
 - The work stays in the work repository: `sdd init` installs the skills and registers the MCP server there, `sdd wip start` branches it, and closure evidence comes from its history.
 - A `graph_dir` leading into another repository is refused. Make that graph a project of its own and point at it with `project_dir`.
 
+`sdd init --project-dir` writes the pointer and sets up a missing project:
+
+```bash
+sdd init --project-dir ../app-sdd                  # missing project: set up there, then point here
+sdd init --project-dir ../app-sdd --language de    # the new project's settings; asked on a terminal otherwise
+sdd init                                           # repeat in the work repository: follows the recorded project_dir
+```
+
+- A folder outside any repository is created when missing and gets its own repository through `git init`. A folder that is a repository root, such as an empty clone, is used as is.
+- The project folder must not lie inside the work repository or inside another repository.
+- `--graph-dir` and `--language` configure the new project. Beside an existing project they are refused: run `sdd init` with them in the project.
+- Only a typed `--project-dir` sets a project up. A recorded `project_dir` naming a missing folder is refused with advice to clone the project there, so a teammate's clone never grows a second, empty graph.
+- `--bump` is refused in a work repository. Run it in the project.
+
 ## The sdd config command
 
 | Command | What it does |
