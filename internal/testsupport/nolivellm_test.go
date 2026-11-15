@@ -67,12 +67,38 @@ func TestRunWithoutLiveLLMs(t *testing.T) {
 	}
 }
 
+func TestRunWithoutLiveLLMsRefusesLookAlikeStandIns(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"claude", "codex", "sdd"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := []string{
+		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"GIT_CONFIG_GLOBAL=" + filepath.Join(dir, "gitconfig"),
+		"GIT_CONFIG_NOSYSTEM=1",
+	}
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+		env = append(env, name+"="+filepath.Join(dir, strings.ToLower(name)))
+	}
+	out, err := probe(t, "none", dir, env...)
+	if err == nil || !strings.Contains(out, "stand-in claude is not the guard's") {
+		t.Fatalf("a guard dir holding other stand-ins should be refused: %v\n%s", err, out)
+	}
+}
+
 // probe re-runs the test binary under the guard, as a run started by a
 // guarded run owning guardDir, or as a run of its own when guardDir is empty.
-func probe(t *testing.T, call, guardDir string) (string, error) {
+func probe(t *testing.T, call, guardDir string, env ...string) (string, error) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestProbe$")
 	cmd.Env = append(os.Environ(), probeEnv+"="+call, guardDirEnv+"="+guardDir)
+	cmd.Env = append(cmd.Env, env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -99,7 +125,11 @@ func TestProbe(t *testing.T) {
 			t.Errorf("git should read neither the user's nor the system's config, got GIT_CONFIG_GLOBAL=%q GIT_CONFIG_NOSYSTEM=%q",
 				os.Getenv("GIT_CONFIG_GLOBAL"), os.Getenv("GIT_CONFIG_NOSYSTEM"))
 		}
-	case "ollama", "ollama-allowed":
+	case "ollama-allowed":
+		if _, ok := http.DefaultTransport.(*http.Transport); !ok {
+			t.Errorf("AllowOllama should leave the default transport unwrapped, got %T", http.DefaultTransport)
+		}
+	case "ollama":
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost:11434/api/version", nil)
 		if err != nil {
 			t.Fatal(err)

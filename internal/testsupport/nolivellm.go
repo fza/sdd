@@ -2,13 +2,16 @@
 package testsupport
 
 import (
+	"bytes"
 	_ "embed"
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -121,7 +124,10 @@ func guardEnv(dir string) map[string]string {
 }
 
 // checkInherited reports how this process's environment differs from the one
-// the guarded run owning dir hands to the processes it starts.
+// the guarded run owning dir hands to the processes it starts. A test that
+// changes PATH, git or XDG variables before starting a test binary gets that
+// binary refused, and so does one running `go test`, which puts GOROOT/bin
+// first on PATH.
 func checkInherited(dir string) error {
 	var errs []error
 	bin := filepath.Join(dir, "bin")
@@ -130,14 +136,19 @@ func checkInherited(dir string) error {
 		errs = append(errs, fmt.Errorf("PATH starts with %q, not %q", first, bin))
 	}
 	for _, name := range standIns {
-		_, err := os.Stat(filepath.Join(bin, name))
-		if err != nil {
+		script, err := os.ReadFile(filepath.Join(bin, name))
+		switch {
+		case err != nil:
 			errs = append(errs, fmt.Errorf("stand-in %s: %w", name, err))
+		case !bytes.Equal(script, failingCLI):
+			errs = append(errs, fmt.Errorf("stand-in %s is not the guard's", name))
 		}
 	}
-	for name, want := range guardEnv(dir) {
-		if got := os.Getenv(name); got != want {
-			errs = append(errs, fmt.Errorf("%s is %q, not %q", name, got, want))
+	env := guardEnv(dir)
+	names := slices.Sorted(maps.Keys(env))
+	for _, name := range names {
+		if got := os.Getenv(name); got != env[name] {
+			errs = append(errs, fmt.Errorf("%s is %q, not %q", name, got, env[name]))
 		}
 	}
 	return errors.Join(errs...)
