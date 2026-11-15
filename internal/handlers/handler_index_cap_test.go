@@ -28,15 +28,16 @@ import (
 // than tokenLimit runes, so calibration derives a cap from tokenLimit alone.
 type tokenCountingEmbedder struct {
 	tokenLimit int
-	// failFirstCall fails the first endpoint call only, the calibration's
-	// first probe, so a fill that ignores the failure would still succeed.
+	// failFirstCall fails the first two endpoint calls only, the calibration's
+	// first probe and its retry, so a fill that ignores the failure would
+	// still succeed.
 	failFirstCall error
 	calls         int
 }
 
 func (e *tokenCountingEmbedder) Embed(_ context.Context, req embed.Request) (embed.Result, error) {
 	e.calls++
-	if e.failFirstCall != nil && e.calls == 1 {
+	if e.failFirstCall != nil && e.calls <= 2 {
 		return embed.Result{}, e.failFirstCall
 	}
 	vectors := make([][]float32, len(req.Texts))
@@ -343,7 +344,7 @@ func TestIndexHandlerFillCalibrationErrors(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
-		// failFirstCall is the error the endpoint returns on its first call.
+		// failFirstCall is the error the endpoint returns on its first two calls.
 		failFirstCall error
 		// corrupt replaces the stored calibration file after a successful fill.
 		corrupt string
