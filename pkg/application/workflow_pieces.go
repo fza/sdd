@@ -162,3 +162,38 @@ func contentHash(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
 }
+
+// stripAnchorTags takes the anchor tags out of every string in a value an
+// agent reports.
+func stripAnchorTags(value any) any {
+	switch v := value.(type) {
+	case string:
+		return model.StripAnchorTags(v)
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			out[key] = stripAnchorTags(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = stripAnchorTags(item)
+		}
+		return out
+	case []string:
+		out := make([]string, len(v))
+		for i, item := range v {
+			out[i] = model.StripAnchorTags(item)
+		}
+		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(v))
+		for i, item := range v {
+			out[i] = stripAnchorTags(item).(map[string]any)
+		}
+		return out
+	default:
+		return value
+	}
+}

@@ -650,6 +650,9 @@ func (w *WorkflowSession) Advance(ctx context.Context, identity RequestIdentity,
 	if request.Report != nil && len(request.Report) == 0 {
 		return nil, fmt.Errorf("report must not be empty")
 	}
+	if request.Report != nil {
+		request.Report = stripAnchorTags(request.Report).(map[string]any)
+	}
 	if w.Finished() {
 		return nil, w.finishedError()
 	}
@@ -867,6 +870,10 @@ func (w *WorkflowSession) StageAttachment(ctx context.Context, identity RequestI
 	if err := w.checkRestagedBody(filename); err != nil {
 		return StagedFile{}, err
 	}
+	// Only text can hold a tag the agent copied; a binary file stages as sent.
+	if utf8.Valid(content) {
+		content = []byte(model.StripAnchorTags(string(content)))
+	}
 	blob, err := w.app.StageBlob(ctx, identity, w.project, SessionRef{Subject: w.binding.Subject, Session: w.binding.SessionID}, filename, content)
 	if err != nil {
 		return StagedFile{}, err
@@ -897,7 +904,13 @@ func (w *WorkflowSession) EditStagedAttachment(ctx context.Context, identity Req
 	if err != nil {
 		return StagedFile{}, err
 	}
-	patched, err := textpatch.Apply(string(current), pairs)
+	// The staged file holds no tags, so a pair quoting one would never match;
+	// the patched text stages again, which strips its new text.
+	stripped := make([]types.PatchPair, len(pairs))
+	for i, pair := range pairs {
+		stripped[i] = types.PatchPair{Old: model.StripAnchorTags(pair.Old), New: pair.New}
+	}
+	patched, err := textpatch.Apply(string(current), stripped)
 	if err != nil {
 		return StagedFile{}, fmt.Errorf("editing staged %q: %w (nothing applied; the staged file is unchanged)", handle, err)
 	}

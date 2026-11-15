@@ -2,7 +2,9 @@ package model
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -171,6 +173,19 @@ func WordAfterAnchor(text, tag string) (string, bool) {
 		return "", false
 	}
 	return leadingWord(text[i+len(mark):])
+}
+
+// placedAnchorTag is an anchor tag as Render places it, with its space.
+var placedAnchorTag = regexp.MustCompile(anchorTagOpen + `[0-9a-z]{` + strconv.Itoa(anchorTagLen) + `}` + anchorTagClose + ` ?`)
+
+// StripAnchorTags takes every placed tag out of text an agent sends back, so
+// a passage it copied from served text carries no tag into a draft, a
+// relayed word, a staged file or a quote that must match its source.
+func StripAnchorTags(text string) string {
+	if !strings.Contains(text, anchorTagOpen) {
+		return text
+	}
+	return placedAnchorTag.ReplaceAllString(text, "")
 }
 
 // ReadAnchors reads every tag in text with the word right after it, in order.
