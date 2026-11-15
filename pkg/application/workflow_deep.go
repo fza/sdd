@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -482,14 +483,37 @@ func (w *WorkflowSession) deepLookup(ctx *engine.Context) (model.DeepLookup, err
 	if err != nil {
 		return model.DeepLookup{}, err
 	}
-	lookup := model.DeepLookup{Entry: func(id string) bool { return ctx.Graph != nil && ctx.Graph.ByID[id] != nil }}
+	lookup := model.DeepLookup{Entry: func(id string) (string, bool) {
+		if ctx.Graph == nil || ctx.Graph.ByID[id] == nil {
+			return "", false
+		}
+		e := ctx.Graph.ByID[id]
+		return e.Summary + "\n\n" + e.Content, true
+	}}
 	if checkout := runtime.options.Checkout; checkout != nil {
 		lookup.File = func(path string) (string, bool, error) { return checkoutFile(checkout, path) }
 	}
 	if commits := runtime.options.Commits; commits != nil {
-		lookup.Commit = func(hash string) (bool, error) { return commits.HasCommit(w.ctx, hash) }
+		lookup.Commit = func(hash string) (string, bool, error) { return commitMessage(w.ctx, commits, hash) }
 	}
 	return lookup, nil
+}
+
+// commitMessages is a CommitLookup that also reads a commit's message, the
+// text a quote citing the commit must be in.
+type commitMessages interface {
+	CommitMessage(ctx context.Context, hash string) (message string, found bool, err error)
+}
+
+// commitMessage returns the message of the commit hash names. A lookup that
+// reads no messages yields an empty one, so a quote citing the commit fails
+// its check rather than passing unread.
+func commitMessage(ctx context.Context, commits CommitLookup, hash string) (string, bool, error) {
+	if messages, ok := commits.(commitMessages); ok {
+		return messages.CommitMessage(ctx, hash)
+	}
+	found, err := commits.HasCommit(ctx, hash)
+	return "", found, err
 }
 
 func checkoutFile(checkout fs.FS, path string) (string, bool, error) {

@@ -88,14 +88,24 @@ func TestDeepOpenFindings_FollowTheLatestResponse(t *testing.T) {
 
 // deepLookup finds one entry, one file and one commit.
 var deepLookup = model.DeepLookup{
-	Entry: func(id string) bool { return id == "20261101-100000-s-tac-abc" },
+	Entry: func(id string) (string, bool) {
+		if id == "20261101-100000-s-tac-abc" {
+			return "An entry.\n\nThe writer keeps the first attachment.", true
+		}
+		return "", false
+	},
 	File: func(path string) (string, bool, error) {
 		if path == "internal/capture/writer.go" {
 			return "Write keeps the first\n   attachment of a name.\n", true, nil
 		}
 		return "", false, nil
 	},
-	Commit: func(hash string) (bool, error) { return hash == "4aeb2c4e", nil },
+	Commit: func(hash string) (string, bool, error) {
+		if hash == "4aeb2c4e" {
+			return "fix(capture): keep the first attachment of a name\n", true, nil
+		}
+		return "", false, nil
+	},
 }
 
 func evidence(sources ...model.DeepSource) model.DeepFinding {
@@ -119,6 +129,8 @@ func TestCheckDeepFindings(t *testing.T) {
 		{"quote not in the file", evidence(model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go", Quote: "keeps the last attachment"}), `f1: source file internal/capture/writer.go does not hold the quote "keeps the last attachment"`},
 		{"invented commit", evidence(model.DeepSource{Kind: "commit", Ref: "deadbeef"}), "f1: source commit deadbeef is not in the repository"},
 		{"invented entry", evidence(model.DeepSource{Kind: "entry", Ref: "20261101-100000-s-tac-zzz"}), "f1: source entry 20261101-100000-s-tac-zzz resolves to no entry"},
+		{"quote not in the entry", evidence(model.DeepSource{Kind: "entry", Ref: "20261101-100000-s-tac-abc", Quote: "keeps the last attachment"}), `f1: source entry 20261101-100000-s-tac-abc does not hold the quote "keeps the last attachment"`},
+		{"quote not in the commit", evidence(model.DeepSource{Kind: "commit", Ref: "4aeb2c4e", Quote: "drop the attachment"}), `f1: source commit 4aeb2c4e does not hold the quote "drop the attachment"`},
 		{"malformed url", evidence(model.DeepSource{Kind: "url", Ref: "example.org/spec"}), `f1: source url "example.org/spec" is no http or https URL`},
 		{"unknown kind", evidence(model.DeepSource{Kind: "chat", Ref: "the user said so"}), `f1: source kind "chat" is not one of`},
 		{"path leaving the checkout", evidence(model.DeepSource{Kind: "file", Ref: "../secrets.txt"}), `f1: source file "../secrets.txt" is no path inside the checkout`},
@@ -145,8 +157,8 @@ func TestCheckDeepFindings_CitationsThatResolveStand(t *testing.T) {
 	finding := evidence(
 		model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go", Quote: "keeps the first attachment"},
 		model.DeepSource{Kind: "file", Ref: "internal/capture/writer.go"},
-		model.DeepSource{Kind: "commit", Ref: "4aeb2c4e"},
-		model.DeepSource{Kind: "entry", Ref: "20261101-100000-s-tac-abc"},
+		model.DeepSource{Kind: "commit", Ref: "4aeb2c4e", Quote: "keep the first attachment"},
+		model.DeepSource{Kind: "entry", Ref: "20261101-100000-s-tac-abc", Quote: "keeps the first attachment"},
 		model.DeepSource{Kind: "url", Ref: "https://example.org/never-fetched"},
 	)
 	finding.Pointers = []model.DeepPointer{{Field: "body", Quote: "drops the second\n  attachment."}, {Field: "layer", Quote: "tactical"}}
@@ -167,7 +179,7 @@ func TestCheckDeepFindings_PointerQuoteMatchesAHeaderFieldsValue(t *testing.T) {
 
 func TestCheckDeepFindings_ALookupFailureIsAnError(t *testing.T) {
 	failing := deepLookup
-	failing.Commit = func(string) (bool, error) { return false, errors.New("git is gone") }
+	failing.Commit = func(string) (string, bool, error) { return "", false, errors.New("git is gone") }
 	_, err := model.CheckDeepFindings(deepBase, []model.DeepFinding{evidence(model.DeepSource{Kind: "commit", Ref: "4aeb2c4e"})}, failing)
 	if err == nil || !strings.Contains(err.Error(), "git is gone") {
 		t.Fatalf("a lookup failure should surface as an error, got %v", err)
