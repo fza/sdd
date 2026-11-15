@@ -79,7 +79,7 @@ func (w *WorkflowSession) registerWorkflowGrounding(registry *engine.Registry) e
 			}
 			err = w.session.Record(engine.Read{
 				Tool: "inject:lateEntries", Instance: ctx.Instance, Summary: late,
-				Grounding: model.ReadPayload{Reads: []model.GroundingRead{{Mode: model.GroundingLate, IDs: late}}},
+				Grounding: model.ReadPayload{Reads: []model.GroundingRead{{Mode: model.GroundingLate, IDs: late}}, Shown: late},
 			})
 			if err != nil {
 				return nil, err

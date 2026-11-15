@@ -38,6 +38,7 @@ func groundingPayload() model.ReadPayload {
 			{Mode: model.GroundingListing, Text: "reliability/grounding", IDs: []string{"d"}},
 		},
 		Full:   []string{"b"},
+		Shown:  []string{"a", "c"},
 		Corpus: model.NewCorpusMark([]string{"a", "b", "c", "d"}),
 	}
 }
@@ -71,6 +72,9 @@ func TestGroundingRead_ReplayRestoresEveryLoggedRead(t *testing.T) {
 	want, got := live.Reading(), restored.Reading()
 	if !slices.Equal(got.Listed(), want.Listed()) || !slices.Equal(got.Full(), want.Full()) {
 		t.Fatalf("replayed reading listed %v full %v, want listed %v full %v", got.Listed(), got.Full(), want.Listed(), want.Full())
+	}
+	if !slices.Equal(got.Shown(), want.Shown()) || !slices.Equal(got.Shown(), []string{"a", "b", "c"}) {
+		t.Fatalf("replayed reading showed %v: replay should restore the briefs and full reads shown, never an entry only listed", got.Shown())
 	}
 	if len(got.Reads) != 4 || got.Reads[0].Text != "grounding before capture" || got.Reads[3].Mode != model.GroundingOpened {
 		t.Fatalf("replayed reads = %+v, want the four reads as run", got.Reads)
