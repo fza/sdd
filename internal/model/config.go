@@ -593,7 +593,7 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"# See https://github.com/networkteam/sdd for documentation.\n" +
 		"\n" +
 		"# Graph directory relative to repository root.\n" +
-		"graph_dir: " + graphDir + "\n" +
+		"graph_dir: " + yamlScalar(graphDir) + "\n" +
 		"\n" +
 		defaultBranchBlock +
 		"\n" +
@@ -682,7 +682,7 @@ func FormatPointerConfig(cfg PerRepoConfig) string {
 		"# The sdd project holding this repository's graph: the folder holding its\n" +
 		"# .sdd/, relative to this repository's root. Every project setting lives\n" +
 		"# there; this file carries only project_dir, skill_scope and supported_agents.\n" +
-		"project_dir: " + cfg.ProjectDir + "\n" +
+		"project_dir: " + yamlScalar(cfg.ProjectDir) + "\n" +
 		"\n" +
 		skillScopeBlock(cfg) +
 		"\n" +
@@ -714,4 +714,14 @@ func supportedAgentsBlock(cfg PerRepoConfig) string {
 		names[i] = string(a)
 	}
 	return block + "supported_agents: [" + strings.Join(names, ", ") + "]\n"
+}
+
+// yamlScalar renders s as a YAML scalar that reads back as s, quoted only
+// where YAML needs it.
+func yamlScalar(s string) string {
+	out, err := yaml.Marshal(s)
+	if err != nil {
+		return strconv.Quote(s)
+	}
+	return strings.TrimSuffix(string(out), "\n")
 }

@@ -50,3 +50,29 @@ func TestFormatPointerConfigCarriesOnlyPointerKeys(t *testing.T) {
 		t.Errorf("the written pointer config should parse back to its values: %+v", parsed)
 	}
 }
+
+// A project_dir holding characters YAML gives meaning to reads back unchanged
+// from the pointer config FormatPointerConfig writes.
+func TestFormatPointerConfigProjectDirReadsBackUnchanged(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		projectDir string
+	}{
+		{"plain path", "../app-sdd"},
+		{"colon and space", "../app: sdd"},
+		{"hash", "../app #2-sdd"},
+		{"double quotes", `"../app-sdd"`},
+		{"single quotes", "'../app-sdd'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := model.FormatPointerConfig(model.PerRepoConfig{ProjectDir: tc.projectDir})
+			cfg, err := model.ParseConfig([]byte(out))
+			if err != nil {
+				t.Fatalf("the written pointer config should parse: %v\n%s", err, out)
+			}
+			if cfg.ProjectDir != tc.projectDir {
+				t.Fatalf("project_dir should read back as written, got %q from\n%s", cfg.ProjectDir, out)
+			}
+		})
+	}
+}
