@@ -1,6 +1,7 @@
 package cliapp_test
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,8 @@ func TestCachePruneCommand(t *testing.T) {
 	if err := os.MkdirAll(clone, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	f.write(t, "config/sdd/config.yaml", "participant: Global Author\nrepos:\n  - repo_id: github.com/acme/kept\n    clone_url: git@github.com:acme/kept.git\n")
+	f.write(t, "cache/sdd/.disconnected/"+url.PathEscape("github.com/acme/dropped"), "")
 	r := f.run(t, "cache", "prune")
 	if r.err != nil {
 		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)

@@ -6,12 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/gofrs/flock"
-
-	"github.com/networkteam/sdd/internal/model"
 )
 
 // ErrClonesBusy reports that another process holds the clone lock.
@@ -46,9 +43,10 @@ func (r *Registry) LockClones(ctx context.Context) (func() error, error) {
 
 // RetireUnconnectedClone renames the clone at path out of the cache when the
 // user-global config, read again under the clone lock, still names no repo
-// for it, and returns where it went; "" when the repo is connected now. The
-// caller deletes the returned directory, outside the lock. It returns
-// ErrClonesBusy when another process holds the lock.
+// for it and its disconnection record still stands, and returns where it went;
+// "" when the repo is connected again. The caller deletes the returned
+// directory, outside the lock. It returns ErrClonesBusy when another process
+// holds the lock.
 func (r *Registry) RetireUnconnectedClone(path string) (retired string, err error) {
 	lock, err := r.clonesLock()
 	if err != nil {
@@ -66,15 +64,19 @@ func (r *Registry) RetireUnconnectedClone(path string) (retired string, err erro
 	if err != nil {
 		return "", err
 	}
-	if base := filepath.Base(path); strings.HasPrefix(base, ".") && strings.HasSuffix(base, ".pruned") {
+	if isRetiredClone(path) {
 		return path, nil
 	}
-	rel, err := filepath.Rel(r.loc.CacheRoot, path)
+	repoID, err := r.cloneRepoID(path)
 	if err != nil {
 		return "", err
 	}
-	if _, connected := cfg.Connected(model.RepoID(filepath.ToSlash(rel))); connected {
+	if _, connected := cfg.Connected(repoID); connected {
 		return "", nil
+	}
+	dropped, err := r.Disconnected(repoID)
+	if err != nil || !dropped {
+		return "", err
 	}
 	retired = filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".pruned")
 	if err := os.RemoveAll(retired); err != nil {
@@ -82,6 +84,9 @@ func (r *Registry) RetireUnconnectedClone(path string) (retired string, err erro
 	}
 	if err := os.Rename(path, retired); err != nil {
 		return "", fmt.Errorf("retiring clone %s: %w", path, err)
+	}
+	if err := clearDisconnected(r.loc.CacheRoot, repoID); err != nil {
+		return "", err
 	}
 	return retired, nil
 }

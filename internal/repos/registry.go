@@ -86,11 +86,21 @@ func (r *Registry) SelectRepoIDs(named []model.RepoID, all bool) ([]model.RepoID
 	return cfg.SelectRepoIDs(named, all)
 }
 
-// UnconnectedClones lists the clone caches under the cache root whose
-// repository the user-global repos list no longer names. A clone is a
-// directory holding .git below a top-level directory named like a host: repo
-// IDs open with a dotted hostname, which keeps the index and graph caches
-// beside them out of the walk.
+// ErrClonePassRefused reports a clone pass that cannot trust the repos list it
+// would judge clones against; the wrapping error says why.
+var ErrClonePassRefused = errors.New("refusing to remove clones")
+
+// UnconnectedClones lists the clones a cache pruning run may remove: the
+// clones of repositories `sdd repo remove` dropped (see Disconnected) that the
+// user-global repos list no longer names, and the clones an earlier run
+// retired. A repo missing from the list proves nothing about a clone, as a
+// process may read another machine's or another user's config root, so a
+// clone without a disconnection record stays. A clone is a directory holding
+// .git below a top-level directory named like a host: repo IDs open with a
+// dotted hostname, which keeps the index and graph caches beside them out of
+// the walk. It returns ErrClonePassRefused, listing nothing, when the
+// locations come from mixed XDG sources, or the config file is missing or
+// lists no repos, while a clone would go.
 func (r *Registry) UnconnectedClones() ([]string, error) {
 	cfg, err := r.Load()
 	if err != nil {
@@ -104,6 +114,7 @@ func (r *Registry) UnconnectedClones() ([]string, error) {
 		return nil, fmt.Errorf("listing clone caches: %w", err)
 	}
 	var stale []string
+	judged := 0
 	for _, host := range hosts {
 		if !host.IsDir() || strings.HasPrefix(host.Name(), ".") || !strings.Contains(host.Name(), ".") {
 			continue
@@ -116,12 +127,24 @@ func (r *Registry) UnconnectedClones() ([]string, error) {
 			if _, statErr := os.Stat(filepath.Join(path, ".git")); statErr != nil {
 				return nil
 			}
-			rel, err := filepath.Rel(r.loc.CacheRoot, path)
+			if isRetiredClone(path) {
+				stale = append(stale, path)
+				return filepath.SkipDir
+			}
+			repoID, err := r.cloneRepoID(path)
 			if err != nil {
 				return err
 			}
-			if _, connected := cfg.Connected(model.RepoID(filepath.ToSlash(rel))); !connected {
+			if _, connected := cfg.Connected(repoID); connected {
+				return filepath.SkipDir
+			}
+			dropped, err := r.Disconnected(repoID)
+			if err != nil {
+				return err
+			}
+			if dropped {
 				stale = append(stale, path)
+				judged++
 			}
 			return filepath.SkipDir
 		})
@@ -129,5 +152,42 @@ func (r *Registry) UnconnectedClones() ([]string, error) {
 			return nil, fmt.Errorf("listing clone caches under %s: %w", root, err)
 		}
 	}
+	if judged > 0 {
+		if err := r.trustRepoList(cfg, judged); err != nil {
+			return nil, err
+		}
+	}
 	return stale, nil
+}
+
+// trustRepoList refuses a repos list that may not be this machine's while
+// judged clones would go.
+func (r *Registry) trustRepoList(cfg *GlobalConfig, judged int) error {
+	if r.loc.MixedXDG != "" {
+		return fmt.Errorf("%w: the XDG base directories come from mixed sources (%s) while %d clones under %s would go; set all of them or none", ErrClonePassRefused, r.loc.MixedXDG, judged, r.loc.CacheRoot)
+	}
+	_, err := os.Stat(r.loc.ConfigPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w: %s does not exist while %d clones under %s would go; check XDG_CONFIG_HOME", ErrClonePassRefused, r.loc.ConfigPath, judged, r.loc.CacheRoot)
+	}
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", r.loc.ConfigPath, err)
+	}
+	if len(cfg.Repos) == 0 {
+		return fmt.Errorf("%w: %s lists no repos while %d clones under %s would go; delete them by hand if they should go", ErrClonePassRefused, r.loc.ConfigPath, judged, r.loc.CacheRoot)
+	}
+	return nil
+}
+
+func (r *Registry) cloneRepoID(path string) (model.RepoID, error) {
+	rel, err := filepath.Rel(r.loc.CacheRoot, path)
+	if err != nil {
+		return "", err
+	}
+	return model.RepoID(filepath.ToSlash(rel)), nil
+}
+
+func isRetiredClone(dir string) bool {
+	base := filepath.Base(dir)
+	return strings.HasPrefix(base, ".") && strings.HasSuffix(base, ".pruned")
 }

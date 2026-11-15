@@ -54,6 +54,9 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	// ensure the committed declaration. Errors when that too is already in
 	// place, so a true no-op still reads as "nothing to do".
 	if existing, ok := cfg.ConnectedByURL(cmd.CloneURL); ok {
+		if err := h.repos.ClearDisconnected(existing.RepoID); err != nil {
+			return err
+		}
 		declared, err := h.declareDependency(existing.RepoID, cmd)
 		if err != nil {
 			return err
@@ -142,6 +145,9 @@ func (h *Handler) placeAndConnect(cloneDir, cacheDir string, repo repos.Connecte
 		return fmt.Errorf("moving clone into cache: %w", err)
 	}
 	repo.RepoID = declared
+	if err := h.repos.ClearDisconnected(declared); err != nil {
+		return err
+	}
 	return h.connectRepo(repo)
 }
 
@@ -226,7 +232,8 @@ func (h *Handler) declareDependency(repoID model.RepoID, cmd *command.RepoAddCmd
 // resolve-or-block), unless Force is set, in which case the stranded refs are
 // named through OnStranded before the removal proceeds. The per-user global
 // connection and its cache are left untouched — machine-level teardown is a
-// separate command surface, out of scope here.
+// separate command surface, out of scope here — and a disconnection record
+// lets cache pruning remove the cache once the connection is gone.
 func (h *Handler) RepoRemove(ctx context.Context, cmd *command.RepoRemoveCmd) error {
 	if err := cmd.Validate(); err != nil {
 		return fmt.Errorf("invalid command: %w", err)
@@ -287,10 +294,31 @@ func (h *Handler) RepoRemove(ctx context.Context, cmd *command.RepoRemoveCmd) er
 			return fmt.Errorf("committing dependency removal: %w", err)
 		}
 	}
+	if err := h.markDisconnected(cmd.RepoID); err != nil {
+		return err
+	}
 	if cmd.OnRemoved != nil {
 		cmd.OnRemoved(cmd.RepoID)
 	}
 	return nil
+}
+
+// markDisconnected records a removed dependency this machine connects, the
+// only record that lets cache pruning remove its clone once the user-global
+// repos list no longer names it. A handler without the connected-repos
+// manager knows no connection to record.
+func (h *Handler) markDisconnected(repoID model.RepoID) error {
+	if h.repos == nil {
+		return nil
+	}
+	cfg, err := h.repos.Registry().Load()
+	if err != nil {
+		return err
+	}
+	if _, connected := cfg.Connected(repoID); !connected {
+		return nil
+	}
+	return h.repos.MarkDisconnected(repoID)
 }
 
 // strandedRefs scans the current graph for local entries that hold a

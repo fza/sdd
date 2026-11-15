@@ -92,6 +92,9 @@ func newPruneFixture(t *testing.T, config string) pruneFixture {
 			t.Fatal(err)
 		}
 	}
+	if err := repos.NewManager(repos.NewRegistry(f.loc), nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
+		t.Fatal(err)
+	}
 
 	snapshots := graphcache.New(filepath.Join(f.loc.CacheRoot, "graph"))
 	f.keptGraph = t.TempDir()
@@ -394,5 +397,56 @@ func TestCacheHandlerPruneLeavesAReplacedSetupsVersionsAlone(t *testing.T) {
 	}
 	if last.After(lastUse.Add(time.Second)) {
 		t.Errorf("pruning should not count as a use of the replaced setup's store, last use moved to %v", last)
+	}
+}
+
+// A clone the loaded repos list lacks stays unless `sdd repo remove` dropped
+// it: a process reading another config root must not empty this machine's
+// clones.
+func TestCacheHandlerPruneKeepsAClonesNoRepoRemoveDropped(t *testing.T) {
+	root := t.TempDir()
+	loc := repos.Locations{
+		ConfigPath: filepath.Join(root, "foreign", "config.yaml"), CacheRoot: filepath.Join(root, "cache"),
+		StateRoot: filepath.Join(root, "state"),
+	}
+	clone := filepath.Join(loc.CacheRoot, "github.com", "acme", "graph")
+	if err := os.MkdirAll(filepath.Join(clone, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc)})
+	if err := h.Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
+		t.Fatalf("pruning: %v", err)
+	}
+	if !exists(t, clone) {
+		t.Error("a clone no repo remove dropped should stay whatever the loaded repos list holds")
+	}
+}
+
+// A dropped clone meeting a missing config file fails the run, recorded for
+// sdd info, and stays.
+func TestCacheHandlerPruneRefusesAMissingConfig(t *testing.T) {
+	root := t.TempDir()
+	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}
+	clone := filepath.Join(loc.CacheRoot, "github.com", "acme", "dropped")
+	if err := os.MkdirAll(filepath.Join(clone, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
+		t.Fatal(err)
+	}
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc)})
+	err := h.Prune(t.Context(), &command.PruneCacheCmd{})
+	if !errors.Is(err, repos.ErrClonePassRefused) {
+		t.Errorf("the run should fail with the refused clone pass, got %v", err)
+	}
+	if !exists(t, clone) {
+		t.Error("a refused clone pass should remove nothing")
+	}
+	status, err := cacheprune.Load(loc.StateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Error == "" {
+		t.Error("the refusal should be recorded for sdd info")
 	}
 }
