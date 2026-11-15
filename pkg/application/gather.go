@@ -158,7 +158,11 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 		reads = append(reads, model.GroundingRead{Mode: model.GroundingBriefs, IDs: liveIDs})
 	case strings.TrimSpace(request.Draft) != "" || request.Query != "" || len(request.Terms) > 0:
 		searchMode = true
-		searched, err := a.gatherSearches(ctx, runtime, selected, request)
+		candidate := make(map[string]bool, len(live))
+		for _, e := range live {
+			candidate[e.ID] = true
+		}
+		searched, err := a.gatherSearches(ctx, runtime, selected, request, candidate)
 		if err != nil {
 			return GatherResult{}, err
 		}
@@ -294,8 +298,11 @@ func (a *Application) gatherOn(ctx context.Context, runtime *ProjectRuntime, sel
 }
 
 // gatherSearches runs the semantic search and the keyword searches. The
-// embedder is checked before the query writer spends any LLM tokens.
-func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntime, selected *readSnapshotSelection, request GatherRequest) ([]model.GroundingRead, error) {
+// embedder is checked before the query writer spends any LLM tokens. Each
+// search lists up to gatherSearchLimit hits among candidate, the live entries
+// that can become candidates, so closed entries and records of who takes part
+// never take a slot.
+func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntime, selected *readSnapshotSelection, request GatherRequest, candidate map[string]bool) ([]model.GroundingRead, error) {
 	explicit := request.Query != "" || len(request.Terms) > 0
 	if !explicit || request.Query != "" {
 		if err := checkEmbedder(ctx, runtime); err != nil {
@@ -317,7 +324,9 @@ func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntim
 	defer target.state.closed.Store(true)
 	run := func(q query.SearchQuery) ([]string, error) {
 		q.SyncMode = request.SyncMode
-		q.Limit = gatherSearchLimit
+		// Hits outside candidate are dropped after the search, so it fetches a
+		// margin over the slots it fills.
+		q.Limit = gatherSearchLimit * 5
 		found, _, err := a.searchTarget(ctx, target, q)
 		if err != nil {
 			return nil, err
@@ -333,7 +342,7 @@ func (a *Application) gatherSearches(ctx context.Context, runtime *ProjectRuntim
 		})
 		var ids []string
 		for _, hit := range found.Entries {
-			if hit.Entry != nil && len(ids) < gatherSearchLimit {
+			if hit.Entry != nil && candidate[hit.Entry.ID] && len(ids) < gatherSearchLimit {
 				ids = append(ids, hit.Entry.ID)
 			}
 		}
