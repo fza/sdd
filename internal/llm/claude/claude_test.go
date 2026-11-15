@@ -450,7 +450,6 @@ func TestChildRunsIsolated(t *testing.T) {
 	}
 }
 
-
 func mustJSON(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
