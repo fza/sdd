@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/proctest"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/test"
@@ -104,6 +105,60 @@ func TestCaptureWording_GuideReviewNamesSubstantiveFindings(t *testing.T) {
 				serve = session.Answer(t, serve.Instance, "playback", "confirm", nil, "looks right")
 			}
 			proctest.RequireStep(t, serve, "guideReview")
+			requireWording(t, serve, mode)
+		})
+	}
+}
+
+func TestCaptureWording_LightVerdictNamesSetAsideFindings(t *testing.T) {
+	for _, mode := range []wordingMode{
+		{name: "autonomous", options: []proctest.Option{proctest.WithAutonomousDialogue()}, want: []string{"Name each `medium` finding you set aside in what you report."}, unwanted: []string{"to the user in your own words"}},
+		{name: "guided", guided: true, want: []string{"Name each `medium` finding you set aside to the user in your own words."}, unwanted: []string{"in what you report"}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			world, session := newCaptureWorld(t, "light-wording-"+mode.name, append([]proctest.Option{proctest.WithGroundingEnforced(),
+				proctest.WithVerifier(sdd.VerifierPolicy{Mode: "prose"}, 200000, 4096)}, mode.options...)...)
+			world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "medium", Category: "outdated", Observation: "the draft leans on a closed gap"}}
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+			session.Gather(t, instance, captureRef2ID)
+			draft := captureDraft()
+			draft["verdicts"] = []any{map[string]any{"ids": []any{captureRef2ID}, "code": model.VerdictCovered}}
+			serve = session.Report(t, instance, draft)
+			if mode.guided {
+				proctest.RequireStep(t, serve, "playback")
+				serve = session.Answer(t, instance, "playback", "confirm", nil, "write it")
+			}
+			proctest.RequireStep(t, serve, "preflightVerdict")
+			requireWording(t, serve, mode)
+		})
+	}
+}
+
+func TestCaptureWording_VerifyHookReviewNamesSetAsideFindings(t *testing.T) {
+	for _, mode := range []wordingMode{
+		{name: "autonomous", options: []proctest.Option{proctest.WithAutonomousDialogue()}, want: []string{"Name each `medium` finding you set aside in what you report."}, unwanted: []string{"to the user in your own words"}},
+		{name: "guided", guided: true, want: []string{"Name each `medium` finding you set aside to the user in your own words."}, unwanted: []string{"in what you report"}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			scripted := &proctest.ScriptedHooks{
+				Configured: []sdd.Hook{{HookConfig: model.HookConfig{Event: "capture.verify", Command: "lint", Findings: true}}},
+				Scripts:    map[string]proctest.HookScript{"lint": {Output: mediumFindingOutput}},
+			}
+			world, session := newDeepWorld(t, "verify-hook-wording-"+mode.name, sdd.VerifierPolicy{}, append([]proctest.Option{proctest.WithHooks(scripted)}, mode.options...)...)
+			var x *deepExchange
+			if mode.guided {
+				x = startDeep(t, world, session, captureDraft())
+			} else {
+				serve := session.Start(t, "capture", nil)
+				session.Gather(t, serve.Instance)
+				serve = session.Report(t, serve.Instance, captureDraft())
+				proctest.RequireStep(t, serve, "deepDispatch")
+				x = dispatchDeep(t, world, session, serve.Instance)
+			}
+			x.judge(t, []any{})
+			serve := x.pickUp(t)
+			requireServedHookFinding(t, serve, "verifyHookReview")
 			requireWording(t, serve, mode)
 		})
 	}
