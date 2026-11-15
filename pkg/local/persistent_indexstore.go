@@ -65,23 +65,38 @@ var (
 	_ app.SearchIndexRunesRecorder = (*PersistentSearchIndexStore)(nil)
 )
 
-// MaxRunes reports the rune cap the namespace's store was chunked under, read
-// from its manifest. Zero marks a store whose manifest predates the cap.
-func (s *PersistentSearchIndexStore) MaxRunes(_ context.Context, namespace app.IndexNamespace) (int, error) {
+// ReadMaxRunes reports the rune caps the namespace's store reads under, read
+// from its manifest. A manifest that predates the cap reads uncapped.
+func (s *PersistentSearchIndexStore) ReadMaxRunes(_ context.Context, namespace app.IndexNamespace) ([]int, error) {
 	dir, err := s.storeDir(namespace)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	manifest, err := s.readManifest(dir)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return manifest.MaxRunes, nil
+	return manifest.ReadMaxRunes(), nil
 }
 
 // RecordMaxRunes writes the rune cap the namespace's rows are chunked under to
-// its manifest. A manifest already recording maxRunes is left unwritten.
+// its manifest, keeping the cap it replaces until SettleMaxRunes.
 func (s *PersistentSearchIndexStore) RecordMaxRunes(ctx context.Context, namespace app.IndexNamespace, maxRunes int) error {
+	return s.updateRuneCaps(ctx, namespace, func(caps *index.RuneCaps) bool {
+		return caps.SetMaxRunes(maxRunes)
+	})
+}
+
+// SettleMaxRunes drops the replaced cap once every entry is published under
+// maxRunes.
+func (s *PersistentSearchIndexStore) SettleMaxRunes(ctx context.Context, namespace app.IndexNamespace, maxRunes int) error {
+	return s.updateRuneCaps(ctx, namespace, func(caps *index.RuneCaps) bool {
+		return caps.SettleMaxRunes(maxRunes)
+	})
+}
+
+// updateRuneCaps saves the namespace's manifest when update changes its caps.
+func (s *PersistentSearchIndexStore) updateRuneCaps(ctx context.Context, namespace app.IndexNamespace, update func(*index.RuneCaps) bool) error {
 	dir, err := s.storeDir(namespace)
 	if err != nil {
 		return err
@@ -91,10 +106,9 @@ func (s *PersistentSearchIndexStore) RecordMaxRunes(ctx context.Context, namespa
 		if err != nil {
 			return err
 		}
-		if manifest.MaxRunes == maxRunes {
+		if !update(&manifest.RuneCaps) {
 			return nil
 		}
-		manifest.MaxRunes = maxRunes
 		return manifest.Save(dir)
 	})
 }

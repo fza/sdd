@@ -153,3 +153,59 @@ func TestSearchEntriesFinderChecksPublicationAtStoredCap(t *testing.T) {
 		})
 	}
 }
+
+func TestIndexVersionsDuringReembedKeepsTheReadVersionCurrent(t *testing.T) {
+	t.Parallel()
+	const oldCap, newCap = 1024, 2048
+	cases := []struct {
+		name string
+		// storedCaps are the caps the entry has versions under.
+		storedCaps  []int
+		wantCurrent int
+		wantBranch  int
+	}{
+		{name: "version under the previous cap only is current", storedCaps: []int{oldCap}, wantCurrent: 1},
+		{name: "version under the new cap supersedes the previous one", storedCaps: []int{oldCap, newCap}, wantCurrent: 1, wantBranch: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			graphDir := writeCapEntry(t)
+			indexDir := t.TempDir()
+			f := finders.New(finders.Options{Config: &model.PerRepoConfig{}})
+			g, err := f.CurrentGraph(graphDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := index.LoadManifest(indexDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest.MaxRunes = oldCap
+			manifest.SetMaxRunes(newCap)
+			for _, maxRunes := range tc.storedCaps {
+				hash, err := chunking.EntryStateHashCapped(ctx, g.ByID[capEntryID], chunking.DiskAttachmentReader{GraphDir: graphDir}, maxRunes)
+				if err != nil {
+					t.Fatal(err)
+				}
+				manifest.AddVersion(capEntryID, index.EntryVersion{Hash: hash, Fingerprint: "fp", Derivation: index.DerivationCurrent, IndexedAt: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)})
+			}
+			if err := manifest.Save(indexDir); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := f.IndexVersions(ctx, query.IndexVersionsQuery{Label: "local", GraphDir: graphDir, IndexDir: indexDir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			versions := map[string]int{}
+			for _, group := range result.Groups {
+				versions[group.Name] = group.Versions
+			}
+			if versions[index.GroupCurrent] != tc.wantCurrent || versions[index.GroupBranch] != tc.wantBranch {
+				t.Errorf("the version search reads should be current and only it, got groups %v", versions)
+			}
+		})
+	}
+}

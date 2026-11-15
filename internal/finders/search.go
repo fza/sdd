@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 
@@ -379,7 +378,7 @@ func (f *SearchFinder) candidates(q query.SearchQuery) []*model.Entry {
 type versionFreshness struct {
 	indexDir    string // "" disables manifest fallback (an in-memory index, tests)
 	attachments chunking.AttachmentReader
-	current     map[string][]string
+	current     map[string]string
 	manifest    *index.Manifest
 }
 
@@ -391,7 +390,7 @@ func (f *SearchFinder) newVersionFreshness() *versionFreshness {
 	return &versionFreshness{
 		indexDir:    dir,
 		attachments: chunking.DiskAttachmentReader{GraphDir: f.graphDir},
-		current:     map[string][]string{},
+		current:     map[string]string{},
 	}
 }
 
@@ -407,18 +406,14 @@ func (v *versionFreshness) loadManifest() (*index.Manifest, error) {
 	return v.manifest, nil
 }
 
-// maxRunes are the caps the store's rows were chunked under, read from the
-// manifest and never calibrated here. A store with no manifest (an in-memory
-// index) has no cap to read and compares uncapped hashes.
-func (v *versionFreshness) maxRunes() ([]int, error) {
+// readManifest is the manifest whose caps and versions decide which version
+// a search reads, never a fresh calibration. A store with no manifest (an
+// in-memory index) reads as one with no cap and no versions: uncapped hashes.
+func (v *versionFreshness) readManifest() (*index.Manifest, error) {
 	if v.indexDir == "" {
-		return []int{0}, nil
+		return &index.Manifest{}, nil
 	}
-	m, err := v.loadManifest()
-	if err != nil {
-		return nil, err
-	}
-	return m.ReadMaxRunes(), nil
+	return v.loadManifest()
 }
 
 func (v *versionFreshness) fresh(ctx context.Context, entry *model.Entry, hit index.Hit) (bool, error) {
@@ -440,20 +435,17 @@ func (v *versionFreshness) fresh(ctx context.Context, entry *model.Entry, hit in
 	}
 	cur, ok := v.current[entry.ID]
 	if !ok {
-		caps, err := v.maxRunes()
+		m, err := v.readManifest()
 		if err != nil {
 			return false, err
 		}
-		for _, maxRunes := range caps {
-			h, err := chunking.EntryStateHashCapped(ctx, entry, v.attachments, maxRunes)
-			if err != nil {
-				return false, err
-			}
-			cur = append(cur, h)
+		cur, err = chunking.ReadableManifestHash(ctx, entry, v.attachments, m)
+		if err != nil {
+			return false, err
 		}
 		v.current[entry.ID] = cur
 	}
-	return slices.Contains(cur, version), nil
+	return version == cur, nil
 }
 
 // compileTerms compiles each --term into a case-insensitive regex.

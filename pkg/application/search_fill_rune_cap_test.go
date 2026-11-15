@@ -17,6 +17,11 @@ var errRuneCapCalibration = errors.New("calibration probe failed")
 // the path a serve-side fill runs, with the given rune cap resolver.
 func newRuneCapApp(t *testing.T, graphDir, cacheRoot string, runeCap func(context.Context) (int, error)) *sdd.Application {
 	t.Helper()
+	return newRuneCapAppWithIndex(t, graphDir, localadapter.NewPersistentSearchIndexStore(counterProject, cacheRoot, "counter/repo"), runeCap)
+}
+
+func newRuneCapAppWithIndex(t *testing.T, graphDir string, searchIndex sdd.SearchIndexStore, runeCap func(context.Context) (int, error)) *sdd.Application {
+	t.Helper()
 	graph, err := localadapter.NewFilesystemGraphStore(localadapter.FilesystemGraphStoreOptions{Project: counterProject, GraphDir: graphDir})
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +39,7 @@ func newRuneCapApp(t *testing.T, graphDir, cacheRoot string, runeCap func(contex
 		Graph:       graph,
 		RuneCap:     runeCap,
 		Embedder:    &countingEmbeddings{},
-		SearchIndex: localadapter.NewPersistentSearchIndexStore(counterProject, cacheRoot, "counter/repo"),
+		SearchIndex: searchIndex,
 		LLM: pkgllm.RunnerFunc(func(context.Context, pkgllm.Request) (pkgllm.Result, error) {
 			return pkgllm.Result{Identity: pkgllm.Identity{Provider: "test", Model: "test"}}, nil
 		}),

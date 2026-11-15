@@ -294,8 +294,8 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 }
 
 // currentEntryHashes maps every indexable entry of the graph to its state hash
-// under maxRunes — the checkout's current versions, which the skip pass and
-// version grouping compare against.
+// under maxRunes — the versions a fill writes, which its skip pass compares
+// against.
 func (h *IndexHandler) currentEntryHashes(ctx context.Context, g *model.Graph, maxRunes int) (map[string]string, error) {
 	hashes := make(map[string]string, len(g.Entries))
 	for _, entry := range g.Entries {
@@ -370,7 +370,7 @@ func (h *IndexHandler) DropVersions(ctx context.Context, cmd *command.DropIndexV
 		if err != nil {
 			return fmt.Errorf("loading manifest: %w", err)
 		}
-		current, err := h.currentEntryHashes(ctx, g, manifest.MaxRunes)
+		current, err := chunking.ReadableEntryHashes(ctx, g.Entries, h.attachments, manifest, h.excludeEmbedded)
 		if err != nil {
 			return err
 		}

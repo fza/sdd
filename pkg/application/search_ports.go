@@ -29,19 +29,22 @@ type SearchIndexEntryManifest interface {
 }
 
 // SearchIndexRunes is an optional capability a persistent store implements to
-// report the rune cap its rows were chunked under. Hashes and new rows use that
-// cap, so they agree with the rows already stored. Zero means no cap is recorded
-// for the namespace; reads then hash uncapped.
+// report the rune caps its rows were chunked under, newest first: the cap
+// fills chunk under, then the cap it replaced while a re-embed is pending
+// (index.RuneCaps.ReadMaxRunes). Reads hash under each and read one version per
+// entry (model.ReadableVersion), so a store reporting more than one cap must
+// also implement SearchIndexEntryStore. A zero cap reads uncapped.
 type SearchIndexRunes interface {
-	MaxRunes(context.Context, IndexNamespace) (int, error)
+	ReadMaxRunes(context.Context, IndexNamespace) ([]int, error)
 }
 
 // SearchIndexRunesRecorder is the write-side counterpart of SearchIndexRunes.
-// A fill records the cap it chunks under before it writes rows, so reads of
-// the store hash under the cap its rows carry. A store without it cannot take
-// a fill.
+// A fill records the cap it chunks under before it writes rows, keeping the
+// cap it replaces readable, and settles the cap once it has published every
+// entry under it. A store without it cannot take a fill.
 type SearchIndexRunesRecorder interface {
 	RecordMaxRunes(context.Context, IndexNamespace, int) error
+	SettleMaxRunes(context.Context, IndexNamespace, int) error
 }
 
 type SearchEntryVersion = types.SearchEntryVersion

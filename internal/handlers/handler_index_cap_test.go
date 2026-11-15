@@ -148,9 +148,8 @@ func TestIndexHandlerFillRefillsWhenEndpointCapChanges(t *testing.T) {
 	}
 }
 
-// searchCapStore runs a vector search over the store and returns the sorted
-// IDs of the entries it finds.
-func searchCapStore(t *testing.T, indexDir string) []string {
+// searchCapStore runs a vector search with citations over the store.
+func searchCapStore(t *testing.T, indexDir string) *query.SearchResult {
 	t.Helper()
 	ctx := context.Background()
 	snapshot, err := index.OpenSearchSnapshot(ctx, indexDir, 5*time.Second)
@@ -164,10 +163,15 @@ func searchCapStore(t *testing.T, indexDir string) []string {
 		Embedder:   &tokenCountingEmbedder{tokenLimit: 8192},
 		IndexStore: snapshot,
 	})
-	result, err := finder.Search(ctx, query.SearchQuery{Phrase: "Summary"})
+	result, err := finder.Search(ctx, query.SearchQuery{Phrase: "Summary", MaxCitationsPerEntry: 10})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
+	return result
+}
+
+// foundIDs returns the sorted IDs of the entries result holds.
+func foundIDs(result *query.SearchResult) []string {
 	var ids []string
 	for _, entry := range result.Entries {
 		ids = append(ids, entry.Entry.ID)
@@ -176,17 +180,18 @@ func searchCapStore(t *testing.T, indexDir string) []string {
 	return ids
 }
 
-func TestIndexHandlerSearchDuringReembedUnderChangedCapFindsEveryEntry(t *testing.T) {
-	t.Parallel()
-	indexDir := t.TempDir()
-	calibrationDir := t.TempDir()
+// fillThenInterruptReembed fills the store under a wide cap, then stops a
+// re-embed under a narrower cap once its first entry is committed.
+func fillThenInterruptReembed(t *testing.T) (indexDir, calibrationDir string) {
+	t.Helper()
+	indexDir = t.TempDir()
+	calibrationDir = t.TempDir()
 	wide := newCapHandler(t, indexDir, calibrationDir, &tokenCountingEmbedder{tokenLimit: 8192}, "endpoint-a")
 	if err := wide.Build(context.Background(), &command.BuildIndexCmd{}); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	want := searchCapStore(t, indexDir)
-	if len(want) != len(capFixtureGraph().Entries) {
-		t.Fatalf("search before the re-embed found %v, want every entry", want)
+	if got := foundIDs(searchCapStore(t, indexDir)); len(got) != len(capFixtureGraph().Entries) {
+		t.Fatalf("search before the re-embed found %v, want every entry", got)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -203,9 +208,50 @@ func TestIndexHandlerSearchDuringReembedUnderChangedCapFindsEveryEntry(t *testin
 	if indexed != 1 {
 		t.Fatalf("interrupted re-embed indexed %d entries, want 1", indexed)
 	}
+	return indexDir, calibrationDir
+}
 
-	if got := searchCapStore(t, indexDir); !slices.Equal(got, want) {
-		t.Errorf("search during the re-embed found %v, want every entry %v", got, want)
+func capFixtureIDs() []string {
+	var ids []string
+	for _, entry := range capFixtureGraph().Entries {
+		ids = append(ids, entry.ID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func TestIndexHandlerSearchDuringReembedUnderChangedCapFindsEveryEntry(t *testing.T) {
+	t.Parallel()
+	indexDir, _ := fillThenInterruptReembed(t)
+	if got := foundIDs(searchCapStore(t, indexDir)); !slices.Equal(got, capFixtureIDs()) {
+		t.Errorf("search during the re-embed found %v, want every entry", got)
+	}
+}
+
+func TestIndexHandlerSearchDuringReembedCitesOneVersionPerEntry(t *testing.T) {
+	t.Parallel()
+	indexDir, _ := fillThenInterruptReembed(t)
+	for _, entry := range searchCapStore(t, indexDir).Entries {
+		seen := map[string]bool{}
+		for _, citation := range entry.Citations {
+			key := fmt.Sprint(citation.Breadcrumb, citation.Snippet, citation.IsSummary)
+			if seen[key] {
+				t.Errorf("entry %s cites the same chunk from two versions", entry.Entry.ID)
+			}
+			seen[key] = true
+		}
+	}
+}
+
+func TestIndexHandlerDropStaleDuringReembedKeepsEveryEntrySearchable(t *testing.T) {
+	t.Parallel()
+	indexDir, calibrationDir := fillThenInterruptReembed(t)
+	h := newCapHandler(t, indexDir, calibrationDir, &tokenCountingEmbedder{tokenLimit: 4096}, "endpoint-b")
+	if err := h.DropVersions(context.Background(), &command.DropIndexVersionsCmd{Groups: []string{index.GroupStale}}); err != nil {
+		t.Fatalf("DropVersions: %v", err)
+	}
+	if got := foundIDs(searchCapStore(t, indexDir)); !slices.Equal(got, capFixtureIDs()) {
+		t.Errorf("search after dropping stale versions mid re-embed found %v, want every entry", got)
 	}
 }
 

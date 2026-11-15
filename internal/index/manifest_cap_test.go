@@ -23,7 +23,7 @@ func TestManifestMaxRunesRoundTrip(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			m := &index.Manifest{Version: 1, MaxRunes: tc.maxRunes, Entries: map[string]index.EntryState{}}
+			m := &index.Manifest{Version: 1, RuneCaps: index.RuneCaps{MaxRunes: tc.maxRunes}, Entries: map[string]index.EntryState{}}
 			if err := m.Save(dir); err != nil {
 				t.Fatalf("Save: %v", err)
 			}
@@ -79,7 +79,7 @@ func TestManifestCapChangeKeepsPreviousCapUntilSettled(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			m := &index.Manifest{Version: 1, MaxRunes: tc.stored, Entries: map[string]index.EntryState{}}
+			m := &index.Manifest{Version: 1, RuneCaps: index.RuneCaps{MaxRunes: tc.stored}, Entries: map[string]index.EntryState{}}
 			m.SetMaxRunes(tc.fill)
 			if err := m.Save(dir); err != nil {
 				t.Fatalf("Save: %v", err)
