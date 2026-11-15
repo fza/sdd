@@ -57,16 +57,10 @@ var loginEnvVars = []string{"ANTHROPIC_PROFILE", "ANTHROPIC_CONFIG_DIR"}
 // transport. A ResponseSchema goes to --json-schema, and the structured output
 // the CLI validated against it becomes the text.
 //
-// The process runs isolated: --safe-mode, no tools, a working directory of its
-// own, and by default no Anthropic credentials from its environment or a
-// settings file. Started inside a
-// project tree the CLI loads that project's instruction files, skills, hooks
-// and configured servers, and every one of them counts against a prompt that
-// needs none of them. The calls are text reviews: `--tools ""` removes the
-// built-in tools and `--strict-mcp-config` the configured MCP servers, whose
-// tool definitions would otherwise load in full into every prompt. A draft's
-// text then has nothing to act through. `--no-session-persistence` keeps the
-// CLI from saving each call's transcript, the full draft, under ~/.claude.
+// Every call is a text review, so the process runs without tools, project
+// context, customizations or a saved session, each of which would cost prompt
+// tokens or keep the draft; the Claude Code CLI section of the configuration
+// reference names each flag.
 func (r *Runner) Run(ctx context.Context, req llm.Request) (llm.Result, error) {
 	workDir, err := os.MkdirTemp("", "sdd-claude-")
 	if err != nil {
