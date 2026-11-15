@@ -9,7 +9,9 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,11 +23,13 @@ import (
 
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 	mcpserver "github.com/networkteam/sdd/pkg/mcpapp"
@@ -57,8 +61,8 @@ func serveCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			watch, err := newConfigWatch(watched, func() (*servedProject, error) {
-				return buildServedProject(cmd)
+			watch, err := newConfigWatch(watched, func(previous *servedProject) (*servedProject, error) {
+				return buildServedProject(cmd, previous)
 			})
 			if err != nil {
 				return err
@@ -347,7 +351,7 @@ func buildServedApplication(ctx context.Context, watch *configWatch) (*sdd.Appli
 
 // buildServedProject resolves the project serve answers calls with from the
 // config files as they are now, its LLM client included.
-func buildServedProject(cmd *cli.Command) (*servedProject, error) {
+func buildServedProject(cmd *cli.Command, previous *servedProject) (*servedProject, error) {
 	graphDir, err := resolveGraphDir(cmd)
 	if err != nil {
 		return nil, err
@@ -368,10 +372,11 @@ func buildServedProject(cmd *cli.Command) (*servedProject, error) {
 	if err != nil {
 		return nil, err
 	}
-	runner, err := newRunner(cmd, "")
+	clients, err := buildServedClients(cmd, previous, layers)
 	if err != nil {
 		return nil, err
 	}
+	runner, localEmbedder, crossEmbedder := clients.llm.Runner, clients.embedders.local, clients.embedders.cross
 	displayName := filepath.Base(filepath.Dir(sddDir))
 	participant := ""
 	language := ""
@@ -403,14 +408,6 @@ func buildServedProject(cmd *cli.Command) (*servedProject, error) {
 		return nil, err
 	}
 	blobs, err := localadapter.NewFilesystemStagedBlobStore(storeLocations...)
-	if err != nil {
-		return nil, err
-	}
-	localEmbedder, err := buildEmbedder(cmd)
-	if err != nil {
-		return nil, err
-	}
-	crossEmbedder, err := crossRepoEmbedder(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -474,7 +471,57 @@ func buildServedProject(cmd *cli.Command) (*servedProject, error) {
 			})
 		}},
 	}
-	return &servedProject{access: access, cfg: cfg, sessions: sessions, blobs: blobs, layers: layers}, nil
+	return &servedProject{access: access, cfg: cfg, sessions: sessions, blobs: blobs, layers: layers, clients: clients}, nil
+}
+
+// servedClients are the LLM runner and the embedders a served project calls.
+// A rebuild keeps each group whose keys did not change, and with it the rate
+// limit its calls are counted against.
+type servedClients struct {
+	llm       *servedRunner
+	embedders *servedEmbedders
+}
+
+type servedRunner struct{ pkgllm.Runner }
+
+type servedEmbedders struct{ local, cross handlers.IndexEmbedder }
+
+func buildServedClients(cmd *cli.Command, previous *servedProject, layers model.ConfigLayers) (*servedClients, error) {
+	clients := &servedClients{}
+	if previous != nil {
+		changes := model.ConfigChanges(previous.layers, layers)
+		if !changedUnder(changes, "llm.") {
+			clients.llm = previous.clients.llm
+		}
+		// The cross-repo embedder follows the user-global embedding alone,
+		// which a project layer can hide from the effective keys.
+		if !changedUnder(changes, "embedding.") && reflect.DeepEqual(previous.layers.Global.Embedding, layers.Global.Embedding) {
+			clients.embedders = previous.clients.embedders
+		}
+	}
+	if clients.llm == nil {
+		runner, err := newRunner(cmd, "")
+		if err != nil {
+			return nil, err
+		}
+		clients.llm = &servedRunner{runner}
+	}
+	if clients.embedders == nil {
+		local, err := buildEmbedder(cmd)
+		if err != nil {
+			return nil, err
+		}
+		cross, err := crossRepoEmbedder(cmd)
+		if err != nil {
+			return nil, err
+		}
+		clients.embedders = &servedEmbedders{local: local, cross: cross}
+	}
+	return clients, nil
+}
+
+func changedUnder(changes []model.ConfigChange, prefix string) bool {
+	return slices.ContainsFunc(changes, func(change model.ConfigChange) bool { return strings.HasPrefix(change.Key, prefix) })
 }
 
 // collectSessions runs one reclamation pass at startup. This is the trigger

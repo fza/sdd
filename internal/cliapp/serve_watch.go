@@ -2,12 +2,12 @@ package cliapp
 
 import (
 	"context"
+	"crypto/sha256"
 	"io"
 	"os"
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
@@ -21,38 +21,49 @@ type servedProject struct {
 	sessions sdd.SessionStore
 	blobs    sdd.StagedBlobStore
 	layers   model.ConfigLayers
+	clients  *servedClients
 }
 
 // fileStamp is what serve compares to tell a config file changed, appeared
-// or vanished.
+// or vanished. It hashes the content: a retargeted symlink, a copy keeping
+// mtimes, or a same-size write within one mtime tick leaves size and mtime
+// as they were.
 type fileStamp struct {
-	path    string
-	exists  bool
-	size    int64
-	modTime time.Time
+	path     string
+	readable bool
+	sum      [sha256.Size]byte
 }
 
+// stampFiles stamps a file it cannot read as unreadable; the build that
+// follows reads it again and fails loud on anything but its absence.
 func stampFiles(paths []string) []fileStamp {
 	stamps := make([]fileStamp, 0, len(paths))
 	for _, path := range paths {
 		stamp := fileStamp{path: path}
-		info, err := os.Stat(path)
+		data, err := os.ReadFile(path)
 		if err == nil {
-			stamp.exists, stamp.size, stamp.modTime = true, info.Size(), info.ModTime()
+			stamp.readable, stamp.sum = true, sha256.Sum256(data)
 		}
 		stamps = append(stamps, stamp)
 	}
 	return stamps
 }
 
+// toldLimit bounds how many sessions serve remembers telling. Past it, the
+// sessions told every notice are forgotten, and a forgotten session is told
+// again what it already was, which beats missing a change.
+const toldLimit = 1024
+
+type servedProjectKey struct{}
+
 // configWatch keeps serve on its current config. Before every tool call it
-// stats the config files, a stat being cheap enough for the call path, and a
-// change, appearance or removal rebuilds the served project before the call
-// is answered. A build that fails refuses every call until one succeeds:
-// serve never keeps the old config silently.
+// reads the config files, small enough for the call path, and a change,
+// appearance or removal rebuilds the served project before the call is
+// answered. A build that fails refuses every call until one succeeds: serve
+// never keeps the old config silently.
 type configWatch struct {
 	watched []string
-	build   func() (*servedProject, error)
+	build   func(previous *servedProject) (*servedProject, error)
 
 	mu      sync.Mutex
 	current *servedProject
@@ -66,43 +77,45 @@ type configWatch struct {
 	toldNoneOf int
 }
 
-func newConfigWatch(watched []string, build func() (*servedProject, error)) (*configWatch, error) {
+func newConfigWatch(watched []string, build func(previous *servedProject) (*servedProject, error)) (*configWatch, error) {
 	stamps := stampFiles(watched)
-	project, err := build()
+	project, err := build(nil)
 	if err != nil {
 		return nil, err
 	}
 	return &configWatch{watched: watched, build: build, current: project, stamps: stamps, told: map[string]int{}}, nil
 }
 
-// admit follows the config for one tool call and hands over the notices the
-// session the call names, "" for none, was not told yet.
-func (w *configWatch) admit(_ context.Context, session string) (string, error) {
+// admit follows the config for one tool call, pins the call to the project
+// served now, and hands over the notices the session the call names, "" for
+// none, was not told yet.
+func (w *configWatch) admit(ctx context.Context, session string) (context.Context, string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	err := w.follow()
 	if err != nil {
-		return "", err
+		return ctx, "", err
 	}
+	call := context.WithValue(ctx, servedProjectKey{}, w.current)
 	if session == "" {
 		notice := strings.Join(w.notices[w.toldNoneOf:], "\n")
 		w.toldNoneOf = len(w.notices)
-		return notice, nil
+		return call, notice, nil
 	}
 	notice := strings.Join(w.notices[w.told[session]:], "\n")
-	w.told[session] = len(w.notices)
-	return notice, nil
+	w.tell(session)
+	return call, notice, nil
 }
 
 func (w *configWatch) follow() error {
 	stamps := stampFiles(w.watched)
-	// A broken build retries on every call: a fix written within the same
-	// mtime tick and size leaves the stamps as they were.
+	// A broken build retries on every call, so a transient failure clears
+	// without another edit.
 	if w.broken == nil && slices.Equal(stamps, w.stamps) {
 		return nil
 	}
 	w.stamps = stamps
-	next, err := w.build()
+	next, err := w.build(w.current)
 	if err != nil {
 		w.broken = err
 		return err
@@ -116,11 +129,28 @@ func (w *configWatch) follow() error {
 	return nil
 }
 
+// tell records session as told every notice so far.
+func (w *configWatch) tell(session string) {
+	w.told[session] = len(w.notices)
+	if len(w.told) <= toldLimit {
+		return
+	}
+	for id, told := range w.told {
+		if told == len(w.notices) && id != session {
+			delete(w.told, id)
+		}
+	}
+	if len(w.told) > toldLimit {
+		clear(w.told)
+		w.told[session] = len(w.notices)
+	}
+}
+
 // opened records a session this serve opened as told every notice so far.
 func (w *configWatch) opened(id sdd.SessionID) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.told[string(id)] = len(w.notices)
+	w.tell(string(id))
 }
 
 func (w *configWatch) served() *servedProject {
@@ -129,44 +159,58 @@ func (w *configWatch) served() *servedProject {
 	return w.current
 }
 
+// project is the project a call was pinned to, or the one served now outside
+// a call.
+func (w *configWatch) project(ctx context.Context) *servedProject {
+	pinned, ok := ctx.Value(servedProjectKey{}).(*servedProject)
+	if ok {
+		return pinned
+	}
+	return w.served()
+}
+
 // servedAccess resolves every call against the project the config watch
-// serves now.
+// pinned it to.
 type servedAccess struct{ watch *configWatch }
 
-func (a servedAccess) access() *localRuntimeAccess { return a.watch.served().access }
+func (a servedAccess) access(ctx context.Context) *localRuntimeAccess {
+	return a.watch.project(ctx).access
+}
 
 func (a servedAccess) ResolvePrincipal(ctx context.Context, identity sdd.RequestIdentity) (sdd.Principal, error) {
-	return a.access().ResolvePrincipal(ctx, identity)
+	return a.access(ctx).ResolvePrincipal(ctx, identity)
 }
 
 func (a servedAccess) ResolveParticipant(ctx context.Context, principal sdd.Principal, project sdd.ProjectID) (string, error) {
-	return a.access().ResolveParticipant(ctx, principal, project)
+	return a.access(ctx).ResolveParticipant(ctx, principal, project)
 }
 
 func (a servedAccess) ListProjects(ctx context.Context, principal sdd.Principal) (sdd.ProjectList, error) {
-	return a.access().ListProjects(ctx, principal)
+	return a.access(ctx).ListProjects(ctx, principal)
 }
 
 func (a servedAccess) ResolveProject(ctx context.Context, principal sdd.Principal, project sdd.ProjectID, access sdd.Access) (*sdd.ProjectRuntime, error) {
-	return a.access().ResolveProject(ctx, principal, project, access)
+	return a.access(ctx).ResolveProject(ctx, principal, project, access)
 }
 
 func (a servedAccess) AuthorizeSession(ctx context.Context, request sdd.SessionAccessRequest) error {
-	return a.access().AuthorizeSession(ctx, request)
+	return a.access(ctx).AuthorizeSession(ctx, request)
 }
 
 func (a servedAccess) ResolveDependency(ctx context.Context, principal sdd.Principal, project sdd.ProjectID, dependency sdd.RepoID) (*sdd.ProjectRuntime, error) {
-	return a.access().ResolveDependency(ctx, principal, project, dependency)
+	return a.access(ctx).ResolveDependency(ctx, principal, project, dependency)
 }
 
-// servedSessions reads and writes sessions where the served project keeps
-// them now.
+// servedSessions reads and writes sessions where the pinned project keeps
+// them.
 type servedSessions struct{ watch *configWatch }
 
-func (s servedSessions) store() sdd.SessionStore { return s.watch.served().sessions }
+func (s servedSessions) store(ctx context.Context) sdd.SessionStore {
+	return s.watch.project(ctx).sessions
+}
 
 func (s servedSessions) Create(ctx context.Context, metadata sdd.SessionMetadata) (sdd.StoredSession, error) {
-	stored, err := s.store().Create(ctx, metadata)
+	stored, err := s.store(ctx).Create(ctx, metadata)
 	if err != nil {
 		return stored, err
 	}
@@ -175,34 +219,36 @@ func (s servedSessions) Create(ctx context.Context, metadata sdd.SessionMetadata
 }
 
 func (s servedSessions) Load(ctx context.Context, id sdd.SessionID) (sdd.StoredSession, error) {
-	return s.store().Load(ctx, id)
+	return s.store(ctx).Load(ctx, id)
 }
 
 func (s servedSessions) List(ctx context.Context, filter sdd.SessionFilter) (sdd.SessionPage, error) {
-	return s.store().List(ctx, filter)
+	return s.store(ctx).List(ctx, filter)
 }
 
 func (s servedSessions) Append(ctx context.Context, id sdd.SessionID, version uint64, appended sdd.SessionAppend) (uint64, error) {
-	return s.store().Append(ctx, id, version, appended)
+	return s.store(ctx).Append(ctx, id, version, appended)
 }
 
 func (s servedSessions) Delete(ctx context.Context, id sdd.SessionID) error {
-	return s.store().Delete(ctx, id)
+	return s.store(ctx).Delete(ctx, id)
 }
 
-// servedBlobs stages attachments where the served project keeps them now.
+// servedBlobs stages attachments where the pinned project keeps them.
 type servedBlobs struct{ watch *configWatch }
 
-func (b servedBlobs) store() sdd.StagedBlobStore { return b.watch.served().blobs }
+func (b servedBlobs) store(ctx context.Context) sdd.StagedBlobStore {
+	return b.watch.project(ctx).blobs
+}
 
 func (b servedBlobs) Stage(ctx context.Context, ref sdd.SessionRef, filename string, content io.Reader) (sdd.StagedBlob, error) {
-	return b.store().Stage(ctx, ref, filename, content)
+	return b.store(ctx).Stage(ctx, ref, filename, content)
 }
 
 func (b servedBlobs) Open(ctx context.Context, ref sdd.SessionRef, id string) (io.ReadCloser, error) {
-	return b.store().Open(ctx, ref, id)
+	return b.store(ctx).Open(ctx, ref, id)
 }
 
 func (b servedBlobs) DeleteStaged(ctx context.Context, ref sdd.SessionRef) error {
-	return b.store().DeleteStaged(ctx, ref)
+	return b.store(ctx).DeleteStaged(ctx, ref)
 }
