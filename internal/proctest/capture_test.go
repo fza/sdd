@@ -106,6 +106,15 @@ func TestCapture_OneShotHappyPath(t *testing.T) {
 	if !strings.Contains(serve.Instructions, "A generated summary.") {
 		t.Errorf("verifySummary unit should render the stored summary, got %q", serve.Instructions)
 	}
+	for _, want := range []string{
+		"Check the summary against the body sentence by sentence: for each summary sentence, name the body sentence it rests on.",
+		"A summary sentence that rests on none, states a firmer modal or state than the body's, or carries an ID or hash the body does not is drift.",
+		"each summary sentence and the body sentence it rests on as the fidelity note",
+	} {
+		if !strings.Contains(serve.Instructions, want) {
+			t.Errorf("verifySummary should pair summary sentences with the body, missing %q:\n%s", want, serve.Instructions)
+		}
+	}
 
 	serve = session.Answer(t, instance, "verifySummary", "faithful",
 		map[string]any{"fidelityNote": "matches the body"}, "")
@@ -381,7 +390,9 @@ func TestCapture_WritingGuideFindingsServeReviewThenProceed(t *testing.T) {
 	if serve.PendingChooser == nil || serve.PendingChooser.Kind != "agent" {
 		t.Fatalf("guideReview must serve an agent chooser, got %+v", serve.PendingChooser)
 	}
-	for _, want := range []string{"stranding", "the earlier approach", "write-in", "substantive", "drafting input", "judged the content the user approved"} {
+	for _, want := range []string{"stranding", "the earlier approach", "write-in", "substantive", "drafting input", "judged the content the user approved",
+		"(repair: write-in) This finding names what is missing, not its content. Write in only what the user said; otherwise ask the user, or dismiss it.",
+		"A revision adds nothing the user did not say and keeps every line the user gave."} {
 		if !strings.Contains(serve.Instructions, want) {
 			t.Errorf("guideReview unit missing %q:\n%s", want, serve.Instructions)
 		}
@@ -437,6 +448,9 @@ func TestCapture_WritingGuideRunsOncePerCapture(t *testing.T) {
 	}
 	serve = session.Answer(t, instance, "playback", "confirm", nil, "yes")
 	proctest.RequireStep(t, serve, "guideReview")
+	if strings.Contains(serve.Instructions, "names what is missing") {
+		t.Errorf("only a write-in finding should carry the write-in rule, got:\n%s", serve.Instructions)
+	}
 
 	serve = session.Answer(t, instance, "guideReview", "revise",
 		map[string]any{"body": "A tactical gap: the fixture observes one thing."}, "")
