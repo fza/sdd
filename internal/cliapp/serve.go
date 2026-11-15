@@ -568,6 +568,10 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, runner pkgllm.Run
 	if err != nil {
 		return nil, err
 	}
+	err = useSecretRules(ctx)
+	if err != nil {
+		return nil, err
+	}
 	displayName := filepath.Base(filepath.Dir(sddDir))
 	participant := ""
 	language := ""

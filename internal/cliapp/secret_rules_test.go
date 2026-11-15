@@ -1,9 +1,12 @@
 package cliapp_test
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/test"
@@ -68,4 +71,60 @@ func TestAnUnknownSecretRulesUpdateFailsTheCommand(t *testing.T) {
 			t.Errorf("the error should name the file, the key, the value and the valid values, missing %q: %v", part, result.err)
 		}
 	}
+}
+
+// The error the command fails with is the only report: no warning repeats it.
+func TestAnUnknownSecretRulesUpdateIsReportedOnce(t *testing.T) {
+	f := newAppFixture(t)
+	f.write(t, "config/sdd/config.yaml", "participant: Global Author\nsecrets:\n  rules_update: weekly\n")
+
+	result := f.run(t, "info")
+
+	if result.err == nil {
+		t.Fatalf("the command should fail, got stdout %q", result.stdout)
+	}
+	if strings.Contains(result.stderr, "weekly") {
+		t.Errorf("no warning should repeat the error the command fails with, got %q", result.stderr)
+	}
+}
+
+// A running serve follows secrets.rules_update on the next call: a valid
+// value switches the rules, an unknown one refuses the call until repaired.
+func TestServeFollowsTheSecretRulesSetting(t *testing.T) {
+	f := newAppFixture(t)
+	f.serve(t, func(client *mcp.ClientSession) {
+		session, _ := openSession(t, client)
+		for _, step := range []struct {
+			setting string
+			update  string
+		}{
+			{setting: "secrets:\n  rules_update: \"off\"\n", update: "off"},
+			{setting: "secrets:\n  rules_update: weekly\n"},
+			{setting: "secrets:\n  rules_update: daily\n", update: "daily"},
+		} {
+			f.write(t, "config/sdd/config.yaml", "participant: Global Author\n"+step.setting)
+			result, failure := callToolResult(t, client, "info", map[string]any{"session": session})
+			if step.update == "" {
+				if !strings.Contains(failure, "secrets.rules_update") || !strings.Contains(failure, "weekly") {
+					t.Errorf("an unknown setting should refuse the next call naming the key and the value, got %q %s", failure, result)
+				}
+				continue
+			}
+			if failure != "" {
+				t.Fatalf("info: %s", failure)
+			}
+			var info struct {
+				SecretRules struct {
+					Update string `json:"update"`
+				} `json:"secretRules"`
+			}
+			err := json.Unmarshal([]byte(result), &info)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.SecretRules.Update != step.update {
+				t.Errorf("the next call should scan with the rules the setting selects, got %q", info.SecretRules.Update)
+			}
+		}
+	})
 }
