@@ -996,11 +996,6 @@ func (s *Session) Abandon(instanceID, reason string) error {
 	if inst.Status != StatusRunning {
 		return fmt.Errorf("instance %s has already ended (%s)", instanceID, inst.Outcome)
 	}
-	// Dropping a blocked move is the user's, as overriding its check is: an
-	// agent alone parks it instead.
-	if step := inst.currentStep(); step != nil && s.unattendedAt(step) != nil {
-		return fmt.Errorf("%s at %s is not abandoned in an autonomous session: a person drops it, after resume_session %s in a session whose dialogue.mode is guided; until then it parks", instanceID, step.ID, s.ID)
-	}
 	inst.Status = StatusAbandoned
 	inst.Outcome = "abandoned"
 	data := map[string]any{}

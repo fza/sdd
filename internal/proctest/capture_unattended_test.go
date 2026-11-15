@@ -1,6 +1,7 @@
 package proctest_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -178,5 +179,18 @@ func TestUnattended_TheAgentCannotAbandonABlockedCapture(t *testing.T) {
 	_, err := session.WF.Abandon(t.Context(), world.Identity, instance, "the finding holds")
 	if err == nil || !strings.Contains(err.Error(), "is not abandoned in an autonomous session") {
 		t.Fatalf("an agent should not abandon a capture blocked at an unattended step, got %v", err)
+	}
+}
+
+// The refusal holds for the move alone: ending the whole session by its
+// handle, as sdd sessions abandon does, still ends it.
+func TestUnattended_TheSessionEndsByItsHandleWithABlockedCapture(t *testing.T) {
+	world, session, instance := blockedAutonomousCapture(t, "unattended-abandon-session")
+	result, err := world.App.AbandonWorkflowSession(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: session.ID}, "dropped by its owner")
+	if err != nil {
+		t.Fatalf("ending the session by its handle should not refuse the blocked capture, got %v", err)
+	}
+	if !result.Abandoned || !slices.ContainsFunc(result.Discarded, func(d sdd.WorkflowInstanceSummary) bool { return d.Instance == instance }) {
+		t.Fatalf("the session should end with the blocked capture discarded, got %+v", result)
 	}
 }

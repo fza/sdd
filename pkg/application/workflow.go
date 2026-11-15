@@ -841,6 +841,9 @@ func (w *WorkflowSession) Abandon(ctx context.Context, identity RequestIdentity,
 	if instance == w.shell {
 		return WorkflowAbandonResult{}, fmt.Errorf("the session shell concludes through its own junction")
 	}
+	if err := w.session.RefuseUnattendedAbandon(instance); err != nil {
+		return WorkflowAbandonResult{}, codedRefusal(err)
+	}
 	result := WorkflowAbandonResult{Abandoned: true}
 	if inst, ok := w.session.Instance(instance); ok {
 		if marker, present := workflowStoreString(inst.Store, "wipMarker"); present {
