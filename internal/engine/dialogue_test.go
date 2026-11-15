@@ -173,7 +173,34 @@ func TestDialogueModeSurvivesReplay(t *testing.T) {
 	}
 }
 
-func TestFormerAutonomousHeaderReplaysGuided(t *testing.T) {
+// A session follows a dialogue mode set while it runs: the next serve renders
+// for it, and the next answer is judged under it.
+func TestSessionFollowsADialogueModeSetWhileItRuns(t *testing.T) {
+	session, sv := dialogueSession(t, &recordingSink{})
+	if sv.UnitText != "Ask the user." {
+		t.Fatalf("a guided session should ask the user first, got %q", sv.UnitText)
+	}
+
+	session.SetDialogue(model.DialogueAuto, "config.local.yaml")
+	sv, err := session.Serve(sv.Instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sv.UnitText != "Decide yourself." {
+		t.Errorf("the next serve should follow the new mode, got %q", sv.UnitText)
+	}
+	sv, err = session.AnswerWith(sv.Instance, "pick", "go", nil, engine.AnswerWords{Reason: "the only way on"})
+	if err != nil {
+		t.Fatalf("an auto session should take the agent's reason: %v", err)
+	}
+
+	session.SetDialogue(model.DialogueGuided, "")
+	if _, err := session.AnswerWith(sv.Instance, "keep", "done", nil, engine.AnswerWords{Reason: "obvious"}); err == nil || !strings.Contains(err.Error(), "guided session") {
+		t.Errorf("a session set back to guided should refuse a reason, got %v", err)
+	}
+}
+
+func TestUnknownDialogueHeaderReplaysGuided(t *testing.T) {
 	sink := &recordingSink{}
 	dialogueSession(t, sink, autonomous())
 	events := slices.Clone(sink.events)
@@ -183,10 +210,10 @@ func TestFormerAutonomousHeaderReplaysGuided(t *testing.T) {
 	resolve := func(string) (*engine.Spec, error) { return spec, nil }
 	replayed, err := eng.ReplaySession("s_dialogue", "tester", events, resolve, nopSink{})
 	if err != nil {
-		t.Fatalf("a log recording the former value should stay readable: %v", err)
+		t.Fatalf("a log recording an unknown mode should stay readable: %v", err)
 	}
 	if replayed.DialogueMode == model.DialogueAuto {
-		t.Errorf("a recorded value the model no longer knows should replay as guided, got %q", replayed.DialogueMode)
+		t.Errorf("a recorded mode the model does not know should replay as guided, got %q", replayed.DialogueMode)
 	}
 }
 
@@ -246,4 +273,19 @@ func TestDelegableOnlyOnAUserChooser(t *testing.T) {
       options:
           - {choice: go, to: end(completed)}`
 	requireProblem(t, parseFails(t, machine, "## unit: pick\n\nPick.\n"), "delegable applies only to a user chooser")
+}
+
+func TestUnattendedSpecProblems(t *testing.T) {
+	cases := []struct{ name, step, want string }{
+		{name: "agent chooser", step: "chooser: agent\n      unattended: {answer: go}", want: "unattended applies only to a user chooser"},
+		{name: "with delegable", step: "chooser: user\n      delegable: true\n      unattended: {answer: go}", want: "unattended and delegable exclude each other"},
+		{name: "negative limit", step: "chooser: user\n      unattended: {answer: go, limit: -1}", want: "unattended limit -1 is negative"},
+		{name: "unknown answer", step: "chooser: user\n      unattended: {answer: skip}", want: `unattended answer "skip" is not an option`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			machine := "steps:\n    - id: pick\n      " + tc.step + "\n      options:\n          - {choice: go, to: end(completed)}"
+			requireProblem(t, parseFails(t, machine, "## unit: pick\n\nPick.\n"), tc.want)
+		})
+	}
 }

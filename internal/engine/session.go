@@ -52,6 +52,7 @@ const (
 	// EventParked records that a running move was deliberately parked back to
 	// the session junction — state kept, resumable through next. Forensic
 	// only: a resuming agent can tell a shelved move from one that drifted.
+	// With held set, an autonomous session parked it for a person (Parking).
 	EventParked EventType = "parked"
 	// EventServedBlocks is a log written before the anchor proof: replay
 	// reads past it.
@@ -221,8 +222,8 @@ type Session struct {
 	// picks a parked dialogue by. Agent-supplied via SetLabel, updatable;
 	// empty until supplied.
 	Label string
-	// DialogueMode is fixed when the session opens and kept on resume;
-	// DialogueSource names the config layer that set it.
+	// DialogueMode is the mode in force: opened from config, then followed
+	// through SetDialogue; DialogueSource names the config layer that set it.
 	DialogueMode   model.DialogueMode
 	DialogueSource string
 	// Lineage names the dispatching instance of a delegate child session; nil
@@ -271,6 +272,13 @@ func WithDialogue(mode model.DialogueMode, source string) SessionOption {
 		s.DialogueMode = mode
 		s.DialogueSource = source
 	}
+}
+
+// SetDialogue puts the session in mode from now on: steps served and answers
+// taken afterwards follow it, a gate already passed stays passed.
+func (s *Session) SetDialogue(mode model.DialogueMode, source string) {
+	s.DialogueMode = mode
+	s.DialogueSource = source
 }
 
 // WithClock injects the timestamp source (tests use a fixed clock).
@@ -322,13 +330,13 @@ func (s *Session) answerer(step *Step, userWords, reason string) (string, error)
 		return "", fmt.Errorf("a reason answers only a user chooser; %s is not one", step.ID)
 	case reason != "" && !autonomous:
 		return "", fmt.Errorf("%s is the user's choice in a guided session — relay the user's words", step.ID)
-	case reason != "" && !step.Delegable:
+	case reason != "" && !step.Delegable && step.Unattended == nil:
 		return "", fmt.Errorf("%s stays the user's choice even in an autonomous session — relay the user's words", step.ID)
 	case !autonomous || step.Chooser != ChooserUser:
 		return "", nil
 	case reason != "":
 		return "agent", nil
-	case userWords == "" && step.Delegable:
+	case userWords == "" && (step.Delegable || step.Unattended != nil):
 		return "", fmt.Errorf("%s needs the user's words or your reason", step.ID)
 	case userWords == "":
 		return "", fmt.Errorf("%s stays the user's choice even in an autonomous session — relay the user's words", step.ID)
@@ -821,6 +829,9 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	if chooser != step.ID {
 		return nil, fmt.Errorf("chooser %q is not pending — the pending chooser is %q (answers are validated: no early, late, or double answers)", chooser, step.ID)
 	}
+	if err := s.checkUnattended(inst, step, choice, userWords); err != nil {
+		return nil, err
+	}
 	answeredBy, err := s.answerer(step, userWords, reason)
 	if err != nil {
 		return nil, err
@@ -885,6 +896,7 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	if err := s.checkSink(); err != nil {
 		return nil, err
 	}
+	inst.countUnattended(step, answeredBy, userWords)
 	s.clearCancellation(inst.ID)
 	inst.interactionStep = inst.Step
 
@@ -979,6 +991,11 @@ func (s *Session) Abandon(instanceID, reason string) error {
 	}
 	if inst.Status != StatusRunning {
 		return fmt.Errorf("instance %s has already ended (%s)", instanceID, inst.Outcome)
+	}
+	// Dropping a blocked move is the user's, as overriding its check is: an
+	// agent alone parks it instead.
+	if step := inst.currentStep(); step != nil && s.unattendedAt(step) != nil {
+		return fmt.Errorf("%s at %s is not abandoned in an autonomous session: a person drops it, after resume_session %s in a session whose dialogue.mode is guided; until then it parks", instanceID, step.ID, s.ID)
 	}
 	inst.Status = StatusAbandoned
 	inst.Outcome = "abandoned"
@@ -1147,6 +1164,9 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		// after resume; a child already dispatched restores its own seed from
 		// its started event.
 		if chooser, _ := ev.Data["chooser"].(string); chooser != "" {
+			words, _ := ev.Data["userWords"].(string)
+			answeredBy, _ := ev.Data["answeredBy"].(string)
+			inst.countUnattended(inst.Spec.StepByID[chooser], answeredBy, words)
 			if step := inst.Spec.StepByID[chooser]; step != nil {
 				choice, _ := ev.Data["choice"].(string)
 				for i := range step.Options {
@@ -1281,7 +1301,10 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 	case EventAnchorSteps:
 		s.foldAnchorSteps(ev.Data)
 
-	case EventServed, EventServedBlocks, EventReoriented, EventParked:
+	case EventParked:
+		return s.replayParked(ev)
+
+	case EventServed, EventServedBlocks, EventReoriented:
 		// Forensic only — no state effect.
 
 	default:

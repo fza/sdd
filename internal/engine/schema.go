@@ -75,11 +75,16 @@ func (s *Spec) collectSchema(step *Step) map[string]any {
 // required nesting explicit. `fields` unions every option's collect fields —
 // each option enforces its own required set at answer time, so the envelope
 // marks none of them required. In an autonomous session a delegable user
-// chooser takes the agent's reason in place of the user's words.
+// chooser takes the agent's reason in place of the user's words, and an
+// unattended one only its answer.
 func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[string]any {
 	choices := make([]any, 0, len(step.Options))
 	fieldProps := make(map[string]any)
+	unattended := step.Chooser == ChooserUser && step.Unattended != nil && mode == model.DialogueAuto
 	for _, o := range step.Options {
+		if unattended && o.Choice != step.Unattended.Answer {
+			continue
+		}
 		choices = append(choices, o.Choice)
 		for _, cf := range o.Collect {
 			if _, seen := fieldProps[cf.Name]; seen {
@@ -105,6 +110,9 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[stri
 	}
 	required := []string{"choice", "chooser"}
 	switch {
+	case unattended:
+		properties["reason"] = map[string]any{"type": "string", "description": "your one-line reason"}
+		required = append(required, "reason")
 	case step.Chooser == ChooserUser && step.Delegable && mode == model.DialogueAuto:
 		properties["userWords"] = map[string]any{
 			"type":        "string",
@@ -226,6 +234,18 @@ func procedureSpecSchema() map[string]any {
 			"goal":        map[string]any{"type": "string"},
 			"serveDelta":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"delegable":   map[string]any{"type": "boolean"},
+			"unattended": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"answer": map[string]any{"type": "string"},
+					"limit":  map[string]any{"type": "integer", "minimum": 0},
+				},
+				"required":             []string{"answer"},
+				"additionalProperties": false,
+			},
+			"deliver":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"await":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"awaitAny": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		},
 		"required":             []string{"id"},
 		"additionalProperties": false,
