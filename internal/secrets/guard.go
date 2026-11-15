@@ -3,24 +3,35 @@ package secrets
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 )
 
-// GuardRunner refuses every LLM request whose prompt holds a credential, so
-// nothing a draft, an entry or an attachment carries reaches the provider.
+type newPartsKey struct{}
+
+// WithNewParts marks the parts of the requests made under ctx that are new to
+// the graph, such as a draft's body. GuardRunner scans only these.
+func WithNewParts(ctx context.Context, parts ...Part) context.Context {
+	marked, _ := ctx.Value(newPartsKey{}).([]Part)
+	return context.WithValue(ctx, newPartsKey{}, append(slices.Clip(marked), parts...))
+}
+
+// GuardRunner refuses every LLM request whose new parts (see WithNewParts)
+// hold a credential. Stored entries a prompt carries as context pass: a hit in
+// one would otherwise block every request pulling it in, and sdd lint reports
+// it.
 func GuardRunner(runner llm.Runner) llm.Runner {
 	return llm.RunnerFunc(func(ctx context.Context, req llm.Request) (llm.Result, error) {
-		for _, prompt := range []string{req.SystemPrompt, req.UserPrompt} {
-			findings, err := Scan(prompt)
-			if err != nil {
-				return llm.Result{}, err
-			}
-			if len(findings) > 0 {
-				return llm.Result{}, &providerRefusal{provider: "model", description: Describe("prompt", findings)}
-			}
+		parts, _ := ctx.Value(newPartsKey{}).([]Part)
+		where, findings, err := scanParts(parts)
+		if err != nil {
+			return llm.Result{}, err
+		}
+		if len(findings) > 0 {
+			return llm.Result{}, &providerRefusal{provider: "model", description: Describe(where, findings)}
 		}
 		return runner.Run(ctx, req)
 	})

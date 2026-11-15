@@ -24,14 +24,15 @@ func credentialSample(t *testing.T) string {
 
 func TestGuardRunner(t *testing.T) {
 	credential := credentialSample(t)
+	stored := llm.Request{SystemPrompt: "Judge the draft.", UserPrompt: "Draft:\nA clean draft.\n\nStored context:\n" + credential}
 	cases := []struct {
 		name    string
-		request llm.Request
+		parts   []secrets.Part
 		refused bool
 	}{
-		{name: "credential in the user prompt", request: llm.Request{UserPrompt: "Context:\n" + credential}, refused: true},
-		{name: "credential in the system prompt", request: llm.Request{SystemPrompt: credential, UserPrompt: "Hi."}, refused: true},
-		{name: "clean prompt", request: llm.Request{SystemPrompt: "Judge the draft.", UserPrompt: "A clean draft."}},
+		{name: "credential in a new part", parts: []secrets.Part{{Where: "summary", Text: "A gap."}, {Where: "body", Text: "Setup:\n" + credential}}, refused: true},
+		{name: "credential only in stored context", parts: []secrets.Part{{Where: "body", Text: "A clean draft."}}},
+		{name: "no new parts", parts: nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,11 +42,11 @@ func TestGuardRunner(t *testing.T) {
 				return llm.Result{Text: "ok"}, nil
 			}))
 
-			_, err := guarded.Run(t.Context(), tc.request)
+			_, err := guarded.Run(secrets.WithNewParts(t.Context(), tc.parts...), stored)
 
 			if tc.refused {
-				if !errors.Is(err, secrets.ErrCredential) || !strings.Contains(err.Error(), "refusing to send to the model provider") {
-					t.Errorf("the request should be refused before the provider: %v", err)
+				if !errors.Is(err, secrets.ErrCredential) || !strings.Contains(err.Error(), "refusing to send to the model provider: the body") {
+					t.Errorf("the request should be refused before the provider, naming the part: %v", err)
 				}
 				if calls != 0 {
 					t.Error("a refused request must not reach the provider")

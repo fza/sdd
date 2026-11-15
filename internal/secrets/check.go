@@ -41,23 +41,35 @@ func CheckEntry(entry *model.Entry) error {
 	return refusal(where, findings)
 }
 
-// ScanEntry scans an entry part by part, so a finding's line points into the
-// part it names, and returns the first part holding any.
-func ScanEntry(entry *model.Entry) (string, []Finding, error) {
+// Part is one piece of text, named as the user knows it ("body", "summary").
+type Part struct{ Where, Text string }
+
+// EntryParts splits an entry into its summary, body and remaining
+// frontmatter, so a finding's line points into the part it names.
+func EntryParts(entry *model.Entry) []Part {
 	rest := *entry
 	rest.Summary = ""
-	parts := []struct{ where, text string }{
-		{"summary", entry.Summary},
-		{"body", entry.Content},
-		{"frontmatter", model.FormatFrontmatter(&rest)},
+	return []Part{
+		{Where: "summary", Text: entry.Summary},
+		{Where: "body", Text: entry.Content},
+		{Where: "frontmatter", Text: model.FormatFrontmatter(&rest)},
 	}
+}
+
+// ScanEntry scans an entry part by part and returns the first part holding
+// any finding.
+func ScanEntry(entry *model.Entry) (string, []Finding, error) {
+	return scanParts(EntryParts(entry))
+}
+
+func scanParts(parts []Part) (string, []Finding, error) {
 	for _, part := range parts {
-		findings, err := Scan(part.text)
+		findings, err := Scan(part.Text)
 		if err != nil {
 			return "", nil, err
 		}
 		if len(findings) > 0 {
-			return part.where, findings, nil
+			return part.Where, findings, nil
 		}
 	}
 	return "", nil, nil

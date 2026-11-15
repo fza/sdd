@@ -8,6 +8,7 @@ import (
 	"text/template"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -31,7 +32,7 @@ func Summarize(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 		return nil, fmt.Errorf("rendering summary prompt: %w", err)
 	}
 
-	output, err := runner.Run(ctx, req)
+	output, err := runner.Run(secrets.WithNewParts(ctx, secrets.EntryParts(entry)...), req)
 	if err != nil {
 		return nil, fmt.Errorf("running summary generator: %w", err)
 	}
