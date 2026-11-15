@@ -50,6 +50,10 @@ A session you did not wrap up stays open. In a new agent session, give the agent
 
 How best to hand work between agent sessions this way is still being worked out. Capturing the state as entries first is the safer path.
 
+## Parked captures
+
+Under `dialogue.mode: auto`, a capture that a check blocks a second time is parked: nothing is written and the session stays open at that step. The agent ends its turn with `parked at <step>: resume_session <session>`. `sdd sessions` marks it, for example `capture parked at deepUser · 2h ago`, and `sdd sessions --format json` lists every open session with `session`, `procedure`, `parked`, `step`, `reason` and `since`. Your next guided session names each parked capture when it opens. Resume the session in a guided dialogue to answer the step yourself.
+
 ## Wrap up sessions
 
 At a natural stop, the agent offers to wrap up and names every thread that is still open. Wrapping up ends the session for good: an open thread left behind cannot be resumed afterwards. Finish the threads worth finishing, drop the others with a reason, and keep the session open if something should continue. Leaving without wrapping up costs nothing; the session stays resumable by its ID.
