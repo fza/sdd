@@ -438,6 +438,34 @@ func TestCapture_WritingGuideRunsOncePerCapture(t *testing.T) {
 	}
 }
 
+// The playback after a guide revision lists each sentence of the draft the
+// revision removed, so the user sees what the entry no longer says.
+func TestCapture_GuideRevisionPlaybackListsRemovedSentences(t *testing.T) {
+	world, session := newCaptureWorld(t, "core-guide-removed")
+	world.LLM.GuideFindings = []proctest.GuideFinding{{
+		Reasoning: "the second sentence repeats the first", Axis: "stranding",
+		Quote: "It blocks the release.", Repair: "cut", Severity: "substantive",
+	}}
+	draft := captureDraft()
+	draft["body"] = "A tactical gap: the fixture observes something. It blocks the release."
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Report(t, instance, draft)
+	session.Answer(t, instance, "playback", "confirm", nil, "yes")
+	serve = session.Answer(t, instance, "guideReview", "revise", map[string]any{"body": "A tactical gap: the fixture observes something."}, "")
+	proctest.RequireStep(t, serve, "playback")
+	for _, want := range []string{"Removed by the revision:", `- "It blocks the release."`} {
+		if !strings.Contains(serve.Instructions, want) {
+			t.Errorf("playback should list the sentence the revision removed, missing %q:\n%s", want, serve.Instructions)
+		}
+	}
+	if strings.Contains(serve.Instructions, `- "A tactical gap: the fixture observes something."`) {
+		t.Errorf("a sentence the revision kept is not listed as removed:\n%s", serve.Instructions)
+	}
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "fine")
+	proctest.RequireStep(t, serve, "verifySummary")
+}
+
 // The playback after a guide revision lists each sentence the revision added,
 // so the user sees what they never said.
 func TestCapture_GuideRevisionPlaybackListsAddedSentences(t *testing.T) {

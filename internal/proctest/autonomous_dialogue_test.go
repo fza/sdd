@@ -110,3 +110,29 @@ func TestAutonomousDialogue_GuideRevisionPlaybackAddressesTheAgent(t *testing.T)
 		}
 	}
 }
+
+// No user reads an autonomous playback, so the sentences a guide revision
+// removed are put to the agent's own check.
+func TestAutonomousDialogue_GuideRevisionRemovalsAddressTheAgent(t *testing.T) {
+	world, session := newCaptureWorld(t, "autonomous-guide-removed", proctest.WithAutonomousDialogue())
+	world.LLM.GuideFindings = []proctest.GuideFinding{{
+		Reasoning: "the second sentence repeats the first", Axis: "stranding",
+		Quote: "It blocks the release.", Repair: "cut", Severity: "substantive",
+	}}
+	draft := captureDraft()
+	draft["body"] = "A tactical gap: the fixture observes something. It blocks the release."
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	serve = session.Report(t, instance, draft)
+	proctest.RequireStep(t, serve, "guideReview")
+	serve = session.Answer(t, instance, "guideReview", "revise", map[string]any{"body": "A tactical gap: the fixture observes something."}, "")
+	proctest.RequireStep(t, serve, "playback")
+	if strings.Contains(serve.Instructions, "Removed by the revision:") {
+		t.Errorf("an autonomous playback should not address a user about the removal, got:\n%s", serve.Instructions)
+	}
+	for _, want := range []string{"Removed by your revision", `- "It blocks the release."`} {
+		if !strings.Contains(serve.Instructions, want) {
+			t.Errorf("an autonomous playback should put the revision's removed sentences to the agent, missing %q:\n%s", want, serve.Instructions)
+		}
+	}
+}
