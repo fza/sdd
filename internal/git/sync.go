@@ -170,6 +170,20 @@ func (c CLI) HasCommit(ctx context.Context, hash string) (bool, error) {
 	return false, fmt.Errorf("git rev-parse %s: %w", hash, err)
 }
 
+// CommitMessage returns the message of the commit hash names; found is false
+// when the repository holds no such commit.
+func (c CLI) CommitMessage(ctx context.Context, hash string) (string, bool, error) {
+	found, err := c.HasCommit(ctx, hash)
+	if err != nil || !found {
+		return "", false, err
+	}
+	out, err := c.command(ctx, "log", "-1", "--format=%B", "--end-of-options", hash+"^{commit}").Output()
+	if err != nil {
+		return "", false, fmt.Errorf("git log %s: %w", hash, err)
+	}
+	return string(out), true, nil
+}
+
 // Contains reports whether commit is reachable from HEAD. A commit the
 // repository does not know is not contained.
 func (c CLI) Contains(ctx context.Context, commit string) (bool, error) {

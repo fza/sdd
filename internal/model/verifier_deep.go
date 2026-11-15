@@ -137,12 +137,14 @@ func (s DeepSource) Validate() error {
 }
 
 // DeepLookup resolves what deep findings cite. A nil function finds nothing.
+// Each returns the text a source's quote must be in: an entry's summary and
+// body, a file's content, a commit's message.
 type DeepLookup struct {
-	Entry func(id string) bool
+	Entry func(id string) (text string, found bool)
 	// File returns the content of a file in the checkout; found is false when
 	// no file is at path.
 	File   func(path string) (content string, found bool, err error)
-	Commit func(hash string) (bool, error)
+	Commit func(hash string) (message string, found bool, err error)
 }
 
 // DeepFinding is one finding of the deep verifier, reasoning first.
@@ -443,7 +445,13 @@ func RenderDeepHunks(hunks []DeepHunk) string {
 // resolve, a quote its draft or file does not hold, or edits that do not
 // apply. Empty means the findings stand; an error is a lookup that failed.
 func CheckDeepFindings(base string, findings []DeepFinding, lookup DeepLookup) ([]string, error) {
-	resolves := func(id string) bool { return lookup.Entry != nil && lookup.Entry(id) }
+	resolves := func(id string) bool {
+		if lookup.Entry == nil {
+			return false
+		}
+		_, found := lookup.Entry(id)
+		return found
+	}
 	draft := newDeepDraftTexts(base)
 	var problems []string
 	for i, finding := range findings {
@@ -486,7 +494,8 @@ func CheckDeepFindings(base string, findings []DeepFinding, lookup DeepLookup) (
 }
 
 // checkDeepSource names why a valid source does not resolve, empty when it
-// does. Quotes match with whitespace runs collapsed.
+// does: its file, commit or entry is missing, or does not hold its quote.
+// Quotes match with whitespace runs collapsed.
 func checkDeepSource(source DeepSource, lookup DeepLookup) (string, error) {
 	switch source.Kind {
 	case DeepSourceFile:
@@ -504,10 +513,10 @@ func checkDeepSource(source DeepSource, lookup DeepLookup) (string, error) {
 			return fmt.Sprintf("source file %s does not hold the quote %q", source.Ref, source.Quote), nil
 		}
 	case DeepSourceCommit:
-		found := false
+		message, found := "", false
 		if lookup.Commit != nil {
 			var err error
-			found, err = lookup.Commit(source.Ref)
+			message, found, err = lookup.Commit(source.Ref)
 			if err != nil {
 				return "", err
 			}
@@ -515,9 +524,19 @@ func checkDeepSource(source DeepSource, lookup DeepLookup) (string, error) {
 		if !found {
 			return fmt.Sprintf("source commit %s is not in the repository", source.Ref), nil
 		}
+		if source.Quote != "" && !strings.Contains(collapseSpace(message), collapseSpace(source.Quote)) {
+			return fmt.Sprintf("source commit %s does not hold the quote %q", source.Ref, source.Quote), nil
+		}
 	case DeepSourceEntry:
-		if lookup.Entry == nil || !lookup.Entry(source.Ref) {
+		text, found := "", false
+		if lookup.Entry != nil {
+			text, found = lookup.Entry(source.Ref)
+		}
+		if !found {
 			return fmt.Sprintf("source entry %s resolves to no entry", source.Ref), nil
+		}
+		if source.Quote != "" && !strings.Contains(collapseSpace(text), collapseSpace(source.Quote)) {
+			return fmt.Sprintf("source entry %s does not hold the quote %q", source.Ref, source.Quote), nil
 		}
 	}
 	return "", nil

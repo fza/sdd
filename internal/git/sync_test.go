@@ -199,3 +199,19 @@ func TestHasCommitFindsOnlyCommitsTheRepositoryHolds(t *testing.T) {
 		})
 	}
 }
+
+func TestCommitMessageReadsTheMessageOfACommitTheRepositoryHolds(t *testing.T) {
+	dir := newRepo(t)
+	gitRun(t, dir, "commit", "-q", "--allow-empty", "-m", "fix(capture): keep the first attachment", "-m", "The second one is dropped.")
+	head := gitOut(t, dir, "rev-parse", "HEAD")
+	message, found, err := git.CLI{Dir: dir}.CommitMessage(context.Background(), head[:8])
+	if err != nil || !found {
+		t.Fatalf("a held commit should be found, got %v, %v", found, err)
+	}
+	if !strings.Contains(message, "keep the first attachment") || !strings.Contains(message, "The second one is dropped.") {
+		t.Errorf("the message should carry the subject and the body, got %q", message)
+	}
+	if _, found, err := (git.CLI{Dir: dir}).CommitMessage(context.Background(), "0000000deadbeef"); err != nil || found {
+		t.Errorf("an unknown hash should be no commit, got %v, %v", found, err)
+	}
+}
