@@ -38,6 +38,9 @@ const commitTimeout = 30 * time.Second
 // controlling terminal. It is the production handlers.Committer for the
 // auto-commit paths (sdd new, summarize, init, ...).
 func (c CLI) Commit(message string, paths ...string) error {
+	if len(paths) == 0 {
+		return errors.New("git commit: no paths to commit (an empty pathspec would record the whole index)")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), commitTimeout)
 	defer cancel()
 

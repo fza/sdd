@@ -196,6 +196,25 @@ func TestCommit_OnlyDeletedPathsStagesNothingElse(t *testing.T) {
 	}
 }
 
+// git commit with an empty pathspec records the whole index, so a commit naming
+// no path is refused.
+func TestCommit_RefusesNoPaths(t *testing.T) {
+	dir := newTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("staged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "staged.txt")
+	head := runGit(t, dir, "rev-parse", "HEAD")
+
+	t.Chdir(dir)
+	if err := (CLI{}).Commit("sdd: nothing"); err == nil {
+		t.Error("a commit naming no path should be refused")
+	}
+	if runGit(t, dir, "rev-parse", "HEAD") != head {
+		t.Errorf("a pre-staged file should not land in a commit naming no path; files = %v", commitFiles(t, dir))
+	}
+}
+
 // A commit meeting another process's index lock waits for it to clear rather
 // than failing: concurrent captures hold the lock briefly.
 func TestCommit_WaitsOutAHeldIndexLock(t *testing.T) {
