@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -105,11 +106,11 @@ func TestCapture_PublicationAndSessionEndFreeStagedAttachments(t *testing.T) {
 				t.Error("the published attachment's handle should no longer name a staged file")
 			}
 			replayed, _ := world.Resume(t, session.ID, "staged-cleanup-replayed")
-			if _, _, err := replayed.WF.ReadStagedAttachment(t.Context(), world.Identity, "record.md", 0, 1024); err == nil {
-				t.Error("a replayed session should no longer name the published attachment as staged")
+			if handles := replayed.WF.StagedHandles(); !slices.Equal(handles, []string{"notes.md"}) {
+				t.Errorf("a replayed session should name only the unpublished attachment as staged, got %v", handles)
 			}
 			if _, _, err := replayed.WF.ReadStagedAttachment(t.Context(), world.Identity, "notes.md", 0, 1024); err != nil {
-				t.Errorf("a replayed session should still name the attachment no entry used as staged: %v", err)
+				t.Errorf("an attachment no entry used should stay staged: %v", err)
 			}
 
 			scenario.end(t, world, replayed)
@@ -237,9 +238,7 @@ func TestCapture_PublicationKeepsAnAttachmentAReportNamedMeanwhile(t *testing.T)
 	race.run = func() {
 		appendReport(t, world, session.ID, second.Instance, second.Step, map[string]any{"attachments": []any{handle}})
 	}
-	serve := session.Answer(t, first.Instance, "playback", "confirm", nil, "capture it")
-	proctest.RequireStep(t, serve, "verifySummary")
-	failed, err := session.AnswerErr(t, first.Instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	failed, err := session.AnswerErr(t, first.Instance, "playback", "confirm", nil, "capture it")
 	if race.run != nil {
 		t.Fatal("the report should land during the publication")
 	}
@@ -264,9 +263,10 @@ func TestCapture_PublicationKeepsAnAttachmentAReportNamedMeanwhile(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	written, _ := retried.Produced["entryId"].(string)
-	if written == "" {
-		t.Fatalf("the retry should report the written entry: %+v", retried)
+	proctest.RequireStep(t, retried, "verifySummary")
+	published := other.Answer(t, first.Instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	if written, _ := published.Produced["entryId"].(string); written == "" || written != resumed.PendingOperation.Values["entryId"] {
+		t.Fatalf("the retry should report the entry the refused release followed, got %q", written)
 	}
 	if got := stagedBlobs(t, world, other); got != 1 {
 		t.Errorf("the retry should free the attachment no capture claims and keep the claimed one, %d staged", got)
@@ -276,7 +276,7 @@ func TestCapture_PublicationKeepsAnAttachmentAReportNamedMeanwhile(t *testing.T)
 	}
 
 	other.Report(t, second.Instance, captureDraft())
-	serve = other.Answer(t, second.Instance, "playback", "confirm", nil, "capture it")
+	serve := other.Answer(t, second.Instance, "playback", "confirm", nil, "capture it")
 	proctest.RequireStep(t, serve, "verifySummary")
 	serve = other.Answer(t, second.Instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
 	id, _ := serve.Produced["entryId"].(string)
