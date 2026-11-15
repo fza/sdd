@@ -52,7 +52,7 @@ func TestUnknownConfigKeysReportsIgnoredDialogueMode(t *testing.T) {
 	}
 }
 
-func TestUnknownConfigKeysReportsTheFormerAutonomousDialogueMode(t *testing.T) {
+func TestUnknownConfigKeysReportsAnUnknownLocalDialogueMode(t *testing.T) {
 	dir := t.TempDir()
 	sddDir := filepath.Join(dir, ".sdd")
 	localPath := filepath.Join(sddDir, "config.local.yaml")
@@ -69,7 +69,7 @@ func TestUnknownConfigKeysReportsTheFormerAutonomousDialogueMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(result.Ignored) != 1 {
-		t.Fatalf("the former autonomous value should be reported once as ignored, got %+v", result.Ignored)
+		t.Fatalf("an unknown local value should be reported once as ignored, got %+v", result.Ignored)
 	}
 	if got := result.Ignored[0]; got.File != localPath || got.Key != "dialogue.mode" || !strings.Contains(got.Reason, "guided or auto") {
 		t.Errorf("the ignored setting should name its file, its key and the allowed values, got %+v", got)

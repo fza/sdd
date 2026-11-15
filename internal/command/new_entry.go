@@ -87,7 +87,10 @@ type NewEntryCmd struct {
 	// decision. Each --involvement flag parses into one entry here.
 	Involvement []model.Involvement
 
-	SkipPreflight  bool
+	SkipPreflight bool
+	// SkipGrounding records a bypass of the grounding gate: the entry is
+	// written with grounding: skipped and low confidence.
+	SkipGrounding  bool
 	DryRun         bool
 	PreflightModel string
 
@@ -161,6 +164,10 @@ func (c *NewEntryCmd) BuildEntry(id string) (*model.Entry, error) {
 	// Apply per-type default when no kind is specified.
 	if entry.Kind == "" {
 		entry.Kind = model.DefaultKindForType(entry.Type)
+	}
+	if c.SkipGrounding {
+		entry.Grounding = model.GroundingSkipped
+		entry.Confidence = "low"
 	}
 
 	// Topics routing: annotation entries take the rich AnnotationTopics

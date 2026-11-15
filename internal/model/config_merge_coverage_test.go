@@ -20,6 +20,9 @@ func TestMergeConfigCarriesEveryField(t *testing.T) {
 		{"LLM", func(c *model.PerRepoConfig) any { return &c.LLM }},
 		{"Embedding", func(c *model.PerRepoConfig) any { return &c.Embedding }},
 		{"Sync", func(c *model.PerRepoConfig) any { return &c.Sync }},
+		{"Verify", func(c *model.PerRepoConfig) any { return &c.Verify }},
+		{"LLMPrefilter", func(c *model.PerRepoConfig) any { return &c.LLMPrefilter }},
+		{"Recheck", func(c *model.PerRepoConfig) any { return &c.Recheck }},
 	} {
 		t.Run(tc.section, func(t *testing.T) {
 			overlay := &model.PerRepoConfig{}
@@ -66,6 +69,16 @@ func setDistinctive(t *testing.T, f reflect.Value) {
 	t.Helper()
 	switch f.Kind() {
 	case reflect.String:
+		// A closed value outside its set merges as unset (VerifyConfig.KnownValues).
+		if closed, ok := f.Interface().(model.ClosedValues); ok {
+			f.SetString(closed.AllowedValues()[0])
+			return
+		}
+		// A verify duration that is not one merges as unset too.
+		if f.Type() == reflect.TypeFor[model.VerifyDuration]() {
+			f.SetString("10m")
+			return
+		}
 		f.SetString("x")
 	case reflect.Int, reflect.Int64:
 		f.SetInt(7)

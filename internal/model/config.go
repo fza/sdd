@@ -80,6 +80,13 @@ type BaseConfig struct {
 	Sync      SyncConfig      `yaml:"sync,omitempty"`
 	Sessions  SessionsConfig  `yaml:"sessions,omitempty"`
 	Dialogue  DialogueConfig  `yaml:"dialogue,omitempty"`
+	// Verify makes captures read the graph before they are written and checks
+	// every draft against that reading; DefaultVerifyMode unless a layer sets
+	// its mode.
+	Verify VerifyConfig `yaml:"verify,omitempty"`
+	// LLMPrefilter is the grounding prefilter's model; verify.prefilter switches
+	// it on, and ResolvedPrefilter fills it from LLM.
+	LLMPrefilter LLMPrefilterConfig `yaml:"llm_prefilter,omitempty"`
 	// Participant is the canonical name used for entry authorship when
 	// --participants / --participant is omitted at capture time. Typically
 	// set once in the user-global config; a per-repo override covers a
@@ -144,6 +151,9 @@ type PerRepoConfig struct {
 	// Events sets the sharing mode per event channel; only the committed
 	// .sdd/config.yaml sets it.
 	Events EventsConfig `yaml:"events,omitempty"`
+	// Recheck names who runs the recheck work; only the committed
+	// .sdd/config.yaml sets it.
+	Recheck RecheckConfig `yaml:"recheck,omitempty"`
 }
 
 // SyncConfig governs background sync awareness: the auto-fetch cooldown and
@@ -193,6 +203,7 @@ func IgnoredSettings(layer BaseConfig, committed bool) []IgnoredSetting {
 	if reason := ignoredDialogueMode(layer.Dialogue.Mode, committed); reason != "" {
 		ignored = append(ignored, IgnoredSetting{Key: "dialogue.mode", Reason: reason})
 	}
+	ignored = append(ignored, ignoredVerifyValues(layer.Verify)...)
 	return ignored
 }
 
@@ -213,11 +224,12 @@ func ignoredDialogueMode(mode DialogueMode, committed bool) string {
 // HonoredLocal returns the machine-local layer without the settings only the
 // committed config sets.
 func HonoredLocal(local *PerRepoConfig) *PerRepoConfig {
-	if local == nil || len(local.Events.Channels) == 0 {
+	if local == nil || (len(local.Events.Channels) == 0 && len(local.Recheck.Responsible) == 0) {
 		return local
 	}
 	honored := *local
 	honored.Events = EventsConfig{}
+	honored.Recheck = RecheckConfig{}
 	return &honored
 }
 
@@ -330,6 +342,9 @@ type LLMConfig struct {
 	// setting that moves latency and token usage makes a different population
 	// of calls that must not be averaged with the defaults.
 	Params map[string]string `yaml:"params,omitempty"`
+	// ContextTokens is the model's context window in tokens, which sizes the
+	// prose verifier's pre-flight calls. Zero keeps the fixed default budget.
+	ContextTokens int `yaml:"context_tokens,omitempty"`
 	// Concurrency bounds the worker pool for batch operations. Zero means
 	// "use DefaultLLMConcurrency".
 	Concurrency int `yaml:"concurrency,omitempty"`
@@ -440,6 +455,8 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	if overlay.Dialogue.Mode != "" {
 		out.Dialogue.Mode = overlay.Dialogue.Mode
 	}
+	out.Verify = mergeVerifyConfig(base.Verify, overlay.Verify)
+	out.LLMPrefilter = mergeLLMPrefilterConfig(base.LLMPrefilter, overlay.LLMPrefilter)
 	return out
 }
 
@@ -478,6 +495,7 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 		out.Dependencies = overlay.Dependencies
 	}
 	out.Events = mergeEventsConfig(base.Events, overlay.Events)
+	out.Recheck = mergeRecheckConfig(base.Recheck, overlay.Recheck)
 	return &out
 }
 
@@ -547,6 +565,9 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 	}
 	if overlay.ExtractTimeout != "" {
 		out.ExtractTimeout = overlay.ExtractTimeout
+	}
+	if overlay.ContextTokens != 0 {
+		out.ContextTokens = overlay.ContextTokens
 	}
 	if overlay.Concurrency != 0 {
 		out.Concurrency = overlay.Concurrency

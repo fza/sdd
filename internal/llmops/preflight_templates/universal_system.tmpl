@@ -5,9 +5,9 @@ The check-specific task, rubric, and calibration for this entry — followed by 
 {{ template "unrelated_refs" . -}}
 {{ template "durability" . -}}
 {{ template "attachment_claim" . -}}
-{{ template "unusual_close" . -}}
-{{ template "ref_meta_consistency" . -}}
-{{ template "settled_justification" . -}}
+{{ if .HasCloses }}{{ template "unusual_close" . }}{{ end -}}
+{{ if .HasRefs }}{{ template "ref_meta_consistency" . }}{{ end -}}
+{{ if .Settled }}{{ template "settled_justification" . }}{{ end -}}
 {{ template "language" . -}}
 {{ template "contracts" . -}}
 {{ template "verdict" . -}}

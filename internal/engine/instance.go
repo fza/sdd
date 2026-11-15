@@ -78,7 +78,13 @@ type Instance struct {
 	// retiredStep is the logged position when the log placed the instance on
 	// a step its procedure no longer has (see ReplaySession).
 	retiredStep string
+	// reading folds the grounding reads credited to this instance; replay
+	// restores it from the read events.
+	reading model.Reading
 }
+
+// Reading returns the instance's credited grounding reads.
+func (i *Instance) Reading() *model.Reading { return &i.reading }
 
 // loggedStep is the instance's position as its log records it.
 func (i *Instance) loggedStep() string {
@@ -177,8 +183,8 @@ type Serve struct {
 // it, so the definition lives in the cycle-free public leaf (s-tac-ah2).
 type ServeLane = types.ServeLane
 
-// evalGuard evaluates a guard against the registry, returning the verdict
-// and the failing predicates for diagnostics.
+// evalGuard evaluates a step guard or transition guard against the registry,
+// returning the verdict and the clauses that block it for diagnostics.
 func (s *Session) evalGuard(inst *Instance, g *GuardExpr) (bool, []FailedPredicate, error) {
 	ok, ruledOut, failing, err := s.explainGuard(inst, g, s.isSelector)
 	if err != nil || ok || !ruledOut {
@@ -249,7 +255,7 @@ func (s *Session) funcContext(inst *Instance) (*Context, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolving current graph: %w", err)
 	}
-	ctx := &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads}
+	ctx := &Context{Instance: inst.ID, Store: inst.Store, Graph: graph, Step: inst.Step, Reads: s.reads, Reading: &inst.reading}
 	if step := inst.currentStep(); step != nil {
 		ctx.Arrived = inst.arrived(step)
 	}
@@ -392,7 +398,7 @@ func (s *Session) runCommand(inst *Instance, name, to string) error {
 	if !ok {
 		return fmt.Errorf("instance %s: %q is not a registered command", inst.ID, name)
 	}
-	ctx := &Context{Instance: inst.ID, Store: inst.Store, Step: inst.Step, Reads: s.reads}
+	ctx := &Context{Instance: inst.ID, Store: inst.Store, Step: inst.Step, Reads: s.reads, Reading: &inst.reading}
 	if cmd.Prepare != nil {
 		if s.intent == nil || s.intentDone {
 			values, err := cmd.Prepare(ctx)

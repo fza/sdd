@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -34,12 +35,18 @@ type Finding struct {
 	Severity    Severity
 	Category    string
 	Observation string
+	// Basis lists the entries a light finding rests on; empty outside light.
+	Basis []string
 }
 
 // PreflightResult holds the parsed findings from a pre-flight validator run.
 // An empty Findings slice means the validator reported no findings.
 type PreflightResult struct {
 	Findings []Finding
+	// Calls is how many light calls the reading took; zero outside light.
+	Calls int
+	// Excerpted names the reading entries a light call judged on excerpts.
+	Excerpted []string
 }
 
 // HasBlocking reports whether any finding blocks entry creation. Currently
@@ -65,7 +72,7 @@ func (r *PreflightResult) HasBlocking() bool {
 // `.sdd/config.yaml` (empty string when unset — English default). It feeds
 // the language-drift check which flags entries whose description prose does
 // not match the configured language.
-func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string) (*PreflightResult, error) {
+func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph *model.Graph, configuredLanguage string, kindFit *model.KindFit) (*PreflightResult, error) {
 	ct := selectCheckType(entry, graph)
 
 	vocab, err := refKindVocabulary(graph)
@@ -74,6 +81,7 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 	}
 	pctx := assembleContext(entry, graph, ct, configuredLanguage)
 	pctx.RefKindVocabulary = vocab
+	pctx.KindFit = kindFit
 
 	req, err := renderPreflightPrompt(ct, pctx)
 	if err != nil {
@@ -86,6 +94,10 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 	}
 	return result, nil
 }
+
+// lightAxes is what the prose verifier's axes render for: one part of a split
+// reading, or the rubric.
+type lightAxes struct{ Partial, Rubric bool }
 
 // --- internal helpers ---
 
@@ -183,7 +195,44 @@ type preflightContext struct {
 	// load is failable). The ref-meta consistency rubric renders it instead of
 	// restating the kinds, so the vocabulary is defined once.
 	RefKindVocabulary string
+
+	// rubric marks the rules page PreflightRubric renders: the guard methods
+	// below then hold only when the entry meets the guard. Pre-flight's own
+	// prompt carries every rule and lets its model apply the guards.
+	rubric      bool
+	entry       *model.Entry
+	closedKinds []model.Kind
+	KindFit     *model.KindFit
 }
+
+// ProposedKind guards a rule on the proposed entry's kind and, when layers
+// are given, its layer.
+func (p *preflightContext) ProposedKind(kind string, layers ...string) bool {
+	if !p.rubric {
+		return true
+	}
+	return string(p.entry.Kind) == kind && (len(layers) == 0 || slices.Contains(layers, string(p.entry.Layer)))
+}
+
+// ClosesKind guards a rule on the kind of an entry the proposed entry closes.
+func (p *preflightContext) ClosesKind(kinds ...string) bool {
+	if !p.rubric {
+		return true
+	}
+	return slices.ContainsFunc(p.closedKinds, func(k model.Kind) bool { return slices.Contains(kinds, string(k)) })
+}
+
+// Rubric reports the rules page PreflightRubric renders.
+func (p *preflightContext) Rubric() bool { return p.rubric }
+
+// HasRefs guards a rule on the proposed entry carrying refs.
+func (p *preflightContext) HasRefs() bool { return !p.rubric || len(p.entry.Refs) > 0 }
+
+// HasCloses guards a rule on the proposed entry carrying closes.
+func (p *preflightContext) HasCloses() bool { return !p.rubric || len(p.entry.Closes) > 0 }
+
+// Settled guards a rule on the proposed entry being a settled directive.
+func (p *preflightContext) Settled() bool { return !p.rubric || p.entry.IsSettled() }
 
 // selectCheckType determines the pre-flight check type from entry properties and graph context.
 // Dispatch is kind-aware: the same structural shape (signal with closes) routes to different
@@ -273,6 +322,7 @@ func assembleContext(entry *model.Entry, graph *model.Graph, ct checkType, confi
 	pctx := &preflightContext{
 		ProposedEntry:      formatProposedEntryForPreflight(entry),
 		ConfiguredLanguage: configuredLanguage,
+		entry:              entry,
 	}
 
 	// Referenced entries. Each carries its derived status (active / closed /
@@ -325,6 +375,7 @@ func assembleContext(entry *model.Entry, graph *model.Graph, ct checkType, confi
 				continue
 			}
 			parts = append(parts, FormatEntryForPrompt(e))
+			pctx.closedKinds = append(pctx.closedKinds, e.Kind)
 		}
 		if len(parts) > 0 {
 			pctx.ClosedEntries = strings.Join(parts, "\n\n---\n\n")
@@ -533,6 +584,12 @@ func renderPreflightPrompt(ct checkType, pctx *preflightContext) (llm.Request, e
 	}
 	if err := tmpl.ExecuteTemplate(&userB, base+"_user", pctx); err != nil {
 		return llm.Request{}, fmt.Errorf("executing template %s_user: %w", base, err)
+	}
+	if pctx.KindFit != nil {
+		userB.WriteString("\n\n")
+		if err := tmpl.ExecuteTemplate(&userB, "kind_fit", pctx.KindFit); err != nil {
+			return llm.Request{}, fmt.Errorf("executing template kind_fit: %w", err)
+		}
 	}
 
 	return llm.Request{

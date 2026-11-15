@@ -40,6 +40,14 @@ type InitCmd struct {
 	// machine-local config.
 	DialogueMode model.DialogueMode
 
+	// VerifyMode, when set, records how carefully drafts are checked against
+	// the graph as verify.mode in the committed config.yaml.
+	VerifyMode model.VerifyMode
+
+	// VerifierRunner, when set, records what runs the deep verifier on this
+	// machine in the machine-local config.
+	VerifierRunner model.VerifierRunner
+
 	// Language is the graph authoring language (locale code) to record in
 	// .sdd/config.yaml on fresh init. Empty means "use the default behavior"
 	// — FormatConfig keeps the commented hint, so the graph stays English.

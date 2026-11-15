@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 )
@@ -56,8 +58,78 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 				return nil, fmt.Errorf("%s = %s is not valid for the %s config: %s", cmd.Key, cmd.Value, layer, ignored.Reason)
 			}
 		}
+		if strings.HasPrefix(cmd.Key, "verify.") {
+			if err := h.verifyWriteRefusal(cmd, patched); err != nil {
+				return nil, err
+			}
+		}
 		return patched, nil
 	})
+}
+
+// verifyWriteRefusal judges cmd.Key alone over the layers as they stand
+// after the write: a read ignores such a value with a warning, a write
+// refuses it.
+func (h *Handler) verifyWriteRefusal(cmd *command.ConfigSetCmd, patched []byte) error {
+	var global model.BaseConfig
+	switch {
+	case cmd.Target == "global":
+		cfg, err := repos.ParseGlobalConfig(patched)
+		if err != nil {
+			return err
+		}
+		global = cfg.BaseConfig
+	case h.repos != nil:
+		cfg, err := h.repos.Registry().Load()
+		if err != nil {
+			return err
+		}
+		global = cfg.BaseConfig
+	}
+	var committed, local *model.PerRepoConfig
+	if h.sddDir != "" {
+		file, err := h.repoConfigFile()
+		if err != nil {
+			return err
+		}
+		committed, err = readConfigLayer(file)
+		if err != nil {
+			return err
+		}
+		committed = model.HonoredCommitted(committed)
+	}
+	switch {
+	case cmd.Target == "local":
+		cfg, err := model.ParseConfig(patched)
+		if err != nil {
+			return err
+		}
+		local = model.HonoredLocal(cfg)
+	case h.sddDir != "":
+		file, err := h.localConfigFile()
+		if err != nil {
+			return err
+		}
+		local, err = readConfigLayer(file)
+		if err != nil {
+			return err
+		}
+		local = model.HonoredLocal(local)
+	}
+	return model.VerifyKeyRefusal(cmd.Key, global, committed, local, meta.ConfigLayerFiles(h.sddDir))
+}
+
+// readConfigLayer parses one per-repo layer, nil when its file is missing.
+func readConfigLayer(file configFile) (*model.PerRepoConfig, error) {
+	data, err := file.read()
+	if err != nil || data == nil {
+		return nil, err
+	}
+	cfg, err := model.ParseConfig(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", file.path, err)
+	}
+	return cfg, nil
 }
 
 // ConfigUnset removes one key from the chosen config layer. No schema check:

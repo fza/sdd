@@ -31,13 +31,19 @@ type ConfigValue struct {
 // layer sets a key — the values a run actually uses, so `sdd config` answers
 // "what will happen" rather than "what is written down".
 var configDefaults = map[string]string{
-	"graph_dir":           DefaultGraphDir,
-	"llm.provider":        DefaultLLMProvider,
-	"llm.model":           DefaultLLMModel,
-	"llm.concurrency":     strconv.Itoa(DefaultLLMConcurrency),
-	"llm.extract_timeout": DefaultLLMExtractTimeout.String(),
-	"sync.cooldown":       DefaultSyncCooldown,
-	"dialogue.mode":       string(DialogueGuided),
+	"graph_dir":            DefaultGraphDir,
+	"llm.provider":         DefaultLLMProvider,
+	"llm.model":            DefaultLLMModel,
+	"llm.concurrency":      strconv.Itoa(DefaultLLMConcurrency),
+	"llm.extract_timeout":  DefaultLLMExtractTimeout.String(),
+	"sync.cooldown":        DefaultSyncCooldown,
+	"dialogue.mode":        string(DialogueGuided),
+	"verify.mode":          string(DefaultVerifyMode),
+	"verify.skip":          string(VerifierSkipFailure),
+	"verify.runner":        string(VerifierRunnerSubagent),
+	"verify.prefilter":     strconv.FormatBool(DefaultGroundingPrefilter),
+	"verify.claude.model":  DefaultVerifierClaude.Model,
+	"verify.claude.effort": DefaultVerifierClaude.Effort,
 
 	"sessions.retention": DefaultSessionRetention,
 }

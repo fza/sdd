@@ -249,6 +249,16 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
+	if cmd.VerifyMode != "" {
+		changed, err := writeVerifyMode(configPath, cmd.VerifyMode)
+		if err != nil {
+			return err
+		}
+		if changed {
+			touched = append(touched, configPath)
+		}
+	}
+
 	// Housekeeping applied on every init (idempotent — ensureGitignoreEntries
 	// skips entries already present). Covers fresh checkouts and upgrades
 	// where a new entry has been added to the required set. The index no
@@ -1014,6 +1024,7 @@ func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
 	settings := []struct{ key, value string }{
 		{"participant", cmd.Participant},
 		{"dialogue.mode", string(cmd.DialogueMode)},
+		{"verify.runner", string(cmd.VerifierRunner)},
 	}
 	configLocalPath := filepath.Join(sddDir, "config.local.yaml")
 	for _, setting := range settings {
@@ -1044,4 +1055,25 @@ func writeLocalSettings(sddDir string, cmd *command.InitCmd) error {
 		}
 	}
 	return nil
+}
+
+// writeVerifyMode records verify.mode in the committed config at configPath,
+// keeping every other key, and reports whether the file changed.
+func writeVerifyMode(configPath string, mode model.VerifyMode) (bool, error) {
+	existing, err := os.ReadFile(configPath)
+	if err != nil {
+		return false, fmt.Errorf("reading %s: %w", configPath, err)
+	}
+	updated, err := model.SetYAMLField(existing, "verify.mode", string(mode))
+	if err != nil {
+		return false, fmt.Errorf("updating %s: %w", configPath, err)
+	}
+	if bytes.Equal(existing, updated) {
+		return false, nil
+	}
+	err = os.WriteFile(configPath, updated, 0o644)
+	if err != nil {
+		return false, fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return true, nil
 }

@@ -14,6 +14,9 @@ type WritingGuideQuery struct {
 	// the entry performs; the targets' bodies stay out, since judging the
 	// draft against its neighborhood is the graph-fit guide's scope.
 	ClosureTargets []model.ClosureTarget
+	// Changed confines the check to the passages changed since the guide
+	// last judged the draft; empty judges the whole draft.
+	Changed []string
 }
 
 // GuideSeverity weighs a writing-guide finding. Nothing gates on it — the

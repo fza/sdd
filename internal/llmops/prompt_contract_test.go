@@ -36,7 +36,7 @@ func TestCheckerPromptContract(t *testing.T) {
 		{
 			name: "preflight",
 			run: func(r llm.Runner) error {
-				_, err := llmops.Preflight(t.Context(), r, entry, graph, "")
+				_, err := llmops.Preflight(t.Context(), r, entry, graph, "", nil)
 				return err
 			},
 			fields:     []string{"observation", "category", "severity"},

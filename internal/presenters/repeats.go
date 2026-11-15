@@ -9,7 +9,7 @@ import (
 
 // GatherWayBack is the call a pointer names to have an entry served in full
 // again.
-const GatherWayBack = "show with its id and its tag left out of held"
+const GatherWayBack = "show or gather with its id and its tag left out of held"
 
 // Repeats applies the no-repeat rule to a serve under the anchor proof: an
 // entry the call proves it holds prints as its pointer (ID and brief, never

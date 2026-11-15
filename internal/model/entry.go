@@ -18,6 +18,15 @@ const (
 	TypeDecision EntryType = "decision"
 )
 
+// GroundingSkipped marks an entry whose capture bypassed the grounding gate;
+// it is written with low confidence.
+const GroundingSkipped = "skipped"
+
+// VerificationSkipped marks an entry written without a verifier's
+// verdict: the user skipped the deep verifier or a pre-flight answer cut at
+// the token cap.
+const VerificationSkipped = "skipped"
+
 type Layer string
 
 const (
@@ -292,11 +301,13 @@ type Entry struct {
 	// Involvement is the list of involvement triples on a kind: focus
 	// decision. Each triple binds a target entry to (resolved) actors and
 	// (resolved) when scope.
-	Involvement []Involvement
-	Preflight   string    // "skipped" or "error" annotation from pre-flight validation
-	Attachments []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
-	Summary     string    // LLM-generated summary: this entry + direct relationships
-	Warnings    []Warning // validation issues found during graph construction
+	Involvement  []Involvement
+	Preflight    string    // "skipped" or "error" annotation from pre-flight validation
+	Grounding    string    // GroundingSkipped when the capture bypassed the grounding gate; empty otherwise
+	Verification string    // VerificationSkipped when the user skipped a verifier; empty otherwise
+	Attachments  []string  // filenames: discovered from the co-located attachment directory on read, declared from staged handles at the write gate
+	Summary      string    // LLM-generated summary: this entry + direct relationships
+	Warnings     []Warning // validation issues found during graph construction
 	// Embedded marks a base entry compiled into the sdd binary (base
 	// procedures) rather than loaded from the graph directory. Set by the
 	// loader, never serialized. Write-side surfaces (summary regeneration,
@@ -448,6 +459,8 @@ type frontmatter struct {
 	ServeBudget  int               `yaml:"serveBudget,omitempty"`
 	Rounds       int               `yaml:"rounds,omitempty"`
 	Preflight    string            `yaml:"preflight,omitempty"`
+	Grounding    string            `yaml:"grounding,omitempty"`
+	Verification string            `yaml:"verification,omitempty"`
 	Summary      string            `yaml:"summary,omitempty"`
 }
 
@@ -534,6 +547,8 @@ func ParseEntry(filename, content string) (*Entry, error) {
 		FocusActors:  fm.FocusActors,
 		FocusWhen:    fm.FocusWhen,
 		Preflight:    fm.Preflight,
+		Grounding:    fm.Grounding,
+		Verification: fm.Verification,
 		Summary:      fm.Summary,
 		Content:      strings.TrimSpace(body),
 		Time:         idParts.Time,
@@ -766,6 +781,8 @@ func FormatFrontmatter(e *Entry) string {
 		FocusActors:  e.FocusActors,
 		FocusWhen:    e.FocusWhen,
 		Preflight:    e.Preflight,
+		Grounding:    e.Grounding,
+		Verification: e.Verification,
 		Summary:      e.Summary,
 	}
 

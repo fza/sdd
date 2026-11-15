@@ -45,6 +45,11 @@ var kindQuestions = map[model.Kind]string{
 	model.KindProcedure:  "How does a playbook move run?",
 }
 
+// KindQuestion is the one question entries of kind answer.
+func KindQuestion(kind model.Kind) string {
+	return kindQuestions[kind]
+}
+
 // overviewFactContent renders the overview fact from its embedded template,
 // generating both kind lists from the model enumeration.
 func overviewFactContent() (string, error) {
