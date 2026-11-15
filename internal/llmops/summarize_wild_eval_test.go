@@ -31,6 +31,7 @@ import (
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/sdd/pkg/llm"
 )
 
@@ -85,7 +86,7 @@ Set verdict to "fail" when any axis fails, and name each problem concretely.`,
 
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
-		res, err := judge.Run(ctx, req)
+		res, err := judge.Run(secrets.WithNoNewParts(ctx), req)
 		if err != nil {
 			lastErr = err
 			continue

@@ -118,8 +118,7 @@ func (h *Handler) Summarize(ctx context.Context, cmd *command.SummarizeCmd) erro
 			}
 
 			// LLM call without the graph lock; the injected runner bounds it.
-			// The entry is stored, so the prompt carries no new parts.
-			output, err := h.llmRunner.Run(secrets.WithNewParts(ctx), req)
+			output, err := h.llmRunner.Run(secrets.WithNoNewParts(ctx), req)
 			if err != nil {
 				return fmt.Errorf("summarizing %s: %w", entry.ID, err)
 			}
