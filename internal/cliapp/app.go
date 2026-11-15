@@ -1049,7 +1049,7 @@ func lintCmd() *cli.Command {
 			// Index health rides along when an embedding provider is
 			// configured; a store that can't be resolved (no .sdd, no
 			// embedder) degrades to the graph-only report, matching the
-			// finder's silent posture.
+			// finder's silent posture. An invalid repo_id is an error finding.
 			embCfg, err := resolveEmbeddingConfig(cmd)
 			if err != nil {
 				return err
@@ -1057,7 +1057,15 @@ func lintCmd() *cli.Command {
 			var idxDir string
 			if embCfg.Provider != "" {
 				if emb, err := localembed.New(embCfg); err == nil {
-					idxDir, _ = resolveIndexStore(emb)
+					dir, err := resolveIndexStore(emb)
+					switch {
+					case err == nil:
+						idxDir = dir
+					case errors.Is(err, errInvalidIndexRepoID):
+						result.Findings = append(result.Findings, query.LintFinding{
+							Category: "index", Code: "invalid-repo-id", Severity: query.LintError, Message: err.Error(),
+						})
+					}
 				}
 			}
 			f.IndexLint(query.IndexLintQuery{

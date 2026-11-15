@@ -49,6 +49,10 @@ func TestValidateRepoID(t *testing.T) {
 		"github.com/re po",    // invalid char
 		"github.com/repo/",    // trailing empty segment
 		"git@github.com/repo", // invalid char (@)
+		"evil.example/../..",  // parent segments
+		"host.com/../x",       // parent segment
+		"host.com/./x",        // current-directory segment
+		"host.com/x/..",       // trailing parent segment
 	}
 	for _, id := range invalid {
 		if err := ValidateRepoID(id); err == nil {
@@ -81,7 +85,7 @@ func TestDeriveRepoID(t *testing.T) {
 			t.Errorf("DeriveRepoID(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
-	for _, in := range []string{"", "not-a-url", "/local/path/only", "file:///local/repo"} {
+	for _, in := range []string{"", "not-a-url", "/local/path/only", "file:///local/repo", "git@evil.example:../.."} {
 		if got, err := DeriveRepoID(in); err == nil {
 			t.Errorf("DeriveRepoID(%q) = %q, want error", in, got)
 		}
