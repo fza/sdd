@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/meta"
@@ -22,6 +23,10 @@ import (
 func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed *bool) error {
 	if cmd.Bump {
 		return fmt.Errorf("--bump raises the project's minimum_version; run it in %s", cmd.ProjectDir)
+	}
+	committedDir, err := committedProjectDir(cmd)
+	if err != nil {
+		return err
 	}
 	projectRoot := cmd.ProjectDir
 	if !filepath.IsAbs(projectRoot) {
@@ -85,15 +90,6 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		}
 	}
 
-	// The committed pointer is every clone's: relative, and changed only by a typed
-	// --project-dir, never by the machine-local override init followed.
-	committedDir := cmd.ProjectDir
-	if filepath.IsAbs(committedDir) {
-		rel, relErr := filepath.Rel(cmd.RepoRoot, committedDir)
-		if relErr == nil {
-			committedDir = filepath.ToSlash(rel)
-		}
-	}
 	var touched []string
 	if !configExisted {
 		err = os.MkdirAll(sddDir, 0o755)
@@ -297,4 +293,43 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 		return fmt.Errorf("git commit: %w", err)
 	}
 	return nil
+}
+
+// committedProjectDir is the project_dir the committed pointer records: every
+// clone's, so relative. A typed absolute path becomes relative between the
+// real folders; one that leaves the repository's parent describes this
+// machine's layout and belongs in the local file.
+func committedProjectDir(cmd *command.InitCmd) (string, error) {
+	if !filepath.IsAbs(cmd.ProjectDir) {
+		return cmd.ProjectDir, nil
+	}
+	repoRoot := resolvedPath(cmd.RepoRoot)
+	rel, err := filepath.Rel(repoRoot, resolvedPath(cmd.ProjectDir))
+	if err != nil {
+		return "", fmt.Errorf("--project-dir %s: %w", cmd.ProjectDir, err)
+	}
+	rel = filepath.ToSlash(rel)
+	if strings.HasPrefix(rel, "../../") || rel == "../.." {
+		return "", fmt.Errorf("--project-dir %s lies outside %s, beside which a committed pointer names its project; pass it relative to the repository, or set the absolute path as project_dir in %s", cmd.ProjectDir, filepath.Dir(repoRoot), filepath.Join(cmd.RepoRoot, model.SDDDirName, "config.local.yaml"))
+	}
+	return rel, nil
+}
+
+// resolvedPath resolves symlinks in path, through its nearest existing
+// ancestor when path does not exist yet.
+func resolvedPath(path string) string {
+	path = filepath.Clean(path)
+	var rest []string
+	for {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			return filepath.Join(append([]string{resolved}, rest...)...)
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return filepath.Join(append([]string{path}, rest...)...)
+		}
+		rest = append([]string{filepath.Base(path)}, rest...)
+		path = parent
+	}
 }

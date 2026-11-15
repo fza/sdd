@@ -77,6 +77,7 @@ sdd init                                           # repeat in the work reposito
 ```
 
 - A folder outside any repository is created when missing and gets its own repository through `git init`. A folder that is a repository root, such as an empty clone, is used as is.
+- An absolute `--project-dir` is recorded relative to the repository, between the real folders. One outside the repository's parent folder is refused: pass it relative, or set the absolute path as `project_dir` in `.sdd/config.local.yaml`.
 - The project folder must not lie inside the work repository or inside another repository.
 - `--graph-dir` and `--language` configure the new project. Beside an existing project they are refused: run `sdd init` with them in the project.
 - Only a typed `--project-dir` sets a project up. A recorded `project_dir` naming a missing folder is refused with advice to clone the project there, so a teammate's clone never grows a second, empty graph.

@@ -604,3 +604,47 @@ func TestProjectDirInsideTheWorkRepositoryIsRefused(t *testing.T) {
 		t.Errorf("a refused capture should write nothing, found %v", entries)
 	}
 }
+
+// A typed absolute path spelled through a symlink still records the short
+// relative pointer the real folders give.
+func TestInitRecordsAnAbsoluteProjectDirThroughASymlinkRelative(t *testing.T) {
+	work, project := pointedRepos(t)
+	if err := os.RemoveAll(filepath.Join(work, ".sdd")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Dir(project), link); err != nil {
+		t.Fatal(err)
+	}
+
+	runApp(t, work, "init", "--project-dir", filepath.Join(link, "work-sdd"), "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	written := readFile(t, filepath.Join(work, ".sdd", "config.yaml"))
+	if !strings.Contains(written, "project_dir: ../work-sdd\n") {
+		t.Errorf("the committed pointer should be relative to the real folders:\n%s", written)
+	}
+}
+
+// A typed absolute path beyond the repository's parent would commit one
+// machine's layout, so it belongs in the local file.
+func TestInitRefusesToCommitAFarAbsoluteProjectDir(t *testing.T) {
+	work, _ := pointedRepos(t)
+	if err := os.RemoveAll(filepath.Join(work, ".sdd")); err != nil {
+		t.Fatal(err)
+	}
+	far := filepath.Join(canonicalTemp(t), "deep", "far-sdd")
+	if err := os.MkdirAll(filepath.Join(far, ".sdd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(far, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/far\ndefault_branch: main\nlanguage: en\n")
+	initRepo(t, far)
+
+	_, err := runAppErr(t, work, "init", "--project-dir", far, "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	if err == nil || !strings.Contains(err.Error(), "config.local.yaml") {
+		t.Fatalf("a far absolute project_dir should be refused naming the local file, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(work, ".sdd")); !os.IsNotExist(statErr) {
+		t.Errorf("a refused init should write nothing in the work repository, stat err = %v", statErr)
+	}
+}
