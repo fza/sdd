@@ -614,6 +614,43 @@ func TestProjectDirInsideTheWorkRepositoryIsRefused(t *testing.T) {
 	}
 }
 
+func TestProjectDirContainingTheWorkRepositoryIsRefused(t *testing.T) {
+	cases := []struct {
+		name     string
+		repoized bool
+	}{
+		{name: "folder outside any repository"},
+		{name: "repository holding the work repository", repoized: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work, project := pointedRepos(t)
+			parent := filepath.Dir(work)
+			if err := os.MkdirAll(filepath.Join(parent, ".sdd", "graph"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(parent, ".sdd", "config.yaml"), readFile(t, filepath.Join(project, ".sdd", "config.yaml")))
+			writeFile(t, filepath.Join(parent, ".sdd", "config.local.yaml"), "participant: Ada\n")
+			if tc.repoized {
+				initRepo(t, parent)
+			}
+			writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: ..\n")
+
+			_, err := runAppErr(t, work,
+				"new", "signal", "tactical", "A project holding its work repository must be refused.",
+				"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.",
+			)
+
+			if err == nil || !strings.Contains(err.Error(), "contains the work repository") {
+				t.Fatalf("a project_dir containing the work repository should be refused: %v", err)
+			}
+			if entries := graphEntries(t, filepath.Join(parent, ".sdd", "graph")); len(entries) != 0 {
+				t.Errorf("a refused capture should write nothing, found %v", entries)
+			}
+		})
+	}
+}
+
 // A typed absolute path spelled through a symlink still records the short
 // relative pointer the real folders give.
 func TestInitRecordsAnAbsoluteProjectDirThroughASymlinkRelative(t *testing.T) {

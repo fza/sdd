@@ -177,6 +177,21 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 			mention:    "lies inside the repository",
 		},
 		{
+			name:       "folder containing the work repository",
+			projectDir: "..",
+			args:       []string{"--language", "en"},
+			mention:    "contains the work repository",
+		},
+		{
+			name:       "repository containing the work repository",
+			projectDir: "..",
+			prepare: func(t *testing.T, work, project string) {
+				initRepo(t, filepath.Dir(work))
+			},
+			args:    []string{"--language", "en"},
+			mention: "contains the work repository",
+		},
+		{
 			name:       "folder inside another repository",
 			projectDir: "../work-sdd/nested",
 			prepare: func(t *testing.T, work, project string) {

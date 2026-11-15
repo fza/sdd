@@ -66,7 +66,7 @@ app-sdd/                     # only sdd: commits
 - `sdd config set --local project_dir <path>` writes the work repository's own `.sdd/config.local.yaml`. In a repository holding its own project it is refused: point a repository with `sdd init --project-dir`.
 - Commands run in the work repository act on the project: captures commit there, `sdd serve` serves it, the write gate reads its `meta.json`, `sdd repo add` declares the dependency there, and `sdd sync --pull` pulls its repository.
 - The work stays in the work repository: `sdd init` installs the skills and registers the MCP server there, `sdd wip start` branches it, and closure evidence comes from its history.
-- A `graph_dir` leading into another repository is refused. Make that graph a project of its own and point at it with `project_dir`. A `graph_dir` leading out of the project into no repository is refused too, by `sdd init` as by every later command, and so is a `project_dir` naming a folder inside the work repository.
+- A `graph_dir` leading into another repository is refused. Make that graph a project of its own and point at it with `project_dir`. A `graph_dir` leading out of the project into no repository is refused too, by `sdd init` as by every later command, and so is a `project_dir` naming a folder inside the work repository or a folder containing it.
 
 `sdd init --project-dir` writes the pointer and sets up a missing project:
 
@@ -78,7 +78,7 @@ sdd init                                           # repeat in the work reposito
 
 - A folder outside any repository is created when missing and gets its own repository through `git init`. A folder that is a repository root, such as an empty clone, is used as is.
 - An absolute `--project-dir` is recorded relative to the repository, between the real folders. One outside the repository's parent folder is refused: pass it relative, or set the absolute path as `project_dir` in `.sdd/config.local.yaml`.
-- The project folder must not lie inside the work repository or inside another repository.
+- The project folder must not lie inside the work repository or inside another repository, and must not contain the work repository.
 - `--graph-dir` and `--language` configure the new project. Beside an existing project they are refused: run `sdd init` with them in the project.
 - Only a typed `--project-dir` sets a project up. A recorded `project_dir` naming a missing folder is refused with advice to clone the project there, so a teammate's clone never grows a second, empty graph.
 - `--bump` is refused in a work repository. Run it in the project.
