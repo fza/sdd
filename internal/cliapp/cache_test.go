@@ -46,6 +46,10 @@ func TestCachePruneCommand(t *testing.T) {
 	if err := os.MkdirAll(clone, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	undropped := filepath.Join(f.root, "cache", "sdd", "github.com", "acme", "graph", ".git")
+	if err := os.MkdirAll(undropped, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	f.write(t, "config/sdd/config.yaml", "participant: Global Author\nrepos:\n  - repo_id: github.com/acme/kept\n    clone_url: git@github.com:acme/kept.git\n")
 	f.write(t, "cache/sdd/.disconnected/"+url.PathEscape("github.com/acme/dropped"), "")
 	r := f.run(t, "cache", "prune")
@@ -57,6 +61,9 @@ func TestCachePruneCommand(t *testing.T) {
 	}
 	if _, err := os.Stat(clone); !os.IsNotExist(err) {
 		t.Errorf("the clone no connection names should be gone, stat says %v", err)
+	}
+	if _, err := os.Stat(undropped); err != nil {
+		t.Errorf("a clone no repo remove dropped should stay, stat says %v", err)
 	}
 	info := f.run(t, "info")
 	if !strings.Contains(info.stdout, "Cache pruning: last run") {
