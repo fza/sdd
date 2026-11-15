@@ -1,13 +1,16 @@
 package gollm_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/networkteam/slogutils"
 	upstreamllm "github.com/teilomillet/gollm/llm"
 
 	gollmrunner "github.com/networkteam/sdd/internal/llm/gollm"
@@ -83,12 +86,17 @@ func TestAutoFallsBackWhenEndpointRefusesJSONSchema(t *testing.T) {
 	server := testsupport.NewOpenAIServer(t, testsupport.OpenAIBehaviour{RefuseJSONSchema: true, Answer: validFindings})
 	runner := newStructuredRunner(t, server.URL, "glm-5.3-flash", model.StructuredOutputAuto)
 
-	result, err := runner.Run(context.Background(), llm.Request{SystemPrompt: "SYSTEM", UserPrompt: "USER", ResponseSchema: findingsSchema})
+	var logged bytes.Buffer
+	ctx := slogutils.WithLogger(context.Background(), slog.New(slog.NewTextHandler(&logged, nil)))
+	result, err := runner.Run(ctx, llm.Request{SystemPrompt: "SYSTEM", UserPrompt: "USER", ResponseSchema: findingsSchema})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if result.Text != validFindings {
 		t.Errorf("fallback answer should be served, got %q", result.Text)
+	}
+	if !strings.Contains(logged.String(), "does not support JSON schema mode") {
+		t.Errorf("the switch should log the refusal it acted on, got %q", logged.String())
 	}
 	if got := server.ResponseFormats(); !slices.Equal(got, []string{"json_schema", "json_object"}) {
 		t.Errorf("a refused json_schema request should be retried once in json_object mode, got %v", got)

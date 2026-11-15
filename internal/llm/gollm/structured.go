@@ -81,7 +81,7 @@ func (so *structuredOutput) run(ctx context.Context, r *Runner, req llm.Request)
 		return result, err
 	}
 	if _, known := jsonObjectEndpoints.LoadOrStore(so.endpointKey, true); !known {
-		slogutils.FromContext(ctx).Info("endpoint refuses json_schema for the model, using json_object mode", "provider", r.provider, "model", r.model)
+		slogutils.FromContext(ctx).Info("endpoint refuses json_schema for the model, using json_object mode", "provider", r.provider, "model", r.model, "refusal", err)
 	}
 	return so.runJSONObject(ctx, r, req)
 }
