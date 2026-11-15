@@ -28,7 +28,8 @@ type Options struct {
 
 	// LocalClient marks the connecting client as sharing this filesystem
 	// (stdio transport). Local clients get absolute paths in read results
-	// (read_attachment) so they can read files directly instead of paging.
+	// (read_attachment) so they can read files directly instead of paging,
+	// and only they may stage a file by path (stage_attachment).
 	LocalClient bool
 	// Version is the SDD version the info tool reports, and the server
 	// implementation version under New.

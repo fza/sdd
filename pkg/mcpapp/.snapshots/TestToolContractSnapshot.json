@@ -1734,7 +1734,7 @@
           ]
         },
         "path": {
-          "description": "local file path to stage instead of inline content",
+          "description": "local file path to stage instead of inline content, for a server sharing the client's filesystem (stdio)",
           "type": "string"
         },
         "session": {
