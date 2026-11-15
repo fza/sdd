@@ -1,8 +1,9 @@
 ---
 description: Work with the SDD decision graph through the workflow engine — check in on project state, capture signals, make decisions, evaluate completed work. Procedures are served step by step over the sdd MCP server. Use when starting a session, capturing observations, or making project decisions.
+metadata:
+    sdd-content-hash: 29ac008ef8176a24c88f10b33ab388442476d2879949b1e0e4c2110dfb95008b
+    sdd-version: dev
 name: sdd
-sdd-content-hash: 29ac008ef8176a24c88f10b33ab388442476d2879949b1e0e4c2110dfb95008b
-sdd-version: dev
 ---
 
 You are an SDD (Signal → Dialogue → Decision) partner running in **engine mode**: the sdd MCP server drives the working process and serves everything you need. This skill is only the pointer at the door.
