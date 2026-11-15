@@ -79,10 +79,12 @@ func TestAutonomousDialogue_OverrideStaysTheUsers(t *testing.T) {
 	session.Report(t, serve.Instance, captureDraft())
 	serve = session.Decide(t, serve.Instance, "playback", "confirm", nil, "the draft holds")
 	proctest.RequireStep(t, serve, "reviseOrOverride")
-	if _, err := session.DecideErr(t, serve.Instance, "reviseOrOverride", "override", nil, "the finding does not apply"); err == nil || !strings.Contains(err.Error(), "stays the user's choice") {
+	if _, err := session.DecideErr(t, serve.Instance, "reviseOrOverride", "override", nil, "the finding does not apply"); err == nil || !strings.Contains(err.Error(), "unattended rule") {
 		t.Fatalf("the agent should not override a failed pre-flight on its own, got %v", err)
 	}
 	world.LLM.PreflightFindings = nil
+	world.SetDialogue("guided")
+	session.Refresh(t)
 	serve = session.Answer(t, serve.Instance, "reviseOrOverride", "override", nil, "override it, the finding does not apply")
 	proctest.RequireStep(t, serve, "verifySummary")
 }

@@ -160,6 +160,17 @@ type WorkflowServe struct {
 	// Framing names the framing blocks the served step carries, for
 	// FramingBlocksFor; nil carries them all.
 	Framing []string
+	// Parked is set when an autonomous session parked the move for a person.
+	Parked *WorkflowParked
+}
+
+// WorkflowParked is where an autonomous session parked a move: the step, the
+// one-line reason, since when, and the call a person resumes it with.
+type WorkflowParked struct {
+	Step   string
+	Reason string
+	Since  time.Time
+	Resume string
 }
 
 // ComposeInstructions joins host-recomposed unit text (e.g. the deduped lane
@@ -173,6 +184,9 @@ type WorkflowInstanceSummary struct {
 	Instance  string
 	Procedure string
 	Step      string
+	// Parked holds where an autonomous session parked the move; nil while it
+	// is not parked.
+	Parked *WorkflowParked
 }
 
 type WorkflowSessionSummary struct {
@@ -1632,6 +1646,9 @@ func (w *WorkflowSession) publicServe(serve *engine.Serve) (*WorkflowServe, erro
 		result.PendingOperation = pending
 	}
 	result.Cancellation = workflowCancellation(serve.Cancellation)
+	if parked := serve.Parked; parked != nil {
+		result.Parked = workflowParked(w.ID(), parked.Step, parked.Reason, parked.Since)
+	}
 	if serve.Chooser != nil {
 		chooser := &WorkflowChooser{Chooser: serve.Chooser.Chooser, Kind: ChooserKind(serve.Chooser.Kind)}
 		for _, option := range serve.Chooser.Options {
@@ -2027,6 +2044,7 @@ func deriveWorkflowSummary(id SessionID, events []engine.Event) WorkflowSessionS
 		step      string
 		running   bool
 		shell     bool
+		parked    *WorkflowParked
 	}
 	states := map[string]*state{}
 	var order []string
@@ -2053,8 +2071,17 @@ func deriveWorkflowSummary(id SessionID, events []engine.Event) WorkflowSessionS
 			}
 		case engine.EventTransition:
 			if item := states[event.Instance]; item != nil {
+				item.parked = nil
 				if to, ok := event.Data["to"].(string); ok && !engine.IsEndTarget(to) {
 					item.step = to
+				}
+			}
+		case engine.EventParked:
+			if item := states[event.Instance]; item != nil {
+				if held, _ := event.Data["held"].(bool); held {
+					step, _ := event.Data["step"].(string)
+					reason, _ := event.Data["reason"].(string)
+					item.parked = workflowParked(id, step, reason, event.TS)
 				}
 			}
 		case engine.EventMutationOutcome:
@@ -2075,9 +2102,13 @@ func deriveWorkflowSummary(id SessionID, events []engine.Event) WorkflowSessionS
 		if item == nil || !item.running || item.shell {
 			continue
 		}
-		result.Open = append(result.Open, WorkflowInstanceSummary{Instance: instance, Procedure: item.procedure, Step: item.step})
+		result.Open = append(result.Open, WorkflowInstanceSummary{Instance: instance, Procedure: item.procedure, Step: item.step, Parked: item.parked})
 	}
 	return result
+}
+
+func workflowParked(session SessionID, step, reason string, since time.Time) *WorkflowParked {
+	return &WorkflowParked{Step: step, Reason: reason, Since: since, Resume: "resume_session " + string(session)}
 }
 
 func workflowLabel(events []engine.Event) string {

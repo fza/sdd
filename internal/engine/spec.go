@@ -225,6 +225,9 @@ type Step struct {
 	// Delegable hands a user chooser to the agent in an autonomous session;
 	// an unmarked one stays the user's in every mode.
 	Delegable bool
+	// Unattended hands a user chooser guarding a check to the agent in an
+	// autonomous session, bounded to one choice.
+	Unattended *Unattended
 	// Deliver names the state fields a task's gate delivers into the
 	// dispatching instance when one of its transitions fires: a transition to
 	// end(completed) is the final delivery, any other step an interim one
@@ -335,6 +338,15 @@ type dispatchYAML struct {
 	Send      map[string]string `yaml:"send"`
 }
 
+// Unattended bounds an autonomous session at a user chooser guarding a check:
+// the agent answers only Answer, with its reason, never user words. Limit > 0
+// parks the instance at the step once the agent answered it Limit times,
+// until a person answers it.
+type Unattended struct {
+	Answer string `yaml:"answer"`
+	Limit  int    `yaml:"limit"`
+}
+
 type transitionYAML struct {
 	When      string `yaml:"when"`
 	Otherwise string `yaml:"otherwise"`
@@ -354,6 +366,7 @@ type stepYAML struct {
 	Goal          string           `yaml:"goal"`
 	ServeDelta    []string         `yaml:"serveDelta"`
 	Delegable     bool             `yaml:"delegable"`
+	Unattended    *Unattended      `yaml:"unattended"`
 	Deliver       []string         `yaml:"deliver"`
 	Await         []string         `yaml:"await"`
 	AwaitAny      []string         `yaml:"awaitAny"`
@@ -757,6 +770,7 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 		Goal:          sy.Goal,
 		ServeDelta:    sy.ServeDelta,
 		Delegable:     sy.Delegable,
+		Unattended:    sy.Unattended,
 		Deliver:       sy.Deliver,
 		Await:         sy.Await,
 		Findings:      sy.Findings,
@@ -785,6 +799,18 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 	}
 	if sy.Delegable && step.Chooser != ChooserUser {
 		addProblem("%s: delegable applies only to a user chooser", prefix)
+	}
+	if u := sy.Unattended; u != nil {
+		switch {
+		case step.Chooser != ChooserUser:
+			addProblem("%s: unattended applies only to a user chooser", prefix)
+		case sy.Delegable:
+			addProblem("%s: unattended and delegable exclude each other", prefix)
+		case u.Limit < 0:
+			addProblem("%s: unattended limit %d is negative", prefix, u.Limit)
+		case !slices.ContainsFunc(sy.Options, func(o optionYAML) bool { return o.Choice == u.Answer }):
+			addProblem("%s: unattended answer %q is not an option", prefix, u.Answer)
+		}
 	}
 	if sy.Findings != "" && step.Chooser != ChooserGate {
 		addProblem("%s: findings applies only to a gate", prefix)

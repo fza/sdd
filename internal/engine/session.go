@@ -52,6 +52,7 @@ const (
 	// EventParked records that a running move was deliberately parked back to
 	// the session junction — state kept, resumable through next. Forensic
 	// only: a resuming agent can tell a shelved move from one that drifted.
+	// With held set, an autonomous session parked it for a person (Parking).
 	EventParked EventType = "parked"
 	// EventServedBlocks is a log written before the anchor proof: replay
 	// reads past it.
@@ -344,13 +345,13 @@ func (s *Session) answerer(step *Step, userWords, reason string) (string, error)
 		return "", fmt.Errorf("a reason answers only a user chooser; %s is not one", step.ID)
 	case reason != "" && !autonomous:
 		return "", fmt.Errorf("%s is the user's choice in a guided session — relay the user's words", step.ID)
-	case reason != "" && !step.Delegable:
+	case reason != "" && !step.Delegable && step.Unattended == nil:
 		return "", fmt.Errorf("%s stays the user's choice even in an autonomous session — relay the user's words", step.ID)
 	case !autonomous || step.Chooser != ChooserUser:
 		return "", nil
 	case reason != "":
 		return "agent", nil
-	case userWords == "" && step.Delegable:
+	case userWords == "" && (step.Delegable || step.Unattended != nil):
 		return "", fmt.Errorf("%s needs the user's words or your reason", step.ID)
 	case userWords == "":
 		return "", fmt.Errorf("%s stays the user's choice even in an autonomous session — relay the user's words", step.ID)
@@ -877,6 +878,9 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 	if chooser != step.ID {
 		return nil, fmt.Errorf("chooser %q is not pending — the pending chooser is %q (answers are validated: no early, late, or double answers)", chooser, step.ID)
 	}
+	if err := s.checkUnattended(inst, step, choice, userWords); err != nil {
+		return nil, err
+	}
 	answeredBy, err := s.answerer(step, userWords, reason)
 	if err != nil {
 		return nil, err
@@ -968,6 +972,7 @@ func (s *Session) AnswerWith(instanceID, chooser, choice string, fields map[stri
 			return err
 		}
 		inst.recordWords(step.ID, choice, userWords)
+		inst.countUnattended(step, answeredBy, userWords)
 		s.clearCancellation(inst.ID)
 		inst.interactionStep = inst.Step
 		// A dispatching junction's declared handoff rides the answered option:
@@ -1246,6 +1251,8 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 			words, _ := ev.Data["userWords"].(string)
 			choice, _ := ev.Data["choice"].(string)
 			inst.recordWords(chooser, choice, words)
+			answeredBy, _ := ev.Data["answeredBy"].(string)
+			inst.countUnattended(inst.Spec.StepByID[chooser], answeredBy, words)
 			if step := inst.Spec.StepByID[chooser]; step != nil {
 				for i := range step.Options {
 					if step.Options[i].Choice == choice {
@@ -1389,7 +1396,10 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 	case EventDeferred:
 		s.foldDeferral(ev.Instance, ev.Data)
 
-	case EventServed, EventParked, EventServedBlocks, EventReoriented, EventModel:
+	case EventParked:
+		return s.replayParked(ev)
+
+	case EventServed, EventServedBlocks, EventReoriented, EventModel:
 		// Forensic only — no state effect.
 
 	default:

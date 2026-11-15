@@ -1837,7 +1837,7 @@ func promptDialogueMode(cmd *cli.Command) (model.DialogueMode, error) {
 		Header: "Who makes the choices during a session? (↑/↓ to navigate, enter to confirm)",
 		Options: []tui.SelectOption[model.DialogueMode]{
 			{Label: string(model.DialogueGuided), Hint: "you confirm each step", Value: model.DialogueGuided},
-			{Label: string(model.DialogueAuto), Hint: "your AI decides, asks only when a check fails", Value: model.DialogueAuto},
+			{Label: string(model.DialogueAuto), Hint: "your AI decides; a capture blocked twice waits for you", Value: model.DialogueAuto},
 		},
 	})
 }

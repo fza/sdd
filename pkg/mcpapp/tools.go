@@ -206,6 +206,9 @@ type ServeResult struct {
 	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve: where the dialogue lands now that this move has ended"`
 	Collected        map[string]string       `json:"collected,omitempty" jsonschema:"state this instance already collected; values persist across handover. Do not re-derive them"`
 	Dispatches       []DispatchResult        `json:"dispatches,omitempty" jsonschema:"delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input. Follow each one's instructions"`
+	Parked           bool                    `json:"parked,omitempty" jsonschema:"set when the move is parked at step for a person; nothing was written"`
+	Reason           string                  `json:"reason,omitempty" jsonschema:"why the move is parked"`
+	Resume           string                  `json:"resume,omitempty" jsonschema:"the call a person resumes the parked move with"`
 	ResultProofNotice
 }
 
@@ -1586,6 +1589,9 @@ func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest,
 		Step: serve.Step, Goal: serve.Goal, Missing: serve.Missing,
 		ReportSchema: serve.ReportSchema, Execution: serve.Execution,
 		Collected: capValues(serve.Collected), PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
+	}
+	if parked := serve.Parked; parked != nil {
+		res.Parked, res.Reason, res.Resume = true, parked.Reason, parked.Resume
 	}
 	var count servedCount
 	res.Instructions, count.lanes = composeInstructions(ss, serve, keep, pageFull)
