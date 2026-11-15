@@ -58,6 +58,7 @@ sdd search --term importer --query "variants"      # both
 - `--term` is a regular expression, matched without regard to case. Repeat it to require every term. It works without any setup.
 - `--query` searches by meaning and needs an embedding provider, set up as the [configuration reference](/sdd/reference/configuration/#embedding) describes. In a project that already has entries, run `sdd index` once. After that, each search adds new entries to the index.
 - With both, sdd merges the keyword and the meaning ranking into one list.
+- A `--query` phrase that looks like a credential is searched as a literal keyword and never sent to the embedding provider. sdd says so on the error stream.
 
 Under each entry line, sdd shows the best matching passage, where it sits, such as the summary, a section or an attachment, and its score relative to the top hit. `--limit` changes the number of hits, 10 by default. `--type`, `--layer` and `--kind` filter them. Superseded entries are left out unless you add `--include-superseded`.
 
@@ -104,4 +105,4 @@ Search: vector,text
 
 **References carry the reasoning.** Follow upstream to see what an entry rests on, and downstream to see what came of it.
 
-To check the graph for problems such as references to entries that do not exist, run `sdd lint`. To read the graphs your project depends on as well, add `--repo` or `--all-repos` to `sdd search` and `sdd view`; see [Connected repositories](/sdd/guides/connected-repositories/).
+To check the graph for problems such as references to entries that do not exist, run `sdd lint`. It also lists entries and attachments that already hold a credential, as advisories that do not fail the run: an entry cannot be edited, so rotate the credential. To read the graphs your project depends on as well, add `--repo` or `--all-repos` to `sdd search` and `sdd view`; see [Connected repositories](/sdd/guides/connected-repositories/).
