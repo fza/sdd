@@ -76,7 +76,11 @@ func roundLogDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(locations.StateRoot, roundproc.LogDirName, filepath.FromSlash(persistentIndexRepoKey(cfg, stableRepoRoot))), nil
+	key, err := persistentIndexRepoKey(cfg, stableRepoRoot)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(locations.StateRoot, roundproc.LogDirName, filepath.FromSlash(key)), nil
 }
 
 func (p roundProcesses) Log(round sdd.LaunchedRound) string {

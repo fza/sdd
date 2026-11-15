@@ -97,6 +97,9 @@ func (h *Handler) RepoAdd(ctx context.Context, cmd *command.RepoAddCmd) error {
 	if _, exists := cfg.Connected(declared); exists {
 		return fmt.Errorf("repo %q is already connected", declared)
 	}
+	if err := cfg.CheckOverlap(declared); err != nil {
+		return err
+	}
 
 	repo := repos.ConnectedRepo{RepoID: declared, CloneURL: cmd.CloneURL}
 	unlock, err := h.repos.Registry().LockClones(ctx)

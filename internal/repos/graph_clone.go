@@ -157,16 +157,35 @@ func (g *GraphClones) Place(ctx context.Context, staged string, repoID model.Rep
 	}
 	defer func() { err = errors.Join(err, unlock()) }()
 	if !IsCloned(dir) {
-		err = os.MkdirAll(filepath.Dir(dir), 0o755)
-		if err != nil {
-			return "", fmt.Errorf("creating %s: %w", filepath.Dir(dir), err)
-		}
-		err = os.Rename(staged, dir)
+		err = moveWithin(filepath.Join(g.dataRoot, "repos"), staged, dir)
 		if err != nil {
 			return "", fmt.Errorf("placing the clone of %s: %w", repoID, err)
 		}
 	}
 	return dir, g.keep(ctx, repoID, dir)
+}
+
+// moveWithin moves src to dst through an os.Root over root, so a symlink
+// planted after cloneDir checked the path cannot carry the move outside it.
+func moveWithin(root, src, dst string) error {
+	from, err := filepath.Rel(root, src)
+	if err != nil {
+		return err
+	}
+	to, err := filepath.Rel(root, dst)
+	if err != nil {
+		return err
+	}
+	opened, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", root, err)
+	}
+	defer func() { _ = opened.Close() }()
+	err = opened.MkdirAll(filepath.Dir(to), 0o755)
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", filepath.Dir(dst), err)
+	}
+	return opened.Rename(from, to)
 }
 
 // keep restores the clone at dir to what sdd made: the cone holds .sdd and

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/networkteam/slogutils"
@@ -144,9 +145,24 @@ func (m *Manager) dropCacheClone(repo ConnectedRepo) error {
 	if statErr == nil {
 		return nil
 	}
-	err = os.RemoveAll(cache)
+	err = removeWithin(m.reg.loc.CacheRoot, cache)
 	if err != nil {
 		return fmt.Errorf("removing the former cache clone of %s: %w", repo.RepoID, err)
 	}
 	return nil
+}
+
+// removeWithin removes dir through an os.Root over root, so a symlink planted
+// after LegacyCacheDir checked the path cannot carry the removal outside it.
+func removeWithin(root, dir string) error {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return err
+	}
+	opened, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", root, err)
+	}
+	defer func() { _ = opened.Close() }()
+	return opened.RemoveAll(rel)
 }
