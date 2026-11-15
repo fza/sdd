@@ -11,8 +11,10 @@ import (
 )
 
 var (
-	quotedValue = regexp.MustCompile("`[^`]*`")
-	errorLine   = regexp.MustCompile(`^line (\d+): `)
+	// The value sits between " `" and the last "` into ", and may hold
+	// backticks itself.
+	valueMismatch = regexp.MustCompile("(?s)^(line \\d+: cannot unmarshal \\S+) `.*` into (.+)$")
+	errorLine     = regexp.MustCompile(`^line (\d+): `)
 )
 
 // withoutValues rewrites a YAML type error to name the key and line of each
@@ -26,7 +28,9 @@ func withoutValues(data []byte, err error) error {
 	keys := keysByLine(data)
 	messages := make([]string, 0, len(typeErr.Errors))
 	for _, message := range typeErr.Errors {
-		message = strings.Join(strings.Fields(quotedValue.ReplaceAllString(message, "")), " ")
+		if parts := valueMismatch.FindStringSubmatch(message); parts != nil {
+			message = parts[1] + " into " + parts[2]
+		}
 		match := errorLine.FindStringSubmatch(message)
 		if match != nil {
 			line, _ := strconv.Atoi(match[1])
