@@ -9,15 +9,15 @@ import (
 	"github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/secrets"
+	"github.com/networkteam/sdd/internal/testsupport"
 	pkgembed "github.com/networkteam/sdd/pkg/llm/embed"
-	"github.com/networkteam/sdd/test"
 )
 
 // The embedder the factory builds refuses a credential before any transport:
 // the endpoint below accepts no connection, so reaching it would surface as a
 // connection error instead of the refusal.
 func TestEmbedderRefusesACredentialBeforeTheProvider(t *testing.T) {
-	content, err := fs.ReadFile(test.SecretFixtures(), "positive/stripe-access-token.txt")
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "positive/stripe-access-token.txt")
 	if err != nil {
 		t.Fatal(err)
 	}

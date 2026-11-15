@@ -6,14 +6,14 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/proctest"
-	"github.com/networkteam/sdd/test"
+	"github.com/networkteam/sdd/internal/testsupport"
 )
 
 // A draft holding a credential reaches no model: the writing guide and the
 // write gate each report the refusal as a finding, and revising the draft
 // lets the capture go on.
 func TestCapture_CredentialRoutesToRevise(t *testing.T) {
-	content, err := fs.ReadFile(test.SecretFixtures(), "positive/github-pat.txt")
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "positive/github-pat.txt")
 	if err != nil {
 		t.Fatal(err)
 	}

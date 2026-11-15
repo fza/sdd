@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/networkteam/sdd/test"
+	"github.com/networkteam/sdd/internal/testsupport"
 )
 
 // noProviderConfig points the model runner at a port that accepts no
@@ -18,7 +18,7 @@ const noProviderConfig = "repo_id: example.test/cli\ngraph_dir: decisions\ndefau
 
 func secretFixture(t *testing.T, rule string) string {
 	t.Helper()
-	content, err := fs.ReadFile(test.SecretFixtures(), "positive/"+rule+".txt")
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "positive/"+rule+".txt")
 	if err != nil {
 		t.Fatal(err)
 	}

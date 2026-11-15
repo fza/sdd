@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/secrets"
-	"github.com/networkteam/sdd/test"
+	"github.com/networkteam/sdd/internal/testsupport"
 )
 
 // gitleaks.toml in the package folder is the file the package embeds.
@@ -51,7 +51,7 @@ func TestParseRulesRefusesAnInvalidFile(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := secrets.ParseRules(test.SecretRuleFixture(t, tc.fixture))
+			_, err := secrets.ParseRules(testsupport.SecretRuleFixture(t, tc.fixture))
 
 			if err == nil {
 				t.Error("the file should be refused")
@@ -61,7 +61,7 @@ func TestParseRulesRefusesAnInvalidFile(t *testing.T) {
 }
 
 func TestParseRulesNormalizesAsGitleaks(t *testing.T) {
-	set, err := secrets.ParseRules(test.SecretRuleFixture(t, "normalized.toml"))
+	set, err := secrets.ParseRules(testsupport.SecretRuleFixture(t, "normalized.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +70,8 @@ func TestParseRulesNormalizesAsGitleaks(t *testing.T) {
 		text    string
 		finding bool
 	}{
-		{name: "uppercase keyword matches lowercase text", text: test.FixtureToken, finding: true},
-		{name: "lowercase and condition needs every check", text: "example " + test.FixtureToken, finding: true},
+		{name: "uppercase keyword matches lowercase text", text: testsupport.FixtureToken, finding: true},
+		{name: "lowercase and condition needs every check", text: "example " + testsupport.FixtureToken, finding: true},
 		{name: "uppercase stopword matches", text: "example sddfixture_allowedq2m5n8p4r", finding: false},
 	}
 	for _, tc := range cases {
@@ -88,13 +88,13 @@ func TestParseRulesNormalizesAsGitleaks(t *testing.T) {
 }
 
 func TestParseRulesReadsBothAllowlistForms(t *testing.T) {
-	set, err := secrets.ParseRules(test.SecretRuleFixture(t, "allowlist-forms.toml"))
+	set, err := secrets.ParseRules(testsupport.SecretRuleFixture(t, "allowlist-forms.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, marker := range []string{"global-single", "global-multiple", "rule-single", "rule-multiple"} {
 		t.Run(marker, func(t *testing.T) {
-			findings, err := set.Scan(marker + " " + test.FixtureToken)
+			findings, err := set.Scan(marker + " " + testsupport.FixtureToken)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -103,7 +103,7 @@ func TestParseRulesReadsBothAllowlistForms(t *testing.T) {
 			}
 		})
 	}
-	findings, err := set.Scan("unlisted " + test.FixtureToken)
+	findings, err := set.Scan("unlisted " + testsupport.FixtureToken)
 	if err != nil {
 		t.Fatal(err)
 	}

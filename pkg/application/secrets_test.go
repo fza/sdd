@@ -10,15 +10,15 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/secrets"
+	"github.com/networkteam/sdd/internal/testsupport"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/llm"
 	localadapter "github.com/networkteam/sdd/pkg/local"
-	"github.com/networkteam/sdd/test"
 )
 
 func fixtureCredential(t *testing.T, rule string) string {
 	t.Helper()
-	content, err := fs.ReadFile(test.SecretFixtures(), "positive/"+rule+".txt")
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "positive/"+rule+".txt")
 	if err != nil {
 		t.Fatal(err)
 	}

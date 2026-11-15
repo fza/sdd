@@ -11,7 +11,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/secrets"
-	"github.com/networkteam/sdd/test"
+	"github.com/networkteam/sdd/internal/testsupport"
 )
 
 func ruleIDs(findings []secrets.Finding) []string {
@@ -23,7 +23,7 @@ func ruleIDs(findings []secrets.Finding) []string {
 }
 
 func TestScanFixtures(t *testing.T) {
-	fixtures := test.SecretFixtures()
+	fixtures := testsupport.SecretFixtures()
 	for _, kind := range []string{"positive", "negative"} {
 		entries, err := fs.ReadDir(fixtures, kind)
 		if err != nil {
@@ -55,7 +55,7 @@ func TestScanFixtures(t *testing.T) {
 }
 
 func TestScanCleanTextFindsNothing(t *testing.T) {
-	content, err := fs.ReadFile(test.SecretFixtures(), "clean.txt")
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "clean.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestScanCleanTextFindsNothing(t *testing.T) {
 }
 
 func TestScanReportsTheLineOfTheMatch(t *testing.T) {
-	content, err := fs.ReadFile(test.SecretFixtures(), "positive/github-pat.txt")
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "positive/github-pat.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestScanFileAppliesPathRules(t *testing.T) {
 }
 
 func TestScanFileSkipsGloballyAllowedPaths(t *testing.T) {
-	content, err := fs.ReadFile(test.SecretFixtures(), "positive/github-pat.txt")
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "positive/github-pat.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestScanFileSkipsGloballyAllowedPaths(t *testing.T) {
 }
 
 func TestCheckEntryNamesThePart(t *testing.T) {
-	content, err := fs.ReadFile(test.SecretFixtures(), "positive/gitlab-pat.txt")
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "positive/gitlab-pat.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func (s gitleaksSample) scan() ([]secrets.Finding, error) {
 
 // gitleaks' own samples hold the engine to gitleaks' verdicts rule by rule.
 func TestScanGitleaksSamples(t *testing.T) {
-	fixtures := test.SecretFixtures()
+	fixtures := testsupport.SecretFixtures()
 	files, err := fs.ReadDir(fixtures, "gitleaks")
 	if err != nil {
 		t.Fatal(err)

@@ -12,14 +12,14 @@ import (
 	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/secrets"
+	"github.com/networkteam/sdd/internal/testsupport"
 	"github.com/networkteam/sdd/pkg/llm"
-	"github.com/networkteam/sdd/test"
 )
 
 // Every runner the factory builds refuses a draft holding a credential before
 // the provider sees it.
 func TestFactoryRunnerRefusesACredentialBeforeTheProvider(t *testing.T) {
-	content, err := fs.ReadFile(test.SecretFixtures(), "positive/slack-bot-token.txt")
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "positive/slack-bot-token.txt")
 	if err != nil {
 		t.Fatal(err)
 	}

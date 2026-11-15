@@ -11,15 +11,15 @@ import (
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/secrets"
+	"github.com/networkteam/sdd/internal/testsupport"
 	"github.com/networkteam/sdd/internal/viewlayout"
 	"github.com/networkteam/sdd/pkg/llm"
-	"github.com/networkteam/sdd/test"
 )
 
 // Each operation marks its draft as new, so the provider guard refuses a draft
 // holding a credential whatever called the operation.
 func TestOperationsMarkTheDraftAsNew(t *testing.T) {
-	content, err := fs.ReadFile(test.SecretFixtures(), "positive/github-pat.txt")
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "positive/github-pat.txt")
 	if err != nil {
 		t.Fatal(err)
 	}

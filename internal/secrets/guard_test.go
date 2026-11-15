@@ -8,14 +8,14 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/secrets"
+	"github.com/networkteam/sdd/internal/testsupport"
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
-	"github.com/networkteam/sdd/test"
 )
 
 func credentialSample(t *testing.T) string {
 	t.Helper()
-	content, err := fs.ReadFile(test.SecretFixtures(), "positive/github-pat.txt")
+	content, err := fs.ReadFile(testsupport.SecretFixtures(), "positive/github-pat.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
