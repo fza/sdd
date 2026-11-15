@@ -2,7 +2,7 @@
 """Drive a real Codex agent through `codex app-server` against a scratch SDD
 repository, one user turn per invocation.
 
-  driver.py setup REPO [--task TEXT]      scratch repo: git, sdd init, anchor directive, code
+  driver.py setup REPO [--task TEXT]      scratch repo: git, sdd init, participant, anchor directive, code
   driver.py start REPO MESSAGE [opts]     run's daemon, new Codex thread, first user turn
   driver.py say REPO MESSAGE              next user turn on the same thread
   driver.py stop REPO                     end the run's daemon, app-server and sdd server
@@ -219,6 +219,8 @@ def codex_home(repo, provider, effort=None):
             lines.append('model_reasoning_effort = "medium"')
         lines.append(OPPER_PROVIDER)
     lines += ["", "[features]"] + [f"{name} = false" for name in DISABLED_FEATURES]
+    # Trusted as a real user's project is, so Codex loads its .codex/agents/.
+    lines += ["", f"[projects.{json.dumps(str(repo))}]", 'trust_level = "trusted"']
     (home / "config.toml").write_text("\n".join(lines) + "\n")
     return home
 
@@ -301,6 +303,11 @@ def print_turn(number, turn, items):
             missing = f" missing={serve['missing']}" if serve.get("missing") else ""
             error = f" ERROR {brief(item['error'])}" if item.get("error") else ""
             print(f"  [{item['server']}] {item['tool']} {brief(item.get('arguments'))} -> {position}{missing}{error}")
+        elif kind == "collabAgentToolCall":
+            arguments = {key: item[key] for key in ("prompt", "model", "reasoningEffort", "receiverThreadIds")
+                         if item.get(key)}
+            states = f" agents={brief(item['agentsStates'], 300)}" if item.get("agentsStates") else ""
+            print(f"  [agent] {item.get('tool')} {brief(arguments, 300)} -> {item.get('status')}{states}")
         elif kind == "commandExecution":
             print(f"  [sh] {brief(item['command'], 200)} (exit {item.get('exitCode')})")
         elif kind == "fileChange":
@@ -486,13 +493,32 @@ summary: {summary}
 {body}
 """
 
+# The scripted user as a registered participant: an actor signal whose
+# canonical is the participant sdd init records.
+PARTICIPANT = """---
+type: signal
+kind: actor
+layer: process
+canonical: Eval User
+actor_kind: human
+participants:
+    - Eval User
+confidence: high
+title: Eval User as the project's participant
+summary: Eval User is the person working in this project.
+---
+
+Eval User is the person working in this project.
+"""
+
 
 def cmd_setup(args):
     setup_repo(args, ["--agents", "codex"])
 
 
 def setup_repo(args, init_flags):
-    """A fresh repository with a code module, sdd initialised with init_flags, and the task as a pending directive."""
+    """A fresh repository with a code module, sdd initialised with init_flags, the scripted user as a registered
+    participant, and the task as a pending directive."""
     repo = Path(args.repo).resolve()
     if repo.exists():
         sys.exit(f"{repo} exists; setup builds a fresh repository")
@@ -514,14 +540,17 @@ def setup_repo(args, init_flags):
     config = repo / ".sdd" / "config.yaml"
     config.write_text(config.read_text().replace("# repo_id: github.com/org/repo", f"repo_id: eval.invalid/{repo.name}"))
     now = datetime.now()
-    suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=3))
-    anchor = f"{now:%Y%m%d-%H%M%S}-d-tac-{suffix}"
-    entry = repo / ".sdd" / "graph" / f"{now:%Y}" / f"{now:%m}" / f"{now:%d-%H%M%S}-d-tac-{suffix}.md"
-    entry.parent.mkdir(parents=True, exist_ok=True)
-    entry.write_text(ANCHOR.format(summary=args.summary, body=args.task))
+    graph = repo / ".sdd" / "graph" / f"{now:%Y}" / f"{now:%m}"
+    graph.mkdir(parents=True, exist_ok=True)
+    ids = {}
+    for name, kind, text in (("participant", "s-prc", PARTICIPANT),
+                             ("anchor", "d-tac", ANCHOR.format(summary=args.summary, body=args.task))):
+        suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=3))
+        ids[name] = f"{now:%Y%m%d-%H%M%S}-{kind}-{suffix}"
+        (graph / f"{now:%d-%H%M%S}-{kind}-{suffix}.md").write_text(text)
     git(repo, "add", ".")
-    git(repo, "commit", "-q", "-m", "Record the task as a directive")
-    print(f"repo: {repo}\nanchor: {anchor}")
+    git(repo, "commit", "-q", "-m", "Record the participant and the task as a directive")
+    print(f"repo: {repo}\nparticipant: {ids['participant']}\nanchor: {ids['anchor']}")
 
 
 def cmd_start(args):
