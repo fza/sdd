@@ -428,3 +428,44 @@ func TestIndexHandlerSearchOpenedBeforeAReembedFindsEveryEntry(t *testing.T) {
 		t.Errorf("a search whose snapshot predates the re-embed found %v, want every entry", got)
 	}
 }
+
+// An older sdd sharing the store re-saves the manifest without the cap. A
+// fill with nothing to embed records it again, so searches hash under it.
+func TestIndexHandlerFillRestoresACapAnOlderBinaryDropped(t *testing.T) {
+	t.Parallel()
+	indexDir := t.TempDir()
+	calibrationDir := t.TempDir()
+	h := newCapHandler(t, indexDir, calibrationDir, &tokenCountingEmbedder{tokenLimit: 8192}, "endpoint-a")
+	if err := h.Build(context.Background(), &command.BuildIndexCmd{}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	recorded := loadCapManifest(t, indexDir).MaxRunes
+	err := index.WriteStore(context.Background(), indexDir, func(*index.Index) error {
+		m, err := index.LoadManifest(indexDir)
+		if err != nil {
+			return err
+		}
+		m.RuneCaps = index.RuneCaps{}
+		return m.Save(indexDir)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(foundIDs(searchCapStore(t, indexDir))); got != 0 {
+		t.Fatalf("a store without its cap should hash uncapped and find none of the capped rows, found %d", got)
+	}
+
+	var indexed int
+	if err := h.Build(context.Background(), &command.BuildIndexCmd{OnEntryIndexed: func(string, int) { indexed++ }}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if indexed != 0 {
+		t.Errorf("every entry is stored under the cap already, yet %d were embedded again", indexed)
+	}
+	if got := loadCapManifest(t, indexDir).MaxRunes; got != recorded {
+		t.Errorf("the fill should record the cap again, manifest holds %d", got)
+	}
+	if got := foundIDs(searchCapStore(t, indexDir)); len(got) != len(capFixtureGraph().Entries) {
+		t.Errorf("a search after the fill found %v, want every entry", got)
+	}
+}

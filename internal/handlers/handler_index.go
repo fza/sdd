@@ -273,9 +273,13 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 	if err != nil {
 		return err
 	}
+	// A complete fill holds every entry under maxRunes, so the store records
+	// it as its only cap, also when there was nothing to embed: an older sdd
+	// sharing the store re-saves the manifest without it.
 	if manifest.PrevMaxRunes != nil || manifest.MaxRunes != maxRunes {
 		if err := session.Commit(ctx, func(_ *index.Index, manifest *index.Manifest) error {
-			if !manifest.SettleMaxRunes(maxRunes) {
+			recorded := manifest.SetMaxRunes(maxRunes)
+			if settled := manifest.SettleMaxRunes(maxRunes); !recorded && !settled {
 				return nil
 			}
 			return manifest.Save(h.indexDir)
