@@ -266,10 +266,10 @@ Every variable that moves a call off the login, such as a key, an endpoint, a pr
 
 Two file-borne routes stay open in `login` mode:
 
-- The `env` map of Claude Code's global config, `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`. Claude Code applies it whatever `--setting-sources` says, so a key, endpoint or provider switch there moves the call off your login.
+- The `env` map of Claude Code's global config, `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`, or a legacy `.config.json` in Claude Code's config directory. Claude Code applies it whatever `--setting-sources` says, so a key, endpoint or provider switch there moves the call off your login.
 - An Anthropic Console profile. Claude Code looks for it in `ANTHROPIC_CONFIG_DIR`, else `$XDG_CONFIG_HOME/anthropic`, else `~/.config/anthropic`, under the name in `<dir>/active_config`, else `default`. A profile of type `oidc_federation` takes precedence over your stored claude.ai login and may carry its own `base_url`, so with one the calls run on that profile, unless `CLAUDE_CODE_OAUTH_TOKEN` or its file descriptor is set. A `user_oauth` profile answers only when no claude.ai login is stored.
 
-Without either, `login` mode bills your Claude Code login.
+Without either, and unless your managed policy settings' `env` sets one, `login` mode bills your Claude Code login.
 
 `claude-cli` needs Claude Code 2.1.169 or later, the first version with `--safe-mode`. An older `claude` stops with `unknown option`, and sdd shows that message.
 
