@@ -238,6 +238,10 @@ func newReadFinder() (*finders.Finder, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newReadFinderFor(cfg)
+}
+
+func newReadFinderFor(cfg *model.PerRepoConfig) (*finders.Finder, error) {
 	if cfg == nil {
 		cfg = &model.PerRepoConfig{}
 	}
@@ -334,6 +338,11 @@ func localConfigLayer() (string, error) {
 		return "", err
 	}
 	project, err := resolveWorkProject(workRoot, repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir)
+	// A pointer at a missing project still names its own local file, the one
+	// `sdd init --project-dir` writes while setting that project up.
+	if errors.Is(err, meta.ErrNotAProject) {
+		return meta.LocalConfigPath(meta.SDDDir(workRoot), ""), nil
+	}
 	if err != nil {
 		return "", err
 	}
@@ -2525,6 +2534,10 @@ func initCmd() *cli.Command {
 			}
 
 			reader, err := newReadFinder()
+			// The project this run sets up does not resolve yet.
+			if errors.Is(err, meta.ErrNotAProject) && projectMissing {
+				reader, err = newReadFinderFor(existingMerged)
+			}
 			if err != nil {
 				return err
 			}
