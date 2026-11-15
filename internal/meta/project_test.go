@@ -72,6 +72,12 @@ func TestResolveProject(t *testing.T) {
 			project:   map[string]string{"config.yaml": "project_dir: ../work\n"},
 			wantError: "itself sets project_dir",
 		},
+		{
+			name:      "a project pointing on through its local file",
+			work:      map[string]string{"config.yaml": "project_dir: ../project\n"},
+			project:   map[string]string{"config.yaml": "graph_dir: .sdd/graph\n", "config.local.yaml": "project_dir: ../elsewhere\n"},
+			wantError: "itself sets project_dir",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

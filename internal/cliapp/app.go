@@ -549,6 +549,7 @@ func New(options Options) *cli.Command {
 			}))
 			ctx = slogutils.WithLogger(ctx, logger)
 			configWrite := writesConfig(cmd)
+			repointing := repointsProject(cmd)
 			currentGate = &invocationGate{ctx: ctx, configWrite: configWrite}
 			if cmd.Bool("timing") {
 				ctx = timing.WithRecorder(ctx, timing.NewRecorder(cmd.ErrWriter, time.Now))
@@ -559,13 +560,13 @@ func New(options Options) *cli.Command {
 
 			warnUnknownConfigKeys(ctx)
 			err := useSecretRules(ctx)
-			if err != nil && !repairingConfig(configWrite, err) {
+			if err != nil && !repairingConfig(configWrite, err) && !repointing {
 				return ctx, err
 			}
 
 			if checksStrays(cmd.Args().First()) {
 				err := strayRefusal(ctx)
-				if err != nil && !repairingConfig(configWrite, err) {
+				if err != nil && !repairingConfig(configWrite, err) && !repointing {
 					return ctx, err
 				}
 			}

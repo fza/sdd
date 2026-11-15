@@ -486,3 +486,61 @@ func TestPointedRepoAddDeclaresTheDependencyInTheProject(t *testing.T) {
 		t.Errorf("the work repository should gain no commit, HEAD is %q", subject)
 	}
 }
+
+// `config set --local project_dir` writes the work repository's own local
+// file, the one place a per-machine pointer lives, never the project's.
+func TestConfigSetLocalProjectDirWritesTheWorkRepository(t *testing.T) {
+	work, project := pointedRepos(t)
+	moved := filepath.Join(filepath.Dir(project), "elsewhere")
+	if err := os.Rename(project, moved); err != nil {
+		t.Fatal(err)
+	}
+	projectLocal := readFile(t, filepath.Join(moved, ".sdd", "config.local.yaml"))
+
+	output, err := runAppErr(t, work, "config", "set", "--local", "project_dir", moved)
+	if err != nil {
+		t.Fatalf("config set --local project_dir: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(readFile(t, filepath.Join(work, ".sdd", "config.local.yaml")), "project_dir: "+moved) {
+		t.Error("the pointer should land in the work repository's own local file")
+	}
+	if readFile(t, filepath.Join(moved, ".sdd", "config.local.yaml")) != projectLocal {
+		t.Error("the project's local file should stay unchanged")
+	}
+	captureSignal(t, work)
+	if entries := graphEntries(t, filepath.Join(moved, ".sdd", "graph")); len(entries) != 1 {
+		t.Fatalf("the capture should follow the new local project_dir, got %v", entries)
+	}
+}
+
+// A local project_dir naming a missing folder can be unset again.
+func TestConfigUnsetLocalProjectDirRepairsABrokenPointer(t *testing.T) {
+	work, _ := pointedRepos(t)
+	writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: ../missing\n")
+
+	output, err := runAppErr(t, work, "config", "unset", "--local", "project_dir")
+	if err != nil {
+		t.Fatalf("config unset --local project_dir should repair the pointer: %v\n%s", err, output)
+	}
+
+	if strings.Contains(readFile(t, filepath.Join(work, ".sdd", "config.local.yaml")), "project_dir") {
+		t.Error("the local pointer should be gone")
+	}
+}
+
+// A repository holding its own project cannot become a pointer by one local key.
+func TestConfigSetLocalProjectDirIsRefusedInAProject(t *testing.T) {
+	_, project := pointedRepos(t)
+	local := filepath.Join(project, ".sdd", "config.local.yaml")
+	before := readFile(t, local)
+
+	_, err := runAppErr(t, project, "config", "set", "--local", "project_dir", "../other")
+
+	if err == nil || !strings.Contains(err.Error(), "sdd init --project-dir") {
+		t.Fatalf("project_dir should be refused in a project naming the way to point, got %v", err)
+	}
+	if readFile(t, local) != before {
+		t.Error("a refused write should leave the local file unchanged")
+	}
+}
