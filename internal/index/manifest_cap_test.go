@@ -3,6 +3,7 @@ package index_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/index"
@@ -50,5 +51,51 @@ func TestManifestWithoutCapFieldReadsZero(t *testing.T) {
 	}
 	if got.MaxRunes != 0 {
 		t.Errorf("max runes on a pre-cap manifest: got %d, want 0", got.MaxRunes)
+	}
+}
+
+func TestManifestCapChangeKeepsPreviousCapUntilSettled(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		// stored is the cap the manifest records before the fill.
+		stored int
+		// fill is the cap the fill chunks under.
+		fill int
+		// settle is the cap the fill settles under, zero for an unfinished fill.
+		settle      int
+		wantSettled bool
+		wantRead    []int
+	}{
+		{name: "unchanged cap reads one cap", stored: 1792, fill: 1792, wantRead: []int{1792}},
+		{name: "changed cap reads both caps", stored: 1792, fill: 1024, wantRead: []int{1024, 1792}},
+		{name: "pre-cap store reads uncapped beside the new cap", stored: 0, fill: 1024, wantRead: []int{1024, 0}},
+		{name: "settled fill reads the new cap only", stored: 1792, fill: 1024, settle: 1024, wantSettled: true, wantRead: []int{1024}},
+		{name: "settling under another cap keeps both", stored: 1792, fill: 1024, settle: 512, wantRead: []int{1024, 1792}},
+		{name: "settling with no pending cap changes nothing", stored: 1792, fill: 1792, settle: 1792, wantRead: []int{1792}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			m := &index.Manifest{Version: 1, MaxRunes: tc.stored, Entries: map[string]index.EntryState{}}
+			m.SetMaxRunes(tc.fill)
+			if err := m.Save(dir); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			loaded, err := index.LoadManifest(dir)
+			if err != nil {
+				t.Fatalf("LoadManifest: %v", err)
+			}
+			if tc.settle != 0 {
+				if got := loaded.SettleMaxRunes(tc.settle); got != tc.wantSettled {
+					t.Errorf("settle reported a change = %v, want %v", got, tc.wantSettled)
+				}
+			}
+			if got := loaded.ReadMaxRunes(); !slices.Equal(got, tc.wantRead) {
+				t.Errorf("read caps should hold the fill's cap and any pending previous cap, got %v", got)
+			}
+		})
 	}
 }

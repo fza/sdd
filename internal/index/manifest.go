@@ -37,11 +37,45 @@ type Manifest struct {
 	// distinguish legacy single-version entries from multi-version ones.
 	Version int                   `json:"version"`
 	Entries map[string]EntryState `json:"entries"`
-	// MaxRunes is the rune cap every row in this store was chunked under. Zero
+	// MaxRunes is the rune cap the store's rows are chunked under. Zero
 	// means the rows predate the cap. Readers take the cap from here, never
 	// from a fresh calibration, so a row hash they compute matches the rows
 	// written.
 	MaxRunes int `json:"max_runes,omitempty"`
+	// PrevMaxRunes is the cap MaxRunes replaced, held while a fill re-embeds
+	// the store under MaxRunes so rows not yet re-embedded stay fresh to
+	// readers. Nil when no re-embed is pending; zero means uncapped.
+	PrevMaxRunes *int `json:"prev_max_runes,omitempty"`
+}
+
+// SetMaxRunes records maxRunes as the cap rows are chunked under, holding the
+// cap it replaces as PrevMaxRunes until SettleMaxRunes.
+func (m *Manifest) SetMaxRunes(maxRunes int) {
+	if m.MaxRunes == maxRunes {
+		return
+	}
+	prev := m.MaxRunes
+	m.PrevMaxRunes = &prev
+	m.MaxRunes = maxRunes
+}
+
+// SettleMaxRunes drops PrevMaxRunes once every entry is published under
+// maxRunes, reporting whether the manifest changed.
+func (m *Manifest) SettleMaxRunes(maxRunes int) bool {
+	if m.PrevMaxRunes == nil || m.MaxRunes != maxRunes {
+		return false
+	}
+	m.PrevMaxRunes = nil
+	return true
+}
+
+// ReadMaxRunes returns the caps a reader hashes an entry under to match its
+// stored versions: MaxRunes, then PrevMaxRunes while a re-embed is pending.
+func (m *Manifest) ReadMaxRunes() []int {
+	if m.PrevMaxRunes == nil {
+		return []int{m.MaxRunes}
+	}
+	return []int{m.MaxRunes, *m.PrevMaxRunes}
 }
 
 // EntryState is one entry's set of stored versions. See Manifest for the
@@ -164,14 +198,15 @@ func LoadManifest(indexDir string) (*Manifest, error) {
 // reading a manifest of thousands of entries.
 func parseManifest(data []byte) (*Manifest, error) {
 	var decoded struct {
-		Version  int                           `json:"version"`
-		Entries  map[string]entryStateDecoding `json:"entries"`
-		MaxRunes int                           `json:"max_runes"`
+		Version      int                           `json:"version"`
+		Entries      map[string]entryStateDecoding `json:"entries"`
+		MaxRunes     int                           `json:"max_runes"`
+		PrevMaxRunes *int                          `json:"prev_max_runes"`
 	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return nil, fmt.Errorf("parse manifest: %w", err)
 	}
-	m := Manifest{Version: decoded.Version, MaxRunes: decoded.MaxRunes, Entries: make(map[string]EntryState, len(decoded.Entries))}
+	m := Manifest{Version: decoded.Version, MaxRunes: decoded.MaxRunes, PrevMaxRunes: decoded.PrevMaxRunes, Entries: make(map[string]EntryState, len(decoded.Entries))}
 	for id, state := range decoded.Entries {
 		m.Entries[id] = state.state()
 	}

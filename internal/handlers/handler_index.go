@@ -253,7 +253,7 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 					}
 					stale = append(stale, replaced...)
 				}
-				manifest.MaxRunes = maxRunes
+				manifest.SetMaxRunes(maxRunes)
 				if err := manifest.Save(h.indexDir); err != nil {
 					return err
 				}
@@ -271,6 +271,16 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 		}, run.onBatchStart)
 	if err != nil {
 		return err
+	}
+	if manifest.PrevMaxRunes != nil || manifest.MaxRunes != maxRunes {
+		if err := session.Commit(ctx, func(_ *index.Index, manifest *index.Manifest) error {
+			if !manifest.SettleMaxRunes(maxRunes) {
+				return nil
+			}
+			return manifest.Save(h.indexDir)
+		}); err != nil {
+			return fmt.Errorf("settling the rune cap: %w", err)
+		}
 	}
 	if err := index.RefreshSegments(ctx, h.indexDir); errors.Is(err, index.ErrLockBusy) {
 		slogutils.FromContext(ctx).Info("index store busy, search segments left to the next fill", "index", h.indexDir)
