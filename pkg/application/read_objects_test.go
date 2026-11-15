@@ -179,3 +179,39 @@ func TestTextFieldsRenderTheTypedResults(t *testing.T) {
 		t.Errorf("the dependency's sections should render under its repo heading: %q", view.Sections)
 	}
 }
+
+// A search over coverage left incomplete returns the notice on its own and
+// renders it after the hits in the text.
+func TestSearchTextRendersTheIncompleteIndexingNotice(t *testing.T) {
+	base, _, baseDir := preparedRuntime(t, "base")
+	putSearchEntry(t, baseDir, "bbb", "Alpha body left unindexed.")
+	indexed := 0
+	app := preparationApp(t, base, nil, func(ctx context.Context, target sdd.SearchTarget) error {
+		for item, err := range target.Entries(ctx) {
+			if err != nil {
+				return err
+			}
+			if indexed > 0 {
+				continue
+			}
+			if err := base.IndexSearchEntry(ctx, sdd.IndexSearchEntryCmd{Entry: item.Entry}); err != nil {
+				return err
+			}
+			indexed++
+		}
+		return nil
+	})
+	result, err := searchPrepared(t, app, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Coverage) != 1 || result.Coverage[0].Complete || len(result.Hits) != 1 {
+		t.Fatalf("one of two entries indexed should leave coverage incomplete with one hit, got %+v", result)
+	}
+	if len(result.Notices) != 1 || !strings.Contains(result.Notices[0], "indexing is incomplete") || result.Notice != result.Notices[0] {
+		t.Errorf("the incomplete-indexing notice should be returned on its own, got Notices %q, Notice %q", result.Notices, result.Notice)
+	}
+	if rendered := presenters.SearchText(result.Hits, result.Notices); result.Results != rendered || !strings.HasSuffix(result.Results, "\n\n"+result.Notices[0]) {
+		t.Errorf("Results should be the hits rendered with the notice following\nResults: %q\nrendered: %q", result.Results, rendered)
+	}
+}
