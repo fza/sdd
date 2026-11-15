@@ -30,7 +30,7 @@ import (
 // runner would turn a hung provider into a hung process. Errors distinguish
 // configuration problems from transport failures so the CLI can surface them
 // distinctly.
-func New(cfg model.LLMConfig) (llm.Runner, error) {
+func New(cfg model.LLMConfig, opts ...Option) (llm.Runner, error) {
 	runner, err := compose(cfg)
 	if err != nil {
 		return nil, err
@@ -49,17 +49,48 @@ func New(cfg model.LLMConfig) (llm.Runner, error) {
 			timeout = d
 		}
 	}
-	return namedTimeout(llm.Bounded(runner, timeout), timeout), nil
+	b := bound{timeout: timeout}
+	for _, opt := range opts {
+		opt(&b)
+	}
+	return namedTimeout(llm.Bounded(runner, b.timeout), b), nil
 }
 
-// namedTimeout names the setting behind a call that ran out its bound: the
-// error otherwise reaches a CLI user or an MCP agent with no hint that
-// llm.timeout exists. A deadline the caller set itself is passed through.
-func namedTimeout(r llm.Runner, timeout time.Duration) llm.Runner {
+// Option adjusts the runner New composes.
+type Option func(*bound)
+
+// bound is the per-call timeout and the flag that set it; no flag means
+// llm.timeout or the provider default.
+type bound struct {
+	timeout time.Duration
+	flag    string
+}
+
+// WithTimeoutFlag bounds each call by d in place of llm.timeout, for the
+// command-line flag named flag that set it; a zero d leaves the bound as is.
+func WithTimeoutFlag(flag string, d time.Duration) Option {
+	return func(b *bound) {
+		if d > 0 {
+			b.timeout, b.flag = d, flag
+		}
+	}
+}
+
+func (b bound) hint() string {
+	if b.flag != "" {
+		return fmt.Sprintf("no answer within --%s (%s); raise it with `--%s <duration>`", b.flag, b.timeout, b.flag)
+	}
+	return fmt.Sprintf("no answer within llm.timeout (%s); raise it with `sdd config set llm.timeout <duration>`", b.timeout)
+}
+
+// namedTimeout names what set the bound of a call that ran out of it: the
+// error otherwise reaches a CLI user or an MCP agent with no hint how to
+// raise it. A deadline the caller set itself is passed through.
+func namedTimeout(r llm.Runner, b bound) llm.Runner {
 	return llm.RunnerFunc(func(ctx context.Context, req llm.Request) (llm.Result, error) {
 		result, err := r.Run(ctx, req)
 		if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
-			return result, fmt.Errorf("%w: no answer within llm.timeout (%s); raise it with `sdd config set llm.timeout <duration>`", err, timeout)
+			return result, fmt.Errorf("%w: %s", err, b.hint())
 		}
 		return result, err
 	})

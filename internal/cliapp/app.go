@@ -78,23 +78,18 @@ func resolveLLMConfig(cmd *cli.Command) (model.LLMConfig, error) {
 // decorator that writes the stats rows `sdd stats` reads. Errors surface
 // misconfiguration (unknown provider, missing API key, broken config file)
 // at CLI entry so failures are visible before graph work begins.
-// timeoutFlag optionally names a per-command duration flag that overrides the
-// configured llm.timeout ("" means config or the factory default).
+// timeoutFlag optionally names a per-command duration flag that, when set,
+// bounds each call in place of llm.timeout and the provider default.
 func newRunner(cmd *cli.Command, timeoutFlag string) (pkgllm.Runner, error) {
 	cfg, err := resolveLLMConfig(cmd)
 	if err != nil {
 		return nil, err
 	}
-	if timeoutFlag != "" {
-		d, err := resolveTimeout(cmd, timeoutFlag)
-		if err != nil {
-			return nil, err
-		}
-		if d > 0 {
-			cfg.Timeout = d.String()
-		}
+	var opts []factory.Option
+	if timeoutFlag != "" && cmd.IsSet(timeoutFlag) {
+		opts = append(opts, factory.WithTimeoutFlag(timeoutFlag, cmd.Duration(timeoutFlag)))
 	}
-	runner, err := factory.New(cfg)
+	runner, err := factory.New(cfg, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -115,35 +110,6 @@ func statsSink() pkgllm.StatsSink {
 		return llmstats.Logged(nil)
 	}
 	return llmstats.Logged(fileSink)
-}
-
-// resolveTimeout returns the per-call LLM timeout for the given flag name,
-// preferring the user's explicit --<flag> over the llm.timeout field in
-// config. Zero when neither is set, so the factory applies the provider's
-// default (model.DefaultLLMTimeoutFor).
-func resolveTimeout(cmd *cli.Command, flagName string) (time.Duration, error) {
-	if cmd.IsSet(flagName) {
-		return cmd.Duration(flagName), nil
-	}
-	return configuredLLMTimeout(cmd)
-}
-
-// configuredLLMTimeout returns the llm.timeout field from config, or zero when
-// it is unset or unparseable. Callers with no flag of their own (sdd serve)
-// take it directly and let their own default stand in for zero.
-func configuredLLMTimeout(cmd *cli.Command) (time.Duration, error) {
-	cfg, err := resolveLLMConfig(cmd)
-	if err != nil {
-		return 0, err
-	}
-	if cfg.Timeout == "" {
-		return 0, nil
-	}
-	d, err := time.ParseDuration(cfg.Timeout)
-	if err != nil || d <= 0 {
-		return 0, nil
-	}
-	return d, nil
 }
 
 // readOnlyRunner satisfies llm.Runner but always errors on Run. Used by

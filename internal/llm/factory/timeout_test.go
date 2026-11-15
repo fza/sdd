@@ -48,6 +48,21 @@ func TestTimeoutNamesTheSetting(t *testing.T) {
 	}
 }
 
+func TestTimeoutNamesTheFlagThatSetIt(t *testing.T) {
+	outlastingClaude(t)
+	runner, err := factory.New(model.LLMConfig{Provider: "claude-cli", Timeout: "1m"}, factory.WithTimeoutFlag("preflight-timeout", 200*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = runner.Run(context.Background(), llm.Request{UserPrompt: "review"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a call outlasting the flag's bound should fail as a deadline, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "--preflight-timeout") || strings.Contains(err.Error(), "llm.timeout") {
+		t.Errorf("the timeout should name the flag that set the bound, not the setting it overrode, got %v", err)
+	}
+}
+
 func TestCallerDeadlineIsNotBlamedOnTheSetting(t *testing.T) {
 	outlastingClaude(t)
 	runner, err := factory.New(model.LLMConfig{Provider: "claude-cli", Timeout: "1m"})
