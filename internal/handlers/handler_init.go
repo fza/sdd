@@ -38,9 +38,16 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	if err := cmd.Validate(); err != nil {
 		return fmt.Errorf("invalid command: %w", err)
 	}
+	if cmd.ProjectDir != "" {
+		return h.initPointer(ctx, cmd)
+	}
 	graphDir := cmd.GraphDir
 	if graphDir == "" {
 		graphDir = model.DefaultGraphDir
+	}
+	err := gitignoreLine(graphDir)
+	if err != nil {
+		return fmt.Errorf("graph directory: %w", err)
 	}
 
 	sddDir := filepath.Join(cmd.RepoRoot, model.SDDDirName)
@@ -219,32 +226,8 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		// retries the drop rather than orphaning files under a config that
 		// already claims they're gone.
 		if persistAgents {
-			// Prune only under project scope, where renders are per-project and
-			// committed. Under user scope the skill dirs are shared across every
-			// project on the machine, so a per-project drop must not delete a
-			// render another project relies on — the recorded list still updates
-			// below, leaving the shared render in place.
-			if effectiveScope == model.ScopeProject {
-				if dropped := agentsDiff(recordedAgents, effectiveAgents); len(dropped) > 0 {
-					if err := h.pruneAgentSkills(ctx, dropped, effectiveScope, cmd, &touched); err != nil {
-						return err
-					}
-				}
-			}
-
-			existing, readErr := os.ReadFile(configPath)
-			if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
-				return fmt.Errorf("reading %s: %w", configPath, readErr)
-			}
-			updated, err := model.SetYAMLSequence(existing, "supported_agents", agentTargetsToStrings(effectiveAgents))
-			if err != nil {
-				return fmt.Errorf("updating %s: %w", configPath, err)
-			}
-			if !bytes.Equal(existing, updated) {
-				if err := os.WriteFile(configPath, updated, 0o644); err != nil {
-					return fmt.Errorf("writing %s: %w", configPath, err)
-				}
-				touched = append(touched, configPath)
+			if err := h.persistSupportedAgents(ctx, cmd, configPath, recordedAgents, effectiveAgents, effectiveScope, &touched); err != nil {
+				return err
 			}
 		}
 	}
@@ -290,31 +273,8 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	// Write the participant into .sdd/config.local.yaml when a value was
-	// resolved by the caller. Preserves any other keys already present in
-	// the file (notably the llm: block from d-tac-bes) by operating on a
-	// yaml.Node tree rather than re-marshaling the Config struct.
-	if cmd.Participant != "" {
-		configLocalPath := filepath.Join(sddDir, "config.local.yaml")
-		existing, readErr := os.ReadFile(configLocalPath)
-		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
-			return fmt.Errorf("reading %s: %w", configLocalPath, readErr)
-		}
-		updated, err := model.SetYAMLField(existing, "participant", cmd.Participant)
-		if err != nil {
-			return fmt.Errorf("updating %s: %w", configLocalPath, err)
-		}
-		if !bytes.Equal(existing, updated) {
-			if err := os.WriteFile(configLocalPath, updated, 0o644); err != nil {
-				return fmt.Errorf("writing %s: %w", configLocalPath, err)
-			}
-			// Deliberately NOT appended to `touched`: config.local.yaml is
-			// gitignored, so staging it would fail the commit. The write
-			// is still recorded via OnParticipantWritten for CLI feedback.
-			if cmd.OnParticipantWritten != nil {
-				cmd.OnParticipantWritten(configLocalPath, cmd.Participant)
-			}
-		}
+	if err := writeParticipant(sddDir, cmd); err != nil {
+		return err
 	}
 
 	// Write .sdd/meta.json when absent. MinimumVersion is populated only on
@@ -373,62 +333,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		}
 	}
 
-	// Install (or refresh) the embedded skill bundle. Track every written
-	// file for the eventual commit.
-	for _, target := range effectiveAgents {
-		err = h.InstallSkills(ctx, &command.InstallSkillsCmd{
-			Target:          target,
-			Scope:           effectiveScope,
-			RepoRoot:        cmd.RepoRoot,
-			UserHome:        cmd.UserHome,
-			BinaryVersion:   cmd.BinaryVersion,
-			Force:           cmd.Force,
-			PromptOverwrite: cmd.PromptOverwrite,
-			OnInstalled: func(r command.SkillInstallResult) {
-				touched = append(touched, r.Installed...)
-				touched = append(touched, r.Refreshed...)
-				touched = append(touched, r.Overwritten...)
-				if cmd.OnSkillsInstalled != nil {
-					cmd.OnSkillsInstalled(r)
-				}
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("installing skills for %s: %w", target, err)
-		}
-	}
-
-	// Sweep out what the bundle stopped shipping, after the install pass so
-	// this run's own writes are on disk and stamped (s-tac-zaz).
-	if err := h.pruneSkillOrphans(ctx, effectiveAgents, effectiveScope, cmd, &touched); err != nil {
-		return err
-	}
-
-	// Register the SDD MCP server per agent so engine mode works out of the
-	// box (d-tac-wfl). Project scope only for now: the registration files
-	// live in the repo tree; user-scope registration (home-dir config) is a
-	// separate path, deferred. User scope still installs skills above — it
-	// just skips this step.
-	if effectiveScope == model.ScopeProject {
-		if err := h.registerMCPServers(effectiveAgents, cmd, &touched); err != nil {
-			return err
-		}
-	}
-
-	// Commit anything touched. Skill files installed under the user-global
-	// scope (outside the repo) are filtered out — they aren't part of the
-	// repo's git tree.
-	if h.committer != nil {
-		commitPaths := filterRepoPaths(cmd.RepoRoot, touched)
-		if len(commitPaths) > 0 {
-			msg := initCommitMessage(sddExisted)
-			if err := h.committer.Commit(msg, commitPaths...); err != nil {
-				return fmt.Errorf("git commit: %w", err)
-			}
-		}
-	}
-
-	return nil
+	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(sddExisted))
 }
 
 // resolveSkillScope picks the scope `sdd init` should install under and
@@ -849,6 +754,16 @@ func initCommitMessage(sddExisted bool) string {
 	return "sdd: init .sdd/ metadata directory"
 }
 
+// gitignoreLine refuses an entry that would read as more than the one path it
+// names: graph_dir comes from a shared config, and a line break, a leading !
+// or # in it would add, negate or hide rules.
+func gitignoreLine(entry string) error {
+	if strings.ContainsAny(entry, "\r\n") || strings.HasPrefix(entry, "!") || strings.HasPrefix(entry, "#") {
+		return fmt.Errorf("refusing .gitignore entry %q: it reads as more than one path", entry)
+	}
+	return nil
+}
+
 // ensureGitignoreEntries appends entries to .gitignore that are not already
 // present. Creates the file if it does not exist. Returns true when at least
 // one entry was added so the caller can decide whether to record the file
@@ -869,6 +784,10 @@ func ensureGitignoreEntries(path string, entries []string) (bool, error) {
 
 	var toAdd []string
 	for _, e := range entries {
+		err := gitignoreLine(e)
+		if err != nil {
+			return false, err
+		}
 		if !existing[e] {
 			toAdd = append(toAdd, e)
 		}

@@ -27,8 +27,11 @@ var errSchemaIncompatible = errors.New("graph schema incompatible with this bina
 // development isn't blocked by a released graph's pins.
 func withWriteGate(action cli.ActionFunc) cli.ActionFunc {
 	return func(ctx context.Context, cmd *cli.Command) error {
-		sddDir, err := resolveSDDDir()
+		sddDir, err := optionalSDDDir()
 		if err != nil {
+			return err
+		}
+		if sddDir == "" {
 			// No .sdd/ — the inner action will fail naturally with the
 			// same message. Don't second-guess discovery here.
 			return action(ctx, cmd)

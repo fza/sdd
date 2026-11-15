@@ -30,6 +30,43 @@ A later row overrides an earlier one: local wins over project, project wins over
 
 sdd skips a key it does not know, including a key in a file where it does not belong. Every command then warns `ignoring unknown config key` and names the key and the file, and `sdd config` lists these keys at the end. A file written by a newer sdd version therefore still works with an older one.
 
+### A graph in a repository of its own
+
+The graph can live in an sdd project of its own, beside the repository where the work happens. The work repository's history then carries only the work, and every `sdd:` commit lands in the project's repository. Point the work repository at the project with `project_dir`:
+
+```yaml
+# work repository: .sdd/config.yaml, committed
+project_dir: ../app-sdd       # folder holding the project's .sdd/, relative to this repository's root or absolute
+skill_scope: project
+supported_agents: [claude]
+```
+
+```yaml
+# work repository: .sdd/config.local.yaml, gitignored
+project_dir: /home/ada/src/app-sdd   # this machine's checkout of the project
+```
+
+```text
+app/                         # only work commits
+  .sdd/config.yaml           # project_dir, skill_scope, supported_agents
+  .sdd/config.local.yaml     # optional: project_dir for this machine
+  .claude/skills/            # sdd init installs and commits these here
+  .mcp.json
+  src/
+
+app-sdd/                     # only sdd: commits
+  .sdd/config.yaml           # graph_dir, repo_id, default_branch, language, dependencies, ...
+  .sdd/config.local.yaml     # participant and other personal settings
+  .sdd/meta.json
+  .sdd/graph/
+```
+
+- The project holds every setting, the graph, `meta.json`, sessions and stats. The work repository's `.sdd/config.yaml` may set only `project_dir`, `skill_scope` and `supported_agents`, and its `.sdd/config.local.yaml` only `project_dir`. sdd refuses any other key there and names the file and the key.
+- `project_dir` must name an initialised project that sets no `project_dir` of its own.
+- Commands run in the work repository act on the project: captures commit there, `sdd serve` serves it, the write gate reads its `meta.json`, `sdd repo add` declares the dependency there, and `sdd sync --pull` pulls its repository.
+- The work stays in the work repository: `sdd init` installs the skills and registers the MCP server there, `sdd wip start` branches it, and closure evidence comes from its history.
+- A `graph_dir` leading into another repository is refused. Make that graph a project of its own and point at it with `project_dir`.
+
 ## The sdd config command
 
 | Command | What it does |
@@ -61,7 +98,8 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `graph_dir` | `.sdd/graph` | Directory of the entry files, relative to the repository root, or an absolute path. |
+| `graph_dir` | `.sdd/graph` | Directory of the entry files, relative to the repository root, or an absolute path inside the repository. |
+| `project_dir` | None | Set only in a work repository: the sdd project holding its graph. See [a graph in a repository of its own](#a-graph-in-a-repository-of-its-own). |
 | `default_branch` | The branch checked out during `sdd init` | A session that names no branch works on the branch checked out in the project directory, and on this branch when none is checked out. `sdd serve` does not start without it. |
 | `repo_id` | Derived from the `origin` remote | The project's identity, such as `github.com/acme/platform`. Other graphs reference an entry here as `<repo_id>:<entry-id>`. Empty for a repository without a remote. Do not change it by hand. |
 | `language` | English | Language of the entry text, as a locale code such as `en`, `de` or `de-DE`. Translated SDD vocabulary ships for `de`. |

@@ -130,3 +130,108 @@ func TestRemovalCommit_ScopesToPathspec(t *testing.T) {
 		t.Errorf("unrelated.txt no longer staged after scoped commit; tracked = %v", tracked)
 	}
 }
+
+// A graph kept in its own checkout beside the project is committed while the
+// process runs in the project, so the commit has to reach a repository the
+// working directory is not in.
+func TestCommit_TargetsTheConfiguredRepository(t *testing.T) {
+	project := newTestRepo(t)
+	sidecar := newTestRepo(t)
+
+	entry := filepath.Join(sidecar, "graph", "entry.md")
+	if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entry, []byte("entry\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(project)
+	if err := (CLI{Dir: sidecar}).Commit("sdd: capture", entry); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	if files := commitFiles(t, sidecar); !slices.Contains(files, "graph/entry.md") {
+		t.Errorf("the entry is missing from the sidecar's HEAD; files = %v", files)
+	}
+	if subject := strings.TrimSpace(runGit(t, project, "log", "-1", "--format=%s")); subject != "seed" {
+		t.Errorf("the project repository gained a commit: %q", subject)
+	}
+}
+
+func TestRemovalCommit_TargetsTheConfiguredRepository(t *testing.T) {
+	project := newTestRepo(t)
+	sidecar := newTestRepo(t)
+
+	marker := filepath.Join(sidecar, "marker.md")
+	if err := os.WriteFile(marker, []byte("wip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, sidecar, "add", "marker.md")
+	runGit(t, sidecar, "commit", "-q", "-m", "add marker")
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(project)
+	if err := (RemovalCommitter{Dir: sidecar}).Commit("sdd: wip done", marker); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	if files := commitFiles(t, sidecar); !slices.Contains(files, "marker.md") {
+		t.Errorf("the removal is missing from the sidecar's HEAD; files = %v", files)
+	}
+	if subject := strings.TrimSpace(runGit(t, project, "log", "-1", "--format=%s")); subject != "seed" {
+		t.Errorf("the project repository gained a commit: %q", subject)
+	}
+}
+
+// Ambient operations follow the same rule: a branch listing or a status read
+// answers for the configured repository, not the process working directory.
+func TestAmbientOperationsFollowTheConfiguredRepository(t *testing.T) {
+	project := newTestRepo(t)
+	sidecar := newTestRepo(t)
+	runGit(t, sidecar, "branch", "graph-only")
+
+	t.Chdir(project)
+	if !(CLI{Dir: sidecar}).BranchMerged("graph-only") {
+		t.Error("BranchMerged must answer for the configured repository")
+	}
+	if (CLI{}).BranchMerged("graph-only") {
+		t.Error("with no directory the answer must come from the working directory")
+	}
+
+	if err := os.WriteFile(filepath.Join(sidecar, "dirty.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clean, err := (CLI{Dir: sidecar}).IsClean(t.Context())
+	if err != nil {
+		t.Fatalf("IsClean: %v", err)
+	}
+	if clean {
+		t.Error("IsClean must report the configured repository's dirty tree")
+	}
+}
+
+// RepoRootFor answers for a path the process is not in, and reports no root
+// outside a repository rather than guessing one.
+func TestRepoRootFor(t *testing.T) {
+	sidecar := newTestRepo(t)
+	nested := filepath.Join(sidecar, "graph", "2026")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+
+	root := RepoRootFor(nested)
+	resolved, err := filepath.EvalSymlinks(sidecar)
+	if err != nil {
+		resolved = sidecar
+	}
+	if root != resolved && root != sidecar {
+		t.Errorf("RepoRootFor(%s) = %q, want %q", nested, root, resolved)
+	}
+	if outside := RepoRootFor(t.TempDir()); outside != "" {
+		t.Errorf("a path outside a repository must report no root, got %q", outside)
+	}
+}

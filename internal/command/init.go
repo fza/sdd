@@ -25,6 +25,12 @@ type InitCmd struct {
 	// defaults to model.DefaultGraphDir (".sdd/graph").
 	GraphDir string
 
+	// ProjectDir, when set, makes RepoRoot a work repository whose graph lives
+	// in the sdd project at this path (relative to RepoRoot or absolute):
+	// init writes only the pointer config and the agent surfaces, never a
+	// graph, meta.json or project settings.
+	ProjectDir string
+
 	// DefaultBranch is the concrete Git branch persisted for ordinary engine
 	// captures on fresh initialization or when upgrading an older config.
 	DefaultBranch string
