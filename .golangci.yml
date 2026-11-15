@@ -12,6 +12,10 @@ linters:
     - unparam
     - testpackage
   settings:
+    misspell:
+      # German layer names in the model's layer table.
+      ignore-rules:
+        - strategisch
     testpackage:
       skip-regexp: (export|internal)_test\.go
       allow-packages:
