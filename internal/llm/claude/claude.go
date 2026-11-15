@@ -45,6 +45,9 @@ func (r *Runner) identity() llm.Identity {
 // llm.claude_cli.credentials: env.
 var scrubbedEnvPrefixes = []string{"ANTHROPIC_", "CLAUDE_CODE_USE_"}
 
+// loginEnvVars pick which signed-in profile answers, so they stay.
+var loginEnvVars = []string{"ANTHROPIC_PROFILE", "ANTHROPIC_CONFIG_DIR"}
+
 // Run executes claude -p --output-format json and parses the JSON response.
 // The claude CLI accepts a single stdin payload, so SystemPrompt and
 // UserPrompt are concatenated — prompt caching is not available through this
@@ -181,7 +184,7 @@ func scrubbedEnv(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, entry := range env {
 		name, _, _ := strings.Cut(entry, "=")
-		if slices.ContainsFunc(scrubbedEnvPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) }) {
+		if !slices.Contains(loginEnvVars, name) && slices.ContainsFunc(scrubbedEnvPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) }) {
 			continue
 		}
 		out = append(out, entry)

@@ -90,7 +90,7 @@ Durations use the units `s`, `m` and `h`, such as `90s`, `5m` or `1h30m`.
 | `llm.retry.max_attempts` | `5` | Attempts per call, counting the first. `1` turns retries off. |
 | `llm.retry.base_delay` | `2s` | Wait before the first retry. The wait grows with each further retry. |
 | `llm.retry.max_delay` | `60s` | Longest wait between two retries. |
-| `llm.claude_cli.credentials` | `login` | What `claude-cli` authenticates with. `login` uses your Claude Code login, removes every `ANTHROPIC_*` and `CLAUDE_CODE_USE_*` variable from the `claude -p` environment and loads no Claude Code settings file. `env` passes the environment through unchanged and loads your settings, so `claude -p` can run on an Anthropic API key or another provider such as Bedrock or Vertex. See [Claude Code CLI](#claude-code-cli). |
+| `llm.claude_cli.credentials` | `login` | What `claude-cli` authenticates with. `login` uses your Claude Code login, removes every `ANTHROPIC_*` and `CLAUDE_CODE_USE_*` variable except the profile selectors `ANTHROPIC_PROFILE` and `ANTHROPIC_CONFIG_DIR` from the `claude -p` environment and loads no Claude Code settings file. `env` passes the environment through unchanged and loads your settings, so `claude -p` can run on an Anthropic API key or another provider such as Bedrock or Vertex. See [Claude Code CLI](#claude-code-cli). |
 | `llm.concurrency` | `4` | Not applied in this version. `sdd summarize --all` takes its worker count from `--concurrency`, which defaults to 4. |
 
 sdd retries a call that failed with a temporary error, such as a rate limit or a dropped connection, and waits as long as the provider asks when it names a time. `claude-cli` ignores the rate limit and retry keys, since the `claude` command retries on its own.
@@ -259,7 +259,7 @@ sdd runs `claude -p` isolated:
 - `--safe-mode`: instruction files, skills, plugins, hooks and your other customizations stay out of the prompt.
 - `--no-session-persistence`: no transcript of the draft stays under `~/.claude`.
 - An empty temporary working directory, removed after the call, so no project file is in reach either.
-- With `llm.claude_cli.credentials: login`, the default: no `ANTHROPIC_*` or `CLAUDE_CODE_USE_*` variable in the environment, and no settings file loaded (`--setting-sources ""`). Those variables carry API keys, tokens, endpoints and provider switches, and a settings file's `env` block and `apiKeyHelper` apply even in safe mode. `CLAUDE_CODE_OAUTH_TOKEN` belongs to the login and stays.
+- With `llm.claude_cli.credentials: login`, the default: no `ANTHROPIC_*` or `CLAUDE_CODE_USE_*` variable in the environment, and no settings file loaded (`--setting-sources ""`). Those variables carry API keys, tokens, endpoints and provider switches, and a settings file's `env` block and `apiKeyHelper` apply even in safe mode. `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_PROFILE` and `ANTHROPIC_CONFIG_DIR` belong to the login and stay.
 
 An exported key or provider switch then cannot move the call off your Claude Code login. To use an API key, set `llm.claude_cli.credentials: env`, or use `provider: anthropic`. With `env`, `claude -p` loads your settings and can also run on another provider such as Bedrock or Vertex.
 
