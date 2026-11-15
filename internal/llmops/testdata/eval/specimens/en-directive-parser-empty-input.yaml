@@ -1,0 +1,14 @@
+id: en-directive-parser-empty-input
+origin: the tactical example of the layer meanings, filed at the operational layer
+class: a component rule at the wrong layer
+language: ""
+operation: preflight
+expect:
+  severity: medium
+  passage: The parser rejects empty input.
+draft:
+  type: decision
+  kind: directive
+  layer: operational
+  content: |-
+    The parser rejects empty input. A request whose body is empty or holds only whitespace fails with a validation error before any handler runs, instead of reaching the handlers as an empty document. Callers learn of the mistake at the boundary, where the error can name it.
