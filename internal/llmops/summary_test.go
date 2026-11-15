@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -54,7 +55,7 @@ func TestNewDescriptionChoosesTheCall(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			description, err := llmops.NewDescription(tc.entry, graph, "", tc.regenerate)
+			description, err := llmops.NewDescription(tc.entry, graph, "", tc.regenerate, nil)
 			if err != nil {
 				t.Fatalf("NewDescription: %v", err)
 			}
@@ -68,7 +69,7 @@ func TestNewDescriptionChoosesTheCall(t *testing.T) {
 func TestNewDescriptionRefusesADescribedEntry(t *testing.T) {
 	entry, graph := titledFixture()
 	entry.Title = "Daemon removal"
-	_, err := llmops.NewDescription(entry, graph, "", false)
+	_, err := llmops.NewDescription(entry, graph, "", false, nil)
 	if !errors.Is(err, llmops.ErrDescribed) {
 		t.Fatalf("an entry holding title and summary should be refused unless regenerated, got %v", err)
 	}
@@ -76,7 +77,7 @@ func TestNewDescriptionRefusesADescribedEntry(t *testing.T) {
 
 func TestPairedDescriptionShowsRelatedTitles(t *testing.T) {
 	entry, graph := titledFixture()
-	description, err := llmops.NewDescription(unsummarizedCopy(entry), graph, "", false)
+	description, err := llmops.NewDescription(unsummarizedCopy(entry), graph, "", false, nil)
 	if err != nil {
 		t.Fatalf("NewDescription: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestPairedDescriptionShowsRelatedTitles(t *testing.T) {
 func TestTitleDescriptionSendsOnlyWhatATitleNames(t *testing.T) {
 	entry, graph := titledFixture()
 	related := graph.ByID["20260101-100000-s-tac-rel"]
-	description, err := llmops.NewDescription(untitledCopy(entry), graph, "de", false)
+	description, err := llmops.NewDescription(untitledCopy(entry), graph, "de", false, nil)
 	if err != nil {
 		t.Fatalf("NewDescription: %v", err)
 	}
@@ -120,12 +121,17 @@ func TestDescriptionsStateTheTitleRule(t *testing.T) {
 	entry, graph := titledFixture()
 	for name, candidate := range map[string]*model.Entry{"title": untitledCopy(entry), "summary": unsummarizedCopy(entry)} {
 		t.Run(name, func(t *testing.T) {
-			description, err := llmops.NewDescription(candidate, graph, "", false)
+			description, err := llmops.NewDescription(candidate, graph, "", false, nil)
 			if err != nil {
 				t.Fatalf("NewDescription: %v", err)
 			}
 			if !strings.Contains(description.Request.SystemPrompt, model.TitleRule) {
 				t.Errorf("the prompt should state the title rule:\n%s", description.Request.SystemPrompt)
+			}
+			for _, want := range []string{"uses no quotation marks", "no trailing punctuation but a question mark"} {
+				if !strings.Contains(description.Request.SystemPrompt, want) {
+					t.Errorf("the prompt should say %q:\n%s", want, description.Request.SystemPrompt)
+				}
 			}
 			if strings.Contains(description.Request.SystemPrompt, "at most 32 characters") {
 				t.Errorf("the prompt should no longer cap titles at 32 characters:\n%s", description.Request.SystemPrompt)
@@ -148,7 +154,7 @@ func TestDescriptionsDeclareTheirSchema(t *testing.T) {
 		{name: "title", entry: untitledCopy(entry), want: []string{`"title"`}, without: `"summary"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			description, err := llmops.NewDescription(tc.entry, graph, "", false)
+			description, err := llmops.NewDescription(tc.entry, graph, "", false, nil)
 			if err != nil {
 				t.Fatalf("NewDescription: %v", err)
 			}
@@ -167,7 +173,7 @@ func TestDescriptionsDeclareTheirSchema(t *testing.T) {
 
 func TestPairedDescriptionParsesTheAnswer(t *testing.T) {
 	entry, graph := titledFixture()
-	description, err := llmops.NewDescription(unsummarizedCopy(entry), graph, "", false)
+	description, err := llmops.NewDescription(unsummarizedCopy(entry), graph, "", false, nil)
 	if err != nil {
 		t.Fatalf("NewDescription: %v", err)
 	}
@@ -181,6 +187,9 @@ func TestPairedDescriptionParsesTheAnswer(t *testing.T) {
 		{name: "paired answer", output: `{"title": "daemon project removal", "summary": "The daemon project is removed."}`, wantTitle: "Daemon project removal", wantSummary: "The daemon project is removed."},
 		{name: "answer wrapped in prose", output: "Here it is:\n```json\n{\"title\": \"daemon project removal\", \"summary\": \"The daemon project is removed.\"}\n```", wantTitle: "Daemon project removal", wantSummary: "The daemon project is removed."},
 		{name: "trailing period dropped from the title", output: `{"title": "daemon project removal.", "summary": "S."}`, wantTitle: "Daemon project removal", wantSummary: "S."},
+		{name: "trailing punctuation dropped from the title", output: `{"title": "daemon project removal …", "summary": "S."}`, wantTitle: "Daemon project removal", wantSummary: "S."},
+		{name: "a question mark kept", output: `{"title": "should the daemon go?", "summary": "S."}`, wantTitle: "Should the daemon go?", wantSummary: "S."},
+		{name: "only punctuation", output: `{"title": " … ", "summary": "S."}`, wantErr: "empty title"},
 		{name: "plain prose", output: "The daemon project is removed.", wantErr: "no JSON object"},
 		{name: "empty title", output: `{"title": " ", "summary": "S."}`, wantErr: "empty title"},
 		{name: "multi-line title", output: `{"title": "daemon\nremoval", "summary": "S."}`, wantErr: "more than one line"},
@@ -207,7 +216,7 @@ func TestPairedDescriptionParsesTheAnswer(t *testing.T) {
 
 func TestTitleDescriptionParsesTheAnswer(t *testing.T) {
 	entry, graph := titledFixture()
-	description, err := llmops.NewDescription(untitledCopy(entry), graph, "", false)
+	description, err := llmops.NewDescription(untitledCopy(entry), graph, "", false, nil)
 	if err != nil {
 		t.Fatalf("NewDescription: %v", err)
 	}
@@ -226,8 +235,8 @@ func TestTitleDescriptionParsesTheAnswer(t *testing.T) {
 
 func TestDescribeGivesTitleAndSummaryFromOneCall(t *testing.T) {
 	entry, graph := titledFixture()
-	runner := &scriptedRunner{replies: []string{`{"title": "daemon project removal", "summary": "The daemon project is removed."}`}}
-	got, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false)
+	runner := &scriptedRunner{replies: []string{`{"title": "daemon project shutdown", "summary": "The daemon project is removed."}`}}
+	got, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false, nil)
 	if err != nil {
 		t.Fatalf("Describe: %v", err)
 	}
@@ -240,7 +249,7 @@ func TestDescribeGivesTitleAndSummaryFromOneCall(t *testing.T) {
 // lent from a related entry; the prompt holds every claim to the entry.
 func TestPairedDescriptionClaimsOnlyWhatTheEntrySays(t *testing.T) {
 	entry, graph := titledFixture()
-	description, err := llmops.NewDescription(unsummarizedCopy(entry), graph, "", false)
+	description, err := llmops.NewDescription(unsummarizedCopy(entry), graph, "", false, nil)
 	if err != nil {
 		t.Fatalf("NewDescription: %v", err)
 	}
@@ -251,7 +260,7 @@ func TestPairedDescriptionClaimsOnlyWhatTheEntrySays(t *testing.T) {
 }
 
 func pairedAnswer(summary string) string {
-	return `{"title": "daemon project removal", "summary": "` + summary + `"}`
+	return `{"title": "Daemon project goes", "summary": "` + summary + `"}`
 }
 
 func sentenceOfWords(n int) string {
@@ -264,7 +273,7 @@ func TestDescribeRepairsALongFirstSentence(t *testing.T) {
 	short := "The daemon project is removed. It relates to s-tac-rel."
 	runner := &scriptedRunner{replies: []string{pairedAnswer(long), pairedAnswer(short)}}
 
-	got, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false)
+	got, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false, nil)
 	if err != nil {
 		t.Fatalf("Describe: %v", err)
 	}
@@ -287,7 +296,7 @@ func TestDescribeRefusesAFirstSentenceTheRepairLeavesLong(t *testing.T) {
 	long := pairedAnswer(sentenceOfWords(llmops.MaxFirstSentenceWords + 1))
 	runner := &scriptedRunner{replies: []string{long, long}}
 
-	_, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false)
+	_, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false, nil)
 	if !errors.Is(err, llmops.ErrLongFirstSentence) {
 		t.Fatalf("a first sentence still too long after the repair should fail the description, got %v", err)
 	}
@@ -300,11 +309,164 @@ func TestDescribeLeavesAFirstSentenceAtTheLimitAlone(t *testing.T) {
 	entry, graph := titledFixture()
 	runner := &scriptedRunner{replies: []string{pairedAnswer(sentenceOfWords(llmops.MaxFirstSentenceWords))}}
 
-	_, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false)
+	_, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false, nil)
 	if err != nil {
 		t.Fatalf("Describe: %v", err)
 	}
 	if len(runner.requests) != 1 {
 		t.Errorf("a first sentence within the limit should need no repair call, got %d calls", len(runner.requests))
+	}
+}
+
+const similarHeading = "## Titles of the most similar entries"
+
+const similarRule = "The new title must not conflict with any of these titles: it must not repeat one or be mistakable for one. Name what sets this entry apart."
+
+// listedSimilarTitles reads the similar-titles list out of a prompt, nil when
+// the prompt has no such section.
+func listedSimilarTitles(prompt string) []string {
+	_, section, ok := strings.Cut(prompt, similarHeading)
+	if !ok {
+		return nil
+	}
+	var titles []string
+	for _, line := range strings.Split(section, "\n") {
+		if title, ok := strings.CutPrefix(line, "- "); ok {
+			titles = append(titles, title)
+		}
+	}
+	return titles
+}
+
+func TestDescriptionsListSimilarTitles(t *testing.T) {
+	entry, graph := titledFixture()
+	similar := []string{"Search index layout", "Title backfill batches"}
+	for name, candidate := range map[string]*model.Entry{"title": untitledCopy(entry), "summary": unsummarizedCopy(entry)} {
+		t.Run(name, func(t *testing.T) {
+			with, err := llmops.NewDescription(candidate, graph, "", false, similar)
+			if err != nil {
+				t.Fatalf("NewDescription: %v", err)
+			}
+			prompt := with.Request.UserPrompt
+			if !strings.Contains(prompt, similarRule) {
+				t.Errorf("the prompt should forbid a title conflicting with the similar ones:\n%s", prompt)
+			}
+			if got := listedSimilarTitles(prompt); !slices.Equal(got, similar) {
+				t.Errorf("the prompt should list the similar titles in rank order, got %q:\n%s", got, prompt)
+			}
+			if !strings.Contains(prompt, "Title: daemon project removal") && !strings.Contains(prompt, ": daemon project removal") {
+				t.Errorf("the related entries should still be listed:\n%s", prompt)
+			}
+
+			without, err := llmops.NewDescription(candidate, graph, "", false, nil)
+			if err != nil {
+				t.Fatalf("NewDescription: %v", err)
+			}
+			combined := without.Request.Combined()
+			if strings.Contains(combined, similarHeading) || strings.Contains(combined, similarRule) {
+				t.Errorf("without similar titles the prompt should carry neither their section nor their rule:\n%s", combined)
+			}
+		})
+	}
+}
+
+// repeatFixture is a graph whose entries hold titles the description's answer
+// can repeat; the entry described holds the title "Index segment cache".
+func repeatFixture() (*model.Entry, *model.Graph) {
+	entry, graph := titledFixture()
+	entry.Title = "Index segment cache"
+	other := &model.Entry{
+		ID: "20260103-100000-s-tac-oth", Type: model.TypeSignal, Kind: model.KindGap, Layer: model.LayerTactical,
+		Title: "Daemon shutdown order", Summary: "The daemon stops in the wrong order.", Content: "Order matters.",
+	}
+	return entry, model.NewGraph(append(slices.Clone(graph.Entries), other))
+}
+
+func TestDescribeRerunsARepeatedTitleOnce(t *testing.T) {
+	previous := []string{"First", "Second", "Third", "Fourth", "Fifth"}
+	cases := []struct {
+		name      string
+		similar   []string
+		replies   []string
+		wantList  []string
+		wantTitle string
+	}{
+		{
+			name:      "repeated title outside the list",
+			similar:   previous,
+			replies:   []string{`{"title": " daemon SHUTDOWN order ", "summary": "The daemon stops first."}`, `{"title": "Daemon stop sequence"}`},
+			wantList:  []string{"Daemon shutdown order", "First", "Second", "Third", "Fourth"},
+			wantTitle: "Daemon stop sequence",
+		},
+		{
+			name:      "repeated title inside the list",
+			similar:   []string{"First", "Daemon shutdown order", "Third", "Fourth", "Fifth"},
+			replies:   []string{`{"title": "Daemon shutdown order", "summary": "The daemon stops first."}`, `{"title": "Daemon stop sequence"}`},
+			wantList:  []string{"Daemon shutdown order", "First", "Third", "Fourth", "Fifth"},
+			wantTitle: "Daemon stop sequence",
+		},
+		{
+			name:      "re-run repeats again",
+			similar:   previous,
+			replies:   []string{`{"title": "Daemon shutdown order", "summary": "The daemon stops first."}`, `{"title": "daemon project removal"}`},
+			wantList:  []string{"Daemon shutdown order", "First", "Second", "Third", "Fourth"},
+			wantTitle: "Daemon project removal",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, graph := repeatFixture()
+			runner := &scriptedRunner{replies: tc.replies}
+			got, err := llmops.Describe(context.Background(), runner, unsummarizedCopy(entry), graph, "", false, tc.similar)
+			if err != nil {
+				t.Fatalf("Describe: %v", err)
+			}
+			if len(runner.requests) != 2 {
+				t.Fatalf("a repeated title should be re-run exactly once, got %d calls", len(runner.requests))
+			}
+			rerun := runner.requests[1]
+			if rerun.Purpose != llm.PurposeTitle {
+				t.Errorf("the re-run should be the title-only call, got %q", rerun.Purpose)
+			}
+			if !strings.Contains(rerun.UserPrompt, "The daemon stops first.") {
+				t.Errorf("the re-run should title the summary the paired call wrote:\n%s", rerun.UserPrompt)
+			}
+			if list := listedSimilarTitles(rerun.UserPrompt); !slices.Equal(list, tc.wantList) {
+				t.Errorf("the re-run should list the repeated title first, then the earlier titles without the last, got %q", list)
+			}
+			if got.Title != tc.wantTitle || got.Summary != "The daemon stops first." {
+				t.Errorf("the re-run's title should be stored beside the paired call's summary, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestDescribeKeepsATitleNoOtherEntryHolds(t *testing.T) {
+	cases := []struct {
+		name       string
+		entry      func(*model.Entry) *model.Entry
+		regenerate bool
+		reply      string
+	}{
+		{name: "free title", entry: unsummarizedCopy, reply: `{"title": "Daemon stop sequence", "summary": "S."}`},
+		{name: "the entry's own title", entry: func(e *model.Entry) *model.Entry { return e }, regenerate: true, reply: `{"title": "index segment cache", "summary": "S."}`},
+		{name: "a title the caller keeps", entry: func(e *model.Entry) *model.Entry {
+			kept := unsummarizedCopy(e)
+			kept.Title = "Caller title"
+			return kept
+		}, reply: `{"title": "Daemon shutdown order", "summary": "S."}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, graph := repeatFixture()
+			runner := &scriptedRunner{replies: []string{tc.reply, `{"title": "Another title"}`}}
+			_, err := llmops.Describe(context.Background(), runner, tc.entry(entry), graph, "", tc.regenerate, []string{"First"})
+			if err != nil {
+				t.Fatalf("Describe: %v", err)
+			}
+			if len(runner.requests) != 1 {
+				t.Errorf("a title repeating no other entry's title should not be re-run, got %d calls", len(runner.requests))
+			}
+		})
 	}
 }

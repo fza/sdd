@@ -455,7 +455,7 @@ func (e *Entry) ListingTitle() string {
 // TitleRule is the guidance every title writer follows, the title model and
 // an agent writing a title alike, rendered from here into each surface that
 // states it.
-const TitleRule = "A title names the entry's subject for a reader scanning a list of entries: a noun phrase of 3 to 10 plain words, about 30 to 80 characters, starting with a capital letter, like \"Daemon project removal\". Write a command, identifier, file or package name, and any other name whose own spelling starts with a lowercase letter, as a backtick code span in its own casing wherever it appears; a title naming one first opens with the code span, like \"`sdd` info JSON output\" or \"`macOS` signing failure\"."
+const TitleRule = "A title names the entry's subject for a reader scanning a list of entries: a noun phrase of 3 to 8 plain words, at most 50 characters, starting with a capital letter, like \"Daemon project removal\". Write code terms (a command, identifier, file or package name) and proper nouns (a product, tool, service or company name) as backtick code spans in their own casing wherever they appear; a title naming one first opens with the code span, like \"`sdd` info JSON output\", \"`macOS` signing failure\" or \"`GitHub` token rotation\". A title uses no quotation marks: a code term or proper noun is a code span instead."
 
 // CapitalizeTitle starts a title with a capital letter, whatever wrote it:
 // listings show titles in a column, and a mix of cases reads as noise there.
@@ -469,17 +469,45 @@ func CapitalizeTitle(title string) string {
 	return string(unicode.ToTitle(first)) + title[size:]
 }
 
+// titleTrailers are trimmed from a title's end: a title names a subject and
+// closes on none of them. A question mark stays, as do a closing code span or
+// bracket.
+const titleTrailers = ".,;:!…-–—"
+
+// titleQuotes are removed wherever they stand (TitleRule). Single quotes stay:
+// they double as apostrophes.
+const titleQuotes = "\"“”„«»"
+
+// NormalizeTitle is the form every stored title takes, whatever wrote it:
+// double quotes removed, whitespace trimmed from both ends, trailing
+// punctuation but a question mark trimmed from the end, and capitalized.
+func NormalizeTitle(title string) string {
+	title = strings.Map(func(r rune) rune {
+		if strings.ContainsRune(titleQuotes, r) {
+			return -1
+		}
+		return r
+	}, title)
+	for strings.Contains(title, "  ") {
+		title = strings.ReplaceAll(title, "  ", " ")
+	}
+	title = strings.TrimRightFunc(strings.TrimSpace(title), func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(titleTrailers, r)
+	})
+	return CapitalizeTitle(title)
+}
+
 // TitleBackfill counts what filling the missing titles of entries costs:
-// entries lacking a summary get summary and title from one call, entries
-// holding a summary get a title-only call. Embedded entries have no file to
-// write and are not counted.
+// entries lacking a summary get summary and title from one call, whether or
+// not they hold a title; entries holding a summary but no title get a
+// title-only call. Embedded entries have no file to write and are not counted.
 func TitleBackfill(entries []*Entry) (withSummary, titleOnly int) {
 	for _, e := range entries {
 		switch {
-		case e.Embedded || e.Title != "":
+		case e.Embedded:
 		case e.Summary == "":
 			withSummary++
-		default:
+		case e.Title == "":
 			titleOnly++
 		}
 	}
@@ -501,6 +529,22 @@ func UntitledNewestFirst(entries []*Entry, limit int) []*Entry {
 	}
 	slices.SortFunc(untitled, func(a, b *Entry) int { return strings.Compare(b.ID, a.ID) })
 	return untitled[:min(len(untitled), limit)]
+}
+
+// SimilarTitleCount is how many titles of the entries nearest an entry's body
+// a title call is shown, so the title it writes stands apart from them.
+const SimilarTitleCount = 5
+
+// RepeatedTitle returns the title of an entry other than id that title
+// repeats, compared trimmed and case-insensitively.
+func RepeatedTitle(entries []*Entry, title, id string) (string, bool) {
+	title = strings.TrimSpace(title)
+	for _, e := range entries {
+		if e.ID != id && e.Title != "" && strings.EqualFold(strings.TrimSpace(e.Title), title) {
+			return e.Title, true
+		}
+	}
+	return "", false
 }
 
 // FirstSentence returns the leading sentence of text. A sentence ends at the

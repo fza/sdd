@@ -318,6 +318,9 @@ This reference exists only on the bound work branch.
 				return pkgllm.Result{Text: `{"findings":[]}`, Identity: identity}, nil
 			case pkgllm.PurposeSummarize:
 				return pkgllm.Result{Text: `{"title": "test title", "summary": "Generated routing summary."}`, Identity: identity}, nil
+			case pkgllm.PurposeTitle:
+				// A later capture repeats the first one's title, which is re-run once.
+				return pkgllm.Result{Text: `{"title": "test title"}`, Identity: identity}, nil
 			default:
 				return pkgllm.Result{}, fmt.Errorf("unexpected LLM purpose %q", request.Purpose)
 			}

@@ -1178,3 +1178,57 @@ func TestNewEntry_AttachmentNeverOverwritesAnotherAttachment(t *testing.T) {
 		t.Error("the written attachment should keep its content")
 	}
 }
+
+func TestNewEntry_NormalizesTheSuppliedTitle(t *testing.T) {
+	cases := []struct {
+		name      string
+		title     string
+		wantTitle string
+		wantCalls int
+	}{
+		{name: "quotes and trailing punctuation removed", title: `"Supplied" title.`, wantTitle: "Supplied title"},
+		{name: "a question mark kept", title: "Should the daemon go?", wantTitle: "Should the daemon go?"},
+		{name: "nothing left is generated", title: " … ", wantTitle: storedTitle, wantCalls: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			sddDir := filepath.Join(tmp, ".sdd")
+			if err := os.MkdirAll(sddDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			runner := &stubRunner{text: "GENERATED"}
+			h := handlers.New(handlers.Options{
+				GraphDir: tmp, SDDDir: sddDir, Reader: &fakeReader{}, Committer: &recordingCommitter{},
+				LLMRunner: runner, Stderr: &bytes.Buffer{},
+			})
+			var id string
+			err := h.NewEntry(context.Background(), &command.NewEntryCmd{
+				Type: model.TypeSignal, Layer: model.LayerTactical, Description: "exercising supplied titles",
+				Summary: "A supplied summary.", Title: tc.title, SkipPreflight: true,
+				OnNewEntry: func(newID, _ string) { id = newID },
+			})
+			if err != nil {
+				t.Fatalf("NewEntry: %v", err)
+			}
+			if runner.callCount() != tc.wantCalls {
+				t.Errorf("a usable supplied title should cost no call, an emptied one a title call, got %d calls", runner.callCount())
+			}
+			relPath, err := model.IDToRelPath(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(tmp, relPath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry, err := model.ParseEntry(id+".md", string(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if entry.Title != tc.wantTitle {
+				t.Errorf("the stored title should be the normalized one, got %q", entry.Title)
+			}
+		})
+	}
+}

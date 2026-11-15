@@ -41,6 +41,14 @@ type SummarizeCmd struct {
 	Backfill bool
 }
 
+// CommitStrandedTitlesCmd captures intent to commit entry files that hold a
+// title on disk but not at HEAD.
+type CommitStrandedTitlesCmd struct {
+	// OnCommitted fires after the stranded files were committed, carrying
+	// their count.
+	OnCommitted func(count int)
+}
+
 // BackfillTitlesCmd captures intent to title the graph's untitled entries in
 // the background and record a failure for the sync notice.
 type BackfillTitlesCmd struct {
