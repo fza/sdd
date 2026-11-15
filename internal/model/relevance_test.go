@@ -9,18 +9,68 @@ import (
 
 func readerVerdicts() []model.ReaderVerdict {
 	var all []model.ReaderVerdict
-	for code := model.ReaderNone; code <= model.ReaderReferenced; code++ {
-		for _, reason := range []uint8{0, 1, 4, 9} {
-			for _, audit := range []bool{false, true} {
+	for _, code := range []model.ReaderCode{model.ReaderNone, model.ReaderImplicit, model.ReaderDismissed, model.ReaderOpened, model.ReaderReferenced} {
+		for _, reason := range []uint8{0, 1, 9} {
+			for _, flags := range [][2]bool{{false, false}, {true, false}, {false, true}} {
 				for _, relations := range []uint8{0, model.RelationContradicts, model.RelationDuplicates | model.RelationOutdates} {
 					for _, source := range []model.ReaderSource{model.SourceLive, model.SourceReplay} {
-						all = append(all, model.ReaderVerdict{Code: code, Reason: reason, Audit: audit, Relations: relations, Source: source})
+						all = append(all, model.ReaderVerdict{Code: code, Reason: reason, Audit: flags[0], Flipped: flags[1], Relations: relations, Source: source})
 					}
 				}
 			}
 		}
 	}
 	return all
+}
+
+// The implicit dismissal sits below every answer the reader gave: any
+// explicit record of the pair replaces it, and a flip keeps its code.
+func TestReaderVerdictJoin_TheImplicitDismissalRanksLowest(t *testing.T) {
+	implicit := model.ReaderVerdict{Code: model.ReaderImplicit, Audit: true}
+	for _, code := range []model.ReaderCode{model.ReaderDismissed, model.ReaderOpened, model.ReaderReferenced} {
+		if got := implicit.Join(model.ReaderVerdict{Code: code, Reason: 1}); got.Code != code || !got.Audit {
+			t.Errorf("join with %s = %+v: the explicit answer should win and the audit bit stay", code, got)
+		}
+	}
+	if got := implicit.Join(model.ReaderVerdict{}); got.Code != model.ReaderImplicit {
+		t.Errorf("join with no answer = %+v: the implicit dismissal should stay", got)
+	}
+	flipped := implicit.Join(model.ReaderVerdict{Code: model.ReaderImplicit, Flipped: true})
+	if flipped.Code != model.ReaderImplicit || !flipped.Flipped || !flipped.Audit {
+		t.Errorf("join with a flip = %+v: the implicit record should carry the flip", flipped)
+	}
+	for _, code := range []model.ReaderCode{model.ReaderNone, model.ReaderImplicit, model.ReaderDismissed, model.ReaderOpened, model.ReaderReferenced} {
+		parsed, err := model.ParseReaderCode(code.String())
+		if err != nil || parsed != code {
+			t.Errorf("parsing %s = %v, %v", code, parsed, err)
+		}
+	}
+}
+
+// A flip pairs entries the implicit dismissal left apart when a later entry
+// references the subject and the candidate both.
+func TestPairFlips_FlipsImplicitDismissalsALaterEntryJoins(t *testing.T) {
+	const (
+		s     = "20261101-120000-d-tac-sub"
+		c     = "20261102-120000-s-tac-can"
+		other = "20261103-120000-s-tac-oth"
+		dis   = "20261104-120000-s-tac-dis"
+	)
+	topicOnly, _ := model.VerdictReasonByte(model.VerdictTopicOnly)
+	ledger := model.NewRelevanceLedger(model.RelevanceBatch{Readers: []model.ReaderRecord{
+		{Pair: model.NewRelevancePair(s, c), Verdict: model.ReaderVerdict{Code: model.ReaderImplicit, Source: model.SourceReplay}},
+		{Pair: model.NewRelevancePair(s, dis), Verdict: model.ReaderVerdict{Code: model.ReaderDismissed, Reason: topicOnly}},
+		{Pair: model.NewRelevancePair(other, s), Verdict: model.ReaderVerdict{Code: model.ReaderImplicit, Flipped: true}},
+	}})
+	got := model.PairFlips(ledger, []string{c, s, dis, other, s, ""})
+	want := []model.ReaderRecord{{Pair: model.NewRelevancePair(s, c), Verdict: model.ReaderVerdict{Code: model.ReaderImplicit, Flipped: true, Source: model.SourceReplay}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("flips %+v\nwant %+v: only the unflipped implicit pair should flip, once", got, want)
+	}
+	ledger.Add(model.RelevanceBatch{Readers: got})
+	if got := model.PairFlips(ledger, []string{s, c}); len(got) != 0 {
+		t.Fatalf("flips %+v: a flipped pair should not flip again", got)
+	}
 }
 
 func TestReaderVerdictJoin_IsALattice(t *testing.T) {
@@ -105,6 +155,14 @@ func TestRelevanceLedgerLookup(t *testing.T) {
 			Readers: []model.ReaderRecord{{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderDismissed, Reason: 1}}},
 			Scores:  []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 250}}},
 		}, calibrated, model.RelevanceNotRelevant},
+		{"an implicit dismissal leaves the pair to the score", model.RelevanceBatch{
+			Readers: []model.ReaderRecord{{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderImplicit}}},
+			Scores:  []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 100}}},
+		}, calibrated, model.RelevanceUndecided},
+		{"a flipped implicit dismissal is relevant", model.RelevanceBatch{
+			Readers: []model.ReaderRecord{{Pair: pair, Verdict: model.ReaderVerdict{Code: model.ReaderImplicit, Flipped: true}}},
+			Scores:  []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 10}}},
+		}, calibrated, model.RelevanceRelevant},
 		{"a low score sets aside", model.RelevanceBatch{Scores: []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 10}}}}, calibrated, model.RelevanceNotRelevant},
 		{"a high score is relevant", model.RelevanceBatch{Scores: []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 200}}}}, calibrated, model.RelevanceRelevant},
 		{"a middle score stays to judge", model.RelevanceBatch{Scores: []model.ScoreRecord{{Pair: pair, Score: model.FilterScore{Judge: judge, Score: 100}}}}, calibrated, model.RelevanceUndecided},

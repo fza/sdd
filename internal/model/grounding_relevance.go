@@ -116,3 +116,28 @@ func VerifierRelevance(entryID string, reading *Reading, findings []DeepFinding,
 	}
 	return records
 }
+
+// PairFlips returns the flips a published entry earns: for every two
+// entries it answers (refs, supersedes, closes) whose pair the ledger holds
+// as an unflipped implicit dismissal, a record flipping it to bearing. The
+// flip joins the held record, so the ledger stays append-only.
+func PairFlips(ledger *RelevanceLedger, answered []string) []ReaderRecord {
+	if ledger == nil {
+		return nil
+	}
+	ids := slices.DeleteFunc(slices.Clone(answered), func(id string) bool { return id == "" })
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	var flips []ReaderRecord
+	for i, a := range ids {
+		for _, b := range ids[i+1:] {
+			pair := NewRelevancePair(a, b)
+			held, ok := ledger.Reader(pair)
+			if !ok || held.Code != ReaderImplicit || held.Flipped {
+				continue
+			}
+			flips = append(flips, ReaderRecord{Pair: pair, Verdict: ReaderVerdict{Code: ReaderImplicit, Flipped: true, Source: held.Source}})
+		}
+	}
+	return flips
+}

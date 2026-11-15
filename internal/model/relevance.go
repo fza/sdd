@@ -39,24 +39,42 @@ func (p RelevancePair) Other(id string) string {
 func (p RelevancePair) Has(id string) bool { return p.A == id || p.B == id }
 
 // ReaderCode is how far a reader went with a candidate, ordered as a
-// lattice: a later, deeper answer never downgrades.
+// lattice by rank, not by its ledger byte: a later, deeper answer never
+// downgrades. From lowest: none, implicit, dismissed, opened, referenced.
 type ReaderCode uint8
 
 const (
 	ReaderNone ReaderCode = iota
 	// ReaderDismissed is a candidate set aside from its listing line.
 	ReaderDismissed
-	// ReaderOpened is a candidate read in full and then set aside.
+	// ReaderOpened is a candidate read in full, and set aside or left
+	// unanswered.
 	ReaderOpened
 	// ReaderReferenced is a candidate the entry references.
 	ReaderReferenced
+	// ReaderImplicit is a candidate the reading showed and the capture left
+	// unanswered, dismissed by sdd at publish.
+	ReaderImplicit
 )
+
+var readerCodes = []ReaderCode{ReaderNone, ReaderImplicit, ReaderDismissed, ReaderOpened, ReaderReferenced}
+
+// rank orders the codes in the lattice; a byte this build does not know
+// ranks above every known code, by its value.
+func (c ReaderCode) rank() int {
+	if i := slices.Index(readerCodes, c); i >= 0 {
+		return i
+	}
+	return int(c) + len(readerCodes)
+}
 
 // String names the code as JSON exports carry it.
 func (c ReaderCode) String() string {
 	switch c {
 	case ReaderNone:
 		return "none"
+	case ReaderImplicit:
+		return "implicit"
 	case ReaderDismissed:
 		return "dismissed"
 	case ReaderOpened:
@@ -69,12 +87,12 @@ func (c ReaderCode) String() string {
 
 // ParseReaderCode is String's inverse.
 func ParseReaderCode(s string) (ReaderCode, error) {
-	for c := ReaderNone; c <= ReaderReferenced; c++ {
+	for _, c := range readerCodes {
 		if c.String() == s {
 			return c, nil
 		}
 	}
-	return 0, fmt.Errorf("unknown reader code %q (none, dismissed, opened, referenced)", s)
+	return 0, fmt.Errorf("unknown reader code %q (none, implicit, dismissed, opened, referenced)", s)
 }
 
 // Verdict reason bytes. Each code holds its own byte so codes added later keep
@@ -166,7 +184,8 @@ func ParseReaderSource(s string) (ReaderSource, error) {
 // reason byte of a set-aside, whether the candidate was an audit sample of
 // the prefilter's set-asides, the strain relation bits, the source, and
 // whether the deep verifier opened the entry its reading hid without a
-// finding resting on it (OpenedHidden, counted apart from every label).
+// finding resting on it (OpenedHidden, counted apart from every label), and
+// whether a later entry flipped an implicit dismissal to bearing (Flipped).
 type ReaderVerdict struct {
 	Code         ReaderCode
 	Reason       uint8
@@ -174,18 +193,22 @@ type ReaderVerdict struct {
 	Relations    uint8
 	Source       ReaderSource
 	OpenedHidden bool
+	Flipped      bool
 }
 
-// Join merges two records of one pair. The code is the larger, the reason
-// that of the larger code (the larger byte on a tie), the bits are ORed,
+// Join merges two records of one pair. The code is the higher ranked, the
+// reason that of that code (the larger byte on a tie), the bits are ORed,
 // and a live record makes the pair live, so merges converge in any order
 // and repeat.
 func (v ReaderVerdict) Join(o ReaderVerdict) ReaderVerdict {
-	out := ReaderVerdict{Audit: v.Audit || o.Audit, Relations: v.Relations | o.Relations, Source: min(v.Source, o.Source), OpenedHidden: v.OpenedHidden || o.OpenedHidden}
+	out := ReaderVerdict{
+		Audit: v.Audit || o.Audit, Relations: v.Relations | o.Relations, Source: min(v.Source, o.Source),
+		OpenedHidden: v.OpenedHidden || o.OpenedHidden, Flipped: v.Flipped || o.Flipped,
+	}
 	switch {
-	case v.Code > o.Code:
+	case v.Code.rank() > o.Code.rank():
 		out.Code, out.Reason = v.Code, v.Reason
-	case o.Code > v.Code:
+	case o.Code.rank() > v.Code.rank():
 		out.Code, out.Reason = o.Code, o.Reason
 	default:
 		out.Code, out.Reason = v.Code, max(v.Reason, o.Reason)
@@ -407,13 +430,15 @@ type RelevanceThresholds struct {
 	Relevant float64
 }
 
-// Lookup decides a pair from subject to candidate: a reader record decides;
-// else judge's score against the thresholds. A one-way score in the other
-// direction answers only when it rates the pair relevant.
+// Lookup decides a pair from subject to candidate: a reader's answer
+// decides, a flipped implicit dismissal as relevant; else judge's score
+// against the thresholds, which an unflipped implicit dismissal leaves the
+// pair to. A one-way score in the other direction answers only when it rates
+// the pair relevant.
 func (l *RelevanceLedger) Lookup(subject, candidate, judge string, thresholds RelevanceThresholds) RelevanceDecision {
 	pair := NewRelevancePair(subject, candidate)
-	if reader, ok := l.readers[pair]; ok && reader.Code != ReaderNone {
-		if reader.Code == ReaderReferenced {
+	if reader, ok := l.readers[pair]; ok && reader.Code != ReaderNone && (reader.Code != ReaderImplicit || reader.Flipped) {
+		if LabelKind(reader) == LabelPositive {
 			return RelevanceRelevant
 		}
 		return RelevanceNotRelevant

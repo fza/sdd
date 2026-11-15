@@ -12,8 +12,8 @@
 // as encoding/binary writes them; times in Unix nanoseconds); code, reason,
 // flags, relations, direction and score take one byte each. A reason byte
 // this build does not know is kept unchanged. The flags
-// byte holds the audit bit (1), the replay bit (2) and the opened-hidden bit
-// (4). A segment written before a bit existed reads with that bit unset, so
+// byte holds the audit bit (1), the replay bit (2), the opened-hidden bit
+// (4) and the flipped bit (8). A segment written before a bit existed reads with that bit unset, so
 // its reader records read as live.
 package relevance
 
@@ -36,6 +36,7 @@ const (
 	flagAudit    = 1
 	flagReplay   = 2
 	flagOpened   = 4
+	flagFlipped  = 8
 )
 
 // Encode returns the segment bytes of batch.
@@ -68,6 +69,9 @@ func Encode(batch model.RelevanceBatch) []byte {
 		}
 		if record.Verdict.OpenedHidden {
 			flags |= flagOpened
+		}
+		if record.Verdict.Flipped {
+			flags |= flagFlipped
 		}
 		if record.Verdict.Source == model.SourceReplay {
 			flags |= flagReplay
@@ -124,7 +128,7 @@ func Decode(data []byte) (model.RelevanceBatch, error) {
 				return model.RelevanceBatch{}, err
 			}
 			batch.Readers = append(batch.Readers, model.ReaderRecord{Pair: pair, Verdict: model.ReaderVerdict{
-				Code: model.ReaderCode(tail[0]), Reason: tail[1], Audit: tail[2]&flagAudit != 0, Relations: tail[3], Source: readerSource(tail[2]), OpenedHidden: tail[2]&flagOpened != 0,
+				Code: model.ReaderCode(tail[0]), Reason: tail[1], Audit: tail[2]&flagAudit != 0, Relations: tail[3], Source: readerSource(tail[2]), OpenedHidden: tail[2]&flagOpened != 0, Flipped: tail[2]&flagFlipped != 0,
 			}})
 		case recordScore:
 			pair, err := readPair(reader, ids)

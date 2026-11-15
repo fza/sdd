@@ -68,25 +68,37 @@ func AuditLabels(labels []RelevanceLabel) []RelevanceLabel {
 // DriftWindowMisses counts the referenced audit samples among the latest
 // DriftWindow audit labels, and the labels counted.
 func DriftWindowMisses(labels []RelevanceLabel) (misses, counted int) {
+	misses, counted, _ = driftWindow(labels)
+	return misses, counted
+}
+
+// driftWindow is DriftWindowMisses with the weighted miss share.
+func driftWindow(labels []RelevanceLabel) (misses, counted int, share float64) {
 	audit := AuditLabels(labels)
 	if len(audit) > DriftWindow {
 		audit = audit[:DriftWindow]
 	}
+	missed, weight := 0.0, 0.0
 	for _, label := range audit {
+		weight += label.Weight
 		if label.Kind == LabelPositive {
 			misses++
+			missed += label.Weight
 		}
 	}
-	return misses, len(audit)
+	if weight > 0 {
+		share = missed / weight
+	}
+	return misses, len(audit), share
 }
 
 // DriftStepDue returns the step the drift rule takes now: when the latest
-// audit labels, at least DriftMinimum, hold more than DriftMissShare
-// referenced samples and no step of the judge came within DriftInterval, the
-// set-aside threshold halves. It never rises.
+// audit labels, at least DriftMinimum, hold a weighted share of referenced
+// samples above DriftMissShare and no step of the judge came within
+// DriftInterval, the set-aside threshold halves. It never rises.
 func DriftStepDue(labels []RelevanceLabel, steps []DriftStep, judge string, now time.Time) (DriftStep, bool) {
-	misses, counted := DriftWindowMisses(labels)
-	if counted < DriftMinimum || float64(misses)/float64(counted) <= DriftMissShare {
+	_, counted, share := driftWindow(labels)
+	if counted < DriftMinimum || share <= DriftMissShare {
 		return DriftStep{}, false
 	}
 	for _, step := range steps {
@@ -123,6 +135,9 @@ type CalibrationReport struct {
 	// no finding resting on them; it moves no threshold.
 	OpenedHidden   int
 	ReplayExcluded bool
+	// Implicit counts the implicit dismissals the ledger holds, Flipped
+	// those a later entry flipped to bearing.
+	Implicit, Flipped int
 	// Misses are the positives scoring below the set-aside threshold;
 	// RecallBound the Wilson lower bound of recall at it.
 	Misses      int
@@ -145,6 +160,14 @@ func (r CalibrationReport) Precision() float64 {
 		return 0
 	}
 	return float64(r.Referenced) / float64(r.PassedInFull)
+}
+
+// FlipRate is the share of implicit dismissals flipped to bearing.
+func (r CalibrationReport) FlipRate() float64 {
+	if r.Implicit == 0 {
+		return 0
+	}
+	return float64(r.Flipped) / float64(r.Implicit)
 }
 
 // DominantCode is the code most pairs passed in full were set aside with: the
@@ -171,19 +194,25 @@ func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) Calibrat
 		if verdict.OpenedHidden && verdict.Code != ReaderReferenced {
 			report.OpenedHidden++
 		}
+		if verdict.Code == ReaderImplicit {
+			report.Implicit++
+			if verdict.Flipped {
+				report.Flipped++
+			}
+		}
 	}
 	for _, step := range steps {
 		if step.Judge == judge {
 			report.Steps = append(report.Steps, step)
 		}
 	}
-	var positives []uint8
+	var positives []RelevanceLabel
 	byCode := map[string]int{}
 	for _, label := range labels {
 		switch label.Kind {
 		case LabelPositive:
 			report.Positive++
-			positives = append(positives, label.Score)
+			positives = append(positives, label)
 		case LabelNegative:
 			report.Negative++
 		case LabelCounted:
@@ -201,14 +230,15 @@ func (l *RelevanceLedger) Calibration(judge string, excludeReplay bool) Calibrat
 			byCode[label.Reason]++
 		}
 	}
-	if report.Thresholds.Valid {
-		for _, score := range positives {
-			if ScoreValue(score) < report.Thresholds.SetAside {
-				report.Misses++
-			}
+	total, missed := 0.0, 0.0
+	for _, positive := range positives {
+		total += positive.Weight
+		if report.Thresholds.Valid && ScoreValue(positive.Score) < report.Thresholds.SetAside {
+			report.Misses++
+			missed += positive.Weight
 		}
 	}
-	report.RecallBound = WilsonLower(report.Positive-report.Misses, report.Positive)
+	report.RecallBound = WilsonLowerWeighted(total-missed, total)
 	report.AuditMisses, report.AuditCounted = DriftWindowMisses(labels)
 	for code, count := range byCode {
 		report.SetAside = append(report.SetAside, CodePrecision{Code: code, Count: count})
