@@ -36,8 +36,9 @@ type Options struct {
 
 	// BeforeCall, when set, runs before every tool call with the session the
 	// call names, "" for none: an error refuses the call with it, the notices
-	// ride on the call's result in notices, and the call runs under the
-	// context it returns, its own when that is nil.
+	// ride on the call's result in notices, or in the error text when the
+	// call fails or is refused, and the call runs under the context it
+	// returns, its own when that is nil.
 	BeforeCall func(ctx context.Context, session string) (call context.Context, notices Notices, err error)
 }
 
