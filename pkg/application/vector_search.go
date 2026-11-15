@@ -62,6 +62,12 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 	if chunkLimit < 50 {
 		chunkLimit = 50
 	}
+	// Read before the search, so a fill settling its cap meanwhile still
+	// leaves the caps the hits were written under.
+	caps, err := r.storedMaxRunes(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
 	hits, err := r.options.SearchIndex.Nearest(ctx, []IndexNamespace{namespace}, embedded.Vectors[0], chunkLimit)
 	if err != nil {
 		return nil, err
@@ -75,7 +81,7 @@ func (r *ProjectRuntime) vectorSearch(ctx context.Context, snapshot *Snapshot, a
 			delete(candidates, hit.EntryID)
 		}
 	}
-	hashes, err := r.readableEntryHashes(ctx, entries, attachments, namespace)
+	hashes, err := r.readableEntryHashes(ctx, entries, attachments, caps, hits)
 	if err != nil {
 		return nil, err
 	}
@@ -179,12 +185,18 @@ func (r *ProjectRuntime) currentEntryHashes(ctx context.Context, entries []*mode
 	return hashes, nil
 }
 
-// readableEntryHashes maps entries to the version a search of the namespace's
-// store reads (chunking.ReadableEntryHash).
-func (r *ProjectRuntime) readableEntryHashes(ctx context.Context, entries []*model.Entry, store GraphStore, namespace IndexNamespace) (map[string]string, error) {
-	caps, err := r.storedMaxRunes(ctx, namespace)
-	if err != nil {
-		return nil, err
+// readableEntryHashes maps entries to the version a search reads
+// (chunking.ReadableEntryHash): of the caps read before the search, the newest
+// whose version is among the search's own hits. Judging by the hits, not by a
+// later look at the store, keeps a fill that commits meanwhile from making
+// the hits look stale.
+func (r *ProjectRuntime) readableEntryHashes(ctx context.Context, entries []*model.Entry, store GraphStore, caps []int, hits []ScoredChunkHit) (map[string]string, error) {
+	found := map[string]map[string]bool{}
+	for _, hit := range hits {
+		if found[hit.EntryID] == nil {
+			found[hit.EntryID] = map[string]bool{}
+		}
+		found[hit.EntryID][hit.EntryHash] = true
 	}
 	attachments := graphStoreAttachmentReader{store: store}
 	hashes := make(map[string]string, len(entries))
@@ -193,7 +205,7 @@ func (r *ProjectRuntime) readableEntryHashes(ctx context.Context, entries []*mod
 			continue
 		}
 		hash, err := chunking.ReadableEntryHash(ctx, entry, attachments, caps, func(hash string) (bool, error) {
-			return r.entryPublished(ctx, SearchEntryVersion{Namespace: namespace, EntryID: entry.ID, EntryHash: hash})
+			return found[entry.ID][hash], nil
 		})
 		if err != nil {
 			return nil, err
@@ -201,14 +213,6 @@ func (r *ProjectRuntime) readableEntryHashes(ctx context.Context, entries []*mod
 		hashes[entry.ID] = hash
 	}
 	return hashes, nil
-}
-
-func (r *ProjectRuntime) entryPublished(ctx context.Context, version SearchEntryVersion) (bool, error) {
-	store, ok := r.options.SearchIndex.(SearchIndexEntryStore)
-	if !ok {
-		return false, errors.New("sdd: the search index store reads under more than one rune cap but cannot report entry publication")
-	}
-	return store.EntryPublished(ctx, version)
 }
 
 // vectorResult rolls chunk hits up to per-entry results, resolving each hit's

@@ -255,7 +255,7 @@ func (v *storeView) snapshotLocked(ctx context.Context) (*snapshotData, bool, er
 	if v.snapshot != nil {
 		return v.snapshot, false, nil
 	}
-	data := &snapshotData{view: v, indexDir: v.dir}
+	data := &snapshotData{view: v, indexDir: v.dir, manifest: v.manifest}
 	seen := map[string]bool{}
 	for _, segment := range v.orderedSegmentsLocked() {
 		used := false

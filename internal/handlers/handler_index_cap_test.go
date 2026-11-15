@@ -387,3 +387,44 @@ func replaceOnlyFile(t *testing.T, dir, content string) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 }
+
+// A search resolves versions against the store as its snapshot holds it, so
+// a re-embed that commits, or completes, after the snapshot opened drops no
+// entry from that search.
+func TestIndexHandlerSearchOpenedBeforeAReembedFindsEveryEntry(t *testing.T) {
+	t.Parallel()
+	indexDir := t.TempDir()
+	calibrationDir := t.TempDir()
+	wide := newCapHandler(t, indexDir, calibrationDir, &tokenCountingEmbedder{tokenLimit: 8192}, "endpoint-a")
+	if err := wide.Build(context.Background(), &command.BuildIndexCmd{}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	ctx := context.Background()
+	snapshot, err := index.OpenSearchSnapshot(ctx, indexDir, 5*time.Second)
+	if err != nil {
+		t.Fatalf("OpenSearchSnapshot: %v", err)
+	}
+	defer func() { _ = snapshot.Close() }()
+
+	narrow := newCapHandler(t, indexDir, calibrationDir, &tokenCountingEmbedder{tokenLimit: 4096}, "endpoint-b")
+	if err := narrow.Build(ctx, &command.BuildIndexCmd{}); err != nil {
+		t.Fatalf("re-embed: %v", err)
+	}
+	if loadCapManifest(t, indexDir).PrevMaxRunes != nil {
+		t.Fatal("the re-embed should complete and settle its cap")
+	}
+
+	finder := finders.NewSearchFinder(finders.SearchFinderOptions{
+		Graph:      capFixtureGraph(),
+		GraphDir:   t.TempDir(),
+		Embedder:   &tokenCountingEmbedder{tokenLimit: 8192},
+		IndexStore: snapshot,
+	})
+	result, err := finder.Search(ctx, query.SearchQuery{Phrase: "Summary", MaxCitationsPerEntry: 10})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if got := foundIDs(result); len(got) != len(capFixtureGraph().Entries) {
+		t.Errorf("a search whose snapshot predates the re-embed found %v, want every entry", got)
+	}
+}

@@ -373,8 +373,8 @@ func (f *SearchFinder) candidates(q query.SearchQuery) []*model.Entry {
 // entry's current state hash — the read-time gate that keeps the shared,
 // version-accumulating store from surfacing stale citations. The current hash
 // is computed once per hit entry (attachments read from disk, as the indexer
-// does) and cached; the manifest is loaded once, and only when a legacy row
-// (no entry_hash metadata) needs it.
+// does) and cached; the manifest is the snapshot's, else loaded once when
+// needed.
 type versionFreshness struct {
 	indexDir    string // "" disables manifest fallback (an in-memory index, tests)
 	attachments chunking.AttachmentReader
@@ -382,16 +382,27 @@ type versionFreshness struct {
 	manifest    *index.Manifest
 }
 
+// snapshotManifest is a VectorIndex that knows the manifest its rows were
+// selected from.
+type snapshotManifest interface {
+	Manifest() *index.Manifest
+}
+
 func (f *SearchFinder) newVersionFreshness() *versionFreshness {
-	dir := ""
-	if f.indexStore != nil {
-		dir = f.indexStore.Path()
-	}
-	return &versionFreshness{
-		indexDir:    dir,
+	freshness := &versionFreshness{
 		attachments: chunking.DiskAttachmentReader{GraphDir: f.graphDir},
 		current:     map[string]string{},
 	}
+	if f.indexStore != nil {
+		freshness.indexDir = f.indexStore.Path()
+		// Versions resolve against the store as the search read it: a
+		// re-embed committing after the snapshot opened must not make the
+		// snapshot's rows look stale.
+		if snapshot, ok := f.indexStore.(snapshotManifest); ok {
+			freshness.manifest = snapshot.Manifest()
+		}
+	}
+	return freshness
 }
 
 // loadManifest reads the store's manifest once. Callers check indexDir first.

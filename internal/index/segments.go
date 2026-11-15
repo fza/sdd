@@ -586,6 +586,8 @@ type SearchSnapshot struct {
 type snapshotData struct {
 	view     *storeView
 	indexDir string
+	// manifest is the parse the rows were selected from; shared, never modified.
+	manifest *Manifest
 	dims     int
 	rows     []snapshotRow
 	segments []*segmentFile
@@ -676,6 +678,11 @@ func readLockWithin(ctx context.Context, indexDir string, bound time.Duration) (
 
 // Path returns the store directory the snapshot was loaded from.
 func (s *SearchSnapshot) Path() string { return s.data.indexDir }
+
+// Manifest returns the manifest the snapshot's rows were selected from, so a
+// search resolves versions against the store as it read it. Shared: read it,
+// never modify it.
+func (s *SearchSnapshot) Manifest() *Manifest { return s.data.manifest }
 
 // Count returns the number of published rows in the snapshot.
 func (s *SearchSnapshot) Count() int { return len(s.data.rows) }

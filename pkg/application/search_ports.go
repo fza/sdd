@@ -32,8 +32,8 @@ type SearchIndexEntryManifest interface {
 // report the rune caps its rows were chunked under, newest first: the cap
 // fills chunk under, then the cap it replaced while a re-embed is pending
 // (index.RuneCaps.ReadMaxRunes). Reads hash under each and read one version per
-// entry (model.ReadableVersion), so a store reporting more than one cap must
-// also implement SearchIndexEntryStore. A zero cap reads uncapped.
+// entry (model.ReadableVersion), the newest among their hits. A zero cap reads
+// uncapped.
 type SearchIndexRunes interface {
 	ReadMaxRunes(context.Context, IndexNamespace) ([]int, error)
 }

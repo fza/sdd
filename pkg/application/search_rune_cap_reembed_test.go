@@ -133,7 +133,7 @@ func TestServeFillClearsPreviousCapWhenReembedCompletes(t *testing.T) {
 	}
 }
 
-func TestServeSearchDuringReembedWithoutPublicationSupportFails(t *testing.T) {
+func TestServeSearchDuringReembedNeedsNoPublicationSupport(t *testing.T) {
 	graphDir, cacheRoot := fillThenInterruptServeReembed(t)
 	store := localadapter.NewPersistentSearchIndexStore(counterProject, cacheRoot, "counter/repo")
 	withoutPublication := struct {
@@ -143,8 +143,59 @@ func TestServeSearchDuringReembedWithoutPublicationSupportFails(t *testing.T) {
 		sdd.SearchIndexRunesRecorder
 	}{store, store, store, store}
 	reader := newRuneCapAppWithIndex(t, graphDir, withoutPublication, fixedRuneCap(256))
-	_, err := reader.Search(t.Context(), sdd.RequestIdentity{Subject: "christopher"}, counterProject, sdd.SearchRequest{SyncMode: sdd.SearchSyncNone, Phrase: "alpha beta", Limit: 10, MaxCitations: 3})
-	if err == nil {
-		t.Error("a search across two caps should fail on a store that cannot report which versions it published")
+	res, err := reader.Search(t.Context(), sdd.RequestIdentity{Subject: "christopher"}, counterProject, sdd.SearchRequest{SyncMode: sdd.SearchSyncNone, Phrase: "alpha beta", Limit: 10, MaxCitations: 3})
+	if err != nil {
+		t.Fatalf("a search across two caps should pick versions from its hits alone: %v", err)
+	}
+	for _, id := range []string{reembedFirstID, reembedSecondID} {
+		if !slices.Contains(res.EntryIDs, id) {
+			t.Errorf("search during the re-embed found %v, missing %s", res.EntryIDs, id)
+		}
+	}
+}
+
+// completingIndex runs after once its first Nearest returned, as a fill
+// committing between a search's read and its version checks does.
+type completingIndex struct {
+	*localadapter.PersistentSearchIndexStore
+	after func()
+	done  *bool
+}
+
+func (s completingIndex) Nearest(ctx context.Context, namespaces []sdd.IndexNamespace, vector []float32, limit int) ([]sdd.ScoredChunkHit, error) {
+	hits, err := s.PersistentSearchIndexStore.Nearest(ctx, namespaces, vector, limit)
+	if err == nil && !*s.done {
+		*s.done = true
+		s.after()
+	}
+	return hits, err
+}
+
+func TestServeSearchReadBeforeAReembedCompletesFindsEveryEntry(t *testing.T) {
+	graphDir, cacheRoot := fillThenInterruptServeReembed(t)
+	done := false
+	store := completingIndex{
+		PersistentSearchIndexStore: localadapter.NewPersistentSearchIndexStore(counterProject, cacheRoot, "counter/repo"),
+		after: func() {
+			counterSearch(t, newRuneCapApp(t, graphDir, cacheRoot, fixedRuneCap(256)), "alpha")
+		},
+		done: &done,
+	}
+	reader := newRuneCapAppWithIndex(t, graphDir, store, fixedRuneCap(256))
+	res, err := reader.Search(t.Context(), sdd.RequestIdentity{Subject: "christopher"}, counterProject, sdd.SearchRequest{SyncMode: sdd.SearchSyncNone, Phrase: "alpha beta", Limit: 10, MaxCitations: 10})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	manifest, err := index.LoadManifest(counterStoreDir(cacheRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !done || manifest.PrevMaxRunes != nil {
+		t.Fatal("the re-embed should complete between the search's read and its version checks")
+	}
+	for _, id := range []string{reembedFirstID, reembedSecondID} {
+		if !slices.Contains(res.EntryIDs, id) {
+			t.Errorf("a search read before the re-embed completed found %v, missing %s", res.EntryIDs, id)
+		}
 	}
 }
