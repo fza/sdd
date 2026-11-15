@@ -60,7 +60,8 @@ func CrossRepoIDs(ids []string) []RepoID {
 
 // ValidateRepoID checks that repoID is URL-shaped: a dotted hostname
 // followed by at least one path segment (host/path, the Go-module
-// convention), each segment limited to letters, digits, '.', '-' and '_'.
+// convention), each segment limited to letters, digits, '.', '-' and '_'
+// and never "." or "..", so the id nests below any root it is joined to.
 func ValidateRepoID(repoID RepoID) error {
 	if repoID == "" {
 		return fmt.Errorf("repo ID is empty")
@@ -72,6 +73,9 @@ func ValidateRepoID(repoID RepoID) error {
 	for _, seg := range segments {
 		if seg == "" {
 			return fmt.Errorf("repo ID %q has an empty path segment", repoID)
+		}
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("repo ID %q has a %q path segment", repoID, seg)
 		}
 		for _, c := range seg {
 			if !isRepoIDChar(c) {

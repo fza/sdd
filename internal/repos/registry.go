@@ -1,7 +1,9 @@
 package repos
 
 import (
+	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -43,12 +45,18 @@ func (r *Registry) CacheRoot() string {
 }
 
 // CacheDir resolves a connected repo's clone location under the cache root.
-// The repo-id's host/path shape nests naturally under the root.
+// The repo-id's host/path shape nests naturally under the root; a path that
+// resolves to the root or above it is refused, as RepoAdd clears it.
 func (r *Registry) CacheDir(repoID model.RepoID) (string, error) {
 	if err := model.ValidateRepoID(repoID); err != nil {
 		return "", err
 	}
-	return filepath.Join(r.loc.CacheRoot, filepath.FromSlash(string(repoID))), nil
+	dir := filepath.Join(r.loc.CacheRoot, filepath.FromSlash(string(repoID)))
+	rel, err := filepath.Rel(r.loc.CacheRoot, dir)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("repo ID %q resolves outside the cache root %s", repoID, r.loc.CacheRoot)
+	}
+	return dir, nil
 }
 
 // Cache returns a connected repo's cache; ok is false when the repo is not

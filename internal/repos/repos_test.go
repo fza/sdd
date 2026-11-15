@@ -97,6 +97,16 @@ func TestDefaultLocationsHonorXDG(t *testing.T) {
 	}
 }
 
+func TestCacheDirStaysInsideTheCacheRoot(t *testing.T) {
+	reg := NewRegistry(Locations{CacheRoot: t.TempDir()})
+	for _, id := range []model.RepoID{"evil.example/../..", "evil.example/..", "evil.example/../../etc"} {
+		dir, err := reg.CacheDir(id)
+		if err == nil {
+			t.Errorf("CacheDir(%q) = %q, want a refusal", id, dir)
+		}
+	}
+}
+
 func TestDefaultLocationsRejectsRelativeStateHome(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg-config")
 	t.Setenv("XDG_CACHE_HOME", "/tmp/xdg-cache")
