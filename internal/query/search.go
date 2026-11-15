@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/textsplitter"
 )
 
 // SearchMode is derived from the SearchQuery's input shape: text-only,
@@ -86,16 +87,22 @@ type SearchQuery struct {
 // SimilarTitles is the vector query for the titled entries whose content lies
 // nearest entry's body. The entry itself and the entries it refs, closes and
 // supersedes are left out: the title prompt lists those apart, under a rule of
-// their own. False for an entry with no body to search by.
+// their own. The body is cut to the runes one indexed chunk holds, so the query
+// fits the embedder's input as every indexed text does. False for an entry with
+// no body to search by.
 func SimilarTitles(entry *model.Entry) (SearchQuery, bool) {
 	if strings.TrimSpace(entry.Content) == "" {
 		return SearchQuery{}, false
+	}
+	phrase := entry.Content
+	if runes := []rune(phrase); len(runes) > textsplitter.DefaultChunkSize {
+		phrase = string(runes[:textsplitter.DefaultChunkSize])
 	}
 	exclude := append([]string{entry.ID}, model.RefIDs(entry.Refs)...)
 	exclude = append(append(exclude, entry.Closes...), entry.Supersedes...)
 	return SearchQuery{
 		SyncMode: SearchSyncNone,
-		Phrase:   entry.Content,
+		Phrase:   phrase,
 		Titled:   true,
 		Exclude:  exclude,
 		Limit:    model.SimilarTitleCount,

@@ -2,10 +2,13 @@ package query_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/textsplitter"
 )
 
 func TestSearchQuery_TextFallback(t *testing.T) {
@@ -65,5 +68,20 @@ func TestSimilarTitles_LeavesTheLinkedEntriesOut(t *testing.T) {
 		if q.Admits(&model.Entry{ID: id, Title: "Linked"}) {
 			t.Errorf("the query should leave out %s, which the prompt lists as a linked entry", id)
 		}
+	}
+}
+
+func TestSimilarTitles_CutsTheBodyToAnIndexedChunk(t *testing.T) {
+	long := strings.Repeat("ä", textsplitter.DefaultChunkSize+50)
+	q, ok := query.SimilarTitles(&model.Entry{ID: "20260101-100000-s-tac-aaa", Content: long})
+	if !ok {
+		t.Fatal("an entry with a body should have a query")
+	}
+	if got := utf8.RuneCountInString(q.Phrase); got != textsplitter.DefaultChunkSize || !strings.HasPrefix(long, q.Phrase) {
+		t.Errorf("the query should be the body's head, as long as an indexed chunk, got %d runes", got)
+	}
+	short, _ := query.SimilarTitles(&model.Entry{ID: "20260101-100000-s-tac-aaa", Content: "A body."})
+	if short.Phrase != "A body." {
+		t.Errorf("a body within the cap should be searched whole, got %q", short.Phrase)
 	}
 }
