@@ -433,6 +433,34 @@ func TestRepoRemove_CleanRemoval(t *testing.T) {
 	}
 }
 
+// Removing a connected dependency records the disconnection cache pruning
+// needs before it removes the clone; adding it again drops the record.
+func TestRepoRemove_RecordsTheDisconnection(t *testing.T) {
+	h, _ := newRepoTestHandler(t, "graph_dir: .sdd/graph\ndependencies: ["+removeTargetRepoID+"]\n")
+	err := h.RepoRemove(context.Background(), &command.RepoRemoveCmd{RepoID: removeTargetRepoID})
+	if err != nil {
+		t.Fatalf("removal: %v", err)
+	}
+	dropped, err := h.repos.Registry().Disconnected(removeTargetRepoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dropped {
+		t.Error("the removal should record the disconnection")
+	}
+	err = h.RepoAdd(context.Background(), &command.RepoAddCmd{CloneURL: "git@github.com:networkteam/other.git"})
+	if err != nil {
+		t.Fatalf("adding again: %v", err)
+	}
+	dropped, err = h.repos.Registry().Disconnected(removeTargetRepoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dropped {
+		t.Error("adding the repo again should drop the disconnection record")
+	}
+}
+
 // Removing a repo that is not a declared dependency is an error, and nothing
 // is committed.
 func TestRepoRemove_NotDeclared(t *testing.T) {

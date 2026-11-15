@@ -2,12 +2,15 @@ package handlers_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/networkteam/sdd/internal/cacheprune"
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/handlers"
@@ -60,9 +63,12 @@ func TestCacheHandlerPruneOwnedClones(t *testing.T) {
 		name    string
 		repo    string
 		prepare func(t *testing.T, loc repos.Locations, dir string, target gitgate.Target) (release func())
-		removed bool
+		// undropped leaves out the record `sdd repo remove` writes.
+		undropped bool
+		removed   bool
 	}{
 		{name: "a clone nothing uses goes", repo: "unused", removed: true},
+		{name: "a clone no repo remove dropped stays", repo: "unlisted", undropped: true},
 		{name: "a connected repo's clone stays", repo: "kept"},
 		{
 			name: "a clone holding unpushed commits stays", repo: "unpushed",
@@ -108,6 +114,11 @@ func TestCacheHandlerPruneOwnedClones(t *testing.T) {
 				t.Fatal(err)
 			}
 			dir, target := ownedClone(t, loc, tc.repo)
+			if !tc.undropped {
+				if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected(model.RepoID("github.com/acme/" + tc.repo)); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if tc.prepare != nil {
 				if release := tc.prepare(t, loc, dir, target); release != nil {
 					defer release()
@@ -130,6 +141,62 @@ func TestCacheHandlerPruneOwnedClones(t *testing.T) {
 				t.Errorf("the removed clone should be counted, got %+v", counts)
 			}
 		})
+	}
+}
+
+// A process whose config root holds no repos list while it reaches this
+// machine's clones keeps them all.
+func TestCacheHandlerPruneKeepsClonesAForeignConfigLacks(t *testing.T) {
+	root := t.TempDir()
+	loc := repos.Locations{
+		ConfigPath: filepath.Join(root, "foreign", "config.yaml"), CacheRoot: filepath.Join(root, "cache"),
+		StateRoot: filepath.Join(root, "foreign-state"), DataRoot: filepath.Join(root, "data"),
+	}
+	first, _ := ownedClone(t, loc, "graph")
+	second, _ := ownedClone(t, loc, "platform")
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
+		CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
+		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(loc.StateRoot, nil)}, Gate: synctest.Gate(loc.StateRoot, nil),
+		State: &synctest.StateSweep{},
+	})
+	if err := h.Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err != nil {
+		t.Fatalf("pruning: %v", err)
+	}
+	if !exists(t, first) || !exists(t, second) {
+		t.Error("clones no repo remove dropped should stay whatever the loaded repos list holds")
+	}
+}
+
+// A disconnected clone meeting a missing config file fails the run, recorded
+// for the next command to report, and stays.
+func TestCacheHandlerPruneRefusesAMissingConfig(t *testing.T) {
+	root := t.TempDir()
+	loc := repos.Locations{
+		ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"),
+		StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data"),
+	}
+	dir, _ := ownedClone(t, loc, "dropped")
+	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
+		t.Fatal(err)
+	}
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
+		CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
+		OwnedClones: syncstate.OwnedClones{Gate: synctest.Gate(loc.StateRoot, nil)}, Gate: synctest.Gate(loc.StateRoot, nil),
+		State: &synctest.StateSweep{},
+	})
+	err := h.Prune(t.Context(), &command.PruneCacheCmd{})
+	if !errors.Is(err, repos.ErrClonePassRefused) {
+		t.Errorf("the run should fail with the refused clone pass, got %v", err)
+	}
+	if !exists(t, dir) {
+		t.Error("a refused clone pass should remove nothing")
+	}
+	status, err := cacheprune.Load(loc.StateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status.Error, repos.ErrClonePassRefused.Error()) {
+		t.Errorf("the refusal should be recorded for the next command, got %q", status.Error)
 	}
 }
 

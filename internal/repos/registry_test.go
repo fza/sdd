@@ -21,6 +21,7 @@ func TestUnconnectedClones(t *testing.T) {
 	owned := filepath.Join(loc.DataRoot, "repos")
 	dropped := filepath.Join(loc.CacheRoot, "gitlab.example.org", "team", "dropped")
 	ownedDropped := filepath.Join(owned, "gitlab.example.org", "team", "graph")
+	ownedRetired := filepath.Join(owned, "gitlab.example.org", "team", ".old.pruned")
 	for _, dir := range []string{
 		filepath.Join(loc.CacheRoot, "github.com", "acme", "kept", ".git"),
 		filepath.Join(dropped, ".git"),
@@ -29,6 +30,8 @@ func TestUnconnectedClones(t *testing.T) {
 		filepath.Join(loc.CacheRoot, "github.com", "acme", "nogit"),
 		filepath.Join(owned, "github.com", "acme", "kept", ".git"),
 		filepath.Join(ownedDropped, ".git"),
+		filepath.Join(ownedRetired, ".git"),
+		filepath.Join(owned, "gitlab.example.org", "team", "unlisted", ".git"),
 		filepath.Join(owned, "gitlab.example.org", "team", "new.cloning", ".git"),
 		filepath.Join(owned, ".adding-456", "clone", ".git"),
 	} {
@@ -37,16 +40,62 @@ func TestUnconnectedClones(t *testing.T) {
 		}
 	}
 
-	stale, err := repos.NewRegistry(loc).UnconnectedClones()
+	registry := repos.NewRegistry(loc)
+	if err := repos.NewManager(registry, nil).MarkDisconnected("gitlab.example.org/team/graph"); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := registry.UnconnectedClones()
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []repos.UnconnectedClone{
+		{Dir: ownedRetired, RepoID: "gitlab.example.org/team/.old.pruned", Owned: true},
 		{Dir: ownedDropped, RepoID: "gitlab.example.org/team/graph", Owned: true},
 		{Dir: dropped, RepoID: "gitlab.example.org/team/dropped"},
 	}
 	if !slices.Equal(stale, want) {
-		t.Errorf("only the clones no connection names should be listed, the sdd-owned ones marked, got %+v", stale)
+		t.Errorf("only disconnected sdd-owned clones, retired leftovers and unconnected cache clones should be listed, got %+v", stale)
+	}
+}
+
+func TestUnconnectedClonesRefuseAnUnsureRepoList(t *testing.T) {
+	empty := "repos: []\n"
+	cases := []struct {
+		name    string
+		config  *string
+		dropped bool
+		refused bool
+	}{
+		{name: "a missing config file with a disconnected clone", dropped: true, refused: true},
+		{name: "an empty repos list with a disconnected clone", config: &empty, dropped: true, refused: true},
+		{name: "a missing config file with no clone to remove"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), DataRoot: filepath.Join(root, "data")}
+			if tc.config != nil {
+				if err := os.WriteFile(loc.ConfigPath, []byte(*tc.config), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.MkdirAll(filepath.Join(loc.DataRoot, "repos", "github.com", "acme", "graph", ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			registry := repos.NewRegistry(loc)
+			if tc.dropped {
+				if err := repos.NewManager(registry, nil).MarkDisconnected("github.com/acme/graph"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := registry.UnconnectedClones()
+			if refused := errors.Is(err, repos.ErrClonePassRefused); refused != tc.refused {
+				t.Errorf("the clone pass should refuse only an unsure repos list with clones to remove, refused = %v, err %v", refused, err)
+			}
+			if !tc.refused && err != nil {
+				t.Errorf("listing should succeed, got %v", err)
+			}
+		})
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -75,7 +74,7 @@ func (r *Registry) RetireUnconnectedClone(clone UnconnectedClone, hold CloneHold
 		return "", err
 	}
 	path := clone.Dir
-	if base := filepath.Base(path); strings.HasPrefix(base, ".") && strings.HasSuffix(base, ".pruned") {
+	if isRetiredClone(path) {
 		return path, nil
 	}
 	if _, connected := cfg.Connected(clone.RepoID); connected {
@@ -94,6 +93,12 @@ func (r *Registry) RetireUnconnectedClone(clone UnconnectedClone, hold CloneHold
 	}
 	if err := os.Rename(path, retired); err != nil {
 		return "", fmt.Errorf("retiring clone %s: %w", path, err)
+	}
+	if clone.Owned {
+		err = clearDisconnected(r.loc.DataRoot, clone.RepoID)
+		if err != nil {
+			return "", err
+		}
 	}
 	return retired, nil
 }
