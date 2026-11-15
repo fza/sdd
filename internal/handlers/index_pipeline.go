@@ -24,6 +24,18 @@ func indexBatchSize(emb embed.Embedder) int {
 	return 32
 }
 
+// eachEntry adapts a per-entry publisher to indexStream's per-batch publish.
+func eachEntry(publish func(context.Context, *model.IndexWork) error) func(context.Context, []*model.IndexWork) error {
+	return func(ctx context.Context, entries []*model.IndexWork) error {
+		for _, entry := range entries {
+			if err := publish(ctx, entry); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 func prepareIndexEntry(ctx context.Context, input indexInput, reader chunking.AttachmentReader, splitter *textsplitter.Splitter, skip func(types.CanonicalChunk) bool) (*model.IndexWork, error) {
 	attachments := &chunking.CachedAttachments{Reader: reader}
 	hash, err := chunking.EntryStateHash(ctx, input.entry, attachments)
@@ -48,7 +60,7 @@ func prepareIndexEntry(ctx context.Context, input indexInput, reader chunking.At
 	return prepared, nil
 }
 
-func indexStream(ctx context.Context, inputs iter.Seq2[indexInput, error], emb embed.Embedder, reader chunking.AttachmentReader, splitter *textsplitter.Splitter, skip func(types.CanonicalChunk) bool, publish func(context.Context, *model.IndexWork) error, onBatch func([]string, int)) error {
+func indexStream(ctx context.Context, inputs iter.Seq2[indexInput, error], emb embed.Embedder, reader chunking.AttachmentReader, splitter *textsplitter.Splitter, skip func(types.CanonicalChunk) bool, publish func(context.Context, []*model.IndexWork) error, onBatch func([]string, int)) error {
 	items := func(yield func(model.IndexItem, error) bool) {
 		for input, err := range inputs {
 			if err == nil {
@@ -64,7 +76,7 @@ func indexStream(ctx context.Context, inputs iter.Seq2[indexInput, error], emb e
 				return
 			}
 			if len(entry.Rows) == 0 {
-				if err := publish(ctx, entry); err != nil {
+				if err := publish(ctx, []*model.IndexWork{entry}); err != nil {
 					yield(model.IndexItem{}, err)
 					return
 				}
@@ -99,10 +111,12 @@ func indexStream(ctx context.Context, inputs iter.Seq2[indexInput, error], emb e
 			if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {
 				return err
 			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := publish(ctx, entry); err != nil {
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if len(completed) > 0 {
+			if err := publish(ctx, completed); err != nil {
 				return err
 			}
 		}

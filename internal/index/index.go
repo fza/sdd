@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	chromem "github.com/philippgille/chromem-go"
 )
@@ -97,6 +98,12 @@ type Index struct {
 	// actually changed content — a no-op lazy-fill never invalidates readers'
 	// cached snapshots.
 	dirty bool
+	// keepSnapshot skips the reload after each add: a FillSession never reads
+	// its own writes, and a full reload per entry is the cost of a whole
+	// store decode.
+	keepSnapshot bool
+	// dims is the vector width this index has accepted, once known.
+	dims int
 }
 
 // Open opens or creates the persistent index under indexDir. The chromem
@@ -120,6 +127,28 @@ func Open(indexDir string) (*Index, error) {
 		return nil, err
 	}
 	if _, err := l.TryRLockContext(context.Background(), lockRetryInterval); err != nil {
+		return nil, fmt.Errorf("acquiring index read lock at %s: %w", indexDir, err)
+	}
+	defer func() { _ = l.Unlock() }()
+	return loadStore(indexDir)
+}
+
+// OpenWithin is Open with a bound on the wait for the shared lock: it returns
+// ErrLockBusy when a writer still holds the store after bound.
+func OpenWithin(ctx context.Context, indexDir string, bound time.Duration) (*Index, error) {
+	if indexDir == "" {
+		return nil, errors.New("index dir is required")
+	}
+	if err := ensureStoreDir(indexDir); err != nil {
+		return nil, err
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, bound)
+	defer cancel()
+	l := lockFile(indexDir)
+	if _, err := l.TryRLockContext(waitCtx, boundedRetryInterval); err != nil {
+		if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+			return nil, ErrLockBusy
+		}
 		return nil, fmt.Errorf("acquiring index read lock at %s: %w", indexDir, err)
 	}
 	defer func() { _ = l.Unlock() }()
@@ -194,13 +223,11 @@ func (i *Index) UpsertEntry(ctx context.Context, entryID string, oldChunkIDs []s
 	if entryID == "" {
 		return errors.New("entryID is required")
 	}
-	dims := 0
-	if i.indexDir != "" {
-		manifest, err := LoadManifest(i.indexDir)
-		if err != nil {
-			return err
-		}
-		for _, state := range manifest.Entries {
+	dims := i.dims
+	if dims == 0 && i.manifest != nil {
+		// The snapshot's own manifest, not the one on disk: only its rows are
+		// guaranteed to be in i.coll.
+		for _, state := range i.manifest.Entries {
 			ids := state.AllChunkIDs()
 			if len(ids) == 0 {
 				continue
@@ -258,6 +285,7 @@ func (i *Index) UpsertEntry(ctx context.Context, entryID string, oldChunkIDs []s
 	if err := i.addDocuments(ctx, docs); err != nil {
 		return fmt.Errorf("add chunks for %s: %w", entryID, err)
 	}
+	i.dims = dims
 	i.dirty = true
 	i.published = nil
 	return nil
@@ -271,6 +299,15 @@ func (i *Index) DeleteEntry(ctx context.Context, chunkIDs []string) error {
 	}
 	if err := i.coll.Delete(ctx, nil, nil, chunkIDs...); err != nil {
 		return err
+	}
+	if i.keepSnapshot {
+		// Rows written after the snapshot loaded are not in i.coll, so chromem
+		// does not know their files.
+		for _, id := range chunkIDs {
+			if err := os.Remove(documentPath(i.indexDir, id)); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
 	}
 	i.dirty = true
 	i.published = nil

@@ -66,7 +66,7 @@ func (h *SearchIndexHandler) complete(ctx context.Context, entries []*model.Entr
 		skip = nil
 	}
 	err := indexStream(ctx, inputs, h.Embedder, h.Attachments, textsplitter.NewSplitter(), skip,
-		func(ctx context.Context, entry *model.IndexWork) error {
+		eachEntry(func(ctx context.Context, entry *model.IndexWork) error {
 			if complete {
 				if err := types.ValidateEntryPublication(entry.Version, entry.Rows); err != nil {
 					return err
@@ -88,7 +88,7 @@ func (h *SearchIndexHandler) complete(ctx context.Context, entries []*model.Entr
 				h.cmd.OnEntryIndexed(entry.Version.EntryID, len(entry.Rows))
 			}
 			return nil
-		}, nil)
+		}), nil)
 	if err != nil {
 		return err
 	}

@@ -559,7 +559,7 @@ func (h *Handler) BuildConnectedIndexes(ctx context.Context, repoIDs []model.Rep
 		}
 		// One machine-global store per (repo-id, fingerprint): the same
 		// index the repo's own checkout would use, embedded once. The handler
-		// loads and locks the store itself at write time (index.WriteStore).
+		// loads and locks the store itself at write time (index.FillSession).
 		idxDir := index.StoreDir(h.repos.Registry().CacheRoot(), index.RepoKey(repoID, cacheDir), embedder.Fingerprint())
 		ih := NewIndexHandler(IndexHandlerOptions{
 			GraphDir:        graphDir,
