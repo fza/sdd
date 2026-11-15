@@ -14,28 +14,48 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// commitInit commits the paths init touched together with those an earlier
-// run's failed commit left behind, limited to paths git reports a change
-// under. A failed commit records its paths for the next run.
-func (h *Handler) commitInit(ctx context.Context, repoRoot string, touched []string, message string) error {
+// trustedRecord reads the paths an earlier run's failed commit left behind.
+// Init calls it before any write: the record decides what the commit takes,
+// and a refusal after the writes would leave them uncommitted with no record.
+// A record git does not ignore did not come from this checkout's own failed
+// run: a cloned one could sweep untracked files into a pushed commit.
+func (h *Handler) trustedRecord(ctx context.Context, repoRoot string) (uncommittedRecord, []string, error) {
 	repoRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
-		return fmt.Errorf("resolving the repository root: %w", err)
+		return uncommittedRecord{}, nil, fmt.Errorf("resolving the repository root: %w", err)
 	}
 	record := uncommittedRecord{repoRoot: repoRoot}
 	leftover, err := record.read()
 	if err != nil {
-		return err
+		return record, nil, err
 	}
-	commitPaths := filterRepoPaths(repoRoot, touched)
+	if len(leftover) == 0 || h.tracker == nil {
+		return record, leftover, nil
+	}
+	ignored, err := h.tracker.Ignored(ctx, record.file())
+	if err != nil {
+		return record, nil, fmt.Errorf("checking that git ignores %s: %w", record.file(), err)
+	}
+	if !ignored {
+		return record, nil, fmt.Errorf("%s is tracked by git or not ignored, so init does not trust it: remove it from git or delete it, then run init again", record.file())
+	}
+	return record, leftover, nil
+}
+
+// commitInit commits the paths init touched together with those an earlier
+// run's failed commit left behind, limited to paths git reports a change
+// under. A failed commit records its paths for the next run.
+func (h *Handler) commitInit(ctx context.Context, record uncommittedRecord, leftover, touched []string, message string) error {
+	commitPaths := filterRepoPaths(record.repoRoot, touched)
 	if h.tracker != nil {
-		leftover, err = h.trustedLeftover(ctx, record, leftover)
-		if err != nil {
-			return err
-		}
+		var err error
 		commitPaths, err = h.tracker.Uncommitted(ctx, commitPaths)
 		if err != nil {
 			return fmt.Errorf("selecting init paths that differ from HEAD: %w", err)
+		}
+		leftover, err = h.tracker.Uncommitted(ctx, leftover)
+		if err != nil {
+			return fmt.Errorf("selecting the paths an earlier init left uncommitted: %w", err)
 		}
 	}
 	for _, path := range leftover {
@@ -46,32 +66,11 @@ func (h *Handler) commitInit(ctx context.Context, repoRoot string, touched []str
 	if len(commitPaths) == 0 {
 		return record.clear()
 	}
-	err = h.committer.Commit(message, commitPaths...)
+	err := h.committer.Commit(message, commitPaths...)
 	if err != nil {
 		return errors.Join(fmt.Errorf("git commit, which the next sdd init retries: %w", err), record.write(commitPaths))
 	}
 	return record.clear()
-}
-
-// trustedLeftover narrows the recorded paths to those with a change to
-// commit. A record git does not ignore did not come from this checkout's own
-// failed run: a cloned one could sweep untracked files into a pushed commit.
-func (h *Handler) trustedLeftover(ctx context.Context, record uncommittedRecord, leftover []string) ([]string, error) {
-	if len(leftover) == 0 {
-		return nil, nil
-	}
-	ignored, err := h.tracker.Ignored(ctx, record.file())
-	if err != nil {
-		return nil, fmt.Errorf("checking that git ignores %s: %w", record.file(), err)
-	}
-	if !ignored {
-		return nil, fmt.Errorf("%s is tracked by git or not ignored, so init does not trust it: remove it from git or delete it, then run init again", record.file())
-	}
-	leftover, err = h.tracker.Uncommitted(ctx, leftover)
-	if err != nil {
-		return nil, fmt.Errorf("selecting the paths an earlier init left uncommitted: %w", err)
-	}
-	return leftover, nil
 }
 
 // uncommittedRecord lists, relative to a repository root, the paths an init

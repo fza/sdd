@@ -75,6 +75,15 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 		return err
 	}
 
+	var record uncommittedRecord
+	var leftover []string
+	if h.committer != nil {
+		record, leftover, err = h.trustedRecord(ctx, cmd.RepoRoot)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Tracks paths we touch so the final git commit covers exactly what
 	// changed. A repeat init that changes nothing yields no commit.
 	var touched []string
@@ -419,7 +428,7 @@ func (h *Handler) Init(ctx context.Context, cmd *command.InitCmd) error {
 	// scope (outside the repo) are filtered out — they aren't part of the
 	// repo's git tree.
 	if h.committer != nil {
-		if err := h.commitInit(ctx, cmd.RepoRoot, touched, initCommitMessage(sddExisted)); err != nil {
+		if err := h.commitInit(ctx, record, leftover, touched, initCommitMessage(sddExisted)); err != nil {
 			return err
 		}
 	}
