@@ -281,6 +281,22 @@ func TestRetireUnconnectedClone(t *testing.T) {
 		}
 	})
 
+	t.Run("an empty repos list refuses the retirement", func(t *testing.T) {
+		if err := os.WriteFile(loc.ConfigPath, []byte("repos: []\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := registry.RetireUnconnectedClone(clone)
+		if !errors.Is(err, repos.ErrClonePassRefused) {
+			t.Errorf("a repos list emptied since the clone was listed should not retire it, got %v", err)
+		}
+		if _, err := os.Stat(clone); err != nil {
+			t.Errorf("the clone should stay in place, stat says %v", err)
+		}
+		if err := os.WriteFile(loc.ConfigPath, []byte(otherRepo), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	t.Run("a dropped, unconnected clone is moved out of the cache", func(t *testing.T) {
 		retired, err := registry.RetireUnconnectedClone(clone)
 		if err != nil {
