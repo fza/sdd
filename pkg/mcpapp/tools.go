@@ -65,7 +65,7 @@ type NextArgs struct {
 	Instance  string `json:"instance" jsonschema:"instance handle from start_procedure"`
 	// Report carries either state fields for the current step (per the served
 	// report_schema) or a chooser answer {chooser, choice, userWords?, reason?, fields?}.
-	Report map[string]any `json:"report,omitempty" jsonschema:"state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}"`
+	Report map[string]any `json:"report,omitempty" jsonschema:"state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}. Omit report, retry_ref and cancel_ref together to pick up a delivery a waiting step was served as awaiting"`
 	Label  string         `json:"label,omitempty" jsonschema:"update the session's subject label when the dialogue's subject has sharpened"`
 }
 
@@ -195,6 +195,27 @@ type ServeResult struct {
 	OpenThreads      string                  `json:"open_threads,omitempty" jsonschema:"this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here"`
 	Base             *BaseServe              `json:"base_junction,omitempty" jsonschema:"the session shell's current serve — where the dialogue lands now that this move has ended"`
 	Collected        map[string]string       `json:"collected,omitempty" jsonschema:"state already collected by this instance — values persist across handover; do not re-derive them"`
+	Dispatches       []DispatchResult        `json:"dispatches,omitempty" jsonschema:"delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions"`
+	Parked           bool                    `json:"parked,omitempty" jsonschema:"set when the move is parked at step for a person; nothing was written"`
+	Reason           string                  `json:"reason,omitempty" jsonschema:"why the move is parked"`
+	Resume           string                  `json:"resume,omitempty" jsonschema:"the call a person resumes the parked move with"`
+}
+
+// DispatchResult is one delegate handoff: the child handles a delegate
+// receives, the prompts that carry them, and what to do this round. The
+// dispatching session's own handle is never part of it, and a delegate sdd
+// launched itself hands over neither handles nor prompts.
+type DispatchResult struct {
+	Session        string `json:"session,omitempty" jsonschema:"the delegate's child session handle; absent when sdd launched the delegate"`
+	Instance       string `json:"instance,omitempty" jsonschema:"the delegate's task instance in its child session; absent when sdd launched the delegate"`
+	Procedure      string `json:"procedure"`
+	Prompt         string `json:"prompt,omitempty" jsonschema:"the whole prompt of a fresh-context delegate"`
+	ContinuePrompt string `json:"continue_prompt,omitempty" jsonschema:"the prompt continuing a delegate that worked an earlier round"`
+	Instructions   string `json:"instructions"`
+	Agent          string `json:"agent,omitempty" jsonschema:"the subagent definition sdd init installs per harness to launch the delegate as"`
+	Model          string `json:"model,omitempty" jsonschema:"the model the harness launches that subagent with; unset leaves the harness's own"`
+	Effort         string `json:"effort,omitempty" jsonschema:"the effort the harness launches that subagent with; unset leaves the harness's own"`
+	Runner         string `json:"runner,omitempty" jsonschema:"set when sdd launched the delegate itself: the runner its round runs with, in the background"`
 }
 
 // BaseServe is the session shell's serve as nested into landing responses
@@ -313,6 +334,19 @@ type ShowArgs struct {
 
 type ShowResult struct {
 	Entries string `json:"entries"`
+}
+
+type GatherArgs struct {
+	Proofs
+	Session  string   `json:"session,omitempty" jsonschema:"attached session's handle, from start_session or resume_session; required"`
+	Instance string   `json:"instance,omitempty" jsonschema:"the running capture this reading grounds. Its reported draft writes the searches. Only reads made through gather inside it count for its grounding. Report the draft at assemble first"`
+	IDs      []string `json:"ids,omitempty" jsonschema:"entries to open in full; an entry the call proves it holds serves its pointer, so the way back to a pointed entry is its id with its tag left out of held"`
+	Draft    string   `json:"draft,omitempty" jsonschema:"without instance: the draft text the searches are written from; credits nothing"`
+	Topics   []string `json:"topics,omitempty" jsonschema:"without instance: the draft's topic labels, each listed in full"`
+}
+
+type GatherResult struct {
+	Serve string `json:"serve" jsonschema:"the reads run, entries served in full, the entries to judge and the entries set aside; nothing is cut"`
 }
 
 type ReadAttachmentArgs struct {
@@ -461,6 +495,15 @@ func (s *toolSet) register(srv *mcp.Server) {
 			"session named by session (required). Use whenever the dialogue touches a specific entry — " +
 			"summaries are pointers, not facts.",
 	}, toolBoundary(s.show))
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "gather",
+		Description: "Ground a draft before its capture, in one call, within the session named by session " +
+			"(required): on a small graph every live entry's brief; above it a semantic search, keyword " +
+			"searches and the live listing of every draft topic, written from the draft. Name the running " +
+			"capture as instance: only reads made through gather inside it ground the capture. Pass ids to " +
+			"open entries in full. An entry the call proves it holds prints as a pointer with its brief.",
+	}, toolBoundary(s.gather))
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "read_attachment",
@@ -752,12 +795,18 @@ func (s *toolSet) abandonSession(ctx context.Context, req *mcp.CallToolRequest, 
 // caller presents — the reorientation. Presenting the handle declares the
 // caller needs re-serving, so its call serves every piece in full (d-cpt-aen).
 func (s *toolSet) resumeSession(ctx context.Context, req *mcp.CallToolRequest, args ResumeSessionArgs) (*mcp.CallToolResult, ResumeSessionResult, error) {
+	identity := s.requestIdentity(req)
+	if id := sdd.SessionID(strings.TrimSpace(args.Session)); id != "" {
+		err := s.app.RefuseClient(ctx, identity, id, mcpClientName(req.Session))
+		if err != nil {
+			return nil, ResumeSessionResult{}, err
+		}
+	}
 	ss, err := s.attachedSession(ctx, req, args.Session, Proofs{})
 	if err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
 	defer ss.mu.Unlock()
-	identity := s.requestIdentity(req)
 	if err := ss.root.Reorient(ctx, identity); err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
@@ -1141,6 +1190,25 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 
 }
 
+func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args GatherArgs) (*mcp.CallToolResult, GatherResult, error) {
+	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
+	if err != nil {
+		return nil, GatherResult{}, err
+	}
+	defer ss.mu.Unlock()
+	result, err := ss.root.Gather(ctx, s.requestIdentity(req), sdd.WorkflowGatherRequest{
+		Instance: strings.TrimSpace(args.Instance), IDs: args.IDs, Draft: args.Draft, Topics: args.Topics,
+		SyncMode: s.searchSyncMode,
+	})
+	if err != nil {
+		return nil, GatherResult{}, err
+	}
+	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
+		return nil, GatherResult{}, err
+	}
+	return nil, GatherResult{Serve: result.Text}, nil
+}
+
 func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, args ReadAttachmentArgs) (*mcp.CallToolResult, ReadAttachmentResult, error) {
 	maxBytes := args.MaxBytes
 	if maxBytes == 0 {
@@ -1259,12 +1327,21 @@ func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest,
 		ReportSchema: serve.ReportSchema, Produced: capValues(serve.Produced), Execution: serve.Execution,
 		Collected: capValues(serve.Collected), PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
 	}
+	if parked := serve.Parked; parked != nil {
+		res.Parked, res.Reason, res.Resume = true, parked.Reason, parked.Resume
+	}
 	if serve.PendingChooser != nil {
 		chooser := &ChooserResult{Chooser: serve.PendingChooser.Chooser, Kind: string(serve.PendingChooser.Kind)}
 		for _, option := range serve.PendingChooser.Options {
 			chooser.Options = append(chooser.Options, ChooserOptionResult{Choice: option.Choice, Collect: option.Collect})
 		}
 		res.PendingChooser = chooser
+	}
+	for _, dispatch := range serve.Dispatches {
+		res.Dispatches = append(res.Dispatches, DispatchResult{
+			Session: string(dispatch.Session), Instance: dispatch.Instance, Procedure: dispatch.Procedure,
+			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Agent: dispatch.Agent, Model: dispatch.Model, Effort: dispatch.Effort, Runner: dispatch.Runner,
+		})
 	}
 	framing, err := ss.root.Framing(ctx, s.requestIdentity(req))
 	if err != nil {

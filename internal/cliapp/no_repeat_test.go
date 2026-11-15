@@ -18,6 +18,7 @@ func TestCLIReadsServeInFullEveryTime(t *testing.T) {
 		{"show", []string{"show", appEntryID}, appBody},
 		{"view as-bodies", []string{"view", "--layout", `id("` + appEntryID + `"):as-bodies`}, appBody},
 		{"search", []string{"search", "--term", "configured graph directory"}, appEntryID},
+		{"gather", []string{"gather", appEntryID}, appBody},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

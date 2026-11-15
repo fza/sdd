@@ -174,3 +174,22 @@ func TestConfigSet_TypedScalars(t *testing.T) {
 		t.Errorf("concurrency not written as number: %s", data)
 	}
 }
+
+// A read ignores a local value loosening the shared verify policy; a write
+// refuses it before anything lands on disk.
+func TestConfigSet_RefusesALocalVerifyValueLooseningTheShared(t *testing.T) {
+	h, _, sddDir := newConfigTestHandler(t)
+	if err := os.WriteFile(filepath.Join(sddDir, "config.yaml"), []byte("verify:\n  mode: deep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: "local", Key: "verify.mode", Value: "prose"})
+	if err == nil || !strings.Contains(err.Error(), "may only raise") {
+		t.Fatalf("a loosening local verify.mode should be refused naming why, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sddDir, "config.local.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("a refused write should leave no local file, got %v", err)
+	}
+	if err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: "local", Key: "verify.mode", Value: "deep"}); err != nil {
+		t.Fatalf("a local value matching the shared one should be written: %v", err)
+	}
+}

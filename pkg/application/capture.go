@@ -12,11 +12,23 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/pkg/application/types"
+	"github.com/networkteam/sdd/pkg/llm"
 )
 
 // PreflightEntry checks a draft without publishing it or opening staged bytes.
 // The procedure persists its findings and invalidates them when checked input changes.
 func (a *Application) PreflightEntry(ctx context.Context, identity RequestIdentity, project ProjectID, binding SessionBinding, draft EntryDraft) (PreflightEntryResult, error) {
+	return a.preflightEntry(ctx, identity, project, draft, nil, false)
+}
+
+// preflightEntry checks the draft, as the light verifier over reading where
+// the project's verifier is on. Where deepJudges,
+// the deep verifier judges in pre-flight's place: only the mechanical checks
+// run, and the result carries the rubric the verifier takes over. A model
+// answer cut at the token cap, or a call past its bound, returns the
+// mechanical findings with an ErrorAnswerCut or ErrorTimedOut error: the
+// model did not judge.
+func (a *Application) preflightEntry(ctx context.Context, identity RequestIdentity, project ProjectID, draft EntryDraft, reading *captureReading, deepJudges bool) (PreflightEntryResult, error) {
 	principal, runtime, err := a.resolve(ctx, identity, project, AccessWrite)
 	if err != nil {
 		return PreflightEntryResult{}, err
@@ -49,14 +61,56 @@ func (a *Application) PreflightEntry(ctx context.Context, identity RequestIdenti
 		PreflightRunner: effective.options.LLM, ProcedureRegistry: registry,
 		Config: &model.PerRepoConfig{Language: effective.options.Language, Dependencies: effective.options.Dependencies},
 	})
-	preflight, err := finder.Preflight(ctx, snapshot.graph, query.PreflightQuery{Entry: entry})
+	if deepJudges {
+		result.Findings, err = mechanicalFindings(finder, snapshot.graph, entry)
+		if err != nil {
+			return result, err
+		}
+		result.Rubric, err = llmops.PreflightRubric(entry, snapshot.graph, effective.options.Language)
+		if err != nil {
+			return result, fmt.Errorf("pre-flight: %w", err)
+		}
+		return result, nil
+	}
+	light := effective.lightPreflight(reading, draft.Kind)
+	preflight, err := finder.Preflight(ctx, snapshot.graph, query.PreflightQuery{Entry: entry, Light: light, KindFit: effective.kindFit(draft.Kind)})
+	var unjudged ErrorCode
+	switch {
+	case errors.Is(err, llm.ErrAnswerCut):
+		unjudged = ErrorAnswerCut
+	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
+		unjudged = ErrorTimedOut
+	}
+	if unjudged != "" {
+		coded := &ApplicationError{Code: unjudged, Message: fmt.Sprintf("pre-flight: %v", err), Cause: err}
+		result.Findings, err = mechanicalFindings(finder, snapshot.graph, entry)
+		if err != nil {
+			return result, err
+		}
+		return result, coded
+	}
 	if err != nil {
 		return result, fmt.Errorf("pre-flight: %w", err)
 	}
-	for _, finding := range preflight.Findings {
-		result.Findings = append(result.Findings, Finding{Severity: string(finding.Severity), Category: finding.Category, Observation: finding.Observation})
-	}
+	result.Findings = publicFindings(preflight.Findings)
+	result.Calls, result.Excerpted = preflight.Calls, preflight.Excerpted
 	return result, nil
+}
+
+func mechanicalFindings(finder *finders.Finder, graph *model.Graph, entry *model.Entry) ([]Finding, error) {
+	mechanical, err := finder.MechanicalPreflight(graph, entry)
+	if err != nil {
+		return nil, fmt.Errorf("pre-flight: %w", err)
+	}
+	return publicFindings(mechanical), nil
+}
+
+func publicFindings(findings []query.Finding) []Finding {
+	var out []Finding
+	for _, finding := range findings {
+		out = append(out, Finding{Severity: string(finding.Severity), Category: finding.Category, Observation: finding.Observation, Basis: finding.Basis})
+	}
+	return out
 }
 
 // entryPublicationExists reports whether a committed publication exists under

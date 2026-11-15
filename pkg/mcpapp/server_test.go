@@ -758,7 +758,7 @@ func TestToolSurfaceMatchesSpec(t *testing.T) {
 	}
 	sort.Strings(got)
 	want := []string{
-		"abandon", "bind_branch", "info", "next", "park", "read_attachment",
+		"abandon", "bind_branch", "gather", "info", "next", "park", "read_attachment",
 		"registry", "resume_session", "search", "show", "stage_attachment",
 		"start_procedure", "start_session", "view",
 	}
@@ -2490,12 +2490,14 @@ func jsonSize(t *testing.T, v any) int {
 	return len(raw)
 }
 
-// TestServedMemoryIsPerSession pins the served-once memory's home (d-cpt-aen):
-// it is derived from the session ledger, so a second connection presenting the
-// handle is stubbed for what the session's consumer already holds, a
-// reorientation resets it so the complete position serves in full, and
-// afterwards the memory accumulates again.
-func TestServedMemoryIsPerSession(t *testing.T) {
+// TestServedMemoryIsPerAgentContext pins the served memory under the anchor
+// proof (d-cpt-aen): the session ledger keeps the
+// issued tags, but only a call proving a piece gets its pointer. The agent
+// context that received a serve gets pointers on any connection; a fresh
+// subagent presenting the same handle holds no tags and gets every piece in
+// full; a reorientation serves its position in full without voiding the
+// tags.
+func TestServedMemoryIsPerAgentContext(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	agent := newAgentMemory()
 	csA := connectAs(t, env.srv, agent)
@@ -2555,9 +2557,9 @@ func TestServedMemoryIsPerSession(t *testing.T) {
 	}
 }
 
-// TestServedMemorySurvivesServerRestart: the ledger carries the served-once
-// memory, so a second server over the same store stubs what an earlier one
-// served, without any reorientation in between.
+// TestServedMemorySurvivesServerRestart: the ledger carries the issued tags,
+// so a second server over the same store points at what the agent proves it
+// holds, without any reorientation in between.
 func TestServedMemorySurvivesServerRestart(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	agent := newAgentMemory()

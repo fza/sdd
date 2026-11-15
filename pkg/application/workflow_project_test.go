@@ -16,8 +16,10 @@ import (
 // under the repo ID example.test/b, which differs from B's project ID as it
 // does in every composition but the local one; C is readable but undeclared.
 // Alice is a full member of A and B and reads C; B has no write authority of
-// its own, as a local dependency has today.
-func newClosureFixture(t *testing.T) (*sdd.Application, sdd.RequestIdentity) {
+// its own, as a local dependency has today. Bob is a full member of A and
+// reads B. verifiers sets a project's verify
+// policy.
+func newClosureFixture(t *testing.T, verifiers ...map[sdd.ProjectID]sdd.VerifierPolicy) (*sdd.Application, sdd.RequestIdentity) {
 	t.Helper()
 	root := t.TempDir()
 	graphB := filepath.Join(root, "project-b")
@@ -56,7 +58,7 @@ Project B is readable as an authorized dependency.`), 0o644); err != nil {
 		}
 		runtime, err := sdd.NewProjectRuntime(sdd.ProjectRuntimeOptions{
 			Project: sdd.ProjectRef{ID: project.id, DisplayName: string(project.id)}, Dependencies: project.dependencies,
-			DefaultBranch: project.branch, Graph: graph, LLM: llm,
+			DefaultBranch: project.branch, Graph: graph, LLM: llm, Verifier: verifierOf(verifiers, project.id),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -75,6 +77,7 @@ Project B is readable as an authorized dependency.`), 0o644); err != nil {
 		runtimes: runtimes,
 		permissions: map[string]map[sdd.ProjectID]compositionPermission{
 			"alice": {"project-a": {read: true, write: true}, "project-b": {read: true, write: true}, "project-c": {read: true}},
+			"bob":   {"project-a": {read: true, write: true}, "project-b": {read: true}},
 		},
 		dependencies: map[sdd.RepoID]sdd.ProjectID{"example.test/b": "project-b"},
 	}
@@ -83,6 +86,15 @@ Project B is readable as an authorized dependency.`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return application, sdd.RequestIdentity{Subject: "alice"}
+}
+
+func verifierOf(verifiers []map[sdd.ProjectID]sdd.VerifierPolicy, project sdd.ProjectID) sdd.VerifierPolicy {
+	for _, set := range verifiers {
+		if policy, ok := set[project]; ok {
+			return policy
+		}
+	}
+	return sdd.VerifierPolicy{}
 }
 
 // TestInstanceTargetsProjectInDependencyClosure pins where an instance's
@@ -162,5 +174,29 @@ func TestInstanceTargetsProjectInDependencyClosure(t *testing.T) {
 	}
 	if projects[explicit.Instance] != "project-b" || projects[home.Instance] != "project-a" || projects[child.Instance] != "project-b" {
 		t.Fatalf("resumed instance projects = %v, want the recorded and derived targets restored", projects)
+	}
+}
+
+// A capture started through a parent in a dependency the principal may only
+// read is refused at its start, as one naming that dependency is.
+func TestCaptureDerivingAReadOnlyDependencyIsRefusedAtStart(t *testing.T) {
+	application, _ := newClosureFixture(t)
+	bob := sdd.RequestIdentity{Subject: "bob"}
+	workflow, _, err := application.OpenWorkflow(t.Context(), bob, "project-a", sdd.WorkflowOpenRequest{ClientName: "bob-mcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := workflow.Start(t.Context(), bob, sdd.WorkflowStartRequest{Canonical: "engage", Project: "project-b"})
+	if err != nil {
+		t.Fatalf("a read in the dependency should start: %v", err)
+	}
+	for _, request := range []sdd.WorkflowStartRequest{
+		{Canonical: "capture", Project: "project-b"},
+		{Canonical: "capture", Parent: parent.Instance},
+	} {
+		_, err := workflow.Start(t.Context(), bob, request)
+		if applicationErrorCode(err) != sdd.ErrorWriteDenied {
+			t.Errorf("a capture into the read-only dependency should be refused at its start, got %v for %+v", err, request)
+		}
 	}
 }

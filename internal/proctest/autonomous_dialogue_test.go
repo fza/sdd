@@ -50,6 +50,28 @@ func TestAutonomousDialogue_AgentConfirmsACapture(t *testing.T) {
 	proctest.RequireStep(t, serve, "verifySummary")
 }
 
+// No user reads a staged draft file in an autonomous session, so the body
+// travels in the report, where a revision costs no extra request.
+func TestAutonomousDialogue_CaptureAsksForTheBodyInline(t *testing.T) {
+	const inline = "report the body inline as `body`"
+	for _, tc := range []struct {
+		name       string
+		options    []proctest.Option
+		wantInline bool
+	}{
+		{"autonomous", []proctest.Option{proctest.WithAutonomousDialogue()}, true},
+		{"guided", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, session := newCaptureWorld(t, tc.name+"-capture-body", tc.options...)
+			serve := session.Start(t, "capture", nil)
+			if strings.Contains(serve.Instructions, inline) != tc.wantInline {
+				t.Errorf("a %s capture should ask for the body inline only when no user reviews the draft, got %q", tc.name, serve.Instructions)
+			}
+		})
+	}
+}
+
 func TestAutonomousDialogue_OverrideStaysTheUsers(t *testing.T) {
 	world, session := newCaptureWorld(t, "autonomous-override", proctest.WithAutonomousDialogue())
 	world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "high", Category: "test-block", Observation: "Review this finding."}}
@@ -57,10 +79,12 @@ func TestAutonomousDialogue_OverrideStaysTheUsers(t *testing.T) {
 	session.Report(t, serve.Instance, captureDraft())
 	serve = session.Decide(t, serve.Instance, "playback", "confirm", nil, "the draft holds")
 	proctest.RequireStep(t, serve, "reviseOrOverride")
-	if _, err := session.DecideErr(t, serve.Instance, "reviseOrOverride", "override", nil, "the finding does not apply"); err == nil || !strings.Contains(err.Error(), "stays the user's choice") {
+	if _, err := session.DecideErr(t, serve.Instance, "reviseOrOverride", "override", nil, "the finding does not apply"); err == nil || !strings.Contains(err.Error(), "unattended rule") {
 		t.Fatalf("the agent should not override a failed pre-flight on its own, got %v", err)
 	}
 	world.LLM.PreflightFindings = nil
+	world.SetDialogue("guided")
+	session.Refresh(t)
 	serve = session.Answer(t, serve.Instance, "reviseOrOverride", "override", nil, "override it, the finding does not apply")
 	proctest.RequireStep(t, serve, "verifySummary")
 }

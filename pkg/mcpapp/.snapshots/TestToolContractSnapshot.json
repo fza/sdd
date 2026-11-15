@@ -224,6 +224,81 @@
     }
   },
   {
+    "description": "Ground a draft before its capture, in one call, within the session named by session (required): on a small graph every live entry's brief; above it a semantic search, keyword searches and the live listing of every draft topic, written from the draft. Name the running capture as instance: only reads made through gather inside it ground the capture. Pass ids to open entries in full. An entry the call proves it holds prints as a pointer with its brief.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "draft": {
+          "description": "without instance: the draft text the searches are written from; credits nothing",
+          "type": "string"
+        },
+        "held": {
+          "description": "for each served piece whose text you still see, from every earlier result, not only the last: its tag and the word right after the tag, as tag:word (e.g. \"… dialogue ⟦gn9p⟧ first …\" → gn9p:first), or the word its last pointer asked for (next proof). A proved piece serves as a short pointer; a proof works once; never guess a word",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "ids": {
+          "description": "entries to open in full; an entry the call proves it holds serves its pointer, so the way back to a pointed entry is its id with its tag left out of held",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "instance": {
+          "description": "the running capture this reading grounds. Its reported draft writes the searches. Only reads made through gather inside it count for its grounding. Report the draft at assemble first",
+          "type": "string"
+        },
+        "reread": {
+          "description": "tags or piece names of served pieces you no longer see; they serve in full again",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "session": {
+          "description": "attached session's handle, from start_session or resume_session; required",
+          "type": "string"
+        },
+        "topics": {
+          "description": "without instance: the draft's topic labels, each listed in full",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "gather",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "serve": {
+          "description": "the reads run, entries served in full, the entries to judge and the entries set aside; nothing is cut",
+          "type": "string"
+        }
+      },
+      "required": [
+        "serve"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "description": "Session framing header for the session named by session (required): project, local participant, configured language, and available search modes.",
     "inputSchema": {
       "additionalProperties": false,
@@ -299,7 +374,7 @@
         },
         "report": {
           "additionalProperties": true,
-          "description": "state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}",
+          "description": "state fields per the served report_schema, or a chooser answer object {chooser, choice, userWords?, reason?, fields?}. Omit report, retry_ref and cancel_ref together to pick up a delivery a waiting step was served as awaiting",
           "type": "object"
         },
         "reread": {
@@ -505,6 +580,61 @@
           "description": "state already collected by this instance — values persist across handover; do not re-derive them",
           "type": "object"
         },
+        "dispatches": {
+          "description": "delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "agent": {
+                "description": "the subagent definition sdd init installs per harness to launch the delegate as",
+                "type": "string"
+              },
+              "continue_prompt": {
+                "description": "the prompt continuing a delegate that worked an earlier round",
+                "type": "string"
+              },
+              "effort": {
+                "description": "the effort the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
+              "instance": {
+                "description": "the delegate's task instance in its child session; absent when sdd launched the delegate",
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string"
+              },
+              "model": {
+                "description": "the model the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
+              "procedure": {
+                "type": "string"
+              },
+              "prompt": {
+                "description": "the whole prompt of a fresh-context delegate",
+                "type": "string"
+              },
+              "runner": {
+                "description": "set when sdd launched the delegate itself: the runner its round runs with, in the background",
+                "type": "string"
+              },
+              "session": {
+                "description": "the delegate's child session handle; absent when sdd launched the delegate",
+                "type": "string"
+              }
+            },
+            "required": [
+              "procedure",
+              "instructions"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "execution": {
           "description": "execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context",
           "type": "string"
@@ -536,6 +666,10 @@
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
           "type": "string"
+        },
+        "parked": {
+          "description": "set when the move is parked at step for a person; nothing was written",
+          "type": "boolean"
         },
         "pending_chooser": {
           "additionalProperties": false,
@@ -674,10 +808,18 @@
             "array"
           ]
         },
+        "reason": {
+          "description": "why the move is parked",
+          "type": "string"
+        },
         "report_schema": {
           "additionalProperties": true,
           "description": "JSON Schema for the current step's report",
           "type": "object"
+        },
+        "resume": {
+          "description": "the call a person resumes the parked move with",
+          "type": "string"
         },
         "session": {
           "description": "session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool",
@@ -1304,6 +1446,61 @@
                 "description": "state already collected by this instance — values persist across handover; do not re-derive them",
                 "type": "object"
               },
+              "dispatches": {
+                "description": "delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "agent": {
+                      "description": "the subagent definition sdd init installs per harness to launch the delegate as",
+                      "type": "string"
+                    },
+                    "continue_prompt": {
+                      "description": "the prompt continuing a delegate that worked an earlier round",
+                      "type": "string"
+                    },
+                    "effort": {
+                      "description": "the effort the harness launches that subagent with; unset leaves the harness's own",
+                      "type": "string"
+                    },
+                    "instance": {
+                      "description": "the delegate's task instance in its child session; absent when sdd launched the delegate",
+                      "type": "string"
+                    },
+                    "instructions": {
+                      "type": "string"
+                    },
+                    "model": {
+                      "description": "the model the harness launches that subagent with; unset leaves the harness's own",
+                      "type": "string"
+                    },
+                    "procedure": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "description": "the whole prompt of a fresh-context delegate",
+                      "type": "string"
+                    },
+                    "runner": {
+                      "description": "set when sdd launched the delegate itself: the runner its round runs with, in the background",
+                      "type": "string"
+                    },
+                    "session": {
+                      "description": "the delegate's child session handle; absent when sdd launched the delegate",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "procedure",
+                    "instructions"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
               "execution": {
                 "description": "execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context",
                 "type": "string"
@@ -1335,6 +1532,10 @@
               "open_threads": {
                 "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
                 "type": "string"
+              },
+              "parked": {
+                "description": "set when the move is parked at step for a person; nothing was written",
+                "type": "boolean"
               },
               "pending_chooser": {
                 "additionalProperties": false,
@@ -1473,10 +1674,18 @@
                   "array"
                 ]
               },
+              "reason": {
+                "description": "why the move is parked",
+                "type": "string"
+              },
               "report_schema": {
                 "additionalProperties": true,
                 "description": "JSON Schema for the current step's report",
                 "type": "object"
+              },
+              "resume": {
+                "description": "the call a person resumes the parked move with",
+                "type": "string"
               },
               "session": {
                 "description": "session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool",
@@ -2096,6 +2305,61 @@
           "description": "state already collected by this instance — values persist across handover; do not re-derive them",
           "type": "object"
         },
+        "dispatches": {
+          "description": "delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "agent": {
+                "description": "the subagent definition sdd init installs per harness to launch the delegate as",
+                "type": "string"
+              },
+              "continue_prompt": {
+                "description": "the prompt continuing a delegate that worked an earlier round",
+                "type": "string"
+              },
+              "effort": {
+                "description": "the effort the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
+              "instance": {
+                "description": "the delegate's task instance in its child session; absent when sdd launched the delegate",
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string"
+              },
+              "model": {
+                "description": "the model the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
+              "procedure": {
+                "type": "string"
+              },
+              "prompt": {
+                "description": "the whole prompt of a fresh-context delegate",
+                "type": "string"
+              },
+              "runner": {
+                "description": "set when sdd launched the delegate itself: the runner its round runs with, in the background",
+                "type": "string"
+              },
+              "session": {
+                "description": "the delegate's child session handle; absent when sdd launched the delegate",
+                "type": "string"
+              }
+            },
+            "required": [
+              "procedure",
+              "instructions"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "execution": {
           "description": "execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context",
           "type": "string"
@@ -2127,6 +2391,10 @@
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
           "type": "string"
+        },
+        "parked": {
+          "description": "set when the move is parked at step for a person; nothing was written",
+          "type": "boolean"
         },
         "pending_chooser": {
           "additionalProperties": false,
@@ -2265,10 +2533,18 @@
             "array"
           ]
         },
+        "reason": {
+          "description": "why the move is parked",
+          "type": "string"
+        },
         "report_schema": {
           "additionalProperties": true,
           "description": "JSON Schema for the current step's report",
           "type": "object"
+        },
+        "resume": {
+          "description": "the call a person resumes the parked move with",
+          "type": "string"
         },
         "session": {
           "description": "session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool",
@@ -2491,6 +2767,61 @@
           "description": "state already collected by this instance — values persist across handover; do not re-derive them",
           "type": "object"
         },
+        "dispatches": {
+          "description": "delegate handoffs this call owes: a delegate forked into its own child session, or sent its next input — follow each one's instructions",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "agent": {
+                "description": "the subagent definition sdd init installs per harness to launch the delegate as",
+                "type": "string"
+              },
+              "continue_prompt": {
+                "description": "the prompt continuing a delegate that worked an earlier round",
+                "type": "string"
+              },
+              "effort": {
+                "description": "the effort the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
+              "instance": {
+                "description": "the delegate's task instance in its child session; absent when sdd launched the delegate",
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string"
+              },
+              "model": {
+                "description": "the model the harness launches that subagent with; unset leaves the harness's own",
+                "type": "string"
+              },
+              "procedure": {
+                "type": "string"
+              },
+              "prompt": {
+                "description": "the whole prompt of a fresh-context delegate",
+                "type": "string"
+              },
+              "runner": {
+                "description": "set when sdd launched the delegate itself: the runner its round runs with, in the background",
+                "type": "string"
+              },
+              "session": {
+                "description": "the delegate's child session handle; absent when sdd launched the delegate",
+                "type": "string"
+              }
+            },
+            "required": [
+              "procedure",
+              "instructions"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "execution": {
           "description": "execution hint for this instance; fork-preferred means the procedure is a task best run in a disposable forked context",
           "type": "string"
@@ -2522,6 +2853,10 @@
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
           "type": "string"
+        },
+        "parked": {
+          "description": "set when the move is parked at step for a person; nothing was written",
+          "type": "boolean"
         },
         "pending_chooser": {
           "additionalProperties": false,
@@ -2660,10 +2995,18 @@
             "array"
           ]
         },
+        "reason": {
+          "description": "why the move is parked",
+          "type": "string"
+        },
         "report_schema": {
           "additionalProperties": true,
           "description": "JSON Schema for the current step's report",
           "type": "object"
+        },
+        "resume": {
+          "description": "the call a person resumes the parked move with",
+          "type": "string"
         },
         "session": {
           "description": "session handle (the session ID); sessions survive restarts and resume via resume_session. Pass it to every other tool",

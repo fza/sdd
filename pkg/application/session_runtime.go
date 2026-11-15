@@ -96,7 +96,7 @@ func verifyBinding(stored StoredSession, binding SessionBinding) error {
 
 // verifyOwnership checks immutable identity and that the dialogue has not
 // ended, without the version CAS. It is the shared front half of verifyBinding
-// and the resync retry.
+// and the catch-up (catchUp).
 func verifyOwnership(stored StoredSession, binding SessionBinding) error {
 	if err := validateStoredSession(stored); err != nil {
 		return err

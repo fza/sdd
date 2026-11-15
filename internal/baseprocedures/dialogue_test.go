@@ -10,14 +10,16 @@ import (
 )
 
 // Every user choice the base procedures hand to an autonomous agent, and
-// the one they keep for the user.
+// the ones they keep for the user: the pre-flight override, the deep
+// verifier's skips and open points, and the choice after a pre-flight model
+// answer cut at the token cap or past its time limit.
 var (
 	wantDelegable = []string{
 		"bootstrap/propose", "bootstrap/refresh", "capture/playback", "catch-up/junction",
 		"engage/moves", "evaluate/junction", "groom/walk", "implementation/closeout",
 		"implementation/setup", "interview/junction", "user-dialogue/junction",
 	}
-	wantReserved = []string{"capture/reviseOrOverride"}
+	wantReserved = []string{"capture/deepFailed", "capture/deepUser", "capture/deepWeigh", "capture/preflightTimedOut", "capture/preflightUnjudged", "capture/reviseOrOverride"}
 )
 
 func TestBaseProceduresHandOverEveryChoiceButTheOverride(t *testing.T) {
@@ -57,7 +59,7 @@ func TestBaseProceduresHandOverEveryChoiceButTheOverride(t *testing.T) {
 		t.Errorf("every base user choice but the override should be delegable, got %v", delegable)
 	}
 	if !slices.Equal(reserved, wantReserved) {
-		t.Errorf("only the pre-flight override should stay the user's, got %v", reserved)
+		t.Errorf("only the pre-flight override and the deep verifier's skips and open points should stay the user's, got %v", reserved)
 	}
 }
 

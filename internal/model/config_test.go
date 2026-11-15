@@ -176,6 +176,8 @@ func TestParseConfig_TolerantAndReportsUnknownKeys(t *testing.T) {
 		{"top-level unknown", "participant: x\nbogus_key: 1\n", "bogus_key"},
 		{"nested unknown", "llm:\n  provider: ollama\n  bogus_nested: 1\n", "llm.bogus_nested"},
 		{"global-only key misplaced", "repos:\n  - repo_id: a/b\n", "repos"},
+		{"grounding block", "grounding:\n  enforce: true\n", "grounding"},
+		{"verifier block", "verifier:\n  mode: deep\n", "verifier"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

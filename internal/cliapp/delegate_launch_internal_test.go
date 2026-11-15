@@ -1,0 +1,164 @@
+package cliapp
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/networkteam/sdd/internal/model"
+	sdd "github.com/networkteam/sdd/pkg/application"
+)
+
+func launcherServing(t *testing.T, cfg *model.PerRepoConfig) headlessLauncher {
+	t.Helper()
+	t.Setenv("PATH", t.TempDir())
+	return headlessLauncher{project: "served", workRoot: t.TempDir(), cfg: cfg}
+}
+
+func TestHeadlessLauncher_LeavesAnUnconfiguredLaunchToTheHarness(t *testing.T) {
+	launcher := launcherServing(t, &model.PerRepoConfig{})
+
+	_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served"})
+
+	if !errors.Is(err, sdd.ErrDelegateNotLaunched) {
+		t.Fatalf("a delegate without a configured launch should go back to the harness, got %v", err)
+	}
+}
+
+func TestHeadlessLauncher_LaunchesOnlyInTheServedProject(t *testing.T) {
+	launcher := launcherServing(t, &model.PerRepoConfig{})
+
+	_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "dependency", Runner: "claude"})
+
+	if err == nil || !strings.Contains(err.Error(), "only in the served project served, not in dependency") {
+		t.Fatalf("a launch in another project should be refused, got %v", err)
+	}
+}
+
+func TestHeadlessLauncher_FallsBackThroughTheProjectsAgents(t *testing.T) {
+	cases := map[string]struct {
+		agents  []model.AgentTarget
+		refusal string
+	}{
+		"named agents":      {agents: []model.AgentTarget{model.AgentCodex, model.AgentClaude}, refusal: "supported_agents (codex, claude)"},
+		"default to claude": {refusal: "supported_agents (claude)"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			launcher := launcherServing(t, &model.PerRepoConfig{SupportedAgents: tc.agents})
+
+			_, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Runner: sdd.DelegateLaunchFallback})
+
+			if err == nil || !strings.Contains(err.Error(), tc.refusal) {
+				t.Fatalf("the fallback should try the project's supported agents in order, got %v", err)
+			}
+		})
+	}
+}
+
+func TestHeadlessLauncher_RunsTheConfiguredDriver(t *testing.T) {
+	driver := filepath.Join(t.TempDir(), "absent-driver")
+	launcher := launcherServing(t, &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Runner: model.VerifierRunnerDriver, Driver: model.VerifierDriver{Command: driver}}}})
+
+	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Runner: "driver"})
+	if err != nil || run.Runner != "driver" {
+		t.Fatalf("the launcher should take the driver runner on at once, got %+v, %v", run, err)
+	}
+	_, err = run.Round(context.Background(), sdd.DelegateRound{Number: 1})
+
+	if err == nil || !strings.Contains(err.Error(), driver+" failed") {
+		t.Fatalf("the launch should run the driver the config names, got %v", err)
+	}
+}
+
+// The launcher hands the headless claude launch verify.claude of the served
+// config.
+func TestHeadlessLauncher_PassesTheLaunchsModelAndEffort(t *testing.T) {
+	cfg := &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{
+		Runner: model.VerifierRunnerClaude,
+		Claude: model.ClaudeAgent{Model: "opus", Effort: "xhigh"},
+	}}}
+	launcher := launcherServing(t, cfg)
+	bin := t.TempDir()
+	argsFile := filepath.Join(bin, "args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\ncat > /dev/null\necho '{\"type\":\"result\",\"is_error\":false,\"session_id\":\"claude-7\",\"result\":\"done\"}'\n"
+	err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/bin:/usr/bin")
+
+	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Runner: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = run.Round(context.Background(), sdd.DelegateRound{Number: 1, Prompt: "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recorded, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSpace(string(recorded)), "\n")
+	if !slices.Contains(args, "opus") || !slices.Contains(args, "xhigh") || slices.Contains(args, "gpt-5.5") {
+		t.Fatalf("claude should run with verify.claude's model and effort only, got %q", args)
+	}
+}
+
+// The launcher reports the agent CLI a round started, with its start stamp.
+func TestHeadlessLauncher_ReportsTheAgentCLIARoundStarted(t *testing.T) {
+	launcher := launcherServing(t, &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Runner: model.VerifierRunnerClaude}}})
+	bin := t.TempDir()
+	pidFile := filepath.Join(bin, "pid")
+	script := "#!/bin/sh\necho $$ > " + pidFile + "\ncat > /dev/null\n/bin/sleep 0.3\necho '{\"type\":\"result\",\"is_error\":false,\"session_id\":\"claude-7\",\"result\":\"done\"}'\n"
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/bin:/usr/bin")
+	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Runner: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agents []sdd.RoundProcess
+	round := sdd.DelegateRound{Number: 1, Prompt: "go", AgentStarted: func(_ context.Context, agent sdd.RoundProcess) error {
+		agents = append(agents, agent)
+		return nil
+	}}
+
+	if _, err := run.Round(context.Background(), round); err != nil {
+		t.Fatal(err)
+	}
+
+	recorded, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 || strconv.Itoa(agents[0].PID) != strings.TrimSpace(string(recorded)) || agents[0].Started == "" {
+		t.Fatalf("the round should report the claude it ran with its start stamp, got %+v for %s", agents, recorded)
+	}
+}
+
+func TestHeadlessLauncher_BoundsARoundByTheRoundTimeout(t *testing.T) {
+	driver := filepath.Join(t.TempDir(), "slow-driver")
+	if err := os.WriteFile(driver, []byte("#!/bin/sh\nexec /bin/sleep 5\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	launcher := launcherServing(t, &model.PerRepoConfig{BaseConfig: model.BaseConfig{Verify: model.VerifyConfig{Runner: model.VerifierRunnerDriver, Driver: model.VerifierDriver{Command: driver}, RoundTimeout: "100ms"}}})
+
+	run, err := launcher.LaunchDelegate(context.Background(), sdd.DelegateLaunch{Project: "served", Runner: "driver"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = run.Round(context.Background(), sdd.DelegateRound{Number: 1})
+
+	if err == nil || !strings.Contains(err.Error(), "did not end its round in time") {
+		t.Fatalf("the round should stop at verify.round_timeout, got %v", err)
+	}
+}
