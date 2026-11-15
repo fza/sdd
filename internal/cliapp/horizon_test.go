@@ -7,7 +7,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const horizonGap = "---\ntype: signal\nkind: gap\nlayer: tactical\nconfidence: medium\nparticipants: [Local Author]\n---\n\nA zebrafinch gap.\n"
+const horizonGap = "---\ntype: signal\nkind: gap\nlayer: tactical\nconfidence: medium\nparticipants: [Local Author]\nsummary: A gap.\ntitle: Gap\n---\n\nA zebrafinch gap.\n"
 
 const (
 	horizonDepEntry   = "20260901-100000-s-tac-dep"
