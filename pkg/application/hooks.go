@@ -374,10 +374,13 @@ func hookDraft(store *engine.Store) map[string]any {
 	body, _ := workflowStoreString(store, "body")
 	entryType, _ := entryTypeForKind(model.Kind(kind))
 	refs, _ := store.Get("refs")
+	skipGrounding, _ := store.Get("skipGrounding")
 	hash := sha256.Sum256([]byte(body))
 	return map[string]any{
 		"type": string(entryType), "kind": kind, "layer": layer, "refs": refs,
 		"topics": workflowStoreStrings(store, "topics"), "body": body,
 		"attachments": workflowStoreStrings(store, "attachments"), "body_hash": hex.EncodeToString(hash[:]),
+		"supersedes": workflowStoreStrings(store, "supersedes"), "closes": workflowStoreStrings(store, "closes"),
+		"skip_grounding": skipGrounding == true,
 	}
 }
