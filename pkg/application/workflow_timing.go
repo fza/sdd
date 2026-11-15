@@ -9,6 +9,7 @@ import (
 	"github.com/networkteam/sdd/internal/llmops"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/textdiff"
 )
 
@@ -28,15 +29,17 @@ type guideBase struct {
 	Body     string `json:"body"`
 }
 
-// fieldGuideAdded records the sentences a guide revision added to the body,
-// listed at playback until the user confirms a draft after it.
+// fieldGuideAdded records the sentences a guide revision added to the body
+// and removed from it, listed at playback until the user confirms a draft
+// after it.
 const fieldGuideAdded = "guideAdded"
 
 // guideAdded is the value of fieldGuideAdded. Confirmation is the playback
-// confirmation that stood at the revision, so a later confirm ends the list.
+// confirmation that stood at the revision, so a later confirm ends the lists.
 type guideAdded struct {
 	Confirmation string   `json:"confirmation"`
 	Sentences    []string `json:"sentences"`
+	Removed      []string `json:"removed"`
 }
 
 // guideDraftFields are the reported fields a delta check compares, the body
@@ -91,7 +94,11 @@ func recordGuideAdded(store *engine.Store) error {
 	if err != nil {
 		return err
 	}
-	return store.WriteEngine(fieldGuideAdded, guideAdded{Confirmation: confirmation, Sentences: textdiff.AddedSentences(base.Body, body)})
+	return store.WriteEngine(fieldGuideAdded, guideAdded{
+		Confirmation: confirmation,
+		Sentences:    textdiff.AddedSentences(base.Body, body),
+		Removed:      textdiff.AddedSentences(body, base.Body),
+	})
 }
 
 func playbackConfirmationKey(store *engine.Store) (string, error) {
@@ -102,9 +109,10 @@ func playbackConfirmationKey(store *engine.Store) (string, error) {
 	return draftJSON(value)
 }
 
-// guideAddedList renders the recorded sentences the body still holds, one
-// quoted bullet each; empty once a confirm followed the revision.
-func guideAddedList(store *engine.Store) (string, error) {
+// guideRevisionList renders the sentences recorded under key that the body
+// still holds, or with held false still lacks, one quoted bullet each; empty
+// once a confirm followed the revision.
+func guideRevisionList(store *engine.Store, key string, held bool) (string, error) {
 	doc, ok := workflowStoreDocument(store, fieldGuideAdded)
 	if !ok {
 		return "", nil
@@ -119,10 +127,10 @@ func guideAddedList(store *engine.Store) (string, error) {
 	body, _ := workflowStoreString(store, fieldBody)
 	body = strings.Join(strings.Fields(body), " ")
 	var b strings.Builder
-	sentences, _ := doc["sentences"].([]any)
+	sentences, _ := doc[key].([]any)
 	for _, item := range sentences {
 		sentence, _ := item.(string)
-		if sentence != "" && strings.Contains(body, sentence) {
+		if sentence != "" && strings.Contains(body, sentence) == held {
 			b.WriteString("- \"" + sentence + "\"\n")
 		}
 	}
@@ -215,7 +223,7 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 	}
 	err := registry.RegisterCommand(engine.Command{
 		Doc: engine.FuncDoc{
-			Name: "recordGuideRevision", Doc: "Records that the agent folded the guide's findings in: the guide step then passes through, and the revised draft is what the guide's judgment covers, and the sentences it added to the body are recorded for playback.",
+			Name: "recordGuideRevision", Doc: "Records that the agent folded the guide's findings in: the guide step then passes through, and the revised draft is what the guide's judgment covers, and the sentences it added to the body and removed from it are recorded for playback.",
 			Reads: []string{"guideFindings", fieldGuideBase}, Writes: []string{"guideReviewed", fieldGuideBase, fieldGuideAdded},
 		},
 		Fn: func(ctx *engine.Context) error {
@@ -233,11 +241,26 @@ func (w *WorkflowSession) registerWorkflowTiming(registry *engine.Registry) erro
 	if err != nil {
 		return err
 	}
+	// The added and the removed list share one text allowance, so the
+	// playback's worst case stays within the capture's serve budget.
+	listBound := engine.QueryBound{Part: serveview.PartText, Cap: serveview.Cap{MaxBytes: serveview.Default().Cap(serveview.PartText).MaxBytes / 2}}
 	err = registry.RegisterQuery(engine.Query{
 		Doc:       engine.FuncDoc{Name: "guideAdded", Doc: "The sentences the last guide revision added to the body, quoted one per line, until the user confirms a draft after it.", Reads: []string{fieldGuideAdded, "body"}},
 		ServeSafe: true,
+		Bound:     listBound,
 		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
-			return guideAddedList(ctx.Store)
+			return guideRevisionList(ctx.Store, "sentences", true)
+		},
+	})
+	if err != nil {
+		return err
+	}
+	err = registry.RegisterQuery(engine.Query{
+		Doc:       engine.FuncDoc{Name: "guideRemoved", Doc: "The sentences the last guide revision removed from the body, quoted one per line, until the user confirms a draft after it.", Reads: []string{fieldGuideAdded, "body"}},
+		ServeSafe: true,
+		Bound:     listBound,
+		Fn: func(ctx *engine.Context, _ map[string]any) (any, error) {
+			return guideRevisionList(ctx.Store, "removed", false)
 		},
 	})
 	if err != nil {

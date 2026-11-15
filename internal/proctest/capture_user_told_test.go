@@ -105,3 +105,29 @@ func TestCaptureDeep_OnlyAFindingTakenWithoutAnEditIsNamedSo(t *testing.T) {
 		t.Fatalf("a held or withdrawn finding is not one taken without an edit:\n%s", text)
 	}
 }
+
+// No user reads an autonomous playback, so a deep finding accepted without an
+// edit is put to the agent's own check, not shown to a user.
+func TestCaptureDeep_AutonomousPlaybackPutsUneditedFindingsToTheAgent(t *testing.T) {
+	world, session := newDeepWorld(t, "deep-unedited-autonomous", sdd.VerifierPolicy{}, proctest.WithAutonomousDialogue())
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Gather(t, instance)
+	serve = session.Report(t, instance, captureDraft())
+	proctest.RequireStep(t, serve, "deepDispatch")
+	x := dispatchDeep(t, world, session, instance)
+	verdict := "the gap claims an observation the graph records nowhere"
+	x.judge(t, []any{map[string]any{"verdict": verdict, "axis": "inconsistent", "severity": "medium"}})
+	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+	serve = session.Answer(t, instance, "deepAnswer", "accept", nil, "")
+	proctest.RequireStep(t, serve, "playback")
+	text := test.Untagged(serve.Instructions)
+	if strings.Contains(text, "Show the user") {
+		t.Errorf("an autonomous playback should not address a user about the findings:\n%s", text)
+	}
+	for _, want := range []string{"- f1 [medium, inconsistent]: " + verdict, "Weigh each against your grounding before you confirm or adjust the draft."} {
+		if !strings.Contains(text, want) {
+			t.Errorf("an autonomous playback should put the findings to the agent, missing %q:\n%s", want, text)
+		}
+	}
+}

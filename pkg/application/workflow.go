@@ -640,16 +640,15 @@ func (w *WorkflowSession) Start(ctx context.Context, identity RequestIdentity, r
 	if err != nil {
 		return nil, err
 	}
-	w.demandProject(project)
+	target := project
+	if target == "" {
+		target = w.instanceProject(parent)
+	}
+	w.demandProject(target)
 	// A move that publishes an entry into another project, named or derived
 	// from its parent, is refused at its start when it may not write there,
 	// not after the dialogue it costs.
-	target := project
-	derived := w.instanceProject(parent)
-	if target == "" && derived != w.project {
-		target = derived
-	}
-	if target != "" && publishesEntry(spec) {
+	if (project != "" || target != w.project) && publishesEntry(spec) {
 		err = w.authorizeTarget(target, AccessWrite)
 		if err != nil {
 			return nil, err
