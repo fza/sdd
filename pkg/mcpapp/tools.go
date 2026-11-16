@@ -1488,11 +1488,11 @@ func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.Ca
 		var syncNotice, cacheNotice string
 		if slot.claim != nil {
 			var claimErr error
-			syncNotice, claimErr = slot.claim(ctx, err != nil)
+			syncNotice, claimErr = slot.claim(call, err != nil)
 			err = errors.Join(err, claimErr)
 		}
 		if s.cacheNotice != nil {
-			cacheNotice = s.cacheNotice(ctx)
+			cacheNotice = s.cacheNotice(call)
 		}
 		if err != nil {
 			for _, notice := range []string{syncNotice, cacheNotice, hostNotice} {
