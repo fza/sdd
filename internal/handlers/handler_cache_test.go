@@ -537,3 +537,29 @@ func TestCacheHandlerPruneKeepsADroppedCloneHoldingAConnectedOne(t *testing.T) {
 		t.Error("a dropped clone holding a connected one should stay, and the connected one with it")
 	}
 }
+
+// A run failing before its pass, here on a run lock it cannot open, records
+// the failure, so a scheduled one is reported by the next command.
+func TestCacheHandlerPruneRecordsAFailureBeforeItsPass(t *testing.T) {
+	f := newPruneFixture(t, "")
+	if err := os.MkdirAll(f.loc.StateRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(f.loc.StateRoot, cacheprune.RunLockFile)
+	if err := os.WriteFile(lock, nil, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err == nil {
+		t.Fatal("a run that cannot open its run lock should fail")
+	}
+	status, err := cacheprune.Load(f.loc.StateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.FailureNotice() == "" {
+		t.Errorf("the failure should be recorded for the next command to report, got %+v", status)
+	}
+	if !exists(t, f.staleClone) {
+		t.Error("a run failing before its pass should remove nothing")
+	}
+}
