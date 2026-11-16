@@ -95,21 +95,27 @@ func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, 
 			return nil, fmt.Errorf("rendering the prose verifier axes: %w", err)
 		}
 	}
-	allowed := map[string]bool{}
-	for _, ref := range entry.Refs {
-		allowed[ref.ID] = true
-	}
-	for _, id := range slices.Concat(entry.Closes, entry.Supersedes) {
-		allowed[id] = true
-	}
-	for _, item := range items {
-		allowed[item.ID] = true
+	// A call's findings rest only on the entries it was served: the draft's
+	// refs, closes and supersedes, and its own reading parts.
+	allowedIn := func(call model.LightCall) map[string]bool {
+		allowed := map[string]bool{}
+		for _, ref := range entry.Refs {
+			allowed[ref.ID] = true
+		}
+		for _, id := range slices.Concat(entry.Closes, entry.Supersedes) {
+			allowed[id] = true
+		}
+		for _, part := range call.Parts {
+			allowed[part.ID] = true
+		}
+		return allowed
 	}
 	results := make([]*PreflightResult, len(calls))
 	errs := make([]error, len(calls))
 	var wg sync.WaitGroup
 	for i, call := range calls {
 		wg.Add(1)
+		allowed := allowedIn(call)
 		go func() {
 			defer wg.Done()
 			req := base

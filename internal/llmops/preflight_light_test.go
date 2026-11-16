@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -248,6 +249,41 @@ func TestPreflightLight_SlicesKeepTheSamePrefixAndMerge(t *testing.T) {
 	}
 	if len(result.Findings) != 1 || !strings.Contains(result.Findings[0].Observation, "raised by prose verifier call 1, 2, 3 of 3") {
 		t.Fatalf("one finding raised by every call should collapse into one naming the calls, got %+v", result.Findings)
+	}
+}
+
+// Each call's findings rest only on what that call carried.
+func TestPreflightLight_EachCallKeepsOnlyTheBasisItCarried(t *testing.T) {
+	body := strings.Repeat("Unrelated filler words about other matters entirely. ", 40)
+	ids := []string{"20261101-100000-s-tac-aaa", "20261101-100001-s-tac-bbb", "20261101-100002-s-tac-ccc"}
+	var entries []*model.Entry
+	for i, id := range ids {
+		entries = append(entries, readingEntry(id, "Entry "+string(rune('A'+i)), body, "topic/t"+string(rune('a'+i))))
+	}
+	graph := lightGraph(t, entries...)
+	probe := &lightRunner{}
+	_, err := llmops.PreflightLight(t.Context(), probe, lightDraft, graph, "", llmops.LightReading{}, 1_000_000, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixed := len(probe.prompts[0].SystemPrompt) + len(probe.prompts[0].UserPrompt)
+	runner := &lightRunner{answer: func(req llm.Request) []lightFinding {
+		if strings.Contains(req.UserPrompt, "ID: "+ids[0]) {
+			return nil
+		}
+		return []lightFinding{{Observation: "Duplicates the first entry.", Category: "duplicates", Severity: "high", Basis: []string{ids[0]}}}
+	}}
+	result, err := llmops.PreflightLight(t.Context(), runner, lightDraft, graph, "", llmops.LightReading{Full: ids}, fixed+len(body)+600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Calls < 2 {
+		t.Fatalf("precondition: the reading should take several calls, got %d", result.Calls)
+	}
+	for _, finding := range result.Findings {
+		if slices.Contains(finding.Basis, ids[0]) {
+			t.Fatalf("a call that never carried the first entry should not keep it as a basis, got %+v", result.Findings)
+		}
 	}
 }
 
