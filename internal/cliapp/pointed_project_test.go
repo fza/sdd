@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func pointedRepos(t *testing.T) (work, project string) {
 	}
 	initRepo(t, work)
 	initRepo(t, project)
-	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: "+pointedProjectID+"\ndefault_branch: main\nlanguage: en\n")
+	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: "+pointedProjectID+"\ndefault_branch: main\nlanguage: en\nskill_scope: project\n")
 	writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
 	writeFile(t, filepath.Join(work, ".sdd", "config.yaml"), "project_dir: ../work-sdd\nskill_scope: project\nsupported_agents: [claude]\n")
 	return work, project
@@ -46,6 +47,7 @@ func runAppAs(t *testing.T, dir, version string, args ...string) (string, error)
 	t.Chdir(dir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "xdg-cache"))
+	t.Setenv("XDG_DATA_HOME", dataHome(dir))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "xdg-state"))
 	var output bytes.Buffer
 	command := cliapp.New(cliapp.Options{Version: version, Reader: strings.NewReader(""), Writer: &output, ErrWriter: &output})
@@ -298,6 +300,7 @@ func TestPointedServeTargetsTheProjectRepository(t *testing.T) {
 	t.Chdir(work)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(work, "xdg-config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(work, "xdg-cache"))
+	t.Setenv("XDG_DATA_HOME", dataHome(work))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(work, "xdg-state"))
 	fixture := &appFixture{root: work}
 
@@ -348,6 +351,8 @@ func TestInitPointsTheWorkRepositoryAtTheProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	gitIn(t, project, "add", ".sdd/config.yaml")
+	gitIn(t, project, "commit", "-q", "-m", "chore: record the project")
 
 	runApp(t, work, "init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada", "--agents", "claude")
 
@@ -360,8 +365,8 @@ func TestInitPointsTheWorkRepositoryAtTheProject(t *testing.T) {
 	if !strings.Contains(written, "project_dir: ../work-sdd") {
 		t.Errorf("the pointer config should name the project:\n%s", written)
 	}
-	if names := sddDirContents(t, work); len(names) != 1 || names[0] != "config.yaml" {
-		t.Errorf("init should create only the config in the work repository's .sdd/, found %v", names)
+	if names := sddDirContents(t, work); !slices.Equal(names, []string{".gitignore", "config.yaml"}) {
+		t.Errorf("init should create only the config and its .gitignore in the work repository's .sdd/, found %v", names)
 	}
 	if !strings.Contains(readFile(t, filepath.Join(work, ".mcp.json")), "serve") {
 		t.Error("init should register the MCP server in the work repository")
@@ -372,8 +377,11 @@ func TestInitPointsTheWorkRepositoryAtTheProject(t *testing.T) {
 	if !strings.Contains(readFile(t, filepath.Join(project, ".sdd", "config.local.yaml")), "participant: Ada") {
 		t.Error("the participant should be recorded with the project")
 	}
-	if subject := headSubject(t, project); subject != "seed" {
-		t.Errorf("init in the work repository should not commit in the project, HEAD is %q", subject)
+	if subject := headSubject(t, project); !strings.HasPrefix(subject, "sdd: ") {
+		t.Errorf("init in the work repository should commit the project's refresh in the project, HEAD is %q", subject)
+	}
+	if status := gitIn(t, project, "status", "--porcelain"); status != "" {
+		t.Errorf("the project's refresh should leave the project clean:\n%s", status)
 	}
 	if subject := headSubject(t, work); subject == "seed" {
 		t.Error("init should commit the pointer and skills in the work repository")
@@ -383,9 +391,10 @@ func TestInitPointsTheWorkRepositoryAtTheProject(t *testing.T) {
 	}
 
 	workHead := gitIn(t, work, "rev-parse", "HEAD")
+	projectHead := gitIn(t, project, "rev-parse", "HEAD")
 	runApp(t, work, "init")
-	if subject := headSubject(t, project); subject != "seed" {
-		t.Errorf("a repeat init should not commit in the project, HEAD is %q", subject)
+	if gitIn(t, project, "rev-parse", "HEAD") != projectHead {
+		t.Error("a repeat init with nothing to refresh should not commit in the project")
 	}
 	if gitIn(t, work, "rev-parse", "HEAD") != workHead {
 		t.Error("a repeat init should leave the work repository's config untouched and commit nothing")

@@ -267,3 +267,79 @@ func TestServeTellsEveryOpenSessionOfAChangeOnce(t *testing.T) {
 		}
 	})
 }
+
+func callToolResult(t *testing.T, client *mcp.ClientSession, name string, args map[string]any) (string, string) {
+	t.Helper()
+	result, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: args})
+	if err != nil {
+		return "", err.Error()
+	}
+	if result.IsError {
+		var text []string
+		for _, content := range result.Content {
+			if part, ok := content.(*mcp.TextContent); ok {
+				text = append(text, part.Text)
+			}
+		}
+		return "", strings.Join(text, "\n")
+	}
+	encoded, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded), ""
+}
+
+func openSession(t *testing.T, client *mcp.ClientSession) string {
+	t.Helper()
+	opening, failure := callToolResult(t, client, "start_session", map[string]any{})
+	if failure != "" {
+		t.Fatalf("start_session: %s", failure)
+	}
+	var door struct {
+		Session string `json:"session"`
+	}
+	err := json.Unmarshal([]byte(opening), &door)
+	if err != nil || door.Session == "" {
+		t.Fatalf("start_session returned no handle: %v %s", err, opening)
+	}
+	return door.Session
+}
+
+// A config naming a moved graph folder refuses every call until that folder
+// holds every entry the folder served before held.
+func TestServeRefusesCallsWhileTheGraphMoveIsUnsettled(t *testing.T) {
+	fixture := newAppFixture(t)
+	committed := readFile(t, filepath.Join(fixture.root, ".sdd", "config.yaml"))
+	entry := filepath.Join("2026", "09", "14-020000-s-tac-cli.md")
+	second := filepath.Join("2026", "09", "14-030000-s-tac-two.md")
+	fixture.serve(t, func(client *mcp.ClientSession) {
+		session := openSession(t, client)
+		resume := func() string {
+			_, failure := callToolResult(t, client, "resume_session", map[string]any{"session": session})
+			return failure
+		}
+
+		fixture.write(t, ".sdd/config.yaml", strings.Replace(committed, "graph_dir: decisions", "graph_dir: moved", 1))
+		if failure := resume(); !strings.Contains(failure, "does not exist") {
+			t.Errorf("a graph folder that does not exist should refuse the call, got %q", failure)
+		}
+		err := os.MkdirAll(filepath.Join(fixture.root, "moved"), 0o755)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if failure := resume(); !strings.Contains(failure, "holds no entries") {
+			t.Errorf("an empty graph folder should refuse the call, got %q", failure)
+		}
+		content := readFile(t, filepath.Join(fixture.root, "decisions", entry))
+		fixture.write(t, filepath.ToSlash(filepath.Join("decisions", second)), content)
+		fixture.write(t, filepath.ToSlash(filepath.Join("moved", entry)), content)
+		if failure := resume(); !strings.Contains(failure, "1 entries in "+filepath.Join(fixture.root, "decisions")+", the folder served before, are missing") {
+			t.Errorf("an entry the new folder lacks should refuse the call, got %q", failure)
+		}
+		fixture.write(t, filepath.ToSlash(filepath.Join("moved", second)), content)
+		if failure := resume(); failure != "" {
+			t.Errorf("a move whose former folder keeps the same entries, as a checkout does, should serve again: %s", failure)
+		}
+	})
+}
