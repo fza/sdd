@@ -609,11 +609,11 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 	}
 	switch {
 	case len(step.Await) == 0:
-		sv.ReportSchema = inst.Spec.ReportSchemaForStep(step)
+		sv.ReportSchema = inst.Spec.ReportSchemaForStep(step, inst.Store)
 	case len(step.Collect) > 0:
 		// A gate awaiting a delivery takes only what it collects; one that
 		// collects nothing takes no report.
-		sv.ReportSchema = inst.Spec.collectSchema(step)
+		sv.ReportSchema = inst.Spec.collectSchema(step, inst.Store)
 	}
 	sv.Missing = s.missingFields(inst, step)
 
@@ -716,7 +716,7 @@ func (s *Session) serveWith(inst *Instance, fullDraft bool) (*Serve, error) {
 		// At a chooser the report is a chooser-answer envelope, not a flat
 		// state write — serve the schema that matches, so collected fields nest
 		// under `fields` and the chooser is named where the answer needs it.
-		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.DialogueMode)
+		sv.ReportSchema = inst.Spec.AnswerSchemaForStep(step, s.DialogueMode, inst.Store)
 		switch {
 		case s.unattendedAt(step) != nil:
 			sv.Goal = fmt.Sprintf("answer %q yourself with a one-line reason; nothing else passes here", step.Unattended.Answer)

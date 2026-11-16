@@ -16,31 +16,36 @@ const entryIDSchemaPattern = `^\d{8}-\d{6}-[sd]-(stg|cpt|tac|ops|prc)-[a-z0-9]+$
 // described properties (required unless marked optional), and every other
 // declared state field is accepted too — reports may batch fields for later
 // steps, and the cascade rule makes the one-shot full draft as fast as
-// today. The same desc that feeds instruction text feeds the schema.
-func (s *Spec) ReportSchemaForStep(step *Step) map[string]any {
+// today. Left out are the fields a report never fills: one only a delivery
+// fills, one a single chooser option collects, which that answer carries,
+// and a procedure-spec field while the draft in store is no procedure. The
+// same desc that feeds instruction text feeds the schema.
+func (s *Spec) ReportSchemaForStep(step *Step, store *Store) map[string]any {
 	properties := make(map[string]any)
 	var required []string
+	procedure := draftIsProcedure(store)
 
-	addField := func(name string) {
+	addField := func(name string) bool {
 		decl, ok := s.State[name]
-		if !ok {
-			return // load validation rejects undeclared collect names
+		if !ok || (decl.Type.Base == TypeProcedureSpec && !procedure) {
+			return false // load validation rejects undeclared collect names
 		}
 		properties[name] = schemaForState(decl)
+		return true
 	}
 
 	if step != nil {
 		for _, cf := range step.Collect {
-			addField(cf.Name)
-			if !cf.Optional {
+			if addField(cf.Name) && !cf.Optional {
 				required = append(required, cf.Name)
 			}
 		}
 	}
 	for name := range s.State {
-		if _, ok := properties[name]; !ok {
-			addField(name)
+		if _, ok := properties[name]; ok || s.DeliveryOnly(name) || s.singleOptionField(name) {
+			continue
 		}
+		addField(name)
 	}
 	sort.Strings(required)
 
@@ -56,8 +61,8 @@ func (s *Spec) ReportSchemaForStep(step *Step) map[string]any {
 }
 
 // collectSchema is ReportSchemaForStep cut to the fields the step collects.
-func (s *Spec) collectSchema(step *Step) map[string]any {
-	schema := s.ReportSchemaForStep(step)
+func (s *Spec) collectSchema(step *Step, store *Store) map[string]any {
+	schema := s.ReportSchemaForStep(step, store)
 	properties, _ := schema["properties"].(map[string]any)
 	for name := range properties {
 		if !slices.ContainsFunc(step.Collect, func(c CollectField) bool { return c.Name == name }) {
@@ -76,11 +81,13 @@ func (s *Spec) collectSchema(step *Step) map[string]any {
 // each option enforces its own required set at answer time, so the envelope
 // marks none of them required. In an autonomous session a delegable user
 // chooser takes the agent's reason in place of the user's words, and an
-// unattended one only its answer.
-func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[string]any {
+// unattended one only its answer. A procedure-spec field shows only while the
+// draft in store is a procedure.
+func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode, store *Store) map[string]any {
 	choices := make([]any, 0, len(step.Options))
 	fieldProps := make(map[string]any)
 	unattended := step.Chooser == ChooserUser && step.Unattended != nil && mode == model.DialogueAuto
+	procedure := draftIsProcedure(store)
 	for _, o := range step.Options {
 		if unattended && o.Choice != step.Unattended.Answer {
 			continue
@@ -90,7 +97,7 @@ func (s *Spec) AnswerSchemaForStep(step *Step, mode model.DialogueMode) map[stri
 			if _, seen := fieldProps[cf.Name]; seen {
 				continue
 			}
-			if decl, ok := s.State[cf.Name]; ok {
+			if decl, ok := s.State[cf.Name]; ok && (decl.Type.Base != TypeProcedureSpec || procedure) {
 				fieldProps[cf.Name] = schemaForState(decl)
 			}
 		}

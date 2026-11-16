@@ -9,7 +9,7 @@ import (
 func TestReportSchemaForStep(t *testing.T) {
 	env := newFixtureEnv(t)
 	step := env.spec.StepByID["assemble"]
-	schema := env.spec.ReportSchemaForStep(step)
+	schema := env.spec.ReportSchemaForStep(step, nil)
 
 	props, ok := schema["properties"].(map[string]any)
 	if !ok {
@@ -53,10 +53,10 @@ func TestReportSchemaForStep(t *testing.T) {
 		t.Errorf("required = %v", required)
 	}
 
-	// Batching: state fields beyond the step's collect list are accepted
-	// properties (fidelityNote belongs to a later step).
-	if _, ok := props["fidelityNote"]; !ok {
-		t.Error("batched later-step fields must be accepted properties")
+	// A field one chooser option alone collects comes with that answer, so
+	// no report batches it.
+	if _, ok := props["fidelityNote"]; ok {
+		t.Error("a field a single option collects should not be a report property")
 	}
 	if schema["additionalProperties"] != false {
 		t.Error("undeclared fields must be rejected by the schema")
@@ -75,7 +75,7 @@ func TestReportSchemaForStep(t *testing.T) {
 		t.Fatalf("index required = %#v", indexObject["required"])
 	}
 
-	answer := env.spec.AnswerSchemaForStep(env.spec.StepByID["playback"], model.DialogueGuided)
+	answer := env.spec.AnswerSchemaForStep(env.spec.StepByID["playback"], model.DialogueGuided, nil)
 	answerProps, _ := answer["properties"].(map[string]any)
 	fields, _ := answerProps["fields"].(map[string]any)
 	fieldProps, _ := fields["properties"].(map[string]any)
