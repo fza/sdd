@@ -236,14 +236,26 @@ func TestRepositoryLocatorsIgnoreAnInheritedGitDir(t *testing.T) {
 				t.Fatal(err)
 			}
 			fresh := filepath.Join(t.TempDir(), "fresh")
+			runGit(t, work, "remote", "add", "origin", "https://example.test/work.git")
+			runGit(t, sidecar, "remote", "add", "origin", "https://example.test/sidecar.git")
+			runGit(t, sidecar, "checkout", "-q", "-b", "graph-line")
 			t.Chdir(work)
 			t.Setenv("GIT_DIR", tc.gitDir(work))
 
 			root := RepoRootFor(filepath.Dir(entry))
 			commitErr := (CLI{Dir: sidecar}).Commit("sdd: capture", entry)
 			initErr := (Repositories{}).Init(fresh)
+			branch, branchErr := (Repositories{}).CurrentBranch(sidecar)
+			remote := (Repositories{}).RemoteURL(sidecar)
 			if err := os.Unsetenv("GIT_DIR"); err != nil {
 				t.Fatal(err)
+			}
+
+			if branchErr != nil || branch != "graph-line" {
+				t.Errorf("CurrentBranch should read the repository at the path, got %q (%v)", branch, branchErr)
+			}
+			if remote != "https://example.test/sidecar.git" {
+				t.Errorf("RemoteURL should read the repository at the path, got %q", remote)
 			}
 
 			if resolved, _ := filepath.EvalSymlinks(sidecar); root != resolved && root != sidecar {
