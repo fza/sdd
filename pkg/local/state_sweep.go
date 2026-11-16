@@ -147,11 +147,12 @@ func (s *StateSwept) add(o StateSwept) {
 }
 
 // StateSweep removes the per-project state under StateRoot nothing needs:
-// ended sessions past their retention with their staged attachments, and the
-// empty session folder and unowned staged attachments of a project unused
-// for longer than the unused retention. It never removes an open session, a
-// log it cannot read, or the staged attachments of either, in the state
-// folder or in a recorded checkout (RecordCheckout).
+// ended sessions past their retention with their staged attachments, in the
+// state folder and in the .sdd/sessions of each recorded checkout
+// (RecordCheckout), and the empty session folder and unowned staged
+// attachments of a project unused for longer than the unused retention. It
+// never removes an open session, a log it cannot read, or the staged
+// attachments of either.
 type StateSweep struct {
 	StateRoot string
 }
@@ -172,6 +173,11 @@ func (s StateSweep) Sweep(ctx context.Context, now time.Time, sessionRetention, 
 		counts.add(collected)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("collecting the sessions of %s: %w", key, err))
+		}
+		collected, err = s.collectInTree(ctx, key, now, sessionRetention)
+		counts.add(collected)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("collecting the in-repo sessions of %s: %w", key, err))
 		}
 	}
 	live, err := s.sessionIDs()
@@ -197,11 +203,46 @@ func (s StateSweep) dir(category, key string) string {
 
 // collect runs session collection over one project's session folder.
 func (s StateSweep) collect(ctx context.Context, key string, now time.Time, retention time.Duration) (StateSwept, error) {
-	var counts StateSwept
 	location := StoreLocation{
 		Name: key, Sessions: s.dir(sessionsCategory, key), StagedBlobs: s.dir(stagedBlobsCategory, key),
 		Subject: "local", Project: projectOfKey(key),
 	}
+	return collectIn(ctx, key, location, []StoreLocation{location}, now, retention)
+}
+
+// collectInTree runs session collection over the .sdd/sessions of each
+// checkout recorded for key, where earlier versions logged sessions. Those
+// sessions staged their attachments in the project's state folder.
+func (s StateSweep) collectInTree(ctx context.Context, key string, now time.Time, retention time.Duration) (StateSwept, error) {
+	var counts StateSwept
+	path, err := checkoutsPath(s.StateRoot, key)
+	if err != nil {
+		return counts, err
+	}
+	checkouts, err := recordedCheckouts(path)
+	if err != nil {
+		return counts, err
+	}
+	state := StoreLocation{Name: key, StagedBlobs: s.dir(stagedBlobsCategory, key), Subject: "local", Project: "local"}
+	for _, checkout := range checkouts {
+		sddDir := filepath.Join(checkout, ".sdd")
+		inTree := StoreLocation{
+			Name: sddDir, Sessions: filepath.Join(sddDir, sessionsCategory), StagedBlobs: filepath.Join(sddDir, stagedBlobsCategory),
+			Subject: "local", Project: "local",
+		}
+		collected, err := collectIn(ctx, key, inTree, []StoreLocation{state, inTree}, now, retention)
+		counts.add(collected)
+		if err != nil {
+			return counts, err
+		}
+	}
+	return counts, nil
+}
+
+// collectIn collects the ended sessions logged under location.Sessions, with
+// their attachments staged under any of blobLocations.
+func collectIn(ctx context.Context, key string, location StoreLocation, blobLocations []StoreLocation, now time.Time, retention time.Duration) (StateSwept, error) {
+	var counts StateSwept
 	if _, err := os.Stat(location.Sessions); errors.Is(err, fs.ErrNotExist) {
 		return counts, nil
 	}
@@ -209,11 +250,15 @@ func (s StateSweep) collect(ctx context.Context, key string, now time.Time, rete
 	if err != nil {
 		return counts, err
 	}
-	blobs, err := NewFilesystemStagedBlobStore(location)
+	blobs, err := NewFilesystemStagedBlobStore(blobLocations...)
 	if err != nil {
 		return counts, err
 	}
-	before, err := treeSize(location.Sessions, location.StagedBlobs)
+	measured := []string{location.Sessions}
+	for _, blob := range blobLocations {
+		measured = append(measured, blob.StagedBlobs)
+	}
+	before, err := treeSize(measured...)
 	if err != nil {
 		return counts, err
 	}
@@ -234,7 +279,7 @@ func (s StateSweep) collect(ctx context.Context, key string, now time.Time, rete
 		cmd.After = result.Next
 	}
 	if counts.Sessions > 0 {
-		after, err := treeSize(location.Sessions, location.StagedBlobs)
+		after, err := treeSize(measured...)
 		if err != nil {
 			return counts, err
 		}
@@ -249,8 +294,13 @@ func (s StateSweep) collect(ctx context.Context, key string, now time.Time, rete
 // checkout record once they are gone. The stamp stays while a session does,
 // so collecting that session later does not read as fresh use.
 func (s StateSweep) retireUnused(ctx context.Context, key string, now time.Time, retention time.Duration, live map[app.SessionID]bool) (counts StateSwept, err error) {
-	last, err := s.lastUse(key)
-	if err != nil || now.Sub(last) <= retention {
+	// Judged again right before each removal: a server opening the project
+	// meanwhile stamps it, and must not lose what it writes.
+	unused := func() (bool, error) {
+		last, err := s.lastUse(key)
+		return err == nil && now.Sub(last) > retention, err
+	}
+	if idle, err := unused(); err != nil || !idle {
 		return counts, err
 	}
 	removed := false
@@ -263,7 +313,7 @@ func (s StateSweep) retireUnused(ctx context.Context, key string, now time.Time,
 		}
 	}()
 	sessions := s.dir(sessionsCategory, key)
-	gone, err := removeEmptySessionFolder(sessions)
+	gone, err := removeEmptySessionFolder(sessions, unused)
 	if err != nil {
 		return counts, err
 	}
@@ -279,6 +329,9 @@ func (s StateSweep) retireUnused(ctx context.Context, key string, now time.Time,
 	if exists(staged) && !owned {
 		size, err := treeSize(staged)
 		if err != nil {
+			return counts, err
+		}
+		if idle, err := unused(); err != nil || !idle {
 			return counts, err
 		}
 		if err := os.RemoveAll(staged); err != nil {
@@ -307,9 +360,11 @@ func (s StateSweep) retireUnused(ctx context.Context, key string, now time.Time,
 	return counts, nil
 }
 
-// stagedOwned reports whether a session still owns staged attachments under
-// dir: one whose log lies in the state folder, or one open in a checkout
-// recorded for key.
+// stagedOwned reports whether a session may still own staged attachments
+// under dir: one whose log lies in the state folder, or one open in a checkout
+// recorded for key. Without a checkout record, or with a recorded checkout
+// missing, as on an unmounted volume, an open session may lie where the sweep
+// cannot read, so the attachments count as owned.
 func (s StateSweep) stagedOwned(ctx context.Context, key, dir string, live map[app.SessionID]bool) (bool, error) {
 	owners, err := stagedSessions(dir)
 	if err != nil || len(owners) == 0 {
@@ -318,46 +373,51 @@ func (s StateSweep) stagedOwned(ctx context.Context, key, dir string, live map[a
 	if slices.ContainsFunc(owners, func(id app.SessionID) bool { return live[id] }) {
 		return true, nil
 	}
-	open, err := s.openInCheckouts(ctx, key)
-	if err != nil {
-		return false, err
+	open, known, err := s.openInCheckouts(ctx, key)
+	if err != nil || !known {
+		return true, err
 	}
 	return slices.ContainsFunc(owners, func(id app.SessionID) bool { return open[id] }), nil
 }
 
 // openInCheckouts lists the sessions open in the .sdd/sessions of each
-// checkout recorded for key. A log it cannot read counts as open; a checkout
-// gone from disk holds none.
-func (s StateSweep) openInCheckouts(ctx context.Context, key string) (map[app.SessionID]bool, error) {
+// checkout recorded for key. A log it cannot read counts as open. known is
+// false when no checkout is on record or a recorded one is missing.
+func (s StateSweep) openInCheckouts(ctx context.Context, key string) (open map[app.SessionID]bool, known bool, err error) {
 	path, err := checkoutsPath(s.StateRoot, key)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	checkouts, err := recordedCheckouts(path)
-	if err != nil {
-		return nil, err
+	if err != nil || len(checkouts) == 0 {
+		return nil, false, err
 	}
-	open := map[app.SessionID]bool{}
+	open = map[app.SessionID]bool{}
 	for _, checkout := range checkouts {
+		if _, err := os.Stat(checkout); errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		} else if err != nil {
+			return nil, false, err
+		}
 		dir := filepath.Join(checkout, ".sdd", sessionsCategory)
 		if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
 			continue
 		} else if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		sessions, err := NewFilesystemSessionStore(StoreLocation{Name: dir, Sessions: dir, Subject: "local", Project: "local"})
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		ids, err := app.OpenSessionsIn(ctx, sessions)
 		if err != nil {
-			return nil, fmt.Errorf("listing the sessions in %s: %w", dir, err)
+			return nil, false, fmt.Errorf("listing the sessions in %s: %w", dir, err)
 		}
 		for _, id := range ids {
 			open[id] = true
 		}
 	}
-	return open, nil
+	return open, true, nil
 }
 
 // lastUse is the project's use stamp, or for a project no binary stamped yet
@@ -396,8 +456,8 @@ func (s StateSweep) lastUse(key string) (time.Time, error) {
 }
 
 // removeEmptySessionFolder removes a session folder holding no session log,
-// once no process holds a lock file in it.
-func removeEmptySessionFolder(dir string) (bool, error) {
+// once no process holds a lock file in it and unused still holds.
+func removeEmptySessionFolder(dir string, unused func() (bool, error)) (bool, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
@@ -423,6 +483,9 @@ func removeEmptySessionFolder(dir string) (bool, error) {
 			return false, nil
 		}
 		defer func() { _ = lock.Unlock() }()
+	}
+	if idle, err := unused(); err != nil || !idle {
+		return false, err
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return false, err

@@ -366,14 +366,15 @@ Each embedding endpoint accepts a limited input, in tokens. On its first fill, s
 
 sdd runs `sdd cache prune` in the background at most once a day. Any command except `sdd cache` starts it as its own process when the last run started or was launched a day ago or more, and a running `sdd serve` checks every hour. The command never waits for it, and the run prints nothing; its output goes to `~/.local/state/sdd/cache-prune.log`, replaced per run. A failed background run is reported once: as a warning by the next command, or in `notices.cache` on the next MCP tool result. `sdd cache prune` deletes what nothing needs and reports the bytes freed:
 
-- after `sessions.retention`: ended sessions of every project, with their staged attachments
+- after `sessions.retention`: ended sessions of every project, with their staged attachments, in the state folder and in the `.sdd/sessions` of every checkout sdd opened the project from
 - after `index.replaced_retention`: replaced index versions, versions of older index formats, the index store of an embedding setup another one replaced
 - after `cache.retention`: unused index stores, graph snapshots and calibrations
-- after `cache.retention`: the session folder of a project no session-store write and no `sdd serve` start used, once no session log is left in it, and its staged attachments once no session on the machine owns them, a session open in a checkout the project was opened from included
+- after `cache.retention`: the session folder of a project no session-store write and no `sdd serve` start used, once no session log is left in it, and its staged attachments once no session on the machine owns them, a session open in a checkout the project was opened from included. They stay while no checkout of the project is on record or a recorded one is missing, as on an unmounted volume.
 - at once: graph snapshots of directories that no longer exist, and clones of repositories `sdd repo remove` dropped under the same config file that `repos` no longer names
 - a clone missing from `repos` alone stays, and so does every clone of a repository `repos` names
 - a dropped clone holding another clone, or the path of a repository `repos` names, stays, with a warning
 - with `repos` missing or empty, or the XDG directories set only in part, a run that would remove a clone removes none and fails
+- with the XDG directories set only in part, a run sweeps no session or project state and fails
 - leftovers of killed processes older than a day
 
 It never deletes an open session, a session log it cannot read, or a version any checkout read within `cache.retention`, and it skips an index store another process holds. One run per machine at a time, at most 5 minutes: a background run that finds another running exits quietly, and `sdd cache prune` started by hand fails with `another cache pruning run is in progress`. `sdd info` shows the last run. `sdd cache prune` reports a failed run as its error.

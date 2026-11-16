@@ -64,14 +64,13 @@ shows the last run. sdd index gc removes more on request.`,
 				if err != nil {
 					return err
 				}
-				var keep handlers.CurrentHashSource
-				if graphDir, err := resolveGraphDir(cmd); err == nil {
-					reader, err := newReadFinder(ctx)
-					if err != nil {
-						return err
+				scheduled := cmd.Bool(scheduledFlag)
+				keep, err := pruneKeepSource(ctx, cmd)
+				if err != nil {
+					if scheduled {
+						// Nothing else shows a background run's failure.
+						return errors.Join(err, cacheprune.RecordFailure(ctx, loc.StateRoot, time.Now(), err))
 					}
-					keep = handlers.NewIndexHandler(handlers.IndexHandlerOptions{GraphDir: graphDir, Reader: reader, Stderr: cmd.ErrWriter})
-				} else if !errors.Is(err, errNoProject) {
 					return err
 				}
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
@@ -79,7 +78,6 @@ shows the last run. sdd index gc removes more on request.`,
 					State:       stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
 					SecretRules: secrets.NewUpdater(secretRulesDir(loc), gitleaks, nil),
 				})
-				scheduled := cmd.Bool(scheduledFlag)
 				return h.Prune(ctx, &command.PruneCacheCmd{
 					Scheduled: scheduled,
 					OnPruned: func(c model.CachePruneCounts) {
@@ -92,6 +90,23 @@ shows the last run. sdd index gc removes more on request.`,
 			},
 		}},
 	}
+}
+
+// pruneKeepSource hashes the current entries of the checkout a run starts in;
+// nil outside an sdd checkout.
+func pruneKeepSource(ctx context.Context, cmd *cli.Command) (handlers.CurrentHashSource, error) {
+	graphDir, err := resolveGraphDir(cmd)
+	if errors.Is(err, errNoProject) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	reader, err := newReadFinder(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return handlers.NewIndexHandler(handlers.IndexHandlerOptions{GraphDir: graphDir, Reader: reader, Stderr: cmd.ErrWriter}), nil
 }
 
 // backgroundCachePrune launches the daily pruning pass when one is due and,
