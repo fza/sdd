@@ -94,7 +94,10 @@ type pieceCall struct {
 	// rest of it and is spent once; spent are those a pointer of the call
 	// rested on.
 	proven map[string]int
-	spent  map[string]bool
+	spent  []spentProof
+	// seq orders the pieces and pointers the call serves, so a mark
+	// withdraws both.
+	seq int
 }
 
 // pendingAnchor is a piece the call served in full, not yet recorded;
@@ -106,6 +109,18 @@ type pendingAnchor struct {
 	covers     []string
 	challenges []model.Challenge
 	changed    bool
+	seq        int
+}
+
+// spentProof is the proof under tag a pointer of the call rested on.
+type spentProof struct {
+	tag string
+	seq int
+}
+
+func (s *Session) nextSeq() int {
+	s.call.seq++
+	return s.call.seq - 1
 }
 
 // BeginCall starts a call carrying the proofs an agent lists for pieces it
@@ -142,10 +157,7 @@ func (s *Session) Point(p Piece) Served {
 	if !proved {
 		return Served{Held: true, Tag: tag}
 	}
-	if s.call.spent == nil {
-		s.call.spent = map[string]bool{}
-	}
-	s.call.spent[tag] = true
+	s.call.spent = append(s.call.spent, spentProof{tag: tag, seq: s.nextSeq()})
 	return Served{Held: true, Tag: tag, Next: s.anchors[tag].promptAfter(s.call.proven[tag])}
 }
 
@@ -201,7 +213,7 @@ func (s *Session) ServePiece(p Piece, carried []Piece, place AnchorPlacer) Serve
 			s.call.covered[id] = tag
 		}
 	}
-	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, tag: tag, word: anchor.Word, covers: covers, challenges: anchor.Challenges})
+	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, tag: tag, word: anchor.Word, covers: covers, challenges: anchor.Challenges, seq: s.nextSeq()})
 	return Served{Anchor: anchor}
 }
 
@@ -214,34 +226,38 @@ func (s *Session) ServeChanged(p Piece) bool {
 	last := s.changed[p.Name]
 	if p.Hash == "" {
 		if last != "" {
-			s.call.pending = append(s.call.pending, pendingAnchor{piece: p, changed: true})
+			s.call.pending = append(s.call.pending, pendingAnchor{piece: p, changed: true, seq: s.nextSeq()})
 		}
 		return false
 	}
 	if last == p.Hash && !s.call.full {
 		return false
 	}
-	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, changed: true})
+	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, changed: true, seq: s.nextSeq()})
 	return true
 }
 
-// PieceMark marks the pieces the call has served in full so far.
-func (s *Session) PieceMark() int { return len(s.call.pending) }
+// PieceMark marks the pieces and pointers the call has served so far.
+func (s *Session) PieceMark() int { return s.call.seq }
 
-// DropPiecesSince withdraws the pieces served in full after mark, for text
-// cut before it reached the agent.
+// DropPiecesSince withdraws the pieces served in full after mark, and the
+// proofs pointers served after it rested on, for text cut before it reached
+// the agent.
 func (s *Session) DropPiecesSince(mark int) {
-	if mark < 0 || mark > len(s.call.pending) {
+	if mark < 0 || mark > s.call.seq {
 		return
 	}
-	for _, dropped := range s.call.pending[mark:] {
+	cut := s.pendingSince(mark)
+	for _, dropped := range s.call.pending[cut:] {
 		s.unissue(dropped)
 	}
-	s.call.pending = s.call.pending[:mark]
+	s.call.pending = s.call.pending[:cut]
+	s.call.spent = slices.DeleteFunc(s.call.spent, func(p spentProof) bool { return p.seq >= mark })
 }
 
 // KeepDelivered withdraws the pieces served in full after mark whose placed
-// tag delivered, the text a result carries of them, does not hold: text
+// tag delivered, the text a result carries of them, does not hold, and the
+// proofs of pointers served after it whose tag it does not hold: text
 // composed into a part the result left out or left waiting. Empty delivered
 // withdraws every one, as DropPiecesSince does.
 func (s *Session) KeepDelivered(mark int, delivered string) {
@@ -249,11 +265,12 @@ func (s *Session) KeepDelivered(mark int, delivered string) {
 		s.DropPiecesSince(mark)
 		return
 	}
-	if mark < 0 || mark > len(s.call.pending) {
+	if mark < 0 || mark > s.call.seq {
 		return
 	}
-	kept := s.call.pending[:mark]
-	for _, p := range s.call.pending[mark:] {
+	cut := s.pendingSince(mark)
+	kept := s.call.pending[:cut]
+	for _, p := range s.call.pending[cut:] {
 		if p.changed || (p.tag != "" && strings.Contains(delivered, model.AnchorMark(p.tag)+" ")) {
 			kept = append(kept, p)
 			continue
@@ -261,6 +278,16 @@ func (s *Session) KeepDelivered(mark int, delivered string) {
 		s.unissue(p)
 	}
 	s.call.pending = kept
+	s.call.spent = slices.DeleteFunc(s.call.spent, func(p spentProof) bool {
+		return p.seq >= mark && !strings.Contains(delivered, model.AnchorMark(p.tag))
+	})
+}
+
+// pendingSince is the index of the first pending piece served at or after
+// mark.
+func (s *Session) pendingSince(mark int) int {
+	i, _ := slices.BinarySearchFunc(s.call.pending, mark, func(p pendingAnchor, mark int) int { return p.seq - mark })
+	return i
 }
 
 func (s *Session) unissue(p pendingAnchor) {
@@ -306,9 +333,9 @@ func (s *Session) RecordAnchors() {
 	}
 	s.call.pending = nil
 	steps := map[string]any{}
-	for _, tag := range slices.Sorted(maps.Keys(s.call.spent)) {
-		if step, ok := s.call.proven[tag]; ok && s.anchors[tag].step == step {
-			steps[tag] = step + 1
+	for _, spent := range s.call.spent {
+		if step, ok := s.call.proven[spent.tag]; ok && s.anchors[spent.tag].step == step {
+			steps[spent.tag] = step + 1
 		}
 	}
 	s.call.spent = nil
