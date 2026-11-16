@@ -47,25 +47,32 @@ func (r uncommittedRecord) read() ([]string, error) {
 	return paths, nil
 }
 
-// trustedLeftover narrows the recorded paths to those with a change to
-// commit. A record git could commit did not come from this checkout's own
-// failed run: a cloned one could sweep untracked files into a pushed commit.
-func (h *Handler) trustedLeftover(ctx context.Context, record uncommittedRecord, leftover []string) ([]string, error) {
-	if len(leftover) == 0 {
-		return nil, nil
+// checkInitRecord refuses a record of uncommitted init paths that git could
+// commit: it did not come from this checkout's own failed run, and a cloned
+// one could sweep untracked files into a pushed commit. Init runs it before
+// any write, since a refusal after the writes leaves them uncommitted with no
+// record.
+func (h *Handler) checkInitRecord(ctx context.Context, repoRoot string) error {
+	if h.committer == nil || h.tracker == nil {
+		return nil
+	}
+	repoRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return fmt.Errorf("resolving the repository root: %w", err)
+	}
+	record := uncommittedRecord{repoRoot: repoRoot}
+	leftover, err := record.read()
+	if err != nil || len(leftover) == 0 {
+		return err
 	}
 	committable, err := h.tracker.Committable(ctx, []string{record.file()})
 	if err != nil {
-		return nil, fmt.Errorf("checking that git ignores %s: %w", record.file(), err)
+		return fmt.Errorf("checking that git ignores %s: %w", record.file(), err)
 	}
 	if len(committable) > 0 {
-		return nil, fmt.Errorf("%s is tracked by git or not ignored, so init does not trust it: remove it from git or delete it, then run init again", record.file())
+		return fmt.Errorf("%s is tracked by git or not ignored, so init does not trust it: remove it from git or delete it, then run init again", record.file())
 	}
-	leftover, err = h.tracker.Uncommitted(ctx, leftover)
-	if err != nil {
-		return nil, fmt.Errorf("selecting the paths an earlier init left uncommitted: %w", err)
-	}
-	return leftover, nil
+	return nil
 }
 
 func (r uncommittedRecord) write(paths []string) error {

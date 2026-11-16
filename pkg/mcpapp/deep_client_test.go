@@ -82,7 +82,7 @@ func TestStartSession_DeepRefusesACodexClient(t *testing.T) {
 }
 
 // A Codex resume is refused before the session's hooks are asked about: the
-// refusal, never a hook confirmation, answers it.
+// refusal, never a hook allow, answers it.
 func TestResumeSession_RefusesACodexClientBeforeItsHooks(t *testing.T) {
 	hooks := &proctest.ScriptedHooks{Configured: []sdd.Hook{{HookConfig: model.HookConfig{Event: "capture.assemble.start", Command: "notify"}}}}
 	world := proctest.NewWorld(t, proctest.WithVerifier(sdd.VerifierPolicy{Mode: "deep"}, 200000, 4096), proctest.WithHooks(hooks))

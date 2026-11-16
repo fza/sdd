@@ -37,6 +37,9 @@ type OwnedCloneProbe interface {
 	TryLockSync(ctx context.Context, dir string) (release func(), err error)
 	// Unpushed reports whether the clone holds commits its remote lacks.
 	Unpushed(ctx context.Context, dir string) (bool, error)
+	// SetAside reports whether the clone holds entries a force push set
+	// aside.
+	SetAside(ctx context.Context, dir string) (bool, error)
 	// LastAttempt is when the git gate last admitted a fetch or push of the
 	// clone's remote; zero when it never did.
 	LastAttempt(ctx context.Context, dir string) (time.Time, error)
@@ -67,10 +70,6 @@ type CacheHandlerOptions struct {
 	Gate        GateSweeper
 	State       StateSweeper
 	Keep        CurrentHashSource
-	// DeclaredHooks returns the hashes of the hooks a checkout declares now
-	// (hooks.DeclaredIn); the pass drops every other hook confirmation under
-	// StateRoot. Nil leaves the confirmations alone.
-	DeclaredHooks func(checkout string) ([]string, error)
 	// SecretRules fetches gitleaks' newest rule file in a scheduled pass
 	// while secrets.rules_update is daily; nil fetches nothing. A failed
 	// fetch fails the pass.
@@ -85,20 +84,19 @@ type SecretRulesUpdater interface {
 
 // CacheHandler runs the machine-global cache pruning.
 type CacheHandler struct {
-	cacheRoot     string
-	stateRoot     string
-	registry      *repos.Registry
-	ownedClones   OwnedCloneProbe
-	gate          GateSweeper
-	state         StateSweeper
-	keep          CurrentHashSource
-	declaredHooks func(checkout string) ([]string, error)
-	secretRules   SecretRulesUpdater
-	now           func() time.Time
+	cacheRoot   string
+	stateRoot   string
+	registry    *repos.Registry
+	ownedClones OwnedCloneProbe
+	gate        GateSweeper
+	state       StateSweeper
+	keep        CurrentHashSource
+	secretRules SecretRulesUpdater
+	now         func() time.Time
 }
 
 func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
-	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, ownedClones: opts.OwnedClones, gate: opts.Gate, state: opts.State, keep: opts.Keep, declaredHooks: opts.DeclaredHooks, secretRules: opts.SecretRules, now: opts.Now}
+	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, ownedClones: opts.OwnedClones, gate: opts.Gate, state: opts.State, keep: opts.Keep, secretRules: opts.SecretRules, now: opts.Now}
 	if h.now == nil {
 		h.now = time.Now
 	}
@@ -214,9 +212,9 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time, scheduled bool)
 		errs = append(errs, fmt.Errorf("pruning graph snapshots: %w", err))
 	}
 
-	if h.declaredHooks != nil {
-		if err := hooks.NewStore(h.stateRoot).Sweep(h.declaredHooks); err != nil {
-			errs = append(errs, fmt.Errorf("sweeping hook confirmations: %w", err))
+	if h.stateRoot != "" {
+		if err := hooks.NewAllows(h.stateRoot).Sweep(); err != nil {
+			errs = append(errs, fmt.Errorf("sweeping the hook allow record: %w", err))
 		}
 	}
 
@@ -512,6 +510,13 @@ func (h *CacheHandler) cloneInUse(ctx context.Context, dir string, now time.Time
 	}
 	if unpushed {
 		return fmt.Errorf("%w: it holds unpushed commits", repos.ErrCloneInUse)
+	}
+	setAside, err := h.ownedClones.SetAside(ctx, dir)
+	if err != nil {
+		return err
+	}
+	if setAside {
+		return fmt.Errorf("%w: it holds entries a force push set aside", repos.ErrCloneInUse)
 	}
 	last, err := h.ownedClones.LastAttempt(ctx, dir)
 	if err != nil {

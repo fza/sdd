@@ -264,6 +264,7 @@ func (b BaseConfig) ResolvedPrefilter() LLMPrefilterConfig {
 		Provider: b.LLM.Provider, Model: b.LLM.Model, Effort: DefaultPrefilterEffort,
 		Endpoint: b.LLM.Endpoint, OllamaEndpoint: b.LLM.OllamaEndpoint,
 		APIKeys: b.LLM.APIKeys, StructuredOutput: b.LLM.StructuredOutput,
+		ClaudeCLI: b.LLM.ClaudeCLI,
 	}
 	out.LLMConfig = mergeLLMConfig(base, out.LLMConfig)
 	return out

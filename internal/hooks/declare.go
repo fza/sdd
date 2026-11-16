@@ -1,15 +1,17 @@
-// Package hooks resolves, confirms and runs the hooks a project and the
-// person running sdd declare: each hook a file in its layer's hooks folder,
-// hashed over its config and the files it names, run without a shell once its
-// hash is confirmed.
+// Package hooks resolves, allows and runs the hooks a project and the person
+// running sdd declare: each hook a file in its layer's hooks folder, run
+// without a shell. A repository's hooks run only while this machine's allow
+// record holds their current hash.
 package hooks
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
-	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
@@ -17,28 +19,51 @@ import (
 
 // Sources names where a project's hooks are declared: the user-global
 // config file and the project's repositories. LocalConfig replaces the
-// project's machine-local layer file when set.
+// project's machine-local layer file when set. Tracker tells which files a
+// repository tracks; without one no repository's hooks can be allowed.
 type Sources struct {
 	GlobalConfig string
 	Project      meta.Project
 	LocalConfig  string
+	Tracker      Tracker
+}
+
+// Tracker lists the files under paths, relative to root, that the
+// repository holding root tracks, matching the paths whatever their case. A
+// root git cannot answer for is an error.
+type Tracker interface {
+	Tracked(ctx context.Context, root string, paths ...string) ([]string, error)
+}
+
+// repoGate is one repository's allow: every hook its config files declare,
+// keyed by its real root.
+type repoGate struct {
+	key      string
+	root     string
+	repo     string
+	hooksDir string
+	hooks    []model.Hook
 }
 
 type layerFile struct {
 	origin model.HookOrigin
+	gate   *repoGate
 	hooks  []model.HookConfig
 }
 
-// Declared reads every layer's hooks, in the order user-global, work
-// repository, project repository, committed before local, and resolves each
-// command to its file in the layer's hooks folder. The hooks carry neither
-// hash nor state.
-func Declared(src Sources) ([]model.Hook, error) {
+// declare reads every layer's hooks, in the order user-global, work
+// repository, project repository, committed before local, resolves each
+// command to its file in the layer's hooks folder, and groups the hooks of
+// each repository under its gate.
+func declare(src Sources) ([]model.Hook, []*repoGate, error) {
 	layers, err := readLayers(src)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var hooks []model.Hook
+	var (
+		hooks []model.Hook
+		gates []*repoGate
+	)
 	for _, layer := range layers {
 		for i, config := range layer.hooks {
 			origin := layer.origin
@@ -46,13 +71,20 @@ func Declared(src Sources) ([]model.Hook, error) {
 			hook := model.Hook{HookConfig: config, Origin: origin}
 			path, err := commandFile(hook)
 			if err != nil {
-				return nil, fmt.Errorf("%s: hooks[%d]: %w", origin.ConfigPath, i, err)
+				return nil, nil, fmt.Errorf("%s: hooks[%d]: %w", origin.ConfigPath, i, err)
 			}
 			hook.Path = path
 			hooks = append(hooks, hook)
+			if layer.gate == nil {
+				continue
+			}
+			if len(layer.gate.hooks) == 0 {
+				gates = append(gates, layer.gate)
+			}
+			layer.gate.hooks = append(layer.gate.hooks, hook)
 		}
 	}
-	return hooks, nil
+	return hooks, gates, nil
 }
 
 func readLayers(src Sources) ([]layerFile, error) {
@@ -100,21 +132,25 @@ func readLayers(src Sources) ([]layerFile, error) {
 }
 
 // repoLayers reads one repository's committed and machine-local layers; an
-// empty localPath reads the committed one alone.
+// empty localPath reads the committed one alone. Both share the
+// repository's gate, keyed by its real root: a path a clone cannot choose
+// for itself, unlike a repo_id it commits.
 func repoLayers(root, repo, localPath string) ([]layerFile, error) {
 	sddDir := meta.SDDDir(root)
 	committed, local, err := meta.ReadConfigLayers(sddDir, localPath)
 	if err != nil {
 		return nil, err
 	}
-	var repoID model.RepoID
-	if committed != nil {
-		repoID = committed.RepoID
+	key, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, err
 	}
-	base := model.HookOrigin{Repo: repo, Dir: filepath.Join(sddDir, model.HooksDirName), Checkout: root, RepoKey: index.RepoKey(repoID, root)}
+	hooksDir := filepath.Join(sddDir, model.HooksDirName)
+	gate := &repoGate{key: key, root: root, repo: repo, hooksDir: hooksDir}
+	base := model.HookOrigin{Repo: repo, Dir: hooksDir, Checkout: key}
 	committedOrigin := base
 	committedOrigin.Layer, committedOrigin.ConfigPath = model.HookLayerCommitted, filepath.Join(sddDir, "config.yaml")
-	layers := []layerFile{{origin: committedOrigin}}
+	layers := []layerFile{{origin: committedOrigin, gate: gate}}
 	if committed != nil {
 		layers[0].hooks = committed.Hooks
 	}
@@ -123,7 +159,7 @@ func repoLayers(root, repo, localPath string) ([]layerFile, error) {
 	}
 	localOrigin := base
 	localOrigin.Layer, localOrigin.ConfigPath = model.HookLayerLocal, localPath
-	layer := layerFile{origin: localOrigin}
+	layer := layerFile{origin: localOrigin, gate: gate}
 	if local != nil {
 		layer.hooks = local.Hooks
 	}
@@ -152,5 +188,44 @@ func commandFile(hook model.Hook) (string, error) {
 	if info.Mode().Perm()&0o111 == 0 {
 		return "", fmt.Errorf("command %q in %s is not executable; give it an interpreter shebang and make it executable", hook.Command, hook.Origin.Dir)
 	}
+	if hook.Origin.Layer == model.HookLayerGlobal {
+		return path, nil
+	}
+	inLocal, err := withinFolder(path, filepath.Join(hook.Origin.Dir, model.HookLocalDir))
+	if err != nil {
+		return "", err
+	}
+	if hook.Origin.Layer == model.HookLayerCommitted && inLocal {
+		return "", fmt.Errorf("command %q reaches a script in %s/, which only this machine has; declare the hook in config.local.yaml", hook.Command, model.HookLocalDir)
+	}
+	if hook.Origin.Layer == model.HookLayerLocal && !inLocal {
+		return "", fmt.Errorf("command %q reaches a script outside %s/; a machine-local hook runs only a script of its own there, never one a pull may change", hook.Command, model.HookLocalDir)
+	}
 	return path, nil
+}
+
+// withinFolder reports whether the file path reaches, links resolved, lies
+// below folder. It compares folders by identity, not by spelling, so another
+// case on a case-insensitive file system or a link changes nothing.
+func withinFolder(path, folder string) (bool, error) {
+	target, err := os.Stat(folder)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false, err
+	}
+	for dir := filepath.Dir(real); ; dir = filepath.Dir(dir) {
+		info, err := os.Stat(dir)
+		if err == nil && os.SameFile(info, target) {
+			return true, nil
+		}
+		if filepath.Dir(dir) == dir {
+			return false, nil
+		}
+	}
 }

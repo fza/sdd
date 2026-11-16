@@ -175,7 +175,7 @@ func cloneRemotes(repoID model.RepoID, source model.CloneSource) ([]cloneRemote,
 }
 
 func buildGraphClone(ctx context.Context, dir string, remotes []cloneRemote, cone []string) error {
-	err := run(ctx, "", "init", "--quiet", dir)
+	err := runEnv(ctx, pathEnv(nil), "", "init", "--quiet", dir)
 	if err != nil {
 		return err
 	}
@@ -313,7 +313,7 @@ func (c CLI) runRemote(ctx context.Context, args ...string) (string, error) {
 	defer cancel()
 	cmd := c.command(ctx, append([]string{"-c", "fetch.unpackLimit=1"}, args...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	cmd.Env = env
+	cmd.Env = c.dirEnv(env)
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return string(out), fmt.Errorf("git %s: timed out after %s", args[0], detachedTimeout)

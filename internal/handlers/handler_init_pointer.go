@@ -42,17 +42,27 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 	}
 	projectRoot = filepath.Clean(projectRoot)
 	projectSDDDir := meta.SDDDir(projectRoot)
-	projectCfg, _, err := meta.ReadConfigLayers(projectSDDDir, "")
+	projectCfg, projectLocal, err := meta.ReadConfigLayers(projectSDDDir, "")
 	if err != nil {
 		return err
 	}
 	switch {
 	case projectCfg == nil && !cmd.SetUpProject:
-		return fmt.Errorf("%s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", cmd.ProjectDir, meta.ErrNotAProject, cmd.ProjectDir)
+		return fmt.Errorf("%s leads to %s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", cmd.ProjectDir, projectRoot, meta.ErrNotAProject, cmd.ProjectDir)
 	case projectCfg != nil && (cmd.GraphDir != "" || cmd.Language != ""):
 		return fmt.Errorf("--graph-dir and --language configure the project holding the graph; run `sdd init` with them in %s", cmd.ProjectDir)
-	case projectCfg != nil && projectCfg.ProjectDir != "":
+	case model.MergeConfig(projectCfg, projectLocal).ProjectDir != "":
 		return fmt.Errorf("%s sets project_dir itself; point at the project holding the graph", cmd.ProjectDir)
+	}
+	err = meta.RequireProjectApart("--project-dir "+cmd.ProjectDir, cmd.RepoRoot, projectRoot, h.repoRootOf)
+	if err != nil {
+		return err
+	}
+	if projectCfg != nil {
+		err = meta.RequireProjectRepository("--project-dir "+cmd.ProjectDir, projectRoot, h.repoRootOf)
+		if err != nil {
+			return err
+		}
 	}
 
 	sddDir := filepath.Join(cmd.RepoRoot, model.SDDDirName)
@@ -87,6 +97,10 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		err = gitignoreLine(projectCfg.GraphDir)
 		if err != nil {
 			return fmt.Errorf("graph_dir in %s: %w", projectSDDDir, err)
+		}
+		err = meta.RequireGraphInProjectRepository(projectSDDDir, projectRoot, meta.ResolveGraphDir(projectRoot, projectCfg), h.repoRootOf)
+		if err != nil {
+			return err
 		}
 	}
 	if projectCfg == nil {
@@ -341,9 +355,9 @@ func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, tou
 		if err != nil {
 			return fmt.Errorf("selecting init paths that differ from HEAD: %w", err)
 		}
-		leftover, err = h.trustedLeftover(ctx, record, leftover)
+		leftover, err = h.tracker.Uncommitted(ctx, leftover)
 		if err != nil {
-			return err
+			return fmt.Errorf("selecting the paths an earlier init left uncommitted: %w", err)
 		}
 	}
 	for _, path := range leftover {

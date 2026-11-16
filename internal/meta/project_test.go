@@ -106,7 +106,7 @@ func TestResolveProject(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if project.Root != filepath.Join(root, tc.wantRoot) {
+			if !meta.SameDir(project.Root, filepath.Join(root, tc.wantRoot)) {
 				t.Errorf("the project root should be the %s folder, got %s", tc.wantRoot, project.Root)
 			}
 			if project.WorkRoot != work {
@@ -128,5 +128,135 @@ func TestResolveProjectReportsAMissingProject(t *testing.T) {
 
 	if !errors.Is(err, meta.ErrNotAProject) {
 		t.Errorf("a missing project should be reported as not an sdd project: %v", err)
+	}
+}
+
+func TestWithinDir(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "outer")
+	err := os.Mkdir(root, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	err = os.Symlink(root, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCase := filepath.Join(filepath.Dir(root), "OUTER")
+	_, err = os.Stat(otherCase)
+	caseInsensitive := err == nil
+	cases := []struct {
+		name          string
+		path          string
+		within        bool
+		needsCaseFold bool
+	}{
+		{name: "the folder itself", path: root, within: true},
+		{name: "a folder below, not yet created", path: filepath.Join(root, "a", "b"), within: true},
+		{name: "a folder below, through a symlink", path: filepath.Join(link, "a"), within: true},
+		{name: "a folder below, spelled in other case", path: filepath.Join(otherCase, "a"), within: true, needsCaseFold: true},
+		{name: "a sibling sharing the name's prefix", path: root + "-sdd", within: false},
+		{name: "the parent folder", path: filepath.Dir(root), within: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.needsCaseFold && !caseInsensitive {
+				t.Skip("the temporary filesystem tells names apart by case")
+			}
+			got := meta.WithinDir(root, tc.path)
+			if got != tc.within {
+				t.Error("the path should be judged by where it really lies")
+			}
+		})
+	}
+}
+
+// A .sdd/ above the repository holding the start folder belongs to another
+// project.
+func TestDiscoverRootStopsAtTheRepositoryRoot(t *testing.T) {
+	cases := []struct {
+		name    string
+		gitFile bool
+	}{
+		{name: "repository root"},
+		{name: "linked worktree or submodule root", gitFile: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outer := t.TempDir()
+			err := os.Mkdir(filepath.Join(outer, ".sdd"), 0o755)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := filepath.Join(outer, "repo")
+			start := filepath.Join(repo, "sub")
+			err = os.MkdirAll(start, 0o755)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.gitFile {
+				err = os.WriteFile(filepath.Join(repo, ".git"), []byte("gitdir: elsewhere\n"), 0o644)
+			} else {
+				err = os.Mkdir(filepath.Join(repo, ".git"), 0o755)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if root := meta.DiscoverRoot(start); root != "" {
+				t.Errorf("discovery should stop at the repository root, found %s", root)
+			}
+
+			err = os.Mkdir(filepath.Join(repo, ".sdd"), 0o755)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if root := meta.DiscoverRoot(start); root != repo {
+				t.Errorf("discovery should find the repository's own .sdd/, found %q", root)
+			}
+		})
+	}
+}
+
+// init records project_dir against the real folders, so a work root reached
+// through a symlink resolves it from where the work root really lies.
+func TestResolveProjectFromASymlinkedWorkRoot(t *testing.T) {
+	realDir := filepath.Join(t.TempDir(), "real")
+	writeConfig(t, filepath.Join(realDir, "work"), "config.yaml", "project_dir: ../project\n")
+	writeConfig(t, filepath.Join(realDir, "project"), "config.yaml", "graph_dir: .sdd/graph\n")
+	link := filepath.Join(t.TempDir(), "wl")
+	err := os.Symlink(filepath.Join(realDir, "work"), link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	project, err := meta.ResolveProject(link, nil)
+
+	if err != nil {
+		t.Fatalf("the project beside the real work root should resolve: %v", err)
+	}
+	if !meta.SameDir(project.Root, filepath.Join(realDir, "project")) {
+		t.Errorf("the project should be found beside the real work root, got %s", project.Root)
+	}
+}
+
+// The real folder a symlinked work root resolves project_dir from is where
+// the project was looked for, so the refusal names it.
+func TestResolveProjectNamesTheRealFolderOfAMissingProject(t *testing.T) {
+	realDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, filepath.Join(realDir, "work"), "config.yaml", "project_dir: ../nowhere\n")
+	link := filepath.Join(t.TempDir(), "wl")
+	err = os.Symlink(filepath.Join(realDir, "work"), link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = meta.ResolveProject(link, nil)
+
+	if err == nil || !strings.Contains(err.Error(), filepath.Join(realDir, "nowhere")) {
+		t.Errorf("the refusal should name the folder it looked in: %v", err)
 	}
 }

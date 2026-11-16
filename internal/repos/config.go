@@ -145,7 +145,13 @@ type ConnectedRepo struct {
 // LoadConfigFrom reads a user-global config from an explicit path. A missing
 // file is not an error — it yields an empty config (no connections).
 func LoadConfigFrom(path string) (*GlobalConfig, error) {
-	data, err := os.ReadFile(path)
+	return LoadConfigWith(os.ReadFile, path)
+}
+
+// LoadConfigWith is LoadConfigFrom reading the file through read, which
+// reports a missing file with an error matching fs.ErrNotExist.
+func LoadConfigWith(read func(path string) ([]byte, error), path string) (*GlobalConfig, error) {
+	data, err := read(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return &GlobalConfig{}, nil
 	}

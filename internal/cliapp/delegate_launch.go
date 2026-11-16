@@ -19,11 +19,11 @@ type headlessLauncher struct {
 	watch *configWatch
 }
 
-func (l headlessLauncher) LaunchDelegate(_ context.Context, launch sdd.DelegateLaunch) (sdd.DelegateRun, error) {
+func (l headlessLauncher) LaunchDelegate(ctx context.Context, launch sdd.DelegateLaunch) (sdd.DelegateRun, error) {
 	if launch.Runner == "" {
 		return sdd.DelegateRun{}, sdd.ErrDelegateNotLaunched
 	}
-	served := l.watch.served()
+	served := l.watch.project(ctx)
 	if launch.Project != served.access.project {
 		return sdd.DelegateRun{}, fmt.Errorf("sdd launches a headless delegate only in the served project %s, not in %s", served.access.project, launch.Project)
 	}

@@ -105,6 +105,7 @@ func TestUncommitted(t *testing.T) {
 		{name: "drops an unchanged tracked path", paths: []string{unchanged, modified}, want: []string{modified}},
 		{name: "drops an ignored path", paths: []string{ignored}, want: nil},
 		{name: "drops a path that never existed", paths: []string{vanished}, want: nil},
+		{name: "takes a path with glob characters literally", paths: []string{filepath.Join(dir, "skills", "*.md")}, want: nil},
 		{name: "keeps a directory with a change beneath it", paths: []string{filepath.Join(dir, "skills")}, want: []string{filepath.Join(dir, "skills")}},
 		{name: "nothing in, nothing out", paths: nil, want: nil},
 	}

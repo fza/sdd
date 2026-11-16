@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +86,33 @@ func TestScore_RateLimitReportsRetryAfter(t *testing.T) {
 	if attributed, ok := errors.AsType[*llm.Error](err); !ok || attributed.Identity.Model != systemone.DefaultModel {
 		t.Fatalf("error %v should be attributed to the model", err)
 	}
+	if delayer, ok := errors.AsType[relevance.RetryDelayer](err); !ok || delayer.RetryDelay() != 7*time.Second {
+		t.Fatalf("error %v should ask for its delay before the next call", err)
+	}
+}
+
+func TestScore_RateLimitReadsAnHTTPDate(t *testing.T) {
+	scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", time.Now().Add(30*time.Second).UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	_, err := scorer.Score(t.Context(), request)
+	status, ok := errors.AsType[*systemone.StatusError](err)
+	if !ok || status.RetryAfter < 25*time.Second || status.RetryAfter > 30*time.Second {
+		t.Fatalf("error %v: a Retry-After date should give the delay until it", err)
+	}
+}
+
+func TestScore_CapsAHugeRetryAfter(t *testing.T) {
+	scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "99999999999")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	_, err := scorer.Score(t.Context(), request)
+	status, ok := errors.AsType[*systemone.StatusError](err)
+	if !ok || status.RetryAfter <= 0 || status.RetryAfter > time.Hour {
+		t.Fatalf("error %v: a huge Retry-After should be capped at an hour", err)
+	}
 }
 
 func TestScore_ValidationErrorKeepsItsDetail(t *testing.T) {
@@ -100,10 +128,11 @@ func TestScore_ValidationErrorKeepsItsDetail(t *testing.T) {
 
 func TestScore_RefusesMalformedReplies(t *testing.T) {
 	for name, body := range map[string]string{
-		"not JSON":         `<html>bad gateway</html>`,
-		"missing answer":   `{"answers":{"q0":{"type":"noul","noul":0.5}}}`,
-		"answer without p": `{"answers":{"q0":{"type":"noul"},"q1":{"type":"noul","noul":0.5}}}`,
-		"p outside [0, 1]": `{"answers":{"q0":{"type":"noul","noul":1.5},"q1":{"type":"noul","noul":0.5}}}`,
+		"not JSON":               `<html>bad gateway</html>`,
+		"missing answer":         `{"answers":{"q0":{"type":"noul","noul":0.5}}}`,
+		"answer without p":       `{"answers":{"q0":{"type":"noul"},"q1":{"type":"noul","noul":0.5}}}`,
+		"p outside [0, 1]":       `{"answers":{"q0":{"type":"noul","noul":1.5},"q1":{"type":"noul","noul":0.5}}}`,
+		"answer of another type": `{"answers":{"q0":{"type":"bool","noul":0.9},"q1":{"type":"noul","noul":0.5}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) })
@@ -112,6 +141,81 @@ func TestScore_RefusesMalformedReplies(t *testing.T) {
 				t.Fatalf("error %v should report a malformed answer", err)
 			}
 		})
+	}
+}
+
+// Every planned call fits Jev's limits: the whole request, state and every
+// question, within the request limit, and the state beside one question
+// within the input limit.
+func TestPlan_KeepsEveryCallWithinJevsLimits(t *testing.T) {
+	for name, size := range map[string]int{"many short candidates": 150, "a full batch filling the state": 360, "few long candidates": 3000} {
+		t.Run(name, func(t *testing.T) {
+			var requests, largest, largestState, question int
+			scorer := serve(t, func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				var got struct {
+					State     json.RawMessage            `json:"state"`
+					Questions map[string]json.RawMessage `json:"questions"`
+				}
+				if err := json.Unmarshal(body, &got); err != nil {
+					t.Errorf("request body is not JSON: %v", err)
+				}
+				requests++
+				largest = max(largest, relevance.EstimateTokens(string(body)))
+				largestState = max(largestState, relevance.EstimateTokens(string(got.State)))
+				answers := map[string]any{}
+				for id, q := range got.Questions {
+					question = max(question, relevance.EstimateTokens(string(q)))
+					answers[id] = map[string]any{"type": "noul", "noul": 0.5}
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"answers": answers})
+			})
+			candidates := make([]relevance.Candidate, 1000)
+			for i := range candidates {
+				candidates[i] = relevance.Candidate{ID: strconv.Itoa(i), Text: strings.Repeat("x", size)}
+			}
+			batches, oversize := relevance.Plan(scorer, "kind: gap\n\nThe draft text.", candidates)
+			if len(oversize) > 0 {
+				t.Fatalf("%d candidates left out: each fits a call on its own", len(oversize))
+			}
+			for _, batch := range batches {
+				request := relevance.Request{Subject: "kind: gap\n\nThe draft text."}
+				for _, i := range batch {
+					request.Candidates = append(request.Candidates, candidates[i])
+				}
+				_, err := scorer.Score(t.Context(), request)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if requests < 2 || largest > systemone.MaxRequestTokens || largestState+question > systemone.MaxInputTokens {
+				t.Fatalf("%d calls, largest request %d tokens, largest state %d beside a %d-token question: every call should stay within Jev's limits", requests, largest, largestState, question)
+			}
+		})
+	}
+}
+
+// An error page keeps its opening only, marked as cut: the error reaches the
+// gather note and the stats.
+func TestScore_ExcerptsALongErrorBody(t *testing.T) {
+	page := "<html>" + strings.Repeat("bad gateway ", 20_000) + "</html>"
+	scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, page)
+	})
+	_, err := scorer.Score(t.Context(), request)
+	status, ok := errors.AsType[*systemone.StatusError](err)
+	if !ok || len(err.Error()) > 600 || !strings.HasPrefix(status.Detail, "<html>bad gateway") || !strings.HasSuffix(status.Detail, "(cut)") {
+		t.Fatalf("error of %d bytes: a long body should be cut to its opening and marked", len(err.Error()))
+	}
+}
+
+func TestNew_KeepsEndpointCredentialsOutOfItsError(t *testing.T) {
+	for _, endpoint := range []string{"https://user:s3cret@[::1", "//user:s3cret@example.invalid/v1", "user:s3cret@api.example/v1", "ftp://user:s3cret@example.invalid/v1", "https:///v1"} {
+		_, err := systemone.New(systemone.Options{APIKey: "k", Endpoint: endpoint})
+		if err == nil || strings.Contains(err.Error(), "s3cret") {
+			t.Errorf("endpoint %q: refused without the password in the error, got %v", endpoint, err)
+		}
 	}
 }
 

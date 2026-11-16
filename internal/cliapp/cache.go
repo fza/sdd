@@ -14,9 +14,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/cacheprune"
 	"github.com/networkteam/sdd/internal/command"
-	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
-	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/repos"
@@ -119,9 +117,8 @@ func newCacheHandler(cmd *cli.Command, loc repos.Locations, secretRulesGitHub *s
 	return handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
 		OwnedClones: syncstate.OwnedClones{Gate: gate}, Gate: gate, Keep: keep,
-		State:         stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
-		DeclaredHooks: hooks.DeclaredIn(loc.ConfigPath, repos.NewGraphClones(loc, git.GraphClones{}, gate, syncstate.CloneLocks{}).Dir),
-		SecretRules:   secretRules,
+		State:       stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
+		SecretRules: secretRules,
 	}), nil
 }
 
@@ -192,12 +189,17 @@ func useSecretRules(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	useSecretRulesOf(ctx, loc, cfg)
+	return nil
+}
+
+// useSecretRulesOf is useSecretRules under the user-global config cfg.
+func useSecretRulesOf(ctx context.Context, loc repos.Locations, cfg *repos.GlobalConfig) {
 	dir := ""
 	if model.ResolveSecretRulesUpdate(cfg.Secrets) == model.SecretRulesDaily {
 		dir = secretRulesDir(loc)
 	}
 	secrets.Use(ctx, dir)
-	return nil
 }
 
 // serveCacheNotice is the MCP server's CacheNotice: a failed run's notice,

@@ -16,11 +16,8 @@ func run(ctx context.Context, dir string, args ...string) error {
 // runEnv is run with env; nil inherits the process environment.
 func runEnv(ctx context.Context, env []string, dir string, args ...string) error {
 	verb := args[0]
-	if dir != "" {
-		args = append([]string{"-C", dir}, args...)
-	}
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = env
+	cmd := exec.CommandContext(ctx, "git", CLI{Dir: dir}.at(args...)...)
+	cmd.Env = CLI{Dir: dir}.dirEnv(env)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.Stdout = nil

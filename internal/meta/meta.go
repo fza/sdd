@@ -15,8 +15,10 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// DiscoverRoot walks up from startDir looking for a directory named ".sdd".
-// Returns the repo root (parent of .sdd/) or empty string if not found.
+// DiscoverRoot walks up from startDir looking for a directory named ".sdd",
+// no further than the root of the repository holding startDir: a .sdd/ above
+// it belongs to another project. Returns the repo root (parent of .sdd/) or
+// empty string if not found.
 func DiscoverRoot(startDir string) string {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
@@ -27,6 +29,12 @@ func DiscoverRoot(startDir string) string {
 		info, err := os.Stat(candidate)
 		if err == nil && info.IsDir() {
 			return dir
+		}
+		// .git is a folder in a repository's root, a file in a linked
+		// worktree's or a submodule's.
+		_, err = os.Lstat(filepath.Join(dir, ".git"))
+		if err == nil {
+			return ""
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -90,7 +98,17 @@ func ConfigLayerFiles(sddDir, localConfigPath string) map[model.ConfigValueSourc
 // file exists — with global settings present, a repo without config files
 // still resolves to them.
 func ResolveConfig(global model.BaseConfig, sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
-	committed, local, err := ReadConfigLayers(sddDir, localConfigPath)
+	return ResolveConfigWith(os.ReadFile, global, sddDir, localConfigPath)
+}
+
+// ReadFile reads one config file; a missing file fails with an error
+// matching fs.ErrNotExist. The ...With functions read through it, so a caller
+// resolving its config from one read of each file can hand them that read.
+type ReadFile func(path string) ([]byte, error)
+
+// ResolveConfigWith is ResolveConfig reading through read.
+func ResolveConfigWith(read ReadFile, global model.BaseConfig, sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
+	committed, local, err := ReadConfigLayersWith(read, sddDir, localConfigPath)
 	if err != nil {
 		return nil, err
 	}
@@ -119,14 +137,24 @@ func ResolveConfig(global model.BaseConfig, sddDir, localConfigPath string) (*mo
 // layers for per-value provenance; everything else wants ReadConfig's
 // merged result.
 func ReadConfigLayers(sddDir, localConfigPath string) (committed, local *model.PerRepoConfig, err error) {
-	return readConfigLayers(sddDir, localConfigPath, readPersonalConfigFile)
+	return ReadConfigLayersWith(os.ReadFile, sddDir, localConfigPath)
+}
+
+// ReadConfigLayersWith is ReadConfigLayers reading through read.
+func ReadConfigLayersWith(read ReadFile, sddDir, localConfigPath string) (committed, local *model.PerRepoConfig, err error) {
+	return readConfigLayers(read, sddDir, localConfigPath, readPersonalConfigFile)
 }
 
 // ReadLayoutConfig is ReadConfig for the keys that locate a project and its
 // graph: it reads past a value sdd refuses, which the command's own config
 // load judges, so `sdd config set` still finds the file to repair it.
 func ReadLayoutConfig(sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
-	committed, local, err := readLayoutLayers(sddDir, localConfigPath)
+	return ReadLayoutConfigWith(os.ReadFile, sddDir, localConfigPath)
+}
+
+// ReadLayoutConfigWith is ReadLayoutConfig reading through read.
+func ReadLayoutConfigWith(read ReadFile, sddDir, localConfigPath string) (*model.PerRepoConfig, error) {
+	committed, local, err := readLayoutLayers(read, sddDir, localConfigPath)
 	if err != nil {
 		return nil, err
 	}
@@ -136,14 +164,14 @@ func ReadLayoutConfig(sddDir, localConfigPath string) (*model.PerRepoConfig, err
 	return model.MergeConfig(committed, local), nil
 }
 
-func readLayoutLayers(sddDir, localConfigPath string) (committed, local *model.PerRepoConfig, err error) {
-	return readConfigLayers(sddDir, localConfigPath, readConfigFile)
+func readLayoutLayers(read ReadFile, sddDir, localConfigPath string) (committed, local *model.PerRepoConfig, err error) {
+	return readConfigLayers(read, sddDir, localConfigPath, readConfigFile)
 }
 
-func readConfigLayers(sddDir, localConfigPath string, readPersonal func(path string) (*model.PerRepoConfig, error)) (committed, local *model.PerRepoConfig, err error) {
+func readConfigLayers(read ReadFile, sddDir, localConfigPath string, readPersonal func(read ReadFile, path string) (*model.PerRepoConfig, error)) (committed, local *model.PerRepoConfig, err error) {
 	if sddDir != "" {
 		committedPath := filepath.Join(sddDir, "config.yaml")
-		committed, err = readConfigFile(committedPath)
+		committed, err = readConfigFile(read, committedPath)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -156,17 +184,17 @@ func readConfigLayers(sddDir, localConfigPath string, readPersonal func(path str
 	// layer — joining an empty dir would read a path relative to the cwd.
 	if sddDir != "" || localConfigPath != "" {
 		localPath := LocalConfigPath(sddDir, localConfigPath)
-		local, err = readPersonal(localPath)
+		local, err = readPersonal(read, localPath)
 		if err != nil {
 			return nil, nil, err
 		}
 		local = model.HonoredLocal(local)
-		under, err := UnderLocalConfigPath(sddDir, localPath)
+		under, err := underLocalConfigPath(read, sddDir, localPath)
 		if err != nil {
 			return nil, nil, err
 		}
 		if under != "" {
-			own, err := readPersonal(under)
+			own, err := readPersonal(read, under)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -183,6 +211,10 @@ func readConfigLayers(sddDir, localConfigPath string, readPersonal func(path str
 // project through project_dir, whose settings lie over the project's own;
 // empty otherwise.
 func UnderLocalConfigPath(sddDir, localPath string) (string, error) {
+	return underLocalConfigPath(os.ReadFile, sddDir, localPath)
+}
+
+func underLocalConfigPath(read ReadFile, sddDir, localPath string) (string, error) {
 	own := LocalConfigPath(sddDir, "")
 	if sddDir == "" || filepath.Clean(localPath) == filepath.Clean(own) || filepath.Base(localPath) != LocalConfigFileName {
 		return "", nil
@@ -191,11 +223,11 @@ func UnderLocalConfigPath(sddDir, localPath string) (string, error) {
 	if filepath.Base(pointingSDDDir) != model.SDDDirName {
 		return "", nil
 	}
-	committed, err := readConfigFile(filepath.Join(pointingSDDDir, "config.yaml"))
+	committed, err := readConfigFile(read, filepath.Join(pointingSDDDir, "config.yaml"))
 	if err != nil {
 		return "", err
 	}
-	local, err := readConfigFile(localPath)
+	local, err := readConfigFile(read, localPath)
 	if err != nil {
 		return "", err
 	}
@@ -213,10 +245,10 @@ func UnderLocalConfigPath(sddDir, localPath string) (string, error) {
 	return own, nil
 }
 
-func readConfigFile(path string) (*model.PerRepoConfig, error) {
-	data, err := os.ReadFile(path)
+func readConfigFile(read ReadFile, path string) (*model.PerRepoConfig, error) {
+	data, err := read(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, err
@@ -232,8 +264,8 @@ func readConfigFile(path string) (*model.PerRepoConfig, error) {
 
 // readPersonalConfigFile reads a machine-local layer, which alone among the
 // per-repo layers sets dialogue.mode.
-func readPersonalConfigFile(path string) (*model.PerRepoConfig, error) {
-	cfg, err := readConfigFile(path)
+func readPersonalConfigFile(read ReadFile, path string) (*model.PerRepoConfig, error) {
+	cfg, err := readConfigFile(read, path)
 	if err != nil || cfg == nil {
 		return cfg, err
 	}

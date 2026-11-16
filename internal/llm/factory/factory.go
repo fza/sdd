@@ -177,7 +177,11 @@ func providerDefaultRPS(provider, modelName string) float64 {
 func buildProvider(cfg model.LLMConfig) (llm.Runner, error) {
 	switch cfg.Provider {
 	case "claude-cli":
-		return claude.NewRunner(cfg.Model, cfg.ResolvedEffort()), nil
+		credentials, err := model.ParseClaudeCLICredentials(string(cfg.ClaudeCLI.Credentials))
+		if err != nil {
+			return nil, err
+		}
+		return claude.NewRunner(cfg.Model, cfg.ResolvedEffort(), credentials), nil
 	case model.LLMProviderCodex:
 		return codex.NewRunner(cfg.Model, cfg.ResolvedEffort()), nil
 	case "anthropic", "openai", "ollama":

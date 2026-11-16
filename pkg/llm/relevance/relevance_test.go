@@ -3,10 +3,13 @@ package relevance_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/networkteam/sdd/pkg/llm"
@@ -150,6 +153,108 @@ func TestBounded_EndsACallAtItsDeadline(t *testing.T) {
 	}
 	if _, err := scorer.Score(t.Context(), relevance.Request{Candidates: candidates("a")}); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Score = %v, the deadline should end the call", err)
+	}
+}
+
+// delayError asks for a delay before the next call, as a 429 does.
+type delayError time.Duration
+
+func (e delayError) Error() string             { return "rate limited" }
+func (e delayError) RetryDelay() time.Duration { return time.Duration(e) }
+
+// failingOnce fails its first call with err, then scores as fixedScorer.
+type failingOnce struct {
+	fixedScorer
+	err   error
+	calls int
+}
+
+func (f *failingOnce) Score(ctx context.Context, request relevance.Request) (relevance.Result, error) {
+	f.calls++
+	if f.calls == 1 {
+		return relevance.Result{}, f.err
+	}
+	return f.fixedScorer.Score(ctx, request)
+}
+
+// Calls that hit a 429 together spread their retries over a quarter of the
+// delay instead of coming back in lockstep.
+func TestRetriedAfterDelay_SpreadsRetriesOfTheSameDelay(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		var mu sync.Mutex
+		var waits []time.Duration
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() {
+				inner := &failingOnce{err: &llm.Error{Err: delayError(time.Second)}}
+				_, err := relevance.RetriedAfterDelay(inner, time.Minute).Score(t.Context(), relevance.Request{Candidates: candidates("a")})
+				if err != nil {
+					t.Error(err)
+				}
+				mu.Lock()
+				waits = append(waits, time.Since(start))
+				mu.Unlock()
+			})
+		}
+		wg.Wait()
+		slices.Sort(waits)
+		if waits[0] < time.Second || waits[len(waits)-1] > 1250*time.Millisecond || waits[0] == waits[len(waits)-1] {
+			t.Fatalf("waits %v: every retry should wait its delay plus up to a quarter more, not all the same", waits)
+		}
+	})
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		value string
+		want  time.Duration
+	}{
+		{"7", 7 * time.Second},
+		{now.Add(30 * time.Second).Format(http.TimeFormat), 30 * time.Second},
+		{now.Add(-time.Minute).Format(http.TimeFormat), 0},
+		{now.Add(2 * time.Hour).Format(http.TimeFormat), relevance.MaxRetryAfter},
+		{"99999999999", relevance.MaxRetryAfter},
+		{"-3", 0},
+		{"soon", 0},
+		{"", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.value, func(t *testing.T) {
+			got := relevance.ParseRetryAfter(tc.value, now)
+			if got != tc.want {
+				t.Fatalf("ParseRetryAfter = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRetriedAfterDelay(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		maxWait  time.Duration
+		deadline time.Duration
+		calls    int
+	}{
+		{"a delay within bounds calls once more", delayError(5 * time.Millisecond), time.Second, time.Second, 2},
+		{"a delay past maxWait ends the call at once", delayError(400 * time.Millisecond), 10 * time.Millisecond, time.Second, 1},
+		{"a delay past the deadline ends the call at once", delayError(time.Second), 2 * time.Second, 400 * time.Millisecond, 1},
+		{"a failure without a delay ends the call", errors.New("down"), time.Second, time.Second, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := &failingOnce{err: &llm.Error{Err: tc.err}}
+			ctx, cancel := context.WithTimeout(t.Context(), tc.deadline)
+			defer cancel()
+			start := time.Now()
+			_, err := relevance.RetriedAfterDelay(inner, tc.maxWait).Score(ctx, relevance.Request{Candidates: candidates("a")})
+			elapsed := time.Since(start)
+			if inner.calls != tc.calls || (tc.calls == 2) != (err == nil) || tc.calls == 1 && elapsed > 200*time.Millisecond {
+				t.Fatalf("%d calls after %s, error %v: the call should be retried only after a delay it can wait out, else end at once", inner.calls, elapsed, err)
+			}
+		})
 	}
 }
 

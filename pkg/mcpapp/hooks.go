@@ -18,33 +18,34 @@ type hookInputRequired struct {
 }
 
 func (e *hookInputRequired) Error() string {
-	return "waiting for the person to confirm the project's hooks"
+	return "waiting for the person to allow the project's hooks"
 }
 
-// elicitingConfirmer asks the person behind the MCP client, by elicitation,
-// whether the hooks this machine has not confirmed may run. The client shows
-// the prompt to the person, not to the agent, so accepting confirms the hooks
-// as `sdd hooks trust` does. The questions ride the call's result as input requests and the
-// answers arrive with the client's retry; for a client on a protocol before
-// multi round-trip the SDK elicits them and calls again.
-type elicitingConfirmer struct {
+// elicitingAllower asks the person behind the MCP client, by elicitation,
+// whether the hooks of the repositories this machine has not allowed may
+// run. The client shows the prompt to the person, not to the agent, so
+// accepting allows the hooks as `sdd hooks allow` does. The questions ride
+// the call's result as input requests and the answers arrive with the
+// client's retry; for a client on a protocol before multi round-trip the SDK
+// elicits them and calls again.
+type elicitingAllower struct {
 	session   *mcp.ServerSession
 	responses mcp.InputResponseMap
 }
 
-func newElicitingConfirmer(req *mcp.CallToolRequest) *elicitingConfirmer {
-	confirmer := &elicitingConfirmer{}
+func newElicitingAllower(req *mcp.CallToolRequest) *elicitingAllower {
+	allower := &elicitingAllower{}
 	if req == nil {
-		return confirmer
+		return allower
 	}
-	confirmer.session = req.Session
+	allower.session = req.Session
 	if req.Params != nil {
-		confirmer.responses = req.Params.InputResponses
+		allower.responses = req.Params.InputResponses
 	}
-	return confirmer
+	return allower
 }
 
-func (c *elicitingConfirmer) ConfirmHooks(_ context.Context, reviews []sdd.HookReview) (bool, error) {
+func (c *elicitingAllower) AllowHooks(_ context.Context, reviews []sdd.HookReview) (bool, error) {
 	if c.session == nil {
 		return false, errors.New("the call has no client session to ask in")
 	}
@@ -74,15 +75,17 @@ func (c *elicitingConfirmer) ConfirmHooks(_ context.Context, reviews []sdd.HookR
 	for _, review := range reviews {
 		requests[hookInputID(review)] = &mcp.ElicitParams{
 			Mode:            "form",
-			Message:         "sdd is about to run a hook this machine has not confirmed. Accept to confirm its hash and run it; decline to stop the call.\n\n" + presenters.HookReviewText(review),
+			Message:         "sdd is about to run hooks that came with a repository and are not allowed on this machine as they are now. Accept to allow them and run them; decline to stop the call.\n\n" + presenters.HookReviewText(review),
 			RequestedSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		}
 	}
 	return false, &hookInputRequired{requests: requests}
 }
 
+// hookInputID names a review's question by the hash it allows, so an answer
+// never allows hooks other than those the person was shown.
 func hookInputID(review sdd.HookReview) string {
-	return "sdd-hook-" + review.Hook.Hash
+	return "sdd-hooks-" + review.Hash
 }
 
 // inputRequired returns the result asking the client for the person's
@@ -95,8 +98,8 @@ func inputRequired(err error) (*mcp.CallToolResult, bool) {
 	return &mcp.CallToolResult{InputRequests: asking.requests}, true
 }
 
-// confirmHooks asks about the unconfirmed hooks of project before the call
-// does any work.
-func (s *toolSet) confirmHooks(ctx context.Context, req *mcp.CallToolRequest, project sdd.ProjectID) error {
-	return s.app.ConfirmHooks(ctx, s.requestIdentity(req), project, newElicitingConfirmer(req))
+// allowHooks asks about the hooks of project this machine has not allowed
+// before the call does any work.
+func (s *toolSet) allowHooks(ctx context.Context, req *mcp.CallToolRequest, project sdd.ProjectID) error {
+	return s.app.AllowHooks(ctx, s.requestIdentity(req), project, newElicitingAllower(req))
 }

@@ -49,16 +49,46 @@ func (c CLI) at(args ...string) []string {
 	return append([]string{"-C", c.Dir}, args...)
 }
 
+// dirEnv is env, nil meaning the process environment, for a command addressed
+// through at: with Dir, pathEnv drops what would pin it to another repository.
+func (c CLI) dirEnv(env []string) []string {
+	if c.Dir == "" {
+		return env
+	}
+	return pathEnv(env)
+}
+
+// repositoryVariables are the variables git exports to hooks that pin a
+// command to the hook's repository whatever -C names.
+var repositoryVariables = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"}
+
+// pathEnv is env, nil meaning the process environment, without the inherited
+// repositoryVariables, for a git command that locates its repository by path.
+// A variable the caller set itself stays, such as graph move's temporary index.
+func pathEnv(env []string) []string {
+	inherited := os.Environ()
+	if env == nil {
+		env = inherited
+	}
+	return slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(repositoryVariables, name) && slices.Contains(inherited, kv)
+	})
+}
+
 // detachedTimeout caps a detached auto-commit or push. A signing or
 // credential helper blocking on input would otherwise hang indefinitely when
 // sdd runs as a long-lived server; the timeout is a backstop on top of the
-// TTY detach in runDetached. See d-tac-zhp.
+// TTY detach in runDetachedEnv. See d-tac-zhp.
 const detachedTimeout = 30 * time.Second
 
 // Commit stages exactly the given paths and commits them, detached from any
 // controlling terminal. It is the production handlers.Committer for the
 // auto-commit paths (sdd new, summarize, init, ...).
 func (c CLI) Commit(message string, paths ...string) error {
+	if len(paths) == 0 {
+		return errors.New("git commit: no paths to commit (an empty pathspec would record the whole index)")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), detachedTimeout)
 	defer cancel()
 
@@ -139,7 +169,7 @@ func (c CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) 
 	for _, path := range paths {
 		// Only stdout lists changes: git warns on stderr about a path whose
 		// folder does not exist yet.
-		cmd := c.command(ctx, "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
+		cmd := c.command(ctx, "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		status, err := cmd.Output()
@@ -232,7 +262,7 @@ func (c CLI) Push(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("resolving the upstream branch of %s: %w", branch, err)
 	}
-	out, err := runDetachedEnv(ctx, env, c.at("push", remote, "HEAD:"+merge)...)
+	out, err := runDetachedEnv(ctx, c.dirEnv(env), c.at("push", remote, "HEAD:"+merge)...)
 	if err != nil {
 		return fmt.Errorf("git push: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
@@ -264,7 +294,7 @@ func (c CLI) Merge(ctx context.Context, ref, message string) error {
 	if err := c.EnsureMergeDriver(ctx); err != nil {
 		return fmt.Errorf("setting up the entry merge driver: %w", err)
 	}
-	out, err := runDetached(ctx, c.at("merge", "--no-edit", "--no-overwrite-ignore", "-m", message, ref)...)
+	out, err := runDetachedEnv(ctx, c.dirEnv(nil), c.at("merge", "--no-edit", "--no-overwrite-ignore", "-m", message, ref)...)
 	if err == nil {
 		return nil
 	}
@@ -336,21 +366,20 @@ func (r RemovalCommitter) EnsureMergeDriver(ctx context.Context) error {
 	return CLI(r).EnsureMergeDriver(ctx)
 }
 
-// runDetached runs a git subprocess detached from any controlling terminal
-// (Setsid starts a new session with no controlling TTY) and bounded by ctx.
-// Detaching is the fix for the auto-commit hang (d-tac-zhp): an interactive
-// signing or credential prompt has no TTY to read from, so it fails immediately
-// instead of suspending the backgrounded process on SIGTTIN. The context
-// timeout is a backstop for any other blocking helper.
-func runDetached(ctx context.Context, args ...string) ([]byte, error) {
-	return runDetachedEnv(ctx, nil, args...)
-}
-
-// runDetachedEnv is runDetached with env; nil inherits the process
-// environment.
+// runDetachedEnv runs a git subprocess with env, nil inheriting the process
+// environment, detached from any controlling terminal (Setsid starts a new
+// session with no controlling TTY) and bounded by ctx. Detaching is the fix
+// for the auto-commit hang (d-tac-zhp): an interactive signing or credential
+// prompt has no TTY to read from, so it fails immediately instead of
+// suspending the backgrounded process on SIGTTIN. The context timeout is a
+// backstop for any other blocking helper.
 func runDetachedEnv(ctx context.Context, env []string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = env
+	if env == nil {
+		env = os.Environ()
+	}
+	// sdd names files, never patterns: a glob character stays part of the name.
+	cmd.Env = append(slices.Clip(env), "GIT_LITERAL_PATHSPECS=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
@@ -568,11 +597,26 @@ func RepoRootFor(path string) string {
 	if dir == "" {
 		return ""
 	}
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	out, err := pathCommand("-C", dir, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// pathCommand is git run with args under pathEnv.
+func pathCommand(args ...string) *exec.Cmd {
+	cmd := exec.Command("git", args...)
+	cmd.Env = pathEnv(nil)
+	return cmd
+}
+
+// CommandAt is git run with args in the repository at dir, whatever
+// repository an inherited GIT_DIR names (pathEnv).
+func CommandAt(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = pathEnv(nil)
+	return cmd
 }
 
 // ErrGraphRepoMissing reports a graph directory that does not exist or lies
@@ -587,7 +631,7 @@ func GraphRepoRoot(graphDir string) (string, error) {
 	if err != nil || !info.IsDir() {
 		return "", fmt.Errorf("%s: %w", graphDir, ErrGraphRepoMissing)
 	}
-	out, err := exec.Command("git", "-C", graphDir, "rev-parse", "--show-toplevel").Output()
+	out, err := pathCommand("-C", graphDir, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", graphDir, ErrGraphRepoMissing)
 	}
@@ -607,8 +651,8 @@ func (Repositories) RootOf(dir string) (string, error) {
 	if ancestor == "" {
 		return "", nil
 	}
-	probe := exec.Command("git", "-C", ancestor, "rev-parse", "--show-toplevel")
-	probe.Env = append(os.Environ(), "LC_ALL=C")
+	probe := pathCommand("-C", ancestor, "rev-parse", "--show-toplevel")
+	probe.Env = append(probe.Env, "LC_ALL=C")
 	var stderr strings.Builder
 	probe.Stderr = &stderr
 	out, err := probe.Output()
@@ -622,18 +666,26 @@ func (Repositories) RootOf(dir string) (string, error) {
 }
 
 func (Repositories) Init(dir string) error {
-	out, err := exec.Command("git", "init", "--quiet", dir).CombinedOutput()
+	out, err := pathCommand("init", "--quiet", dir).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git init %s: %s (%w)", dir, strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
 
-func (Repositories) CurrentBranch(dir string) (string, error) { return CurrentBranch(dir) }
+func (Repositories) CurrentBranch(dir string) (string, error) {
+	return currentBranch(pathCommand("-C", dir, "symbolic-ref", "--quiet", "--short", "HEAD"))
+}
 
-func (Repositories) RemoteURL(dir string) string { return RemoteURL(dir) }
+func (Repositories) RemoteURL(dir string) string {
+	return remoteURL(pathCommand("-C", dir, "remote", "get-url", "origin"))
+}
 
-func (Repositories) StableRoot(dir string) (string, error) { return StableRepoRoot(dir) }
+func (Repositories) StableRoot(dir string) (string, error) {
+	return stableRepoRootWith(dir, func(args ...string) ([]byte, error) {
+		return pathCommand(args[1:]...).CombinedOutput()
+	})
+}
 
 // existingAncestor returns path, or the closest ancestor that exists on disk.
 func existingAncestor(path string) string {
@@ -667,7 +719,11 @@ func UserName() string {
 // RemoteURL returns the repo's origin remote URL, or "" when no remote is
 // configured — the local-only case for repo_id derivation.
 func RemoteURL(repoRoot string) string {
-	out, err := exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin").Output()
+	return remoteURL(exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin"))
+}
+
+func remoteURL(cmd *exec.Cmd) string {
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
@@ -677,7 +733,11 @@ func RemoteURL(repoRoot string) string {
 // CurrentBranch resolves the symbolic branch at repoRoot. Detached HEAD is
 // returned as an error because it cannot seed durable mutation authority.
 func CurrentBranch(repoRoot string) (string, error) {
-	out, err := exec.Command("git", "-C", repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD").CombinedOutput()
+	return currentBranch(exec.Command("git", "-C", repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD"))
+}
+
+func currentBranch(cmd *exec.Cmd) (string, error) {
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git current branch: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
@@ -699,7 +759,7 @@ func errExitCode(err error) int {
 // Ignored reports whether the repository at root ignores path, which need not
 // exist yet.
 func Ignored(root, path string) (bool, error) {
-	err := exec.Command("git", "-C", root, "check-ignore", "-q", "--", path).Run()
+	err := pathCommand("-C", root, "check-ignore", "-q", "--", path).Run()
 	if err == nil {
 		return true, nil
 	}

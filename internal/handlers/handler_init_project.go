@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/meta"
@@ -26,25 +25,25 @@ type ProjectRepositories interface {
 	StableRoot(dir string) (string, error)
 }
 
+// repoRootOf is ProjectRepositories.RootOf, empty when the handler reaches no
+// repositories by path.
+func (h *Handler) repoRootOf(dir string) (string, error) {
+	if h.projectRepos == nil {
+		return "", nil
+	}
+	return h.projectRepos.RootOf(dir)
+}
+
 // setUpProject runs a plain init in projectRoot, which holds no sdd project
-// yet, giving it the repository of its own it needs.
-// Every refusal comes before the first write.
+// yet, giving it the repository of its own it needs. initPointer has run
+// meta.RequireProjectApart; every refusal here comes before the first write.
 func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget, changed *bool) error {
 	if h.projectRepos == nil || h.repositoryAt == nil {
 		return fmt.Errorf("setting up the project at %s needs a git adapter for it", cmd.ProjectDir)
 	}
-	if within(projectRoot, cmd.RepoRoot) {
-		return fmt.Errorf("--project-dir %s lies inside this repository; the project needs a repository of its own", cmd.ProjectDir)
-	}
-	if within(cmd.RepoRoot, projectRoot) {
-		return fmt.Errorf("--project-dir %s contains this repository; the project needs a repository of its own beside it", cmd.ProjectDir)
-	}
 	root, err := h.projectRepos.RootOf(projectRoot)
 	if err != nil {
 		return err
-	}
-	if root != "" && !sameDir(root, projectRoot) {
-		return fmt.Errorf("--project-dir %s lies inside the repository at %s; the project needs a repository of its own", cmd.ProjectDir, root)
 	}
 	graphDir := cmd.GraphDir
 	if graphDir == "" {
@@ -58,7 +57,7 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 	if err != nil {
 		return fmt.Errorf("--graph-dir: %w", err)
 	}
-	if !within(absGraphDir, projectRoot) {
+	if !meta.WithinDir(projectRoot, absGraphDir) {
 		return fmt.Errorf("--graph-dir %s leads out of the project at %s; the graph lives inside its project", cmd.GraphDir, cmd.ProjectDir)
 	}
 	_, err = os.Stat(filepath.Join(projectRoot, model.SDDDirName))
@@ -142,20 +141,4 @@ func (h *Handler) runProjectInit(ctx context.Context, cmd *command.InitCmd, proj
 		return fmt.Errorf("initializing the project in %s: %w", projectRoot, err)
 	}
 	return nil
-}
-
-// within reports whether path is dir or lies below it, through symlinks such
-// as macOS's /var → /private/var, resolving path's nearest existing ancestor
-// when path does not exist yet.
-func within(path, dir string) bool {
-	rel, err := filepath.Rel(meta.ResolvedPath(dir), meta.ResolvedPath(path))
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
-}
-
-// sameDir reports whether a and b name one directory, through symlinks.
-func sameDir(a, b string) bool {
-	return meta.ResolvedPath(a) == meta.ResolvedPath(b)
 }

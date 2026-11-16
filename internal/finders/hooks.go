@@ -1,32 +1,24 @@
 package finders
 
 import (
+	"context"
+
 	"github.com/networkteam/sdd/internal/hooks"
-	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 )
 
-// Hooks lists every declared hook with its confirmation state.
-func (f *Finder) Hooks(q query.HooksQuery) (*query.HooksResult, error) {
-	sources := hooks.Sources{
-		GlobalConfig: q.GlobalConfig,
-		Project:      meta.Project{Root: q.Root, WorkRoot: q.WorkRoot, GraphRepo: q.GraphRepo},
-		LocalConfig:  q.LocalConfig,
-	}
-	declared, err := hooks.Declared(sources)
-	if err != nil {
-		return nil, err
-	}
-	resolved, err := hooks.NewStore(q.StateRoot).Resolve(declared)
+// Hooks lists every declared hook with whether it may run on this machine.
+func (f *Finder) Hooks(ctx context.Context, q query.HooksQuery) (*query.HooksResult, error) {
+	resolved, err := hooks.New(q.Sources, hooks.NewAllows(q.StateRoot)).Hooks(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return &query.HooksResult{Hooks: resolved}, nil
 }
 
-// HookReview returns what a person sees before confirming a hook: the files
-// its hash covers with their digests and the head of its command file.
-func (f *Finder) HookReview(q query.HookReviewQuery) (model.HookReview, error) {
-	return hooks.Review(q.Hook)
+// HookReviews returns what a person sees before allowing each repository
+// whose hooks this machine has not allowed as they are now.
+func (f *Finder) HookReviews(ctx context.Context, q query.HookReviewsQuery) ([]model.HookReview, error) {
+	return hooks.New(q.Sources, hooks.NewAllows(q.StateRoot)).Reviews(ctx)
 }

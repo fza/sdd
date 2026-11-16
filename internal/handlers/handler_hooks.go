@@ -7,7 +7,8 @@ import (
 	"github.com/networkteam/sdd/internal/hooks"
 )
 
-// ConfirmHook records a hook's hash as confirmed on this machine.
-func (h *Handler) ConfirmHook(_ context.Context, cmd *command.ConfirmHookCmd) error {
-	return hooks.NewStore(cmd.StateRoot).Confirm(cmd.Hook)
+// AllowHooks records the reviewed repositories' hooks as allowed on this
+// machine.
+func (h *Handler) AllowHooks(ctx context.Context, cmd *command.AllowHooksCmd) error {
+	return hooks.New(cmd.Sources, hooks.NewAllows(cmd.StateRoot)).Allow(ctx, cmd.Reviews)
 }

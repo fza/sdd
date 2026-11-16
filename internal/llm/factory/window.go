@@ -66,7 +66,7 @@ func (d *WindowDetector) Detect(ctx context.Context, cfg model.LLMConfig) (Windo
 	case "ollama":
 		window, err = d.ollama(ctx, cfg, modelName)
 	case model.DefaultLLMProvider:
-		window, err = claudeCLIWindow(ctx, modelName)
+		window, err = claudeCLIWindow(ctx, modelName, cfg.ClaudeCLI.Credentials)
 	}
 	if err != nil {
 		return Window{}, fmt.Errorf("detecting the context window of %s model %s: %w; set llm.context_tokens to the model's window", provider, modelName, err)
@@ -88,9 +88,14 @@ func (d *WindowDetector) Detect(ctx context.Context, cfg model.LLMConfig) (Windo
 }
 
 // claudeCLIWindow reads the window a short claude -p probe reports for the
-// model; the probe runs at effort low, since the window does not depend on it.
-func claudeCLIWindow(ctx context.Context, modelName string) (Window, error) {
-	tokens, maxOutput, err := claude.NewRunner(modelName, "low").Window(ctx)
+// model; the probe runs at effort low, since the window does not depend on it,
+// and on the credentials the calls use.
+func claudeCLIWindow(ctx context.Context, modelName string, configured model.ClaudeCLICredentials) (Window, error) {
+	credentials, err := model.ParseClaudeCLICredentials(string(configured))
+	if err != nil {
+		return Window{}, err
+	}
+	tokens, maxOutput, err := claude.NewRunner(modelName, "low", credentials).Window(ctx)
 	if err != nil {
 		return Window{}, err
 	}

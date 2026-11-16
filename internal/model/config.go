@@ -594,6 +594,49 @@ type LLMConfig struct {
 	// Transcripts hold graph content, so only a person's own config may turn it
 	// on.
 	Debug *bool `yaml:"debug,omitempty"`
+	// ClaudeCLI tunes the claude-cli provider alone.
+	ClaudeCLI ClaudeCLIConfig `yaml:"claude_cli,omitempty"`
+}
+
+// ClaudeCLIConfig holds the settings only the claude-cli provider reads.
+type ClaudeCLIConfig struct {
+	// Credentials selects what `claude -p` authenticates with. Empty means
+	// DefaultClaudeCLICredentials.
+	Credentials ClaudeCLICredentials `yaml:"credentials,omitempty"`
+}
+
+// ClaudeCLICredentials is the closed set of llm.claude_cli.credentials values.
+type ClaudeCLICredentials string
+
+const (
+	// ClaudeCLICredentialsLogin runs `claude -p` on the Claude Code login,
+	// with the Anthropic credential variables removed from its environment.
+	ClaudeCLICredentialsLogin ClaudeCLICredentials = "login"
+	// ClaudeCLICredentialsEnv passes the environment through unchanged, so
+	// `claude -p` can run on an Anthropic API key, Bedrock or Vertex.
+	ClaudeCLICredentialsEnv ClaudeCLICredentials = "env"
+)
+
+// DefaultClaudeCLICredentials applies when llm.claude_cli.credentials is unset.
+const DefaultClaudeCLICredentials = ClaudeCLICredentialsLogin
+
+func (ClaudeCLICredentials) AllowedValues() []string {
+	return closedValues(ClaudeCLICredentialsLogin, ClaudeCLICredentialsEnv)
+}
+
+// ParseClaudeCLICredentials resolves a configured value, empty meaning
+// DefaultClaudeCLICredentials. A value outside the set is refused rather than
+// read as login, so a misspelt env never runs on the login unnoticed.
+func ParseClaudeCLICredentials(value string) (ClaudeCLICredentials, error) {
+	credentials := ClaudeCLICredentials(value)
+	switch {
+	case credentials == "":
+		return DefaultClaudeCLICredentials, nil
+	case slices.Contains(credentials.AllowedValues(), value):
+		return credentials, nil
+	default:
+		return "", fmt.Errorf("unknown llm.claude_cli.credentials %q (supported: %s)", value, strings.Join(credentials.AllowedValues(), ", "))
+	}
 }
 
 // LLMPreflightConfig holds the settings of the LLM pre-flight calls, the
@@ -939,6 +982,9 @@ func mergeLLMConfig(base, overlay LLMConfig) LLMConfig {
 	out.Retry = mergeRetryConfig(base.Retry, overlay.Retry)
 	if overlay.Debug != nil {
 		out.Debug = overlay.Debug
+	}
+	if overlay.ClaudeCLI.Credentials != "" {
+		out.ClaudeCLI.Credentials = overlay.ClaudeCLI.Credentials
 	}
 	if len(overlay.APIKeys) > 0 {
 		if out.APIKeys == nil {

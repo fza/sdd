@@ -279,6 +279,118 @@ func TestRepoRootFor(t *testing.T) {
 	}
 }
 
+// git exports GIT_DIR to hooks, so sdd run from one inherits the hook's
+// repository; the calls that locate a repository by path must still reach the
+// repository at that path.
+func TestRepositoryLocatorsIgnoreAnInheritedGitDir(t *testing.T) {
+	cases := []struct {
+		name   string
+		gitDir func(work string) string
+	}{
+		{name: "absolute", gitDir: func(work string) string { return filepath.Join(work, ".git") }},
+		{name: "relative", gitDir: func(string) string { return ".git" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work := newTestRepo(t)
+			sidecar := newTestRepo(t)
+			entry := filepath.Join(sidecar, "graph", "entry.md")
+			if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(entry, []byte("entry\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			fresh := filepath.Join(t.TempDir(), "fresh")
+			runGit(t, work, "remote", "add", "origin", "https://example.test/work.git")
+			runGit(t, sidecar, "remote", "add", "origin", "https://example.test/sidecar.git")
+			runGit(t, sidecar, "checkout", "-q", "-b", "graph-line")
+			t.Chdir(work)
+			t.Setenv("GIT_DIR", tc.gitDir(work))
+
+			root := RepoRootFor(filepath.Dir(entry))
+			rootOf, rootErr := (Repositories{}).RootOf(filepath.Dir(entry))
+			commitErr := (CLI{Dir: sidecar}).Commit("sdd: capture", entry)
+			initErr := (Repositories{}).Init(fresh)
+			branch, branchErr := (Repositories{}).CurrentBranch(sidecar)
+			remote := (Repositories{}).RemoteURL(sidecar)
+			if err := os.Unsetenv("GIT_DIR"); err != nil {
+				t.Fatal(err)
+			}
+
+			resolved, _ := filepath.EvalSymlinks(sidecar)
+			if root != resolved && root != sidecar {
+				t.Errorf("RepoRootFor should name the repository at the path, got %q", root)
+			}
+			if rootErr != nil || (rootOf != resolved && rootOf != sidecar) {
+				t.Errorf("RootOf should name the repository at the path, got %q (%v)", rootOf, rootErr)
+			}
+			if commitErr != nil {
+				t.Errorf("Commit should reach the configured repository: %v", commitErr)
+			}
+			if files := commitFiles(t, sidecar); !slices.Contains(files, "graph/entry.md") {
+				t.Errorf("the entry should be committed in the configured repository; files = %v", files)
+			}
+			if subject := strings.TrimSpace(runGit(t, work, "log", "-1", "--format=%s")); subject != "seed" {
+				t.Errorf("the hook's repository should gain no commit, HEAD is %q", subject)
+			}
+			if initErr != nil {
+				t.Errorf("Init should create the repository at the path: %v", initErr)
+			}
+			if _, err := os.Stat(filepath.Join(fresh, ".git")); err != nil {
+				t.Errorf("Init should create the repository at the path: %v", err)
+			}
+			if branchErr != nil || branch != "graph-line" {
+				t.Errorf("CurrentBranch should read the repository at the path, got %q (%v)", branch, branchErr)
+			}
+			if remote != "https://example.test/sidecar.git" {
+				t.Errorf("RemoteURL should read the repository at the path, got %q", remote)
+			}
+		})
+	}
+}
+
+// A path with glob characters names that one file, not every file it matches.
+func TestCommit_TakesPathsLiterally(t *testing.T) {
+	dir := newTestRepo(t)
+	for _, name := range []string{"note*.txt", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("note\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Chdir(dir)
+	if err := (CLI{}).Commit("note", "note*.txt"); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	if files := commitFiles(t, dir); !slices.Equal(files, []string{"note*.txt"}) {
+		t.Errorf("the commit should record only the named file; files = %v", files)
+	}
+	if tracked := strings.Fields(runGit(t, dir, "ls-files")); slices.Contains(tracked, "notes.txt") {
+		t.Errorf("a file the name only matches as a glob should stay out of the index; tracked = %v", tracked)
+	}
+}
+
+// git commit with an empty pathspec records the whole index, so a commit naming
+// no path is refused.
+func TestCommit_RefusesNoPaths(t *testing.T) {
+	dir := newTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("staged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "staged.txt")
+	head := runGit(t, dir, "rev-parse", "HEAD")
+
+	t.Chdir(dir)
+	if err := (CLI{}).Commit("sdd: nothing"); err == nil {
+		t.Error("a commit naming no path should be refused")
+	}
+	if runGit(t, dir, "rev-parse", "HEAD") != head {
+		t.Errorf("a pre-staged file should not land in a commit naming no path; files = %v", commitFiles(t, dir))
+	}
+}
+
 // A commit meeting another process's index lock waits for it to clear rather
 // than failing: captures running beside a backfill hold the lock briefly.
 func TestCommit_WaitsOutAHeldIndexLock(t *testing.T) {

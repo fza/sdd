@@ -72,10 +72,14 @@ var switchingGraphRepo model.RepoID
 
 // resolveWorkProject resolves the project governing workRoot.
 func resolveWorkProject(workRoot string, graphClone func(model.RepoID) (string, error)) (meta.Project, error) {
+	return resolveWorkProjectWith(os.ReadFile, workRoot, graphClone)
+}
+
+func resolveWorkProjectWith(read meta.ReadFile, workRoot string, graphClone func(model.RepoID) (string, error)) (meta.Project, error) {
 	if switchingGraphRepo != "" {
-		return meta.ResolveSwitchedProject(workRoot, switchingGraphRepo, graphClone)
+		return meta.ResolveSwitchedProjectWith(read, workRoot, switchingGraphRepo, graphClone)
 	}
-	return meta.ResolveProject(workRoot, graphClone)
+	return meta.ResolveProjectWith(read, workRoot, graphClone)
 }
 
 // resolveLLMConfig builds the effective LLMConfig for a command from the
@@ -87,11 +91,16 @@ func resolveWorkProject(workRoot string, graphClone func(model.RepoID) (string, 
 // in any config layer propagates — broken config must not silently run on
 // defaults.
 func resolveLLMConfig(cmd *cli.Command) (model.LLMConfig, error) {
-	var cfg model.LLMConfig
 	fileCfg, err := loadConfig()
 	if err != nil {
-		return cfg, err
+		return model.LLMConfig{}, err
 	}
+	return llmConfigWithFlags(cmd, fileCfg), nil
+}
+
+// llmConfigWithFlags is resolveLLMConfig over the effective config fileCfg.
+func llmConfigWithFlags(cmd *cli.Command, fileCfg *model.PerRepoConfig) model.LLMConfig {
+	var cfg model.LLMConfig
 	if fileCfg != nil {
 		cfg = fileCfg.LLM
 	}
@@ -111,7 +120,7 @@ func resolveLLMConfig(cmd *cli.Command) (model.LLMConfig, error) {
 	if cmd.IsSet("concurrency") {
 		cfg.Concurrency = int(cmd.Int("concurrency"))
 	}
-	return cfg, nil
+	return cfg
 }
 
 // newRunner builds the composed llm.Runner this host injects everywhere: the
@@ -131,40 +140,46 @@ func newRunner(cmd *cli.Command, timeoutFlag string) (pkgllm.Runner, error) {
 
 // runnerConfig is the LLMConfig newRunner composes from.
 func runnerConfig(cmd *cli.Command, timeoutFlag string) (model.LLMConfig, error) {
-	cfg, err := resolveLLMConfig(cmd)
+	fileCfg, err := loadConfig()
 	if err != nil {
-		return cfg, err
+		return model.LLMConfig{}, err
 	}
-	if timeoutFlag != "" {
-		d, err := resolveTimeout(cmd, timeoutFlag)
-		if err != nil {
-			return cfg, err
-		}
-		if d > 0 {
-			cfg.Timeout = d.String()
-		}
+	return runnerConfigFrom(cmd, timeoutFlag, fileCfg), nil
+}
+
+// runnerConfigFrom is runnerConfig over the effective config fileCfg.
+func runnerConfigFrom(cmd *cli.Command, timeoutFlag string, fileCfg *model.PerRepoConfig) model.LLMConfig {
+	cfg := llmConfigWithFlags(cmd, fileCfg)
+	if timeoutFlag != "" && cmd.IsSet(timeoutFlag) && cmd.Duration(timeoutFlag) > 0 {
+		cfg.Timeout = cmd.Duration(timeoutFlag).String()
 	}
-	return cfg, nil
+	return cfg
 }
 
 // composedRunner is newRunner over a resolved LLMConfig.
 func composedRunner(cfg model.LLMConfig) (pkgllm.Runner, error) {
+	return composedRunnerIn(cfg, resolveSDDDir)
+}
+
+// composedRunnerIn is composedRunner for the project whose .sdd/ directory
+// sddDir resolves.
+func composedRunnerIn(cfg model.LLMConfig, sddDir func() (string, error)) (pkgllm.Runner, error) {
 	runner, err := factory.New(cfg)
 	if err != nil {
 		return nil, err
 	}
 	if cfg.DebugOn() {
-		sddDir, err := resolveSDDDir()
+		dir, err := sddDir()
 		if err != nil {
 			return nil, fmt.Errorf("llm.debug writes into the project's .sdd/ directory: %w", err)
 		}
-		runner = llmdebug.Transcribed(runner, filepath.Join(sddDir, llmdebug.Dir))
+		runner = llmdebug.Transcribed(runner, filepath.Join(dir, llmdebug.Dir))
 	}
 	log, err := usageLog()
 	if err != nil {
 		return nil, err
 	}
-	return log.Runner(pkgllm.Observed(runner, statsSink())), nil
+	return log.Runner(pkgllm.Observed(runner, statsSinkIn(sddDir))), nil
 }
 
 // statsSink is the recording sink both the chat runner and the embedder are
@@ -172,11 +187,17 @@ func composedRunner(cfg model.LLMConfig) (pkgllm.Runner, error) {
 // that `sdd stats` reads. Best-effort: outside an sdd repo, or when the sink
 // directory cannot be created, calls are logged but not recorded.
 func statsSink() pkgllm.StatsSink {
-	sddDir, err := resolveSDDDir()
+	return statsSinkIn(resolveSDDDir)
+}
+
+// statsSinkIn is statsSink for the project whose .sdd/ directory sddDir
+// resolves.
+func statsSinkIn(sddDir func() (string, error)) pkgllm.StatsSink {
+	dir, err := sddDir()
 	if err != nil {
 		return llmstats.Logged(nil)
 	}
-	fileSink, err := llmstats.NewFileSink(filepath.Join(sddDir, "stats"))
+	fileSink, err := llmstats.NewFileSink(filepath.Join(dir, "stats"))
 	if err != nil {
 		return llmstats.Logged(nil)
 	}
@@ -1679,11 +1700,7 @@ func recordedGraphDir(repoRoot, recorded string) (string, error) {
 // resolveGraphDir determines the graph directory from the --graph-dir flag
 // or by discovering .sdd/config.yaml. Errors if neither is available.
 func resolveGraphDir(cmd *cli.Command) (string, error) {
-	// Explicit flag takes priority.
-	if dir := cmd.String("graph-dir"); dir != "" {
-		if !filepath.IsAbs(dir) {
-			dir, _ = filepath.Abs(dir)
-		}
+	if dir, ok := graphDirFlag(cmd); ok {
 		return dir, nil
 	}
 
@@ -1696,6 +1713,19 @@ func resolveGraphDir(cmd *cli.Command) (string, error) {
 		return "", fmt.Errorf("reading .sdd/config.yaml: %w", err)
 	}
 	return meta.ResolveGraphDir(project.Root, cfg), nil
+}
+
+// graphDirFlag is the absolute --graph-dir, which takes priority over the
+// config, and whether it was given.
+func graphDirFlag(cmd *cli.Command) (string, bool) {
+	dir := cmd.String("graph-dir")
+	if dir == "" {
+		return "", false
+	}
+	if !filepath.IsAbs(dir) {
+		dir, _ = filepath.Abs(dir)
+	}
+	return dir, true
 }
 
 // resolveParticipantsFlag is the shared fallback rule for capture commands.
@@ -1789,7 +1819,12 @@ func resolveSDDDir() (string, error) {
 }
 
 func resolveProject() (meta.Project, error) {
-	project, clones, err := discoverProject()
+	return resolveProjectWith(os.ReadFile)
+}
+
+// resolveProjectWith is resolveProject reading the config files through read.
+func resolveProjectWith(read meta.ReadFile) (meta.Project, error) {
+	project, clones, err := discoverProjectWith(read)
 	if err != nil {
 		return meta.Project{}, err
 	}
@@ -1799,7 +1834,7 @@ func resolveProject() (meta.Project, error) {
 			return meta.Project{}, err
 		}
 	}
-	err = requireGraphInsideRepository(project)
+	err = requireGraphInsideRepository(read, project)
 	if err != nil {
 		return meta.Project{}, err
 	}
@@ -1809,6 +1844,10 @@ func resolveProject() (meta.Project, error) {
 // discoverProject finds the project governing the working directory without
 // making its graph clone.
 func discoverProject() (meta.Project, *repos.GraphClones, error) {
+	return discoverProjectWith(os.ReadFile)
+}
+
+func discoverProjectWith(read meta.ReadFile) (meta.Project, *repos.GraphClones, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return meta.Project{}, nil, fmt.Errorf("getting working directory: %w", err)
@@ -1826,7 +1865,7 @@ func discoverProject() (meta.Project, *repos.GraphClones, error) {
 		return meta.Project{}, nil, err
 	}
 	clones := repos.NewGraphClones(locations, git.GraphClones{}, gate, syncstate.CloneLocks{})
-	project, err := resolveWorkProject(workRoot, clones.Dir)
+	project, err := resolveWorkProjectWith(read, workRoot, clones.Dir)
 	if err != nil {
 		return meta.Project{}, nil, err
 	}
@@ -1854,33 +1893,30 @@ func ensureGraphClone(ctx context.Context, clones *repos.GraphClones, project me
 	return nil
 }
 
-// requireGraphInsideRepository refuses a graph_dir leading into another
-// repository: graph commits, the schema stamp and engine branches all belong to
-// the repository holding the project's .sdd/, so a graph kept apart is a
-// project of its own that the work repository names with project_dir.
-func requireGraphInsideRepository(project meta.Project) error {
-	cfg, err := meta.ReadLayoutConfig(project.SDDDir(), project.LocalConfigPath(localConfigOverride))
+// requireGraphInsideRepository refuses a project placed where its work
+// repository cannot point at it, and a graph_dir leading out of the project's
+// repository (meta.RequireGraphInProjectRepository).
+func requireGraphInsideRepository(read meta.ReadFile, project meta.Project) error {
+	cfg, err := meta.ReadLayoutConfigWith(read, project.SDDDir(), project.LocalConfigPath(localConfigOverride))
 	if err != nil {
 		return err
 	}
-	projectRepo := git.RepoRootFor(project.Root)
-	if project.Pointed() && projectRepo != "" && projectRepo == git.RepoRootFor(project.WorkRoot) {
-		return fmt.Errorf("project_dir in %s names %s, inside the repository at %s; the project needs a repository of its own", meta.SDDDir(project.WorkRoot), project.Root, projectRepo)
+	if project.Pointed() && project.GraphRepo == "" {
+		subject := fmt.Sprintf("project_dir in %s names %s, which", meta.SDDDir(project.WorkRoot), project.Root)
+		err = meta.RequireProjectApart(subject, project.WorkRoot, project.Root, repoRootFor)
+		if err != nil {
+			return err
+		}
+		err = meta.RequireProjectRepository(subject, project.Root, repoRootFor)
+		if err != nil {
+			return err
+		}
 	}
-	graphDir := meta.ResolveGraphDir(project.Root, cfg)
-	rel, err := filepath.Rel(project.Root, graphDir)
-	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil
-	}
-	graphRepo := git.RepoRootFor(graphDir)
-	if graphRepo == "" {
-		return fmt.Errorf("graph_dir in %s leads to %s, outside the project and outside any repository; keep the graph inside the project", project.SDDDir(), graphDir)
-	}
-	if projectRepo == "" || graphRepo == projectRepo {
-		return nil
-	}
-	return fmt.Errorf("graph_dir in %s leads into %s, a repository separate from %s; make the graph a project of its own (`sdd init` there) and set project_dir to that repository's root instead", project.SDDDir(), graphRepo, projectRepo)
+	return meta.RequireGraphInProjectRepository(project.SDDDir(), project.Root, meta.ResolveGraphDir(project.Root, cfg), repoRootFor)
 }
+
+// repoRootFor is git.RepoRootFor as a meta.RootOf.
+func repoRootFor(path string) (string, error) { return git.RepoRootFor(path), nil }
 
 // promptGraphDir runs an interactive prompt for the graph directory. Empty
 // input accepts the default; cancellation returns an error.
@@ -2211,6 +2247,7 @@ func initCmd() *cli.Command {
 			// A pointer at a folder holding no sdd project sets that project
 			// up first, asking what a fresh init asks.
 			projectMissing := false
+			var projectRoot string
 			if graphRepo != "" {
 				locations, err := repos.DefaultLocations()
 				if err != nil {
@@ -2227,11 +2264,12 @@ func initCmd() *cli.Command {
 				}
 				projectMissing = cloneCommitted == nil
 			} else if pointer {
-				projectRoot := projectDir
+				projectRoot = projectDir
 				if !filepath.IsAbs(projectRoot) {
 					projectRoot = filepath.Join(repoRoot, projectRoot)
 				}
-				projectSDDDir = meta.SDDDir(filepath.Clean(projectRoot))
+				projectRoot = filepath.Clean(projectRoot)
+				projectSDDDir = meta.SDDDir(projectRoot)
 				projectCommitted, _, err := meta.ReadConfigLayers(projectSDDDir, "")
 				if err != nil {
 					return fmt.Errorf("reading the project's configuration before init: %w", err)
@@ -2272,9 +2310,13 @@ func initCmd() *cli.Command {
 					missing = append(missing, "--participant NAME   (canonical author name)")
 				}
 				if len(missing) > 0 {
+					purpose := "to run non-interactively"
+					if projectMissing && projectRoot != "" {
+						purpose = "to set up the project in " + projectRoot + " non-interactively"
+					}
 					return fmt.Errorf(
-						"sdd init needs values for the following flags to run non-interactively:\n  %s",
-						strings.Join(missing, "\n  "),
+						"sdd init needs values for the following flags %s:\n  %s",
+						purpose, strings.Join(missing, "\n  "),
 					)
 				}
 			}
@@ -2312,8 +2354,12 @@ func initCmd() *cli.Command {
 					graphDir = model.DefaultGraphDir
 				}
 
-				graphRepoRoot := git.RepoRootFor(meta.ResolveGraphDir(repoRoot, &model.PerRepoConfig{GraphDir: graphDir}))
-				if graphRepoRoot != "" && graphRepoRoot != repoRoot {
+				absGraphDir := meta.ResolveGraphDir(repoRoot, &model.PerRepoConfig{GraphDir: graphDir})
+				graphRepoRoot := git.RepoRootFor(absGraphDir)
+				if graphRepoRoot == "" && !meta.WithinDir(repoRoot, absGraphDir) {
+					return fmt.Errorf("--graph-dir leads to %s, outside the project and outside any repository; keep the graph inside the project", absGraphDir)
+				}
+				if graphRepoRoot != "" && !meta.SameDir(graphRepoRoot, repoRoot) {
 					return fmt.Errorf("--graph-dir leads into %s, a repository separate from %s; point this repository at it with --project-dir instead", graphRepoRoot, repoRoot)
 				}
 				remoteURL = git.RemoteURL(repoRoot)
