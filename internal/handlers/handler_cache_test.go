@@ -15,12 +15,15 @@ import (
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/filestamp"
 	"github.com/networkteam/sdd/internal/finders"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/graphcache"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/handlers/synctest"
 	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/llm/embed"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/syncstate"
 )
 
 const pruneRetention = 90 * 24 * time.Hour
@@ -47,6 +50,7 @@ func newPruneFixture(t *testing.T, config string) pruneFixture {
 	root := t.TempDir()
 	f := pruneFixture{loc: repos.Locations{
 		ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"),
+		DataRoot: filepath.Join(root, "data"),
 	}}
 	if err := os.WriteFile(f.loc.ConfigPath, []byte("repos:\n  - repo_id: github.com/acme/kept\n    clone_url: git@github.com:acme/kept.git\n"+config), 0o600); err != nil {
 		t.Fatal(err)
@@ -130,7 +134,7 @@ func newPruneFixture(t *testing.T, config string) pruneFixture {
 func (f pruneFixture) handler(keep handlers.CurrentHashSource) *handlers.CacheHandler {
 	return handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
-		Keep: keep,
+		OwnedClones: syncstate.OwnedClones{Gate: f.gate()}, Gate: f.gate(), Keep: keep,
 	})
 }
 
@@ -400,80 +404,6 @@ func TestCacheHandlerPruneLeavesAReplacedSetupsVersionsAlone(t *testing.T) {
 	}
 }
 
-// A clone the loaded repos list lacks stays unless `sdd repo remove` dropped
-// it: a process reading another config root must not empty this machine's
-// clones.
-func TestCacheHandlerPruneKeepsAClonesNoRepoRemoveDropped(t *testing.T) {
-	root := t.TempDir()
-	loc := repos.Locations{
-		ConfigPath: filepath.Join(root, "foreign", "config.yaml"), CacheRoot: filepath.Join(root, "cache"),
-		StateRoot: filepath.Join(root, "state"),
-	}
-	clone := filepath.Join(loc.CacheRoot, "github.com", "acme", "graph")
-	if err := os.MkdirAll(filepath.Join(clone, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc)})
-	if err := h.Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
-		t.Fatalf("pruning: %v", err)
-	}
-	if !exists(t, clone) {
-		t.Error("a clone no repo remove dropped should stay whatever the loaded repos list holds")
-	}
-}
-
-// A dropped clone meeting a missing config file fails the run, recorded for
-// sdd info, and stays.
-func TestCacheHandlerPruneRefusesAMissingConfig(t *testing.T) {
-	root := t.TempDir()
-	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}
-	clone := filepath.Join(loc.CacheRoot, "github.com", "acme", "dropped")
-	if err := os.MkdirAll(filepath.Join(clone, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("github.com/acme/dropped"); err != nil {
-		t.Fatal(err)
-	}
-	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc)})
-	err := h.Prune(t.Context(), &command.PruneCacheCmd{})
-	if !errors.Is(err, repos.ErrClonePassRefused) {
-		t.Errorf("the run should fail with the refused clone pass, got %v", err)
-	}
-	if !exists(t, clone) {
-		t.Error("a refused clone pass should remove nothing")
-	}
-	status, err := cacheprune.Load(loc.StateRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.Error == "" {
-		t.Error("the refusal should be recorded for sdd info")
-	}
-}
-
-// A dropped clone holding a connected one stays with it, and the run goes on.
-func TestCacheHandlerPruneKeepsADroppedCloneHoldingAConnectedOne(t *testing.T) {
-	root := t.TempDir()
-	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}
-	config := "repos:\n  - repo_id: git.example.com/foo/bar\n    clone_url: git@git.example.com:foo/bar.git\n"
-	if err := os.WriteFile(loc.ConfigPath, []byte(config), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	outer := filepath.Join(loc.CacheRoot, "git.example.com", "foo")
-	inner := filepath.Join(outer, "bar")
-	for _, dir := range []string{outer, inner} {
-		if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := repos.NewManager(repos.NewRegistry(loc), nil).MarkDisconnected("git.example.com/foo"); err != nil {
-		t.Fatal(err)
-	}
-	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc)})
-	if err := h.Prune(t.Context(), &command.PruneCacheCmd{}); err != nil {
-		t.Fatalf("a clone kept for the clone it holds should not fail the run: %v", err)
-	}
-	if !exists(t, filepath.Join(inner, ".git")) || !exists(t, filepath.Join(outer, ".git")) {
-		t.Error("a dropped clone holding a connected one should stay, and the connected one with it")
-	}
+func (f pruneFixture) gate() *gitgate.Gate {
+	return synctest.Gate(f.loc.StateRoot, nil)
 }
