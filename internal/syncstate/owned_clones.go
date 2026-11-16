@@ -40,6 +40,10 @@ func (o OwnedClones) Unpushed(ctx context.Context, dir string) (bool, error) {
 	return git.CLI{Dir: dir}.HoldsUnpushed(ctx)
 }
 
+func (o OwnedClones) SetAside(_ context.Context, dir string) (bool, error) {
+	return git.CLI{Dir: dir}.HoldsSetAside()
+}
+
 func (o OwnedClones) LastAttempt(ctx context.Context, dir string) (time.Time, error) {
 	if o.Gate == nil {
 		return time.Time{}, repos.ErrNoGate

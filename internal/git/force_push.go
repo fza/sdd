@@ -189,6 +189,19 @@ func (c CLI) setAsideDir() string {
 	return filepath.Join(c.Dir, ".git", setAsideDirName)
 }
 
+// HoldsSetAside reports whether the clone at Dir holds entries a force push
+// set aside.
+func (c CLI) HoldsSetAside() (bool, error) {
+	files, err := os.ReadDir(filepath.Join(c.setAsideDir(), setAsideFiles))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reading the set-aside entries: %w", err)
+	}
+	return len(files) > 0, nil
+}
+
 // setAside keeps files beside the clone, noting the rewrite they came from;
 // files the rewritten upstream holds stay with it.
 func (c CLI) setAside(previous, upstream string, files map[string]string) error {
