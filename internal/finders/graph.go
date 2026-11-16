@@ -55,6 +55,11 @@ func (s filesystemSource) GraphDocuments() (GraphDocuments, error) {
 	proven := s.cache != nil
 	walkErr := filepath.WalkDir(s.dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			// git keeps no empty folder, so a fresh clone of a graph without entries has none.
+			if path == s.dir && errors.Is(err, fs.ErrNotExist) {
+				proven = false
+				return fs.SkipAll
+			}
 			return err
 		}
 		if model.IsWIPDir(d) {

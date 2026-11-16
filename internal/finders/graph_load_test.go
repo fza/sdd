@@ -74,3 +74,36 @@ func TestLoadGraphFailsOnAnUnreadableEntry(t *testing.T) {
 		t.Error("an entry file that cannot be read should fail the load")
 	}
 }
+
+// A fresh clone of a project with no entries has no graph folder yet: git
+// tracks no empty folder.
+func TestLoadGraphReadsAMissingGraphFolderAsEmpty(t *testing.T) {
+	graphDir := filepath.Join(t.TempDir(), ".sdd", "graph")
+
+	g, err := finders.New(finders.Options{}).LoadGraph(graphDir)
+	if err != nil {
+		t.Fatalf("a missing graph folder should load as an empty graph, got %v", err)
+	}
+	empty, err := finders.New(finders.Options{}).LoadGraph(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.Entries) != len(empty.Entries) {
+		t.Errorf("a missing graph folder should load like an empty one: %d entries, want %d", len(g.Entries), len(empty.Entries))
+	}
+	if _, err := os.Stat(graphDir); !os.IsNotExist(err) {
+		t.Errorf("loading should not create the graph folder, stat: %v", err)
+	}
+}
+
+func TestLoadGraphFailsWhenTheGraphFolderCannotBeRead(t *testing.T) {
+	graphDir := filepath.Join(t.TempDir(), "graph")
+	if err := os.Mkdir(graphDir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(graphDir, 0o755) })
+
+	if _, err := finders.New(finders.Options{}).LoadGraph(graphDir); err == nil {
+		t.Error("a graph folder that cannot be read should fail the load")
+	}
+}
