@@ -425,8 +425,8 @@ func (s *toolSet) register(srv *mcp.Server) {
 		Name: "next",
 		Description: "Advance a procedure instance in the session named by session (required): send state " +
 			"fields per the served report_schema, or answer a pending chooser with {chooser, choice, " +
-			"userWords?, reason?, fields?}. User choosers must carry the user's answer relayed verbatim in " +
-			"userWords, unless the served schema offers reason for a choice you decide yourself. For an unfinished operation, omit report and pass its exact retry_ref to " +
+			"userWords?, reason?, fields?}. User choosers must carry the user's own message verbatim in " +
+			"userWords, never words of yours, unless the served schema offers reason for a choice you decide yourself. For an unfinished operation, omit report and pass its exact retry_ref to " +
 			"continue or cancel_ref to leave its effects in place and return to the preceding interaction. " +
 			"Other transitions remain blocked until the operation is retried or cancelled. " +
 			"When a move ends, the response carries the session shell's serve — where the " +
