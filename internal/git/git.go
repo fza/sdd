@@ -19,6 +19,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/networkteam/sdd/internal/model"
 )
 
 // CLI is the exec-based adapter: a struct whose methods shell out to the git
@@ -463,6 +465,35 @@ func (c CLI) MergePull(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("git pull --no-rebase: %w", err)
 		}
 		return "", fmt.Errorf("git pull --no-rebase: %s", msg)
+	}
+	return msg, nil
+}
+
+// MergeFetched merges the branch's upstream as last fetched, reaching no
+// remote: the merge of MergePull without its fetch. Production
+// handlers.Puller.
+func (c CLI) MergeFetched(ctx context.Context) (string, error) {
+	upstream, err := c.UpstreamRef(ctx)
+	if err != nil {
+		return "", err
+	}
+	if upstream == "" {
+		return "", errors.New("the current branch has no upstream to merge")
+	}
+	if c.graphClone() {
+		err = c.mergeClone(ctx, upstream, model.GraphMergeMessage(upstream))
+		if err != nil {
+			return "", err
+		}
+		return "merged " + upstream, nil
+	}
+	if err := c.EnsureMergeDriver(ctx); err != nil {
+		return "", fmt.Errorf("setting up the entry merge driver: %w", err)
+	}
+	out, err := c.command(ctx, "merge", "--no-edit", upstream).CombinedOutput()
+	msg := strings.TrimSpace(string(out))
+	if err != nil {
+		return "", fmt.Errorf("git merge %s: %s (%w)", upstream, msg, err)
 	}
 	return msg, nil
 }

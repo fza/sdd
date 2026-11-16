@@ -58,7 +58,7 @@ func syncCmd() *cli.Command {
 							fmt.Fprintln(cmd.Writer, output)
 						}
 					},
-					OnDeferred: func(next time.Time) { printDeferred(cmd.Writer, "pull", next) },
+					OnDeferred: func(next time.Time) { printDeferred(cmd.Writer, "fetch", next) },
 				})
 				if err != nil {
 					return err

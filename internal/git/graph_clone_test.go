@@ -240,6 +240,33 @@ func TestKeepGraphCloneKeepsTheRuntimeDirectory(t *testing.T) {
 	}
 }
 
+// In the clone, the merge of what was fetched is sdd's: the upkeep keeps it.
+func TestMergeFetchedRecordsTheCloneMerge(t *testing.T) {
+	remote := seededRemote(t)
+	dir := sddClone(t, model.ProtocolHTTPS)
+	repo := git.CLI{Dir: dir}
+	sddEntry := ".sdd/graph/2026/11/07-130000-s-tac-sdd.md"
+	writeFile(t, dir, sddEntry, "---\ntype: signal\n---\nby sdd\n")
+	err := repo.Commit("sdd: capture", sddEntry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote.Commit(t, "upstream capture", map[string]string{".sdd/graph/2026/11/07-140000-s-tac-ups.md": "---\ntype: signal\n---\nupstream\n"})
+	err = repo.Fetch(admitted(t, context.Background()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = repo.MergeFetched(admitted(t, context.Background()))
+	if err != nil {
+		t.Fatalf("MergeFetched: %v", err)
+	}
+	head := strings.TrimSpace(test.Git(t, dir, "rev-parse", "HEAD"))
+	if !strings.Contains(readFile(t, dir, ".git/"+model.GraphCloneCommits), head) {
+		t.Error("the clone's merge should be recorded as sdd's")
+	}
+}
+
 // A hand commit made right before a push is dropped by the push itself.
 func TestKeepGraphCloneRunsBeforeAnyHandCommitIsPushed(t *testing.T) {
 	remote := seededRemote(t)

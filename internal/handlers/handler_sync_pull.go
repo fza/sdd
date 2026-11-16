@@ -12,8 +12,9 @@ import (
 // SyncPull pulls the shared graph from upstream using a merge (never a
 // rebase), so background sync never rewrites the shared history. It refuses
 // on a dirty working tree and defers to the user with an actionable message;
-// on a clean tree it runs the merge pull when the git gate admits it and
-// reports git's output through the command's OnPulled callback.
+// on a clean tree it runs the merge pull when the git gate admits it, else
+// merges the upstream as last fetched, and reports git's output through the
+// command's OnPulled callback.
 func (h *Handler) SyncPull(ctx context.Context, cmd *command.SyncPullCmd) error {
 	if h.puller == nil {
 		return errors.New("sync pull is unavailable: no git surface configured")
@@ -38,7 +39,7 @@ func (h *Handler) SyncPull(ctx context.Context, cmd *command.SyncPullCmd) error 
 		if cmd.OnDeferred != nil {
 			cmd.OnDeferred(deferred.Next)
 		}
-		return nil
+		out, err = h.puller.MergeFetched(ctx)
 	}
 	if err != nil {
 		return fmt.Errorf("merge pull: %w", err)
