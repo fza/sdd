@@ -1343,7 +1343,7 @@ func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest,
 			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Agent: dispatch.Agent, Model: dispatch.Model, Effort: dispatch.Effort, Runner: dispatch.Runner,
 		})
 	}
-	framing, err := ss.root.Framing(ctx, s.requestIdentity(req))
+	framing, err := ss.root.FramingBlocksFor(ctx, s.requestIdentity(req), serve.Framing)
 	if err != nil {
 		return ServeResult{}, err
 	}
@@ -1416,7 +1416,7 @@ func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, s
 	if source.Instructions != "" {
 		result.Instructions += "\n\n" + source.Instructions
 	}
-	framing, err := ss.root.Framing(ctx, s.requestIdentity(req))
+	framing, err := ss.root.FramingBlocks(ctx, s.requestIdentity(req))
 	if err != nil {
 		return ResumeSessionResult{}, err
 	}

@@ -243,6 +243,9 @@ type Step struct {
 	// gate once its delegate ended without delivering: the report ends the
 	// instance's live forks with it as their reason, so DelegateEnded applies.
 	DelegateGone string
+	// Framing names the session framing blocks a serve of this step carries,
+	// by block name; nil carries them all.
+	Framing []string
 }
 
 // Terminal transition targets. A procedure ends by transitioning to one of
@@ -353,6 +356,7 @@ type stepYAML struct {
 	AwaitAny      []string         `yaml:"awaitAny"`
 	DelegateEnded string           `yaml:"delegateEnded"`
 	DelegateGone  string           `yaml:"delegateGone"`
+	Framing       *[]string        `yaml:"framing"`
 }
 
 // decodeStrict re-encodes a retained YAML node and decodes it with unknown
@@ -764,6 +768,22 @@ func parseStep(sy stepYAML, index int) (*Step, []string) {
 			addProblem("%s: unattended answer %q is not an option", prefix, u.Answer)
 		}
 	}
+	if sy.Framing != nil {
+		if len(*sy.Framing) == 0 {
+			addProblem("%s: framing names no block; name the blocks the step serves, or leave framing out to serve them all", prefix)
+		}
+		for _, name := range *sy.Framing {
+			switch {
+			case !isValidFuncName(name):
+				addProblem("%s: framing names %q, not a block name (identifiers only)", prefix, name)
+			case slices.Contains(step.Framing, name):
+				addProblem("%s: framing names %q twice", prefix, name)
+			default:
+				step.Framing = append(step.Framing, name)
+			}
+		}
+	}
+
 	for _, f := range sy.Collect {
 		cf, err := parseCollectField(f)
 		if err != nil {

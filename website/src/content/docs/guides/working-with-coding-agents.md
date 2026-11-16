@@ -47,6 +47,8 @@ sdd cannot tell whether a compaction happened, so it repeats a piece of text onl
   ← … serve each entry ⟦h4zt⟧ once per session …   full text, fresh tag
 ```
 
+A step that only waits, launches the verifier or confirms a summary carries only the session's basic facts (participant, language, search, branch), not the working principles or the recent graph movement.
+
 In practice it often works better to avoid compaction in long work. Capture the current state, for example as progress notes on the implementation or a partial done, and continue in a fresh agent session.
 
 ## Resume a session in a fresh agent session

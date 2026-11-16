@@ -7,6 +7,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // Proofs is what a call lists about the pieces served to it before; the
@@ -79,14 +80,14 @@ func carried(ids []string, text string) []string {
 // out, as the agent named it itself, except for the next proof it asks for.
 // A block holds the entries it carries in full; a block is never cut for
 // them.
-func composeFraming(ss *shellSession, blocks []string) string {
+func composeFraming(ss *shellSession, blocks []types.ServeLane) string {
 	var served, held []string
-	for i, block := range blocks {
-		if block == "" {
+	for _, block := range blocks {
+		if block.Text == "" {
 			continue
 		}
-		name := fmt.Sprintf("framing block %d", i+1)
-		piece := ss.root.ServeText(name, block, ss.root.FramingFullIDs(block))
+		name := "framing " + block.Name
+		piece := ss.root.ServeText(name, block.Text, ss.root.FramingFullIDs(block.Text))
 		if !piece.Held {
 			served = append(served, piece.Text)
 			continue
