@@ -52,6 +52,9 @@ type Options struct {
 	// from this process, working from dir. Nil leaves background pruning off,
 	// as for a host running commands in-process.
 	LaunchCachePrune func(dir, logPath string) error
+	// SecretRulesGitHub is where the daily pass fetches gitleaks' newest rule
+	// file. Nil fetches nothing, so no test reaches GitHub.
+	SecretRulesGitHub *secrets.GitHub
 }
 
 // localConfigOverride carries --local-config: the file that stands in for
@@ -565,7 +568,7 @@ func New(options Options) *cli.Command {
 			summarizeCmd(),
 			migrateCmd(),
 			indexCmd(),
-			cacheCmd(),
+			cacheCmd(options.SecretRulesGitHub),
 			searchCmd(),
 			gatherCmd(),
 			dismissCmd(),

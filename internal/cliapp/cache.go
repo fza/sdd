@@ -29,7 +29,7 @@ const (
 	scheduledFlag    = "scheduled"
 )
 
-func cacheCmd() *cli.Command {
+func cacheCmd(secretRulesGitHub *secrets.GitHub) *cli.Command {
 	return &cli.Command{
 		Name:  cacheCommandName,
 		Usage: "Manage the machine-global cache",
@@ -73,12 +73,16 @@ searches always stay. sdd index gc removes more on request.`,
 					return err
 				}
 				scheduled := cmd.Bool(scheduledFlag)
+				var secretRules handlers.SecretRulesUpdater
+				if secretRulesGitHub != nil {
+					secretRules = secrets.NewUpdater(secretRulesDir(loc), secretRulesGitHub, nil)
+				}
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
 					OwnedClones: syncstate.OwnedClones{Gate: gate}, Gate: gate, Keep: keep,
 					State:         stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
 					DeclaredHooks: hooks.DeclaredIn(loc.ConfigPath, repos.NewGraphClones(loc, git.GraphClones{}, gate).Dir),
-					SecretRules:   secrets.NewUpdater(secretRulesDir(loc), secrets.NewGitHub("", "", nil), nil),
+					SecretRules:   secretRules,
 				})
 				return h.Prune(ctx, &command.PruneCacheCmd{
 					Scheduled: scheduled,
