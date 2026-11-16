@@ -33,7 +33,7 @@ const (
 
 // cloneExcludeLines keep sdd's own files in the clone out of git and out of
 // the upkeep's clean.
-var cloneExcludeLines = []string{model.GraphCloneExcludeLine, "/.sdd/tmp/", "/.sdd/config.local.yaml"}
+var cloneExcludeLines = []string{model.GraphCloneExcludeLine, "/.sdd/tmp/", "/.sdd/config.local.yaml", ".sdd-runtime/"}
 
 // IsGraphClone reports whether dir is the root of an sdd-owned graph clone.
 func IsGraphClone(dir string) bool {

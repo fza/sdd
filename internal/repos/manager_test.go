@@ -7,8 +7,10 @@ import (
 
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/gitgate"
+	"github.com/networkteam/sdd/internal/handlers/synctest"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/syncstate"
 	"github.com/networkteam/sdd/test"
 )
 
@@ -29,7 +31,7 @@ func TestEnsureDropsTheFormerCacheClone(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			loc := testLocations(t)
-			mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, &countingGit{}, fixedGate(t)))
+			mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, &countingGit{}, fixedGate(t), synctest.CloneLocks{}))
 			cache := filepath.Join(loc.CacheRoot, filepath.FromSlash(string(repoID)))
 			for _, sub := range tc.contents {
 				err := os.MkdirAll(filepath.Join(cache, sub), 0o755)
@@ -77,7 +79,7 @@ func TestEnsureClonesFromTheConnectedURL(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			git := &countingGit{}
 			loc := testLocations(t)
-			mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, fixedGate(t)))
+			mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, fixedGate(t), synctest.CloneLocks{}))
 			_, _, err := mgr.Ensure(t.Context(), repos.ConnectedRepo{RepoID: repoID, CloneURL: tc.url})
 			if err != nil {
 				t.Fatal(err)
@@ -95,7 +97,7 @@ func TestStageThenPlaceAtTheDeclaredID(t *testing.T) {
 	const repoID = model.RepoID("example.test/acme/other")
 	git := &countingGit{files: map[string]string{".sdd/config.yaml": "repo_id: example.test/acme/other\n"}}
 	loc := testLocations(t)
-	mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, fixedGate(t)))
+	mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, fixedGate(t), synctest.CloneLocks{}))
 
 	staged, remove, err := mgr.Stage(t.Context(), "/srv/git/other")
 	if err != nil {
@@ -149,7 +151,7 @@ func TestEnsureClonesAConnectedRepoWithGit(t *testing.T) {
 	})
 	loc := testLocations(t)
 	gate := gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }})
-	mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git.GraphClones{}, gate))
+	mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git.GraphClones{}, gate, syncstate.CloneLocks{}))
 
 	dir, cloned, err := mgr.Ensure(t.Context(), repos.ConnectedRepo{RepoID: repoID, CloneURL: remote.Bare})
 	if err != nil || !cloned {

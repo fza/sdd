@@ -86,7 +86,7 @@ func TestRefreshDependencyClosure(t *testing.T) {
 		RepoID:       "example.test/local",
 		Dependencies: []model.RepoID{"example.test/dep", "example.test/failing", "example.test/unconnected"},
 	}})
-	manager := repos.NewManager(reg, repos.NewGraphClones(loc, &synctest.CloneGit{}, synctest.Gate(t.TempDir(), nil)))
+	manager := repos.NewManager(reg, repos.NewGraphClones(loc, &synctest.CloneGit{}, synctest.Gate(t.TempDir(), nil), synctest.CloneLocks{}))
 	h := handlers.New(handlers.Options{Reader: reader, Repos: manager, CloneRound: round})
 
 	var failed, unconnected []model.RepoID

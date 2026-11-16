@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/networkteam/sdd/internal/gitgate"
+	"github.com/networkteam/sdd/internal/handlers/synctest"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 )
@@ -101,7 +102,7 @@ func testLocations(t *testing.T) repos.Locations {
 func TestManagerClonesThroughTheGate(t *testing.T) {
 	git := &countingGit{remote: "https://example.test/acme/other.git"}
 	loc := testLocations(t)
-	mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, fixedGate(t)))
+	mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, fixedGate(t), synctest.CloneLocks{}))
 	repo := repos.ConnectedRepo{RepoID: "example.test/acme/other", CloneURL: "https://example.test/acme/other.git"}
 
 	due, _, err := mgr.FetchDue(t.Context(), repo)
@@ -131,7 +132,7 @@ func TestManagerClonesThroughTheGate(t *testing.T) {
 func TestManagerWithoutGateRefusesToClone(t *testing.T) {
 	git := &countingGit{}
 	loc := testLocations(t)
-	mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, nil))
+	mgr := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, nil, synctest.CloneLocks{}))
 	repo := repos.ConnectedRepo{RepoID: "example.test/acme/other", CloneURL: "https://example.test/acme/other.git"}
 
 	_, _, err := mgr.Ensure(t.Context(), repo)
@@ -146,7 +147,7 @@ func TestManagerWithoutGateRefusesToClone(t *testing.T) {
 
 func TestGraphClonesPassTheGate(t *testing.T) {
 	git := &countingGit{}
-	clones := repos.NewGraphClones(repos.Locations{DataRoot: t.TempDir()}, git, fixedGate(t))
+	clones := repos.NewGraphClones(repos.Locations{DataRoot: t.TempDir()}, git, fixedGate(t), synctest.CloneLocks{})
 	repoID := model.RepoID("example.test/acme/app-sdd")
 
 	_, cloned, err := clones.Ensure(t.Context(), repoID, "git@example.test:acme/app.git")
@@ -169,7 +170,7 @@ func TestGraphClonesPassTheGate(t *testing.T) {
 
 func TestGraphClonesWithoutGateRefuseToClone(t *testing.T) {
 	git := &countingGit{}
-	clones := repos.NewGraphClones(repos.Locations{DataRoot: t.TempDir()}, git, nil)
+	clones := repos.NewGraphClones(repos.Locations{DataRoot: t.TempDir()}, git, nil, synctest.CloneLocks{})
 
 	_, _, err := clones.Ensure(t.Context(), "example.test/acme/app-sdd", "")
 	if !errors.Is(err, repos.ErrNoGate) || git.clones != 0 {
@@ -188,7 +189,7 @@ func TestConeChangesRunInsideAGateAdmission(t *testing.T) {
 		Limits:   func(string) gitgate.Limits { return model.DefaultGitLimits() },
 		Now:      func() time.Time { return now },
 	})
-	clones := repos.NewGraphClones(testLocations(t), git, gate)
+	clones := repos.NewGraphClones(testLocations(t), git, gate, synctest.CloneLocks{})
 	repoID := model.RepoID("example.test/acme/app-sdd")
 
 	dir, cloned, err := clones.Ensure(t.Context(), repoID, "")

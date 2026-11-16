@@ -28,7 +28,7 @@ func TestConnectedDependenciesRebuildAVanishedClone(t *testing.T) {
 	builds := 0
 	deps := &connectedDependencies{
 		registry: registry,
-		manager:  repos.NewManager(registry, repos.NewGraphClones(loc, cloneGit, synctest.Gate(loc.StateRoot, nil))),
+		manager:  repos.NewManager(registry, repos.NewGraphClones(loc, cloneGit, synctest.Gate(loc.StateRoot, nil), synctest.CloneLocks{})),
 		build: func(sdd.RepoID, string, *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
 			builds++
 			return &sdd.ProjectRuntime{}, nil
@@ -70,7 +70,7 @@ func TestConnectedDependenciesNameTheFixForADeferredClone(t *testing.T) {
 	registry := repos.NewRegistry(loc)
 	deps := &connectedDependencies{
 		registry: registry,
-		manager:  repos.NewManager(registry, repos.NewGraphClones(loc, cloneGit, synctest.Gate(loc.StateRoot, nil))),
+		manager:  repos.NewManager(registry, repos.NewGraphClones(loc, cloneGit, synctest.Gate(loc.StateRoot, nil), synctest.CloneLocks{})),
 		build: func(sdd.RepoID, string, *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
 			return &sdd.ProjectRuntime{}, nil
 		},

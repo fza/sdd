@@ -40,7 +40,7 @@ func repoCmd() *cli.Command {
 					if err != nil {
 						return err
 					}
-					dir, err := repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir(model.RepoID(cmd.Args().First()))
+					dir, err := repos.NewGraphClones(locations, git.GraphClones{}, nil, nil).Dir(model.RepoID(cmd.Args().First()))
 					if err != nil {
 						return err
 					}

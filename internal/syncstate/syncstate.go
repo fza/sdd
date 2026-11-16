@@ -226,6 +226,19 @@ func Unlock(lock *flock.Flock) {
 	}
 }
 
+// CloneLocks is the repos.CloneLocker of sdd-owned clones: it waits for the
+// sync lock, then the graph lock, of the clone.
+type CloneLocks struct{}
+
+func (CloneLocks) LockClone(ctx context.Context, dir, graphDir string) (func(), error) {
+	common, err := git.CLI{Dir: dir}.CommonDir(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("locating the sync state of %s: %w", dir, err)
+	}
+	state := &State{dir: filepath.Join(common, "sdd"), graphDir: filepath.Join(dir, filepath.FromSlash(graphDir))}
+	return state.Lock(ctx)
+}
+
 // CheckoutLocks are the locks of one checkout's graph directory a title
 // backfill runs under: the graph lock every writer takes, and the lock that
 // keeps one backfill running per checkout.

@@ -62,7 +62,7 @@ func syncedClone(t *testing.T, files map[string]string) (*gitRepository, string)
 	maps.Copy(seed, files)
 	remote.Commit(t, "sdd: init", seed)
 	gate := gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }})
-	dir, _, err := repos.NewGraphClones(repos.Locations{DataRoot: canonicalTempDir(t)}, git.GraphClones{}, gate).Ensure(t.Context(), cloneRepoID, "")
+	dir, _, err := repos.NewGraphClones(repos.Locations{DataRoot: canonicalTempDir(t)}, git.GraphClones{}, gate, syncstate.CloneLocks{}).Ensure(t.Context(), cloneRepoID, "")
 	if err != nil {
 		t.Fatal(err)
 	}

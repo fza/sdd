@@ -62,3 +62,8 @@ func (g *CloneGit) RemoteURL(_ context.Context, dir string) (string, error) {
 }
 
 func (g *CloneGit) ExpandURL(_ context.Context, url string) (string, error) { return url, nil }
+
+// CloneLocks is a repos.CloneLocker for clones no other process touches.
+type CloneLocks struct{}
+
+func (CloneLocks) LockClone(context.Context, string, string) (func(), error) { return func() {}, nil }
