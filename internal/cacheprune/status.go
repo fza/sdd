@@ -158,9 +158,15 @@ func LaunchIfDue(ctx context.Context, stateRoot string, now time.Time, launch fu
 	if launchErr == nil {
 		return nil
 	}
+	return RecordFailure(ctx, stateRoot, now, fmt.Errorf("starting the run: %w", launchErr))
+}
+
+// RecordFailure records failed as the failure of a run that ended at now
+// before it pruned anything, for the next command to report.
+func RecordFailure(ctx context.Context, stateRoot string, now time.Time, failed error) error {
 	return Update(ctx, stateRoot, func(s *model.CachePruneStatus) {
 		s.FinishedAt = now
-		s.Error = fmt.Sprintf("starting the run: %v", launchErr)
+		s.Error = failed.Error()
 		s.Reported = false
 	})
 }

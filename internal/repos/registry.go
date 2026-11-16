@@ -47,6 +47,12 @@ func (r *Registry) CacheRoot() string {
 	return r.loc.CacheRoot
 }
 
+// MixedStateXDG is Locations.MixedStateXDG of the locations the registry
+// works against.
+func (r *Registry) MixedStateXDG() string {
+	return r.loc.MixedStateXDG
+}
+
 // CloneDir resolves where the sdd-owned clone of repoID lives, one per
 // repository id under <DataRoot>/repos.
 func (r *Registry) CloneDir(repoID model.RepoID) (string, error) {

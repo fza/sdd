@@ -108,6 +108,10 @@ func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
 // process runs one; a scheduled pass leaves quietly instead.
 var ErrCachePruneRunning = errors.New("another cache pruning run is in progress")
 
+// ErrStateSweepRefused fails a pass whose state root may be another setup's;
+// the pass then sweeps no session or project state.
+var ErrStateSweepRefused = errors.New("refusing to sweep the state folder")
+
 // Prune runs one pruning pass over the whole cache and records its result in
 // the pruning status, failure included, so the next command can report it.
 func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (err error) {
@@ -134,7 +138,7 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 		if err != nil {
 			return err
 		}
-		if now.Sub(status.StartedAt) < model.CachePruneInterval {
+		if status.StartedRecently(now) {
 			return nil
 		}
 	}
@@ -218,9 +222,12 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time, scheduled bool)
 	errs = append(errs, h.sweepLeftovers(now, &counts)...)
 	errs = append(errs, h.pruneRecords(ctx, now, retention, &counts)...)
 
-	if h.state == nil {
+	switch {
+	case h.state == nil:
 		errs = append(errs, errors.New("cache pruning has no sweeper for the state folder"))
-	} else {
+	case h.registry.MixedStateXDG() != "":
+		errs = append(errs, fmt.Errorf("%w %s: the state, cache and data directories come from mixed sources (%s); set all three or none", ErrStateSweepRefused, h.stateRoot, h.registry.MixedStateXDG()))
+	default:
 		swept, err := h.state.Sweep(ctx, now, sessionRetention, retention)
 		counts.Add(swept)
 		if err != nil {

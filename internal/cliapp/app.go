@@ -570,12 +570,18 @@ func New(options Options) *cli.Command {
 			warnUnknownConfigKeys(ctx)
 			err := useSecretRules(ctx)
 			if err != nil && !repairingConfig(configWrite, err) && !repointing {
+				if isScheduledCachePrune(cmd.Args()) {
+					err = recordScheduledPruneFailure(ctx, err)
+				}
 				return ctx, err
 			}
 
 			if checksStrays(cmd.Args().First()) {
 				err := strayRefusal(ctx)
 				if err != nil && !repairingConfig(configWrite, err) && !repointing {
+					if isScheduledCachePrune(cmd.Args()) {
+						err = recordScheduledPruneFailure(ctx, err)
+					}
 					return ctx, err
 				}
 			}

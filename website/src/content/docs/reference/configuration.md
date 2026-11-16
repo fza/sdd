@@ -484,10 +484,10 @@ Once a day sdd starts `sdd cache prune` in the background, detached from the com
 
 | What | When it goes |
 | --- | --- |
-| A session that ended (concluded or abandoned), with its staged attachments | `sessions.retention` after it ended. An open session stays, however long it is idle. |
+| A session that ended (concluded or abandoned), with its staged attachments | `sessions.retention` after it ended, also one older sdd versions logged in the `.sdd/sessions` of a checkout sdd recorded. An open session stays, however long it is idle. |
 | A staged attachment | Once the entry it is attached to is published, unless another capture in progress names it; the rest of a session's when the session ends. One a pending capture still needs stays until that capture is retried or cancelled. |
 | A project's relevance ledger and its empty session folder | After `cache.retention` without the project being used. Open sessions stay. |
-| A project's staged attachments no session owns | After `cache.retention` without the project being used. Those of a session open in a checkout's `.sdd/sessions`, where older sdd versions logged sessions, stay: sdd records each checkout it opens the project from and reads the sessions there. |
+| A project's staged attachments no session owns | After `cache.retention` without the project being used. Those of a session open in a checkout's `.sdd/sessions`, where older sdd versions logged sessions, stay: sdd records each checkout it opens the project from and reads the sessions there. So do all the project's staged attachments while no checkout is recorded, or while a recorded one is missing from disk, as on an unmounted volume. |
 | An older version of an entry in the search index | `index.replaced_retention` after a newer version replaced it, unless a checkout that searched the index within `cache.retention` still reads it. The version the current checkout searches always stays. |
 | Index data in an older format | `index.replaced_retention` after its last use. |
 | The index of an embedding setup you switched away from | `index.replaced_retention` after its last use, once the project's index under another setup was used later. Switching back afterwards embeds the graph again. |
@@ -501,7 +501,7 @@ A session log sdd cannot read stays, with its staged attachments: it may belong 
 
 While `secrets.rules_update` is `daily`, the background run also asks GitHub for gitleaks' latest release and fetches its rule file into `~/.cache/sdd/secret-rules/` when it is newer than the one in use ([credential scan](/sdd/working-modes/#capture)). Each request gives up after 20 seconds. A failed or rejected fetch keeps the rule file in use, is logged as a warning and does not stop the run; `sdd info` shows it with its reason. `sdd cache prune` by hand fetches nothing.
 
-The run removes no clone and fails when a clone would go while the user-global config file is missing or lists no repos, or while some of `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_DATA_HOME` are set and others are not. Set all four or none.
+The run removes no clone and fails when a clone would go while the user-global config file is missing or lists no repos, or while some of `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_DATA_HOME` are set and others are not. While some of `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_DATA_HOME` are set and others are not, the run fails and removes no session, staged attachment or relevance ledger. Set all four or none.
 
 `sdd index gc` stays for deliberate cleanup beyond these rules.
 

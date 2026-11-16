@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/networkteam/slogutils"
@@ -58,28 +59,14 @@ searches always stay. sdd index gc removes more on request.`,
 				if err != nil {
 					return err
 				}
-				var keep handlers.CurrentHashSource
-				if graphDir, err := resolveGraphDir(cmd); err == nil {
-					reader, err := newReadFinder()
-					if err != nil {
-						return err
-					}
-					keep = handlers.NewIndexHandler(handlers.IndexHandlerOptions{GraphDir: graphDir, Reader: reader, Stderr: cmd.ErrWriter})
-				} else if !errors.Is(err, errNoProject) {
-					return err
-				}
-				gate, err := commandGate()
-				if err != nil {
-					return err
-				}
 				scheduled := cmd.Bool(scheduledFlag)
-				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
-					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
-					OwnedClones: syncstate.OwnedClones{Gate: gate}, Gate: gate, Keep: keep,
-					State:         stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
-					DeclaredHooks: hooks.DeclaredIn(loc.ConfigPath, repos.NewGraphClones(loc, git.GraphClones{}, gate).Dir),
-					SecretRules:   secrets.NewUpdater(secretRulesDir(loc), secrets.NewGitHub("", "", nil), nil),
-				})
+				h, err := newCacheHandler(cmd, loc)
+				if err != nil {
+					if scheduled {
+						return recordScheduledPruneFailure(ctx, err)
+					}
+					return err
+				}
 				return h.Prune(ctx, &command.PruneCacheCmd{
 					Scheduled: scheduled,
 					OnPruned: func(c model.CachePruneCounts) {
@@ -92,6 +79,46 @@ searches always stay. sdd index gc removes more on request.`,
 			},
 		}},
 	}
+}
+
+// isScheduledCachePrune reports whether args, as the root command sees them,
+// run the daily background pass.
+func isScheduledCachePrune(args cli.Args) bool {
+	return args.Get(0) == cacheCommandName && args.Get(1) == "prune" && slices.Contains(args.Slice(), "--"+scheduledFlag)
+}
+
+// recordScheduledPruneFailure records failed, which stopped the background
+// pass before it pruned, so the next command reports it as any failed run.
+func recordScheduledPruneFailure(ctx context.Context, failed error) error {
+	loc, err := repos.DefaultLocations()
+	if err != nil {
+		return errors.Join(failed, err)
+	}
+	return errors.Join(failed, cacheprune.RecordFailure(context.WithoutCancel(ctx), loc.StateRoot, time.Now(), failed))
+}
+
+func newCacheHandler(cmd *cli.Command, loc repos.Locations) (*handlers.CacheHandler, error) {
+	var keep handlers.CurrentHashSource
+	if graphDir, err := resolveGraphDir(cmd); err == nil {
+		reader, err := newReadFinder()
+		if err != nil {
+			return nil, err
+		}
+		keep = handlers.NewIndexHandler(handlers.IndexHandlerOptions{GraphDir: graphDir, Reader: reader, Stderr: cmd.ErrWriter})
+	} else if !errors.Is(err, errNoProject) {
+		return nil, err
+	}
+	gate, err := commandGate()
+	if err != nil {
+		return nil, err
+	}
+	return handlers.NewCacheHandler(handlers.CacheHandlerOptions{
+		CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
+		OwnedClones: syncstate.OwnedClones{Gate: gate}, Gate: gate, Keep: keep,
+		State:         stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
+		DeclaredHooks: hooks.DeclaredIn(loc.ConfigPath, repos.NewGraphClones(loc, git.GraphClones{}, gate).Dir),
+		SecretRules:   secrets.NewUpdater(secretRulesDir(loc), secrets.NewGitHub("", "", nil), nil),
+	}), nil
 }
 
 // backgroundCachePrune launches the daily pruning pass when one is due and

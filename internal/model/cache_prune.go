@@ -125,11 +125,21 @@ func (c *CachePruneCounts) Add(o CachePruneCounts) {
 
 // Due reports whether a background run should start at now.
 func (s CachePruneStatus) Due(now time.Time) bool {
-	last := s.LaunchedAt
-	if s.StartedAt.After(last) {
-		last = s.StartedAt
-	}
-	return now.Sub(last) >= CachePruneInterval
+	return !withinPruneInterval(s.LaunchedAt, now) && !s.StartedRecently(now)
+}
+
+// StartedRecently reports whether a run began within CachePruneInterval
+// before now.
+func (s CachePruneStatus) StartedRecently(now time.Time) bool {
+	return withinPruneInterval(s.StartedAt, now)
+}
+
+// withinPruneInterval treats a time later than now, left by a clock set
+// back, as long past, so runs resume at once instead of when the clock
+// catches up.
+func withinPruneInterval(at, now time.Time) bool {
+	since := now.Sub(at)
+	return since >= 0 && since < CachePruneInterval
 }
 
 // FailureNotice is the one line a command shows for a failed run nobody was

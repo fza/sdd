@@ -95,6 +95,37 @@ func TestCommandsReportAFailedCachePruneOnce(t *testing.T) {
 	}
 }
 
+// A scheduled run that fails before it prunes is recorded like any failed
+// run, so the next command reports it instead of only the run's log.
+func TestScheduledCachePruneRecordsAFailureBeforePruning(t *testing.T) {
+	cases := []struct {
+		name, broken   string
+		outsideProject bool
+	}{
+		{name: "an unreadable project config, refused before the command runs", broken: ".sdd/config.yaml"},
+		{name: "an unreadable user config outside a project, refused before the command runs", broken: "config/sdd/config.yaml", outsideProject: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAppFixture(t)
+			f.write(t, tc.broken, "repos: [\n")
+			if tc.outsideProject {
+				t.Chdir(t.TempDir())
+			}
+			if r := f.run(t, "cache", "prune", "--scheduled"); r.err == nil {
+				t.Fatal("a scheduled run on an unreadable config should fail")
+			}
+			status, err := cacheprune.Load(filepath.Join(f.root, "state", "sdd"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(status.Error, "config.yaml") || status.FailureNotice() == "" {
+				t.Errorf("the failure should be recorded for the next command, got %+v", status)
+			}
+		})
+	}
+}
+
 func TestCachePruneCommand(t *testing.T) {
 	f := newAppFixture(t)
 	clone := filepath.Join(f.root, "cache", "sdd", "github.com", "acme", "dropped", ".git")
