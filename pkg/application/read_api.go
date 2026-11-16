@@ -63,6 +63,9 @@ type ViewResult struct {
 	// local counts the local graph's sections, the ones the no-repeat rule
 	// covers.
 	local int
+	// bodiesOnly marks a view whose every section serves as-bodies: its
+	// budget already cut it at whole bodies.
+	bodiesOnly bool
 }
 
 type ShowRequest struct {

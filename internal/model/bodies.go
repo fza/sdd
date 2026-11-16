@@ -12,15 +12,17 @@ const ShapeBodies RenderShape = "bodies"
 // carries nothing but the entries in the order the section produced them.
 type Bodies struct {
 	Entries []*Entry
-	// Dropped counts whole units a serve budget kept out of this section;
-	// Pull is the runnable layout expression for the complete section.
-	// Zero/empty on explicit pulls, which are never cut (d-tac-rzi).
-	Dropped int
-	Pull    string
+	// Withheld are the whole bodies a serve budget kept out of this section,
+	// named so the cut says what it dropped; Pull is the runnable layout
+	// expression for the complete section. Empty on explicit pulls, which are
+	// never cut (d-tac-rzi).
+	Withheld []*Entry
+	Pull     string
 }
 
 // Shape implements SectionData.
 func (Bodies) Shape() RenderShape { return ShapeBodies }
 
-// Count implements SectionData.
-func (b Bodies) Count() int { return len(b.Entries) }
+// Count implements SectionData. Withheld bodies count: the section matched
+// them, and a section its budget cut to nothing still renders that cut.
+func (b Bodies) Count() int { return len(b.Entries) + len(b.Withheld) }

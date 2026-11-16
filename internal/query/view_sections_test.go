@@ -185,10 +185,10 @@ func TestViewResult_ViewSectionsCarriesEveryShape(t *testing.T) {
 			name: "bodies carry the full body, tagged with their repo",
 			repo: "example.com/team/dep",
 			section: query.SectionResult{Render: "as-bodies", Name: "Principles", Data: model.Bodies{
-				Entries: []*model.Entry{plan}, Dropped: 5, Pull: "active:as-bodies",
+				Entries: []*model.Entry{plan}, Withheld: []*model.Entry{plan}, Pull: "active:as-bodies",
 			}},
-			want: types.ViewSection{Render: "as-bodies", Name: "Principles", Repo: "example.com/team/dep", Matched: 1, Bodies: &types.ViewBodies{
-				Entries: []types.ListedEntry{planBody}, Dropped: 5, Pull: "active:as-bodies",
+			want: types.ViewSection{Render: "as-bodies", Name: "Principles", Repo: "example.com/team/dep", Matched: 2, Bodies: &types.ViewBodies{
+				Entries: []types.ListedEntry{planBody}, Withheld: []types.ListedEntry{planListed}, Pull: "active:as-bodies",
 			}},
 		},
 		{

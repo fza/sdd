@@ -122,3 +122,47 @@ func TestRenderView_AsBodies_MultipleEntriesInSectionOrder(t *testing.T) {
 		t.Errorf("entries are separated by a blank line, got:\n%s", got)
 	}
 }
+
+// TestRenderView_AsBodies_WithheldBodiesAreNamed pins the honest whole-body
+// cut (d-tac-rzi): a body the serve budget withheld leaves the section naming
+// the entry and the pull, even when nothing of the section fits.
+func TestRenderView_AsBodies_WithheldBodiesAreNamed(t *testing.T) {
+	kept := entry("20260101-100000-s-prc-aaa", withKind(model.KindFact), withContent("# Kept\n\nServed whole.\n"))
+	withheld := entry("20260101-110000-s-prc-bbb", withKind(model.KindFact),
+		withSummary("The long posture this project works by."), withContent("# Withheld\n\nNever served in part.\n"))
+	const pull = `topic("principles/interactive"):as-bodies:name("Working principles")`
+	notice := "(withheld for size, 1 whole — pull: " + pull + ")\n" +
+		"- 20260101-110000-s-prc-bbb — The long posture this project works by.\n"
+
+	cases := []struct {
+		name   string
+		bodies model.Bodies
+		want   string
+	}{
+		{
+			name:   "section cut to nothing",
+			bodies: model.Bodies{Withheld: []*model.Entry{withheld}, Pull: pull},
+			want:   "## Working principles\n\n" + notice,
+		},
+		{
+			name:   "section cut after a kept body",
+			bodies: model.Bodies{Entries: []*model.Entry{kept}, Withheld: []*model.Entry{withheld}, Pull: pull},
+			want: "## Working principles\n\n" +
+				"### Kept\n\n`20260101-100000-s-prc-aaa` — process fact signal\n\nServed whole.\n\n" + notice,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := renderView(&query.ViewResult{
+				Graph:    model.NewGraph([]*model.Entry{kept, withheld}),
+				Sections: []query.SectionResult{{Render: "as-bodies", Name: "Working principles", Data: tc.bodies}},
+			})
+			if got != tc.want {
+				t.Errorf("withheld render mismatch:\ngot:\n%s\nwant:\n%s", got, tc.want)
+			}
+			if strings.Contains(got, "Never served in part") {
+				t.Error("a withheld body must not serve any of its text")
+			}
+		})
+	}
+}

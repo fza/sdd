@@ -219,9 +219,10 @@ type ViewWipMarker struct {
 }
 
 // ViewBodies is an as-bodies section: entries with their full bodies, in
-// section order. Dropped and Pull are as in ViewFocusBlock.
+// section order. Withheld are the whole bodies a serve budget kept out, each
+// named by its ID and brief; Pull is as in ViewFocusBlock.
 type ViewBodies struct {
-	Entries []ListedEntry
-	Dropped int
-	Pull    string
+	Entries  []ListedEntry
+	Withheld []ListedEntry
+	Pull     string
 }

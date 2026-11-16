@@ -24,12 +24,12 @@ var serveChainBudget = types.ShowTreeBudget{
 }
 
 // servedViewBudget bounds a pushed view's scaling shapes at whole units:
-// focus and participant groups, WIP markers, whole bodies, per-entry ref
-// sub-lines. Explicit pulls (the view tool, the CLI) pass no budget.
+// focus and participant groups, WIP markers, per-entry ref sub-lines. Whole
+// bodies take the inject's effective cap. Explicit pulls (the view tool, the
+// CLI) pass no budget.
 var servedViewBudget = types.ViewBudget{
 	GroupItems:   12,
 	RefsPerEntry: 6,
-	BodyBytes:    serveview.Default().Cap(serveview.PartText).MaxBytes,
 }
 
 func (w *WorkflowSession) buildRegistry() (*engine.Registry, error) {
@@ -113,7 +113,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		return err
 	}
 	if err := registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes: a listing gives up whole entries and ends naming how many and the layout serving them, as an n(k) that cuts one does; other output is cut at a line boundary with an honest notice whose pull is the lane's own layout. Injected into a step served over MCP, an entry the consumer already holds in full prints as its pointer."},
+		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes: a listing gives up whole entries and ends naming how many and the layout serving them, as an n(k) that cuts one does; other output is cut at a line boundary with an honest notice whose pull is the lane's own layout. A layout of only as-bodies sections is cut at whole bodies instead, naming each withheld entry. Injected into a step served over MCP, an entry the consumer already holds in full prints as its pointer."},
 		ServeSafe: true,
 		Bound: engine.QueryBound{
 			Part: serveview.PartText,
@@ -133,6 +133,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 				return nil, err
 			}
 			request := ViewRequest{Layout: layout, Budget: servedViewBudget}
+			request.Budget.BodyBytes = ctx.Cap.MaxBytes
 			if !w.framing {
 				if repeats := w.repeats(); repeats != nil {
 					request.Held, request.Anchor = repeats.Held, repeats.Anchor
@@ -147,6 +148,12 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 				w.laneFull = append(w.laneFull, result.FullIDs...)
 			}
 			text := result.Sections
+			if result.bodiesOnly {
+				// Authored bodies are never split (d-tac-rzi): the view cut them
+				// whole and names what it withheld, so no line cut follows.
+				n := len(text)
+				return truncate.Text{Text: text, Cut: truncate.Cut{KeptBytes: n, TotalBytes: n}}, nil
+			}
 			// A listing past the bound gives up whole entries, its last line
 			// naming how many and the layout serving them.
 			for ctx.Cap.MaxBytes > 0 && len(text) > ctx.Cap.MaxBytes && dropLastListed(result.ViewSections) {

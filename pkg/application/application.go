@@ -294,6 +294,7 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 		KnownParticipants: knownParticipants,
 		FullIDs:           full,
 		SummaryIDs:        summary,
+		bodiesOnly:        viewResult.BodiesOnly(),
 		local:             local,
 	}
 	result.Sections = result.render(snapshot.graph, request.Held, request.Anchor)

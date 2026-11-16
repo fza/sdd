@@ -168,7 +168,10 @@ func viewWipList(list model.WipList) *types.ViewWipList {
 }
 
 func viewBodies(g *model.Graph, bodies model.Bodies) *types.ViewBodies {
-	shown := &types.ViewBodies{Dropped: bodies.Dropped, Pull: bodies.Pull}
+	shown := &types.ViewBodies{Pull: bodies.Pull}
+	for _, e := range bodies.Withheld {
+		shown.Withheld = append(shown.Withheld, listedEntry(e, g))
+	}
 	for _, e := range bodies.Entries {
 		listed := listedEntry(e, g)
 		listed.Body = e.Content
