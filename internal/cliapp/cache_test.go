@@ -108,6 +108,24 @@ func TestScheduledCachePruneFetchesFromTheConfiguredHosts(t *testing.T) {
 	}
 }
 
+// Only the sdd binary names GitHub: a host that names no release hosts, a
+// test or an embedder, fetches nothing.
+func TestScheduledCachePruneFetchesNothingWithoutReleaseHosts(t *testing.T) {
+	f := newAppFixture(t)
+	var stdout, stderr bytes.Buffer
+	command := cliapp.New(cliapp.Options{Version: appVersion, Reader: strings.NewReader(""), Writer: &stdout, ErrWriter: &stderr})
+
+	err := command.Run(t.Context(), []string{"sdd", "cache", "prune", "--scheduled"})
+
+	if err != nil {
+		t.Fatalf("cache prune --scheduled: %v\n%s", err, stderr.String())
+	}
+	_, err = os.Stat(filepath.Join(f.root, "cache", "sdd", "secret-rules", "state.json"))
+	if !os.IsNotExist(err) {
+		t.Errorf("no fetch should have been tried, the fetch state: %v", err)
+	}
+}
+
 // A scheduled run refused before it starts, on a secrets.rules_update sdd
 // does not know, is recorded like any failed run, so the next command
 // reports it instead of only the run's log.

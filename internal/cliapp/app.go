@@ -46,8 +46,9 @@ type Options struct {
 	// --scheduled` in dir, detached, with its output in logPath. Nil launches
 	// nothing: an in-process host or a test runs no background pass.
 	LaunchCachePrune func(dir, logPath string) error
-	// Gitleaks reads gitleaks' releases for the daily rule fetch. Nil reads
-	// them from GitHub.
+	// Gitleaks reads gitleaks' releases for the daily rule fetch. Nil fetches
+	// nothing: only the sdd binary names GitHub, so no test or embedder
+	// reaches it unasked.
 	Gitleaks *secrets.GitHub
 }
 
@@ -454,7 +455,7 @@ func New(options Options) *cli.Command {
 			lintCmd(),
 			summarizeCmd(),
 			indexCmd(),
-			cacheCmd(options.Gitleaks, options.Version),
+			cacheCmd(options.Gitleaks),
 			searchCmd(),
 			serveCmd(options.LaunchCachePrune),
 			sessionsCmd(),

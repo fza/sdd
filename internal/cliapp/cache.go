@@ -26,10 +26,7 @@ const (
 	scheduledFlag    = "scheduled"
 )
 
-func cacheCmd(gitleaks *secrets.GitHub, version string) *cli.Command {
-	if gitleaks == nil {
-		gitleaks = secrets.NewGitHub(secrets.GitHubOptions{UserAgent: "sdd/" + version})
-	}
+func cacheCmd(gitleaks *secrets.GitHub) *cli.Command {
 	return &cli.Command{
 		Name:  cacheCommandName,
 		Usage: "Manage the machine-global cache",
@@ -73,10 +70,14 @@ shows the last run. sdd index gc removes more on request.`,
 					}
 					return err
 				}
+				var secretRules handlers.SecretRulesUpdater
+				if gitleaks != nil {
+					secretRules = secrets.NewUpdater(secretRulesDir(loc), gitleaks, nil)
+				}
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), Keep: keep,
 					State:       stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
-					SecretRules: secrets.NewUpdater(secretRulesDir(loc), gitleaks, nil),
+					SecretRules: secretRules,
 				})
 				return h.Prune(ctx, &command.PruneCacheCmd{
 					Scheduled: scheduled,
