@@ -244,6 +244,26 @@ func TestRunFailsOnANonzeroExitWithItsStderr(t *testing.T) {
 	}
 }
 
+func TestRunPassesOnlyTheAllowlistedEnvironment(t *testing.T) {
+	t.Setenv("FAKE_SECRET", "s3cr3t-token")
+	t.Setenv("LANG", "en_US.UTF-8")
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "env.sh"), "env")
+	w.commit(t, "  - event: entry.written\n    command: env.sh\n")
+	output, err := w.commands().Run(t.Context(), w.only(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(output), "s3cr3t-token") {
+		t.Errorf("a variable of sdd's environment outside the allowlist should not reach the hook:\n%s", output)
+	}
+	for _, name := range []string{"PATH=", "HOME=", "LANG="} {
+		if !strings.Contains(string(output), name) {
+			t.Errorf("the hook should see %s from sdd's environment:\n%s", name, output)
+		}
+	}
+}
+
 func TestRunFailsAHookWritingMoreThanTheOutputCap(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "flood.sh"), "head -c 1100000 /dev/zero")

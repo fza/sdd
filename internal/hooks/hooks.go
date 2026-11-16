@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -45,6 +46,7 @@ func (c *Commands) Hooks(context.Context) ([]model.Hook, error) {
 func (c *Commands) Run(ctx context.Context, hook model.Hook, stdin []byte) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, hook.Path, hook.Args...)
 	cmd.Dir = hook.Origin.Dir
+	cmd.Env = hookEnv()
 	cmd.Stdin = bytes.NewReader(stdin)
 	stdout, stderr := &cappedBuffer{limit: stdoutCap}, &cappedBuffer{limit: stderrCap}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -66,6 +68,22 @@ func (c *Commands) Run(ctx context.Context, hook model.Hook, stdin []byte) ([]by
 		return nil, fmt.Errorf("wrote more than 1 MiB to stdout")
 	}
 	return stdout.Bytes(), nil
+}
+
+// hookEnvAllowlist names the variables of sdd's environment a hook sees;
+// everything else, such as API keys in the MCP server's environment, stays
+// with sdd. The payload arrives on stdin, not in the environment.
+var hookEnvAllowlist = []string{"PATH", "HOME", "LANG", "TMPDIR"}
+
+func hookEnv() []string {
+	env := []string{}
+	for _, name := range hookEnvAllowlist {
+		value, ok := os.LookupEnv(name)
+		if ok {
+			env = append(env, name+"="+value)
+		}
+	}
+	return env
 }
 
 // cappedBuffer keeps up to limit bytes and drops the rest, so a hook writing
