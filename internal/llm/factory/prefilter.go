@@ -90,7 +90,7 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 	if cfg.RateLimitRPS > 0 {
 		scorer = relevance.RateLimited(scorer, cfg.RateLimitRPS)
 	}
-	scorer = relevance.Observed(relevance.Bounded(scorer, timeout), sink)
+	scorer = relevance.Observed(relevance.Bounded(relevance.RetriedAfterDelay(scorer, timeout), timeout), sink)
 	return Prefilter{Scorer: scorer, Judge: string(cfg.Protocol) + ":" + modelName}, nil
 }
 

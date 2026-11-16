@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
+	"net/http"
+	"strconv"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -38,6 +41,64 @@ func RateLimited(s Scorer, rps float64) Scorer {
 	return decorated{Scorer: s, score: func(ctx context.Context, request Request) (Result, error) {
 		if err := limiter.Wait(ctx); err != nil {
 			return Result{}, fmt.Errorf("rate limiter: %w", err)
+		}
+		return s.Score(ctx, request)
+	}}
+}
+
+// RetryDelayer is an error asking for a delay before the next call, as a
+// 429's Retry-After does.
+type RetryDelayer interface {
+	error
+	RetryDelay() time.Duration
+}
+
+// MaxRetryAfter caps the delay a Retry-After asks for.
+const MaxRetryAfter = time.Hour
+
+// ParseRetryAfter is the delay a Retry-After value asks for at now, in
+// seconds or as an HTTP date, at most MaxRetryAfter; zero for none.
+func ParseRetryAfter(value string, now time.Time) time.Duration {
+	seconds, err := strconv.Atoi(value)
+	if err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(min(seconds, int(MaxRetryAfter/time.Second))) * time.Second
+	}
+	at, err := http.ParseTime(value)
+	if err != nil {
+		return 0
+	}
+	return min(max(at.Sub(now), 0), MaxRetryAfter)
+}
+
+// RetriedAfterDelay calls once more after a failure whose RetryDelayer asks
+// for a delay. The wait adds up to a quarter of the delay at random, so calls
+// refused together come back apart; a wait past maxWait or ctx's deadline
+// ends the call, as does any other failure.
+func RetriedAfterDelay(s Scorer, maxWait time.Duration) Scorer {
+	return decorated{Scorer: s, score: func(ctx context.Context, request Request) (Result, error) {
+		result, err := s.Score(ctx, request)
+		delayer, ok := errors.AsType[RetryDelayer](err)
+		if !ok {
+			return result, err
+		}
+		delay := delayer.RetryDelay()
+		if delay <= 0 {
+			return result, err
+		}
+		wait := delay + rand.N(delay/4+1)
+		deadline, bounded := ctx.Deadline()
+		if wait > maxWait || bounded && time.Until(deadline) <= wait {
+			return result, err
+		}
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return result, err
+		case <-timer.C:
 		}
 		return s.Score(ctx, request)
 	}}

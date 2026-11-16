@@ -16,7 +16,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 	"unicode/utf8"
 
@@ -113,13 +112,17 @@ type response struct {
 	} `json:"usage"`
 }
 
-// StatusError is a non-2xx reply.
+// StatusError is a non-2xx reply; RetryAfter carries a 429's Retry-After,
+// at most relevance.MaxRetryAfter.
 type StatusError struct {
 	Status     int
 	Code       string
 	Message    string
 	RetryAfter time.Duration
 }
+
+// RetryDelay is the delay a 429 asks for, zero for none.
+func (e *StatusError) RetryDelay() time.Duration { return e.RetryAfter }
 
 func (e *StatusError) Error() string {
 	text := fmt.Sprintf("cohere rerank: HTTP %d", e.Status)
@@ -208,9 +211,7 @@ func statusError(resp *http.Response, raw []byte) error {
 	} else {
 		out.Message = excerpt(string(bytes.TrimSpace(raw)))
 	}
-	if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && seconds > 0 {
-		out.RetryAfter = time.Duration(seconds) * time.Second
-	}
+	out.RetryAfter = relevance.ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 	return out
 }
 

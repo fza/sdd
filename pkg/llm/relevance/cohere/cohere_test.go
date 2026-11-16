@@ -88,6 +88,33 @@ func TestScore_RateLimitReportsRetryAfter(t *testing.T) {
 	if attributed, ok := errors.AsType[*llm.Error](err); !ok || attributed.Identity.Model != cohere.DefaultModel {
 		t.Fatalf("error %v should be attributed to the model", err)
 	}
+	if delayer, ok := errors.AsType[relevance.RetryDelayer](err); !ok || delayer.RetryDelay() != 9*time.Second {
+		t.Fatalf("error %v should ask for its delay before the next call", err)
+	}
+}
+
+func TestScore_RateLimitReadsAnHTTPDate(t *testing.T) {
+	scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", time.Now().Add(30*time.Second).UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	_, err := scorer.Score(t.Context(), request)
+	status, ok := errors.AsType[*cohere.StatusError](err)
+	if !ok || status.RetryAfter < 25*time.Second || status.RetryAfter > 30*time.Second {
+		t.Fatalf("error %v: a Retry-After date should give the delay until it", err)
+	}
+}
+
+func TestScore_CapsAHugeRetryAfter(t *testing.T) {
+	scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "99999999999")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	_, err := scorer.Score(t.Context(), request)
+	status, ok := errors.AsType[*cohere.StatusError](err)
+	if !ok || status.RetryAfter <= 0 || status.RetryAfter > time.Hour {
+		t.Fatalf("error %v: a huge Retry-After should be capped at an hour", err)
+	}
 }
 
 func TestScore_RefusesMalformedReplies(t *testing.T) {
