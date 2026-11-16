@@ -35,6 +35,9 @@ type OwnedCloneProbe interface {
 	TryLockSync(ctx context.Context, dir string) (release func(), err error)
 	// Unpushed reports whether the clone holds commits its remote lacks.
 	Unpushed(ctx context.Context, dir string) (bool, error)
+	// SetAside reports whether the clone holds entries a force push set
+	// aside.
+	SetAside(ctx context.Context, dir string) (bool, error)
 	// LastAttempt is when the git gate last admitted a fetch or push of the
 	// clone's remote; zero when it never did.
 	LastAttempt(ctx context.Context, dir string) (time.Time, error)
@@ -321,6 +324,13 @@ func (h *CacheHandler) cloneInUse(ctx context.Context, dir string, now time.Time
 	}
 	if unpushed {
 		return fmt.Errorf("%w: it holds unpushed commits", repos.ErrCloneInUse)
+	}
+	setAside, err := h.ownedClones.SetAside(ctx, dir)
+	if err != nil {
+		return err
+	}
+	if setAside {
+		return fmt.Errorf("%w: it holds entries a force push set aside", repos.ErrCloneInUse)
 	}
 	last, err := h.ownedClones.LastAttempt(ctx, dir)
 	if err != nil {
