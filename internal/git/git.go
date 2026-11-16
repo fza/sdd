@@ -279,7 +279,7 @@ type TrackedFiles struct{}
 // holding root, that git tracks; none when root is in no repository. The
 // repository is the one at root, whatever GIT_DIR the process inherited.
 func (TrackedFiles) Tracked(ctx context.Context, root string, paths ...string) ([]string, error) {
-	env := withoutRepoOverrides(os.Environ())
+	env := pathEnv()
 	probe := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--is-inside-work-tree")
 	probe.Env = env
 	err := probe.Run()
@@ -299,21 +299,6 @@ func (TrackedFiles) Tracked(ctx context.Context, root string, paths ...string) (
 		}
 	}
 	return files, nil
-}
-
-// withoutRepoOverrides drops the variables that point git at another
-// repository than the one -C names.
-func withoutRepoOverrides(env []string) []string {
-	kept := env[:0:0]
-	for _, entry := range env {
-		name, _, _ := strings.Cut(entry, "=")
-		switch name {
-		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR":
-			continue
-		}
-		kept = append(kept, entry)
-	}
-	return kept
 }
 
 // Repositories reaches repositories by path rather than through one adapter's
