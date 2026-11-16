@@ -244,6 +244,26 @@ func TestRunFailsOnANonzeroExitWithItsStderr(t *testing.T) {
 	}
 }
 
+func TestRunFailsAHookWritingMoreThanTheOutputCap(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "flood.sh"), "head -c 1100000 /dev/zero")
+	w.commit(t, "  - event: entry.written\n    command: flood.sh\n")
+	_, err := w.commands().Run(t.Context(), w.only(t), nil)
+	if err == nil || !strings.Contains(err.Error(), "more than 1 MiB to stdout") {
+		t.Fatalf("a hook flooding stdout should fail naming the cap, got %v", err)
+	}
+}
+
+func TestRunCutsALongStderrInItsError(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "noisy.sh"), "head -c 100000 /dev/zero | tr '\\0' x >&2; exit 1")
+	w.commit(t, "  - event: entry.written\n    command: noisy.sh\n")
+	_, err := w.commands().Run(t.Context(), w.only(t), nil)
+	if err == nil || len(err.Error()) > 10000 || !strings.Contains(err.Error(), "stderr cut") {
+		t.Fatalf("a long stderr should be cut in the error, got %d bytes", len(err.Error()))
+	}
+}
+
 func TestRunStopsTheHookAndItsChildrenWhenTheContextEnds(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "hang.sh"), "sleep 30 & echo $! > child.pid; wait")
