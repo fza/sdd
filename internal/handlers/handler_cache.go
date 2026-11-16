@@ -77,7 +77,7 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 	run := flock.New(filepath.Join(h.stateRoot, cacheprune.RunLockFile))
 	locked, err := run.TryLock()
 	if err != nil {
-		return fmt.Errorf("locking cache pruning: %w", err)
+		return h.recordEarlyFailure(ctx, cmd, fmt.Errorf("locking cache pruning: %w", err))
 	}
 	if !locked {
 		if cmd.Scheduled {
@@ -92,14 +92,14 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 	if cmd.Scheduled {
 		status, err := cacheprune.Load(h.stateRoot)
 		if err != nil {
-			return err
+			return h.recordEarlyFailure(ctx, cmd, err)
 		}
 		if status.StartedRecently(now) {
 			return nil
 		}
 	}
 	if err := cacheprune.Update(ctx, h.stateRoot, func(s *model.CachePruneStatus) { s.StartedAt = now }); err != nil {
-		return err
+		return h.recordEarlyFailure(ctx, cmd, err)
 	}
 	runCtx, cancel := context.WithTimeout(ctx, model.CachePruneRunLimit)
 	defer cancel()
@@ -117,6 +117,15 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 		}
 	})
 	return errors.Join(runErr, recordErr)
+}
+
+// recordEarlyFailure records a failure before the pass started as the run's
+// own; it may not reach the record when the record itself is what failed.
+func (h *CacheHandler) recordEarlyFailure(ctx context.Context, cmd *command.PruneCacheCmd, failure error) error {
+	recordErr := cacheprune.Update(context.WithoutCancel(ctx), h.stateRoot, func(s *model.CachePruneStatus) {
+		s.FinishedAt, s.Error, s.Reported = h.now(), failure.Error(), !cmd.Scheduled
+	})
+	return errors.Join(failure, recordErr)
 }
 
 func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePruneCounts, error) {
