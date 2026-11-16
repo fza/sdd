@@ -161,12 +161,17 @@ func useSecretRules(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	useSecretRulesOf(ctx, loc, cfg)
+	return nil
+}
+
+// useSecretRulesOf is useSecretRules under the user-global config cfg.
+func useSecretRulesOf(ctx context.Context, loc repos.Locations, cfg *repos.GlobalConfig) {
 	dir := ""
 	if model.ResolveSecretRulesUpdate(cfg.Secrets) == model.SecretRulesDaily {
 		dir = secretRulesDir(loc)
 	}
 	secrets.Use(ctx, dir)
-	return nil
 }
 
 // serveCacheNotice is the MCP server's CacheNotice: a failed run's notice,

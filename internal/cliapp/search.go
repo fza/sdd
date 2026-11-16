@@ -43,11 +43,17 @@ const searchPrepareBound = 100 * time.Millisecond
 // overrides. Mirrors resolveLLMConfig — same precedence rules, same
 // IsSet check so unset flags don't clobber config defaults.
 func resolveEmbeddingConfig(cmd *cli.Command) (model.EmbeddingConfig, error) {
-	var cfg model.EmbeddingConfig
 	fileCfg, err := loadConfig()
 	if err != nil {
-		return cfg, err
+		return model.EmbeddingConfig{}, err
 	}
+	return embeddingConfigWithFlags(cmd, fileCfg), nil
+}
+
+// embeddingConfigWithFlags is resolveEmbeddingConfig over the effective config
+// fileCfg.
+func embeddingConfigWithFlags(cmd *cli.Command, fileCfg *model.PerRepoConfig) model.EmbeddingConfig {
+	var cfg model.EmbeddingConfig
 	if fileCfg != nil {
 		cfg = fileCfg.Embedding
 	}
@@ -72,7 +78,7 @@ func resolveEmbeddingConfig(cmd *cli.Command) (model.EmbeddingConfig, error) {
 	if cmd.IsSet("embedding-rate-limit-rps") {
 		cfg.RateLimitRPS = cmd.Float("embedding-rate-limit-rps")
 	}
-	return cfg, nil
+	return cfg
 }
 
 // embeddingFlags returns the CLI flag set used by both `sdd index` and
@@ -176,10 +182,16 @@ func buildEmbedder(cmd *cli.Command) (handlers.IndexEmbedder, error) {
 	if err != nil {
 		return handlers.IndexEmbedder{}, err
 	}
+	return configuredEmbedder(cfg, resolveSDDDir)
+}
+
+// configuredEmbedder is buildEmbedder over the resolved cfg, recording into
+// the project whose .sdd/ directory sddDir resolves.
+func configuredEmbedder(cfg model.EmbeddingConfig, sddDir func() (string, error)) (handlers.IndexEmbedder, error) {
 	if cfg.Provider == "" {
 		return handlers.IndexEmbedder{}, nil
 	}
-	return newEmbedder(cfg)
+	return newEmbedderIn(cfg, sddDir)
 }
 
 // newEmbedder composes the local embedder the way newRunner composes the chat
@@ -187,6 +199,12 @@ func buildEmbedder(cmd *cli.Command) (handlers.IndexEmbedder, error) {
 // sink per request, batched to the configured size outside the observer so one
 // stats row is one round-trip.
 func newEmbedder(cfg model.EmbeddingConfig) (handlers.IndexEmbedder, error) {
+	return newEmbedderIn(cfg, resolveSDDDir)
+}
+
+// newEmbedderIn is newEmbedder recording into the project whose .sdd/
+// directory sddDir resolves.
+func newEmbedderIn(cfg model.EmbeddingConfig, sddDir func() (string, error)) (handlers.IndexEmbedder, error) {
 	emb, err := localembed.New(cfg)
 	if err != nil {
 		return handlers.IndexEmbedder{}, err
@@ -201,7 +219,7 @@ func newEmbedder(cfg model.EmbeddingConfig) (handlers.IndexEmbedder, error) {
 	}
 	size := localembed.BatchSize(cfg)
 	return handlers.IndexEmbedder{
-		Embedder:       embed.Batched(log.Embedder(embed.Observed(emb, statsSink())), size),
+		Embedder:       embed.Batched(log.Embedder(embed.Observed(emb, statsSinkIn(sddDir))), size),
 		BatchSize:      size,
 		CalibrationDir: filepath.Join(reg.CacheRoot(), localembed.CalibrationDirName),
 		CalibrationKey: emb.Fingerprint() + "\n" + cfg.Endpoint + "\n" + cfg.Path,

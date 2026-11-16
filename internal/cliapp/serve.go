@@ -61,9 +61,7 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 		),
 		Action: withPendingGraphClone(withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = handlers.WithoutSyncReport(ctx)
-			watch, err := newConfigWatch(func() (string, error) { return resolveGraphDir(cmd) }, func(previous *servedProject) (*servedProject, error) {
-				return buildServedProject(ctx, cmd, "", previous)
-			})
+			watch, err := newServedWatch(ctx, cmd)
 			if err != nil {
 				return err
 			}
@@ -463,78 +461,118 @@ func (a *localRuntimeAccess) ResolveDependency(ctx context.Context, _ sdd.Princi
 	return a.dependencies.resolve(ctx, dependency)
 }
 
-// localDialogue reads dialogue.mode and the layer that sets it; the
-// committed layer arrives without it.
-func localDialogue(sddDir string) (sdd.Dialogue, error) {
-	loc, err := repos.DefaultLocations()
-	if err != nil {
-		return sdd.Dialogue{}, err
-	}
-	global, err := repos.LoadConfigFrom(loc.ConfigPath)
-	if err != nil {
-		return sdd.Dialogue{}, err
-	}
-	localLayer, err := localConfigLayer()
-	if err != nil {
-		return sdd.Dialogue{}, err
-	}
-	committed, local, err := meta.ReadConfigLayers(sddDir, localLayer)
-	if err != nil {
-		return sdd.Dialogue{}, err
-	}
-	sources := map[model.ConfigValueSource]string{
-		model.ConfigSourceGlobal: loc.ConfigPath,
-		model.ConfigSourceLocal:  meta.LocalConfigPath(sddDir, localLayer),
-	}
-	for _, value := range model.EffectiveConfigValues(global.BaseConfig, committed, local) {
-		if value.Key == "dialogue.mode" {
-			return sdd.Dialogue{Mode: value.Value, Source: sources[value.Source]}, nil
-		}
-	}
-	return sdd.Dialogue{Mode: string(model.DialogueGuided)}, nil
+// servedConfig is what one read of the config files resolves serve's project
+// to.
+type servedConfig struct {
+	project    meta.Project
+	sddDir     string
+	localLayer string
+	graphDir   string
+	globalPath string
+	global     *repos.GlobalConfig
+	layers     model.ConfigLayers
+	// cfg is the effective config the layers resolve to.
+	cfg *model.PerRepoConfig
+	// watched names every file that sets the layers, existing or not: the
+	// user-global config, the project's committed and machine-local layer,
+	// and those of the repository pointing at it.
+	watched []string
 }
 
-// servedConfigLayers reads the config layers of the project at sddDir and
-// names every file that sets them, existing or not: the user-global config,
-// the project's committed and machine-local layer, and those of the
-// repository pointing at it.
-func servedConfigLayers(sddDir string) (model.ConfigLayers, []string, error) {
+// servedGraphDir resolves the project and its graph folder from files.
+func servedGraphDir(cmd *cli.Command, files *configFiles) (meta.Project, string, error) {
+	project, err := resolveProjectWith(files.read)
+	if err != nil {
+		return meta.Project{}, "", err
+	}
+	if dir, ok := graphDirFlag(cmd); ok {
+		return project, dir, nil
+	}
+	committed, local, err := meta.ReadConfigLayersWith(files.read, project.SDDDir(), project.LocalConfigPath(localConfigOverride))
+	if err != nil {
+		return meta.Project{}, "", fmt.Errorf("reading .sdd/config.yaml: %w", err)
+	}
+	var cfg *model.PerRepoConfig
+	if committed != nil || local != nil {
+		cfg = model.MergeConfig(committed, local)
+	}
+	return project, meta.ResolveGraphDir(project.Root, cfg), nil
+}
+
+// resolveServedConfig resolves serve's config from files.
+func resolveServedConfig(cmd *cli.Command, files *configFiles) (servedConfig, error) {
+	project, graphDir, err := servedGraphDir(cmd, files)
+	if err != nil {
+		return servedConfig{}, err
+	}
 	loc, err := repos.DefaultLocations()
 	if err != nil {
-		return model.ConfigLayers{}, nil, err
+		return servedConfig{}, err
 	}
-	global, err := repos.LoadConfigFrom(loc.ConfigPath)
+	global, err := repos.LoadConfigWith(files.read, loc.ConfigPath)
 	if err != nil {
-		return model.ConfigLayers{}, nil, err
+		return servedConfig{}, err
 	}
-	localLayer, err := localConfigLayer()
+	sddDir := project.SDDDir()
+	localLayer := project.LocalConfigPath(localConfigOverride)
+	committed, local, err := meta.ReadConfigLayersWith(files.read, sddDir, localLayer)
 	if err != nil {
-		return model.ConfigLayers{}, nil, err
+		return servedConfig{}, err
 	}
-	committed, local, err := meta.ReadConfigLayers(sddDir, localLayer)
+	cfg, err := meta.ResolveConfigWith(files.read, global.BaseConfig, sddDir, localLayer)
 	if err != nil {
-		return model.ConfigLayers{}, nil, err
+		return servedConfig{}, err
 	}
-	layers := model.ConfigLayers{Global: global.BaseConfig, Project: committed, Local: local}
-	watched := []string{loc.ConfigPath, filepath.Join(sddDir, "config.yaml"), meta.LocalConfigPath(sddDir, localLayer), meta.LocalConfigPath(sddDir, "")}
+	served := servedConfig{
+		project: project, sddDir: sddDir, localLayer: localLayer, graphDir: graphDir,
+		globalPath: loc.ConfigPath, global: global, cfg: cfg,
+		layers:  model.ConfigLayers{Global: global.BaseConfig, Project: committed, Local: local},
+		watched: []string{loc.ConfigPath, filepath.Join(sddDir, "config.yaml"), meta.LocalConfigPath(sddDir, localLayer), meta.LocalConfigPath(sddDir, "")},
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return model.ConfigLayers{}, nil, fmt.Errorf("getting working directory: %w", err)
+		return servedConfig{}, fmt.Errorf("getting working directory: %w", err)
 	}
 	workRoot := meta.DiscoverRoot(cwd)
 	if workRoot == "" {
-		return layers, watched, nil
+		return served, nil
 	}
 	workSDDDir := meta.SDDDir(workRoot)
-	watched = append(watched, filepath.Join(workSDDDir, "config.yaml"), meta.LocalConfigPath(workSDDDir, ""))
+	served.watched = append(served.watched, filepath.Join(workSDDDir, "config.yaml"), meta.LocalConfigPath(workSDDDir, ""))
 	if filepath.Clean(workSDDDir) != filepath.Clean(sddDir) {
-		pointerCommitted, pointerLocal, err := meta.ReadConfigLayers(workSDDDir, "")
+		pointerCommitted, pointerLocal, err := meta.ReadConfigLayersWith(files.read, workSDDDir, "")
 		if err != nil {
-			return model.ConfigLayers{}, nil, err
+			return servedConfig{}, err
 		}
-		layers.Pointer = model.MergeConfig(pointerCommitted, pointerLocal)
+		served.layers.Pointer = model.MergeConfig(pointerCommitted, pointerLocal)
 	}
-	return layers, watched, nil
+	return served, nil
+}
+
+// dialogue is dialogue.mode and the file of the layer that sets it; the
+// committed layer arrives without it.
+func (c servedConfig) dialogue() sdd.Dialogue {
+	sources := map[model.ConfigValueSource]string{
+		model.ConfigSourceGlobal: c.globalPath,
+		model.ConfigSourceLocal:  meta.LocalConfigPath(c.sddDir, c.localLayer),
+	}
+	for _, value := range model.EffectiveConfigValues(c.layers.Global, c.layers.Project, c.layers.Local) {
+		if value.Key == "dialogue.mode" {
+			return sdd.Dialogue{Mode: value.Value, Source: sources[value.Source]}
+		}
+	}
+	return sdd.Dialogue{Mode: string(model.DialogueGuided)}
+}
+
+// newServedWatch watches the config the project serve answers cmd with
+// resolves from.
+func newServedWatch(ctx context.Context, cmd *cli.Command) (*configWatch, error) {
+	return newConfigWatch(func(files *configFiles) (string, error) {
+		_, dir, err := servedGraphDir(cmd, files)
+		return dir, err
+	}, func(files *configFiles, previous *servedProject) (*servedProject, error) {
+		return buildServedProject(ctx, cmd, "", files, previous)
+	})
 }
 
 // buildServedApplication composes the application whose every call resolves
@@ -556,41 +594,27 @@ func buildServedApplication(ctx context.Context, cmd *cli.Command, watch *config
 	return application, identity, nil
 }
 
-// buildServedProject resolves the project serve answers calls with from the
-// config layers as they are now. Its LLM client and the window sizing that
+// buildServedProject resolves the project serve answers calls with from one
+// read of its config files. Its LLM client and the window sizing that
 // client's calls come from one resolved llm setting, timeoutFlag as in
 // newRunner. ctx is the server's, which the connected dependencies the
 // project builds later keep. previous, nil on the first build, lends the
 // clients buildServedClients keeps.
-func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag string, previous *servedProject) (*servedProject, error) {
-	graphDir, err := resolveGraphDir(cmd)
+func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag string, files *configFiles, previous *servedProject) (*servedProject, error) {
+	served, err := resolveServedConfig(cmd, files)
 	if err != nil {
 		return nil, err
 	}
-	sddDir, err := resolveSDDDir()
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := loadConfig()
-	if err != nil {
-		return nil, err
-	}
+	graphDir, sddDir, cfg, layout, layers, localLayer := served.graphDir, served.sddDir, served.cfg, served.project, served.layers, served.localLayer
 	registry, _, err := defaultRepos()
 	if err != nil {
 		return nil, err
 	}
-	layout, err := resolveProject()
+	locations, err := repos.DefaultLocations()
 	if err != nil {
 		return nil, err
 	}
-	layers, watched, err := servedConfigLayers(sddDir)
-	if err != nil {
-		return nil, err
-	}
-	err = useSecretRules(ctx)
-	if err != nil {
-		return nil, err
-	}
+	useSecretRulesOf(ctx, locations, served.global)
 	displayName := filepath.Base(filepath.Dir(sddDir))
 	participant := ""
 	language := ""
@@ -599,10 +623,6 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 		participant = cfg.Participant
 		language = cfg.Language
 		dependencies = append(dependencies, cfg.Dependencies...)
-	}
-	locations, err := repos.DefaultLocations()
-	if err != nil {
-		return nil, err
 	}
 	stableRepoRoot, err := git.StableRepoRoot(filepath.Dir(sddDir))
 	if err != nil {
@@ -625,11 +645,8 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 	if err != nil {
 		return nil, err
 	}
-	llmConfig, err := runnerConfig(cmd, timeoutFlag)
-	if err != nil {
-		return nil, err
-	}
-	clients, err := buildServedClients(cmd, previous, layout, layers, llmConfig)
+	llmConfig := runnerConfigFrom(cmd, timeoutFlag, cfg)
+	clients, err := buildServedClients(cmd, previous, served, llmConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -653,10 +670,6 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 		runeCap = localEmbedder.MaxRunes
 	}
 	serverCheckout := filepath.Dir(sddDir)
-	localLayer, err := localConfigLayer()
-	if err != nil {
-		return nil, err
-	}
 	targets, err := localadapter.NewRepositoryTargets(ctx, project, serverCheckout, locations.ConfigPath, localLayer, locations.StateRoot, locations.DataRoot)
 	if err != nil {
 		return nil, err
@@ -685,7 +698,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 		build: func(repoID sdd.RepoID, dir string, dependencyCfg *model.PerRepoConfig) (*sdd.ProjectRuntime, error) {
 			return cloneRuntime(ctx, repoID, dir, dependencyCfg, locations, runner, modelWindow(llmConfig), memberEmbedder, memberRuneCap, cacheRoot)
 		}}
-	prefilter, err := projectPrefilter(cfg)
+	prefilter, err := projectPrefilter(cfg, statsSinkIn(served.sddDirOf))
 	if err != nil {
 		return nil, err
 	}
@@ -715,14 +728,10 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 	if err != nil {
 		return nil, err
 	}
-	dialogue, err := localDialogue(sddDir)
-	if err != nil {
-		return nil, err
-	}
-	access := &localRuntimeAccess{project: project, participant: participant, dialogue: dialogue, runtime: runtime, dependencies: connectedDeps}
+	access := &localRuntimeAccess{project: project, participant: participant, dialogue: served.dialogue(), runtime: runtime, dependencies: connectedDeps}
 	return &servedProject{
 		access: access, cfg: cfg, layout: layout, sessions: sessions, blobs: blobs,
-		graphDir: graphDir, entries: len(graphFolderEntries(graphDir).Entries), layers: layers, watched: watched, clients: clients,
+		graphDir: graphDir, entries: len(graphFolderEntries(graphDir).Entries), layers: layers, watched: served.watched, clients: clients,
 	}, nil
 }
 
@@ -741,9 +750,10 @@ type servedEmbedders struct{ local, cross handlers.IndexEmbedder }
 // buildServedClients composes the clients of a build, keeping previous's
 // while the project stays: its stats and llm.debug transcripts go into that
 // project's .sdd/.
-func buildServedClients(cmd *cli.Command, previous *servedProject, layout meta.Project, layers model.ConfigLayers, llmConfig model.LLMConfig) (*servedClients, error) {
+func buildServedClients(cmd *cli.Command, previous *servedProject, served servedConfig, llmConfig model.LLMConfig) (*servedClients, error) {
 	clients := &servedClients{}
-	if previous != nil && previous.clients != nil && previous.layout.Root == layout.Root {
+	layers := served.layers
+	if previous != nil && previous.clients != nil && previous.layout.Root == served.project.Root {
 		changes := model.ConfigChanges(previous.layers, layers)
 		if !changedUnder(changes, "llm.") {
 			clients.llm = previous.clients.llm
@@ -755,24 +765,38 @@ func buildServedClients(cmd *cli.Command, previous *servedProject, layout meta.P
 		}
 	}
 	if clients.llm == nil {
-		runner, err := composedRunner(llmConfig)
+		runner, err := composedRunnerIn(llmConfig, served.sddDirOf)
 		if err != nil {
 			return nil, err
 		}
 		clients.llm = &servedRunner{runner}
 	}
 	if clients.embedders == nil {
-		local, err := buildEmbedder(cmd)
+		embedding := embeddingConfigWithFlags(cmd, served.cfg)
+		local, err := configuredEmbedder(embedding, served.sddDirOf)
 		if err != nil {
 			return nil, err
 		}
-		cross, err := crossRepoEmbedder(cmd)
+		// As crossRepoEmbedder: the user-global embedding wins when set.
+		if layers.Global.Embedding.Provider != "" {
+			embedding = layers.Global.Embedding
+		}
+		cross, err := configuredEmbedder(embedding, served.sddDirOf)
 		if err != nil {
 			return nil, err
 		}
 		clients.embedders = &servedEmbedders{local: local, cross: cross}
 	}
 	return clients, nil
+}
+
+// sddDirOf hands composedRunnerIn and the stats sinks the project's .sdd/
+// directory this read resolved, so they resolve no project of their own.
+func (c servedConfig) sddDirOf() (string, error) {
+	if c.sddDir == "" {
+		return "", errNoProject
+	}
+	return c.sddDir, nil
 }
 
 func changedUnder(changes []model.ConfigChange, prefix string) bool {

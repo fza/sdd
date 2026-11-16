@@ -119,9 +119,7 @@ func delegateRoundCmd() *cli.Command {
 			&cli.IntFlag{Name: "round", Required: true},
 		),
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			watch, err := newConfigWatch(func() (string, error) { return resolveGraphDir(cmd) }, func(previous *servedProject) (*servedProject, error) {
-				return buildServedProject(ctx, cmd, "", previous)
-			})
+			watch, err := newServedWatch(ctx, cmd)
 			if err != nil {
 				return err
 			}

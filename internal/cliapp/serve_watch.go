@@ -47,11 +47,39 @@ type fileStamp struct {
 	sum    [sha256.Size]byte
 }
 
-func stampFiles(paths []string) []fileStamp {
+// configFiles is one read of the config files: each is read once, on first
+// ask. A rebuild resolves the whole project from the read its stamps were
+// taken from, so an edit landing during the rebuild cannot mix two versions
+// into one project.
+type configFiles struct {
+	reads map[string]configRead
+}
+
+type configRead struct {
+	data []byte
+	err  error
+}
+
+func newConfigFiles() *configFiles {
+	return &configFiles{reads: map[string]configRead{}}
+}
+
+// read is a meta.ReadFile.
+func (f *configFiles) read(path string) ([]byte, error) {
+	key := filepath.Clean(path)
+	read, ok := f.reads[key]
+	if !ok {
+		read.data, read.err = os.ReadFile(key)
+		f.reads[key] = read
+	}
+	return read.data, read.err
+}
+
+func (f *configFiles) stamps(paths []string) []fileStamp {
 	stamps := make([]fileStamp, 0, len(paths))
 	for _, path := range paths {
 		stamp := fileStamp{path: path}
-		data, err := os.ReadFile(path)
+		data, err := f.read(path)
 		switch {
 		case err == nil:
 			stamp.found, stamp.sum = true, sha256.Sum256(data)
@@ -71,8 +99,8 @@ func stampFiles(paths []string) []fileStamp {
 // refuses every call until that folder holds the graph and the one served
 // before holds none of it, and only then is the project rebuilt on it.
 type configWatch struct {
-	locate func() (string, error)
-	build  func(previous *servedProject) (*servedProject, error)
+	locate func(files *configFiles) (string, error)
+	build  func(files *configFiles, previous *servedProject) (*servedProject, error)
 	// guards run before every call once the config is followed, and refuse
 	// the call while their state lasts.
 	guards []func(context.Context, *servedProject) error
@@ -86,12 +114,13 @@ type configWatch struct {
 	notices []string
 }
 
-func newConfigWatch(locate func() (string, error), build func(previous *servedProject) (*servedProject, error)) (*configWatch, error) {
-	project, err := build(nil)
+func newConfigWatch(locate func(files *configFiles) (string, error), build func(files *configFiles, previous *servedProject) (*servedProject, error)) (*configWatch, error) {
+	files := newConfigFiles()
+	project, err := build(files, nil)
 	if err != nil {
 		return nil, err
 	}
-	return &configWatch{locate: locate, build: build, current: project, watched: project.watched, stamps: stampFiles(project.watched)}, nil
+	return &configWatch{locate: locate, build: build, current: project, watched: project.watched, stamps: files.stamps(project.watched)}, nil
 }
 
 type servedProjectKey struct{}
@@ -139,13 +168,14 @@ func (w *configWatch) project(ctx context.Context) *servedProject {
 }
 
 func (w *configWatch) follow(ctx context.Context) error {
-	stamps := stampFiles(w.watched)
+	files := newConfigFiles()
+	stamps := files.stamps(w.watched)
 	// While broken, the file that broke the build may lie outside the watched
 	// set (a project a new pointer names), so every call tries again.
 	changed := w.broken != nil || !slices.Equal(stamps, w.stamps)
 	w.stamps = stamps
 	if changed {
-		dir, err := w.locate()
+		dir, err := w.locate(files)
 		if err != nil {
 			w.broken = err
 			return err
@@ -163,7 +193,7 @@ func (w *configWatch) follow(ctx context.Context) error {
 		changed = changed || filepath.Clean(to.Dir) != filepath.Clean(w.current.graphDir)
 	}
 	if changed {
-		err := w.rebuild()
+		err := w.rebuild(files)
 		if err != nil {
 			return err
 		}
@@ -191,8 +221,8 @@ func (w *configWatch) track(dir string) {
 	}
 }
 
-func (w *configWatch) rebuild() error {
-	next, err := w.build(w.current)
+func (w *configWatch) rebuild(files *configFiles) error {
+	next, err := w.build(files, w.current)
 	if err != nil {
 		w.broken = err
 		return err
@@ -207,7 +237,7 @@ func (w *configWatch) rebuild() error {
 			w.watched = append(w.watched, path)
 		}
 	}
-	w.stamps = stampFiles(w.watched)
+	w.stamps = files.stamps(w.watched)
 	return nil
 }
 

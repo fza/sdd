@@ -3,6 +3,7 @@ package meta
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -47,22 +48,27 @@ func (p Project) LocalConfigPath(override string) string {
 // holding the graph. A pointing repository carries only the pointer keys, and
 // the project_dir it names must be one that does not point on.
 func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, error)) (Project, error) {
+	return ResolveProjectWith(os.ReadFile, workRoot, graphClone)
+}
+
+// ResolveProjectWith is ResolveProject reading the config files through read.
+func ResolveProjectWith(read ReadFile, workRoot string, graphClone func(model.RepoID) (string, error)) (Project, error) {
 	sddDir := SDDDir(workRoot)
 	committedPath := filepath.Join(sddDir, "config.yaml")
 	localPath := LocalConfigPath(sddDir, "")
-	committed, local, err := readLayoutLayers(sddDir, localPath)
+	committed, local, err := readLayoutLayers(read, sddDir, localPath)
 	if err != nil {
 		return Project{}, err
 	}
 	pointers := model.MergeConfig(committed, local)
 	if pointers.GraphRepo != "" {
-		return resolveGraphRepo(workRoot, pointers.GraphRepo, committedPath, graphClone)
+		return resolveGraphRepo(read, workRoot, pointers.GraphRepo, committedPath, graphClone)
 	}
 	projectDir := pointers.ProjectDir
 	if projectDir == "" {
 		return Project{Root: workRoot, WorkRoot: workRoot}, nil
 	}
-	err = requireOnlyKeys(committedPath, model.PointerKeys)
+	err = requireOnlyKeys(read, committedPath, model.PointerKeys)
 	if err != nil {
 		return Project{}, err
 	}
@@ -75,7 +81,7 @@ func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, erro
 		root = filepath.Join(workRoot, root)
 	}
 	root = filepath.Clean(root)
-	targetCommitted, targetLocal, err := readLayoutLayers(SDDDir(root), "")
+	targetCommitted, targetLocal, err := readLayoutLayers(read, SDDDir(root), "")
 	if err != nil {
 		return Project{}, err
 	}
@@ -95,24 +101,30 @@ func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, erro
 // committed config names one. Any other workRoot resolves as ResolveProject
 // resolves it.
 func ResolveSwitchedProject(workRoot string, repoID model.RepoID, graphClone func(model.RepoID) (string, error)) (Project, error) {
+	return ResolveSwitchedProjectWith(os.ReadFile, workRoot, repoID, graphClone)
+}
+
+// ResolveSwitchedProjectWith is ResolveSwitchedProject reading the config
+// files through read.
+func ResolveSwitchedProjectWith(read ReadFile, workRoot string, repoID model.RepoID, graphClone func(model.RepoID) (string, error)) (Project, error) {
 	sddDir := SDDDir(workRoot)
-	committed, local, err := readLayoutLayers(sddDir, LocalConfigPath(sddDir, ""))
+	committed, local, err := readLayoutLayers(read, sddDir, LocalConfigPath(sddDir, ""))
 	if err != nil {
 		return Project{}, err
 	}
 	pointers := model.MergeConfig(committed, local)
 	if pointers.GraphRepo == "" && pointers.ProjectDir == "" {
-		return ResolveProject(workRoot, graphClone)
+		return ResolveProjectWith(read, workRoot, graphClone)
 	}
-	return resolveGraphRepo(workRoot, repoID, filepath.Join(sddDir, "config.yaml"), graphClone)
+	return resolveGraphRepo(read, workRoot, repoID, filepath.Join(sddDir, "config.yaml"), graphClone)
 }
 
-func resolveGraphRepo(workRoot string, repoID model.RepoID, committedPath string, graphClone func(model.RepoID) (string, error)) (Project, error) {
+func resolveGraphRepo(read ReadFile, workRoot string, repoID model.RepoID, committedPath string, graphClone func(model.RepoID) (string, error)) (Project, error) {
 	err := model.ValidateRepoID(repoID)
 	if err != nil {
 		return Project{}, fmt.Errorf("graph_repo in %s: %w", SDDDir(workRoot), err)
 	}
-	err = requireOnlyKeys(committedPath, model.GraphRepoPointerKeys)
+	err = requireOnlyKeys(read, committedPath, model.GraphRepoPointerKeys)
 	if err != nil {
 		return Project{}, err
 	}
@@ -126,10 +138,10 @@ func resolveGraphRepo(workRoot string, repoID model.RepoID, committedPath string
 	return Project{Root: root, WorkRoot: workRoot, GraphRepo: repoID}, nil
 }
 
-func requireOnlyKeys(path string, allowed []string) error {
-	data, err := os.ReadFile(path)
+func requireOnlyKeys(read ReadFile, path string, allowed []string) error {
+	data, err := read(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return err

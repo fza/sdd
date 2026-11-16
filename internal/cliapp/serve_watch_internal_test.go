@@ -2,8 +2,14 @@ package cliapp
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/urfave/cli/v3"
@@ -11,6 +17,7 @@ import (
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	pkgllm "github.com/networkteam/sdd/pkg/llm"
 )
 
 // namedSessions tells apart the session stores of two builds.
@@ -27,9 +34,9 @@ func languageWatch(t *testing.T) (*configWatch, string) {
 	path := filepath.Join(dir, "config.yaml")
 	graphDir := filepath.Join(dir, "graph")
 	writeWatched(t, path, "de")
-	locate := func() (string, error) { return graphDir, nil }
-	watch, err := newConfigWatch(locate, func(*servedProject) (*servedProject, error) {
-		data, err := os.ReadFile(path)
+	locate := func(*configFiles) (string, error) { return graphDir, nil }
+	watch, err := newConfigWatch(locate, func(files *configFiles, _ *servedProject) (*servedProject, error) {
+		data, err := files.read(path)
 		if err != nil {
 			return nil, err
 		}
@@ -121,13 +128,13 @@ func TestServedClientsFollowOnlyTheirOwnKeys(t *testing.T) {
 	}
 
 	command := &cli.Command{Name: "serve", Action: func(_ context.Context, cmd *cli.Command) error {
-		clients, err := buildServedClients(cmd, nil, layout, base, model.LLMConfig{})
+		clients, err := buildServedClients(cmd, nil, servedConfig{project: layout, layers: base}, model.LLMConfig{})
 		if err != nil {
 			return err
 		}
 		previous := &servedProject{layout: layout, layers: base, clients: clients}
 		for _, tc := range cases {
-			next, err := buildServedClients(cmd, previous, tc.layout, tc.layers, model.LLMConfig{})
+			next, err := buildServedClients(cmd, previous, servedConfig{project: tc.layout, layers: tc.layers}, model.LLMConfig{})
 			if err != nil {
 				return err
 			}
@@ -137,6 +144,94 @@ func TestServedClientsFollowOnlyTheirOwnKeys(t *testing.T) {
 			if (next.embedders == clients.embedders) != tc.keepsEmbedder {
 				t.Errorf("%s: the embedders should be kept only while no embedding setting changed in the same project", tc.name)
 			}
+		}
+		return nil
+	}}
+	err := command.Run(t.Context(), []string{"serve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// servedFixture is a project at a fresh working directory, with sdd's
+// machine folders inside it, and the paths of its global, committed and
+// local config.
+func servedFixture(t *testing.T) (global, committed, local string) {
+	t.Helper()
+	root := canonicalTempDir(t)
+	t.Chdir(root)
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"} {
+		t.Setenv(name, filepath.Join(root, name))
+	}
+	return filepath.Join(root, "XDG_CONFIG_HOME", "sdd", "config.yaml"), filepath.Join(root, ".sdd", "config.yaml"), filepath.Join(root, ".sdd", "config.local.yaml")
+}
+
+// A rebuild derives the whole project from the one read its stamps came
+// from: an edit landing after that read reaches neither the config, the
+// layers nor the LLM runner.
+func TestServedConfigComesFromOneRead(t *testing.T) {
+	global, committed, local := servedFixture(t)
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		models = append(models, req.Model)
+		mu.Unlock()
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+	project := func(language, llmModel string) {
+		writeWatched(t, committed, "default_branch: main\nlanguage: "+language+"\n")
+		writeWatched(t, local, "llm:\n  provider: openai\n  model: "+llmModel+"\n  endpoint: "+server.URL+
+			"\n  api_keys:\n    openai: op-notarealkeyaaaaaaaaaa\n  retry:\n    max_attempts: 1\n")
+	}
+	project("de", "read-model")
+	files := newConfigFiles()
+	files.stamps([]string{global, committed, local})
+	project("en", "edited-model")
+
+	command := &cli.Command{Name: "serve", Action: func(ctx context.Context, cmd *cli.Command) error {
+		served, err := resolveServedConfig(cmd, files)
+		if err != nil {
+			return err
+		}
+		if served.cfg.Language != "de" || served.layers.Project.Language != "de" {
+			t.Errorf("the config and the layers should come from the read, got %q and %q", served.cfg.Language, served.layers.Project.Language)
+		}
+		clients, err := buildServedClients(cmd, nil, served, runnerConfigFrom(cmd, "", served.cfg))
+		if err != nil {
+			return err
+		}
+		_, _ = clients.llm.Run(ctx, pkgllm.Request{UserPrompt: "ping"})
+		mu.Lock()
+		defer mu.Unlock()
+		if len(models) == 0 || slices.ContainsFunc(models, func(model string) bool { return model != "read-model" }) {
+			t.Errorf("the runner should call the model the read named, called %q", models)
+		}
+		return nil
+	}}
+	err := command.Run(t.Context(), []string{"serve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServedConfigNamesTheGlobalConfigOnAReadError(t *testing.T) {
+	global, committed, _ := servedFixture(t)
+	writeWatched(t, committed, "default_branch: main\n")
+	files := newConfigFiles()
+	files.reads[filepath.Clean(global)] = configRead{err: os.ErrPermission}
+
+	command := &cli.Command{Name: "serve", Action: func(_ context.Context, cmd *cli.Command) error {
+		_, err := resolveServedConfig(cmd, files)
+		if err == nil || !strings.Contains(err.Error(), "reading global config "+global) {
+			t.Errorf("a global read error should name the global config, got %v", err)
 		}
 		return nil
 	}}
