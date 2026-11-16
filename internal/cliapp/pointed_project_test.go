@@ -395,6 +395,15 @@ func TestInitRefusesAPointerItCannotHonour(t *testing.T) {
 			mention: "sets project_dir itself",
 		},
 		{
+			name: "project pointing on through its local file",
+			prepare: func(t *testing.T, work, project string) {
+				removeWorkSDD(t, work)
+				writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\nproject_dir: ../work\n")
+			},
+			args:    []string{"init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada"},
+			mention: "sets project_dir itself",
+		},
+		{
 			name:    "minimum version bump from the work repository",
 			version: "1.2.3",
 			prepare: func(t *testing.T, work, project string) {

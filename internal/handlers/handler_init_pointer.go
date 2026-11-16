@@ -42,7 +42,7 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 	}
 	projectRoot = filepath.Clean(projectRoot)
 	projectSDDDir := meta.SDDDir(projectRoot)
-	projectCfg, _, err := meta.ReadConfigLayers(projectSDDDir, "")
+	projectCfg, projectLocal, err := meta.ReadConfigLayers(projectSDDDir, "")
 	if err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		return fmt.Errorf("%s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", cmd.ProjectDir, meta.ErrNotAProject, cmd.ProjectDir)
 	case projectCfg != nil && (cmd.GraphDir != "" || cmd.Language != ""):
 		return fmt.Errorf("--graph-dir and --language configure the project holding the graph; run `sdd init` with them in %s", cmd.ProjectDir)
-	case projectCfg != nil && projectCfg.ProjectDir != "":
+	case model.MergeConfig(projectCfg, projectLocal).ProjectDir != "":
 		return fmt.Errorf("%s sets project_dir itself; point at the project holding the graph", cmd.ProjectDir)
 	}
 	err = meta.RequireProjectApart("--project-dir "+cmd.ProjectDir, cmd.RepoRoot, projectRoot, h.repoRootOf)
