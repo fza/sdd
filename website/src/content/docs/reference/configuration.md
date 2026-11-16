@@ -417,20 +417,24 @@ Every config file may declare `hooks`: the user-global file, and both `.sdd/conf
 | `.sdd/config.yaml` | `.sdd/hooks/`, committed with the project |
 | `.sdd/config.local.yaml` | `.sdd/hooks/local/`, which `sdd init` adds to `.gitignore` |
 
-sdd refuses an absolute path, `..`, a name it would have to look up on `PATH`, and anything a shell would interpret. A hook runs without a shell, with the hooks folder as its working directory, so `args` resolve from there too. Put an interpreter in the script's shebang and make the script executable. A hook in the committed file may not run a script from `local/`, which only your machine has, and a hook in the local file runs only a script from `local/`, never the repository's, which a pull could change. sdd compares the folders themselves, so a link or another spelling of `local` changes nothing.
+sdd refuses an absolute path, `..`, a name it would have to look up on `PATH`, and anything a shell would interpret. A hook runs without a shell, with the hooks folder as its working directory, so `args` resolve from there too. Put an interpreter in the script's shebang and make the script executable. A hook in the committed file may not run a script from `local/`, which only your machine has, and a hook in the local file runs only a script from `local/`, never the repository's, which a pull could change. For these two rules sdd compares the folders themselves, so a link or another spelling of `local` changes nothing.
 
 ### Allowing a project's hooks
 
-Hooks in `.sdd/config.yaml` arrive with every clone, so sdd runs them only after you allow them on your machine. Until then sdd skips them, and the step it serves names `sdd hooks allow`. The same holds for the local file and `.sdd/hooks/local/` when the repository tracks either of them, for example after a forced `git add`. Hooks in the user-global file, and in a local file the repository does not track, are your own and run without it.
+Hooks in `.sdd/config.yaml` arrive with every clone, so sdd runs them only after you allow them on your machine. Until then sdd skips them, and the step it serves names `sdd hooks allow`. Hooks in the user-global file are your own and run without it.
+
+A hook in the local file is your own only when git says the repository tracks neither `.sdd/config.local.yaml` nor anything under `.sdd/hooks/local/`, in any spelling of the names, and none of `.sdd`, `.sdd/hooks` and `.sdd/hooks/local` is a link. Otherwise it waits for an allow too: when the repository tracks the file, for example after a forced `git add`; when a folder on the way is a link, past which git does not look; and when git cannot answer, as in an unpacked archive or a copied folder with no `.git`, in a repository git refuses as unsafe, or without git. The step sdd serves says which applies. `sdd hooks allow` needs git, so outside a repository such hooks do not run; declare them in the user-global file instead.
 
 ```bash
 sdd hooks allow   # review the repository's .sdd/hooks first
 ```
 
-- `sdd hooks allow` records, per repository, a hash over the hook declarations it allows and over every file in `.sdd/hooks/`: scripts, files they source or import, files their arguments name, interpreters kept there. It leaves out `local/` unless the repository tracks it.
-- Any change there, a new hook or file included, skips those hooks again until you allow them again. sdd checks the hash again right before each hook runs. Code a hook loads from outside `.sdd/hooks/` is not covered.
+- `sdd hooks allow` allows, per repository, the hooks of `.sdd/config.yaml` and those of a local file that waits for an allow. It names a hook sdd refuses to run, such as one whose script is missing, as refused.
+- It records a hash over those hook declarations and over every file the repository tracks in `.sdd/hooks/`, by content and mode, a link by the text git stores for it: scripts, files they source or import, files their arguments name, interpreters kept there. sdd follows no link.
+- Any change to them, a new tracked file included, skips those hooks again until you allow them again. Files the repository does not track do not count, since no clone or pull brings them: a hook may write into its folder, but sdd ignores what it writes there. Code a hook loads from outside `.sdd/hooks/` is not covered.
+- sdd checks the hash again right before each hook runs. A change in the milliseconds between that check and the hook reading its files still runs.
 - In a project whose graph lives in a repository of its own, it allows both repositories' hooks.
-- The record lives in `~/.local/state/sdd/hooks/allowed.json`, keyed by the repository's `repo_id`, or by its path when it sets none. sdd writes it readable only by you. An unreadable record allows nothing, the step sdd serves says so, and `sdd hooks allow` rewrites it.
+- The record lives in `~/.local/state/sdd/hooks/allowed.json`, keyed by the repository's `repo_id`, or by its path when it sets none. sdd writes it readable only by you. An unreadable record allows nothing, the step sdd serves says so, and `sdd hooks allow` rewrites it. Any other problem checking the hooks skips them with a notice as well; it fails no call.
 
 ### Events
 
