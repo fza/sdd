@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -252,7 +253,9 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 		return ViewResult{}, err
 	}
 	var rendered bytes.Buffer
-	presenters.RenderViewRepeats(&rendered, viewResult, repeatsFor(request.Held, request.Anchor))
+	presenters.RenderWithin(&rendered, repeatsFor(request.Held, request.Anchor), func(w io.Writer, r *presenters.Repeats) {
+		presenters.RenderViewRepeats(w, viewResult, r)
+	})
 	// Matched count is a read-side fact owned by the finder; sum it across the
 	// local graph and every queried dependency so "empty" means nothing
 	// rendered anywhere, not just an empty rendered string (which is also false
@@ -330,7 +333,9 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 		return ShowResult{}, err
 	}
 	var rendered bytes.Buffer
-	presenters.RenderShow(&rendered, showResult, presenters.ShowOptions{Repeats: repeatsFor(request.Held, request.Anchor)})
+	presenters.RenderWithin(&rendered, repeatsFor(request.Held, request.Anchor), func(w io.Writer, r *presenters.Repeats) {
+		presenters.RenderShow(w, showResult, presenters.ShowOptions{Repeats: r})
+	})
 	show := ShowResult{Project: runtime.options.Project, Entries: strings.TrimRight(rendered.String(), "\n")}
 	for _, group := range showResult.Groups {
 		if group.Primary != nil {
@@ -404,7 +409,9 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 		searchResult.Entries = searchResult.Entries[:limit]
 	}
 	var rendered bytes.Buffer
-	presenters.RenderSearchRepeats(&rendered, searchResult, snapshot.graph, repeatsFor(request.Held, request.Anchor))
+	presenters.RenderWithin(&rendered, repeatsFor(request.Held, request.Anchor), func(w io.Writer, r *presenters.Repeats) {
+		presenters.RenderSearchRepeats(w, searchResult, snapshot.graph, r)
+	})
 	search := SearchResult{Project: runtime.options.Project, Results: strings.TrimRight(rendered.String(), "\n"), Coverage: coverage}
 	for _, member := range coverage {
 		if !member.Complete {
@@ -828,7 +835,7 @@ var errVectorUnavailable = errors.New("vector search requires an Embedder and a 
 
 // repeatsFor applies the no-repeat rule for a consumer holding the entries
 // held reports; nil serves everything in full.
-func repeatsFor(held func(id, hash string) (string, string, bool), anchor func(id, hash, body string) string) *presenters.Repeats {
+func repeatsFor(held func(id, hash string) (string, string, bool), anchor func(id, hash, body, field string) string) *presenters.Repeats {
 	if held == nil {
 		return nil
 	}

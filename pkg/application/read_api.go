@@ -36,7 +36,7 @@ type ViewRequest struct {
 	// value is unbounded — explicit pulls arrive complete (d-tac-rzi).
 	Budget types.ViewBudget
 	Held   func(id, hash string) (tag, next string, held bool) // as ShowRequest.Held
-	Anchor func(id, hash, body string) string                  // as ShowRequest.Anchor
+	Anchor func(id, hash, body, field string) string           // as ShowRequest.Anchor
 }
 
 type ViewResult struct {
@@ -72,7 +72,7 @@ type ShowRequest struct {
 	// serves everything in full, as the CLI does.
 	Held func(id, hash string) (tag, next string, held bool)
 	// Anchor returns an entry body served in full with its tag placed.
-	Anchor func(id, hash, body string) string
+	Anchor func(id, hash, body, field string) string
 }
 
 type ShowResult struct {
@@ -100,7 +100,7 @@ type SearchRequest struct {
 	Repos             []RepoID
 	AllRepos          bool
 	Held              func(id, hash string) (tag, next string, held bool) // as ShowRequest.Held
-	Anchor            func(id, hash, body string) string                  // as ShowRequest.Anchor
+	Anchor            func(id, hash, body, field string) string           // as ShowRequest.Anchor
 }
 
 type SearchResult struct {

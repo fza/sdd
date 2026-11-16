@@ -239,3 +239,26 @@ func TestStripAnchorTags(t *testing.T) {
 		})
 	}
 }
+
+// A schema's proofs ask for words once in the whole schema the agent reads,
+// property names and the other descriptions included.
+func TestSchemaChallengePromptsOccurOnceInTheSchema(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"reviewer": map[string]any{"type": "string", "description": "Later the reviewer approves drafts before every write lands."},
+			"note":     map[string]any{"type": "string", "description": "A note on drafts the parser reads."},
+		},
+	}
+	for seed := range uint64(200) {
+		anchor, ok := model.PlaceSchemaAnchor(schema, "ab12", seeded(seed))
+		if !ok {
+			t.Fatal("a schema with descriptions should take an anchor")
+		}
+		for _, c := range anchor.Challenges {
+			if c.Prompt == "reviewer" || c.Prompt == "drafts" {
+				t.Fatalf("a prompt occurring elsewhere in the schema should not be drawn, got %+v", c)
+			}
+		}
+	}
+}
