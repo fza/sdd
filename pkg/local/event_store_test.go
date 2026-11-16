@@ -339,3 +339,23 @@ func TestFilesystemEventStore_MarksSharedSegmentsBinary(t *testing.T) {
 		t.Fatalf("a git channel should mark segments binary, .gitattributes = %q, %v", attributes, err)
 	}
 }
+
+// The attributes file is written inside the event store only: a symlink in
+// its place, as a cloned repository could carry, is refused, never followed.
+func TestFilesystemEventStore_RefusesASymlinkedAttributesFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "events")
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, ".gitattributes")); err != nil {
+		t.Fatal(err)
+	}
+	err := newFileEventStore(t, dir, "recheck").Append(t.Context(), []sdd.Event{testEvent("a", "recheck")})
+	if err == nil {
+		t.Fatal("an attributes file that is a symlink should be refused")
+	}
+	if _, statErr := os.Lstat(outside); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("nothing should be written outside the event store, got %v", statErr)
+	}
+}

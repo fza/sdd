@@ -141,14 +141,25 @@ func (s *FilesystemEventStore) markSharing(root *os.Root, channel string) error 
 	return root.WriteFile(".gitignore", localChannelIgnore, 0o644)
 }
 
-// markSegmentsBinary writes the attributes file once a channel is shared.
-func (s *FilesystemEventStore) markSegmentsBinary() error {
-	path := filepath.Join(s.dir, ".gitattributes")
-	_, err := os.Stat(path)
-	if err == nil || !errors.Is(err, fs.ErrNotExist) {
+// markSegmentsBinary writes the attributes file once a channel is shared,
+// inside the store only: anything but a regular file in its place is
+// refused.
+func (s *FilesystemEventStore) markSegmentsBinary() (err error) {
+	root, err := os.OpenRoot(s.dir)
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, sharedSegmentAttributes, 0o644)
+	defer func() { err = errors.Join(err, root.Close()) }()
+	info, err := root.Lstat(".gitattributes")
+	switch {
+	case err == nil && info.Mode().IsRegular():
+		return nil
+	case err == nil:
+		return fmt.Errorf("%s is not a regular file", filepath.Join(s.dir, ".gitattributes"))
+	case !errors.Is(err, fs.ErrNotExist):
+		return err
+	}
+	return root.WriteFile(".gitattributes", sharedSegmentAttributes, 0o644)
 }
 
 func (s *FilesystemEventStore) Query(ctx context.Context, query app.EventQuery) ([]app.Event, error) {
