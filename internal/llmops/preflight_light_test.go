@@ -393,3 +393,48 @@ func TestPreflightLight_ReformatFlagsWhetherTheFirstAnswerHoldsAnalysis(t *testi
 		})
 	}
 }
+
+// Two calls that raise different observations on the same category and basis,
+// as the draft's refs that lead every call, keep both.
+func TestPreflightLight_DistinctObservationsOnASharedBasisStay(t *testing.T) {
+	body := strings.Repeat("Unrelated filler words about other matters entirely. ", 40)
+	target := readingEntry("20261101-090000-s-tac-tgt", "The writer keeps one attachment per name.", "Body.")
+	ids := []string{"20261101-100000-s-tac-aaa", "20261101-100001-s-tac-bbb", "20261101-100002-s-tac-ccc"}
+	entries := []*model.Entry{target}
+	for i, id := range ids {
+		entries = append(entries, readingEntry(id, "Entry "+string(rune('A'+i)), body, "topic/t"+string(rune('a'+i))))
+	}
+	graph := lightGraph(t, entries...)
+	draft := *lightDraft
+	draft.Refs = []model.Ref{{ID: target.ID, Kind: "related", Desc: "the writer"}}
+	probe := &lightRunner{}
+	_, err := llmops.PreflightLight(t.Context(), probe, &draft, graph, "", llmops.LightReading{}, 1_000_000, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixed := len(probe.prompts[0].SystemPrompt) + len(probe.prompts[0].UserPrompt)
+	runner := &lightRunner{answer: func(req llm.Request) []lightFinding {
+		for _, id := range ids {
+			if strings.Contains(req.UserPrompt, "ID: "+id) {
+				return []lightFinding{{Observation: "The draft clashes with the writer as read beside " + id + ".", Category: "strain", Severity: "medium", Basis: []string{target.ID}}}
+			}
+		}
+		return nil
+	}}
+	result, err := llmops.PreflightLight(t.Context(), runner, &draft, graph, "", llmops.LightReading{Full: ids}, fixed+len(body)+600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Calls < 2 {
+		t.Fatalf("precondition: the reading should take several calls, got %d", result.Calls)
+	}
+	strains := 0
+	for _, finding := range result.Findings {
+		if finding.Category == "strain" {
+			strains++
+		}
+	}
+	if strains != result.Calls {
+		t.Fatalf("each call's distinct observation on the shared basis should stay, got %d of %d: %+v", strains, result.Calls, result.Findings)
+	}
+}
