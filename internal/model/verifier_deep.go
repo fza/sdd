@@ -296,42 +296,53 @@ func DeepChanges(findings []DeepFinding, responses []DeepResponse) []DeepChange 
 	return changes
 }
 
-// DeepSpan is the byte range [Start, End) of a draft document.
-type DeepSpan struct{ Start, End int }
-
-// DeepSettledSpans returns the spans of document an exchange settled: the
-// text each of its edits wrote, and each passage a finding quotes.
-func DeepSettledSpans(document string, findings []DeepFinding, responses []DeepResponse) []DeepSpan {
-	var spans []DeepSpan
-	occurrences := func(text string, from, to int) {
-		for at := 0; text != ""; {
-			i := strings.Index(document[at:], text)
-			if i < 0 {
-				return
-			}
-			spans = append(spans, DeepSpan{Start: at + i + from, End: at + i + len(text) - to})
-			at += i + 1
-		}
+// DeepEditsReverted reports whether draft is document with one or more of
+// the edits the proposal wrote over base taken back at the spot it wrote
+// them, and nothing else changed: the user undid what the verifier wrote,
+// which needs no new check. document must be the proposal itself.
+func DeepEditsReverted(base, document, draft string, changes []DeepChange) bool {
+	spans, problems := deepEditSpans(base, changes)
+	if len(problems) > 0 || len(spans) == 0 || draft == document {
+		return false
 	}
-	for _, change := range DeepChanges(findings, responses) {
-		for _, edit := range change.Edits {
-			prefix := 0
-			for prefix < len(edit.Old) && prefix < len(edit.New) && edit.Old[prefix] == edit.New[prefix] {
-				prefix++
-			}
-			suffix := 0
-			for suffix < len(edit.Old)-prefix && suffix < len(edit.New)-prefix && edit.Old[len(edit.Old)-1-suffix] == edit.New[len(edit.New)-1-suffix] {
-				suffix++
-			}
-			occurrences(edit.New, prefix, suffix)
-		}
+	type part struct{ fixed, wrote, took string }
+	var parts []part
+	var proposal strings.Builder
+	last := 0
+	for _, span := range spans {
+		parts = append(parts, part{fixed: base[last:span.start]}, part{wrote: span.edit.New, took: span.edit.Old})
+		proposal.WriteString(base[last:span.start])
+		proposal.WriteString(span.edit.New)
+		last = span.end
 	}
-	for _, finding := range findings {
-		for _, pointer := range finding.Pointers {
-			occurrences(pointer.Quote, 0, 0)
-		}
+	parts = append(parts, part{fixed: base[last:]})
+	proposal.WriteString(base[last:])
+	if proposal.String() != document {
+		return false
 	}
-	return spans
+	seen := map[[2]int]bool{}
+	var match func(i, at int) bool
+	match = func(i, at int) bool {
+		if i == len(parts) {
+			return at == len(draft)
+		}
+		key := [2]int{i, at}
+		if seen[key] {
+			return false
+		}
+		seen[key] = true
+		p := parts[i]
+		if p.wrote == "" && p.took == "" {
+			return strings.HasPrefix(draft[at:], p.fixed) && match(i+1, at+len(p.fixed))
+		}
+		for _, text := range []string{p.wrote, p.took} {
+			if strings.HasPrefix(draft[at:], text) && match(i+1, at+len(text)) {
+				return true
+			}
+		}
+		return false
+	}
+	return match(0, 0)
 }
 
 type deepSpan struct {
@@ -345,25 +356,7 @@ type deepSpan struct {
 // exactly once and no two edits may overlap. It returns the proposal and its
 // hunks in document order, or every problem found.
 func BuildDeepProposal(base string, changes []DeepChange) (string, []DeepHunk, error) {
-	var spans []deepSpan
-	var problems []error
-	for _, change := range changes {
-		for i, edit := range change.Edits {
-			count := strings.Count(base, edit.Old)
-			if count != 1 {
-				problems = append(problems, fmt.Errorf("%s edit %d: old text matches the draft %d times, it must match exactly once: %q", change.Finding, i+1, count, edit.Old))
-				continue
-			}
-			start := strings.Index(base, edit.Old)
-			spans = append(spans, deepSpan{start: start, end: start + len(edit.Old), finding: change.Finding, outcome: change.Outcome, edit: edit})
-		}
-	}
-	sort.SliceStable(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
-	for i := 1; i < len(spans); i++ {
-		if spans[i].start < spans[i-1].end {
-			problems = append(problems, fmt.Errorf("%s and %s edit overlapping text: %q", spans[i-1].finding, spans[i].finding, base[spans[i].start:min(spans[i].end, spans[i-1].end)]))
-		}
-	}
+	spans, problems := deepEditSpans(base, changes)
 	if len(problems) > 0 {
 		return "", nil, errors.Join(problems...)
 	}
@@ -383,6 +376,31 @@ func BuildDeepProposal(base string, changes []DeepChange) (string, []DeepHunk, e
 	}
 	b.WriteString(base[last:])
 	return b.String(), hunks, nil
+}
+
+// deepEditSpans places every edit over base, sorted by position: each old
+// text must match exactly once and no two may overlap.
+func deepEditSpans(base string, changes []DeepChange) ([]deepSpan, []error) {
+	var spans []deepSpan
+	var problems []error
+	for _, change := range changes {
+		for i, edit := range change.Edits {
+			count := strings.Count(base, edit.Old)
+			if count != 1 {
+				problems = append(problems, fmt.Errorf("%s edit %d: old text matches the draft %d times, it must match exactly once: %q", change.Finding, i+1, count, edit.Old))
+				continue
+			}
+			start := strings.Index(base, edit.Old)
+			spans = append(spans, deepSpan{start: start, end: start + len(edit.Old), finding: change.Finding, outcome: change.Outcome, edit: edit})
+		}
+	}
+	sort.SliceStable(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+	for i := 1; i < len(spans); i++ {
+		if spans[i].start < spans[i-1].end {
+			problems = append(problems, fmt.Errorf("%s and %s edit overlapping text: %q", spans[i-1].finding, spans[i].finding, base[spans[i].start:min(spans[i].end, spans[i-1].end)]))
+		}
+	}
+	return spans, problems
 }
 
 // RenderDeepHunks renders the hunks as a diff labelled by finding:

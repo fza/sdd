@@ -263,3 +263,26 @@ func TestAProofSpentMidCallHoldsForTheRestOfIt(t *testing.T) {
 		t.Error("the first challenge's answer should prove the piece: the call spent its proof once")
 	}
 }
+
+// A pointer withdrawn by a cut never reached the agent, so the proof it rested
+// on stays unspent.
+func TestDropPiecesSinceLeavesAWithdrawnPointersProofUnspent(t *testing.T) {
+	lane := engine.Piece{Name: "lane step", Hash: "h1"}
+	session := newPieceSession(nil)
+	session.BeginCall(nil, nil)
+	proof := servedInFull(t, session, lane)
+	session.RecordAnchors()
+
+	session.BeginCall([]model.Proof{proof}, nil)
+	mark := session.PieceMark()
+	if served := session.ServePiece(lane, nil, placeIn(pieceText)); !served.Held {
+		t.Fatalf("precondition: the proof should hold the lane, got %+v", served)
+	}
+	session.DropPiecesSince(mark)
+	session.RecordAnchors()
+
+	session.BeginCall([]model.Proof{proof}, nil)
+	if _, held := session.Holds(lane); !held {
+		t.Error("the proof of a pointer the cut withdrew should still hold the lane")
+	}
+}

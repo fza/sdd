@@ -25,6 +25,10 @@ const eventSegmentKind = "sdd.events"
 // auto-commit picks up.
 var localChannelIgnore = []byte("# sdd: local event channel, kept out of Git\n*\n")
 
+// sharedSegmentAttributes, in the event store's directory, keeps Git from
+// diffing or merging a shared channel's segments as text.
+var sharedSegmentAttributes = []byte("# sdd: event segments are binary\n*.seg binary\n")
+
 // EventSettler returns the IDs of the events of channel that compaction
 // may drop.
 type EventSettler func(ctx context.Context, channel string, events []app.Event) ([]string, error)
@@ -125,14 +129,26 @@ func (s *FilesystemEventStore) markSharing(root *os.Root, channel string) error 
 	}
 	if slices.Contains(s.gitChannels, channel) {
 		if present && bytes.Equal(current, localChannelIgnore) {
-			return root.Remove(".gitignore")
+			if err := root.Remove(".gitignore"); err != nil {
+				return err
+			}
 		}
-		return nil
+		return s.markSegmentsBinary()
 	}
 	if present {
 		return nil
 	}
 	return root.WriteFile(".gitignore", localChannelIgnore, 0o644)
+}
+
+// markSegmentsBinary writes the attributes file once a channel is shared.
+func (s *FilesystemEventStore) markSegmentsBinary() error {
+	path := filepath.Join(s.dir, ".gitattributes")
+	_, err := os.Stat(path)
+	if err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return os.WriteFile(path, sharedSegmentAttributes, 0o644)
 }
 
 func (s *FilesystemEventStore) Query(ctx context.Context, query app.EventQuery) ([]app.Event, error) {

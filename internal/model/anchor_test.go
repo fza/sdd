@@ -2,8 +2,10 @@ package model_test
 
 import (
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -78,18 +80,44 @@ func TestChallengeAnswersAreContentWords(t *testing.T) {
 	}
 }
 
-// A word that also occurs inside another token, as "user" in "user's", is
-// no prompt: the agent could not tell which spot it names.
+// A prompt occurs once as a run of letters anywhere in the piece, code and
+// compound words included, so the agent's lookup finds the one spot it names.
 func TestChallengePromptsOccurOnceAsAWord(t *testing.T) {
-	text := "Settling them is the user's call; the user actually decides each review."
-	for seed := range uint64(100) {
-		anchor, ok := model.PlaceAnchor(text, "ab12", seeded(seed))
+	letterRuns := func(text string) []string {
+		return strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return !unicode.IsLetter(r) })
+	}
+	for _, text := range []string{
+		"The user's choice settles the review. Later the user approves every staged change.",
+		"Set the `user` field before the parser reads it. Later the user approves every staged change.",
+		"A user-facing page lists the review. Later the user approves every staged change.",
+	} {
+		for seed := range uint64(200) {
+			anchor, ok := model.PlaceAnchor(text, "ab12", seeded(seed))
+			if !ok {
+				t.Fatal("a text with content words should take an anchor")
+			}
+			for _, c := range anchor.Challenges {
+				if n := slices.Index(letterRuns(text), strings.ToLower(c.Prompt)); n < 0 || slices.Contains(letterRuns(text)[n+1:], strings.ToLower(c.Prompt)) {
+					t.Fatalf("prompt %q should occur once as a word in %q", c.Prompt, text)
+				}
+			}
+		}
+	}
+}
+
+// A piece joined with others into one result asks for words that occur once
+// in the whole result, so a word of a piece beside it never answers.
+func TestChallengePromptsOccurOnceInTheField(t *testing.T) {
+	text := "The focus lane renders every staged change before the parser reads it."
+	field := "Another lane ranks the parser output.\n\n" + text
+	for seed := range uint64(200) {
+		anchor, ok := model.PlaceAnchorIn(text, field, "ab12", seeded(seed))
 		if !ok {
 			t.Fatal("a text with content words should take an anchor")
 		}
 		for _, c := range anchor.Challenges {
-			if c.Prompt == "user" {
-				t.Fatalf("a word occurring inside another token should not be a prompt, got %+v", c)
+			if c.Prompt == "lane" || c.Prompt == "parser" {
+				t.Fatalf("a prompt occurring in a piece beside it should not be drawn, got %+v", c)
 			}
 		}
 	}

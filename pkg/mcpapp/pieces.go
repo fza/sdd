@@ -44,10 +44,15 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe) string {
 		return serve.Instructions
 	}
 	pageFull := ss.root.TakeStepFullIDs()
+	texts := make([]string, len(lanes))
+	for i, lane := range lanes {
+		texts[i] = lane.Text
+	}
+	field := strings.Join(texts, "\n\n")
 	var fresh, held []string
 	for _, lane := range lanes {
 		name := "lane " + lane.Name
-		served := ss.root.ServeText(name, lane.Text, carried(pageFull, lane.Text))
+		served := ss.root.ServeTextIn(name, lane.Text, field, carried(pageFull, lane.Text))
 		if served.Held {
 			held = append(held, heldName(name, served.Tag, served.Next))
 			continue
@@ -81,13 +86,18 @@ func carried(ids []string, text string) []string {
 // A block holds the entries it carries in full; a block is never cut for
 // them.
 func composeFraming(ss *shellSession, blocks []types.ServeLane) string {
+	texts := make([]string, len(blocks))
+	for i, block := range blocks {
+		texts[i] = block.Text
+	}
+	field := strings.Join(texts, "\n\n")
 	var served, held []string
 	for _, block := range blocks {
 		if block.Text == "" {
 			continue
 		}
 		name := "framing " + block.Name
-		piece := ss.root.ServeText(name, block.Text, ss.root.FramingFullIDs(block.Text))
+		piece := ss.root.ServeTextIn(name, block.Text, field, ss.root.FramingFullIDs(block.Text))
 		if !piece.Held {
 			served = append(served, piece.Text)
 			continue

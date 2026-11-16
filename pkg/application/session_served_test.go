@@ -84,3 +84,30 @@ func TestBeginCallRefusesAMalformedProof(t *testing.T) {
 		t.Error("a held item that is not tag:word should be refused")
 	}
 }
+
+// A lane carrying a held entry's pointer names a next proof that changes on
+// every call; the lane is the same piece all the same, so its own proof
+// still holds it.
+func TestALaneHoldsWhileItsEntryPointersRotate(t *testing.T) {
+	application, _, _, _ := newStampWorkflowApp(t, "", "", time.Now)
+	identity := sdd.RequestIdentity{Subject: "christopher"}
+	w, _, err := application.OpenWorkflow(t.Context(), identity, "example", sdd.WorkflowOpenRequest{ClientName: "mcp-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane := func(prompt string) string {
+		return servedLane + "\n\n  20260101-000000-s-tac-aaa — An entry. (held as ⟦ab12⟧; " + model.NextProof("ab12", prompt) + ")"
+	}
+	proof := proofOf(t, w.ServeText("lane step", lane("first"), nil))
+	err = w.RecordServed(t.Context(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = w.BeginCall([]string{proof}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.ServeText("lane step", lane("second"), nil).Held {
+		t.Fatal("a lane whose only change is its entry pointer's next proof should stay held")
+	}
+}

@@ -55,18 +55,24 @@ type Challenge struct {
 	Answer string
 }
 
-// pickChallenges draws up to n challenges from text: content words that occur
-// once in it, each with the content word right after it on the same line. It
-// takes the ones nearest at, the tag's offset, so the agent finds each prompt
-// beside the tag it holds.
-func pickChallenges(text string, at, n int) []Challenge {
-	words := contentWords(text)
-	// A prompt occurs once as a run of letters anywhere in the text, so no
-	// other spot, as "user" in "user's", reads as the one it names.
+// letterRuns counts each run of letters in text, case folded. A prompt is a
+// run that occurs once in the text a piece is served within, so no other
+// spot, as "user" in "user's" or a word of a piece beside it, reads as the
+// one it names.
+func letterRuns(text string) map[string]int {
 	count := map[string]int{}
 	for _, run := range strings.FieldsFunc(text, func(r rune) bool { return !unicode.IsLetter(r) }) {
 		count[strings.ToLower(run)]++
 	}
+	return count
+}
+
+// pickChallenges draws up to n challenges from text: content words whose
+// letter run count names once, each with the content word right after it on
+// the same line. It takes the ones nearest at, the tag's offset, so the agent
+// finds each prompt beside the tag it holds.
+func pickChallenges(text string, count map[string]int, at, n int) []Challenge {
+	words := contentWords(text)
 	type candidate struct {
 		challenge Challenge
 		distance  int
@@ -131,12 +137,20 @@ func AnchorMark(tag string) string { return anchorTagOpen + tag + anchorTagClose
 // PlaceAnchor places tag before a content word of text drawn from rnd. It
 // reports false when the text holds no content word outside code.
 func PlaceAnchor(text, tag string, rnd RandomSource) (Anchor, bool) {
+	return PlaceAnchorIn(text, text, tag, rnd)
+}
+
+// PlaceAnchorIn is PlaceAnchor for text served within field, the whole
+// result text it is joined into: each later proof's prompt occurs once in
+// field.
+func PlaceAnchorIn(text, field, tag string, rnd RandomSource) (Anchor, bool) {
 	words := contentWords(text)
 	if len(words) == 0 {
 		return Anchor{}, false
 	}
+	count := letterRuns(field)
 	i, challenges := drawKeepingProofs(len(words), rnd, func(i int) []Challenge {
-		return pickChallenges(text, words[i].offset, AnchorChallenges)
+		return pickChallenges(text, count, words[i].offset, AnchorChallenges)
 	})
 	w := words[i]
 	return Anchor{Tag: tag, Word: w.text, Offset: w.offset, Challenges: challenges}, true
@@ -200,7 +214,7 @@ func PlaceSchemaAnchor(schema map[string]any, tag string, rnd RandomSource) (Anc
 	// The challenges come from the description the tag sits in, so the agent
 	// finds each prompt beside the tag.
 	i, challenges := drawKeepingProofs(len(spots), rnd, func(i int) []Challenge {
-		return pickChallenges(spots[i].text, spots[i].word.offset, AnchorChallenges)
+		return pickChallenges(spots[i].text, letterRuns(spots[i].text), spots[i].word.offset, AnchorChallenges)
 	})
 	s := spots[i]
 	return Anchor{Tag: tag, Word: s.word.text, Offset: s.word.offset, Path: s.path, Challenges: challenges}, true
@@ -457,6 +471,15 @@ func StripAnchorTags(text string) string {
 		return text
 	}
 	return placedAnchorTag.ReplaceAllString(text, "")
+}
+
+// nextProofClause matches a NextProof clause in served text.
+var nextProofClause = regexp.MustCompile(`next proof [0-9a-z]{4}:<the word right after "(?:[^"\\]|\\.)*">`)
+
+// WithoutProofs returns text without its anchor tags and next-proof clauses:
+// the parts that change from serve to serve while the text is the same piece.
+func WithoutProofs(text string) string {
+	return nextProofClause.ReplaceAllString(StripAnchorTags(text), "")
 }
 
 // NextProof tells how the next call proves tag: the word right after next in

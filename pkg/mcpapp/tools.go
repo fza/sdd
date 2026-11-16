@@ -780,7 +780,7 @@ func (s *toolSet) abandonSession(ctx context.Context, req *mcp.CallToolRequest, 
 		s.sessions.evict(id)
 	}
 	result, err := s.app.AbandonWorkflowSession(ctx, identity, sdd.WorkflowResumeRequest{
-		SessionID: id, ClientName: mcpClientName(req.Session), ClientVersion: mcpClientVersion(req.Session),
+		SessionID: id, ClientName: mcpClientName(req.Session), ClientVersion: mcpClientVersion(req.Session), Agent: true,
 	}, args.Reason)
 	if err != nil {
 		return nil, AbandonResult{}, err

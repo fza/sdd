@@ -37,6 +37,8 @@ func TestReasonRepeatsIntent(t *testing.T) {
 		{"intent holds the reason", "reject empty input", "The parser should reject empty input.", true},
 		{"case, spacing and closing punctuation set aside", "Reject  Empty input!", "reject empty input", true},
 		{"a reason of its own", "empty input hid upstream bugs twice", "the parser module should reject empty input with a clear error", false},
+		{"the intent with a because clause", "always run the linter because CI blocks otherwise", "always run the linter", false},
+		{"the intent with a since clause", "Always run the linter, since CI blocks otherwise.", "always run the linter", false},
 		{"no intent", "empty input hid upstream bugs twice", "", false},
 		{"no reason", "", "reject empty input", false},
 	}
@@ -60,6 +62,8 @@ func TestQuotedFrom(t *testing.T) {
 		{"other case and quotes", "Say “An explicit error”", true},
 		{"closing punctuation", "instead of a clear error.", true},
 		{"words the user did not say", "reject empty input with an explicit error", false},
+		{"a word inside another word", "rig", false},
+		{"a letter of a word", "e", false},
 		{"empty", "  ", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,5 +71,14 @@ func TestQuotedFrom(t *testing.T) {
 				t.Errorf("QuotedFrom(%q) should be %v", tc.words, tc.want)
 			}
 		})
+	}
+}
+
+func TestQuotedFromMatchesWholeWords(t *testing.T) {
+	if model.QuotedFrom("no", "I know the reason") {
+		t.Error(`"no" inside "know" should not count as quoted`)
+	}
+	if !model.QuotedFrom("know the reason", "I know the reason.") {
+		t.Error("whole words of the message should count as quoted")
 	}
 }

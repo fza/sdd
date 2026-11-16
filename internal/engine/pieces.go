@@ -89,13 +89,16 @@ type pieceCall struct {
 	// proven are the tags the call's proofs answer as the call began, with
 	// their proof step then, so a proof the call spends still holds for the
 	// rest of it and is spent once; spent are those a pointer of the call
-	// rested on.
+	// rested on, each with the step of the call it was spent at.
 	proven map[string]int
-	spent  map[string]bool
+	spent  map[string]int
+	// steps counts what the call served in full or spent, for PieceMark.
+	steps int
 }
 
 // pendingAnchor is a piece the call served in full, not yet recorded.
 type pendingAnchor struct {
+	step       int
 	piece      Piece
 	tag        string
 	word       string
@@ -137,9 +140,12 @@ func (s *Session) Point(p Piece) Served {
 		return Served{Held: true, Tag: tag}
 	}
 	if s.call.spent == nil {
-		s.call.spent = map[string]bool{}
+		s.call.spent = map[string]int{}
 	}
-	s.call.spent[tag] = true
+	if _, spent := s.call.spent[tag]; !spent {
+		s.call.spent[tag] = s.call.steps
+		s.call.steps++
+	}
 	return Served{Held: true, Tag: tag, Next: s.anchors[tag].promptAfter(s.call.proven[tag])}
 }
 
@@ -194,28 +200,37 @@ func (s *Session) ServePiece(p Piece, carried []Piece, place AnchorPlacer) Serve
 			s.call.covered[id] = tag
 		}
 	}
-	s.call.pending = append(s.call.pending, pendingAnchor{piece: p, tag: tag, word: anchor.Word, covers: covers, challenges: anchor.Challenges})
+	s.call.pending = append(s.call.pending, pendingAnchor{step: s.call.steps, piece: p, tag: tag, word: anchor.Word, covers: covers, challenges: anchor.Challenges})
+	s.call.steps++
 	return Served{Anchor: anchor}
 }
 
-// PieceMark marks the pieces the call has served in full so far.
-func (s *Session) PieceMark() int { return len(s.call.pending) }
+// PieceMark marks what the call has served in full or spent so far.
+func (s *Session) PieceMark() int { return s.call.steps }
 
 // DropPiecesSince withdraws the pieces served in full after mark, for text
-// cut before it reached the agent.
+// cut before it reached the agent, and leaves the proofs the withdrawn
+// pointers rested on unspent.
 func (s *Session) DropPiecesSince(mark int) {
-	if mark < 0 || mark > len(s.call.pending) {
-		return
-	}
-	for _, dropped := range s.call.pending[mark:] {
-		delete(s.call.issued, dropped.piece)
-		for _, id := range dropped.covers {
-			if s.call.covered[id] == dropped.tag {
+	kept := s.call.pending[:0]
+	for _, p := range s.call.pending {
+		if p.step < mark {
+			kept = append(kept, p)
+			continue
+		}
+		delete(s.call.issued, p.piece)
+		for _, id := range p.covers {
+			if s.call.covered[id] == p.tag {
 				delete(s.call.covered, id)
 			}
 		}
 	}
-	s.call.pending = s.call.pending[:mark]
+	s.call.pending = kept
+	for tag, step := range s.call.spent {
+		if step >= mark {
+			delete(s.call.spent, tag)
+		}
+	}
 }
 
 // RecordAnchors logs the anchors the call issued since the last record, so a

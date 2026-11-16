@@ -350,3 +350,61 @@ func TestServeAllWithinWithdrawsWhatAnOmittedInstanceServed(t *testing.T) {
 	}
 	t.Fatalf("the second explore should be kept, got %+v", result.Open)
 }
+
+// chainStepProcedure injects the repeat target's chain, bounded by bound (an
+// inject field, or empty).
+func chainStepProcedure(bound string) string {
+	return `---
+type: decision
+kind: procedure
+layer: process
+canonical: chain-step
+confidence: high
+summary: A workflow whose step serves the repeat target's chain.
+state:
+    body: {type: text, desc: what the chain showed}
+steps:
+    - id: look
+      inject:
+          - {fn: entryChains, args: {id: "20260713-070000-s-tac-tgt"}` + bound + `}
+      collect: [body]
+      transitions:
+          - when: hasBody
+            to: end(completed)
+---
+
+Serves the repeat target's chain.
+
+## unit: look
+
+{{.entryChains}}
+`
+}
+
+// An injected chain counts the entries it served as served only when the step
+// serves it uncut, as a view does.
+func TestInjectedEntryChainsHoldOnlyWhenUncut(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		bound string
+		held  bool
+	}{
+		{"uncut", "", true},
+		{"cut", ", maxBytes: 60", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workflow, identity, id := newRepeatWorkflow(t, map[string]string{"13-070003-d-prc-chs.md": chainStepProcedure(tc.bound)})
+			workflow.CutRepeats()
+			serve, err := workflow.Start(t.Context(), identity, sdd.WorkflowStartRequest{Canonical: "chain-step"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(test.Untagged(serve.Instructions), repeatTargetBody) != tc.held {
+				t.Fatalf("the step should serve the body whole only uncut:\n%s", serve.Instructions)
+			}
+			if _, _, held := workflow.HoldsEntry(id, targetHash(t)); held != tc.held {
+				t.Fatalf("the target should count as served only when the step served the chain uncut, held=%v", held)
+			}
+		})
+	}
+}
