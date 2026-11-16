@@ -21,6 +21,15 @@ type ProjectRepositories interface {
 	RemoteURL(dir string) string
 }
 
+// repoRootOf returns the root of the repository holding dir; empty when there
+// is none or the handler reaches no repositories by path.
+func (h *Handler) repoRootOf(dir string) string {
+	if h.projectRepos == nil {
+		return ""
+	}
+	return h.projectRepos.RootOf(dir)
+}
+
 // setUpProject runs a plain init in projectRoot, which holds no sdd project
 // yet, giving it the repository of its own it needs.
 func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget, changed *bool) error {
@@ -39,8 +48,7 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 		}
 		return fmt.Errorf("--graph-dir leads into %s, a repository separate from the project at %s; keep the graph inside the project", graphRepo, projectRoot)
 	}
-	root := h.projectRepos.RootOf(projectRoot)
-	if root == "" {
+	if h.projectRepos.RootOf(projectRoot) == "" {
 		err := os.MkdirAll(projectRoot, 0o755)
 		if err != nil {
 			return fmt.Errorf("creating %s: %w", projectRoot, err)
@@ -49,8 +57,6 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 		if err != nil {
 			return err
 		}
-	} else if !meta.SameDir(root, projectRoot) {
-		return fmt.Errorf("--project-dir %s lies inside the repository at %s; the project needs a repository of its own", cmd.ProjectDir, root)
 	}
 
 	branch, err := h.projectRepos.CurrentBranch(projectRoot)

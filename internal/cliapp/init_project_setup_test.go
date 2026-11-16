@@ -312,27 +312,80 @@ func TestInitJudgesAProjectFolderSpelledInOtherCase(t *testing.T) {
 	}
 }
 
+// A pointer at an existing project whose graph_dir leaves it is refused before
+// init writes anything, as the project's own init and every later command
+// refuse it.
+func TestInitRefusesAnExistingProjectWhoseGraphLeavesIt(t *testing.T) {
+	cases := []struct {
+		name     string
+		graphDir string
+		link     bool
+		mention  string
+	}{
+		{name: "symlink in the project into another repository", graphDir: "gl/graph", link: true, mention: "a repository separate from"},
+		{name: "path into another repository", graphDir: "../other/graph", mention: "a repository separate from"},
+		{name: "path outside any repository", graphDir: "../norepo/graph", mention: "outside any repository"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work, project := workRepository(t)
+			other := filepath.Join(filepath.Dir(work), "other")
+			err := os.MkdirAll(filepath.Join(other, "graph"), 0o755)
+			if err != nil {
+				t.Fatal(err)
+			}
+			initRepo(t, other)
+			writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: "+tc.graphDir+"\nrepo_id: example.test/work-sdd\ndefault_branch: main\nlanguage: en\n")
+			initRepo(t, project)
+			if tc.link {
+				err = os.Symlink(other, filepath.Join(project, "gl"))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			statusBefore := gitIn(t, work, "status", "--porcelain", "--untracked-files=all")
+
+			_, err = runAppErr(t, work, "init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+			if err == nil || !strings.Contains(err.Error(), tc.mention) {
+				t.Errorf("the pointer should be refused naming the fix: %v", err)
+			}
+			if subject := headSubject(t, work); subject != "seed" {
+				t.Errorf("a refused pointer should commit nothing in the work repository, HEAD is %q", subject)
+			}
+			if status := gitIn(t, work, "status", "--porcelain", "--untracked-files=all"); status != statusBefore {
+				t.Errorf("a refused pointer should write nothing in the work repository:\n%s", status)
+			}
+			if _, statErr := os.Stat(filepath.Join(project, ".sdd", "config.local.yaml")); statErr == nil {
+				t.Error("a refused pointer should record no participant with the project")
+			}
+		})
+	}
+}
+
 // Pointing at an existing project placed where no later command accepts it is
 // refused before init writes anything, on either side.
 func TestInitRefusesAnExistingProjectPlacedAgainstTheWorkRepository(t *testing.T) {
 	cases := []struct {
 		name       string
 		projectDir string
-		repoized   bool
+		repo       string
 		mention    string
 	}{
 		{name: "folder containing the work repository", projectDir: "..", mention: "contains the work repository"},
-		{name: "repository containing the work repository", projectDir: "..", repoized: true, mention: "contains the work repository"},
+		{name: "repository containing the work repository", projectDir: "..", repo: "..", mention: "contains the work repository"},
 		{name: "folder inside the work repository", projectDir: "sub", mention: "lies inside the repository"},
-		{name: "repository of its own inside the work repository", projectDir: "nested", repoized: true, mention: "lies inside the repository"},
+		{name: "repository of its own inside the work repository", projectDir: "nested", repo: "nested", mention: "lies inside the repository"},
+		{name: "folder inside another repository", projectDir: "../mono/sub", repo: "../mono", mention: "lies inside the repository"},
+		{name: "folder outside any repository", projectDir: "../loose", mention: "outside any repository"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			work, _ := workRepository(t)
 			projectRoot := filepath.Join(work, tc.projectDir)
 			writeFile(t, filepath.Join(projectRoot, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/placed\ndefault_branch: main\nlanguage: en\n")
-			if tc.repoized {
-				initRepo(t, projectRoot)
+			if tc.repo != "" {
+				initRepo(t, filepath.Join(work, tc.repo))
 			}
 			statusBefore := gitIn(t, work, "status", "--porcelain", "--untracked-files=all")
 
