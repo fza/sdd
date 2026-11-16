@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -59,8 +61,8 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 		),
 		Action: withPendingGraphClone(withWriteGate(func(ctx context.Context, cmd *cli.Command) error {
 			ctx = handlers.WithoutSyncReport(ctx)
-			watch, err := newConfigWatch(func() (string, error) { return resolveGraphDir(cmd) }, func() (*servedProject, error) {
-				return buildServedProject(ctx, cmd, "")
+			watch, err := newConfigWatch(func() (string, error) { return resolveGraphDir(cmd) }, func(previous *servedProject) (*servedProject, error) {
+				return buildServedProject(ctx, cmd, "", previous)
 			})
 			if err != nil {
 				return err
@@ -558,8 +560,9 @@ func buildServedApplication(ctx context.Context, cmd *cli.Command, watch *config
 // config layers as they are now. Its LLM client and the window sizing that
 // client's calls come from one resolved llm setting, timeoutFlag as in
 // newRunner. ctx is the server's, which the connected dependencies the
-// project builds later keep.
-func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag string) (*servedProject, error) {
+// project builds later keep. previous, nil on the first build, lends the
+// clients buildServedClients keeps.
+func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag string, previous *servedProject) (*servedProject, error) {
 	graphDir, err := resolveGraphDir(cmd)
 	if err != nil {
 		return nil, err
@@ -622,14 +625,15 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 	if err != nil {
 		return nil, err
 	}
-	localEmbedder, err := buildEmbedder(cmd)
+	llmConfig, err := runnerConfig(cmd, timeoutFlag)
 	if err != nil {
 		return nil, err
 	}
-	crossEmbedder, err := crossRepoEmbedder(cmd)
+	clients, err := buildServedClients(cmd, previous, layout, layers, llmConfig)
 	if err != nil {
 		return nil, err
 	}
+	runner, localEmbedder, crossEmbedder := clients.llm.Runner, clients.embedders.local, clients.embedders.cross
 	// The machine-global persistent store the CLI also builds and reads: one
 	// store per (repo-key, embedding fingerprint) under the cache root. The
 	// base repo key matches the CLI exactly (see cmd search resolveIndexStore);
@@ -659,14 +663,6 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 	}
 	if cfg == nil || cfg.DefaultBranch == "" {
 		return nil, fmt.Errorf("default_branch is required in .sdd/config.yaml before serving mutation tools")
-	}
-	llmConfig, err := runnerConfig(cmd, timeoutFlag)
-	if err != nil {
-		return nil, err
-	}
-	runner, err := composedRunner(llmConfig)
-	if err != nil {
-		return nil, err
 	}
 	_, manager, err := defaultRepos()
 	if err != nil {
@@ -726,8 +722,61 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 	access := &localRuntimeAccess{project: project, participant: participant, dialogue: dialogue, runtime: runtime, dependencies: connectedDeps}
 	return &servedProject{
 		access: access, cfg: cfg, layout: layout, sessions: sessions, blobs: blobs,
-		graphDir: graphDir, entries: len(graphFolderEntries(graphDir).Entries), layers: layers, watched: watched,
+		graphDir: graphDir, entries: len(graphFolderEntries(graphDir).Entries), layers: layers, watched: watched, clients: clients,
 	}, nil
+}
+
+// servedClients are the LLM runner and the embedders a served project calls.
+// A rebuild keeps each group whose keys did not change, and with it the rate
+// limit its calls are counted against.
+type servedClients struct {
+	llm       *servedRunner
+	embedders *servedEmbedders
+}
+
+type servedRunner struct{ pkgllm.Runner }
+
+type servedEmbedders struct{ local, cross handlers.IndexEmbedder }
+
+// buildServedClients composes the clients of a build, keeping previous's
+// while the project stays: its stats and llm.debug transcripts go into that
+// project's .sdd/.
+func buildServedClients(cmd *cli.Command, previous *servedProject, layout meta.Project, layers model.ConfigLayers, llmConfig model.LLMConfig) (*servedClients, error) {
+	clients := &servedClients{}
+	if previous != nil && previous.clients != nil && previous.layout.Root == layout.Root {
+		changes := model.ConfigChanges(previous.layers, layers)
+		if !changedUnder(changes, "llm.") {
+			clients.llm = previous.clients.llm
+		}
+		// The cross-repo embedder follows the user-global embedding alone,
+		// which a project layer can hide from the effective keys.
+		if !changedUnder(changes, "embedding.") && reflect.DeepEqual(previous.layers.Global.Embedding, layers.Global.Embedding) {
+			clients.embedders = previous.clients.embedders
+		}
+	}
+	if clients.llm == nil {
+		runner, err := composedRunner(llmConfig)
+		if err != nil {
+			return nil, err
+		}
+		clients.llm = &servedRunner{runner}
+	}
+	if clients.embedders == nil {
+		local, err := buildEmbedder(cmd)
+		if err != nil {
+			return nil, err
+		}
+		cross, err := crossRepoEmbedder(cmd)
+		if err != nil {
+			return nil, err
+		}
+		clients.embedders = &servedEmbedders{local: local, cross: cross}
+	}
+	return clients, nil
+}
+
+func changedUnder(changes []model.ConfigChange, prefix string) bool {
+	return slices.ContainsFunc(changes, func(change model.ConfigChange) bool { return strings.HasPrefix(change.Key, prefix) })
 }
 
 // cloneRuntime serves a dependency from its sdd-owned clone at dir: its own
