@@ -61,9 +61,11 @@ type Challenge struct {
 // beside the tag it holds.
 func pickChallenges(text string, at, n int) []Challenge {
 	words := contentWords(text)
+	// A prompt occurs once as a run of letters anywhere in the text, so no
+	// other spot, as "user" in "user's", reads as the one it names.
 	count := map[string]int{}
-	for _, w := range words {
-		count[strings.ToLower(w.text)]++
+	for _, run := range strings.FieldsFunc(text, func(r rune) bool { return !unicode.IsLetter(r) }) {
+		count[strings.ToLower(run)]++
 	}
 	type candidate struct {
 		challenge Challenge

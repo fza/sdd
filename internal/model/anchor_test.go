@@ -78,6 +78,23 @@ func TestChallengeAnswersAreContentWords(t *testing.T) {
 	}
 }
 
+// A word that also occurs inside another token, as "user" in "user's", is
+// no prompt: the agent could not tell which spot it names.
+func TestChallengePromptsOccurOnceAsAWord(t *testing.T) {
+	text := "Settling them is the user's call; the user actually decides each review."
+	for seed := range uint64(100) {
+		anchor, ok := model.PlaceAnchor(text, "ab12", seeded(seed))
+		if !ok {
+			t.Fatal("a text with content words should take an anchor")
+		}
+		for _, c := range anchor.Challenges {
+			if c.Prompt == "user" {
+				t.Fatalf("a word occurring inside another token should not be a prompt, got %+v", c)
+			}
+		}
+	}
+}
+
 func TestPlaceAnchorKeepsALaterProofInAShortPiece(t *testing.T) {
 	text := "Local participant: Tester\nSearch: text\nBase branch: main (configured default)"
 	for seed := range uint64(200) {
