@@ -320,9 +320,11 @@ func TestInitRefusesAnExistingProjectWhoseGraphLeavesIt(t *testing.T) {
 		name     string
 		graphDir string
 		link     bool
+		nested   bool
 		mention  string
 	}{
 		{name: "symlink in the project into another repository", graphDir: "gl/graph", link: true, mention: "a repository separate from"},
+		{name: "repository of its own inside the project", graphDir: "g", nested: true, mention: "a repository separate from"},
 		{name: "path into another repository", graphDir: "../other/graph", mention: "a repository separate from"},
 		{name: "path outside any repository", graphDir: "../norepo/graph", mention: "outside any repository"},
 	}
@@ -342,6 +344,13 @@ func TestInitRefusesAnExistingProjectWhoseGraphLeavesIt(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+			}
+			if tc.nested {
+				err = os.MkdirAll(filepath.Join(project, tc.graphDir), 0o755)
+				if err != nil {
+					t.Fatal(err)
+				}
+				initRepo(t, filepath.Join(project, tc.graphDir))
 			}
 			statusBefore := gitIn(t, work, "status", "--porcelain", "--untracked-files=all")
 

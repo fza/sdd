@@ -256,9 +256,11 @@ func TestGraphDirIntoAnotherRepositoryIsRefused(t *testing.T) {
 	cases := []struct {
 		name           string
 		throughSymlink bool
+		nested         bool
 	}{
 		{name: "path into the other repository"},
 		{name: "symlink in the project leading there", throughSymlink: true},
+		{name: "repository of its own inside the project", nested: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -270,6 +272,15 @@ func TestGraphDirIntoAnotherRepositoryIsRefused(t *testing.T) {
 					t.Fatal(err)
 				}
 				graphDir = "graph"
+			}
+			if tc.nested {
+				sidecar = filepath.Join(project, "nested")
+				graphDir = "nested/graph"
+				err := os.MkdirAll(filepath.Join(sidecar, "graph"), 0o755)
+				if err != nil {
+					t.Fatal(err)
+				}
+				initRepo(t, sidecar)
 			}
 			writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: "+graphDir+"\nrepo_id: example.test/project\ndefault_branch: main\n")
 			writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
