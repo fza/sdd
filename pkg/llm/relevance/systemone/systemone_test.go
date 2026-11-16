@@ -199,7 +199,7 @@ func TestScore_ExcerptsALongErrorBody(t *testing.T) {
 }
 
 func TestNew_KeepsEndpointCredentialsOutOfItsError(t *testing.T) {
-	for _, endpoint := range []string{"https://user:s3cret@[::1", "//user:s3cret@example.invalid/v1"} {
+	for _, endpoint := range []string{"https://user:s3cret@[::1", "//user:s3cret@example.invalid/v1", "user:s3cret@api.example/v1", "ftp://user:s3cret@example.invalid/v1", "https:///v1"} {
 		_, err := systemone.New(systemone.Options{APIKey: "k", Endpoint: endpoint})
 		if err == nil || strings.Contains(err.Error(), "s3cret") {
 			t.Errorf("endpoint %q: refused without the password in the error, got %v", endpoint, err)

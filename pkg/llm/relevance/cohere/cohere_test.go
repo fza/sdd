@@ -156,7 +156,7 @@ func TestScore_ExcerptsALongErrorBody(t *testing.T) {
 }
 
 func TestNew_KeepsEndpointCredentialsOutOfItsError(t *testing.T) {
-	for _, endpoint := range []string{"https://user:s3cret@[::1", "//user:s3cret@example.invalid/v3/rerank"} {
+	for _, endpoint := range []string{"https://user:s3cret@[::1", "//user:s3cret@example.invalid/v3/rerank", "user:s3cret@api.example/v3/rerank", "ftp://user:s3cret@example.invalid/v3/rerank", "https:///v3/rerank"} {
 		_, err := cohere.New(cohere.Options{APIKey: "k", Endpoint: endpoint})
 		if err == nil || strings.Contains(err.Error(), "s3cret") {
 			t.Errorf("endpoint %q: refused without the password in the error, got %v", endpoint, err)

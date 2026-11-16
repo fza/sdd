@@ -74,8 +74,8 @@ func New(options Options) (*Scorer, error) {
 	if err != nil {
 		return nil, errors.New("systemone: endpoint is no valid URL")
 	}
-	if !parsed.IsAbs() {
-		return nil, fmt.Errorf("systemone: endpoint %q is not an absolute URL", parsed.Redacted())
+	if parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "" {
+		return nil, errors.New("systemone: endpoint is not an absolute http or https URL")
 	}
 	model := options.Model
 	if model == "" {
