@@ -296,42 +296,51 @@ func DeepChanges(findings []DeepFinding, responses []DeepResponse) []DeepChange 
 	return changes
 }
 
-// DeepSpan is the byte range [Start, End) of a draft document.
-type DeepSpan struct{ Start, End int }
+// DeepEditSettled reports whether draft differs from document only by
+// reverting or restoring edits the proposal built from base and changes
+// applied: both must be that proposal with each edit, at the place it was
+// applied, holding its new text or its old one. Any other change is not
+// settled, nor is any change when the edits no longer apply to base.
+func DeepEditSettled(base string, changes []DeepChange, document, draft string) bool {
+	spans, err := deepEditSpans(base, changes)
+	if err != nil {
+		return false
+	}
+	return deepEditVariant(base, spans, document) && deepEditVariant(base, spans, draft)
+}
 
-// DeepSettledSpans returns the spans of document an exchange settled: the
-// text each of its edits wrote, and each passage a finding quotes.
-func DeepSettledSpans(document string, findings []DeepFinding, responses []DeepResponse) []DeepSpan {
-	var spans []DeepSpan
-	occurrences := func(text string, from, to int) {
-		for at := 0; text != ""; {
-			i := strings.Index(document[at:], text)
-			if i < 0 {
-				return
-			}
-			spans = append(spans, DeepSpan{Start: at + i + from, End: at + i + len(text) - to})
-			at += i + 1
+// deepEditVariant reports whether text is base with each span's edit
+// applied or not.
+func deepEditVariant(base string, spans []deepSpan, text string) bool {
+	failed := map[[2]int]bool{}
+	var match func(i, at int) bool
+	match = func(i, at int) bool {
+		from, to := 0, len(base)
+		if i > 0 {
+			from = spans[i-1].end
 		}
-	}
-	for _, change := range DeepChanges(findings, responses) {
-		for _, edit := range change.Edits {
-			prefix := 0
-			for prefix < len(edit.Old) && prefix < len(edit.New) && edit.Old[prefix] == edit.New[prefix] {
-				prefix++
-			}
-			suffix := 0
-			for suffix < len(edit.Old)-prefix && suffix < len(edit.New)-prefix && edit.Old[len(edit.Old)-1-suffix] == edit.New[len(edit.New)-1-suffix] {
-				suffix++
-			}
-			occurrences(edit.New, prefix, suffix)
+		if i < len(spans) {
+			to = spans[i].start
 		}
-	}
-	for _, finding := range findings {
-		for _, pointer := range finding.Pointers {
-			occurrences(pointer.Quote, 0, 0)
+		if !strings.HasPrefix(text[at:], base[from:to]) {
+			return false
 		}
+		at += to - from
+		if i == len(spans) {
+			return at == len(text)
+		}
+		if failed[[2]int{i, at}] {
+			return false
+		}
+		for _, choice := range []string{spans[i].edit.New, spans[i].edit.Old} {
+			if strings.HasPrefix(text[at:], choice) && match(i+1, at+len(choice)) {
+				return true
+			}
+		}
+		failed[[2]int{i, at}] = true
+		return false
 	}
-	return spans
+	return match(0, 0)
 }
 
 type deepSpan struct {
@@ -345,6 +354,31 @@ type deepSpan struct {
 // exactly once and no two edits may overlap. It returns the proposal and its
 // hunks in document order, or every problem found.
 func BuildDeepProposal(base string, changes []DeepChange) (string, []DeepHunk, error) {
+	spans, err := deepEditSpans(base, changes)
+	if err != nil {
+		return "", nil, err
+	}
+	var b strings.Builder
+	hunks := make([]DeepHunk, 0, len(spans))
+	last := 0
+	for i, span := range spans {
+		b.WriteString(base[last:span.start])
+		b.WriteString(span.edit.New)
+		last = span.end
+		lineStart := strings.LastIndex(base[:span.start], "\n") + 1
+		lineEnd := span.end + strings.IndexByte(base[span.end:]+"\n", '\n')
+		hunks = append(hunks, DeepHunk{
+			ID: "h" + strconv.Itoa(i+1), Finding: span.finding, Outcome: span.outcome,
+			Line: strings.Count(base[:span.start], "\n") + 1, Old: base[lineStart:lineEnd], New: base[lineStart:span.start] + span.edit.New + base[span.end:lineEnd],
+		})
+	}
+	b.WriteString(base[last:])
+	return b.String(), hunks, nil
+}
+
+// deepEditSpans places each edit of the changes in base, in document order,
+// or returns every problem found.
+func deepEditSpans(base string, changes []DeepChange) ([]deepSpan, error) {
 	var spans []deepSpan
 	var problems []error
 	for _, change := range changes {
@@ -365,24 +399,9 @@ func BuildDeepProposal(base string, changes []DeepChange) (string, []DeepHunk, e
 		}
 	}
 	if len(problems) > 0 {
-		return "", nil, errors.Join(problems...)
+		return nil, errors.Join(problems...)
 	}
-	var b strings.Builder
-	hunks := make([]DeepHunk, 0, len(spans))
-	last := 0
-	for i, span := range spans {
-		b.WriteString(base[last:span.start])
-		b.WriteString(span.edit.New)
-		last = span.end
-		lineStart := strings.LastIndex(base[:span.start], "\n") + 1
-		lineEnd := span.end + strings.IndexByte(base[span.end:]+"\n", '\n')
-		hunks = append(hunks, DeepHunk{
-			ID: "h" + strconv.Itoa(i+1), Finding: span.finding, Outcome: span.outcome,
-			Line: strings.Count(base[:span.start], "\n") + 1, Old: base[lineStart:lineEnd], New: base[lineStart:span.start] + span.edit.New + base[span.end:lineEnd],
-		})
-	}
-	b.WriteString(base[last:])
-	return b.String(), hunks, nil
+	return spans, nil
 }
 
 // RenderDeepHunks renders the hunks as a diff labelled by finding:

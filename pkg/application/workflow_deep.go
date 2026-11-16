@@ -152,8 +152,8 @@ func (w *WorkflowSession) deepVerdictCurrent(ctx *engine.Context) (bool, error) 
 }
 
 // deepEditSettled reports whether a guided capture's draft changed since the
-// deep verdict only within what the last exchange settled
-// (model.DeepSettledSpans), its attachments and target as they were.
+// deep verdict only by reverting or restoring the last exchange's edits
+// (model.DeepEditSettled), its attachments and target as they were.
 func (w *WorkflowSession) deepEditSettled(ctx *engine.Context) (bool, error) {
 	verdict, ok := readDeepVerdict(ctx.Store)
 	if w.Autonomous() || !ok || verdict.Outcome == "skipped" || verdict.Fingerprint == w.deepFingerprint(ctx) || verdict.Fingerprint != w.deepFingerprintOf(ctx, verdict.Document) {
@@ -167,18 +167,8 @@ func (w *WorkflowSession) deepEditSettled(ctx *engine.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	settled := model.DeepSettledSpans(verdict.Document, findings, history)
-	changed := textdiff.ChangedSpans(verdict.Document, draftText(ctx.Store))
-	outside := slices.ContainsFunc(changed, func(c textdiff.Span) bool {
-		return !slices.ContainsFunc(settled, func(s model.DeepSpan) bool {
-			// Text added at either edge extends the settled text rather than changing it.
-			if c.Start == c.End {
-				return s.Start < c.Start && c.Start < s.End
-			}
-			return s.Start <= c.Start && c.End <= s.End
-		})
-	})
-	return len(changed) > 0 && !outside, nil
+	base, _ := workflowStoreString(ctx.Store, fieldDeepBase)
+	return model.DeepEditSettled(base, model.DeepChanges(findings, history), verdict.Document, draftText(ctx.Store)), nil
 }
 
 // deepJudgesPreflight reports whether the deep verifier judges the draft in
@@ -301,7 +291,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			},
 		},
 		{
-			Doc: engine.FuncDoc{Name: "deepEditSettled", Doc: "A guided capture whose draft changed since the deep verdict only within the text the last exchange's edits wrote or its findings quote, its attachments and target unchanged.", Reads: append(slices.Clone(captureDraftFields), fieldDeepVerdict, fieldDeepFindings, fieldDeepHistory)},
+			Doc: engine.FuncDoc{Name: "deepEditSettled", Doc: "A guided capture whose draft changed since the deep verdict only by reverting or restoring edits the last exchange's proposal applied, each where it applied it, its attachments and target unchanged.", Reads: append(slices.Clone(captureDraftFields), fieldDeepVerdict, fieldDeepBase, fieldDeepFindings, fieldDeepHistory)},
 			Fn:  w.deepEditSettled,
 		},
 		{
@@ -403,7 +393,7 @@ func (w *WorkflowSession) registerWorkflowDeep(registry *engine.Registry) error 
 			Fn:  w.recordDeepSettled,
 		},
 		{
-			Doc: engine.FuncDoc{Name: "settleDeepEdit", Doc: "Records the user's edit within what the deep exchange settled as the deep verdict over the current draft, and has the writing guide's judgment cover it.", Reads: append(slices.Clone(captureDraftFields), "guideFindings"), Writes: []string{fieldDeepVerdict, fieldGuideBase}},
+			Doc: engine.FuncDoc{Name: "settleDeepEdit", Doc: "Records the user's revert or restore of the deep exchange's edits as the deep verdict over the current draft, and has the writing guide's judgment cover it.", Reads: append(slices.Clone(captureDraftFields), "guideFindings"), Writes: []string{fieldDeepVerdict, fieldGuideBase}},
 			Fn:  w.recordDeepSettled,
 		},
 		{
