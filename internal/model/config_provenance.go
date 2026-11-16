@@ -65,6 +65,8 @@ var configDefaults = map[string]string{
 	"sync.default.lease_pause":                      DefaultGitLeasePause.String(),
 	"sync.default.read_wait":                        DefaultGitReadWait.String(),
 
+	"llm.claude_cli.credentials": string(DefaultClaudeCLICredentials),
+
 	"sessions.retention": DefaultSessionRetention,
 
 	secretRulesUpdateKey: string(DefaultSecretRulesUpdate),
@@ -368,14 +370,16 @@ func concatLayers(layers []struct {
 }
 
 // providerDefault reports whether the baked default of path applies under
-// provider: codex runs its own default model, and only the CLI providers take
-// llm.effort.
+// provider: codex runs its own default model, only the CLI providers take
+// llm.effort, and only claude-cli llm.claude_cli.credentials.
 func providerDefault(path, provider string) bool {
 	switch path {
 	case "llm.model":
 		return provider != LLMProviderCodex
 	case "llm.effort":
 		return provider == DefaultLLMProvider || provider == LLMProviderCodex
+	case "llm.claude_cli.credentials":
+		return provider == DefaultLLMProvider
 	}
 	return true
 }

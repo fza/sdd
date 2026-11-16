@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/command"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 )
 
@@ -237,5 +238,32 @@ func TestConfigSet_LocalOverrideWritesOverrideFile(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(sddDir, "config.local.yaml")); !os.IsNotExist(statErr) {
 		t.Error("the in-repo local file must stay untouched")
+	}
+}
+
+func TestConfigSet_ClaudeCLICredentials(t *testing.T) {
+	h, globalPath, _ := newConfigTestHandler(t)
+
+	err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: "global", Key: "llm.claude_cli.credentials", Value: "apikey"})
+	if err == nil || !strings.Contains(err.Error(), "login") || !strings.Contains(err.Error(), "env") {
+		t.Errorf("an unknown credentials value should be refused, naming the allowed ones, got %v", err)
+	}
+	if _, statErr := os.Stat(globalPath); !os.IsNotExist(statErr) {
+		t.Error("a refused write must not create the global file")
+	}
+
+	if err := h.ConfigSet(context.Background(), &command.ConfigSetCmd{Target: "global", Key: "llm.claude_cli.credentials", Value: "env"}); err != nil {
+		t.Fatalf("env should be accepted: %v", err)
+	}
+	data, err := os.ReadFile(globalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := model.ParseConfig(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LLM.ClaudeCLI.Credentials != model.ClaudeCLICredentialsEnv {
+		t.Errorf("credentials should land nested under llm.claude_cli: %s", data)
 	}
 }
