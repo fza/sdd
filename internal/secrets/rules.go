@@ -127,6 +127,10 @@ func ParseFetchedRules(data []byte) (*RuleSet, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = boundsTheScanCost(set)
+	if err != nil {
+		return nil, err
+	}
 	return set, nil
 }
 
