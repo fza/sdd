@@ -22,6 +22,29 @@ type shellSession struct {
 	// composed; seen dedups within the call.
 	pending []string
 	seen    map[string]bool
+	// notices maps a notice's name to the hash of the text last served under
+	// it, so an unchanged notice is served once.
+	notices map[string]string
+}
+
+// notice returns text when it differs from the text last served under name,
+// else "". An empty text forgets name, so the notice's next appearance is
+// served again.
+func (ss *shellSession) notice(name, text string) string {
+	if text == "" {
+		delete(ss.notices, name)
+		return ""
+	}
+	sum := sha256.Sum256([]byte(text))
+	hash := hex.EncodeToString(sum[:])
+	if ss.notices[name] == hash {
+		return ""
+	}
+	if ss.notices == nil {
+		ss.notices = map[string]string{}
+	}
+	ss.notices[name] = hash
+	return text
 }
 
 // servedBefore reports whether the session's consumer already holds a block

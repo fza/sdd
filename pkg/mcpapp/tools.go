@@ -351,11 +351,12 @@ type InfoArgs struct {
 
 type InfoResult struct {
 	NoticesField
-	Project     string `json:"project,omitempty" jsonschema:"the session's project ID"`
-	Participant string `json:"participant,omitempty" jsonschema:"configured local participant (canonical name)"`
-	Language    string `json:"language,omitempty" jsonschema:"configured graph language; empty = English"`
-	Search      string `json:"search" jsonschema:"available retrieval modes: text or vector,text"`
-	Version     string `json:"version,omitempty"`
+	SyncBlocked *SyncBlockedResult `json:"sync_blocked,omitempty" jsonschema:"what blocks automatic sync of the graph repository; absent while sync proceeds"`
+	Project     string             `json:"project,omitempty" jsonschema:"the session's project ID"`
+	Participant string             `json:"participant,omitempty" jsonschema:"configured local participant (canonical name)"`
+	Language    string             `json:"language,omitempty" jsonschema:"configured graph language; empty = English"`
+	Search      string             `json:"search" jsonschema:"available retrieval modes: text or vector,text"`
+	Version     string             `json:"version,omitempty"`
 }
 
 type RegistryArgs struct {
@@ -367,12 +368,15 @@ type RegistryArgs struct {
 // notice per kind, each kind omitted when empty.
 type Notices struct {
 	Config string `json:"config,omitempty" jsonschema:"set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values"`
+	Sync   string `json:"sync,omitempty" jsonschema:"set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says"`
 }
 
 func (n Notices) texts() []string {
 	var texts []string
-	if n.Config != "" {
-		texts = append(texts, n.Config)
+	for _, text := range []string{n.Config, n.Sync} {
+		if text != "" {
+			texts = append(texts, text)
+		}
 	}
 	return texts
 }
@@ -382,7 +386,16 @@ type NoticesField struct {
 	Notices Notices `json:"notices,omitzero" jsonschema:"what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error"`
 }
 
-func (f *NoticesField) setNotices(notices Notices) { f.Notices = notices }
+// setNotices sets each kind notices carries, keeping a kind the handler set
+// itself, such as the sync notice of a teardown.
+func (f *NoticesField) setNotices(notices Notices) {
+	if notices.Config != "" {
+		f.Notices.Config = notices.Config
+	}
+	if notices.Sync != "" {
+		f.Notices.Sync = notices.Sync
+	}
+}
 
 type RegistryFuncResult struct {
 	Name   string   `json:"name"`
@@ -509,6 +522,13 @@ func (s *toolSet) register(srv *mcp.Server) {
 		Name:        "registry",
 		Description: "Engine function contracts (predicates, queries, commands) — what procedure spec authors consult. Carries the session handle like every other tool.",
 	}, toolBoundary(s.beforeCall, s.registryDocs))
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "sync_repos",
+		Description: "Run the sync round of the connected repositories; session required. Each repository's " +
+			"sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to " +
+			"name them. Without repos, every connected repository syncs. Returns one outcome per repository.",
+	}, toolBoundary(s.beforeCall, s.syncRepos))
 }
 
 // attachedSession returns the named session locked and replayed from its ledger.
@@ -542,6 +562,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		ss.root = workflow
 	}
 	ss.pending, ss.seen = nil, nil
+	s.noteSyncSession(ctx, req, ss)
 	if ss.root.Finished() {
 		ss.mu.Unlock()
 		s.sessions.evict(id)
@@ -596,6 +617,7 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 		return nil, ServeResponse{}, err
 	}
 	ss := s.sessions.put(&shellSession{root: workflow})
+	s.noteSyncSession(ctx, req, ss)
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	result, err := s.toRootServeResult(ctx, req, ss, serve)
@@ -757,6 +779,7 @@ func (s *toolSet) abandonSession(ctx context.Context, req *mcp.CallToolRequest, 
 		return nil, AbandonResult{}, err
 	}
 	out := AbandonResult{Abandoned: true, Session: string(result.Session), Label: result.Label, HeldMarkers: boundList(result.HeldMarkers, "held markers")}
+	out.Notices.Sync = result.SyncNotice
 	for _, instance := range result.Discarded {
 		out.DiscardedThreads = append(out.DiscardedThreads, instance.Procedure+" at "+instance.Step)
 	}
@@ -777,6 +800,8 @@ func (s *toolSet) resumeSession(ctx context.Context, req *mcp.CallToolRequest, a
 		return nil, ResumeSessionResult{}, err
 	}
 	defer ss.mu.Unlock()
+	// A resume serves everything in full, the standing notices included.
+	ss.notices = nil
 	identity := s.requestIdentity(req)
 	if err := ss.root.Reorient(ctx, identity); err != nil {
 		return nil, ResumeSessionResult{}, err
@@ -1197,7 +1222,8 @@ func (s *toolSet) info(ctx context.Context, req *mcp.CallToolRequest, args InfoA
 		return nil, InfoResult{}, err
 	}
 	return nil, InfoResult{
-		Project: string(info.Project.ID), Participant: info.Participant, Language: info.Language, Search: info.Search,
+		SyncBlocked: syncBlockedResult(info.SyncBlocked),
+		Project:     string(info.Project.ID), Participant: info.Participant, Language: info.Language, Search: info.Search,
 		Version: s.version,
 	}, nil
 
@@ -1233,12 +1259,16 @@ func toolBoundary[In, Out any](before func(context.Context, *mcp.CallToolRequest
 		if call == nil {
 			call = ctx
 		}
+		slot := &syncNoticeSlot{}
 		if err == nil {
-			res, out, err = handler(call, req, in)
+			res, out, err = handler(context.WithValue(call, syncNoticeKey{}, slot), req, in)
 		}
 		var coded *sdd.ApplicationError
 		if err != nil && errors.As(err, &coded) && coded.Code != "" {
 			err = fmt.Errorf("%s: %w", coded.Code, err)
+		}
+		if slot.claim != nil {
+			notices.Sync = slot.claim(call)
 		}
 		texts := notices.texts()
 		if len(texts) == 0 {
@@ -1251,6 +1281,30 @@ func toolBoundary[In, Out any](before func(context.Context, *mcp.CallToolRequest
 			carrier.setNotices(notices)
 		}
 		return res, out, err
+	}
+}
+
+type syncNoticeKey struct{}
+
+// syncNoticeSlot lets the call's session, once attached, name how its sync
+// notice is claimed after the handler ran, so the notice reflects what the
+// call itself recorded.
+type syncNoticeSlot struct {
+	claim func(ctx context.Context) string
+}
+
+// noteSyncSession names ss as the session whose sync notice the call's
+// result carries, served once per change of its text (shellSession.notice).
+func (s *toolSet) noteSyncSession(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession) {
+	slot, ok := ctx.Value(syncNoticeKey{}).(*syncNoticeSlot)
+	if !ok {
+		return
+	}
+	identity := s.requestIdentity(req)
+	slot.claim = func(ctx context.Context) string {
+		ss.mu.Lock()
+		defer ss.mu.Unlock()
+		return ss.notice("sync", ss.root.SyncNotice(ctx, identity))
 	}
 }
 

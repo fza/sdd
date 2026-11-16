@@ -100,6 +100,7 @@ func Register(server *mcp.Server, opts Options) error {
 // add no tools of their own. It owns the transport and the lifecycle.
 type Server struct {
 	mcp *mcp.Server
+	app *sdd.Application
 
 	lifecycleMu sync.Mutex
 	closing     bool
@@ -116,6 +117,7 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
+		app: opts.Application,
 		mcp: mcp.NewServer(&mcp.Implementation{
 			Name:    "sdd",
 			Version: opts.Version,
@@ -181,9 +183,10 @@ func (s *Server) Connect(ctx context.Context, t mcp.Transport) (*mcp.ServerSessi
 }
 
 // Shutdown stops admitting requests and closes every live MCP connection in
-// parallel. Closing a connection touches no session — a dialogue ends only by
-// a participant act (d-cpt-aen) — so the context bounds only the close wait; a
-// host that reaches its deadline should force-close its HTTP transport.
+// parallel, then waits for the application's background work. Closing a
+// connection touches no session (a dialogue ends only by a participant act,
+// d-cpt-aen), so the context bounds only the waits; a host that reaches its
+// deadline should force-close its HTTP transport.
 func (s *Server) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("mcpapp: shutdown context is required")
@@ -217,7 +220,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	case <-done:
 		errMu.Lock()
 		defer errMu.Unlock()
-		return errors.Join(errs...)
+		return errors.Join(append(errs, s.app.Shutdown(ctx))...)
 	case <-ctx.Done():
 		errMu.Lock()
 		defer errMu.Unlock()

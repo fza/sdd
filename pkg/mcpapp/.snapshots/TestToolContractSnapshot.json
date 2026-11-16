@@ -158,6 +158,10 @@
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
               "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
+              "type": "string"
             }
           },
           "type": "object"
@@ -211,6 +215,10 @@
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
               "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
+              "type": "string"
             }
           },
           "type": "object"
@@ -256,6 +264,10 @@
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
               "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
+              "type": "string"
             }
           },
           "type": "object"
@@ -271,6 +283,53 @@
         "search": {
           "description": "available retrieval modes: text or vector,text",
           "type": "string"
+        },
+        "sync_blocked": {
+          "additionalProperties": false,
+          "description": "what blocks automatic sync of the graph repository; absent while sync proceeds",
+          "properties": {
+            "destination": {
+              "description": "for a conflict: the local commit it was to merge into",
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "owner": {
+              "description": "session owning the fix",
+              "type": "string"
+            },
+            "paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "since": {
+              "type": "string"
+            },
+            "source": {
+              "description": "for a conflict: the upstream commit that would not merge",
+              "type": "string"
+            },
+            "upstream": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "since"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
         },
         "version": {
           "type": "string"
@@ -532,6 +591,10 @@
           "properties": {
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
               "type": "string"
             }
           },
@@ -844,6 +907,10 @@
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
               "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
+              "type": "string"
             }
           },
           "type": "object"
@@ -935,6 +1002,10 @@
           "properties": {
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
               "type": "string"
             }
           },
@@ -1032,6 +1103,10 @@
           "properties": {
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
               "type": "string"
             }
           },
@@ -1148,6 +1223,10 @@
           "properties": {
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
               "type": "string"
             }
           },
@@ -1722,6 +1801,10 @@
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
               "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
+              "type": "string"
             }
           },
           "type": "object"
@@ -1793,6 +1876,10 @@
           "properties": {
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
               "type": "string"
             }
           },
@@ -1871,6 +1958,10 @@
           "properties": {
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
               "type": "string"
             }
           },
@@ -2131,6 +2222,10 @@
           "properties": {
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
               "type": "string"
             }
           },
@@ -2538,6 +2633,10 @@
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
               "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
+              "type": "string"
             }
           },
           "type": "object"
@@ -2712,6 +2811,84 @@
     }
   },
   {
+    "description": "Run the sync round of the connected repositories; session required. Each repository's sdd-owned clone fetches, merges and publishes as far as the git gate admits it. Pass repos to name them. Without repos, every connected repository syncs. Returns one outcome per repository.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "repos": {
+          "description": "connected repositories to sync, by repo ID; omitted, every repository connected on this machine",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "session": {
+          "description": "session handle this connection is attached to (from start_session or resume_session); required; the sync runs for that session's home project",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "sync_repos",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "notices": {
+          "additionalProperties": false,
+          "description": "what the host tells you beside the result, keyed by kind, each told once. Plain status, not a tool error",
+          "properties": {
+            "config": {
+              "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "repos": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "next": {
+                "description": "RFC 3339 time a skipped repository is due or a failed one is retried",
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              },
+              "state": {
+                "description": "synced, pushed (local commits published), skipped (the git gate holds it back; next says when it is due), failed (reason says why; next says when it is retried) or refused (reason says why, such as not connected on this machine)",
+                "type": "string"
+              }
+            },
+            "required": [
+              "repo",
+              "state"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "repos"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "description": "Run an sdd view layout pipeline over the graph — overview sections, topic counts, ranked lists. A free read within the session named by session (required).",
     "inputSchema": {
       "additionalProperties": false,
@@ -2762,6 +2939,10 @@
           "properties": {
             "config": {
               "description": "set once after the host's config changed: the changed keys with their old and new values (a secret names only its key); carry on under the new values",
+              "type": "string"
+            },
+            "sync": {
+              "description": "set when automatic sync of the graph repository becomes blocked, a connected repository's last sync round fails, or a refresh the call started still runs past its wait, and whenever that notice changes. One line each: which, and since when, why or how old the clone it read is, plus the fix steps when the attached session owns the fix. While it stands unchanged, later results leave it out; resume_session serves it again. Act on it as it says",
               "type": "string"
             }
           },
