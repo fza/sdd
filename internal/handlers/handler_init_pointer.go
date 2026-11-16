@@ -58,6 +58,12 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 	if err != nil {
 		return err
 	}
+	if projectCfg != nil {
+		err = meta.RequireProjectRepository("--project-dir "+cmd.ProjectDir, projectRoot, h.repoRootOf)
+		if err != nil {
+			return err
+		}
+	}
 
 	sddDir := filepath.Join(cmd.RepoRoot, model.SDDDirName)
 	configPath := filepath.Join(sddDir, "config.yaml")

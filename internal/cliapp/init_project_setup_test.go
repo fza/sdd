@@ -562,6 +562,7 @@ func TestInitRefusesAnExistingProjectPlacedAgainstTheWorkRepository(t *testing.T
 		{name: "folder inside the work repository", projectDir: "sub", mention: "lies inside the repository"},
 		{name: "repository of its own inside the work repository", projectDir: "nested", repo: "nested", mention: "lies inside the repository"},
 		{name: "folder inside another repository", projectDir: "../mono/sub", repo: "../mono", mention: "lies inside the repository"},
+		{name: "folder outside any repository", projectDir: "../loose", mention: "outside any repository"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

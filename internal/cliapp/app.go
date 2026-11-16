@@ -1861,6 +1861,10 @@ func requireGraphInsideRepository(project meta.Project) error {
 		if err != nil {
 			return err
 		}
+		err = meta.RequireProjectRepository(subject, project.Root, repoRootFor)
+		if err != nil {
+			return err
+		}
 	}
 	projectRepo := git.RepoRootFor(project.Root)
 	graphDir := meta.ResolveGraphDir(project.Root, cfg)

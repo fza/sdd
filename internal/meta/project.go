@@ -202,6 +202,16 @@ func RequireProjectApart(subject, workRoot, projectRoot string, rootOf RootOf) e
 	return nil
 }
 
+// RequireProjectRepository refuses an existing project at projectRoot that
+// lies in no repository: its graph commits would have nowhere to land.
+func RequireProjectRepository(subject, projectRoot string, rootOf RootOf) error {
+	root, err := rootOf(projectRoot)
+	if err != nil || root != "" {
+		return err
+	}
+	return fmt.Errorf("%s lies outside any repository; the project needs a repository of its own: run `git init` there and commit its .sdd/", subject)
+}
+
 // WithinDir reports whether path is dir or lies below it. Folders on disk
 // compare by identity, so a symlink or a spelling a case-insensitive
 // filesystem accepts names the folder it leads to; the parts of either path
