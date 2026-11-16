@@ -719,7 +719,7 @@ func buildServedProject(ctx context.Context, cmd *cli.Command, timeoutFlag strin
 		Grounding: groundingPolicy(cfg),
 		Verifier:  verifierPolicy(cfg), Window: modelWindow(llmConfig), Checkout: os.DirFS(layout.WorkRoot),
 		Commits:   git.CLI{Dir: layout.WorkRoot},
-		Hooks:     hooks.New(hooks.Sources{GlobalConfig: locations.ConfigPath, Project: layout, LocalConfig: localConfigOverride}, hooks.NewStore(locations.StateRoot)),
+		Hooks:     hooks.New(hooks.Sources{GlobalConfig: locations.ConfigPath, Project: layout, LocalConfig: localConfigOverride, Tracker: git.TrackedFiles{}}, hooks.NewAllows(locations.StateRoot)),
 		Events:    events,
 		HandEdits: localadapter.GitHandEdits{GraphDir: graphDir},
 		Relevance: verdicts,

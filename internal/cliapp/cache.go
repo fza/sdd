@@ -13,9 +13,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/cacheprune"
 	"github.com/networkteam/sdd/internal/command"
-	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
-	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/repos"
@@ -76,9 +74,8 @@ searches always stay. sdd index gc removes more on request.`,
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
 					OwnedClones: syncstate.OwnedClones{Gate: gate}, Gate: gate, Keep: keep,
-					State:         stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
-					DeclaredHooks: hooks.DeclaredIn(loc.ConfigPath, repos.NewGraphClones(loc, git.GraphClones{}, gate).Dir),
-					SecretRules:   secrets.NewUpdater(secretRulesDir(loc), secrets.NewGitHub("", "", nil), nil),
+					State:       stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
+					SecretRules: secrets.NewUpdater(secretRulesDir(loc), secrets.NewGitHub("", "", nil), nil),
 				})
 				return h.Prune(ctx, &command.PruneCacheCmd{
 					Scheduled: scheduled,

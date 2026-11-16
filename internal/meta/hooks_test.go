@@ -10,7 +10,7 @@ import (
 )
 
 func hookLayer(command string) string {
-	return "hooks:\n  - event: capture.assemble\n    command: " + command + "\n    args: [--config, vale.ini]\n    files: [styles/*]\n"
+	return "hooks:\n  - event: capture.assemble\n    command: " + command + "\n    args: [--config, vale.ini]\n"
 }
 
 // A project ships hooks in its committed config.
@@ -22,8 +22,8 @@ func TestHooksResolveFromTheCommittedLayer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Hooks) != 1 || cfg.Hooks[0].Command != "vale.sh" || strings.Join(cfg.Hooks[0].Args, " ") != "--config vale.ini" || strings.Join(cfg.Hooks[0].Files, " ") != "styles/*" {
-		t.Fatalf("hooks = %+v, want the committed hook with its args and files", cfg.Hooks)
+	if len(cfg.Hooks) != 1 || cfg.Hooks[0].Command != "vale.sh" || strings.Join(cfg.Hooks[0].Args, " ") != "--config vale.ini" {
+		t.Fatalf("hooks = %+v, want the committed hook with its args", cfg.Hooks)
 	}
 }
 

@@ -3,6 +3,7 @@ package hooks_test
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -11,13 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 )
 
-// world is a user-global config folder and one repository, each with a
-// hooks folder, and a state root for confirmations.
+// world is a user-global config folder and one git repository, each with a
+// hooks folder, and a state root for the allow record.
 type world struct {
 	global    string
 	repo      string
@@ -30,7 +32,23 @@ func newWorld(t *testing.T) *world {
 	w := &world{global: filepath.Join(base, "config", "sdd", "config.yaml"), repo: filepath.Join(base, "repo"), stateRoot: filepath.Join(base, "state", "sdd")}
 	write(t, w.global, "")
 	write(t, filepath.Join(w.repo, ".sdd", "config.yaml"), "repo_id: example.com/org/repo\n")
+	gitIn(t, w.repo, "init", "-q")
 	return w
+}
+
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// track adds paths, relative to the repository, to its index as a clone
+// would hold them.
+func (w *world) track(t *testing.T, paths ...string) {
+	t.Helper()
+	gitIn(t, w.repo, append([]string{"add", "-f", "--"}, paths...)...)
 }
 
 func write(t *testing.T, path, content string) {
@@ -58,12 +76,17 @@ func (w *world) commit(t *testing.T, hooksYAML string) {
 	write(t, filepath.Join(w.repo, ".sdd", "config.yaml"), "repo_id: example.com/org/repo\nhooks:\n"+hooksYAML)
 }
 
+func (w *world) local(t *testing.T, hooksYAML string) {
+	t.Helper()
+	write(t, filepath.Join(w.repo, ".sdd", "config.local.yaml"), "hooks:\n"+hooksYAML)
+}
+
 func (w *world) sources() hooks.Sources {
-	return hooks.Sources{GlobalConfig: w.global, Project: meta.Project{Root: w.repo, WorkRoot: w.repo}}
+	return hooks.Sources{GlobalConfig: w.global, Project: meta.Project{Root: w.repo, WorkRoot: w.repo}, Tracker: git.TrackedFiles{}}
 }
 
 func (w *world) commands() *hooks.Commands {
-	return hooks.New(w.sources(), hooks.NewStore(w.stateRoot))
+	return hooks.New(w.sources(), hooks.NewAllows(w.stateRoot))
 }
 
 func (w *world) hooks(t *testing.T) []model.Hook {
@@ -84,13 +107,26 @@ func (w *world) only(t *testing.T) model.Hook {
 	return resolved[0]
 }
 
-func declaredErr(t *testing.T, w *world) error {
+// allow allows every repository waiting for it as the person would after
+// reviewing it.
+func (w *world) allow(t *testing.T) {
 	t.Helper()
-	_, err := hooks.Declared(w.sources())
+	reviews, err := w.commands().Reviews(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.commands().Allow(t.Context(), reviews); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (w *world) hooksErr(t *testing.T) error {
+	t.Helper()
+	_, err := w.commands().Hooks(t.Context())
 	return err
 }
 
-func TestDeclaredRefusesACommandOutsideTheHooksFolder(t *testing.T) {
+func TestHooksRefuseACommandOutsideTheHooksFolder(t *testing.T) {
 	for _, tc := range []struct{ name, command, want string }{
 		{"absolute", "/bin/echo", "is an absolute path"},
 		{"parent", "../config.yaml", "leaves the hooks folder"},
@@ -100,7 +136,7 @@ func TestDeclaredRefusesACommandOutsideTheHooksFolder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWorld(t)
 			w.commit(t, "  - event: entry.written\n    command: "+tc.command+"\n")
-			err := declaredErr(t, w)
+			err := w.hooksErr(t)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), filepath.Join(".sdd", "config.yaml")+": hooks[0]") {
 				t.Fatalf("the command should be refused naming %q and the declaring file, got %v", tc.want, err)
 			}
@@ -108,34 +144,45 @@ func TestDeclaredRefusesACommandOutsideTheHooksFolder(t *testing.T) {
 	}
 }
 
-func TestDeclaredRefusesACommittedHookIntoLocal(t *testing.T) {
+func TestHooksRefuseACommittedHookIntoLocal(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "local", "mine.sh"), "true")
 	w.commit(t, "  - event: entry.written\n    command: local/mine.sh\n")
-	if err := declaredErr(t, w); err == nil || !strings.Contains(err.Error(), "config.local.yaml") {
+	if err := w.hooksErr(t); err == nil || !strings.Contains(err.Error(), "config.local.yaml") {
 		t.Fatalf("a committed hook into local/ should be refused, got %v", err)
 	}
 
-	write(t, filepath.Join(w.repo, ".sdd", "config.yaml"), "repo_id: example.com/org/repo\n")
-	write(t, filepath.Join(w.repo, ".sdd", "config.local.yaml"), "hooks:\n  - event: entry.written\n    command: local/mine.sh\n")
-	if err := declaredErr(t, w); err != nil {
+	w.commit(t, "")
+	w.local(t, "  - event: entry.written\n    command: local/mine.sh\n")
+	if err := w.hooksErr(t); err != nil {
 		t.Fatalf("a machine-local hook may run a script from local/, got %v", err)
 	}
 }
 
-func TestDeclaredRefusesACommandFileThatCannotRun(t *testing.T) {
+func TestHooksRefuseACommandFileThatCannotRun(t *testing.T) {
 	w := newWorld(t)
 	write(t, filepath.Join(w.hooksDir(), "lint.sh"), "#!/bin/sh\n")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
-	if err := declaredErr(t, w); err == nil || !strings.Contains(err.Error(), "is not executable") {
+	if err := w.hooksErr(t); err == nil || !strings.Contains(err.Error(), "is not executable") {
 		t.Fatalf("a command file without execute permission should be refused, got %v", err)
+	}
+}
+
+func TestHooksRefuseACommandThatIsAFolder(t *testing.T) {
+	w := newWorld(t)
+	if err := os.MkdirAll(filepath.Join(w.hooksDir(), "lint"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w.commit(t, "  - event: entry.written\n    command: lint\n")
+	if err := w.hooksErr(t); err == nil || !strings.Contains(err.Error(), "is not a regular file") {
+		t.Fatalf("a folder as command should be refused, got %v", err)
 	}
 }
 
 // Hooks of every layer resolve in order: user-global, work repository,
 // project repository, committed before local, each against its own hooks
-// folder.
-func TestDeclaredReadsEveryLayerOfAProjectDirLayout(t *testing.T) {
+// folder and keyed by its repository's real root.
+func TestHooksReadEveryLayerOfAProjectDirLayout(t *testing.T) {
 	base := t.TempDir()
 	global := filepath.Join(base, "config", "sdd", "config.yaml")
 	work, project := filepath.Join(base, "work"), filepath.Join(base, "project")
@@ -152,12 +199,14 @@ func TestDeclaredReadsEveryLayerOfAProjectDirLayout(t *testing.T) {
 	for _, file := range []string{"project.sh", "local/project-local.sh"} {
 		script(t, filepath.Join(project, ".sdd", "hooks", file), "true")
 	}
+	gitIn(t, work, "init", "-q")
+	gitIn(t, project, "init", "-q")
 	resolved, err := meta.ResolveProject(work, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	declared, err := hooks.Declared(hooks.Sources{GlobalConfig: global, Project: resolved})
+	declared, err := hooks.New(hooks.Sources{GlobalConfig: global, Project: resolved, Tracker: git.TrackedFiles{}}, hooks.NewAllows(filepath.Join(base, "state"))).Hooks(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,41 +224,76 @@ func TestDeclaredReadsEveryLayerOfAProjectDirLayout(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("declared hooks\n %v\nwant\n %v", got, want)
 	}
-	if declared[3].Origin.RepoKey != "example.com/org/project" || !strings.HasPrefix(declared[1].Origin.RepoKey, "local/") {
-		t.Errorf("a repository is keyed by its repo_id, else by its checkout, got %q and %q", declared[3].Origin.RepoKey, declared[1].Origin.RepoKey)
+	realWork, err := filepath.EvalSymlinks(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if declared[1].Origin.Checkout != realWork || declared[2].Origin.Checkout != realWork || declared[3].Origin.Checkout == realWork {
+		t.Errorf("each repository should be keyed by its own real root, got %q, %q and %q", declared[1].Origin.Checkout, declared[2].Origin.Checkout, declared[3].Origin.Checkout)
 	}
 }
 
-func TestOnlyTheUserGlobalHookRunsUnconfirmed(t *testing.T) {
+// In a graph_repo layout the clone's machine-local layer is the work
+// repository's own file, read once.
+func TestHooksReadAGraphRepoLayoutsLocalLayerOnce(t *testing.T) {
+	base := t.TempDir()
+	global := filepath.Join(base, "config", "sdd", "config.yaml")
+	work, clone := filepath.Join(base, "work"), filepath.Join(base, "clone")
+	write(t, global, "")
+	write(t, filepath.Join(work, ".sdd", "config.yaml"), "graph_repo: example.com/org/graph\n")
+	write(t, filepath.Join(work, ".sdd", "config.local.yaml"), "hooks:\n  - event: entry.written\n    command: local/mine.sh\n")
+	write(t, filepath.Join(clone, ".sdd", "config.yaml"), "repo_id: example.com/org/graph\n")
+	script(t, filepath.Join(work, ".sdd", "hooks", "local", "mine.sh"), "true")
+
+	declared, err := hooks.New(hooks.Sources{GlobalConfig: global, Project: meta.Project{Root: clone, WorkRoot: work, GraphRepo: "example.com/org/graph"}}, hooks.NewAllows(filepath.Join(base, "state"))).Hooks(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(declared) != 1 || declared[0].Origin.Label() != "work local" {
+		t.Fatalf("the work repository's machine-local layer once, got %+v", declared)
+	}
+}
+
+// Every layer of a repository waits for an allow, its machine-local one
+// included, whether git tracks it or not; only the user-global layer runs
+// without.
+func TestOnlyTheUserGlobalHookRunsWithoutAnAllow(t *testing.T) {
 	w := newWorld(t)
 	write(t, w.global, "hooks:\n  - event: entry.written\n    command: notify.sh\n")
 	script(t, filepath.Join(filepath.Dir(w.global), "hooks", "notify.sh"), "true")
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
+	script(t, filepath.Join(w.hooksDir(), "local", "mine.sh"), "true")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	w.local(t, "  - event: entry.written\n    command: local/mine.sh\n")
+	w.track(t, ".sdd/config.yaml", ".sdd/hooks/lint.sh")
 
 	resolved := w.hooks(t)
-	if len(resolved) != 2 || resolved[0].State != model.HookConfirmed || resolved[1].State != model.HookPending {
-		t.Fatalf("the global hook should run unconfirmed and the project's wait, got %+v", resolved)
+	if len(resolved) != 3 || resolved[0].State != model.HookAllowed || resolved[1].State != model.HookPending || resolved[2].State != model.HookPending {
+		t.Fatalf("the global hook should run and both repository layers wait, got %+v", resolved)
 	}
-	if len(resolved[1].Hash) != 64 {
-		t.Errorf("a hook should carry its SHA-256 hash, got %q", resolved[1].Hash)
+	w.allow(t)
+	for _, hook := range w.hooks(t) {
+		if hook.State != model.HookAllowed {
+			t.Errorf("after the allow %s should be allowed, got %s", hook.Label(), hook.State)
+		}
 	}
 }
 
-// Changing the command file, an args file, a files match or the hook's
-// config makes a confirmed hook pending again.
-func TestAnyChangeMakesAConfirmedHookAskAgain(t *testing.T) {
+// A change to a declaration or to any file git tracks in the hooks folder,
+// sourced or named by a flag or not, needs a new allow; a file the
+// repository does not track, such as a cache a hook writes, does not.
+func TestAChangeToAnythingAPullDeliversNeedsANewAllow(t *testing.T) {
 	setup := func(t *testing.T) *world {
 		w := newWorld(t)
-		script(t, filepath.Join(w.hooksDir(), "vale.sh"), "true")
+		script(t, filepath.Join(w.hooksDir(), "vale.sh"), ". ./lib.sh")
+		write(t, filepath.Join(w.hooksDir(), "lib.sh"), "true\n")
 		write(t, filepath.Join(w.hooksDir(), "vale.ini"), "MinAlertLevel = error\n")
 		write(t, filepath.Join(w.hooksDir(), "styles", "Base", "rule.yml"), "level: error\n")
-		w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    args: [--config, vale.ini]\n    files: [styles]\n")
-		if err := w.commands().Confirm(t.Context(), w.only(t)); err != nil {
-			t.Fatal(err)
-		}
-		if state := w.only(t).State; state != model.HookConfirmed {
-			t.Fatalf("a confirmed hook should resolve confirmed, got %s", state)
+		w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    args: [--config=vale.ini]\n")
+		w.track(t, ".sdd")
+		w.allow(t)
+		if state := w.only(t).State; state != model.HookAllowed {
+			t.Fatalf("an allowed hook should resolve allowed, got %s", state)
 		}
 		return w
 	}
@@ -219,18 +303,25 @@ func TestAnyChangeMakesAConfirmedHookAskAgain(t *testing.T) {
 		want   model.HookState
 	}{
 		{"command file", func(t *testing.T, w *world) { script(t, filepath.Join(w.hooksDir(), "vale.sh"), "echo changed") }, model.HookChanged},
-		{"args file", func(t *testing.T, w *world) {
+		{"sourced file", func(t *testing.T, w *world) { write(t, filepath.Join(w.hooksDir(), "lib.sh"), "echo evil\n") }, model.HookChanged},
+		{"flag file", func(t *testing.T, w *world) {
 			write(t, filepath.Join(w.hooksDir(), "vale.ini"), "MinAlertLevel = suggestion\n")
 		}, model.HookChanged},
-		{"files match", func(t *testing.T, w *world) {
+		{"exec bit", func(t *testing.T, w *world) {
+			if err := os.Chmod(filepath.Join(w.hooksDir(), "lib.sh"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, model.HookChanged},
+		{"newly tracked file", func(t *testing.T, w *world) {
 			write(t, filepath.Join(w.hooksDir(), "styles", "Base", "new.yml"), "level: warning\n")
+			w.track(t, ".sdd/hooks/styles/Base/new.yml")
 		}, model.HookChanged},
-		{"config", func(t *testing.T, w *world) {
-			w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    args: [--config, vale.ini]\n    files: [styles]\n    timeout: 30\n")
+		{"declaration", func(t *testing.T, w *world) {
+			w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    args: [--config=vale.ini]\n    timeout: 30\n")
 		}, model.HookChanged},
-		{"event", func(t *testing.T, w *world) {
-			w.commit(t, "  - event: capture.guide\n    command: vale.sh\n    args: [--config, vale.ini]\n    files: [styles]\n")
-		}, model.HookPending},
+		{"untracked cache", func(t *testing.T, w *world) {
+			write(t, filepath.Join(w.hooksDir(), "__pycache__", "lib.pyc"), "cache\n")
+		}, model.HookAllowed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := setup(t)
@@ -242,100 +333,247 @@ func TestAnyChangeMakesAConfirmedHookAskAgain(t *testing.T) {
 	}
 }
 
-func TestAFilesEntryMatchingNothingIsRefused(t *testing.T) {
-	w := newWorld(t)
-	script(t, filepath.Join(w.hooksDir(), "vale.sh"), "true")
-	w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    files: [styles/*.yml]\n")
-	if _, err := w.commands().Hooks(t.Context()); err == nil || !strings.Contains(err.Error(), `files entry "styles/*.yml" matches nothing`) {
-		t.Fatalf("a files entry matching nothing should be refused, got %v", err)
+// A machine-local layer a repository tracks waits for the allow and its
+// tracked scripts join the hash, however the repository spells its folders
+// and through a tracked link to the .sdd folder.
+func TestATrackedMachineLocalLayerRunsOnlyOnceAllowed(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, w *world) (script string)
+	}{
+		{"plain", func(t *testing.T, w *world) string {
+			path := filepath.Join(w.hooksDir(), "local", "evil.sh")
+			script(t, path, "echo v1")
+			w.local(t, "  - event: entry.written\n    command: local/evil.sh\n")
+			w.track(t, ".sdd/config.local.yaml", ".sdd/hooks/local/evil.sh")
+			return path
+		}},
+		{"other case", func(t *testing.T, w *world) string {
+			requireCaseInsensitive(t, w.repo)
+			path := filepath.Join(w.hooksDir(), "LOCAL", "evil.sh")
+			script(t, path, "echo v1")
+			write(t, filepath.Join(w.repo, ".sdd", "CONFIG.LOCAL.YAML"), "hooks:\n  - event: entry.written\n    command: local/evil.sh\n")
+			w.track(t, ".sdd/CONFIG.LOCAL.YAML", ".sdd/hooks/LOCAL/evil.sh")
+			return path
+		}},
+		{"linked .sdd", func(t *testing.T, w *world) string {
+			real := filepath.Join(w.repo, "sddreal")
+			if err := os.Rename(filepath.Join(w.repo, ".sdd"), real); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("sddreal", filepath.Join(w.repo, ".sdd")); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(real, "hooks", "local", "evil.sh")
+			script(t, path, "echo v1")
+			write(t, filepath.Join(real, "config.local.yaml"), "hooks:\n  - event: entry.written\n    command: local/evil.sh\n")
+			w.track(t, ".sdd", "sddreal")
+			return path
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			path := tc.setup(t, w)
+			if state := w.only(t).State; state != model.HookPending {
+				t.Fatalf("a tracked machine-local hook should wait for the allow, got %s", state)
+			}
+			w.allow(t)
+			if state := w.only(t).State; state != model.HookAllowed {
+				t.Fatalf("once allowed it should run, got %s", state)
+			}
+			script(t, path, "echo v2")
+			if state := w.only(t).State; state != model.HookChanged {
+				t.Errorf("a change to its tracked script should need a new allow, got %s", state)
+			}
+		})
 	}
 }
 
-func TestConfirmationsLiveInAPrivateFilePerRepositoryKey(t *testing.T) {
-	w := newWorld(t)
-	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
-	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
-	hook := w.only(t)
-	if err := w.commands().Confirm(t.Context(), hook); err != nil {
+func requireCaseInsensitive(t *testing.T, dir string) {
+	t.Helper()
+	probe := filepath.Join(dir, "case-probe")
+	write(t, probe, "")
+	_, err := os.Stat(filepath.Join(dir, "CASE-PROBE"))
+	if err := os.Remove(probe); err != nil {
 		t.Fatal(err)
 	}
-
-	path := filepath.Join(w.stateRoot, "hooks", "example.com", "org", "repo.json")
-	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("the confirmation should live at %s: %v", path, err)
-	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Errorf("the confirmation file should be private, mode %o", mode)
-	}
-	if raw, _ := os.ReadFile(path); !strings.Contains(string(raw), hook.Hash) || !strings.Contains(string(raw), w.repo) || !strings.Contains(string(raw), `"event": "entry.written"`) {
-		t.Errorf("the confirmation should record the hash, event and checkout, got %s", raw)
-	}
-
-	clone := newWorld(t)
-	script(t, filepath.Join(clone.hooksDir(), "lint.sh"), "true")
-	clone.commit(t, "  - event: entry.written\n    command: lint.sh\n")
-	clone.stateRoot = w.stateRoot
-	if state := clone.only(t).State; state != model.HookConfirmed {
-		t.Errorf("a clone of the same repository should share the confirmation, got %s", state)
+		t.Skip("the file system tells case apart")
 	}
 }
 
-func TestSweepDropsUndeclaredHashesAndVanishedCheckouts(t *testing.T) {
+// Outside a repository git can list, no repository hook runs or can be
+// allowed: there is no saying what came with it.
+func TestHooksOutsideAGitRepositoryFailClosed(t *testing.T) {
+	w := newWorld(t)
+	if err := os.RemoveAll(filepath.Join(w.repo, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	script(t, filepath.Join(w.hooksDir(), "local", "mine.sh"), "true")
+	w.local(t, "  - event: entry.written\n    command: local/mine.sh\n")
+
+	hook := w.only(t)
+	if hook.State != model.HookPending || !strings.Contains(hook.Notice, "cannot run or be allowed") {
+		t.Fatalf("a local hook outside a repository should wait, saying why, got %+v", hook)
+	}
+	if _, err := w.commands().Reviews(t.Context()); err == nil || !strings.Contains(err.Error(), "listing the files git tracks") {
+		t.Fatalf("its review should fail naming git, got %v", err)
+	}
+}
+
+// A tracked link is hashed by its text and never followed, so a link out of
+// the repository to a folder sdd cannot read, or to the whole disk, neither
+// breaks nor slows reading the hooks.
+func TestALinkOutOfTheRepositoryIsHashedByItsText(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
-	kept := w.only(t)
-	store := hooks.NewStore(w.stateRoot)
-	if err := store.Confirm(kept); err != nil {
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.MkdirAll(filepath.Join(locked, "inner"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dropped := kept
-	dropped.Hash = strings.Repeat("0", 64)
-	gone := kept
-	gone.Hash, gone.Origin.Checkout = strings.Repeat("1", 64), filepath.Join(t.TempDir(), "removed")
-	for _, hook := range []model.Hook{dropped, gone} {
-		if err := store.Confirm(hook); err != nil {
+	if err := os.Chmod(filepath.Join(locked, "inner"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(locked, "inner"), 0o755) })
+	for name, target := range map[string]string{"ext": locked, "root": "/"} {
+		if err := os.Symlink(target, filepath.Join(w.hooksDir(), name)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Remove(gone.Origin.Checkout); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
+	w.track(t, ".sdd")
 
-	err := store.Sweep(func(checkout string) ([]string, error) {
-		if checkout != w.repo {
-			t.Errorf("only existing checkouts should be asked, asked %s", checkout)
-		}
-		return []string{kept.Hash}, nil
-	})
+	started := time.Now()
+	w.allow(t)
+	if state := w.only(t).State; state != model.HookAllowed {
+		t.Fatalf("hooks beside links out of the repository should be allowable, got %s", state)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Errorf("reading the hooks should not walk the links, took %s", elapsed)
+	}
+	reviews, err := hooks.New(w.sources(), hooks.NewAllows(t.TempDir())).Reviews(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(store.Path(kept.Origin.RepoKey))
-	if err != nil {
-		t.Fatal(err)
+	var files []string
+	for _, file := range reviews[0].Files {
+		files = append(files, file.Path+"="+file.Digest)
 	}
-	if !strings.Contains(string(raw), kept.Hash) || strings.Contains(string(raw), dropped.Hash) || strings.Contains(string(raw), gone.Hash) {
-		t.Errorf("the sweep should keep only the declared hash, store holds %s", raw)
+	if !slices.Contains(files, ".sdd/hooks/root=link:/") || !slices.Contains(files, ".sdd/hooks/ext=link:"+locked) {
+		t.Errorf("the links should be covered by their text, got %v", files)
 	}
 }
 
-func TestSweepKeepsTheConfirmationsOfACheckoutItCannotRead(t *testing.T) {
+// The allow is keyed by the checkout's real root, which a repository cannot
+// choose: another checkout with the same repo_id and the same hooks waits
+// for its own allow.
+func TestAnAllowHoldsForItsCheckoutAlone(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	w.track(t, ".sdd")
+	w.allow(t)
+
+	other := newWorld(t)
+	script(t, filepath.Join(other.hooksDir(), "lint.sh"), "true")
+	other.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	other.track(t, ".sdd")
+	other.stateRoot = w.stateRoot
+	if hook := other.only(t); hook.State != model.HookPending {
+		t.Errorf("a checkout claiming the same repo_id should wait for its own allow, got %s", hook.State)
+	}
+}
+
+func TestTheAllowRecordIsAPrivateFileKeyedByRealRoot(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
+	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	w.allow(t)
 	hook := w.only(t)
-	store := hooks.NewStore(w.stateRoot)
-	if err := store.Confirm(hook); err != nil {
+
+	allows := hooks.NewAllows(w.stateRoot)
+	info, err := os.Stat(allows.Path())
+	if err != nil {
 		t.Fatal(err)
 	}
-	err := store.Sweep(func(string) ([]string, error) { return nil, os.ErrPermission })
-	if err == nil || !strings.Contains(err.Error(), w.repo) {
-		t.Fatalf("a checkout the sweep cannot read should be reported, got %v", err)
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Errorf("the allow record should be private, mode %o", mode)
 	}
-	if state := w.only(t).State; state != model.HookConfirmed {
-		t.Errorf("its confirmation should be kept, got %s", state)
+	dir, err := os.Stat(filepath.Dir(allows.Path()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := dir.Mode().Perm(); mode != 0o700 {
+		t.Errorf("the allow record's folder should be private, mode %o", mode)
+	}
+	if raw, _ := os.ReadFile(allows.Path()); !strings.Contains(string(raw), hook.Origin.Checkout) || !strings.Contains(string(raw), hook.Hash) {
+		t.Errorf("the record should map the real root to the hash, got %s", raw)
+	}
+}
+
+// An unreadable record allows nothing and says how to recover, and the next
+// allow rewrites it.
+func TestACorruptAllowRecordAllowsNothingUntilTheNextAllow(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
+	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	w.allow(t)
+	write(t, hooks.NewAllows(w.stateRoot).Path(), "{")
+
+	hook := w.only(t)
+	if hook.State != model.HookPending || !strings.Contains(hook.Notice, "is unreadable") || !strings.Contains(hook.Notice, "`sdd hooks allow` rewrites it") {
+		t.Fatalf("an unreadable record should allow nothing and say how to recover, got %+v", hook)
+	}
+	w.allow(t)
+	if state := w.only(t).State; state != model.HookAllowed {
+		t.Errorf("the next allow should rewrite the record, got %s", state)
+	}
+}
+
+// Only what the person saw is allowed: a change between the review and the
+// answer refuses the allow.
+func TestAllowRefusesHooksChangedSinceTheReview(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
+	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	w.track(t, ".sdd")
+	reviews, err := w.commands().Reviews(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "echo swapped")
+	if err := w.commands().Allow(t.Context(), reviews); err == nil || !strings.Contains(err.Error(), "changed since they were shown") {
+		t.Fatalf("an allow of hooks changed since the review should be refused, got %v", err)
+	}
+	if state := w.only(t).State; state != model.HookPending {
+		t.Errorf("nothing should be allowed, got %s", state)
+	}
+}
+
+func TestReviewShowsTheHooksTheCoveredFilesAndTheHeadOfEachCommand(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "vale.sh"), strings.Repeat("echo line\n", 30))
+	write(t, filepath.Join(w.hooksDir(), "vale.ini"), "x\n")
+	w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    args: [vale.ini, --flag]\n")
+	w.track(t, ".sdd/hooks")
+	reviews, err := w.commands().Reviews(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reviews) != 1 || len(reviews[0].Hooks) != 1 || reviews[0].State != model.HookPending || len(reviews[0].Hash) != 64 {
+		t.Fatalf("one pending review with its hook and hash, got %+v", reviews)
+	}
+	review := reviews[0]
+	var files []string
+	for _, file := range review.Files {
+		files = append(files, file.Path)
+	}
+	if !slices.Equal(files, []string{".sdd/hooks/vale.ini", ".sdd/hooks/vale.sh"}) {
+		t.Errorf("the review should list the tracked files of the hooks folder, got %v", files)
+	}
+	head := review.Heads[review.Hooks[0].Path]
+	if len(head) != 20 || head[0] != "#!/bin/sh" {
+		t.Errorf("the review should show the first 20 lines of the command, got %d starting %q", len(head), head)
 	}
 }
 
@@ -343,6 +581,7 @@ func TestRunRunsTheFileWithoutAShellInItsHooksFolder(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "my lint.sh"), `pwd -P; printf '%s|' "$@"; cat`)
 	w.commit(t, "  - event: entry.written\n    command: my\\ lint.sh\n    args: [\"$HOME\", \"a b\"]\n")
+	w.allow(t)
 	output, err := w.commands().Run(t.Context(), w.only(t), []byte(`{"event":"entry.written"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -360,6 +599,7 @@ func TestRunFailsOnANonzeroExitWithItsStderr(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "echo lint broke >&2; exit 3")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	w.allow(t)
 	_, err := w.commands().Run(t.Context(), w.only(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "exit status 3") || !strings.Contains(err.Error(), "lint broke") {
 		t.Fatalf("a nonzero exit should fail naming the status and the hook's stderr, got %v", err)
@@ -370,9 +610,11 @@ func TestRunRefusesAHookChangedSinceItResolved(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	w.track(t, ".sdd")
+	w.allow(t)
 	hook := w.only(t)
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "echo swapped")
-	if _, err := w.commands().Run(t.Context(), hook, nil); err == nil || !strings.Contains(err.Error(), "changed while the call ran") {
+	if _, err := w.commands().Run(t.Context(), hook, nil); err == nil || !strings.Contains(err.Error(), "is not allowed as it is now") {
 		t.Fatalf("a hook whose file changed after it resolved should not run, got %v", err)
 	}
 }
@@ -381,6 +623,7 @@ func TestRunStopsTheHookAndItsChildrenWhenTheContextEnds(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "hang.sh"), "sleep 30 & echo $! > child.pid; wait")
 	w.commit(t, "  - event: entry.written\n    command: hang.sh\n")
+	w.allow(t)
 	hook := w.only(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer cancel()
@@ -409,84 +652,23 @@ func TestRunStopsTheHookAndItsChildrenWhenTheContextEnds(t *testing.T) {
 	}
 }
 
-func TestReviewShowsTheHashedFilesAndTheHeadOfTheCommand(t *testing.T) {
-	w := newWorld(t)
-	script(t, filepath.Join(w.hooksDir(), "vale.sh"), strings.Repeat("echo line\n", 30))
-	write(t, filepath.Join(w.hooksDir(), "vale.ini"), "x\n")
-	w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    args: [vale.ini, --flag]\n")
-	review, err := w.commands().Review(t.Context(), w.only(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var files []string
-	for _, file := range review.Files {
-		files = append(files, file.Role+":"+file.Path)
-		if len(file.Digest) != 64 {
-			t.Errorf("%s should carry its SHA-256 digest, got %q", file.Path, file.Digest)
-		}
-	}
-	if !slices.Equal(files, []string{"command:vale.sh", "arg:vale.ini"}) {
-		t.Errorf("the review should list the command and the args naming a file, got %v", files)
-	}
-	if len(review.Head) != 20 || review.Head[0] != "#!/bin/sh" {
-		t.Errorf("the review should show the first 20 lines of the command, got %d starting %q", len(review.Head), review.Head)
-	}
-}
-
-func TestSweepAsksTheCheckoutsConfigAsItIsNow(t *testing.T) {
+func TestSweepDropsTheAllowsOfVanishedCheckouts(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
-	store := hooks.NewStore(w.stateRoot)
-	if err := store.Confirm(w.only(t)); err != nil {
+	w.allow(t)
+	allows := hooks.NewAllows(w.stateRoot)
+	gone := filepath.Join(t.TempDir(), "removed")
+	if err := allows.Record(map[string]string{gone: "hash"}); err != nil {
 		t.Fatal(err)
 	}
-	declared := hooks.DeclaredIn(w.global, nil)
-
-	if err := store.Sweep(declared); err != nil {
+	if err := allows.Sweep(); err != nil {
 		t.Fatal(err)
 	}
-	if state := w.only(t).State; state != model.HookConfirmed {
-		t.Fatalf("a hook the checkout still declares should stay confirmed, got %s", state)
+	if state, _ := allows.State(gone, "hash"); state != model.HookPending {
+		t.Errorf("the allow of a vanished checkout should be dropped, got %s", state)
 	}
-
-	w.commit(t, "")
-	if err := store.Sweep(declared); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(store.Path("example.com/org/repo")); !os.IsNotExist(err) {
-		t.Errorf("a store left without confirmations should be removed, stat %v", err)
-	}
-}
-
-func TestDeclaredRefusesACommandThatIsAFolder(t *testing.T) {
-	w := newWorld(t)
-	if err := os.MkdirAll(filepath.Join(w.hooksDir(), "lint"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	w.commit(t, "  - event: entry.written\n    command: lint\n")
-	if err := declaredErr(t, w); err == nil || !strings.Contains(err.Error(), "is not a regular file") {
-		t.Fatalf("a folder as command should be refused, got %v", err)
-	}
-}
-
-// In a graph_repo layout the clone's machine-local layer is the work
-// repository's own file, read once.
-func TestDeclaredReadsAGraphRepoLayoutsLocalLayerOnce(t *testing.T) {
-	base := t.TempDir()
-	global := filepath.Join(base, "config", "sdd", "config.yaml")
-	work, clone := filepath.Join(base, "work"), filepath.Join(base, "clone")
-	write(t, global, "")
-	write(t, filepath.Join(work, ".sdd", "config.yaml"), "graph_repo: example.com/org/graph\n")
-	write(t, filepath.Join(work, ".sdd", "config.local.yaml"), "hooks:\n  - event: entry.written\n    command: local/mine.sh\n")
-	write(t, filepath.Join(clone, ".sdd", "config.yaml"), "repo_id: example.com/org/graph\n")
-	script(t, filepath.Join(work, ".sdd", "hooks", "local", "mine.sh"), "true")
-
-	declared, err := hooks.Declared(hooks.Sources{GlobalConfig: global, Project: meta.Project{Root: clone, WorkRoot: work, GraphRepo: "example.com/org/graph"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(declared) != 1 || declared[0].Origin.Label() != "work local" {
-		t.Fatalf("the work repository's machine-local layer once, got %+v", declared)
+	if state := w.only(t).State; state != model.HookAllowed {
+		t.Errorf("the allow of a present checkout should stay, got %s", state)
 	}
 }

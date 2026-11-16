@@ -650,7 +650,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 	ss := s.sessions.get(id)
 	var fresh bool
 	if ss == nil {
-		workflow, err := s.app.RefreshWorkflowConfirmingHooks(ctx, s.requestIdentity(req), id, newElicitingConfirmer(req))
+		workflow, err := s.app.RefreshWorkflowAllowingHooks(ctx, s.requestIdentity(req), id, newElicitingAllower(req))
 		if err != nil {
 			return nil, err
 		}
@@ -665,7 +665,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 	}
 	if !fresh {
 		ss.mu.Lock()
-		workflow, err := s.app.RefreshWorkflowConfirmingHooks(ctx, s.requestIdentity(req), id, newElicitingConfirmer(req))
+		workflow, err := s.app.RefreshWorkflowAllowingHooks(ctx, s.requestIdentity(req), id, newElicitingAllower(req))
 		if err != nil {
 			ss.mu.Unlock()
 			return nil, err
@@ -727,7 +727,7 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 	)
 	err := s.app.RefuseOpen(ctx, identity, project, mcpClientName(req.Session))
 	if err == nil {
-		err = s.confirmHooks(ctx, req, project)
+		err = s.allowHooks(ctx, req, project)
 	}
 	if err == nil {
 		workflow, serve, err = s.app.OpenWorkflow(ctx, identity, project, sdd.WorkflowOpenRequest{

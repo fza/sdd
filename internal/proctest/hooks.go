@@ -32,15 +32,16 @@ type HookRun struct {
 }
 
 // ScriptedHooks is a HookCommands whose commands run scripts instead of
-// processes, recording every run and confirmation. Configured and Scripts
-// may change between calls; a changed configuration reaches the next call.
-// A configured hook without a state counts as confirmed.
+// processes, recording every run and allow. Configured and Scripts may
+// change between calls; a changed configuration reaches the next call. A
+// configured hook without a state counts as allowed; the hooks not allowed
+// form one review per Origin.Checkout.
 type ScriptedHooks struct {
 	mu         sync.Mutex
 	Configured []sdd.Hook
 	Scripts    map[string]HookScript
 	runs       []HookRun
-	confirmed  []sdd.Hook
+	allowed    []sdd.HookReview
 }
 
 // Hooks returns the configured hooks.
@@ -50,35 +51,55 @@ func (s *ScriptedHooks) Hooks(context.Context) ([]sdd.Hook, error) {
 	hooks := append([]sdd.Hook(nil), s.Configured...)
 	for i := range hooks {
 		if hooks[i].State == "" {
-			hooks[i].State = model.HookConfirmed
+			hooks[i].State = model.HookAllowed
 		}
 	}
 	return hooks, nil
 }
 
-// Review describes the hook by itself.
-func (s *ScriptedHooks) Review(_ context.Context, hook sdd.Hook) (sdd.HookReview, error) {
-	return sdd.HookReview{Hook: hook}, nil
+// Reviews groups the hooks not allowed by their checkout.
+func (s *ScriptedHooks) Reviews(ctx context.Context) ([]sdd.HookReview, error) {
+	hooks, err := s.Hooks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var reviews []sdd.HookReview
+	at := map[string]int{}
+	for _, hook := range hooks {
+		if hook.State == model.HookAllowed {
+			continue
+		}
+		i, ok := at[hook.Origin.Checkout]
+		if !ok {
+			i = len(reviews)
+			at[hook.Origin.Checkout] = i
+			reviews = append(reviews, sdd.HookReview{Checkout: hook.Origin.Checkout, State: hook.State, Hash: "scripted-" + hook.Origin.Checkout})
+		}
+		reviews[i].Hooks = append(reviews[i].Hooks, hook)
+	}
+	return reviews, nil
 }
 
-// Confirm records the confirmation and marks the configured hook confirmed.
-func (s *ScriptedHooks) Confirm(_ context.Context, hook sdd.Hook) error {
+// Allow records the reviews and marks their checkouts' hooks allowed.
+func (s *ScriptedHooks) Allow(_ context.Context, reviews []sdd.HookReview) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.confirmed = append(s.confirmed, hook)
-	for i := range s.Configured {
-		if s.Configured[i].Command == hook.Command && s.Configured[i].Event == hook.Event {
-			s.Configured[i].State = model.HookConfirmed
+	s.allowed = append(s.allowed, reviews...)
+	for _, review := range reviews {
+		for i := range s.Configured {
+			if s.Configured[i].Origin.Checkout == review.Checkout {
+				s.Configured[i].State = model.HookAllowed
+			}
 		}
 	}
 	return nil
 }
 
-// Confirmed returns the recorded confirmations.
-func (s *ScriptedHooks) Confirmed() []sdd.Hook {
+// Allowed returns the recorded allows.
+func (s *ScriptedHooks) Allowed() []sdd.HookReview {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]sdd.Hook(nil), s.confirmed...)
+	return append([]sdd.HookReview(nil), s.allowed...)
 }
 
 // Run runs the hook command's script.

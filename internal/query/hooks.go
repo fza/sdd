@@ -1,21 +1,15 @@
 package query
 
-import "github.com/networkteam/sdd/internal/model"
+import (
+	"github.com/networkteam/sdd/internal/hooks"
+	"github.com/networkteam/sdd/internal/model"
+)
 
-// HooksQuery asks for every declared hook with its confirmation state: the
-// user-global config's, and, inside a project, those of its repositories.
-// Root and WorkRoot are the project's
-// roots, equal outside a project_dir layout and empty outside a project;
-// GraphRepo is set for a project reached through graph_repo. LocalConfig
-// replaces the project's machine-local layer file; StateRoot holds the
-// confirmation store.
+// HooksQuery asks for every hook Sources declares with whether it may run
+// on this machine; StateRoot holds the allow record.
 type HooksQuery struct {
-	GlobalConfig string
-	Root         string
-	WorkRoot     string
-	GraphRepo    model.RepoID
-	LocalConfig  string
-	StateRoot    string
+	Sources   hooks.Sources
+	StateRoot string
 }
 
 // HooksResult lists the hooks in layer order: user-global, work repository,
@@ -24,7 +18,10 @@ type HooksResult struct {
 	Hooks []model.Hook
 }
 
-// HookReviewQuery asks what a person sees before confirming Hook.
-type HookReviewQuery struct {
-	Hook model.Hook
+// HookReviewsQuery asks what a person sees before allowing each repository
+// whose hooks Sources declares and this machine has not allowed as they are
+// now.
+type HookReviewsQuery struct {
+	Sources   hooks.Sources
+	StateRoot string
 }

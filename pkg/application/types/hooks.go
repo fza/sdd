@@ -20,12 +20,8 @@ type HookConfig struct {
 	// Command names a file in the hooks folder; a backslash escapes a space
 	// in its name.
 	Command string `yaml:"command"`
-	// Args are passed to the command as they stand; an entry naming a file,
-	// resolved from the hooks folder, joins the hook's hash.
+	// Args are passed to the command as they stand.
 	Args []string `yaml:"args,omitempty"`
-	// Files are paths or globs, resolved from the hooks folder, whose
-	// contents join the hook's hash.
-	Files []string `yaml:"files,omitempty"`
 	// Timeout is in seconds; zero means DefaultHookTimeout.
 	Timeout int `yaml:"timeout,omitempty"`
 	// Findings declares that the hook may answer with findings, which only
@@ -62,15 +58,14 @@ type HookOrigin struct {
 	// Dir is the layer's hooks folder: the command's home and working
 	// directory.
 	Dir string
-	// Checkout is the declaring repository's root and RepoKey its key in the
-	// confirmation store; both are empty for the user-global layer.
+	// Checkout is the declaring repository's root with links resolved, the
+	// key of its allow on this machine; empty for the user-global layer.
 	Checkout string
-	RepoKey  string
 }
 
-// NeedsConfirmation reports whether the hook runs only once its hash is
-// confirmed: every layer but the user-global one.
-func (o HookOrigin) NeedsConfirmation() bool { return o.Layer != HookLayerGlobal }
+// NeedsAllow reports whether the hook runs only once its repository's hooks
+// are allowed on this machine: every layer but the user-global one.
+func (o HookOrigin) NeedsAllow() bool { return o.Layer != HookLayerGlobal }
 
 // Label names the layer, with its repository in a project_dir layout.
 func (o HookOrigin) Label() string {
@@ -80,28 +75,36 @@ func (o HookOrigin) Label() string {
 	return o.Repo + " " + string(o.Layer)
 }
 
-// HookState is a hook's confirmation state on this machine.
+// HookState is whether a hook may run on this machine.
 type HookState string
 
 const (
-	// HookConfirmed runs: its hash is confirmed, or its layer needs none.
-	HookConfirmed HookState = "confirmed"
-	// HookPending was never confirmed.
+	// HookAllowed runs: its repository's hooks are allowed as they are now,
+	// or its layer needs no allow.
+	HookAllowed HookState = "allowed"
+	// HookPending came with a repository whose hooks were never allowed on
+	// this machine.
 	HookPending HookState = "pending"
-	// HookChanged was confirmed with another hash in this checkout.
+	// HookChanged came with a repository whose hooks were allowed on this
+	// machine before they changed.
 	HookChanged HookState = "changed"
 )
 
 // Hook is a configured hook resolved against its layer: the command file
-// found in the hooks folder, the hash over its config and contents, and its
-// confirmation state.
+// found in the hooks folder and whether it may run on this machine.
 type Hook struct {
 	HookConfig
 	Origin HookOrigin
 	// Path is the command file's absolute path.
 	Path  string
-	Hash  string
 	State HookState
+	// Hash is the allow hash of the hook's repository as it is now; empty for
+	// the user-global layer and when sdd cannot compute it.
+	Hash string
+	// Notice says why a hook that is not allowed cannot be allowed as it is,
+	// such as a repository git cannot list, or why nothing counts as allowed,
+	// such as an unreadable allow record.
+	Notice string
 }
 
 // Label names the hook in a message: its event, command and declaring file.
@@ -109,19 +112,23 @@ func (h Hook) Label() string {
 	return fmt.Sprintf("%s hook %s (%s: hooks[%d])", h.Event, h.Command, h.Origin.ConfigPath, h.Origin.Index)
 }
 
-// HookFile is one file whose contents a hook's hash covers, with its
-// SHA-256 digest. Path is as the config names it, or as a glob matched it,
-// relative to the hooks folder.
+// HookFile is one file an allow covers: its slash path relative to the
+// repository and its digest, the SHA-256 of its content with whether it may
+// run, or a link's text.
 type HookFile struct {
-	Role   string `json:"role"`
 	Path   string `json:"path"`
-	Digest string `json:"sha256"`
+	Digest string `json:"digest"`
 }
 
-// HookReview is what a person sees before confirming a hook: the hook, the
-// files its hash covers and the head of its command file.
+// HookReview is what a person sees before allowing one repository's hooks:
+// every hook its config files declare, the files the allow covers, the head
+// of each command file by its path, and the hash the allow records.
 type HookReview struct {
-	Hook  Hook
-	Files []HookFile
-	Head  []string
+	Repo     string
+	Checkout string
+	State    HookState
+	Hooks    []Hook
+	Files    []HookFile
+	Heads    map[string][]string
+	Hash     string
 }

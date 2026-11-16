@@ -51,9 +51,9 @@ const (
 	HookLayerCommitted = types.HookLayerCommitted
 	HookLayerLocal     = types.HookLayerLocal
 
-	HookConfirmed = types.HookConfirmed
-	HookPending   = types.HookPending
-	HookChanged   = types.HookChanged
+	HookAllowed = types.HookAllowed
+	HookPending = types.HookPending
+	HookChanged = types.HookChanged
 )
 
 // HookRepoWork and HookRepoProject name the two repositories of a
