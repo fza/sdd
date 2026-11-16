@@ -86,13 +86,13 @@ func TestDeepOpenFindings_FollowTheLatestResponse(t *testing.T) {
 }
 
 func TestDeepEditSettled_OnlyARevertOrRestoreWhereTheEditApplied(t *testing.T) {
-	base := "The parser reads teh file.\nIt skips the team notes.\n"
+	base := "The parser reads one file.\nIt skips the team notes.\n"
 	changes := []model.DeepChange{
-		{Finding: "f1", Outcome: model.DeepApplied, Edits: []model.DeepEdit{{Old: "teh", New: "the"}}},
+		{Finding: "f1", Outcome: model.DeepApplied, Edits: []model.DeepEdit{{Old: "one", New: "the"}}},
 		{Finding: "f2", Outcome: model.DeepApplied, Edits: []model.DeepEdit{{Old: "reads", New: "reads and checks"}}},
 	}
 	proposal := "The parser reads and checks the file.\nIt skips the team notes.\n"
-	firstReverted := "The parser reads and checks teh file.\nIt skips the team notes.\n"
+	firstReverted := "The parser reads and checks one file.\nIt skips the team notes.\n"
 	cases := []struct {
 		name, document, draft string
 		changes               []model.DeepChange
