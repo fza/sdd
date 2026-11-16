@@ -215,8 +215,8 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 	switch {
 	case h.state == nil:
 		errs = append(errs, errors.New("cache pruning has no sweeper for the state folder"))
-	case h.registry.MixedXDG() != "":
-		errs = append(errs, fmt.Errorf("%w %s: the XDG base directories come from mixed sources (%s); set all four or none", ErrStateSweepRefused, h.stateRoot, h.registry.MixedXDG()))
+	case h.registry.MixedStateXDG() != "":
+		errs = append(errs, fmt.Errorf("%w %s: the state, cache and data directories come from mixed sources (%s); set all three or none", ErrStateSweepRefused, h.stateRoot, h.registry.MixedStateXDG()))
 	default:
 		swept, err := h.state.Sweep(ctx, now, sessionRetention, retention)
 		counts.Add(swept)

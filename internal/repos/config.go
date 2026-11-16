@@ -41,6 +41,11 @@ type Locations struct {
 	// Mixed roots pair one repos list with another's clones, so cache
 	// pruning removes no clone under them.
 	MixedXDG string
+	// MixedStateXDG is MixedXDG over the state, cache and data variables
+	// only: a state root from another source than the cache and data roots
+	// may be another setup's, so the state sweep removes nothing under it.
+	// XDG_CONFIG_HOME set alone, a common setup, does not count.
+	MixedStateXDG string
 }
 
 // DefaultLocations resolves the conventional locations: the XDG base
@@ -54,20 +59,10 @@ func DefaultLocations() (Locations, error) {
 	cacheBase := os.Getenv("XDG_CACHE_HOME")
 	stateBase := os.Getenv("XDG_STATE_HOME")
 	dataBase := os.Getenv("XDG_DATA_HOME")
-	var set, unset []string
-	for _, v := range []struct{ name, value string }{
-		{"XDG_CONFIG_HOME", cfgBase}, {"XDG_CACHE_HOME", cacheBase}, {"XDG_STATE_HOME", stateBase}, {"XDG_DATA_HOME", dataBase},
-	} {
-		if v.value == "" {
-			unset = append(unset, v.name)
-		} else {
-			set = append(set, v.name)
-		}
-	}
-	mixed := ""
-	if len(set) > 0 && len(unset) > 0 {
-		mixed = fmt.Sprintf("%s set, %s not", strings.Join(set, ", "), strings.Join(unset, ", "))
-	}
+	config := xdgVar{"XDG_CONFIG_HOME", cfgBase}
+	cache, state, data := xdgVar{"XDG_CACHE_HOME", cacheBase}, xdgVar{"XDG_STATE_HOME", stateBase}, xdgVar{"XDG_DATA_HOME", dataBase}
+	mixed := mixedSources(config, cache, state, data)
+	mixedState := mixedSources(cache, state, data)
 	if cfgBase == "" || cacheBase == "" || stateBase == "" || dataBase == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -90,12 +85,32 @@ func DefaultLocations() (Locations, error) {
 		return Locations{}, fmt.Errorf("XDG_STATE_HOME must be an absolute path: %q", stateBase)
 	}
 	return Locations{
-		ConfigPath: filepath.Join(cfgBase, "sdd", "config.yaml"),
-		CacheRoot:  filepath.Join(cacheBase, "sdd"),
-		StateRoot:  filepath.Join(stateBase, "sdd"),
-		DataRoot:   filepath.Join(dataBase, "sdd"),
-		MixedXDG:   mixed,
+		ConfigPath:    filepath.Join(cfgBase, "sdd", "config.yaml"),
+		CacheRoot:     filepath.Join(cacheBase, "sdd"),
+		StateRoot:     filepath.Join(stateBase, "sdd"),
+		DataRoot:      filepath.Join(dataBase, "sdd"),
+		MixedXDG:      mixed,
+		MixedStateXDG: mixedState,
 	}, nil
+}
+
+type xdgVar struct{ name, value string }
+
+// mixedSources names the variables set and those not, empty when all or none
+// are set.
+func mixedSources(vars ...xdgVar) string {
+	var set, unset []string
+	for _, v := range vars {
+		if v.value == "" {
+			unset = append(unset, v.name)
+		} else {
+			set = append(set, v.name)
+		}
+	}
+	if len(set) == 0 || len(unset) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s set, %s not", strings.Join(set, ", "), strings.Join(unset, ", "))
 }
 
 // GlobalConfig is the user-global SDD configuration. It embeds the shared

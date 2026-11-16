@@ -206,6 +206,41 @@ func TestRetireUnconnectedClone(t *testing.T) {
 	})
 }
 
+// The state sweep refuses a state root from another source than the cache
+// and data roots; the config root's source does not count.
+func TestDefaultLocationsNameAStateRootFromAnotherSource(t *testing.T) {
+	cases := []struct {
+		name  string
+		set   []string
+		mixed bool
+	}{
+		{name: "state from the home default, cache and data redirected", set: []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"}, mixed: true},
+		{name: "state redirected, cache and data from the home default", set: []string{"XDG_STATE_HOME"}, mixed: true},
+		{name: "only the config root redirected", set: []string{"XDG_CONFIG_HOME"}},
+		{name: "all four redirected", set: []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"}},
+		{name: "none redirected"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("HOME", filepath.Join(root, "home"))
+			for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+				t.Setenv(name, "")
+			}
+			for _, name := range tc.set {
+				t.Setenv(name, filepath.Join(root, name))
+			}
+			loc, err := repos.DefaultLocations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mixed := loc.MixedStateXDG != ""; mixed != tc.mixed {
+				t.Errorf("the state root should count as from another source %v, MixedStateXDG %q", tc.mixed, loc.MixedStateXDG)
+			}
+		})
+	}
+}
+
 // The XDG roots belong together only when one source set them all: a process
 // overriding some of them reaches the clones of another repos list.
 func TestUnconnectedClonesRefuseMixedXDGRoots(t *testing.T) {

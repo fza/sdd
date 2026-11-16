@@ -106,12 +106,12 @@ func TestCacheHandlerPruneSweepsTheStateFolder(t *testing.T) {
 	}
 }
 
-// XDG base directories set only in part may put the state root on another
-// setup's folder: the run sweeps none of it and fails, recorded for the next
-// command to report.
+// State, cache and data directories from mixed sources may put the state root
+// on another setup's folder: the run sweeps none of it and fails, recorded
+// for the next command to report.
 func TestCacheHandlerPruneRefusesTheStateSweepUnderMixedXDG(t *testing.T) {
 	f := newPruneFixture(t, "")
-	f.loc.MixedXDG = "XDG_CONFIG_HOME set, XDG_STATE_HOME not"
+	f.loc.MixedStateXDG = "XDG_CACHE_HOME, XDG_DATA_HOME set, XDG_STATE_HOME not"
 	state := &synctest.StateSweep{}
 	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
