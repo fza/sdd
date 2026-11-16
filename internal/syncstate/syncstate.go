@@ -85,6 +85,28 @@ func (s *State) TryLock(context.Context) (func(), error) {
 
 // Lock waits for the sync lock until ctx ends, then takes the graph lock.
 func (s *State) Lock(ctx context.Context) (func(), error) {
+	lock, err := s.waitSync(ctx)
+	if err != nil {
+		return nil, err
+	}
+	graphLock, err := newGraphLock(s.graphDir)
+	if err != nil {
+		Unlock(lock)
+		return nil, err
+	}
+	taken, err := graphLock.TryLockContext(ctx, lockRetryDelay)
+	if err == nil && !taken {
+		err = errors.New("graph lock not taken")
+	}
+	if err != nil {
+		Unlock(lock)
+		return nil, err
+	}
+	return releaseBoth(graphLock, lock), nil
+}
+
+// waitSync waits for the sync lock until ctx ends.
+func (s *State) waitSync(ctx context.Context) (*flock.Flock, error) {
 	lock, err := s.syncLock()
 	if err != nil {
 		return nil, err
@@ -96,20 +118,7 @@ func (s *State) Lock(ctx context.Context) (func(), error) {
 	if !taken {
 		return nil, errors.New("sync lock not taken")
 	}
-	graphLock, err := newGraphLock(s.graphDir)
-	if err != nil {
-		Unlock(lock)
-		return nil, err
-	}
-	taken, err = graphLock.TryLockContext(ctx, lockRetryDelay)
-	if err == nil && !taken {
-		err = errors.New("graph lock not taken")
-	}
-	if err != nil {
-		Unlock(lock)
-		return nil, err
-	}
-	return releaseBoth(graphLock, lock), nil
+	return lock, nil
 }
 
 func (s *State) syncLock() (*flock.Flock, error) {
@@ -223,6 +232,32 @@ func Unlock(lock *flock.Flock) {
 	if lock != nil {
 		_ = lock.Unlock()
 	}
+}
+
+// CloneLocks is the repos.CloneLocker of sdd-owned clones: it waits for the
+// sync lock, then the graph lock, of the clone.
+type CloneLocks struct{}
+
+func (CloneLocks) LockClone(ctx context.Context, dir, graphDir string) (func(), error) {
+	common, err := git.CLI{Dir: dir}.CommonDir(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("locating the sync state of %s: %w", dir, err)
+	}
+	state := &State{dir: filepath.Join(common, "sdd"), graphDir: filepath.Join(dir, filepath.FromSlash(graphDir))}
+	_, err = os.Stat(state.graphDir)
+	if errors.Is(err, os.ErrNotExist) {
+		// The graph lock would create the graph directory; without one no
+		// writer holds it.
+		lock, err := state.waitSync(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return func() { Unlock(lock) }, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return state.Lock(ctx)
 }
 
 // CheckoutLocks are the locks of one checkout's graph directory a title

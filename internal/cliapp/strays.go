@@ -63,7 +63,7 @@ func straysQuery(project meta.Project) (query.GraphStraysQuery, error) {
 		Repos:    []string{project.WorkRoot, project.Root},
 		Current:  model.LayoutLocation(pointer, projectCfg),
 		GraphDir: meta.ResolveGraphDir(project.Root, projectCfg),
-		CloneDir: repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir,
+		CloneDir: repos.NewGraphClones(locations, git.GraphClones{}, nil, nil).Dir,
 	}, nil
 }
 

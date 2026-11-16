@@ -17,6 +17,7 @@ import (
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/syncstate"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -67,7 +68,7 @@ func moveCmd() *cli.Command {
 			handler := handlers.New(handlers.Options{
 				Stderr:              cmd.ErrWriter,
 				Gate:                gate,
-				GraphClones:         repos.NewGraphClones(locations, git.GraphClones{}, gate),
+				GraphClones:         repos.NewGraphClones(locations, git.GraphClones{}, gate, syncstate.CloneLocks{}),
 				ProjectRepositories: git.Repositories{},
 				GraphMoverAt:        func(dir string) handlers.GraphMover { return git.CLI{Dir: dir} },
 				Strays:              reader,

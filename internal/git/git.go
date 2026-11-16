@@ -517,6 +517,35 @@ func (c CLI) MergePull(ctx context.Context) (string, error) {
 	return msg, nil
 }
 
+// MergeFetched merges the branch's upstream as last fetched, reaching no
+// remote: the merge of MergePull without its fetch. Production
+// handlers.Puller.
+func (c CLI) MergeFetched(ctx context.Context) (string, error) {
+	upstream, err := c.UpstreamRef(ctx)
+	if err != nil {
+		return "", err
+	}
+	if upstream == "" {
+		return "", errors.New("the current branch has no upstream to merge")
+	}
+	if c.graphClone() {
+		err = c.mergeClone(ctx, upstream, model.GraphMergeMessage(upstream))
+		if err != nil {
+			return "", err
+		}
+		return "merged " + upstream, nil
+	}
+	if err := c.EnsureMergeDriver(ctx); err != nil {
+		return "", fmt.Errorf("setting up the entry merge driver: %w", err)
+	}
+	out, err := c.command(ctx, "merge", "--no-edit", upstream).CombinedOutput()
+	msg := strings.TrimSpace(string(out))
+	if err != nil {
+		return "", fmt.Errorf("git merge %s: %s (%w)", upstream, msg, err)
+	}
+	return msg, nil
+}
+
 // RepoRoot returns the git repository root, falling back to cwd when not in
 // a repository.
 func RepoRoot() (string, error) {

@@ -130,7 +130,7 @@ func newConnections(t *testing.T, now time.Time, scripted map[model.RepoID]*sync
 		t.Fatal(err)
 	}
 	repostest.WriteConfig(t, loc.ConfigPath, cfg)
-	manager := repos.NewManager(reg, repos.NewGraphClones(loc, git, gate))
+	manager := repos.NewManager(reg, repos.NewGraphClones(loc, git, gate, synctest.CloneLocks{}))
 	return &connections{handler: handlers.New(handlers.Options{Repos: manager, CloneRound: round}), manager: manager, round: round, git: git, repos: scripted, now: &now}
 }
 

@@ -2,7 +2,9 @@ package repos_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/syncstate"
 	"github.com/networkteam/sdd/test"
 )
 
@@ -40,8 +43,8 @@ func TestGraphClonesEnsureWaitsForAClone(t *testing.T) {
 	locations := repos.Locations{DataRoot: filepath.Join(t.TempDir(), "data")}
 	held := &heldClone{started: make(chan struct{}), release: make(chan struct{})}
 	gate := gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }})
-	first := repos.NewGraphClones(locations, held, gate)
-	second := repos.NewGraphClones(locations, held, gate)
+	first := repos.NewGraphClones(locations, held, gate, syncstate.CloneLocks{})
+	second := repos.NewGraphClones(locations, held, gate, syncstate.CloneLocks{})
 
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
@@ -61,5 +64,87 @@ func TestGraphClonesEnsureWaitsForAClone(t *testing.T) {
 	}
 	if n := held.clones.Load(); n != 1 {
 		t.Errorf("one clone should serve both callers, %d ran", n)
+	}
+}
+
+func TestGraphClonesEnsureRefusesWithoutALocker(t *testing.T) {
+	remote := test.NewGraphRemote(t, "example.test/acme/app-sdd")
+	remote.Commit(t, "seed", map[string]string{".sdd/config.yaml": "graph_dir: .sdd/graph\n"})
+	gate := gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }})
+	clones := repos.NewGraphClones(repos.Locations{DataRoot: filepath.Join(t.TempDir(), "data")}, git.GraphClones{}, gate, nil)
+
+	_, _, err := clones.Ensure(t.Context(), remote.RepoID, "")
+	if err == nil || !strings.Contains(err.Error(), "no clone locker") {
+		t.Errorf("an upkeep without the clone's locks should be refused, got %v", err)
+	}
+}
+
+// The upkeep of a graph repository holding no graph directory yet leaves it
+// absent, so nothing reads a layout from the lock's folder.
+func TestGraphClonesEnsureCreatesNoGraphDirectory(t *testing.T) {
+	remote := test.NewGraphRemote(t, "example.test/acme/app-sdd")
+	gate := gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }})
+	clones := repos.NewGraphClones(repos.Locations{DataRoot: filepath.Join(t.TempDir(), "data")}, git.GraphClones{}, gate, syncstate.CloneLocks{})
+
+	dir, _, err := clones.Ensure(t.Context(), remote.RepoID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, statErr := os.Stat(filepath.Join(dir, ".sdd", "graph"))
+	if statErr == nil {
+		t.Error("the upkeep should create no graph directory")
+	}
+}
+
+// The upkeep a read command runs before it reads waits for a writer holding
+// the graph lock, so the entry the writer published and its commit survive.
+func TestGraphClonesEnsureWaitsForAWriter(t *testing.T) {
+	remote := test.NewGraphRemote(t, "example.test/acme/app-sdd")
+	remote.Commit(t, "seed", map[string]string{".sdd/config.yaml": "graph_dir: .sdd/graph\n", ".sdd/graph/2026/11/07-120000-s-tac-abc.md": "---\ntype: signal\n---\nx\n"})
+	locations := repos.Locations{DataRoot: filepath.Join(t.TempDir(), "data")}
+	gate := gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }})
+	clones := repos.NewGraphClones(locations, git.GraphClones{}, gate, syncstate.CloneLocks{})
+	dir, _, err := clones.Ensure(t.Context(), remote.RepoID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := syncstate.LockGraph(filepath.Join(dir, ".sdd", "graph"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := ".sdd/graph/2026/11/07-130000-s-tac-pub.md"
+	err = os.WriteFile(filepath.Join(dir, filepath.FromSlash(published)), []byte("---\ntype: signal\n---\npublished\n"), 0o644)
+	if err != nil {
+		syncstate.Unlock(lock)
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := clones.Ensure(t.Context(), remote.RepoID, "")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		syncstate.Unlock(lock)
+		t.Fatalf("the upkeep should wait for the writer's graph lock, it ran: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	err = git.CLI{Dir: dir}.Commit("sdd: capture", published)
+	syncstate.Unlock(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = <-done
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	_, statErr := os.Stat(filepath.Join(dir, filepath.FromSlash(published)))
+	if statErr != nil {
+		t.Errorf("the writer's entry should survive the upkeep: %v", statErr)
+	}
+	ahead := strings.TrimSpace(test.Git(t, dir, "rev-list", "--count", "@{u}..HEAD"))
+	if ahead != "1" {
+		t.Errorf("the writer's commit should survive the upkeep, %s commits ahead", ahead)
 	}
 }

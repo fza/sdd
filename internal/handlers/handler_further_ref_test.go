@@ -65,7 +65,7 @@ func newFurther(t *testing.T, readWait time.Duration, cloned bool) *further {
 	if cloned {
 		f.write(t, ".git/HEAD", "c1\n")
 	}
-	manager := repos.NewManager(reg, repos.NewGraphClones(loc, git, gate))
+	manager := repos.NewManager(reg, repos.NewGraphClones(loc, git, gate, synctest.CloneLocks{}))
 	f.handler = handlers.New(handlers.Options{Repos: manager, CloneRound: round, Now: func() time.Time { return now }})
 	return f
 }

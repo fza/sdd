@@ -120,7 +120,7 @@ func newCacheHandler(cmd *cli.Command, loc repos.Locations, secretRulesGitHub *s
 		CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
 		OwnedClones: syncstate.OwnedClones{Gate: gate}, Gate: gate, Keep: keep,
 		State:         stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
-		DeclaredHooks: hooks.DeclaredIn(loc.ConfigPath, repos.NewGraphClones(loc, git.GraphClones{}, gate).Dir),
+		DeclaredHooks: hooks.DeclaredIn(loc.ConfigPath, repos.NewGraphClones(loc, git.GraphClones{}, gate, syncstate.CloneLocks{}).Dir),
 		SecretRules:   secretRules,
 	}), nil
 }

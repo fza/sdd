@@ -292,7 +292,7 @@ func defaultRepos() (*repos.Registry, *repos.Manager, error) {
 		return nil, nil, err
 	}
 	reg := repos.NewRegistry(loc)
-	return reg, repos.NewManager(reg, repos.NewGraphClones(loc, git.GraphClones{}, gate)), nil
+	return reg, repos.NewManager(reg, repos.NewGraphClones(loc, git.GraphClones{}, gate, syncstate.CloneLocks{})), nil
 }
 
 // cloneRound is the sync round connected repos refresh through, under the
@@ -340,7 +340,7 @@ func localConfigLayer() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	project, err := resolveWorkProject(workRoot, repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir)
+	project, err := resolveWorkProject(workRoot, repos.NewGraphClones(locations, git.GraphClones{}, nil, nil).Dir)
 	// A pointer at a missing project still names its own local file, the one
 	// `sdd init --project-dir` writes while setting that project up.
 	if errors.Is(err, meta.ErrNotAProject) {
@@ -1825,7 +1825,7 @@ func discoverProject() (meta.Project, *repos.GraphClones, error) {
 	if err != nil {
 		return meta.Project{}, nil, err
 	}
-	clones := repos.NewGraphClones(locations, git.GraphClones{}, gate)
+	clones := repos.NewGraphClones(locations, git.GraphClones{}, gate, syncstate.CloneLocks{})
 	project, err := resolveWorkProject(workRoot, clones.Dir)
 	if err != nil {
 		return meta.Project{}, nil, err
@@ -2216,7 +2216,7 @@ func initCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				cloneDir, err := repos.NewGraphClones(locations, git.GraphClones{}, nil).Dir(graphRepo)
+				cloneDir, err := repos.NewGraphClones(locations, git.GraphClones{}, nil, nil).Dir(graphRepo)
 				if err != nil {
 					return err
 				}
@@ -2578,7 +2578,7 @@ func initCmd() *cli.Command {
 			handler := handlers.New(handlers.Options{
 				Stderr:              cmd.ErrWriter,
 				Reader:              reader,
-				GraphClones:         repos.NewGraphClones(locations, git.GraphClones{}, gate),
+				GraphClones:         repos.NewGraphClones(locations, git.GraphClones{}, gate, syncstate.CloneLocks{}),
 				CloneRound:          round,
 				Committer:           git.CLI{},
 				Tracker:             git.CLI{},

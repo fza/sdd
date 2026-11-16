@@ -92,7 +92,7 @@ func TestRefreshDependencies(t *testing.T) {
 	for repoID, dir := range cloneDirs {
 		remotes[dir] = "https://" + string(repoID)
 	}
-	manager := repos.NewManager(reg, repos.NewGraphClones(loc, &synctest.CloneGit{Remotes: remotes}, synctest.Gate(t.TempDir(), nil)))
+	manager := repos.NewManager(reg, repos.NewGraphClones(loc, &synctest.CloneGit{Remotes: remotes}, synctest.Gate(t.TempDir(), nil), synctest.CloneLocks{}))
 	h := handlers.New(handlers.Options{Reader: reader, Repos: manager, CloneRound: round})
 
 	var failed, unconnected []model.RepoID

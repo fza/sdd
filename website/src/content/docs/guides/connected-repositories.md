@@ -71,7 +71,7 @@ In a project, `sdd repo sync` reaches only the repositories in its `dependencies
 
 The same holds in the other direction. For another project to reference your entries, commit and push them.
 
-`sdd repo sync` only touches the clones. `sdd sync --pull` is a different command, which merges upstream changes into your own repository.
+`sdd repo sync` only touches the clones. `sdd sync --pull` is a different command, which merges upstream changes into your own repository. Within the fetch cooldown of the [git limits](/sdd/reference/configuration/#sync-and-sessions), it skips the fetch and merges what the last fetch brought.
 
 ## References across graphs
 

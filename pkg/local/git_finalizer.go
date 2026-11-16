@@ -46,7 +46,9 @@ func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation
 		return err
 	}
 	if revision != "" {
-		return nil
+		// The commit may have landed without its record; unrecorded, the
+		// clone upkeep would drop it.
+		return git.CLI{Dir: f.Checkout}.RecordGraphCloneRevision(revision)
 	}
 	seen := map[string]bool{}
 	var paths, added, removed []string

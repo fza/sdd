@@ -59,7 +59,7 @@ func overlapLocations(t *testing.T) repos.Locations {
 func overlapHandler(t *testing.T, loc repos.Locations, git declaringGit) *handlers.Handler {
 	t.Helper()
 	gate := synctest.Gate(loc.StateRoot, nil)
-	manager := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, gate))
+	manager := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, gate, synctest.CloneLocks{}))
 	return handlers.New(handlers.Options{Repos: manager, CloneRound: alwaysDueRound{}})
 }
 

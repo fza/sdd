@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -32,7 +33,7 @@ const (
 
 // cloneExcludeLines keep sdd's own files in the clone out of git and out of
 // the upkeep's clean.
-var cloneExcludeLines = []string{model.GraphCloneExcludeLine, "/.sdd/tmp/", "/.sdd/config.local.yaml"}
+var cloneExcludeLines = []string{model.GraphCloneExcludeLine, "/.sdd/tmp/", "/.sdd/config.local.yaml", ".sdd-runtime/"}
 
 // IsGraphClone reports whether dir is the root of an sdd-owned graph clone.
 func IsGraphClone(dir string) bool {
@@ -611,6 +612,27 @@ func (c CLI) RecordGraphCloneCommit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	return c.recordCommit(head)
+}
+
+// RecordGraphCloneRevision records revision as a commit sdd made in the
+// clone at Dir unless it is recorded already; outside a clone it does
+// nothing.
+func (c CLI) RecordGraphCloneRevision(revision string) error {
+	if !c.graphClone() {
+		return nil
+	}
+	recorded, err := c.recordedCommits()
+	if err != nil {
+		return err
+	}
+	if slices.Contains(recorded, revision) {
+		return nil
+	}
+	return c.recordCommit(revision)
+}
+
+func (c CLI) recordCommit(head string) error {
 	file, err := os.OpenFile(filepath.Join(c.Dir, ".git", model.GraphCloneCommits), os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("recording commit %s: %w", head, err)
@@ -664,7 +686,7 @@ func relayNotices(ctx context.Context, output string) {
 	for scanner.Scan() {
 		_, notice, found := strings.Cut(scanner.Text(), model.MergeNoticePrefix)
 		if found {
-			slogutils.FromContext(ctx).Info("sync: " + notice)
+			slogutils.FromContext(ctx).Warn("sync: " + notice)
 		}
 	}
 }

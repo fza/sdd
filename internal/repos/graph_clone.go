@@ -35,6 +35,12 @@ type GraphCloneGit interface {
 	ExpandURL(ctx context.Context, url string) (string, error)
 }
 
+// CloneLocker takes the locks every sync round and writer of the clone at
+// dir holds, graphDir its graph directory relative to dir.
+type CloneLocker interface {
+	LockClone(ctx context.Context, dir, graphDir string) (release func(), err error)
+}
+
 // GraphClones owns the sdd-owned clone of every graph and connected
 // repository this machine reads or writes, one per repository id under
 // <DataRoot>/repos/<repo-id>/. A clone passes
@@ -43,13 +49,14 @@ type GraphClones struct {
 	dataRoot string
 	git      GraphCloneGit
 	gate     *gitgate.Gate
+	locker   CloneLocker
 }
 
 // NewGraphClones builds the clone owner over the locations' data root. A nil
-// gate serves only the clones' places; a clone or publish fails with
-// ErrNoGate.
-func NewGraphClones(loc Locations, git GraphCloneGit, gate *gitgate.Gate) *GraphClones {
-	return &GraphClones{dataRoot: loc.DataRoot, git: git, gate: gate}
+// gate and locker serve only the clones' places; a clone or publish fails
+// with ErrNoGate, a keep without a locker fails too.
+func NewGraphClones(loc Locations, git GraphCloneGit, gate *gitgate.Gate, locker CloneLocker) *GraphClones {
+	return &GraphClones{dataRoot: loc.DataRoot, git: git, gate: gate, locker: locker}
 }
 
 // Dir is where the clone of repoID lives.
@@ -190,13 +197,26 @@ func moveWithin(root, src, dst string) error {
 
 // keep restores the clone at dir to what sdd made: the cone holds .sdd and
 // the graph_dir its committed config names, merges route to sdd's drivers,
-// and anything sdd did not make is gone.
+// and anything sdd did not make is gone. It runs under the clone's locks, so
+// never beside a writer or a sync round.
 func (g *GraphClones) keep(ctx context.Context, repoID model.RepoID, dir string) error {
-	err := g.git.KeepGraphClone(ctx, dir, nil)
+	if g.locker == nil {
+		return fmt.Errorf("keeping the clone of %s: no clone locker", repoID)
+	}
+	graphDir, err := committedGraphDir(dir)
+	if err != nil {
+		return err
+	}
+	release, err := g.locker.LockClone(ctx, dir, graphDir)
+	if err != nil {
+		return fmt.Errorf("locking the clone of %s: %w", repoID, err)
+	}
+	defer release()
+	err = g.git.KeepGraphClone(ctx, dir, nil)
 	if err != nil {
 		return fmt.Errorf("keeping the clone of %s: %w", repoID, err)
 	}
-	graphDir, err := committedGraphDir(dir)
+	graphDir, err = committedGraphDir(dir)
 	if err != nil {
 		return err
 	}

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	"github.com/networkteam/sdd/pkg/local"
 )
@@ -147,5 +149,36 @@ func TestGitFinalizerFailsAtOnceOnOtherErrors(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("a failure unrelated to the index lock should return without waiting, took %s", elapsed)
+	}
+}
+
+// A retry whose commit landed in a graph clone without being recorded
+// records it, so the clone upkeep keeps the capture.
+func TestGitFinalizerRecordsALandedCommitOnRetry(t *testing.T) {
+	clone, _ := syncedClone(t, nil)
+	const entryPath = "2026/11/07-120000-s-tac-api.md"
+	clone.write(".sdd/graph/"+entryPath, "entry\n")
+	clone.git("add", ".sdd/graph/"+entryPath)
+	clone.git("commit", "-q", "-m", "sdd: signal tactical captured\n\nSDD-Mutation: mutation-1")
+	finalizer := local.GitFinalizer{Checkout: clone.root, GraphDir: ".sdd/graph", Branch: "main"}
+	mutation := sdd.AppliedMutation{BatchID: "mutation-1", Batch: sdd.MutationBatch{Changes: []sdd.DocumentChange{{LogicalPath: entryPath}}}}
+
+	for range 2 {
+		if err := finalizer.Finalize(t.Context(), mutation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorded, err := os.ReadFile(filepath.Join(clone.root, ".git", model.GraphCloneCommits))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(recorded), clone.git("rev-parse", "HEAD")); n != 1 {
+		t.Errorf("the landed commit should be recorded once, %d times", n)
+	}
+	if err := (git.CLI{Dir: clone.root}).KeepGraphClone(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if !clone.hasPath("main", ".sdd/graph/"+entryPath) {
+		t.Error("the upkeep should keep the capture the retry found")
 	}
 }

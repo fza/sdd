@@ -51,14 +51,24 @@ func syncCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				handler := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Puller: graphGit(dir), Gate: gate})
+				opts := handlers.Options{Stderr: cmd.ErrWriter, Puller: graphGit(dir), Gate: gate}
+				if git.IsGraphClone(graphGit(dir).Dir) {
+					// In sdd's clone the merge waits for the locks the upkeep,
+					// sync rounds and writers hold.
+					_, state, err := syncstate.Open(ctx, dir)
+					if err != nil {
+						return err
+					}
+					opts.SyncLock = state
+				}
+				handler := handlers.New(opts)
 				err = handler.SyncPull(ctx, &command.SyncPullCmd{
 					OnPulled: func(output string) {
 						if output != "" {
 							fmt.Fprintln(cmd.Writer, output)
 						}
 					},
-					OnDeferred: func(next time.Time) { printDeferred(cmd.Writer, "pull", next) },
+					OnDeferred: func(next time.Time) { printDeferred(cmd.Writer, "fetch", next) },
 				})
 				if err != nil {
 					return err

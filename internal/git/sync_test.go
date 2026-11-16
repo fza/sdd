@@ -134,6 +134,36 @@ func TestPushPublishesOnlyTheCurrentBranch(t *testing.T) {
 	}
 }
 
+// MergeFetched merges what an earlier fetch brought without fetching again.
+func TestMergeFetchedMergesTheFetchedUpstream(t *testing.T) {
+	dir := newRepo(t)
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	gitRun(t, dir, "init", "-q", "--bare", "-b", "main", remote)
+	gitRun(t, dir, "remote", "add", "origin", remote)
+	gitRun(t, dir, "push", "-q", "-u", "origin", "main")
+	other := filepath.Join(t.TempDir(), "other")
+	gitRun(t, dir, "clone", "-q", remote, other)
+	gitRun(t, other, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "--allow-empty", "-m", "sdd: upstream capture")
+	gitRun(t, other, "push", "-q")
+	gitRun(t, dir, "fetch", "-q")
+	gitRun(t, dir, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
+
+	_, err := git.CLI{Dir: dir}.MergeFetched(context.Background())
+	if err != nil {
+		t.Fatalf("MergeFetched: %v", err)
+	}
+	if gitOut(t, dir, "rev-parse", "HEAD") != gitOut(t, other, "rev-parse", "HEAD") {
+		t.Error("the fetched upstream should be merged")
+	}
+}
+
+func TestMergeFetchedFailsWithoutAnUpstream(t *testing.T) {
+	_, err := git.CLI{Dir: newRepo(t)}.MergeFetched(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no upstream") {
+		t.Errorf("a branch without an upstream should fail the merge, got %v", err)
+	}
+}
+
 func TestMergeKeepsIgnoredLocalFiles(t *testing.T) {
 	dir := newRepo(t)
 	writeTestFile(t, filepath.Join(dir, ".gitignore"), "local.yaml\n")

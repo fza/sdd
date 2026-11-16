@@ -22,6 +22,9 @@ type fakePuller struct {
 	pullErr     error
 	mergeCalled bool
 	url         string
+
+	fetchedOut    string
+	fetchedMerged bool
 }
 
 func (f *fakePuller) UpstreamURL(context.Context) (string, error) {
@@ -38,6 +41,11 @@ func (f *fakePuller) IsClean(context.Context) (bool, error) {
 func (f *fakePuller) MergePull(context.Context) (string, error) {
 	f.mergeCalled = true
 	return f.pullOut, f.pullErr
+}
+
+func (f *fakePuller) MergeFetched(context.Context) (string, error) {
+	f.fetchedMerged = true
+	return f.fetchedOut, f.pullErr
 }
 
 func TestSyncPull_CleanTreeMergesAndReports(t *testing.T) {
@@ -110,20 +118,39 @@ func TestSyncPull_DeferredWithinTheCooldown(t *testing.T) {
 		t.Fatalf("the first pull should run: %v", err)
 	}
 	puller.mergeCalled = false
+	puller.fetchedOut = "Merge made by the 'ort' strategy."
 	var next time.Time
-	pulled := false
+	var pulled string
 	err = h.SyncPull(context.Background(), &command.SyncPullCmd{
-		OnPulled:   func(string) { pulled = true },
+		OnPulled:   func(out string) { pulled = out },
 		OnDeferred: func(at time.Time) { next = at },
 	})
 	if err != nil {
-		t.Fatalf("a deferred pull should be a skip, not a failure: %v", err)
+		t.Fatalf("a pull within the fetch cooldown should still merge: %v", err)
 	}
-	if puller.mergeCalled || pulled {
-		t.Error("a pull within the fetch cooldown should not run")
+	if puller.mergeCalled {
+		t.Error("a pull within the fetch cooldown should not fetch")
+	}
+	if !puller.fetchedMerged || pulled != puller.fetchedOut {
+		t.Errorf("a pull within the fetch cooldown should merge what was fetched and report it, got %q", pulled)
 	}
 	if !next.After(now) {
 		t.Errorf("the deferral should name a later time it may run, got %v", next)
+	}
+}
+
+// A pull holds the sync lock, so it never merges beside a sync round or the
+// clone upkeep.
+func TestSyncPull_TakesTheSyncLock(t *testing.T) {
+	lock := &synctest.Lock{}
+	h := handlers.New(handlers.Options{Puller: &fakePuller{clean: true}, Gate: synctest.Gate(t.TempDir(), nil), SyncLock: lock})
+
+	err := h.SyncPull(context.Background(), &command.SyncPullCmd{})
+	if err != nil {
+		t.Fatalf("SyncPull: %v", err)
+	}
+	if lock.Taken != 1 {
+		t.Errorf("the pull should take the sync lock once, took it %d times", lock.Taken)
 	}
 }
 

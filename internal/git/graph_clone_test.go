@@ -222,6 +222,51 @@ func TestKeepGraphCloneDiscardsWhatSddDidNotMake(t *testing.T) {
 	}
 }
 
+// The graph lock a writer holds lives in the graph's runtime directory, which
+// the upkeep keeps even when the graph repository does not ignore it.
+func TestKeepGraphCloneKeepsTheRuntimeDirectory(t *testing.T) {
+	seededRemote(t)
+	dir := sddClone(t, model.ProtocolHTTPS)
+	lock := ".sdd/graph/.sdd-runtime/graph.lock"
+	writeFile(t, dir, lock, "")
+
+	err := git.CLI{Dir: dir}.KeepGraphClone(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, statErr := os.Stat(filepath.Join(dir, filepath.FromSlash(lock)))
+	if statErr != nil {
+		t.Errorf("the upkeep should keep the graph lock: %v", statErr)
+	}
+}
+
+// In the clone, the merge of what was fetched is sdd's: the upkeep keeps it.
+func TestMergeFetchedRecordsTheCloneMerge(t *testing.T) {
+	remote := seededRemote(t)
+	dir := sddClone(t, model.ProtocolHTTPS)
+	repo := git.CLI{Dir: dir}
+	sddEntry := ".sdd/graph/2026/11/07-130000-s-tac-sdd.md"
+	writeFile(t, dir, sddEntry, "---\ntype: signal\n---\nby sdd\n")
+	err := repo.Commit("sdd: capture", sddEntry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote.Commit(t, "upstream capture", map[string]string{".sdd/graph/2026/11/07-140000-s-tac-ups.md": "---\ntype: signal\n---\nupstream\n"})
+	err = repo.Fetch(admitted(t, context.Background()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = repo.MergeFetched(admitted(t, context.Background()))
+	if err != nil {
+		t.Fatalf("MergeFetched: %v", err)
+	}
+	head := strings.TrimSpace(test.Git(t, dir, "rev-parse", "HEAD"))
+	if !strings.Contains(readFile(t, dir, ".git/"+model.GraphCloneCommits), head) {
+		t.Error("the clone's merge should be recorded as sdd's")
+	}
+}
+
 // A hand commit made right before a push is dropped by the push itself.
 func TestKeepGraphCloneRunsBeforeAnyHandCommitIsPushed(t *testing.T) {
 	remote := seededRemote(t)
@@ -343,7 +388,8 @@ func TestCloneLetsAnUpstreamDeletionWin(t *testing.T) {
 
 func TestCloneMergesConfigPerKey(t *testing.T) {
 	remote := seededRemote(t)
-	ctx, log := capturedLog(t)
+	var log bytes.Buffer
+	ctx := admitted(t, slogutils.WithLogger(context.Background(), slog.New(slog.NewTextHandler(&log, &slog.HandlerOptions{Level: slog.LevelWarn}))))
 	dir := sddClone(t, model.ProtocolHTTPS)
 	repo := git.CLI{Dir: dir}
 	remote.Commit(t, "upstream model", map[string]string{".sdd/config.yaml": "graph_dir: .sdd/graph\nllm:\n  model: upstream\n"})
@@ -366,7 +412,7 @@ func TestCloneMergesConfigPerKey(t *testing.T) {
 		t.Errorf("upstream should win the clash and the local addition stay:\n%s", merged)
 	}
 	if !strings.Contains(log.String(), "llm.model") {
-		t.Errorf("a notice should name the key both sides changed:\n%s", log)
+		t.Errorf("a warning should name the key both sides changed:\n%s", log.String())
 	}
 }
 
