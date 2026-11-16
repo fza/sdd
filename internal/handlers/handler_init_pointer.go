@@ -49,6 +49,10 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		return err
 	}
 	if projectCfg != nil {
+		err = meta.RequireProjectRepository("--project-dir "+cmd.ProjectDir, projectRoot, h.repoRootOf)
+		if err != nil {
+			return err
+		}
 		err = gitignoreLine(projectCfg.GraphDir)
 		if err != nil {
 			return fmt.Errorf("graph_dir in %s: %w", projectSDDDir, err)

@@ -140,6 +140,16 @@ func RequireProjectApart(subject, workRoot, projectRoot string, rootOf func(stri
 	return nil
 }
 
+// RequireProjectRepository refuses an existing project at projectRoot that
+// lies in no repository: its graph commits would have nowhere to land.
+// RequireProjectApart already refuses one inside another repository.
+func RequireProjectRepository(subject, projectRoot string, rootOf func(string) string) error {
+	if rootOf(projectRoot) != "" {
+		return nil
+	}
+	return fmt.Errorf("%s lies outside any repository; the project needs a repository of its own: run `git init` there and commit its .sdd/", subject)
+}
+
 // RequireGraphInProjectRepository refuses a graph_dir, set in sddDir and
 // resolved to graphDir, that leads out of the project at projectRoot into no
 // repository or into one other than the project's: graph commits, the schema
