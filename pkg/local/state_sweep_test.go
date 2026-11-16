@@ -207,7 +207,7 @@ func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := localadapter.RecordCheckout(f.root, usedEmpty, t.TempDir()); err != nil {
+	if err := localadapter.RecordCheckout(f.root, usedEmpty, t.TempDir(), f.now); err != nil {
 		t.Fatal(err)
 	}
 	f.used(t, usedEmpty, f.now.Add(-time.Hour))
@@ -339,7 +339,7 @@ func TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions(t *testing.T) {
 		{name: "open in a second checkout", wantKept: true, prepare: func(t *testing.T, f stateFixture, key, checkout string) {
 			f.inRepoSession(t, key, checkout, "s_first", f.now.Add(-time.Hour))
 			second := t.TempDir()
-			if err := localadapter.RecordCheckout(f.root, key, second); err != nil {
+			if err := localadapter.RecordCheckout(f.root, key, second, f.now); err != nil {
 				t.Fatal(err)
 			}
 			f.inRepoSession(t, key, second, "s_inrepo", time.Time{})
@@ -362,7 +362,7 @@ func TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions(t *testing.T) {
 			const key = "github.com/acme/paused"
 			checkout := t.TempDir()
 			if !tc.unrecorded {
-				if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+				if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -392,7 +392,7 @@ func TestStateSweepRemovesTheKeptStagedAttachmentsOnceTheInRepoSessionEnds(t *te
 	f := newStateFixture(t)
 	const key = "github.com/acme/paused"
 	checkout := t.TempDir()
-	if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+	if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
 		t.Fatal(err)
 	}
 	f.used(t, key, f.now.Add(-3*sweepUnusedRetention))
@@ -416,7 +416,7 @@ func TestRecordCheckoutRecordsEachCheckoutOnce(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "local/abcdef012345"
 	for _, checkout := range []string{"/work/app", "/work/app-feature", "/work/app"} {
-		if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+		if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -424,8 +424,83 @@ func TestRecordCheckoutRecordsEachCheckoutOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(content), "/work/app\n/work/app-feature\n"; got != want {
-		t.Errorf("the record should list each checkout once, got %q, want %q", got, want)
+	stamp := f.now.UTC().Format(time.RFC3339)
+	if got, want := string(content), "/work/app\t"+stamp+"\n/work/app-feature\t"+stamp+"\n"; got != want {
+		t.Errorf("the record should list each checkout once with when it was last seen, got %q, want %q", got, want)
+	}
+}
+
+// A checkout missing longer than cache.retention, as a removed worktree, is
+// dropped from the record; the attachments only it could own then go. One
+// missing for less, as an unmounted volume, keeps them (see
+// TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions).
+func TestStateSweepDropsACheckoutMissingLongerThanTheRetention(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "github.com/acme/paused"
+	checkout := t.TempDir()
+	if err := localadapter.RecordCheckout(f.root, key, checkout, f.now.Add(-3*sweepUnusedRetention)); err != nil {
+		t.Fatal(err)
+	}
+	f.used(t, key, f.now.Add(-3*sweepUnusedRetention))
+	f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
+	if err := os.RemoveAll(checkout); err != nil {
+		t.Fatal(err)
+	}
+
+	f.sweep(t)
+
+	if f.stagedExists(t, key, "s_inrepo") {
+		t.Error("the attachments only a checkout gone past cache.retention could own should go")
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "checkouts", "github.com", "acme", "paused.list")); err == nil {
+		t.Error("the record of a checkout gone past cache.retention should go")
+	}
+}
+
+// The sweep refreshes when it last saw a recorded checkout, so a checkout
+// unmounted later counts as missing from then on, not from its recording.
+func TestStateSweepRefreshesWhenItLastSawACheckout(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "github.com/acme/app"
+	checkout := t.TempDir()
+	if err := localadapter.RecordCheckout(f.root, key, checkout, f.now.Add(-3*sweepUnusedRetention)); err != nil {
+		t.Fatal(err)
+	}
+	f.used(t, key, f.now)
+
+	f.sweep(t)
+
+	content, err := os.ReadFile(filepath.Join(f.root, "checkouts", "github.com", "acme", "app.list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := checkout + "\t" + f.now.UTC().Format(time.RFC3339) + "\n"; string(content) != want {
+		t.Errorf("the record should say the sweep saw the checkout, got %q, want %q", content, want)
+	}
+}
+
+// A checkout recorded under the repository-identity key and the
+// identity-less one has its in-repo sessions collected with the attachments
+// they staged under either key.
+func TestStateSweepCollectsAnInRepoSessionUnderEveryKeyRecordingItsCheckout(t *testing.T) {
+	f := newStateFixture(t)
+	const identified, identityless = "github.com/acme/app", "local/abcdef012345"
+	checkout := t.TempDir()
+	for _, key := range []string{identified, identityless} {
+		if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
+			t.Fatal(err)
+		}
+		f.used(t, key, f.now)
+	}
+	f.inRepoSession(t, identityless, checkout, "s_old", f.now.Add(-sweepSessionRetention-time.Hour))
+
+	removed := f.sweep(t)
+
+	if removed.Sessions != 1 {
+		t.Errorf("the sweep should collect the in-repo session once, got %+v", removed)
+	}
+	if f.stagedExists(t, identityless, "s_old") {
+		t.Error("the attachments the session staged under the identity-less key should go with it")
 	}
 }
 
@@ -494,7 +569,7 @@ func TestStateSweepCollectsTheEndedSessionsOfRecordedCheckouts(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "github.com/acme/app"
 	checkout := t.TempDir()
-	if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+	if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
 		t.Fatal(err)
 	}
 	f.used(t, key, f.now)
