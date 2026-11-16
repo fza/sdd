@@ -89,11 +89,15 @@ func (w *WorkflowSession) HoldsEntry(id, hash string) (tag, next string, held bo
 }
 
 // ServeEntry returns an entry's rendered body served in full, its tag
-// placed.
-func (w *WorkflowSession) ServeEntry(id, hash, body string) string {
+// placed and its proofs asking for words once in field, the whole result
+// text the body is served in; an empty field is the body alone.
+func (w *WorkflowSession) ServeEntry(id, hash, body, field string) string {
+	if field == "" {
+		field = body
+	}
 	served := w.session.ServePiece(engine.Piece{Name: id, Hash: hash}, nil,
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
-			return model.PlaceAnchor(body, tag, rnd)
+			return model.PlaceAnchorIn(body, field, tag, rnd)
 		})
 	return served.Anchor.Render(body)
 }

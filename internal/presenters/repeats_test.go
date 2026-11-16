@@ -2,8 +2,11 @@ package presenters_test
 
 import (
 	"bytes"
+	"io"
+	"math/rand/v2"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/networkteam/sdd/internal/finders"
 	"github.com/networkteam/sdd/internal/model"
@@ -19,7 +22,7 @@ func heldOnly(ids ...string) *presenters.Repeats {
 			}
 		}
 		return "", "", false
-	}, Anchor: func(_, _, body string) string { return "⟦zz99⟧ " + body }}
+	}, Anchor: func(_, _, body, _ string) string { return "⟦zz99⟧ " + body }}
 }
 
 // Every view renderer prints a held entry as its pointer and keeps the rest.
@@ -108,5 +111,45 @@ func TestRenderSearch_HeldHitPrintsAsPointer(t *testing.T) {
 	}
 	if !strings.Contains(got, "remote-snippet") || strings.Contains(got, remote.ID+" — Remote entry. (held") {
 		t.Errorf("a connected repo's hit should keep its line and citations:\n%s", got)
+	}
+}
+
+// An entry body is anchored over the whole result it is served in, so a
+// naive agent finds each prompt once: the body's heading, identity line and
+// the entries beside it hold none of them.
+func TestRenderWithin_AnchorsEntriesOverTheWholeResult(t *testing.T) {
+	first := entry("20260101-100000-d-tac-one", withContent("## The user's choice\n\nLater the user approves drafts before every write lands."))
+	second := entry("20260101-110000-d-tac-two", withContent("Drafts wait until the reviewer approves them."))
+	g := model.NewGraph([]*model.Entry{first, second})
+	section := query.SectionResult{Render: "as-bodies", Data: model.Bodies{Entries: []*model.Entry{first, second}}}
+	for seed := range uint64(100) {
+		var challenges []model.Challenge
+		repeats := &presenters.Repeats{
+			Held: func(string, string) (string, string, bool) { return "", "", false },
+			Anchor: func(_, _, body, field string) string {
+				if field == "" {
+					field = body
+				}
+				anchor, _ := model.PlaceAnchorIn(body, field, "ab12", rand.New(rand.NewPCG(seed, seed)))
+				challenges = append(challenges, anchor.Challenges...)
+				return anchor.Render(body)
+			},
+		}
+		var buf bytes.Buffer
+		presenters.RenderWithin(&buf, repeats, func(w io.Writer, r *presenters.Repeats) {
+			presenters.RenderViewRepeats(w, &query.ViewResult{Graph: g, Sections: []query.SectionResult{section}}, r)
+		})
+		runs := strings.FieldsFunc(strings.ToLower(model.StripAnchorTags(buf.String())), func(r rune) bool { return !unicode.IsLetter(r) })
+		for _, c := range challenges {
+			n := 0
+			for _, run := range runs {
+				if run == strings.ToLower(c.Prompt) {
+					n++
+				}
+			}
+			if n != 1 {
+				t.Fatalf("prompt %q occurs %d times as a word in the result:\n%s", c.Prompt, n, buf.String())
+			}
+		}
 	}
 }
