@@ -253,7 +253,11 @@ func TestDeclaredRefusesACommandThatIsAFolder(t *testing.T) {
 // project repository, committed before local, each against its own hooks
 // folder.
 func TestDeclaredReadsEveryLayerOfAProjectDirLayout(t *testing.T) {
-	base := t.TempDir()
+	// ResolveProject returns real paths, so the expected folders are real too.
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	global := filepath.Join(base, "config", "sdd", "config.yaml")
 	work, project := filepath.Join(base, "work"), filepath.Join(base, "project")
 	hook := func(command string) string { return "hooks:\n  - event: entry.written\n    command: " + command + "\n" }
