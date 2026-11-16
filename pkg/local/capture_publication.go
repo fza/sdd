@@ -67,7 +67,15 @@ func (s *FilesystemGraphStore) PublishEntry(ctx context.Context, key app.Publica
 	if err != nil {
 		return app.EntryPublication{}, err
 	}
-	defer unlock(lock)
+	// A successful publication keeps the graph lock for the finalizer that
+	// commits it (heldGraphLock).
+	defer func() {
+		if err == nil && s.held != nil {
+			s.held.keep(lock)
+			return
+		}
+		unlock(lock)
+	}()
 	if publication, exists, err := s.lookupEntryPublicationLocked(ctx, key, entryID); err != nil || exists {
 		return publication, err
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
@@ -108,6 +109,78 @@ func TestRepositoryTargetsReloadConfiguration(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A publication keeps the graph lock until its commit, so no other process's
+// clone upkeep removes the entry file in between.
+func TestRepositoryTargetsHoldTheGraphLockFromPublicationToCommit(t *testing.T) {
+	repo := newGitRepository(t)
+	repo.write(".sdd/config.yaml", "repo_id: example\ngraph_dir: .sdd/graph\ndefault_branch: main\n")
+	repo.write("global-config.yaml", "")
+	acquired, err := repo.targets().Acquire(t.Context(), sdd.MutationTarget{Project: "example", Branch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = acquired.Release() }()
+	key := sdd.PublicationKey{Session: "session", Sequence: 1, Discriminator: "new-entry"}
+	batch := captureBatch(t, key, "20260914-020000-s-tac-cap", "Summary.")
+	publication, err := acquired.Graph.(sdd.PublicationStore).PublishEntry(t.Context(), key, batch, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := flock.New(filepath.Join(repo.root, ".sdd", "graph", ".sdd-runtime", "graph.lock"))
+	taken, err := lock.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taken {
+		_ = lock.Unlock()
+		t.Fatal("the graph lock should stay held between the publication and its commit")
+	}
+
+	err = acquired.Finalizers[0].Finalize(t.Context(), sdd.AppliedMutation{Project: "example", BatchID: key.String(), Revision: publication.Revision, Batch: batch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	taken, err = lock.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !taken {
+		t.Fatal("the commit should release the graph lock")
+	}
+	_ = lock.Unlock()
+}
+
+// A publication whose commit never runs leaves the graph lock with the
+// release of its target.
+func TestRepositoryTargetsReleaseAPublicationsGraphLock(t *testing.T) {
+	repo := newGitRepository(t)
+	repo.write(".sdd/config.yaml", "repo_id: example\ngraph_dir: .sdd/graph\ndefault_branch: main\n")
+	repo.write("global-config.yaml", "")
+	acquired, err := repo.targets().Acquire(t.Context(), sdd.MutationTarget{Project: "example", Branch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := sdd.PublicationKey{Session: "session", Sequence: 1, Discriminator: "new-entry"}
+	_, err = acquired.Graph.(sdd.PublicationStore).PublishEntry(t.Context(), key, captureBatch(t, key, "20260914-020000-s-tac-cap", "Summary."), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = acquired.Release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := flock.New(filepath.Join(repo.root, ".sdd", "graph", ".sdd-runtime", "graph.lock"))
+	taken, err := lock.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !taken {
+		t.Fatal("releasing the target should release the publication's graph lock")
+	}
+	_ = lock.Unlock()
 }
 
 // A graph_repo project's machine-local layer lives in the code repository,

@@ -74,19 +74,21 @@ func NewRepositoryTargets(ctx context.Context, project app.ProjectID, serverChec
 			if graphDir == "" {
 				graphDir = model.DefaultGraphDir
 			}
-			finalizer := GitFinalizer{Checkout: checkout, GraphDir: graphDir, Branch: target.Branch}
+			held := &heldGraphLock{}
+			finalizer := GitFinalizer{Checkout: checkout, GraphDir: graphDir, Branch: target.Branch, held: held}
 			graph, err := NewFilesystemGraphStore(FilesystemGraphStoreOptions{
 				Project: project, GraphDir: meta.ResolveGraphDir(checkout, cfg), Branch: target.Branch, PublicationGit: &finalizer,
 			})
 			if err != nil {
 				return nil, nil, nil, err
 			}
+			graph.held = held
 			finalizers := []app.MutationFinalizer{finalizer}
 			if syncstate.Mode(checkout) == model.SyncModeAuto {
 				finalizers = append(finalizers, GraphPublisher{GraphDir: meta.ResolveGraphDir(checkout, cfg), gate: gate})
 			}
 			finalizers = append(finalizers, MergeDriverSetup{Checkout: checkout})
-			return graph, finalizers, func() error { return nil }, nil
+			return graph, finalizers, func() error { held.release(); return nil }, nil
 		},
 	})
 	if err != nil {

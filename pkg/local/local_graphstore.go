@@ -40,6 +40,7 @@ type FilesystemGraphStore struct {
 	mu             sync.Mutex
 	snapshots      map[string]*retainedSnapshot
 	publicationGit *GitFinalizer
+	held           *heldGraphLock
 	// lineage maps a published revision to the revision it replaced, so a read
 	// can be shown to include an earlier write. It is cached from the lineage
 	// file under the runtime directory, which every store over this graph

@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/networkteam/sdd/internal/git"
 	app "github.com/networkteam/sdd/pkg/application"
 )
@@ -23,16 +25,52 @@ type GitFinalizer struct {
 	GraphDir string
 	Branch   string
 	Timeout  time.Duration
+	held     *heldGraphLock
 }
+
+// heldGraphLock carries the graph lock an entry publication took to the
+// finalizer committing it: released in between, another process's clone
+// upkeep would remove the entry file before its commit.
+type heldGraphLock struct {
+	mu   sync.Mutex
+	lock *flock.Flock
+}
+
+func (h *heldGraphLock) keep(lock *flock.Flock) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.lock != nil && h.lock != lock {
+		unlock(h.lock)
+	}
+	h.lock = lock
+}
+
+// take hands the held lock over, nil when none is held.
+func (h *heldGraphLock) take() *flock.Flock {
+	if h == nil {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	lock := h.lock
+	h.lock = nil
+	return lock
+}
+
+func (h *heldGraphLock) release() { unlock(h.take()) }
 
 func (GitFinalizer) Name() string { return "git" }
 
 func mutationTrailer(batchID string) string { return "SDD-Mutation: " + batchID }
 
 func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation) error {
-	lock, err := lockGraph(filepath.Join(f.Checkout, f.GraphDir))
-	if err != nil {
-		return err
+	lock := f.held.take()
+	if lock == nil {
+		var err error
+		lock, err = lockGraph(filepath.Join(f.Checkout, f.GraphDir))
+		if err != nil {
+			return err
+		}
 	}
 	defer unlock(lock)
 	if f.Timeout <= 0 {
