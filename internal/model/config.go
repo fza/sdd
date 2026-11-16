@@ -18,6 +18,12 @@ const (
 	// when initialized with sdd init.
 	DefaultGraphDir = ".sdd/graph"
 
+	// GraphOnlyGraphDir is the default graph directory of a project whose
+	// repository holds only the graph a code repository points at through
+	// project_dir or graph_repo: with no code beside it, the graph sits at
+	// the top level.
+	GraphOnlyGraphDir = "graph"
+
 	// SDDDirName is the metadata directory name at the repository root.
 	SDDDirName = ".sdd"
 
@@ -49,11 +55,6 @@ const (
 	// DefaultRetryMaxDelay caps backoff growth between retries.
 	DefaultRetryMaxDelay = "60s"
 
-	// DefaultSyncCooldown bounds how often background sync runs git fetch
-	// when last-fetch exceeds this duration. Applied when Config.Sync.Cooldown
-	// is empty or unparseable.
-	DefaultSyncCooldown = "15m"
-
 	// DefaultSessionRetention is how long an ended engine session's log is
 	// kept before collection removes it. Sessions are scaffolding, but a
 	// dialogue that has just ended is exactly the one worth reading when
@@ -78,6 +79,9 @@ type BaseConfig struct {
 	// set once in the user-global config; a per-repo override covers a
 	// project where the same person deliberately uses another spelling.
 	Participant string `yaml:"participant,omitempty"`
+	// Connected is the writing side's gate on capturing into a connected
+	// graph.
+	Connected ConnectedConfig `yaml:"connected,omitempty"`
 }
 
 // IsZero reports whether no base setting is set. Resolution uses it to
@@ -140,6 +144,13 @@ type PerRepoConfig struct {
 	// A repository setting it carries no project settings of its own; see
 	// PointerKeys and LocalPointerKeys.
 	ProjectDir string `yaml:"project_dir,omitempty"`
+	// GraphRepo points a code repository at the repository holding its graph,
+	// which sdd reads and writes only through the clone it owns. Beside
+	// project_dir it wins.
+	GraphRepo RepoID `yaml:"graph_repo,omitempty"`
+	// Inbound is the receiving graph's gate on captures written from another
+	// project; only the committed .sdd/config.yaml sets it.
+	Inbound InboundConfig `yaml:"inbound,omitempty"`
 }
 
 // PointerKeys are the keys a committed config may set beside project_dir:
@@ -168,14 +179,70 @@ func TopLevelKeys(data []byte) ([]string, error) {
 	return keys, nil
 }
 
-// SyncConfig governs background sync awareness: the auto-fetch cooldown and
-// related behavior. Stored as a string Go duration (e.g. "15m") parsed at
-// use site so malformed values fall back to DefaultSyncCooldown rather than
-// failing at config load.
+// GraphRepoPointerKeys are the keys a committed config may set beside
+// graph_repo: the pointer keys, project_dir for older builds and graph_dir for
+// the guard against stock sdd.
+var GraphRepoPointerKeys = []string{"graph_repo", "project_dir", "graph_dir", "skill_scope", "supported_agents"}
+
+// SyncConfig is the `sync` block. Default and Hosts are the git limits per
+// remote host and are read from the user-global config only. Cooldown is
+// retired: it stays declared so a file carrying it raises no unknown-key
+// warning, and `sdd config set` refuses it.
 type SyncConfig struct {
-	// Cooldown is the minimum interval between background git fetches. Go
-	// duration string (e.g. "15m", "1h"). Empty means DefaultSyncCooldown.
+	Default GitLimitsConfig            `yaml:"default,omitempty"`
+	Hosts   map[string]GitLimitsConfig `yaml:"hosts,omitempty"`
+
 	Cooldown string `yaml:"cooldown,omitempty"`
+}
+
+// SyncMode is whether sdd pushes and pulls a graph repository on its own;
+// syncstate.Mode decides it, no config key does.
+type SyncMode string
+
+const (
+	SyncModeManual SyncMode = "manual"
+	SyncModeAuto   SyncMode = "auto"
+)
+
+// IgnoredSetting is a setting a config layer carries that sdd reads past: a
+// key that layer may not set.
+type IgnoredSetting struct {
+	Key    string
+	Reason string
+}
+
+// RetiredConfigKeys are keys sdd no longer uses, each with what replaced it.
+// Reading them stays tolerant; `sdd config set` refuses them.
+var RetiredConfigKeys = map[string]string{
+	"sync.cooldown": "git operations sdd starts are limited per remote host under sync.default and sync.hosts in the global config",
+}
+
+// IgnoredSettings returns the settings in one config layer that sdd reads
+// past. source names the layer: global, project (the shared
+// .sdd/config.yaml) or local.
+func IgnoredSettings(layer BaseConfig, source ConfigValueSource) []IgnoredSetting {
+	if source == ConfigSourceGlobal {
+		return nil
+	}
+	return misplacedGitLimits(layer.Sync)
+}
+
+// HonoredCommitted returns the committed layer without the settings only the
+// user-global config may make.
+func HonoredCommitted(committed *PerRepoConfig) *PerRepoConfig {
+	if committed == nil || len(misplacedGitLimits(committed.Sync)) == 0 {
+		return committed
+	}
+	honored := withoutGitLimits(*committed)
+	return &honored
+}
+
+// withoutGitLimits drops the git limits, which only the user-global config
+// sets, from a project layer.
+func withoutGitLimits(cfg PerRepoConfig) PerRepoConfig {
+	cfg.Sync.Default = GitLimitsConfig{}
+	cfg.Sync.Hosts = nil
+	return cfg
 }
 
 // SessionsConfig holds settings for engine session lifetime.
@@ -390,6 +457,7 @@ func MergeBaseConfig(base, overlay BaseConfig) BaseConfig {
 	out.LLM = mergeLLMConfig(base.LLM, overlay.LLM)
 	out.Embedding = mergeEmbeddingConfig(base.Embedding, overlay.Embedding)
 	out.Sync = mergeSyncConfig(base.Sync, overlay.Sync)
+	out.Connected = mergeConnectedConfig(base.Connected, overlay.Connected)
 	return out
 }
 
@@ -430,6 +498,10 @@ func MergeConfig(base, overlay *PerRepoConfig) *PerRepoConfig {
 	if overlay.ProjectDir != "" {
 		out.ProjectDir = overlay.ProjectDir
 	}
+	if overlay.GraphRepo != "" {
+		out.GraphRepo = overlay.GraphRepo
+	}
+	out.Inbound = mergeInboundConfig(base.Inbound, overlay.Inbound)
 	return &out
 }
 
@@ -483,6 +555,8 @@ func mergeEmbeddingConfig(base, overlay EmbeddingConfig) EmbeddingConfig {
 
 func mergeSyncConfig(base, overlay SyncConfig) SyncConfig {
 	out := base
+	out.Default = mergeGitLimitsConfig(base.Default, overlay.Default)
+	out.Hosts = mergeGitLimitsHosts(base.Hosts, overlay.Hosts)
 	if overlay.Cooldown != "" {
 		out.Cooldown = overlay.Cooldown
 	}
@@ -619,10 +693,18 @@ func FormatConfig(cfg PerRepoConfig) string {
 		"#   timeout: 2m\n" +
 		"#   concurrency: 4\n" +
 		"\n" +
-		"# Background sync — controls how often the CLI auto-fetches to detect graph\n" +
-		"# changes from collaborators. Go duration string.\n" +
-		"# sync:\n" +
-		"#   cooldown: " + DefaultSyncCooldown + "\n"
+		"# Limits on the git operations sdd starts are set per remote host in the\n" +
+		"# user-global config, under sync.default and sync.hosts.\n"
+}
+
+// DefaultGraphDirFor returns the graph directory a fresh init sets up when
+// none is given: GraphOnlyGraphDir for a project holding only the graph of
+// another repository, DefaultGraphDir otherwise.
+func DefaultGraphDirFor(graphOnly bool) string {
+	if graphOnly {
+		return GraphOnlyGraphDir
+	}
+	return DefaultGraphDir
 }
 
 // ResolveSessionRetention returns the effective session retention from cfg.
@@ -657,26 +739,25 @@ func parseDaysOrDuration(raw string) (time.Duration, error) {
 	return time.ParseDuration(raw)
 }
 
-// ResolveSyncCooldown returns the effective cooldown duration from cfg,
-// falling back to DefaultSyncCooldown on empty or unparseable values.
-func ResolveSyncCooldown(cfg *PerRepoConfig) time.Duration {
-	raw := ""
-	if cfg != nil {
-		raw = cfg.Sync.Cooldown
-	}
-	return parsePositiveDuration(raw, DefaultSyncCooldown)
-}
-
-// parsePositiveDuration reads a configured duration, falling back to a baked
-// default when it is empty, malformed or not positive.
-func parsePositiveDuration(raw, fallback string) time.Duration {
-	if raw != "" {
-		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
-			return d
-		}
-	}
-	d, _ := time.ParseDuration(fallback)
-	return d
+// FormatGraphRepoPointerConfig returns the config of a code repository whose
+// graph lives in the graph repository cfg.GraphRepo: the pointer, the stock
+// guard as graph_dir, and the agent keys.
+func FormatGraphRepoPointerConfig(cfg PerRepoConfig) string {
+	return "# SDD configuration\n" +
+		"# See https://github.com/networkteam/sdd for documentation.\n" +
+		"\n" +
+		"# The repository holding this repository's graph. sdd reads and writes it\n" +
+		"# through a clone of its own; `sdd repo path " + string(cfg.GraphRepo) + "` prints where.\n" +
+		"graph_repo: " + string(cfg.GraphRepo) + "\n" +
+		"\n" +
+		"# Guard for sdd builds without graph_repo: graph_dir names a file, so their\n" +
+		"# captures fail here instead of starting a second graph. sdd with graph_repo\n" +
+		"# ignores it.\n" +
+		"graph_dir: " + GraphElsewhereFile + "\n" +
+		"\n" +
+		skillScopeBlock(cfg) +
+		"\n" +
+		supportedAgentsBlock(cfg)
 }
 
 // FormatPointerConfig returns the config of a work repository whose graph

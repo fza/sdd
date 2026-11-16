@@ -31,11 +31,22 @@ type ConfigValue struct {
 // layer sets a key — the values a run actually uses, so `sdd config` answers
 // "what will happen" rather than "what is written down".
 var configDefaults = map[string]string{
-	"graph_dir":       DefaultGraphDir,
-	"llm.provider":    DefaultLLMProvider,
-	"llm.model":       DefaultLLMModel,
-	"llm.concurrency": strconv.Itoa(DefaultLLMConcurrency),
-	"sync.cooldown":   DefaultSyncCooldown,
+	"graph_dir":                                     DefaultGraphDir,
+	"llm.provider":                                  DefaultLLMProvider,
+	"llm.model":                                     DefaultLLMModel,
+	"llm.concurrency":                               strconv.Itoa(DefaultLLMConcurrency),
+	"sync.default.fetch_cooldown":                   DefaultGitFetchCooldown.String(),
+	"sync.default.push_cooldown":                    DefaultGitPushCooldown.String(),
+	"sync.default.retries":                          strconv.Itoa(DefaultGitRetries),
+	"sync.default.concurrency":                      strconv.Itoa(DefaultGitConcurrency),
+	"sync.default.ssh.per_hour":                     strconv.Itoa(DefaultGitSSHPerHour),
+	"sync.default.https.per_hour":                   strconv.Itoa(DefaultGitHTTPSPerHour),
+	"sync.default.https.per_hour_unauthenticated":   strconv.Itoa(DefaultGitHTTPSUnauthenticatedPerHour),
+	"sync.default.ssh.per_minute":                   strconv.Itoa(DefaultGitLimits().SSHPerMinute),
+	"sync.default.https.per_minute":                 strconv.Itoa(DefaultGitLimits().HTTPSPerMinute),
+	"sync.default.https.per_minute_unauthenticated": strconv.Itoa(DefaultGitLimits().HTTPSUnauthenticatedPerMinute),
+	"sync.default.lease_pause":                      DefaultGitLeasePause.String(),
+	"sync.default.read_wait":                        DefaultGitReadWait.String(),
 
 	"sessions.retention": DefaultSessionRetention,
 }
@@ -61,6 +72,9 @@ func effectiveConfigValues(global BaseConfig, project, local *PerRepoConfig, mas
 
 	var out []ConfigValue
 	for _, leaf := range collectConfigLeaves(reflect.TypeFor[PerRepoConfig](), nil, nil) {
+		if _, retired := RetiredConfigKeys[leaf.path]; retired {
+			continue
+		}
 		switch leaf.kind {
 		case leafMap:
 			out = append(out, effectiveMapEntries(leaf, mask, layers)...)
@@ -209,6 +223,9 @@ func effectiveMapEntries(leaf configLeaf, mask bool, layers []struct {
 }
 
 func renderConfigValue(v reflect.Value) string {
+	if v.Kind() == reflect.Pointer {
+		v = v.Elem()
+	}
 	if v.Kind() == reflect.Slice {
 		parts := make([]string, 0, v.Len())
 		for i := 0; i < v.Len(); i++ {

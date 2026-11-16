@@ -43,10 +43,6 @@ func TestEffectiveConfigValues_PrecedenceAndDefaults(t *testing.T) {
 	if v := findValue(t, values, "language"); v.Value != "de" || v.Source != ConfigSourceProject {
 		t.Errorf("language = %+v, want de/project", v)
 	}
-	// No layer sets sync.cooldown — the baked default surfaces.
-	if v := findValue(t, values, "sync.cooldown"); v.Value != DefaultSyncCooldown || v.Source != ConfigSourceDefault {
-		t.Errorf("sync.cooldown = %+v, want %s/default", v, DefaultSyncCooldown)
-	}
 	// llm.concurrency default surfaces even though llm block is partially set.
 	if v := findValue(t, values, "llm.concurrency"); v.Source != ConfigSourceDefault {
 		t.Errorf("llm.concurrency = %+v, want default source", v)

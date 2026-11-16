@@ -2,27 +2,28 @@ package model
 
 import (
 	"reflect"
+	"regexp"
 	"testing"
 )
 
-func TestCountGraphCommits(t *testing.T) {
+func TestCountMatchingSubjects(t *testing.T) {
+	pattern := regexp.MustCompile(`^sdd:`)
 	cases := []struct {
 		name string
 		in   string
 		want int
 	}{
 		{"empty", "", 0},
-		{"whitespace only", "\n  \n\n", 0},
-		{"single hash", "abc123\n", 1},
-		{"multiple hashes", "abc123\ndef456\n789abc\n", 3},
-		{"no trailing newline", "abc123", 1},
-		{"blank line between", "abc123\n\ndef456\n", 2},
+		{"one graph subject", "sdd: capture x\n", 1},
+		{"mixed subjects", "sdd: capture x\nfeat: add y\nsdd: summarize z\n", 2},
+		{"prefix not at start", "feat: sdd: y\n", 0},
+		{"no trailing newline", "sdd: capture x", 1},
+		{"blank line", "\nsdd: capture x\n", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := CountGraphCommits(tc.in)
-			if got != tc.want {
-				t.Errorf("got %d, want %d", got, tc.want)
+			if got := CountMatchingSubjects(tc.in, pattern); got != tc.want {
+				t.Errorf("only subjects starting with the prefix should count, got %d", got)
 			}
 		})
 	}

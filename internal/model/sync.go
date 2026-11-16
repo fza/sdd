@@ -1,6 +1,15 @@
 package model
 
-import "strings"
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
+
+// GraphCommitSubjectPattern matches the subject every SDD-written commit
+// starts with; sync counts commits matching it on either side of the
+// local/upstream divergence.
+const GraphCommitSubjectPattern = "^sdd:"
 
 // SyncState describes the overall state of background sync detection.
 type SyncState string
@@ -28,13 +37,26 @@ const (
 	// SyncStateNoUpstream: current branch has no upstream tracking branch.
 	SyncStateNoUpstream SyncState = "no-upstream"
 	// SyncStateFetchFailed: git fetch was attempted and failed (network,
-	// authentication, etc.). The last-fetch timestamp is still updated so
-	// subsequent commands within the cooldown window do not retry.
+	// authentication, etc.). The git gate holds the next attempt back.
 	SyncStateFetchFailed SyncState = "fetch-failed"
-	// SyncStateSkipped: the sync check did not run (cooldown window active,
-	// command exempt, or environment unavailable). No slog output expected.
+	// SyncStateSkipped: the sync check did not run (the git gate deferred the
+	// fetch, command exempt, or environment unavailable). No slog output
+	// expected.
 	SyncStateSkipped SyncState = "skipped"
+	// SyncStateFetched: the upstream was fetched; the remote-tracking ref is
+	// fresh.
+	SyncStateFetched SyncState = "fetched"
 )
+
+// Fetched reports whether the sync check reached the upstream, so the
+// remote-tracking ref an automatic pull merges is fresh.
+func (s SyncState) Fetched() bool {
+	switch s {
+	case SyncStateFetched, SyncStateUpToDate, SyncStateFastForward, SyncStateCleanRebase, SyncStateConflictPredicted, SyncStateLocalAhead:
+		return true
+	}
+	return false
+}
 
 // SyncStatus is the structured result of a background sync check. Callers
 // emit the appropriate slog line based on State; the skill pattern-matches
@@ -50,13 +72,14 @@ type SyncStatus struct {
 	Reason string
 }
 
-// CountGraphCommits counts non-empty lines from `git log --grep='^sdd:'
-// --pretty=format:%H <range>`. Each line is one SDD-written commit in the
-// range; we only need the count, not the hashes themselves.
-func CountGraphCommits(gitLogOutput string) int {
+// CountMatchingSubjects counts the lines of `git log --format=%s` output,
+// one commit subject per line, that pattern matches. Only the subject is
+// judged: a body line starting with the graph prefix does not make a commit
+// a graph commit.
+func CountMatchingSubjects(subjects string, pattern *regexp.Regexp) int {
 	n := 0
-	for line := range strings.SplitSeq(gitLogOutput, "\n") {
-		if strings.TrimSpace(line) != "" {
+	for line := range strings.SplitSeq(subjects, "\n") {
+		if pattern.MatchString(line) {
 			n++
 		}
 	}
@@ -84,4 +107,76 @@ func ParseMergeTreeConflicts(output string) []string {
 		paths = append(paths, line)
 	}
 	return paths
+}
+
+// PushVerdict is what automatic sync does with the commits a branch holds
+// ahead of its upstream.
+type PushVerdict string
+
+const (
+	PushOff        PushVerdict = "off"
+	PushNoUpstream PushVerdict = "no-upstream"
+	PushNothing    PushVerdict = "nothing"
+	// PushUnpublished: a commit not written by sdd is ahead, and a push would
+	// publish it; the graph commits stay local.
+	PushUnpublished PushVerdict = "unpublished"
+	PushReady       PushVerdict = "ready"
+)
+
+// DecidePush judges a push from the commits ahead of upstream: all of them
+// and the ones matching ^sdd:.
+func DecidePush(mode SyncMode, hasUpstream bool, ahead, graphAhead int) PushVerdict {
+	switch {
+	case mode != SyncModeAuto:
+		return PushOff
+	case !hasUpstream:
+		return PushNoUpstream
+	case ahead == 0:
+		return PushNothing
+	case graphAhead < ahead:
+		return PushUnpublished
+	default:
+		return PushReady
+	}
+}
+
+// PullVerdict is what automatic sync does with the commits upstream holds
+// ahead of the branch.
+type PullVerdict string
+
+const (
+	PullNoUpstream PullVerdict = "no-upstream"
+	PullNothing    PullVerdict = "nothing"
+	PullDirty      PullVerdict = "dirty"
+	PullReady      PullVerdict = "ready"
+)
+
+// DecidePull judges a pull into the sdd-owned clone from the count of
+// incoming commits and whether its working tree is clean. Every upstream
+// commit merges: nobody works in the clone, so a hand commit or a path
+// outside the graph upstream arrives one-sided.
+func DecidePull(hasUpstream bool, incoming int, clean bool) PullVerdict {
+	switch {
+	case !hasUpstream:
+		return PullNoUpstream
+	case incoming == 0:
+		return PullNothing
+	case !clean:
+		return PullDirty
+	default:
+		return PullReady
+	}
+}
+
+// GraphMergeMessage is the message of the merge commit an automatic pull
+// writes; it matches ^sdd: so the merge itself passes the push rule.
+func GraphMergeMessage(upstream string) string {
+	return fmt.Sprintf("sdd: merge %s", upstream)
+}
+
+// MergeConflict is an automatic pull that would not merge cleanly: the
+// upstream ref and the paths both sides changed.
+type MergeConflict struct {
+	Upstream string
+	Paths    []string
 }

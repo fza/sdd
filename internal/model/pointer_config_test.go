@@ -76,3 +76,21 @@ func TestFormatPointerConfigProjectDirReadsBackUnchanged(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultGraphDirFor(t *testing.T) {
+	cases := []struct {
+		name      string
+		graphOnly bool
+		want      string
+	}{
+		{name: "repository holding only the graph", graphOnly: true, want: "graph"},
+		{name: "repository holding code and graph", graphOnly: false, want: ".sdd/graph"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := model.DefaultGraphDirFor(tc.graphOnly); got != tc.want {
+				t.Errorf("the default graph directory should fit the layout, got %q", got)
+			}
+		})
+	}
+}
