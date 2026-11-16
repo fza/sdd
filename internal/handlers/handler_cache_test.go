@@ -364,6 +364,21 @@ func TestCacheHandlerPruneRunsOncePerDayWhenScheduled(t *testing.T) {
 	}
 }
 
+// A start stamp further ahead than clock jitter means the clock was set back:
+// it should not hold the scheduled run off until the clock passes it.
+func TestCacheHandlerPruneRunsWhenScheduledAfterTheClockWentBack(t *testing.T) {
+	f := newPruneFixture(t, "")
+	if err := cacheprune.Update(t.Context(), f.loc.StateRoot, func(s *model.CachePruneStatus) { s.StartedAt = time.Now().Add(12 * time.Hour) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(t, f.staleClone) {
+		t.Error("a scheduled run should prune when the last start lies ahead of the clock")
+	}
+}
+
 func TestCacheHandlerPruneRecordsAFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name         string

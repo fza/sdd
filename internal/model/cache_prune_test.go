@@ -68,6 +68,9 @@ func TestCachePruneStatusDue(t *testing.T) {
 		{name: "launched an hour ago", status: model.CachePruneStatus{LaunchedAt: now.Add(-time.Hour)}},
 		{name: "started an hour ago", status: model.CachePruneStatus{StartedAt: now.Add(-time.Hour), LaunchedAt: now.Add(-48 * time.Hour)}},
 		{name: "a day since both", status: model.CachePruneStatus{StartedAt: now.Add(-25 * time.Hour), LaunchedAt: now.Add(-24 * time.Hour)}, want: true},
+		{name: "launched seconds ahead", status: model.CachePruneStatus{LaunchedAt: now.Add(5 * time.Second)}},
+		{name: "launched hours ahead, the clock set back", status: model.CachePruneStatus{LaunchedAt: now.Add(5 * time.Hour)}, want: true},
+		{name: "started hours ahead, the clock set back", status: model.CachePruneStatus{StartedAt: now.Add(5 * time.Hour)}, want: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

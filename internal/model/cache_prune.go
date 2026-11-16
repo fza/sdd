@@ -88,13 +88,24 @@ type CachePruneStatus struct {
 	Reported bool
 }
 
+// cachePruneClockSlack is how far ahead of now a recorded time may lie and
+// still count as recent. Further ahead, the clock was set back, and runs do
+// not wait until it passes that time.
+const cachePruneClockSlack = time.Minute
+
 // Due reports whether a background run should start at now.
 func (s CachePruneStatus) Due(now time.Time) bool {
-	last := s.LaunchedAt
-	if s.StartedAt.After(last) {
-		last = s.StartedAt
-	}
-	return now.Sub(last) >= CachePruneInterval
+	return !recentRun(s.LaunchedAt, now) && !s.StartedRecently(now)
+}
+
+// StartedRecently reports whether a run started less than
+// CachePruneInterval before now.
+func (s CachePruneStatus) StartedRecently(now time.Time) bool {
+	return recentRun(s.StartedAt, now)
+}
+
+func recentRun(t, now time.Time) bool {
+	return !t.After(now.Add(cachePruneClockSlack)) && now.Sub(t) < CachePruneInterval
 }
 
 // FailureNotice is the one line a command shows for a failed run nobody was
