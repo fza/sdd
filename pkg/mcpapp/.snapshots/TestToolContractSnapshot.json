@@ -276,6 +276,10 @@
           "additionalProperties": false,
           "description": "the gitleaks rule file credential scans use",
           "properties": {
+            "commit": {
+              "description": "the gitleaks commit the rule file was read at",
+              "type": "string"
+            },
             "lastAccepted": {
               "description": "when the fetched copy in use was accepted",
               "type": "string"

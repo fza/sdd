@@ -35,6 +35,7 @@ type sourceRules struct {
 	set     *RuleSet
 	origin  string
 	tag     string
+	commit  string
 	sha256  string
 	stamp   stateStamp
 	problem string
@@ -143,7 +144,7 @@ func (s *Source) load(previous *sourceRules) (*sourceRules, error) {
 	if err != nil {
 		return nil, err
 	}
-	loaded := &sourceRules{set: set, origin: model.SecretRulesBuiltIn, tag: file.Tag}
+	loaded := &sourceRules{set: set, origin: model.SecretRulesBuiltIn, tag: file.Tag, commit: file.Commit}
 	if s.dir == "" {
 		return loaded, nil
 	}
@@ -153,14 +154,14 @@ func (s *Source) load(previous *sourceRules) (*sourceRules, error) {
 	}
 	state, err := readState(s.dir)
 	if err == nil && previous != nil && previous.origin == model.SecretRulesFetched && previous.tag == state.Tag && previous.sha256 == state.SHA256 {
-		loaded.set, loaded.origin, loaded.tag, loaded.sha256 = previous.set, model.SecretRulesFetched, previous.tag, previous.sha256
+		loaded.set, loaded.origin, loaded.tag, loaded.commit, loaded.sha256 = previous.set, model.SecretRulesFetched, previous.tag, state.Commit, previous.sha256
 		return loaded, nil
 	}
 	if err == nil {
 		var fetched *RuleSet
 		fetched, err = loadFetched(s.dir, state, file.Tag)
 		if fetched != nil {
-			loaded.set, loaded.origin, loaded.tag, loaded.sha256 = fetched, model.SecretRulesFetched, state.Tag, state.SHA256
+			loaded.set, loaded.origin, loaded.tag, loaded.commit, loaded.sha256 = fetched, model.SecretRulesFetched, state.Tag, state.Commit, state.SHA256
 		}
 	}
 	if err != nil {
@@ -235,7 +236,7 @@ func (s *Source) Status() (model.SecretRulesStatus, error) {
 	if err != nil {
 		return model.SecretRulesStatus{}, err
 	}
-	status := model.SecretRulesStatus{Update: model.SecretRulesOff, Source: loaded.origin, Tag: loaded.tag, Unused: loaded.problem}
+	status := model.SecretRulesStatus{Update: model.SecretRulesOff, Source: loaded.origin, Tag: loaded.tag, Commit: loaded.commit, Unused: loaded.problem}
 	if s.dir == "" {
 		return status, nil
 	}

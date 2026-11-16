@@ -46,8 +46,12 @@ func TestInfoNamesTheSecretRulesInUse(t *testing.T) {
 			if text.err != nil {
 				t.Fatalf("info: %v\n%s", text.err, text.stderr)
 			}
-			if !strings.Contains(text.stdout, "Secret rules: gitleaks "+tc.tag+" ("+tc.source+"), updates "+tc.update) {
-				t.Errorf("info should name the rule file the setting selects:\n%s", text.stdout)
+			commit := builtin.Commit
+			if tc.source == "fetched" {
+				commit = releases.Commit("v99.0.0")
+			}
+			if !strings.Contains(text.stdout, "Secret rules: gitleaks "+tc.tag+" ("+tc.source+"), updates "+tc.update) || !strings.Contains(text.stdout, "Commit: "+commit) {
+				t.Errorf("info should name the rule file the setting selects and its commit:\n%s", text.stdout)
 			}
 			f.serve(t, func(client *mcp.ClientSession) {
 				door, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_session", Arguments: map[string]any{}})
@@ -60,7 +64,7 @@ func TestInfoNamesTheSecretRulesInUse(t *testing.T) {
 					t.Fatalf("info: %v %+v", err, info)
 				}
 				rules, _ := info.StructuredContent.(map[string]any)["secretRules"].(map[string]any)
-				if rules["source"] != tc.source || rules["tag"] != tc.tag || rules["update"] != tc.update {
+				if rules["source"] != tc.source || rules["tag"] != tc.tag || rules["commit"] != commit || rules["update"] != tc.update {
 					t.Errorf("the served info should name the rule file the setting selects at serve start, got %v", rules)
 				}
 			})

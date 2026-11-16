@@ -20,11 +20,12 @@ var builtinTOML []byte
 //go:embed gitleaks.source.json
 var builtinSourceJSON []byte
 
-// RuleFile is one copy of gitleaks' config/gitleaks.toml and the release tag
-// it was published under.
+// RuleFile is one copy of gitleaks' config/gitleaks.toml, the release tag it
+// was published under and the commit it was read at.
 type RuleFile struct {
-	Tag  string
-	Data []byte
+	Tag    string
+	Commit string
+	Data   []byte
 }
 
 // BuiltinStamp records where the built-in rule file came from; the refresh
@@ -51,7 +52,7 @@ func BuiltinRuleFile() (RuleFile, error) {
 	if err != nil {
 		return RuleFile{}, err
 	}
-	return RuleFile{Tag: stamp.Tag, Data: builtinTOML}, nil
+	return RuleFile{Tag: stamp.Tag, Commit: stamp.Commit, Data: builtinTOML}, nil
 }
 
 // The built-in file is trusted (its tests compile every pattern), so it loads

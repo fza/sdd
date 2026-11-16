@@ -462,7 +462,7 @@ func secretRulesReport() (sdd.SecretRules, error) {
 		return sdd.SecretRules{}, err
 	}
 	return sdd.SecretRules{
-		Source: rules.Source, Tag: rules.Tag, Update: string(rules.Update), Unused: rules.Unused,
+		Source: rules.Source, Tag: rules.Tag, Commit: rules.Commit, Update: string(rules.Update), Unused: rules.Unused,
 		LastAccepted: rules.LastAccepted, LastChecked: rules.LastChecked, LastFailure: rules.LastFailure, LastFailureAt: rules.LastFailureAt,
 	}, nil
 }

@@ -100,15 +100,15 @@ func (g *GitHub) LatestTag(ctx context.Context) (string, error) {
 	return release.TagName, nil
 }
 
-// RuleFile downloads config/gitleaks.toml at ref, a release tag or a commit
-// hash.
-func (g *GitHub) RuleFile(ctx context.Context, ref string) ([]byte, error) {
-	if !releaseTag(ref) && !commitSHA.MatchString(ref) {
-		return nil, fmt.Errorf("%q is no release version or commit hash", ref)
+// RuleFile downloads config/gitleaks.toml at a commit. A tag can move, so a
+// release is read at the commit TagCommit resolves it to.
+func (g *GitHub) RuleFile(ctx context.Context, commit string) ([]byte, error) {
+	if !commitSHA.MatchString(commit) {
+		return nil, fmt.Errorf("%q is no commit hash", commit)
 	}
-	data, err := g.get(ctx, g.rawBase+"/"+gitleaksRepo+"/"+ref+"/"+gitleaksRulePath, "", maxRuleFileSize)
+	data, err := g.get(ctx, g.rawBase+"/"+gitleaksRepo+"/"+commit+"/"+gitleaksRulePath, "", maxRuleFileSize)
 	if err != nil {
-		return nil, fmt.Errorf("downloading gitleaks' rule file at %s: %w", ref, err)
+		return nil, fmt.Errorf("downloading gitleaks' rule file at %s: %w", commit, err)
 	}
 	return data, nil
 }
@@ -208,7 +208,11 @@ func (u *Updater) Update(ctx context.Context) error {
 		state.CheckedAt = u.now()
 		return u.succeed(state)
 	}
-	data, err := u.github.RuleFile(ctx, latest)
+	commit, err := u.github.TagCommit(ctx, latest)
+	if err != nil {
+		return u.fail(state, err)
+	}
+	data, err := u.github.RuleFile(ctx, commit)
 	if err != nil {
 		return u.fail(state, err)
 	}
@@ -224,7 +228,7 @@ func (u *Updater) Update(ctx context.Context) error {
 	replaced := state.File
 	sum := sha256.Sum256(data)
 	now := u.now()
-	state.Tag, state.File, state.SHA256 = latest, name, hex.EncodeToString(sum[:])
+	state.Tag, state.Commit, state.File, state.SHA256 = latest, commit, name, hex.EncodeToString(sum[:])
 	state.AcceptedAt, state.CheckedAt = now, now
 	err = u.succeed(state)
 	if err != nil {

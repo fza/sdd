@@ -24,6 +24,7 @@ const (
 // accepted last and how the latest attempts went.
 type fetchState struct {
 	Tag        string    `json:"tag,omitempty"`
+	Commit     string    `json:"commit,omitempty"`
 	File       string    `json:"file,omitempty"`
 	SHA256     string    `json:"sha256,omitempty"`
 	AcceptedAt time.Time `json:"accepted_at,omitzero"`

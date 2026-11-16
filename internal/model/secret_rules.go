@@ -71,6 +71,8 @@ type SecretRulesStatus struct {
 	// release its rule file came from.
 	Source string
 	Tag    string
+	// Commit is the gitleaks commit the rule file was read at.
+	Commit string
 	// Unused says why a fetched copy on disk is not in use.
 	Unused        string
 	LastAccepted  time.Time

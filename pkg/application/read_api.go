@@ -33,9 +33,11 @@ type InfoResult struct {
 // SecretRules is the gitleaks rule file credential scans use: the built-in
 // copy or one the daily pass fetched, and how fetching went.
 type SecretRules struct {
-	// Source is "built-in" or "fetched"; Tag is its gitleaks release.
+	// Source is "built-in" or "fetched"; Tag is its gitleaks release and
+	// Commit the gitleaks commit it was read at.
 	Source string
 	Tag    string
+	Commit string
 	// Update is the effective secrets.rules_update: daily or off.
 	Update string
 	// Unused says why a fetched copy on disk is not in use.

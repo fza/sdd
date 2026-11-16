@@ -12,6 +12,9 @@ import (
 // how the daily fetch went.
 func RenderSecretRules(w io.Writer, s model.SecretRulesStatus) {
 	fmt.Fprintf(w, "Secret rules: gitleaks %s (%s), updates %s\n", s.Tag, s.Source, s.Update)
+	if s.Commit != "" {
+		fmt.Fprintf(w, "  Commit: %s\n", s.Commit)
+	}
 	for _, field := range []struct {
 		label string
 		at    time.Time

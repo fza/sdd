@@ -228,3 +228,21 @@ func TestUpdaterClearsTheFailureOnSuccess(t *testing.T) {
 		t.Error("the same failure after a success should be told again")
 	}
 }
+
+// The fetch reads the rule file at the commit the release tag points at and
+// records both, so a tag moved to other content shows as another commit.
+func TestUpdaterRecordsTheCommitTheTagPointsAt(t *testing.T) {
+	releases := testsupport.NewGitleaksReleases(t)
+	releases.Publish("v99.0.0", testsupport.SecretRuleFixture(t, "one-rule.toml"))
+	releases.Publish("v99.0.0", testsupport.NewerGitleaksRules(t))
+	dir := t.TempDir()
+
+	err := newUpdater(releases, dir).Update(t.Context())
+
+	if err != nil {
+		t.Fatalf("the rule file at the tag's current commit should be accepted: %v", err)
+	}
+	if got := status(t, dir); got.Tag != "v99.0.0" || got.Commit != releases.Commit("v99.0.0") {
+		t.Errorf("the status should name the tag and the commit read, got %+v", got)
+	}
+}

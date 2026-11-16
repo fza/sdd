@@ -1,6 +1,8 @@
 package testsupport
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +22,7 @@ type GitleaksReleases struct {
 
 	mu         sync.Mutex
 	latest     string
+	tags       map[string]string
 	files      map[string][]byte
 	failWith   int
 	requests   []string
@@ -45,7 +48,7 @@ func (g *GitleaksReleases) UserAgents() []string {
 // the test ends.
 func NewGitleaksReleases(t testing.TB) *GitleaksReleases {
 	t.Helper()
-	g := &GitleaksReleases{files: map[string][]byte{}}
+	g := &GitleaksReleases{tags: map[string]string{}, files: map[string][]byte{}}
 	server := httptest.NewServer(http.HandlerFunc(g.serve))
 	t.Cleanup(server.Close)
 	g.URL, g.Client = server.URL, server.Client()
@@ -64,11 +67,22 @@ func NewerGitleaksRules(t testing.TB) []byte {
 	return append(append([]byte(nil), builtin.Data...), SecretRuleFixture(t, "extra-rule.toml")...)
 }
 
-// Publish makes tag the latest release, serving file as its rule file.
+// Publish makes tag the latest release, pointing at a commit that holds file
+// as its rule file. Publishing a tag again moves it to a new commit; the raw
+// host serves rule files by commit only.
 func (g *GitleaksReleases) Publish(tag string, file []byte) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.latest, g.files[tag] = tag, file
+	sum := sha1.Sum(append([]byte(tag+"\x00"), file...))
+	commit := hex.EncodeToString(sum[:])
+	g.latest, g.tags[tag], g.files[commit] = tag, commit, file
+}
+
+// Commit is the commit tag points at now.
+func (g *GitleaksReleases) Commit(tag string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.tags[tag]
 }
 
 // FailWith answers every request with status; 0 answers normally again.
@@ -113,11 +127,20 @@ func (g *GitleaksReleases) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"tag_name": g.latest})
 		return
 	}
-	tag, ok := strings.CutPrefix(r.URL.Path, "/gitleaks/gitleaks/")
-	if ok {
-		tag, ok = strings.CutSuffix(tag, "/config/gitleaks.toml")
+	if tag, ok := strings.CutPrefix(r.URL.Path, "/repos/gitleaks/gitleaks/commits/"); ok {
+		commit, published := g.tags[tag]
+		if !published {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(commit))
+		return
 	}
-	file, published := g.files[tag]
+	commit, ok := strings.CutPrefix(r.URL.Path, "/gitleaks/gitleaks/")
+	if ok {
+		commit, ok = strings.CutSuffix(commit, "/config/gitleaks.toml")
+	}
+	file, published := g.files[commit]
 	if !ok || !published {
 		http.NotFound(w, r)
 		return

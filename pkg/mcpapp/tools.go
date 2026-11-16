@@ -363,6 +363,7 @@ type InfoResult struct {
 type SecretRulesResult struct {
 	Source       string             `json:"source" jsonschema:"built-in or fetched"`
 	Tag          string             `json:"tag" jsonschema:"the gitleaks release the rule file came from"`
+	Commit       string             `json:"commit,omitempty" jsonschema:"the gitleaks commit the rule file was read at"`
 	Update       string             `json:"update" jsonschema:"secrets.rules_update: daily or off"`
 	Unused       string             `json:"unused,omitempty" jsonschema:"why a fetched copy on disk is not in use"`
 	LastAccepted string             `json:"lastAccepted,omitempty" jsonschema:"when the fetched copy in use was accepted"`
@@ -1228,7 +1229,7 @@ func secretRulesResult(rules sdd.SecretRules) SecretRulesResult {
 		return t.Format(time.RFC3339)
 	}
 	result := SecretRulesResult{
-		Source: rules.Source, Tag: rules.Tag, Update: rules.Update, Unused: rules.Unused,
+		Source: rules.Source, Tag: rules.Tag, Commit: rules.Commit, Update: rules.Update, Unused: rules.Unused,
 		LastAccepted: stamp(rules.LastAccepted), LastChecked: stamp(rules.LastChecked),
 	}
 	if !rules.LastFailureAt.IsZero() {
