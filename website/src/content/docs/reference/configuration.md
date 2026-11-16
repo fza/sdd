@@ -32,7 +32,7 @@ sdd --local-config ~/ci-local.yaml config get participant
 | `dialogue.mode` | User-global or local | Set per person. sdd ignores it in the project file. |
 | `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
-| `hooks` | Any file | The lists of all files run together. A hook from a project file runs only once you [confirm it](#confirming-a-hook). |
+| `hooks` | Any file | The lists of all files run together. A hook from a project file runs only once you [allow it](#allowing-a-repositorys-hooks). |
 
 :::caution[Keep API keys out of the project file]
 `.sdd/config.yaml` is committed and shared. sdd reads `api_keys` from any file and does not stop you, so put keys in the user-global or the local file. `sdd config set` writes only to those two.
@@ -60,7 +60,7 @@ sdd skips a key it does not know, including a key in a file where it does not be
 - No command writes `.sdd/config.yaml` directly. `sdd init` creates it, `sdd repo add` and `sdd repo remove` change `dependencies`, and you edit the rest by hand and commit it.
 
 :::note[A running server follows config changes]
-Your agent starts the sdd server, `sdd serve`. Before each tool call it checks the config files. After a change it answers with the new configuration and names the settings that changed; a file that fails to load refuses every call until it is fixed. This includes the `llm` settings: the next call goes to the language model they name. sdd commands in a terminal read the configuration on every run.
+Your agent starts the sdd server, `sdd serve`. Before each tool call it checks the config files. After a change it answers with the new configuration and names the settings that changed; a file that fails to load refuses every call until it is fixed. A call already running finishes under the configuration it started with. This includes the `llm` settings: the next call goes to the language model they name. sdd commands in a terminal read the configuration on every run.
 :::
 
 ## Keys
@@ -536,7 +536,6 @@ A hook is a script sdd runs at an event of a running procedure, such as a prose 
 | `event` | Required | The event, below. |
 | `command` | Required | A file in the layer's hooks folder. Escape a space in its name with a backslash. |
 | `args` | None | Arguments passed as they stand, without a shell. |
-| `files` | None | Paths or globs whose contents the hook's hash covers, such as a linter's configuration. A folder covers every file below it. |
 | `timeout` | `600` | Seconds before sdd stops the hook and its child processes and fails the call. |
 | `findings` | `false` | The hook may answer with findings. Only an event with a findings channel accepts it. |
 
@@ -552,20 +551,24 @@ Every config file may declare `hooks`: the user-global file, and both `.sdd/conf
 | `.sdd/config.yaml` | `.sdd/hooks/`, committed with the project |
 | `.sdd/config.local.yaml` | `.sdd/hooks/`, its scripts in `local/` there, which `sdd init` adds to `.sdd/.gitignore` |
 
-sdd refuses an absolute path, `..`, a name it would have to look up on `PATH`, and anything a shell would interpret. A hook runs without a shell, with the hooks folder as its working directory, so `args` and `files` resolve from there too. Put an interpreter in the script's shebang and make the script executable. A hook in the committed file may not run a script from `local/`, which only your machine has.
+sdd refuses an absolute path, `..`, a name it would have to look up on `PATH`, and anything a shell would interpret. A hook runs without a shell, with the hooks folder as its working directory, so `args` resolve from there too. Put an interpreter in the script's shebang and make the script executable. sdd judges `local/` by the folder a command reaches, links followed and in any spelling: a hook in the committed file may not run a script there, which only your machine has, and a hook in `config.local.yaml` runs only a script there, never one a pull may change.
 
-### Confirming a hook
+### Allowing a repository's hooks
 
-A hook from a `.sdd/` file runs only after you confirm it on your machine. Hooks from the user-global file need no confirmation.
+Hooks in a repository's `.sdd/` files, the committed and the machine-local one alike, run only once you allow that repository's hooks on your machine. Hooks from the user-global file need no allow.
 
-sdd hashes each hook on every run: its event, command, arguments, timeout, findings and files, the contents of its script, of every argument naming a file, and of every file `files` matches. Any change asks again. Scripts a hook loads without listing them in `files` change unnoticed.
+An allow records a hash over the repository's hook declarations, each with its layer, event, command, arguments, timeout and findings, and over every file git tracks in its `.sdd/hooks/`, by content and execute bit, a link by its text. The whole folder counts because a hook runs more than the script it names: files it sources or imports, a file a flag names, an interpreter beside it. A change to any of them, whether you made it or a pull brought it, needs a new allow. A file git does not track, such as `local/` or a cache a hook writes beside itself, changes nothing; code outside `.sdd/hooks/` is not covered. sdd follows no link to hash it, so a link out of the repository is covered by its text alone.
 
-- `sdd hooks` lists every hook as `confirmed`, `pending`, or `changed` since you confirmed it.
-- `sdd hooks trust` shows each pending hook with its event, command, arguments, the hashed files with their SHA-256 digests and the first 20 lines of its script, and asks y/N. It runs only in a terminal: you confirm each hook yourself, so without a terminal it confirms nothing and fails.
-- `sdd init` offers the pending hooks when it runs in a terminal, and otherwise names how many wait.
-- Over MCP, every call that works on a session or opens one first checks all of the project's hooks. Before it does anything else, it shows you the prompt for each unconfirmed hook at once through your client, and goes on only once you accept them all. A decline, or a client that cannot ask, fails the call with nothing done and names `sdd hooks trust`. A hook that changes while the call runs fails the call the same way.
+- `sdd hooks` lists every hook as `allowed`, `pending` (never allowed on this machine), or `changed` since you allowed it.
+- `sdd hooks allow` shows each repository waiting with its hooks, the files the allow covers with their SHA-256 digests and the first 20 lines of each script, and asks y/N. It runs only in a terminal: you allow each repository yourself, so without a terminal it allows nothing and fails. It records only what it showed you: a change in between refuses the allow.
+- `sdd init` offers the waiting repositories when it runs in a terminal, and otherwise names how many hooks wait.
+- Over MCP, every call that works on a session or opens one first checks all of the project's hooks. Before it does anything else, it shows you the prompt for each repository waiting at once through your client, and goes on only once you accept them all. A decline, or a client that cannot ask, fails the call with nothing done and names `sdd hooks allow`. A hook that changes while the call runs fails the call the same way.
 
-Confirmations live in `~/.local/state/sdd/hooks/<repository>.json`, readable only by you, keyed by the project's `repo_id`, so clones of one repository share them. The [daily sweep](#the-daily-sweep) drops the confirmations of hooks no config declares any more and of checkouts gone from disk.
+sdd fails closed. A repository git cannot list, such as a folder without `.git` or one git refuses, has hooks that neither run nor can be allowed, and the call names why. A hooks folder whose link leads out of the repository is refused the same way.
+
+The allow record is `~/.local/state/sdd/hooks/allowed.json`, readable only by you. It is keyed by the checkout's real path, which a repository cannot choose, so each checkout is allowed on its own. An unreadable record allows nothing, and the next `sdd hooks allow` rewrites it. The [daily sweep](#the-daily-sweep) drops the allows of checkouts gone from disk.
+
+A hook sees only `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TMPDIR`, `USER` and `LOGNAME` of sdd's environment, so API keys set there do not reach it. It still runs with your rights and can read your files, sdd's config included.
 
 ### Events
 
@@ -584,7 +587,7 @@ A failing `.start` hook holds its step: sdd runs it again on every call, and the
 
 ### Running a hook
 
-Hooks on one event run at once. A hook fails the call when it exits nonzero, outlives its timeout, or writes anything to stdout but nothing or `{"findings": [...]}`. A high finding holds the step like one of the step's own.
+Hooks on one event run at once. A hook fails the call when it exits nonzero, outlives its timeout, writes more than 1 MiB to stdout, or writes anything to stdout but nothing or `{"findings": [...]}`. Its stderr joins the error, cut at 4 KiB. A high finding holds the step like one of the step's own.
 
 The payload carries `event`, `time`, `project`, `branch`, `session`, `procedure`, `instance`, `step` and `phase` (`start`, `done` or `round`); `transition`, the step the procedure moves to, when a step is done; `findings`, the step's findings so far, on a step with a findings channel; `draft` during a capture, with `type`, `kind`, `layer`, `refs`, `topics`, `body`, `attachments`, `body_hash`, `supersedes` and `closes` (entry ID lists) and `skip_grounding` (whether the draft bypasses the grounding gate); and `entry`, the written entry's ID, on `entry.written`. A finding has `severity` (`high`, `medium` or `low`), `category` and `observation`.
 
@@ -595,7 +598,6 @@ A Vale check on every capture draft:
 hooks:
   - event: capture.assemble
     command: vale.sh
-    files: [.vale.ini, styles]
     findings: true
     timeout: 60
 ```
@@ -616,7 +618,7 @@ jq -r .draft.body | vale --config .vale.ini --ext .md --output JSON --no-exit |
 | `XDG_CONFIG_HOME` | `~/.config` | The user-global file is `$XDG_CONFIG_HOME/sdd/config.yaml`. |
 | `XDG_CACHE_HOME` | `~/.cache` | Search indexes live under `$XDG_CACHE_HOME/sdd`. |
 | `XDG_DATA_HOME` | `~/.local/share` | Clones of connected repositories live under `$XDG_DATA_HOME/sdd/repos`. |
-| `XDG_STATE_HOME` | `~/.local/state` | Session logs, hook confirmations, the relevance ledger and the logs of verifier rounds live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
+| `XDG_STATE_HOME` | `~/.local/state` | Session logs, the hook allow record, the relevance ledger and the logs of verifier rounds live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
 | `SDD_GRAPH_CACHE` | On | `off` reads every graph from its files. Otherwise the CLI keeps each graph's entry files under `$XDG_CACHE_HOME/sdd` and reads them back only while every graph file's size, timestamps and inode match what they were when it was saved, so a command on an unchanged graph reads one file instead of every entry. |
 | `SDD_SERVE_TOKEN` | None | The bearer token `sdd serve --transport http` requires on every request. Same as `--auth-token`. |
 | `SDD_USAGE_LOG` | None | A file path. Every model call, pre-flight and embedding alike, appends one JSON line with its step, provider, endpoint host, model, token counts, finish reason, the provider's `billing_cost` object where the reply carries one, and whether it succeeded. Keys, prompts and answers never reach it. A path sdd cannot write fails the command. The record shape is `llmstats.UsageRecord` in `internal/llmstats`. |

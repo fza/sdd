@@ -650,7 +650,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 	ss := s.sessions.get(id)
 	var fresh bool
 	if ss == nil {
-		workflow, err := s.app.RefreshWorkflowConfirmingHooks(ctx, s.requestIdentity(req), id, newElicitingConfirmer(req))
+		workflow, err := s.app.RefreshWorkflowAllowingHooks(ctx, s.requestIdentity(req), id, newElicitingAllower(req))
 		if err != nil {
 			return nil, err
 		}
@@ -665,7 +665,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 	}
 	if !fresh {
 		ss.mu.Lock()
-		workflow, err := s.app.RefreshWorkflowConfirmingHooks(ctx, s.requestIdentity(req), id, newElicitingConfirmer(req))
+		workflow, err := s.app.RefreshWorkflowAllowingHooks(ctx, s.requestIdentity(req), id, newElicitingAllower(req))
 		if err != nil {
 			ss.mu.Unlock()
 			return nil, err
@@ -727,7 +727,7 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 	)
 	err := s.app.RefuseOpen(ctx, identity, project, mcpClientName(req.Session))
 	if err == nil {
-		err = s.confirmHooks(ctx, req, project)
+		err = s.allowHooks(ctx, req, project)
 	}
 	if err == nil {
 		workflow, serve, err = s.app.OpenWorkflow(ctx, identity, project, sdd.WorkflowOpenRequest{
@@ -1471,12 +1471,12 @@ func (s *toolSet) registryDocs(ctx context.Context, req *mcp.CallToolRequest, ar
 // structured content is still marshalled from the returned value.
 func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-		hostNotice, err := s.beforeCall(ctx)
+		call, hostNotice, err := s.beforeCall(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
 		slot := &syncNoticeSlot{}
-		res, out, err := handler(context.WithValue(ctx, syncNoticeKey{}, slot), req, in)
+		res, out, err := handler(context.WithValue(call, syncNoticeKey{}, slot), req, in)
 		if asked, ok := inputRequired(err); ok {
 			var none Out
 			return asked, none, nil
@@ -1488,11 +1488,11 @@ func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.Ca
 		var syncNotice, cacheNotice string
 		if slot.claim != nil {
 			var claimErr error
-			syncNotice, claimErr = slot.claim(ctx, err != nil)
+			syncNotice, claimErr = slot.claim(call, err != nil)
 			err = errors.Join(err, claimErr)
 		}
 		if s.cacheNotice != nil {
-			cacheNotice = s.cacheNotice(ctx)
+			cacheNotice = s.cacheNotice(call)
 		}
 		if err != nil {
 			for _, notice := range []string{syncNotice, cacheNotice, hostNotice} {
@@ -1525,11 +1525,15 @@ func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.Ca
 	}
 }
 
-func (s *toolSet) beforeCall(ctx context.Context) (string, error) {
+func (s *toolSet) beforeCall(ctx context.Context) (context.Context, string, error) {
 	if s.before == nil {
-		return "", nil
+		return ctx, "", nil
 	}
-	return s.before(ctx)
+	call, notice, err := s.before(ctx)
+	if call == nil {
+		call = ctx
+	}
+	return call, notice, err
 }
 
 type syncNoticeKey struct{}

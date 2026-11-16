@@ -38,8 +38,9 @@ type Options struct {
 	// when the host prunes nothing.
 	CacheNotice func(context.Context) string
 	// BeforeCall, when set, runs before every tool call: an error refuses the
-	// call with it, a notice rides once on the call's result.
-	BeforeCall func(context.Context) (notice string, err error)
+	// call with it, a notice rides once on the call's result, and the call
+	// runs under the context it returns, its own when that is nil.
+	BeforeCall func(ctx context.Context) (call context.Context, notice string, err error)
 }
 
 // toolSet carries what SDD's tool handlers need, independent of the server
@@ -51,7 +52,7 @@ type toolSet struct {
 	local          bool
 	version        string
 	cacheNotice    func(context.Context) string
-	before         func(context.Context) (string, error)
+	before         func(context.Context) (context.Context, string, error)
 	// sessions caches loaded sessions by ID. The transport holds no state
 	// about a dialogue: nothing is keyed to a connection, and no connection
 	// event acts on a session (d-cpt-aen).

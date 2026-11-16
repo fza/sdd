@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/networkteam/sdd/test"
 )
 
 // payloadHook declares, in the config file named, a hook at event whose
@@ -28,6 +30,21 @@ func (f *appFixture) payloadHook(t *testing.T, configFile, event string) string 
 	existing := readFile(t, filepath.Join(f.root, configFile))
 	f.write(t, configFile, existing+"hooks:\n  - event: "+event+"\n    command: payload.sh\n")
 	return filepath.Join(f.root, filepath.Dir(configFile), "payload.json")
+}
+
+// repoHook is payloadHook in the project's committed config, the fixture
+// made a git repository tracking its .sdd folder, as a clone holds it.
+func (f *appFixture) repoHook(t *testing.T, event string) string {
+	t.Helper()
+	payload := f.payloadHook(t, ".sdd/config.yaml", event)
+	// In a repository a session start backfills the fixture entry's title.
+	llm := test.NewOpenAIServer(t, test.OpenAIBehaviour{Answer: `{"title": "CLI gap", "summary": "` + appSummary + `", "findings": []}`})
+	f.write(t, ".sdd/config.local.yaml", "participant: Local Author\nllm:\n  provider: openai\n  model: fake\n  endpoint: "+llm.URL+"\n  api_keys:\n    openai: op-notarealkeyaaaaaaaaaa\n  retry:\n    max_attempts: 1\n")
+	if _, err := os.Stat(filepath.Join(f.root, ".git")); err != nil {
+		gitIn(t, f.root, "init", "-q")
+	}
+	gitIn(t, f.root, "add", "-f", ".sdd/config.yaml", ".sdd/hooks")
+	return payload
 }
 
 func readHookPayload(t *testing.T, path string) map[string]any {
@@ -66,9 +83,9 @@ func toolText(result *mcp.CallToolResult) string {
 	return text.String()
 }
 
-// A hook in the user-global config runs at its event without confirmation,
+// A hook in the user-global config runs at its event without an allow,
 // its payload on stdin.
-func TestServeRunsAUserGlobalHookUnconfirmed(t *testing.T) {
+func TestServeRunsAUserGlobalHookWithoutAnAllow(t *testing.T) {
 	fixture := newAppFixture(t)
 	payloadFile := fixture.payloadHook(t, "config/sdd/config.yaml", "user-dialogue.junction.start")
 
@@ -81,10 +98,10 @@ func TestServeRunsAUserGlobalHookUnconfirmed(t *testing.T) {
 	}
 }
 
-// A project's hook runs only once confirmed: over MCP the call asks the
+// A project's hook runs only once allowed: over MCP the call asks the
 // person by elicitation and continues on accept; a decline or a client
-// without elicitation fails the call naming `sdd hooks trust`.
-func TestServeAsksForAnUnconfirmedProjectHook(t *testing.T) {
+// without elicitation fails the call naming `sdd hooks allow`.
+func TestServeAsksToAllowAProjectHook(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		answer  string
@@ -97,7 +114,7 @@ func TestServeAsksForAnUnconfirmedProjectHook(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newAppFixture(t)
-			payloadFile := fixture.payloadHook(t, ".sdd/config.yaml", "user-dialogue.junction.start")
+			payloadFile := fixture.repoHook(t, "user-dialogue.junction.start")
 			var (
 				mu       sync.Mutex
 				messages []string
@@ -123,11 +140,11 @@ func TestServeAsksForAnUnconfirmedProjectHook(t *testing.T) {
 
 			_, statErr := os.Stat(payloadFile)
 			if tc.answer != "accept" {
-				if !result.IsError || !strings.Contains(toolText(result), "sdd hooks trust") || !strings.Contains(toolText(result), filepath.Join(".sdd", "config.yaml")) {
-					t.Fatalf("the call should fail naming the hook's file and `sdd hooks trust`, got %+v", result)
+				if !result.IsError || !strings.Contains(toolText(result), "sdd hooks allow") || !strings.Contains(toolText(result), filepath.Join(".sdd", "config.yaml")) {
+					t.Fatalf("the call should fail naming the hook's file and `sdd hooks allow`, got %+v", result)
 				}
 				if statErr == nil {
-					t.Fatal("an unconfirmed hook ran")
+					t.Fatal("a hook not allowed ran")
 				}
 				return
 			}
@@ -138,8 +155,8 @@ func TestServeAsksForAnUnconfirmedProjectHook(t *testing.T) {
 				t.Errorf("the person should see the hook and its script once, got %q", messages)
 			}
 			readHookPayload(t, payloadFile)
-			if list := fixture.run(t, "hooks"); !regexp.MustCompile(`confirmed +committed +user-dialogue\.junction\.start +payload\.sh`).MatchString(list.stdout) {
-				t.Errorf("the accepted hook should list as confirmed:\n%s%v", list.stdout, list.err)
+			if list := fixture.run(t, "hooks"); !regexp.MustCompile(`allowed +committed +user-dialogue\.junction\.start +payload\.sh`).MatchString(list.stdout) {
+				t.Errorf("the accepted hook should list as allowed:\n%s%v", list.stdout, list.err)
 			}
 		})
 	}
@@ -162,51 +179,51 @@ func TestServeReadsHooksAfreshOnEveryCall(t *testing.T) {
 	}
 }
 
-// `sdd hooks` lists every hook with its state; `sdd hooks trust` shows each
-// pending one on a terminal and confirms it on yes, and refuses without a
-// terminal; a changed script asks again.
-func TestHooksTrustConfirmsWhatThePersonAccepts(t *testing.T) {
+// `sdd hooks` lists every hook with its state; `sdd hooks allow` shows each
+// repository waiting on a terminal and allows it on yes, and refuses without a
+// terminal; a changed tracked script asks again.
+func TestHooksAllowAllowsWhatThePersonAccepts(t *testing.T) {
 	fixture := newAppFixture(t)
-	fixture.payloadHook(t, ".sdd/config.yaml", "capture.assemble")
+	fixture.repoHook(t, "capture.assemble")
 	fixture.payloadHook(t, "config/sdd/config.yaml", "entry.written")
 	row := func(state, layer, event string) *regexp.Regexp {
 		return regexp.MustCompile(state + ` +` + layer + ` +` + regexp.QuoteMeta(event) + ` +payload\.sh`)
 	}
 
 	list := fixture.run(t, "hooks")
-	if list.err != nil || !row("pending", "committed", "capture.assemble").MatchString(list.stdout) || !row("confirmed", "global", "entry.written").MatchString(list.stdout) {
-		t.Fatalf("sdd hooks should list the project's hook pending and the global one confirmed:\n%s%v", list.stdout, list.err)
+	if list.err != nil || !row("pending", "committed", "capture.assemble").MatchString(list.stdout) || !row("allowed", "global", "entry.written").MatchString(list.stdout) {
+		t.Fatalf("sdd hooks should list the project's hook pending and the global one allowed:\n%s%v", list.stdout, list.err)
 	}
 
 	refusing := make(chan appResult, 1)
-	go func() { refusing <- fixture.run(t, "hooks", "trust") }()
+	go func() { refusing <- fixture.run(t, "hooks", "allow") }()
 	var refused appResult
 	select {
 	case refused = <-refusing:
 	case <-time.After(20 * time.Second):
-		t.Fatal("sdd hooks trust without a terminal should refuse at once, it still runs after 20s")
+		t.Fatal("sdd hooks allow without a terminal should refuse at once, it still runs after 20s")
 	}
-	if refused.err == nil || !strings.Contains(refused.err.Error(), "confirms only on a terminal") {
-		t.Fatalf("sdd hooks trust without a terminal should refuse, got %v:\n%s", refused.err, refused.stdout)
+	if refused.err == nil || !strings.Contains(refused.err.Error(), "allows only on a terminal") {
+		t.Fatalf("sdd hooks allow without a terminal should refuse, got %v:\n%s", refused.err, refused.stdout)
 	}
 	if list := fixture.run(t, "hooks"); !row("pending", "committed", "capture.assemble").MatchString(list.stdout) {
-		t.Fatalf("a refused trust should confirm nothing:\n%s", list.stdout)
+		t.Fatalf("a refused allow should allow nothing:\n%s", list.stdout)
 	}
 
-	declined := fixture.runTerminal(t, "[y/N]", "n", "hooks", "trust")
+	declined := fixture.runTerminal(t, "[y/N]", "n", "hooks", "allow")
 	if declined.err != nil || !strings.Contains(declined.stdout, "cat > ../payload.json") || !strings.Contains(declined.stdout, "left pending") {
-		t.Fatalf("sdd hooks trust should show the script, ask and leave a declined hook:\n%s%v", declined.stdout, declined.err)
+		t.Fatalf("sdd hooks allow should show the script, ask and leave a declined hook:\n%s%v", declined.stdout, declined.err)
 	}
 	if list := fixture.run(t, "hooks"); !row("pending", "committed", "capture.assemble").MatchString(list.stdout) {
 		t.Fatalf("a declined hook should stay pending:\n%s", list.stdout)
 	}
 
-	accepted := fixture.runTerminal(t, "[y/N]", "y", "hooks", "trust")
-	if accepted.err != nil || !strings.Contains(accepted.stdout, "confirmed") {
-		t.Fatalf("sdd hooks trust should confirm on yes:\n%s%v", accepted.stdout, accepted.err)
+	accepted := fixture.runTerminal(t, "[y/N]", "y", "hooks", "allow")
+	if accepted.err != nil || !strings.Contains(accepted.stdout, "allowed;") {
+		t.Fatalf("sdd hooks allow should allow on yes:\n%s%v", accepted.stdout, accepted.err)
 	}
-	if list := fixture.run(t, "hooks"); !row("confirmed", "committed", "capture.assemble").MatchString(list.stdout) {
-		t.Fatalf("an accepted hook should list as confirmed:\n%s", list.stdout)
+	if list := fixture.run(t, "hooks"); !row("allowed", "committed", "capture.assemble").MatchString(list.stdout) {
+		t.Fatalf("an accepted hook should list as allowed:\n%s", list.stdout)
 	}
 
 	fixture.write(t, ".sdd/hooks/payload.sh", "#!/bin/sh\ncat > ../elsewhere.json\n")
@@ -218,7 +235,7 @@ func TestHooksTrustConfirmsWhatThePersonAccepts(t *testing.T) {
 // sdd config lists the hooks of every layer, the committed one included.
 func TestConfigListsTheCommittedLayersHooks(t *testing.T) {
 	fixture := newAppFixture(t)
-	fixture.payloadHook(t, ".sdd/config.yaml", "capture.assemble")
+	fixture.repoHook(t, "capture.assemble")
 	result := fixture.run(t, "config")
 	if result.err != nil || !regexp.MustCompile(`hooks\.0\.command +payload\.sh +\(project\)`).MatchString(result.stdout) {
 		t.Fatalf("sdd config should list the committed hook:\n%s%v", result.stdout, result.err)
@@ -278,14 +295,14 @@ func TestInitNamesThePendingHooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sdd init: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "1 hook(s) of this project wait for confirmation; review them with `sdd hooks trust` in a terminal") {
+	if !strings.Contains(output, "1 hook(s) of this project wait to be allowed; review them with `sdd hooks allow` in a terminal") {
 		t.Errorf("sdd init should name the pending hooks:\n%s", output)
 	}
 }
 
-// On a terminal sdd init asks about each pending hook and confirms the
+// On a terminal sdd init asks about each repository waiting and allows the
 // accepted one.
-func TestInitConfirmsThePendingHooksOnATerminal(t *testing.T) {
+func TestInitAllowsThePendingHooksOnATerminal(t *testing.T) {
 	work, _ := pointedRepos(t)
 	writeFile(t, filepath.Join(work, ".sdd", "config.yaml"), "project_dir: ../work-sdd\nskill_scope: project\nsupported_agents: [claude]\nhooks:\n  - event: capture.assemble\n    command: lint.sh\n")
 	writeFile(t, filepath.Join(work, ".sdd", "hooks", "lint.sh"), "#!/bin/sh\n")
@@ -297,11 +314,11 @@ func TestInitConfirmsThePendingHooksOnATerminal(t *testing.T) {
 	}
 	fixture := &appFixture{root: work}
 	result := fixture.runTerminal(t, "[y/N]", "y", "init", "--scope", "project", "--participant", "Ada", "--agents", "claude", "--dialogue-mode", "guided", "--verify-mode", "off")
-	if result.err != nil || !strings.Contains(result.stdout, "Run this capture.assemble hook on this machine?") || !strings.Contains(result.stdout, "confirmed") {
-		t.Fatalf("sdd init on a terminal should ask and confirm:\n%s%s%v", result.stdout, result.stderr, result.err)
+	if result.err != nil || !strings.Contains(result.stdout, "Allow these hooks to run on this machine?") || !strings.Contains(result.stdout, "allowed;") {
+		t.Fatalf("sdd init on a terminal should ask and allow:\n%s%s%v", result.stdout, result.stderr, result.err)
 	}
-	if list := fixture.run(t, "hooks"); !regexp.MustCompile(`confirmed +work committed +capture\.assemble +lint\.sh`).MatchString(list.stdout) {
-		t.Fatalf("the hook accepted in sdd init should list as confirmed:\n%s%v", list.stdout, list.err)
+	if list := fixture.run(t, "hooks"); !regexp.MustCompile(`allowed +work committed +capture\.assemble +lint\.sh`).MatchString(list.stdout) {
+		t.Fatalf("the hook accepted in sdd init should list as allowed:\n%s%v", list.stdout, list.err)
 	}
 }
 
@@ -325,11 +342,11 @@ func (f *appFixture) sessionFiles(t *testing.T) map[string]string {
 }
 
 // On the multi round-trip protocol start_session asks about the project's
-// unconfirmed hooks before it opens a session, so the client's retry with
+// hooks not allowed before it opens a session, so the client's retry with
 // the answer leaves exactly one session.
 func TestServeStartSessionAsksBeforeOpeningASession(t *testing.T) {
 	fixture := newAppFixture(t)
-	payloadFile := fixture.payloadHook(t, ".sdd/config.yaml", "user-dialogue.junction.start")
+	payloadFile := fixture.repoHook(t, "user-dialogue.junction.start")
 	var (
 		mu            sync.Mutex
 		protocol      string
@@ -363,7 +380,7 @@ func TestServeStartSessionAsksBeforeOpeningASession(t *testing.T) {
 	readHookPayload(t, payloadFile)
 }
 
-// A mutating call asks about an unconfirmed hook before it changes anything:
+// A mutating call asks about a hook not allowed before it changes anything:
 // declined, the session's ledger stays as it was before the call.
 func TestServeMutatingCallAsksBeforeAnySideEffect(t *testing.T) {
 	fixture := newAppFixture(t)
@@ -384,7 +401,7 @@ func TestServeMutatingCallAsksBeforeAnySideEffect(t *testing.T) {
 	)
 	fixture.serveWith(t, options, func(client *mcp.ClientSession) {
 		handle := startSession(t, client)
-		payloadFile = fixture.payloadHook(t, ".sdd/config.yaml", "capture.assemble.start")
+		payloadFile = fixture.repoHook(t, "capture.assemble.start")
 		before = fixture.sessionFiles(t)
 		var err error
 		result, err = client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_procedure", Arguments: map[string]any{"session": handle, "canonical": "capture"}})
@@ -392,8 +409,8 @@ func TestServeMutatingCallAsksBeforeAnySideEffect(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if !result.IsError || !strings.Contains(toolText(result), "sdd hooks trust") || !strings.Contains(toolText(result), "(declined)") {
-		t.Fatalf("a declined hook should fail the call naming `sdd hooks trust`, got %+v", result)
+	if !result.IsError || !strings.Contains(toolText(result), "sdd hooks allow") || !strings.Contains(toolText(result), "(declined)") {
+		t.Fatalf("a declined hook should fail the call naming `sdd hooks allow`, got %+v", result)
 	}
 	if len(asked) != 1 || !reflect.DeepEqual(asked[0], before) {
 		t.Fatalf("the person should be asked once, before the call changed the session's ledger; asked %d times", len(asked))

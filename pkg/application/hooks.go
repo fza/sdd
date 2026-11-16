@@ -19,48 +19,50 @@ import (
 )
 
 // Hook is one declared hook resolved against its layer: a file run with an
-// event's JSON payload on stdin, its hash, and whether this machine confirmed
-// it.
+// event's JSON payload on stdin, and whether this machine allows it to run.
 type Hook = types.Hook
 
-// HookReview is what the person sees before confirming a hook.
+// HookReview is what the person sees before allowing one repository's
+// hooks.
 type HookReview = types.HookReview
 
 // HookCommands is the composition's port to the declared hooks. Hooks
 // returns them as declared at the time of the call, each with its state, so
 // a changed configuration or file reaches the next call. Run runs one hook
 // with stdin and returns what it wrote to stdout; it stops the command when
-// ctx ends, and a nonzero exit is an error. Review describes a hook for the
-// person confirming it, and Confirm records its hash.
+// ctx ends, and a nonzero exit is an error. Reviews describes each
+// repository whose hooks are not allowed as they are now, and Allow records
+// the reviewed ones as allowed on this machine.
 type HookCommands interface {
 	Hooks(ctx context.Context) ([]Hook, error)
 	Run(ctx context.Context, hook Hook, stdin []byte) ([]byte, error)
-	Review(ctx context.Context, hook Hook) (HookReview, error)
-	Confirm(ctx context.Context, hook Hook) error
+	Reviews(ctx context.Context) ([]HookReview, error)
+	Allow(ctx context.Context, reviews []HookReview) error
 }
 
-// HookConfirmer asks the person running sdd, all at once, whether the hooks
-// this machine has not confirmed may run, showing them each review. It
-// returns true only when the person accepted every one; an error means the
-// person could not be asked.
-type HookConfirmer interface {
-	ConfirmHooks(ctx context.Context, reviews []HookReview) (bool, error)
+// HookAllower asks the person running sdd, all at once, whether the hooks of
+// the repositories this machine has not allowed may run, showing them each
+// review. It returns true only when the person accepted every one; an error
+// means the person could not be asked.
+type HookAllower interface {
+	AllowHooks(ctx context.Context, reviews []HookReview) (bool, error)
 }
 
-// ConfirmHooks asks confirmer about every hook of project this machine has
-// not confirmed and records their hashes once the person accepts them all.
-// A call that can fire hooks calls it before any work, so a declined hook
-// leaves nothing behind. Left empty, project is the sole accessible one. A decline, or a nil confirmer, fails naming
-// `sdd hooks trust`.
-func (a *Application) ConfirmHooks(ctx context.Context, identity RequestIdentity, project ProjectID, confirmer HookConfirmer) error {
+// AllowHooks asks allower about every repository of project whose hooks
+// this machine has not allowed as they are now, and records them allowed
+// once the person accepts them all. A call that can fire hooks calls it
+// before any work, so a declined hook leaves nothing behind. Left empty,
+// project is the sole accessible one. A decline, or a nil allower, fails
+// naming `sdd hooks allow`.
+func (a *Application) AllowHooks(ctx context.Context, identity RequestIdentity, project ProjectID, allower HookAllower) error {
 	_, runtime, err := a.resolve(ctx, identity, project, AccessRead)
 	if err != nil {
 		return err
 	}
-	return confirmPendingHooks(ctx, runtime.options.Hooks, confirmer)
+	return allowPendingHooks(ctx, runtime.options.Hooks, allower)
 }
 
-func confirmPendingHooks(ctx context.Context, commands HookCommands, confirmer HookConfirmer) error {
+func allowPendingHooks(ctx context.Context, commands HookCommands, allower HookAllower) error {
 	if commands == nil {
 		return nil
 	}
@@ -68,44 +70,41 @@ func confirmPendingHooks(ctx context.Context, commands HookCommands, confirmer H
 	if err != nil {
 		return fmt.Errorf("reading the configured hooks: %w", err)
 	}
-	var (
-		pending []Hook
-		labels  []string
-	)
+	var labels []string
 	for _, hook := range hooks {
-		if hook.State != model.HookConfirmed {
-			pending = append(pending, hook)
-			labels = append(labels, fmt.Sprintf("%s is %s", hook.Label(), hook.State))
+		if hook.State != model.HookAllowed {
+			labels = append(labels, notAllowed(hook))
 		}
 	}
-	if len(pending) == 0 {
+	if len(labels) == 0 {
 		return nil
 	}
-	refusal := fmt.Errorf("%s on this machine; review and confirm with `sdd hooks trust`", strings.Join(labels, "; "))
-	if confirmer == nil {
+	refusal := fmt.Errorf("%s; review and allow them with `sdd hooks allow`", strings.Join(labels, "; "))
+	if allower == nil {
 		return refusal
 	}
-	reviews := make([]HookReview, 0, len(pending))
-	for _, hook := range pending {
-		review, err := commands.Review(ctx, hook)
-		if err != nil {
-			return errors.Join(refusal, err)
-		}
-		reviews = append(reviews, review)
+	reviews, err := commands.Reviews(ctx)
+	if err != nil {
+		return errors.Join(refusal, err)
 	}
-	accepted, err := confirmer.ConfirmHooks(ctx, reviews)
+	accepted, err := allower.AllowHooks(ctx, reviews)
 	if err != nil {
 		return fmt.Errorf("%w (asking failed: %w)", refusal, err)
 	}
 	if !accepted {
 		return fmt.Errorf("%w (declined)", refusal)
 	}
-	for _, hook := range pending {
-		if err := commands.Confirm(ctx, hook); err != nil {
-			return err
-		}
+	return commands.Allow(ctx, reviews)
+}
+
+// notAllowed says that hook may not run on this machine, and why when its
+// notice says more.
+func notAllowed(hook Hook) string {
+	label := fmt.Sprintf("%s is %s on this machine", hook.Label(), hook.State)
+	if hook.Notice != "" {
+		label += " (" + hook.Notice + ")"
 	}
-	return nil
+	return label
 }
 
 // workflowHooks runs a workflow session's hooks: every hook matching an
@@ -167,7 +166,7 @@ func (h *workflowHooks) Fire(point engine.HookPoint) ([]query.Finding, error) {
 		if !model.MatchHookEvent(hook.Event, event) {
 			continue
 		}
-		if err := refuseUnconfirmed(hook); err != nil {
+		if err := refuseNotAllowed(hook); err != nil {
 			refused = append(refused, err)
 			continue
 		}
@@ -209,13 +208,13 @@ func (h *workflowHooks) Fire(point engine.HookPoint) ([]query.Finding, error) {
 	return merged, nil
 }
 
-// refuseUnconfirmed fails a hook the call's ConfirmHooks did not leave
-// confirmed: one that changed while the call ran.
-func refuseUnconfirmed(hook Hook) error {
-	if hook.State == model.HookConfirmed {
+// refuseNotAllowed fails a hook the call's AllowHooks did not leave allowed:
+// one that changed while the call ran.
+func refuseNotAllowed(hook Hook) error {
+	if hook.State == model.HookAllowed {
 		return nil
 	}
-	return fmt.Errorf("%s is %s on this machine; review and confirm it with `sdd hooks trust`", hook.Label(), hook.State)
+	return fmt.Errorf("%s; review it and allow it with `sdd hooks allow`", notAllowed(hook))
 }
 
 func runHook(ctx context.Context, commands HookCommands, hook Hook, payload []byte) ([]query.Finding, error) {

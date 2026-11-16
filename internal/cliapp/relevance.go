@@ -8,7 +8,7 @@ import (
 	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/model"
 	sdd "github.com/networkteam/sdd/pkg/application"
-
+	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
 
@@ -66,8 +66,8 @@ func (s usedRelevanceStore) Segments(ctx context.Context) ([][]byte, error) {
 }
 
 // projectPrefilter composes the prefilter verify.prefilter switches on;
-// the zero value while it is off.
-func projectPrefilter(cfg *model.PerRepoConfig) (sdd.Prefilter, error) {
+// the zero value while it is off. Its calls are recorded into sink.
+func projectPrefilter(cfg *model.PerRepoConfig, sink pkgllm.StatsSink) (sdd.Prefilter, error) {
 	var base model.BaseConfig
 	if cfg != nil {
 		base = cfg.BaseConfig
@@ -75,7 +75,7 @@ func projectPrefilter(cfg *model.PerRepoConfig) (sdd.Prefilter, error) {
 	if !base.Verify.GroundingPolicy().Prefilter {
 		return sdd.Prefilter{}, nil
 	}
-	prefilter, err := factory.NewPrefilter(base.ResolvedPrefilter(), statsSink())
+	prefilter, err := factory.NewPrefilter(base.ResolvedPrefilter(), sink)
 	if err != nil {
 		return sdd.Prefilter{}, err
 	}

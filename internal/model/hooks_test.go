@@ -179,10 +179,10 @@ func TestHookCommandPathRefusesACommittedHookIntoLocal(t *testing.T) {
 	}
 }
 
-func TestOnlyTheUserGlobalLayerRunsUnconfirmed(t *testing.T) {
+func TestOnlyTheUserGlobalLayerRunsWithoutAnAllow(t *testing.T) {
 	for layer, want := range map[model.HookLayer]bool{model.HookLayerGlobal: false, model.HookLayerCommitted: true, model.HookLayerLocal: true} {
-		if got := (model.HookOrigin{Layer: layer}).NeedsConfirmation(); got != want {
-			t.Errorf("%s NeedsConfirmation = %v, want %v", layer, got, want)
+		if got := (model.HookOrigin{Layer: layer}).NeedsAllow(); got != want {
+			t.Errorf("%s NeedsAllow = %v, want %v", layer, got, want)
 		}
 	}
 }

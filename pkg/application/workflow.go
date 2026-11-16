@@ -387,17 +387,18 @@ func (a *Application) RefreshWorkflow(ctx context.Context, identity RequestIdent
 	return a.refreshWorkflow(ctx, identity, id, nil)
 }
 
-// RefreshWorkflowConfirmingHooks is RefreshWorkflow that first asks
-// confirmer about the unconfirmed hooks of the session's home project, as
-// ConfirmHooks does, and stops before any work unless the person accepts
-// them all: replaying can start the session's shell, which fires hooks.
-func (a *Application) RefreshWorkflowConfirmingHooks(ctx context.Context, identity RequestIdentity, id SessionID, confirmer HookConfirmer) (*WorkflowSession, error) {
+// RefreshWorkflowAllowingHooks is RefreshWorkflow that first asks allower
+// about the hooks of the session's home project this machine has not
+// allowed, as AllowHooks does, and stops before any work unless the person
+// accepts them all: replaying can start the session's shell, which fires
+// hooks.
+func (a *Application) RefreshWorkflowAllowingHooks(ctx context.Context, identity RequestIdentity, id SessionID, allower HookAllower) (*WorkflowSession, error) {
 	return a.refreshWorkflow(ctx, identity, id, func(runtime *ProjectRuntime) error {
-		return confirmPendingHooks(ctx, runtime.options.Hooks, confirmer)
+		return allowPendingHooks(ctx, runtime.options.Hooks, allower)
 	})
 }
 
-func (a *Application) refreshWorkflow(ctx context.Context, identity RequestIdentity, id SessionID, confirmHooks func(*ProjectRuntime) error) (*WorkflowSession, error) {
+func (a *Application) refreshWorkflow(ctx context.Context, identity RequestIdentity, id SessionID, allowHooks func(*ProjectRuntime) error) (*WorkflowSession, error) {
 	_, runtime, stored, err := a.resolveSession(ctx, identity, id)
 	if err != nil {
 		return nil, err
@@ -405,8 +406,8 @@ func (a *Application) refreshWorkflow(ctx context.Context, identity RequestIdent
 	if end := stored.Metadata.Ended; end != nil {
 		return nil, endedSessionError(stored.Metadata, *end)
 	}
-	if confirmHooks != nil {
-		if err := confirmHooks(runtime); err != nil {
+	if allowHooks != nil {
+		if err := allowHooks(runtime); err != nil {
 			return nil, err
 		}
 	}
