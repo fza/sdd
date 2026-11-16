@@ -98,6 +98,10 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		if err != nil {
 			return fmt.Errorf("graph_dir in %s: %w", projectSDDDir, err)
 		}
+		err = meta.RequireGraphInProjectRepository(projectSDDDir, projectRoot, meta.ResolveGraphDir(projectRoot, projectCfg), h.repoRootOf)
+		if err != nil {
+			return err
+		}
 	}
 	if projectCfg == nil {
 		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents, changed)
