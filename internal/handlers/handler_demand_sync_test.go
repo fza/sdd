@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	gosynctest "testing/synctest"
 	"time"
@@ -98,7 +99,8 @@ func TestDemandSyncWaitsAtMostTheReadWait(t *testing.T) {
 					SyncLock: &synctest.Lock{}, SyncRecord: &synctest.Record{}, SyncMode: model.SyncModeAuto,
 					Gate: synctest.Gate(t.TempDir(), nil, hostedURL),
 				})
-				var pending, settled bool
+				var pending bool
+				var settled atomic.Bool
 				start := time.Now()
 				err := handler.DemandSync(context.Background(), &command.DemandSyncCmd{
 					OnPending: func(fetched time.Time) {
@@ -107,7 +109,7 @@ func TestDemandSyncWaitsAtMostTheReadWait(t *testing.T) {
 							t.Errorf("a graph never fetched should report no fetch time, got %v", fetched)
 						}
 					},
-					OnSettled: func() { settled = true },
+					OnSettled: func() { settled.Store(true) },
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -115,12 +117,12 @@ func TestDemandSyncWaitsAtMostTheReadWait(t *testing.T) {
 				if waited := time.Since(start); waited != tc.waited {
 					t.Errorf("the call should wait %v, waited %v", tc.waited, waited)
 				}
-				if pending != tc.pending || settled {
-					t.Errorf("want pending %v and nothing settled yet, got pending %v, settled %v", tc.pending, pending, settled)
+				if pending != tc.pending || settled.Load() {
+					t.Errorf("want pending %v and nothing settled yet, got pending %v, settled %v", tc.pending, pending, settled.Load())
 				}
 				handler.Settle()
-				if !repo.Called("fetch") || settled != tc.pending {
-					t.Errorf("the round should finish, settled %v reported only for a pending one; got calls %v, settled %v", tc.pending, repo.Calls, settled)
+				if !repo.Called("fetch") || settled.Load() != tc.pending {
+					t.Errorf("the round should finish, settled %v reported only for a pending one; got calls %v, settled %v", tc.pending, repo.Calls, settled.Load())
 				}
 			})
 		})
