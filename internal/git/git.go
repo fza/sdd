@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -43,6 +44,36 @@ func (c CLI) at(args ...string) []string {
 	return append([]string{"-C", c.Dir}, args...)
 }
 
+// env is the environment for a git command addressed through at: nil, the
+// process's own, without Dir; with Dir, the process's own without the
+// variables that would pin the command to another repository (pathEnv).
+func (c CLI) env() []string {
+	if c.Dir == "" {
+		return nil
+	}
+	return pathEnv()
+}
+
+// command builds a git command for this adapter's repository.
+func (c CLI) command(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", c.at(args...)...)
+	cmd.Env = c.env()
+	return cmd
+}
+
+// repositoryVariables are the variables git exports to hooks that pin a
+// command to the hook's repository whatever -C names.
+var repositoryVariables = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"}
+
+// pathEnv is the process environment without repositoryVariables, for a git
+// command that locates its repository by path.
+func pathEnv() []string {
+	return slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(repositoryVariables, name)
+	})
+}
+
 // commitTimeout caps the detached auto-commit. A signing or credential helper
 // blocking on input would otherwise hang indefinitely when sdd runs as a
 // long-lived server; the timeout is a backstop on top of the TTY detach in
@@ -57,7 +88,7 @@ func (c CLI) Commit(message string, paths ...string) error {
 	defer cancel()
 
 	addArgs := c.at(append([]string{"add", "--all", "--"}, paths...)...)
-	if out, err := runDetached(ctx, addArgs...); err != nil {
+	if out, err := runDetached(ctx, c.env(), addArgs...); err != nil {
 		return fmt.Errorf("git add: %s (%w)", out, err)
 	}
 
@@ -65,7 +96,7 @@ func (c CLI) Commit(message string, paths ...string) error {
 	// Without `-- <paths>`, `git commit` records the whole index, sweeping any
 	// pre-staged unrelated work into the CLI's own commit.
 	commitArgs := c.at(append([]string{"commit", "-m", message, "--"}, paths...)...)
-	if out, err := runDetached(ctx, commitArgs...); err != nil {
+	if out, err := runDetached(ctx, c.env(), commitArgs...); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
 
@@ -76,7 +107,7 @@ func (c CLI) Commit(message string, paths ...string) error {
 // used by retryable post-apply finalizers to recognize a commit that landed
 // before its durable finalizer outcome could be recorded.
 func (c CLI) HasCommitMessage(ctx context.Context, text string) (bool, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("log", "--all", "--fixed-strings", "--grep="+text, "--format=%H", "-n", "1")...).CombinedOutput()
+	out, err := c.command(ctx, "log", "--all", "--fixed-strings", "--grep="+text, "--format=%H", "-n", "1").CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("git log: %s (%w)", out, err)
 	}
@@ -96,18 +127,18 @@ type RemovalCommitter struct {
 // Commit stages the deletion of the given paths and commits, scoped to those
 // paths so an unrelated staged index isn't swept into the removal commit.
 func (r RemovalCommitter) Commit(message string, paths ...string) error {
-	at := CLI(r).at
+	ctx := context.Background()
+	repo := CLI(r)
 	for _, p := range paths {
-		rm := exec.Command("git", at("rm", "--cached", "-f", p)...)
+		rm := repo.command(ctx, "rm", "--cached", "-f", p)
 		if out, err := rm.CombinedOutput(); err != nil {
-			add := exec.Command("git", at("add", p)...)
+			add := repo.command(ctx, "add", p)
 			if out2, err2 := add.CombinedOutput(); err2 != nil {
 				return fmt.Errorf("git stage: %s (%v); fallback %s (%w)", out, err, out2, err2)
 			}
 		}
 	}
-	commitArgs := at(append([]string{"commit", "-m", message, "--"}, paths...)...)
-	commit := exec.Command("git", commitArgs...)
+	commit := repo.command(ctx, append([]string{"commit", "-m", message, "--"}, paths...)...)
 	if out, err := commit.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %s (%w)", out, err)
 	}
@@ -120,8 +151,9 @@ func (r RemovalCommitter) Commit(message string, paths ...string) error {
 // signing or credential prompt has no TTY to read from, so it fails immediately
 // instead of suspending the backgrounded process on SIGTTIN. The context
 // timeout is a backstop for any other blocking helper.
-func runDetached(ctx context.Context, args ...string) ([]byte, error) {
+func runDetached(ctx context.Context, env []string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
@@ -137,7 +169,7 @@ func (c CLI) Move(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("creating destination directory: %w", err)
 	}
-	if out, err := exec.Command("git", c.at("mv", src, dst)...).CombinedOutput(); err != nil {
+	if out, err := c.command(context.Background(), "mv", src, dst).CombinedOutput(); err != nil {
 		return fmt.Errorf("git mv %s %s: %s (%w)", src, dst, out, err)
 	}
 	return nil
@@ -151,7 +183,7 @@ func (c CLI) Checkout(branch string, create bool) error {
 		args = append(args, "-b")
 	}
 	args = append(args, branch)
-	if out, err := exec.Command("git", c.at(args...)...).CombinedOutput(); err != nil {
+	if out, err := c.command(context.Background(), args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("git checkout: %s (%w)", out, err)
 	}
 	return nil
@@ -159,7 +191,7 @@ func (c CLI) Checkout(branch string, create bool) error {
 
 // BranchMerged reports whether branch is merged into the current HEAD.
 func (c CLI) BranchMerged(branch string) bool {
-	out, err := exec.Command("git", c.at("branch", "--merged")...).Output()
+	out, err := c.command(context.Background(), "branch", "--merged").Output()
 	if err != nil {
 		return false
 	}
@@ -180,7 +212,7 @@ func (c CLI) DeleteBranch(branch string, force bool) error {
 	if force {
 		flag = "-D"
 	}
-	if out, err := exec.Command("git", c.at("branch", flag, branch)...).CombinedOutput(); err != nil {
+	if out, err := c.command(context.Background(), "branch", flag, branch).CombinedOutput(); err != nil {
 		return fmt.Errorf("git branch %s: %s (%w)", flag, out, err)
 	}
 	return nil
@@ -189,7 +221,7 @@ func (c CLI) DeleteBranch(branch string, force bool) error {
 // IsClean reports whether the working tree has no uncommitted changes.
 // Production handlers.Puller.
 func (c CLI) IsClean(ctx context.Context) (bool, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("status", "--porcelain")...).Output()
+	out, err := c.command(ctx, "status", "--porcelain").Output()
 	if err != nil {
 		return false, fmt.Errorf("git status --porcelain: %w", err)
 	}
@@ -200,7 +232,7 @@ func (c CLI) IsClean(ctx context.Context) (bool, error) {
 // regardless of the user's pull.rebase config, so background sync never
 // rewrites the shared graph's history.
 func (c CLI) MergePull(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("pull", "--no-rebase")...).CombinedOutput()
+	out, err := c.command(ctx, "pull", "--no-rebase").CombinedOutput()
 	msg := strings.TrimSpace(string(out))
 	if err != nil {
 		if msg == "" {
@@ -233,7 +265,7 @@ func RepoRootFor(path string) string {
 	if dir == "" {
 		return ""
 	}
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	out, err := (CLI{Dir: dir}).command(context.Background(), "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return ""
 	}
@@ -248,7 +280,9 @@ type Repositories struct{}
 func (Repositories) RootOf(dir string) string { return RepoRootFor(dir) }
 
 func (Repositories) Init(dir string) error {
-	out, err := exec.Command("git", "init", "--quiet", dir).CombinedOutput()
+	cmd := exec.Command("git", "init", "--quiet", dir)
+	cmd.Env = pathEnv()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git init %s: %s (%w)", dir, strings.TrimSpace(string(out)), err)
 	}
