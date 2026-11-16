@@ -239,3 +239,24 @@ func TestResolveProjectFromASymlinkedWorkRoot(t *testing.T) {
 		t.Errorf("the project should be found beside the real work root, got %s", project.Root)
 	}
 }
+
+// The real folder a symlinked work root resolves project_dir from is where
+// the project was looked for, so the refusal names it.
+func TestResolveProjectNamesTheRealFolderOfAMissingProject(t *testing.T) {
+	realDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, filepath.Join(realDir, "work"), "config.yaml", "project_dir: ../nowhere\n")
+	link := filepath.Join(t.TempDir(), "wl")
+	err = os.Symlink(filepath.Join(realDir, "work"), link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = meta.ResolveProject(link, nil)
+
+	if err == nil || !strings.Contains(err.Error(), filepath.Join(realDir, "nowhere")) {
+		t.Errorf("the refusal should name the folder it looked in: %v", err)
+	}
+}

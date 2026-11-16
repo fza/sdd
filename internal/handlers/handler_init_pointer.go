@@ -48,7 +48,7 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 	}
 	switch {
 	case projectCfg == nil && !cmd.SetUpProject:
-		return fmt.Errorf("%s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", cmd.ProjectDir, meta.ErrNotAProject, cmd.ProjectDir)
+		return fmt.Errorf("%s leads to %s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", cmd.ProjectDir, projectRoot, meta.ErrNotAProject, cmd.ProjectDir)
 	case projectCfg != nil && (cmd.GraphDir != "" || cmd.Language != ""):
 		return fmt.Errorf("--graph-dir and --language configure the project holding the graph; run `sdd init` with them in %s", cmd.ProjectDir)
 	case model.MergeConfig(projectCfg, projectLocal).ProjectDir != "":
