@@ -26,7 +26,10 @@ const (
 	scheduledFlag    = "scheduled"
 )
 
-func cacheCmd() *cli.Command {
+func cacheCmd(gitleaks *secrets.GitHub) *cli.Command {
+	if gitleaks == nil {
+		gitleaks = secrets.NewGitHub("", "", nil)
+	}
 	return &cli.Command{
 		Name:  cacheCommandName,
 		Usage: "Manage the machine-global cache",
@@ -74,7 +77,7 @@ shows the last run. sdd index gc removes more on request.`,
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), Keep: keep,
 					State:       stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
-					SecretRules: secrets.NewUpdater(secretRulesDir(loc), secrets.NewGitHub("", "", nil), nil),
+					SecretRules: secrets.NewUpdater(secretRulesDir(loc), gitleaks, nil),
 				})
 				scheduled := cmd.Bool(scheduledFlag)
 				return h.Prune(ctx, &command.PruneCacheCmd{

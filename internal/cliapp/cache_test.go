@@ -15,6 +15,7 @@ import (
 	"github.com/networkteam/sdd/internal/cliapp"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/testsupport"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	localadapter "github.com/networkteam/sdd/pkg/local"
 )
@@ -27,6 +28,7 @@ func (f *appFixture) runWithPrune(t *testing.T, launched *[]string, args ...stri
 	command := cliapp.New(cliapp.Options{
 		Version: appVersion, Reader: strings.NewReader(""), Writer: &stdout, ErrWriter: &stderr,
 		LaunchCachePrune: func(dir, _ string) error { *launched = append(*launched, dir); return nil },
+		Gitleaks:         f.gitleaks(),
 	})
 	err := command.Run(t.Context(), append([]string{"sdd"}, args...))
 	return appResult{stdout: stdout.String(), stderr: stderr.String(), err: err}
@@ -83,6 +85,26 @@ func TestScheduledCachePrunePrintsNothing(t *testing.T) {
 	}
 	if info := f.run(t, "info"); !strings.Contains(info.stdout, "Cache pruning: last run") {
 		t.Errorf("the background pass should still be on record, stdout:\n%s", info.stdout)
+	}
+}
+
+// The scheduled pass of every CLI test fetches from the fixture's stand-in
+// for GitHub; one that reached a real host would fail at the closed proxy
+// and leave the built-in rules in use.
+func TestScheduledCachePruneFetchesFromTheConfiguredHosts(t *testing.T) {
+	f := newAppFixture(t)
+	f.releases.Publish("v99.0.0", testsupport.NewerGitleaksRules(t))
+
+	r := f.run(t, "cache", "prune", "--scheduled")
+
+	if r.err != nil {
+		t.Fatalf("cache prune --scheduled: %v\n%s", r.err, r.stderr)
+	}
+	if len(f.releases.Requests()) == 0 {
+		t.Error("the pass should ask the configured hosts")
+	}
+	if info := f.run(t, "info"); !strings.Contains(info.stdout, "gitleaks v99.0.0 (fetched)") {
+		t.Errorf("the pass should have stored the stand-in's release, stdout:\n%s", info.stdout)
 	}
 }
 

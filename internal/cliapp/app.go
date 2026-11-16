@@ -46,6 +46,9 @@ type Options struct {
 	// --scheduled` in dir, detached, with its output in logPath. Nil launches
 	// nothing: an in-process host or a test runs no background pass.
 	LaunchCachePrune func(dir, logPath string) error
+	// Gitleaks reads gitleaks' releases for the daily rule fetch. Nil reads
+	// them from GitHub.
+	Gitleaks *secrets.GitHub
 }
 
 // resolveLLMConfig builds the effective LLMConfig for a command from the
@@ -444,7 +447,7 @@ func New(options Options) *cli.Command {
 			lintCmd(),
 			summarizeCmd(),
 			indexCmd(),
-			cacheCmd(),
+			cacheCmd(options.Gitleaks),
 			searchCmd(),
 			serveCmd(options.LaunchCachePrune),
 			sessionsCmd(),

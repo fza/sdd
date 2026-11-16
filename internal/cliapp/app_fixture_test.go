@@ -13,6 +13,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/networkteam/sdd/internal/cliapp"
+	"github.com/networkteam/sdd/internal/secrets"
+	"github.com/networkteam/sdd/internal/testsupport"
 	"github.com/urfave/cli/v3"
 )
 
@@ -23,15 +25,23 @@ const (
 	appBody    = "The command renders this entry through the configured graph directory."
 )
 
-type appFixture struct{ root string }
+// appFixture runs commands in a project of its own. releases stands in for
+// GitHub, so no command reaches it.
+type appFixture struct {
+	root     string
+	releases *testsupport.GitleaksReleases
+}
 
 func newAppFixture(t *testing.T) *appFixture {
 	t.Helper()
-	f := &appFixture{root: t.TempDir()}
+	f := &appFixture{root: t.TempDir(), releases: testsupport.NewGitleaksReleases(t)}
 	t.Chdir(f.root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(f.root, "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(f.root, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(f.root, "state"))
+	// A request that still leaves for a real host fails at a closed port.
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:9")
 	f.write(t, "config/sdd/config.yaml", "participant: Global Author\n")
 	f.write(t, ".sdd/config.yaml", "repo_id: example.test/cli\ngraph_dir: decisions\ndefault_branch: main\nlanguage: de\n")
 	f.write(t, ".sdd/config.local.yaml", "participant: Local Author\n")
@@ -66,7 +76,12 @@ func (f *appFixture) run(t *testing.T, args ...string) appResult {
 func (f *appFixture) command(reader io.Reader, writer, errWriter io.Writer) *cli.Command {
 	return cliapp.New(cliapp.Options{
 		Version: appVersion, Reader: reader, Writer: writer, ErrWriter: errWriter,
+		Gitleaks: f.gitleaks(),
 	})
+}
+
+func (f *appFixture) gitleaks() *secrets.GitHub {
+	return secrets.NewGitHub(f.releases.URL, f.releases.URL, f.releases.Client)
 }
 
 func (r appResult) exitCode() int {
