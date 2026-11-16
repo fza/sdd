@@ -120,7 +120,7 @@ func TestGraphRepoPullWaitsForTheCloneLocks(t *testing.T) {
 	clone := cloneDir(t)
 	upstreamEntry := ".sdd/graph/2026/11/07-150000-s-tac-ups.md"
 	remote.Commit(t, "an upstream entry", map[string]string{
-		upstreamEntry: "---\ntype: signal\nlayer: tactical\nkind: gap\nconfidence: high\nparticipants: [Bo]\nsummary: Written elsewhere.\n---\n\nUpstream.\n",
+		upstreamEntry: "---\ntype: signal\nlayer: tactical\nkind: gap\nconfidence: high\nparticipants: [Bo]\ntitle: Upstream entry\nsummary: Written elsewhere.\n---\n\nUpstream.\n",
 	})
 	gitIn(t, clone, "fetch", "-q", "--no-filter", strings.TrimSpace(gitIn(t, clone, "config", "sdd.remote")))
 	lock, err := syncstate.LockGraph(filepath.Join(clone, ".sdd", "graph"))
