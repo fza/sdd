@@ -43,7 +43,7 @@ SDD lets each party do what they're good at. Agents work with information and ru
 - Connected repositories: reference, search and traverse entries across graphs
 - Composable views that filter, rank and render the graph
 - Multilingual graphs: dialogue in any language, entries in the graph's configured one
-- Git-native and immutable, with background awareness of remote state
+- Git-native and immutable: a graph in a repository of its own syncs itself, a graph beside the code reports what the remote holds
 - Eight moves: bootstrap, catch-up, capture, interview, engage, implementation, evaluate, groom
 
 ## Install
