@@ -474,6 +474,8 @@ Once a day sdd starts `sdd cache prune` in the background, detached from the com
 
 A session log sdd cannot read stays: it may belong to a newer sdd. The run reports how many it kept.
 
+The run reads sessions in the state folder only. A session an earlier sdd logged in a checkout's `.sdd/sessions` stays, ended or not, and so do staged attachments whose session log the run does not find in the state folder. Delete them by hand.
+
 The run removes no clone and fails when a clone would go while the user-global config file is missing or lists no repos. While some of `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_DATA_HOME` are set and others are not, the run fails and removes no session, staged attachment, relevance ledger or clone. Set all four or none.
 
 `sdd index gc` stays for deliberate cleanup beyond these rules.
