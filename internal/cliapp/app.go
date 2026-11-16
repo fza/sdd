@@ -1846,10 +1846,8 @@ func ensureGraphClone(ctx context.Context, clones *repos.GraphClones, project me
 }
 
 // requireGraphInsideRepository refuses a project placed where its work
-// repository cannot point at it, and a graph_dir leading into another
-// repository: graph commits, the schema stamp and engine branches all belong to
-// the repository holding the project's .sdd/, so a graph kept apart is a
-// project of its own that the work repository names with project_dir.
+// repository cannot point at it, and a graph_dir leading out of the project's
+// repository (meta.RequireGraphInProjectRepository).
 func requireGraphInsideRepository(project meta.Project) error {
 	cfg, err := meta.ReadLayoutConfig(project.SDDDir(), project.LocalConfigPath(localConfigOverride))
 	if err != nil {
@@ -1866,20 +1864,7 @@ func requireGraphInsideRepository(project meta.Project) error {
 			return err
 		}
 	}
-	projectRepo := git.RepoRootFor(project.Root)
-	graphDir := meta.ResolveGraphDir(project.Root, cfg)
-	rel, err := filepath.Rel(project.Root, graphDir)
-	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil
-	}
-	graphRepo := git.RepoRootFor(graphDir)
-	if graphRepo == "" {
-		return fmt.Errorf("graph_dir in %s leads to %s, outside the project and outside any repository; keep the graph inside the project", project.SDDDir(), graphDir)
-	}
-	if projectRepo == "" || graphRepo == projectRepo {
-		return nil
-	}
-	return fmt.Errorf("graph_dir in %s leads into %s, a repository separate from %s; make the graph a project of its own (`sdd init` there) and set project_dir to that repository's root instead", project.SDDDir(), graphRepo, projectRepo)
+	return meta.RequireGraphInProjectRepository(project.SDDDir(), project.Root, meta.ResolveGraphDir(project.Root, cfg), repoRootFor)
 }
 
 // repoRootFor is git.RepoRootFor as a meta.RootOf.
