@@ -26,9 +26,9 @@ const (
 	scheduledFlag    = "scheduled"
 )
 
-func cacheCmd(gitleaks *secrets.GitHub) *cli.Command {
+func cacheCmd(gitleaks *secrets.GitHub, version string) *cli.Command {
 	if gitleaks == nil {
-		gitleaks = secrets.NewGitHub("", "", nil)
+		gitleaks = secrets.NewGitHub(secrets.GitHubOptions{UserAgent: "sdd/" + version})
 	}
 	return &cli.Command{
 		Name:  cacheCommandName,

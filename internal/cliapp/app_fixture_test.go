@@ -81,7 +81,7 @@ func (f *appFixture) command(reader io.Reader, writer, errWriter io.Writer) *cli
 }
 
 func (f *appFixture) gitleaks() *secrets.GitHub {
-	return secrets.NewGitHub(f.releases.URL, f.releases.URL, f.releases.Client)
+	return f.releases.GitHub()
 }
 
 func (r appResult) exitCode() int {

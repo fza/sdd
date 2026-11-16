@@ -2,6 +2,7 @@ package secrets_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ import (
 var fetchNow = time.Date(2026, 11, 14, 3, 0, 0, 0, time.UTC)
 
 func newUpdater(releases *testsupport.GitleaksReleases, dir string) *secrets.Updater {
-	return secrets.NewUpdater(dir, secrets.NewGitHub(releases.URL, releases.URL, releases.Client), func() time.Time { return fetchNow })
+	return secrets.NewUpdater(dir, releases.GitHub(), func() time.Time { return fetchNow })
 }
 
 func scansFixtureToken(t *testing.T, source *secrets.Source) bool {
@@ -156,5 +157,74 @@ func TestUpdaterKeepsTheCopyInUseOnAFailure(t *testing.T) {
 				t.Error("scans should go on with the copy in use")
 			}
 		})
+	}
+}
+
+// Every request names the program, nothing about its user.
+func TestGitHubSendsItsUserAgent(t *testing.T) {
+	releases := testsupport.NewGitleaksReleases(t)
+	releases.Publish("v99.0.0", testsupport.NewerGitleaksRules(t))
+
+	err := newUpdater(releases, t.TempDir()).Update(t.Context())
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents := releases.UserAgents()
+	if len(agents) == 0 || slices.ContainsFunc(agents, func(a string) bool { return a != testsupport.GitHubUserAgent }) {
+		t.Errorf("each request should carry the configured User-Agent, got %v", agents)
+	}
+}
+
+// An https request redirected to plain http would read the rule file
+// without TLS; the redirect is refused.
+func TestGitHubRefusesARedirectToPlainHTTP(t *testing.T) {
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name": "v99.0.0"}`))
+	}))
+	t.Cleanup(plain.Close)
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+r.URL.Path, http.StatusFound)
+	}))
+	t.Cleanup(secure.Close)
+	github := secrets.NewGitHub(secrets.GitHubOptions{APIBase: secure.URL, RawBase: secure.URL, Client: secure.Client()})
+
+	_, err := github.LatestTag(t.Context())
+
+	if err == nil || !strings.Contains(err.Error(), "plain http") {
+		t.Errorf("the redirect to plain http should be refused, got %v", err)
+	}
+}
+
+// A fetch that works again clears the failure, so sdd info shows no trouble
+// that has passed, and the same failure later is told again.
+func TestUpdaterClearsTheFailureOnSuccess(t *testing.T) {
+	releases := testsupport.NewGitleaksReleases(t)
+	releases.Publish("v99.0.0", testsupport.NewerGitleaksRules(t))
+	dir := t.TempDir()
+	releases.FailWith(http.StatusInternalServerError)
+	if newUpdater(releases, dir).Update(t.Context()) == nil {
+		t.Fatal("the failing API should fail the fetch")
+	}
+	source := secrets.NewSource(t.Context(), dir)
+	if notice, _ := source.TakeFailureNotice(); notice == "" {
+		t.Fatal("the failure should be told")
+	}
+	releases.FailWith(0)
+
+	err := newUpdater(releases, dir).Update(t.Context())
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := status(t, dir); got.LastFailure != "" || !got.LastFailureAt.IsZero() {
+		t.Errorf("the success should clear the failure, got %+v", got)
+	}
+	releases.FailWith(http.StatusInternalServerError)
+	if newUpdater(releases, dir).Update(t.Context()) == nil {
+		t.Fatal("the failing API should fail the fetch")
+	}
+	if notice, _ := source.TakeFailureNotice(); notice == "" {
+		t.Error("the same failure after a success should be told again")
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -35,24 +36,48 @@ const (
 // GitHub reads gitleaks' releases: the API answers which release is the
 // latest, the raw host serves the rule file at a release tag or a commit.
 type GitHub struct {
-	apiBase string
-	rawBase string
-	client  *http.Client
+	apiBase   string
+	rawBase   string
+	userAgent string
+	client    *http.Client
 }
 
-// NewGitHub returns a reader against the given bases; empty bases mean
-// DefaultGitHubAPI and DefaultGitHubRaw, a nil client http.DefaultClient.
-func NewGitHub(apiBase, rawBase string, client *http.Client) *GitHub {
+// GitHubOptions configures NewGitHub. Empty bases mean DefaultGitHubAPI and
+// DefaultGitHubRaw, a nil Client http.DefaultClient's settings. UserAgent
+// names the program, such as sdd/1.2.3, and nothing about its user.
+type GitHubOptions struct {
+	APIBase   string
+	RawBase   string
+	UserAgent string
+	Client    *http.Client
+}
+
+func NewGitHub(opts GitHubOptions) *GitHub {
+	apiBase, rawBase := opts.APIBase, opts.RawBase
 	if apiBase == "" {
 		apiBase = DefaultGitHubAPI
 	}
 	if rawBase == "" {
 		rawBase = DefaultGitHubRaw
 	}
-	if client == nil {
-		client = http.DefaultClient
+	var client http.Client
+	if opts.Client != nil {
+		client = *opts.Client
 	}
-	return &GitHub{apiBase: strings.TrimSuffix(apiBase, "/"), rawBase: strings.TrimSuffix(rawBase, "/"), client: client}
+	client.CheckRedirect = refuseDowngrade
+	return &GitHub{apiBase: strings.TrimSuffix(apiBase, "/"), rawBase: strings.TrimSuffix(rawBase, "/"), userAgent: opts.UserAgent, client: &client}
+}
+
+// refuseDowngrade stops a redirect from https to plain http, which would
+// read the rule file without TLS, and keeps the default limit of 10.
+func refuseDowngrade(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing a redirect from https to plain http: %s", req.URL.Redacted())
+	}
+	return nil
 }
 
 // LatestTag is the tag of gitleaks' latest release; a tag that is no plain
@@ -116,6 +141,9 @@ func (g *GitHub) get(ctx context.Context, url, accept string, limit int64) (_ []
 	if accept != "" {
 		req.Header.Set("Accept", accept)
 	}
+	if g.userAgent != "" {
+		req.Header.Set("User-Agent", g.userAgent)
+	}
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -178,7 +206,7 @@ func (u *Updater) Update(ctx context.Context) error {
 	}
 	if semver.Compare(latest, inUse) <= 0 {
 		state.CheckedAt = u.now()
-		return writeState(u.dir, state)
+		return u.succeed(state)
 	}
 	data, err := u.github.RuleFile(ctx, latest)
 	if err != nil {
@@ -198,11 +226,26 @@ func (u *Updater) Update(ctx context.Context) error {
 	now := u.now()
 	state.Tag, state.File, state.SHA256 = latest, name, hex.EncodeToString(sum[:])
 	state.AcceptedAt, state.CheckedAt = now, now
-	err = writeState(u.dir, state)
+	err = u.succeed(state)
 	if err != nil {
 		return err
 	}
 	return u.removeStale(name, replaced)
+}
+
+// succeed records a fetch that worked: the failure it clears is past, and a
+// later one is told again.
+func (u *Updater) succeed(state fetchState) error {
+	state.Failure, state.FailedAt = "", time.Time{}
+	err := writeState(u.dir, state)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(filepath.Join(u.dir, reportedFileName))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func (u *Updater) fail(state fetchState, err error) error {

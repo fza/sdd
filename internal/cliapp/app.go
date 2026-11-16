@@ -454,7 +454,7 @@ func New(options Options) *cli.Command {
 			lintCmd(),
 			summarizeCmd(),
 			indexCmd(),
-			cacheCmd(options.Gitleaks),
+			cacheCmd(options.Gitleaks, options.Version),
 			searchCmd(),
 			serveCmd(options.LaunchCachePrune),
 			sessionsCmd(),

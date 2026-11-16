@@ -18,11 +18,27 @@ type GitleaksReleases struct {
 	URL    string
 	Client *http.Client
 
-	mu       sync.Mutex
-	latest   string
-	files    map[string][]byte
-	failWith int
-	requests []string
+	mu         sync.Mutex
+	latest     string
+	files      map[string][]byte
+	failWith   int
+	requests   []string
+	userAgents []string
+}
+
+// GitHubUserAgent is the User-Agent GitHub sends the stand-in.
+const GitHubUserAgent = "sdd/test"
+
+// GitHub reads the stand-in as the fetch reads GitHub.
+func (g *GitleaksReleases) GitHub() *secrets.GitHub {
+	return secrets.NewGitHub(secrets.GitHubOptions{APIBase: g.URL, RawBase: g.URL, UserAgent: GitHubUserAgent, Client: g.Client})
+}
+
+// UserAgents lists the User-Agent of each request so far.
+func (g *GitleaksReleases) UserAgents() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.userAgents...)
 }
 
 // NewGitleaksReleases starts a GitleaksReleases with no release, closed when
@@ -84,6 +100,7 @@ func (g *GitleaksReleases) serve(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.requests = append(g.requests, r.URL.Path)
+	g.userAgents = append(g.userAgents, r.UserAgent())
 	if g.failWith != 0 {
 		http.Error(w, "failing on purpose", g.failWith)
 		return

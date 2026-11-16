@@ -36,7 +36,7 @@ func TestInfoNamesTheSecretRulesInUse(t *testing.T) {
 			releases := testsupport.NewGitleaksReleases(t)
 			releases.Publish("v99.0.0", testsupport.NewerGitleaksRules(t))
 			dir := filepath.Join(f.root, "cache", "sdd", secrets.CacheDirName)
-			err := secrets.NewUpdater(dir, secrets.NewGitHub(releases.URL, releases.URL, releases.Client), nil).Update(t.Context())
+			err := secrets.NewUpdater(dir, releases.GitHub(), nil).Update(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}

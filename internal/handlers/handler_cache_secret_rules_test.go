@@ -35,7 +35,7 @@ func TestCacheHandlerPruneFetchesSecretRulesPerSetting(t *testing.T) {
 			h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 				CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
 				State:       &recordingStateSweep{},
-				SecretRules: secrets.NewUpdater(dir, secrets.NewGitHub(releases.URL, releases.URL, releases.Client), nil),
+				SecretRules: secrets.NewUpdater(dir, releases.GitHub(), nil),
 			})
 
 			err := h.Prune(t.Context(), &command.PruneCacheCmd{Scheduled: tc.scheduled})
@@ -62,7 +62,7 @@ func TestCacheHandlerPruneGoesOnPastAFailedFetch(t *testing.T) {
 	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
 		State:       &recordingStateSweep{},
-		SecretRules: secrets.NewUpdater(filepath.Join(f.loc.CacheRoot, secrets.CacheDirName), secrets.NewGitHub(releases.URL, releases.URL, releases.Client), nil),
+		SecretRules: secrets.NewUpdater(filepath.Join(f.loc.CacheRoot, secrets.CacheDirName), releases.GitHub(), nil),
 	})
 
 	err := h.Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true})

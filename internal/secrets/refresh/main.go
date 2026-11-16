@@ -46,7 +46,7 @@ func run(ctx context.Context, dir string, out io.Writer) error {
 		return fmt.Errorf("decoding %s: %w", stampPath, err)
 	}
 
-	github := secrets.NewGitHub("", "", nil)
+	github := secrets.NewGitHub(secrets.GitHubOptions{UserAgent: "sdd-refresh-secret-rules"})
 	tag, err := github.LatestTag(ctx)
 	if err != nil {
 		return err
