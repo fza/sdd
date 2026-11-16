@@ -16,13 +16,17 @@ import (
 func (f *appFixture) payloadHook(t *testing.T, configFile, event string) string {
 	t.Helper()
 	hooksDir := filepath.Join(filepath.Dir(configFile), "hooks")
-	f.write(t, filepath.Join(hooksDir, "payload.sh"), "#!/bin/sh\ncat > ../payload.json\n")
-	err := os.Chmod(filepath.Join(f.root, hooksDir, "payload.sh"), 0o755)
+	command := "payload.sh"
+	if filepath.Base(configFile) == "config.local.yaml" {
+		command = "local/payload.sh"
+	}
+	f.write(t, filepath.Join(hooksDir, command), "#!/bin/sh\ncat > ../payload.json\n")
+	err := os.Chmod(filepath.Join(f.root, hooksDir, command), 0o755)
 	if err != nil {
 		t.Fatal(err)
 	}
 	existing := readFile(t, filepath.Join(f.root, configFile))
-	f.write(t, configFile, existing+"hooks:\n  - event: "+event+"\n    command: payload.sh\n")
+	f.write(t, configFile, existing+"hooks:\n  - event: "+event+"\n    command: "+command+"\n")
 	return filepath.Join(f.root, filepath.Dir(configFile), "payload.json")
 }
 

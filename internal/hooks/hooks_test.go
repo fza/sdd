@@ -286,6 +286,49 @@ func TestDeclaredRefusesACommittedHookIntoLocal(t *testing.T) {
 	}
 }
 
+// A machine-local hook runs only a script of its own: one in local/, never
+// the repository's, which a pull would change under it.
+func TestDeclaredRefusesAMachineLocalHookOutsideLocal(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "shared.sh"), "true")
+	script(t, filepath.Join(w.hooksDir(), "local", "mine.sh"), "true")
+	err := os.Symlink(filepath.Join("..", "shared.sh"), filepath.Join(w.hooksDir(), "local", "link.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"shared.sh", "local/link.sh"} {
+		write(t, filepath.Join(w.repo, ".sdd", "config.local.yaml"), "hooks:\n  - event: entry.written\n    command: "+command+"\n")
+		err := declaredErr(t, w)
+		if err == nil || !strings.Contains(err.Error(), "local/") {
+			t.Errorf("a machine-local hook running %s, outside local/, should be refused, got %v", command, err)
+		}
+	}
+}
+
+// Which file a command reaches decides, not how it is spelled: a link into
+// local/, or another case on a case-insensitive file system, is still
+// local/.
+func TestDeclaredRefusesACommittedHookReachingLocalBySpelling(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "local", "mine.sh"), "true")
+	err := os.Symlink(filepath.Join("local", "mine.sh"), filepath.Join(w.hooksDir(), "link.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := []string{"link.sh"}
+	_, statErr := os.Stat(filepath.Join(w.hooksDir(), "Local", "mine.sh"))
+	if statErr == nil {
+		commands = append(commands, "Local/mine.sh")
+	}
+	for _, command := range commands {
+		w.commit(t, "  - event: entry.written\n    command: "+command+"\n")
+		err := declaredErr(t, w)
+		if err == nil || !strings.Contains(err.Error(), "config.local.yaml") {
+			t.Errorf("a committed hook reaching local/ through %s should be refused, got %v", command, err)
+		}
+	}
+}
+
 func TestDeclaredRefusesACommandFileThatCannotRun(t *testing.T) {
 	w := newWorld(t)
 	write(t, filepath.Join(w.hooksDir(), "lint.sh"), "#!/bin/sh\n")

@@ -102,8 +102,12 @@ func HookCommandPath(command string, layer HookLayer) (string, error) {
 		}
 	}
 	file = path.Clean(file)
-	if layer == HookLayerCommitted && (file == HookLocalDir || strings.HasPrefix(file, HookLocalDir+"/")) {
+	inLocal := file == HookLocalDir || strings.HasPrefix(file, HookLocalDir+"/")
+	if layer == HookLayerCommitted && inLocal {
 		return "", fmt.Errorf("command %q runs a script from %s/, which only this machine has; declare the hook in config.local.yaml", command, HookLocalDir)
+	}
+	if layer == HookLayerLocal && !strings.HasPrefix(file, HookLocalDir+"/") {
+		return "", fmt.Errorf("command %q is not a script in %s/; a machine-local hook runs only a script of its own there, never one a pull may change", command, HookLocalDir)
 	}
 	return filepath.FromSlash(file), nil
 }

@@ -127,7 +127,7 @@ func TestHookCommandPathNamesAFileInTheHooksFolder(t *testing.T) {
 		"vale-v3.0_final.py":  "vale-v3.0_final.py",
 		"nested/dir/check.rb": filepath.Join("nested", "dir", "check.rb"),
 	} {
-		got, err := model.HookCommandPath(command, model.HookLayerLocal)
+		got, err := model.HookCommandPath(command, model.HookLayerGlobal)
 		if want == "" {
 			if err == nil {
 				t.Errorf("HookCommandPath(%q) = %q, want a refusal", command, got)
@@ -157,15 +157,24 @@ func TestHookCommandPathRefusesWhatAShellOrPathWouldResolve(t *testing.T) {
 		"~/bin/vale":            `shell character '~'`,
 		"vale\\ --config\\ \"x": `shell character '"'`,
 	} {
-		_, err := model.HookCommandPath(command, model.HookLayerLocal)
+		_, err := model.HookCommandPath(command, model.HookLayerGlobal)
 		if err == nil || !strings.Contains(err.Error(), reason) {
 			t.Errorf("HookCommandPath(%q) = %v, want a refusal naming %q", command, err, reason)
 		}
 	}
 }
 
+func TestHookCommandPathKeepsAMachineLocalHookInLocal(t *testing.T) {
+	for _, command := range []string{"shared.sh", "lint/vale.sh", "local", "localized.sh"} {
+		_, err := model.HookCommandPath(command, model.HookLayerLocal)
+		if err == nil || !strings.Contains(err.Error(), "local/") {
+			t.Errorf("machine-local HookCommandPath(%q) = %v, want a refusal naming local/", command, err)
+		}
+	}
+}
+
 func TestHookCommandPathRefusesACommittedHookIntoLocal(t *testing.T) {
-	for _, command := range []string{"local/mine.sh", "./local/mine.sh", "local"} {
+	for _, command := range []string{"local/mine.sh", "./local/mine.sh"} {
 		_, err := model.HookCommandPath(command, model.HookLayerCommitted)
 		if err == nil || !strings.Contains(err.Error(), "config.local.yaml") {
 			t.Errorf("committed HookCommandPath(%q) = %v, want a refusal naming config.local.yaml", command, err)
@@ -173,6 +182,9 @@ func TestHookCommandPathRefusesACommittedHookIntoLocal(t *testing.T) {
 		if _, err := model.HookCommandPath(command, model.HookLayerLocal); err != nil {
 			t.Errorf("a local hook may run %q, got %v", command, err)
 		}
+	}
+	if _, err := model.HookCommandPath("local", model.HookLayerCommitted); err == nil || !strings.Contains(err.Error(), "config.local.yaml") {
+		t.Errorf("committed HookCommandPath(local) = %v, want a refusal naming config.local.yaml", err)
 	}
 	if _, err := model.HookCommandPath("localized.sh", model.HookLayerCommitted); err != nil {
 		t.Errorf("a committed hook may run a file merely starting with local, got %v", err)
