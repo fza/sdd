@@ -114,97 +114,34 @@ func (m *agentMemory) keep(res *mcp.CallToolResult) {
 // JSON-escaped.
 var nextProof = regexp.MustCompile(`next proof ([0-9a-z]{4}):(?:<|\\u003c)the word right after \\?"(.+?)\\?"(?:>|\\u003e)`)
 
-// wordAfter reads the word right after prompt in the piece tag marks, as the
-// agent looks it up in the text it holds. A result carries several pieces, and
-// the prompt is unique only within its own piece, so an occurrence counts only
-// as the server picks one: a whole word, the next word on the same line after
-// whitespace alone, and no other piece's tag between it and this tag. Of those,
-// the one nearest the tag is the piece's own.
+// wordAfter reads the word right after prompt as a naive agent looks it up in
+// the text it holds: the first spot the prompt stands as a word, and the word
+// after it. The server draws a prompt that occurs once, so this naive lookup
+// is the regression guard of that rule.
 func wordAfter(text, tag, prompt string) (string, bool) {
-	mark := strings.Index(text, model.AnchorMark(tag))
-	if mark < 0 {
+	if !strings.Contains(text, model.AnchorMark(tag)) {
 		return "", false
 	}
-	others := otherTagSpans(text, tag)
-	start, end := sectionAround(text, mark)
-	best, bestOutside, answer := -1, false, ""
+	text = test.Untagged(text)
 	for from := 0; ; {
 		i := strings.Index(text[from:], prompt)
 		if i < 0 {
-			break
+			return "", false
 		}
 		at := from + i
 		from = at + len(prompt)
-		if before, _ := utf8.DecodeLastRuneInString(text[:at]); at > 0 && (unicode.IsLetter(before) || unicode.IsDigit(before)) {
+		before, _ := utf8.DecodeLastRuneInString(text[:at])
+		after, _ := utf8.DecodeRuneInString(text[from:])
+		if (at > 0 && unicode.IsLetter(before)) || unicode.IsLetter(after) {
 			continue
 		}
-		word, ok := nextWordOnLine(text[at+len(prompt):])
-		if !ok || separated(others, at, mark) {
-			continue
+		rest := strings.TrimLeftFunc(text[from:], func(r rune) bool { return !unicode.IsLetter(r) })
+		end := strings.IndexFunc(rest, func(r rune) bool { return !unicode.IsLetter(r) })
+		if end < 0 {
+			end = len(rest)
 		}
-		outside := at < start || at >= end
-		if best < 0 || (bestOutside && !outside) || (outside == bestOutside && abs(at-mark) < abs(best-mark)) {
-			best, bestOutside, answer = at, outside, word
-		}
+		return rest[:end], end > 0
 	}
-	return answer, best >= 0
-}
-
-// sectionAround returns the bounds of the "## " section holding offset at:
-// the prompt is unique within its piece, so an occurrence in the tag's own
-// section is the one.
-func sectionAround(text string, at int) (start, end int) {
-	if i := strings.LastIndex(text[:at], "\n## "); i >= 0 {
-		start = i + 1
-	}
-	end = len(text)
-	if i := strings.Index(text[at:], "\n## "); i >= 0 {
-		end = at + i
-	}
-	return start, end
-}
-
-// nextWordOnLine returns the word that follows rest's leading spaces on the
-// same line; a tag standing between is skipped, as the agent reads past it.
-func nextWordOnLine(rest string) (string, bool) {
-	if r, _ := utf8.DecodeRuneInString(rest); unicode.IsLetter(r) || unicode.IsDigit(r) {
-		return "", false
-	}
-	rest = test.Untagged(rest)
-	trimmed := strings.TrimLeft(rest, " \t")
-	if len(trimmed) == len(rest) {
-		return "", false
-	}
-	end := strings.IndexFunc(trimmed, func(r rune) bool { return !unicode.IsLetter(r) })
-	if end < 0 {
-		end = len(trimmed)
-	}
-	return trimmed[:end], end > 0
-}
-
-// otherTagSpans lists the offsets of every tag in text but tag.
-func otherTagSpans(text, tag string) []int {
-	var at []int
-	for _, proof := range model.ReadAnchors(text) {
-		if proof.Tag == tag {
-			continue
-		}
-		if i := strings.Index(text, model.AnchorMark(proof.Tag)); i >= 0 {
-			at = append(at, i)
-		}
-	}
-	return at
-}
-
-// separated reports whether another piece's tag stands between a and b.
-func separated(others []int, a, b int) bool {
-	lo, hi := min(a, b), max(a, b)
-	for _, o := range others {
-		if o > lo && o < hi {
-			return true
-		}
-	}
-	return false
 }
 
 // resultStrings decodes a JSON result into its string values, the text the

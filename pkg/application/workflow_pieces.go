@@ -42,9 +42,18 @@ func (w *WorkflowSession) BeginCall(held, reread []string) error {
 // ServeText serves a piece of text named name. covers names the entries the
 // text carries whole, which its proof holds too.
 func (w *WorkflowSession) ServeText(name, text string, covers []string) ServedPiece {
-	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(text)}, w.entryPieces(covers),
+	return w.ServeTextIn(name, text, text, covers)
+}
+
+// ServeTextIn is ServeText for a piece joined with others into field, the
+// text one result field carries: its proofs ask for words that occur once
+// in field (model.PlaceAnchorIn).
+func (w *WorkflowSession) ServeTextIn(name, text, field string, covers []string) ServedPiece {
+	// The pointers of held entries a lane carries rotate their next proof;
+	// the lane stays the same piece.
+	served := w.session.ServePiece(engine.Piece{Name: name, Hash: contentHash(model.WithoutProofs(text))}, w.entryPieces(covers),
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
-			return model.PlaceAnchor(text, tag, rnd)
+			return model.PlaceAnchorIn(text, field, tag, rnd)
 		})
 	if served.Held {
 		return ServedPiece{Held: true, Tag: served.Tag, Next: served.Next}
