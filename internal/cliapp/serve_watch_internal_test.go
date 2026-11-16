@@ -16,6 +16,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/internal/secrets"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 )
@@ -208,7 +209,7 @@ func TestServedConfigComesFromOneRead(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		_, _ = clients.llm.Run(ctx, pkgllm.Request{UserPrompt: "ping"})
+		_, _ = clients.llm.Run(secrets.WithNoNewParts(ctx), pkgllm.Request{UserPrompt: "ping"})
 		mu.Lock()
 		defer mu.Unlock()
 		if len(models) == 0 || slices.ContainsFunc(models, func(model string) bool { return model != "read-model" }) {
