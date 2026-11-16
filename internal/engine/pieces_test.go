@@ -232,3 +232,34 @@ func TestServePieceRotatesItsProofs(t *testing.T) {
 		t.Error("spent proofs should stay spent after a restart")
 	}
 }
+
+// A call that records mid-way, as a resume does per move, still holds by the
+// proof it began with, and spends it once.
+func TestAProofSpentMidCallHoldsForTheRestOfIt(t *testing.T) {
+	text := "Draft one entry, dialogue first, then check its grounding against the graph before the write lands."
+	lane := engine.Piece{Name: "lane step", Hash: "h1"}
+	session := newPieceSession(nil)
+	session.BeginCall(nil, nil)
+	served := session.ServePiece(lane, nil, placeIn(text))
+	session.RecordAnchors()
+	if len(served.Anchor.Challenges) < 2 {
+		t.Fatal("a piece served in full should carry later challenges")
+	}
+	proof := model.Proof{Tag: served.Anchor.Tag, Word: served.Anchor.Word}
+	first := model.Proof{Tag: proof.Tag, Word: served.Anchor.Challenges[0].Answer}
+
+	// The call also lists the first challenge's answer: once its proof is
+	// spent mid-call, that answer must not spend the tag a second time.
+	session.BeginCall([]model.Proof{proof, first}, nil)
+	for range 2 {
+		if pointed := session.ServePiece(lane, nil, placeIn(text)); !pointed.Held || pointed.Next != served.Anchor.Challenges[0].Prompt {
+			t.Fatalf("the call's proof should hold the piece after a record mid-call, got %+v", pointed)
+		}
+		session.RecordAnchors()
+	}
+
+	session.BeginCall([]model.Proof{first}, nil)
+	if _, held := session.Holds(lane); !held {
+		t.Error("the first challenge's answer should prove the piece: the call spent its proof once")
+	}
+}
