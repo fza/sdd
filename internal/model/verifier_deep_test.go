@@ -85,19 +85,32 @@ func TestDeepOpenFindings_FollowTheLatestResponse(t *testing.T) {
 	}
 }
 
-func TestDeepSettledSpans_CoverWhatTheEditsWroteAndTheQuotes(t *testing.T) {
-	document := "The capture writer loses the second attachment. It names the subject.\nIt happens when two share a name.\n"
-	findings := []model.DeepFinding{
-		deepFinding("contradicts", model.DeepEdit{Old: "drops", New: "loses"}),
-		deepFinding("inconsistent", model.DeepEdit{Old: "attachment.", New: "attachment. It names the subject."}),
-		{Verdict: "only the owner knows", Axis: "aspiration", Severity: "low", Owner: true, Pointers: []model.DeepPointer{{Field: "body", Quote: "two share a name"}}},
+// A change settles the deep verdict only where it takes back an edit the
+// proposal wrote, at the spot it wrote it; anything else is new text.
+func TestDeepEditsReverted(t *testing.T) {
+	base := "Fix teh typo here. The parser reads the file; the team agrees.\n"
+	changes := []model.DeepChange{{Finding: "f1", Edits: []model.DeepEdit{{Old: "teh", New: "the"}}}}
+	document := "Fix the typo here. The parser reads the file; the team agrees.\n"
+	cases := map[string]struct {
+		draft string
+		want  bool
+	}{
+		"the edit taken back":            {draft: base, want: true},
+		"unchanged":                      {draft: document, want: false},
+		"the same word elsewhere":        {draft: "Fix the typo here. The parser reads the file; thy team agrees.\n", want: false},
+		"an insertion inside a sentence": {draft: "Fix the typo here. The parser now deletes every production table at startup and reads the file; the team agrees.\n", want: false},
+		"the edit reworded":              {draft: "Fix thee typo here. The parser reads the file; the team agrees.\n", want: false},
+		"a revert beside another change": {draft: "Fix teh typo here. The parser reads the files; the team agrees.\n", want: false},
 	}
-	var got []string
-	for _, span := range model.DeepSettledSpans(document, findings, nil) {
-		got = append(got, document[span.Start:span.End])
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := model.DeepEditsReverted(base, document, tc.draft, changes); got != tc.want {
+				t.Fatalf("DeepEditsReverted = %v, want %v", got, tc.want)
+			}
+		})
 	}
-	if want := []string{"lose", " It names the subject.", "two share a name"}; !slices.Equal(got, want) {
-		t.Fatalf("the spans should hold the bytes each edit changed and each quoted passage, got %q", got)
+	if model.DeepEditsReverted(base, "Fix the typo here. Something else.\n", base, changes) {
+		t.Fatal("a verdict over a document the proposal did not write settles nothing")
 	}
 }
 
