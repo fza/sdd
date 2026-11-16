@@ -86,19 +86,39 @@ func TestDeepOpenFindings_FollowTheLatestResponse(t *testing.T) {
 	}
 }
 
-func TestDeepSettledSpans_CoverWhatTheEditsWroteAndTheQuotes(t *testing.T) {
-	document := "The capture writer loses the second attachment. It names the subject.\nIt happens when two share a name.\n"
-	findings := []model.DeepFinding{
-		deepFinding("contradicts", model.DeepEdit{Old: "drops", New: "loses"}),
-		deepFinding("inconsistent", model.DeepEdit{Old: "attachment.", New: "attachment. It names the subject."}),
-		{Verdict: "only the owner knows", Axis: "aspiration", Severity: "low", Owner: true, Pointers: []model.DeepPointer{{Field: "body", Quote: "two share a name"}}},
+func TestDeepEditSettled_OnlyARevertOrRestoreWhereTheEditApplied(t *testing.T) {
+	base := "The parser reads one file.\nIt skips the team notes.\n"
+	changes := []model.DeepChange{
+		{Finding: "f1", Outcome: model.DeepApplied, Edits: []model.DeepEdit{{Old: "one", New: "the"}}},
+		{Finding: "f2", Outcome: model.DeepApplied, Edits: []model.DeepEdit{{Old: "reads", New: "reads and checks"}}},
 	}
-	var got []string
-	for _, span := range model.DeepSettledSpans(document, findings, nil) {
-		got = append(got, document[span.Start:span.End])
+	proposal := "The parser reads and checks the file.\nIt skips the team notes.\n"
+	firstReverted := "The parser reads and checks one file.\nIt skips the team notes.\n"
+	cases := []struct {
+		name, document, draft string
+		changes               []model.DeepChange
+		settled               bool
+	}{
+		{name: "one edit reverted", document: proposal, draft: firstReverted, settled: true},
+		{name: "every edit reverted", document: proposal, draft: base, settled: true},
+		{name: "a reverted edit restored", document: firstReverted, draft: proposal, settled: true},
+		{name: "an insertion inside an edit's text", document: proposal, draft: "The parser reads and now deletes every table and checks the file.\nIt skips the team notes.\n"},
+		{name: "an edit's interior replaced", document: proposal, draft: "The parser reads and ignores the file.\nIt skips the team notes.\n"},
+		{name: "an edit partly reverted", document: proposal, draft: "The parser reads and the file.\nIt skips the team notes.\n"},
+		{name: "another occurrence of an edit's text", document: proposal, draft: "The parser reads and checks the file.\nIt skips thy team notes.\n"},
+		{name: "a document no proposal variant", document: "The parser reads and checks the file.\nIt skips notes.\n", draft: proposal},
+		{name: "edits that no longer apply", document: proposal, draft: firstReverted, changes: []model.DeepChange{{Finding: "f1", Outcome: model.DeepApplied, Edits: []model.DeepEdit{{Old: "absent", New: "the"}}}}},
 	}
-	if want := []string{"lose", " It names the subject.", "two share a name"}; !slices.Equal(got, want) {
-		t.Fatalf("the spans should hold the bytes each edit changed and each quoted passage, got %q", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			edits := changes
+			if tc.changes != nil {
+				edits = tc.changes
+			}
+			if got := model.DeepEditSettled(base, edits, tc.document, tc.draft); got != tc.settled {
+				t.Fatalf("settled should be %v for a draft that %s, got %v", tc.settled, tc.name, got)
+			}
+		})
 	}
 }
 

@@ -79,17 +79,33 @@ func TestCaptureDeep_AChangeAfterTheVerdictGoesToTheLiveVerifier(t *testing.T) {
 	}
 }
 
-// An adjust that rewords only what the verifier wrote stays settled: neither
-// the writing guide's delta check nor the verifier judges it again.
-func TestCaptureDeep_AnAdjustOfTheVerifiersWordsStaysSettled(t *testing.T) {
+// An adjust that reverts the verifier's edit stays settled: neither the
+// writing guide's delta check nor the verifier judges it again.
+func TestCaptureDeep_ARevertOfTheVerifiersEditStaysSettled(t *testing.T) {
 	world, session := newDeepWorld(t, "deep-revision-settled", sdd.VerifierPolicy{})
 	x := startDeep(t, world, session, captureDraft())
 	x.judge(t, subjectFinding("observes something."))
 	proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
-	serve := x.settleWithAChange(t, "A tactical gap: the fixture observes something. It names its subject.")
+	serve := x.settleWithAChange(t, "A tactical gap: the fixture observes something.")
 	proctest.RequireStep(t, serve, "verifySummary")
 	if got := world.LLM.Calls("writing-guide"); got != 1 {
-		t.Fatalf("the guide should judge the approved draft once and leave the reworded verifier sentence alone, ran %d times", got)
+		t.Fatalf("the guide should judge the approved draft once and leave the reverted verifier sentence alone, ran %d times", got)
+	}
+}
+
+// New words inside the verifier's edit are no revert: they go to the verifier.
+func TestCaptureDeep_NewWordsInsideTheVerifiersEditGoToTheVerifier(t *testing.T) {
+	for _, body := range []string{
+		"A tactical gap: the fixture observes something. It names its subject.",
+		"A tactical gap: the fixture observes something. It names the subject and deletes every table at startup.",
+	} {
+		t.Run(body, func(t *testing.T) {
+			world, session := newDeepWorld(t, "deep-revision-reworded", sdd.VerifierPolicy{})
+			x := startDeep(t, world, session, captureDraft())
+			x.judge(t, subjectFinding("observes something."))
+			proctest.RequireStep(t, x.pickUp(t), "deepAnswer")
+			proctest.RequireStep(t, x.settleWithAChange(t, body), "deepWait")
+		})
 	}
 }
 
