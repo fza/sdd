@@ -254,7 +254,7 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 				if err != nil {
 					return err
 				}
-				manifest.MaxRunes = maxRunes
+				manifest.SetMaxRunes(maxRunes)
 				if err := manifest.Save(h.indexDir); err != nil {
 					return err
 				}
@@ -273,6 +273,16 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 	if err != nil {
 		return err
 	}
+	if manifest.PrevMaxRunes != nil || manifest.MaxRunes != maxRunes {
+		if err := session.Commit(ctx, func(_ *index.Index, manifest *index.Manifest) error {
+			if !manifest.SettleMaxRunes(maxRunes) {
+				return nil
+			}
+			return manifest.Save(h.indexDir)
+		}); err != nil {
+			return fmt.Errorf("settling the rune cap: %w", err)
+		}
+	}
 	if err := index.RefreshSegments(ctx, h.indexDir); errors.Is(err, index.ErrLockBusy) {
 		slogutils.FromContext(ctx).Info("index store busy, search segments left to the next fill", "index", h.indexDir)
 	} else if err != nil {
@@ -284,9 +294,6 @@ func (h *IndexHandler) indexEntries(ctx context.Context, run indexRun) (err erro
 	return nil
 }
 
-// currentEntryHashes maps every indexable entry of the graph to its state hash
-// under maxRunes — the checkout's current versions, which the skip pass and
-// version grouping compare against.
 // CurrentHashes returns the state hash under maxRunes of every entry the
 // checkout's search reads, by entry ID: the versions cache pruning keeps
 // (CurrentHashSource).
@@ -298,6 +305,9 @@ func (h *IndexHandler) CurrentHashes(ctx context.Context, maxRunes int) (map[str
 	return h.currentEntryHashes(ctx, g, maxRunes)
 }
 
+// currentEntryHashes maps every indexable entry of the graph to its state hash
+// under maxRunes — the versions a fill writes, which its skip pass compares
+// against.
 func (h *IndexHandler) currentEntryHashes(ctx context.Context, g *model.Graph, maxRunes int) (map[string]string, error) {
 	hashes := make(map[string]string, len(g.Entries))
 	for _, entry := range g.Entries {
@@ -381,7 +391,7 @@ func (h *IndexHandler) DropVersions(ctx context.Context, cmd *command.DropIndexV
 		if err != nil {
 			return fmt.Errorf("loading manifest: %w", err)
 		}
-		current, err := h.currentEntryHashes(ctx, g, manifest.MaxRunes)
+		current, err := chunking.ReadableEntryHashes(ctx, g.Entries, h.attachments, manifest, h.excludeEmbedded)
 		if err != nil {
 			return err
 		}

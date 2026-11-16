@@ -21,16 +21,9 @@ func (f *Finder) IndexVersions(ctx context.Context, q query.IndexVersionsQuery) 
 	attachments := chunking.DiskAttachmentReader{GraphDir: q.GraphDir}
 	result := &query.IndexVersionsResult{Label: q.Label, IndexDir: q.IndexDir}
 	err = index.ReadManifestLocked(ctx, q.IndexDir, func(manifest *index.Manifest) error {
-		current := make(map[string]string, len(g.Entries))
-		for _, entry := range g.Entries {
-			if !chunking.IncludeEntry(entry, q.ExcludeEmbedded) {
-				continue
-			}
-			hash, err := chunking.EntryStateHashCapped(ctx, entry, attachments, manifest.MaxRunes)
-			if err != nil {
-				return err
-			}
-			current[entry.ID] = hash
+		current, err := chunking.ReadableEntryHashes(ctx, g.Entries, attachments, manifest, q.ExcludeEmbedded)
+		if err != nil {
+			return err
 		}
 		total, err := index.StoreSize(q.IndexDir)
 		if err != nil {

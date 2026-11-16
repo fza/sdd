@@ -85,7 +85,11 @@ func (f *SearchFinder) VectorAvailable() bool {
 // StoredMaxRunes is the rune cap the index store's rows were chunked under,
 // zero for a store without a manifest or a recorded cap.
 func (f *SearchFinder) StoredMaxRunes() (int, error) {
-	return f.newVersionFreshness().maxRunes()
+	m, err := f.newVersionFreshness().readManifest()
+	if err != nil {
+		return 0, err
+	}
+	return m.MaxRunes, nil
 }
 
 // Search dispatches the query to the appropriate mode.
@@ -416,18 +420,14 @@ func (v *versionFreshness) loadManifest() (*index.Manifest, error) {
 	return v.manifest, nil
 }
 
-// maxRunes is the cap the store's rows were chunked under, read from the
-// manifest and never calibrated here. A store with no manifest (an in-memory
-// index) has no cap to read and compares uncapped hashes.
-func (v *versionFreshness) maxRunes() (int, error) {
+// readManifest is the manifest whose caps and versions decide which version
+// a search reads, never a fresh calibration. A store with no manifest (an
+// in-memory index) reads as one with no cap and no versions: uncapped hashes.
+func (v *versionFreshness) readManifest() (*index.Manifest, error) {
 	if v.indexDir == "" {
-		return 0, nil
+		return &index.Manifest{}, nil
 	}
-	m, err := v.loadManifest()
-	if err != nil {
-		return 0, err
-	}
-	return m.MaxRunes, nil
+	return v.loadManifest()
 }
 
 func (v *versionFreshness) fresh(ctx context.Context, entry *model.Entry, hit index.Hit) (bool, error) {
@@ -449,16 +449,15 @@ func (v *versionFreshness) fresh(ctx context.Context, entry *model.Entry, hit in
 	}
 	cur, ok := v.current[entry.ID]
 	if !ok {
-		maxRunes, err := v.maxRunes()
+		m, err := v.readManifest()
 		if err != nil {
 			return false, err
 		}
-		h, err := chunking.EntryStateHashCapped(ctx, entry, v.attachments, maxRunes)
+		cur, err = chunking.ReadableManifestHash(ctx, entry, v.attachments, m)
 		if err != nil {
 			return false, err
 		}
-		cur = h
-		v.current[entry.ID] = h
+		v.current[entry.ID] = cur
 	}
 	return version == cur, nil
 }

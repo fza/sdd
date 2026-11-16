@@ -153,3 +153,66 @@ func TestSearchEntriesFinderChecksPublicationAtStoredCap(t *testing.T) {
 		})
 	}
 }
+
+// indexedAt stamps a version with its cap, so a group's Newest names it.
+func indexedAt(maxRunes int) time.Time {
+	return time.Date(2026, 9, 1, 0, 0, maxRunes, 0, time.UTC)
+}
+
+func TestIndexVersionsDuringReembedKeepsTheReadVersionCurrent(t *testing.T) {
+	t.Parallel()
+	const oldCap, newCap = 1024, 2048
+	cases := []struct {
+		name string
+		// storedCaps are the caps the entry has versions under.
+		storedCaps []int
+		// wantCurrentCap is the cap of the version that should be current.
+		wantCurrentCap int
+		wantBranch     int
+	}{
+		{name: "version under the previous cap only is current", storedCaps: []int{oldCap}, wantCurrentCap: oldCap},
+		{name: "version under the new cap supersedes the previous one", storedCaps: []int{oldCap, newCap}, wantCurrentCap: newCap, wantBranch: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			graphDir := writeCapEntry(t)
+			indexDir := t.TempDir()
+			f := finders.New(finders.Options{Config: &model.PerRepoConfig{}})
+			g, err := f.CurrentGraph(graphDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := index.LoadManifest(indexDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest.MaxRunes = oldCap
+			manifest.SetMaxRunes(newCap)
+			for _, maxRunes := range tc.storedCaps {
+				hash, err := chunking.EntryStateHashCapped(ctx, g.ByID[capEntryID], chunking.DiskAttachmentReader{GraphDir: graphDir}, maxRunes)
+				if err != nil {
+					t.Fatal(err)
+				}
+				manifest.AddVersion(capEntryID, index.EntryVersion{Hash: hash, Fingerprint: "fp", Derivation: index.DerivationCurrent, IndexedAt: indexedAt(maxRunes)})
+			}
+			if err := manifest.Save(indexDir); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := f.IndexVersions(ctx, query.IndexVersionsQuery{Label: "local", GraphDir: graphDir, IndexDir: indexDir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			groups := map[string]query.IndexVersionGroup{}
+			for _, group := range result.Groups {
+				groups[group.Name] = group
+			}
+			current := groups[index.GroupCurrent]
+			if current.Versions != 1 || !current.Newest.Equal(indexedAt(tc.wantCurrentCap)) || groups[index.GroupBranch].Versions != tc.wantBranch {
+				t.Errorf("the version search reads should be current and only it, got groups %+v", groups)
+			}
+		})
+	}
+}
