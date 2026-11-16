@@ -451,7 +451,9 @@ func GraphRepoRoot(graphDir string) (string, error) {
 	if err != nil || !info.IsDir() {
 		return "", fmt.Errorf("%s: %w", graphDir, ErrGraphRepoMissing)
 	}
-	out, err := exec.Command("git", "-C", graphDir, "rev-parse", "--show-toplevel").Output()
+	probe := exec.Command("git", "-C", graphDir, "rev-parse", "--show-toplevel")
+	probe.Env = pathEnv()
+	out, err := probe.Output()
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", graphDir, ErrGraphRepoMissing)
 	}

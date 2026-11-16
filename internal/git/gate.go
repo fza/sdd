@@ -100,7 +100,7 @@ func (c CLI) branchRemote(ctx context.Context) (string, error) {
 	if err != nil || branch == "" {
 		return "", err
 	}
-	out, err := gitOutput(ctx, c.at("config", "--get", "branch."+branch+".remote")...)
+	out, err := c.output(ctx, "config", "--get", "branch."+branch+".remote")
 	if errExitCode(err) == 1 {
 		return "", nil
 	}

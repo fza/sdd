@@ -302,3 +302,57 @@ func TestRepoRootFor(t *testing.T) {
 		t.Errorf("a path outside a repository must report no root, got %q", outside)
 	}
 }
+
+// The path-located calls sync adds reach the repository at the path under an
+// inherited GIT_DIR too.
+func TestSyncLocatorsIgnoreAnInheritedGitDir(t *testing.T) {
+	work := newTestRepo(t)
+	sidecar := newTestRepo(t)
+	graphDir := filepath.Join(sidecar, "graph")
+	if err := os.MkdirAll(graphDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, sidecar, "remote", "add", "sidecar-remote", "https://example.test/sidecar.git")
+	branch := strings.TrimSpace(runGit(t, sidecar, "symbolic-ref", "--short", "HEAD"))
+	runGit(t, sidecar, "config", "branch."+branch+".remote", "sidecar-remote")
+	runGit(t, sidecar, "commit", "-q", "--allow-empty", "-m", "sidecar only")
+	runGit(t, sidecar, "update-ref", "refs/remotes/sidecar-remote/"+branch, "HEAD")
+	sidecarHead := strings.TrimSpace(runGit(t, sidecar, "rev-parse", "HEAD"))
+	fresh := filepath.Join(t.TempDir(), "fresh")
+	repo := CLI{Dir: sidecar}
+	t.Chdir(work)
+	t.Setenv("GIT_DIR", filepath.Join(work, ".git"))
+
+	root, rootErr := GraphRepoRoot(graphDir)
+	unpushed, unpushedErr := repo.HoldsUnpushed(t.Context())
+	url, urlErr := repo.UpstreamURL(t.Context())
+	head, combinedErr := repo.combined(t.Context(), nil, "", "rev-parse", "HEAD")
+	tagErr := run(t.Context(), sidecar, "tag", "probe")
+	initErr := run(t.Context(), "", "init", "--quiet", fresh)
+	if err := os.Unsetenv("GIT_DIR"); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := filepath.EvalSymlinks(sidecar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootErr != nil || (root != resolved && root != sidecar) {
+		t.Errorf("GraphRepoRoot should name the repository at the path, got %q (%v)", root, rootErr)
+	}
+	if unpushedErr != nil || unpushed {
+		t.Errorf("HoldsUnpushed should read the repository at the path, got %v (%v)", unpushed, unpushedErr)
+	}
+	if urlErr != nil || url != "https://example.test/sidecar.git" {
+		t.Errorf("UpstreamURL should read the repository at the path, got %q (%v)", url, urlErr)
+	}
+	if combinedErr != nil || strings.TrimSpace(head) != sidecarHead {
+		t.Errorf("a combined call should run in the repository at the path, got %q (%v)", head, combinedErr)
+	}
+	if tagErr != nil || strings.TrimSpace(runGit(t, sidecar, "tag", "--list", "probe")) != "probe" {
+		t.Errorf("a run should reach the repository at the path: %v", tagErr)
+	}
+	if _, err := os.Stat(filepath.Join(fresh, ".git")); initErr != nil || err != nil {
+		t.Errorf("a run initializing a path should create the repository there: %v, %v", initErr, err)
+	}
+}

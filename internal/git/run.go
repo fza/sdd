@@ -13,13 +13,17 @@ func run(ctx context.Context, dir string, args ...string) error {
 	return runEnv(ctx, nil, dir, args...)
 }
 
-// runEnv is run with env; nil inherits the process environment.
+// runEnv is run with env; nil is the process environment without the
+// repository variables (pathEnv): every run names its repository by path.
 func runEnv(ctx context.Context, env []string, dir string, args ...string) error {
 	verb := args[0]
 	if dir != "" {
 		args = append([]string{"-C", dir}, args...)
 	}
 	cmd := exec.CommandContext(ctx, "git", args...)
+	if env == nil {
+		env = pathEnv()
+	}
 	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
