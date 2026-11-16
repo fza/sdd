@@ -112,13 +112,17 @@ type response struct {
 	} `json:"usage"`
 }
 
-// StatusError is a non-2xx reply; RetryAfter carries a 429's Retry-After.
+// StatusError is a non-2xx reply; RetryAfter carries a 429's Retry-After,
+// at most maxRetryAfter.
 type StatusError struct {
 	Status     int
 	Code       string
 	Message    string
 	RetryAfter time.Duration
 }
+
+// RetryDelay is the delay a 429 asks for, zero for none.
+func (e *StatusError) RetryDelay() time.Duration { return e.RetryAfter }
 
 func (e *StatusError) Error() string {
 	text := fmt.Sprintf("cohere rerank: HTTP %d", e.Status)
@@ -214,10 +218,13 @@ func statusError(resp *http.Response, raw []byte) error {
 	}
 	seconds, err := strconv.Atoi(resp.Header.Get("Retry-After"))
 	if err == nil && seconds > 0 {
-		out.RetryAfter = time.Duration(seconds) * time.Second
+		out.RetryAfter = time.Duration(min(seconds, int(maxRetryAfter/time.Second))) * time.Second
 	}
 	return out
 }
+
+// maxRetryAfter caps the delay a Retry-After asks for.
+const maxRetryAfter = time.Hour
 
 // maxDetail bounds the reply text an error carries.
 const maxDetail = 512

@@ -43,6 +43,39 @@ func RateLimited(s Scorer, rps float64) Scorer {
 	}}
 }
 
+// RetryDelayer is an error asking for a delay before the next call, as a
+// 429's Retry-After does.
+type RetryDelayer interface {
+	error
+	RetryDelay() time.Duration
+}
+
+// RetriedAfterDelay calls once more after a failure whose RetryDelayer asks
+// for a delay of at most maxWait that ends before ctx's deadline; any other
+// failure returns as it came.
+func RetriedAfterDelay(s Scorer, maxWait time.Duration) Scorer {
+	return decorated{Scorer: s, score: func(ctx context.Context, request Request) (Result, error) {
+		result, err := s.Score(ctx, request)
+		delayer, ok := errors.AsType[RetryDelayer](err)
+		if !ok {
+			return result, err
+		}
+		delay := delayer.RetryDelay()
+		deadline, bounded := ctx.Deadline()
+		if delay <= 0 || delay > maxWait || bounded && time.Until(deadline) <= delay {
+			return result, err
+		}
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return result, err
+		case <-timer.C:
+		}
+		return s.Score(ctx, request)
+	}}
+}
+
 // Observed hands one llm.CallStat per call to sink, as llm.Observed does;
 // Items is the number of candidates. A nil sink returns s unwrapped.
 func Observed(s Scorer, sink llm.StatsSink) Scorer {

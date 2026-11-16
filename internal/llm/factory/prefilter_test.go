@@ -1,6 +1,9 @@
 package factory_test
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -80,5 +83,28 @@ func TestNewPrefilter_DefaultModelNamesTheJudge(t *testing.T) {
 	}
 	if generate.Judge != "generate:"+model.DefaultLLMModel {
 		t.Fatalf("judge %q should name the default model", generate.Judge)
+	}
+}
+
+// A dedicated judge asked to wait by a 429 calls once more within its timeout.
+func TestNewPrefilter_RetriesAfterTheDelayA429AsksFor(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = io.WriteString(w, `{"results":[{"index":0,"relevance_score":0.5}]}`)
+	}))
+	t.Cleanup(server.Close)
+	prefilter, err := factory.NewPrefilter(model.LLMPrefilterConfig{Provider: "cohere", Endpoint: server.URL, APIKeys: map[string]string{"cohere": "k"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = prefilter.Scorer.Score(t.Context(), relevance.Request{Subject: "draft", Candidates: []relevance.Candidate{{ID: "a", Text: "candidate"}}})
+	if err != nil || calls != 2 {
+		t.Fatalf("%d calls, error %v: the judge should call once more after the delay", calls, err)
 	}
 }
