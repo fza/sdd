@@ -69,7 +69,7 @@ func TestScore_RanksEveryCandidateAgainstTheDraftInOneCall(t *testing.T) {
 	if result.Usage.InputTokens != 42 || result.Usage.CostUSD != 0.0004 || result.Identity.Model != cohere.DefaultModel || result.Identity.Provider != "opper" {
 		t.Errorf("result %+v should carry the reported usage and identity", result)
 	}
-	if scorer.Direction() != relevance.Forward || scorer.MaxBatch() != cohere.MaxBatch || scorer.MaxPairTokens() != cohere.MaxPairTokens {
+	if scorer.Direction() != relevance.Forward || scorer.MaxBatch() != cohere.MaxBatch {
 		t.Error("a reranker scores one direction, up to its batch size, each pair within its window")
 	}
 }
@@ -98,6 +98,8 @@ func TestScore_RefusesMalformedReplies(t *testing.T) {
 		"index twice":        `{"results":[{"index":0,"relevance_score":0.5},{"index":1,"relevance_score":0.5},{"index":0,"relevance_score":0.4}]}`,
 		"no score":           `{"results":[{"index":0},{"index":1,"relevance_score":0.5}]}`,
 		"score above one":    `{"results":[{"index":0,"relevance_score":1.5},{"index":1,"relevance_score":0.5}]}`,
+		"no index":           `{"results":[{"relevance_score":0.5},{"index":1,"relevance_score":0.5}]}`,
+		"negative index":     `{"results":[{"index":-1,"relevance_score":0.5},{"index":0,"relevance_score":0.5},{"index":1,"relevance_score":0.5}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) })
@@ -106,6 +108,20 @@ func TestScore_RefusesMalformedReplies(t *testing.T) {
 				t.Fatalf("error %v should report a malformed answer", err)
 			}
 		})
+	}
+}
+
+// The pair window counts the instruction the query carries before the draft,
+// so a pair that fits only without it goes to the reader uncut.
+func TestPlan_CountsTheInstructionInThePairWindow(t *testing.T) {
+	scorer := serve(t, func(http.ResponseWriter, *http.Request) {})
+	subject := "kind: gap\n\nThe draft text."
+	room := cohere.MaxPairTokens - relevance.EstimateTokens(subject)
+	fits := strings.Repeat("x", 3*(room-relevance.EstimateTokens(cohere.Instruction)))
+	past := strings.Repeat("x", 3*room)
+	_, oversize := relevance.Plan(scorer, subject, []relevance.Candidate{{ID: "fits", Text: fits}, {ID: "past", Text: past}})
+	if len(oversize) != 1 || oversize[0] != 1 {
+		t.Fatalf("oversize %v: only the pair past the window with the instruction should be left out", oversize)
 	}
 }
 

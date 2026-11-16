@@ -31,7 +31,8 @@ const (
 	// MaxBatch is the documents one rerank call takes.
 	MaxBatch = 1000
 	// MaxPairTokens is the window rerank reads the query and one document in;
-	// a longer pair would be cut, so Plan leaves it to the reader.
+	// a longer pair would be cut, so Plan leaves it to the reader. The
+	// query's Instruction takes its share.
 	MaxPairTokens = 4096
 )
 
@@ -92,7 +93,7 @@ func New(options Options) (*Scorer, error) {
 func (s *Scorer) Direction() relevance.Direction { return relevance.Forward }
 func (s *Scorer) MaxBatch() int                  { return MaxBatch }
 func (s *Scorer) MaxInputTokens() int            { return 0 }
-func (s *Scorer) MaxPairTokens() int             { return MaxPairTokens }
+func (s *Scorer) MaxPairTokens() int             { return MaxPairTokens - relevance.EstimateTokens(Instruction) }
 
 type request struct {
 	Model     string   `json:"model"`

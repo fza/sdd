@@ -194,7 +194,7 @@ func (s *Scorer) Score(ctx context.Context, req relevance.Request) (relevance.Re
 	result := relevance.Result{Scores: make([]float64, len(req.Candidates)), Identity: identity, Usage: usage}
 	for i := range req.Candidates {
 		answer, ok := decoded.Answers["q"+strconv.Itoa(i)]
-		if !ok || answer.Noul == nil {
+		if !ok || answer.Type != "noul" || answer.Noul == nil {
 			return relevance.Result{}, s.attribute(&llm.MalformedAnswerError{Text: string(raw), Err: fmt.Errorf("systemone: no noul answer for candidate %s", req.Candidates[i].ID)}, usage)
 		}
 		result.Scores[i] = *answer.Noul

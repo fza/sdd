@@ -101,10 +101,11 @@ func TestScore_ValidationErrorKeepsItsDetail(t *testing.T) {
 
 func TestScore_RefusesMalformedReplies(t *testing.T) {
 	for name, body := range map[string]string{
-		"not JSON":         `<html>bad gateway</html>`,
-		"missing answer":   `{"answers":{"q0":{"type":"noul","noul":0.5}}}`,
-		"answer without p": `{"answers":{"q0":{"type":"noul"},"q1":{"type":"noul","noul":0.5}}}`,
-		"p outside [0, 1]": `{"answers":{"q0":{"type":"noul","noul":1.5},"q1":{"type":"noul","noul":0.5}}}`,
+		"not JSON":               `<html>bad gateway</html>`,
+		"missing answer":         `{"answers":{"q0":{"type":"noul","noul":0.5}}}`,
+		"answer without p":       `{"answers":{"q0":{"type":"noul"},"q1":{"type":"noul","noul":0.5}}}`,
+		"p outside [0, 1]":       `{"answers":{"q0":{"type":"noul","noul":1.5},"q1":{"type":"noul","noul":0.5}}}`,
+		"answer of another type": `{"answers":{"q0":{"type":"bool","noul":0.9},"q1":{"type":"noul","noul":0.5}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) })
