@@ -199,14 +199,14 @@ func (h *Handler) targetHome(ctx context.Context, cmd *command.MoveGraphCmd) (gr
 			root = filepath.Join(cmd.WorkRoot, root)
 		}
 		home.root = filepath.Clean(root)
-		if within(home.root, cmd.WorkRoot) || within(cmd.WorkRoot, home.root) {
+		if meta.WithinDir(cmd.WorkRoot, home.root) || meta.WithinDir(home.root, cmd.WorkRoot) {
 			return graphHome{}, fmt.Errorf("--project-dir %s overlaps this repository; the graph needs a repository of its own beside it", target.Address)
 		}
 		repoRoot, err := h.projectRepos.RootOf(home.root)
 		if err != nil {
 			return graphHome{}, err
 		}
-		if repoRoot != "" && !sameDir(repoRoot, home.root) {
+		if repoRoot != "" && !meta.SameDir(repoRoot, home.root) {
 			return graphHome{}, fmt.Errorf("--project-dir %s lies inside the repository at %s; the graph needs a repository of its own", target.Address, repoRoot)
 		}
 		home.location = model.GitPathLocation(target.Address, home.graphDir)
@@ -935,7 +935,7 @@ func (h *Handler) carryFrom(ctx context.Context, cmd *command.MoveGraphCmd, proj
 		formerPaths = append(formerPaths, filepath.Join(formerPrefix, rel))
 		carried = append(carried, filepath.Join(home.graphDir, rel))
 	}
-	if sameDir(formerRoot, home.root) {
+	if meta.SameDir(formerRoot, home.root) {
 		for i := range formerPaths {
 			err = current.MoveTracked(ctx, formerPaths[i], carried[i])
 			if err != nil {

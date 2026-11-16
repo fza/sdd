@@ -244,20 +244,50 @@ func TestProjectDirMustNameAProjectThatDoesNotPointOn(t *testing.T) {
 // through graph_dir would split commits, schema and branches across two
 // repositories.
 func TestGraphDirIntoAnotherRepositoryIsRefused(t *testing.T) {
-	project, sidecar := twoRepos(t)
-	writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: "+filepath.Join(sidecar, "graph")+"\nrepo_id: example.test/project\ndefault_branch: main\n")
-	writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
-
-	_, err := runAppErr(t, project,
-		"new", "signal", "tactical", "A graph reached across repositories must be refused.",
-		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.", "--title", "Refused capture",
-	)
-
-	if err == nil || !strings.Contains(err.Error(), "project_dir") {
-		t.Fatalf("a graph_dir into another repository should be refused naming project_dir: %v", err)
+	cases := []struct {
+		name           string
+		throughSymlink bool
+		nested         bool
+	}{
+		{name: "path into the other repository"},
+		{name: "symlink in the project leading there", throughSymlink: true},
+		{name: "repository of its own inside the project", nested: true},
 	}
-	if entries := graphEntries(t, filepath.Join(sidecar, "graph")); len(entries) != 0 {
-		t.Errorf("a refused capture should write nothing, found %v", entries)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			project, sidecar := twoRepos(t)
+			graphDir := filepath.Join(sidecar, "graph")
+			if tc.throughSymlink {
+				err := os.Symlink(graphDir, filepath.Join(project, "graph"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				graphDir = "graph"
+			}
+			if tc.nested {
+				sidecar = filepath.Join(project, "nested")
+				graphDir = "nested/graph"
+				err := os.MkdirAll(filepath.Join(sidecar, "graph"), 0o755)
+				if err != nil {
+					t.Fatal(err)
+				}
+				initRepo(t, sidecar)
+			}
+			writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "graph_dir: "+graphDir+"\nrepo_id: example.test/project\ndefault_branch: main\n")
+			writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\n")
+
+			_, err := runAppErr(t, project,
+				"new", "signal", "tactical", "A graph reached across repositories must be refused.",
+				"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.", "--title", "Refused capture",
+			)
+
+			if err == nil || !strings.Contains(err.Error(), "project_dir") {
+				t.Fatalf("a graph_dir into another repository should be refused naming project_dir: %v", err)
+			}
+			if entries := graphEntries(t, filepath.Join(sidecar, "graph")); len(entries) != 0 {
+				t.Errorf("a refused capture should write nothing, found %v", entries)
+			}
+		})
 	}
 }
 
@@ -390,6 +420,15 @@ func TestInitRefusesAPointerItCannotHonour(t *testing.T) {
 			prepare: func(t *testing.T, work, project string) {
 				removeWorkSDD(t, work)
 				writeFile(t, filepath.Join(project, ".sdd", "config.yaml"), "project_dir: ../work\n")
+			},
+			args:    []string{"init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada"},
+			mention: "sets project_dir itself",
+		},
+		{
+			name: "project pointing on through its local file",
+			prepare: func(t *testing.T, work, project string) {
+				removeWorkSDD(t, work)
+				writeFile(t, filepath.Join(project, ".sdd", "config.local.yaml"), "participant: Ada\nproject_dir: ../work\n")
 			},
 			args:    []string{"init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada"},
 			mention: "sets project_dir itself",
@@ -640,24 +679,163 @@ func TestGraphDirOutsideAnyRepositoryIsRefused(t *testing.T) {
 }
 
 func TestProjectDirInsideTheWorkRepositoryIsRefused(t *testing.T) {
+	cases := []struct {
+		name     string
+		repoized bool
+	}{
+		{name: "folder of the work repository"},
+		{name: "repository of its own", repoized: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work, project := pointedRepos(t)
+			nested := filepath.Join(work, "graph-project")
+			if err := os.MkdirAll(filepath.Join(nested, ".sdd", "graph"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(nested, ".sdd", "config.yaml"), readFile(t, filepath.Join(project, ".sdd", "config.yaml")))
+			writeFile(t, filepath.Join(nested, ".sdd", "config.local.yaml"), "participant: Ada\n")
+			if tc.repoized {
+				initRepo(t, nested)
+			}
+			writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: graph-project\n")
+
+			_, err := runAppErr(t, work,
+				"new", "signal", "tactical", "A project inside its work repository must be refused.",
+				"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.", "--title", "Refused capture",
+			)
+
+			if err == nil || !strings.Contains(err.Error(), "a repository of its own") {
+				t.Fatalf("a project_dir inside the work repository should be refused: %v", err)
+			}
+			if entries := graphEntries(t, filepath.Join(nested, ".sdd", "graph")); len(entries) != 0 {
+				t.Errorf("a refused capture should write nothing, found %v", entries)
+			}
+		})
+	}
+}
+
+func TestProjectDirContainingTheWorkRepositoryIsRefused(t *testing.T) {
+	cases := []struct {
+		name     string
+		repoized bool
+	}{
+		{name: "folder outside any repository"},
+		{name: "repository holding the work repository", repoized: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work, project := pointedRepos(t)
+			parent := filepath.Dir(work)
+			if err := os.MkdirAll(filepath.Join(parent, ".sdd", "graph"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(parent, ".sdd", "config.yaml"), readFile(t, filepath.Join(project, ".sdd", "config.yaml")))
+			writeFile(t, filepath.Join(parent, ".sdd", "config.local.yaml"), "participant: Ada\n")
+			if tc.repoized {
+				initRepo(t, parent)
+			}
+			writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: ..\n")
+
+			_, err := runAppErr(t, work,
+				"new", "signal", "tactical", "A project holding its work repository must be refused.",
+				"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.", "--title", "Refused capture",
+			)
+
+			if err == nil || !strings.Contains(err.Error(), "contains the work repository") {
+				t.Fatalf("a project_dir containing the work repository should be refused: %v", err)
+			}
+			if entries := graphEntries(t, filepath.Join(parent, ".sdd", "graph")); len(entries) != 0 {
+				t.Errorf("a refused capture should write nothing, found %v", entries)
+			}
+		})
+	}
+}
+
+// git exports GIT_DIR to hooks; sdd run from one in the work repository still
+// reaches the project's repository.
+func TestPointedCaptureUnderAnInheritedGitDir(t *testing.T) {
+	cases := []struct {
+		name   string
+		gitDir func(work string) string
+	}{
+		{name: "absolute", gitDir: func(work string) string { return filepath.Join(work, ".git") }},
+		{name: "relative", gitDir: func(string) string { return ".git" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work, project := pointedRepos(t)
+			t.Setenv("GIT_DIR", tc.gitDir(work))
+
+			_, err := runAppErr(t, work,
+				"new", "signal", "tactical", "A capture from a git hook lands in the project.",
+				"--confidence", "high", "--skip-preflight", "--summary", "Capture under GIT_DIR.", "--title", "Capture under GIT_DIR",
+			)
+			if unsetErr := os.Unsetenv("GIT_DIR"); unsetErr != nil {
+				t.Fatal(unsetErr)
+			}
+
+			if err != nil {
+				t.Fatalf("a capture under an inherited GIT_DIR should succeed: %v", err)
+			}
+			if subject := headSubject(t, project); !strings.HasPrefix(subject, "sdd: ") {
+				t.Errorf("the capture should commit in the project, HEAD is %q", subject)
+			}
+			if subject := headSubject(t, work); subject != "seed" {
+				t.Errorf("the work repository should gain no commit, HEAD is %q", subject)
+			}
+		})
+	}
+}
+
+func TestProjectDirInsideAnotherRepositoryIsRefused(t *testing.T) {
 	work, project := pointedRepos(t)
-	nested := filepath.Join(work, "graph-project")
-	if err := os.MkdirAll(filepath.Join(nested, ".sdd", "graph"), 0o755); err != nil {
+	mono := filepath.Join(filepath.Dir(work), "mono")
+	sub := filepath.Join(mono, "sub")
+	if err := os.MkdirAll(filepath.Join(sub, ".sdd", "graph"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(nested, ".sdd", "config.yaml"), readFile(t, filepath.Join(project, ".sdd", "config.yaml")))
-	writeFile(t, filepath.Join(nested, ".sdd", "config.local.yaml"), "participant: Ada\n")
-	writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: graph-project\n")
+	writeFile(t, filepath.Join(sub, ".sdd", "config.yaml"), readFile(t, filepath.Join(project, ".sdd", "config.yaml")))
+	writeFile(t, filepath.Join(sub, ".sdd", "config.local.yaml"), "participant: Ada\n")
+	initRepo(t, mono)
+	writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: ../mono/sub\n")
 
 	_, err := runAppErr(t, work,
-		"new", "signal", "tactical", "A project inside its work repository must be refused.",
+		"new", "signal", "tactical", "A project inside another repository must be refused.",
 		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.", "--title", "Refused capture",
 	)
 
-	if err == nil || !strings.Contains(err.Error(), "a repository of its own") {
-		t.Fatalf("a project_dir inside the work repository should be refused: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "lies inside the repository") {
+		t.Fatalf("a project_dir inside another repository should be refused: %v", err)
 	}
-	if entries := graphEntries(t, filepath.Join(nested, ".sdd", "graph")); len(entries) != 0 {
+	if entries := graphEntries(t, filepath.Join(sub, ".sdd", "graph")); len(entries) != 0 {
+		t.Errorf("a refused capture should write nothing, found %v", entries)
+	}
+	if subject := headSubject(t, mono); subject != "seed" {
+		t.Errorf("a refused capture should commit nothing in the other repository, HEAD is %q", subject)
+	}
+}
+
+// A project in no repository has nowhere to commit its captures.
+func TestProjectDirOutsideAnyRepositoryIsRefused(t *testing.T) {
+	work, project := pointedRepos(t)
+	loose := filepath.Join(filepath.Dir(work), "loose")
+	if err := os.MkdirAll(filepath.Join(loose, ".sdd", "graph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(loose, ".sdd", "config.yaml"), readFile(t, filepath.Join(project, ".sdd", "config.yaml")))
+	writeFile(t, filepath.Join(loose, ".sdd", "config.local.yaml"), "participant: Ada\n")
+	writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: ../loose\n")
+
+	_, err := runAppErr(t, work,
+		"new", "signal", "tactical", "A project outside any repository must be refused.",
+		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.", "--title", "Refused capture",
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "outside any repository") {
+		t.Fatalf("a project_dir outside any repository should be refused: %v", err)
+	}
+	if entries := graphEntries(t, filepath.Join(loose, ".sdd", "graph")); len(entries) != 0 {
 		t.Errorf("a refused capture should write nothing, found %v", entries)
 	}
 }

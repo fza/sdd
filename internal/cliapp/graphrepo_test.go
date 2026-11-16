@@ -154,3 +154,22 @@ func readFile(t *testing.T, name string) string {
 	}
 	return string(content)
 }
+
+// init refuses the graph_dir every later command would refuse.
+func TestInitRefusesAGraphDirOutsideAnyRepository(t *testing.T) {
+	root := canonicalTemp(t)
+	project := filepath.Join(root, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initRepo(t, project)
+
+	_, err := runAppErr(t, project, "init", "--graph-dir", "../norepo/graph", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	if err == nil || !strings.Contains(err.Error(), "outside any repository") {
+		t.Fatalf("a graph_dir outside any repository should be refused at init, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(project, ".sdd")); !os.IsNotExist(statErr) {
+		t.Errorf("a refused init should write nothing, stat err = %v", statErr)
+	}
+}

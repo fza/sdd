@@ -1845,33 +1845,30 @@ func ensureGraphClone(ctx context.Context, clones *repos.GraphClones, project me
 	return nil
 }
 
-// requireGraphInsideRepository refuses a graph_dir leading into another
-// repository: graph commits, the schema stamp and engine branches all belong to
-// the repository holding the project's .sdd/, so a graph kept apart is a
-// project of its own that the work repository names with project_dir.
+// requireGraphInsideRepository refuses a project placed where its work
+// repository cannot point at it, and a graph_dir leading out of the project's
+// repository (meta.RequireGraphInProjectRepository).
 func requireGraphInsideRepository(project meta.Project) error {
 	cfg, err := meta.ReadLayoutConfig(project.SDDDir(), project.LocalConfigPath(localConfigOverride))
 	if err != nil {
 		return err
 	}
-	projectRepo := git.RepoRootFor(project.Root)
-	if project.Pointed() && projectRepo != "" && projectRepo == git.RepoRootFor(project.WorkRoot) {
-		return fmt.Errorf("project_dir in %s names %s, inside the repository at %s; the project needs a repository of its own", meta.SDDDir(project.WorkRoot), project.Root, projectRepo)
+	if project.Pointed() && project.GraphRepo == "" {
+		subject := fmt.Sprintf("project_dir in %s names %s, which", meta.SDDDir(project.WorkRoot), project.Root)
+		err = meta.RequireProjectApart(subject, project.WorkRoot, project.Root, repoRootFor)
+		if err != nil {
+			return err
+		}
+		err = meta.RequireProjectRepository(subject, project.Root, repoRootFor)
+		if err != nil {
+			return err
+		}
 	}
-	graphDir := meta.ResolveGraphDir(project.Root, cfg)
-	rel, err := filepath.Rel(project.Root, graphDir)
-	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil
-	}
-	graphRepo := git.RepoRootFor(graphDir)
-	if graphRepo == "" {
-		return fmt.Errorf("graph_dir in %s leads to %s, outside the project and outside any repository; keep the graph inside the project", project.SDDDir(), graphDir)
-	}
-	if projectRepo == "" || graphRepo == projectRepo {
-		return nil
-	}
-	return fmt.Errorf("graph_dir in %s leads into %s, a repository separate from %s; make the graph a project of its own (`sdd init` there) and set project_dir to that repository's root instead", project.SDDDir(), graphRepo, projectRepo)
+	return meta.RequireGraphInProjectRepository(project.SDDDir(), project.Root, meta.ResolveGraphDir(project.Root, cfg), repoRootFor)
 }
+
+// repoRootFor is git.RepoRootFor as a meta.RootOf.
+func repoRootFor(path string) (string, error) { return git.RepoRootFor(path), nil }
 
 // promptGraphDir runs an interactive prompt for the graph directory. Empty
 // input accepts the default; cancellation returns an error.
@@ -2202,6 +2199,7 @@ func initCmd() *cli.Command {
 			// A pointer at a folder holding no sdd project sets that project
 			// up first, asking what a fresh init asks.
 			projectMissing := false
+			var projectRoot string
 			if graphRepo != "" {
 				locations, err := repos.DefaultLocations()
 				if err != nil {
@@ -2218,11 +2216,12 @@ func initCmd() *cli.Command {
 				}
 				projectMissing = cloneCommitted == nil
 			} else if pointer {
-				projectRoot := projectDir
+				projectRoot = projectDir
 				if !filepath.IsAbs(projectRoot) {
 					projectRoot = filepath.Join(repoRoot, projectRoot)
 				}
-				projectSDDDir = meta.SDDDir(filepath.Clean(projectRoot))
+				projectRoot = filepath.Clean(projectRoot)
+				projectSDDDir = meta.SDDDir(projectRoot)
 				projectCommitted, _, err := meta.ReadConfigLayers(projectSDDDir, "")
 				if err != nil {
 					return fmt.Errorf("reading the project's configuration before init: %w", err)
@@ -2263,9 +2262,13 @@ func initCmd() *cli.Command {
 					missing = append(missing, "--participant NAME   (canonical author name)")
 				}
 				if len(missing) > 0 {
+					purpose := "to run non-interactively"
+					if projectMissing && projectRoot != "" {
+						purpose = "to set up the project in " + projectRoot + " non-interactively"
+					}
 					return fmt.Errorf(
-						"sdd init needs values for the following flags to run non-interactively:\n  %s",
-						strings.Join(missing, "\n  "),
+						"sdd init needs values for the following flags %s:\n  %s",
+						purpose, strings.Join(missing, "\n  "),
 					)
 				}
 			}
@@ -2303,8 +2306,12 @@ func initCmd() *cli.Command {
 					graphDir = model.DefaultGraphDir
 				}
 
-				graphRepoRoot := git.RepoRootFor(meta.ResolveGraphDir(repoRoot, &model.PerRepoConfig{GraphDir: graphDir}))
-				if graphRepoRoot != "" && graphRepoRoot != repoRoot {
+				absGraphDir := meta.ResolveGraphDir(repoRoot, &model.PerRepoConfig{GraphDir: graphDir})
+				graphRepoRoot := git.RepoRootFor(absGraphDir)
+				if graphRepoRoot == "" && !meta.WithinDir(repoRoot, absGraphDir) {
+					return fmt.Errorf("--graph-dir leads to %s, outside the project and outside any repository; keep the graph inside the project", absGraphDir)
+				}
+				if graphRepoRoot != "" && !meta.SameDir(graphRepoRoot, repoRoot) {
 					return fmt.Errorf("--graph-dir leads into %s, a repository separate from %s; point this repository at it with --project-dir instead", graphRepoRoot, repoRoot)
 				}
 				remoteURL = git.RemoteURL(repoRoot)
