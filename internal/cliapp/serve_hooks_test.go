@@ -157,6 +157,20 @@ func TestServeSkipsATrackedLocalHookUntilAllowed(t *testing.T) {
 	readHookPayload(t, payloadFile)
 }
 
+// sdd hooks allow names a hook sdd refuses to run as refused, not allowed.
+func TestHooksAllowNamesARefusedHookAsRefused(t *testing.T) {
+	fixture := newAppFixture(t)
+	initRepo(t, fixture.root)
+	fixture.write(t, ".sdd/config.yaml", readFile(t, filepath.Join(fixture.root, ".sdd/config.yaml"))+"hooks:\n  - event: entry.written\n    command: missing.sh\n")
+	allowed := fixture.run(t, "hooks", "allow")
+	if allowed.err != nil {
+		t.Fatalf("sdd hooks allow: %v\n%s", allowed.err, allowed.stderr)
+	}
+	if strings.Contains(allowed.stdout, "allowed entry.written missing.sh") || !strings.Contains(allowed.stdout, "refused entry.written missing.sh") {
+		t.Errorf("a refused hook should be named as refused:\n%s", allowed.stdout)
+	}
+}
+
 // Outside any git repository, as in an unpacked archive, git cannot say the
 // machine-local layer is the person's own, so it waits for an allow and the
 // call says why.

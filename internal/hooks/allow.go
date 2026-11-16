@@ -112,7 +112,8 @@ func (a *Allows) load() (map[string]string, error) {
 }
 
 // Allow records the hooks that came with every repository of the project, as
-// they are now, as allowed on this machine, and returns them.
+// they are now, as allowed on this machine, and returns them; a hook sdd
+// refuses to run keeps its Err and runs no more for the allow.
 func Allow(ctx context.Context, src Sources, allows *Allows) ([]model.Hook, error) {
 	layers, err := declaredLayers(ctx, src)
 	if err != nil {
