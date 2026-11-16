@@ -37,6 +37,8 @@ func TestReasonRepeatsIntent(t *testing.T) {
 		{"intent holds the reason", "reject empty input", "The parser should reject empty input.", true},
 		{"case, spacing and closing punctuation set aside", "Reject  Empty input!", "reject empty input", true},
 		{"a reason of its own", "empty input hid upstream bugs twice", "the parser module should reject empty input with a clear error", false},
+		{"the intent with a because clause", "always run the linter because CI blocks otherwise", "always run the linter", false},
+		{"the intent with a since clause", "Always run the linter, since CI blocks otherwise.", "always run the linter", false},
 		{"no intent", "empty input hid upstream bugs twice", "", false},
 		{"no reason", "", "reject empty input", false},
 	}
