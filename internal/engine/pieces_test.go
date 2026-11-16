@@ -168,6 +168,49 @@ func TestDropPiecesSinceWithdrawsWhatACutKeptFromTheAgent(t *testing.T) {
 	}
 }
 
+// A pointer withdrawn before it reached the agent spends no proof; one
+// served before the mark, or delivered, still does.
+func TestAWithdrawnPointerSpendsNoProof(t *testing.T) {
+	cases := []struct {
+		name     string
+		withdraw func(session *engine.Session, mark int, kept string)
+	}{
+		{name: "cut", withdraw: func(session *engine.Session, mark int, _ string) { session.DropPiecesSince(mark) }},
+		{name: "left out of the result", withdraw: func(session *engine.Session, mark int, kept string) {
+			session.KeepDelivered(mark, "a result holding only the pointer held as "+model.AnchorMark(kept))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			first := engine.Piece{Name: "lane step", Hash: "h1"}
+			second := engine.Piece{Name: "lane other", Hash: "h2"}
+			session := newPieceSession(nil)
+			session.BeginCall(nil, nil)
+			firstProof, secondProof := servedInFull(t, session, first), servedInFull(t, session, second)
+			session.RecordAnchors()
+
+			session.BeginCall([]model.Proof{firstProof, secondProof}, nil)
+			if !session.ServePiece(first, nil, placeIn(pieceText)).Held {
+				t.Fatal("the proof should hold the first piece")
+			}
+			mark := session.PieceMark()
+			if !session.ServePiece(second, nil, placeIn(pieceText)).Held {
+				t.Fatal("the proof should hold the second piece")
+			}
+			tc.withdraw(session, mark, firstProof.Tag)
+			session.RecordAnchors()
+
+			session.BeginCall([]model.Proof{firstProof, secondProof}, nil)
+			if _, held := session.Holds(first); held {
+				t.Error("the pointer that reached the agent should have spent its proof")
+			}
+			if _, held := session.Holds(second); !held {
+				t.Error("the withdrawn pointer should leave its proof unspent")
+			}
+		})
+	}
+}
+
 // A piece with no word to tag serves in full every call: no proof can hold
 // it, so none is recorded.
 func TestServePieceWithoutAWordToTagServesInFull(t *testing.T) {
