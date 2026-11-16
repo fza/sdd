@@ -483,7 +483,7 @@ Once a day sdd starts `sdd cache prune` in the background, detached from the com
 
 A session log sdd cannot read stays: it may belong to a newer sdd. The run reports how many it kept.
 
-While `secrets.rules_update` is `daily`, the background run also asks GitHub for gitleaks' latest release and fetches its rule file into `~/.cache/sdd/secret-rules/` when it is newer than the one in use ([credential scan](/sdd/working-modes/#capture)). Each request gives up after 20 seconds. A failed or rejected fetch keeps the rule file in use, is logged as a warning and does not stop the run; `sdd info` shows it with its reason. `sdd cache prune` by hand fetches nothing.
+While `secrets.rules_update` is `daily`, the background run also asks GitHub for gitleaks' latest release and fetches its rule file into `~/.cache/sdd/secret-rules/` when it is newer than the one in use ([credential scan](/sdd/working-modes/#capture)). Each request gives up after 20 seconds. A failed or rejected fetch keeps the rule file in use and does not stop the run's other work, but fails the run: the next command reports it once, and `sdd info` shows it with its reason until a later check succeeds. `sdd cache prune` by hand fetches nothing.
 
 `sdd index gc` stays for deliberate cleanup beyond these rules.
 
