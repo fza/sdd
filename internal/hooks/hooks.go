@@ -126,7 +126,7 @@ func (c *Commands) unchanged(ctx context.Context, hook model.Hook) error {
 // hookEnvAllowlist names the variables of sdd's environment a hook sees;
 // everything else, such as API keys in the MCP server's environment, stays
 // with sdd. The payload arrives on stdin, not in the environment.
-var hookEnvAllowlist = []string{"PATH", "HOME", "LANG", "TMPDIR"}
+var hookEnvAllowlist = []string{"PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "USER", "LOGNAME"}
 
 func hookEnv() []string {
 	env := []string{}

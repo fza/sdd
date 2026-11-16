@@ -552,7 +552,12 @@ func TestRunFailsOnANonzeroExitWithItsStderr(t *testing.T) {
 
 func TestRunPassesOnlyTheAllowlistedEnvironment(t *testing.T) {
 	t.Setenv("FAKE_SECRET", "s3cr3t-token")
-	t.Setenv("LANG", "en_US.UTF-8")
+	t.Setenv("GIT_DIR", "/elsewhere/.git")
+	for _, name := range []string{"LANG", "LC_ALL", "LC_CTYPE"} {
+		t.Setenv(name, "en_US.UTF-8")
+	}
+	t.Setenv("USER", "ada")
+	t.Setenv("LOGNAME", "ada")
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "env.sh"), "env")
 	w.commit(t, "  - event: entry.written\n    command: env.sh\n")
@@ -560,10 +565,10 @@ func TestRunPassesOnlyTheAllowlistedEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(output), "s3cr3t-token") {
+	if strings.Contains(string(output), "s3cr3t-token") || strings.Contains(string(output), "GIT_DIR=") {
 		t.Errorf("a variable of sdd's environment outside the allowlist should not reach the hook:\n%s", output)
 	}
-	for _, name := range []string{"PATH=", "HOME=", "LANG="} {
+	for _, name := range []string{"PATH=", "HOME=", "LANG=", "LC_ALL=", "LC_CTYPE=", "USER=", "LOGNAME="} {
 		if !strings.Contains(string(output), name) {
 			t.Errorf("the hook should see %s from sdd's environment:\n%s", name, output)
 		}
