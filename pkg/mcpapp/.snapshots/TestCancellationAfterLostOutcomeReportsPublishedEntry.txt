@@ -51,11 +51,11 @@ report_schema:
       type: string
     chooser:
       const: playback
-      description: the pending chooser's step id — copy it verbatim from pending_chooser.chooser
+      description: the pending chooser's step id
       type: string
     fields:
       additionalProperties: false
-      description: state fields the chosen option collects — nested here, not at the top level
+      description: the chosen option's fields, nested here, never at the top level
       properties:
         body:
           description: entry description; self-describing first sentence
