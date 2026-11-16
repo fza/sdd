@@ -252,6 +252,22 @@ llm_prefilter:
 
 The judge's identity is `generate:<model>`, and calibration keys its labels on it. A whole pass ends after 45 seconds; candidates whose call failed or came late stay unscored and go to judge. A candidate too long for one call is never cut: it goes to judge too.
 
+Two dedicated judges rate a whole batch of candidates in one call instead of one chat call per candidate. `llm_prefilter.provider` picks them: `systemone`, Jev over the System One protocol, or `cohere`, Cohere rerank. The block then takes nothing from `llm`; it needs its own key under `llm_prefilter.api_keys.<provider>`:
+
+```yaml
+llm_prefilter:
+  provider: systemone
+  api_keys:
+    systemone: <your-opper-key>
+```
+
+| Provider | Default `endpoint` | Default `model` | Direction | One call |
+| --- | --- | --- | --- | --- |
+| `systemone` | `https://api.opper.ai/v3/compat/v1/systemone` | `jev-1.14.0` | Both: one score answers the pair either way | Up to 32,000 tokens of draft and candidates |
+| `cohere` | `https://api.opper.ai/v3/rerank` | `aws/cohere/rerank-v3.5` | Draft to candidate only | Up to 1,000 candidates, each within 4,096 tokens beside the draft |
+
+`endpoint` and `model` point the judge at another host speaking the same protocol; `endpoint` must be an absolute URL. `timeout` and `rate_limit_rps` apply as for a chat judge; `params` and `concurrency` apply to chat providers only. The judge's identity is `<provider>:<model>`, calibrated on its own: a new judge stays uncalibrated until `sdd grounding rescore` scores the labelled pairs. A candidate that does not fit beside the draft in Cohere's window goes to judge uncut. Whole entry texts go to the judge's vendor. A missing key fails the prefilter's build, `sdd serve` included, naming the key; `sdd config set` refuses a provider outside the list.
+
 Each judge gets thresholds of its own from the labels in the relevance ledger. The set-aside threshold is the highest score that keeps the 95% Wilson lower bound of recall at 0.98; the relevant threshold is the lowest score at which the share of positive labels reaches one half. Until the recall bound holds, the prefilter only sorts the briefs to judge and sets nothing aside. A blind audit returns 3% of the set-aside entries, rounded up, as ordinary briefs to judge, with no score shown on any line. After each publish, the drift rule looks at the latest 200 audit labels, once there are at least 50: where more than 2% of them, by weight, were referenced, it halves the set-aside threshold, at most once per judge in 24 hours, and never raises it.
 
 | Command | What it does |

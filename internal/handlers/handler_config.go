@@ -58,6 +58,12 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 				return nil, fmt.Errorf("%s = %s is not valid for the %s config: %s", cmd.Key, cmd.Value, layer, ignored.Reason)
 			}
 		}
+		if cmd.Key == "llm_prefilter.provider" {
+			err := model.CheckPrefilterProvider(settings.LLMPrefilter.Provider)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if strings.HasPrefix(cmd.Key, "verify.") {
 			if err := h.verifyWriteRefusal(cmd, patched); err != nil {
 				return nil, err

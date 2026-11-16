@@ -209,15 +209,42 @@ func readTag(read GroundingRead) string {
 	return string(read.Mode)
 }
 
-// LLMPrefilterConfig is the `llm_prefilter` block: the chat model the
-// relevance judge runs on, in the shape of `llm`.
+// LLMPrefilterConfig is the `llm_prefilter` block: the relevance judge, in
+// the shape of `llm`. A chat provider runs the generate judge on its model;
+// a dedicated provider rates the candidates over its own protocol.
 type LLMPrefilterConfig struct {
 	LLMConfig `yaml:",inline"`
 }
 
-// ResolvedPrefilter is the prefilter block as it runs: the llm block's
-// provider, model and connection, each value llm_prefilter sets winning.
+// The dedicated llm_prefilter providers, each named after its wire protocol.
+const (
+	PrefilterSystemOne = "systemone"
+	PrefilterCohere    = "cohere"
+)
+
+// PrefilterProviders lists the values llm_prefilter.provider takes: the chat
+// providers, then the dedicated judges.
+func PrefilterProviders() []string {
+	return []string{"claude-cli", "anthropic", "openai", "ollama", PrefilterSystemOne, PrefilterCohere}
+}
+
+// CheckPrefilterProvider refuses an llm_prefilter.provider outside
+// PrefilterProviders; unset passes.
+func CheckPrefilterProvider(provider string) error {
+	if provider == "" {
+		return nil
+	}
+	return checkClosedValue("llm_prefilter.provider", provider, PrefilterProviders())
+}
+
+// ResolvedPrefilter is the prefilter block as it runs. A dedicated provider
+// takes the block as set; otherwise the llm block's provider, model and
+// connection, each value llm_prefilter sets winning.
 func (b BaseConfig) ResolvedPrefilter() LLMPrefilterConfig {
+	switch b.LLMPrefilter.Provider {
+	case PrefilterSystemOne, PrefilterCohere:
+		return b.LLMPrefilter
+	}
 	base := LLMConfig{
 		Provider: b.LLM.Provider, Model: b.LLM.Model,
 		Endpoint: b.LLM.Endpoint, OllamaEndpoint: b.LLM.OllamaEndpoint,

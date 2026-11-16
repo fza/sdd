@@ -50,7 +50,8 @@ func TestGroundingPolicy_PrefilterOnByDefault(t *testing.T) {
 }
 
 // Without an llm_prefilter block the prefilter runs on the llm provider and
-// model; every value llm_prefilter sets wins.
+// model; every value llm_prefilter sets wins. A dedicated provider takes the
+// block as set.
 func TestResolvedPrefilter(t *testing.T) {
 	llm := model.LLMConfig{Provider: "openai", Model: "gpt-x", Timeout: "5m", Concurrency: 2, APIKeys: map[string]string{"openai": "k"}}
 
@@ -65,5 +66,13 @@ func TestResolvedPrefilter(t *testing.T) {
 	set := model.BaseConfig{LLM: llm, LLMPrefilter: model.LLMPrefilterConfig{LLMConfig: model.LLMConfig{Model: "gpt-mini", Timeout: "45s"}}}.ResolvedPrefilter()
 	if set.Provider != "openai" || set.Model != "gpt-mini" || set.Timeout != "45s" {
 		t.Errorf("values llm_prefilter sets should win, got %+v", set)
+	}
+
+	for _, provider := range []string{model.PrefilterSystemOne, model.PrefilterCohere} {
+		block := model.LLMPrefilterConfig{LLMConfig: model.LLMConfig{Provider: provider, APIKeys: map[string]string{provider: "p"}}}
+		dedicated := model.BaseConfig{LLM: llm, LLMPrefilter: block}.ResolvedPrefilter()
+		if dedicated.Model != "" || dedicated.Endpoint != "" || dedicated.APIKeys["openai"] != "" || dedicated.APIKeys[provider] != "p" {
+			t.Errorf("%s should take the block as set, nothing from llm, got %+v", provider, dedicated)
+		}
 	}
 }
