@@ -29,6 +29,7 @@ type ScriptedScorer struct {
 func (s *ScriptedScorer) Direction() relevance.Direction { return relevance.Both }
 func (s *ScriptedScorer) MaxBatch() int                  { return 0 }
 func (s *ScriptedScorer) MaxInputTokens() int            { return 0 }
+func (s *ScriptedScorer) MaxPairTokens() int             { return 0 }
 
 func (s *ScriptedScorer) Score(_ context.Context, request relevance.Request) (relevance.Result, error) {
 	s.mu.Lock()
