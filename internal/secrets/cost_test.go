@@ -42,8 +42,13 @@ func TestParseFetchedRulesBoundsTheScanCost(t *testing.T) {
 				return fmt.Sprintf("\n[[rules]]\nid = \"sdd-extra-%d\"\nregex = '''sddextra%d_[a-z0-9]{16}'''\n", i, i)
 			})
 		}},
-		{name: "rules slow on common text", reason: "takes", data: func(t *testing.T) []byte {
-			return extraRules(t, 150, func(i int) string {
+		{name: "large patterns", reason: "patterns compile to", data: func(t *testing.T) []byte {
+			return extraRules(t, 100, func(i int) string {
+				return fmt.Sprintf("\n[[rules]]\nid = \"sdd-extra-%d\"\nregex = '''(?i)[a-z0-9]{8,200}q[a-z0-9 ]{4,300}zx%d'''\nkeywords = [\"sddextra%d_\"]\n", i, i, i)
+			})
+		}},
+		{name: "large patterns running on common text", reason: "ordinary text", data: func(t *testing.T) []byte {
+			return extraRules(t, 10, func(i int) string {
 				return fmt.Sprintf("\n[[rules]]\nid = \"sdd-extra-%d\"\nregex = '''(?i)[a-z0-9]{8,200}q[a-z0-9 ]{4,300}zx%d'''\nkeywords = [\"ey\"]\n", i, i)
 			})
 		}},
