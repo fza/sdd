@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -52,13 +53,19 @@ func startSession(t *testing.T, client *mcp.ClientSession) string {
 	return handle
 }
 
-// Hooks of the user-global config and of the project's committed config run
-// at their event, the payload on stdin.
+// Hooks of every layer run at their event, the payload on stdin; the
+// committed layer's once allowed.
 func TestServeRunsTheHooksOfEveryLayer(t *testing.T) {
-	for _, configFile := range []string{"config/sdd/config.yaml", ".sdd/config.yaml"} {
+	for _, configFile := range []string{"config/sdd/config.yaml", ".sdd/config.yaml", ".sdd/config.local.yaml"} {
 		t.Run(configFile, func(t *testing.T) {
 			fixture := newAppFixture(t)
 			payloadFile := fixture.payloadHook(t, configFile, "user-dialogue.junction.start")
+			if configFile == ".sdd/config.yaml" {
+				allowed := fixture.run(t, "hooks", "allow")
+				if allowed.err != nil {
+					t.Fatalf("sdd hooks allow: %v\n%s", allowed.err, allowed.stderr)
+				}
+			}
 
 			var handle string
 			fixture.serve(t, func(client *mcp.ClientSession) { handle = startSession(t, client) })
@@ -69,6 +76,38 @@ func TestServeRunsTheHooksOfEveryLayer(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A hook that came with the repository runs only once `sdd hooks allow`
+// recorded it on this machine; until then the call goes on without it and
+// says so.
+func TestServeSkipsACommittedHookUntilAllowed(t *testing.T) {
+	fixture := newAppFixture(t)
+	payloadFile := fixture.payloadHook(t, ".sdd/config.yaml", "user-dialogue.junction.start")
+
+	var text string
+	fixture.serve(t, func(client *mcp.ClientSession) {
+		door, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_session", Arguments: map[string]any{}})
+		if err != nil || door.IsError {
+			t.Fatalf("start_session: %v %+v", err, door)
+		}
+		raw, _ := json.Marshal(door)
+		text = string(raw)
+	})
+	_, err := os.Stat(payloadFile)
+	if err == nil {
+		t.Fatal("a committed hook not allowed on this machine ran")
+	}
+	if !strings.Contains(text, "sdd hooks allow") {
+		t.Errorf("the call should name `sdd hooks allow` for the skipped hook, served %s", text)
+	}
+
+	allowed := fixture.run(t, "hooks", "allow")
+	if allowed.err != nil || !strings.Contains(allowed.stdout, "payload.sh") {
+		t.Fatalf("sdd hooks allow should name the hook it allows:\n%s%v", allowed.stdout, allowed.err)
+	}
+	fixture.serve(t, func(client *mcp.ClientSession) { startSession(t, client) })
+	readHookPayload(t, payloadFile)
 }
 
 // A hook added while serve runs reaches its next call.

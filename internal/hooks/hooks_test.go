@@ -2,6 +2,7 @@ package hooks_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,16 +18,17 @@ import (
 )
 
 // world is a user-global config folder and one repository, each with a
-// hooks folder.
+// hooks folder, and a state root for the allow record.
 type world struct {
-	global string
-	repo   string
+	global    string
+	repo      string
+	stateRoot string
 }
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
 	base := t.TempDir()
-	w := &world{global: filepath.Join(base, "config", "sdd", "config.yaml"), repo: filepath.Join(base, "repo")}
+	w := &world{global: filepath.Join(base, "config", "sdd", "config.yaml"), repo: filepath.Join(base, "repo"), stateRoot: filepath.Join(base, "state", "sdd")}
 	write(t, w.global, "")
 	write(t, filepath.Join(w.repo, ".sdd", "config.yaml"), "repo_id: example.com/org/repo\n")
 	return w
@@ -65,7 +67,96 @@ func (w *world) sources() hooks.Sources {
 }
 
 func (w *world) commands() *hooks.Commands {
-	return hooks.New(w.sources())
+	return hooks.New(w.sources(), hooks.NewAllows(w.stateRoot))
+}
+
+func (w *world) allow(t *testing.T) []model.Hook {
+	t.Helper()
+	allowed, err := hooks.Allow(w.sources(), hooks.NewAllows(w.stateRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return allowed
+}
+
+// needsAllow lists, per hook, its command and whether it waits for an allow.
+func (w *world) needsAllow(t *testing.T) []string {
+	t.Helper()
+	var states []string
+	for _, hook := range w.hooks(t) {
+		states = append(states, fmt.Sprintf("%s=%v", hook.Command, hook.NeedsAllow))
+	}
+	return states
+}
+
+// Only the hooks a repository brings with its committed config wait for an
+// allow; the user-global and machine-local ones are the person's own.
+func TestCommittedHooksRunOnlyOnceAllowed(t *testing.T) {
+	w := newWorld(t)
+	write(t, w.global, "hooks:\n  - event: entry.written\n    command: notify.sh\n")
+	script(t, filepath.Join(filepath.Dir(w.global), "hooks", "notify.sh"), "true")
+	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
+	script(t, filepath.Join(w.hooksDir(), "local", "mine.sh"), "true")
+	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	write(t, filepath.Join(w.repo, ".sdd", "config.local.yaml"), "hooks:\n  - event: entry.written\n    command: local/mine.sh\n")
+
+	want := []string{"notify.sh=false", "lint.sh=true", "local/mine.sh=false"}
+	if got := w.needsAllow(t); !slices.Equal(got, want) {
+		t.Fatalf("only the committed hook should wait for an allow, got %v", got)
+	}
+	allowed := w.allow(t)
+	if len(allowed) != 1 || allowed[0].Command != "lint.sh" {
+		t.Errorf("allow should name the committed hook it allowed, got %+v", allowed)
+	}
+	want = []string{"notify.sh=false", "lint.sh=false", "local/mine.sh=false"}
+	if got := w.needsAllow(t); !slices.Equal(got, want) {
+		t.Fatalf("an allowed committed hook should run, got %v", got)
+	}
+
+	info, err := os.Stat(filepath.Join(w.stateRoot, "hooks", "allowed.json"))
+	if err != nil {
+		t.Fatalf("the allow should be recorded in the state root: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("the allow record should be private, mode %o", info.Mode().Perm())
+	}
+}
+
+// Any change to a committed hook's config, script or an args file needs a
+// new allow.
+func TestAChangedCommittedHookNeedsAllowAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(t *testing.T, w *world)
+	}{
+		{"script", func(t *testing.T, w *world) { script(t, filepath.Join(w.hooksDir(), "vale.sh"), "echo changed") }},
+		{"args file", func(t *testing.T, w *world) {
+			write(t, filepath.Join(w.hooksDir(), "vale.ini"), "MinAlertLevel = suggestion\n")
+		}},
+		{"config", func(t *testing.T, w *world) {
+			w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    args: [--config, vale.ini]\n    timeout: 30\n")
+		}},
+		{"added hook", func(t *testing.T, w *world) {
+			w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    args: [--config, vale.ini]\n  - event: entry.written\n    command: vale.sh\n")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			script(t, filepath.Join(w.hooksDir(), "vale.sh"), "true")
+			write(t, filepath.Join(w.hooksDir(), "vale.ini"), "MinAlertLevel = error\n")
+			w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    args: [--config, vale.ini]\n")
+			w.allow(t)
+			if w.only(t).NeedsAllow {
+				t.Fatal("an allowed hook should run")
+			}
+			tc.change(t, w)
+			for _, hook := range w.hooks(t) {
+				if !hook.NeedsAllow {
+					t.Errorf("after a change to the %s the committed hooks should wait for an allow again, %s does not", tc.name, hook.Command)
+				}
+			}
+		})
+	}
 }
 
 func (w *world) hooks(t *testing.T) []model.Hook {

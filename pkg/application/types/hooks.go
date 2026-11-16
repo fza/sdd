@@ -75,6 +75,10 @@ type Hook struct {
 	Origin HookOrigin
 	// Path is the command file's absolute path.
 	Path string
+	// NeedsAllow marks a hook that came with the repository's committed
+	// config and that this machine has not allowed, or that changed since:
+	// sdd skips it until `sdd hooks allow` records it.
+	NeedsAllow bool
 	// Err is why the hook cannot run, such as a command file that is missing
 	// or not executable. Only a call raising an event the hook matches fails
 	// on it.

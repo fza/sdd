@@ -153,6 +153,24 @@ func TestHookWithAProblemFailsOnlyTheCallsReachingIt(t *testing.T) {
 	}
 }
 
+func TestHookWaitingForAnAllowIsSkippedWithANotice(t *testing.T) {
+	waiting := hookAt("waiting-test.*.start")
+	waiting.NeedsAllow = true
+	hooks := &recordingHooks{hooks: []sdd.Hook{waiting}}
+	w := newHookedWorkflow(t, hooks)
+	serve := startWaiting(t, w)
+	if ran := hooks.ran(); len(ran) != 0 {
+		t.Fatalf("a hook waiting for an allow should not run, ran at %v", ran)
+	}
+	if len(serve.Notices) != 1 || !strings.Contains(serve.Notices[0], "sdd hooks allow") {
+		t.Fatalf("the serve should say the hook was skipped and name `sdd hooks allow`, got %q", serve.Notices)
+	}
+	serve = startWaiting(t, w)
+	if len(serve.Notices) != 0 {
+		t.Errorf("the skip should be noticed once per session, noticed again %q", serve.Notices)
+	}
+}
+
 func TestHookNamingAnUnknownEventIsServedOnceAsANotice(t *testing.T) {
 	hooks := &recordingHooks{hooks: []sdd.Hook{hookAt("waiting-test.renamed")}}
 	w, opened := openHookedWorkflow(t, hooks)

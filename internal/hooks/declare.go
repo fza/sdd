@@ -1,6 +1,6 @@
 // Package hooks resolves and runs the hooks a project and the person running
 // sdd declare: each hook a file in its layer's hooks folder, run without a
-// shell.
+// shell, a committed layer's only once allowed on this machine.
 package hooks
 
 import (
@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/networkteam/sdd/internal/index"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
@@ -20,9 +21,19 @@ type Sources struct {
 	Project      meta.Project
 }
 
+// layerFile is one config file's hooks list; key names its repository in
+// the allow record.
 type layerFile struct {
 	origin model.HookOrigin
+	key    string
 	hooks  []model.HookConfig
+}
+
+// declaredLayer is a layerFile with its hooks resolved.
+type declaredLayer struct {
+	origin model.HookOrigin
+	key    string
+	hooks  []model.Hook
 }
 
 // Declared reads every layer's hooks, in the order user-global, work
@@ -31,14 +42,27 @@ type layerFile struct {
 // resolve sets the hook's Err rather than failing the whole list, so it
 // fails only the calls that reach the hook.
 func Declared(src Sources) ([]model.Hook, error) {
-	layers, err := readLayers(src)
+	layers, err := declaredLayers(src)
 	if err != nil {
 		return nil, err
 	}
 	var hooks []model.Hook
 	for _, layer := range layers {
-		for i, config := range layer.hooks {
-			origin := layer.origin
+		hooks = append(hooks, layer.hooks...)
+	}
+	return hooks, nil
+}
+
+func declaredLayers(src Sources) ([]declaredLayer, error) {
+	files, err := readLayers(src)
+	if err != nil {
+		return nil, err
+	}
+	layers := make([]declaredLayer, 0, len(files))
+	for _, file := range files {
+		layer := declaredLayer{origin: file.origin, key: file.key}
+		for i, config := range file.hooks {
+			origin := file.origin
 			origin.Index = i
 			hook := model.Hook{HookConfig: config, Origin: origin}
 			path, err := commandFile(hook)
@@ -46,10 +70,11 @@ func Declared(src Sources) ([]model.Hook, error) {
 				hook.Err = fmt.Errorf("%s: hooks[%d]: %w", origin.ConfigPath, i, err)
 			}
 			hook.Path = path
-			hooks = append(hooks, hook)
+			layer.hooks = append(layer.hooks, hook)
 		}
+		layers = append(layers, layer)
 	}
-	return hooks, nil
+	return layers, nil
 }
 
 func readLayers(src Sources) ([]layerFile, error) {
@@ -92,7 +117,11 @@ func repoLayers(root, repo string) ([]layerFile, error) {
 		return nil, err
 	}
 	base := model.HookOrigin{Repo: repo, Dir: filepath.Join(sddDir, model.HooksDirName)}
-	committedLayer := layerFile{origin: base}
+	var repoID model.RepoID
+	if committed != nil {
+		repoID = committed.RepoID
+	}
+	committedLayer := layerFile{origin: base, key: index.RepoKey(repoID, root)}
 	committedLayer.origin.Layer, committedLayer.origin.ConfigPath = model.HookLayerCommitted, filepath.Join(sddDir, "config.yaml")
 	if committed != nil {
 		committedLayer.hooks = committed.Hooks

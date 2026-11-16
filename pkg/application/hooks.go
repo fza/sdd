@@ -43,6 +43,7 @@ type workflowHooks struct {
 	// notices wait for the next serve: what the person should hear about a
 	// hook that does not fail any call, such as one naming an unknown event.
 	notices []string
+	noticed map[string]bool
 }
 
 // resolve reads the configured hooks once per session load and checks each
@@ -89,6 +90,19 @@ func (h *workflowHooks) resolve() error {
 	return nil
 }
 
+// noticeOnce adds notice unless one under key was already added since the
+// hooks were read.
+func (h *workflowHooks) noticeOnce(key, notice string) {
+	if h.noticed[key] {
+		return
+	}
+	if h.noticed == nil {
+		h.noticed = map[string]bool{}
+	}
+	h.noticed[key] = true
+	h.notices = append(h.notices, notice)
+}
+
 // takeNotices returns the notices raised since the last serve and forgets
 // them.
 func (h *workflowHooks) takeNotices() []string {
@@ -108,6 +122,10 @@ func (h *workflowHooks) Fire(point engine.HookPoint) ([]query.Finding, error) {
 	)
 	for _, hook := range h.hooks {
 		if !model.MatchHookEvent(hook.Event, event) {
+			continue
+		}
+		if hook.NeedsAllow {
+			h.noticeOnce(hook.Label(), fmt.Sprintf("%s came with the repository and is not allowed on this machine, or changed since it was; it was skipped. Review the repository's .sdd/hooks and run `sdd hooks allow` to let it run.", hook.Label()))
 			continue
 		}
 		if hook.Err != nil {

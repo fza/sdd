@@ -25,19 +25,42 @@ const (
 )
 
 // Commands implements the application's HookCommands port over the hooks
-// declared in sources, read afresh on every call.
+// declared in sources, read afresh on every call, and the allow record.
 type Commands struct {
 	sources Sources
+	allows  *Allows
 }
 
 // New returns Commands over the hooks sources declares.
-func New(sources Sources) *Commands {
-	return &Commands{sources: sources}
+func New(sources Sources, allows *Allows) *Commands {
+	return &Commands{sources: sources, allows: allows}
 }
 
-// Hooks returns the hooks as declared now.
+// Hooks returns the hooks as declared now, a committed layer's marked
+// NeedsAllow unless the allow record holds its current hash.
 func (c *Commands) Hooks(context.Context) ([]model.Hook, error) {
-	return Declared(c.sources)
+	layers, err := declaredLayers(c.sources)
+	if err != nil {
+		return nil, err
+	}
+	var hooks []model.Hook
+	for _, layer := range layers {
+		if layer.origin.Layer == model.HookLayerCommitted && len(layer.hooks) > 0 {
+			hash, err := layerHash(layer.hooks)
+			if err != nil {
+				return nil, err
+			}
+			allowed, err := c.allows.Allowed(layer.key, hash)
+			if err != nil {
+				return nil, err
+			}
+			for i := range layer.hooks {
+				layer.hooks[i].NeedsAllow = !allowed
+			}
+		}
+		hooks = append(hooks, layer.hooks...)
+	}
+	return hooks, nil
 }
 
 // Run runs hook's file with its args in its hooks folder, stdin on its

@@ -391,6 +391,7 @@ func New(options Options) *cli.Command {
 			initCmd(),
 			infoCmd(),
 			configCmd(),
+			hooksCmd(),
 			showCmd(),
 			viewCmd(),
 			exportCmd(),

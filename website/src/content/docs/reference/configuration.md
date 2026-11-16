@@ -23,7 +23,7 @@ A later row overrides an earlier one: local wins over project, project wins over
 | `sessions.retention` | User-global | sdd currently ignores it in the project files. |
 | `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
-| `hooks` | Any file | The lists of all files run together. See [hooks](#hooks). |
+| `hooks` | Any file | The lists of all files run together; the project file's only once [allowed](#allowing-a-projects-hooks). See [hooks](#hooks). |
 
 :::caution[Keep API keys out of the project file]
 `.sdd/config.yaml` is committed and shared. sdd reads `api_keys` from any file and does not stop you, so put keys in the user-global or the local file. `sdd config set` writes only to those two.
@@ -407,7 +407,7 @@ A hook is a script sdd runs at an event of a running procedure, such as a prose 
 
 ### Where hooks live
 
-Every config file may declare `hooks`: the user-global file, and both `.sdd/config.yaml` and `.sdd/config.local.yaml` of the project. In a project whose graph lives in a [repository of its own](#a-graph-in-a-repository-of-its-own), the work repository's two files declare hooks as well. sdd runs the hooks of every file together. Hooks run without an approval step, as git runs the files of `.git/hooks/`: a project's committed hooks run on the machine of everyone working on it.
+Every config file may declare `hooks`: the user-global file, and both `.sdd/config.yaml` and `.sdd/config.local.yaml` of the project. In a project whose graph lives in a [repository of its own](#a-graph-in-a-repository-of-its-own), the work repository's two files declare hooks as well. sdd runs the hooks of every file together.
 
 `command` names a file in the declaring layer's hooks folder:
 
@@ -418,6 +418,19 @@ Every config file may declare `hooks`: the user-global file, and both `.sdd/conf
 | `.sdd/config.local.yaml` | `.sdd/hooks/`, its scripts in `local/` there, which `sdd init` adds to `.gitignore` |
 
 sdd refuses an absolute path, `..`, a name it would have to look up on `PATH`, and anything a shell would interpret. A hook runs without a shell, with the hooks folder as its working directory, so `args` resolve from there too. Put an interpreter in the script's shebang and make the script executable. A hook in the committed file may not run a script from `local/`, which only your machine has.
+
+### Allowing a project's hooks
+
+Hooks in `.sdd/config.yaml` arrive with every clone, so sdd runs them only after you allow them on your machine. Until then sdd skips them, and the step it serves names `sdd hooks allow`. Hooks in the user-global and the local file are your own and run without it.
+
+```bash
+sdd hooks allow   # review the repository's .sdd/hooks first
+```
+
+- `sdd hooks allow` records, per repository, a hash over the committed hook declarations and the files they name: the script and every `args` entry naming a file in the hooks folder.
+- Any change to them, a new hook included, skips the committed hooks again until you allow them again.
+- In a project whose graph lives in a repository of its own, it allows both repositories' committed hooks.
+- The record lives in `~/.local/state/sdd/hooks/allowed.json`, readable only by you, keyed by `repo_id`.
 
 ### Events
 
@@ -466,5 +479,5 @@ jq -r .draft.body | vale --config .vale.ini --ext .md --output JSON --no-exit |
 | --- | --- | --- |
 | `XDG_CONFIG_HOME` | `~/.config` | The user-global file is `$XDG_CONFIG_HOME/sdd/config.yaml`. |
 | `XDG_CACHE_HOME` | `~/.cache` | Search indexes and clones of connected repositories live under `$XDG_CACHE_HOME/sdd`. |
-| `XDG_STATE_HOME` | `~/.local/state` | Session logs live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
+| `XDG_STATE_HOME` | `~/.local/state` | Session logs and the hook allow record live under `$XDG_STATE_HOME/sdd`. Must be an absolute path. |
 | `SDD_SERVE_TOKEN` | None | The bearer token `sdd serve --transport http` requires on every request. Same as `--auth-token`. |
