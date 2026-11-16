@@ -14,11 +14,16 @@ import (
 // on a dirty working tree and defers to the user with an actionable message;
 // on a clean tree it runs the merge pull when the git gate admits it, else
 // merges the upstream as last fetched, and reports git's output through the
-// command's OnPulled callback.
+// command's OnPulled callback. A configured sync lock is held throughout.
 func (h *Handler) SyncPull(ctx context.Context, cmd *command.SyncPullCmd) error {
 	if h.puller == nil {
 		return errors.New("sync pull is unavailable: no git surface configured")
 	}
+	release, err := h.takeSyncLock(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	clean, err := h.puller.IsClean(ctx)
 	if err != nil {

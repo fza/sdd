@@ -1,12 +1,15 @@
 package cliapp_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/networkteam/sdd/internal/cliapp"
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
@@ -106,6 +109,47 @@ func TestGraphRepoSyncMergesEveryUpstreamCommit(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(cloneDir(t), filepath.FromSlash(handEntry)))
 	if statErr != nil {
 		t.Errorf("the upstream entry should arrive in the clone: %v", statErr)
+	}
+}
+
+// `sdd sync --pull` merges in the clone only under its sync and graph locks,
+// so never beside another process's writer, sync round or clone upkeep.
+func TestGraphRepoPullWaitsForTheCloneLocks(t *testing.T) {
+	code, remote := graphRepoCode(t)
+	runApp(t, code, "sync", "--pull")
+	clone := cloneDir(t)
+	upstreamEntry := ".sdd/graph/2026/11/07-150000-s-tac-ups.md"
+	remote.Commit(t, "an upstream entry", map[string]string{
+		upstreamEntry: "---\ntype: signal\nlayer: tactical\nkind: gap\nconfidence: high\nparticipants: [Bo]\nsummary: Written elsewhere.\n---\n\nUpstream.\n",
+	})
+	gitIn(t, clone, "fetch", "-q", "--no-filter", strings.TrimSpace(gitIn(t, clone, "config", "sdd.remote")))
+	lock, err := syncstate.LockGraph(filepath.Join(clone, ".sdd", "graph"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		command := cliapp.New(cliapp.Options{Version: "test", Reader: strings.NewReader(""), Writer: &output, ErrWriter: &output})
+		done <- command.Run(t.Context(), []string{"sdd", "sync", "--pull"})
+	}()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		_, statErr := os.Stat(filepath.Join(clone, filepath.FromSlash(upstreamEntry)))
+		if statErr == nil {
+			syncstate.Unlock(lock)
+			<-done
+			t.Fatal("the pull should merge nothing while another process holds the graph lock")
+		}
+	}
+	syncstate.Unlock(lock)
+	err = <-done
+	if err != nil {
+		t.Fatalf("sync --pull: %v\n%s", err, output.String())
+	}
+	_, statErr := os.Stat(filepath.Join(clone, filepath.FromSlash(upstreamEntry)))
+	if statErr != nil {
+		t.Errorf("the pull should merge the fetched upstream once the lock is free: %v\n%s", statErr, output.String())
 	}
 }
 

@@ -139,6 +139,21 @@ func TestSyncPull_DeferredWithinTheCooldown(t *testing.T) {
 	}
 }
 
+// A pull holds the sync lock, so it never merges beside a sync round or the
+// clone upkeep.
+func TestSyncPull_TakesTheSyncLock(t *testing.T) {
+	lock := &synctest.Lock{}
+	h := handlers.New(handlers.Options{Puller: &fakePuller{clean: true}, Gate: synctest.Gate(t.TempDir(), nil), SyncLock: lock})
+
+	err := h.SyncPull(context.Background(), &command.SyncPullCmd{})
+	if err != nil {
+		t.Fatalf("SyncPull: %v", err)
+	}
+	if lock.Taken != 1 {
+		t.Errorf("the pull should take the sync lock once, took it %d times", lock.Taken)
+	}
+}
+
 func TestSyncPull_WithoutGateRefuses(t *testing.T) {
 	puller := &fakePuller{clean: true}
 	h := handlers.New(handlers.Options{Puller: puller})
