@@ -182,13 +182,18 @@ func TestUnattended_TheAgentCannotAbandonABlockedCapture(t *testing.T) {
 	}
 }
 
-// The refusal holds for the move alone: ending the whole session by its
-// handle, as sdd sessions abandon does, still ends it.
-func TestUnattended_TheSessionEndsByItsHandleWithABlockedCapture(t *testing.T) {
+// Ending the session by its handle is the person's door to drop a blocked
+// capture: sdd sessions abandon ends it, while the agent's abandon by handle
+// (marked Agent, as the MCP surface sends it) is refused like its per-move one.
+func TestUnattended_OnlyThePersonEndsTheSessionOfABlockedCapture(t *testing.T) {
 	world, session, instance := blockedAutonomousCapture(t, "unattended-abandon-session")
+	_, err := world.App.AbandonWorkflowSession(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: session.ID, Agent: true}, "the finding holds")
+	if err == nil || !strings.Contains(err.Error(), "is not abandoned in an autonomous session") {
+		t.Fatalf("the agent's abandon by session handle should be refused, got %v", err)
+	}
 	result, err := world.App.AbandonWorkflowSession(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: session.ID}, "dropped by its owner")
 	if err != nil {
-		t.Fatalf("ending the session by its handle should not refuse the blocked capture, got %v", err)
+		t.Fatalf("sdd sessions abandon should end the session with the blocked capture, got %v", err)
 	}
 	if !result.Abandoned || !slices.ContainsFunc(result.Discarded, func(d sdd.WorkflowInstanceSummary) bool { return d.Instance == instance }) {
 		t.Fatalf("the session should end with the blocked capture discarded, got %+v", result)
