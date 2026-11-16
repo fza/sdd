@@ -7,10 +7,15 @@ import (
 	"github.com/networkteam/sdd/internal/llm/factory"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
+	"github.com/networkteam/sdd/pkg/llm/relevance/systemone"
 )
 
 func TestNewPrefilter(t *testing.T) {
 	keys := map[string]string{"systemone": "k", "cohere": "k"}
+	jev, err := systemone.New(systemone.Options{APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name      string
 		cfg       model.LLMPrefilterConfig
@@ -20,7 +25,7 @@ func TestNewPrefilter(t *testing.T) {
 		pair      int
 	}{
 		{"chat provider runs generate", model.LLMPrefilterConfig{Provider: "claude-cli", Model: "haiku"}, "generate:haiku", relevance.Both, 1, 0},
-		{"systemone defaults to Jev through Opper", model.LLMPrefilterConfig{Provider: "systemone", APIKeys: keys}, "systemone:jev-1.14.0", relevance.Both, 0, 0},
+		{"systemone defaults to Jev through Opper", model.LLMPrefilterConfig{Provider: "systemone", APIKeys: keys}, "systemone:jev-1.14.0", relevance.Both, jev.MaxBatch(), 0},
 		{"cohere defaults to rerank v3.5 through Opper", model.LLMPrefilterConfig{Provider: "cohere", APIKeys: keys}, "cohere:aws/cohere/rerank-v3.5", relevance.Forward, 1000, 4096},
 		{"a set model names the judge", model.LLMPrefilterConfig{Provider: "cohere", Model: "cohere/rerank-v4", APIKeys: keys}, "cohere:cohere/rerank-v4", relevance.Forward, 1000, 4096},
 	}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +111,57 @@ func TestScore_RefusesMalformedReplies(t *testing.T) {
 			_, err := scorer.Score(t.Context(), request)
 			if _, ok := errors.AsType[*llm.MalformedAnswerError](err); !ok {
 				t.Fatalf("error %v should report a malformed answer", err)
+			}
+		})
+	}
+}
+
+// Every planned call fits Jev's limits: the whole request, state and every
+// question, within the request limit, and the state beside one question
+// within the input limit.
+func TestPlan_KeepsEveryCallWithinJevsLimits(t *testing.T) {
+	for name, size := range map[string]int{"many short candidates": 150, "a full batch filling the state": 360, "few long candidates": 3000} {
+		t.Run(name, func(t *testing.T) {
+			var requests, largest, largestState, question int
+			scorer := serve(t, func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				var got struct {
+					State     json.RawMessage            `json:"state"`
+					Questions map[string]json.RawMessage `json:"questions"`
+				}
+				if err := json.Unmarshal(body, &got); err != nil {
+					t.Errorf("request body is not JSON: %v", err)
+				}
+				requests++
+				largest = max(largest, relevance.EstimateTokens(string(body)))
+				largestState = max(largestState, relevance.EstimateTokens(string(got.State)))
+				answers := map[string]any{}
+				for id, q := range got.Questions {
+					question = max(question, relevance.EstimateTokens(string(q)))
+					answers[id] = map[string]any{"type": "noul", "noul": 0.5}
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"answers": answers})
+			})
+			candidates := make([]relevance.Candidate, 1000)
+			for i := range candidates {
+				candidates[i] = relevance.Candidate{ID: strconv.Itoa(i), Text: strings.Repeat("x", size)}
+			}
+			batches, oversize := relevance.Plan(scorer, "kind: gap\n\nThe draft text.", candidates)
+			if len(oversize) > 0 {
+				t.Fatalf("%d candidates left out: each fits a call on its own", len(oversize))
+			}
+			for _, batch := range batches {
+				request := relevance.Request{Subject: "kind: gap\n\nThe draft text."}
+				for _, i := range batch {
+					request.Candidates = append(request.Candidates, candidates[i])
+				}
+				_, err := scorer.Score(t.Context(), request)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if requests < 2 || largest > systemone.MaxRequestTokens || largestState+question > systemone.MaxInputTokens {
+				t.Fatalf("%d calls, largest request %d tokens, largest state %d beside a %d-token question: every call should stay within Jev's limits", requests, largest, largestState, question)
 			}
 		})
 	}
