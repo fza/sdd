@@ -513,6 +513,9 @@ func New(options Options) *cli.Command {
 			if checksStrays(cmd.Args().First()) {
 				err := strayRefusal(ctx)
 				if err != nil {
+					if isScheduledCachePrune(cmd.Args()) {
+						err = recordScheduledPruneFailure(ctx, err)
+					}
 					return ctx, err
 				}
 			}
