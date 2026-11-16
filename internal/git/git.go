@@ -59,6 +59,9 @@ const detachedTimeout = 30 * time.Second
 // controlling terminal. It is the production handlers.Committer for the
 // auto-commit paths (sdd new, summarize, init, ...).
 func (c CLI) Commit(message string, paths ...string) error {
+	if len(paths) == 0 {
+		return errors.New("git commit: no paths to commit (an empty pathspec would record the whole index)")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), detachedTimeout)
 	defer cancel()
 
@@ -139,7 +142,7 @@ func (c CLI) Uncommitted(ctx context.Context, paths []string) ([]string, error) 
 	for _, path := range paths {
 		// Only stdout lists changes: git warns on stderr about a path whose
 		// folder does not exist yet.
-		cmd := c.command(ctx, "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
+		cmd := c.command(ctx, "--literal-pathspecs", "status", "--porcelain", "-z", "--untracked-files=all", "--", path)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		status, err := cmd.Output()
@@ -350,7 +353,11 @@ func runDetached(ctx context.Context, args ...string) ([]byte, error) {
 // environment.
 func runDetachedEnv(ctx context.Context, env []string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = env
+	if env == nil {
+		env = os.Environ()
+	}
+	// sdd names files, never patterns: a glob character stays part of the name.
+	cmd.Env = append(slices.Clip(env), "GIT_LITERAL_PATHSPECS=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
