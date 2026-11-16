@@ -45,6 +45,9 @@ type ApplicationOptions struct {
 	// EntrySuffix supplies the random part of a new entry ID; nil draws it
 	// from the system's randomness (d-cpt-t8i).
 	EntrySuffix func(length int) (string, error)
+	// SecretRules reports the credential rule file the host's scans use; Info
+	// carries it. nil reports none.
+	SecretRules func() (SecretRules, error)
 }
 
 // Application resolves current access and dispatches protocol-neutral SDD
@@ -58,6 +61,7 @@ type Application struct {
 	clock         Clock
 	prepareSearch func(context.Context, SearchTarget) error
 	entrySuffix   func(length int) (string, error)
+	secretRules   func() (SecretRules, error)
 }
 
 func NewApplication(options ApplicationOptions) (*Application, error) {
@@ -85,6 +89,7 @@ func NewApplication(options ApplicationOptions) (*Application, error) {
 		clock:         clock,
 		prepareSearch: options.PrepareSearch,
 		entrySuffix:   suffix,
+		secretRules:   options.SecretRules,
 	}, nil
 }
 
@@ -108,13 +113,11 @@ func (a *Application) infoForBranch(ctx context.Context, identity RequestIdentit
 	if err != nil {
 		return InfoResult{}, err
 	}
-	rules, err := secrets.Active().Status()
-	if err != nil {
-		return InfoResult{}, fmt.Errorf("reading the secret rules in use: %w", err)
-	}
-	result.SecretRules = SecretRules{
-		Source: rules.Source, Tag: rules.Tag, Update: string(rules.Update), Unused: rules.Unused,
-		LastAccepted: rules.LastAccepted, LastChecked: rules.LastChecked, LastFailure: rules.LastFailure, LastFailureAt: rules.LastFailureAt,
+	if a.secretRules != nil {
+		result.SecretRules, err = a.secretRules()
+		if err != nil {
+			return InfoResult{}, fmt.Errorf("reading the secret rules in use: %w", err)
+		}
 	}
 	return result, nil
 }

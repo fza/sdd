@@ -26,6 +26,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/secrets"
 	pkgllm "github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/embed"
 	localadapter "github.com/networkteam/sdd/pkg/local"
@@ -425,7 +426,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 			})
 		}},
 	}
-	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: access, Sessions: sessions, StagedBlobs: blobs})
+	application, err := sdd.NewApplication(sdd.ApplicationOptions{Access: access, Sessions: sessions, StagedBlobs: blobs, SecretRules: secretRulesReport})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err
 	}
@@ -451,4 +452,17 @@ func repoIDOf(cfg *model.PerRepoConfig) model.RepoID {
 		return ""
 	}
 	return cfg.RepoID
+}
+
+// secretRulesReport is the application's SecretRules: the rules
+// useSecretRules selected for this process's scans.
+func secretRulesReport() (sdd.SecretRules, error) {
+	rules, err := secrets.Active().Status()
+	if err != nil {
+		return sdd.SecretRules{}, err
+	}
+	return sdd.SecretRules{
+		Source: rules.Source, Tag: rules.Tag, Update: string(rules.Update), Unused: rules.Unused,
+		LastAccepted: rules.LastAccepted, LastChecked: rules.LastChecked, LastFailure: rules.LastFailure, LastFailureAt: rules.LastFailureAt,
+	}, nil
 }
