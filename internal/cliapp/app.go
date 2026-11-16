@@ -1583,6 +1583,10 @@ func requireGraphInsideRepository(project meta.Project) error {
 		if err != nil {
 			return err
 		}
+		err = meta.RequireProjectRepository(subject, project.Root, git.RepoRootFor)
+		if err != nil {
+			return err
+		}
 	}
 	return meta.RequireGraphInProjectRepository(project.SDDDir(), project.Root, meta.ResolveGraphDir(project.Root, cfg), git.RepoRootFor)
 }
@@ -1890,6 +1894,7 @@ func initCmd() *cli.Command {
 			// A pointer at a folder holding no sdd project sets that project
 			// up first, asking what a fresh init asks.
 			projectMissing := false
+			var projectRoot string
 			if graphRepo != "" {
 				locations, err := repos.DefaultLocations()
 				if err != nil {
@@ -1899,6 +1904,7 @@ func initCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
+				projectRoot = cloneDir
 				projectSDDDir = meta.SDDDir(cloneDir)
 				cloneCommitted, _, err := meta.ReadLayers(projectSDDDir, "")
 				if err != nil {
@@ -1906,11 +1912,12 @@ func initCmd() *cli.Command {
 				}
 				projectMissing = cloneCommitted == nil
 			} else if pointer {
-				projectRoot := projectDir
+				projectRoot = projectDir
 				if !filepath.IsAbs(projectRoot) {
 					projectRoot = filepath.Join(repoRoot, projectRoot)
 				}
-				projectSDDDir = meta.SDDDir(filepath.Clean(projectRoot))
+				projectRoot = filepath.Clean(projectRoot)
+				projectSDDDir = meta.SDDDir(projectRoot)
 				projectCommitted, _, err := meta.ReadConfigLayers(projectSDDDir)
 				if err != nil {
 					return fmt.Errorf("reading the project's configuration before init: %w", err)
@@ -1947,9 +1954,13 @@ func initCmd() *cli.Command {
 					missing = append(missing, "--participant NAME   (canonical author name)")
 				}
 				if len(missing) > 0 {
+					purpose := "to run non-interactively"
+					if projectMissing {
+						purpose = "to set up the project in " + projectRoot + " non-interactively"
+					}
 					return fmt.Errorf(
-						"sdd init needs values for the following flags to run non-interactively:\n  %s",
-						strings.Join(missing, "\n  "),
+						"sdd init needs values for the following flags %s:\n  %s",
+						purpose, strings.Join(missing, "\n  "),
 					)
 				}
 			}

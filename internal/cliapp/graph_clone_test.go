@@ -155,7 +155,7 @@ func TestInitGraphRepoAndTheStockGuard(t *testing.T) {
 	out, err := runAppErr(t, code,
 		"new", "signal", "tactical", "A capture that must not land in the code repository.",
 		"--confidence", "high", "--skip-preflight", "--participants", "Ada", "--summary", "A stray capture.")
-	if err == nil || !strings.Contains(err.Error()+out, "not a directory") {
+	if err == nil || !strings.Contains(err.Error()+out, model.GraphElsewhereFile) {
 		t.Errorf("a capture should fail on the guard file, got %v:\n%s", err, out)
 	}
 	if headSubject(t, code) != head {

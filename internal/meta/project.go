@@ -103,7 +103,7 @@ func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, erro
 		return Project{}, err
 	}
 	if targetCommitted == nil {
-		return Project{}, fmt.Errorf("project_dir %s in %s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", projectDir, sddDir, ErrNotAProject, projectDir)
+		return Project{}, fmt.Errorf("project_dir %s in %s leads to %s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", projectDir, sddDir, root, ErrNotAProject, projectDir)
 	}
 	if model.MergeConfig(targetCommitted, targetLocal).ProjectDir != "" {
 		return Project{}, fmt.Errorf("project_dir %s in %s names a repository that itself sets project_dir; point at the project holding the graph", projectDir, sddDir)
@@ -216,25 +216,40 @@ func RequireProjectApart(subject, workRoot, projectRoot string, rootOf func(stri
 	return nil
 }
 
+// RequireProjectRepository refuses an existing project at projectRoot that
+// lies in no repository: its graph commits would have nowhere to land.
+// RequireProjectApart already refuses one inside another repository.
+func RequireProjectRepository(subject, projectRoot string, rootOf func(string) string) error {
+	if rootOf(projectRoot) != "" {
+		return nil
+	}
+	return fmt.Errorf("%s lies outside any repository; the project needs a repository of its own: run `git init` there and commit its .sdd/", subject)
+}
+
 // RequireGraphInProjectRepository refuses a graph_dir, set in sddDir and
-// resolved to graphDir, that leads out of the project at projectRoot into no
-// repository or into one other than the project's: graph commits, the schema
-// stamp and engine branches all belong to the repository holding the
-// project's .sdd/. rootOf returns the root of the repository holding a path,
-// empty when there is none.
+// resolved to graphDir, that lies in no repository or in one other than the
+// project's, a repository nested in the project included: graph commits, the
+// schema stamp and engine branches all belong to the repository holding the
+// project's .sdd/. A project with no repository yet keeps only a graph inside
+// it. rootOf returns the root of the repository holding a path, empty when
+// there is none.
 func RequireGraphInProjectRepository(sddDir, projectRoot, graphDir string, rootOf func(string) string) error {
-	if WithinDir(projectRoot, graphDir) {
+	projectRepo := rootOf(projectRoot)
+	if projectRepo == "" && WithinDir(projectRoot, graphDir) {
 		return nil
 	}
 	graphRepo := rootOf(graphDir)
 	if graphRepo == "" {
 		return fmt.Errorf("graph_dir in %s leads to %s, outside the project and outside any repository; keep the graph inside the project", sddDir, graphDir)
 	}
-	projectRepo := rootOf(projectRoot)
 	if projectRepo != "" && SameDir(graphRepo, projectRepo) {
 		return nil
 	}
-	return fmt.Errorf("graph_dir in %s leads into %s, a repository separate from %s; make the graph a project of its own (`sdd init` there) and set project_dir to that repository's root instead", sddDir, graphRepo, projectRepo)
+	separateFrom := projectRepo
+	if separateFrom == "" {
+		separateFrom = projectRoot
+	}
+	return fmt.Errorf("graph_dir in %s leads into %s, a repository separate from %s; make the graph a project of its own (`sdd init` there) and set project_dir to that repository's root instead", sddDir, graphRepo, separateFrom)
 }
 
 // WithinDir reports whether path is dir or lies below it. Folders on disk

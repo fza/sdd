@@ -3,7 +3,6 @@ package git
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -20,7 +19,7 @@ func admittedEnv(ctx context.Context, verb string, extra ...string) ([]string, e
 	if !admitted {
 		return nil, fmt.Errorf("git %s: %w", verb, gitgate.ErrNotAdmitted)
 	}
-	env := append(os.Environ(), extra...)
+	env := append(pathEnv(), extra...)
 	return append(env, gateEnv...), nil
 }
 
@@ -38,12 +37,11 @@ func (c CLI) run(ctx context.Context, args ...string) error {
 	return runEnv(ctx, c.localEnv(ctx), c.Dir, args...)
 }
 
-// localEnv is the environment of a git command in the repository: nil, so
-// the process environment, outside an sdd-owned graph clone, and cloneEnv in
-// one.
+// localEnv is the environment of a git command in the repository: env
+// outside an sdd-owned graph clone, and cloneEnv in one.
 func (c CLI) localEnv(ctx context.Context) []string {
 	if !c.graphClone() {
-		return nil
+		return c.env()
 	}
 	return cloneEnv(ctx)
 }
@@ -51,17 +49,17 @@ func (c CLI) localEnv(ctx context.Context) []string {
 // cloneEnv lets a git command in an sdd-owned graph clone fetch file
 // contents on its own only inside a gate admission, which counts and bounds
 // the connection; outside one, a command that needs missing contents fails
-// instead of connecting.
+// instead of connecting. A clone is always reached by path (pathEnv).
 func cloneEnv(ctx context.Context) []string {
 	gateEnv, admitted := gitgate.Env(ctx)
 	if admitted {
-		env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND="+sshCommand)
+		env := append(pathEnv(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND="+sshCommand)
 		return append(env, gateEnv...)
 	}
 	if !lazyFetchBar() {
-		return nil
+		return pathEnv()
 	}
-	return append(os.Environ(), "GIT_NO_LAZY_FETCH=1")
+	return append(pathEnv(), "GIT_NO_LAZY_FETCH=1")
 }
 
 // lazyFetchBar reports whether the installed git bars lazy fetches in a

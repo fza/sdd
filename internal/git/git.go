@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -50,6 +51,29 @@ func (c CLI) at(args ...string) []string {
 // sdd runs as a long-lived server; the timeout is a backstop on top of the
 // TTY detach in runDetached. See d-tac-zhp.
 const detachedTimeout = 30 * time.Second
+
+// env is the environment for a git command addressed through at: nil, the
+// process's own, without Dir; with Dir, the process's own without the
+// variables that would pin the command to another repository (pathEnv).
+func (c CLI) env() []string {
+	if c.Dir == "" {
+		return nil
+	}
+	return pathEnv()
+}
+
+// repositoryVariables are the variables git exports to hooks that pin a
+// command to the hook's repository whatever -C names.
+var repositoryVariables = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"}
+
+// pathEnv is the process environment without repositoryVariables, for a git
+// command that locates its repository by path.
+func pathEnv() []string {
+	return slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(repositoryVariables, name)
+	})
+}
 
 // Commit stages exactly the given paths and commits them, detached from any
 // controlling terminal. It is the production handlers.Committer for the
@@ -336,7 +360,7 @@ func RepoRootFor(path string) string {
 	if dir == "" {
 		return ""
 	}
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	out, err := (CLI{Dir: dir}).command(context.Background(), "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return ""
 	}
@@ -357,7 +381,7 @@ func (Repositories) RootOf(dir string) (string, error) {
 		return "", nil
 	}
 	probe := exec.Command("git", "-C", ancestor, "rev-parse", "--show-toplevel")
-	probe.Env = append(os.Environ(), "LC_ALL=C")
+	probe.Env = append(pathEnv(), "LC_ALL=C")
 	var stderr strings.Builder
 	probe.Stderr = &stderr
 	out, err := probe.Output()
@@ -371,7 +395,9 @@ func (Repositories) RootOf(dir string) (string, error) {
 }
 
 func (Repositories) Init(dir string) error {
-	out, err := exec.Command("git", "init", "--quiet", dir).CombinedOutput()
+	cmd := exec.Command("git", "init", "--quiet", dir)
+	cmd.Env = pathEnv()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git init %s: %s (%w)", dir, strings.TrimSpace(string(out)), err)
 	}

@@ -62,7 +62,7 @@ func (c CLI) BuildCommit(ctx context.Context, plan model.MoveCommit) (string, er
 	}
 	index := filepath.Join(lastLine(gitDir), "sdd-move-index")
 	defer func() { _ = os.Remove(index) }()
-	env := append(os.Environ(), "GIT_INDEX_FILE="+index)
+	env := append(pathEnv(), "GIT_INDEX_FILE="+index)
 	if len(plan.Parents) > 0 && plan.Parents[0] != "" {
 		_, err = c.combined(ctx, env, "", "read-tree", plan.Parents[0])
 	} else {
