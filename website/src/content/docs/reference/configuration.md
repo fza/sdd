@@ -286,7 +286,7 @@ A round that cannot finish leaves a record for the branch. Every tool result of 
 
 `sdd init` routes the entry files to the merge driver `sdd git-merge entry` in `<graph_dir>/.gitattributes`, and every command that touches the graph's git writes the driver into `.git/config`. When only one side of a merge changed an entry's `title` or `summary`, that side wins. Changed on both sides, the value whose UTF-8 bytes sort first wins, so every clone gets the same result in either merge direction. The body and the other keys merge as text. Without the driver in `.git/config`, or without `sdd` on `PATH`, git merges the file as text with conflict markers.
 
-In the clones it keeps, sdd passes the drivers with every git call, and `sdd git-merge config` merges `.sdd/config.yaml` key by key: `dependencies` as a set, and a value changed on both sides takes the upstream value, with a notice. An upstream deletion of an entry wins over a local `title` or `summary` change. git calls both drivers; you never run them yourself.
+In the clones it keeps, sdd passes the drivers with every git call, and `sdd git-merge config` merges `.sdd/config.yaml` key by key: `dependencies` as a set, and a value changed on both sides takes the upstream value, with a warning. An upstream deletion of an entry wins over a local `title` or `summary` change. git calls both drivers; you never run them yourself.
 
 ### Cache
 

@@ -157,7 +157,7 @@ sdd checks both when the capture starts, before the dialogue, and refuses with t
 sdd repo remove github.com/acme/platform
 ```
 
-This removes the `repo_id` from `dependencies` and commits the change. It refuses while any entry in your graph references the repository and lists those references. `--force` removes the dependency anyway and names each reference it leaves unresolvable. The connection in your user-global config and the clone stay in place. Once you also delete the repository from `repos` in that config, [`sdd cache prune`](/sdd/reference/configuration/#cleanup) removes the clone after `cache.retention` without a fetch or push, unless it holds unpushed commits. A clone no `sdd repo remove` dropped stays.
+This removes the `repo_id` from `dependencies` and commits the change. It refuses while any entry in your graph references the repository and lists those references. `--force` removes the dependency anyway and names each reference it leaves unresolvable. The connection in your user-global config and the clone stay in place. Once you also delete the repository from `repos` in that config, [`sdd cache prune`](/sdd/reference/configuration/#cleanup) removes the clone after `cache.retention` without a fetch or push, unless it holds unpushed commits or entries a force push set aside. A clone no `sdd repo remove` dropped stays.
 
 ## When something does not resolve
 
