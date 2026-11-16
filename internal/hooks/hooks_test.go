@@ -159,6 +159,49 @@ func TestHooksRefuseACommittedHookIntoLocal(t *testing.T) {
 	}
 }
 
+// A machine-local hook runs only a script of its own in local/, judged by
+// the file it reaches, so a committed script a pull may change never runs
+// under it, named directly or through a link.
+func TestHooksRefuseAMachineLocalHookOutsideLocal(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		command string
+		setup   func(t *testing.T, w *world)
+	}{
+		{"committed script", "shared.sh", func(t *testing.T, w *world) {}},
+		{"link out of local", "local/link.sh", func(t *testing.T, w *world) {
+			if err := os.MkdirAll(filepath.Join(w.hooksDir(), "local"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../shared.sh", filepath.Join(w.hooksDir(), "local", "link.sh")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			script(t, filepath.Join(w.hooksDir(), "shared.sh"), "true")
+			tc.setup(t, w)
+			w.local(t, "  - event: entry.written\n    command: "+tc.command+"\n")
+			if err := w.hooksErr(t); err == nil || !strings.Contains(err.Error(), "reaches a script outside local/") {
+				t.Fatalf("a machine-local hook outside local/ should be refused, got %v", err)
+			}
+		})
+	}
+}
+
+// On a case-insensitive file system another spelling of local/ reaches the
+// same folder, and a committed hook may not run a script there.
+func TestHooksRefuseACommittedHookIntoLocalSpelledOtherwise(t *testing.T) {
+	w := newWorld(t)
+	requireCaseInsensitive(t, w.repo)
+	script(t, filepath.Join(w.hooksDir(), "local", "mine.sh"), "true")
+	w.commit(t, "  - event: entry.written\n    command: Local/mine.sh\n")
+	if err := w.hooksErr(t); err == nil || !strings.Contains(err.Error(), "reaches a script in local/") {
+		t.Fatalf("a committed hook into Local/ should be refused, got %v", err)
+	}
+}
+
 func TestHooksRefuseACommandFileThatCannotRun(t *testing.T) {
 	w := newWorld(t)
 	write(t, filepath.Join(w.hooksDir(), "lint.sh"), "#!/bin/sh\n")

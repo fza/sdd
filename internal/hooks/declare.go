@@ -6,7 +6,9 @@ package hooks
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -186,5 +188,44 @@ func commandFile(hook model.Hook) (string, error) {
 	if info.Mode().Perm()&0o111 == 0 {
 		return "", fmt.Errorf("command %q in %s is not executable; give it an interpreter shebang and make it executable", hook.Command, hook.Origin.Dir)
 	}
+	if hook.Origin.Layer == model.HookLayerGlobal {
+		return path, nil
+	}
+	inLocal, err := withinFolder(path, filepath.Join(hook.Origin.Dir, model.HookLocalDir))
+	if err != nil {
+		return "", err
+	}
+	if hook.Origin.Layer == model.HookLayerCommitted && inLocal {
+		return "", fmt.Errorf("command %q reaches a script in %s/, which only this machine has; declare the hook in config.local.yaml", hook.Command, model.HookLocalDir)
+	}
+	if hook.Origin.Layer == model.HookLayerLocal && !inLocal {
+		return "", fmt.Errorf("command %q reaches a script outside %s/; a machine-local hook runs only a script of its own there, never one a pull may change", hook.Command, model.HookLocalDir)
+	}
 	return path, nil
+}
+
+// withinFolder reports whether the file path reaches, links resolved, lies
+// below folder. It compares folders by identity, not by spelling, so another
+// case on a case-insensitive file system or a link changes nothing.
+func withinFolder(path, folder string) (bool, error) {
+	target, err := os.Stat(folder)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false, err
+	}
+	for dir := filepath.Dir(real); ; dir = filepath.Dir(dir) {
+		info, err := os.Stat(dir)
+		if err == nil && os.SameFile(info, target) {
+			return true, nil
+		}
+		if filepath.Dir(dir) == dir {
+			return false, nil
+		}
+	}
 }
