@@ -1155,7 +1155,7 @@ func (w *WorkflowSession) concludeEndedForks(ctx context.Context, identity Reque
 // as it is.
 func (a *Application) endDelegate(ctx context.Context, identity RequestIdentity, child SessionID, reason string) error {
 	for attempt := 0; ; attempt++ {
-		_, err := a.abandonSession(ctx, identity, WorkflowResumeRequest{SessionID: child}, reason, false)
+		_, err := a.abandonSession(ctx, identity, WorkflowResumeRequest{SessionID: child}, reason, false, false)
 		var appErr *ApplicationError
 		if errors.As(err, &appErr) && appErr.Code == ErrorSessionEnded {
 			return nil

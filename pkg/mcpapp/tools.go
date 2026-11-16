@@ -916,7 +916,7 @@ func (s *toolSet) abandonSession(ctx context.Context, req *mcp.CallToolRequest, 
 		defer cached.mu.Unlock()
 		s.sessions.evict(id)
 	}
-	result, err := s.app.AbandonWorkflowSession(ctx, identity, sdd.WorkflowResumeRequest{
+	result, err := s.app.AbandonWorkflowSessionAsAgent(ctx, identity, sdd.WorkflowResumeRequest{
 		SessionID: id, ClientName: mcpClientName(req.Session), ClientVersion: mcpClientVersion(req.Session),
 	}, args.Reason)
 	if err != nil {

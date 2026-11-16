@@ -52,7 +52,7 @@ How best to hand work between agent sessions this way is still being worked out.
 
 ## Parked captures
 
-Under `dialogue.mode: auto`, a capture that a check blocks a second time is parked: nothing is written and the session stays open at that step. The agent ends its turn with `parked at <step>: resume_session <session>`. `sdd sessions` marks it, for example `capture parked at deepUser · 2h ago`, and `sdd sessions --format json` lists every open session with `session`, `procedure`, `parked`, `step`, `reason` and `since`. Your next guided session names each parked capture when it opens. Resume the session in a guided dialogue to answer the step yourself.
+Under `dialogue.mode: auto`, a capture that a check blocks a second time is parked: nothing is written and the session stays open at that step. The agent ends its turn with `parked at <step>: resume_session <session>`. `sdd sessions` marks it, for example `capture parked at deepUser · 2h ago`, and `sdd sessions --format json` lists every open session with `session`, `procedure`, `parked`, `step`, `reason` and `since`. Your next guided session names each parked capture when it opens. Resume the session in a guided dialogue to answer the step yourself. The agent cannot drop a blocked capture: sdd refuses its abandon of the move, and its end of the session by the session's handle, while the move waits at such a step. You drop it in a guided dialogue, or end the session with `sdd sessions abandon <session>`.
 
 ## Wrap up sessions
 
