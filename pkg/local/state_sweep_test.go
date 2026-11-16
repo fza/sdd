@@ -213,6 +213,40 @@ func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
 	}
 }
 
+// A session logged in a checkout's .sdd/sessions stages its attachments in
+// the state folder; the sweep cannot see that log, so it keeps them however
+// long the project was unused.
+func TestStateSweepKeepsTheStagedAttachmentsOfASessionLoggedInACheckout(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "github.com/acme/checkout"
+	sddDir := filepath.Join(t.TempDir(), ".sdd")
+	inTree := localadapter.StoreLocation{
+		Name: "in-tree store", Sessions: filepath.Join(sddDir, "sessions"), StagedBlobs: filepath.Join(sddDir, "staged-blobs"),
+		Subject: "local", Project: "local",
+	}
+	sessions, err := localadapter.NewFilesystemSessionStore(inTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessions.Create(t.Context(), sdd.SessionMetadata{ID: "s_in_tree", Subject: "local", Project: "local", Participant: "Christopher", UpdatedAt: f.now}); err != nil {
+		t.Fatal(err)
+	}
+	blobs, err := localadapter.NewFilesystemStagedBlobStore(f.location(key), inTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := blobs.Stage(t.Context(), sdd.SessionRef{Subject: "local", Session: "s_in_tree"}, "evidence.md", strings.NewReader("evidence")); err != nil {
+		t.Fatal(err)
+	}
+	f.used(t, key, f.now.Add(-sweepUnusedRetention-time.Hour))
+
+	f.sweep(t)
+
+	if !f.stagedExists(t, key, "s_in_tree") {
+		t.Error("the staged attachments of an open session the sweep does not see should stay")
+	}
+}
+
 // A project whose last session ended without using it, as a long-running
 // server or a cache.retention below sessions.retention allows, loses its
 // session folder on the sweep that collects that session.

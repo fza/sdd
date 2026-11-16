@@ -87,8 +87,10 @@ func (s *StateSwept) add(o StateSwept) {
 // StateSweep removes the per-project state under StateRoot nothing needs:
 // ended sessions past their retention with their staged attachments, and the
 // relevance ledger and empty session folder of a project unused for longer
-// than the unused retention. It never removes an open session or a log it
-// cannot read.
+// than the unused retention. It never removes an open session, a log it
+// cannot read, or the staged attachments of a session it does not collect:
+// that session's log may lie in a checkout's .sdd/sessions, which it does
+// not see.
 type StateSweep struct {
 	StateRoot string
 }
@@ -111,15 +113,11 @@ func (s StateSweep) Sweep(ctx context.Context, now time.Time, sessionRetention, 
 			errs = append(errs, fmt.Errorf("collecting the sessions of %s: %w", key, err))
 		}
 	}
-	live, err := s.sessionIDs()
-	if err != nil {
-		return counts, errors.Join(append(errs, err)...)
-	}
 	for _, key := range keys {
 		if ctx.Err() != nil {
 			break
 		}
-		removed, err := s.retireUnused(key, now, unusedRetention, live)
+		removed, err := s.retireUnused(key, now, unusedRetention)
 		counts.add(removed)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("removing the state of unused project %s: %w", key, err))
@@ -182,8 +180,8 @@ func (s StateSweep) collect(ctx context.Context, key string, now time.Time, rete
 
 // retireUnused removes the state of a project unused for longer than
 // retention: its relevance ledger, its session folder once no session is
-// left, and its staged attachments once no session anywhere owns them.
-func (s StateSweep) retireUnused(key string, now time.Time, retention time.Duration, live map[app.SessionID]bool) (counts StateSwept, err error) {
+// left, and its staged-attachments folder once it holds no session's.
+func (s StateSweep) retireUnused(key string, now time.Time, retention time.Duration) (counts StateSwept, err error) {
 	last, err := s.lastUse(key)
 	if err != nil || now.Sub(last) <= retention {
 		return counts, err
@@ -223,7 +221,7 @@ func (s StateSweep) retireUnused(key string, now time.Time, retention time.Durat
 	if err != nil {
 		return counts, err
 	}
-	if exists(staged) && !slices.ContainsFunc(owned, func(id app.SessionID) bool { return live[id] }) {
+	if exists(staged) && len(owned) == 0 {
 		size, err := treeSize(staged)
 		if err != nil {
 			return counts, err
@@ -388,28 +386,6 @@ func holdsState(dir string) (bool, error) {
 		}
 	}
 	return !slices.ContainsFunc(entries, fs.DirEntry.IsDir), nil
-}
-
-// sessionIDs lists every session log under the state root.
-func (s StateSweep) sessionIDs() (map[app.SessionID]bool, error) {
-	ids := map[app.SessionID]bool{}
-	root := filepath.Join(s.StateRoot, sessionsCategory)
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) && path == root {
-				return filepath.SkipAll
-			}
-			return err
-		}
-		if !d.IsDir() && strings.HasSuffix(d.Name(), sessionLogSuffix) {
-			ids[app.SessionID(strings.TrimSuffix(d.Name(), sessionLogSuffix))] = true
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("listing %s: %w", root, err)
-	}
-	return ids, nil
 }
 
 // stagedSessions lists the sessions a staged-blobs folder holds attachments
