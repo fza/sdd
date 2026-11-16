@@ -27,28 +27,53 @@ type CurrentHashSource interface {
 	CurrentHashes(ctx context.Context, maxRunes int) (map[string]string, error)
 }
 
-// CacheHandlerOptions configures NewCacheHandler. CacheRoot, StateRoot and
-// Registry are required; Keep is nil outside an sdd checkout; Now defaults to
-// time.Now.
+// OwnedCloneProbe answers what pruning asks of an sdd-owned clone before it
+// removes one.
+type OwnedCloneProbe interface {
+	// TryLockSync takes the clone's sync lock; release is nil while another
+	// process holds it.
+	TryLockSync(ctx context.Context, dir string) (release func(), err error)
+	// Unpushed reports whether the clone holds commits its remote lacks.
+	Unpushed(ctx context.Context, dir string) (bool, error)
+	// LastAttempt is when the git gate last admitted a fetch or push of the
+	// clone's remote; zero when it never did.
+	LastAttempt(ctx context.Context, dir string) (time.Time, error)
+	// GC runs git gc --auto in the clone, locally.
+	GC(ctx context.Context, dir string) error
+}
+
+// GateSweeper is the git gate's part in the sweep.
+type GateSweeper interface {
+	PruneRecords(ctx context.Context, now time.Time, retention time.Duration) (int, error)
+	SweepTraces(now time.Time, minAge time.Duration) (int, error)
+}
+
+// CacheHandlerOptions configures NewCacheHandler. CacheRoot, StateRoot,
+// Registry, OwnedClones and Gate are required; Keep is nil outside an sdd
+// checkout; Now defaults to time.Now.
 type CacheHandlerOptions struct {
-	CacheRoot string
-	StateRoot string
-	Registry  *repos.Registry
-	Keep      CurrentHashSource
-	Now       func() time.Time
+	CacheRoot   string
+	StateRoot   string
+	Registry    *repos.Registry
+	OwnedClones OwnedCloneProbe
+	Gate        GateSweeper
+	Keep        CurrentHashSource
+	Now         func() time.Time
 }
 
 // CacheHandler runs the machine-global cache pruning.
 type CacheHandler struct {
-	cacheRoot string
-	stateRoot string
-	registry  *repos.Registry
-	keep      CurrentHashSource
-	now       func() time.Time
+	cacheRoot   string
+	stateRoot   string
+	registry    *repos.Registry
+	ownedClones OwnedCloneProbe
+	gate        GateSweeper
+	keep        CurrentHashSource
+	now         func() time.Time
 }
 
 func NewCacheHandler(opts CacheHandlerOptions) *CacheHandler {
-	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, keep: opts.Keep, now: opts.Now}
+	h := &CacheHandler{cacheRoot: opts.CacheRoot, stateRoot: opts.StateRoot, registry: opts.Registry, ownedClones: opts.OwnedClones, gate: opts.Gate, keep: opts.Keep, now: opts.Now}
 	if h.now == nil {
 		h.now = time.Now
 	}
@@ -142,21 +167,22 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		errs = append(errs, fmt.Errorf("pruning graph snapshots: %w", err))
 	}
 
-	calibrations, err := embed.PruneCalibrations(filepath.Join(h.cacheRoot, embed.CalibrationDirName), now, retention)
-	counts.Records += calibrations
-	if err != nil {
-		errs = append(errs, err)
-	}
+	errs = append(errs, h.sweepLeftovers(now, &counts)...)
+	errs = append(errs, h.pruneRecords(ctx, now, retention, &counts)...)
 
 	clones, err := h.registry.UnconnectedClones()
 	if err != nil {
 		errs = append(errs, err)
 	}
-	for _, dir := range clones {
-		retired, err := h.registry.RetireUnconnectedClone(dir)
+	for _, clone := range clones {
+		dir := clone.Dir
+		retired, err := h.registry.RetireUnconnectedClone(clone, h.holdUnused(ctx, now, retention))
 		switch {
 		case errors.Is(err, repos.ErrClonesBusy):
 			log.Info("connected-repo clones in use, skipped")
+			continue
+		case errors.Is(err, repos.ErrCloneInUse):
+			log.Info("clone kept", "clone", dir, "reason", err)
 			continue
 		case errors.Is(err, repos.ErrCloneHoldsClones):
 			log.Warn("clone kept", "clone", dir, "reason", err)
@@ -180,9 +206,130 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time) (model.CachePru
 		counts.Bytes += size
 		log.Info("removed unconnected clone", "clone", dir, "bytes", size)
 	}
+	errs = append(errs, h.gcListedClones(ctx)...)
 
 	errs = append(errs, h.pruneIndex(ctx, now, index.Retention{Unused: retention, Replaced: replaced}, keepFor, &counts)...)
 	return counts, errors.Join(errs...)
+}
+
+// gcListedClones runs git gc --auto in each clone the repos list names,
+// skipping one a sync holds.
+func (h *CacheHandler) gcListedClones(ctx context.Context) []error {
+	if h.ownedClones == nil {
+		return []error{errors.New("cache pruning has no probe for sdd-owned clones")}
+	}
+	clones, err := h.registry.ListedClones()
+	if err != nil {
+		return []error{err}
+	}
+	var errs []error
+	for _, clone := range clones {
+		if ctx.Err() != nil {
+			break
+		}
+		release, err := h.ownedClones.TryLockSync(ctx, clone.Dir)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("locking the sync of %s: %w", clone.Dir, err))
+			continue
+		}
+		if release == nil {
+			slogutils.FromContext(ctx).Info("clone in use, gc skipped", "clone", clone.Dir)
+			continue
+		}
+		err = h.ownedClones.GC(ctx, clone.Dir)
+		release()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("packing the clone of %s: %w", clone.RepoID, err))
+		}
+	}
+	return errs
+}
+
+// sweepLeftovers removes what killed processes left outside the index stores
+// once older than model.CacheLeftoverAge.
+func (h *CacheHandler) sweepLeftovers(now time.Time, counts *model.CachePruneCounts) []error {
+	var errs []error
+	if h.gate == nil {
+		errs = append(errs, errors.New("cache pruning has no git gate"))
+	} else {
+		traces, err := h.gate.SweepTraces(now, model.CacheLeftoverAge)
+		counts.Leftovers += traces
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	staging, err := h.registry.SweepCloneStaging(now, model.CacheLeftoverAge)
+	counts.Leftovers += staging
+	if err != nil {
+		errs = append(errs, err)
+	}
+	hosts, err := h.registry.SweepLegacyHostDirs(now, model.CacheLeftoverAge)
+	counts.Leftovers += hosts
+	if err != nil {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
+// pruneRecords drops git gate records and embedder calibrations unused for
+// retention.
+func (h *CacheHandler) pruneRecords(ctx context.Context, now time.Time, retention time.Duration, counts *model.CachePruneCounts) []error {
+	var errs []error
+	if h.gate != nil {
+		records, err := h.gate.PruneRecords(ctx, now, retention)
+		counts.GateRecords += records
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	calibrations, err := embed.PruneCalibrations(filepath.Join(h.cacheRoot, embed.CalibrationDirName), now, retention)
+	counts.Records += calibrations
+	if err != nil {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
+// holdUnused lets an sdd-owned clone go only while nothing uses it: its sync
+// lock is free, it holds no unpushed commits, and the git gate admitted no
+// operation on its remote within retention, which keeps the graph_repo clone
+// of a project, never connected, while the project syncs it.
+func (h *CacheHandler) holdUnused(ctx context.Context, now time.Time, retention time.Duration) repos.CloneHold {
+	return func(dir string) (func(), error) {
+		if h.ownedClones == nil {
+			return nil, errors.New("cache pruning has no probe for sdd-owned clones")
+		}
+		release, err := h.ownedClones.TryLockSync(ctx, dir)
+		if err != nil {
+			return nil, fmt.Errorf("locking the sync of %s: %w", dir, err)
+		}
+		if release == nil {
+			return nil, fmt.Errorf("%w: a sync holds it", repos.ErrCloneInUse)
+		}
+		if err := h.cloneInUse(ctx, dir, now, retention); err != nil {
+			release()
+			return nil, err
+		}
+		return release, nil
+	}
+}
+
+func (h *CacheHandler) cloneInUse(ctx context.Context, dir string, now time.Time, retention time.Duration) error {
+	unpushed, err := h.ownedClones.Unpushed(ctx, dir)
+	if err != nil {
+		return err
+	}
+	if unpushed {
+		return fmt.Errorf("%w: it holds unpushed commits", repos.ErrCloneInUse)
+	}
+	last, err := h.ownedClones.LastAttempt(ctx, dir)
+	if err != nil {
+		return err
+	}
+	if !last.IsZero() && now.Sub(last) <= retention {
+		return fmt.Errorf("%w: git last reached its remote at %s", repos.ErrCloneInUse, last.Format(time.RFC3339))
+	}
+	return nil
 }
 
 // pruneIndex applies the index retention rules to every store, the longest

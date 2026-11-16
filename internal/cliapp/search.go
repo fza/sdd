@@ -148,7 +148,7 @@ func resolveIndexStore(emb embed.Embedder) (string, error) {
 		return "", err
 	}
 	key := index.RepoKey(repoID, stableRoot)
-	return index.StoreDir(loc.CacheRoot, key, emb.Fingerprint()), nil
+	return index.OpenStoreDir(loc.CacheRoot, key, emb.Fingerprint())
 }
 
 // crossRepoEmbedder builds the embedder for a cross-repo search: the
@@ -293,7 +293,12 @@ func indexCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				connH = handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr})
+				round, err := cloneRound()
+				if err != nil {
+					return err
+				}
+				connH = handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr, CloneRound: round})
+				defer connH.Settle()
 				if err := connH.RefreshDependencyClosure(ctx, dependencyRefreshCmd(ctx)); err != nil {
 					return err
 				}
@@ -549,6 +554,10 @@ func searchCmd() *cli.Command {
 			if showView {
 				prog = newEmbedProgress()
 			}
+			// settle waits, once the results are out, for the sync rounds the
+			// cross-repo read stopped waiting for.
+			settle := func() {}
+			defer func() { settle() }()
 			work := func(ctx context.Context) (*query.SearchResult, error) {
 				sq := sq
 				if needsVector {
@@ -608,7 +617,12 @@ func searchCmd() *cli.Command {
 				if err != nil {
 					return nil, err
 				}
-				h := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr})
+				round, err := cloneRound()
+				if err != nil {
+					return nil, err
+				}
+				h := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Reader: reader, Repos: mgr, CloneRound: round})
+				settle = h.Settle
 				refresh := dependencyRefreshCmd(ctx)
 				var fill *command.BuildConnectedIndexesCmd
 				if prog != nil {

@@ -5,21 +5,36 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/networkteam/sdd/internal/git"
+	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/syncstate"
 	app "github.com/networkteam/sdd/pkg/application"
 )
 
 // NewRepositoryTargets opens configured graph readers and Git-backed mutation
-// targets. Each acquisition rereads the global, committed and local config.
-func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPath string) (*GitWorktreeAcquirer, error) {
+// targets. Each acquisition rereads the global, committed and local config;
+// a non-empty localLayerFile stands in for every checkout's
+// .sdd/config.local.yaml. The git network operations sync starts pass a gate
+// keeping its record in stateDir, under the limits the global config sets as
+// read now and the sdd-owned clones under dataDir.
+func NewRepositoryTargets(ctx context.Context, project app.ProjectID, serverCheckout, globalConfigPath, localLayerFile, stateDir, dataDir string) (*GitWorktreeAcquirer, error) {
+	limitsConfig, err := repos.LoadConfigFrom(globalConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	gate := gitgate.New(gitgate.Options{
+		StateDir: stateDir, Limits: repos.GitLimitsFunc(ctx, limitsConfig, globalConfigPath),
+		Clones: repos.NewCloneTargets(repos.Locations{DataRoot: dataDir}, git.GraphClones{}).Targets,
+	})
 	resolveConfig := func(checkout string) (*model.PerRepoConfig, error) {
 		global, err := repos.LoadConfigFrom(globalConfigPath)
 		if err != nil {
 			return nil, err
 		}
-		cfg, err := meta.ResolveConfig(global.BaseConfig, filepath.Join(checkout, model.SDDDirName))
+		cfg, err := meta.ResolveConfigWithLocal(global.BaseConfig, filepath.Join(checkout, model.SDDDirName), localLayerFile)
 		if err != nil {
 			return nil, err
 		}
@@ -35,7 +50,7 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 		}
 		return cfg, nil
 	}
-	return NewGitWorktreeAcquirer(GitWorktreeAcquirerOptions{
+	acquirer, err := NewGitWorktreeAcquirer(GitWorktreeAcquirerOptions{
 		Project: project, ServerCheckout: serverCheckout,
 		ReadFactory: func(ctx context.Context, checkout string, q app.SnapshotReadQuery) (*app.AcquiredSnapshot, error) {
 			cfg, err := resolveConfig(checkout)
@@ -66,7 +81,18 @@ func NewRepositoryTargets(project app.ProjectID, serverCheckout, globalConfigPat
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			return graph, []app.MutationFinalizer{finalizer}, func() error { return nil }, nil
+			finalizers := []app.MutationFinalizer{finalizer}
+			if syncstate.Mode(checkout) == model.SyncModeAuto {
+				finalizers = append(finalizers, GraphPublisher{GraphDir: meta.ResolveGraphDir(checkout, cfg), gate: gate})
+			}
+			finalizers = append(finalizers, MergeDriverSetup{Checkout: checkout})
+			return graph, finalizers, func() error { return nil }, nil
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+	acquirer.resolveConfig = resolveConfig
+	acquirer.gate = gate
+	return acquirer, nil
 }

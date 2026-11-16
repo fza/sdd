@@ -6,6 +6,9 @@ package query
 // the caller is outside an sdd repo: global settings and defaults only.
 type EffectiveConfigQuery struct {
 	SDDDir string
+	// LocalLayerFile is the machine-local layer's file; empty means the one
+	// under SDDDir (meta.Project.LocalLayerFile).
+	LocalLayerFile string
 	// Key restricts the result to one dotted key (e.g. "llm.model").
 	// Empty returns every effective entry.
 	Key string
@@ -30,6 +33,8 @@ type EffectiveConfigResult struct {
 // alone.
 type UnknownConfigKeysQuery struct {
 	SDDDir string
+	// LocalLayerFile is as on EffectiveConfigQuery.
+	LocalLayerFile string
 }
 
 // UnknownConfigKey is one unrecognised key and the file carrying it.
@@ -38,8 +43,18 @@ type UnknownConfigKey struct {
 	Key  string
 }
 
-// UnknownConfigKeysResult lists the unrecognised keys across every layer,
-// global first. Empty means every key in every layer is understood.
+// IgnoredConfigSetting is one setting sdd read past, the file carrying it,
+// and why it is not honored.
+type IgnoredConfigSetting struct {
+	File   string
+	Key    string
+	Reason string
+}
+
+// UnknownConfigKeysResult lists the unrecognised keys and the ignored
+// settings across every layer, global first. Both empty means every key in
+// every layer is understood and honored.
 type UnknownConfigKeysResult struct {
-	Keys []UnknownConfigKey
+	Keys    []UnknownConfigKey
+	Ignored []IgnoredConfigSetting
 }

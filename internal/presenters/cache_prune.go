@@ -25,8 +25,8 @@ func CachePruneLine(s model.CachePruneStatus) string {
 
 // CachePruneRemoved names what a run removed.
 func CachePruneRemoved(c model.CachePruneCounts) string {
-	return fmt.Sprintf("%d index versions, %d index stores, %d graph snapshots, %d clones, %d calibrations, %d leftovers",
-		c.Versions, c.Stores, c.Snapshots, c.Clones, c.Records, c.Leftovers)
+	return fmt.Sprintf("%d index versions, %d index stores, %d graph snapshots, %d clones, %d calibrations, %d leftovers, %d gate records",
+		c.Versions, c.Stores, c.Snapshots, c.Clones, c.Records, c.Leftovers, c.GateRecords)
 }
 
 // RenderCachePruneStatus writes CachePruneLine when there is a run to name.

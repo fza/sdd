@@ -3,6 +3,7 @@ package local_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,9 +110,36 @@ func TestRepositoryTargetsReloadConfiguration(t *testing.T) {
 	}
 }
 
+// A graph_repo project's machine-local layer lives in the code repository,
+// outside the checkout the targets open.
+func TestRepositoryTargetsReadTheGivenLocalLayer(t *testing.T) {
+	repo := newGitRepository(t)
+	repo.write(".sdd/config.yaml", "repo_id: committed\ndefault_branch: main\n")
+	repo.write("global-config.yaml", "")
+	localLayer := filepath.Join(t.TempDir(), "config.local.yaml")
+	if err := os.WriteFile(localLayer, []byte("repo_id: example\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := local.NewRepositoryTargets(t.Context(), "example", repo.root, filepath.Join(repo.root, "global-config.yaml"), localLayer, t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	read, err := targets.AcquireSnapshot(t.Context(), sdd.SnapshotReadQuery{Branch: "main"})
+	if err != nil {
+		t.Fatalf("the targets should resolve the project through the given local layer: %v", err)
+	}
+	if err := read.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (r *gitRepository) targets() *local.GitWorktreeAcquirer {
 	r.t.Helper()
-	targets, err := local.NewRepositoryTargets("example", r.root, filepath.Join(r.root, "global-config.yaml"))
+	if r.state == "" {
+		r.state = r.t.TempDir()
+	}
+	targets, err := local.NewRepositoryTargets(r.t.Context(), "example", r.root, filepath.Join(r.root, "global-config.yaml"), "", r.state, r.t.TempDir())
 	if err != nil {
 		r.t.Fatal(err)
 	}

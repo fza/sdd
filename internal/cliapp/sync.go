@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -11,10 +12,12 @@ import (
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/finders"
+	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/internal/syncstate"
 	"github.com/networkteam/slogutils"
 	"github.com/urfave/cli/v3"
 )
@@ -24,9 +27,10 @@ import (
 // alone can hang on unreachable remotes without this.
 const syncCheckTimeout = 30 * time.Second
 
-// syncCmd exposes graph synchronization. Today it carries a single mode,
-// --pull, which performs a merge-only pull so background sync never rewrites
-// the shared graph's history; the bare command prints guidance.
+// syncCmd exposes synchronization of the repository at hand: under automatic
+// sync the bare command runs a round even while a conflict pauses sync,
+// otherwise it fetches and prints the status, and --pull performs a
+// merge-only pull so sync never rewrites the shared graph's history.
 func syncCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "sync",
@@ -37,29 +41,118 @@ func syncCmd() *cli.Command {
 				Usage: "Pull upstream changes with a merge (never a rebase); refuses on a dirty working tree",
 			},
 		},
-		Action: func(ctx context.Context, cmd *cli.Command) error {
-			if !cmd.Bool("pull") {
-				return errors.New("sync: specify --pull to merge upstream changes into the shared graph")
-			}
+		Action: refusingStraysAfter(func(ctx context.Context, cmd *cli.Command) error {
 			dir, err := resolveGraphDir(cmd)
 			if err != nil {
 				return err
 			}
-			handler := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Puller: graphGit(dir)})
-			return handler.SyncPull(ctx, &command.SyncPullCmd{
-				OnPulled: func(output string) {
-					if output != "" {
-						fmt.Fprintln(cmd.Writer, output)
-					}
-				},
-			})
-		},
+			if cmd.Bool("pull") {
+				gate, err := commandGate()
+				if err != nil {
+					return err
+				}
+				handler := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Puller: graphGit(dir), Gate: gate})
+				return handler.SyncPull(ctx, &command.SyncPullCmd{
+					OnPulled: func(output string) {
+						if output != "" {
+							fmt.Fprintln(cmd.Writer, output)
+						}
+					},
+					OnDeferred: func(next time.Time) { printDeferred(cmd.Writer, "pull", next) },
+				})
+			}
+			syncMode, err := graphSyncMode(dir)
+			if err != nil {
+				return err
+			}
+			if syncMode != model.SyncModeAuto {
+				return fetchAndReport(ctx, cmd, dir)
+			}
+			opts, err := graphSyncOptions(ctx, dir, handlers.Options{SyncMode: syncMode})
+			if err != nil {
+				return err
+			}
+			return handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{Explicit: true, OnDeferred: func(operation string, next time.Time) {
+				printDeferred(cmd.Writer, operation, next)
+			}})
+		}),
 	}
 }
 
-// runSyncCheck performs the background sync check and emits slog lines.
-// Swallows all errors — sync check failure must never fail a user command.
-// Bounded by syncCheckTimeout so network pathologies cannot stall the CLI.
+// fetchAndReport fetches the upstream of the graph's repository as far as
+// the git gate admits it and prints where the graph stands against it,
+// leaving the merge to --pull.
+func fetchAndReport(ctx context.Context, cmd *cli.Command, graphDir string) error {
+	repo, err := git.GraphRepoRoot(graphDir)
+	if err != nil {
+		return fmt.Errorf("sync: finding the graph repository: %w", err)
+	}
+	graphRepo := git.CLI{Dir: repo}
+	gate, err := commandGate()
+	if err != nil {
+		return err
+	}
+	var state model.SyncState
+	var reason string
+	err = handlers.New(handlers.Options{GraphFetcher: graphRepo, Gate: gate}).FetchGraph(ctx, &command.FetchGraphCmd{
+		OnFetched:  func(fetched model.SyncState, why string) { state, reason = fetched, why },
+		OnDeferred: func(operation string, next time.Time) { printDeferred(cmd.Writer, operation, next) },
+	})
+	if err != nil {
+		return err
+	}
+	status := model.SyncStatus{State: state, Reason: reason}
+	if state == model.SyncStateFetched || state == model.SyncStateSkipped {
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		status, err = finders.New(finders.Options{Config: cfg, GitSyncer: graphRepo}).SyncStatus(ctx, query.SyncStatusQuery{})
+		if err != nil {
+			return err
+		}
+	}
+	line, _ := syncStatusLine(status)
+	if syncCannotRun(status.State) {
+		return errors.New(line)
+	}
+	fmt.Fprintln(cmd.Writer, line)
+	return nil
+}
+
+// printDeferred tells the user a commanded sync skipped an operation the git
+// gate deferred, and when it may run.
+func printDeferred(w io.Writer, operation string, next time.Time) {
+	fmt.Fprintf(w, "sync: %s skipped, next allowed at %s\n", operation, next.Local().Format("15:04"))
+}
+
+// graphSyncOptions adds the git surfaces and sync state of graphDir's
+// repository to opts under automatic sync.
+func graphSyncOptions(ctx context.Context, graphDir string, opts handlers.Options) (handlers.Options, error) {
+	if opts.SyncMode != model.SyncModeAuto {
+		return opts, nil
+	}
+	gate, err := commandGate()
+	if err != nil {
+		return opts, err
+	}
+	opts.Gate = gate
+	return syncstate.HandlerOptions(ctx, graphDir, opts)
+}
+
+// withSyncBanner scopes blocked-sync reporting to one command: each blocked
+// state prints once, as a plain line rather than a warning.
+func withSyncBanner(ctx context.Context, w io.Writer) context.Context {
+	return handlers.WithSyncReport(ctx, func(block model.SyncBlocked) {
+		fmt.Fprintf(w, "%s; `sdd info` shows the record and how to clear it\n", block.Banner())
+	})
+}
+
+// runSyncCheck runs the background sync check of every command: in an
+// sdd-owned graph clone a round that skips when another process syncs,
+// otherwise a fetch and a status line, each git operation only as far as the
+// git gate admits it, a deferral silent. Bounded by syncCheckTimeout so
+// network pathologies cannot stall the CLI, and it never fails the command.
 func runSyncCheck(ctx context.Context) {
 	logger := slogutils.FromContext(ctx)
 
@@ -78,44 +171,106 @@ func runSyncCheck(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, syncCheckTimeout)
 	defer cancel()
 
-	f := finders.New(finders.Options{
-		Config:    cfg,
-		GitSyncer: graphGit(meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)),
-	})
-	status, err := f.SyncStatus(ctx, query.SyncStatusQuery{
-		SDDDir:          sddDir,
-		RespectCooldown: true,
+	graphDir := meta.ResolveGraphDir(filepath.Dir(sddDir), cfg)
+	if syncstate.Mode(filepath.Dir(sddDir)) == model.SyncModeAuto {
+		opts, err := graphSyncOptions(ctx, graphDir, handlers.Options{SyncMode: model.SyncModeAuto, GraphDir: graphDir})
+		if err == nil {
+			err = handlers.New(opts).SyncRound(ctx, &command.SyncRoundCmd{})
+		}
+		if err != nil {
+			logger.Warn(fmt.Sprintf("sync: %v", err))
+		}
+		return
+	}
+
+	repo, err := git.GraphRepoRoot(graphDir)
+	if err != nil {
+		logger.Debug("sync check: no graph repository", "err", err)
+		return
+	}
+	graphRepo := git.CLI{Dir: repo}
+	gate, err := commandGate()
+	if err != nil {
+		logger.Debug("sync check: no git gate", "err", err)
+		return
+	}
+	var state model.SyncState
+	var reason string
+	err = handlers.New(handlers.Options{GraphFetcher: graphRepo, Gate: gate}).FetchGraph(ctx, &command.FetchGraphCmd{
+		OnFetched: func(fetched model.SyncState, why string) { state, reason = fetched, why },
 	})
 	if err != nil {
 		logger.Debug("sync check failed", "err", err)
 		return
 	}
+	status := model.SyncStatus{State: state, Reason: reason}
+	if state == model.SyncStateFetched {
+		status, err = finders.New(finders.Options{Config: cfg, GitSyncer: graphRepo}).SyncStatus(ctx, query.SyncStatusQuery{})
+		if err != nil {
+			logger.Debug("sync check failed", "err", err)
+			return
+		}
+	}
 	emitSyncStatus(logger, status)
 }
 
-// emitSyncStatus renders a SyncStatus as one slog line. The phrasing is
-// the skill's pattern-match surface — changes here must stay coordinated
-// with `internal/bundledskills/templates/sdd/SKILL.md.tmpl`.
+// emitSyncStatus renders a SyncStatus as one slog line, quiet while the
+// graph is level with its upstream or the fetch did not run.
 func emitSyncStatus(logger *slog.Logger, s model.SyncStatus) {
 	switch s.State {
-	case model.SyncStateUpToDate, model.SyncStateSkipped:
-		// Quiet: nothing to tell the user or the skill.
-	case model.SyncStateFastForward:
-		logger.Info(fmt.Sprintf("sync: fast-forward available, %d commits behind", s.RemoteAhead))
-	case model.SyncStateCleanRebase:
-		logger.Info(fmt.Sprintf("sync: merge is clean, %d remote / %d local", s.RemoteAhead, s.LocalAhead))
-	case model.SyncStateConflictPredicted:
-		logger.Warn(fmt.Sprintf("sync: merge would conflict in %s, %d remote / %d local",
-			strings.Join(s.ConflictPaths, ", "), s.RemoteAhead, s.LocalAhead))
-	case model.SyncStateLocalAhead:
-		logger.Info(fmt.Sprintf("sync: local ahead by %d, consider push", s.LocalAhead))
-	case model.SyncStateNoRepo:
-		logger.Warn("sync: not a git repo")
-	case model.SyncStateNoRemote:
-		logger.Warn("sync: no remote configured")
-	case model.SyncStateNoUpstream:
-		logger.Warn("sync: no upstream for current branch — set with `git branch --set-upstream-to=origin/<branch>`")
-	case model.SyncStateFetchFailed:
-		logger.Warn(fmt.Sprintf("sync: fetch failed: %s", s.Reason))
+	case model.SyncStateUpToDate, model.SyncStateSkipped, model.SyncStateFetched:
+		return
 	}
+	line, level := syncStatusLine(s)
+	logger.Log(context.Background(), level, line)
+}
+
+// syncStatusLine phrases a SyncStatus at the level it is logged at. The
+// phrasing is the skill's pattern-match surface: changes here
+// must stay coordinated with `internal/bundledskills/templates/sdd/SKILL.md.tmpl`.
+func syncStatusLine(s model.SyncStatus) (string, slog.Level) {
+	switch s.State {
+	case model.SyncStateFastForward:
+		return fmt.Sprintf("sync: fast-forward available, %d commits behind", s.RemoteAhead), slog.LevelInfo
+	case model.SyncStateCleanRebase:
+		return fmt.Sprintf("sync: merge is clean, %d remote / %d local", s.RemoteAhead, s.LocalAhead), slog.LevelInfo
+	case model.SyncStateConflictPredicted:
+		return fmt.Sprintf("sync: merge would conflict in %s, %d remote / %d local",
+			strings.Join(s.ConflictPaths, ", "), s.RemoteAhead, s.LocalAhead), slog.LevelWarn
+	case model.SyncStateLocalAhead:
+		return fmt.Sprintf("sync: local ahead by %d, consider push", s.LocalAhead), slog.LevelInfo
+	case model.SyncStateNoRepo:
+		return "sync: not a git repo", slog.LevelWarn
+	case model.SyncStateNoRemote:
+		return "sync: no remote configured", slog.LevelWarn
+	case model.SyncStateNoUpstream:
+		return "sync: no upstream for current branch — set with `git branch --set-upstream-to=origin/<branch>`", slog.LevelWarn
+	case model.SyncStateFetchFailed:
+		return fmt.Sprintf("sync: fetch failed: %s", s.Reason), slog.LevelWarn
+	}
+	return "sync: up to date", slog.LevelInfo
+}
+
+// syncCannotRun reports whether state keeps a sync from reaching the
+// upstream at all.
+func syncCannotRun(state model.SyncState) bool {
+	switch state {
+	case model.SyncStateNoRepo, model.SyncStateNoRemote, model.SyncStateNoUpstream, model.SyncStateFetchFailed:
+		return true
+	}
+	return false
+}
+
+// syncBlocked reads what blocks automatic sync of the project's graph
+// repository, nil under manual sync or while sync proceeds.
+func syncBlocked(ctx context.Context) (*model.SyncBlocked, error) {
+	sddDir, err := resolveSDDDir()
+	if err != nil {
+		return nil, nil
+	}
+	cfg, err := loadConfig()
+	if err != nil || syncstate.Mode(filepath.Dir(sddDir)) != model.SyncModeAuto {
+		return nil, err
+	}
+	return syncstate.ReadBlocked(ctx, meta.ResolveGraphDir(filepath.Dir(sddDir), cfg))
 }

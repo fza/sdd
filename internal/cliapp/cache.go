@@ -13,6 +13,7 @@ import (
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/presenters"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/syncstate"
 )
 
 const cacheCommandName = "cache"
@@ -25,12 +26,14 @@ func cacheCmd() *cli.Command {
 			Name:  "prune",
 			Usage: "Delete cache data past its retention now",
 			Description: `Removes replaced index data after index.replaced_retention (default ` + model.DefaultReplacedRetention + `);
-unused index stores, graph snapshots and embedder calibrations after
-cache.retention (default ` + model.DefaultCacheRetention + `); graph snapshots of vanished folders and clones
-sdd repo remove dropped that the repos list no longer names at once; and crash
-leftovers a day old. Both keys live in the user-global config. Versions any
-checkout read within cache.retention always stay. sdd index gc removes more
-on request.`,
+unused index stores, graph snapshots, embedder calibrations and git gate
+records after cache.retention (default ` + model.DefaultCacheRetention + `); graph snapshots of vanished
+folders and clones sdd repo remove dropped that the repos list no longer
+names; and crash leftovers a day old. An sdd-owned clone stays while a sync
+holds it, while it holds unpushed commits, and while git reached its remote
+within cache.retention. Both keys live in the user-global config. Versions
+any checkout read within cache.retention always stay. Listed clones get git
+gc --auto. sdd index gc removes more on request.`,
 			Action: func(ctx context.Context, cmd *cli.Command) error {
 				loc, err := repos.DefaultLocations()
 				if err != nil {
@@ -46,8 +49,13 @@ on request.`,
 				} else if !errors.Is(err, errNoProject) {
 					return err
 				}
+				gate, err := commandGate()
+				if err != nil {
+					return err
+				}
 				h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
-					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc), Keep: keep,
+					CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
+					OwnedClones: syncstate.OwnedClones{Gate: gate}, Gate: gate, Keep: keep,
 				})
 				return h.Prune(ctx, &command.PruneCacheCmd{
 					OnPruned: func(c model.CachePruneCounts) {

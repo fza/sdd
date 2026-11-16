@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/networkteam/sdd/internal/git"
 	app "github.com/networkteam/sdd/pkg/application"
 )
 
@@ -96,7 +97,7 @@ func (f GitFinalizer) Finalize(ctx context.Context, mutation app.AppliedMutation
 	if out, err := exec.CommandContext(ctx, "git", commitArgs...).CombinedOutput(); err != nil {
 		return fmt.Errorf("git finalizer commit: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
-	return nil
+	return git.CLI{Dir: f.Checkout}.RecordGraphCloneCommit(ctx)
 }
 
 // lookupTrailer returns the newest commit on the branch carrying the trailer

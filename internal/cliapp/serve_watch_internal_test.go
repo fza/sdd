@@ -210,7 +210,7 @@ func TestServedProjectComesFromOneRead(t *testing.T) {
 	project("en", "edited-model")
 
 	command := &cli.Command{Name: "serve", Action: func(ctx context.Context, cmd *cli.Command) error {
-		built, err := buildServedProject(cmd, nil, reads)
+		built, err := buildServedProject(ctx, cmd, nil, reads)
 		if err != nil {
 			return err
 		}

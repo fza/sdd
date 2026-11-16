@@ -56,3 +56,13 @@ func (gf *GraphFinder) Preflight(ctx context.Context, q query.PreflightQuery) (*
 func (f *Finder) Preflight(ctx context.Context, g *model.Graph, q query.PreflightQuery) (*query.PreflightResult, error) {
 	return f.OnGraph(g).Preflight(ctx, q)
 }
+
+// MechanicalPreflight runs only the Go-side checks of the pre-flight against
+// entry over g, for a decision that must not wait on the LLM.
+func (f *Finder) MechanicalPreflight(g *model.Graph, entry *model.Entry) ([]query.Finding, error) {
+	deps, err := f.declaredDependencies()
+	if err != nil {
+		return nil, fmt.Errorf("mechanical pre-flight: %w", err)
+	}
+	return mechanicalPreflight(entry, g, deps, f.procedureRegistry), nil
+}

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/networkteam/sdd/internal/command"
-	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/repos"
 )
 
@@ -26,7 +25,7 @@ func newConfigTestHandler(t *testing.T) (*Handler, string, string) {
 	})
 	h := New(Options{
 		SDDDir: sddDir,
-		Repos:  repos.NewManager(reg, git.CLI{}),
+		Repos:  repos.NewManager(reg, nil),
 	})
 	return h, globalPath, sddDir
 }

@@ -4,182 +4,162 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/handlers"
+	"github.com/networkteam/sdd/internal/handlers/synctest"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
 	"github.com/networkteam/sdd/internal/repos/repostest"
 )
 
-// declaringGit clones a repo whose committed config declares the repo_id
-// mapped to its URL.
+// declaringGit clones a repository whose committed config declares the
+// repo_id mapped to its URL; nothing reaches a remote.
 type declaringGit struct{ declares map[string]model.RepoID }
 
-func (g declaringGit) Clone(_ context.Context, url, dir string) error {
+func (g declaringGit) CloneGraph(_ context.Context, _ model.RepoID, source model.CloneSource, dir string, _ []string) error {
 	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Join(dir, ".sdd"), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, ".sdd", "config.yaml"), []byte("repo_id: "+string(g.declares[url])+"\n"), 0o644)
+	return os.WriteFile(filepath.Join(dir, ".sdd", "config.yaml"), []byte("repo_id: "+string(g.declares[source.URL])+"\n"), 0o644)
+}
+func (declaringGit) SparseCone(context.Context, string) ([]string, error) {
+	return model.GraphCloneCone(""), nil
+}
+func (declaringGit) SetSparseCone(context.Context, string, []string) error  { return nil }
+func (declaringGit) KeepGraphClone(context.Context, string, []string) error { return nil }
+func (declaringGit) PushGraphClone(context.Context, string) error           { return nil }
+func (declaringGit) CommitsWaiting(context.Context, string) (bool, error)   { return false, nil }
+func (declaringGit) RemoteURL(context.Context, string) (string, error)      { return "/srv/remote", nil }
+func (declaringGit) ExpandURL(_ context.Context, url string) (string, error) {
+	return url, nil
 }
 
-func (declaringGit) PullFFOnly(context.Context, string) error { return nil }
+type alwaysDueRound struct{}
+
+func (alwaysDueRound) SyncClone(context.Context, string, *command.SyncRoundCmd) error { return nil }
+func (alwaysDueRound) TimerRound(context.Context, string) (model.TimerRound, error) {
+	return model.TimerRoundSync, nil
+}
+
+func overlapLocations(t *testing.T) repos.Locations {
+	t.Helper()
+	root := t.TempDir()
+	return repos.Locations{
+		ConfigPath: filepath.Join(root, "config", "sdd", "config.yaml"),
+		CacheRoot:  filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data"),
+	}
+}
+
+func overlapHandler(t *testing.T, loc repos.Locations, git declaringGit) *handlers.Handler {
+	t.Helper()
+	gate := synctest.Gate(loc.StateRoot, nil)
+	manager := repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, gate))
+	return handlers.New(handlers.Options{Repos: manager, CloneRound: alwaysDueRound{}})
+}
+
+// overlapping is a repos list connected before overlap was checked: one repo
+// nested in another, beside a disjoint one.
+var overlapping = &repos.GlobalConfig{Repos: []repos.ConnectedRepo{
+	{RepoID: "github.com/org", CloneURL: "/srv/org"},
+	{RepoID: "github.com/org/repo", CloneURL: "/srv/repo"},
+	{RepoID: "github.com/other/repo", CloneURL: "/srv/other"},
+}}
 
 func TestRepoAdd_RefusesAnIDOverlappingAConnectedClone(t *testing.T) {
-	tests := []struct {
-		name     string
-		declared model.RepoID
-	}{
-		{"case variant", "github.com/ORG/repo"},
-		{"parent of the clone", "github.com/org"},
-		{"inside the clone", "github.com/org/repo/.git"},
-		{"through a symlink in the clone", "github.com/org/repo/l/x"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			root := t.TempDir()
-			loc := repos.Locations{
-				ConfigPath: filepath.Join(root, "config", "sdd", "config.yaml"),
-				CacheRoot:  filepath.Join(root, "cache"),
-			}
-			reg := repos.NewRegistry(loc)
+	for _, declared := range []model.RepoID{"github.com/ORG/repo", "github.com/org", "github.com/org/repo/sub"} {
+		t.Run(string(declared), func(t *testing.T) {
+			loc := overlapLocations(t)
 			cfg := &repos.GlobalConfig{}
 			if err := cfg.AddRepo(repos.ConnectedRepo{RepoID: "github.com/org/repo", CloneURL: "git@github.com:org/repo.git"}); err != nil {
 				t.Fatal(err)
 			}
 			repostest.WriteConfig(t, loc.ConfigPath, cfg)
-			clone, err := reg.CacheDir("github.com/org/repo")
+			clone, err := repos.NewRegistry(loc).CloneDir("github.com/org/repo")
 			if err != nil {
 				t.Fatal(err)
 			}
 			precious := filepath.Join(clone, ".git", "precious")
-			victim := filepath.Join(root, "victim", "x", "precious")
-			for _, file := range []string{precious, victim} {
-				if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(file, []byte("keep"), 0o644); err != nil {
-					t.Fatal(err)
-				}
+			if err := os.MkdirAll(filepath.Dir(precious), 0o755); err != nil {
+				t.Fatal(err)
 			}
-			if err := os.Symlink(filepath.Join(root, "victim"), filepath.Join(clone, "l")); err != nil {
+			if err := os.WriteFile(precious, []byte("keep"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			const url = "/srv/crafted"
-			h := handlers.New(handlers.Options{Repos: repos.NewManager(reg, declaringGit{declares: map[string]model.RepoID{url: tt.declared}})})
+			h := overlapHandler(t, loc, declaringGit{declares: map[string]model.RepoID{url: declared}})
 
-			err = h.RepoAdd(context.Background(), &command.RepoAddCmd{CloneURL: url})
-			if err == nil {
-				t.Error("RepoAdd should refuse an id overlapping a connected repo")
+			err = h.RepoAdd(t.Context(), &command.RepoAddCmd{CloneURL: url})
+			if err == nil || !strings.Contains(err.Error(), "overlaps") {
+				t.Errorf("adding an id overlapping a connected repo should be refused, got %v", err)
 			}
-			for _, file := range []string{precious, victim} {
-				if _, err := os.Stat(file); err != nil {
-					t.Errorf("RepoAdd should leave %s in place: %v", file, err)
-				}
+			if _, statErr := os.Stat(precious); statErr != nil {
+				t.Errorf("the connected clone should stay untouched: %v", statErr)
+			}
+			loaded, err := repos.NewRegistry(loc).Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(loaded.Repos) != 1 {
+				t.Errorf("the refused repo should not be connected, repos %+v", loaded.Repos)
 			}
 		})
 	}
 }
 
-func TestRepoAdd_ReplacesAStaleCacheWithTheClone(t *testing.T) {
-	root := t.TempDir()
-	loc := repos.Locations{
-		ConfigPath: filepath.Join(root, "config", "sdd", "config.yaml"),
-		CacheRoot:  filepath.Join(root, "cache"),
-	}
-	reg := repos.NewRegistry(loc)
-	repostest.WriteConfig(t, loc.ConfigPath, &repos.GlobalConfig{})
-	cacheDir, err := reg.CacheDir("github.com/org/repo")
+func TestRepoSync_RefusesOverlappingReposAndSyncsTheRest(t *testing.T) {
+	loc := overlapLocations(t)
+	repostest.WriteConfig(t, loc.ConfigPath, overlapping)
+	h := overlapHandler(t, loc, declaringGit{})
+
+	states := map[model.RepoID]model.RepoSyncState{}
+	reasons := map[model.RepoID]string{}
+	err := h.RepoSync(t.Context(), &command.RepoSyncCmd{OnOutcome: func(o model.RepoSyncOutcome) {
+		states[o.RepoID] = o.State
+		reasons[o.RepoID] = o.Reason
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	stale := filepath.Join(cacheDir, "stale")
-	if err := os.MkdirAll(stale, 0o755); err != nil {
-		t.Fatal(err)
+	for _, id := range []model.RepoID{"github.com/org", "github.com/org/repo"} {
+		if states[id] != model.RepoRefused || !strings.Contains(reasons[id], "overlaps") {
+			t.Errorf("a repo of an overlapping pair should be refused naming the overlap, got %s %q", states[id], reasons[id])
+		}
 	}
-	const url = "/srv/repo"
-	h := handlers.New(handlers.Options{Repos: repos.NewManager(reg, declaringGit{declares: map[string]model.RepoID{url: "github.com/org/repo"}})})
-
-	if err := h.RepoAdd(context.Background(), &command.RepoAddCmd{CloneURL: url}); err != nil {
-		t.Fatal(err)
+	if states["github.com/other/repo"] == model.RepoRefused || states["github.com/other/repo"] == model.RepoFailed {
+		t.Errorf("the disjoint repo should sync, got %s %q", states["github.com/other/repo"], reasons["github.com/other/repo"])
 	}
-	if _, err := os.Stat(filepath.Join(cacheDir, ".sdd", "config.yaml")); err != nil {
-		t.Errorf("the clone should sit in its cache dir: %v", err)
-	}
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Errorf("the stale cache should be cleared: %v", err)
-	}
+	assertClonedOnlyDisjoint(t, loc)
 }
 
 func TestEnsureReposFresh_SkipsOverlappingReposAndRefreshesTheRest(t *testing.T) {
-	root := t.TempDir()
-	loc := repos.Locations{
-		ConfigPath: filepath.Join(root, "config", "sdd", "config.yaml"),
-		CacheRoot:  filepath.Join(root, "cache"),
-	}
-	reg := repos.NewRegistry(loc)
-	repostest.WriteConfig(t, loc.ConfigPath, &repos.GlobalConfig{Repos: []repos.ConnectedRepo{
-		{RepoID: "github.com/org", CloneURL: "/srv/org"},
-		{RepoID: "github.com/org/repo", CloneURL: "/srv/repo"},
-		{RepoID: "github.com/other/repo", CloneURL: "/srv/other"},
-	}})
-	h := handlers.New(handlers.Options{Repos: repos.NewManager(reg, declaringGit{})})
+	loc := overlapLocations(t)
+	repostest.WriteConfig(t, loc.ConfigPath, overlapping)
+	h := overlapHandler(t, loc, declaringGit{})
 
-	changed, err := h.EnsureReposFresh(context.Background(), command.EnsureReposFreshCmd{
+	_, err := h.EnsureReposFresh(t.Context(), command.EnsureReposFreshCmd{
 		RepoIDs: []model.RepoID{"github.com/org", "github.com/org/repo", "github.com/other/repo"},
 	})
 	if err == nil || !strings.Contains(err.Error(), `"github.com/org"`) || !strings.Contains(err.Error(), `"github.com/org/repo"`) {
-		t.Errorf("EnsureReposFresh should fail naming the overlapping pair, got %v", err)
+		t.Errorf("the refresh should fail naming each side of the overlapping pair, got %v", err)
 	}
-	if !changed {
-		t.Error("EnsureReposFresh should report the disjoint repo's clone as a change")
-	}
+	assertClonedOnlyDisjoint(t, loc)
+}
+
+func assertClonedOnlyDisjoint(t *testing.T, loc repos.Locations) {
+	t.Helper()
 	for id, want := range map[model.RepoID]bool{"github.com/org": false, "github.com/org/repo": false, "github.com/other/repo": true} {
-		dir, err := reg.CacheDir(id)
+		dir, err := repos.NewRegistry(loc).CloneDir(id)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if repos.IsCloned(dir) != want {
-			t.Errorf("EnsureReposFresh should clone %s only when it overlaps no other repo", id)
-		}
-	}
-}
-
-func TestRepoSync_SkipsOverlappingReposAndSyncsTheRest(t *testing.T) {
-	root := t.TempDir()
-	loc := repos.Locations{
-		ConfigPath: filepath.Join(root, "config", "sdd", "config.yaml"),
-		CacheRoot:  filepath.Join(root, "cache"),
-	}
-	reg := repos.NewRegistry(loc)
-	repostest.WriteConfig(t, loc.ConfigPath, &repos.GlobalConfig{Repos: []repos.ConnectedRepo{
-		{RepoID: "github.com/org", CloneURL: "/srv/org"},
-		{RepoID: "github.com/org/repo", CloneURL: "/srv/repo"},
-		{RepoID: "github.com/other/repo", CloneURL: "/srv/other"},
-	}})
-	h := handlers.New(handlers.Options{Repos: repos.NewManager(reg, declaringGit{})})
-
-	var synced []model.RepoID
-	err := h.RepoSync(context.Background(), &command.RepoSyncCmd{OnSynced: func(id model.RepoID) { synced = append(synced, id) }})
-	if err == nil || !strings.Contains(err.Error(), `"github.com/org"`) || !strings.Contains(err.Error(), `"github.com/org/repo"`) {
-		t.Errorf("RepoSync should fail naming the overlapping pair, got %v", err)
-	}
-	if !slices.Equal(synced, []model.RepoID{"github.com/other/repo"}) {
-		t.Errorf("RepoSync should sync only the disjoint repo, synced %v", synced)
-	}
-	for _, id := range []model.RepoID{"github.com/org", "github.com/org/repo"} {
-		dir, err := reg.CacheDir(id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if repos.IsCloned(dir) {
-			t.Errorf("RepoSync should not clone the overlapping repo %s", id)
+			t.Errorf("%s should be cloned only when it overlaps no other repo", id)
 		}
 	}
 }

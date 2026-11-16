@@ -19,7 +19,7 @@ import (
 // index built under an older embedder. Lint reports drift for the closure
 // members only, the repos a cross-repo search reaches (20261026-194528-d-cpt-gcq).
 func TestIndexLintReportsDriftAcrossTheDependencyClosure(t *testing.T) {
-	loc := repos.Locations{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), CacheRoot: t.TempDir()}
+	loc := repos.Locations{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), CacheRoot: t.TempDir(), DataRoot: t.TempDir()}
 	reg := repos.NewRegistry(loc)
 	embedding := model.EmbeddingConfig{Provider: "ollama", Model: "current"}
 	connected := &repos.GlobalConfig{BaseConfig: model.BaseConfig{Embedding: embedding}}
@@ -31,7 +31,7 @@ func TestIndexLintReportsDriftAcrossTheDependencyClosure(t *testing.T) {
 		if err := connected.AddRepo(repos.ConnectedRepo{RepoID: repoID, CloneURL: "https://" + string(repoID)}); err != nil {
 			t.Fatal(err)
 		}
-		dir, err := reg.CacheDir(repoID)
+		dir, err := reg.CloneDir(repoID)
 		if err != nil {
 			t.Fatal(err)
 		}

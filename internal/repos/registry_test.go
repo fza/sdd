@@ -25,7 +25,7 @@ func markDisconnected(t *testing.T, registry *repos.Registry, repoID model.RepoI
 
 func TestUnconnectedClones(t *testing.T) {
 	root := t.TempDir()
-	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}
+	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data")}
 	config := "repos:\n  - repo_id: github.com/acme/kept\n    clone_url: git@github.com:acme/kept.git\n"
 	if err := os.WriteFile(loc.ConfigPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
@@ -53,14 +53,14 @@ func TestUnconnectedClones(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(stale, []string{dropped}) {
+	if !slices.Equal(dirsOf(stale), []string{dropped}) {
 		t.Errorf("only clones repo remove dropped that no connection names should be listed, got %v", stale)
 	}
 }
 
 func TestUnconnectedClonesKeepAClonesNamedLikeARetiredOne(t *testing.T) {
 	root := t.TempDir()
-	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}
+	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data")}
 	config := "repos:\n  - repo_id: github.com/acme/.kept.pruned\n    clone_url: git@github.com:acme/.kept.pruned.git\n"
 	if err := os.WriteFile(loc.ConfigPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestUnconnectedClonesKeepAClonesNamedLikeARetiredOne(t *testing.T) {
 
 func TestUnconnectedClonesListCloneLeftoversARetirementLeft(t *testing.T) {
 	root := t.TempDir()
-	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}
+	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data")}
 	if err := os.WriteFile(loc.ConfigPath, []byte(otherRepo), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestUnconnectedClonesListCloneLeftoversARetirementLeft(t *testing.T) {
 	}
 	registry := repos.NewRegistry(loc)
 	markDisconnected(t, registry, "github.com/acme/dropped")
-	retired, err := registry.RetireUnconnectedClone(clone)
+	retired, err := retireDir(registry, clone)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,10 +105,10 @@ func TestUnconnectedClonesListCloneLeftoversARetirementLeft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(stale, []string{retired}) {
+	if !slices.Equal(dirsOf(stale), []string{retired}) {
 		t.Errorf("a retired clone a run left behind should be listed for the next run, got %v", stale)
 	}
-	again, err := registry.RetireUnconnectedClone(retired)
+	again, err := retireDir(registry, retired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,8 +120,8 @@ func TestUnconnectedClonesListCloneLeftoversARetirementLeft(t *testing.T) {
 func TestDisconnectionRecordHoldsOnlyForItsConfig(t *testing.T) {
 	root := t.TempDir()
 	cacheRoot := filepath.Join(root, "cache")
-	own := repos.Locations{ConfigPath: filepath.Join(root, "real", "config.yaml"), CacheRoot: cacheRoot, StateRoot: filepath.Join(root, "state")}
-	other := repos.Locations{ConfigPath: filepath.Join(root, "other", "config.yaml"), CacheRoot: cacheRoot, StateRoot: filepath.Join(root, "state")}
+	own := repos.Locations{ConfigPath: filepath.Join(root, "real", "config.yaml"), CacheRoot: cacheRoot, StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data")}
+	other := repos.Locations{ConfigPath: filepath.Join(root, "other", "config.yaml"), CacheRoot: cacheRoot, StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data")}
 	config := "repos:\n  - repo_id: github.com/acme/kept\n    clone_url: git@github.com:acme/kept.git\n"
 	for _, path := range []string{own.ConfigPath, other.ConfigPath} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -152,14 +152,14 @@ func TestDisconnectionRecordHoldsOnlyForItsConfig(t *testing.T) {
 	if len(stale) != 0 {
 		t.Errorf("another config's repos list should remove no clone, listed %v", stale)
 	}
-	retired, err := registry.RetireUnconnectedClone(clone)
+	retired, err := retireDir(registry, clone)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if retired != "" {
 		t.Errorf("another config's repos list should retire no clone, retired to %s", retired)
 	}
-	if stale, err := repos.NewRegistry(own).UnconnectedClones(); err != nil || !slices.Equal(stale, []string{clone}) {
+	if stale, err := repos.NewRegistry(own).UnconnectedClones(); err != nil || !slices.Equal(dirsOf(stale), []string{clone}) {
 		t.Errorf("the config the disconnection was recorded under should still list the clone, got %v, %v", stale, err)
 	}
 }
@@ -183,7 +183,7 @@ func TestUnconnectedClonesRefuseAnUnsureRepoList(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
-			loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"), MixedXDG: tc.mixed}
+			loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data"), MixedXDG: tc.mixed}
 			if tc.config != nil {
 				if err := os.WriteFile(loc.ConfigPath, []byte(*tc.config), 0o600); err != nil {
 					t.Fatal(err)
@@ -230,7 +230,7 @@ func TestDefaultLocationsNameMixedXDGRoots(t *testing.T) {
 
 func TestRetireUnconnectedClone(t *testing.T) {
 	root := t.TempDir()
-	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}
+	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data")}
 	if err := os.WriteFile(loc.ConfigPath, []byte(otherRepo), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestRetireUnconnectedClone(t *testing.T) {
 	registry := repos.NewRegistry(loc)
 
 	t.Run("a clone no repo remove dropped stays", func(t *testing.T) {
-		retired, err := registry.RetireUnconnectedClone(clone)
+		retired, err := retireDir(registry, clone)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -257,7 +257,7 @@ func TestRetireUnconnectedClone(t *testing.T) {
 		if err := os.WriteFile(loc.ConfigPath, []byte(config), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		retired, err := registry.RetireUnconnectedClone(clone)
+		retired, err := retireDir(registry, clone)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -274,7 +274,7 @@ func TestRetireUnconnectedClone(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = registry.RetireUnconnectedClone(clone)
+		_, err = retireDir(registry, clone)
 		if err := unlock(); err != nil {
 			t.Fatal(err)
 		}
@@ -287,7 +287,7 @@ func TestRetireUnconnectedClone(t *testing.T) {
 		if err := os.WriteFile(loc.ConfigPath, []byte("repos: []\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		_, err := registry.RetireUnconnectedClone(clone)
+		_, err := retireDir(registry, clone)
 		if !errors.Is(err, repos.ErrClonePassRefused) {
 			t.Errorf("a repos list emptied since the clone was listed should not retire it, got %v", err)
 		}
@@ -300,7 +300,7 @@ func TestRetireUnconnectedClone(t *testing.T) {
 	})
 
 	t.Run("a dropped, unconnected clone is moved out of the cache", func(t *testing.T) {
-		retired, err := registry.RetireUnconnectedClone(clone)
+		retired, err := retireDir(registry, clone)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -330,7 +330,7 @@ func TestRetireUnconnectedCloneKeepsAClonesHoldingAConnectedOne(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
-			loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}
+			loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data")}
 			config := "repos:\n  - repo_id: " + tc.connected + "\n    clone_url: git@git.example.com:foo/bar.git\n"
 			if err := os.WriteFile(loc.ConfigPath, []byte(config), 0o600); err != nil {
 				t.Fatal(err)
@@ -356,7 +356,7 @@ func TestRetireUnconnectedCloneKeepsAClonesHoldingAConnectedOne(t *testing.T) {
 			}
 			registry := repos.NewRegistry(loc)
 			markDisconnected(t, registry, "git.example.com/foo")
-			retired, err := registry.RetireUnconnectedClone(clone)
+			retired, err := retireDir(registry, clone)
 			if !errors.Is(err, repos.ErrCloneHoldsClones) {
 				t.Errorf("a clone holding a connected one should not be retired, got %q, %v", retired, err)
 			}
@@ -374,7 +374,7 @@ func TestRetireUnconnectedCloneKeepsAClonesHoldingAConnectedOne(t *testing.T) {
 
 func TestDisconnectionRecordLeftEmptyHoldsNothing(t *testing.T) {
 	root := t.TempDir()
-	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}
+	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data")}
 	if err := os.WriteFile(loc.ConfigPath, []byte(otherRepo), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -414,8 +414,8 @@ func TestDisconnectionRecordFollowsSymlinks(t *testing.T) {
 	if err := os.Symlink(realDir, link); err != nil {
 		t.Fatal(err)
 	}
-	viaLink := repos.NewRegistry(repos.Locations{ConfigPath: filepath.Join(link, "config.yaml"), CacheRoot: cacheRoot, StateRoot: filepath.Join(root, "state")})
-	viaReal := repos.NewRegistry(repos.Locations{ConfigPath: filepath.Join(realDir, "config.yaml"), CacheRoot: cacheRoot, StateRoot: filepath.Join(root, "state")})
+	viaLink := repos.NewRegistry(repos.Locations{ConfigPath: filepath.Join(link, "config.yaml"), CacheRoot: cacheRoot, StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data")})
+	viaReal := repos.NewRegistry(repos.Locations{ConfigPath: filepath.Join(realDir, "config.yaml"), CacheRoot: cacheRoot, StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data")})
 	markDisconnected(t, viaLink, "github.com/acme/dropped")
 
 	dropped, err := viaReal.Disconnected("github.com/acme/dropped")
@@ -442,7 +442,7 @@ func TestDisconnectionRecordFollowsSymlinks(t *testing.T) {
 
 func TestRetireUnconnectedCloneOfADeepRepoID(t *testing.T) {
 	root := t.TempDir()
-	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state")}
+	loc := repos.Locations{ConfigPath: filepath.Join(root, "config.yaml"), CacheRoot: filepath.Join(root, "cache"), StateRoot: filepath.Join(root, "state"), DataRoot: filepath.Join(root, "data")}
 	if err := os.WriteFile(loc.ConfigPath, []byte(otherRepo), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -457,11 +457,29 @@ func TestRetireUnconnectedCloneOfADeepRepoID(t *testing.T) {
 	}
 	registry := repos.NewRegistry(loc)
 	markDisconnected(t, registry, repoID)
-	retired, err := registry.RetireUnconnectedClone(clone)
+	retired, err := retireDir(registry, clone)
 	if err != nil {
 		t.Fatalf("a repo ID too long for one file name should still retire its clone: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(retired, ".git")); err != nil {
 		t.Errorf("the retired clone should await deletion, stat says %v", err)
 	}
+}
+
+// retireDir retires the cache clone, or the retired clone, at dir.
+func retireDir(r *repos.Registry, dir string) (string, error) {
+	clone := repos.UnconnectedClone{Dir: dir}
+	rel, err := filepath.Rel(r.CacheRoot(), dir)
+	if err == nil && !strings.HasPrefix(rel, ".") {
+		clone.RepoID = model.RepoID(filepath.ToSlash(rel))
+	}
+	return r.RetireUnconnectedClone(clone, nil)
+}
+
+func dirsOf(clones []repos.UnconnectedClone) []string {
+	dirs := make([]string, 0, len(clones))
+	for _, clone := range clones {
+		dirs = append(dirs, clone.Dir)
+	}
+	return dirs
 }

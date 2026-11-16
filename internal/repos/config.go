@@ -1,12 +1,11 @@
 // Package repos holds the connected-repos machinery for cross-repo
 // references: the user-global configuration naming which repositories this
-// user is connected to, and the managed read-only clone caches those
-// connections resolve against. The package reads no ambient state — the
-// config, cache, and state roots arrive as an explicit Locations value,
-// resolved once at the composition root (repos.DefaultLocations for the XDG
-// convention). Pure reads live on Registry; the side-effectful cache
-// lifecycle (clone, pull) lives on Manager, orchestrated by handlers that
-// invalidate the read side's GraphSource on completion. Config writes are not
+// user is connected to, and the sdd-owned clones those connections resolve
+// against. The package reads no ambient state — the config, cache, state and
+// data roots arrive as an explicit Locations value, resolved once at the
+// composition root (repos.DefaultLocations for the XDG convention). Pure
+// reads live on Registry; the side-effectful clone lifecycle lives on
+// GraphClones and Manager, orchestrated by handlers. Config writes are not
 // here at all — they are field-level patches owned by the handlers.
 package repos
 
@@ -21,21 +20,24 @@ import (
 )
 
 // Locations names the user-global places the connected-repos machinery works
-// against: the config file, cache root, and state root. Resolved once at the
+// against: the config file and the cache, state and data roots. Resolved once at the
 // composition root and passed down explicitly — tests point both at temp
 // dirs, no environment involved.
 type Locations struct {
 	// ConfigPath is the user-global config file
 	// (default $XDG_CONFIG_HOME/sdd/config.yaml).
 	ConfigPath string
-	// CacheRoot is the base directory for connected-repo clone caches
+	// CacheRoot is the base directory for the search index stores
 	// (default $XDG_CACHE_HOME/sdd).
 	CacheRoot string
 	// StateRoot is the base directory for durable machine-local state
 	// (default $XDG_STATE_HOME/sdd).
 	StateRoot string
+	// DataRoot is the base directory for the sdd-owned clones of graph and
+	// connected repositories (default $XDG_DATA_HOME/sdd).
+	DataRoot string
 	// MixedXDG names the XDG base directory variables set while others fall
-	// back to the home directory; empty when one source set all three roots.
+	// back to the home directory; empty when one source set all four roots.
 	// Mixed roots pair one repos list with another's clones, so cache
 	// pruning removes no clone under them.
 	MixedXDG string
@@ -51,9 +53,10 @@ func DefaultLocations() (Locations, error) {
 	cfgBase := os.Getenv("XDG_CONFIG_HOME")
 	cacheBase := os.Getenv("XDG_CACHE_HOME")
 	stateBase := os.Getenv("XDG_STATE_HOME")
+	dataBase := os.Getenv("XDG_DATA_HOME")
 	var set, unset []string
 	for _, v := range []struct{ name, value string }{
-		{"XDG_CONFIG_HOME", cfgBase}, {"XDG_CACHE_HOME", cacheBase}, {"XDG_STATE_HOME", stateBase},
+		{"XDG_CONFIG_HOME", cfgBase}, {"XDG_CACHE_HOME", cacheBase}, {"XDG_STATE_HOME", stateBase}, {"XDG_DATA_HOME", dataBase},
 	} {
 		if v.value == "" {
 			unset = append(unset, v.name)
@@ -65,7 +68,7 @@ func DefaultLocations() (Locations, error) {
 	if len(set) > 0 && len(unset) > 0 {
 		mixed = fmt.Sprintf("%s set, %s not", strings.Join(set, ", "), strings.Join(unset, ", "))
 	}
-	if cfgBase == "" || cacheBase == "" || stateBase == "" {
+	if cfgBase == "" || cacheBase == "" || stateBase == "" || dataBase == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return Locations{}, fmt.Errorf("resolving home dir: %w", err)
@@ -79,6 +82,9 @@ func DefaultLocations() (Locations, error) {
 		if stateBase == "" {
 			stateBase = filepath.Join(home, ".local", "state")
 		}
+		if dataBase == "" {
+			dataBase = filepath.Join(home, ".local", "share")
+		}
 	}
 	if !filepath.IsAbs(stateBase) {
 		return Locations{}, fmt.Errorf("XDG_STATE_HOME must be an absolute path: %q", stateBase)
@@ -87,6 +93,7 @@ func DefaultLocations() (Locations, error) {
 		ConfigPath: filepath.Join(cfgBase, "sdd", "config.yaml"),
 		CacheRoot:  filepath.Join(cacheBase, "sdd"),
 		StateRoot:  filepath.Join(stateBase, "sdd"),
+		DataRoot:   filepath.Join(dataBase, "sdd"),
 		MixedXDG:   mixed,
 	}, nil
 }

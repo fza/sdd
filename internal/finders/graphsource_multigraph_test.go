@@ -23,6 +23,7 @@ func TestCurrentGraphResolvesConnectedRepo(t *testing.T) {
 	loc := repos.Locations{
 		ConfigPath: filepath.Join(t.TempDir(), "config.yaml"),
 		CacheRoot:  t.TempDir(),
+		DataRoot:   t.TempDir(),
 	}
 	reg := repos.NewRegistry(loc)
 
@@ -36,22 +37,22 @@ func TestCurrentGraphResolvesConnectedRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Connected-repo caches: fake clones (a .git marker suffices — the
+	// Connected-repo clones: fake clones (a .git marker suffices — the
 	// loader only reads the graph files) with one remote entry each.
 	cfg := &repos.GlobalConfig{}
 	for _, id := range []model.RepoID{repoID, undeclared} {
-		cacheDir, err := reg.CacheDir(id)
+		cloneDir, err := reg.CloneDir(id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.MkdirAll(filepath.Join(cacheDir, ".git"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(cloneDir, ".git"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.MkdirAll(filepath.Join(cacheDir, ".sdd/graph/2026/04"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(cloneDir, ".sdd/graph/2026/04"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		remote := "---\ntype: decision\nlayer: cpt\nkind: directive\nintent: guiding\n---\n\nA remote directive.\n"
-		if err := os.WriteFile(filepath.Join(cacheDir, ".sdd/graph/2026/04/01-090000-d-cpt-rem.md"), []byte(remote), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(cloneDir, ".sdd/graph/2026/04/01-090000-d-cpt-rem.md"), []byte(remote), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if err := cfg.AddRepo(repos.ConnectedRepo{RepoID: id, CloneURL: "https://" + string(id)}); err != nil {

@@ -16,10 +16,11 @@ import (
 )
 
 // initPointer sets up a work repository whose graph lives in the sdd project
-// at cmd.ProjectDir. The project owns every setting, the graph, meta.json and
-// runtime state, so this repository receives only the pointer config, the
-// agents' skills and registrations, and a gitignore entry for the local file
-// that may override project_dir.
+// at cmd.ProjectDir, running the project's own init first: a set-up when the
+// project is missing, a refresh otherwise. The project owns every setting,
+// the graph, meta.json and runtime state, so this repository receives only
+// the pointer config, the agents' skills and registrations, and its
+// .sdd/.gitignore.
 func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed *bool) error {
 	if cmd.Bump {
 		return fmt.Errorf("--bump raises the project's minimum_version; run it in %s", cmd.ProjectDir)
@@ -44,7 +45,11 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 	if model.MergeConfig(projectCfg, projectLocal).ProjectDir != "" {
 		return fmt.Errorf("%s sets project_dir itself; point at the project holding the graph", cmd.ProjectDir)
 	}
-	err = meta.RequireProjectApart("--project-dir "+cmd.ProjectDir, cmd.RepoRoot, projectRoot, h.repoRootOf)
+	rootOf, rootFailed := h.repoRoots()
+	err = meta.RequireProjectApart("--project-dir "+cmd.ProjectDir, cmd.RepoRoot, projectRoot, rootOf)
+	if err == nil {
+		err = rootFailed()
+	}
 	if err != nil {
 		return err
 	}
@@ -53,7 +58,10 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		if err != nil {
 			return fmt.Errorf("graph_dir in %s: %w", projectSDDDir, err)
 		}
-		err = meta.RequireGraphInProjectRepository(projectSDDDir, projectRoot, meta.ResolveGraphDir(projectRoot, projectCfg), h.repoRootOf)
+		err = meta.RequireGraphInProjectRepository(projectSDDDir, projectRoot, meta.ResolveGraphDir(projectRoot, projectCfg), rootOf)
+		if err == nil {
+			err = rootFailed()
+		}
 		if err != nil {
 			return err
 		}
@@ -89,13 +97,15 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 
 	if projectCfg == nil {
 		err = h.setUpProject(ctx, cmd, projectRoot, effectiveScope, effectiveAgents, changed)
-		if err != nil {
-			return err
-		}
-		projectCfg, _, err = meta.ReadConfigLayers(projectSDDDir)
-		if err != nil {
-			return err
-		}
+	} else {
+		err = h.refreshProject(ctx, cmd, projectRoot, projectCfg, changed)
+	}
+	if err != nil {
+		return err
+	}
+	projectCfg, _, err = meta.ReadConfigLayers(projectSDDDir)
+	if err != nil {
+		return err
 	}
 
 	var touched []string
@@ -144,16 +154,13 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		}
 	}
 
-	gitignorePath := filepath.Join(cmd.RepoRoot, ".gitignore")
-	gitignoreAdded, err := ensureGitignoreEntries(gitignorePath, []string{".sdd/config.local.yaml"})
-	if err != nil {
-		return fmt.Errorf("updating %s: %w", gitignorePath, err)
+	projectGraphDir := projectCfg.GraphDir
+	if projectGraphDir == "" {
+		projectGraphDir = model.DefaultGraphDir
 	}
-	if gitignoreAdded {
-		touched = append(touched, gitignorePath)
-		if cmd.OnGitignoreUpdated != nil {
-			cmd.OnGitignoreUpdated(gitignorePath)
-		}
+	err = keepIgnoreFiles(cmd, "", []string{projectGraphDir, model.DefaultGraphDir}, &touched)
+	if err != nil {
+		return err
 	}
 
 	bridgePaths, err := scaffoldInstructionBridge(cmd.RepoRoot, effectiveAgents)
@@ -167,10 +174,6 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 		}
 	}
 
-	err = writeParticipant(projectSDDDir, cmd, changed)
-	if err != nil {
-		return err
-	}
 	return h.installAgentSurfaces(ctx, cmd, effectiveAgents, effectiveScope, touched, initCommitMessage(configExisted), changed)
 }
 
@@ -180,7 +183,7 @@ func writeParticipant(sddDir string, cmd *command.InitCmd, changed *bool) error 
 	if cmd.Participant == "" {
 		return nil
 	}
-	configLocalPath := filepath.Join(sddDir, "config.local.yaml")
+	configLocalPath := meta.LocalLayerOf(sddDir, cmd.LocalLayerFile)
 	existing, err := os.ReadFile(configLocalPath)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("reading %s: %w", configLocalPath, err)
@@ -245,8 +248,22 @@ func (h *Handler) persistSupportedAgents(ctx context.Context, cmd *command.InitC
 
 // installAgentSurfaces installs or refreshes the skill bundle, sweeps what the
 // bundle stopped shipping, registers the MCP server, and commits everything
-// touched inside cmd.RepoRoot, setting *changed when it touched anything.
+// touched inside cmd.RepoRoot, setting *changed when it touched anything. A
+// graph repository set up through sdd's clone gets none of them: agents work
+// in the code repository.
 func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string, commitMessage string, changed *bool) error {
+	if !cmd.GraphOnly {
+		var err error
+		touched, err = h.installSkillsAndRegistrations(ctx, cmd, agents, scope, touched)
+		if err != nil {
+			return err
+		}
+	}
+	*changed = *changed || len(touched) > 0
+	return h.commitInitPaths(ctx, cmd, touched, commitMessage)
+}
+
+func (h *Handler) installSkillsAndRegistrations(ctx context.Context, cmd *command.InitCmd, agents []model.AgentTarget, scope model.Scope, touched []string) ([]string, error) {
 	for _, target := range agents {
 		err := h.InstallSkills(ctx, &command.InstallSkillsCmd{
 			Target:          target,
@@ -266,7 +283,7 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("installing skills for %s: %w", target, err)
+			return nil, fmt.Errorf("installing skills for %s: %w", target, err)
 		}
 	}
 
@@ -274,7 +291,7 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 	// (s-tac-zaz).
 	err := h.pruneSkillOrphans(ctx, agents, scope, cmd, &touched)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Project scope only: the registration files live in the repo tree;
@@ -282,11 +299,15 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 	if scope == model.ScopeProject {
 		err = h.registerMCPServers(agents, cmd, &touched)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
+	return touched, nil
+}
 
-	*changed = *changed || len(touched) > 0
+// commitInitPaths commits everything init touched inside cmd.RepoRoot, and
+// in an sdd-owned clone pushes it before returning.
+func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, touched []string, commitMessage string) error {
 	// Skill files installed under the user-global scope sit outside the repo's
 	// git tree.
 	if h.committer == nil {
@@ -296,7 +317,7 @@ func (h *Handler) installAgentSurfaces(ctx context.Context, cmd *command.InitCmd
 	if len(commitPaths) == 0 {
 		return nil
 	}
-	err = h.committer.Commit(commitMessage, commitPaths...)
+	err := h.commitGraph(ctx, commitMessage, commitPaths...)
 	if err != nil {
 		return fmt.Errorf("git commit: %w", err)
 	}

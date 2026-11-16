@@ -34,9 +34,9 @@ func (r *Registry) clonesLock() (*flock.Flock, error) {
 	return flock.New(filepath.Join(r.loc.CacheRoot, ".clones.lock")), nil
 }
 
-// LockClones holds the clone lock while a repo's clone is moved into the
-// cache and the repo is connected, so a cache pruning run never judges that
-// clone between the two steps. The returned function releases it.
+// LockClones holds the clone lock while a repo's clone is placed and the
+// repo is connected, so a cache pruning run never judges that clone between
+// the two steps. The returned function releases it.
 func (r *Registry) LockClones(ctx context.Context) (func() error, error) {
 	lock, err := r.clonesLock()
 	if err != nil {
@@ -50,15 +50,25 @@ func (r *Registry) LockClones(ctx context.Context) (func() error, error) {
 	return lock.Unlock, nil
 }
 
-// RetireUnconnectedClone renames the clone at path out of the cache when the
+// ErrCloneInUse reports an sdd-owned clone that must stay; the wrapping error
+// says why.
+var ErrCloneInUse = errors.New("clone in use")
+
+// CloneHold holds the sdd-owned clone at dir against every other use while it
+// is retired, and returns release once it is. It returns ErrCloneInUse,
+// wrapped with why, when the clone must stay.
+type CloneHold func(dir string) (release func(), err error)
+
+// RetireUnconnectedClone renames the clone out of its place when the
 // user-global config, read again under the clone lock, still names no repo
-// for it and its disconnection record still stands, and returns where it went;
-// "" when the repo is connected again. A clone an earlier run retired is
+// for it, its disconnection record still stands and, for an sdd-owned clone,
+// hold lets it go. It returns where the clone went; "" when the repo is
+// connected now or its record is gone. A clone an earlier run retired is
 // returned as it is. The caller deletes the returned directory, outside the
-// lock. It returns ErrClonesBusy when another process holds the lock,
+// lock. It returns ErrClonesBusy when another process holds the clone lock,
 // ErrClonePassRefused on a repos list UnconnectedClones would refuse, and
-// ErrCloneHoldsClones for a clone retiring would take another one along.
-func (r *Registry) RetireUnconnectedClone(path string) (retired string, err error) {
+// hold's error when hold keeps the clone.
+func (r *Registry) RetireUnconnectedClone(clone UnconnectedClone, hold CloneHold) (retired string, err error) {
 	lock, err := r.clonesLock()
 	if err != nil {
 		return "", err
@@ -71,21 +81,25 @@ func (r *Registry) RetireUnconnectedClone(path string) (retired string, err erro
 		return "", ErrClonesBusy
 	}
 	defer func() { err = errors.Join(err, lock.Unlock()) }()
-	if filepath.Dir(path) == r.retiredClonesDir() {
+	path := clone.Dir
+	if r.isRetiredClone(clone) {
 		return path, nil
+	}
+	placed, err := r.clonePath(clone)
+	if err != nil {
+		return "", err
+	}
+	if placed != path {
+		return "", fmt.Errorf("retiring clone %s: %s places its clone at %s", path, clone.RepoID, placed)
 	}
 	cfg, err := r.Load()
 	if err != nil {
 		return "", err
 	}
-	repoID, err := r.cloneRepoID(path)
-	if err != nil {
-		return "", err
-	}
-	if _, connected := cfg.Connected(repoID); connected {
+	if _, connected := cfg.Connected(clone.RepoID); connected {
 		return "", nil
 	}
-	dropped, err := r.Disconnected(repoID)
+	dropped, err := r.Disconnected(clone.RepoID)
 	if err != nil || !dropped {
 		return "", err
 	}
@@ -93,25 +107,46 @@ func (r *Registry) RetireUnconnectedClone(path string) (retired string, err erro
 	if err != nil {
 		return "", err
 	}
-	err = holdsClones(path, repoID, cfg)
+	err = holdsClones(path, clone.RepoID, cfg)
 	if err != nil {
 		return "", err
 	}
-	err = os.MkdirAll(r.retiredClonesDir(), 0o755)
-	if err != nil {
-		return "", fmt.Errorf("creating %s: %w", r.retiredClonesDir(), err)
+	if clone.Owned {
+		release, err := hold(path)
+		if err != nil {
+			return "", err
+		}
+		defer release()
 	}
-	retired = filepath.Join(r.retiredClonesDir(), entryName(repoID))
+	err = os.MkdirAll(r.retiredClonesDir(clone.Owned), 0o755)
+	if err != nil {
+		return "", fmt.Errorf("creating %s: %w", r.retiredClonesDir(clone.Owned), err)
+	}
+	retired = filepath.Join(r.retiredClonesDir(clone.Owned), entryName(clone.RepoID))
 	if err := os.RemoveAll(retired); err != nil {
 		return "", fmt.Errorf("removing %s: %w", retired, err)
 	}
 	if err := os.Rename(path, retired); err != nil {
 		return "", fmt.Errorf("retiring clone %s: %w", path, err)
 	}
-	if err := clearDisconnected(r.loc.CacheRoot, repoID); err != nil {
+	err = r.clearDisconnectedOnceGone(clone)
+	if err != nil {
 		return "", err
 	}
 	return retired, nil
+}
+
+// clearDisconnectedOnceGone drops clone's disconnection record unless the
+// repo's other clone, sdd-owned or left in the cache, still waits for it.
+func (r *Registry) clearDisconnectedOnceGone(clone UnconnectedClone) error {
+	other, err := r.clonePath(UnconnectedClone{RepoID: clone.RepoID, Owned: !clone.Owned})
+	if err != nil {
+		return err
+	}
+	if IsCloned(other) {
+		return nil
+	}
+	return clearDisconnected(r.loc.DataRoot, clone.RepoID)
 }
 
 // holdsClones returns ErrCloneHoldsClones when a connected repo's ID lies

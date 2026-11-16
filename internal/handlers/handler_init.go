@@ -15,6 +15,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/index"
+	"github.com/networkteam/sdd/internal/meta"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/repos"
@@ -52,6 +53,9 @@ func (h *Handler) initRepo(ctx context.Context, cmd *command.InitCmd, changed *b
 	if err := cmd.Validate(); err != nil {
 		return fmt.Errorf("invalid command: %w", err)
 	}
+	if cmd.GraphRepo != "" {
+		return h.initGraphRepo(ctx, cmd, changed)
+	}
 	if cmd.ProjectDir != "" {
 		return h.initPointer(ctx, cmd, changed)
 	}
@@ -63,12 +67,15 @@ func (h *Handler) initRepo(ctx context.Context, cmd *command.InitCmd, changed *b
 	if err != nil {
 		return fmt.Errorf("graph directory: %w", err)
 	}
+	_, err = model.EntryMergeAttributeLine(graphDir)
+	if err != nil {
+		return fmt.Errorf("graph directory: %w", err)
+	}
 
 	sddDir := filepath.Join(cmd.RepoRoot, model.SDDDirName)
 	absGraphDir := filepath.Join(cmd.RepoRoot, graphDir)
 	tmpDir := filepath.Join(sddDir, "tmp")
 	configPath := filepath.Join(sddDir, "config.yaml")
-	gitignorePath := filepath.Join(cmd.RepoRoot, ".gitignore")
 
 	sddExisted, err := pathExists(sddDir)
 	if err != nil {
@@ -246,21 +253,13 @@ func (h *Handler) initRepo(ctx context.Context, cmd *command.InitCmd, changed *b
 		}
 	}
 
-	// Housekeeping applied on every init (idempotent — ensureGitignoreEntries
-	// skips entries already present). Covers fresh checkouts and upgrades
-	// where a new entry has been added to the required set. The index no
-	// longer lives in the tree (machine-global store, d-tac-nhx), so its
-	// gitignore entry is not emitted anymore; existing entries are harmless
-	// and left alone.
-	graphRuntimeEntry := filepath.ToSlash(filepath.Join(graphDir, ".sdd-runtime")) + "/"
-	gitignoreEntries := []string{".sdd/tmp/", ".sdd/config.local.yaml", ".sdd/stats/", ".sdd/sessions/", ".sdd/staged-blobs/", graphRuntimeEntry}
-	gitignoreAdded, err := ensureGitignoreEntries(gitignorePath, gitignoreEntries)
+	err = keepIgnoreFiles(cmd, graphDir, []string{graphDir}, &touched)
 	if err != nil {
-		log.Warn("could not update .gitignore", "path", gitignorePath, "err", err)
-	} else if gitignoreAdded {
-		touched = append(touched, gitignorePath)
-		if cmd.OnGitignoreUpdated != nil {
-			cmd.OnGitignoreUpdated(gitignorePath)
+		return err
+	}
+	if h.mergeDriverAt != nil {
+		if err := h.mergeDriverAt(cmd.RepoRoot).EnsureMergeDriver(ctx); err != nil {
+			return fmt.Errorf("setting up the entry merge driver: %w", err)
 		}
 	}
 
@@ -278,7 +277,11 @@ func (h *Handler) initRepo(ctx context.Context, cmd *command.InitCmd, changed *b
 	// agent is in play and the files are absent. AGENTS.md is the cross-tool
 	// canonical instruction file; CLAUDE.md imports it via @AGENTS.md. Existing
 	// files are never overwritten — a project's own instructions are sacred.
-	if bridgePaths, err := scaffoldInstructionBridge(cmd.RepoRoot, effectiveAgents); err != nil {
+	bridgeAgents := effectiveAgents
+	if cmd.GraphOnly {
+		bridgeAgents = nil
+	}
+	if bridgePaths, err := scaffoldInstructionBridge(cmd.RepoRoot, bridgeAgents); err != nil {
 		return err
 	} else if len(bridgePaths) > 0 {
 		touched = append(touched, bridgePaths...)
@@ -786,55 +789,6 @@ func gitignoreLine(entry string) error {
 	return nil
 }
 
-// ensureGitignoreEntries appends entries to .gitignore that are not already
-// present. Creates the file if it does not exist. Returns true when at least
-// one entry was added so the caller can decide whether to record the file
-// as touched.
-func ensureGitignoreEntries(path string, entries []string) (bool, error) {
-	existing := make(map[string]bool)
-	var fileData []byte
-
-	if data, err := os.ReadFile(path); err == nil {
-		fileData = data
-		scanner := bufio.NewScanner(strings.NewReader(string(data)))
-		for scanner.Scan() {
-			existing[strings.TrimSpace(scanner.Text())] = true
-		}
-	} else if !os.IsNotExist(err) {
-		return false, err
-	}
-
-	var toAdd []string
-	for _, e := range entries {
-		err := gitignoreLine(e)
-		if err != nil {
-			return false, err
-		}
-		if !existing[e] {
-			toAdd = append(toAdd, e)
-		}
-	}
-	if len(toAdd) == 0 {
-		return false, nil
-	}
-
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return false, err
-	}
-	defer f.Close()
-
-	// Ensure we start on a new line if the file doesn't end with one.
-	if len(fileData) > 0 && fileData[len(fileData)-1] != '\n' {
-		fmt.Fprintln(f)
-	}
-
-	for _, e := range toAdd {
-		fmt.Fprintln(f, e)
-	}
-	return true, nil
-}
-
 // migrateOldTmpDir moves files from oldDir to newDir. Returns the count
 // of migrated files. Uses copy-then-remove for cross-device safety.
 func migrateOldTmpDir(oldDir, newDir string) int {
@@ -958,7 +912,7 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 		return err
 	}
 	for _, r := range gcfg.Repos {
-		cacheDir, err := h.repos.Registry().CacheDir(r.RepoID)
+		cacheDir, err := h.repos.Registry().LegacyCacheDir(r.RepoID)
 		if err != nil {
 			continue
 		}
@@ -976,4 +930,117 @@ func (h *Handler) migrateLegacyIndexes(cmd *command.InitCmd, sddDir, configPath 
 		}
 	}
 	return nil
+}
+
+// keepIgnoreFiles brings the ignore and attribute files of cmd.RepoRoot to
+// what init writes, none of them depending on graph_dir: the committed
+// .sdd/.gitignore and, for a repository holding its graph in graphDir, the
+// graph directory's .gitattributes and its runtime folder's .gitignore. The
+// root .gitignore and .gitattributes lose exactly the lines earlier builds
+// derived for legacyGraphDirs; lines added by hand stay.
+func keepIgnoreFiles(cmd *command.InitCmd, graphDir string, legacyGraphDirs []string, touched *[]string) error {
+	ignored := func(path string) {
+		*touched = append(*touched, path)
+		if cmd.OnGitignoreUpdated != nil {
+			cmd.OnGitignoreUpdated(path)
+		}
+	}
+	attributed := func(path string) {
+		*touched = append(*touched, path)
+		if cmd.OnGitattributesUpdated != nil {
+			cmd.OnGitattributesUpdated(path)
+		}
+	}
+	sddIgnore := filepath.Join(cmd.RepoRoot, model.SDDDirName, ".gitignore")
+	changed, err := rewriteLines(sddIgnore, nil, model.SDDIgnoreLines)
+	if err != nil {
+		return err
+	}
+	if changed {
+		ignored(sddIgnore)
+	}
+
+	var legacyIgnore, legacyAttributes []string
+	if len(legacyGraphDirs) == 0 {
+		legacyIgnore = model.LegacyRootIgnoreLines("")
+	}
+	for _, dir := range legacyGraphDirs {
+		legacyIgnore = append(legacyIgnore, model.LegacyRootIgnoreLines(dir)...)
+		line, err := model.EntryMergeAttributeLine(dir)
+		if err == nil {
+			legacyAttributes = append(legacyAttributes, line)
+		}
+	}
+	rootIgnore := filepath.Join(cmd.RepoRoot, ".gitignore")
+	changed, err = rewriteLines(rootIgnore, legacyIgnore, nil)
+	if err != nil {
+		return err
+	}
+	if changed {
+		ignored(rootIgnore)
+	}
+
+	rootAttributes := filepath.Join(cmd.RepoRoot, ".gitattributes")
+	graphAttributes := ""
+	if graphDir != "" {
+		graphAttributes = filepath.Join(cmd.RepoRoot, graphDir, ".gitattributes")
+	}
+	var rootAdd []string
+	if filepath.Clean(graphAttributes) == filepath.Clean(rootAttributes) {
+		rootAdd = []string{model.GraphAttributesLine}
+	}
+	changed, err = rewriteLines(rootAttributes, legacyAttributes, rootAdd)
+	if err != nil {
+		return fmt.Errorf("routing graph entries to the merge driver in %s: %w", rootAttributes, err)
+	}
+	if changed {
+		attributed(rootAttributes)
+	}
+	if graphAttributes == "" {
+		return nil
+	}
+	if rootAdd == nil {
+		changed, err = rewriteLines(graphAttributes, nil, []string{model.GraphAttributesLine})
+		if err != nil {
+			return fmt.Errorf("routing graph entries to the merge driver in %s: %w", graphAttributes, err)
+		}
+		if changed {
+			attributed(graphAttributes)
+		}
+	}
+	return meta.KeepRuntimeIgnore(filepath.Join(cmd.RepoRoot, graphDir))
+}
+
+// rewriteLines rewrites the file at path with model.RewriteLines, removing
+// it when no line remains and creating its folder when it is new; changed
+// reports a write.
+func rewriteLines(path string, remove, add []string) (changed bool, err error) {
+	current, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, fmt.Errorf("reading %s: %w", path, err)
+	}
+	existed := err == nil
+	rewritten := model.RewriteLines(current, remove, add)
+	if bytes.Equal(bytes.TrimRight(rewritten, "\n"), bytes.TrimRight(current, "\n")) {
+		return false, nil
+	}
+	if rewritten == nil {
+		if !existed {
+			return false, nil
+		}
+		err = os.Remove(path)
+		if err != nil {
+			return false, fmt.Errorf("removing %s: %w", path, err)
+		}
+		return true, nil
+	}
+	err = os.MkdirAll(filepath.Dir(path), 0o755)
+	if err != nil {
+		return false, fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+	}
+	err = os.WriteFile(path, rewritten, 0o644)
+	if err != nil {
+		return false, fmt.Errorf("writing %s: %w", path, err)
+	}
+	return true, nil
 }
