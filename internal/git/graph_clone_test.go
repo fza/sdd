@@ -343,7 +343,8 @@ func TestCloneLetsAnUpstreamDeletionWin(t *testing.T) {
 
 func TestCloneMergesConfigPerKey(t *testing.T) {
 	remote := seededRemote(t)
-	ctx, log := capturedLog(t)
+	var log bytes.Buffer
+	ctx := admitted(t, slogutils.WithLogger(context.Background(), slog.New(slog.NewTextHandler(&log, &slog.HandlerOptions{Level: slog.LevelWarn}))))
 	dir := sddClone(t, model.ProtocolHTTPS)
 	repo := git.CLI{Dir: dir}
 	remote.Commit(t, "upstream model", map[string]string{".sdd/config.yaml": "graph_dir: .sdd/graph\nllm:\n  model: upstream\n"})
@@ -366,7 +367,7 @@ func TestCloneMergesConfigPerKey(t *testing.T) {
 		t.Errorf("upstream should win the clash and the local addition stay:\n%s", merged)
 	}
 	if !strings.Contains(log.String(), "llm.model") {
-		t.Errorf("a notice should name the key both sides changed:\n%s", log)
+		t.Errorf("a warning should name the key both sides changed:\n%s", log.String())
 	}
 }
 
