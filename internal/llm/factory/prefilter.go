@@ -56,7 +56,7 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 		if err != nil {
 			return Prefilter{}, fmt.Errorf("llm_prefilter: %w", err)
 		}
-		scorer, judge = client, cfg.Provider+":"+cmp.Or(cfg.Model, systemone.DefaultModel)
+		scorer, judge = client, string(cfg.Provider)+":"+cmp.Or(cfg.Model, systemone.DefaultModel)
 	case model.PrefilterCohere:
 		key, err := prefilterKey(cfg)
 		if err != nil {
@@ -66,13 +66,9 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 		if err != nil {
 			return Prefilter{}, fmt.Errorf("llm_prefilter: %w", err)
 		}
-		scorer, judge = client, cfg.Provider+":"+cmp.Or(cfg.Model, cohere.DefaultModel)
+		scorer, judge = client, string(cfg.Provider)+":"+cmp.Or(cfg.Model, cohere.DefaultModel)
 	default:
-		err := model.CheckPrefilterProvider(cfg.Provider)
-		if err != nil {
-			return Prefilter{}, err
-		}
-		chat, err := New(cfg.LLMConfig)
+		chat, err := New(cfg.Chat())
 		if err != nil {
 			return Prefilter{}, fmt.Errorf("llm_prefilter: %w", err)
 		}
@@ -85,7 +81,7 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 			concurrency = defaultPrefilterConcurrency
 		}
 		scorer = relevance.PerItem(bridge, concurrency)
-		judge = "generate:" + cmp.Or(cfg.Model, cfg.Provider, model.DefaultLLMModel)
+		judge = "generate:" + cmp.Or(cfg.Model, string(cfg.Provider), model.DefaultLLMModel)
 	}
 	if cfg.RateLimitRPS > 0 {
 		scorer = relevance.RateLimited(scorer, cfg.RateLimitRPS)
@@ -97,7 +93,7 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 // prefilterKey is the API key a dedicated provider authenticates with, keyed
 // by the provider as llm.api_keys is.
 func prefilterKey(cfg model.LLMPrefilterConfig) (string, error) {
-	key := cfg.APIKeys[cfg.Provider]
+	key := cfg.APIKeys[string(cfg.Provider)]
 	if key == "" {
 		return "", fmt.Errorf("llm_prefilter: provider %s needs llm_prefilter.api_keys.%s", cfg.Provider, cfg.Provider)
 	}

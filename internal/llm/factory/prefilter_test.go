@@ -13,20 +13,20 @@ func TestNewPrefilter(t *testing.T) {
 	keys := map[string]string{"systemone": "k", "cohere": "k"}
 	cases := []struct {
 		name      string
-		cfg       model.LLMConfig
+		cfg       model.LLMPrefilterConfig
 		judge     string
 		direction relevance.Direction
 		batch     int
 		pair      int
 	}{
-		{"chat provider runs generate", model.LLMConfig{Provider: "claude-cli", Model: "haiku"}, "generate:haiku", relevance.Both, 1, 0},
-		{"systemone defaults to Jev through Opper", model.LLMConfig{Provider: "systemone", APIKeys: keys}, "systemone:jev-1.14.0", relevance.Both, 0, 0},
-		{"cohere defaults to rerank v3.5 through Opper", model.LLMConfig{Provider: "cohere", APIKeys: keys}, "cohere:aws/cohere/rerank-v3.5", relevance.Forward, 1000, 4096},
-		{"a set model names the judge", model.LLMConfig{Provider: "cohere", Model: "cohere/rerank-v4", APIKeys: keys}, "cohere:cohere/rerank-v4", relevance.Forward, 1000, 4096},
+		{"chat provider runs generate", model.LLMPrefilterConfig{Provider: "claude-cli", Model: "haiku"}, "generate:haiku", relevance.Both, 1, 0},
+		{"systemone defaults to Jev through Opper", model.LLMPrefilterConfig{Provider: "systemone", APIKeys: keys}, "systemone:jev-1.14.0", relevance.Both, 0, 0},
+		{"cohere defaults to rerank v3.5 through Opper", model.LLMPrefilterConfig{Provider: "cohere", APIKeys: keys}, "cohere:aws/cohere/rerank-v3.5", relevance.Forward, 1000, 4096},
+		{"a set model names the judge", model.LLMPrefilterConfig{Provider: "cohere", Model: "cohere/rerank-v4", APIKeys: keys}, "cohere:cohere/rerank-v4", relevance.Forward, 1000, 4096},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			prefilter, err := factory.NewPrefilter(model.LLMPrefilterConfig{LLMConfig: tc.cfg}, nil)
+			prefilter, err := factory.NewPrefilter(tc.cfg, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -41,18 +41,18 @@ func TestNewPrefilter(t *testing.T) {
 func TestNewPrefilter_RefusesABadBlock(t *testing.T) {
 	cases := []struct {
 		name string
-		cfg  model.LLMConfig
+		cfg  model.LLMPrefilterConfig
 		want string
 	}{
-		{"systemone without its key", model.LLMConfig{Provider: "systemone", APIKeys: map[string]string{"opper": "k"}}, "llm_prefilter: provider systemone needs llm_prefilter.api_keys.systemone"},
-		{"cohere without its key", model.LLMConfig{Provider: "cohere"}, "llm_prefilter: provider cohere needs llm_prefilter.api_keys.cohere"},
-		{"relative endpoint", model.LLMConfig{Provider: "cohere", Endpoint: "/v3/rerank", APIKeys: map[string]string{"cohere": "k"}}, "not an absolute URL"},
-		{"unknown provider", model.LLMConfig{Provider: "bm25"}, "claude-cli, anthropic, openai, ollama, systemone or cohere"},
-		{"bad timeout", model.LLMConfig{Provider: "claude-cli", Timeout: "soon"}, "parsing timeout"},
+		{"systemone without its key", model.LLMPrefilterConfig{Provider: "systemone", APIKeys: map[string]string{"opper": "k"}}, "llm_prefilter: provider systemone needs llm_prefilter.api_keys.systemone"},
+		{"cohere without its key", model.LLMPrefilterConfig{Provider: "cohere"}, "llm_prefilter: provider cohere needs llm_prefilter.api_keys.cohere"},
+		{"relative endpoint", model.LLMPrefilterConfig{Provider: "cohere", Endpoint: "/v3/rerank", APIKeys: map[string]string{"cohere": "k"}}, "not an absolute URL"},
+		{"unknown provider", model.LLMPrefilterConfig{Provider: "bm25"}, "unknown llm provider \"bm25\""},
+		{"bad timeout", model.LLMPrefilterConfig{Provider: "claude-cli", Timeout: "soon"}, "parsing timeout"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := factory.NewPrefilter(model.LLMPrefilterConfig{LLMConfig: tc.cfg}, nil)
+			_, err := factory.NewPrefilter(tc.cfg, nil)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("NewPrefilter = %v, should name the problem", err)
 			}

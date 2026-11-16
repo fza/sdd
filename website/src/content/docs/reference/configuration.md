@@ -234,7 +234,7 @@ In a guided dialogue the agent plays the draft back without a check; once you co
 
 #### Relevance prefilter
 
-The prefilter judge rates how much each candidate bears on the draft, from `verify.prefilter_from` candidates on. It runs on a chat model the `llm_prefilter` block sets, with the same keys as [`llm`](#language-model):
+The prefilter judge rates how much each candidate bears on the draft, from `verify.prefilter_from` candidates on. It runs on a chat model the `llm_prefilter` block sets, with the keys of [`llm`](#language-model) that apply to a judge: `provider`, `model`, `endpoint`, `ollama_endpoint`, `api_keys`, `timeout`, `params`, `concurrency`, `rate_limit_rps` and `retry`:
 
 ```yaml
 llm_prefilter:

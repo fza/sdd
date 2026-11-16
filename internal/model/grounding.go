@@ -209,40 +209,76 @@ func readTag(read GroundingRead) string {
 	return string(read.Mode)
 }
 
-// LLMPrefilterConfig is the `llm_prefilter` block: the relevance judge, in
-// the shape of `llm`. A chat provider runs the generate judge on its model;
-// a dedicated provider rates the candidates over its own protocol.
+// LLMPrefilterConfig is the `llm_prefilter` block: the relevance judge, with
+// the keys of `llm` that apply to it. Its provider is a field of its own,
+// since it takes the dedicated judges beside the chat providers.
 type LLMPrefilterConfig struct {
-	LLMConfig `yaml:",inline"`
+	// Provider picks the judge: a chat provider runs the generate judge on
+	// its model; a dedicated provider rates over its own protocol.
+	Provider       PrefilterProvider `yaml:"provider,omitempty"`
+	Model          string            `yaml:"model,omitempty"`
+	Timeout        string            `yaml:"timeout,omitempty"`
+	Params         map[string]string `yaml:"params,omitempty"`
+	Concurrency    int               `yaml:"concurrency,omitempty"`
+	Endpoint       string            `yaml:"endpoint,omitempty"`
+	OllamaEndpoint string            `yaml:"ollama_endpoint,omitempty"`
+	APIKeys        map[string]string `yaml:"api_keys,omitempty" sdd:"secret"`
+	RateLimitRPS   float64           `yaml:"rate_limit_rps,omitempty"`
+	Retry          RetryConfig       `yaml:"retry,omitempty"`
 }
 
-// The dedicated llm_prefilter providers, each named after its wire protocol.
+// PrefilterProvider is an llm_prefilter.provider value.
+type PrefilterProvider string
+
+// The dedicated judges, each named after its wire protocol.
 const (
-	PrefilterSystemOne = "systemone"
-	PrefilterCohere    = "cohere"
+	PrefilterSystemOne PrefilterProvider = "systemone"
+	PrefilterCohere    PrefilterProvider = "cohere"
 )
 
-// PrefilterProviders lists the values llm_prefilter.provider takes: the chat
-// providers, then the dedicated judges.
-func PrefilterProviders() []string {
-	return []string{"claude-cli", "anthropic", "openai", "ollama", PrefilterSystemOne, PrefilterCohere}
+// AllowedValues lists the chat providers, then the dedicated judges.
+func (PrefilterProvider) AllowedValues() []string {
+	return append(LLMProviders(), string(PrefilterSystemOne), string(PrefilterCohere))
 }
 
-// CheckPrefilterProvider refuses an llm_prefilter.provider outside
-// PrefilterProviders; unset passes.
-func CheckPrefilterProvider(provider string) error {
+// Dedicated reports a judge that rates over its own protocol, not a chat
+// model.
+func (p PrefilterProvider) Dedicated() bool {
+	return p == PrefilterSystemOne || p == PrefilterCohere
+}
+
+// CheckPrefilterProvider refuses an llm_prefilter.provider outside its
+// allowed values; unset passes.
+func CheckPrefilterProvider(provider PrefilterProvider) error {
 	if provider == "" {
 		return nil
 	}
-	return checkClosedValue("llm_prefilter.provider", provider, PrefilterProviders())
+	return checkClosedValue("llm_prefilter.provider", string(provider), provider.AllowedValues())
+}
+
+// Chat is the block as the llm settings the generate judge's chat model runs
+// on.
+func (c LLMPrefilterConfig) Chat() LLMConfig {
+	return LLMConfig{
+		Provider: string(c.Provider), Model: c.Model, Timeout: c.Timeout, Params: c.Params,
+		Concurrency: c.Concurrency, Endpoint: c.Endpoint, OllamaEndpoint: c.OllamaEndpoint,
+		APIKeys: c.APIKeys, RateLimitRPS: c.RateLimitRPS, Retry: c.Retry,
+	}
+}
+
+func prefilterFromChat(c LLMConfig) LLMPrefilterConfig {
+	return LLMPrefilterConfig{
+		Provider: PrefilterProvider(c.Provider), Model: c.Model, Timeout: c.Timeout, Params: c.Params,
+		Concurrency: c.Concurrency, Endpoint: c.Endpoint, OllamaEndpoint: c.OllamaEndpoint,
+		APIKeys: c.APIKeys, RateLimitRPS: c.RateLimitRPS, Retry: c.Retry,
+	}
 }
 
 // ResolvedPrefilter is the prefilter block as it runs. A dedicated provider
 // takes the block as set; otherwise the llm block's provider, model and
 // connection, each value llm_prefilter sets winning.
 func (b BaseConfig) ResolvedPrefilter() LLMPrefilterConfig {
-	switch b.LLMPrefilter.Provider {
-	case PrefilterSystemOne, PrefilterCohere:
+	if b.LLMPrefilter.Provider.Dedicated() {
 		return b.LLMPrefilter
 	}
 	base := LLMConfig{
@@ -250,11 +286,11 @@ func (b BaseConfig) ResolvedPrefilter() LLMPrefilterConfig {
 		Endpoint: b.LLM.Endpoint, OllamaEndpoint: b.LLM.OllamaEndpoint,
 		APIKeys: b.LLM.APIKeys,
 	}
-	return LLMPrefilterConfig{LLMConfig: mergeLLMConfig(base, b.LLMPrefilter.LLMConfig)}
+	return prefilterFromChat(mergeLLMConfig(base, b.LLMPrefilter.Chat()))
 }
 
 func mergeLLMPrefilterConfig(base, overlay LLMPrefilterConfig) LLMPrefilterConfig {
-	return LLMPrefilterConfig{LLMConfig: mergeLLMConfig(base.LLMConfig, overlay.LLMConfig)}
+	return prefilterFromChat(mergeLLMConfig(base.Chat(), overlay.Chat()))
 }
 
 func boolOr(v *bool, fallback bool) bool {
