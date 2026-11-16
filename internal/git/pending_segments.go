@@ -16,11 +16,13 @@ import (
 // instead of commits of their own.
 var segmentPathspecs = []string{
 	":(top,glob)**/" + path.Join(model.SDDDirName, model.EventsDirName) + "/*/*.seg",
+	":(top,glob)**/" + path.Join(model.SDDDirName, model.EventsDirName) + "/.gitattributes",
 }
 
-// PendingSegments returns the shared segments the next commit has to carry:
-// new ones git neither tracks nor ignores, and tracked ones compaction
-// removed, as paths relative to the directory the adapter's commands run in.
+// PendingSegments returns the shared segments the next commit has to carry,
+// with the attributes file marking them binary: new ones git neither tracks
+// nor ignores, and tracked ones compaction removed, as paths relative to the
+// directory the adapter's commands run in.
 // Stage them with `git add --all`, which records a removal too.
 func (c CLI) PendingSegments(ctx context.Context) ([]string, error) {
 	args := append([]string{"ls-files", "--others", "--deleted", "--exclude-standard", "-z", "--"}, segmentPathspecs...)

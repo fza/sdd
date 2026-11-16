@@ -1,7 +1,6 @@
 package textdiff_test
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -72,24 +71,5 @@ func TestChangedPassages(t *testing.T) {
 	}
 	if got := textdiff.ChangedPassages(old, old); len(got) != 0 {
 		t.Fatalf("an unchanged text has no changed passage, got %q", got)
-	}
-}
-
-func TestChangedSpans(t *testing.T) {
-	old := "head\nIt names the subject.\ntail"
-	for _, tc := range []struct {
-		name, new string
-		want      []textdiff.Span
-	}{
-		{"a word within a line", "head\nIt names its subject.\ntail", []textdiff.Span{{Start: 14, End: 17}}},
-		{"two separate lines", "HEAD\nIt names the subject.\nTAIL", []textdiff.Span{{Start: 0, End: 4}, {Start: 27, End: 31}}},
-		{"an inserted line", "head\nIt names the subject.\nadded\ntail", []textdiff.Span{{Start: 27, End: 27}}},
-		{"no change", old, nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := textdiff.ChangedSpans(old, tc.new); !slices.Equal(got, tc.want) {
-				t.Fatalf("the spans should cover the changed bytes of old only, got %v", got)
-			}
-		})
 	}
 }

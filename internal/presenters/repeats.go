@@ -69,11 +69,6 @@ func (r *Repeats) WriteWayBack(w io.Writer) {
 	}
 }
 
-// GatherPointer is the pointer an entry held under tag prints as.
-func GatherPointer(e *model.Entry, tag string) string {
-	return pointerText(e.ID, model.EntryBrief(e), tag, "")
-}
-
 // pointerText is the pointer a held entry prints as: its ID, its brief,
 // never cut, the tag it is held under and the word whose follower proves
 // it next.

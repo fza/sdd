@@ -320,3 +320,22 @@ func segmentFiles(t *testing.T, dir string) []string {
 	}
 	return names
 }
+
+// A channel shared through Git marks its segments binary, so Git never
+// diffs or merges them as text; a local channel writes no attributes.
+func TestFilesystemEventStore_MarksSharedSegmentsBinary(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "events")
+	if err := newFileEventStore(t, dir).Append(t.Context(), []sdd.Event{testEvent("a", "wip")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".gitattributes")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("local channels alone should write no attributes: %v", err)
+	}
+	if err := newFileEventStore(t, dir, "recheck").Append(t.Context(), []sdd.Event{testEvent("b", "recheck")}); err != nil {
+		t.Fatal(err)
+	}
+	attributes, err := os.ReadFile(filepath.Join(dir, ".gitattributes"))
+	if err != nil || !strings.Contains(string(attributes), "*.seg binary") {
+		t.Fatalf("a git channel should mark segments binary, .gitattributes = %q, %v", attributes, err)
+	}
+}

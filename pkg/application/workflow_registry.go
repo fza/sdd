@@ -206,12 +206,17 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if err != nil {
 				return nil, err
 			}
+			mark := w.session.PieceMark()
 			result, err := showFromSnapshot(view.runtime, view.snapshot, ShowRequest{
 				IDs: ids, UpDepth: workflowIntArg(args, "up", query.DefaultUpDepth), DownDepth: workflowIntArg(args, "down", query.DefaultDownDepth),
 				Budget: serveChainBudget, Held: held, Anchor: anchor,
 			})
 			if err != nil {
 				return nil, err
+			}
+			// A cut can drop an entry the chain rendered, as for viewLayout.
+			if _, cut := serveview.BoundValue(result.Entries, ctx.Cap); cut != nil {
+				w.session.DropPiecesSince(mark)
 			}
 			w.session.LogRead("inject:entryChains", result.FullIDs, result.SummaryIDs)
 			return result.Entries, nil

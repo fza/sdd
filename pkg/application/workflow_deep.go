@@ -151,8 +151,8 @@ func (w *WorkflowSession) deepVerdictCurrent(ctx *engine.Context) (bool, error) 
 }
 
 // deepEditSettled reports whether a guided capture's draft changed since the
-// deep verdict only within what the last exchange settled
-// (model.DeepSettledSpans), its attachments and target as they were.
+// deep verdict only by taking back edits the exchange's proposal wrote
+// (model.DeepEditsReverted), its attachments and target as they were.
 func (w *WorkflowSession) deepEditSettled(ctx *engine.Context) (bool, error) {
 	verdict, ok := readDeepVerdict(ctx.Store)
 	if w.Autonomous() || !ok || verdict.Outcome == "skipped" || verdict.Fingerprint == w.deepFingerprint(ctx) || verdict.Fingerprint != w.deepFingerprintOf(ctx, verdict.Document) {
@@ -166,18 +166,8 @@ func (w *WorkflowSession) deepEditSettled(ctx *engine.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	settled := model.DeepSettledSpans(verdict.Document, findings, history)
-	changed := textdiff.ChangedSpans(verdict.Document, draftText(ctx.Store))
-	outside := slices.ContainsFunc(changed, func(c textdiff.Span) bool {
-		return !slices.ContainsFunc(settled, func(s model.DeepSpan) bool {
-			// Text added at either edge extends the settled text rather than changing it.
-			if c.Start == c.End {
-				return s.Start < c.Start && c.Start < s.End
-			}
-			return s.Start <= c.Start && c.End <= s.End
-		})
-	})
-	return len(changed) > 0 && !outside, nil
+	base, _ := workflowStoreString(ctx.Store, fieldDeepBase)
+	return model.DeepEditsReverted(base, verdict.Document, draftText(ctx.Store), model.DeepChanges(findings, history)), nil
 }
 
 // deepJudgesPreflight reports whether the deep verifier judges the draft in

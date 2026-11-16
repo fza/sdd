@@ -130,3 +130,26 @@ func TestRemovalCommit_ScopesToPathspec(t *testing.T) {
 		t.Errorf("unrelated.txt no longer staged after scoped commit; tracked = %v", tracked)
 	}
 }
+
+// The attributes file marking shared segments binary rides the commit with
+// the segments it marks.
+func TestPendingSegments_CarryTheEventAttributes(t *testing.T) {
+	dir := newTestRepo(t)
+	events := filepath.Join(dir, ".sdd", "events")
+	if err := os.MkdirAll(filepath.Join(events, "recheck"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{"recheck/a.seg": "SDDREC", ".gitattributes": "*.seg binary\n"} {
+		if err := os.WriteFile(filepath.Join(events, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pending, err := CLI{Dir: dir}.PendingSegments(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(pending)
+	if want := []string{".sdd/events/.gitattributes", ".sdd/events/recheck/a.seg"}; !slices.Equal(pending, want) {
+		t.Fatalf("pending = %v, want %v", pending, want)
+	}
+}

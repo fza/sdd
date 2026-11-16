@@ -51,11 +51,11 @@ func TestRenderView_HeldEntryPrintsAsPointer(t *testing.T) {
 			presenters.RenderViewRepeats(&buf, &query.ViewResult{Graph: g, Sections: []query.SectionResult{tc.section}}, heldOnly(ids...))
 			got := buf.String()
 			for _, e := range tc.held {
-				if !strings.Contains(got, presenters.GatherPointer(e, "ab12")) {
+				if !strings.Contains(got, heldPointer(e, "ab12")) {
 					t.Errorf("a held entry should print as its pointer:\n%s", got)
 				}
 			}
-			if strings.Contains(got, other.ID) && (!strings.Contains(got, "Other entry.") || strings.Contains(got, presenters.GatherPointer(other, "ab12"))) {
+			if strings.Contains(got, other.ID) && (!strings.Contains(got, "Other entry.") || strings.Contains(got, heldPointer(other, "ab12"))) {
 				t.Errorf("an entry not held should print its own line:\n%s", got)
 			}
 			if !strings.Contains(got, presenters.GatherWayBack) {
@@ -63,6 +63,11 @@ func TestRenderView_HeldEntryPrintsAsPointer(t *testing.T) {
 			}
 		})
 	}
+}
+
+// heldPointer is the pointer an entry heldOnly holds prints as.
+func heldPointer(e *model.Entry, tag string) string {
+	return e.ID + " — " + model.EntryBrief(e) + " (held as ⟦" + tag + "⟧"
 }
 
 // A held entry on a show chain prints as its pointer on the bullet.
@@ -77,7 +82,7 @@ func TestRenderShow_HeldChainEntryPrintsAsPointer(t *testing.T) {
 	var buf bytes.Buffer
 	presenters.RenderShow(&buf, result, presenters.ShowOptions{Repeats: heldOnly(basis.ID)})
 	got := buf.String()
-	if !strings.Contains(got, presenters.GatherPointer(basis, "ab12")) {
+	if !strings.Contains(got, heldPointer(basis, "ab12")) {
 		t.Fatalf("a held chain entry should print as its pointer:\n%s", got)
 	}
 	if !strings.Contains(got, "# body") || !strings.Contains(got, "⟦zz99⟧ Decision on the basis.") {
