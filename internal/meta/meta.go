@@ -10,7 +10,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"time"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -42,24 +41,41 @@ func SDDDir(repoRoot string) string {
 	return filepath.Join(repoRoot, model.SDDDirName)
 }
 
+// LocalLayerFile is the machine-local, gitignored config layer inside the
+// .sdd/ directory sddDir.
+func LocalLayerFile(sddDir string) string {
+	return filepath.Join(sddDir, "config.local.yaml")
+}
+
+// LocalLayerOf is localFile, or LocalLayerFile(sddDir) when it is empty.
+func LocalLayerOf(sddDir, localFile string) string {
+	if localFile != "" {
+		return localFile
+	}
+	return LocalLayerFile(sddDir)
+}
+
 // ReadConfig reads and parses .sdd/config.yaml from the given .sdd directory,
 // then overlays any .sdd/config.local.yaml present. Returns nil config with
 // nil error if neither file exists. The local file is gitignored, parses as
 // the same PerRepoConfig schema, and carries genuinely machine-specific
 // overrides (API keys, endpoints).
 func ReadConfig(sddDir string) (*model.PerRepoConfig, error) {
-	base, err := readConfigFile(filepath.Join(sddDir, "config.yaml"))
+	return ReadConfigWithLocal(sddDir, LocalLayerFile(sddDir))
+}
+
+// ReadConfigWithLocal is ReadConfig with the machine-local layer read from
+// localFile: a graph_repo project keeps it in its code repository
+// (Project.LocalLayerFile).
+func ReadConfigWithLocal(sddDir, localFile string) (*model.PerRepoConfig, error) {
+	base, local, err := ReadLayers(sddDir, localFile)
 	if err != nil {
 		return nil, err
 	}
-	overlay, err := readConfigFile(filepath.Join(sddDir, "config.local.yaml"))
-	if err != nil {
-		return nil, err
-	}
-	if base == nil && overlay == nil {
+	if base == nil && local == nil {
 		return nil, nil
 	}
-	return model.MergeConfig(base, overlay), nil
+	return model.MergeConfig(base, local), nil
 }
 
 // ResolveConfig builds the effective per-repo config from the full overlay:
@@ -69,7 +85,13 @@ func ReadConfig(sddDir string) (*model.PerRepoConfig, error) {
 // file exists — with global settings present, a repo without config files
 // still resolves to them.
 func ResolveConfig(global model.BaseConfig, sddDir string) (*model.PerRepoConfig, error) {
-	committed, local, err := ReadConfigLayers(sddDir)
+	return ResolveConfigWithLocal(global, sddDir, LocalLayerFile(sddDir))
+}
+
+// ResolveConfigWithLocal is ResolveConfig with the machine-local layer read
+// from localFile.
+func ResolveConfigWithLocal(global model.BaseConfig, sddDir, localFile string) (*model.PerRepoConfig, error) {
+	committed, local, err := ReadLayers(sddDir, localFile)
 	if err != nil {
 		return nil, err
 	}
@@ -82,15 +104,25 @@ func ResolveConfig(global model.BaseConfig, sddDir string) (*model.PerRepoConfig
 // layers for per-value provenance; everything else wants ReadConfig's
 // merged result.
 func ReadConfigLayers(sddDir string) (committed, local *model.PerRepoConfig, err error) {
+	return ReadLayers(sddDir, LocalLayerFile(sddDir))
+}
+
+// ReadLayers is ReadConfigLayers with the machine-local layer read from
+// localFile, LocalLayerFile(sddDir) when empty. Each layer comes without the
+// settings it may not make (model.HonoredCommitted, model.HonoredLocal).
+func ReadLayers(sddDir, localFile string) (committed, local *model.PerRepoConfig, err error) {
+	if localFile == "" {
+		localFile = LocalLayerFile(sddDir)
+	}
 	committed, err = readConfigFile(filepath.Join(sddDir, "config.yaml"))
 	if err != nil {
 		return nil, nil, err
 	}
-	local, err = readConfigFile(filepath.Join(sddDir, "config.local.yaml"))
+	local, err = readConfigFile(localFile)
 	if err != nil {
 		return nil, nil, err
 	}
-	return committed, local, nil
+	return model.HonoredCommitted(committed), model.HonoredLocal(local), nil
 }
 
 func readConfigFile(path string) (*model.PerRepoConfig, error) {
@@ -154,49 +186,6 @@ func ResolveGraphDir(repoRoot string, cfg *model.PerRepoConfig) string {
 // TmpDir returns the path to .sdd/tmp/ given the .sdd/ directory path.
 func TmpDir(sddDir string) string {
 	return filepath.Join(sddDir, "tmp")
-}
-
-// LastFetchPath returns the path to the background-sync last-fetch marker.
-// The file's mtime records the last time sdd attempted git fetch; its
-// presence short-circuits further fetches within the configured cooldown.
-func LastFetchPath(sddDir string) string {
-	return filepath.Join(TmpDir(sddDir), "last-fetch")
-}
-
-// ReadLastFetch returns the mtime of the last-fetch marker, or the zero
-// time if the marker does not exist. A zero result means "never fetched,"
-// treat as stale.
-func ReadLastFetch(sddDir string) (time.Time, error) {
-	info, err := os.Stat(LastFetchPath(sddDir))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return time.Time{}, nil
-		}
-		return time.Time{}, err
-	}
-	return info.ModTime(), nil
-}
-
-// TouchLastFetch stamps the last-fetch marker with the current time,
-// creating the .sdd/tmp/ directory and the file itself as needed. Called
-// whether the fetch succeeded or failed — the cooldown applies to attempts,
-// not successes, so transient offline periods don't re-fetch per command.
-func TouchLastFetch(sddDir string) error {
-	if err := os.MkdirAll(TmpDir(sddDir), 0o755); err != nil {
-		return err
-	}
-	path := LastFetchPath(sddDir)
-	now := time.Now()
-	if _, err := os.Stat(path); err == nil {
-		return os.Chtimes(path, now, now)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	return f.Close()
 }
 
 // IsSDDMetaDir returns true if the directory entry is the .sdd metadata
