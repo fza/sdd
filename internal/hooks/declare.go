@@ -38,8 +38,13 @@ type Tracker interface {
 // when git tracks its config file or a script under hooks/local/.
 type repoGate struct {
 	key        string
+	root       string
 	hooksDir   string
+	tracker    Tracker
 	localGated bool
+	// localWhy is why the local layer is gated when the repository does not
+	// simply track it, such as git not answering.
+	localWhy string
 }
 
 // layerFile is one config file's hooks list; gate is its repository's allow,
@@ -147,16 +152,8 @@ func repoLayers(ctx context.Context, tracker Tracker, root, repo string) ([]laye
 	if committed != nil {
 		repoID = committed.RepoID
 	}
-	gate := &repoGate{key: index.RepoKey(repoID, root), hooksDir: hooksDir, localGated: true}
-	if tracker != nil {
-		localConfig := filepath.Join(sddDir, "config.local.yaml")
-		localScripts := filepath.Join(hooksDir, model.HookLocalDir)
-		tracked, err := tracker.Tracked(ctx, root, relativeTo(root, localConfig), relativeTo(root, localScripts))
-		if err != nil {
-			return nil, err
-		}
-		gate.localGated = len(tracked) > 0
-	}
+	gate := &repoGate{key: index.RepoKey(repoID, root), root: root, hooksDir: hooksDir, tracker: tracker}
+	gate.localGated, gate.localWhy = localLayerGated(ctx, tracker, root, sddDir, hooksDir)
 	base := model.HookOrigin{Repo: repo, Dir: hooksDir}
 	committedLayer := layerFile{origin: base, gate: gate}
 	committedLayer.origin.Layer, committedLayer.origin.ConfigPath = model.HookLayerCommitted, filepath.Join(sddDir, "config.yaml")
@@ -169,6 +166,29 @@ func repoLayers(ctx context.Context, tracker Tracker, root, repo string) ([]laye
 		localLayer.hooks = local.Hooks
 	}
 	return []layerFile{committedLayer, localLayer}, nil
+}
+
+// localLayerGated reports whether a repository's machine-local layer waits
+// for an allow, and why when the reason is not that the repository tracks
+// it. It fails closed: the layer is the person's own only when git
+// positively reports none of it tracked, matched in any case, and no folder
+// on the way to it is a link, which git would not look past.
+func localLayerGated(ctx context.Context, tracker Tracker, root, sddDir, hooksDir string) (bool, string) {
+	if tracker == nil {
+		return true, "sdd cannot ask git which files the repository tracks"
+	}
+	localDir := filepath.Join(hooksDir, model.HookLocalDir)
+	for _, folder := range []string{sddDir, hooksDir, localDir} {
+		info, err := os.Lstat(folder)
+		if err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return true, fmt.Sprintf("%s is a link, past which git does not say what the repository tracks", folder)
+		}
+	}
+	tracked, err := tracker.Tracked(ctx, root, relativeTo(root, filepath.Join(sddDir, "config.local.yaml")), relativeTo(root, localDir))
+	if err != nil {
+		return true, fmt.Sprintf("git cannot say which files the repository tracks (%v)", err)
+	}
+	return len(tracked) > 0, ""
 }
 
 func relativeTo(root, path string) string {

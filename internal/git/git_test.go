@@ -326,7 +326,31 @@ func TestTrackedListsTheTrackedFilesUnderPathsOfTheRepositoryAtRoot(t *testing.T
 		t.Errorf("only the added file should be tracked, in the repository at root whatever GIT_DIR says, got %v", tracked)
 	}
 	outside, err := TrackedFiles{}.Tracked(t.Context(), t.TempDir(), "x")
-	if err != nil || len(outside) != 0 {
-		t.Errorf("a folder in no repository tracks nothing, got %v %v", outside, err)
+	if err == nil {
+		t.Errorf("a folder in no repository cannot say what it tracks, got %v", outside)
+	}
+}
+
+// The paths match whatever their case, as a case-insensitive file system
+// opens them.
+func TestTrackedMatchesPathsWhateverTheirCase(t *testing.T) {
+	dir := newTestRepo(t)
+	err := os.MkdirAll(filepath.Join(dir, ".sdd", "hooks", "LOCAL"), 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{".sdd/CONFIG.LOCAL.YAML", ".sdd/hooks/LOCAL/evil.sh"} {
+		err = os.WriteFile(filepath.Join(dir, file), []byte("x\n"), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, dir, "add", "-f", file)
+	}
+	tracked, err := TrackedFiles{}.Tracked(t.Context(), dir, ".sdd/config.local.yaml", ".sdd/hooks/local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tracked) != 2 {
+		t.Errorf("tracked files spelled in another case should match, got %v", tracked)
 	}
 }

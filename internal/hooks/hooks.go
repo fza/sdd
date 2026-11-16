@@ -46,15 +46,21 @@ func (c *Commands) Hooks(ctx context.Context) ([]model.Hook, error) {
 		return nil, err
 	}
 	for _, group := range gateGroups(layers) {
-		hash, err := gateHash(group)
+		allowed, notice := false, ""
+		hash, err := gateHash(ctx, group)
 		if err != nil {
-			return nil, err
+			notice = fmt.Sprintf("sdd could not check the hooks that came with %s, so they are skipped (%v).", group.gate.root, err)
+		} else {
+			allowed, notice = c.allows.Allowed(group.gate.key, hash)
 		}
-		allowed, notice := c.allows.Allowed(group.gate.key, hash)
 		for _, i := range group.layers {
+			layerNotice := notice
+			if layers[i].origin.Layer == model.HookLayerLocal && group.gate.localWhy != "" {
+				layerNotice = strings.TrimSpace(fmt.Sprintf("%s counts as having come with the repository: %s. %s", layers[i].origin.ConfigPath, group.gate.localWhy, notice))
+			}
 			for j := range layers[i].hooks {
 				layers[i].hooks[j].NeedsAllow = !allowed
-				layers[i].hooks[j].Notice = notice
+				layers[i].hooks[j].Notice = layerNotice
 			}
 		}
 	}

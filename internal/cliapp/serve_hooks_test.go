@@ -63,6 +63,7 @@ func TestServeRunsTheHooksOfEveryLayer(t *testing.T) {
 	for _, configFile := range []string{"config/sdd/config.yaml", ".sdd/config.yaml", ".sdd/config.local.yaml"} {
 		t.Run(configFile, func(t *testing.T) {
 			fixture := newAppFixture(t)
+			initRepo(t, fixture.root)
 			payloadFile := fixture.payloadHook(t, configFile, "user-dialogue.junction.start")
 			if configFile == ".sdd/config.yaml" {
 				allowed := fixture.run(t, "hooks", "allow")
@@ -153,6 +154,31 @@ func TestServeSkipsATrackedLocalHookUntilAllowed(t *testing.T) {
 	}
 	fixture.serve(t, func(client *mcp.ClientSession) { startSession(t, client) })
 	readHookPayload(t, payloadFile)
+}
+
+// Outside any git repository, as in an unpacked archive, git cannot say the
+// machine-local layer is the person's own, so it waits for an allow and the
+// call says why.
+func TestServeSkipsALocalHookOutsideAnyRepository(t *testing.T) {
+	fixture := newAppFixture(t)
+	payloadFile := fixture.payloadHook(t, ".sdd/config.local.yaml", "user-dialogue.junction.start")
+
+	var text string
+	fixture.serve(t, func(client *mcp.ClientSession) {
+		door, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_session", Arguments: map[string]any{}})
+		if err != nil || door.IsError {
+			t.Fatalf("start_session: %v %+v", err, door)
+		}
+		raw, _ := json.Marshal(door)
+		text = string(raw)
+	})
+	_, err := os.Stat(payloadFile)
+	if err == nil {
+		t.Fatal("a local hook ran where git could not say the repository does not track it")
+	}
+	if !strings.Contains(text, "sdd hooks allow") || !strings.Contains(text, "git cannot say") {
+		t.Errorf("the call should say why the local hook waits and name `sdd hooks allow`, served %s", text)
+	}
 }
 
 // A hook added while serve runs reaches its next call.

@@ -2,6 +2,7 @@ package hooks_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,6 +26,31 @@ type world struct {
 	repo      string
 	stateRoot string
 	tracked   trackedFiles
+	// tracker replaces tracked as the world's Tracker when set.
+	tracker hooks.Tracker
+}
+
+// track marks files, relative to the repository, as tracked.
+func (w *world) track(files ...string) {
+	w.tracked = append(w.tracked, files...)
+}
+
+// linkFolder moves the repository's folder rel aside and links rel to it.
+func (w *world) linkFolder(t *testing.T, rel string) {
+	t.Helper()
+	path := filepath.Join(w.repo, filepath.FromSlash(rel))
+	err := os.MkdirAll(path, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.Rename(path, path+".real")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.Symlink(filepath.Base(path)+".real", path)
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 // trackedFiles is a Tracker reporting its files as tracked wherever they
@@ -81,7 +107,11 @@ func (w *world) commit(t *testing.T, hooksYAML string) {
 }
 
 func (w *world) sources() hooks.Sources {
-	return hooks.Sources{GlobalConfig: w.global, Project: meta.Project{Root: w.repo, WorkRoot: w.repo}, Tracker: w.tracked}
+	var tracker hooks.Tracker = w.tracked
+	if w.tracker != nil {
+		tracker = w.tracker
+	}
+	return hooks.Sources{GlobalConfig: w.global, Project: meta.Project{Root: w.repo, WorkRoot: w.repo}, Tracker: tracker}
 }
 
 func (w *world) commands() *hooks.Commands {
@@ -144,6 +174,45 @@ func TestCommittedHooksRunOnlyOnceAllowed(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("the allow record should be private, mode %o", info.Mode().Perm())
+	}
+}
+
+// failingTracker is a Tracker that cannot answer, as git outside a
+// repository, on a refused one, or missing.
+type failingTracker struct{}
+
+func (failingTracker) Tracked(context.Context, string, ...string) ([]string, error) {
+	return nil, errors.New("not a git repository")
+}
+
+// A machine-local layer is the person's own only when git positively says
+// the repository tracks none of it and no folder on the way is a link;
+// otherwise it waits for an allow.
+func TestALocalLayerIsGatedUnlessGitSaysItIsUntracked(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, w *world)
+		gated bool
+	}{
+		{"untracked", func(*testing.T, *world) {}, false},
+		{"git cannot answer", func(_ *testing.T, w *world) { w.tracker = failingTracker{} }, true},
+		{".sdd a link", func(t *testing.T, w *world) { w.linkFolder(t, ".sdd") }, true},
+		{".sdd/hooks a link", func(t *testing.T, w *world) { w.linkFolder(t, ".sdd/hooks") }, true},
+		{".sdd/hooks/local a link", func(t *testing.T, w *world) { w.linkFolder(t, ".sdd/hooks/local") }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			script(t, filepath.Join(w.hooksDir(), "local", "mine.sh"), "true")
+			write(t, filepath.Join(w.repo, ".sdd", "config.local.yaml"), "hooks:\n  - event: entry.written\n    command: local/mine.sh\n")
+			tc.setup(t, w)
+			hook := w.only(t)
+			if hook.NeedsAllow != tc.gated {
+				t.Fatalf("the local hook should wait for an allow: %v, got %+v", tc.gated, hook)
+			}
+			if tc.gated && hook.Notice == "" {
+				t.Error("a local layer gated for a reason of its own should say why")
+			}
+		})
 	}
 }
 

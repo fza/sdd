@@ -275,22 +275,24 @@ func RepoRootFor(path string) string {
 // TrackedFiles is the production hooks.Tracker.
 type TrackedFiles struct{}
 
-// Tracked returns the files under paths, relative to the repository root
-// holding root, that git tracks; none when root is in no repository. The
-// repository is the one at root, whatever GIT_DIR the process inherited.
+// Tracked returns the files under paths, relative to root, that the
+// repository at root tracks, the paths matched whatever their case, as a
+// case-insensitive file system opens them. The repository is the one at
+// root, whatever GIT_DIR the process inherited. A root in no repository git
+// can read is an error: there is no saying what it tracks.
 func (TrackedFiles) Tracked(ctx context.Context, root string, paths ...string) ([]string, error) {
 	env := pathEnv()
-	probe := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--is-inside-work-tree")
-	probe.Env = env
-	err := probe.Run()
-	if err != nil {
-		return nil, nil
+	args := []string{"-C", root, "ls-files", "-z", "--"}
+	for _, path := range paths {
+		args = append(args, ":(icase)"+path)
 	}
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root, "ls-files", "-z", "--"}, paths...)...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = env
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("listing tracked files under %s: %w", root, err)
+		return nil, fmt.Errorf("listing the files git tracks under %s: %w: %s", root, err, strings.TrimSpace(stderr.String()))
 	}
 	var files []string
 	for _, file := range strings.Split(string(out), "\x00") {

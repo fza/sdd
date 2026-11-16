@@ -119,7 +119,7 @@ func Allow(ctx context.Context, src Sources, allows *Allows) ([]model.Hook, erro
 	}
 	var allowed []model.Hook
 	for _, group := range gateGroups(layers) {
-		hash, err := gateHash(group)
+		hash, err := gateHash(ctx, group)
 		if err != nil {
 			return nil, err
 		}
@@ -177,7 +177,7 @@ type hashedHook struct {
 // repository tracks it. The folder as a whole counts because a hook runs
 // more than the script it names: files it sources or imports, files a flag
 // names, an interpreter beside it.
-func gateHash(group gateGroup) (string, error) {
+func gateHash(_ context.Context, group gateGroup) (string, error) {
 	hooks, err := hookEntries(group.hooks)
 	if err != nil {
 		return "", err
