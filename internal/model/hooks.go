@@ -157,6 +157,18 @@ func MatchHookEvent(pattern string, event HookEvent) bool {
 // least one raised event, and, when it declares findings, only events with
 // a findings channel.
 func ValidateHooks(hooks []Hook, events []HookEvent) error {
+	var errs []error
+	for _, hook := range hooks {
+		_, err := CheckHook(hook, events)
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// CheckHook is ValidateHooks for one hook. known reports whether the hook's
+// event matches any raised event, so a caller can tell a hook that can never
+// run from one that fails where it runs.
+func CheckHook(hook Hook, events []HookEvent) (known bool, err error) {
 	var names, channels []string
 	for _, event := range events {
 		names = append(names, event.Name)
@@ -164,28 +176,26 @@ func ValidateHooks(hooks []Hook, events []HookEvent) error {
 			channels = append(channels, event.Name)
 		}
 	}
+	label := fmt.Sprintf("%s: hooks[%d] (%s)", hook.Origin.ConfigPath, hook.Origin.Index, hook.Event)
 	var errs []error
-	for _, hook := range hooks {
-		label := fmt.Sprintf("%s: hooks[%d] (%s)", hook.Origin.ConfigPath, hook.Origin.Index, hook.Event)
-		if hook.Timeout < 0 {
-			errs = append(errs, fmt.Errorf("%s: timeout %d is negative", label, hook.Timeout))
+	if hook.Timeout < 0 {
+		errs = append(errs, fmt.Errorf("%s: timeout %d is negative", label, hook.Timeout))
+	}
+	var matched, withoutChannel []string
+	for _, event := range events {
+		if !MatchHookEvent(hook.Event, event) {
+			continue
 		}
-		var matched, withoutChannel []string
-		for _, event := range events {
-			if !MatchHookEvent(hook.Event, event) {
-				continue
-			}
-			matched = append(matched, event.Name)
-			if !event.Findings {
-				withoutChannel = append(withoutChannel, event.Name)
-			}
-		}
-		switch {
-		case len(matched) == 0:
-			errs = append(errs, fmt.Errorf("%s: unknown event %q; valid events: %s", label, hook.Event, strings.Join(names, ", ")))
-		case hook.Findings && len(withoutChannel) > 0:
-			errs = append(errs, fmt.Errorf("%s: declares findings, but %s has no findings channel; events with one: %s", label, strings.Join(withoutChannel, ", "), strings.Join(channels, ", ")))
+		matched = append(matched, event.Name)
+		if !event.Findings {
+			withoutChannel = append(withoutChannel, event.Name)
 		}
 	}
-	return errors.Join(errs...)
+	switch {
+	case len(matched) == 0:
+		errs = append(errs, fmt.Errorf("%s: unknown event %q; valid events: %s", label, hook.Event, strings.Join(names, ", ")))
+	case hook.Findings && len(withoutChannel) > 0:
+		errs = append(errs, fmt.Errorf("%s: declares findings, but %s has no findings channel; events with one: %s", label, strings.Join(withoutChannel, ", "), strings.Join(channels, ", ")))
+	}
+	return len(matched) > 0, errors.Join(errs...)
 }

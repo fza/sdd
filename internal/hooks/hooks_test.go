@@ -86,10 +86,18 @@ func (w *world) only(t *testing.T) model.Hook {
 	return resolved[0]
 }
 
+// declaredErr returns the error the one declared hook carries; Declared
+// itself succeeds, so a bad hook fails only the calls that reach it.
 func declaredErr(t *testing.T, w *world) error {
 	t.Helper()
-	_, err := hooks.Declared(w.sources())
-	return err
+	declared, err := hooks.Declared(w.sources())
+	if err != nil {
+		t.Fatalf("a bad hook should not fail reading the others: %v", err)
+	}
+	if len(declared) != 1 {
+		t.Fatalf("want the one declared hook, got %+v", declared)
+	}
+	return declared[0].Err
 }
 
 func TestDeclaredRefusesACommandOutsideTheHooksFolder(t *testing.T) {

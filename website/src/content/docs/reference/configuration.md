@@ -430,6 +430,8 @@ sdd refuses an absolute path, `..`, a name it would have to look up on `PATH`, a
 
 Every step of every procedure raises `<procedure>.<step>` when it is done, also named `<procedure>.<step>.done`, and `<procedure>.<step>.start` when the procedure arrives at it. `*` stands for any procedure or step: `*.*` matches every step being done, `*.*.start` every arrival. Only the events in the table are supported; the others follow the procedures' steps and may change with them.
 
+A hook naming an event no procedure raises never runs, and the next step sdd serves says so. A hook sdd cannot run, such as one whose script is missing or not executable, fails only the calls raising an event it matches.
+
 A failing `.start` hook holds its step: sdd runs it again on every call, and the step's work, such as the pre-flight call, waits until it passes.
 
 ### Running a hook

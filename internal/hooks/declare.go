@@ -27,7 +27,9 @@ type layerFile struct {
 
 // Declared reads every layer's hooks, in the order user-global, work
 // repository, project repository, committed before local, and resolves each
-// command to its file in the layer's hooks folder.
+// command to its file in the layer's hooks folder. A command that does not
+// resolve sets the hook's Err rather than failing the whole list, so it
+// fails only the calls that reach the hook.
 func Declared(src Sources) ([]model.Hook, error) {
 	layers, err := readLayers(src)
 	if err != nil {
@@ -41,7 +43,7 @@ func Declared(src Sources) ([]model.Hook, error) {
 			hook := model.Hook{HookConfig: config, Origin: origin}
 			path, err := commandFile(hook)
 			if err != nil {
-				return nil, fmt.Errorf("%s: hooks[%d]: %w", origin.ConfigPath, i, err)
+				hook.Err = fmt.Errorf("%s: hooks[%d]: %w", origin.ConfigPath, i, err)
 			}
 			hook.Path = path
 			hooks = append(hooks, hook)

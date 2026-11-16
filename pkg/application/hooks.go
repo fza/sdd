@@ -40,10 +40,15 @@ type workflowHooks struct {
 	commands HookCommands
 	hooks    []Hook
 	err      error
+	// notices wait for the next serve: what the person should hear about a
+	// hook that does not fail any call, such as one naming an unknown event.
+	notices []string
 }
 
-// resolve reads the configured hooks once per session load and checks them
-// against the events the project's procedures raise.
+// resolve reads the configured hooks once per session load and checks each
+// against the events the project's procedures raise. A hook's own problem
+// stays with the hook, failing only the calls that reach it; a hook whose
+// event matches nothing raised can never run, which a notice says.
 func (h *workflowHooks) resolve() error {
 	if h.resolved {
 		return h.err
@@ -71,10 +76,25 @@ func (h *workflowHooks) resolve() error {
 		h.err = err
 		return err
 	}
-	if err := model.ValidateHooks(h.hooks, events); err != nil {
-		h.err = fmt.Errorf("configured hooks: %w", err)
+	for i := range h.hooks {
+		hook := &h.hooks[i]
+		known, err := model.CheckHook(*hook, events)
+		switch {
+		case !known:
+			h.notices = append(h.notices, fmt.Sprintf("%s never runs: %v", hook.Label(), err))
+		case err != nil && hook.Err == nil:
+			hook.Err = err
+		}
 	}
-	return h.err
+	return nil
+}
+
+// takeNotices returns the notices raised since the last serve and forgets
+// them.
+func (h *workflowHooks) takeNotices() []string {
+	notices := h.notices
+	h.notices = nil
+	return notices
 }
 
 func (h *workflowHooks) Fire(point engine.HookPoint) ([]query.Finding, error) {
@@ -82,11 +102,22 @@ func (h *workflowHooks) Fire(point engine.HookPoint) ([]query.Finding, error) {
 		return nil, err
 	}
 	event := point.HookEvent()
-	var matched []Hook
+	var (
+		matched []Hook
+		broken  []error
+	)
 	for _, hook := range h.hooks {
-		if model.MatchHookEvent(hook.Event, event) {
-			matched = append(matched, hook)
+		if !model.MatchHookEvent(hook.Event, event) {
+			continue
 		}
+		if hook.Err != nil {
+			broken = append(broken, hook.Err)
+			continue
+		}
+		matched = append(matched, hook)
+	}
+	if err := errors.Join(broken...); err != nil {
+		return nil, fmt.Errorf("configured hooks at %s: %w", event.Name, err)
 	}
 	if len(matched) == 0 {
 		return nil, nil

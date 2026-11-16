@@ -75,6 +75,10 @@ type Hook struct {
 	Origin HookOrigin
 	// Path is the command file's absolute path.
 	Path string
+	// Err is why the hook cannot run, such as a command file that is missing
+	// or not executable. Only a call raising an event the hook matches fails
+	// on it.
+	Err error
 }
 
 // Label names the hook in a message: its event, command and declaring file.

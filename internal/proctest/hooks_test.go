@@ -25,12 +25,17 @@ func newHookedCaptureWorld(t *testing.T, hooks ...sdd.Hook) (*proctest.World, *p
 	return world, session, scripted
 }
 
-func openErr(t *testing.T, hooks ...sdd.Hook) error {
+// openServe opens a session with the hooks configured and returns its door
+// serve.
+func openServe(t *testing.T, hooks ...sdd.Hook) *sdd.WorkflowServe {
 	t.Helper()
 	scripted := &proctest.ScriptedHooks{Configured: hooks}
 	world := proctest.NewWorld(t, proctest.WithHooks(scripted))
-	_, _, err := world.App.OpenWorkflow(t.Context(), world.Identity, "proctest", sdd.WorkflowOpenRequest{ClientName: "hooks"})
-	return err
+	_, serve, err := world.App.OpenWorkflow(t.Context(), world.Identity, "proctest", sdd.WorkflowOpenRequest{ClientName: "hooks"})
+	if err != nil {
+		t.Fatalf("a hook's own problem should not fail opening a session: %v", err)
+	}
+	return serve
 }
 
 func TestHooks_PreflightFindingJoinsTheWriteGateAndRoutesToOverride(t *testing.T) {
@@ -228,22 +233,45 @@ func TestHooks_OutputMustBeEmptyOrDeclaredFindings(t *testing.T) {
 	}
 }
 
-func TestHooks_ConfigurationIsCheckedAgainstTheRunningProcedures(t *testing.T) {
-	err := openErr(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.asemble", Command: "lint"}})
-	if err == nil || !strings.Contains(err.Error(), `unknown event "capture.asemble"`) || !strings.Contains(err.Error(), "capture.assemble") {
-		t.Errorf("an unknown event should be refused listing the valid ones, got %v", err)
-	}
-	err = openErr(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.playback", Command: "lint", Findings: true}})
-	if err == nil || !strings.Contains(err.Error(), "capture.playback has no findings channel") {
-		t.Errorf("findings on a step without a findings channel should be refused, got %v", err)
-	}
-	for _, event := range []string{"capture.assemble", "capture.guide", "capture.preflight"} {
-		if err := openErr(t, sdd.Hook{HookConfig: model.HookConfig{Event: event, Command: "lint", Findings: true}}); err != nil {
-			t.Errorf("%s has a findings channel, refused: %v", event, err)
+// A hook naming an event no procedure raises never runs, which a notice
+// says, listing the valid events.
+func TestHooks_UnknownEventIsANotice(t *testing.T) {
+	for _, event := range []string{"capture.asemble", "capture.verify.round"} {
+		serve := openServe(t, sdd.Hook{HookConfig: model.HookConfig{Event: event, Command: "lint"}})
+		notices := strings.Join(serve.Notices, "\n")
+		if !strings.Contains(notices, `unknown event "`+event+`"`) || !strings.Contains(notices, "capture.assemble") || !strings.Contains(serve.Instructions, notices) {
+			t.Errorf("an unknown event should be a served notice listing the valid ones, got %q", serve.Notices)
 		}
 	}
-	if err := openErr(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.verify.round", Command: "status"}}); err == nil {
-		t.Error("capture has no verify step, so its round event should be refused")
+	for _, event := range []string{"capture.assemble", "capture.guide", "capture.preflight"} {
+		serve := openServe(t, sdd.Hook{HookConfig: model.HookConfig{Event: event, Command: "lint", Findings: true}})
+		if len(serve.Notices) > 0 {
+			t.Errorf("%s has a findings channel, got notices %q", event, serve.Notices)
+		}
+	}
+}
+
+// A hook's own problem fails only the calls raising an event it matches.
+func TestHooks_ABrokenHookFailsOnlyTheCallsReachingIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		hook sdd.Hook
+		want string
+	}{
+		{"findings off a channel", sdd.Hook{HookConfig: model.HookConfig{Event: "capture.playback", Command: "lint", Findings: true}}, "capture.playback has no findings channel"},
+		{"command file missing", sdd.Hook{HookConfig: model.HookConfig{Event: "capture.playback", Command: "lint"}, Err: errors.New(`command "lint" is not a file in .sdd/hooks`)}, "is not a file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, session, _ := newHookedCaptureWorld(t, tc.hook)
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+			serve = session.Report(t, instance, captureDraft())
+			proctest.RequireStep(t, serve, "playback")
+			_, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "capture it")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("the call leaving playback should fail on the hook, got %v", err)
+			}
+		})
 	}
 }
 
