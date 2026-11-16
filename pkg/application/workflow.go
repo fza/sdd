@@ -53,6 +53,11 @@ type WorkflowResumeRequest struct {
 	SessionID     SessionID
 	ClientName    string
 	ClientVersion string
+	// Person marks an abandon a person asked for at their own door (sdd
+	// sessions abandon). Any other abandon by handle counts as the agent's,
+	// which leaves a move an autonomous session blocked at an unattended step
+	// for a person to drop.
+	Person bool
 }
 
 type WorkflowStartRequest struct {
@@ -1589,6 +1594,11 @@ func (a *Application) abandonOnce(ctx context.Context, identity RequestIdentity,
 	for _, inst := range w.session.Instances() {
 		if inst.Status != engine.StatusRunning {
 			continue
+		}
+		if !request.Person {
+			if err := w.session.RefuseUnattendedAbandon(inst.ID); err != nil {
+				return WorkflowAbandonResult{}, nil, nil, codedRefusal(err)
+			}
 		}
 		if inst.Spec.Class != model.ProcedureClassShell {
 			result.Discarded = append(result.Discarded, WorkflowInstanceSummary{Instance: inst.ID, Procedure: inst.Spec.Canonical, Step: inst.Step})
