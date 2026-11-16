@@ -101,8 +101,7 @@ func checkoutsPath(stateRoot, repoKey string) (string, error) {
 }
 
 // checkoutRecord lists a project's checkouts with when each was last seen on
-// disk, one "<path>\t<RFC 3339 time>" line each. A line without a time, as
-// earlier versions wrote, counts as seen when the record last changed.
+// disk, one "<path>\t<RFC 3339 time>" line each.
 type checkoutRecord struct {
 	exists   bool
 	entries  []checkoutEntry
@@ -136,7 +135,8 @@ func (r checkoutRecord) paths() []string {
 	return paths
 }
 
-// loadCheckoutRecord reads the record at path; a missing one lists nothing.
+// loadCheckoutRecord reads the record at path; a missing one lists nothing,
+// a malformed line fails it.
 func loadCheckoutRecord(path string) (checkoutRecord, error) {
 	content, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -145,23 +145,20 @@ func loadCheckoutRecord(path string) (checkoutRecord, error) {
 	if err != nil {
 		return checkoutRecord{}, fmt.Errorf("reading checkout record: %w", err)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return checkoutRecord{}, fmt.Errorf("reading checkout record: %w", err)
-	}
 	record := checkoutRecord{exists: true}
 	for line := range strings.Lines(string(content)) {
-		line = strings.TrimSuffix(line, "\n")
-		entry := checkoutEntry{path: line, seen: info.ModTime()}
-		if i := strings.LastIndex(line, "\t"); i >= 0 {
-			seen, err := time.Parse(time.RFC3339, line[i+1:])
-			if err != nil {
-				return checkoutRecord{}, fmt.Errorf("reading checkout record %s: %w", path, err)
-			}
-			entry = checkoutEntry{path: line[:i], seen: seen}
+		trimmed := strings.TrimSuffix(line, "\n")
+		i := strings.LastIndex(trimmed, "\t")
+		if i <= 0 {
+			return checkoutRecord{}, fmt.Errorf("reading checkout record %s: malformed line %q", path, line)
 		}
-		if entry.path != "" && !slices.Contains(record.paths(), entry.path) {
-			record.entries = append(record.entries, entry)
+		checkout := trimmed[:i]
+		seen, err := time.Parse(time.RFC3339, trimmed[i+1:])
+		if err != nil {
+			return checkoutRecord{}, fmt.Errorf("reading checkout record %s: %w", path, err)
+		}
+		if !slices.Contains(record.paths(), checkout) {
+			record.entries = append(record.entries, checkoutEntry{path: checkout, seen: seen})
 		}
 	}
 	return record, nil

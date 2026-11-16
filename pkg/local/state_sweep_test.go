@@ -592,3 +592,29 @@ func TestStateSweepCollectsTheEndedSessionsOfRecordedCheckouts(t *testing.T) {
 		}
 	}
 }
+
+// A checkout record line without its last-seen time is malformed: the sweep
+// fails on it and keeps the attachments the record would judge.
+func TestStateSweepRefusesACheckoutRecordLineWithoutATime(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "github.com/acme/paused"
+	checkout := t.TempDir()
+	record := filepath.Join(f.root, "checkouts", "github.com", "acme", "paused.list")
+	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, []byte(checkout+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.used(t, key, f.now.Add(-3*sweepUnusedRetention))
+	f.inRepoSession(t, key, checkout, "s_inrepo", f.now.Add(-time.Hour))
+
+	_, err := localadapter.StateSweep{StateRoot: f.root}.Sweep(t.Context(), f.now, sweepSessionRetention, sweepUnusedRetention)
+
+	if err == nil || !strings.Contains(err.Error(), "checkout record") {
+		t.Errorf("the sweep should fail on the malformed record, got %v", err)
+	}
+	if !f.stagedExists(t, key, "s_inrepo") {
+		t.Error("attachments a malformed record would judge should stay")
+	}
+}
