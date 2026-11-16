@@ -326,29 +326,31 @@ func hookFindingsWeighed(ctx *Context) (bool, error) {
 	return ok && recorded == ctx.Store.StateSnapshot(), nil
 }
 
-// recordHookReview records, for each findings channel holding findings, the
-// draft they were weighed on.
+// recordHookReview records the draft the agent weighed the findings on, for
+// the one findings channel the reviewing step renders: the agent saw that
+// channel alone, so another channel's findings stay to be served.
 func recordHookReview(ctx *Context) error {
+	step := ctx.Store.spec.StepByID[ctx.Step]
+	if step == nil || !isFindingsChannel(ctx.Store.spec, step.Render) {
+		return fmt.Errorf("step %s renders no findings channel to record as weighed", ctx.Step)
+	}
 	weighed, _ := ctx.Store.Get(fieldHookFindingsWeighed)
 	previous, _ := weighed.(map[string]any)
 	record := map[string]any{}
 	for channel, snapshot := range previous {
 		record[channel] = snapshot
 	}
-	snapshot := ctx.Store.StateSnapshot()
-	for _, step := range ctx.Store.spec.Steps {
-		if step.Findings == "" {
-			continue
-		}
-		findings, err := channelFindings(ctx.Store, step.Findings)
-		if err != nil {
-			return err
-		}
-		if len(findings) > 0 {
-			record[step.Findings] = snapshot
+	record[step.Render] = ctx.Store.StateSnapshot()
+	return ctx.Store.WriteEngine(fieldHookFindingsWeighed, record)
+}
+
+func isFindingsChannel(spec *Spec, field string) bool {
+	for _, step := range spec.Steps {
+		if field != "" && step.Findings == field {
+			return true
 		}
 	}
-	return ctx.Store.WriteEngine(fieldHookFindingsWeighed, record)
+	return false
 }
 
 func highStepFindingsDetail(ctx *Context) string {

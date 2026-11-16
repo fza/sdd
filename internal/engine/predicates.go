@@ -491,7 +491,7 @@ func registerBuiltinCommands(r *Registry) {
 	mustRegisterCommand(r, Command{
 		Doc: FuncDoc{
 			Name:   "recordHookReview",
-			Doc:    "Records the hooks' findings the agent weighed, per findings channel; the step they joined then passes them through instead of re-serving the review.",
+			Doc:    "Records the hooks' findings of the channel the reviewing step renders as weighed on the draft as it stands; the step they joined then passes them through instead of re-serving the review.",
 			Writes: []string{fieldHookFindingsWeighed},
 		},
 		Fn: recordHookReview,

@@ -78,6 +78,30 @@ func TestHooks_GuideMediumFindingIsServedWithTheGuidesFindings(t *testing.T) {
 	proctest.RequireStep(t, serve, "playback")
 }
 
+// Weighing the assemble hooks' findings weighs those alone: the guide hooks'
+// findings on the revised draft are still served at guide.
+func TestHooks_WeighingAssembleFindingsLeavesTheGuideFindingsToBeServed(t *testing.T) {
+	_, session, scripted := newHookedCaptureWorld(t,
+		sdd.Hook{HookConfig: model.HookConfig{Event: "capture.assemble", Command: "assemble-lint", Findings: true}},
+		sdd.Hook{HookConfig: model.HookConfig{Event: "capture.guide", Command: "guide-lint", Findings: true}},
+	)
+	revised := `{"findings": [{"severity": "medium", "category": "prose-lint", "observation": "the revision repeats itself"}]}`
+	scripted.Scripts["assemble-lint"] = proctest.HookScript{Varying: []string{"", mediumFindingOutput}}
+	scripted.Scripts["guide-lint"] = proctest.HookScript{Varying: []string{mediumFindingOutput, revised}}
+
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	serve = session.Report(t, instance, captureDraft())
+	requireServedHookFinding(t, serve, "guideReview")
+	serve = session.Answer(t, instance, "guideReview", "revise", map[string]any{"body": "A tactical gap: the fixture observes something, revised."}, "")
+	requireServedHookFinding(t, serve, "assembleHookReview")
+	serve = session.Answer(t, instance, "assembleHookReview", "proceed", nil, "")
+	proctest.RequireStep(t, serve, "guideReview")
+	if !strings.Contains(serve.Instructions, "the revision repeats itself") {
+		t.Errorf("the guide hook's finding on the revised draft should be served, served %q", serve.Instructions)
+	}
+}
+
 // The writing guide judges a capture once, but the hooks judge every
 // revision: a medium hook finding on a revised draft is served even though
 // the guide's own findings were already reviewed.
