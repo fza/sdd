@@ -1,11 +1,14 @@
 package handlers_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/networkteam/sdd/internal/cacheprune"
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/gitgate"
 	"github.com/networkteam/sdd/internal/handlers"
@@ -100,5 +103,32 @@ func TestCacheHandlerPruneSweepsTheStateFolder(t *testing.T) {
 	}
 	if counts.Sessions != 2 || counts.Projects != 1 || counts.Unreadable != 1 {
 		t.Errorf("the run should count what the state sweep removed, got %+v", counts)
+	}
+}
+
+// XDG base directories set only in part may put the state root on another
+// setup's folder: the run sweeps none of it and fails, recorded for the next
+// command to report.
+func TestCacheHandlerPruneRefusesTheStateSweepUnderMixedXDG(t *testing.T) {
+	f := newPruneFixture(t, "")
+	f.loc.MixedXDG = "XDG_CONFIG_HOME set, XDG_STATE_HOME not"
+	state := &synctest.StateSweep{}
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
+		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc),
+		OwnedClones: syncstate.OwnedClones{Gate: f.gate()}, Gate: f.gate(), State: state,
+	})
+	err := h.Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true})
+	if !errors.Is(err, handlers.ErrStateSweepRefused) {
+		t.Errorf("the run should fail with the refused state sweep, got %v", err)
+	}
+	if state.Session != 0 || state.Unused != 0 {
+		t.Error("a refused state sweep should not run")
+	}
+	status, err := cacheprune.Load(f.loc.StateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status.Error, handlers.ErrStateSweepRefused.Error()) || status.FailureNotice() == "" {
+		t.Errorf("the refusal should be recorded for the next command, got %+v", status)
 	}
 }
