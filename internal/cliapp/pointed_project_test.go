@@ -686,6 +686,42 @@ func TestProjectDirInsideAnotherRepositoryIsRefused(t *testing.T) {
 	}
 }
 
+// git exports GIT_DIR to hooks; sdd run from one in the work repository still
+// reaches the project's repository.
+func TestPointedCaptureUnderAnInheritedGitDir(t *testing.T) {
+	cases := []struct {
+		name   string
+		gitDir func(work string) string
+	}{
+		{name: "absolute", gitDir: func(work string) string { return filepath.Join(work, ".git") }},
+		{name: "relative", gitDir: func(string) string { return ".git" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work, project := pointedRepos(t)
+			t.Setenv("GIT_DIR", tc.gitDir(work))
+
+			_, err := runAppErr(t, work,
+				"new", "signal", "tactical", "A capture from a git hook lands in the project.",
+				"--confidence", "high", "--skip-preflight", "--summary", "Capture under GIT_DIR.",
+			)
+			if unsetErr := os.Unsetenv("GIT_DIR"); unsetErr != nil {
+				t.Fatal(unsetErr)
+			}
+
+			if err != nil {
+				t.Fatalf("a capture under an inherited GIT_DIR should succeed: %v", err)
+			}
+			if subject := headSubject(t, project); !strings.HasPrefix(subject, "sdd: ") {
+				t.Errorf("the capture should commit in the project, HEAD is %q", subject)
+			}
+			if subject := headSubject(t, work); subject != "seed" {
+				t.Errorf("the work repository should gain no commit, HEAD is %q", subject)
+			}
+		})
+	}
+}
+
 func TestProjectDirOutsideAnyRepositoryIsRefused(t *testing.T) {
 	work, project := pointedRepos(t)
 	loose := filepath.Join(filepath.Dir(work), "loose")

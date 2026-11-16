@@ -3,7 +3,6 @@ package git
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -15,7 +14,7 @@ import (
 
 // InRepo reports whether the process is inside a git working tree.
 func (c CLI) InRepo(ctx context.Context) bool {
-	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--is-inside-work-tree")...).Output()
+	out, err := c.command(ctx, "rev-parse", "--is-inside-work-tree").Output()
 	if err != nil {
 		return false
 	}
@@ -24,7 +23,7 @@ func (c CLI) InRepo(ctx context.Context) bool {
 
 // HasRemote reports whether the repository has at least one remote configured.
 func (c CLI) HasRemote(ctx context.Context) bool {
-	out, err := exec.CommandContext(ctx, "git", c.at("remote")...).Output()
+	out, err := c.command(ctx, "remote").Output()
 	if err != nil {
 		return false
 	}
@@ -33,7 +32,7 @@ func (c CLI) HasRemote(ctx context.Context) bool {
 
 // UpstreamRef returns the upstream ref name for the current branch.
 func (c CLI) UpstreamRef(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("rev-parse", "--abbrev-ref", "@{u}")...).Output()
+	out, err := c.command(ctx, "rev-parse", "--abbrev-ref", "@{u}").Output()
 	if err != nil {
 		// Non-zero exit (typically 128) means no upstream is configured;
 		// report as empty string rather than propagating so the finder can
@@ -48,7 +47,7 @@ func (c CLI) UpstreamRef(ctx context.Context) (string, error) {
 
 // Fetch runs `git fetch` with no args.
 func (c CLI) Fetch(ctx context.Context) error {
-	out, err := exec.CommandContext(ctx, "git", c.at("fetch")...).CombinedOutput()
+	out, err := c.command(ctx, "fetch").CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -63,7 +62,7 @@ func (c CLI) Fetch(ctx context.Context) error {
 func (c CLI) CountCommits(ctx context.Context, rangeSpec, grepPattern string) (int, error) {
 	// -E enables ERE so patterns like ^sdd: match. --pretty=format:%H gives
 	// one hash per commit; an empty output (no matches) yields zero lines.
-	cmd := exec.CommandContext(ctx, "git", c.at("log", "--grep="+grepPattern, "-E", "--pretty=format:%H", rangeSpec)...)
+	cmd := c.command(ctx, "log", "--grep="+grepPattern, "-E", "--pretty=format:%H", rangeSpec)
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, fmt.Errorf("git log %s: %w", rangeSpec, err)
@@ -78,7 +77,7 @@ func (c CLI) MergeTreePredict(ctx context.Context, ourRef, theirRef string) ([]s
 	// section so stdout after the OID is purely the conflicted path list.
 	// --merge-base is omitted so git computes the base internally (2.38
 	// compatibility — the explicit flag was added in 2.40).
-	cmd := exec.CommandContext(ctx, "git", c.at("merge-tree", "--write-tree", "--name-only", "--no-messages", ourRef, theirRef)...)
+	cmd := c.command(ctx, "merge-tree", "--write-tree", "--name-only", "--no-messages", ourRef, theirRef)
 	out, err := cmd.Output()
 	if err != nil {
 		// Exit 1 is the documented conflict signal; parse stdout for paths.

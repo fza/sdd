@@ -213,6 +213,73 @@ func TestAmbientOperationsFollowTheConfiguredRepository(t *testing.T) {
 	}
 }
 
+// git exports GIT_DIR to hooks, so sdd run from one inherits the hook's
+// repository; the calls that locate a repository by path must still reach the
+// repository at that path.
+func TestRepositoryLocatorsIgnoreAnInheritedGitDir(t *testing.T) {
+	cases := []struct {
+		name   string
+		gitDir func(work string) string
+	}{
+		{name: "absolute", gitDir: func(work string) string { return filepath.Join(work, ".git") }},
+		{name: "relative", gitDir: func(string) string { return ".git" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work := newTestRepo(t)
+			sidecar := newTestRepo(t)
+			entry := filepath.Join(sidecar, "graph", "entry.md")
+			if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(entry, []byte("entry\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			fresh := filepath.Join(t.TempDir(), "fresh")
+			runGit(t, work, "remote", "add", "origin", "https://example.test/work.git")
+			runGit(t, sidecar, "remote", "add", "origin", "https://example.test/sidecar.git")
+			runGit(t, sidecar, "checkout", "-q", "-b", "graph-line")
+			t.Chdir(work)
+			t.Setenv("GIT_DIR", tc.gitDir(work))
+
+			root := RepoRootFor(filepath.Dir(entry))
+			commitErr := (CLI{Dir: sidecar}).Commit("sdd: capture", entry)
+			initErr := (Repositories{}).Init(fresh)
+			branch, branchErr := (Repositories{}).CurrentBranch(sidecar)
+			remote := (Repositories{}).RemoteURL(sidecar)
+			if err := os.Unsetenv("GIT_DIR"); err != nil {
+				t.Fatal(err)
+			}
+
+			if branchErr != nil || branch != "graph-line" {
+				t.Errorf("CurrentBranch should read the repository at the path, got %q (%v)", branch, branchErr)
+			}
+			if remote != "https://example.test/sidecar.git" {
+				t.Errorf("RemoteURL should read the repository at the path, got %q", remote)
+			}
+
+			if resolved, _ := filepath.EvalSymlinks(sidecar); root != resolved && root != sidecar {
+				t.Errorf("RepoRootFor should name the repository at the path, got %q", root)
+			}
+			if commitErr != nil {
+				t.Errorf("Commit should reach the configured repository: %v", commitErr)
+			}
+			if files := commitFiles(t, sidecar); !slices.Contains(files, "graph/entry.md") {
+				t.Errorf("the entry should be committed in the configured repository; files = %v", files)
+			}
+			if subject := strings.TrimSpace(runGit(t, work, "log", "-1", "--format=%s")); subject != "seed" {
+				t.Errorf("the hook's repository should gain no commit, HEAD is %q", subject)
+			}
+			if initErr != nil {
+				t.Errorf("Init should create the repository at the path: %v", initErr)
+			}
+			if _, err := os.Stat(filepath.Join(fresh, ".git")); err != nil {
+				t.Errorf("Init should create the repository at the path: %v", err)
+			}
+		})
+	}
+}
+
 // RepoRootFor answers for a path the process is not in, and reports no root
 // outside a repository rather than guessing one.
 func TestRepoRootFor(t *testing.T) {
