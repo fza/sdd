@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -56,7 +57,7 @@ func TestGroundingPolicy_PrefilterOnByDefault(t *testing.T) {
 func TestResolvedPrefilter(t *testing.T) {
 	llm := model.LLMConfig{Provider: "openai", Model: "gpt-x", Timeout: "5m", Concurrency: 2, APIKeys: map[string]string{"openai": "k"}}
 
-	derived := model.BaseConfig{LLM: llm}.ResolvedPrefilter()
+	derived := mustResolvePrefilter(t, model.BaseConfig{LLM: llm})
 	if derived.Provider != "openai" || derived.Model != "gpt-x" {
 		t.Errorf("no block should derive the llm provider and model, got %+v", derived)
 	}
@@ -64,18 +65,39 @@ func TestResolvedPrefilter(t *testing.T) {
 		t.Errorf("the derived block should keep the prefilter's own bounds and the llm connection, got %+v", derived)
 	}
 
-	set := model.BaseConfig{LLM: llm, LLMPrefilter: model.LLMPrefilterConfig{Model: "gpt-mini", Timeout: "45s"}}.ResolvedPrefilter()
+	set := mustResolvePrefilter(t, model.BaseConfig{LLM: llm, LLMPrefilter: model.LLMPrefilterConfig{Model: "gpt-mini", Timeout: "45s"}})
 	if set.Provider != "openai" || set.Model != "gpt-mini" || set.Timeout != "45s" {
 		t.Errorf("values llm_prefilter sets should win, got %+v", set)
 	}
 
 	for _, provider := range []model.PrefilterProvider{model.PrefilterSystemOne, model.PrefilterCohere} {
 		block := model.LLMPrefilterConfig{Provider: provider, APIKeys: map[string]string{string(provider): "p"}}
-		dedicated := model.BaseConfig{LLM: llm, LLMPrefilter: block}.ResolvedPrefilter()
+		dedicated := mustResolvePrefilter(t, model.BaseConfig{LLM: llm, LLMPrefilter: block})
 		if dedicated.Model != "" || dedicated.Endpoint != "" || dedicated.APIKeys["openai"] != "" || dedicated.APIKeys[string(provider)] != "p" {
 			t.Errorf("%s should take the block as set, nothing from llm, got %+v", provider, dedicated)
 		}
 	}
+}
+
+// A dedicated judge is named by llm_prefilter.provider only: from
+// llm.provider it would run on the llm block's key, endpoint and model.
+func TestResolvedPrefilter_RefusesADedicatedJudgeFromTheLLMBlock(t *testing.T) {
+	for _, provider := range []string{"systemone", "cohere"} {
+		llm := model.LLMConfig{Provider: provider, Model: "haiku", APIKeys: map[string]string{provider: "k"}}
+		_, err := model.BaseConfig{LLM: llm}.ResolvedPrefilter()
+		if err == nil || !strings.Contains(err.Error(), "llm_prefilter.provider") {
+			t.Errorf("llm.provider %s should be refused, pointing at llm_prefilter.provider, got %v", provider, err)
+		}
+	}
+}
+
+func mustResolvePrefilter(t *testing.T, b model.BaseConfig) model.LLMPrefilterConfig {
+	t.Helper()
+	resolved, err := b.ResolvedPrefilter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 // llm_prefilter.provider takes every chat provider the llm block knows, then

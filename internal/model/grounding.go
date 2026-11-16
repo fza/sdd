@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 )
@@ -276,17 +277,22 @@ func prefilterFromChat(c LLMConfig) LLMPrefilterConfig {
 
 // ResolvedPrefilter is the prefilter block as it runs. A dedicated provider
 // takes the block as set; otherwise the llm block's provider, model and
-// connection, each value llm_prefilter sets winning.
-func (b BaseConfig) ResolvedPrefilter() LLMPrefilterConfig {
+// connection, each value llm_prefilter sets winning. A dedicated provider
+// reached through llm.provider is refused.
+func (b BaseConfig) ResolvedPrefilter() (LLMPrefilterConfig, error) {
 	if b.LLMPrefilter.Provider.Dedicated() {
-		return b.LLMPrefilter
+		return b.LLMPrefilter, nil
 	}
 	base := LLMConfig{
 		Provider: b.LLM.Provider, Model: b.LLM.Model,
 		Endpoint: b.LLM.Endpoint, OllamaEndpoint: b.LLM.OllamaEndpoint,
 		APIKeys: b.LLM.APIKeys,
 	}
-	return prefilterFromChat(mergeLLMConfig(base, b.LLMPrefilter.Chat()))
+	resolved := prefilterFromChat(mergeLLMConfig(base, b.LLMPrefilter.Chat()))
+	if resolved.Provider.Dedicated() {
+		return LLMPrefilterConfig{}, fmt.Errorf("llm.provider %s is a prefilter judge, not a chat model: set it as llm_prefilter.provider", resolved.Provider)
+	}
+	return resolved, nil
 }
 
 func mergeLLMPrefilterConfig(base, overlay LLMPrefilterConfig) LLMPrefilterConfig {
