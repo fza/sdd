@@ -272,3 +272,20 @@ func TestTheSweepKeepsTheStagedAttachmentsOfAnOpenInRepoSession(t *testing.T) {
 		t.Errorf("the staged attachments of a session open in the checkout should stay: %v", err)
 	}
 }
+
+// A background run that fails before its pass, here on a config it cannot
+// read, records the failure, so the next command reports it.
+func TestAScheduledCachePruneRecordsAFailureBeforeItsPass(t *testing.T) {
+	f := newAppFixture(t)
+	f.write(t, ".sdd/config.yaml", "graph_dir: [\n")
+	if r := f.run(t, "cache", "prune", "--scheduled"); r.err == nil {
+		t.Fatal("a background run on a broken config should fail")
+	}
+	status, err := cacheprune.Load(filepath.Join(f.root, "state", "sdd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.FailureNotice() == "" {
+		t.Fatalf("the failure should be recorded for the next command to report, got %+v", status)
+	}
+}

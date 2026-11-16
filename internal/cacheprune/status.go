@@ -164,10 +164,14 @@ func LaunchIfDue(ctx context.Context, stateRoot string, now time.Time, launch fu
 	if launchErr == nil {
 		return nil
 	}
+	return RecordFailure(ctx, stateRoot, now, fmt.Errorf("starting the run: %w", launchErr))
+}
+
+// RecordFailure records failure as the latest run's, ended at now, for the
+// next command to report.
+func RecordFailure(ctx context.Context, stateRoot string, now time.Time, failure error) error {
 	return Update(ctx, stateRoot, func(s *model.CachePruneStatus) {
-		s.FinishedAt = now
-		s.Error = fmt.Sprintf("starting the run: %v", launchErr)
-		s.Reported = false
+		s.FinishedAt, s.Error, s.Reported = now, failure.Error(), false
 	})
 }
 
