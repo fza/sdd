@@ -30,7 +30,7 @@ const (
 	scheduledFlag    = "scheduled"
 )
 
-func cacheCmd() *cli.Command {
+func cacheCmd(secretRulesGitHub *secrets.GitHub) *cli.Command {
 	return &cli.Command{
 		Name:  cacheCommandName,
 		Usage: "Manage the machine-global cache",
@@ -60,7 +60,7 @@ searches always stay. sdd index gc removes more on request.`,
 					return err
 				}
 				scheduled := cmd.Bool(scheduledFlag)
-				h, err := newCacheHandler(cmd, loc)
+				h, err := newCacheHandler(cmd, loc, secretRulesGitHub)
 				if err != nil {
 					if scheduled {
 						return recordScheduledPruneFailure(ctx, err)
@@ -97,7 +97,7 @@ func recordScheduledPruneFailure(ctx context.Context, failed error) error {
 	return errors.Join(failed, cacheprune.RecordFailure(context.WithoutCancel(ctx), loc.StateRoot, time.Now(), failed))
 }
 
-func newCacheHandler(cmd *cli.Command, loc repos.Locations) (*handlers.CacheHandler, error) {
+func newCacheHandler(cmd *cli.Command, loc repos.Locations, secretRulesGitHub *secrets.GitHub) (*handlers.CacheHandler, error) {
 	var keep handlers.CurrentHashSource
 	if graphDir, err := resolveGraphDir(cmd); err == nil {
 		reader, err := newReadFinder()
@@ -112,12 +112,16 @@ func newCacheHandler(cmd *cli.Command, loc repos.Locations) (*handlers.CacheHand
 	if err != nil {
 		return nil, err
 	}
+	var secretRules handlers.SecretRulesUpdater
+	if secretRulesGitHub != nil {
+		secretRules = secrets.NewUpdater(secretRulesDir(loc), secretRulesGitHub, nil)
+	}
 	return handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: loc.CacheRoot, StateRoot: loc.StateRoot, Registry: repos.NewRegistry(loc),
 		OwnedClones: syncstate.OwnedClones{Gate: gate}, Gate: gate, Keep: keep,
 		State:         stateSweeper{localadapter.StateSweep{StateRoot: loc.StateRoot}},
 		DeclaredHooks: hooks.DeclaredIn(loc.ConfigPath, repos.NewGraphClones(loc, git.GraphClones{}, gate).Dir),
-		SecretRules:   secrets.NewUpdater(secretRulesDir(loc), secrets.NewGitHub("", "", nil), nil),
+		SecretRules:   secretRules,
 	}), nil
 }
 

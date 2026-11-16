@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/pelletier/go-toml/v2"
+	"golang.org/x/mod/semver"
 )
 
 //go:embed gitleaks.toml
@@ -113,7 +114,9 @@ func ParseRules(data []byte) (*RuleSet, error) {
 }
 
 // ParseFetchedRules is ParseRules for a copy fetched to replace the built-in
-// file, which must also keep every rule the built-in file has.
+// file. The copy must keep every rule the built-in file has, cost a scan at
+// most maxScanCostFactor times what the built-in file costs, and raise each
+// built-in rule on its sample in gitleaks.samples.json.
 func ParseFetchedRules(data []byte) (*RuleSet, error) {
 	set, err := ParseRules(data)
 	if err != nil {
@@ -123,7 +126,98 @@ func ParseFetchedRules(data []byte) (*RuleSet, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = withinScanCost(set)
+	if err != nil {
+		return nil, err
+	}
+	err = raisesBuiltinSamples(set)
+	if err != nil {
+		return nil, err
+	}
 	return set, nil
+}
+
+// maxScanCostFactor leaves room for releases adding rules, none for a file
+// that slows every scan by orders of magnitude.
+const maxScanCostFactor = 2
+
+func withinScanCost(set *RuleSet) error {
+	builtin, err := builtinRules()
+	if err != nil {
+		return err
+	}
+	limit, err := builtin.scanCost()
+	if err != nil {
+		return err
+	}
+	cost, err := set.scanCost()
+	if err != nil {
+		return err
+	}
+	if cost > maxScanCostFactor*limit {
+		return fmt.Errorf("a scan with the rule file would cost %d, more than %d times the built-in file's %d", cost, maxScanCostFactor, limit)
+	}
+	return nil
+}
+
+// gitleaks.samples.json holds the shortest true positive per rule of
+// test/fixtures/secrets/gitleaks, plus synthetic ones for the two dropbox
+// rules gitleaks lists none for. A built-in file with a new rule needs its
+// sample here, or every fetched copy is refused.
+//
+//go:embed gitleaks.samples.json
+var builtinSamplesJSON []byte
+
+// sample is a text its rule must raise; one with a path is a file.
+type sample struct {
+	Path string `json:"path"`
+	Text string `json:"text"`
+}
+
+var builtinSamples = sync.OnceValues(func() (map[string]sample, error) {
+	var samples map[string]sample
+	err := json.Unmarshal(builtinSamplesJSON, &samples)
+	if err != nil {
+		return nil, fmt.Errorf("decoding the built-in rules' samples: %w", err)
+	}
+	return samples, nil
+})
+
+// raisesBuiltinSamples refuses a set that keeps a built-in rule's id but no
+// longer finds what it found, as a loosened pattern or a global allowlist
+// would.
+func raisesBuiltinSamples(set *RuleSet) error {
+	builtin, err := builtinRules()
+	if err != nil {
+		return err
+	}
+	samples, err := builtinSamples()
+	if err != nil {
+		return err
+	}
+	var silent []string
+	for _, id := range builtin.RuleIDs() {
+		s, ok := samples[id]
+		if !ok {
+			return fmt.Errorf("the built-in rule %s has no sample in gitleaks.samples.json", id)
+		}
+		findings, err := set.scan(s.Path, s.Text)
+		if err != nil {
+			return err
+		}
+		if !slices.ContainsFunc(findings, func(f Finding) bool { return f.RuleID == id }) {
+			silent = append(silent, id)
+		}
+	}
+	if len(silent) == 0 {
+		return nil
+	}
+	named := silent[:min(len(silent), 5)]
+	more := ""
+	if len(silent) > len(named) {
+		more = fmt.Sprintf(" and %d more", len(silent)-len(named))
+	}
+	return fmt.Errorf("with the rule file, built-in rules no longer raise their samples: %s%s", strings.Join(named, ", "), more)
 }
 
 func coversBuiltin(set *RuleSet) error {
@@ -150,7 +244,14 @@ func decodeRules(data []byte) (*RuleSet, error) {
 		}
 		return nil, fmt.Errorf("decoding the rule file: %w", err)
 	}
-	set := &RuleSet{allowlists: allowlistsOf(file.Allowlist, file.Allowlists)}
+	if file.MinVersion != "" && (!semver.IsValid(file.MinVersion) || semver.Compare(file.MinVersion, readsGitleaksVersion) > 0) {
+		return nil, fmt.Errorf("the rule file needs gitleaks %s, sdd reads rule files as gitleaks %s does", file.MinVersion, readsGitleaksVersion)
+	}
+	global, err := allowlistsOf(file.Allowlist, file.Allowlists)
+	if err != nil {
+		return nil, fmt.Errorf("global allowlist: %w", err)
+	}
+	set := &RuleSet{allowlists: global}
 	for i := range set.allowlists {
 		err = set.allowlists[i].compilePatterns()
 		if err != nil {
@@ -163,6 +264,10 @@ func decodeRules(data []byte) (*RuleSet, error) {
 			keywords = append(keywords, strings.ToLower(keyword))
 		}
 		slices.Sort(keywords)
+		lists, err := allowlistsOf(entry.Allowlist, entry.Allowlists)
+		if err != nil {
+			return nil, fmt.Errorf("rule %s allowlist: %w", entry.ID, err)
+		}
 		set.rules = append(set.rules, &rule{
 			ID:          entry.ID,
 			Regex:       entry.Regex,
@@ -170,16 +275,21 @@ func decodeRules(data []byte) (*RuleSet, error) {
 			Entropy:     entry.Entropy,
 			SecretGroup: entry.SecretGroup,
 			Keywords:    slices.Compact(keywords),
-			Allowlists:  allowlistsOf(entry.Allowlist, entry.Allowlists),
+			Allowlists:  lists,
 		})
 	}
 	return set, nil
 }
 
+// readsGitleaksVersion is the gitleaks release whose reading of a rule file
+// the scan follows; a file needing a later release is refused.
+const readsGitleaksVersion = "v8.30.1"
+
 // allowlistsOf reads gitleaks' single [allowlist] table and its
 // [[allowlists]] array alike, as gitleaks does: stopwords lowercased, the
-// condition uppercased.
-func allowlistsOf(single *gitleaksAllowlist, multiple []gitleaksAllowlist) []allowlist {
+// condition uppercased. A condition or regexTarget gitleaks does not know is
+// refused, not read as the default.
+func allowlistsOf(single *gitleaksAllowlist, multiple []gitleaksAllowlist) ([]allowlist, error) {
 	var entries []gitleaksAllowlist
 	if single != nil {
 		entries = append(entries, *single)
@@ -187,17 +297,24 @@ func allowlistsOf(single *gitleaksAllowlist, multiple []gitleaksAllowlist) []all
 	entries = append(entries, multiple...)
 	lists := make([]allowlist, 0, len(entries))
 	for _, entry := range entries {
+		condition := strings.ToUpper(entry.Condition)
+		if !slices.Contains([]string{"", "OR", "AND"}, condition) {
+			return nil, fmt.Errorf("condition %q is neither AND nor OR", entry.Condition)
+		}
+		if !slices.Contains([]string{"", "secret", "match", "line"}, entry.RegexTarget) {
+			return nil, fmt.Errorf("regexTarget %q is none of secret, match, line", entry.RegexTarget)
+		}
 		stopwords := make([]string, 0, len(entry.Stopwords))
 		for _, word := range entry.Stopwords {
 			stopwords = append(stopwords, strings.ToLower(word))
 		}
 		lists = append(lists, allowlist{
-			Condition:   strings.ToUpper(entry.Condition),
+			Condition:   condition,
 			RegexTarget: entry.RegexTarget,
 			Regexes:     entry.Regexes,
 			Paths:       entry.Paths,
 			Stopwords:   stopwords,
 		})
 	}
-	return lists
+	return lists, nil
 }

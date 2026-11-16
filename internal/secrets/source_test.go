@@ -62,6 +62,21 @@ func TestSourceWithoutAFolderUsesTheBuiltinFile(t *testing.T) {
 	}
 }
 
+func TestSourceStatusNamesACorruptFetchState(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "state.json")
+	err := os.WriteFile(state, []byte("{"), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = secrets.NewSource(t.Context(), dir).Status()
+
+	if err == nil || !strings.Contains(err.Error(), state) {
+		t.Errorf("the error should name the unreadable fetch state file, got %v", err)
+	}
+}
+
 func TestSourceSetsAsideAChangedCopy(t *testing.T) {
 	dir := t.TempDir()
 	releases := test.NewGitleaksReleases(t)

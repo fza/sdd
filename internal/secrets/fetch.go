@@ -149,7 +149,7 @@ func NewUpdater(dir string, github *GitHub, now func() time.Time) *Updater {
 // Update asks for gitleaks' latest release and, when it is newer than the
 // copy in use, downloads, validates and stores its rule file. A failure
 // leaves the copy in use alone and is recorded in the fetch state before it
-// is returned.
+// is returned; a later success clears it.
 func (u *Updater) Update(ctx context.Context) error {
 	state, err := readState(u.dir)
 	if err != nil {
@@ -170,6 +170,7 @@ func (u *Updater) Update(ctx context.Context) error {
 	}
 	if semver.Compare(latest, inUse) <= 0 {
 		state.CheckedAt = u.now()
+		state.Failure, state.FailedAt = "", time.Time{}
 		return writeState(u.dir, state)
 	}
 	data, err := u.github.RuleFile(ctx, latest)
@@ -190,6 +191,7 @@ func (u *Updater) Update(ctx context.Context) error {
 	now := u.now()
 	state.Tag, state.File, state.SHA256 = latest, name, hex.EncodeToString(sum[:])
 	state.AcceptedAt, state.CheckedAt = now, now
+	state.Failure, state.FailedAt = "", time.Time{}
 	err = writeState(u.dir, state)
 	if err != nil {
 		return err

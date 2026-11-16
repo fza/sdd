@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/networkteam/sdd/internal/cacheprune"
 	"github.com/networkteam/sdd/internal/command"
 	"github.com/networkteam/sdd/internal/handlers"
 	"github.com/networkteam/sdd/internal/handlers/synctest"
@@ -56,8 +57,9 @@ func TestCacheHandlerPruneFetchesSecretRulesPerSetting(t *testing.T) {
 	}
 }
 
-// A failed fetch is the rule file's business: the pass goes on and succeeds.
-func TestCacheHandlerPruneGoesOnPastAFailedFetch(t *testing.T) {
+// A failed fetch fails the pass after its other work, so the next command
+// reports it once, as any failed pass.
+func TestCacheHandlerPruneReportsAFailedFetchAndGoesOn(t *testing.T) {
 	f := newPruneFixture(t, "")
 	releases := test.NewGitleaksReleases(t)
 	releases.Publish("v99.0.0", test.SecretRuleFixture(t, "one-rule.toml"))
@@ -69,8 +71,15 @@ func TestCacheHandlerPruneGoesOnPastAFailedFetch(t *testing.T) {
 
 	err := h.Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true})
 
+	if err == nil || !strings.Contains(err.Error(), "lacks rules") {
+		t.Errorf("a rejected rule file should fail the pass with its reason: %v", err)
+	}
+	status, err := cacheprune.Load(f.loc.StateRoot)
 	if err != nil {
-		t.Fatalf("a rejected rule file should not fail the pass: %v", err)
+		t.Fatal(err)
+	}
+	if !strings.Contains(status.FailureNotice(), "lacks rules") {
+		t.Errorf("the next command should be told of the rejection, status %+v", status)
 	}
 	if exists(t, f.staleClone) {
 		t.Error("the pass should do its other work")

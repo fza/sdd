@@ -72,7 +72,8 @@ type CacheHandlerOptions struct {
 	// StateRoot. Nil leaves the confirmations alone.
 	DeclaredHooks func(checkout string) ([]string, error)
 	// SecretRules fetches gitleaks' newest rule file in a scheduled pass
-	// while secrets.rules_update is daily; nil fetches nothing.
+	// while secrets.rules_update is daily; nil fetches nothing. A failed
+	// fetch fails the pass.
 	SecretRules SecretRulesUpdater
 	Now         func() time.Time
 }
@@ -236,10 +237,10 @@ func (h *CacheHandler) prune(ctx context.Context, now time.Time, scheduled bool)
 	}
 
 	if scheduled && h.secretRules != nil && model.ResolveSecretRulesUpdate(cfg.Secrets) == model.SecretRulesDaily {
-		// The updater records a failure where sdd info shows it; scans keep
-		// the copy in use, so the pass goes on.
+		// Scans keep the copy in use, so the pass goes on; failing it gets
+		// the failure reported to the next command.
 		if err := h.secretRules.Update(ctx); err != nil {
-			log.Warn("fetching gitleaks' newest rule file", "err", err)
+			errs = append(errs, fmt.Errorf("fetching gitleaks' newest rule file: %w", err))
 		}
 	}
 

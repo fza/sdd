@@ -499,7 +499,7 @@ Once a day sdd starts `sdd cache prune` in the background, detached from the com
 
 A session log sdd cannot read stays, with its staged attachments: it may belong to a newer sdd. The run reports how many it kept.
 
-While `secrets.rules_update` is `daily`, the background run also asks GitHub for gitleaks' latest release and fetches its rule file into `~/.cache/sdd/secret-rules/` when it is newer than the one in use ([credential scan](/sdd/working-modes/#capture)). Each request gives up after 20 seconds. A failed or rejected fetch keeps the rule file in use, is logged as a warning and does not stop the run; `sdd info` shows it with its reason. `sdd cache prune` by hand fetches nothing.
+While `secrets.rules_update` is `daily`, the background run also asks GitHub for gitleaks' latest release and fetches its rule file into `~/.cache/sdd/secret-rules/` when it is newer than the one in use ([credential scan](/sdd/working-modes/#capture)). Each request gives up after 20 seconds. A failed or rejected fetch keeps the rule file in use and does not stop the run's other work, but fails the run: the next command reports it once, and `sdd info` shows it with its reason until a later check succeeds. `sdd cache prune` by hand fetches nothing.
 
 The run removes no clone and fails when a clone would go while the user-global config file is missing or lists no repos, or while some of `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_DATA_HOME` are set and others are not. While some of `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_DATA_HOME` are set and others are not, the run fails and removes no session, staged attachment or relevance ledger. Set all four or none.
 

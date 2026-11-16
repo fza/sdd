@@ -11,6 +11,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/cliapp"
 	"github.com/networkteam/sdd/internal/cliout"
+	"github.com/networkteam/sdd/internal/secrets"
 	"github.com/networkteam/slogutils"
 	"github.com/urfave/cli/v3"
 )
@@ -21,7 +22,10 @@ var version = "dev"
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	app := cliapp.New(cliapp.Options{Version: version, Reader: os.Stdin, Writer: os.Stdout, ErrWriter: os.Stderr, LaunchCachePrune: launchCachePrune})
+	app := cliapp.New(cliapp.Options{
+		Version: version, Reader: os.Stdin, Writer: os.Stdout, ErrWriter: os.Stderr,
+		LaunchCachePrune: launchCachePrune, SecretRulesGitHub: secrets.NewGitHub("", "", nil),
+	})
 	if err := app.Run(ctx, os.Args); err != nil {
 		var exit cli.ExitCoder
 		if errors.As(err, &exit) && exit.ExitCode() == 0 {

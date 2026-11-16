@@ -15,8 +15,10 @@ import (
 	"github.com/networkteam/sdd/internal/cliapp"
 	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/repos"
+	"github.com/networkteam/sdd/internal/secrets"
 	sdd "github.com/networkteam/sdd/pkg/application"
 	localadapter "github.com/networkteam/sdd/pkg/local"
+	"github.com/networkteam/sdd/test"
 )
 
 // runWithPrune runs one command with a recording launcher in place of the
@@ -172,6 +174,41 @@ func TestCachePruneCommand(t *testing.T) {
 	info := f.run(t, "info")
 	if !strings.Contains(info.stdout, "Cache pruning: last run") {
 		t.Errorf("sdd info should name the last pass, stdout:\n%s", info.stdout)
+	}
+}
+
+// Only the sdd binary names GitHub, so no test's daily pass reaches it.
+func TestTheDailyPassFetchesNothingWithoutReleaseHosts(t *testing.T) {
+	f := newAppFixture(t)
+
+	r := f.run(t, "cache", "prune", "--scheduled")
+
+	if r.err != nil {
+		t.Fatalf("cache prune: %v\n%s", r.err, r.stderr)
+	}
+	state := filepath.Join(f.root, "cache", "sdd", secrets.CacheDirName, "state.json")
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Errorf("the pass should ask no release host, yet it recorded a fetch: stat of %s says %v", state, err)
+	}
+}
+
+func TestTheDailyPassFetchesFromTheGivenReleaseHosts(t *testing.T) {
+	newAppFixture(t)
+	releases := test.NewGitleaksReleases(t)
+	releases.Publish("v99.0.0", test.NewerGitleaksRules(t))
+	var stdout, stderr bytes.Buffer
+	command := cliapp.New(cliapp.Options{
+		Version: appVersion, Reader: strings.NewReader(""), Writer: &stdout, ErrWriter: &stderr,
+		SecretRulesGitHub: secrets.NewGitHub(releases.URL, releases.URL, releases.Client),
+	})
+
+	err := command.Run(t.Context(), []string{"sdd", "cache", "prune", "--scheduled"})
+
+	if err != nil {
+		t.Fatalf("cache prune: %v\n%s", err, stderr.String())
+	}
+	if releases.Downloads() != 1 {
+		t.Errorf("the pass should fetch the newer release's rule file from the given hosts, asked %v", releases.Requests())
 	}
 }
 
