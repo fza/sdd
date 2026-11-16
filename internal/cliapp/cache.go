@@ -188,6 +188,21 @@ func useSecretRules(ctx context.Context) error {
 	return nil
 }
 
+// recordScheduledPruneFailure records err as the run's failure when the
+// invocation is the scheduled pass, which nothing else shows, and returns it.
+func recordScheduledPruneFailure(ctx context.Context, root *cli.Command, err error) error {
+	leaf := invokedCommand(root)
+	lineage := leaf.Lineage()
+	if len(lineage) != 3 || lineage[1].Name != cacheCommandName || leaf.Name != "prune" || !leaf.Bool(scheduledFlag) {
+		return err
+	}
+	loc, locErr := repos.DefaultLocations()
+	if locErr != nil {
+		return errors.Join(err, locErr)
+	}
+	return errors.Join(err, cacheprune.RecordFailure(ctx, loc.StateRoot, time.Now(), err))
+}
+
 // serveSecretRulesNotice is the part of the MCP server's CacheNotice that
 // tells a failed or rejected rule fetch once.
 func serveSecretRulesNotice(ctx context.Context) string {

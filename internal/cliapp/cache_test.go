@@ -108,6 +108,39 @@ func TestScheduledCachePruneFetchesFromTheConfiguredHosts(t *testing.T) {
 	}
 }
 
+// A scheduled run refused before it starts, on a secrets.rules_update sdd
+// does not know, is recorded like any failed run, so the next command
+// reports it instead of only the run's log.
+// A run by hand shows the refusal as its own error and records nothing.
+func TestScheduledCachePruneRecordsARefusedRulesUpdate(t *testing.T) {
+	for _, tc := range []struct {
+		args     []string
+		recorded bool
+	}{
+		{args: []string{"cache", "prune", "--scheduled"}, recorded: true},
+		{args: []string{"cache", "prune"}},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			f := newAppFixture(t)
+			f.write(t, "config/sdd/config.yaml", "participant: Global Author\nsecrets:\n  rules_update: weekly\n")
+
+			r := f.run(t, tc.args...)
+
+			if r.err == nil {
+				t.Fatal("a run on a refused value should fail")
+			}
+			status, err := cacheprune.Load(filepath.Join(f.root, "state", "sdd"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			recorded := strings.Contains(status.Error, "secrets.rules_update") && status.FailureNotice() != ""
+			if recorded != tc.recorded {
+				t.Errorf("only the scheduled run's failure should be recorded for the next command, got %+v", status)
+			}
+		})
+	}
+}
+
 func TestCachePruneCommandReportsItsFailureAsItsError(t *testing.T) {
 	f := newAppFixture(t)
 	f.write(t, "config/sdd/config.yaml", "participant: Global Author\ncache:\n  retention: soon\n")

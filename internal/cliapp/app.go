@@ -402,7 +402,7 @@ func New(options Options) *cli.Command {
 			warnUnknownConfigKeys(ctx)
 			err := useSecretRules(ctx)
 			if err != nil && !repairingConfig(writesConfig(cmd), err) {
-				return ctx, err
+				return ctx, recordScheduledPruneFailure(ctx, cmd, err)
 			}
 			// sdd serve tells it on its next tool result instead.
 			if first := cmd.Args().First(); first != "serve" && first != cacheCommandName {
