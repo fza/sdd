@@ -58,7 +58,8 @@ const (
 	// reads past it.
 	EventServedBlocks EventType = "served_blocks"
 	// EventAnchors records the anchors a call issued for the pieces it served
-	// in full, so a restarted server still checks their proofs (Piece). No
+	// in full, so a restarted server still checks their proofs (Piece), and
+	// the tags whose proofs took a piece off the unproved list. No
 	// instance: the served memory is session-level like the read set.
 	EventAnchors EventType = "anchors"
 	// EventAnchorSteps records the anchor proofs a call spent on the pointers
@@ -256,8 +257,12 @@ type Session struct {
 	// deferred folds the deferral events: per instance whose serve left parts
 	// waiting, the pieces it sent, each under its tag (FollowDeferral).
 	deferred map[string]map[Piece]string
-	call     pieceCall
-	rnd      model.RandomSource
+	// unproved folds, per piece name, its newest serve in full that no proof
+	// followed, numbered by servedSeq (Unproved).
+	unproved  map[string]unprovedServe
+	servedSeq int
+	call      pieceCall
+	rnd       model.RandomSource
 	// sinkErr carries a deferred log-append failure; surfaced by the next
 	// advance call so a durability problem can't pass silently.
 	sinkErr     error
@@ -1308,6 +1313,14 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		}
 
 	case EventAnchors:
+		// A call takes what its proofs prove off the unproved list before it
+		// records the anchors it issued (RecordAnchors).
+		proved, _ := ev.Data["proved"].([]any)
+		for _, tag := range proved {
+			if tag, ok := tag.(string); ok {
+				s.foldProved([]string{tag})
+			}
+		}
 		anchors, _ := ev.Data["anchors"].([]any)
 		for _, record := range anchors {
 			s.foldAnchor(record)
