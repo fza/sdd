@@ -371,6 +371,21 @@ func TestCacheHandlerPruneRunsOncePerDayWhenScheduled(t *testing.T) {
 	}
 }
 
+// A start later than now is what a clock set back leaves; waiting for the
+// clock to pass it would skip runs for as long as it was set back.
+func TestCacheHandlerPruneRunsWhenScheduledAfterTheClockWentBack(t *testing.T) {
+	f := newPruneFixture(t, "")
+	if err := cacheprune.Update(t.Context(), f.loc.StateRoot, func(s *model.CachePruneStatus) { s.StartedAt = time.Now().Add(48 * time.Hour) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.handler(nil).Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(t, f.staleClone) {
+		t.Error("a scheduled run should prune when the last start lies later than now")
+	}
+}
+
 func TestCacheHandlerPruneLeavesARunningPassAlone(t *testing.T) {
 	f := newPruneFixture(t, "")
 	if err := os.MkdirAll(f.loc.StateRoot, 0o755); err != nil {

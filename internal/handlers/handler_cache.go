@@ -124,7 +124,7 @@ func (h *CacheHandler) Prune(ctx context.Context, cmd *command.PruneCacheCmd) (e
 		if err != nil {
 			return err
 		}
-		if now.Sub(status.StartedAt) < model.CachePruneInterval {
+		if status.StartedRecently(now) {
 			return nil
 		}
 	}
