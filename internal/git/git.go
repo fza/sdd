@@ -240,6 +240,50 @@ func RepoRootFor(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// TrackedFiles is the production hooks.Tracker.
+type TrackedFiles struct{}
+
+// Tracked returns the files under paths, relative to the repository root
+// holding root, that git tracks; none when root is in no repository. The
+// repository is the one at root, whatever GIT_DIR the process inherited.
+func (TrackedFiles) Tracked(ctx context.Context, root string, paths ...string) ([]string, error) {
+	env := withoutRepoOverrides(os.Environ())
+	probe := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--is-inside-work-tree")
+	probe.Env = env
+	err := probe.Run()
+	if err != nil {
+		return nil, nil
+	}
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root, "ls-files", "-z", "--"}, paths...)...)
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("listing tracked files under %s: %w", root, err)
+	}
+	var files []string
+	for _, file := range strings.Split(string(out), "\x00") {
+		if file != "" {
+			files = append(files, file)
+		}
+	}
+	return files, nil
+}
+
+// withoutRepoOverrides drops the variables that point git at another
+// repository than the one -C names.
+func withoutRepoOverrides(env []string) []string {
+	kept := env[:0:0]
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		switch name {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR":
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
+}
+
 // Repositories reaches repositories by path rather than through one adapter's
 // Dir: a work repository's init sets its project up in a repository beside it.
 // It is the production handlers.ProjectRepositories.

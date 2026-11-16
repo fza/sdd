@@ -110,6 +110,47 @@ func TestServeSkipsACommittedHookUntilAllowed(t *testing.T) {
 	readHookPayload(t, payloadFile)
 }
 
+// A machine-local config the repository tracks anyway, force-added past its
+// .gitignore, came with the clone too: its hooks wait for an allow like the
+// committed config's.
+func TestServeSkipsATrackedLocalHookUntilAllowed(t *testing.T) {
+	fixture := newAppFixture(t)
+	initRepo(t, fixture.root)
+	fixture.write(t, ".sdd/hooks/local/payload.sh", "#!/bin/sh\ncat > ../payload.json\n")
+	err := os.Chmod(filepath.Join(fixture.root, ".sdd/hooks/local/payload.sh"), 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.write(t, ".sdd/config.local.yaml", readFile(t, filepath.Join(fixture.root, ".sdd/config.local.yaml"))+"hooks:\n  - event: user-dialogue.junction.start\n    command: local/payload.sh\n")
+	gitIn(t, fixture.root, "add", "-f", ".sdd/config.local.yaml", ".sdd/hooks/local/payload.sh")
+	gitIn(t, fixture.root, "commit", "-q", "-m", "ship a local hook")
+	payloadFile := filepath.Join(fixture.root, ".sdd", "payload.json")
+
+	var text string
+	fixture.serve(t, func(client *mcp.ClientSession) {
+		door, err := client.CallTool(t.Context(), &mcp.CallToolParams{Name: "start_session", Arguments: map[string]any{}})
+		if err != nil || door.IsError {
+			t.Fatalf("start_session: %v %+v", err, door)
+		}
+		raw, _ := json.Marshal(door)
+		text = string(raw)
+	})
+	_, err = os.Stat(payloadFile)
+	if err == nil {
+		t.Fatal("a local hook the repository tracks ran without an allow")
+	}
+	if !strings.Contains(text, "sdd hooks allow") {
+		t.Errorf("the call should name `sdd hooks allow` for the skipped hook, served %s", text)
+	}
+
+	allowed := fixture.run(t, "hooks", "allow")
+	if allowed.err != nil || !strings.Contains(allowed.stdout, "local/payload.sh") {
+		t.Fatalf("sdd hooks allow should name the tracked local hook:\n%s%v", allowed.stdout, allowed.err)
+	}
+	fixture.serve(t, func(client *mcp.ClientSession) { startSession(t, client) })
+	readHookPayload(t, payloadFile)
+}
+
 // A hook added while serve runs reaches its next call.
 func TestServeReadsHooksAfreshOnEveryCall(t *testing.T) {
 	fixture := newAppFixture(t)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/hooks"
 	"github.com/networkteam/sdd/internal/repos"
 )
@@ -18,7 +19,7 @@ func hooksCmd() *cli.Command {
 			{
 				Name:  "allow",
 				Usage: "Let the hooks in the project's committed config run on this machine, as they are now",
-				Action: func(_ context.Context, cmd *cli.Command) error {
+				Action: func(ctx context.Context, cmd *cli.Command) error {
 					locations, err := repos.DefaultLocations()
 					if err != nil {
 						return err
@@ -27,7 +28,7 @@ func hooksCmd() *cli.Command {
 					if err != nil {
 						return err
 					}
-					allowed, err := hooks.Allow(hooks.Sources{GlobalConfig: locations.ConfigPath, Project: project}, hooks.NewAllows(locations.StateRoot))
+					allowed, err := hooks.Allow(ctx, hooks.Sources{GlobalConfig: locations.ConfigPath, Project: project, Tracker: git.TrackedFiles{}}, hooks.NewAllows(locations.StateRoot))
 					if err != nil {
 						return err
 					}

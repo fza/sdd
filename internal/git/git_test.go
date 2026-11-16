@@ -235,3 +235,31 @@ func TestRepoRootFor(t *testing.T) {
 		t.Errorf("a path outside a repository must report no root, got %q", outside)
 	}
 }
+
+func TestTrackedListsTheTrackedFilesUnderPathsOfTheRepositoryAtRoot(t *testing.T) {
+	dir := newTestRepo(t)
+	for _, file := range []string{".sdd/config.local.yaml", ".sdd/hooks/local/mine.sh"} {
+		err := os.MkdirAll(filepath.Dir(filepath.Join(dir, file)), 0o755)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = os.WriteFile(filepath.Join(dir, file), []byte("x\n"), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, dir, "add", "-f", ".sdd/config.local.yaml")
+	t.Setenv("GIT_DIR", filepath.Join(newTestRepo(t), ".git"))
+
+	tracked, err := TrackedFiles{}.Tracked(t.Context(), dir, ".sdd/config.local.yaml", ".sdd/hooks/local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(tracked, []string{".sdd/config.local.yaml"}) {
+		t.Errorf("only the added file should be tracked, in the repository at root whatever GIT_DIR says, got %v", tracked)
+	}
+	outside, err := TrackedFiles{}.Tracked(t.Context(), t.TempDir(), "x")
+	if err != nil || len(outside) != 0 {
+		t.Errorf("a folder in no repository tracks nothing, got %v %v", outside, err)
+	}
+}

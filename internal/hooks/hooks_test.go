@@ -23,6 +23,23 @@ type world struct {
 	global    string
 	repo      string
 	stateRoot string
+	tracked   trackedFiles
+}
+
+// trackedFiles is a Tracker reporting its files as tracked wherever they
+// fall under the asked paths.
+type trackedFiles []string
+
+func (f trackedFiles) Tracked(_ context.Context, _ string, paths ...string) ([]string, error) {
+	var tracked []string
+	for _, file := range f {
+		for _, path := range paths {
+			if file == path || strings.HasPrefix(file, path+"/") {
+				tracked = append(tracked, file)
+			}
+		}
+	}
+	return tracked, nil
 }
 
 func newWorld(t *testing.T) *world {
@@ -63,7 +80,7 @@ func (w *world) commit(t *testing.T, hooksYAML string) {
 }
 
 func (w *world) sources() hooks.Sources {
-	return hooks.Sources{GlobalConfig: w.global, Project: meta.Project{Root: w.repo, WorkRoot: w.repo}}
+	return hooks.Sources{GlobalConfig: w.global, Project: meta.Project{Root: w.repo, WorkRoot: w.repo}, Tracker: w.tracked}
 }
 
 func (w *world) commands() *hooks.Commands {
@@ -72,7 +89,7 @@ func (w *world) commands() *hooks.Commands {
 
 func (w *world) allow(t *testing.T) []model.Hook {
 	t.Helper()
-	allowed, err := hooks.Allow(w.sources(), hooks.NewAllows(w.stateRoot))
+	allowed, err := hooks.Allow(t.Context(), w.sources(), hooks.NewAllows(w.stateRoot))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +136,29 @@ func TestCommittedHooksRunOnlyOnceAllowed(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("the allow record should be private, mode %o", info.Mode().Perm())
+	}
+}
+
+// A machine-local layer the repository tracks, its config file or a script
+// under hooks/local/, came with the clone: it waits for an allow too.
+func TestATrackedLocalLayerWaitsForAnAllow(t *testing.T) {
+	for _, tracked := range []string{".sdd/config.local.yaml", ".sdd/hooks/local/mine.sh"} {
+		t.Run(tracked, func(t *testing.T) {
+			w := newWorld(t)
+			w.tracked = trackedFiles{tracked}
+			script(t, filepath.Join(w.hooksDir(), "local", "mine.sh"), "true")
+			write(t, filepath.Join(w.repo, ".sdd", "config.local.yaml"), "hooks:\n  - event: entry.written\n    command: local/mine.sh\n")
+			if !w.only(t).NeedsAllow {
+				t.Fatal("a tracked local layer's hook should wait for an allow")
+			}
+			allowed := w.allow(t)
+			if len(allowed) != 1 || allowed[0].Command != "local/mine.sh" {
+				t.Errorf("allow should name the tracked local hook, got %+v", allowed)
+			}
+			if w.only(t).NeedsAllow {
+				t.Error("an allowed tracked local hook should run")
+			}
+		})
 	}
 }
 
@@ -181,7 +221,7 @@ func (w *world) only(t *testing.T) model.Hook {
 // itself succeeds, so a bad hook fails only the calls that reach it.
 func declaredErr(t *testing.T, w *world) error {
 	t.Helper()
-	declared, err := hooks.Declared(w.sources())
+	declared, err := hooks.Declared(t.Context(), w.sources())
 	if err != nil {
 		t.Fatalf("a bad hook should not fail reading the others: %v", err)
 	}
@@ -278,7 +318,7 @@ func TestDeclaredReadsEveryLayerOfAProjectDirLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	declared, err := hooks.Declared(hooks.Sources{GlobalConfig: global, Project: resolved})
+	declared, err := hooks.Declared(t.Context(), hooks.Sources{GlobalConfig: global, Project: resolved, Tracker: trackedFiles{}})
 	if err != nil {
 		t.Fatal(err)
 	}

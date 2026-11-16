@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -68,29 +69,59 @@ func (a *Allows) load() (map[string]string, error) {
 	return record, nil
 }
 
-// Allow records the committed hooks every repository of the project declares
-// now as allowed on this machine, and returns them.
-func Allow(src Sources, allows *Allows) ([]model.Hook, error) {
-	layers, err := declaredLayers(src)
+// Allow records the hooks that came with every repository of the project, as
+// they are now, as allowed on this machine, and returns them.
+func Allow(ctx context.Context, src Sources, allows *Allows) ([]model.Hook, error) {
+	layers, err := declaredLayers(ctx, src)
 	if err != nil {
 		return nil, err
 	}
 	var allowed []model.Hook
-	for _, layer := range layers {
-		if layer.origin.Layer != model.HookLayerCommitted || len(layer.hooks) == 0 {
-			continue
-		}
-		hash, err := layerHash(layer.hooks)
+	for _, group := range gateGroups(layers) {
+		hash, err := gateHash(group)
 		if err != nil {
 			return nil, err
 		}
-		err = allows.Record(layer.key, hash)
+		err = allows.Record(group.gate.key, hash)
 		if err != nil {
 			return nil, err
 		}
-		allowed = append(allowed, layer.hooks...)
+		allowed = append(allowed, group.hooks...)
 	}
 	return allowed, nil
+}
+
+// gateGroup is one repository's gated layers, by index into the declared
+// layers, and their hooks.
+type gateGroup struct {
+	gate   *repoGate
+	layers []int
+	hooks  []model.Hook
+}
+
+// gateGroups returns, per repository, the gated layers holding hooks.
+func gateGroups(layers []declaredLayer) []gateGroup {
+	var groups []gateGroup
+	index := map[*repoGate]int{}
+	for i, layer := range layers {
+		if !layer.gated() || len(layer.hooks) == 0 {
+			continue
+		}
+		at, ok := index[layer.gate]
+		if !ok {
+			at = len(groups)
+			index[layer.gate] = at
+			groups = append(groups, gateGroup{gate: layer.gate})
+		}
+		groups[at].layers = append(groups[at].layers, i)
+		groups[at].hooks = append(groups[at].hooks, layer.hooks...)
+	}
+	return groups
+}
+
+// gateHash is the hash a repository's allow records.
+func gateHash(group gateGroup) (string, error) {
+	return layerHash(group.hooks)
 }
 
 // hashedHook is the canonical form of one hook the layer hash covers: its

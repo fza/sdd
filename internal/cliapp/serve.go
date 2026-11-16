@@ -382,7 +382,7 @@ func buildLocalApplication(ctx context.Context, cmd *cli.Command, graphDir, sddD
 		Dependencies: dependencies, Graph: localadapter.BranchReadStore{GraphStore: graph, Branches: targets, DefaultBranch: cfg.DefaultBranch}, Targets: targets, Branches: targets, Base: targets,
 		Embedder: embeddings, SearchIndex: optionalSearchIndex(embeddings, baseIndex),
 		LLM:   runner,
-		Hooks: hooks.New(hooks.Sources{GlobalConfig: locations.ConfigPath, Project: layout}, hooks.NewAllows(locations.StateRoot)),
+		Hooks: hooks.New(hooks.Sources{GlobalConfig: locations.ConfigPath, Project: layout, Tracker: git.TrackedFiles{}}, hooks.NewAllows(locations.StateRoot)),
 	})
 	if err != nil {
 		return nil, "", sdd.RequestIdentity{}, err

@@ -36,28 +36,31 @@ func New(sources Sources, allows *Allows) *Commands {
 	return &Commands{sources: sources, allows: allows}
 }
 
-// Hooks returns the hooks as declared now, a committed layer's marked
-// NeedsAllow unless the allow record holds its current hash.
-func (c *Commands) Hooks(context.Context) ([]model.Hook, error) {
-	layers, err := declaredLayers(c.sources)
+// Hooks returns the hooks as declared now, those that came with a repository
+// marked NeedsAllow unless the allow record holds the repository's current
+// hash.
+func (c *Commands) Hooks(ctx context.Context) ([]model.Hook, error) {
+	layers, err := declaredLayers(ctx, c.sources)
 	if err != nil {
 		return nil, err
 	}
-	var hooks []model.Hook
-	for _, layer := range layers {
-		if layer.origin.Layer == model.HookLayerCommitted && len(layer.hooks) > 0 {
-			hash, err := layerHash(layer.hooks)
-			if err != nil {
-				return nil, err
-			}
-			allowed, err := c.allows.Allowed(layer.key, hash)
-			if err != nil {
-				return nil, err
-			}
-			for i := range layer.hooks {
-				layer.hooks[i].NeedsAllow = !allowed
+	for _, group := range gateGroups(layers) {
+		hash, err := gateHash(group)
+		if err != nil {
+			return nil, err
+		}
+		allowed, err := c.allows.Allowed(group.gate.key, hash)
+		if err != nil {
+			return nil, err
+		}
+		for _, i := range group.layers {
+			for j := range layers[i].hooks {
+				layers[i].hooks[j].NeedsAllow = !allowed
 			}
 		}
+	}
+	var hooks []model.Hook
+	for _, layer := range layers {
 		hooks = append(hooks, layer.hooks...)
 	}
 	return hooks, nil

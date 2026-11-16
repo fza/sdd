@@ -1,9 +1,11 @@
 // Package hooks resolves and runs the hooks a project and the person running
 // sdd declare: each hook a file in its layer's hooks folder, run without a
-// shell, a committed layer's only once allowed on this machine.
+// shell. Hooks that came with a repository run only once allowed on this
+// machine.
 package hooks
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,25 +17,48 @@ import (
 )
 
 // Sources names where a project's hooks are declared: the user-global
-// config file and the project's repositories.
+// config file and the project's repositories. Tracker tells which of a
+// repository's machine-local files git tracks; without one, every
+// machine-local layer counts as tracked.
 type Sources struct {
 	GlobalConfig string
 	Project      meta.Project
+	Tracker      Tracker
 }
 
-// layerFile is one config file's hooks list; key names its repository in
-// the allow record.
+// Tracker lists the files under paths, relative to root, that the
+// repository holding root tracks.
+type Tracker interface {
+	Tracked(ctx context.Context, root string, paths ...string) ([]string, error)
+}
+
+// repoGate is one repository's allow: the layers it covers came with the
+// repository. The committed layer always does; the machine-local layer does
+// when git tracks its config file or a script under hooks/local/.
+type repoGate struct {
+	key        string
+	hooksDir   string
+	localGated bool
+}
+
+// layerFile is one config file's hooks list; gate is its repository's allow,
+// nil for the user-global layer.
 type layerFile struct {
 	origin model.HookOrigin
-	key    string
+	gate   *repoGate
 	hooks  []model.HookConfig
 }
 
 // declaredLayer is a layerFile with its hooks resolved.
 type declaredLayer struct {
 	origin model.HookOrigin
-	key    string
+	gate   *repoGate
 	hooks  []model.Hook
+}
+
+// gated reports whether the layer runs only once allowed.
+func (l declaredLayer) gated() bool {
+	return l.gate != nil && (l.origin.Layer == model.HookLayerCommitted || l.gate.localGated)
 }
 
 // Declared reads every layer's hooks, in the order user-global, work
@@ -41,8 +66,8 @@ type declaredLayer struct {
 // command to its file in the layer's hooks folder. A command that does not
 // resolve sets the hook's Err rather than failing the whole list, so it
 // fails only the calls that reach the hook.
-func Declared(src Sources) ([]model.Hook, error) {
-	layers, err := declaredLayers(src)
+func Declared(ctx context.Context, src Sources) ([]model.Hook, error) {
+	layers, err := declaredLayers(ctx, src)
 	if err != nil {
 		return nil, err
 	}
@@ -53,14 +78,14 @@ func Declared(src Sources) ([]model.Hook, error) {
 	return hooks, nil
 }
 
-func declaredLayers(src Sources) ([]declaredLayer, error) {
-	files, err := readLayers(src)
+func declaredLayers(ctx context.Context, src Sources) ([]declaredLayer, error) {
+	files, err := readLayers(ctx, src)
 	if err != nil {
 		return nil, err
 	}
 	layers := make([]declaredLayer, 0, len(files))
 	for _, file := range files {
-		layer := declaredLayer{origin: file.origin, key: file.key}
+		layer := declaredLayer{origin: file.origin, gate: file.gate}
 		for i, config := range file.hooks {
 			origin := file.origin
 			origin.Index = i
@@ -77,7 +102,7 @@ func declaredLayers(src Sources) ([]declaredLayer, error) {
 	return layers, nil
 }
 
-func readLayers(src Sources) ([]layerFile, error) {
+func readLayers(ctx context.Context, src Sources) ([]layerFile, error) {
 	global, err := repos.LoadConfigFrom(src.GlobalConfig)
 	if err != nil {
 		return nil, err
@@ -91,17 +116,17 @@ func readLayers(src Sources) ([]layerFile, error) {
 		return layers, nil
 	}
 	if !project.Pointed() {
-		repo, err := repoLayers(project.Root, "")
+		repo, err := repoLayers(ctx, src.Tracker, project.Root, "")
 		if err != nil {
 			return nil, err
 		}
 		return append(layers, repo...), nil
 	}
-	work, err := repoLayers(project.WorkRoot, model.HookRepoWork)
+	work, err := repoLayers(ctx, src.Tracker, project.WorkRoot, model.HookRepoWork)
 	if err != nil {
 		return nil, err
 	}
-	projectLayers, err := repoLayers(project.Root, model.HookRepoProject)
+	projectLayers, err := repoLayers(ctx, src.Tracker, project.Root, model.HookRepoProject)
 	if err != nil {
 		return nil, err
 	}
@@ -110,28 +135,47 @@ func readLayers(src Sources) ([]layerFile, error) {
 }
 
 // repoLayers reads one repository's committed and machine-local layers.
-func repoLayers(root, repo string) ([]layerFile, error) {
+func repoLayers(ctx context.Context, tracker Tracker, root, repo string) ([]layerFile, error) {
 	sddDir := meta.SDDDir(root)
 	committed, local, err := meta.ReadConfigLayers(sddDir)
 	if err != nil {
 		return nil, err
 	}
-	base := model.HookOrigin{Repo: repo, Dir: filepath.Join(sddDir, model.HooksDirName)}
+	hooksDir := filepath.Join(sddDir, model.HooksDirName)
 	var repoID model.RepoID
 	if committed != nil {
 		repoID = committed.RepoID
 	}
-	committedLayer := layerFile{origin: base, key: index.RepoKey(repoID, root)}
+	gate := &repoGate{key: index.RepoKey(repoID, root), hooksDir: hooksDir, localGated: true}
+	if tracker != nil {
+		localConfig := filepath.Join(sddDir, "config.local.yaml")
+		localScripts := filepath.Join(hooksDir, model.HookLocalDir)
+		tracked, err := tracker.Tracked(ctx, root, relativeTo(root, localConfig), relativeTo(root, localScripts))
+		if err != nil {
+			return nil, err
+		}
+		gate.localGated = len(tracked) > 0
+	}
+	base := model.HookOrigin{Repo: repo, Dir: hooksDir}
+	committedLayer := layerFile{origin: base, gate: gate}
 	committedLayer.origin.Layer, committedLayer.origin.ConfigPath = model.HookLayerCommitted, filepath.Join(sddDir, "config.yaml")
 	if committed != nil {
 		committedLayer.hooks = committed.Hooks
 	}
-	localLayer := layerFile{origin: base}
+	localLayer := layerFile{origin: base, gate: gate}
 	localLayer.origin.Layer, localLayer.origin.ConfigPath = model.HookLayerLocal, filepath.Join(sddDir, "config.local.yaml")
 	if local != nil {
 		localLayer.hooks = local.Hooks
 	}
 	return []layerFile{committedLayer, localLayer}, nil
+}
+
+func relativeTo(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return path
+	}
+	return filepath.ToSlash(rel)
 }
 
 // commandFile returns the absolute path of the file the hook's command
