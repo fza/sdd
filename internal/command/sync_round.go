@@ -64,6 +64,7 @@ type DemandSyncCmd struct {
 	// when the repository last fetched; the round then finishes in the
 	// background.
 	OnPending func(fetched time.Time)
-	// OnSettled is invoked once a round reported pending ends.
+	// OnSettled is invoked once a round reported pending ends, on the
+	// goroutine that finishes the round, so it synchronizes what it shares.
 	OnSettled func()
 }

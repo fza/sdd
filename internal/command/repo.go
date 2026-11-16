@@ -46,7 +46,8 @@ type EnsureReposFreshCmd struct {
 	OnPhase func(phase model.Phase)
 
 	// OnPending reports a round still running past the read wait, with when
-	// the clone last fetched; OnSettled that round's outcome once it ends.
+	// the clone last fetched; OnSettled that round's outcome once it ends, on
+	// the goroutine that finishes the round.
 	// Optional.
 	OnPending func(repoID model.RepoID, fetched time.Time)
 	OnSettled func(outcome model.RepoSyncOutcome)
