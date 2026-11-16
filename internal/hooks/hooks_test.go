@@ -162,14 +162,19 @@ func TestATrackedLocalLayerWaitsForAnAllow(t *testing.T) {
 	}
 }
 
-// Any change to a committed hook's config, script or an args file needs a
-// new allow.
+// Any change to a committed hook's config, an args file or any file in the
+// hooks folder outside local/ needs a new allow.
 func TestAChangedCommittedHookNeedsAllowAgain(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		change func(t *testing.T, w *world)
 	}{
 		{"script", func(t *testing.T, w *world) { script(t, filepath.Join(w.hooksDir(), "vale.sh"), "echo changed") }},
+		{"sourced file", func(t *testing.T, w *world) { write(t, filepath.Join(w.hooksDir(), "lib.sh"), "echo changed\n") }},
+		{"file a flag names", func(t *testing.T, w *world) { write(t, filepath.Join(w.hooksDir(), "rules", "data.txt"), "changed\n") }},
+		{"new file in the folder", func(t *testing.T, w *world) {
+			write(t, filepath.Join(w.hooksDir(), "styles", "x.yml"), "level: error\n")
+		}},
 		{"args file", func(t *testing.T, w *world) {
 			write(t, filepath.Join(w.hooksDir(), "vale.ini"), "MinAlertLevel = suggestion\n")
 		}},
@@ -182,9 +187,11 @@ func TestAChangedCommittedHookNeedsAllowAgain(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWorld(t)
-			script(t, filepath.Join(w.hooksDir(), "vale.sh"), "true")
+			script(t, filepath.Join(w.hooksDir(), "vale.sh"), ". ./lib.sh")
+			write(t, filepath.Join(w.hooksDir(), "lib.sh"), "true\n")
+			write(t, filepath.Join(w.hooksDir(), "rules", "data.txt"), "rules\n")
 			write(t, filepath.Join(w.hooksDir(), "vale.ini"), "MinAlertLevel = error\n")
-			w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    args: [--config, vale.ini]\n")
+			w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    args: [--config, vale.ini, --rules=rules/data.txt]\n")
 			w.allow(t)
 			if w.only(t).NeedsAllow {
 				t.Fatal("an allowed hook should run")
@@ -196,6 +203,19 @@ func TestAChangedCommittedHookNeedsAllowAgain(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The machine-local scripts under an untracked local/ are the person's own,
+// so changing them leaves the committed hooks allowed.
+func TestAChangeUnderAnUntrackedLocalFolderKeepsTheAllow(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "vale.sh"), "true")
+	w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n")
+	w.allow(t)
+	script(t, filepath.Join(w.hooksDir(), "local", "mine.sh"), "echo mine")
+	if w.only(t).NeedsAllow {
+		t.Error("a change under an untracked local/ should keep the committed hooks allowed")
 	}
 }
 

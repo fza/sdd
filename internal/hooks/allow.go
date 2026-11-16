@@ -119,14 +119,10 @@ func gateGroups(layers []declaredLayer) []gateGroup {
 	return groups
 }
 
-// gateHash is the hash a repository's allow records.
-func gateHash(group gateGroup) (string, error) {
-	return layerHash(group.hooks)
-}
-
-// hashedHook is the canonical form of one hook the layer hash covers: its
+// hashedHook is the canonical form of one hook the gate hash covers: its
 // config and the digest of every file it names.
 type hashedHook struct {
+	Layer    model.HookLayer   `json:"layer"`
 	Event    string            `json:"event"`
 	Command  string            `json:"command"`
 	Args     []string          `json:"args"`
@@ -135,14 +131,107 @@ type hashedHook struct {
 	Files    map[string]string `json:"files"`
 }
 
-// layerHash returns the SHA-256 over a layer's hooks in order: each hook's
-// config and the contents of its command file and of every args entry
-// naming a file in its hooks folder.
-func layerHash(hooks []model.Hook) (string, error) {
+// gateHash returns the SHA-256 over a repository's gated hooks in order and
+// over every file in its hooks folder, local/ included only when the
+// repository tracks it. The folder as a whole counts because a hook runs
+// more than the script it names: files it sources or imports, files a flag
+// names, an interpreter beside it.
+func gateHash(group gateGroup) (string, error) {
+	hooks, err := hookEntries(group.hooks)
+	if err != nil {
+		return "", err
+	}
+	tree, err := treeDigests(group.gate.hooksDir, !group.gate.localGated)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(struct {
+		Hooks []hashedHook      `json:"hooks"`
+		Tree  map[string]string `json:"tree"`
+	}{hooks, tree})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// treeDigests maps every file below dir, by its slash path relative to dir,
+// to its content digest and whether it may run. Symbolic links are followed,
+// a folder reached twice is recorded rather than walked again, and a broken
+// link is recorded by its target. skipLocal leaves out the top-level local/.
+func treeDigests(dir string, skipLocal bool) (map[string]string, error) {
+	tree := map[string]string{}
+	real, err := filepath.EvalSymlinks(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return tree, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	visited := map[string]bool{real: true}
+	var walk func(path, rel string) error
+	walk = func(path, rel string) error {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			child := filepath.Join(path, entry.Name())
+			childRel := entry.Name()
+			if rel != "" {
+				childRel = rel + "/" + entry.Name()
+			}
+			if skipLocal && childRel == model.HookLocalDir {
+				continue
+			}
+			info, err := os.Stat(child)
+			if err != nil {
+				target, _ := os.Readlink(child)
+				tree[childRel] = "unreadable:" + target
+				continue
+			}
+			switch {
+			case info.IsDir():
+				realChild, err := filepath.EvalSymlinks(child)
+				if err != nil {
+					return err
+				}
+				if visited[realChild] {
+					tree[childRel] = "folder seen before:" + realChild
+					continue
+				}
+				visited[realChild] = true
+				err = walk(child, childRel)
+				if err != nil {
+					return err
+				}
+			case info.Mode().IsRegular():
+				digest, err := fileDigest(child)
+				if err != nil {
+					return err
+				}
+				tree[childRel] = fmt.Sprintf("%s:%t", digest, info.Mode().Perm()&0o111 != 0)
+			default:
+				tree[childRel] = info.Mode().String()
+			}
+		}
+		return nil
+	}
+	err = walk(real, "")
+	if err != nil {
+		return nil, fmt.Errorf("hashing %s: %w", dir, err)
+	}
+	return tree, nil
+}
+
+// hookEntries returns each hook's config with the digests of its command
+// file and of every args entry naming a file, wherever it lies.
+func hookEntries(hooks []model.Hook) ([]hashedHook, error) {
 	canonical := make([]hashedHook, 0, len(hooks))
 	for _, hook := range hooks {
 		entry := hashedHook{
-			Event: hook.Event, Command: hook.Command, Args: append([]string{}, hook.Args...),
+			Layer: hook.Origin.Layer, Event: hook.Event, Command: hook.Command, Args: append([]string{}, hook.Args...),
 			Timeout: hook.Timeout, Findings: hook.Findings, Files: map[string]string{},
 		}
 		paths := []string{hook.Path}
@@ -156,22 +245,17 @@ func layerHash(hooks []model.Hook) (string, error) {
 			}
 			digest, err := fileDigest(path)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			rel, err := filepath.Rel(hook.Origin.Dir, path)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			entry.Files[filepath.ToSlash(rel)] = digest
 		}
 		canonical = append(canonical, entry)
 	}
-	encoded, err := json.Marshal(canonical)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:]), nil
+	return canonical, nil
 }
 
 func fileDigest(path string) (string, error) {
