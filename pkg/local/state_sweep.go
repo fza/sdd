@@ -93,6 +93,8 @@ func (s *StateSwept) add(o StateSwept) {
 // not see.
 type StateSweep struct {
 	StateRoot string
+	// beforeRemoval runs before each removal of an unused project's state.
+	beforeRemoval func(path string)
 }
 
 // Sweep runs one pass and reports what it removed.
@@ -186,6 +188,15 @@ func (s StateSweep) retireUnused(key string, now time.Time, retention time.Durat
 	if err != nil || now.Sub(last) <= retention {
 		return counts, err
 	}
+	// A process reopening the project stamps it before it writes there, so
+	// each removal reads the stamp again first.
+	stillUnused := func(path string) (bool, error) {
+		if s.beforeRemoval != nil {
+			s.beforeRemoval(path)
+		}
+		last, err := s.lastUse(key)
+		return err == nil && now.Sub(last) > retention, err
+	}
 	removed := false
 	defer func() {
 		if removed {
@@ -201,6 +212,9 @@ func (s StateSweep) retireUnused(key string, now time.Time, retention time.Durat
 		if err != nil {
 			return counts, err
 		}
+		if unused, err := stillUnused(relevance); err != nil || !unused {
+			return counts, err
+		}
 		if err := os.RemoveAll(relevance); err != nil {
 			return counts, err
 		}
@@ -208,7 +222,7 @@ func (s StateSweep) retireUnused(key string, now time.Time, retention time.Durat
 		removed = true
 	}
 	sessions := s.dir(sessionsCategory, key)
-	gone, err := removeEmptySessionFolder(sessions)
+	gone, err := removeEmptySessionFolder(sessions, stillUnused)
 	if err != nil {
 		return counts, err
 	}
@@ -224,6 +238,9 @@ func (s StateSweep) retireUnused(key string, now time.Time, retention time.Durat
 	if exists(staged) && len(owned) == 0 {
 		size, err := treeSize(staged)
 		if err != nil {
+			return counts, err
+		}
+		if unused, err := stillUnused(staged); err != nil || !unused {
 			return counts, err
 		}
 		if err := os.RemoveAll(staged); err != nil {
@@ -280,8 +297,8 @@ func (s StateSweep) lastUse(key string) (time.Time, error) {
 }
 
 // removeEmptySessionFolder removes a session folder holding no session log,
-// once no process holds a lock file in it.
-func removeEmptySessionFolder(dir string) (bool, error) {
+// once no process holds a lock file in it and stillUnused still holds.
+func removeEmptySessionFolder(dir string, stillUnused func(path string) (bool, error)) (bool, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
@@ -307,6 +324,9 @@ func removeEmptySessionFolder(dir string) (bool, error) {
 			return false, nil
 		}
 		defer func() { _ = lock.Unlock() }()
+	}
+	if unused, err := stillUnused(dir); err != nil || !unused {
+		return false, err
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return false, err
