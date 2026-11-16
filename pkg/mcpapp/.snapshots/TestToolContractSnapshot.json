@@ -171,6 +171,19 @@
           "description": "the torn-down session's subject label",
           "type": "string"
         },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
+        },
         "session": {
           "description": "the torn-down session, on teardown by handle",
           "type": "string"
@@ -212,6 +225,19 @@
         "branch": {
           "description": "the now-effective branch binding; empty after clear",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
         },
         "status": {
           "type": "string"
@@ -291,6 +317,19 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
+        },
         "serve": {
           "description": "the reads run, entries served in full, the entries to judge and the entries set aside; nothing is cut",
           "type": "string"
@@ -325,6 +364,19 @@
         "language": {
           "description": "configured graph language; empty = English",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
         },
         "participant": {
           "description": "configured local participant (canonical name)",
@@ -667,6 +719,19 @@
             "array"
           ]
         },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
+        },
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
           "type": "string"
@@ -999,6 +1064,19 @@
         "instructions": {
           "type": "string"
         },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
+        },
         "parked": {
           "type": "boolean"
         },
@@ -1079,6 +1157,19 @@
         },
         "next_offset": {
           "type": "integer"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
         },
         "offset": {
           "type": "integer"
@@ -1173,6 +1264,19 @@
         "next_page": {
           "description": "set while more contracts follow: pass it as page for them",
           "type": "integer"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
         }
       },
       "required": [
@@ -1278,6 +1382,19 @@
         "label": {
           "description": "the session's subject label, when one was recorded",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
         },
         "open_instances": {
           "description": "current serve for every running instance; the session shell's serve carries the open-threads block",
@@ -1539,6 +1656,19 @@
                 "type": [
                   "null",
                   "array"
+                ]
+              },
+              "notices": {
+                "additionalProperties": false,
+                "properties": {
+                  "proof": {
+                    "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+                    "type": "string"
+                  }
+                },
+                "type": [
+                  "null",
+                  "object"
                 ]
               },
               "open_threads": {
@@ -1932,6 +2062,19 @@
           "description": "readable incomplete-indexing notice",
           "type": "string"
         },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
+        },
         "results": {
           "description": "matching entries with citations",
           "type": "string"
@@ -2016,6 +2159,19 @@
       "properties": {
         "entries": {
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
         }
       },
       "required": [
@@ -2083,6 +2239,19 @@
         "handle": {
           "description": "attachment handle; pass it in a report's attachments field",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
         }
       },
       "required": [
@@ -2406,6 +2575,19 @@
           "type": [
             "null",
             "array"
+          ]
+        },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
           ]
         },
         "open_threads": {
@@ -2870,6 +3052,19 @@
             "array"
           ]
         },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
+        },
         "open_threads": {
           "description": "this dialogue's own open threads, carried on the session shell's serves. Other dialogues are never listed here",
           "type": "string"
@@ -3119,6 +3314,19 @@
         "hint": {
           "description": "one-line pointer to the view layout grammar, left out while the call proves it holds it",
           "type": "string"
+        },
+        "notices": {
+          "additionalProperties": false,
+          "properties": {
+            "proof": {
+              "description": "set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out",
+              "type": "string"
+            }
+          },
+          "type": [
+            "null",
+            "object"
+          ]
         },
         "sections": {
           "type": "string"

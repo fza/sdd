@@ -89,6 +89,7 @@ type AbandonResult struct {
 	HeldMarkers      []string   `json:"held_markers,omitempty" jsonschema:"WIP markers held; left standing — resume later or close via groom"`
 	Instructions     string     `json:"instructions,omitempty"`
 	Base             *BaseServe `json:"base_junction,omitempty" jsonschema:"the session shell's current serve — where the dialogue now stands"`
+	ResultProofs
 }
 
 type ParkArgs struct {
@@ -105,6 +106,7 @@ type ParkResult struct {
 	Step         string     `json:"step"`
 	Instructions string     `json:"instructions,omitempty"`
 	Base         *BaseServe `json:"base_junction,omitempty" jsonschema:"the session shell's serve — where the dialogue lands"`
+	ResultProofs
 }
 
 type ChooserOptionResult struct {
@@ -202,6 +204,7 @@ type ServeResult struct {
 	Parked           bool                    `json:"parked,omitempty" jsonschema:"set when the move is parked at step for a person; nothing was written"`
 	Reason           string                  `json:"reason,omitempty" jsonschema:"why the move is parked"`
 	Resume           string                  `json:"resume,omitempty" jsonschema:"the call a person resumes the parked move with"`
+	ResultProofs
 }
 
 // DispatchResult is one delegate handoff: the child handles a delegate
@@ -256,6 +259,7 @@ type ResumeSessionResult struct {
 	Open             []ServeResult           `json:"open_instances" jsonschema:"current serve for every running instance; the session shell's serve carries the open-threads block"`
 	Framing          string                  `json:"framing,omitempty"`
 	Instructions     string                  `json:"instructions,omitempty"`
+	ResultProofs
 }
 
 type BindBranchArgs struct {
@@ -267,6 +271,7 @@ type BindBranchArgs struct {
 type BindBranchResult struct {
 	Branch string `json:"branch,omitempty" jsonschema:"the now-effective branch binding; empty after clear"`
 	Status string `json:"status"`
+	ResultProofs
 }
 
 type StageAttachmentArgs struct {
@@ -285,6 +290,7 @@ type SearchReplaceArg struct {
 
 type StageAttachmentResult struct {
 	Handle string `json:"handle" jsonschema:"attachment handle; pass it in a report's attachments field"`
+	ResultProofs
 }
 
 // --- free reads -------------------------------------------------------------
@@ -311,6 +317,7 @@ type SearchResult struct {
 	Coverage []sdd.SearchCoverage `json:"coverage,omitempty" jsonschema:"published entry coverage for each fixed search snapshot"`
 	Notice   string               `json:"notice,omitempty" jsonschema:"readable incomplete-indexing notice"`
 	Results  string               `json:"results" jsonschema:"matching entries with citations"`
+	ResultProofs
 }
 
 type ViewArgs struct {
@@ -326,6 +333,7 @@ type ViewArgs struct {
 type ViewResult struct {
 	Sections string `json:"sections"`
 	Hint     string `json:"hint,omitempty" jsonschema:"one-line pointer to the view layout grammar, left out while the call proves it holds it"`
+	ResultProofs
 }
 
 type ShowArgs struct {
@@ -340,6 +348,7 @@ type ShowArgs struct {
 
 type ShowResult struct {
 	Entries string `json:"entries"`
+	ResultProofs
 }
 
 type GatherArgs struct {
@@ -354,6 +363,7 @@ type GatherArgs struct {
 
 type GatherResult struct {
 	Serve string `json:"serve" jsonschema:"the reads run, entries served in full, the entries to judge and the entries set aside; nothing is cut"`
+	ResultProofs
 }
 
 type ReadAttachmentArgs struct {
@@ -375,6 +385,7 @@ type ReadAttachmentResult struct {
 	More       bool     `json:"more"`
 	Available  []string `json:"available" jsonschema:"the entry's attachment filenames"`
 	Path       string   `json:"path,omitempty" jsonschema:"absolute filesystem path; present only for local (stdio) clients, which may read the file directly instead of paging"`
+	ResultProofs
 }
 
 type InfoArgs struct {
@@ -388,6 +399,7 @@ type InfoResult struct {
 	Language    string `json:"language,omitempty" jsonschema:"configured graph language; empty = English"`
 	Search      string `json:"search" jsonschema:"available retrieval modes: text or vector,text"`
 	Version     string `json:"version,omitempty"`
+	ResultProofs
 }
 
 type RegistryArgs struct {
@@ -407,6 +419,7 @@ type RegistryFuncResult struct {
 type RegistryResult struct {
 	Functions []RegistryFuncResult `json:"functions"`
 	NextPage  int                  `json:"next_page,omitempty" jsonschema:"set while more contracts follow: pass it as page for them"`
+	ResultProofs
 }
 
 func (s *toolSet) register(srv *mcp.Server) {
@@ -575,6 +588,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		ss.mu.Unlock()
 		return nil, err
 	}
+	noteCallSession(ctx, ss)
 	return ss, nil
 }
 
@@ -1334,12 +1348,45 @@ func (s *toolSet) registryDocs(ctx context.Context, req *mcp.CallToolRequest, ar
 // its code rather than its prose (d-cpt-s2i). Uncoded errors pass unchanged.
 func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
-		res, out, err := handler(ctx, req, in)
+		slot := &callSlot{}
+		res, out, err := handler(context.WithValue(ctx, callSlotKey{}, slot), req, in)
 		var coded *sdd.ApplicationError
 		if err != nil && errors.As(err, &coded) && coded.Code != "" {
 			err = fmt.Errorf("%s: %w", coded.Code, err)
 		}
+		if slot.finish != nil {
+			slot.finish()
+		}
+		if err != nil {
+			return res, out, err
+		}
+		if carrier, ok := any(&out).(interface{ setProofNotice(string) }); ok && len(slot.failed) > 0 {
+			carrier.setProofNotice(proofNotice(slot.failed))
+		}
 		return res, out, err
+	}
+}
+
+type callSlotKey struct{}
+
+// callSlot lets the session a call attaches name how the call ends once its
+// handler ran: finish leaves the call's failed proofs in failed, for
+// toolBoundary to put on the result.
+type callSlot struct {
+	finish func()
+	failed []sdd.FailedProof
+}
+
+// noteCallSession hands the call's slot the session the call attached.
+func noteCallSession(ctx context.Context, ss *shellSession) {
+	slot, ok := ctx.Value(callSlotKey{}).(*callSlot)
+	if !ok {
+		return
+	}
+	slot.finish = func() {
+		ss.mu.Lock()
+		defer ss.mu.Unlock()
+		slot.failed = ss.root.FailedProofs()
 	}
 }
 

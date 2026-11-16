@@ -187,6 +187,45 @@ func (s *Session) holds(p Piece) (string, bool, bool) {
 	return "", false, false
 }
 
+// FailedProof is a proof the call carries that holds no piece: Issued
+// reports whether its tag was ever issued, so only its word is wrong.
+type FailedProof struct {
+	Proof  model.Proof
+	Issued bool
+}
+
+// FailedProofs lists the proofs the call carries whose tag the session never
+// issued or whose word its tag never asked for; a tag the call also lists in
+// reread is left out. A spent proof is no failure: its piece serves in full
+// under a fresh tag, as after a last challenge.
+func (s *Session) FailedProofs() []FailedProof {
+	var failed []FailedProof
+	for _, proof := range s.call.held {
+		if s.call.reread[proof.Tag] {
+			continue
+		}
+		anchor, issued := s.anchors[proof.Tag]
+		if issued && anchor.askedFor(proof.Word) {
+			continue
+		}
+		failed = append(failed, FailedProof{Proof: proof, Issued: issued})
+	}
+	return failed
+}
+
+// askedFor reports whether word answers one of the anchor's proofs up to its
+// current one, spent ones included.
+func (a issuedAnchor) askedFor(word string) bool {
+	for step := 0; step <= a.step; step++ {
+		at := a
+		at.step = step
+		if at.proves(word) {
+			return true
+		}
+	}
+	return false
+}
+
 // ServePiece decides how the call in flight serves p: its pointer when the
 // call holds it, otherwise in full under a fresh tag place puts into the
 // content. covers are the entries the piece carries whole, held from then

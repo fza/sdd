@@ -81,4 +81,5 @@ over: list the tags from every earlier result, not only the last, as a piece
 served many calls ago (the type-system overview, a framing block, an entry)
 serves in full again on any call without its proof. List in reread the tag
 or name of a piece you no longer see: it serves in full again. Never guess a
-word: a missing or wrong proof costs only the full text.`
+word: a missing or wrong proof costs only the full text, and the result's
+notices.proof names a wrong one.`

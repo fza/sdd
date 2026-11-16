@@ -17,6 +17,38 @@ type Proofs struct {
 	Reread []string `json:"reread,omitempty" jsonschema:"tags or piece names of served pieces you no longer see; they serve in full again"`
 }
 
+// ResultProofs names, on a result from an attached session, how the proofs
+// the call listed fared.
+type ResultProofs struct {
+	Notices *ResultNotices `json:"notices,omitempty"`
+}
+
+// ResultNotices carries the notices a result holds beside its payload.
+type ResultNotices struct {
+	Proof string `json:"proof,omitempty" jsonschema:"set when a proof you listed in held failed: each one, and whether its word is wrong or its tag unknown. Its piece served in full; correct the word from the text or leave the tag out"`
+}
+
+func (r *ResultProofs) setProofNotice(notice string) {
+	if r.Notices == nil {
+		r.Notices = &ResultNotices{}
+	}
+	r.Notices.Proof = notice
+}
+
+// proofNotice names the proofs of a call that failed, so the agent corrects
+// or drops them.
+func proofNotice(failed []sdd.FailedProof) string {
+	names := make([]string, 0, len(failed))
+	for _, f := range failed {
+		reason := "no such tag"
+		if f.Issued {
+			reason = "not the word its proof asks for"
+		}
+		names = append(names, f.Proof+" ("+reason+")")
+	}
+	return fmt.Sprintf("these held proofs failed, so their pieces served in full: %s. A proof works once: send the word the tag's last next proof asked for, else the word right after the tag, in its full text, or leave the tag out", strings.Join(names, ", "))
+}
+
 // heldName names a held piece in a pointer by the tag it is held under, then
 // its name and how the next call proves it: an agent read the word after a
 // tag's mark in the pointer as the proof word.

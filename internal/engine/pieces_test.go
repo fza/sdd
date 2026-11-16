@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 
 	"github.com/networkteam/sdd/internal/engine"
@@ -311,5 +312,55 @@ func TestADeferralFollowUpSpendsNoProof(t *testing.T) {
 	session.BeginCall([]model.Proof{proof}, nil)
 	if _, held := session.Holds(lane); !held {
 		t.Error("the proof should still hold the piece once the deferral ends")
+	}
+}
+
+// FailedProofs names a proof whose word is not the one after its tag and one
+// whose tag was never issued; a right proof and a tag listed in reread are
+// not failures.
+func TestFailedProofsNamesWrongWordsAndUnknownTags(t *testing.T) {
+	lane := engine.Piece{Name: "lane step", Hash: "h1"}
+	session := newPieceSession(nil)
+	session.BeginCall(nil, nil)
+	proof := servedInFull(t, session, lane)
+	session.RecordAnchors()
+
+	wrong := model.Proof{Tag: proof.Tag, Word: "elsewhere"}
+	unknown := model.Proof{Tag: "zzzz", Word: proof.Word}
+	session.BeginCall([]model.Proof{proof, wrong, unknown}, nil)
+	want := []engine.FailedProof{{Proof: wrong, Issued: true}, {Proof: unknown}}
+	if got := session.FailedProofs(); !slices.Equal(got, want) {
+		t.Errorf("failed proofs = %+v, want %+v", got, want)
+	}
+
+	session.BeginCall([]model.Proof{wrong}, []string{proof.Tag})
+	if got := session.FailedProofs(); len(got) != 0 {
+		t.Errorf("a tag listed in reread should not count as a failed proof, got %+v", got)
+	}
+}
+
+// A spent proof is no failed proof: its piece serves in full under a fresh
+// tag, as after a last challenge, while a wrong word still fails.
+func TestFailedProofsLeavesOutASpentProof(t *testing.T) {
+	lane := engine.Piece{Name: "lane step", Hash: "h1"}
+	session := newPieceSession(nil)
+	session.BeginCall(nil, nil)
+	proof := servedInFull(t, session, lane)
+	session.RecordAnchors()
+
+	session.BeginCall([]model.Proof{proof}, nil)
+	session.ServePiece(lane, nil, placeIn(pieceText))
+	if got := session.FailedProofs(); len(got) != 0 {
+		t.Errorf("the proof a pointer of the call rests on should not fail within it, got %+v", got)
+	}
+	session.RecordAnchors()
+
+	wrong := model.Proof{Tag: proof.Tag, Word: "elsewhere"}
+	session.BeginCall([]model.Proof{proof, wrong}, nil)
+	if _, held := session.Holds(lane); held {
+		t.Fatal("a spent proof should not hold the piece")
+	}
+	if got := session.FailedProofs(); !slices.Equal(got, []engine.FailedProof{{Proof: wrong, Issued: true}}) {
+		t.Errorf("only the wrong word should fail, never the spent proof, got %+v", got)
 	}
 }
