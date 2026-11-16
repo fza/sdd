@@ -82,11 +82,13 @@ func TestResolvedPrefilter(t *testing.T) {
 // A dedicated judge is named by llm_prefilter.provider only: from
 // llm.provider it would run on the llm block's key, endpoint and model.
 func TestResolvedPrefilter_RefusesADedicatedJudgeFromTheLLMBlock(t *testing.T) {
-	for _, provider := range []string{"systemone", "cohere"} {
-		llm := model.LLMConfig{Provider: provider, Model: "haiku", APIKeys: map[string]string{provider: "k"}}
+	for _, llm := range []model.LLMConfig{
+		{Provider: "systemone", Model: "haiku", APIKeys: map[string]string{"systemone": "k"}},
+		{Provider: "cohere", Model: "haiku", APIKeys: map[string]string{"cohere": "k"}},
+	} {
 		_, err := model.BaseConfig{LLM: llm}.ResolvedPrefilter()
 		if err == nil || !strings.Contains(err.Error(), "llm_prefilter.provider") {
-			t.Errorf("llm.provider %s should be refused, pointing at llm_prefilter.provider, got %v", provider, err)
+			t.Errorf("llm.provider %s should be refused, pointing at llm_prefilter.provider, got %v", llm.Provider, err)
 		}
 	}
 }
