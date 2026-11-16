@@ -112,6 +112,9 @@ func TestUpdaterKeepsTheCopyInUseOnAFailure(t *testing.T) {
 		{name: "copy lacking built-in rules", reason: "lacks rules", fail: func(t *testing.T, releases *testsupport.GitleaksReleases) {
 			releases.Publish("v100.0.0", testsupport.SecretRuleFixture(t, "one-rule.toml"))
 		}},
+		{name: "copy that stops flagging the built-in samples", reason: "no longer flags", fail: func(t *testing.T, releases *testsupport.GitleaksReleases) {
+			releases.Publish("v100.0.0", append(testsupport.NewerGitleaksRules(t), "\n[[allowlists]]\nregexes = ['''.''']\n"...))
+		}},
 		{name: "copy with an unknown key", reason: "unknown keys", fail: func(t *testing.T, releases *testsupport.GitleaksReleases) {
 			releases.Publish("v100.0.0", append(testsupport.NewerGitleaksRules(t), "\nsddVersion = 1\n"...))
 		}},

@@ -123,6 +123,10 @@ func ParseFetchedRules(data []byte) (*RuleSet, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = keepsTheFloor(set)
+	if err != nil {
+		return nil, err
+	}
 	return set, nil
 }
 
