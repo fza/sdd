@@ -28,6 +28,9 @@ const (
 	DefaultModel    = "jev-1.14.0"
 	// MaxInputTokens is Jev's limit for state plus the longest question.
 	MaxInputTokens = 32_000
+	// MaxRequestTokens is Jev's limit for one request: the state and every
+	// question.
+	MaxRequestTokens = 64_000
 	// questionReserve keeps room for the question text in the state limit.
 	questionReserve = 400
 )
@@ -88,10 +91,21 @@ func New(options Options) (*Scorer, error) {
 		identity: llm.Identity{Provider: provider, Model: model, Host: parsed.Hostname()}}, nil
 }
 
+// A call's questions share MaxRequestTokens with the state, so maxBatch caps
+// them to what fits beside a full state; each candidate's key in the state
+// comes out of the state's budget.
+var (
+	questionTokens = relevance.EstimateTokens(`"q999":{"type":"noul","instructions":` + strconv.Quote(fmt.Sprintf(Question, "`candidates.c999`")) + `},`)
+	stateKeyTokens = relevance.EstimateTokens(`"c999":"",`)
+	maxBatch       = (MaxRequestTokens - (MaxInputTokens - questionReserve)) / questionTokens
+)
+
 func (s *Scorer) Direction() relevance.Direction { return relevance.Both }
-func (s *Scorer) MaxBatch() int                  { return 0 }
-func (s *Scorer) MaxInputTokens() int            { return MaxInputTokens - questionReserve }
-func (s *Scorer) MaxPairTokens() int             { return 0 }
+func (s *Scorer) MaxBatch() int                  { return maxBatch }
+func (s *Scorer) MaxInputTokens() int {
+	return MaxInputTokens - questionReserve - maxBatch*stateKeyTokens
+}
+func (s *Scorer) MaxPairTokens() int { return 0 }
 
 type question struct {
 	Type         string `json:"type"`
