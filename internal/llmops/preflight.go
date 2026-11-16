@@ -95,7 +95,7 @@ func Preflight(ctx context.Context, runner llm.Runner, entry *model.Entry, graph
 	if err != nil {
 		return nil, fmt.Errorf("running pre-flight validator: %w", err)
 	}
-	result.Findings = flagUnlocated(result.Findings, req.UserPrompt)
+	result.Findings = flagUnlocated(result.Findings, req.Combined())
 	return result, nil
 }
 

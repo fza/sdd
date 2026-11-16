@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/networkteam/sdd/internal/basefacts"
 	"github.com/networkteam/sdd/internal/llmops"
@@ -17,10 +18,20 @@ func answering(text string) llm.Runner {
 	})
 }
 
+// quoteGraph carries an active contract, which pre-flight renders into its
+// system prompt rather than the user prompt.
 func quoteGraph() (*model.Entry, *model.Graph) {
 	fact := &model.Entry{ID: basefacts.RefKindsFactID, Type: model.TypeSignal, Layer: model.LayerProcess, Kind: model.KindFact, Content: "ref-kind vocabulary stub"}
+	contract := &model.Entry{
+		ID:      "20260408-120000-d-prc-ccc",
+		Type:    model.TypeDecision,
+		Layer:   model.LayerProcess,
+		Kind:    model.KindContract,
+		Content: "Every release note names the person who owns its follow-up.",
+		Time:    time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC),
+	}
 	proposed := &model.Entry{Type: model.TypeSignal, Layer: model.LayerTactical, Content: "The release procedure gains a fixed section of its notes template."}
-	return proposed, model.NewGraph([]*model.Entry{fact})
+	return proposed, model.NewGraph([]*model.Entry{fact, contract})
 }
 
 func TestPreflightFlagsAFindingWhoseQuoteLocatesNothing(t *testing.T) {
@@ -31,6 +42,7 @@ func TestPreflightFlagsAFindingWhoseQuoteLocatesNothing(t *testing.T) {
 		wantFlagged  bool
 	}{
 		{"a quote of the draft stands", "gains a fixed section … notes template", llmops.SeverityHigh, false},
+		{"a quote of an active contract stands", "names the person who owns its follow-up", llmops.SeverityHigh, false},
 		{"an invented quote is capped and flagged", "the Storybook proof requires worktime reasoning", llmops.SeverityMedium, true},
 		{"an empty quote is capped and flagged", "", llmops.SeverityMedium, true},
 	}
@@ -67,6 +79,7 @@ func TestPreflightLightFlagsAFindingWhoseQuoteLocatesNothing(t *testing.T) {
 		wantFlagged bool
 	}{
 		{"a quote of the draft blocks", "gains a fixed section", false},
+		{"a quote of an active contract blocks", "names the person who owns its follow-up", false},
 		{"an invented quote is flagged below blocking", "Canada-Family Conversation Storybook", true},
 	}
 	for _, tt := range tests {
