@@ -34,7 +34,7 @@ func (h *Handler) repoRootOf(dir string) string {
 // yet, giving it the repository of its own it needs.
 func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget, changed *bool) error {
 	if !cmd.SetUpProject || h.projectRepos == nil || h.committerAt == nil {
-		return fmt.Errorf("%s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", cmd.ProjectDir, meta.ErrNotAProject, cmd.ProjectDir)
+		return fmt.Errorf("%s leads to %s: %w; clone the project there, or set up a new one with `sdd init --project-dir %s`", cmd.ProjectDir, projectRoot, meta.ErrNotAProject, cmd.ProjectDir)
 	}
 	err := gitignoreLine(cmd.GraphDir)
 	if err != nil {

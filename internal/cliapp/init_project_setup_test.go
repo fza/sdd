@@ -271,6 +271,38 @@ func TestInitFollowsTheAdviceForARecordedPointerAtAMissingProject(t *testing.T) 
 	}
 }
 
+// From a work repository reached through a symlink, project_dir resolves from
+// the real folder, so init's refusals name the folder it looked in.
+func TestInitNamesTheRealProjectFolderFromASymlinkedWorkRepository(t *testing.T) {
+	root := canonicalTemp(t)
+	isolateGitIdentity(t, root)
+	realWork := filepath.Join(root, "real", "work")
+	err := os.MkdirAll(realWork, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initRepo(t, realWork)
+	link := filepath.Join(root, "wl")
+	err = os.Symlink(realWork, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	realProject := filepath.Join(root, "real", "work-sdd")
+
+	_, err = runAppErr(t, link, "init", "--project-dir", "../work-sdd", "--scope", "project", "--participant", "Ada")
+
+	if err == nil || !strings.Contains(err.Error(), realProject) {
+		t.Errorf("the setup's missing values should name the folder it sets the project up in: %v", err)
+	}
+
+	writeFile(t, filepath.Join(realWork, ".sdd", "config.yaml"), "project_dir: ../work-sdd\nskill_scope: project\nsupported_agents: [claude]\n")
+	_, err = runAppErr(t, link, "init", "--participant", "Ada")
+
+	if err == nil || !strings.Contains(err.Error(), realProject) {
+		t.Errorf("a recorded pointer at a missing project should name the folder it looked in: %v", err)
+	}
+}
+
 // On a filesystem that ignores case, a folder spelled in other case is the
 // folder it names.
 func TestInitJudgesAProjectFolderSpelledInOtherCase(t *testing.T) {

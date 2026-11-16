@@ -36,7 +36,7 @@ The graph can live in an sdd project of its own, beside the repository where the
 
 ```yaml
 # work repository: .sdd/config.yaml, committed
-project_dir: ../app-sdd       # folder holding the project's .sdd/, relative to this repository's root
+project_dir: ../app-sdd       # folder holding the project's .sdd/, relative to this repository's root: its real folder, symlinks resolved
 skill_scope: project
 supported_agents: [claude]
 ```
