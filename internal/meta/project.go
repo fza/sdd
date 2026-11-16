@@ -175,8 +175,9 @@ type RootOf func(path string) (string, error)
 
 // RequireProjectApart refuses a project at projectRoot that a work tree at
 // workRoot cannot point at: one inside the repository holding the work tree,
-// a repository of its own nested there included, or one containing the work
-// tree. subject opens the refusal, naming where the project came from.
+// a repository of its own nested there included; one containing the work
+// tree; or one inside another repository rather than at its root. subject
+// opens the refusal, naming where the project came from.
 func RequireProjectApart(subject, workRoot, projectRoot string, rootOf RootOf) error {
 	outer, err := rootOf(workRoot)
 	if err != nil {
@@ -190,6 +191,13 @@ func RequireProjectApart(subject, workRoot, projectRoot string, rootOf RootOf) e
 	}
 	if WithinDir(projectRoot, workRoot) {
 		return fmt.Errorf("%s contains the work repository at %s; the project needs a repository of its own beside it", subject, workRoot)
+	}
+	projectRepo, err := rootOf(projectRoot)
+	if err != nil {
+		return err
+	}
+	if projectRepo != "" && !SameDir(projectRepo, projectRoot) {
+		return fmt.Errorf("%s lies inside the repository at %s; the project needs a repository of its own", subject, projectRepo)
 	}
 	return nil
 }

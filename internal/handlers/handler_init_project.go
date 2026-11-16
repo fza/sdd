@@ -45,9 +45,6 @@ func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projec
 	if err != nil {
 		return err
 	}
-	if root != "" && !meta.SameDir(root, projectRoot) {
-		return fmt.Errorf("--project-dir %s lies inside the repository at %s; the project needs a repository of its own", cmd.ProjectDir, root)
-	}
 	graphDir := cmd.GraphDir
 	if graphDir == "" {
 		graphDir = model.DefaultGraphDirFor(true)

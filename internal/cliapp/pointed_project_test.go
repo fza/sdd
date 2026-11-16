@@ -748,3 +748,31 @@ func TestPointedCaptureUnderAnInheritedGitDir(t *testing.T) {
 		})
 	}
 }
+
+func TestProjectDirInsideAnotherRepositoryIsRefused(t *testing.T) {
+	work, project := pointedRepos(t)
+	mono := filepath.Join(filepath.Dir(work), "mono")
+	sub := filepath.Join(mono, "sub")
+	if err := os.MkdirAll(filepath.Join(sub, ".sdd", "graph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(sub, ".sdd", "config.yaml"), readFile(t, filepath.Join(project, ".sdd", "config.yaml")))
+	writeFile(t, filepath.Join(sub, ".sdd", "config.local.yaml"), "participant: Ada\n")
+	initRepo(t, mono)
+	writeFile(t, filepath.Join(work, ".sdd", "config.local.yaml"), "project_dir: ../mono/sub\n")
+
+	_, err := runAppErr(t, work,
+		"new", "signal", "tactical", "A project inside another repository must be refused.",
+		"--confidence", "high", "--skip-preflight", "--summary", "Refused capture.", "--title", "Refused capture",
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "lies inside the repository") {
+		t.Fatalf("a project_dir inside another repository should be refused: %v", err)
+	}
+	if entries := graphEntries(t, filepath.Join(sub, ".sdd", "graph")); len(entries) != 0 {
+		t.Errorf("a refused capture should write nothing, found %v", entries)
+	}
+	if subject := headSubject(t, mono); subject != "seed" {
+		t.Errorf("a refused capture should commit nothing in the other repository, HEAD is %q", subject)
+	}
+}
