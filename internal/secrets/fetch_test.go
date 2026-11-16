@@ -161,3 +161,40 @@ func TestUpdaterKeepsTheCopyInUseOnAFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdaterClearsTheFailureOnALaterSuccess(t *testing.T) {
+	cases := []struct {
+		name    string
+		publish string
+	}{
+		{name: "a newer release accepted", publish: "v100.0.0"},
+		{name: "no newer release", publish: "v99.0.0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			releases := test.NewGitleaksReleases(t)
+			releases.Publish("v99.0.0", test.NewerGitleaksRules(t))
+			dir := t.TempDir()
+			updater := newUpdater(releases, dir)
+			err := updater.Update(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			releases.FailWith(http.StatusInternalServerError)
+			if updater.Update(t.Context()) == nil {
+				t.Fatal("the failed fetch should be reported")
+			}
+			releases.FailWith(0)
+			releases.Publish(tc.publish, test.NewerGitleaksRules(t))
+
+			err = updater.Update(t.Context())
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := status(t, dir); got.LastFailure != "" || !got.LastFailureAt.IsZero() {
+				t.Errorf("a successful fetch should clear the earlier failure, got %+v", got)
+			}
+		})
+	}
+}
