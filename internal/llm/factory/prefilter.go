@@ -3,6 +3,7 @@ package factory
 import (
 	"cmp"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/networkteam/sdd/internal/llmops"
@@ -40,6 +41,12 @@ func NewPrefilter(cfg model.LLMPrefilterConfig, sink llm.StatsSink) (Prefilter, 
 		}
 		if d > 0 {
 			timeout = d
+		}
+	}
+	if cfg.Provider.Dedicated() {
+		ignored := chatOnlyKeys(cfg)
+		if len(ignored) > 0 {
+			return Prefilter{}, fmt.Errorf("llm_prefilter: provider %s takes no %s: chat providers only", cfg.Provider, strings.Join(ignored, ", "))
 		}
 	}
 	var (
@@ -98,4 +105,23 @@ func prefilterKey(cfg model.LLMPrefilterConfig) (string, error) {
 		return "", fmt.Errorf("llm_prefilter: provider %s needs llm_prefilter.api_keys.%s", cfg.Provider, cfg.Provider)
 	}
 	return key, nil
+}
+
+// chatOnlyKeys lists the keys cfg sets that only the generate judge's chat
+// model reads.
+func chatOnlyKeys(cfg model.LLMPrefilterConfig) []string {
+	var keys []string
+	if cfg.Concurrency != 0 {
+		keys = append(keys, "concurrency")
+	}
+	if cfg.OllamaEndpoint != "" {
+		keys = append(keys, "ollama_endpoint")
+	}
+	if len(cfg.Params) > 0 {
+		keys = append(keys, "params")
+	}
+	if cfg.Retry != (model.RetryConfig{}) {
+		keys = append(keys, "retry")
+	}
+	return keys
 }

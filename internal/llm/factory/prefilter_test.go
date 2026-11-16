@@ -48,6 +48,8 @@ func TestNewPrefilter_RefusesABadBlock(t *testing.T) {
 		{"cohere without its key", model.LLMPrefilterConfig{Provider: "cohere"}, "llm_prefilter: provider cohere needs llm_prefilter.api_keys.cohere"},
 		{"relative endpoint", model.LLMPrefilterConfig{Provider: "cohere", Endpoint: "/v3/rerank", APIKeys: map[string]string{"cohere": "k"}}, "not an absolute URL"},
 		{"unknown provider", model.LLMPrefilterConfig{Provider: "bm25"}, "unknown llm provider \"bm25\""},
+		{"params on systemone", model.LLMPrefilterConfig{Provider: "systemone", Params: map[string]string{"temperature": "0"}, APIKeys: map[string]string{"systemone": "k"}}, "provider systemone takes no params"},
+		{"concurrency and retry on cohere", model.LLMPrefilterConfig{Provider: "cohere", Concurrency: 4, Retry: model.RetryConfig{MaxAttempts: 2}, APIKeys: map[string]string{"cohere": "k"}}, "provider cohere takes no concurrency, retry"},
 		{"bad timeout", model.LLMPrefilterConfig{Provider: "claude-cli", Timeout: "soon"}, "parsing timeout"},
 	}
 	for _, tc := range cases {
