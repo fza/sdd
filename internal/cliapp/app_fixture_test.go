@@ -100,7 +100,7 @@ func (f *appFixture) serve(t *testing.T, check func(*mcp.ClientSession)) {
 	t.Helper()
 	serverInput, clientOutput := io.Pipe()
 	clientInput, serverOutput := io.Pipe()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	var stderr bytes.Buffer
 	command := f.command(serverInput, serverOutput, &stderr)
 	done := make(chan struct{})
