@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -27,30 +28,74 @@ func NewAllows(stateRoot string) *Allows {
 }
 
 // Allowed reports whether hash is the one recorded for the repository key.
-func (a *Allows) Allowed(key, hash string) (bool, error) {
+// An unreadable record allows nothing; the returned notice says so and how
+// to rewrite it, rather than failing every call that reads the hooks.
+func (a *Allows) Allowed(key, hash string) (allowed bool, notice string) {
 	record, err := a.load()
 	if err != nil {
-		return false, err
+		return false, fmt.Sprintf("The hook allow record at %s is unreadable (%v), so nothing counts as allowed; `sdd hooks allow` rewrites it.", a.path, err)
 	}
-	return record[key] == hash, nil
+	return record[key] == hash, ""
 }
 
-// Record sets the repository key's allowed hash.
+// Record sets the repository key's allowed hash. It holds a lock on the
+// record across reading and writing it, writes a new file and renames it
+// into place, and keeps the record and its folder private to their owner. An
+// unreadable record is replaced.
 func (a *Allows) Record(key, hash string) error {
-	record, err := a.load()
+	dir := filepath.Dir(a.path)
+	err := os.MkdirAll(dir, 0o700)
 	if err != nil {
 		return err
+	}
+	err = os.Chmod(dir, 0o700)
+	if err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(a.path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX)
+	if err != nil {
+		return fmt.Errorf("locking %s: %w", a.path, err)
+	}
+	record, err := a.load()
+	if err != nil {
+		record = map[string]string{}
 	}
 	record[key] = hash
 	encoded, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return err
 	}
-	err = os.MkdirAll(filepath.Dir(a.path), 0o700)
+	return writeAtomically(a.path, append(encoded, '\n'))
+}
+
+// writeAtomically writes data to a new private file beside path and renames
+// it over path, so a reader sees the old record or the new one, never part.
+func writeAtomically(path string, data []byte) error {
+	file, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(a.path, append(encoded, '\n'), 0o600)
+	defer os.Remove(file.Name())
+	_, err = file.Write(data)
+	if err != nil {
+		file.Close()
+		return err
+	}
+	err = file.Chmod(0o600)
+	if err != nil {
+		file.Close()
+		return err
+	}
+	err = file.Close()
+	if err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 func (a *Allows) load() (map[string]string, error) {

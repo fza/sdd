@@ -50,13 +50,11 @@ func (c *Commands) Hooks(ctx context.Context) ([]model.Hook, error) {
 		if err != nil {
 			return nil, err
 		}
-		allowed, err := c.allows.Allowed(group.gate.key, hash)
-		if err != nil {
-			return nil, err
-		}
+		allowed, notice := c.allows.Allowed(group.gate.key, hash)
 		for _, i := range group.layers {
 			for j := range layers[i].hooks {
 				layers[i].hooks[j].NeedsAllow = !allowed
+				layers[i].hooks[j].Notice = notice
 			}
 		}
 	}

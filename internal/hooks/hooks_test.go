@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -210,6 +211,79 @@ func TestAChangedCommittedHookNeedsAllowAgain(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// An unreadable allow record allows nothing and says so, and `sdd hooks
+// allow` rewrites it.
+func TestACorruptAllowRecordAllowsNothingAndIsRewritten(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
+	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	record := filepath.Join(w.stateRoot, "hooks", "allowed.json")
+	write(t, record, "{not json")
+
+	hook := w.only(t)
+	if !hook.NeedsAllow || !strings.Contains(hook.Notice, record) || !strings.Contains(hook.Notice, "sdd hooks allow") {
+		t.Fatalf("an unreadable record should allow nothing and name itself and `sdd hooks allow`, got %+v", hook)
+	}
+	w.allow(t)
+	if w.only(t).NeedsAllow {
+		t.Error("sdd hooks allow should rewrite the unreadable record")
+	}
+}
+
+// The record stays readable and writable by its owner alone, whatever it
+// held before.
+func TestTheAllowRecordIsPrivateOnEveryWrite(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
+	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	record := filepath.Join(w.stateRoot, "hooks", "allowed.json")
+	write(t, record, "{}\n")
+	for path, mode := range map[string]os.FileMode{record: 0o644, filepath.Dir(record): 0o755} {
+		err := os.Chmod(path, mode)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.allow(t)
+	for path, want := range map[string]os.FileMode{record: 0o600, filepath.Dir(record): 0o700} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != want {
+			t.Errorf("%s should be private after a write, mode %o", path, info.Mode().Perm())
+		}
+	}
+}
+
+// Allows of several repositories at once all land in the record.
+func TestConcurrentAllowsKeepEveryEntry(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	var worlds []*world
+	for range 12 {
+		w := newWorld(t)
+		w.stateRoot = stateRoot
+		write(t, filepath.Join(w.repo, ".sdd", "config.yaml"), "hooks:\n  - event: entry.written\n    command: lint.sh\n")
+		script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
+		worlds = append(worlds, w)
+	}
+	var wg sync.WaitGroup
+	for _, w := range worlds {
+		wg.Go(func() {
+			_, err := hooks.Allow(t.Context(), w.sources(), hooks.NewAllows(stateRoot))
+			if err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	for _, w := range worlds {
+		if w.only(t).NeedsAllow {
+			t.Errorf("an allow written alongside others was lost for %s", w.repo)
+		}
 	}
 }
 

@@ -171,6 +171,17 @@ func TestHookWaitingForAnAllowIsSkippedWithANotice(t *testing.T) {
 	}
 }
 
+func TestHookWaitingForAnAllowCarriesItsOwnNotice(t *testing.T) {
+	waiting := hookAt("waiting-test.*.start")
+	waiting.NeedsAllow = true
+	waiting.Notice = "The hook allow record is unreadable."
+	w := newHookedWorkflow(t, &recordingHooks{hooks: []sdd.Hook{waiting}})
+	serve := startWaiting(t, w)
+	if len(serve.Notices) != 1 || !strings.Contains(serve.Notices[0], waiting.Notice) {
+		t.Fatalf("the skip notice should carry the hook's own notice, got %q", serve.Notices)
+	}
+}
+
 func TestHookNamingAnUnknownEventIsServedOnceAsANotice(t *testing.T) {
 	hooks := &recordingHooks{hooks: []sdd.Hook{hookAt("waiting-test.renamed")}}
 	w, opened := openHookedWorkflow(t, hooks)

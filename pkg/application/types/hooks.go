@@ -79,6 +79,9 @@ type Hook struct {
 	// config and that this machine has not allowed, or that changed since:
 	// sdd skips it until `sdd hooks allow` records it.
 	NeedsAllow bool
+	// Notice adds to why a hook needs an allow, such as an unreadable allow
+	// record.
+	Notice string
 	// Err is why the hook cannot run, such as a command file that is missing
 	// or not executable. Only a call raising an event the hook matches fails
 	// on it.

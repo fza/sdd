@@ -125,7 +125,11 @@ func (h *workflowHooks) Fire(point engine.HookPoint) ([]query.Finding, error) {
 			continue
 		}
 		if hook.NeedsAllow {
-			h.noticeOnce(hook.Label(), fmt.Sprintf("%s came with the repository and is not allowed on this machine, or changed since it was; it was skipped. Review the repository's .sdd/hooks and run `sdd hooks allow` to let it run.", hook.Label()))
+			notice := fmt.Sprintf("%s came with the repository and is not allowed on this machine, or changed since it was; it was skipped. Review the repository's .sdd/hooks and run `sdd hooks allow` to let it run.", hook.Label())
+			if hook.Notice != "" {
+				notice += " " + hook.Notice
+			}
+			h.noticeOnce(hook.Label(), notice)
 			continue
 		}
 		if hook.Err != nil {
