@@ -17,22 +17,23 @@ type Proofs struct {
 	Reread []string `json:"reread,omitempty" jsonschema:"tags or piece names of served pieces you no longer see; they serve in full again"`
 }
 
-// heldName names a held piece in a pointer: its name, the tag it is held
-// under and how the next call proves it.
+// heldName names a held piece in a pointer by the tag it is held under, then
+// its name and how the next call proves it: an agent read the word after a
+// tag's mark in the pointer as the proof word.
 func heldName(name, tag, next string) string {
 	if tag == "" {
 		return name
 	}
 	if proof := model.NextProof(tag, next); proof != "" {
-		return name + " " + model.AnchorMark(tag) + " (" + proof + ")"
+		return model.TagName(tag) + " for " + name + " (" + proof + ")"
 	}
-	return name + " " + model.AnchorMark(tag)
+	return model.TagName(tag) + " for " + name
 }
 
 // heldLine is the pointer to pieces the call holds and the way to have them
 // again.
 func heldLine(names []string) string {
-	return fmt.Sprintf("(held: %s — list a tag in reread to have its text again, or resume_session re-serves this position in full)", strings.Join(names, ", "))
+	return fmt.Sprintf("(held: %s — prove each tag with the word its next proof asks for, else the word after the tag, in the full text you were served, never a word of this line; list a tag in reread to have its text again, or resume_session re-serves this position in full)", strings.Join(names, ", "))
 }
 
 // composeInstructions serves the step's first keep lanes: a lane the call
@@ -166,7 +167,7 @@ func serveReportSchema(ss *shellSession, serve *sdd.WorkflowServe) (map[string]a
 	served := maps.Clone(fields)
 	if piece.Held {
 		delete(served, "properties")
-		served["held_properties"] = fmt.Sprintf("you hold these %s as %s — list the tag in reread to have them again, or resume_session re-serves them in full", name, strings.TrimSpace(heldName("", piece.Tag, piece.Next)))
+		served["held_properties"] = fmt.Sprintf("you hold %s — prove the tag with the word its next proof asks for, else the word after the tag, in the full schema you were served, never a word here; list the tag in reread to have them again, or resume_session re-serves them in full", heldName("these "+name, piece.Tag, piece.Next))
 	} else {
 		served["properties"] = tagged
 	}

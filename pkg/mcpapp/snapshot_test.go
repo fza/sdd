@@ -43,13 +43,17 @@ func snapshotResponse(t *testing.T, res *mcp.CallToolResult) {
 		}
 		writeValue(&sb, value, 0)
 	}
-	cupaloy.New(cupaloy.SnapshotFileExtension(".txt")).SnapshotT(t, anyNextProof.ReplaceAllString(anyTag.ReplaceAllString(aliasSessions(sb.String()), "⟦tag⟧"), ""))
+	text := anyNamedTag.ReplaceAllString(anyTag.ReplaceAllString(aliasSessions(sb.String()), "⟦tag⟧"), "tag <tag>$1")
+	cupaloy.New(cupaloy.SnapshotFileExtension(".txt")).SnapshotT(t, anyNextProof.ReplaceAllString(text, ""))
 }
 
 var sessionHandle = regexp.MustCompile(`s_\d{8}-\d{6}-[0-9a-f]{32}`)
 
 // anyTag names a pointer's tag, which is drawn per serve.
 var anyTag = regexp.MustCompile(`⟦[0-9a-z]{4}⟧`)
+
+// anyNamedTag names the tag a pointer names bare (model.TagName).
+var anyNamedTag = regexp.MustCompile(`\btag [0-9a-z]{4}( for\b|\)|;)`)
 
 // anyNextProof names a pointer's next proof, drawn per serve like its tag.
 var anyNextProof = regexp.MustCompile(` ?\(?next proof [0-9a-z]{4}:<the word right after "[^"]*">\)?`)

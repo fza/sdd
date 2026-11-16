@@ -85,9 +85,9 @@ func TestBeginCallRefusesAMalformedProof(t *testing.T) {
 	}
 }
 
-// A lane carrying a held entry's pointer names a next proof that changes on
-// every call; the lane is the same piece all the same, so its own proof
-// still holds it.
+// A lane carrying a held entry's pointer names a tag and a next proof that
+// change from serve to serve; the lane is the same piece all the same, so its
+// own proof still holds it.
 func TestALaneHoldsWhileItsEntryPointersRotate(t *testing.T) {
 	application, _, _, _ := newStampWorkflowApp(t, "", "", time.Now)
 	identity := sdd.RequestIdentity{Subject: "christopher"}
@@ -95,10 +95,10 @@ func TestALaneHoldsWhileItsEntryPointersRotate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lane := func(prompt string) string {
-		return servedLane + "\n\n  20260101-000000-s-tac-aaa — An entry. (held as ⟦ab12⟧; " + model.NextProof("ab12", prompt) + ")"
+	lane := func(tag, prompt string) string {
+		return servedLane + "\n\n  20260101-000000-s-tac-aaa — An entry. (held as " + model.TagName(tag) + "; " + model.NextProof(tag, prompt) + ")"
 	}
-	proof := proofOf(t, w.ServeText("lane step", lane("first"), nil))
+	proof := proofOf(t, w.ServeText("lane step", lane("ab12", "first"), nil))
 	err = w.RecordServed(t.Context(), identity)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestALaneHoldsWhileItsEntryPointersRotate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !w.ServeText("lane step", lane("second"), nil).Held {
-		t.Fatal("a lane whose only change is its entry pointer's next proof should stay held")
+	if !w.ServeText("lane step", lane("cd34", "second"), nil).Held {
+		t.Fatal("a lane whose only change is its entry pointer's tag and next proof should stay held")
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-const pointerMark = "(held as ⟦"
+const pointerMark = "(held as tag "
 
 // The no-repeat rule cuts only in MCP mode: the same CLI read prints in full
 // every time.

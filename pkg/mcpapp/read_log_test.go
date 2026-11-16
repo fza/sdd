@@ -74,7 +74,7 @@ func TestGatherPointsAtAnEntryAlreadyServedInFull(t *testing.T) {
 		call(t, cs, "gather", map[string]any{"session": session, "page": page}, &again)
 		served += again.Serve
 	}
-	if !strings.Contains(served, fixtureGapID+" — ") || !strings.Contains(served, "(held as ⟦") {
+	if !strings.Contains(served, fixtureGapID+" — ") || !strings.Contains(served, "(held as tag ") {
 		t.Fatalf("a later serve should point at the entry served in full:\n%s", served)
 	}
 	if !strings.Contains(served, "its tag left out of held") {

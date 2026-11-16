@@ -14,7 +14,7 @@ import (
 
 var waitingLanes = regexp.MustCompile(`more lanes of these instructions wait[^:]*: ([^.]*)\.`)
 
-var heldIntroLane = regexp.MustCompile(`\(held: lane intro ⟦[0-9a-z]{4}⟧`)
+var heldIntroLane = regexp.MustCompile(`\(held: tag [0-9a-z]{4} for lane intro`)
 
 // youngProjectShape is the realistic fixture at the scale of a young
 // project.

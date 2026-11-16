@@ -45,7 +45,7 @@ import (
 //
 // The CLI never cuts: TestCLIReadsServeInFullEveryTime
 // (internal/cliapp).
-const pointerMark = "(held as ⟦"
+const pointerMark = "(held as tag "
 
 func TestNoRepeat(t *testing.T) {
 	env := newTestServer(t, nil, "", "")

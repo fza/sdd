@@ -82,7 +82,7 @@ func holdEntry(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.Request
 }
 
 func heldPointer(id, tag string) string {
-	return id + " — A target for an explore step. (held as ⟦" + tag + "⟧"
+	return id + " — A target for an explore step. (held as tag " + tag
 }
 
 // The no-repeat rule cuts an injected entry chain only once CutRepeats turned
@@ -348,7 +348,7 @@ func TestServeAllWithinWithdrawsWhatAnOmittedInstanceServed(t *testing.T) {
 	if kept == nil {
 		t.Fatal("the second explore should be delivered")
 	}
-	if strings.Contains(kept.Instructions, "(held as ⟦") || !strings.Contains(test.Untagged(kept.Instructions), repeatTargetBody) {
+	if strings.Contains(kept.Instructions, "(held as tag ") || !strings.Contains(test.Untagged(kept.Instructions), repeatTargetBody) {
 		t.Fatalf("the kept explore should serve the target in full:\n%s", kept.Instructions)
 	}
 }

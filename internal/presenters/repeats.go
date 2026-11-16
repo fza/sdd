@@ -90,7 +90,7 @@ func pointerText(id, brief, tag, next string) string {
 		return fmt.Sprintf("%s — %s (served in full above)", id, brief)
 	}
 	if proof := model.NextProof(tag, next); proof != "" {
-		return fmt.Sprintf("%s — %s (held as %s; %s)", id, brief, model.AnchorMark(tag), proof)
+		return fmt.Sprintf("%s — %s (held as %s; %s)", id, brief, model.TagName(tag), proof)
 	}
-	return fmt.Sprintf("%s — %s (held as %s)", id, brief, model.AnchorMark(tag))
+	return fmt.Sprintf("%s — %s (held as %s)", id, brief, model.TagName(tag))
 }

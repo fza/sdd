@@ -67,7 +67,7 @@ func TestRenderView_HeldEntryPrintsAsPointer(t *testing.T) {
 
 // heldPointer is the pointer an entry heldOnly holds prints as.
 func heldPointer(e *model.Entry, tag string) string {
-	return e.ID + " — " + model.EntryBrief(e) + " (held as ⟦" + tag + "⟧"
+	return e.ID + " — " + model.EntryBrief(e) + " (held as tag " + tag
 }
 
 // A held entry on a show chain prints as its pointer on the bullet.
@@ -109,7 +109,7 @@ func TestRenderSearch_HeldHitPrintsAsPointer(t *testing.T) {
 	var buf bytes.Buffer
 	presenters.RenderSearch(&buf, result.Hits(g), heldOnly(local.ID, remote.ID))
 	got := buf.String()
-	if !strings.Contains(got, local.ID+" — Held entry. (held as ⟦ab12⟧)") || strings.Contains(got, "local-snippet") {
+	if !strings.Contains(got, local.ID+" — Held entry. (held as tag ab12)") || strings.Contains(got, "local-snippet") {
 		t.Errorf("a held local hit should print as its pointer without citations:\n%s", got)
 	}
 	if !strings.Contains(got, "remote-snippet") || strings.Contains(got, remote.ID+" — Remote entry. (held") {

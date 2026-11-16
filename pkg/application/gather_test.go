@@ -273,7 +273,7 @@ func TestGather_HeldEntryPrintsAsPointer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pointer := gatherBeta + " — The beta entry is about beta matters. (held as ⟦ab12⟧)"
+	pointer := gatherBeta + " — The beta entry is about beta matters. (held as tag ab12)"
 	if !strings.Contains(result.Text, pointer) {
 		t.Errorf("a held entry should print as id, brief and pointer:\n%s", result.Text)
 	}

@@ -73,9 +73,9 @@ func TestResumePointsOnlyAtEntriesItDelivers(t *testing.T) {
 	raw.raw = true
 	resumed := callRaw(t, connectAs(t, env.srv, raw), "resume_session", map[string]any{"session": session})
 	text := fmt.Sprint(resumed)
-	pointer := regexp.MustCompile(regexp.QuoteMeta(fixtureGapID) + ` — [^\n]*?\(held as ⟦([0-9a-z]{4})⟧`)
+	pointer := regexp.MustCompile(regexp.QuoteMeta(fixtureGapID) + ` — [^\n]*?\(held as tag ([0-9a-z]{4})`)
 	for _, match := range pointer.FindAllStringSubmatch(text, -1) {
-		placed := strings.Count(text, "⟦"+match[1]+"⟧") - strings.Count(text, "held as ⟦"+match[1]+"⟧")
+		placed := strings.Count(text, "⟦"+match[1]+"⟧")
 		if placed == 0 {
 			t.Fatalf("the resume should not point at an entry under a tag it never delivered (%s):\n%s", match[1], text)
 		}

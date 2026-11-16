@@ -134,6 +134,10 @@ func NewAnchorTag(rnd RandomSource) string {
 // AnchorMark is the tag as it appears in served text.
 func AnchorMark(tag string) string { return anchorTagOpen + tag + anchorTagClose }
 
+// TagName is the tag as a pointer names it: without the mark, so no word
+// after it reads as its proof.
+func TagName(tag string) string { return "tag " + tag }
+
 // PlaceAnchor places tag before a content word of text drawn from rnd. It
 // reports false when the text holds no content word outside code.
 func PlaceAnchor(text, tag string, rnd RandomSource) (Anchor, bool) {
@@ -476,10 +480,14 @@ func StripAnchorTags(text string) string {
 // nextProofClause matches a NextProof clause in served text.
 var nextProofClause = regexp.MustCompile(`next proof [0-9a-z]{4}:<the word right after "(?:[^"\\]|\\.)*">`)
 
-// WithoutProofs returns text without its anchor tags and next-proof clauses:
-// the parts that change from serve to serve while the text is the same piece.
+// heldTagName matches the tag an entry pointer names (TagName).
+var heldTagName = regexp.MustCompile(`\(held as tag [0-9a-z]{4}`)
+
+// WithoutProofs returns text without its anchor tags, the tags its entry
+// pointers name and its next-proof clauses: the parts that change from serve
+// to serve while the text is the same piece.
 func WithoutProofs(text string) string {
-	return nextProofClause.ReplaceAllString(StripAnchorTags(text), "")
+	return nextProofClause.ReplaceAllString(heldTagName.ReplaceAllString(StripAnchorTags(text), "(held as"), "")
 }
 
 // NextProof tells how the next call proves tag: the word right after next in
