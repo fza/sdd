@@ -96,6 +96,13 @@ func (w *world) allow(t *testing.T) []model.Hook {
 	return allowed
 }
 
+// allowedOnly allows the one declared hook and returns it.
+func (w *world) allowedOnly(t *testing.T) model.Hook {
+	t.Helper()
+	w.allow(t)
+	return w.only(t)
+}
+
 // needsAllow lists, per hook, its command and whether it waits for an allow.
 func (w *world) needsAllow(t *testing.T) []string {
 	t.Helper()
@@ -203,6 +210,25 @@ func TestAChangedCommittedHookNeedsAllowAgain(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The allow is checked again right before a hook runs, so a change landing
+// between reading the hooks and running one, such as a pull, does not run.
+func TestRunRefusesAHookChangedSinceItWasRead(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
+	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	w.allow(t)
+	hook := w.only(t)
+	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "touch ran")
+	_, err := w.commands().Run(t.Context(), hook, nil)
+	if err == nil || !strings.Contains(err.Error(), "sdd hooks allow") {
+		t.Fatalf("a hook changed since it was read should be refused naming `sdd hooks allow`, got %v", err)
+	}
+	_, statErr := os.Stat(filepath.Join(w.hooksDir(), "ran"))
+	if statErr == nil {
+		t.Error("the changed hook ran")
 	}
 }
 
@@ -426,7 +452,7 @@ func TestRunRunsTheFileWithoutAShellInItsHooksFolder(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "my lint.sh"), `pwd -P; printf '%s|' "$@"; cat`)
 	w.commit(t, "  - event: entry.written\n    command: my\\ lint.sh\n    args: [\"$HOME\", \"a b\"]\n")
-	output, err := w.commands().Run(t.Context(), w.only(t), []byte(`{"event":"entry.written"}`))
+	output, err := w.commands().Run(t.Context(), w.allowedOnly(t), []byte(`{"event":"entry.written"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +470,7 @@ func TestRunFailsOnANonzeroExitWithItsStderr(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "echo lint broke >&2; exit 3")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
-	_, err := w.commands().Run(t.Context(), w.only(t), nil)
+	_, err := w.commands().Run(t.Context(), w.allowedOnly(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "exit status 3") || !strings.Contains(err.Error(), "lint broke") {
 		t.Fatalf("a nonzero exit should fail naming the status and the hook's stderr, got %v", err)
 	}
@@ -456,7 +482,7 @@ func TestRunPassesOnlyTheAllowlistedEnvironment(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "env.sh"), "env")
 	w.commit(t, "  - event: entry.written\n    command: env.sh\n")
-	output, err := w.commands().Run(t.Context(), w.only(t), nil)
+	output, err := w.commands().Run(t.Context(), w.allowedOnly(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +500,7 @@ func TestRunFailsAHookWritingMoreThanTheOutputCap(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "flood.sh"), "head -c 1100000 /dev/zero")
 	w.commit(t, "  - event: entry.written\n    command: flood.sh\n")
-	_, err := w.commands().Run(t.Context(), w.only(t), nil)
+	_, err := w.commands().Run(t.Context(), w.allowedOnly(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "more than 1 MiB to stdout") {
 		t.Fatalf("a hook flooding stdout should fail naming the cap, got %v", err)
 	}
@@ -484,7 +510,7 @@ func TestRunCutsALongStderrInItsError(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "noisy.sh"), "head -c 100000 /dev/zero | tr '\\0' x >&2; exit 1")
 	w.commit(t, "  - event: entry.written\n    command: noisy.sh\n")
-	_, err := w.commands().Run(t.Context(), w.only(t), nil)
+	_, err := w.commands().Run(t.Context(), w.allowedOnly(t), nil)
 	if err == nil || len(err.Error()) > 10000 || !strings.Contains(err.Error(), "stderr cut") {
 		t.Fatalf("a long stderr should be cut in the error, got %d bytes", len(err.Error()))
 	}
@@ -494,7 +520,7 @@ func TestRunStopsTheHookAndItsChildrenWhenTheContextEnds(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "hang.sh"), "sleep 30 & echo $! > child.pid; wait")
 	w.commit(t, "  - event: entry.written\n    command: hang.sh\n")
-	hook := w.only(t)
+	hook := w.allowedOnly(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer cancel()
 	started := time.Now()
