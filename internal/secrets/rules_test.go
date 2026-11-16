@@ -127,3 +127,29 @@ func TestParseRulesReadsBothAllowlistForms(t *testing.T) {
 		t.Error("text no allowlist names should raise the rule")
 	}
 }
+
+// A value sdd does not read as gitleaks does refuses the file, as an unknown
+// key does: misread, it would weaken or switch off a rule.
+func TestParseRulesRefusesValuesItCannotRead(t *testing.T) {
+	rule := "[[rules]]\nid = \"sdd-fixture-token\"\nregex = '''sddfixture_[a-z0-9]{16}'''\nkeywords = [\"sddfixture_\"]\n"
+	cases := []struct {
+		name   string
+		file   string
+		reason string
+	}{
+		{name: "unknown condition", file: rule + "[[rules.allowlists]]\ncondition = \"XOR\"\nstopwords = [\"x\"]\n", reason: "XOR"},
+		{name: "unknown regexTarget", file: rule + "[[rules.allowlists]]\nregexTarget = \"nonsense\"\nregexes = ['''x''']\n", reason: "nonsense"},
+		{name: "unknown global regexTarget", file: "[[allowlists]]\nregexTarget = \"nonsense\"\nregexes = ['''x''']\n\n" + rule, reason: "nonsense"},
+		{name: "newer minVersion", file: "minVersion = \"v99.0.0\"\n\n" + rule, reason: "v99.0.0"},
+		{name: "minVersion that is no version", file: "minVersion = \"soon\"\n\n" + rule, reason: "soon"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := secrets.ParseRules([]byte(tc.file))
+
+			if err == nil || !strings.Contains(err.Error(), tc.reason) {
+				t.Errorf("the file should be refused naming the value, got %v", err)
+			}
+		})
+	}
+}

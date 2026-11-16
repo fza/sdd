@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/pelletier/go-toml/v2"
+	"golang.org/x/mod/semver"
 )
 
 //go:embed gitleaks.toml
@@ -158,7 +159,15 @@ func decodeRules(data []byte) (*RuleSet, error) {
 		}
 		return nil, fmt.Errorf("decoding the rule file: %w", err)
 	}
+	err = readableVersion(file.MinVersion)
+	if err != nil {
+		return nil, err
+	}
 	set := &RuleSet{allowlists: allowlistsOf(file.Allowlist, file.Allowlists)}
+	err = readableAllowlists(set.allowlists)
+	if err != nil {
+		return nil, fmt.Errorf("global allowlist: %w", err)
+	}
 	for i := range set.allowlists {
 		err = set.allowlists[i].compilePatterns()
 		if err != nil {
@@ -171,6 +180,11 @@ func decodeRules(data []byte) (*RuleSet, error) {
 			keywords = append(keywords, strings.ToLower(keyword))
 		}
 		slices.Sort(keywords)
+		allowlists := allowlistsOf(entry.Allowlist, entry.Allowlists)
+		err = readableAllowlists(allowlists)
+		if err != nil {
+			return nil, fmt.Errorf("rule %s: %w", entry.ID, err)
+		}
 		set.rules = append(set.rules, &rule{
 			ID:          entry.ID,
 			Regex:       entry.Regex,
@@ -178,10 +192,41 @@ func decodeRules(data []byte) (*RuleSet, error) {
 			Entropy:     entry.Entropy,
 			SecretGroup: entry.SecretGroup,
 			Keywords:    slices.Compact(keywords),
-			Allowlists:  allowlistsOf(entry.Allowlist, entry.Allowlists),
+			Allowlists:  allowlists,
 		})
 	}
 	return set, nil
+}
+
+// readsGitleaksVersion is the gitleaks release whose rule file semantics the
+// scanner implements; a file asking for a newer gitleaks is refused.
+const readsGitleaksVersion = "v8.30.1"
+
+func readableVersion(minVersion string) error {
+	if minVersion == "" {
+		return nil
+	}
+	if !semver.IsValid(minVersion) {
+		return fmt.Errorf("the rule file's minVersion %q is no version", minVersion)
+	}
+	if semver.Compare(minVersion, readsGitleaksVersion) > 0 {
+		return fmt.Errorf("the rule file needs gitleaks %s; sdd reads rule files up to gitleaks %s", minVersion, readsGitleaksVersion)
+	}
+	return nil
+}
+
+// readableAllowlists refuses a condition or regexTarget the scan does not
+// implement, which it would otherwise read as the default.
+func readableAllowlists(lists []allowlist) error {
+	for _, a := range lists {
+		if !slices.Contains([]string{"", "OR", "AND"}, a.Condition) {
+			return fmt.Errorf("allowlist condition %q is not OR or AND", a.Condition)
+		}
+		if !slices.Contains([]string{"", "secret", "match", "line"}, a.RegexTarget) {
+			return fmt.Errorf("allowlist regexTarget %q is not secret, match or line", a.RegexTarget)
+		}
+	}
+	return nil
 }
 
 // allowlistsOf reads gitleaks' single [allowlist] table and its
