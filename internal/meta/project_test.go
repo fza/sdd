@@ -106,7 +106,7 @@ func TestResolveProject(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if project.Root != filepath.Join(root, tc.wantRoot) {
+			if !meta.SameDir(project.Root, filepath.Join(root, tc.wantRoot)) {
 				t.Errorf("the project root should be the %s folder, got %s", tc.wantRoot, project.Root)
 			}
 			if project.WorkRoot != work {
@@ -215,5 +215,27 @@ func TestDiscoverRootStopsAtTheRepositoryRoot(t *testing.T) {
 				t.Errorf("discovery should find the repository's own .sdd/, found %q", root)
 			}
 		})
+	}
+}
+
+// init records project_dir against the real folders, so a work root reached
+// through a symlink resolves it from where the work root really lies.
+func TestResolveProjectFromASymlinkedWorkRoot(t *testing.T) {
+	realDir := filepath.Join(t.TempDir(), "real")
+	writeConfig(t, filepath.Join(realDir, "work"), "config.yaml", "project_dir: ../project\n")
+	writeConfig(t, filepath.Join(realDir, "project"), "config.yaml", "graph_dir: .sdd/graph\n")
+	link := filepath.Join(t.TempDir(), "wl")
+	err := os.Symlink(filepath.Join(realDir, "work"), link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	project, err := meta.ResolveProject(link, nil)
+
+	if err != nil {
+		t.Fatalf("the project beside the real work root should resolve: %v", err)
+	}
+	if !meta.SameDir(project.Root, filepath.Join(realDir, "project")) {
+		t.Errorf("the project should be found beside the real work root, got %s", project.Root)
 	}
 }

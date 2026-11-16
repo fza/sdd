@@ -72,7 +72,8 @@ func ResolveProject(workRoot string, graphClone func(model.RepoID) (string, erro
 	}
 	root := projectDir
 	if !filepath.IsAbs(root) {
-		root = filepath.Join(workRoot, root)
+		// init records project_dir against the real folders.
+		root = filepath.Join(ResolvedPath(workRoot), root)
 	}
 	root = filepath.Clean(root)
 	targetCommitted, targetLocal, err := readLayoutLayers(SDDDir(root), "")
