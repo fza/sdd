@@ -257,6 +257,15 @@ func CheckPrefilterProvider(provider PrefilterProvider) error {
 	return checkClosedValue("llm_prefilter.provider", string(provider), provider.AllowedValues())
 }
 
+// CheckLLMProviderIsNoJudge refuses an llm.provider naming a dedicated
+// judge: only llm_prefilter.provider names one.
+func CheckLLMProviderIsNoJudge(provider string) error {
+	if !PrefilterProvider(provider).Dedicated() {
+		return nil
+	}
+	return fmt.Errorf("llm.provider %s is a prefilter judge, not a chat model: set it as llm_prefilter.provider", provider)
+}
+
 // Chat is the block as the llm settings the generate judge's chat model runs
 // on.
 func (c LLMPrefilterConfig) Chat() LLMConfig {
@@ -289,8 +298,9 @@ func (b BaseConfig) ResolvedPrefilter() (LLMPrefilterConfig, error) {
 		APIKeys: b.LLM.APIKeys,
 	}
 	resolved := prefilterFromChat(mergeLLMConfig(base, b.LLMPrefilter.Chat()))
-	if resolved.Provider.Dedicated() {
-		return LLMPrefilterConfig{}, fmt.Errorf("llm.provider %s is a prefilter judge, not a chat model: set it as llm_prefilter.provider", resolved.Provider)
+	err := CheckLLMProviderIsNoJudge(string(resolved.Provider))
+	if err != nil {
+		return LLMPrefilterConfig{}, err
 	}
 	return resolved, nil
 }

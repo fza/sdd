@@ -64,6 +64,12 @@ func (h *Handler) ConfigSet(ctx context.Context, cmd *command.ConfigSetCmd) erro
 				return nil, err
 			}
 		}
+		if cmd.Key == "llm.provider" {
+			err := model.CheckLLMProviderIsNoJudge(string(settings.LLM.Provider))
+			if err != nil {
+				return nil, err
+			}
+		}
 		if strings.HasPrefix(cmd.Key, "verify.") {
 			if err := h.verifyWriteRefusal(cmd, patched); err != nil {
 				return nil, err
