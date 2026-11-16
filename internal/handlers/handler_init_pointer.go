@@ -54,6 +54,10 @@ func (h *Handler) initPointer(ctx context.Context, cmd *command.InitCmd, changed
 	case projectCfg != nil && projectCfg.ProjectDir != "":
 		return fmt.Errorf("%s sets project_dir itself; point at the project holding the graph", cmd.ProjectDir)
 	}
+	err = meta.RequireProjectApart("--project-dir "+cmd.ProjectDir, cmd.RepoRoot, projectRoot, h.repoRootOf)
+	if err != nil {
+		return err
+	}
 
 	sddDir := filepath.Join(cmd.RepoRoot, model.SDDDirName)
 	configPath := filepath.Join(sddDir, "config.yaml")

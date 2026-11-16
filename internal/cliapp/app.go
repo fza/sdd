@@ -1845,7 +1845,8 @@ func ensureGraphClone(ctx context.Context, clones *repos.GraphClones, project me
 	return nil
 }
 
-// requireGraphInsideRepository refuses a graph_dir leading into another
+// requireGraphInsideRepository refuses a project placed where its work
+// repository cannot point at it, and a graph_dir leading into another
 // repository: graph commits, the schema stamp and engine branches all belong to
 // the repository holding the project's .sdd/, so a graph kept apart is a
 // project of its own that the work repository names with project_dir.
@@ -1854,10 +1855,14 @@ func requireGraphInsideRepository(project meta.Project) error {
 	if err != nil {
 		return err
 	}
-	projectRepo := git.RepoRootFor(project.Root)
-	if project.Pointed() && projectRepo != "" && projectRepo == git.RepoRootFor(project.WorkRoot) {
-		return fmt.Errorf("project_dir in %s names %s, inside the repository at %s; the project needs a repository of its own", meta.SDDDir(project.WorkRoot), project.Root, projectRepo)
+	if project.Pointed() && project.GraphRepo == "" {
+		subject := fmt.Sprintf("project_dir in %s names %s, which", meta.SDDDir(project.WorkRoot), project.Root)
+		err = meta.RequireProjectApart(subject, project.WorkRoot, project.Root, repoRootFor)
+		if err != nil {
+			return err
+		}
 	}
+	projectRepo := git.RepoRootFor(project.Root)
 	graphDir := meta.ResolveGraphDir(project.Root, cfg)
 	rel, err := filepath.Rel(project.Root, graphDir)
 	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -1872,6 +1877,9 @@ func requireGraphInsideRepository(project meta.Project) error {
 	}
 	return fmt.Errorf("graph_dir in %s leads into %s, a repository separate from %s; make the graph a project of its own (`sdd init` there) and set project_dir to that repository's root instead", project.SDDDir(), graphRepo, projectRepo)
 }
+
+// repoRootFor is git.RepoRootFor as a meta.RootOf.
+func repoRootFor(path string) (string, error) { return git.RepoRootFor(path), nil }
 
 // promptGraphDir runs an interactive prompt for the graph directory. Empty
 // input accepts the default; cancellation returns an error.

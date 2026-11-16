@@ -25,18 +25,21 @@ type ProjectRepositories interface {
 	StableRoot(dir string) (string, error)
 }
 
+// repoRootOf is ProjectRepositories.RootOf, empty when the handler reaches no
+// repositories by path.
+func (h *Handler) repoRootOf(dir string) (string, error) {
+	if h.projectRepos == nil {
+		return "", nil
+	}
+	return h.projectRepos.RootOf(dir)
+}
+
 // setUpProject runs a plain init in projectRoot, which holds no sdd project
-// yet, giving it the repository of its own it needs.
-// Every refusal comes before the first write.
+// yet, giving it the repository of its own it needs. initPointer has run
+// meta.RequireProjectApart; every refusal here comes before the first write.
 func (h *Handler) setUpProject(ctx context.Context, cmd *command.InitCmd, projectRoot string, scope model.Scope, agents []model.AgentTarget, changed *bool) error {
 	if h.projectRepos == nil || h.repositoryAt == nil {
 		return fmt.Errorf("setting up the project at %s needs a git adapter for it", cmd.ProjectDir)
-	}
-	if meta.WithinDir(cmd.RepoRoot, projectRoot) {
-		return fmt.Errorf("--project-dir %s lies inside this repository; the project needs a repository of its own", cmd.ProjectDir)
-	}
-	if meta.WithinDir(projectRoot, cmd.RepoRoot) {
-		return fmt.Errorf("--project-dir %s contains this repository; the project needs a repository of its own beside it", cmd.ProjectDir)
 	}
 	root, err := h.projectRepos.RootOf(projectRoot)
 	if err != nil {

@@ -169,6 +169,31 @@ func ResolvedPath(path string) string {
 	}
 }
 
+// RootOf returns the root of the repository holding path, empty when there is
+// none.
+type RootOf func(path string) (string, error)
+
+// RequireProjectApart refuses a project at projectRoot that a work tree at
+// workRoot cannot point at: one inside the repository holding the work tree,
+// a repository of its own nested there included, or one containing the work
+// tree. subject opens the refusal, naming where the project came from.
+func RequireProjectApart(subject, workRoot, projectRoot string, rootOf RootOf) error {
+	outer, err := rootOf(workRoot)
+	if err != nil {
+		return err
+	}
+	if outer == "" {
+		outer = workRoot
+	}
+	if WithinDir(outer, projectRoot) {
+		return fmt.Errorf("%s lies inside the repository at %s; the project needs a repository of its own", subject, outer)
+	}
+	if WithinDir(projectRoot, workRoot) {
+		return fmt.Errorf("%s contains the work repository at %s; the project needs a repository of its own beside it", subject, workRoot)
+	}
+	return nil
+}
+
 // WithinDir reports whether path is dir or lies below it. Folders on disk
 // compare by identity, so a symlink or a spelling a case-insensitive
 // filesystem accepts names the folder it leads to; the parts of either path

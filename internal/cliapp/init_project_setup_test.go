@@ -166,13 +166,13 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 			name:       "folder inside the work repository",
 			projectDir: "graph-project",
 			args:       []string{"--language", "en"},
-			mention:    "lies inside this repository",
+			mention:    "lies inside the repository",
 		},
 		{
 			name:       "work repository itself",
 			projectDir: ".",
 			args:       []string{"--language", "en"},
-			mention:    "lies inside this repository",
+			mention:    "lies inside the repository",
 		},
 		{
 			name:       "repository of its own nested in the work repository",
@@ -186,7 +186,7 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 				initRepo(t, nested)
 			},
 			args:    []string{"--language", "en"},
-			mention: "lies inside this repository",
+			mention: "lies inside the repository",
 		},
 		{
 			name:       "graph directory leading out of the project",
@@ -207,7 +207,16 @@ func TestInitRefusesAProjectSetupItCannotHonour(t *testing.T) {
 			name:       "folder containing the work repository",
 			projectDir: "..",
 			args:       []string{"--language", "en"},
-			mention:    "contains this repository",
+			mention:    "contains the work repository",
+		},
+		{
+			name:       "repository containing the work repository",
+			projectDir: "..",
+			prepare: func(t *testing.T, work, project string) {
+				initRepo(t, filepath.Dir(work))
+			},
+			args:    []string{"--language", "en"},
+			mention: "contains the work repository",
 		},
 		{
 			name:       "graph directory reading as an ignore negation",
@@ -522,7 +531,7 @@ func TestInitJudgesAProjectFolderSpelledInOtherCase(t *testing.T) {
 
 	_, err = runAppErr(t, work, "init", "--project-dir", "../../OUTER", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
 
-	if err == nil || !strings.Contains(err.Error(), "contains this repository") {
+	if err == nil || !strings.Contains(err.Error(), "contains the work repository") {
 		t.Errorf("a folder containing the work repository should be refused in any spelling: %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "outer", ".git")); statErr == nil {
@@ -536,5 +545,47 @@ func TestInitJudgesAProjectFolderSpelledInOtherCase(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(project, ".sdd", "config.yaml")); statErr != nil {
 		t.Errorf("the clone should hold the project: %v", statErr)
+	}
+}
+
+// Pointing at an existing project placed where no later command accepts it is
+// refused before init writes anything, on either side.
+func TestInitRefusesAnExistingProjectPlacedAgainstTheWorkRepository(t *testing.T) {
+	cases := []struct {
+		name       string
+		projectDir string
+		repo       string
+		mention    string
+	}{
+		{name: "folder containing the work repository", projectDir: "..", mention: "contains the work repository"},
+		{name: "repository containing the work repository", projectDir: "..", repo: "..", mention: "contains the work repository"},
+		{name: "folder inside the work repository", projectDir: "sub", mention: "lies inside the repository"},
+		{name: "repository of its own inside the work repository", projectDir: "nested", repo: "nested", mention: "lies inside the repository"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work, _ := workRepository(t)
+			projectRoot := filepath.Join(work, tc.projectDir)
+			writeFile(t, filepath.Join(projectRoot, ".sdd", "config.yaml"), "graph_dir: .sdd/graph\nrepo_id: example.test/placed\ndefault_branch: main\nlanguage: en\n")
+			if tc.repo != "" {
+				initRepo(t, filepath.Join(work, tc.repo))
+			}
+			statusBefore := gitIn(t, work, "status", "--porcelain", "--untracked-files=all")
+
+			_, err := runAppErr(t, work, "init", "--project-dir", tc.projectDir, "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+			if err == nil || !strings.Contains(err.Error(), tc.mention) {
+				t.Errorf("the pointer should be refused naming the fix: %v", err)
+			}
+			if subject := headSubject(t, work); subject != "seed" {
+				t.Errorf("a refused pointer should commit nothing in the work repository, HEAD is %q", subject)
+			}
+			if status := gitIn(t, work, "status", "--porcelain", "--untracked-files=all"); status != statusBefore {
+				t.Errorf("a refused pointer should write nothing in the work repository:\n%s", status)
+			}
+			if _, statErr := os.Stat(filepath.Join(projectRoot, ".sdd", "config.local.yaml")); statErr == nil {
+				t.Error("a refused pointer should record no participant with the project")
+			}
+		})
 	}
 }
