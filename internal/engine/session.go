@@ -782,10 +782,18 @@ func (s *Session) Report(instanceID string, fields map[string]any) (*Serve, erro
 		inst.interactionStep = inst.Step
 	}
 
+	at := inst.Step
 	if err := s.cascade(inst); err != nil {
 		return nil, err
 	}
-	return s.serve(inst)
+	sv, err := s.serve(inst)
+	if err != nil {
+		return nil, err
+	}
+	if inst.Status == StatusRunning && inst.Step == at {
+		s.narrowToFailing(inst, sv)
+	}
+	return sv, nil
 }
 
 // Answer resolves the pending chooser at the instance's current step: the
