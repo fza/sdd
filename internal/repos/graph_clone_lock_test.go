@@ -79,6 +79,23 @@ func TestGraphClonesEnsureRefusesWithoutALocker(t *testing.T) {
 	}
 }
 
+// The upkeep of a graph repository holding no graph directory yet leaves it
+// absent, so nothing reads a layout from the lock's folder.
+func TestGraphClonesEnsureCreatesNoGraphDirectory(t *testing.T) {
+	remote := test.NewGraphRemote(t, "example.test/acme/app-sdd")
+	gate := gitgate.New(gitgate.Options{StateDir: t.TempDir(), Limits: func(string) gitgate.Limits { return model.DefaultGitLimits() }})
+	clones := repos.NewGraphClones(repos.Locations{DataRoot: filepath.Join(t.TempDir(), "data")}, git.GraphClones{}, gate, syncstate.CloneLocks{})
+
+	dir, _, err := clones.Ensure(t.Context(), remote.RepoID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, statErr := os.Stat(filepath.Join(dir, ".sdd", "graph"))
+	if statErr == nil {
+		t.Error("the upkeep should create no graph directory")
+	}
+}
+
 // The upkeep a read command runs before it reads waits for a writer holding
 // the graph lock, so the entry the writer published and its commit survive.
 func TestGraphClonesEnsureWaitsForAWriter(t *testing.T) {
