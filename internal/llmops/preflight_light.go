@@ -115,7 +115,7 @@ func PreflightLight(ctx context.Context, runner llm.Runner, entry *model.Entry, 
 				return parseLightResult(output, allowed)
 			})
 			if errs[i] == nil {
-				results[i].Findings = flagUnlocated(results[i].Findings, req.UserPrompt)
+				results[i].Findings = flagUnlocated(results[i].Findings, req.Combined())
 			}
 		}()
 	}
