@@ -95,16 +95,16 @@ func newConfigWatch(locate func() (string, error), build func() (*servedProject,
 
 // admit follows the config for one tool call and hands over the notice of
 // the changes it has not told yet.
-func (w *configWatch) admit(ctx context.Context) (string, error) {
+func (w *configWatch) admit(ctx context.Context) (context.Context, string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	err := w.follow(ctx)
 	if err != nil {
-		return "", err
+		return ctx, "", err
 	}
 	notice := strings.Join(w.notices, "\n")
 	w.notices = nil
-	return notice, nil
+	return ctx, notice, nil
 }
 
 // runtime follows the config for one sync tick.

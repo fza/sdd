@@ -1471,12 +1471,12 @@ func (s *toolSet) registryDocs(ctx context.Context, req *mcp.CallToolRequest, ar
 // structured content is still marshalled from the returned value.
 func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, any, error) {
 	return func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
-		hostNotice, err := s.beforeCall(ctx)
+		call, hostNotice, err := s.beforeCall(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
 		slot := &syncNoticeSlot{}
-		res, out, err := handler(context.WithValue(ctx, syncNoticeKey{}, slot), req, in)
+		res, out, err := handler(context.WithValue(call, syncNoticeKey{}, slot), req, in)
 		if asked, ok := inputRequired(err); ok {
 			var none Out
 			return asked, none, nil
@@ -1525,11 +1525,15 @@ func toolBoundary[In, Out any](s *toolSet, handler func(context.Context, *mcp.Ca
 	}
 }
 
-func (s *toolSet) beforeCall(ctx context.Context) (string, error) {
+func (s *toolSet) beforeCall(ctx context.Context) (context.Context, string, error) {
 	if s.before == nil {
-		return "", nil
+		return ctx, "", nil
 	}
-	return s.before(ctx)
+	call, notice, err := s.before(ctx)
+	if call == nil {
+		call = ctx
+	}
+	return call, notice, err
 }
 
 type syncNoticeKey struct{}
