@@ -153,20 +153,73 @@ func (c *Commands) Run(ctx context.Context, hook model.Hook, stdin []byte) ([]by
 	}
 	cmd := exec.CommandContext(ctx, hook.Path, hook.Args...)
 	cmd.Dir = hook.Origin.Dir
+	cmd.Env = hookEnv()
 	cmd.Stdin = bytes.NewReader(stdin)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	stdout, stderr := &cappedBuffer{limit: stdoutCap}, &cappedBuffer{limit: stderrCap}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = waitDelay
 	if err := cmd.Run(); err != nil {
-		if message := strings.TrimSpace(stderr.String()); message != "" {
+		message := strings.TrimSpace(stderr.String())
+		if stderr.over {
+			message += " … (stderr cut)"
+		}
+		if message != "" {
 			return nil, fmt.Errorf("%w: %s", err, message)
 		}
 		return nil, err
 	}
+	if stdout.over {
+		return nil, errors.New("wrote more than 1 MiB to stdout")
+	}
 	return stdout.Bytes(), nil
 }
+
+// stdoutCap and stderrCap bound what sdd keeps of a hook's output: stdout
+// beyond its cap fails the hook, stderr beyond its cap is cut from the error.
+const (
+	stdoutCap = 1 << 20
+	stderrCap = 4 << 10
+)
+
+// hookEnvAllowlist names the variables of sdd's environment a hook sees;
+// everything else, such as API keys in the MCP server's environment, stays
+// with sdd. The payload arrives on stdin, not in the environment.
+var hookEnvAllowlist = []string{"PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "USER", "LOGNAME"}
+
+func hookEnv() []string {
+	env := []string{}
+	for _, name := range hookEnvAllowlist {
+		if value, ok := os.LookupEnv(name); ok {
+			env = append(env, name+"="+value)
+		}
+	}
+	return env
+}
+
+// cappedBuffer keeps up to limit bytes and drops the rest, so a hook writing
+// without end still runs to its exit or timeout without growing sdd's memory.
+// It wraps the buffer rather than embedding it, so io.Copy cannot bypass
+// Write through the buffer's ReadFrom.
+type cappedBuffer struct {
+	buf   bytes.Buffer
+	limit int
+	over  bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	room := b.limit - b.buf.Len()
+	if len(p) > room {
+		b.over = true
+		b.buf.Write(p[:max(room, 0)])
+		return len(p), nil
+	}
+	return b.buf.Write(p)
+}
+
+func (b *cappedBuffer) Bytes() []byte  { return b.buf.Bytes() }
+func (b *cappedBuffer) String() string { return b.buf.String() }
 
 // unchanged reports an error unless the hook is still declared as it was
 // read and still allowed.

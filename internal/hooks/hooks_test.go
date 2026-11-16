@@ -2,6 +2,7 @@ package hooks_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -646,6 +647,42 @@ func TestRunFailsOnANonzeroExitWithItsStderr(t *testing.T) {
 	_, err := w.commands().Run(t.Context(), w.only(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "exit status 3") || !strings.Contains(err.Error(), "lint broke") {
 		t.Fatalf("a nonzero exit should fail naming the status and the hook's stderr, got %v", err)
+	}
+}
+
+// A hook sees only the allowlisted variables of sdd's environment, so keys
+// in the MCP server's environment stay with sdd.
+func TestRunPassesOnlyTheAllowlistedEnvironment(t *testing.T) {
+	t.Setenv("SDD_TEST_SECRET", "s3cret")
+	t.Setenv("LC_ALL", "C.UTF-8")
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "env.sh"), "env")
+	w.commit(t, "  - event: entry.written\n    command: env.sh\n")
+	w.allow(t)
+	output, err := w.commands().Run(t.Context(), w.only(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(output), "s3cret") || !strings.Contains(string(output), "LC_ALL=C.UTF-8") || !strings.Contains(string(output), "PATH=") {
+		t.Errorf("the hook should see PATH and the locale but no other variable, got\n%s", output)
+	}
+}
+
+// A hook's output is capped: stdout past 1 MiB fails it, stderr past its
+// cap is cut from the error.
+func TestRunCapsTheHooksOutput(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "loud.sh"), "head -c 2000000 /dev/zero")
+	script(t, filepath.Join(w.hooksDir(), "noisy.sh"), "head -c 100000 /dev/zero | tr '\\0' x >&2; exit 1")
+	w.commit(t, "  - event: entry.written\n    command: loud.sh\n  - event: entry.written\n    command: noisy.sh\n")
+	w.allow(t)
+	resolved := w.hooks(t)
+	if _, err := w.commands().Run(t.Context(), resolved[0], nil); err == nil || !strings.Contains(err.Error(), "more than 1 MiB to stdout") {
+		t.Errorf("stdout past its cap should fail the hook, got %v", err)
+	}
+	_, err := w.commands().Run(t.Context(), resolved[1], nil)
+	if err == nil || !strings.Contains(err.Error(), "(stderr cut)") || len(err.Error()) > 5000 {
+		t.Errorf("stderr past its cap should be cut from the error, got %d bytes", len(fmt.Sprint(err)))
 	}
 }
 
