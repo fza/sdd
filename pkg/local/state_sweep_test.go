@@ -170,6 +170,7 @@ func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
 		unstamped  = "github.com/acme/unstamped"
 		locked     = "github.com/acme/locked"
 		legacy     = "github.com/acme/legacy"
+		usedEmpty  = "github.com/acme/usedempty"
 	)
 	f.session(t, unused, "s_ended", long)
 	f.used(t, unused, long)
@@ -199,6 +200,17 @@ func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
 	f.used(t, unusedOpen, long)
 	f.session(t, used, "s_used", time.Time{})
 	f.used(t, used, f.now.Add(-sweepUnusedRetention+time.Hour))
+	// Used recently, with no session left and attachments no session owns.
+	usedEmptyArea := filepath.Join(f.location(usedEmpty).StagedBlobs, "local", "s_gone")
+	for _, dir := range []string{usedEmptyArea, f.location(usedEmpty).Sessions} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := localadapter.RecordCheckout(f.root, usedEmpty, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	f.used(t, usedEmpty, f.now.Add(-time.Hour))
 
 	removed := f.sweep(t)
 
@@ -208,6 +220,7 @@ func TestStateSweepRemovesTheStateOfUnusedProjects(t *testing.T) {
 	for dir, wantKept := range map[string]bool{
 		f.location(unused).Sessions: false, f.location(unused).StagedBlobs: false,
 		f.location(used).Sessions: true, f.location(unstamped).Sessions: true, lockDir: true, legacyArea: true,
+		f.location(usedEmpty).Sessions: true, usedEmptyArea: true,
 	} {
 		if _, err := os.Stat(dir); (err == nil) != wantKept {
 			t.Errorf("%s kept should be %v, stat says %v", dir, wantKept, err)
