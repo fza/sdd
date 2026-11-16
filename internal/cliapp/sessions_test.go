@@ -16,6 +16,13 @@ import (
 // there since parkedAt unless that is zero.
 func writeCaptureSession(t *testing.T, f *appFixture, id, step string, parkedAt time.Time) {
 	t.Helper()
+	writeCaptureSessionIn(t, f, id, step, parkedAt, "")
+}
+
+// writeCaptureSessionIn is writeCaptureSession in a dialogue mode; empty is
+// guided.
+func writeCaptureSessionIn(t *testing.T, f *appFixture, id, step string, parkedAt time.Time, mode string) {
+	t.Helper()
 	sessions, err := localadapter.NewFilesystemSessionStore(localadapter.StoreLocation{
 		Name: "test", Subject: "local", Project: "example.test/cli",
 		Sessions:    filepath.Join(f.root, "state", "sdd", "sessions", "example.test", "cli"),
@@ -29,8 +36,12 @@ func writeCaptureSession(t *testing.T, f *appFixture, id, step string, parkedAt 
 	if err != nil {
 		t.Fatal(err)
 	}
+	meta := map[string]any{"participant": "Local Author"}
+	if mode != "" {
+		meta["dialogue"] = mode
+	}
 	events := []engine.Event{
-		{Event: engine.EventSessionMeta, Data: map[string]any{"participant": "Local Author"}},
+		{Event: engine.EventSessionMeta, Data: meta},
 		{Instance: "i1", Event: engine.EventStarted, Data: map[string]any{"procedure": "capture", "step": "assemble"}},
 		{Instance: "i1", Event: engine.EventTransition, Data: map[string]any{"to": step}},
 	}
@@ -67,6 +78,21 @@ func TestSessionsListsAParkedCaptureWithItsStep(t *testing.T) {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("the listing should show each open move and where it is parked, missing %q in:\n%s", want, r.stdout)
 		}
+	}
+}
+
+// A person ends a session the agent's door refuses to: one holding an
+// autonomous capture blocked at an unattended step.
+func TestSessionsAbandonEndsABlockedAutonomousCapture(t *testing.T) {
+	f := newAppFixture(t)
+	writeCaptureSessionIn(t, f, "s_blocked", "reviseOrOverride", time.Time{}, "auto")
+
+	r := f.run(t, "sessions", "abandon", "--reason", "the finding holds", "s_blocked")
+	if r.err != nil {
+		t.Fatalf("sessions abandon: %v\n%s", r.err, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "Abandoned s_blocked") || !strings.Contains(r.stdout, "discarded: capture at reviseOrOverride") {
+		t.Errorf("the person's door should end the session and name the discarded capture, got:\n%s", r.stdout)
 	}
 }
 

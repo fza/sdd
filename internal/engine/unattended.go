@@ -49,8 +49,7 @@ func (s *Session) checkUnattended(inst *Instance, step *Step, choice, userWords 
 
 // RefuseUnattendedAbandon refuses abandoning a running instance that waits at
 // an unattended step of an autonomous session: dropping a blocked move is the
-// user's, as overriding its check is, so an agent alone parks it instead. A
-// session torn down by its handle is not asked.
+// user's, as overriding its check is, so an agent alone parks it instead.
 func (s *Session) RefuseUnattendedAbandon(instanceID string) error {
 	inst, ok := s.instances[instanceID]
 	if !ok || inst.Status != StatusRunning {

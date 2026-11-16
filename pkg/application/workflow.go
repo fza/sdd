@@ -1499,22 +1499,30 @@ func (a *Application) parkedBlock(ctx context.Context, identity RequestIdentity,
 // abandon in one final append. A mid-teardown failure returns before that
 // append, so the session stays as it was — honest state, no phantom teardown.
 // Ending a session is a participant act, and holding the handle is what
-// authorizes it (d-cpt-aen).
+// authorizes it (d-cpt-aen). It is the person's door; an agent's is
+// AbandonWorkflowSessionAsAgent.
 func (a *Application) AbandonWorkflowSession(ctx context.Context, identity RequestIdentity, request WorkflowResumeRequest, reason string) (WorkflowAbandonResult, error) {
-	return a.abandonSession(ctx, identity, request, reason, true)
+	return a.abandonSession(ctx, identity, request, reason, true, false)
+}
+
+// AbandonWorkflowSessionAsAgent is AbandonWorkflowSession for an agent: it
+// refuses ending an autonomous session while a move waits at an unattended
+// step, since dropping that move is a person's (RefuseUnattendedAbandon).
+func (a *Application) AbandonWorkflowSessionAsAgent(ctx context.Context, identity RequestIdentity, request WorkflowResumeRequest, reason string) (WorkflowAbandonResult, error) {
+	return a.abandonSession(ctx, identity, request, reason, true, true)
 }
 
 // abandonSession is the teardown by handle. Every delegate the session still
 // has live goes down with it; a delegate session torn down by its own handle
 // releases its fork in the dispatching session when releaseParent is set.
 // A launched round still running in it is stopped last.
-func (a *Application) abandonSession(ctx context.Context, identity RequestIdentity, request WorkflowResumeRequest, reason string, releaseParent bool) (WorkflowAbandonResult, error) {
+func (a *Application) abandonSession(ctx context.Context, identity RequestIdentity, request WorkflowResumeRequest, reason string, releaseParent, byAgent bool) (WorkflowAbandonResult, error) {
 	if request.SessionID == "" {
 		return WorkflowAbandonResult{}, fmt.Errorf("sdd: session ID is required")
 	}
-	result, w, runtime, err := a.abandonOnce(ctx, identity, request, reason)
+	result, w, runtime, err := a.abandonOnce(ctx, identity, request, reason, byAgent)
 	if isSessionConflict(err) {
-		result, w, runtime, err = a.abandonOnce(ctx, identity, request, reason)
+		result, w, runtime, err = a.abandonOnce(ctx, identity, request, reason, byAgent)
 		if isSessionConflict(err) {
 			return WorkflowAbandonResult{}, fmt.Errorf("%w; %s", err, reorientSuffix)
 		}
@@ -1547,7 +1555,7 @@ func (a *Application) abandonSession(ctx context.Context, identity RequestIdenti
 // records the end in one append. Another attach appending since the load
 // fails that append as a session conflict, which abandonSession retries
 // once on a fresh load (20260914-113737-d-cpt-qst bounds the retry).
-func (a *Application) abandonOnce(ctx context.Context, identity RequestIdentity, request WorkflowResumeRequest, reason string) (WorkflowAbandonResult, *WorkflowSession, *ProjectRuntime, error) {
+func (a *Application) abandonOnce(ctx context.Context, identity RequestIdentity, request WorkflowResumeRequest, reason string, byAgent bool) (WorkflowAbandonResult, *WorkflowSession, *ProjectRuntime, error) {
 	_, runtime, stored, err := a.resolveSession(ctx, identity, request.SessionID)
 	if err != nil {
 		return WorkflowAbandonResult{}, nil, nil, err
@@ -1568,6 +1576,13 @@ func (a *Application) abandonOnce(ctx context.Context, identity RequestIdentity,
 	w.session, err = w.engine.ReplaySession(string(request.SessionID), stored.Metadata.Participant, events, resolve, sink)
 	if err != nil {
 		return WorkflowAbandonResult{}, nil, nil, fmt.Errorf("replaying session %s: %w", request.SessionID, err)
+	}
+	if byAgent {
+		for _, inst := range w.session.Instances() {
+			if err := w.session.RefuseUnattendedAbandon(inst.ID); err != nil {
+				return WorkflowAbandonResult{}, nil, nil, codedRefusal(fmt.Errorf("session %s is not ended by its handle: %w", request.SessionID, err))
+			}
+		}
 	}
 	result := WorkflowAbandonResult{Abandoned: true, Session: stored.Metadata.ID, Label: w.session.Label}
 	for _, inst := range w.session.Instances() {
