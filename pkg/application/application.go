@@ -285,20 +285,27 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	if matched == 0 && layout.UsesFunction("participant") {
 		knownParticipants = snapshot.graph.AllParticipants()
 	}
-	// The no-repeat rule covers the local graph's sections only.
-	var rendered strings.Builder
-	presenters.RenderView(&rendered, sections[:local], repeatsFor(snapshot.graph, request.Held, request.Anchor))
-	presenters.RenderView(&rendered, sections[local:], nil)
 	full, summary := viewResult.ServedIDs()
-	return ViewResult{
+	result := ViewResult{
 		Project:           runtime.options.Project,
-		Sections:          strings.TrimRight(rendered.String(), "\n"),
 		ViewSections:      sections,
 		MatchedCount:      matched,
 		KnownParticipants: knownParticipants,
 		FullIDs:           full,
 		SummaryIDs:        summary,
-	}, nil
+		local:             local,
+	}
+	result.Sections = result.render(snapshot.graph, request.Held, request.Anchor)
+	return result, nil
+}
+
+// render renders the view's sections as text. The no-repeat rule covers the
+// local graph's sections only.
+func (r ViewResult) render(g *model.Graph, held func(id, hash string) (string, string, bool), anchor func(id, hash, body string) string) string {
+	var rendered strings.Builder
+	presenters.RenderView(&rendered, r.ViewSections[:r.local], repeatsFor(g, held, anchor))
+	presenters.RenderView(&rendered, r.ViewSections[r.local:], nil)
+	return strings.TrimRight(rendered.String(), "\n")
 }
 
 func (a *Application) Show(ctx context.Context, identity RequestIdentity, project ProjectID, request ShowRequest) (result ShowResult, err error) {

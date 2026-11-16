@@ -60,6 +60,9 @@ type ViewResult struct {
 	// bodies in full, entry rows as summary lines.
 	FullIDs    []string
 	SummaryIDs []string
+	// local counts the local graph's sections, the ones the no-repeat rule
+	// covers.
+	local int
 }
 
 type ShowRequest struct {

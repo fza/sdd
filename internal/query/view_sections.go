@@ -73,6 +73,8 @@ func viewList(g *model.Graph, flat model.FlatList) *types.ViewList {
 	list := &types.ViewList{
 		Ranked:       len(flat.Scores) == len(flat.Entries) && len(flat.Scores) > 0,
 		RefsExpanded: len(flat.RefExpansions) == len(flat.Entries),
+		More:         flat.More,
+		Paging:       flat.Paging,
 	}
 	dropped := len(flat.RefExpansionDropped) == len(flat.Entries)
 	for i, e := range flat.Entries {

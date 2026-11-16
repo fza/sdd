@@ -3,6 +3,8 @@ package model
 import (
 	"strconv"
 	"strings"
+
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // Layout is the parsed root of a `--layout=...` argument to `sdd view`.
@@ -36,6 +38,20 @@ func (s Section) Expr() string {
 		parts = append(parts, fn.String())
 	}
 	return strings.Join(parts, ":")
+}
+
+// Paging pages the section's entries: its functions without its own skip, n
+// and name, which a page sets anew, after offset entries the section skipped.
+func (s Section) Paging(offset int) types.ViewPaging {
+	parts := make([]string, 0, len(s.Functions))
+	for _, fn := range s.Functions {
+		switch fn.Name {
+		case "skip", "n", "name", "name-prefix":
+			continue
+		}
+		parts = append(parts, fn.String())
+	}
+	return types.ViewPaging{Head: strings.Join(parts, ":"), Offset: offset}
 }
 
 // String renders the function back to layout grammar.

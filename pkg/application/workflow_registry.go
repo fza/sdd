@@ -113,7 +113,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 		return err
 	}
 	if err := registry.RegisterQuery(engine.Query{
-		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes (line-boundary cut, honest notice; the cut's pull is the lane's own layout). Injected into a step served over MCP, an entry the consumer already holds in full prints as its pointer."},
+		Doc:       engine.FuncDoc{Name: "viewLayout", Doc: "Rendered `sdd view` pipeline result. Arg layout: the full pipeline syntax; may be a Go template over the store. The engine bounds the result at the inject's declared maxBytes: a listing gives up whole entries and ends naming how many and the layout serving them, as an n(k) that cuts one does; other output is cut at a line boundary with an honest notice whose pull is the lane's own layout. Injected into a step served over MCP, an entry the consumer already holds in full prints as its pointer."},
 		ServeSafe: true,
 		Bound: engine.QueryBound{
 			Part: serveview.PartText,
@@ -146,12 +146,19 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 			if w.framing {
 				w.laneFull = append(w.laneFull, result.FullIDs...)
 			}
+			text := result.Sections
+			// A listing past the bound gives up whole entries, its last line
+			// naming how many and the layout serving them.
+			for ctx.Cap.MaxBytes > 0 && len(text) > ctx.Cap.MaxBytes && dropLastListed(result.ViewSections) {
+				w.session.DropPiecesSince(mark)
+				text = result.render(view.snapshot.graph, request.Held, request.Anchor)
+			}
 			// A line cut can drop a body the view rendered.
-			_, cut := serveview.BoundValue(result.Sections, ctx.Cap)
+			_, cut := serveview.BoundValue(text, ctx.Cap)
 			if cut != nil {
 				w.session.DropPiecesSince(mark)
 			}
-			return result.Sections, nil
+			return text, nil
 		},
 	}); err != nil {
 		return err
@@ -796,4 +803,14 @@ type RegistryFunction struct {
 	Doc    string
 	Reads  []string
 	Writes []string
+}
+
+// dropLastListed gives up the last entry of the last listing that holds one.
+func dropLastListed(sections []types.ViewSection) bool {
+	for i := len(sections) - 1; i >= 0; i-- {
+		if list := sections[i].List; list != nil && list.DropLast() {
+			return true
+		}
+	}
+	return false
 }
