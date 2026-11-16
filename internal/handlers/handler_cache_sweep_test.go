@@ -69,7 +69,7 @@ func TestCacheHandlerPruneFailsWithoutAStateSweeper(t *testing.T) {
 // another setup's: the run sweeps none of it, fails, and records why.
 func TestCacheHandlerPruneRefusesTheStateSweepUnderMixedXDG(t *testing.T) {
 	f := newPruneFixture(t, "")
-	f.loc.MixedXDG = "XDG_CONFIG_HOME set, XDG_STATE_HOME not"
+	f.loc.MixedStateXDG = "XDG_CACHE_HOME, XDG_DATA_HOME set, XDG_STATE_HOME not"
 	state := &recordingStateSweep{}
 	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
 		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc), State: state,
@@ -87,5 +87,23 @@ func TestCacheHandlerPruneRefusesTheStateSweepUnderMixedXDG(t *testing.T) {
 	}
 	if status.FailureNotice() == "" {
 		t.Errorf("the refusal should be recorded for the next command to report, got %+v", status)
+	}
+}
+
+// Where the config file lives does not make the state root another setup's:
+// with only XDG_CONFIG_HOME set, the state sweep runs.
+func TestCacheHandlerPruneSweepsTheStateFolderWithOnlyTheConfigHomeSet(t *testing.T) {
+	f := newPruneFixture(t, "")
+	f.loc.MixedXDG = "XDG_CONFIG_HOME set, XDG_CACHE_HOME, XDG_STATE_HOME not"
+	state := &recordingStateSweep{}
+	h := handlers.NewCacheHandler(handlers.CacheHandlerOptions{
+		CacheRoot: f.loc.CacheRoot, StateRoot: f.loc.StateRoot, Registry: repos.NewRegistry(f.loc), State: state,
+	})
+	// The clone pass keeps its own refusal under these mixed roots.
+	if err := h.Prune(t.Context(), &command.PruneCacheCmd{Scheduled: true}); err != nil && strings.Contains(err.Error(), "state folder") {
+		t.Errorf("the state sweep should not be refused, got %v", err)
+	}
+	if !state.called {
+		t.Error("the state folder should be swept when only XDG_CONFIG_HOME is set")
 	}
 }

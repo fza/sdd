@@ -374,7 +374,7 @@ sdd runs `sdd cache prune` in the background at most once a day. Any command exc
 - a clone missing from `repos` alone stays, and so does every clone of a repository `repos` names
 - a dropped clone holding another clone, or the path of a repository `repos` names, stays, with a warning
 - with `repos` missing or empty, or the XDG directories set only in part, a run that would remove a clone removes none and fails
-- with the XDG directories set only in part, a run sweeps no session or project state and fails
+- with `XDG_STATE_HOME` set while `XDG_CACHE_HOME` or `XDG_DATA_HOME` is not, or the reverse, a run sweeps no session or project state and fails; `XDG_CONFIG_HOME` plays no part
 - leftovers of killed processes older than a day
 
 It never deletes an open session, a session log it cannot read, or a version any checkout read within `cache.retention`, and it skips an index store another process holds. One run per machine at a time, at most 5 minutes: a background run that finds another running exits quietly, and `sdd cache prune` started by hand fails with `another cache pruning run is in progress`. `sdd info` shows the last run. `sdd cache prune` reports a failed run as its error.

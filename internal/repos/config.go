@@ -39,6 +39,12 @@ type Locations struct {
 	// Mixed roots pair one repos list with another's clones, so cache
 	// pruning removes no clone under them.
 	MixedXDG string
+	// MixedStateXDG names XDG_STATE_HOME's source against XDG_CACHE_HOME's
+	// and XDG_DATA_HOME's when they differ: one set while another falls back
+	// to the home directory. A tool redirecting the data and cache homes may
+	// leave the state root on the real one, so cache pruning sweeps no state
+	// then. XDG_CONFIG_HOME plays no part.
+	MixedStateXDG string
 }
 
 // DefaultLocations resolves the conventional locations: the XDG base
@@ -51,20 +57,8 @@ func DefaultLocations() (Locations, error) {
 	cfgBase := os.Getenv("XDG_CONFIG_HOME")
 	cacheBase := os.Getenv("XDG_CACHE_HOME")
 	stateBase := os.Getenv("XDG_STATE_HOME")
-	var set, unset []string
-	for _, v := range []struct{ name, value string }{
-		{"XDG_CONFIG_HOME", cfgBase}, {"XDG_CACHE_HOME", cacheBase}, {"XDG_STATE_HOME", stateBase},
-	} {
-		if v.value == "" {
-			unset = append(unset, v.name)
-		} else {
-			set = append(set, v.name)
-		}
-	}
-	mixed := ""
-	if len(set) > 0 && len(unset) > 0 {
-		mixed = fmt.Sprintf("%s set, %s not", strings.Join(set, ", "), strings.Join(unset, ", "))
-	}
+	mixed := mixedSources("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME")
+	mixedState := mixedSources("XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME")
 	if cfgBase == "" || cacheBase == "" || stateBase == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -84,11 +78,29 @@ func DefaultLocations() (Locations, error) {
 		return Locations{}, fmt.Errorf("XDG_STATE_HOME must be an absolute path: %q", stateBase)
 	}
 	return Locations{
-		ConfigPath: filepath.Join(cfgBase, "sdd", "config.yaml"),
-		CacheRoot:  filepath.Join(cacheBase, "sdd"),
-		StateRoot:  filepath.Join(stateBase, "sdd"),
-		MixedXDG:   mixed,
+		ConfigPath:    filepath.Join(cfgBase, "sdd", "config.yaml"),
+		CacheRoot:     filepath.Join(cacheBase, "sdd"),
+		StateRoot:     filepath.Join(stateBase, "sdd"),
+		MixedXDG:      mixed,
+		MixedStateXDG: mixedState,
 	}, nil
+}
+
+// mixedSources names which of the variables are set and which are not, empty
+// when all are set or none is.
+func mixedSources(names ...string) string {
+	var set, unset []string
+	for _, name := range names {
+		if os.Getenv(name) == "" {
+			unset = append(unset, name)
+		} else {
+			set = append(set, name)
+		}
+	}
+	if len(set) == 0 || len(unset) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s set, %s not", strings.Join(set, ", "), strings.Join(unset, ", "))
 }
 
 // GlobalConfig is the user-global SDD configuration. It embeds the shared

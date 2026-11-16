@@ -47,9 +47,10 @@ func (r *Registry) CacheRoot() string {
 	return r.loc.CacheRoot
 }
 
-// MixedXDG is Locations.MixedXDG of the locations the registry reads.
-func (r *Registry) MixedXDG() string {
-	return r.loc.MixedXDG
+// MixedStateXDG is Locations.MixedStateXDG of the locations the registry
+// reads.
+func (r *Registry) MixedStateXDG() string {
+	return r.loc.MixedStateXDG
 }
 
 // CacheDir resolves a connected repo's clone location under the cache root.

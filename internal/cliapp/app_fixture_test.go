@@ -39,6 +39,7 @@ func newAppFixture(t *testing.T) *appFixture {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(f.root, "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(f.root, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(f.root, "state"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(f.root, "data"))
 	// A request that still leaves for a real host fails at a closed port.
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9")
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:9")
