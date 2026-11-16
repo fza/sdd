@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/networkteam/sdd/test"
 )
 
 // payloadHook declares, in the config file named, a hook at event whose
@@ -35,6 +37,9 @@ func (f *appFixture) payloadHook(t *testing.T, configFile, event string) string 
 func (f *appFixture) repoHook(t *testing.T, event string) string {
 	t.Helper()
 	payload := f.payloadHook(t, ".sdd/config.yaml", event)
+	// In a repository a session start backfills the fixture entry's title.
+	llm := test.NewOpenAIServer(t, test.OpenAIBehaviour{Answer: `{"title": "CLI gap", "summary": "` + appSummary + `", "findings": []}`})
+	f.write(t, ".sdd/config.local.yaml", "participant: Local Author\nllm:\n  provider: openai\n  model: fake\n  endpoint: "+llm.URL+"\n  api_keys:\n    openai: op-notarealkeyaaaaaaaaaa\n  retry:\n    max_attempts: 1\n")
 	if _, err := os.Stat(filepath.Join(f.root, ".git")); err != nil {
 		gitIn(t, f.root, "init", "-q")
 	}
