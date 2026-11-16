@@ -3,10 +3,13 @@ package relevance_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/networkteam/sdd/pkg/llm"
@@ -172,6 +175,59 @@ func (f *failingOnce) Score(ctx context.Context, request relevance.Request) (rel
 		return relevance.Result{}, f.err
 	}
 	return f.fixedScorer.Score(ctx, request)
+}
+
+// Calls that hit a 429 together spread their retries over a quarter of the
+// delay instead of coming back in lockstep.
+func TestRetriedAfterDelay_SpreadsRetriesOfTheSameDelay(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		var mu sync.Mutex
+		var waits []time.Duration
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() {
+				inner := &failingOnce{err: &llm.Error{Err: delayError(time.Second)}}
+				_, err := relevance.RetriedAfterDelay(inner, time.Minute).Score(t.Context(), relevance.Request{Candidates: candidates("a")})
+				if err != nil {
+					t.Error(err)
+				}
+				mu.Lock()
+				waits = append(waits, time.Since(start))
+				mu.Unlock()
+			})
+		}
+		wg.Wait()
+		slices.Sort(waits)
+		if waits[0] < time.Second || waits[len(waits)-1] > 1250*time.Millisecond || waits[0] == waits[len(waits)-1] {
+			t.Fatalf("waits %v: every retry should wait its delay plus up to a quarter more, not all the same", waits)
+		}
+	})
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		value string
+		want  time.Duration
+	}{
+		{"7", 7 * time.Second},
+		{now.Add(30 * time.Second).Format(http.TimeFormat), 30 * time.Second},
+		{now.Add(-time.Minute).Format(http.TimeFormat), 0},
+		{now.Add(2 * time.Hour).Format(http.TimeFormat), relevance.MaxRetryAfter},
+		{"99999999999", relevance.MaxRetryAfter},
+		{"-3", 0},
+		{"soon", 0},
+		{"", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.value, func(t *testing.T) {
+			got := relevance.ParseRetryAfter(tc.value, now)
+			if got != tc.want {
+				t.Fatalf("ParseRetryAfter = %s, want %s", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestRetriedAfterDelay(t *testing.T) {

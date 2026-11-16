@@ -91,6 +91,18 @@ func TestScore_RateLimitReportsRetryAfter(t *testing.T) {
 	}
 }
 
+func TestScore_RateLimitReadsAnHTTPDate(t *testing.T) {
+	scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", time.Now().Add(30*time.Second).UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	_, err := scorer.Score(t.Context(), request)
+	status, ok := errors.AsType[*systemone.StatusError](err)
+	if !ok || status.RetryAfter < 25*time.Second || status.RetryAfter > 30*time.Second {
+		t.Fatalf("error %v: a Retry-After date should give the delay until it", err)
+	}
+}
+
 func TestScore_CapsAHugeRetryAfter(t *testing.T) {
 	scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "99999999999")

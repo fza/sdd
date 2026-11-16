@@ -16,7 +16,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 	"unicode/utf8"
 
@@ -113,7 +112,7 @@ type response struct {
 }
 
 // StatusError is a non-2xx reply; RetryAfter carries a 429's Retry-After,
-// at most maxRetryAfter.
+// at most relevance.MaxRetryAfter.
 type StatusError struct {
 	Status     int
 	Code       string
@@ -216,15 +215,9 @@ func statusError(resp *http.Response, raw []byte) error {
 	} else {
 		out.Message = excerpt(string(bytes.TrimSpace(raw)))
 	}
-	seconds, err := strconv.Atoi(resp.Header.Get("Retry-After"))
-	if err == nil && seconds > 0 {
-		out.RetryAfter = time.Duration(min(seconds, int(maxRetryAfter/time.Second))) * time.Second
-	}
+	out.RetryAfter = relevance.ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 	return out
 }
-
-// maxRetryAfter caps the delay a Retry-After asks for.
-const maxRetryAfter = time.Hour
 
 // maxDetail bounds the reply text an error carries.
 const maxDetail = 512
