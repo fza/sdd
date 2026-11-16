@@ -961,6 +961,27 @@ func TestToolContractSnapshot(t *testing.T) {
 	cupaloy.New(cupaloy.SnapshotFileExtension(".json")).SnapshotT(t, string(encoded))
 }
 
+// The next tool states the userWords rule the answer schema states: the
+// user's own message, never the agent's words.
+func TestNextDescriptionAsksForTheUsersOwnMessage(t *testing.T) {
+	env := newTestServer(t, nil, "", "")
+	cs := connect(t, env.srv)
+	res, err := cs.ListTools(t.Context(), &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name != "next" {
+			continue
+		}
+		if !strings.Contains(tool.Description, "the user's own message verbatim in userWords, never words of yours") || strings.Contains(tool.Description, "relayed verbatim") {
+			t.Fatalf("next should ask for the user's own message in userWords, got %q", tool.Description)
+		}
+		return
+	}
+	t.Fatal("no next tool listed")
+}
+
 // TestOrientationListsMoveParamSignatures verifies the shell orientation's
 // move listing carries each move's accepted start-param signature, so a
 // caller sees the params where the move is offered rather than only through a
