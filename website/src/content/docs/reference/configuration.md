@@ -23,7 +23,7 @@ A later row overrides an earlier one: local wins over project, project wins over
 | `sessions.retention` | User-global | sdd currently ignores it in the project files. |
 | `graph_dir`, `default_branch`, `repo_id`, `language`, `skill_scope`, `supported_agents`, `dependencies` | Project | These describe the repository. sdd ignores them in the user-global file. |
 | `repos` | User-global | sdd ignores it in the project files. |
-| `hooks` | Any file | The lists of all files run together; the project file's only once [allowed](#allowing-a-projects-hooks). See [hooks](#hooks). |
+| `hooks` | Any file | The lists of all files run together; those that came with the repository only once [allowed](#allowing-a-projects-hooks). See [hooks](#hooks). |
 
 :::caution[Keep API keys out of the project file]
 `.sdd/config.yaml` is committed and shared. sdd reads `api_keys` from any file and does not stop you, so put keys in the user-global or the local file. `sdd config set` writes only to those two.
@@ -415,22 +415,22 @@ Every config file may declare `hooks`: the user-global file, and both `.sdd/conf
 | --- | --- |
 | User-global config | `~/.config/sdd/hooks/` |
 | `.sdd/config.yaml` | `.sdd/hooks/`, committed with the project |
-| `.sdd/config.local.yaml` | `.sdd/hooks/`, its scripts in `local/` there, which `sdd init` adds to `.gitignore` |
+| `.sdd/config.local.yaml` | `.sdd/hooks/local/`, which `sdd init` adds to `.gitignore` |
 
-sdd refuses an absolute path, `..`, a name it would have to look up on `PATH`, and anything a shell would interpret. A hook runs without a shell, with the hooks folder as its working directory, so `args` resolve from there too. Put an interpreter in the script's shebang and make the script executable. A hook in the committed file may not run a script from `local/`, which only your machine has.
+sdd refuses an absolute path, `..`, a name it would have to look up on `PATH`, and anything a shell would interpret. A hook runs without a shell, with the hooks folder as its working directory, so `args` resolve from there too. Put an interpreter in the script's shebang and make the script executable. A hook in the committed file may not run a script from `local/`, which only your machine has, and a hook in the local file runs only a script from `local/`, never the repository's, which a pull could change. sdd compares the folders themselves, so a link or another spelling of `local` changes nothing.
 
 ### Allowing a project's hooks
 
-Hooks in `.sdd/config.yaml` arrive with every clone, so sdd runs them only after you allow them on your machine. Until then sdd skips them, and the step it serves names `sdd hooks allow`. Hooks in the user-global and the local file are your own and run without it.
+Hooks in `.sdd/config.yaml` arrive with every clone, so sdd runs them only after you allow them on your machine. Until then sdd skips them, and the step it serves names `sdd hooks allow`. The same holds for the local file and `.sdd/hooks/local/` when the repository tracks either of them, for example after a forced `git add`. Hooks in the user-global file, and in a local file the repository does not track, are your own and run without it.
 
 ```bash
 sdd hooks allow   # review the repository's .sdd/hooks first
 ```
 
-- `sdd hooks allow` records, per repository, a hash over the committed hook declarations and the files they name: the script and every `args` entry naming a file in the hooks folder.
-- Any change to them, a new hook included, skips the committed hooks again until you allow them again.
-- In a project whose graph lives in a repository of its own, it allows both repositories' committed hooks.
-- The record lives in `~/.local/state/sdd/hooks/allowed.json`, readable only by you, keyed by `repo_id`.
+- `sdd hooks allow` records, per repository, a hash over the hook declarations it allows and over every file in `.sdd/hooks/`: scripts, files they source or import, files their arguments name, interpreters kept there. It leaves out `local/` unless the repository tracks it.
+- Any change there, a new hook or file included, skips those hooks again until you allow them again. sdd checks the hash again right before each hook runs. Code a hook loads from outside `.sdd/hooks/` is not covered.
+- In a project whose graph lives in a repository of its own, it allows both repositories' hooks.
+- The record lives in `~/.local/state/sdd/hooks/allowed.json`, keyed by the repository's `repo_id`, or by its path when it sets none. sdd writes it readable only by you. An unreadable record allows nothing, the step sdd serves says so, and `sdd hooks allow` rewrites it.
 
 ### Events
 
@@ -449,7 +449,7 @@ A failing `.start` hook holds its step: sdd runs it again on every call, and the
 
 ### Running a hook
 
-Hooks on one event run at once. A hook sees only `PATH`, `HOME`, `LANG` and `TMPDIR` of sdd's environment, so API keys and tokens set for sdd do not reach it. A hook fails the call when it exits nonzero, outlives its timeout, writes more than 1 MiB to stdout, or writes anything to stdout but nothing or `{"findings": [...]}`. A high finding holds the step like one of the step's own. Medium and low findings go to your agent to weigh: after `capture.assemble` in a review of their own, after `capture.guide` with the writing guide's findings, and after `capture.preflight` among pre-flight's findings.
+Hooks on one event run at once. A hook sees only `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TMPDIR`, `USER` and `LOGNAME` of sdd's environment, so API keys and tokens in sdd's environment do not reach it. An allowed hook still runs with your rights and can read your files, sdd's config with its API keys and `~/.netrc` included. A hook fails the call when it exits nonzero, outlives its timeout, writes more than 1 MiB to stdout, or writes anything to stdout but nothing or `{"findings": [...]}`. A high finding holds the step like one of the step's own. Medium and low findings go to your agent to weigh: after `capture.assemble` in a review of their own, after `capture.guide` with the writing guide's findings, and after `capture.preflight` among pre-flight's findings.
 
 The payload carries `event`, `time`, `project`, `branch`, `session`, `procedure`, `instance`, `step` and `phase` (`start` or `done`, or `round` on a step that declares rounds, which no shipped step does yet); `transition`, the step the procedure moves to, when a step is done; `findings`, the step's findings so far, on a step with a findings channel; `draft` during a capture, with `type`, `kind`, `layer`, `refs`, `topics`, `body`, `attachments`, `body_hash`, `supersedes` and `closes` (entry ID lists); and `entry`, the written entry's ID, on `entry.written`. A finding has `severity` (`high`, `medium` or `low`), `category` and `observation`.
 
