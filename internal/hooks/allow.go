@@ -80,22 +80,18 @@ func writeAtomically(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
 	_, err = file.Write(data)
-	if err != nil {
-		file.Close()
-		return err
+	if err == nil {
+		err = file.Chmod(0o600)
 	}
-	err = file.Chmod(0o600)
-	if err != nil {
-		file.Close()
-		return err
+	err = errors.Join(err, file.Close())
+	if err == nil {
+		err = os.Rename(file.Name(), path)
 	}
-	err = file.Close()
 	if err != nil {
-		return err
+		return errors.Join(err, os.Remove(file.Name()))
 	}
-	return os.Rename(file.Name(), path)
+	return nil
 }
 
 func (a *Allows) load() (map[string]string, error) {
