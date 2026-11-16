@@ -213,12 +213,17 @@ func RequireProjectRepository(subject, projectRoot string, rootOf RootOf) error 
 }
 
 // RequireGraphInProjectRepository refuses a graph_dir, set in sddDir and
-// resolved to graphDir, that leads out of the project at projectRoot into no
-// repository or into one other than the project's: graph commits, the schema
-// stamp and engine branches all belong to the repository holding the
-// project's .sdd/.
+// resolved to graphDir, that lies in no repository or in one other than the
+// project's, a repository nested in the project included: graph commits, the
+// schema stamp and engine branches all belong to the repository holding the
+// project's .sdd/. A project with no repository yet keeps only a graph inside
+// it.
 func RequireGraphInProjectRepository(sddDir, projectRoot, graphDir string, rootOf RootOf) error {
-	if WithinDir(projectRoot, graphDir) {
+	projectRepo, err := rootOf(projectRoot)
+	if err != nil {
+		return err
+	}
+	if projectRepo == "" && WithinDir(projectRoot, graphDir) {
 		return nil
 	}
 	graphRepo, err := rootOf(graphDir)
@@ -228,14 +233,14 @@ func RequireGraphInProjectRepository(sddDir, projectRoot, graphDir string, rootO
 	if graphRepo == "" {
 		return fmt.Errorf("graph_dir in %s leads to %s, outside the project and outside any repository; keep the graph inside the project", sddDir, graphDir)
 	}
-	projectRepo, err := rootOf(projectRoot)
-	if err != nil {
-		return err
-	}
-	if projectRepo == "" || SameDir(graphRepo, projectRepo) {
+	if projectRepo != "" && SameDir(graphRepo, projectRepo) {
 		return nil
 	}
-	return fmt.Errorf("graph_dir in %s leads into %s, a repository separate from %s; make the graph a project of its own (`sdd init` there) and set project_dir to that repository's root instead", sddDir, graphRepo, projectRepo)
+	separateFrom := projectRepo
+	if separateFrom == "" {
+		separateFrom = projectRoot
+	}
+	return fmt.Errorf("graph_dir in %s leads into %s, a repository separate from %s; make the graph a project of its own (`sdd init` there) and set project_dir to that repository's root instead", sddDir, graphRepo, separateFrom)
 }
 
 // WithinDir reports whether path is dir or lies below it. Folders on disk
