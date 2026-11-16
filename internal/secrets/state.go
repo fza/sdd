@@ -14,7 +14,11 @@ import (
 // rule files and their fetch state.
 const CacheDirName = "secret-rules"
 
-const stateFileName = "state.json"
+const (
+	stateFileName = "state.json"
+	// reportedFileName holds the fetch failure last told to a person.
+	reportedFileName = "reported-failure"
+)
 
 // fetchState is the fetch record beside the fetched copies: which copy was
 // accepted last and how the latest attempts went.

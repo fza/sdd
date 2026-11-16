@@ -188,6 +188,17 @@ func useSecretRules(ctx context.Context) error {
 	return nil
 }
 
+// serveSecretRulesNotice is the part of the MCP server's CacheNotice that
+// tells a failed or rejected rule fetch once.
+func serveSecretRulesNotice(ctx context.Context) string {
+	notice, err := secrets.Active().TakeFailureNotice()
+	if err != nil {
+		slogutils.FromContext(ctx).Warn("secret rules: reading the fetch state", "err", err)
+		return ""
+	}
+	return notice
+}
+
 // serveCacheNotice is the MCP server's CacheNotice: a failed run's notice,
 // handed out once.
 func serveCacheNotice(ctx context.Context) string {

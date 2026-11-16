@@ -404,6 +404,13 @@ func New(options Options) *cli.Command {
 			if err != nil && !repairingConfig(writesConfig(cmd), err) {
 				return ctx, err
 			}
+			// sdd serve tells it on its next tool result instead.
+			if first := cmd.Args().First(); first != "serve" && first != cacheCommandName {
+				notice := serveSecretRulesNotice(ctx)
+				if notice != "" {
+					slogutils.FromContext(ctx).Warn(notice)
+				}
+			}
 
 			// sdd cache is the pass itself. sdd serve shows a failed pass
 			// through its tool results instead.

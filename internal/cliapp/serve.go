@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,12 +78,14 @@ func serveCmd(launchCachePrune func(dir, logPath string) error) *cli.Command {
 			if err != nil {
 				return err
 			}
-			var cacheNotice func(context.Context) string
+			cacheNotice := serveSecretRulesNotice
 			if launchCachePrune != nil {
 				timerCtx, stopTimer := context.WithCancel(ctx)
 				defer stopTimer()
 				go runCachePruneTimer(timerCtx, launchCachePrune)
-				cacheNotice = serveCacheNotice
+				cacheNotice = func(ctx context.Context) string {
+					return strings.TrimSpace(serveCacheNotice(ctx) + "\n" + serveSecretRulesNotice(ctx))
+				}
 			}
 
 			transport := cmd.String("transport")
