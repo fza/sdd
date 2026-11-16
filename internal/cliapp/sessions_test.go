@@ -16,6 +16,13 @@ import (
 // there since parkedAt unless that is zero.
 func writeCaptureSession(t *testing.T, f *appFixture, id, step string, parkedAt time.Time) {
 	t.Helper()
+	writeCaptureSessionIn(t, f, id, step, parkedAt, "")
+}
+
+// writeCaptureSessionIn is writeCaptureSession for a session opened in
+// dialogue mode, empty for guided.
+func writeCaptureSessionIn(t *testing.T, f *appFixture, id, step string, parkedAt time.Time, dialogue string) {
+	t.Helper()
 	sessions, err := localadapter.NewFilesystemSessionStore(localadapter.StoreLocation{
 		Name: "test", Subject: "local", Project: "example.test/cli",
 		Sessions:    filepath.Join(f.root, "state", "sdd", "sessions", "example.test", "cli"),
@@ -30,7 +37,7 @@ func writeCaptureSession(t *testing.T, f *appFixture, id, step string, parkedAt 
 		t.Fatal(err)
 	}
 	events := []engine.Event{
-		{Event: engine.EventSessionMeta, Data: map[string]any{"participant": "Local Author"}},
+		{Event: engine.EventSessionMeta, Data: map[string]any{"participant": "Local Author", "dialogue": dialogue}},
 		{Instance: "i1", Event: engine.EventStarted, Data: map[string]any{"procedure": "capture", "step": "assemble"}},
 		{Instance: "i1", Event: engine.EventTransition, Data: map[string]any{"to": step}},
 	}
@@ -98,5 +105,20 @@ func TestSessionsJSONListsEveryOpenSession(t *testing.T) {
 	}
 	if open.Parked || open.Step != "playback" || open.Since.IsZero() {
 		t.Errorf("an open capture should list as not parked with its last activity, got %+v", open)
+	}
+}
+
+// sdd sessions abandon is the person's door: it ends an autonomous session
+// whose capture waits at an unattended step, which the agent's abandon may
+// not drop.
+func TestSessionsAbandonEndsAnAutonomousSessionWithABlockedCapture(t *testing.T) {
+	f := newAppFixture(t)
+	writeCaptureSessionIn(t, f, "s_blocked", "reviseOrOverride", time.Time{}, "auto")
+	result := f.run(t, "sessions", "abandon", "s_blocked")
+	if result.err != nil {
+		t.Fatalf("sdd sessions abandon should end the session, got %v\n%s", result.err, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "Abandoned s_blocked") {
+		t.Fatalf("the abandon should report the session, got %q", result.stdout)
 	}
 }

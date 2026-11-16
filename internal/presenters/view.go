@@ -54,10 +54,11 @@ func RenderView(w io.Writer, sections []types.ViewSection, r *Repeats) {
 }
 
 // ViewText is the view text of the application, the engine and the MCP
-// server: RenderView without the trailing newline.
+// server: RenderView within the whole result (RenderWithin), without the
+// trailing newline.
 func ViewText(sections []types.ViewSection, r *Repeats) string {
 	var rendered strings.Builder
-	RenderView(&rendered, sections, r)
+	RenderWithin(&rendered, r, func(w io.Writer, r *Repeats) { RenderView(w, sections, r) })
 	return strings.TrimRight(rendered.String(), "\n")
 }
 

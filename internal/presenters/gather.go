@@ -1,6 +1,7 @@
 package presenters
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -14,6 +15,16 @@ import (
 // every list prints whole, and what the full block leaves out is named with
 // the call that opens it.
 func RenderGather(w io.Writer, result *query.GatherResult) error {
+	var repeats *Repeats
+	if result.Held != nil || result.Anchor != nil {
+		repeats = &Repeats{Held: result.Held, Anchor: result.Anchor, Graph: result.Graph}
+	}
+	var err error
+	RenderWithin(w, repeats, func(w io.Writer, r *Repeats) { err = errors.Join(err, renderGather(w, result, r)) })
+	return err
+}
+
+func renderGather(w io.Writer, result *query.GatherResult, repeats *Repeats) error {
 	g := result.Graph
 	fmt.Fprintln(w, "# gather")
 	fmt.Fprintln(w)
@@ -33,7 +44,6 @@ func RenderGather(w io.Writer, result *query.GatherResult) error {
 	}
 	fmt.Fprintf(w, "prefilter: %s\n", prefilter)
 
-	repeats := &Repeats{Held: result.Held, Anchor: result.Anchor, Graph: g}
 	wayBackShown := false
 	if result.Full != nil && len(result.Full.Groups) > 0 || len(result.Overflow) > 0 {
 		fmt.Fprintln(w)

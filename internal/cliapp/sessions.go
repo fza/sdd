@@ -63,7 +63,7 @@ func sessionsAbandonCmd() *cli.Command {
 				return err
 			}
 			result, err := application.AbandonWorkflowSession(ctx, identity, sdd.WorkflowResumeRequest{
-				SessionID: sdd.SessionID(strings.TrimSpace(cmd.Args().First())), ClientName: "sdd sessions abandon",
+				SessionID: sdd.SessionID(strings.TrimSpace(cmd.Args().First())), ClientName: "sdd sessions abandon", Person: true,
 			}, cmd.String("reason"))
 			if err != nil {
 				return err

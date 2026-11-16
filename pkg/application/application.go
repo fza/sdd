@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -299,12 +300,15 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	return result, nil
 }
 
-// render renders the view's sections as text. The no-repeat rule covers the
-// local graph's sections only.
-func (r ViewResult) render(g *model.Graph, held func(id, hash string) (string, string, bool), anchor func(id, hash, body string) string) string {
+// render renders the view's sections as text, entries served in full anchored
+// over the whole result. The no-repeat rule covers the local graph's sections
+// only.
+func (r ViewResult) render(g *model.Graph, held func(id, hash string) (string, string, bool), anchor func(id, hash, body, field string) string) string {
 	var rendered strings.Builder
-	presenters.RenderView(&rendered, r.ViewSections[:r.local], repeatsFor(g, held, anchor))
-	presenters.RenderView(&rendered, r.ViewSections[r.local:], nil)
+	presenters.RenderWithin(&rendered, repeatsFor(g, held, anchor), func(w io.Writer, repeats *presenters.Repeats) {
+		presenters.RenderView(w, r.ViewSections[:r.local], repeats)
+		presenters.RenderView(w, r.ViewSections[r.local:], nil)
+	})
 	return strings.TrimRight(rendered.String(), "\n")
 }
 
@@ -841,7 +845,7 @@ var errVectorUnavailable = errors.New("vector search requires an Embedder and a 
 
 // repeatsFor applies the no-repeat rule for a consumer holding the entries
 // held reports; nil serves everything in full.
-func repeatsFor(g *model.Graph, held func(id, hash string) (string, string, bool), anchor func(id, hash, body string) string) *presenters.Repeats {
+func repeatsFor(g *model.Graph, held func(id, hash string) (string, string, bool), anchor func(id, hash, body, field string) string) *presenters.Repeats {
 	if held == nil {
 		return nil
 	}

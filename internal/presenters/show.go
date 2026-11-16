@@ -1,6 +1,7 @@
 package presenters
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -53,10 +54,15 @@ func RenderShow(w io.Writer, entries []types.ShownEntry, opts ShowOptions) error
 }
 
 // ShowText is the show text of the application and the MCP server: RenderShow
-// with default options under r's no-repeat rule, without the trailing newline.
+// with default options under r's no-repeat rule, within the whole result
+// (RenderWithin), without the trailing newline.
 func ShowText(entries []types.ShownEntry, r *Repeats) (string, error) {
 	var rendered strings.Builder
-	if err := RenderShow(&rendered, entries, ShowOptions{Repeats: r}); err != nil {
+	var err error
+	RenderWithin(&rendered, r, func(w io.Writer, r *Repeats) {
+		err = errors.Join(err, RenderShow(w, entries, ShowOptions{Repeats: r}))
+	})
+	if err != nil {
 		return "", err
 	}
 	return strings.TrimRight(rendered.String(), "\n"), nil

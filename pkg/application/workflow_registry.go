@@ -205,7 +205,7 @@ func (w *WorkflowSession) registerWorkflowQueries(registry *engine.Registry) err
 				}
 			}
 			var held func(id, hash string) (string, string, bool)
-			var anchor func(id, hash, body string) string
+			var anchor func(id, hash, body, field string) string
 			if repeats := w.repeats(); repeats != nil {
 				held, anchor = repeats.Held, repeats.Anchor
 			}

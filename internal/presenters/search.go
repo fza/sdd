@@ -57,11 +57,11 @@ func RenderSearch(w io.Writer, hits []types.SearchHit, r *Repeats) {
 }
 
 // SearchText is the search text of the application and the MCP server:
-// RenderSearch without the trailing newline, each notice following as its own
-// paragraph.
+// RenderSearch within the whole result (RenderWithin), without the trailing
+// newline, each notice following as its own paragraph.
 func SearchText(hits []types.SearchHit, notices []string, r *Repeats) string {
 	var rendered strings.Builder
-	RenderSearch(&rendered, hits, r)
+	RenderWithin(&rendered, r, func(w io.Writer, r *Repeats) { RenderSearch(w, hits, r) })
 	text := strings.TrimRight(rendered.String(), "\n")
 	for _, notice := range notices {
 		if text != "" {

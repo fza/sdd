@@ -72,7 +72,7 @@ type GatherRequest struct {
 	// a candidate prints as a pointer. Nil serves every line in full,
 	// as the CLI does. Anchor places the tag in a body served in full.
 	Held   func(id, hash string) (tag, next string, held bool)
-	Anchor func(id, hash, body string) string
+	Anchor func(id, hash, body, field string) string
 	// since is the corpus mark of the capture's reading; the live entries it
 	// lacks are listed as landed since the reading began.
 	since *model.CorpusMark

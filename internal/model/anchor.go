@@ -3,6 +3,7 @@ package model
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -216,9 +217,15 @@ func PlaceSchemaAnchor(schema map[string]any, tag string, rnd RandomSource) (Anc
 		return Anchor{}, false
 	}
 	// The challenges come from the description the tag sits in, so the agent
-	// finds each prompt beside the tag.
+	// finds each prompt beside the tag, and occur once in the whole schema
+	// it reads.
+	raw, err := json.Marshal(schema)
+	if err != nil {
+		return Anchor{}, false
+	}
+	count := letterRuns(string(raw))
 	i, challenges := drawKeepingProofs(len(spots), rnd, func(i int) []Challenge {
-		return pickChallenges(spots[i].text, letterRuns(spots[i].text), spots[i].word.offset, AnchorChallenges)
+		return pickChallenges(spots[i].text, count, spots[i].word.offset, AnchorChallenges)
 	})
 	s := spots[i]
 	return Anchor{Tag: tag, Word: s.word.text, Offset: s.word.offset, Path: s.path, Challenges: challenges}, true

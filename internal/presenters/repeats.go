@@ -3,6 +3,7 @@ package presenters
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/networkteam/sdd/internal/model"
 )
@@ -21,12 +22,14 @@ type Repeats struct {
 	// hash of its stored text (model.EntryHash), with its tag and the word
 	// whose follower its next proof names (model.Challenge).
 	Held func(id, hash string) (tag, next string, held bool)
-	// Anchor returns an entry body served in full with its tag placed.
-	Anchor func(id, hash, body string) string
+	// Anchor returns an entry body served in full with its tag placed, its
+	// proofs asking for words once in field, the whole result text.
+	Anchor func(id, hash, body, field string) string
 	// Graph holds the entries the serve renders, whose stored text keys
 	// them; an entry it does not hold keys on its ID alone.
 	Graph   *model.Graph
 	pointed bool
+	field   string
 }
 
 // pointer returns the pointer an entry prints as when the call holds it. An
@@ -48,7 +51,7 @@ func (r *Repeats) anchor(id, body string) string {
 	if r == nil || r.Anchor == nil {
 		return body
 	}
-	return r.Anchor(id, r.hash(id), body)
+	return r.Anchor(id, r.hash(id), body, r.field)
 }
 
 func (r *Repeats) hash(id string) string {
@@ -93,4 +96,20 @@ func pointerText(id, brief, tag, next string) string {
 		return fmt.Sprintf("%s — %s (held as %s; %s)", id, brief, model.TagName(tag), proof)
 	}
 	return fmt.Sprintf("%s — %s (held as %s)", id, brief, model.TagName(tag))
+}
+
+// RenderWithin renders a result through render with r, the entries it serves
+// in full anchored over the whole result text: a first pass with every entry
+// in full, plus the words pointer lines carry, so a proof's prompt occurs
+// once in what the agent reads.
+func RenderWithin(w io.Writer, r *Repeats, render func(io.Writer, *Repeats)) {
+	if r != nil && r.Anchor != nil {
+		var whole strings.Builder
+		render(&whole, nil)
+		whole.WriteString(pointerText("", "", "", ""))
+		whole.WriteString(pointerText("", "", "abcd", "x"))
+		(&Repeats{pointed: true}).WriteWayBack(&whole)
+		r.field = whole.String()
+	}
+	render(w, r)
 }

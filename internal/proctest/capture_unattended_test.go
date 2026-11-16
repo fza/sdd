@@ -183,15 +183,16 @@ func TestUnattended_TheAgentCannotAbandonABlockedCapture(t *testing.T) {
 }
 
 // Ending the session by its handle is the person's door to drop a blocked
-// capture: sdd sessions abandon ends it, while the agent's abandon by handle
-// (marked Agent, as the MCP surface sends it) is refused like its per-move one.
+// capture: an abandon marked Person, as sdd sessions abandon sends it, ends
+// it, while any other abandon by handle counts as the agent's and is refused
+// like its per-move one.
 func TestUnattended_OnlyThePersonEndsTheSessionOfABlockedCapture(t *testing.T) {
 	world, session, instance := blockedAutonomousCapture(t, "unattended-abandon-session")
-	_, err := world.App.AbandonWorkflowSession(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: session.ID, Agent: true}, "the finding holds")
+	_, err := world.App.AbandonWorkflowSession(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: session.ID}, "the finding holds")
 	if err == nil || !strings.Contains(err.Error(), "is not abandoned in an autonomous session") {
 		t.Fatalf("the agent's abandon by session handle should be refused, got %v", err)
 	}
-	result, err := world.App.AbandonWorkflowSession(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: session.ID}, "dropped by its owner")
+	result, err := world.App.AbandonWorkflowSession(t.Context(), world.Identity, sdd.WorkflowResumeRequest{SessionID: session.ID, Person: true}, "dropped by its owner")
 	if err != nil {
 		t.Fatalf("sdd sessions abandon should end the session with the blocked capture, got %v", err)
 	}
