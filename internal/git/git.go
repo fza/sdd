@@ -404,9 +404,9 @@ func (Repositories) Init(dir string) error {
 	return nil
 }
 
-func (Repositories) CurrentBranch(dir string) (string, error) { return CurrentBranch(dir) }
+func (Repositories) CurrentBranch(dir string) (string, error) { return currentBranch(dir, pathEnv()) }
 
-func (Repositories) RemoteURL(dir string) string { return RemoteURL(dir) }
+func (Repositories) RemoteURL(dir string) string { return remoteURL(dir, pathEnv()) }
 
 func (Repositories) StableRoot(dir string) (string, error) { return StableRepoRoot(dir) }
 
@@ -460,8 +460,13 @@ func UserName() string {
 
 // RemoteURL returns the repo's origin remote URL, or "" when no remote is
 // configured — the local-only case for repo_id derivation.
-func RemoteURL(repoRoot string) string {
-	out, err := exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin").Output()
+func RemoteURL(repoRoot string) string { return remoteURL(repoRoot, nil) }
+
+// remoteURL is RemoteURL run with env; nil inherits the process environment.
+func remoteURL(repoRoot string, env []string) string {
+	cmd := exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin")
+	cmd.Env = env
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
@@ -470,8 +475,14 @@ func RemoteURL(repoRoot string) string {
 
 // CurrentBranch resolves the symbolic branch at repoRoot. Detached HEAD is
 // returned as an error because it cannot seed durable mutation authority.
-func CurrentBranch(repoRoot string) (string, error) {
-	out, err := exec.Command("git", "-C", repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD").CombinedOutput()
+func CurrentBranch(repoRoot string) (string, error) { return currentBranch(repoRoot, nil) }
+
+// currentBranch is CurrentBranch run with env; nil inherits the process
+// environment.
+func currentBranch(repoRoot string, env []string) (string, error) {
+	cmd := exec.Command("git", "-C", repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD")
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git current branch: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
