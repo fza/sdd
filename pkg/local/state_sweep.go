@@ -78,22 +78,21 @@ func RecordCheckout(stateRoot, repoKey, checkout string) error {
 	if err != nil {
 		return err
 	}
-	recorded, err := recordedCheckouts(path)
-	if err != nil || slices.Contains(recorded, checkout) {
+	recorded, err := readCheckoutRecord(path)
+	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("creating checkout records: %w", err)
+	if slices.Contains(recorded, checkoutEntry{path: checkout}) {
+		return nil
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("opening checkout record: %w", err)
-	}
-	_, err = file.WriteString(checkout + "\n")
-	if err := errors.Join(err, file.Close()); err != nil {
-		return fmt.Errorf("recording checkout: %w", err)
-	}
-	return nil
+	return updateCheckoutRecord(stateRoot, path, func(entries []checkoutEntry) []checkoutEntry {
+		i := slices.IndexFunc(entries, func(e checkoutEntry) bool { return e.path == checkout })
+		if i < 0 {
+			return append(entries, checkoutEntry{path: checkout})
+		}
+		entries[i].missing = time.Time{}
+		return entries
+	})
 }
 
 func checkoutsPath(stateRoot, repoKey string) (string, error) {
@@ -104,9 +103,31 @@ func checkoutsPath(stateRoot, repoKey string) (string, error) {
 	return dir + checkoutsSuffix, nil
 }
 
-// recordedCheckouts reads a checkout record, one path per line; a missing
-// record names none.
-func recordedCheckouts(path string) ([]string, error) {
+// checkoutEntry is one line of a checkout record: the checkout's path and,
+// once a sweep found it gone, a tab and since when (RFC 3339).
+type checkoutEntry struct {
+	path    string
+	missing time.Time
+}
+
+func parseCheckoutLine(line string) checkoutEntry {
+	if i := strings.LastIndexByte(line, '\t'); i >= 0 {
+		if missing, err := time.Parse(time.RFC3339, line[i+1:]); err == nil {
+			return checkoutEntry{path: line[:i], missing: missing}
+		}
+	}
+	return checkoutEntry{path: line}
+}
+
+func (e checkoutEntry) line() string {
+	if e.missing.IsZero() {
+		return e.path + "\n"
+	}
+	return e.path + "\t" + e.missing.UTC().Format(time.RFC3339) + "\n"
+}
+
+// readCheckoutRecord reads a checkout record; a missing record names none.
+func readCheckoutRecord(path string) ([]checkoutEntry, error) {
 	content, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -114,13 +135,66 @@ func recordedCheckouts(path string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading checkout record: %w", err)
 	}
-	var checkouts []string
+	var entries []checkoutEntry
 	for line := range strings.Lines(string(content)) {
-		if line = strings.TrimSuffix(line, "\n"); line != "" && !slices.Contains(checkouts, line) {
-			checkouts = append(checkouts, line)
+		line = strings.TrimSuffix(line, "\n")
+		if line == "" {
+			continue
+		}
+		entry := parseCheckoutLine(line)
+		if !slices.ContainsFunc(entries, func(e checkoutEntry) bool { return e.path == entry.path }) {
+			entries = append(entries, entry)
 		}
 	}
-	return checkouts, nil
+	return entries, nil
+}
+
+// checkoutRecordsLockWait bounds how long a record update waits for another.
+const checkoutRecordsLockWait = 5 * time.Second
+
+// updateCheckoutRecord rewrites the record at path with what change makes of
+// its entries, under a lock shared by every record of stateRoot; an empty
+// result removes the record.
+func updateCheckoutRecord(stateRoot, path string, change func([]checkoutEntry) []checkoutEntry) (err error) {
+	if err := os.MkdirAll(stateRoot, 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", stateRoot, err)
+	}
+	lock := flock.New(filepath.Join(stateRoot, checkoutsCategory+".lock"))
+	ctx, cancel := context.WithTimeout(context.Background(), checkoutRecordsLockWait)
+	defer cancel()
+	if _, err := lock.TryLockContext(ctx, 20*time.Millisecond); err != nil {
+		return fmt.Errorf("locking checkout records: %w", err)
+	}
+	defer func() { err = errors.Join(err, lock.Unlock()) }()
+	before, err := readCheckoutRecord(path)
+	if err != nil {
+		return err
+	}
+	after := change(slices.Clone(before))
+	if slices.Equal(before, after) {
+		return nil
+	}
+	if len(after) == 0 {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("removing checkout record: %w", err)
+		}
+		return nil
+	}
+	var content strings.Builder
+	for _, entry := range after {
+		content.WriteString(entry.line())
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating checkout records: %w", err)
+	}
+	temp := path + ".tmp"
+	if err := os.WriteFile(temp, []byte(content.String()), 0o644); err != nil {
+		return fmt.Errorf("recording checkout: %w", err)
+	}
+	if err := os.Rename(temp, path); err != nil {
+		return fmt.Errorf("recording checkout: %w", err)
+	}
+	return nil
 }
 
 // StateSwept is what one StateSweep pass removed. Unreadable counts the
@@ -174,6 +248,18 @@ func (s StateSweep) Sweep(ctx context.Context, now time.Time, sessionRetention, 
 	for _, key := range keys {
 		if ctx.Err() != nil {
 			break
+		}
+		missing, err := s.tendCheckoutRecord(key, now, unusedRetention)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("tending the checkout record of %s: %w", key, err))
+			continue
+		}
+		if !missing {
+			orphaned, err := s.removeOrphanedStaged(key, now, unusedRetention, live)
+			counts.add(orphaned)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("removing the orphaned staged attachments of %s: %w", key, err))
+			}
 		}
 		removed, err := s.retireUnused(ctx, key, now, unusedRetention, live)
 		counts.add(removed)
@@ -337,13 +423,13 @@ func (s StateSweep) openInCheckouts(ctx context.Context, key string) (map[app.Se
 	if err != nil {
 		return nil, err
 	}
-	checkouts, err := recordedCheckouts(path)
+	checkouts, err := readCheckoutRecord(path)
 	if err != nil {
 		return nil, err
 	}
 	open := map[app.SessionID]bool{}
 	for _, checkout := range checkouts {
-		dir := filepath.Join(checkout, model.SDDDirName, sessionsCategory)
+		dir := filepath.Join(checkout.path, model.SDDDirName, sessionsCategory)
 		if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
 			continue
 		} else if err != nil {
@@ -362,6 +448,148 @@ func (s StateSweep) openInCheckouts(ctx context.Context, key string) (map[app.Se
 		}
 	}
 	return open, nil
+}
+
+// tendCheckoutRecord notes when a sweep first found a recorded checkout gone
+// and drops one gone for longer than retention, as a removed worktree; until
+// then it may be an unmounted volume. It reports whether a checkout on record
+// is gone. The checkouts are looked up outside the record lock, so a hung
+// mount holds no RecordCheckout.
+func (s StateSweep) tendCheckoutRecord(key string, now time.Time, retention time.Duration) (missing bool, err error) {
+	path, err := checkoutsPath(s.StateRoot, key)
+	if err != nil {
+		return false, err
+	}
+	entries, err := readCheckoutRecord(path)
+	if err != nil || len(entries) == 0 {
+		return false, err
+	}
+	absent := map[string]bool{}
+	for _, entry := range entries {
+		_, err := os.Stat(entry.path)
+		if errors.Is(err, fs.ErrNotExist) {
+			absent[entry.path] = true
+		} else if err != nil {
+			return false, err
+		}
+	}
+	err = updateCheckoutRecord(s.StateRoot, path, func(entries []checkoutEntry) []checkoutEntry {
+		missing = false
+		kept := entries[:0]
+		for _, entry := range entries {
+			switch {
+			case !absent[entry.path]:
+				entry.missing = time.Time{}
+			case entry.missing.IsZero():
+				entry.missing = now
+			case now.Sub(entry.missing) > retention:
+				continue
+			}
+			missing = missing || absent[entry.path]
+			kept = append(kept, entry)
+		}
+		return kept
+	})
+	return missing, err
+}
+
+// removeOrphanedStaged removes the staged attachments under key of sessions
+// no log names any more, in the state folder or a recorded checkout, once
+// untouched for longer than retention: those of a removed worktree's sessions,
+// which retireUnused never reaches while the project is in use.
+func (s StateSweep) removeOrphanedStaged(key string, now time.Time, retention time.Duration, live map[app.SessionID]bool) (counts StateSwept, err error) {
+	staged := s.dir(stagedBlobsCategory, key)
+	subjects, err := os.ReadDir(staged)
+	if errors.Is(err, fs.ErrNotExist) {
+		return counts, nil
+	}
+	if err != nil {
+		return counts, err
+	}
+	logged, err := s.loggedInCheckouts(key)
+	if err != nil {
+		return counts, err
+	}
+	for _, subject := range subjects {
+		if !subject.IsDir() {
+			continue
+		}
+		sessions, err := os.ReadDir(filepath.Join(staged, subject.Name()))
+		if err != nil {
+			return counts, err
+		}
+		for _, session := range sessions {
+			id := app.SessionID(session.Name())
+			if !session.IsDir() || live[id] || logged[id] {
+				continue
+			}
+			dir := filepath.Join(staged, subject.Name(), session.Name())
+			changed, err := lastChange(dir)
+			if err != nil {
+				return counts, err
+			}
+			if now.Sub(changed) <= retention {
+				continue
+			}
+			size, err := treeSize(dir)
+			if err != nil {
+				return counts, err
+			}
+			if err := os.RemoveAll(dir); err != nil {
+				return counts, err
+			}
+			counts.Bytes += size
+		}
+	}
+	return counts, nil
+}
+
+// loggedInCheckouts lists the sessions holding a log, open, ended or
+// unreadable, in the .sdd/sessions of a checkout recorded for key.
+func (s StateSweep) loggedInCheckouts(key string) (map[app.SessionID]bool, error) {
+	path, err := checkoutsPath(s.StateRoot, key)
+	if err != nil {
+		return nil, err
+	}
+	checkouts, err := readCheckoutRecord(path)
+	if err != nil {
+		return nil, err
+	}
+	logged := map[app.SessionID]bool{}
+	for _, checkout := range checkouts {
+		entries, err := os.ReadDir(filepath.Join(checkout.path, model.SDDDirName, sessionsCategory))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), sessionLogSuffix) {
+				logged[app.SessionID(strings.TrimSuffix(entry.Name(), sessionLogSuffix))] = true
+			}
+		}
+	}
+	return logged, nil
+}
+
+// lastChange is the latest modification time of dir or anything below it.
+func lastChange(dir string) (time.Time, error) {
+	var last time.Time
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.ModTime().After(last) {
+			last = info.ModTime()
+		}
+		return nil
+	})
+	return last, err
 }
 
 // lastUse is the project's use stamp, or for a project no binary stamped yet

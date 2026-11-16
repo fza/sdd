@@ -408,3 +408,74 @@ func TestMarkProjectUsedRefreshesOnceADay(t *testing.T) {
 		t.Errorf("a use a day after the stamp should refresh it, got %v, %v", info.ModTime(), err)
 	}
 }
+
+// A checkout gone from disk may be an unmounted volume: its sessions' staged
+// attachments stay while it is missing for less than cache.retention. Missing
+// longer, it is a removed worktree: its record line goes, and so do the staged
+// attachments no log names any more, though the project stays in use.
+func TestStateSweepDropsARemovedWorktreeAfterTheRetention(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "github.com/acme/busy"
+	removed, kept := t.TempDir(), t.TempDir()
+	for _, checkout := range []string{removed, kept} {
+		if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.inRepoSession(t, key, removed, "s_removed", time.Time{})
+	f.inRepoSession(t, key, kept, "s_kept", time.Time{})
+	if err := os.RemoveAll(removed); err != nil {
+		t.Fatal(err)
+	}
+	record := filepath.Join(f.root, "checkouts", "github.com", "acme", "busy.list")
+
+	soon := f
+	soon.now = f.now.Add(time.Hour)
+	soon.used(t, key, soon.now)
+	soon.sweep(t)
+	if !f.stagedExists(t, key, "s_removed") {
+		t.Fatal("the staged attachments of a checkout missing for less than the retention should stay")
+	}
+	content, err := os.ReadFile(record)
+	if err != nil || !strings.Contains(string(content), removed+"\t") {
+		t.Fatalf("the record should note since when the checkout is missing, got %q, %v", content, err)
+	}
+
+	late := f
+	late.now = soon.now.Add(sweepUnusedRetention + time.Hour)
+	late.used(t, key, late.now)
+	late.sweep(t)
+	if f.stagedExists(t, key, "s_removed") {
+		t.Error("the staged attachments of a checkout missing past the retention should go")
+	}
+	if !f.stagedExists(t, key, "s_kept") {
+		t.Error("the staged attachments of a session logged in a present checkout should stay")
+	}
+	content, err = os.ReadFile(record)
+	if err != nil || string(content) != kept+"\n" {
+		t.Errorf("the record should keep only the present checkout, got %q, %v", content, err)
+	}
+}
+
+// A record line from an earlier build, a path alone, still reads; recording a
+// checkout again clears its missing mark.
+func TestRecordCheckoutClearsTheMissingMark(t *testing.T) {
+	f := newStateFixture(t)
+	record := filepath.Join(f.root, "checkouts", "local", "abcdef012345.list")
+	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, []byte("/work/app\t2026-01-02T03:04:05Z\n/work/legacy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := localadapter.RecordCheckout(f.root, "local/abcdef012345", "/work/app"); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(content), "/work/app\n/work/legacy\n"; got != want {
+		t.Errorf("record %q, want %q", got, want)
+	}
+}
