@@ -48,7 +48,7 @@ func TestRenderView_HeldEntryPrintsAsPointer(t *testing.T) {
 				ids = append(ids, e.ID)
 			}
 			var buf bytes.Buffer
-			presenters.RenderViewRepeats(&buf, &query.ViewResult{Graph: g, Sections: []query.SectionResult{tc.section}}, heldOnly(ids...))
+			presenters.RenderView(&buf, (&query.ViewResult{Graph: g, Sections: []query.SectionResult{tc.section}}).ViewSections(""), heldOnly(ids...))
 			got := buf.String()
 			for _, e := range tc.held {
 				if !strings.Contains(got, presenters.GatherPointer(e, "ab12")) {
@@ -74,8 +74,14 @@ func TestRenderShow_HeldChainEntryPrintsAsPointer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	entries, err := result.ShownEntries()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var buf bytes.Buffer
-	presenters.RenderShow(&buf, result, presenters.ShowOptions{Repeats: heldOnly(basis.ID)})
+	if err := presenters.RenderShow(&buf, entries, presenters.ShowOptions{Repeats: heldOnly(basis.ID)}); err != nil {
+		t.Fatal(err)
+	}
 	got := buf.String()
 	if !strings.Contains(got, presenters.GatherPointer(basis, "ab12")) {
 		t.Fatalf("a held chain entry should print as its pointer:\n%s", got)
@@ -96,7 +102,7 @@ func TestRenderSearch_HeldHitPrintsAsPointer(t *testing.T) {
 		{Entry: remote, RepoID: "example.com/team/dep", Citations: []query.Citation{{Snippet: "remote-snippet", IsSummary: true, Score: 0.8}}},
 	}}
 	var buf bytes.Buffer
-	presenters.RenderSearchRepeats(&buf, result, g, heldOnly(local.ID, remote.ID))
+	presenters.RenderSearch(&buf, result.Hits(g), heldOnly(local.ID, remote.ID))
 	got := buf.String()
 	if !strings.Contains(got, local.ID+" — Held entry. (held as ⟦ab12⟧)") || strings.Contains(got, "local-snippet") {
 		t.Errorf("a held local hit should print as its pointer without citations:\n%s", got)

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/networkteam/sdd/internal/model"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // renderAsParticipantsBlock writes one `### <canonical>` per active
@@ -15,13 +15,9 @@ import (
 // Empty groups suppress output entirely. The CLI shell handles the
 // outer `## <name>` header (when name() is set), so this function
 // focuses on the per-actor bodies.
-func renderAsParticipantsBlock(w io.Writer, g *model.Graph, block model.ParticipantsBlock, brief bool, r *Repeats) {
+func renderAsParticipantsBlock(w io.Writer, block types.ViewParticipantsBlock, brief bool, r *Repeats) {
 	if len(block.Groups) == 0 {
 		return
-	}
-	line := EntryLine
-	if brief {
-		line = EntryLineBrief
 	}
 	for i, grp := range block.Groups {
 		if grp.Actor == nil {
@@ -31,9 +27,9 @@ func renderAsParticipantsBlock(w io.Writer, g *model.Graph, block model.Particip
 			fmt.Fprintln(w)
 		}
 		fmt.Fprintf(w, "### %s\n", grp.Actor.Canonical)
-		r.entry(w, grp.Actor, func() { line(w, grp.Actor, g) })
+		r.entry(w, grp.Actor.ID, grp.Actor.Brief, func() { writeListedEntry(w, *grp.Actor, brief) })
 		for _, role := range grp.Roles {
-			r.entry(w, role, func() { line(w, role, g) })
+			r.entry(w, role.ID, role.Brief, func() { writeListedEntry(w, role, brief) })
 		}
 	}
 	if block.Dropped > 0 {

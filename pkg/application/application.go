@@ -1,7 +1,6 @@
 package application
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -251,8 +250,8 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	if err != nil {
 		return ViewResult{}, err
 	}
-	var rendered bytes.Buffer
-	presenters.RenderViewRepeats(&rendered, viewResult, repeatsFor(request.Held, request.Anchor))
+	sections := viewResult.ViewSections("")
+	local := len(sections)
 	// Matched count is a read-side fact owned by the finder; sum it across the
 	// local graph and every queried dependency so "empty" means nothing
 	// rendered anywhere, not just an empty rendered string (which is also false
@@ -276,8 +275,7 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 			return ViewResult{}, err
 		}
 		matched += memberResult.MatchedCount()
-		fmt.Fprintf(&rendered, "\n── repo: %s ──\n", repoID)
-		presenters.RenderView(&rendered, memberResult)
+		sections = append(sections, memberResult.ViewSections(repoID)...)
 	}
 	// When a participant filter matched nothing, name the participants the
 	// local graph knows: participant() is an exact canonical match, so an
@@ -287,10 +285,15 @@ func (a *Application) viewFromSnapshot(ctx context.Context, identity RequestIden
 	if matched == 0 && layout.UsesFunction("participant") {
 		knownParticipants = snapshot.graph.AllParticipants()
 	}
+	// The no-repeat rule covers the local graph's sections only.
+	var rendered strings.Builder
+	presenters.RenderView(&rendered, sections[:local], repeatsFor(snapshot.graph, request.Held, request.Anchor))
+	presenters.RenderView(&rendered, sections[local:], nil)
 	full, summary := viewResult.ServedIDs()
 	return ViewResult{
 		Project:           runtime.options.Project,
 		Sections:          strings.TrimRight(rendered.String(), "\n"),
+		ViewSections:      sections,
 		MatchedCount:      matched,
 		KnownParticipants: knownParticipants,
 		FullIDs:           full,
@@ -329,9 +332,15 @@ func showFromSnapshot(runtime *ProjectRuntime, snapshot *Snapshot, request ShowR
 	if err != nil {
 		return ShowResult{}, err
 	}
-	var rendered bytes.Buffer
-	presenters.RenderShow(&rendered, showResult, presenters.ShowOptions{Repeats: repeatsFor(request.Held, request.Anchor)})
-	show := ShowResult{Project: runtime.options.Project, Entries: strings.TrimRight(rendered.String(), "\n")}
+	items, err := showResult.ShownEntries()
+	if err != nil {
+		return ShowResult{}, err
+	}
+	entries, err := presenters.ShowText(items, repeatsFor(snapshot.graph, request.Held, request.Anchor))
+	if err != nil {
+		return ShowResult{}, err
+	}
+	show := ShowResult{Project: runtime.options.Project, Entries: entries, Items: items}
 	for _, group := range showResult.Groups {
 		if group.Primary != nil {
 			if group.PrimaryID != "" {
@@ -403,19 +412,16 @@ func (a *Application) Search(ctx context.Context, identity RequestIdentity, proj
 	if limit := q.EffectiveLimit(); len(searchResult.Entries) > limit {
 		searchResult.Entries = searchResult.Entries[:limit]
 	}
-	var rendered bytes.Buffer
-	presenters.RenderSearchRepeats(&rendered, searchResult, snapshot.graph, repeatsFor(request.Held, request.Anchor))
-	search := SearchResult{Project: runtime.options.Project, Results: strings.TrimRight(rendered.String(), "\n"), Coverage: coverage}
+	hits := searchResult.Hits(snapshot.graph)
+	search := SearchResult{Project: runtime.options.Project, Hits: hits, Coverage: coverage}
 	for _, member := range coverage {
 		if !member.Complete {
-			search.Notice = "Search indexing is incomplete for the selected snapshots. Available matches are shown; retry later."
-			if search.Results != "" {
-				search.Results += "\n\n"
-			}
-			search.Results += search.Notice
+			search.Notices = append(search.Notices, "Search indexing is incomplete for the selected snapshots. Available matches are shown; retry later.")
 			break
 		}
 	}
+	search.Notice = strings.Join(search.Notices, " ")
+	search.Results = presenters.SearchText(hits, search.Notices, repeatsFor(snapshot.graph, request.Held, request.Anchor))
 	for _, entry := range searchResult.Entries {
 		if entry.Entry != nil {
 			search.EntryIDs = append(search.EntryIDs, entry.DisplayID())
@@ -828,9 +834,9 @@ var errVectorUnavailable = errors.New("vector search requires an Embedder and a 
 
 // repeatsFor applies the no-repeat rule for a consumer holding the entries
 // held reports; nil serves everything in full.
-func repeatsFor(held func(id, hash string) (string, string, bool), anchor func(id, hash, body string) string) *presenters.Repeats {
+func repeatsFor(g *model.Graph, held func(id, hash string) (string, string, bool), anchor func(id, hash, body string) string) *presenters.Repeats {
 	if held == nil {
 		return nil
 	}
-	return &presenters.Repeats{Held: held, Anchor: anchor}
+	return &presenters.Repeats{Held: held, Anchor: anchor, Graph: g}
 }

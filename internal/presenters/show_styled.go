@@ -13,7 +13,7 @@ import (
 
 	"github.com/networkteam/sdd/internal/mdcompose"
 	"github.com/networkteam/sdd/internal/model"
-	"github.com/networkteam/sdd/internal/query"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // defaultBodyWidth is the glamour wrap width used when no terminal width is
@@ -29,46 +29,52 @@ const defaultBodyWidth = 80
 // The colorprofile writer downsamples ANSI to the destination's capability and
 // strips it for a non-terminal writer (d-cpt-mvb), so a plain io.Writer — a
 // test buffer or a pipe — receives clean, color-free structured text.
-func RenderShowStyled(dst io.Writer, result *query.ShowResult, opts ShowOptions) {
+func RenderShowStyled(dst io.Writer, entries []types.ShownEntry, opts ShowOptions) error {
 	w := colorprofile.NewWriter(dst, os.Environ())
-	for i, g := range result.Groups {
+	for i, entry := range entries {
 		if i > 0 {
 			fmt.Fprintln(w)
 		}
-		renderShowGroupStyled(w, g, opts)
+		if err := renderShowEntryStyled(w, entry, opts); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func renderShowGroupStyled(w io.Writer, g query.ShowGroup, opts ShowOptions) {
+func renderShowEntryStyled(w io.Writer, entry types.ShownEntry, opts ShowOptions) error {
 	// Envelope: the same YAML the plain renderer emits, lightly syntax-
 	// highlighted (keys vs values vs punctuation) so it reads as structured
 	// metadata above the rendered body.
 	var env strings.Builder
-	writeEnvelope(&env, g, opts)
+	if err := writeEnvelope(&env, entry, opts); err != nil {
+		return err
+	}
 	fmt.Fprintln(w, styleEnvelopeYAML(env.String()))
 	fmt.Fprintln(w)
 
 	// Body under a top-level heading, demoted beneath it (d-cpt-5wv);
 	// glamour-rendered (raw fallback on any render error).
 	fmt.Fprintln(w, clrHeading.Render("# body"))
-	fmt.Fprint(w, renderStyledBody(mdcompose.DemoteTo(g.Primary.Content, bodyHeadingLevel), opts.Width))
+	fmt.Fprint(w, renderStyledBody(mdcompose.DemoteTo(entry.Body, bodyHeadingLevel), opts.Width))
 
-	if len(g.Upstream) > 0 {
+	if len(entry.Upstream) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, clrHeading.Render("# upstream"))
 		fmt.Fprintln(w)
-		for _, item := range g.Upstream {
-			renderTreeItemStyled(w, item, primaryDisplayID(g))
+		for _, item := range entry.Upstream {
+			renderTreeItemStyled(w, item, entry.ID)
 		}
 	}
-	if len(g.Downstream) > 0 {
+	if len(entry.Downstream) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, clrHeading.Render("# downstream"))
 		fmt.Fprintln(w)
-		for _, item := range g.Downstream {
-			renderTreeItemStyled(w, item, primaryDisplayID(g))
+		for _, item := range entry.Downstream {
+			renderTreeItemStyled(w, item, entry.ID)
 		}
 	}
+	return nil
 }
 
 // styleEnvelopeYAML highlights the marshaled envelope YAML by concept: keys in
@@ -206,10 +212,10 @@ func renderStyledBody(content string, width int) string {
 // grey. A closed/superseded node is rendered whole in the receded grey with no
 // colour accents, so the live entries stand out. The node shape is otherwise
 // identical to the plain renderer.
-func renderTreeItemStyled(w io.Writer, item model.ShowTreeItem, primaryID string) {
+func renderTreeItemStyled(w io.Writer, item types.ShownChainItem, primaryID string) {
 	guide := clrFaint.Render(strings.Repeat("│ ", item.Depth-1))
 	subGuide := clrFaint.Render(strings.Repeat("│ ", item.Depth))
-	live := isLiveStatus(item.Status)
+	live := isLiveStatus(item.DerivedStatus)
 
 	verb := treeVerb(item)
 	qual := treeQualifier(item)
@@ -221,7 +227,7 @@ func renderTreeItemStyled(w io.Writer, item model.ShowTreeItem, primaryID string
 	if live {
 		line.WriteString(clrRefKind.Render(verb))
 		line.WriteString(" ")
-		line.WriteString(clrID.Render(item.NodeID()))
+		line.WriteString(clrID.Render(item.ID))
 		if q := styledQualifier(item); q != "" {
 			line.WriteString(" " + q)
 		}
@@ -230,7 +236,7 @@ func renderTreeItemStyled(w io.Writer, item model.ShowTreeItem, primaryID string
 		}
 	} else {
 		// Closed/superseded: recede the whole node, no colour accents.
-		text := verb + " " + item.NodeID()
+		text := verb + " " + item.ID
 		if qual != "" {
 			text += " " + qual
 		}
@@ -241,22 +247,16 @@ func renderTreeItemStyled(w io.Writer, item model.ShowTreeItem, primaryID string
 	}
 	fmt.Fprintln(w, line.String())
 
-	if item.RefDesc != "" {
+	if item.Desc != "" {
 		why := clrBody
 		if !live {
 			why = clrInactive
 		}
-		fmt.Fprintf(w, "%s%s\n", subGuide, why.Render("↳ "+item.RefDesc))
+		fmt.Fprintf(w, "%s%s\n", subGuide, why.Render("↳ "+item.Desc))
 	}
 
 	if len(item.Truncated) > 0 {
-		reason := fmt.Sprintf("depth %d", item.Depth)
-		if item.TruncatedReason != "" {
-			reason = item.TruncatedReason
-		}
-		trunc := fmt.Sprintf("+%d more refs truncated (%s): %s",
-			len(item.Truncated), reason, truncatedIDs(item.Truncated))
-		fmt.Fprintf(w, "%s%s\n", subGuide, clrFaint.Render(trunc))
+		fmt.Fprintf(w, "%s%s\n", subGuide, clrFaint.Render(truncationLine(item)))
 	}
 }
 
@@ -265,12 +265,12 @@ func renderTreeItemStyled(w io.Writer, item model.ShowTreeItem, primaryID string
 // comma stay in the body grey. Returns "" when there is nothing to qualify.
 // Live nodes never carry an id in the status (active/open/done only), so the
 // words are safe to bold wholesale.
-func styledQualifier(item model.ShowTreeItem) string {
-	if repo := unresolvedRepo(item); repo != "" {
-		return clrFaint.Render("[unresolved: repo " + string(repo) + "]")
+func styledQualifier(item types.ShownChainItem) string {
+	if item.UnresolvedRepo != "" {
+		return clrFaint.Render("[unresolved: repo " + item.UnresolvedRepo + "]")
 	}
-	kind := entryKindLabel(item.Entry)
-	status := formatStatusTrailValue(item.Status, item.SupersedePath)
+	kind := item.KindLabel
+	status := formatStatusTrailValue(item.DerivedStatus)
 	switch {
 	case kind != "" && status != "":
 		return clrBody.Render("(") + clrQual.Render(kind) + clrBody.Render(", ") + clrQual.Render(status) + clrBody.Render(")")
@@ -286,8 +286,8 @@ func styledQualifier(item model.ShowTreeItem) string {
 // isLiveStatus reports whether a node is still in play — an active decision, an
 // open signal, or a terminal done — versus closed/superseded/cascade-retired,
 // which the styled tree dims so live entries draw the eye.
-func isLiveStatus(s model.Status) bool {
-	switch s.Kind {
+func isLiveStatus(s types.DerivedStatus) bool {
+	switch model.StatusKind(s.Kind) {
 	case model.StatusClosedBy, model.StatusSupersededBy, model.StatusCascadeClosedBy, model.StatusCascadeOrphan:
 		return false
 	default:

@@ -22,36 +22,49 @@ type Repeats struct {
 	// whose follower its next proof names (model.Challenge).
 	Held func(id, hash string) (tag, next string, held bool)
 	// Anchor returns an entry body served in full with its tag placed.
-	Anchor  func(id, hash, body string) string
+	Anchor func(id, hash, body string) string
+	// Graph holds the entries the serve renders, whose stored text keys
+	// them; an entry it does not hold keys on its ID alone.
+	Graph   *model.Graph
 	pointed bool
 }
 
 // pointer returns the pointer an entry prints as when the call holds it. An
 // entry without a brief, one of a connected repo's graph, never does.
-func (r *Repeats) pointer(e *model.Entry) (string, bool) {
-	brief := model.EntryBrief(e)
+func (r *Repeats) pointer(id, brief string) (string, bool) {
 	if r == nil || r.Held == nil || brief == "" {
 		return "", false
 	}
-	tag, next, held := r.Held(e.ID, model.EntryHash(e))
+	tag, next, held := r.Held(id, r.hash(id))
 	if !held {
 		return "", false
 	}
 	r.pointed = true
-	return pointerText(e.ID, brief, tag, next), true
+	return pointerText(id, brief, tag, next), true
 }
 
 // anchor returns body as an entry served in full prints it.
-func (r *Repeats) anchor(e *model.Entry, body string) string {
+func (r *Repeats) anchor(id, body string) string {
 	if r == nil || r.Anchor == nil {
 		return body
 	}
-	return r.Anchor(e.ID, model.EntryHash(e), body)
+	return r.Anchor(id, r.hash(id), body)
 }
 
-// entry writes e's line through write, or its pointer when it is held.
-func (r *Repeats) entry(w io.Writer, e *model.Entry, write func()) {
-	if pointer, held := r.pointer(e); held {
+func (r *Repeats) hash(id string) string {
+	if r.Graph == nil {
+		return ""
+	}
+	e, ok := r.Graph.ByID[id]
+	if !ok {
+		return ""
+	}
+	return model.EntryHash(e)
+}
+
+// entry writes id's line through write, or its pointer when it is held.
+func (r *Repeats) entry(w io.Writer, id, brief string, write func()) {
+	if pointer, held := r.pointer(id, brief); held {
 		fmt.Fprintf(w, "  %s\n", pointer)
 		return
 	}

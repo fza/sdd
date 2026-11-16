@@ -33,14 +33,20 @@ func RenderGather(w io.Writer, result *query.GatherResult) error {
 	}
 	fmt.Fprintf(w, "prefilter: %s\n", prefilter)
 
-	repeats := &Repeats{Held: result.Held, Anchor: result.Anchor}
+	repeats := &Repeats{Held: result.Held, Anchor: result.Anchor, Graph: g}
 	wayBackShown := false
 	if result.Full != nil && len(result.Full.Groups) > 0 || len(result.Overflow) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "# relevant")
 		if result.Full != nil && len(result.Full.Groups) > 0 {
 			fmt.Fprintln(w)
-			RenderShow(w, result.Full, ShowOptions{Repeats: repeats})
+			entries, err := result.Full.ShownEntries()
+			if err != nil {
+				return err
+			}
+			if err := RenderShow(w, entries, ShowOptions{Repeats: repeats}); err != nil {
+				return err
+			}
 			wayBackShown = repeats.Pointed()
 		}
 		if len(result.Overflow) > 0 {
@@ -79,6 +85,15 @@ func RenderGather(w io.Writer, result *query.GatherResult) error {
 	return nil
 }
 
+// topicPathLabels is each topic path in its label form.
+func topicPathLabels(paths []model.TopicPath) []string {
+	labels := make([]string, 0, len(paths))
+	for _, path := range paths {
+		labels = append(labels, path.String())
+	}
+	return labels
+}
+
 // RenderLateEntries writes the entries that landed after the assemble check
 // as brief lines, one each, nothing cut; an entry held reports in full
 // prints as its pointer.
@@ -93,7 +108,7 @@ func gatherLine(g *model.Graph, candidate model.GatherCandidate, r *Repeats) str
 	e := candidate.Entry
 	var line strings.Builder
 	line.WriteString("- ")
-	if pointer, held := r.pointer(e); held {
+	if pointer, held := r.pointer(e.ID, model.EntryBrief(e)); held {
 		line.WriteString(pointer)
 	} else {
 		fmt.Fprintf(&line, "%s (%s %s %s)", e.ID, e.Kind, e.LayerLabel(), e.TypeLabel())
@@ -103,7 +118,7 @@ func gatherLine(g *model.Graph, candidate model.GatherCandidate, r *Repeats) str
 		}
 		line.WriteString(" — ")
 		line.WriteString(model.EntryBrief(e))
-		if topics := FormatTopics(g.EffectiveTopics(e)); topics != "" {
+		if topics := formatTopics(topicPathLabels(g.EffectiveTopics(e))); topics != "" {
 			line.WriteString(" ")
 			line.WriteString(topics)
 		}
