@@ -249,8 +249,19 @@ func TestAChangedCommittedHookNeedsAllowAgain(t *testing.T) {
 		{"script", func(t *testing.T, w *world) { script(t, filepath.Join(w.hooksDir(), "vale.sh"), "echo changed") }},
 		{"sourced file", func(t *testing.T, w *world) { write(t, filepath.Join(w.hooksDir(), "lib.sh"), "echo changed\n") }},
 		{"file a flag names", func(t *testing.T, w *world) { write(t, filepath.Join(w.hooksDir(), "rules", "data.txt"), "changed\n") }},
-		{"new file in the folder", func(t *testing.T, w *world) {
+		{"new tracked file in the folder", func(t *testing.T, w *world) {
 			write(t, filepath.Join(w.hooksDir(), "styles", "x.yml"), "level: error\n")
+			w.track(".sdd/hooks/styles/x.yml")
+		}},
+		{"tracked link retargeted", func(t *testing.T, w *world) {
+			err := os.Remove(filepath.Join(w.hooksDir(), "lib-link.sh"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = os.Symlink("rules/data.txt", filepath.Join(w.hooksDir(), "lib-link.sh"))
+			if err != nil {
+				t.Fatal(err)
+			}
 		}},
 		{"args file", func(t *testing.T, w *world) {
 			write(t, filepath.Join(w.hooksDir(), "vale.ini"), "MinAlertLevel = suggestion\n")
@@ -268,6 +279,11 @@ func TestAChangedCommittedHookNeedsAllowAgain(t *testing.T) {
 			write(t, filepath.Join(w.hooksDir(), "lib.sh"), "true\n")
 			write(t, filepath.Join(w.hooksDir(), "rules", "data.txt"), "rules\n")
 			write(t, filepath.Join(w.hooksDir(), "vale.ini"), "MinAlertLevel = error\n")
+			err := os.Symlink("lib.sh", filepath.Join(w.hooksDir(), "lib-link.sh"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.track(".sdd/hooks/vale.sh", ".sdd/hooks/lib.sh", ".sdd/hooks/rules/data.txt", ".sdd/hooks/vale.ini", ".sdd/hooks/lib-link.sh")
 			w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n    args: [--config, vale.ini, --rules=rules/data.txt]\n")
 			w.allow(t)
 			if w.only(t).NeedsAllow {
@@ -361,6 +377,7 @@ func TestConcurrentAllowsKeepEveryEntry(t *testing.T) {
 func TestRunRefusesAHookChangedSinceItWasRead(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
+	w.track(".sdd/hooks/lint.sh")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
 	w.allow(t)
 	hook := w.only(t)
@@ -377,6 +394,71 @@ func TestRunRefusesAHookChangedSinceItWasRead(t *testing.T) {
 
 // The machine-local scripts under an untracked local/ are the person's own,
 // so changing them leaves the committed hooks allowed.
+// A clone or a pull delivers only tracked files, so files the repository does
+// not track, such as caches or output a hook writes beside itself, leave the
+// allow standing.
+func TestAnUntrackedFileInTheHooksFolderKeepsTheAllow(t *testing.T) {
+	w := newWorld(t)
+	script(t, filepath.Join(w.hooksDir(), "vale.sh"), "true")
+	w.track(".sdd/hooks/vale.sh")
+	w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n")
+	w.allow(t)
+	write(t, filepath.Join(w.hooksDir(), "__pycache__", "lib.cpython-312.pyc"), "bytecode")
+	write(t, filepath.Join(w.hooksDir(), "out.json"), "{}")
+	if w.only(t).NeedsAllow {
+		t.Error("an untracked file in the hooks folder should leave the allow standing")
+	}
+}
+
+// A tracked link counts by its text, as git keeps it; sdd never follows it
+// out of the repository, so an unreadable target breaks nothing.
+func TestATrackedLinkIsHashedByItsTextNotFollowed(t *testing.T) {
+	w := newWorld(t)
+	outside := t.TempDir()
+	locked := filepath.Join(outside, "locked")
+	err := os.MkdirAll(locked, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.Chmod(locked, 0o000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	script(t, filepath.Join(w.hooksDir(), "vale.sh"), "true")
+	err = os.Symlink(outside, filepath.Join(w.hooksDir(), "ext"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.track(".sdd/hooks/vale.sh", ".sdd/hooks/ext")
+	w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n")
+	w.allow(t)
+	if w.only(t).NeedsAllow {
+		t.Error("a tracked link to an unreadable folder should hash by its text and be allowed")
+	}
+}
+
+// A problem hashing the hooks that came with a repository skips them with a
+// notice and fails no call.
+func TestAHashingProblemSkipsTheHooksWithANotice(t *testing.T) {
+	w := newWorld(t)
+	outside := t.TempDir()
+	script(t, filepath.Join(outside, "vale.sh"), "true")
+	err := os.RemoveAll(w.hooksDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.Symlink(outside, w.hooksDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.commit(t, "  - event: capture.assemble\n    command: vale.sh\n")
+	hook := w.only(t)
+	if !hook.NeedsAllow || !strings.Contains(hook.Notice, "outside the repository") {
+		t.Errorf("a hooks folder outside the repository should skip its hooks with a notice, got %+v", hook)
+	}
+}
+
 func TestAChangeUnderAnUntrackedLocalFolderKeepsTheAllow(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "vale.sh"), "true")

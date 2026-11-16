@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/networkteam/sdd/internal/model"
@@ -160,29 +161,28 @@ func gateGroups(layers []declaredLayer) []gateGroup {
 	return groups
 }
 
-// hashedHook is the canonical form of one hook the gate hash covers: its
-// config and the digest of every file it names.
+// hashedHook is the canonical form of one hook's declaration the gate hash
+// covers.
 type hashedHook struct {
-	Layer    model.HookLayer   `json:"layer"`
-	Event    string            `json:"event"`
-	Command  string            `json:"command"`
-	Args     []string          `json:"args"`
-	Timeout  int               `json:"timeout"`
-	Findings bool              `json:"findings"`
-	Files    map[string]string `json:"files"`
+	Layer    model.HookLayer `json:"layer"`
+	Event    string          `json:"event"`
+	Command  string          `json:"command"`
+	Args     []string        `json:"args"`
+	Timeout  int             `json:"timeout"`
+	Findings bool            `json:"findings"`
 }
 
-// gateHash returns the SHA-256 over a repository's gated hooks in order and
-// over every file in its hooks folder, local/ included only when the
-// repository tracks it. The folder as a whole counts because a hook runs
-// more than the script it names: files it sources or imports, files a flag
-// names, an interpreter beside it.
-func gateHash(_ context.Context, group gateGroup) (string, error) {
-	hooks, err := hookEntries(group.hooks)
-	if err != nil {
-		return "", err
-	}
-	tree, err := treeDigests(group.gate.hooksDir, !group.gate.localGated)
+// gateHash returns the SHA-256 over a repository's gated hook declarations
+// in order and over every file the repository tracks in its hooks folder,
+// by work-tree content and mode, a link by its text. The folder as a whole
+// counts because a hook runs more than the script it names: files it
+// sources or imports, files a flag names, an interpreter beside it. Only
+// tracked files count, since a clone or a pull delivers nothing else, so a
+// cache or output a hook writes beside itself leaves the allow standing.
+// Links are never followed.
+func gateHash(ctx context.Context, group gateGroup) (string, error) {
+	hooks := hookEntries(group.hooks)
+	tree, err := trackedDigests(ctx, group.gate)
 	if err != nil {
 		return "", err
 	}
@@ -197,106 +197,73 @@ func gateHash(_ context.Context, group gateGroup) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// treeDigests maps every file below dir, by its slash path relative to dir,
-// to its content digest and whether it may run. Symbolic links are followed,
-// a folder reached twice is recorded rather than walked again, and a broken
-// link is recorded by its target. skipLocal leaves out the top-level local/.
-func treeDigests(dir string, skipLocal bool) (map[string]string, error) {
-	tree := map[string]string{}
-	real, err := filepath.EvalSymlinks(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return tree, nil
+// trackedDigests maps every file the repository tracks under its hooks
+// folder, by its slash path relative to the repository, to its work-tree
+// content digest and whether it may run, a link to its text, a missing file
+// to "missing". When the hooks folder is reached through a link, the files
+// tracked where it really lies count too; a hooks folder lying outside the
+// repository is an error.
+func trackedDigests(ctx context.Context, gate *repoGate) (map[string]string, error) {
+	if gate.tracker == nil {
+		return nil, errors.New("sdd cannot ask git which files the repository tracks")
 	}
+	paths := []string{relativeTo(gate.root, gate.hooksDir)}
+	real, err := filepath.EvalSymlinks(gate.hooksDir)
+	if err == nil {
+		realRoot, err := filepath.EvalSymlinks(gate.root)
+		if err != nil {
+			return nil, err
+		}
+		rel, err := filepath.Rel(realRoot, real)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+			return nil, fmt.Errorf("the hooks folder %s lies outside the repository", real)
+		}
+		if filepath.ToSlash(rel) != paths[0] {
+			paths = append(paths, filepath.ToSlash(rel))
+		}
+	}
+	tracked, err := gate.tracker.Tracked(ctx, gate.root, paths...)
 	if err != nil {
 		return nil, err
 	}
-	visited := map[string]bool{real: true}
-	var walk func(path, rel string) error
-	walk = func(path, rel string) error {
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			child := filepath.Join(path, entry.Name())
-			childRel := entry.Name()
-			if rel != "" {
-				childRel = rel + "/" + entry.Name()
-			}
-			if skipLocal && childRel == model.HookLocalDir {
-				continue
-			}
-			info, err := os.Stat(child)
+	tree := map[string]string{}
+	for _, file := range tracked {
+		path := filepath.Join(gate.root, filepath.FromSlash(file))
+		info, err := os.Lstat(path)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			tree[file] = "missing"
+		case err != nil:
+			return nil, err
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(path)
 			if err != nil {
-				target, _ := os.Readlink(child)
-				tree[childRel] = "unreadable:" + target
-				continue
+				return nil, err
 			}
-			switch {
-			case info.IsDir():
-				realChild, err := filepath.EvalSymlinks(child)
-				if err != nil {
-					return err
-				}
-				if visited[realChild] {
-					tree[childRel] = "folder seen before:" + realChild
-					continue
-				}
-				visited[realChild] = true
-				err = walk(child, childRel)
-				if err != nil {
-					return err
-				}
-			case info.Mode().IsRegular():
-				digest, err := fileDigest(child)
-				if err != nil {
-					return err
-				}
-				tree[childRel] = fmt.Sprintf("%s:%t", digest, info.Mode().Perm()&0o111 != 0)
-			default:
-				tree[childRel] = info.Mode().String()
-			}
-		}
-		return nil
-	}
-	err = walk(real, "")
-	if err != nil {
-		return nil, fmt.Errorf("hashing %s: %w", dir, err)
-	}
-	return tree, nil
-}
-
-// hookEntries returns each hook's config with the digests of its command
-// file and of every args entry naming a file, wherever it lies.
-func hookEntries(hooks []model.Hook) ([]hashedHook, error) {
-	canonical := make([]hashedHook, 0, len(hooks))
-	for _, hook := range hooks {
-		entry := hashedHook{
-			Layer: hook.Origin.Layer, Event: hook.Event, Command: hook.Command, Args: append([]string{}, hook.Args...),
-			Timeout: hook.Timeout, Findings: hook.Findings, Files: map[string]string{},
-		}
-		paths := []string{hook.Path}
-		for _, arg := range hook.Args {
-			paths = append(paths, filepath.Join(hook.Origin.Dir, arg))
-		}
-		for _, path := range paths {
-			info, err := os.Stat(path)
-			if path == "" || err != nil || !info.Mode().IsRegular() {
-				continue
-			}
+			tree[file] = "link:" + target
+		case info.Mode().IsRegular():
 			digest, err := fileDigest(path)
 			if err != nil {
 				return nil, err
 			}
-			rel, err := filepath.Rel(hook.Origin.Dir, path)
-			if err != nil {
-				return nil, err
-			}
-			entry.Files[filepath.ToSlash(rel)] = digest
+			tree[file] = fmt.Sprintf("%s:%t", digest, info.Mode().Perm()&0o111 != 0)
+		default:
+			tree[file] = info.Mode().String()
 		}
-		canonical = append(canonical, entry)
 	}
-	return canonical, nil
+	return tree, nil
+}
+
+// hookEntries returns each hook's declaration in canonical form.
+func hookEntries(hooks []model.Hook) []hashedHook {
+	canonical := make([]hashedHook, 0, len(hooks))
+	for _, hook := range hooks {
+		canonical = append(canonical, hashedHook{
+			Layer: hook.Origin.Layer, Event: hook.Event, Command: hook.Command, Args: append([]string{}, hook.Args...),
+			Timeout: hook.Timeout, Findings: hook.Findings,
+		})
+	}
+	return canonical
 }
 
 func fileDigest(path string) (string, error) {

@@ -88,6 +88,7 @@ func TestServeRunsTheHooksOfEveryLayer(t *testing.T) {
 // says so.
 func TestServeSkipsACommittedHookUntilAllowed(t *testing.T) {
 	fixture := newAppFixture(t)
+	initRepo(t, fixture.root)
 	payloadFile := fixture.payloadHook(t, ".sdd/config.yaml", "user-dialogue.junction.start")
 
 	var text string
