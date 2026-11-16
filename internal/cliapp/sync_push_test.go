@@ -289,16 +289,26 @@ func deferFetches(t *testing.T, root string) {
 		`{"version":1,"buckets":{},"repos":{"example.invalid/acme/graph":{"protocol":"https","fetch":{"retries_used":0,"next":"2099-01-01T00:00:00Z"}}}}`)
 }
 
-func TestCommandedSyncReportsADeferredPull(t *testing.T) {
+// Within the fetch cooldown a commanded pull still merges what the last
+// fetch brought.
+func TestCommandedSyncMergesWithinTheFetchCooldown(t *testing.T) {
 	root := syncedProject(t)
+	other := filepath.Join(canonicalTemp(t), "other")
+	gitIn(t, root, "clone", "-q", filepath.Join(filepath.Dir(root), "remote.git"), other)
+	gitIn(t, other, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "--allow-empty", "-m", "sdd: upstream capture")
+	gitIn(t, other, "push", "-q")
+	gitIn(t, root, "fetch", "-q")
 	deferFetches(t, root)
 
 	out, err := runAppErr(t, root, "sync", "--pull")
 	if err != nil {
-		t.Fatalf("a deferred pull should be a skip, not a failure: %v\n%s", err, out)
+		t.Fatalf("a pull within the fetch cooldown should merge, not fail: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "sync: pull skipped, next allowed at") {
-		t.Errorf("the commanded sync should say it skipped and when it may run, got %q", out)
+	if !strings.Contains(out, "sync: fetch skipped, next allowed at") {
+		t.Errorf("the commanded sync should say it skipped the fetch and when it may run, got %q", out)
+	}
+	if localHead(t, root) != localHead(t, other) {
+		t.Errorf("the commanded sync should merge the fetched upstream, got %q", out)
 	}
 }
 

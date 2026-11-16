@@ -51,14 +51,17 @@ func syncCmd() *cli.Command {
 				if err != nil {
 					return err
 				}
-				handler := handlers.New(handlers.Options{Stderr: cmd.ErrWriter, Puller: graphGit(dir), Gate: gate})
-				return handler.SyncPull(ctx, &command.SyncPullCmd{
+				opts, err := syncstate.HandlerOptions(ctx, dir, handlers.Options{Stderr: cmd.ErrWriter, Puller: graphGit(dir), Gate: gate})
+				if err != nil {
+					return err
+				}
+				return handlers.New(opts).SyncPull(ctx, &command.SyncPullCmd{
 					OnPulled: func(output string) {
 						if output != "" {
 							fmt.Fprintln(cmd.Writer, output)
 						}
 					},
-					OnDeferred: func(next time.Time) { printDeferred(cmd.Writer, "pull", next) },
+					OnDeferred: func(next time.Time) { printDeferred(cmd.Writer, "fetch", next) },
 				})
 			}
 			syncMode, err := graphSyncMode(dir)

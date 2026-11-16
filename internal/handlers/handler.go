@@ -86,6 +86,9 @@ type Puller interface {
 	// MergePull fetches and merges upstream, never rebasing, and returns
 	// git's combined output. A non-nil error means the pull failed.
 	MergePull(ctx context.Context) (string, error)
+	// MergeFetched merges the upstream as last fetched, reaching no remote,
+	// and returns git's combined output.
+	MergeFetched(ctx context.Context) (string, error)
 	UpstreamLocator
 }
 
