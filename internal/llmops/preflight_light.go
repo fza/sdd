@@ -393,10 +393,10 @@ func parseLightResult(output string, allowed map[string]bool) (*PreflightResult,
 	return &PreflightResult{Findings: findings}, nil
 }
 
-// mergeLightResults folds the calls' findings into one verdict: findings on
-// one category and basis raised by several calls collapse into one, at the
-// highest severity raised, naming every call that raised it. Within
-// one call, every finding stands.
+// mergeLightResults folds the calls' findings into one verdict: one
+// observation on one category and basis raised by several calls collapses
+// into one, at the highest severity raised, naming every call that raised
+// it. Within one call, every finding stands.
 func mergeLightResults(results []*PreflightResult) *PreflightResult {
 	if len(results) == 1 {
 		return &PreflightResult{Findings: results[0].Findings}
@@ -410,11 +410,9 @@ func mergeLightResults(results []*PreflightResult) *PreflightResult {
 	for i, result := range results {
 		occurrence := map[string]int{}
 		for _, finding := range result.Findings {
-			key := finding.Category + "\x00" + strings.Join(finding.Basis, ",")
-			// Without a basis only the same observation is the same finding.
-			if len(finding.Basis) == 0 {
-				key += "\x00" + strings.ToLower(strings.TrimSpace(finding.Observation))
-			}
+			// The draft's refs lead every call, so a shared basis alone does not
+			// make two observations one finding.
+			key := finding.Category + "\x00" + strings.Join(finding.Basis, ",") + "\x00" + strings.ToLower(strings.TrimSpace(finding.Observation))
 			occurrence[key]++
 			key += fmt.Sprintf("\x00%d", occurrence[key])
 			m, ok := byKey[key]
