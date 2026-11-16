@@ -132,6 +132,36 @@ func TestInitCompletesARefusedCommitInTheProjectRepository(t *testing.T) {
 	}
 }
 
+// A clone shipping a record: init refuses it before writing anything, so the
+// run after the record's removal sets up and commits everything.
+func TestInitRefusesAClonedRecordBeforeWritingAnything(t *testing.T) {
+	repo := canonicalTemp(t)
+	initRepo(t, repo)
+	writeFile(t, filepath.Join(repo, ".env"), "TOKEN=x\n")
+	writeFile(t, uncommittedRecord(repo), ".env\n")
+	gitIn(t, repo, "add", "-f", uncommittedRecord(repo))
+	gitIn(t, repo, "commit", "-q", "-m", "chore: ship a record")
+	firstInit := []string{"init", "--scope", "project", "--agents", "claude", "--language", "en", "--participant", "Ada"}
+
+	_, err := runAppErr(t, repo, firstInit...)
+
+	if err == nil || !strings.Contains(err.Error(), "does not trust it") {
+		t.Fatalf("init should refuse a record git tracks, got %v", err)
+	}
+	if status := gitIn(t, repo, "status", "--porcelain", "--untracked-files=all"); status != "?? .env\n" {
+		t.Errorf("a refused record should stop init before it writes anything:\n%s", status)
+	}
+
+	if err := os.Remove(uncommittedRecord(repo)); err != nil {
+		t.Fatal(err)
+	}
+	runApp(t, repo, firstInit...)
+
+	if status := gitIn(t, repo, "status", "--porcelain", "--untracked-files=all"); status != " D .sdd/tmp/init-uncommitted\n?? .env\n" {
+		t.Errorf("the run after the record's removal should commit its whole setup and nothing else:\n%s", status)
+	}
+}
+
 func TestInitRefusesARecordItCannotTrust(t *testing.T) {
 	cases := []struct {
 		name    string

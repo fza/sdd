@@ -341,9 +341,9 @@ func (h *Handler) commitInitPaths(ctx context.Context, cmd *command.InitCmd, tou
 		if err != nil {
 			return fmt.Errorf("selecting init paths that differ from HEAD: %w", err)
 		}
-		leftover, err = h.trustedLeftover(ctx, record, leftover)
+		leftover, err = h.tracker.Uncommitted(ctx, leftover)
 		if err != nil {
-			return err
+			return fmt.Errorf("selecting the paths an earlier init left uncommitted: %w", err)
 		}
 	}
 	for _, path := range leftover {

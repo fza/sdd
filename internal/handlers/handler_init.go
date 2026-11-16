@@ -53,6 +53,9 @@ func (h *Handler) initRepo(ctx context.Context, cmd *command.InitCmd, changed *b
 	if err := cmd.Validate(); err != nil {
 		return fmt.Errorf("invalid command: %w", err)
 	}
+	if err := h.checkInitRecord(ctx, cmd.RepoRoot); err != nil {
+		return err
+	}
 	if cmd.GraphRepo != "" {
 		return h.initGraphRepo(ctx, cmd, changed)
 	}
