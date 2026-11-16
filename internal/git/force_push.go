@@ -59,12 +59,12 @@ func (c CLI) followForcePush(ctx context.Context, previous string) error {
 	if err != nil || previous == "" || previous == upstream {
 		return c.noteFetchedTip(ctx)
 	}
-	err = c.command(ctx, "merge-base", "--is-ancestor", previous, upstream).Run()
+	err = c.run(ctx, "merge-base", "--is-ancestor", previous, upstream)
 	if err == nil {
 		return c.noteFetchedTip(ctx)
 	}
-	if code := errExitCode(err); code != 1 && code != 128 {
-		return fmt.Errorf("git merge-base --is-ancestor %s %s: %w", previous, upstream, err)
+	if errExitCode(err) != 1 {
+		return fmt.Errorf("reading the noted upstream tip %s: %w", previous, err)
 	}
 	err = c.recoverForcePush(ctx, previous, upstream)
 	if err != nil {
