@@ -303,14 +303,16 @@ func (f stateFixture) endInRepoSession(t *testing.T, checkout string, id sdd.Ses
 
 // Retiring an unused project keeps the staged attachments of a session still
 // open in the .sdd/sessions of any checkout sdd opened the project from, or
-// whose log there it cannot read; an ended session's, or those of a checkout
-// gone from disk, go.
+// whose log there it cannot read, and of every session while a recorded
+// checkout cannot be read or no checkout is on record, since an open session
+// may lie there; an ended session's go.
 func TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions(t *testing.T) {
 	long := 3 * sweepUnusedRetention
 	for _, tc := range []struct {
-		name     string
-		prepare  func(t *testing.T, f stateFixture, key, checkout string)
-		wantKept bool
+		name       string
+		unrecorded bool
+		prepare    func(t *testing.T, f stateFixture, key, checkout string)
+		wantKept   bool
 	}{
 		{name: "open", wantKept: true, prepare: func(t *testing.T, f stateFixture, key, checkout string) {
 			f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
@@ -332,19 +334,24 @@ func TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions(t *testing.T) {
 		{name: "ended", prepare: func(t *testing.T, f stateFixture, key, checkout string) {
 			f.inRepoSession(t, key, checkout, "s_inrepo", f.now.Add(-time.Hour))
 		}},
-		{name: "checkout gone", prepare: func(t *testing.T, f stateFixture, key, checkout string) {
+		{name: "checkout gone, as an unmounted volume", wantKept: true, prepare: func(t *testing.T, f stateFixture, key, checkout string) {
 			f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
 			if err := os.RemoveAll(checkout); err != nil {
 				t.Fatal(err)
 			}
+		}},
+		{name: "no checkout on record", unrecorded: true, wantKept: true, prepare: func(t *testing.T, f stateFixture, key, checkout string) {
+			f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStateFixture(t)
 			const key = "github.com/acme/paused"
 			checkout := t.TempDir()
-			if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
-				t.Fatal(err)
+			if !tc.unrecorded {
+				if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+					t.Fatal(err)
+				}
 			}
 			f.used(t, key, f.now.Add(-long))
 			tc.prepare(t, f, key, checkout)
@@ -353,6 +360,9 @@ func TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions(t *testing.T) {
 
 			if kept := f.stagedExists(t, key, "s_inrepo"); kept != tc.wantKept {
 				t.Errorf("the staged attachments of the in-repo session kept should be %v", tc.wantKept)
+			}
+			if tc.unrecorded {
+				return
 			}
 			record := filepath.Join(f.root, "checkouts", "github.com", "acme", "paused.list")
 			if _, err := os.Stat(record); (err == nil) != tc.wantKept {
@@ -461,5 +471,36 @@ func TestSessionWritesRefreshTheProjectsUseStamp(t *testing.T) {
 	}
 	if info, err := os.Stat(stamp); err != nil || !info.ModTime().After(stale.Add(time.Hour)) {
 		t.Errorf("appending to a session should refresh a day-old stamp, got %v, %v", info.ModTime(), err)
+	}
+}
+
+// The sweep collects the ended sessions an earlier sdd logged into the
+// .sdd/sessions of a recorded checkout, with the attachments they staged in
+// the state folder; open and recently ended ones stay.
+func TestStateSweepCollectsTheEndedSessionsOfRecordedCheckouts(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "github.com/acme/app"
+	checkout := t.TempDir()
+	if err := localadapter.RecordCheckout(f.root, key, checkout); err != nil {
+		t.Fatal(err)
+	}
+	f.used(t, key, f.now)
+	f.inRepoSession(t, key, checkout, "s_old", f.now.Add(-sweepSessionRetention-time.Hour))
+	f.inRepoSession(t, key, checkout, "s_recent", f.now.Add(-time.Hour))
+	f.inRepoSession(t, key, checkout, "s_open", time.Time{})
+
+	removed := f.sweep(t)
+
+	if removed.Sessions != 1 {
+		t.Errorf("the sweep should collect the one in-repo session ended past sessions.retention, got %+v", removed)
+	}
+	for id, wantKept := range map[sdd.SessionID]bool{"s_old": false, "s_recent": true, "s_open": true} {
+		_, err := os.Stat(filepath.Join(checkout, ".sdd", "sessions", string(id)+".jsonl"))
+		if kept := err == nil; kept != wantKept {
+			t.Errorf("in-repo session %s kept should be %v", id, wantKept)
+		}
+		if kept := f.stagedExists(t, key, id); kept != wantKept {
+			t.Errorf("the staged attachments of in-repo session %s kept should be %v", id, wantKept)
+		}
 	}
 }
