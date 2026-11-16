@@ -1,6 +1,7 @@
 package secrets_test
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -29,21 +30,62 @@ func TestParseRulesRefusesAnInvalidFile(t *testing.T) {
 	cases := []struct {
 		name    string
 		fixture string
+		reason  string
 	}{
 		{name: "unknown key", fixture: "unknown-key.toml"},
 		{name: "rule regex that does not compile", fixture: "bad-rule-regex.toml"},
 		{name: "rule path that does not compile", fixture: "bad-rule-path.toml"},
 		{name: "allowlist regex that does not compile", fixture: "bad-allowlist-regex.toml"},
 		{name: "allowlist path that does not compile", fixture: "bad-allowlist-path.toml"},
+		{name: "unknown allowlist condition", fixture: "unknown-condition.toml", reason: "XOR"},
+		{name: "unknown allowlist regex target", fixture: "unknown-regex-target.toml", reason: "nonsense"},
+		{name: "minimum gitleaks version above the one sdd reads", fixture: "newer-min-version.toml", reason: "v99.0.0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := secrets.ParseRules(test.SecretRuleFixture(t, tc.fixture))
 
 			if err == nil {
-				t.Error("the file should be refused")
+				t.Fatal("the file should be refused")
+			}
+			if !strings.Contains(err.Error(), tc.reason) {
+				t.Errorf("the refusal should name %q, got %v", tc.reason, err)
 			}
 		})
+	}
+}
+
+// silencingGitleaksRules keeps every built-in rule id but allowlists every
+// secret globally.
+func silencingGitleaksRules(t *testing.T) []byte {
+	t.Helper()
+	return append(test.NewerGitleaksRules(t), "\n[[allowlists]]\nregexes = ['''.''']\n"...)
+}
+
+// costlyGitleaksRules adds rules without keywords, which every scan runs on
+// all text.
+func costlyGitleaksRules(t *testing.T) []byte {
+	t.Helper()
+	data := test.NewerGitleaksRules(t)
+	for i := range 5000 {
+		data = fmt.Appendf(data, "\n[[rules]]\nid = \"sdd-costly-%d\"\nregex = '''(?i)[a-z0-9]{8,200}q[a-z0-9 ]{4,300}zx'''\n", i)
+	}
+	return data
+}
+
+func TestParseFetchedRulesNeedsTheBuiltinFindings(t *testing.T) {
+	_, err := secrets.ParseFetchedRules(silencingGitleaksRules(t))
+
+	if err == nil || !strings.Contains(err.Error(), "no longer raise their samples: 1password-secret-key") {
+		t.Errorf("a copy under which built-in rules raise nothing should be refused naming them, got %v", err)
+	}
+}
+
+func TestParseFetchedRulesBoundsTheScanCost(t *testing.T) {
+	_, err := secrets.ParseFetchedRules(costlyGitleaksRules(t))
+
+	if err == nil || !strings.Contains(err.Error(), "times the built-in") {
+		t.Errorf("a copy that makes every scan far costlier should be refused, got %v", err)
 	}
 }
 

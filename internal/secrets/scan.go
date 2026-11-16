@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"regexp/syntax"
 	"slices"
 	"strings"
 	"sync"
@@ -73,6 +74,56 @@ func (s *RuleSet) missing(floor *RuleSet) []string {
 		}
 	}
 	return missing
+}
+
+// scanCost bounds the work a scan with the set does per byte of text: Go's
+// regexp runs in time linear in the text times the program's instructions,
+// so it sums those of every pattern, plus every keyword and stopword.
+func (s *RuleSet) scanCost() (int, error) {
+	cost := 0
+	addPatterns := func(patterns ...string) error {
+		for _, pattern := range patterns {
+			if pattern == "" {
+				continue
+			}
+			parsed, err := syntax.Parse(pattern, syntax.Perl)
+			if err != nil {
+				return err
+			}
+			prog, err := syntax.Compile(parsed.Simplify())
+			if err != nil {
+				return err
+			}
+			cost += len(prog.Inst)
+		}
+		return nil
+	}
+	addLists := func(lists []allowlist) error {
+		for _, a := range lists {
+			cost += len(a.Stopwords)
+			err := addPatterns(append(slices.Clone(a.Regexes), a.Paths...)...)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	err := addLists(s.allowlists)
+	if err != nil {
+		return 0, err
+	}
+	for _, r := range s.rules {
+		cost += len(r.Keywords)
+		err = addPatterns(r.Regex, r.Path)
+		if err != nil {
+			return 0, err
+		}
+		err = addLists(r.Allowlists)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return cost, nil
 }
 
 // Scan reports the credentials in text that has no file path, such as an

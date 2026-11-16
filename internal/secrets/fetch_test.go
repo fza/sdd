@@ -118,6 +118,12 @@ func TestUpdaterKeepsTheCopyInUseOnAFailure(t *testing.T) {
 		{name: "copy with a pattern that does not compile", reason: "sdd-fixture-file", fail: func(t *testing.T, releases *test.GitleaksReleases) {
 			releases.Publish("v100.0.0", append(test.NewerGitleaksRules(t), test.SecretRuleFixture(t, "bad-rule-path.toml")...))
 		}},
+		{name: "copy silencing built-in rules", reason: "no longer raise", fail: func(t *testing.T, releases *test.GitleaksReleases) {
+			releases.Publish("v100.0.0", silencingGitleaksRules(t))
+		}},
+		{name: "copy too costly to scan with", reason: "times the built-in", fail: func(t *testing.T, releases *test.GitleaksReleases) {
+			releases.Publish("v100.0.0", costlyGitleaksRules(t))
+		}},
 		{name: "pre-release tag", reason: "no release version", fail: func(t *testing.T, releases *test.GitleaksReleases) {
 			releases.Publish("v100.0.0-rc.1", test.NewerGitleaksRules(t))
 		}},
