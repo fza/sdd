@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/networkteam/sdd/internal/basefacts"
+	"github.com/networkteam/sdd/internal/model"
 	"github.com/networkteam/sdd/internal/query"
 	"github.com/networkteam/sdd/internal/serveview"
 	"github.com/networkteam/sdd/internal/textpatch"
@@ -588,7 +589,7 @@ func (s *toolSet) attachedSession(ctx context.Context, req *mcp.CallToolRequest,
 		ss.mu.Unlock()
 		return nil, err
 	}
-	noteCallSession(ctx, ss)
+	noteCallSession(ctx, s.requestIdentity(req), ss)
 	return ss, nil
 }
 
@@ -639,6 +640,7 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 	}
 	workflow.CutRepeats()
 	ss := s.sessions.put(&shellSession{root: workflow})
+	noteCallSession(ctx, s.requestIdentity(req), ss)
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	guide, err := resultChars(proofGuide + "\n\n")
@@ -1355,13 +1357,20 @@ func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolReques
 			err = fmt.Errorf("%s: %w", coded.Code, err)
 		}
 		if slot.finish != nil {
-			slot.finish()
+			err = errors.Join(err, slot.finish(ctx, err != nil))
 		}
 		if err != nil {
 			return res, out, err
 		}
 		if carrier, ok := any(&out).(interface{ setProofNotice(string) }); ok && len(slot.failed) > 0 {
 			carrier.setProofNotice(proofNotice(slot.failed))
+		}
+		if carrier, ok := any(&out).(interface{ setUnproved(string) }); ok && len(slot.unproved) > 0 {
+			cost, err := resultChars(out)
+			if err != nil {
+				return res, out, err
+			}
+			carrier.setUnproved(unprovedLine(slot.unproved, model.MaxResultChars-cost-len(`,"unproved":""`)))
 		}
 		return res, out, err
 	}
@@ -1370,23 +1379,31 @@ func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolReques
 type callSlotKey struct{}
 
 // callSlot lets the session a call attaches name how the call ends once its
-// handler ran: finish leaves the call's failed proofs in failed, for
-// toolBoundary to put on the result.
+// handler ran: finish records what the call served, none of its proofs when
+// it failed, and leaves the call's failed proofs in failed and the pieces
+// left unproved in unproved, for toolBoundary to put on the result.
 type callSlot struct {
-	finish func()
-	failed []sdd.FailedProof
+	finish   func(ctx context.Context, failed bool) error
+	failed   []sdd.FailedProof
+	unproved []sdd.UnprovedPiece
 }
 
 // noteCallSession hands the call's slot the session the call attached.
-func noteCallSession(ctx context.Context, ss *shellSession) {
+func noteCallSession(ctx context.Context, identity sdd.RequestIdentity, ss *shellSession) {
 	slot, ok := ctx.Value(callSlotKey{}).(*callSlot)
 	if !ok {
 		return
 	}
-	slot.finish = func() {
+	slot.finish = func(ctx context.Context, failed bool) error {
 		ss.mu.Lock()
 		defer ss.mu.Unlock()
 		slot.failed = ss.root.FailedProofs()
+		if failed {
+			ss.root.DropProved()
+		}
+		err := ss.root.RecordServed(ctx, identity)
+		slot.unproved = ss.root.Unproved()
+		return err
 	}
 }
 

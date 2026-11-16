@@ -482,3 +482,30 @@ func TestUnprovedRecordsOnlyProofsThatChangeTheList(t *testing.T) {
 		t.Errorf("a proof of a piece already off the list should record nothing, got %q", log.String()[recorded:])
 	}
 }
+
+// A failed call records none of its proofs: the proof its pointer rested on
+// stays unspent and the piece it proved stays listed, as no result of the
+// call reached the agent.
+func TestDropProvedLeavesAFailedCallsProofsUnspent(t *testing.T) {
+	lane := engine.Piece{Name: "lane step", Hash: "h1"}
+	session := newPieceSession(nil)
+	session.BeginCall(nil, nil)
+	proof := servedInFull(t, session, lane)
+	session.RecordAnchors()
+
+	session.BeginCall([]model.Proof{proof}, nil)
+	if served := session.ServePiece(lane, nil, placeIn(pieceText)); !served.Held {
+		t.Fatalf("precondition: the proof should hold the lane, got %+v", served)
+	}
+	session.DropProved()
+	session.RecordAnchors()
+
+	session.BeginCall(nil, nil)
+	if got := unprovedNames(session.Unproved()); !slices.Equal(got, []string{lane.Name}) {
+		t.Errorf("the lane a failed call proved should stay listed, got %v", got)
+	}
+	session.BeginCall([]model.Proof{proof}, nil)
+	if _, held := session.Holds(lane); !held {
+		t.Error("the proof a failed call's pointer rested on should stay unspent")
+	}
+}
