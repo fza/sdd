@@ -40,12 +40,12 @@ func (c CLI) run(ctx context.Context, args ...string) error {
 
 // localEnv is the environment of a git command in the repository: nil, so
 // the process environment, outside an sdd-owned graph clone, and cloneEnv in
-// one.
+// one, each through dirEnv.
 func (c CLI) localEnv(ctx context.Context) []string {
 	if !c.graphClone() {
-		return nil
+		return c.dirEnv(nil)
 	}
-	return cloneEnv(ctx)
+	return c.dirEnv(cloneEnv(ctx))
 }
 
 // cloneEnv lets a git command in an sdd-owned graph clone fetch file
@@ -102,7 +102,7 @@ func (c CLI) branchRemote(ctx context.Context) (string, error) {
 	if err != nil || branch == "" {
 		return "", err
 	}
-	out, err := gitOutput(ctx, c.at("config", "--get", "branch."+branch+".remote")...)
+	out, err := gitOutputEnv(ctx, c.dirEnv(nil), c.at("config", "--get", "branch."+branch+".remote")...)
 	if errExitCode(err) == 1 {
 		return "", nil
 	}
@@ -110,7 +110,14 @@ func (c CLI) branchRemote(ctx context.Context) (string, error) {
 }
 
 func gitOutput(ctx context.Context, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", args...).Output()
+	return gitOutputEnv(ctx, nil, args...)
+}
+
+// gitOutputEnv is gitOutput with env; nil inherits the process environment.
+func gitOutputEnv(ctx context.Context, env []string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = env
+	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}

@@ -8,11 +8,11 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
 
+	"github.com/networkteam/sdd/internal/git"
 	"github.com/networkteam/sdd/internal/model"
 	app "github.com/networkteam/sdd/pkg/application"
 )
@@ -208,7 +208,7 @@ func (s *FilesystemGraphStore) readExistingEntry(ctx context.Context, logicalPat
 
 func (s *FilesystemGraphStore) readCommittedEntry(ctx context.Context, revision, logicalPath string) (app.EntryPublication, error) {
 	filename := path.Join(s.publicationGit.GraphDir, logicalPath)
-	raw, err := exec.CommandContext(ctx, "git", "-C", s.publicationGit.Checkout, "show", revision+":"+filename).Output()
+	raw, err := git.CommandAt(ctx, s.publicationGit.Checkout, "show", revision+":"+filename).Output()
 	if err != nil {
 		return app.EntryPublication{}, fmt.Errorf("reading published entry at %s: %w", revision, err)
 	}
@@ -217,7 +217,7 @@ func (s *FilesystemGraphStore) readCommittedEntry(ctx context.Context, revision,
 		return app.EntryPublication{}, err
 	}
 	attachmentDir := strings.TrimSuffix(filename, ".md")
-	files, err := exec.CommandContext(ctx, "git", "-C", s.publicationGit.Checkout, "ls-tree", "-r", "--name-only", "-z", revision, "--", attachmentDir+"/").Output()
+	files, err := git.CommandAt(ctx, s.publicationGit.Checkout, "ls-tree", "-r", "--name-only", "-z", revision, "--", attachmentDir+"/").Output()
 	if err != nil {
 		return app.EntryPublication{}, fmt.Errorf("listing published attachments at %s: %w", revision, err)
 	}

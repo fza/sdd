@@ -50,7 +50,7 @@ func (MoveHistory) MoveRecordTrailers(ctx context.Context, repoDir string) ([]st
 
 func (c CLI) combined(ctx context.Context, env []string, stdin string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", c.at(args...)...)
-	cmd.Env = env
+	cmd.Env = c.dirEnv(env)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

@@ -62,7 +62,7 @@ func (c CLI) Fetch(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, detachedTimeout)
 	defer cancel()
-	out, err := runDetachedEnv(ctx, env, c.at("fetch")...)
+	out, err := runDetachedEnv(ctx, c.dirEnv(env), c.at("fetch")...)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
@@ -142,7 +142,9 @@ func (c CLI) CommonDir(ctx context.Context) (string, error) {
 // HoldsUnpushed reports whether a local branch holds a commit no
 // remote-tracking branch reaches.
 func (c CLI) HoldsUnpushed(ctx context.Context) (bool, error) {
-	out, err := exec.CommandContext(ctx, "git", c.at("rev-list", "--count", "--branches", "--not", "--remotes")...).Output()
+	cmd := exec.CommandContext(ctx, "git", c.at("rev-list", "--count", "--branches", "--not", "--remotes")...)
+	cmd.Env = c.dirEnv(nil)
+	out, err := cmd.Output()
 	if err != nil {
 		return false, fmt.Errorf("git rev-list --branches --not --remotes: %w", err)
 	}
