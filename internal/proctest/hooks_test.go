@@ -233,6 +233,33 @@ func TestHooks_OutputMustBeEmptyOrDeclaredFindings(t *testing.T) {
 	}
 }
 
+// Reopening playback on a stale confirmation bounces the gate back: the
+// gate is not done, so its done hooks do not run, and playback's start
+// hooks do.
+func TestHooks_ReopenedPlaybackRaisesNoDoneEvent(t *testing.T) {
+	world, session, scripted := newHookedCaptureWorld(t,
+		sdd.Hook{HookConfig: model.HookConfig{Event: "capture.write", Command: "status"}},
+		sdd.Hook{HookConfig: model.HookConfig{Event: "capture.playback.start", Command: "status"}},
+	)
+	world.LLM.PreflightFindings = []proctest.PreflightFinding{{Severity: "high", Category: "test-block", Observation: "blocked until override"}}
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	session.Report(t, instance, captureDraft())
+	serve = session.Answer(t, instance, "playback", "confirm", nil, "capture it")
+	proctest.RequireStep(t, serve, "reviseOrOverride")
+	arrivals := len(scripted.RunsAt("capture.playback.start"))
+
+	session.Report(t, instance, map[string]any{"body": "Edited after confirmation is a stale draft."})
+	serve = session.Answer(t, instance, "reviseOrOverride", "override", nil, "just write it")
+	proctest.RequireStep(t, serve, "playback")
+	if runs := scripted.RunsAt("capture.write"); len(runs) != 0 {
+		t.Errorf("the write gate bounced back to playback is not done, yet its done hook ran %d times", len(runs))
+	}
+	if got := len(scripted.RunsAt("capture.playback.start")); got != arrivals+1 {
+		t.Errorf("the reopened playback should raise its start event once, raised %d times", got-arrivals)
+	}
+}
+
 // A hook naming an event no procedure raises never runs, which a notice
 // says, listing the valid events.
 func TestHooks_UnknownEventIsANotice(t *testing.T) {

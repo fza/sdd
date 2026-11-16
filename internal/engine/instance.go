@@ -355,7 +355,8 @@ func (s *Session) reopenStalePlayback(inst *Instance, failing []FailedPredicate)
 			fieldPlaybackConfirmation: nil,
 		},
 	})
-	return true, s.transitionTo(inst, conf.Step, true)
+	// The gate bounces back rather than being done, so no done event fires.
+	return true, s.moveTo(inst, conf.Step, true)
 }
 
 // runCommand executes a registry command at the instance's current step and
@@ -463,7 +464,7 @@ func (s *Session) transitionTo(inst *Instance, to string, reopen bool) error {
 }
 
 // moveTo logs the transition, moves the instance, and raises the target
-// step's start event; the step's done event was raised before.
+// step's start event; a step being done raised its done event before.
 func (s *Session) moveTo(inst *Instance, to string, reopen bool) error {
 	if err := s.checkSink(); err != nil {
 		return err
