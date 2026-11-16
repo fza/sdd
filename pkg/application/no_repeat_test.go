@@ -52,7 +52,7 @@ func newRepeatWorkflow(t *testing.T, extra ...map[string]string) (*sdd.WorkflowS
 // proving it, as an agent that kept the text would; it returns the tag.
 func holdEntry(t *testing.T, workflow *sdd.WorkflowSession, identity sdd.RequestIdentity, id string) string {
 	t.Helper()
-	proofs := model.ReadAnchors(workflow.ServeEntry(id, repeatTargetBody))
+	proofs := model.ReadAnchors(workflow.ServeEntry(id, repeatTargetBody, nil))
 	if len(proofs) != 1 {
 		t.Fatalf("an entry served in full should carry one tag, got %v", proofs)
 	}

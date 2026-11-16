@@ -18,6 +18,12 @@ const GatherWayBack = "show or gather with its id and its tag left out of held"
 // every list prints whole, and what the full block leaves out is named with
 // the call that opens it.
 func RenderGather(w io.Writer, result *query.GatherResult) error {
+	return RenderWithin(w, &Repeats{Held: result.Held, Anchor: result.Anchor}, func(w io.Writer, repeats *Repeats) error {
+		return renderGather(w, result, repeats)
+	})
+}
+
+func renderGather(w io.Writer, result *query.GatherResult, repeats *Repeats) error {
 	g := result.Graph
 	fmt.Fprintln(w, "# gather")
 	fmt.Fprintln(w)
@@ -37,7 +43,6 @@ func RenderGather(w io.Writer, result *query.GatherResult) error {
 	}
 	fmt.Fprintf(w, "prefilter: %s\n", prefilter)
 
-	repeats := &Repeats{Held: result.Held, Anchor: result.Anchor}
 	wayBackShown := false
 	if result.Full != nil && len(result.Full.Groups) > 0 || len(result.Overflow) > 0 {
 		fmt.Fprintln(w)

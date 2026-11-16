@@ -2,6 +2,7 @@ package presenters_test
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -20,7 +21,7 @@ func heldOnly(ids ...string) *presenters.Repeats {
 			}
 		}
 		return "", "", false
-	}, Anchor: func(_, body string) string { return "⟦zz99⟧ " + body }}
+	}, Anchor: func(_, body string, _ map[string]int) string { return "⟦zz99⟧ " + body }}
 }
 
 // Every view renderer prints a held entry as its pointer and keeps the rest.
@@ -108,5 +109,44 @@ func TestRenderSearch_HeldHitPrintsAsPointer(t *testing.T) {
 	}
 	if !strings.Contains(got, "remote-snippet") || strings.Contains(got, remote.ID+" — ") {
 		t.Errorf("a hit without a brief should keep its line and citations:\n%s", got)
+	}
+}
+
+// An entry served in full is anchored over the whole result: its title and
+// the brief a held entry beside it prints count, and the counts are taken
+// once for every entry the result serves.
+func TestShowText_AnchorsEntriesOverTheWholeResult(t *testing.T) {
+	first := types.ShownEntry{ID: "20260101-100000-d-tac-one", Type: "decision", Layer: "tactical", Kind: "directive",
+		Title: "The reviewer guide", Body: "Later the reviewer and the approver merge drafts.", Brief: "First entry."}
+	second := types.ShownEntry{ID: "20260101-110000-d-tac-two", Type: "decision", Layer: "tactical", Kind: "directive",
+		Title: "Second", Body: "Nothing else.", Brief: "Second entry."}
+	held := types.ShownEntry{ID: "20260101-120000-d-tac-hld", Type: "decision", Layer: "tactical", Kind: "directive",
+		Title: "Queue", Body: "Nothing more.", Brief: "The approver queue stalls."}
+	var fields []model.WordCounts
+	r := &presenters.Repeats{
+		Held: func(id string) (string, string, bool) { return "ab12", "", id == held.ID },
+		Anchor: func(_, body string, field map[string]int) string {
+			fields = append(fields, field)
+			return body
+		},
+	}
+	got, err := presenters.ShowText([]types.ShownEntry{first, second, held}, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, held.Body) {
+		t.Fatalf("precondition: the held entry should print as its pointer:\n%s", got)
+	}
+	if len(fields) != 2 {
+		t.Fatalf("both entries served in full should be anchored, got %d", len(fields))
+	}
+	if fields[0]["reviewer"] < 2 {
+		t.Errorf("the entry's title should count beside its body, got %d", fields[0]["reviewer"])
+	}
+	if fields[0]["approver"] < 2 {
+		t.Errorf("a held entry's brief should count though the first render printed the entry in full, got %d", fields[0]["approver"])
+	}
+	if reflect.ValueOf(fields[0]).Pointer() != reflect.ValueOf(fields[1]).Pointer() {
+		t.Error("the result's counts should be taken once for every entry it anchors")
 	}
 }

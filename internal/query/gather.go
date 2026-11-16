@@ -28,5 +28,5 @@ type GatherResult struct {
 	// nothing, as the CLI serves. Anchor places the tag in a body served in
 	// full.
 	Held   func(id string) (tag, next string, held bool)
-	Anchor func(id, body string) string
+	Anchor func(id, body string, field map[string]int) string
 }

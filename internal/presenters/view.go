@@ -57,7 +57,10 @@ func RenderView(w io.Writer, sections []types.ViewSection, r *Repeats) {
 // server: RenderView without the trailing newline.
 func ViewText(sections []types.ViewSection, r *Repeats) string {
 	var rendered strings.Builder
-	RenderView(&rendered, sections, r)
+	_ = RenderWithin(&rendered, r, func(w io.Writer, r *Repeats) error {
+		RenderView(w, sections, r)
+		return nil
+	})
 	return strings.TrimRight(rendered.String(), "\n")
 }
 

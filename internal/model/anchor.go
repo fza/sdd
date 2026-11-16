@@ -55,19 +55,27 @@ type Challenge struct {
 	Answer string
 }
 
-// pickChallenges draws up to n challenges from text: content words that occur
-// once in it, each with the content word right after it on the same line; a
-// function word there could be guessed without the text. It takes the ones
-// nearest at, the tag's offset, so the agent finds each prompt beside the tag,
-// and never one answering what the tag or an earlier challenge did.
-func pickChallenges(text string, at, n int) []Challenge {
-	words := contentWords(text)
-	// A prompt occurs once as a run of letters anywhere in the text, so no
-	// other spot, as "user" in "user's", reads as the one it names.
-	count := map[string]int{}
+// WordCounts counts each run of letters of a text, case folded.
+type WordCounts map[string]int
+
+// CountWords counts text's letter runs. A prompt is a run that occurs once in
+// the text a piece is served within, so no other spot, as "user" in "user's"
+// or a word of an entry beside it, reads as the one it names.
+func CountWords(text string) WordCounts {
+	count := WordCounts{}
 	for _, run := range strings.FieldsFunc(text, func(r rune) bool { return !unicode.IsLetter(r) }) {
 		count[strings.ToLower(run)]++
 	}
+	return count
+}
+
+// pickChallenges draws up to n challenges from text: content words count
+// names once, each with the content word right after it on the same line; a
+// function word there could be guessed without the text. It takes the ones
+// nearest at, the tag's offset, so the agent finds each prompt beside the tag,
+// and never one answering what the tag or an earlier challenge did.
+func pickChallenges(text string, count WordCounts, at, n int) []Challenge {
+	words := contentWords(text)
 	type candidate struct {
 		challenge Challenge
 		distance  int
@@ -142,12 +150,18 @@ func TagName(tag string) string { return "tag " + tag }
 // PlaceAnchor places tag before a content word of text drawn from rnd. It
 // reports false when the text holds no content word outside code.
 func PlaceAnchor(text, tag string, rnd RandomSource) (Anchor, bool) {
+	return PlaceAnchorIn(text, CountWords(text), tag, rnd)
+}
+
+// PlaceAnchorIn is PlaceAnchor for text served within a larger result whose
+// letter runs field counts: each later proof's prompt occurs once there.
+func PlaceAnchorIn(text string, field WordCounts, tag string, rnd RandomSource) (Anchor, bool) {
 	words := contentWords(text)
 	if len(words) == 0 {
 		return Anchor{}, false
 	}
 	w := words[rnd.IntN(len(words))]
-	return Anchor{Tag: tag, Word: w.text, Offset: w.offset, Challenges: pickChallenges(text, w.offset, AnchorChallenges)}, true
+	return Anchor{Tag: tag, Word: w.text, Offset: w.offset, Challenges: pickChallenges(text, field, w.offset, AnchorChallenges)}, true
 }
 
 // Render returns text with the anchor's tag placed.
@@ -178,7 +192,7 @@ func PlaceSchemaAnchor(schema map[string]any, tag string, rnd RandomSource) (Anc
 	}
 	s := spots[rnd.IntN(len(spots))]
 	// The challenges come from the description the tag sits in.
-	challenges := pickChallenges(s.text, s.word.offset, AnchorChallenges)
+	challenges := pickChallenges(s.text, CountWords(s.text), s.word.offset, AnchorChallenges)
 	return Anchor{Tag: tag, Word: s.word.text, Offset: s.word.offset, Path: s.path, Challenges: challenges}, true
 }
 

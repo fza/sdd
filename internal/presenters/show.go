@@ -56,7 +56,10 @@ func RenderShow(w io.Writer, entries []types.ShownEntry, opts ShowOptions) error
 // with default options under r's no-repeat rule, without the trailing newline.
 func ShowText(entries []types.ShownEntry, r *Repeats) (string, error) {
 	var rendered strings.Builder
-	if err := RenderShow(&rendered, entries, ShowOptions{Repeats: r}); err != nil {
+	err := RenderWithin(&rendered, r, func(w io.Writer, r *Repeats) error {
+		return RenderShow(w, entries, ShowOptions{Repeats: r})
+	})
+	if err != nil {
 		return "", err
 	}
 	return strings.TrimRight(rendered.String(), "\n"), nil

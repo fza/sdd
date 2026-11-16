@@ -147,11 +147,15 @@ func (w *WorkflowSession) HoldsEntry(id string) (tag, next string, held bool) {
 }
 
 // ServeEntry returns an entry's rendered body served in full, its tag
-// placed.
-func (w *WorkflowSession) ServeEntry(id, body string) string {
+// placed and its proofs asking for words once in the result whose letter
+// runs field counts; a nil field counts the body alone.
+func (w *WorkflowSession) ServeEntry(id, body string, field map[string]int) string {
+	if field == nil {
+		field = model.CountWords(body)
+	}
 	served := w.session.ServePiece(w.entryPiece(id), nil,
 		func(tag string, rnd model.RandomSource) (model.Anchor, bool) {
-			return model.PlaceAnchor(body, tag, rnd)
+			return model.PlaceAnchorIn(body, field, tag, rnd)
 		})
 	return served.Anchor.Render(body)
 }

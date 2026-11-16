@@ -104,6 +104,29 @@ func TestChallengePromptsOccurOnceAsAWord(t *testing.T) {
 	}
 }
 
+// A word the piece holds once but the result around it holds again, as an
+// entry body's word in its heading, is no prompt.
+func TestChallengePromptsOccurOnceInTheField(t *testing.T) {
+	body := "Later the reviewer approves drafts quickly and the approver merges branches."
+	field := model.CountWords("## The reviewer's choice\n\n" + body)
+	sawPrompt := false
+	for seed := range uint64(100) {
+		anchor, ok := model.PlaceAnchorIn(body, field, "ab12", seeded(seed))
+		if !ok {
+			t.Fatal("a text with content words should take an anchor")
+		}
+		for _, c := range anchor.Challenges {
+			sawPrompt = true
+			if c.Prompt == "reviewer" {
+				t.Fatalf("a word the field holds twice should not be a prompt, got %+v", c)
+			}
+		}
+	}
+	if !sawPrompt {
+		t.Fatal("precondition: the body should yield challenges")
+	}
+}
+
 func TestNextProofQuotesThePrompt(t *testing.T) {
 	if got := model.NextProof("ab12", "graph"); got != `next proof ab12:<the word right after "graph">` {
 		t.Errorf("the next proof should name the tag and quote the prompt, got %q", got)
