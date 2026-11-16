@@ -430,10 +430,10 @@ func TestRecordCheckoutRecordsEachCheckoutOnce(t *testing.T) {
 	}
 }
 
-// A checkout missing longer than cache.retention, as a removed worktree, is
-// dropped from the record; the attachments only it could own then go. One
-// missing for less, as an unmounted volume, keeps them (see
-// TestStateSweepKeepsTheStagedAttachmentsOfOpenInRepoSessions).
+// A checkout a sweep has found missing for longer than cache.retention, as a
+// removed worktree, is dropped from the record; the attachments only it could
+// own then go. A checkout last seen long ago but found missing only now, as a
+// volume unmounted after a while without sweeps, counts as missing from now.
 func TestStateSweepDropsACheckoutMissingLongerThanTheRetention(t *testing.T) {
 	f := newStateFixture(t)
 	const key = "github.com/acme/paused"
@@ -448,6 +448,12 @@ func TestStateSweepDropsACheckoutMissingLongerThanTheRetention(t *testing.T) {
 	}
 
 	f.sweep(t)
+	if !f.stagedExists(t, key, "s_inrepo") {
+		t.Fatal("a checkout last seen long ago but first found missing now should keep the attachments it may own")
+	}
+	later := f
+	later.now = f.now.Add(sweepUnusedRetention + time.Hour)
+	later.sweep(t)
 
 	if f.stagedExists(t, key, "s_inrepo") {
 		t.Error("the attachments only a checkout gone past cache.retention could own should go")
@@ -616,5 +622,70 @@ func TestStateSweepRefusesACheckoutRecordLineWithoutATime(t *testing.T) {
 	}
 	if !f.stagedExists(t, key, "s_inrepo") {
 		t.Error("attachments a malformed record would judge should stay")
+	}
+}
+
+// A command opening a project replaces a checkout record it cannot read, so a
+// corrupt record never keeps the project from opening; the sweep still fails
+// on one (TestStateSweepRefusesACheckoutRecordLineWithoutATime).
+func TestRecordCheckoutReplacesAMalformedRecord(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "local/abcdef012345"
+	record := filepath.Join(f.root, "checkouts", "local", "abcdef012345.list")
+	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, []byte("/work/old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := localadapter.RecordCheckout(f.root, key, "/work/app", f.now); err != nil {
+		t.Fatalf("recording a checkout over a malformed record should succeed: %v", err)
+	}
+	content, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/work/app\t" + f.now.UTC().Format(time.RFC3339) + "\n"; string(content) != want {
+		t.Errorf("the malformed record should be replaced, got %q, want %q", content, want)
+	}
+}
+
+// A checkout found missing and then back, as a volume mounted again, counts
+// as missing only from when it next goes.
+func TestStateSweepForgetsAMissingCheckoutThatCameBack(t *testing.T) {
+	f := newStateFixture(t)
+	const key = "github.com/acme/paused"
+	checkout := filepath.Join(t.TempDir(), "volume")
+	away := checkout + "-unmounted"
+	if err := os.MkdirAll(checkout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := localadapter.RecordCheckout(f.root, key, checkout, f.now); err != nil {
+		t.Fatal(err)
+	}
+	f.used(t, key, f.now.Add(-3*sweepUnusedRetention))
+	f.inRepoSession(t, key, checkout, "s_inrepo", time.Time{})
+	sweepAt := func(at time.Time) {
+		t.Helper()
+		later := f
+		later.now = at
+		later.sweep(t)
+	}
+
+	if err := os.Rename(checkout, away); err != nil {
+		t.Fatal(err)
+	}
+	sweepAt(f.now)
+	if err := os.Rename(away, checkout); err != nil {
+		t.Fatal(err)
+	}
+	sweepAt(f.now.Add(time.Hour))
+	if err := os.Rename(checkout, away); err != nil {
+		t.Fatal(err)
+	}
+	sweepAt(f.now.Add(sweepUnusedRetention + 2*time.Hour))
+
+	if !f.stagedExists(t, key, "s_inrepo") {
+		t.Error("a checkout missing again for a moment should keep the attachments it may own")
 	}
 }

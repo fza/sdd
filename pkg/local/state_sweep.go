@@ -81,13 +81,14 @@ func projectStampPath(stateRoot, repoKey string) (string, error) {
 // RecordCheckout notes checkout as a working tree the project keyed repoKey
 // is opened from, seen at now, so the sweep reads the sessions earlier
 // versions logged into its .sdd/sessions. A checkout seen within a day is
-// left as recorded.
+// left as recorded. A record it cannot read is replaced, so a corrupt record
+// never keeps a project from opening; the sweep reports one.
 func RecordCheckout(stateRoot, repoKey, checkout string, now time.Time) error {
 	path, err := checkoutsPath(stateRoot, repoKey)
 	if err != nil {
 		return err
 	}
-	return updateCheckoutRecord(stateRoot, path, func(record *checkoutRecord) {
+	return updateCheckoutRecord(stateRoot, path, true, func(record *checkoutRecord) {
 		record.see(checkout, now)
 	})
 }
@@ -101,7 +102,8 @@ func checkoutsPath(stateRoot, repoKey string) (string, error) {
 }
 
 // checkoutRecord lists a project's checkouts with when each was last seen on
-// disk, one "<path>\t<RFC 3339 time>" line each.
+// disk and, once a sweep found it missing, since when: one
+// "<path>\t<RFC 3339 time>[\t<RFC 3339 time>]" line each.
 type checkoutRecord struct {
 	exists   bool
 	entries  []checkoutEntry
@@ -109,18 +111,21 @@ type checkoutRecord struct {
 }
 
 type checkoutEntry struct {
-	path string
-	seen time.Time
+	path    string
+	seen    time.Time
+	missing time.Time
 }
 
-// see records checkout as seen at now, at most once a day.
+// see records checkout as seen at now, at most once a day, and no longer
+// missing.
 func (r *checkoutRecord) see(checkout string, now time.Time) {
 	for i := range r.entries {
-		if r.entries[i].path != checkout {
+		entry := &r.entries[i]
+		if entry.path != checkout {
 			continue
 		}
-		if now.Sub(r.entries[i].seen) >= projectUseRefresh {
-			r.entries[i].seen, r.modified = now, true
+		if now.Sub(entry.seen) >= projectUseRefresh || !entry.missing.IsZero() {
+			entry.seen, entry.missing, r.modified = now, time.Time{}, true
 		}
 		return
 	}
@@ -147,21 +152,45 @@ func loadCheckoutRecord(path string) (checkoutRecord, error) {
 	}
 	record := checkoutRecord{exists: true}
 	for line := range strings.Lines(string(content)) {
-		trimmed := strings.TrimSuffix(line, "\n")
-		i := strings.LastIndex(trimmed, "\t")
-		if i <= 0 {
+		entry, ok := parseCheckoutLine(strings.TrimSuffix(line, "\n"))
+		if !ok {
 			return checkoutRecord{}, fmt.Errorf("reading checkout record %s: malformed line %q", path, line)
 		}
-		checkout := trimmed[:i]
-		seen, err := time.Parse(time.RFC3339, trimmed[i+1:])
-		if err != nil {
-			return checkoutRecord{}, fmt.Errorf("reading checkout record %s: %w", path, err)
-		}
-		if !slices.Contains(record.paths(), checkout) {
-			record.entries = append(record.entries, checkoutEntry{path: checkout, seen: seen})
+		if !slices.Contains(record.paths(), entry.path) {
+			record.entries = append(record.entries, entry)
 		}
 	}
 	return record, nil
+}
+
+// parseCheckoutLine reads one record line, its times split off from the end
+// so a path may hold a tab.
+func parseCheckoutLine(line string) (checkoutEntry, bool) {
+	rest, last, ok := cutLastTime(line)
+	if !ok {
+		return checkoutEntry{}, false
+	}
+	if path, seen, ok := cutLastTime(rest); ok {
+		return checkoutEntry{path: path, seen: seen, missing: last}, true
+	}
+	return checkoutEntry{path: rest, seen: last}, rest != ""
+}
+
+func cutLastTime(s string) (string, time.Time, bool) {
+	i := strings.LastIndex(s, "\t")
+	if i <= 0 {
+		return "", time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, s[i+1:])
+	return s[:i], t, err == nil
+}
+
+func (e checkoutEntry) line() string {
+	line := e.path + "\t" + e.seen.UTC().Format(time.RFC3339)
+	if !e.missing.IsZero() {
+		line += "\t" + e.missing.UTC().Format(time.RFC3339)
+	}
+	return line + "\n"
 }
 
 // checkoutRecordWait bounds how long a writer waits for another one; a
@@ -171,8 +200,9 @@ const checkoutRecordWait = time.Second
 // updateCheckoutRecord applies change to the record at path as one locked
 // read-modify-write, writing it back only when change modified it. A record
 // left with no checkout stays as an empty file, so the sweep can tell every
-// recorded checkout gone from none ever recorded.
-func updateCheckoutRecord(stateRoot, path string, change func(*checkoutRecord)) (err error) {
+// recorded checkout gone from none ever recorded. replaceUnreadable starts an
+// unreadable record afresh instead of failing.
+func updateCheckoutRecord(stateRoot, path string, replaceUnreadable bool, change func(*checkoutRecord)) (err error) {
 	if err := os.MkdirAll(filepath.Join(stateRoot, checkoutsCategory), 0o755); err != nil {
 		return fmt.Errorf("creating checkout records: %w", err)
 	}
@@ -184,7 +214,10 @@ func updateCheckoutRecord(stateRoot, path string, change func(*checkoutRecord)) 
 	}
 	defer func() { err = errors.Join(err, lock.Unlock()) }()
 	record, err := loadCheckoutRecord(path)
-	if err != nil {
+	switch {
+	case err != nil && replaceUnreadable:
+		record = checkoutRecord{exists: true, modified: true}
+	case err != nil:
 		return err
 	}
 	change(&record)
@@ -193,7 +226,7 @@ func updateCheckoutRecord(stateRoot, path string, change func(*checkoutRecord)) 
 	}
 	var content strings.Builder
 	for _, entry := range record.entries {
-		content.WriteString(entry.path + "\t" + entry.seen.UTC().Format(time.RFC3339) + "\n")
+		content.WriteString(entry.line())
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating checkout records: %w", err)
@@ -298,10 +331,12 @@ func (s StateSweep) collect(ctx context.Context, key string, now time.Time, rete
 	return collectIn(ctx, key, location, []StoreLocation{location}, now, retention)
 }
 
-// tendCheckoutRecords refreshes when each recorded checkout was last seen and
-// drops one missing longer than retention, as a removed worktree; one missing
-// for less, as an unmounted volume, stays. It returns the keys recording each
-// checkout found on disk.
+// tendCheckoutRecords refreshes when each recorded checkout was last seen,
+// notes when a sweep first found one missing, and drops one missing for
+// longer than retention since, as a removed worktree; one missing for less,
+// as an unmounted volume, stays. It returns the keys recording each checkout
+// found on disk. The checkouts are looked up outside the record lock, so a
+// hanging mount never holds up a command recording its checkout.
 func (s StateSweep) tendCheckoutRecords(keys []string, now time.Time, retention time.Duration) (map[string][]string, error) {
 	recordedBy := map[string][]string{}
 	var errs []error
@@ -311,17 +346,34 @@ func (s StateSweep) tendCheckoutRecords(keys []string, now time.Time, retention 
 			errs = append(errs, err)
 			continue
 		}
-		err = updateCheckoutRecord(s.StateRoot, path, func(record *checkoutRecord) {
+		record, err := loadCheckoutRecord(path)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		present := map[string]bool{}
+		absent := map[string]bool{}
+		for _, checkout := range record.paths() {
+			_, statErr := os.Stat(checkout)
+			switch {
+			case statErr == nil:
+				present[checkout] = true
+				recordedBy[checkout] = append(recordedBy[checkout], key)
+			case errors.Is(statErr, fs.ErrNotExist):
+				absent[checkout] = true
+			}
+		}
+		err = updateCheckoutRecord(s.StateRoot, path, false, func(record *checkoutRecord) {
 			kept := record.entries[:0]
 			for _, entry := range record.entries {
-				_, statErr := os.Stat(entry.path)
 				switch {
-				case statErr == nil:
-					recordedBy[entry.path] = append(recordedBy[entry.path], key)
-					if now.Sub(entry.seen) >= projectUseRefresh {
-						entry.seen, record.modified = now, true
+				case present[entry.path]:
+					if now.Sub(entry.seen) >= projectUseRefresh || !entry.missing.IsZero() {
+						entry.seen, entry.missing, record.modified = now, time.Time{}, true
 					}
-				case errors.Is(statErr, fs.ErrNotExist) && now.Sub(entry.seen) > retention:
+				case absent[entry.path] && entry.missing.IsZero():
+					entry.missing, record.modified = now, true
+				case absent[entry.path] && now.Sub(entry.missing) > retention:
 					record.modified = true
 					continue
 				}
@@ -493,10 +545,10 @@ func (s StateSweep) stagedOwned(ctx context.Context, key, dir string, live map[a
 	return slices.ContainsFunc(owners, func(id app.SessionID) bool { return open[id] }), nil
 }
 
+// openInCheckouts lists the sessions open in the .sdd/sessions of each
 // checkout recorded for key. A log it cannot read counts as open. known is
 // false when no record was ever written for key, or a recorded checkout is
 // missing (tendCheckoutRecords drops one gone past the retention).
-// false when no checkout is on record or a recorded one is missing.
 func (s StateSweep) openInCheckouts(ctx context.Context, key string) (open map[app.SessionID]bool, known bool, err error) {
 	path, err := checkoutsPath(s.StateRoot, key)
 	if err != nil {
