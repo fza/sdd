@@ -15,7 +15,8 @@ import (
 )
 
 // floor.json holds, per built-in rule, the first of gitleaks' own true
-// positives; a fetched copy must still flag each. UPDATE_SNAPSHOTS=true
+// positives, or of the synthetic ones for a rule gitleaks gives none; a
+// fetched copy must still flag each. UPDATE_SNAPSHOTS=true
 // writes it from the fixtures after the built-in file changes.
 func TestFloorSamplesFollowTheGitleaksFixtures(t *testing.T) {
 	builtin, err := secrets.BuiltinRuleFile()
@@ -27,20 +28,26 @@ func TestFloorSamplesFollowTheGitleaksFixtures(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixtures := testsupport.SecretFixtures()
-	files, err := fs.ReadDir(fixtures, "gitleaks")
-	if err != nil {
-		t.Fatal(err)
+	var paths []string
+	for _, dir := range []string{"gitleaks", "synthetic"} {
+		files, err := fs.ReadDir(fixtures, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range files {
+			paths = append(paths, path.Join(dir, file.Name()))
+		}
 	}
 	var floor []secrets.FloorSample
-	for _, file := range files {
-		data, err := fs.ReadFile(fixtures, path.Join("gitleaks", file.Name()))
+	for _, file := range paths {
+		data, err := fs.ReadFile(fixtures, file)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var samples gitleaksSamples
 		err = json.Unmarshal(data, &samples)
 		if err != nil {
-			t.Fatalf("%s: %v", file.Name(), err)
+			t.Fatalf("%s: %v", file, err)
 		}
 		if !slices.Contains(set.RuleIDs(), samples.Rule) || len(samples.TruePositives) == 0 {
 			continue
@@ -94,5 +101,38 @@ func TestParseFetchedRulesRefusesACopyThatStopsFlaggingTheSamples(t *testing.T) 
 				t.Errorf("the copy should be refused naming the rules it no longer flags, got %v", err)
 			}
 		})
+	}
+}
+
+// A built-in rule without a sample would be checked by its ID alone, which a
+// loosened pattern keeps.
+func TestFloorCoversEveryBuiltinRule(t *testing.T) {
+	builtin, err := secrets.BuiltinRuleFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := secrets.ParseRules(builtin.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile("floor.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var floor []secrets.FloorSample
+	err = json.Unmarshal(data, &floor)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var uncovered []string
+	for _, id := range set.RuleIDs() {
+		if !slices.ContainsFunc(floor, func(s secrets.FloorSample) bool { return s.Rule == id }) {
+			uncovered = append(uncovered, id)
+		}
+	}
+
+	if len(uncovered) > 0 {
+		t.Errorf("every built-in rule should have a sample; add one under fixtures/secrets/synthetic for: %v", uncovered)
 	}
 }

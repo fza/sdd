@@ -226,22 +226,29 @@ func (s gitleaksSample) scan() ([]secrets.Finding, error) {
 	return secrets.Scan(s.Text)
 }
 
-// gitleaks' own samples hold the engine to gitleaks' verdicts rule by rule.
+// gitleaks' own samples hold the engine to gitleaks' verdicts rule by rule;
+// the synthetic ones stand in for rules gitleaks gives none.
 func TestScanGitleaksSamples(t *testing.T) {
 	fixtures := testsupport.SecretFixtures()
-	files, err := fs.ReadDir(fixtures, "gitleaks")
-	if err != nil {
-		t.Fatal(err)
+	var paths []string
+	for _, dir := range []string{"gitleaks", "synthetic"} {
+		files, err := fs.ReadDir(fixtures, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range files {
+			paths = append(paths, path.Join(dir, file.Name()))
+		}
 	}
-	for _, file := range files {
-		data, err := fs.ReadFile(fixtures, path.Join("gitleaks", file.Name()))
+	for _, file := range paths {
+		data, err := fs.ReadFile(fixtures, file)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var samples gitleaksSamples
 		err = json.Unmarshal(data, &samples)
 		if err != nil {
-			t.Fatalf("%s: %v", file.Name(), err)
+			t.Fatalf("%s: %v", file, err)
 		}
 		t.Run(samples.Rule, func(t *testing.T) {
 			for i, sample := range samples.TruePositives {
