@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
@@ -72,8 +73,11 @@ func New(options Options) (*Scorer, error) {
 		endpoint = DefaultEndpoint
 	}
 	parsed, err := url.Parse(endpoint)
-	if err != nil || !parsed.IsAbs() {
-		return nil, fmt.Errorf("systemone: endpoint %q is not an absolute URL", endpoint)
+	if err != nil {
+		return nil, errors.New("systemone: endpoint is no valid URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "" {
+		return nil, errors.New("systemone: endpoint is not an absolute http or https URL")
 	}
 	model := options.Model
 	if model == "" {
@@ -158,11 +162,11 @@ func (s *Scorer) Score(ctx context.Context, req relevance.Request) (relevance.Re
 	}
 	body, err := json.Marshal(request{Model: s.model, State: map[string]any{"draft": req.Subject, "candidates": candidates}, Questions: questions})
 	if err != nil {
-		return relevance.Result{}, fmt.Errorf("systemone: encoding the request: %w", err)
+		return relevance.Result{}, s.attribute(fmt.Errorf("systemone: encoding the request: %w", err), llm.Usage{})
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return relevance.Result{}, err
+		return relevance.Result{}, s.attribute(fmt.Errorf("systemone: %w", err), llm.Usage{})
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+s.key)
@@ -213,15 +217,31 @@ func statusError(resp *http.Response, raw []byte) error {
 	if json.Unmarshal(raw, &body) == nil && len(body.Detail) > 0 {
 		var text string
 		if json.Unmarshal(body.Detail, &text) == nil {
-			out.Detail = text
+			out.Detail = excerpt(text)
 		} else {
-			out.Detail = string(body.Detail)
+			out.Detail = excerpt(string(body.Detail))
 		}
 	} else {
-		out.Detail = string(bytes.TrimSpace(raw))
+		out.Detail = excerpt(string(bytes.TrimSpace(raw)))
 	}
 	if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && seconds > 0 {
 		out.RetryAfter = time.Duration(seconds) * time.Second
 	}
 	return out
+}
+
+// maxDetail bounds the reply text an error carries.
+const maxDetail = 512
+
+// excerpt is text cut to its first maxDetail bytes on a rune boundary, marked
+// when cut.
+func excerpt(text string) string {
+	if len(text) <= maxDetail {
+		return text
+	}
+	cut := maxDetail
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + "… (cut)"
 }

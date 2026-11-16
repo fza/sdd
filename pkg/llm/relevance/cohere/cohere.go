@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/networkteam/sdd/pkg/llm"
 	"github.com/networkteam/sdd/pkg/llm/relevance"
@@ -66,8 +67,11 @@ func New(options Options) (*Scorer, error) {
 		endpoint = DefaultEndpoint
 	}
 	parsed, err := url.Parse(endpoint)
-	if err != nil || !parsed.IsAbs() {
-		return nil, fmt.Errorf("cohere rerank: endpoint %q is not an absolute URL", endpoint)
+	if err != nil {
+		return nil, errors.New("cohere rerank: endpoint is no valid URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "" {
+		return nil, errors.New("cohere rerank: endpoint is not an absolute http or https URL")
 	}
 	model := options.Model
 	if model == "" {
@@ -137,11 +141,11 @@ func (s *Scorer) Score(ctx context.Context, req relevance.Request) (relevance.Re
 	}
 	body, err := json.Marshal(request{Model: s.model, Query: Instruction + req.Subject, Documents: documents})
 	if err != nil {
-		return relevance.Result{}, fmt.Errorf("cohere rerank: encoding the request: %w", err)
+		return relevance.Result{}, s.attribute(fmt.Errorf("cohere rerank: encoding the request: %w", err), llm.Usage{})
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return relevance.Result{}, err
+		return relevance.Result{}, s.attribute(fmt.Errorf("cohere rerank: %w", err), llm.Usage{})
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+s.key)
@@ -199,12 +203,28 @@ func statusError(resp *http.Response, raw []byte) error {
 		} `json:"error"`
 	}
 	if json.Unmarshal(raw, &body) == nil && (body.Error.Code != "" || body.Error.Message != "") {
-		out.Code, out.Message = body.Error.Code, body.Error.Message
+		out.Code, out.Message = body.Error.Code, excerpt(body.Error.Message)
 	} else {
-		out.Message = string(bytes.TrimSpace(raw))
+		out.Message = excerpt(string(bytes.TrimSpace(raw)))
 	}
 	if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && seconds > 0 {
 		out.RetryAfter = time.Duration(seconds) * time.Second
 	}
 	return out
+}
+
+// maxDetail bounds the reply text an error carries.
+const maxDetail = 512
+
+// excerpt is text cut to its first maxDetail bytes on a rune boundary, marked
+// when cut.
+func excerpt(text string) string {
+	if len(text) <= maxDetail {
+		return text
+	}
+	cut := maxDetail
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + "… (cut)"
 }
