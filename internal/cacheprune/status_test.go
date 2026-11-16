@@ -60,7 +60,7 @@ func TestLaunchIfDue(t *testing.T) {
 		t.Errorf("a day later another run should launch, launched %d", launches)
 	}
 
-	failing := func() error { return errors.New("fork failed") }
+	failing := func() error { return errors.New("spawn failed") }
 	if err := cacheprune.LaunchIfDue(t.Context(), stateRoot, now.Add(3*model.CachePruneInterval), failing); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestLaunchIfDue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(notice, "fork failed") {
+	if !strings.Contains(notice, "spawn failed") {
 		t.Errorf("a launch that fails should be reported once like a failed run, notice %q", notice)
 	}
 }
