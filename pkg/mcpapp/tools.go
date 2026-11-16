@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -18,6 +21,7 @@ import (
 	"github.com/networkteam/sdd/internal/textpatch"
 	"github.com/networkteam/sdd/internal/truncate"
 	sdd "github.com/networkteam/sdd/pkg/application"
+	"github.com/networkteam/sdd/pkg/application/types"
 )
 
 // defaultSearchHits caps search responses when the caller sets no limit —
@@ -623,7 +627,11 @@ func (s *toolSet) startSession(ctx context.Context, req *mcp.CallToolRequest, ar
 	ss := s.sessions.put(&shellSession{root: workflow})
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	result, err := s.toRootServeResult(ctx, req, ss, serve)
+	guide, err := resultChars(proofGuide + "\n\n")
+	if err != nil {
+		return nil, ServeResult{}, err
+	}
+	result, err := s.toRootServeResultWithin(ctx, req, ss, serve, serveBudget-guide)
 	if err != nil {
 		return nil, ServeResult{}, err
 	}
@@ -686,6 +694,7 @@ func (s *toolSet) next(ctx context.Context, req *mcp.CallToolRequest, args NextA
 		return nil, ServeResult{}, toolError("instance is required")
 	}
 	identity := s.requestIdentity(req)
+	ss.root.FollowDeferral(args.Instance)
 	serve, err := ss.root.Advance(ctx, identity, sdd.WorkflowAdvanceRequest{Instance: args.Instance, Report: args.Report, Label: args.Label, RetryRef: args.RetryRef, CancelRef: args.CancelRef})
 	if err != nil {
 		return nil, ServeResult{}, err
@@ -721,7 +730,11 @@ func (s *toolSet) abandon(ctx context.Context, req *mcp.CallToolRequest, args Ab
 		out.Instructions = "The instance holds WIP markers, left standing by design. Tell the user: resume the work later or close the markers through grooming."
 	}
 	if result.Base != nil {
-		base, err := s.toBaseServeResult(ctx, req, ss, result.Base)
+		around, err := resultChars(out)
+		if err != nil {
+			return nil, AbandonResult{}, err
+		}
+		base, err := s.toBaseServeResult(ctx, req, ss, result.Base, serveBudget-around)
 		if err != nil {
 			return nil, AbandonResult{}, err
 		}
@@ -755,7 +768,11 @@ func (s *toolSet) park(ctx context.Context, req *mcp.CallToolRequest, args ParkA
 		Instructions: "The move is parked with its state kept — it stays listed as an open thread and resumes through next. Tell the user it is recorded as open work, not forgotten.",
 	}
 	if result.Base != nil {
-		base, err := s.toBaseServeResult(ctx, req, ss, result.Base)
+		around, err := resultChars(out)
+		if err != nil {
+			return nil, ParkResult{}, err
+		}
+		base, err := s.toBaseServeResult(ctx, req, ss, result.Base, serveBudget-around)
 		if err != nil {
 			return nil, ParkResult{}, err
 		}
@@ -815,31 +832,15 @@ func (s *toolSet) resumeSession(ctx context.Context, req *mcp.CallToolRequest, a
 	if err := ss.root.Reorient(ctx, identity); err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
-	result, omitted, err := ss.root.ServeAllWithin(ctx, identity, resumeBudget())
+	var moves resumeMoves
+	source, err := ss.root.ServeAllWithin(ctx, identity, func(head sdd.WorkflowResumeResult, serve sdd.WorkflowServe) (string, error) {
+		return s.mapResumeMove(ctx, req, ss, &moves, head, serve)
+	})
 	if err != nil {
 		return nil, ResumeSessionResult{}, err
 	}
-	mapped, err := s.mapRootResume(ctx, req, ss, result, omitted)
+	mapped, err := s.mapRootResume(ctx, req, ss, source, moves)
 	return nil, mapped, err
-}
-
-// resumeBudget keeps the open instances a resume projection has room for:
-// whole instances only (d-tac-qwc), at most maxResumeOpenInstances within
-// resumeOpenBudgetBytes, the instance holding an unfinished operation
-// always, since the resume exists to re-serve it. It decides as each
-// instance renders, so an omitted one withdraws the pieces it served.
-func resumeBudget() func(sdd.WorkflowServe) bool {
-	kept, spent := 0, 0
-	return func(serve sdd.WorkflowServe) bool {
-		size := resumeServeBytes(&serve)
-		pending := serve.PendingOperation != nil
-		if !pending && (kept >= maxResumeOpenInstances || (kept > 0 && spent+size > resumeOpenBudgetBytes)) {
-			return false
-		}
-		kept++
-		spent += size
-		return true
-	}
 }
 
 func (s *toolSet) bindBranch(ctx context.Context, req *mcp.CallToolRequest, args BindBranchArgs) (*mcp.CallToolResult, BindBranchResult, error) {
@@ -1077,16 +1078,35 @@ var (
 	// threads, discarded threads, session rejections); cuts keep whole lines
 	// and name the remainder.
 	maxLineListBytes = serveview.Default().Cap(serveview.PartLineList).MaxBytes
-
-	// resumeOpenBudgetBytes is the aggregate byte budget across a resume
-	// projection's open instances — a reorientation serves everything in full,
-	// and whole-instance omission is the only legitimate cut (d-tac-qwc).
-	resumeOpenBudgetBytes = serveview.Default().Total
 )
 
 // maxResumeOpenInstances caps how many open instances a resume projection
 // serves in full; the rest are named, each reachable through next.
 const maxResumeOpenInstances = 8
+
+// maxEndedValueChars bounds a produced value an ended move serves: the
+// results a caller acts on, such as the entry written, fit; the move's
+// working state does not.
+const maxEndedValueChars = 200
+
+// endedValues renders the values an ended move produced that fit
+// maxEndedValueChars, and names the rest in order.
+func endedValues(values map[string]any) (map[string]string, []string) {
+	var out map[string]string
+	var omitted []string
+	for _, name := range slices.Sorted(maps.Keys(values)) {
+		value := collectedString(values[name])
+		if len(value) > maxEndedValueChars {
+			omitted = append(omitted, name)
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[name] = value
+	}
+	return out, omitted
+}
 
 // capValues renders each collected or produced value to a display string,
 // truncates any over-cap value, and enforces a per-instance total budget by
@@ -1326,17 +1346,25 @@ func toolBoundary[In, Out any](handler func(context.Context, *mcp.CallToolReques
 // --- serve conversion --------------------------------------------------------
 
 // serveResultBody converts the serve fields every landing shares —
-// instructions with per-lane dedup, chooser, framing, open threads. Schema
-// and vocabulary dedup live only in toRootServeResult: a base mapping drops
-// those fields, and recording bytes never delivered would stub them for a
-// later serve that does deliver.
-func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (ServeResult, error) {
+// instructions with per-lane dedup, the first keep lanes of them, chooser,
+// the first framing blocks of the framing, open threads; framing below zero
+// composes none. Schema and vocabulary dedup live only in composeServe: a
+// base mapping drops those fields, and recording bytes never delivered would
+// stub them for a later serve that does deliver. It returns what it served.
+func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, keep, framing int, pageFull []string) (ServeResult, servedCount, error) {
 	res := ServeResult{
 		Session: string(serve.Session), Project: string(serve.Project),
 		Branch: serve.Branch, Instance: serve.Instance, Procedure: serve.Procedure, Status: serve.Status,
-		Step: serve.Step, Goal: serve.Goal, Instructions: composeInstructions(ss, serve), Missing: serve.Missing,
-		ReportSchema: serve.ReportSchema, Produced: capValues(serve.Produced), Execution: serve.Execution,
+		Step: serve.Step, Goal: serve.Goal, Missing: serve.Missing,
+		ReportSchema: serve.ReportSchema, Execution: serve.Execution,
 		Collected: capValues(serve.Collected), PendingOperation: pendingOperationResult(serve.PendingOperation), Cancellation: cancellationResult(serve.Cancellation),
+	}
+	var count servedCount
+	res.Instructions, count.lanes = composeInstructions(ss, serve, keep, pageFull)
+	var omitted []string
+	res.Produced, omitted = endedValues(serve.Produced)
+	if len(omitted) > 0 {
+		res.Instructions = strings.TrimPrefix(res.Instructions+"\n\n"+fmt.Sprintf("(produced leaves out the move's working state, kept in the session store: %s)", strings.Join(omitted, ", ")), "\n\n")
 	}
 	if parked := serve.Parked; parked != nil {
 		res.Parked, res.Reason, res.Resume = true, parked.Reason, parked.Resume
@@ -1354,60 +1382,284 @@ func (s *toolSet) serveResultBody(ctx context.Context, req *mcp.CallToolRequest,
 			Prompt: dispatch.Prompt, ContinuePrompt: dispatch.ContinuePrompt, Instructions: dispatch.Instructions, Agent: dispatch.Agent, Model: dispatch.Model, Effort: dispatch.Effort, Runner: dispatch.Runner,
 		})
 	}
-	framing, err := ss.root.FramingBlocksFor(ctx, s.requestIdentity(req), serve.Framing)
+	if framing >= 0 {
+		blocks, err := ss.root.FramingBlocksFor(ctx, s.requestIdentity(req), serve.Framing)
+		if err != nil {
+			return ServeResult{}, servedCount{}, err
+		}
+		composed := composeFraming(ss, blocks, framing)
+		res.Framing, count.framing, count.blocks = composed.text, composed.fresh, composed.blocks
+		if len(composed.waiting) > 0 {
+			res.Instructions = strings.TrimPrefix(res.Instructions+"\n\n"+framingWaitLine(composed.waiting, keep < len(serve.InstructionLanes)), "\n\n")
+		}
+	}
+	if ss.root.IsShell(serve.Instance) {
+		res.OpenThreads = openThreadsRoot(ss)
+	}
+	return res, count, nil
+}
+
+// servedCount is what a composed serve holds: the lanes and framing blocks
+// it served in full, the framing blocks its framing has, and whether its
+// vocabulary table waits.
+type servedCount struct {
+	lanes, framing, blocks int
+	vocabularyWaits        bool
+}
+
+// toRootServeResult converts an engine serve into the tool response, within
+// the result bound, and records what it served in full into the session
+// ledger. The shell's open-work block lists this dialogue's own threads only;
+// other dialogues never appear.
+func (s *toolSet) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (ServeResult, error) {
+	return s.toRootServeResultWithin(ctx, req, ss, serve, serveBudget)
+}
+
+// toRootServeResultWithin is toRootServeResult within budget, for a result
+// that carries more than the serve, as the opening carries the proof guide.
+func (s *toolSet) toRootServeResultWithin(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int) (ServeResult, error) {
+	res, held, err := s.boundedServe(ctx, req, ss, serve, budget, true)
 	if err != nil {
 		return ServeResult{}, err
 	}
-	res.Framing = composeFraming(ss, framing)
-	if ss.root.IsShell(serve.Instance) {
-		res.OpenThreads = openThreadsRoot(ss)
+	if err := recordDeferral(ss, serve, held, res); err != nil {
+		return ServeResult{}, err
+	}
+	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
+		return ServeResult{}, err
 	}
 	return res, nil
 }
 
-// toRootServeResult converts an engine serve into the tool response and records
-// what it served in full into the session ledger. The shell's open-work block
-// lists this dialogue's own threads only; other dialogues never appear.
-func (s *toolSet) toRootServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (ServeResult, error) {
-	res, err := s.serveResultBody(ctx, req, ss, serve)
+// heldLanes is how much a bounded result holds: lanes of its serve and of the
+// session shell's serve it lands in, framing blocks of its serve, of the
+// blocks its framing has, and whether its vocabulary table waits.
+type heldLanes struct {
+	keep, base, framing, blocks int
+	vocabularyWaits             bool
+}
+
+const (
+	framingAll  = math.MaxInt
+	framingNone = -1
+)
+
+// boundedServe composes serve's result to cost at most budget: while the
+// whole would cost more, the last lanes of the session shell's serve it lands
+// in wait first, then the step's own, then its last framing blocks, each
+// named with the call that serves them, and what the larger composition
+// served is withdrawn. With progress, a result leaving anything waiting
+// serves at least one lane or framing block in full: where none fits beside
+// the rest, the first not yet held serves alone past the bound, so a piece
+// larger than one result never waits forever. A resume serves without it and
+// without framing, which it carries once for every move, as a move whose
+// lanes all wait resumes through next. It returns what the result holds; the
+// caller records what it served and, through recordDeferral, what waits.
+func (s *toolSet) boundedServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int, progress bool) (ServeResult, heldLanes, error) {
+	ss.root.EndDeferral(serve.Instance)
+	pageFull := ss.root.TakeStepFullIDs()
+	mark := ss.root.ServeMark()
+	compose := func(held heldLanes) (ServeResult, heldLanes, servedCount, bool, error) {
+		res, count, err := s.composeServe(ctx, req, ss, serve, held, pageFull)
+		if err != nil {
+			return ServeResult{}, heldLanes{}, servedCount{}, false, err
+		}
+		cost, err := resultChars(res)
+		if err != nil {
+			return ServeResult{}, heldLanes{}, servedCount{}, false, err
+		}
+		held.blocks, held.vocabularyWaits = count.blocks, count.vocabularyWaits
+		return res, held, count, cost <= budget, nil
+	}
+	lanes := len(serve.InstructionLanes)
+	held := heldLanes{keep: lanes, framing: framingAll}
+	if !progress {
+		held.framing = framingNone
+	}
+	if serve.Base != nil {
+		for held.base = len(serve.Base.InstructionLanes); held.base > 0; held.base-- {
+			res, kept, _, fits, err := compose(held)
+			if err != nil || fits {
+				return res, kept, err
+			}
+			ss.root.WithdrawServedSince(mark)
+		}
+	}
+	alone := -1
+	for held.keep = lanes; ; held.keep-- {
+		res, kept, count, fits, err := compose(held)
+		if err != nil {
+			return ServeResult{}, heldLanes{}, err
+		}
+		if count.lanes > 0 {
+			alone = held.keep
+		}
+		if fits && (held.keep == lanes || count.lanes > 0 || !progress) {
+			return res, kept, nil
+		}
+		if held.keep == 0 && !progress {
+			return res, kept, nil
+		}
+		ss.root.WithdrawServedSince(mark)
+		if held.keep == 0 {
+			break
+		}
+	}
+	// No lanes fit beside the whole framing: the fewest lanes that serve one
+	// in full, or all where every lane is held, stay, the framing's last
+	// blocks wait and, where none fits beside the vocabulary, it waits too.
+	held.keep = lanes
+	if alone >= 0 {
+		held.keep = alone
+	}
+	blocks := 0
+	fitFraming := func() (ServeResult, heldLanes, bool, error) {
+		for held.framing = framingAll; ; held.framing-- {
+			res, kept, count, fits, err := compose(held)
+			if err != nil {
+				return ServeResult{}, heldLanes{}, false, err
+			}
+			if held.framing == framingAll {
+				blocks = kept.blocks
+				held.framing = blocks
+			}
+			if fits && (count.lanes > 0 || count.framing > 0) {
+				return res, kept, true, nil
+			}
+			ss.root.WithdrawServedSince(mark)
+			if held.framing == 0 {
+				return ServeResult{}, heldLanes{}, false, nil
+			}
+		}
+	}
+	for _, vocabularyWaits := range []bool{false, true} {
+		held.vocabularyWaits = vocabularyWaits
+		res, kept, fits, err := fitFraming()
+		if err != nil || fits {
+			return res, kept, err
+		}
+	}
+	if alone >= 0 {
+		held.framing = 0
+		res, kept, _, _, err := compose(held)
+		return res, kept, err
+	}
+	for held.framing = 1; ; held.framing++ {
+		res, kept, count, _, err := compose(held)
+		if err != nil || count.framing > 0 || held.framing >= blocks {
+			return res, kept, err
+		}
+		ss.root.WithdrawServedSince(mark)
+	}
+}
+
+// recordDeferral records a serve, or the session shell's serve it lands in,
+// that holds only its first lanes or framing blocks, so the next call on that
+// instance serves what waits and points at what res, the result delivered,
+// sent: lanes, framing, schema and entries alike, as any of them re-sent to
+// an agent that proves nothing would leave what waits no room.
+func recordDeferral(ss *shellSession, serve *sdd.WorkflowServe, held heldLanes, res any) error {
+	return recordDeferrals(ss, deferredInstances(serve, held), res)
+}
+
+// deferredInstances names the instances of serve whose serve, as held, left
+// something waiting.
+func deferredInstances(serve *sdd.WorkflowServe, held heldLanes) []string {
+	var waiting []string
+	if held.keep < len(serve.InstructionLanes) || held.framing >= 0 && held.framing < held.blocks || held.vocabularyWaits {
+		waiting = append(waiting, serve.Instance)
+	}
+	if serve.Base != nil && held.base < len(serve.Base.InstructionLanes) {
+		waiting = append(waiting, serve.Base.Instance)
+	}
+	return waiting
+}
+
+// recordDeferrals records a deferral of each instance against res, the
+// result delivered.
+func recordDeferrals(ss *shellSession, instances []string, res any) error {
+	if len(instances) == 0 {
+		return nil
+	}
+	delivered, err := json.Marshal(res)
 	if err != nil {
-		return ServeResult{}, err
+		return fmt.Errorf("recording a deferral: %w", err)
+	}
+	for _, instance := range instances {
+		ss.root.RecordDeferral(instance, string(delivered))
+	}
+	return nil
+}
+
+// composeServe composes serve's whole result with what held names, and
+// returns what it served of serve's own.
+func (s *toolSet) composeServe(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, held heldLanes, pageFull []string) (ServeResult, servedCount, error) {
+	res, count, err := s.serveResultBody(ctx, req, ss, serve, held.keep, held.framing, pageFull)
+	if err != nil {
+		return ServeResult{}, servedCount{}, err
 	}
 	if len(serve.ReportSchema) > 0 {
 		res.ReportSchema, err = serveReportSchema(ss, serve)
 		if err != nil {
-			return ServeResult{}, err
+			return ServeResult{}, servedCount{}, err
 		}
 	}
 	vocabulary, err := s.app.Vocabulary(ctx, s.requestIdentity(req), ss.root.Project())
 	if err != nil {
-		return ServeResult{}, err
+		return ServeResult{}, servedCount{}, err
 	}
-	res.Vocabulary = serveVocabulary(ss, vocabulary)
+	vocabularyMark := ss.root.ServeMark()
+	var vocabularyFull bool
+	res.Vocabulary, vocabularyFull = serveVocabulary(ss, vocabulary)
+	if held.vocabularyWaits && vocabularyFull {
+		ss.root.WithdrawServedSince(vocabularyMark)
+		res.Vocabulary, count.vocabularyWaits = "", true
+		res.Instructions += "\n\n(the vocabulary table waits, as this result would run past its size bound. Call next with this instance and no report to have it before you act; it serves the step again)"
+	}
 	if serve.Base != nil {
-		base, err := s.toBaseServeResult(ctx, req, ss, serve.Base)
+		body, _, err := s.serveResultBody(ctx, req, ss, serve.Base, held.base, framingAll, nil)
 		if err != nil {
-			return ServeResult{}, err
+			return ServeResult{}, servedCount{}, err
 		}
-		res.Base = base
+		res.Base = rootBaseServe(body)
 	}
-	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
-		return ServeResult{}, err
-	}
-	return res, nil
+	return res, count, nil
 }
 
 // toBaseServeResult maps a serve onto the base_junction landing, which
 // carries no schema or vocabulary — so neither is recorded as served here.
-func (s *toolSet) toBaseServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe) (*BaseServe, error) {
-	body, err := s.serveResultBody(ctx, req, ss, serve)
-	if err != nil {
-		return nil, err
+// Its last lanes wait while it would cost more than budget, what a serve may
+// take less the result around it, as boundedServe has them.
+func (s *toolSet) toBaseServeResult(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, serve *sdd.WorkflowServe, budget int) (*BaseServe, error) {
+	ss.root.EndDeferral(serve.Instance)
+	pageFull := ss.root.TakeStepFullIDs()
+	mark := ss.root.ServeMark()
+	var base *BaseServe
+	keep := len(serve.InstructionLanes)
+	for ; ; keep-- {
+		body, _, err := s.serveResultBody(ctx, req, ss, serve, keep, framingAll, pageFull)
+		if err != nil {
+			return nil, err
+		}
+		base = rootBaseServe(body)
+		cost, err := resultChars(base)
+		if err != nil {
+			return nil, err
+		}
+		if cost <= budget || keep == 0 {
+			break
+		}
+		ss.root.WithdrawServedSince(mark)
+	}
+	if keep < len(serve.InstructionLanes) {
+		if err := recordDeferrals(ss, []string{serve.Instance}, base); err != nil {
+			return nil, err
+		}
 	}
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, err
 	}
-	return rootBaseServe(body), nil
+	return base, nil
 }
 
 func rootBaseServe(result ServeResult) *BaseServe {
@@ -1418,7 +1670,16 @@ func rootBaseServe(result ServeResult) *BaseServe {
 	}
 }
 
-func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, source sdd.WorkflowResumeResult, left []sdd.WorkflowServe) (ResumeSessionResult, error) {
+// resumeMoves is what a resume's moves mapped to as they rendered.
+type resumeMoves struct {
+	open              []ServeResult
+	started           bool
+	spent             int
+	shell             string
+	omitted, deferred []string
+}
+
+func resumeHeadResult(ss *shellSession, source sdd.WorkflowResumeResult) ResumeSessionResult {
 	result := ResumeSessionResult{
 		Session: string(source.Session), Project: string(ss.root.Project()),
 		Participant: source.Participant, Label: source.Label, Branch: source.Branch,
@@ -1427,25 +1688,77 @@ func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, s
 	if source.Instructions != "" {
 		result.Instructions += "\n\n" + source.Instructions
 	}
+	return result
+}
+
+// mapResumeMove maps one move of a resume as it renders, the session shell
+// last, which takes what room is left: its lanes wait sooner than a move is
+// omitted. Whole-instance granularity is the only legitimate cut on a resume
+// projection (d-tac-qwc): an instance past the count or the result bound is
+// named instead. It returns the text the result carries of the move, empty
+// for one omitted; ServeAllWithin withdraws what that text does not carry.
+func (s *toolSet) mapResumeMove(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, moves *resumeMoves, head sdd.WorkflowResumeResult, serve sdd.WorkflowServe) (string, error) {
+	if !moves.started {
+		spent, err := resultChars(resumeHeadResult(ss, head))
+		if err != nil {
+			return "", err
+		}
+		moves.started, moves.spent = true, spent
+	}
+	if ss.root.IsShell(serve.Instance) {
+		moves.shell = serve.Instance
+	}
+	// The instance holding an unfinished operation is the position the
+	// resume exists to re-serve; it is never the one cut for size.
+	pending := head.PendingOperation != nil && head.PendingOperation.Instance == serve.Instance
+	name := fmt.Sprintf("%s (%s at %s)", serve.Instance, serve.Procedure, serve.Step)
+	if !pending && len(moves.open) >= maxResumeOpenInstances {
+		moves.omitted = append(moves.omitted, name)
+		return "", nil
+	}
+	mapped, held, err := s.boundedServe(ctx, req, ss, &serve, serveBudget-moves.spent, false)
+	if err != nil {
+		return "", err
+	}
+	mapped.Framing = ""
+	cost, err := resultChars(mapped)
+	if err != nil {
+		return "", err
+	}
+	if !pending && len(moves.open) > 0 && moves.spent+cost > serveBudget {
+		moves.omitted = append(moves.omitted, name)
+		return "", nil
+	}
+	moves.deferred = append(moves.deferred, deferredInstances(&serve, held)...)
+	moves.spent += cost
+	moves.open = append(moves.open, mapped)
+	delivered, err := json.Marshal(mapped)
+	if err != nil {
+		return "", fmt.Errorf("measuring a resumed move: %w", err)
+	}
+	return string(delivered), nil
+}
+
+func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, ss *shellSession, source sdd.WorkflowResumeResult, moves resumeMoves) (ResumeSessionResult, error) {
+	result := resumeHeadResult(ss, source)
 	framing, err := ss.root.FramingBlocks(ctx, s.requestIdentity(req))
 	if err != nil {
 		return ResumeSessionResult{}, err
 	}
-	result.Framing = composeFraming(ss, framing)
-	for i := range source.Open {
-		mapped, err := s.toRootServeResult(ctx, req, ss, &source.Open[i])
-		if err != nil {
-			return ResumeSessionResult{}, err
-		}
-		mapped.Framing = ""
-		result.Open = append(result.Open, mapped)
-	}
-	var omitted []string
-	for _, serve := range left {
-		omitted = append(omitted, fmt.Sprintf("%s (%s at %s)", serve.Instance, serve.Procedure, serve.Step))
-	}
+	result.Open = moves.open
+	omitted, deferred := moves.omitted, moves.deferred
 	if len(omitted) > 0 {
 		result.Instructions += fmt.Sprintf("\n\n%d open moves omitted here for size — each resumes at its current step through next: %s", len(omitted), strings.Join(omitted, "; "))
+	}
+	shell, err := resumeFraming(ss, moves.shell, framing, &result)
+	if err != nil {
+		return ResumeSessionResult{}, err
+	}
+	if shell != "" && !slices.Contains(deferred, shell) {
+		deferred = append(deferred, shell)
+	}
+	if err := recordDeferrals(ss, deferred, result); err != nil {
+		return ResumeSessionResult{}, err
 	}
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return ResumeSessionResult{}, err
@@ -1453,22 +1766,30 @@ func (s *toolSet) mapRootResume(ctx context.Context, req *mcp.CallToolRequest, s
 	return result, nil
 }
 
-// resumeServeBytes estimates one open serve's projection weight from the
-// fields the mapping actually carries (never InstructionLanes, which duplicate
-// Instructions). Dedup can only shrink the mapped result, so the estimate errs
-// toward omitting — never toward an oversized projection.
-func resumeServeBytes(serve *sdd.WorkflowServe) int {
-	n := len(serve.Instructions) + len(serve.Goal)
-	if b, err := json.Marshal(serve.ReportSchema); err == nil {
-		n += len(b)
+// resumeFraming composes the resume's framing into the room its moves leave:
+// the last blocks that do not fit wait, named with the session shell's next
+// call, which serves them. It returns the shell's instance where blocks wait.
+func resumeFraming(ss *shellSession, shell string, framing []types.ServeLane, result *ResumeSessionResult) (string, error) {
+	instructions := result.Instructions
+	mark := ss.root.ServeMark()
+	for keep := len(framing); ; keep-- {
+		composed := composeFraming(ss, framing, keep)
+		result.Framing, result.Instructions = composed.text, instructions
+		if len(composed.waiting) > 0 {
+			result.Instructions += fmt.Sprintf("\n\n(%d framing blocks wait, as this result would run past its size bound: %s. Call next with instance %s and no report to have them before you act)", len(composed.waiting), strings.Join(composed.waiting, ", "), shell)
+		}
+		cost, err := resultChars(result)
+		if err != nil {
+			return "", err
+		}
+		if cost <= serveBudget || keep == 0 || shell == "" {
+			if len(composed.waiting) == 0 {
+				return "", nil
+			}
+			return shell, nil
+		}
+		ss.root.WithdrawServedSince(mark)
 	}
-	for _, v := range capValues(serve.Collected) {
-		n += len(v)
-	}
-	for _, v := range capValues(serve.Produced) {
-		n += len(v)
-	}
-	return n
 }
 
 // openThreadsRoot renders the session shell's open-work block: this dialogue's

@@ -64,6 +64,10 @@ const (
 	// EventAnchorSteps records the anchor proofs a call spent on the pointers
 	// it served, so a proof never holds twice (Piece).
 	EventAnchorSteps EventType = "anchor_steps"
+	// EventDeferred records that a serve of an instance left parts waiting
+	// past the result bound, with the pieces it sent, or, with ended set, that
+	// the deferral is settled (Session.EndDeferral).
+	EventDeferred EventType = "deferred"
 	// EventReoriented records that the consumer asked for the session's
 	// position — the declaration that it needs re-serving. Its call serves
 	// every piece in full.
@@ -249,8 +253,11 @@ type Session struct {
 	// anchors folds the anchor events: each issued tag with its piece and
 	// word. call is the tool call in flight; rnd draws tags and positions.
 	anchors map[string]issuedAnchor
-	call    pieceCall
-	rnd     model.RandomSource
+	// deferred folds the deferral events: per instance whose serve left parts
+	// waiting, the pieces it sent, each under its tag (FollowDeferral).
+	deferred map[string]map[Piece]string
+	call     pieceCall
+	rnd      model.RandomSource
 	// sinkErr carries a deferred log-append failure; surfaced by the next
 	// advance call so a durability problem can't pass silently.
 	sinkErr     error
@@ -1305,6 +1312,9 @@ func (s *Session) applyEvent(ev Event, resolve SpecResolver) error {
 		for _, record := range anchors {
 			s.foldAnchor(record)
 		}
+
+	case EventDeferred:
+		s.foldDeferral(ev.Instance, ev.Data)
 
 	case EventAnchorSteps:
 		s.foldAnchorSteps(ev.Data)

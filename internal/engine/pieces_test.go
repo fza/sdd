@@ -286,3 +286,30 @@ func TestDropPiecesSinceLeavesAWithdrawnPointersProofUnspent(t *testing.T) {
 		t.Error("the proof of a pointer the cut withdrew should still hold the lane")
 	}
 }
+
+// The follow-ups of a deferral continue the serve that sent a piece, so a
+// right proof of it holds there without being spent, however many calls the
+// deferral takes.
+func TestADeferralFollowUpSpendsNoProof(t *testing.T) {
+	lane := engine.Piece{Name: "lane step", Hash: "h1"}
+	session := newPieceSession(nil)
+	session.BeginCall(nil, nil)
+	proof := servedInFull(t, session, lane)
+	session.RecordDeferral("i_1", model.AnchorMark(proof.Tag)+" "+proof.Word)
+	session.RecordAnchors()
+
+	for call := range model.AnchorChallenges + 1 {
+		session.BeginCall([]model.Proof{proof}, nil)
+		session.FollowDeferral("i_1")
+		if served := session.ServePiece(lane, nil, placeIn(pieceText)); !served.Held || served.Next != "" {
+			t.Fatalf("follow-up %d should point at the piece without spending its proof, got %+v", call+1, served)
+		}
+		session.RecordDeferral("i_1", "")
+		session.RecordAnchors()
+	}
+
+	session.BeginCall([]model.Proof{proof}, nil)
+	if _, held := session.Holds(lane); !held {
+		t.Error("the proof should still hold the piece once the deferral ends")
+	}
+}

@@ -35,23 +35,28 @@ func heldLine(names []string) string {
 	return fmt.Sprintf("(held: %s — list a tag in reread to have its text again, or resume_session re-serves this position in full)", strings.Join(names, ", "))
 }
 
-// composeInstructions serves the step's lanes: a lane the call holds becomes
-// its pointer, the rest serve in full with their tags. A lane carrying an
-// entry the verify reading page served whole holds that entry too.
-func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe) string {
+// composeInstructions serves the step's first keep lanes: a lane the call
+// holds becomes its pointer, the rest serve in full with their tags. A lane
+// carrying an entry of pageFull, those the verify reading page served whole,
+// holds that entry too. The lanes past keep wait, named with the call that
+// serves them. It returns how many lanes it served in full.
+func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe, keep int, pageFull []string) (string, int) {
 	lanes := serve.InstructionLanes
 	if len(lanes) == 0 {
-		return serve.Instructions
+		return serve.Instructions, 0
 	}
-	pageFull := ss.root.TakeStepFullIDs()
 	texts := make([]string, len(lanes))
 	for i, lane := range lanes {
 		texts[i] = lane.Text
 	}
 	field := strings.Join(texts, "\n\n")
-	var fresh, held []string
-	for _, lane := range lanes {
+	var fresh, held, waiting []string
+	for i, lane := range lanes {
 		name := "lane " + lane.Name
+		if i >= keep {
+			waiting = append(waiting, lane.Name)
+			continue
+		}
 		served := ss.root.ServeTextIn(name, lane.Text, field, carried(pageFull, lane.Text))
 		if served.Held {
 			held = append(held, heldName(name, served.Tag, served.Next))
@@ -59,14 +64,18 @@ func composeInstructions(ss *shellSession, serve *sdd.WorkflowServe) string {
 		}
 		fresh = append(fresh, served.Text)
 	}
-	if len(fresh) == 0 {
+	full := len(fresh)
+	if len(fresh) == 0 && len(waiting) == 0 {
 		fresh = append(fresh, fmt.Sprintf("(you hold the step %s instructions — follow them; goal: %s)", serve.Step, serve.Goal))
 	}
 	text := strings.Join(fresh, "\n\n")
 	if len(held) > 0 {
 		text += "\n\n" + heldLine(held)
 	}
-	return serve.ComposeInstructions(text)
+	if len(waiting) > 0 {
+		text += fmt.Sprintf("\n\n(%d more lanes of these instructions wait, as this result would run past its size bound: %s. Call next with this instance and no report to have them before you act; it serves the step again)", len(waiting), strings.Join(waiting, ", "))
+	}
+	return serve.ComposeInstructions(strings.TrimPrefix(text, "\n\n")), full
 }
 
 func carried(ids []string, text string) []string {
@@ -84,16 +93,25 @@ func carried(ids []string, text string) []string {
 // the stable aspirations or directives (I6). A block the call holds is left
 // out, as the agent named it itself, except for the next proof it asks for.
 // A block holds the entries it carries in full; a block is never cut for
-// them.
-func composeFraming(ss *shellSession, blocks []types.ServeLane) string {
+// them. Only the first keep blocks serve; the rest wait, as instruction lanes
+// do past the result bound.
+func composeFraming(ss *shellSession, blocks []types.ServeLane, keep int) framingServed {
 	texts := make([]string, len(blocks))
 	for i, block := range blocks {
 		texts[i] = block.Text
 	}
 	field := strings.Join(texts, "\n\n")
-	var served, held []string
+	var (
+		result       framingServed
+		served, held []string
+	)
 	for _, block := range blocks {
 		if block.Text == "" {
+			continue
+		}
+		result.blocks++
+		if result.blocks > keep {
+			result.waiting = append(result.waiting, block.Name)
 			continue
 		}
 		name := "framing " + block.Name
@@ -104,10 +122,29 @@ func composeFraming(ss *shellSession, blocks []types.ServeLane) string {
 		}
 		held = append(held, heldName(name, piece.Tag, piece.Next))
 	}
+	result.fresh = len(served)
 	if len(held) > 0 {
 		served = append(served, heldLine(held))
 	}
-	return strings.Join(served, "\n\n")
+	result.text = strings.Join(served, "\n\n")
+	return result
+}
+
+// framingServed is a composed framing: its text, the blocks that wait, how
+// many blocks it served in full and how many the framing has.
+type framingServed struct {
+	text          string
+	waiting       []string
+	fresh, blocks int
+}
+
+// framingWaitLine names the framing blocks that wait; lanesWait leaves the
+// call that serves them to the line naming the waiting lanes.
+func framingWaitLine(waiting []string, lanesWait bool) string {
+	if lanesWait {
+		return fmt.Sprintf("(framing blocks wait too: %s)", strings.Join(waiting, ", "))
+	}
+	return fmt.Sprintf("(%d framing blocks wait, as this result would run past its size bound: %s. Call next with this instance and no report to have them before you act; it serves the step again)", len(waiting), strings.Join(waiting, ", "))
 }
 
 // serveReportSchema serves a step's report schema: the required list and any
@@ -171,15 +208,15 @@ func withSchemaAt(schema map[string]any, path []string, node map[string]any) map
 	return out
 }
 
-// serveVocabulary serves the graph's vocabulary table; while the call holds
-// it, only its held line with the next proof.
-func serveVocabulary(ss *shellSession, vocabulary string) string {
+// serveVocabulary serves the graph's vocabulary table, reporting whether in
+// full; while the call holds it, only its held line with the next proof.
+func serveVocabulary(ss *shellSession, vocabulary string) (string, bool) {
 	if vocabulary == "" {
-		return ""
+		return "", false
 	}
 	piece := ss.root.ServeText("vocabulary", vocabulary, nil)
 	if !piece.Held {
-		return piece.Text
+		return piece.Text, true
 	}
-	return heldLine([]string{heldName("vocabulary", piece.Tag, piece.Next)})
+	return heldLine([]string{heldName("vocabulary", piece.Tag, piece.Next)}), false
 }

@@ -332,23 +332,25 @@ func TestServeAllWithinWithdrawsWhatAnOmittedInstanceServed(t *testing.T) {
 	if err := workflow.Reorient(t.Context(), identity); err != nil {
 		t.Fatal(err)
 	}
-	result, omitted, err := workflow.ServeAllWithin(t.Context(), identity, func(serve sdd.WorkflowServe) bool { return serve.Instance != explores[0] })
+	var kept *sdd.WorkflowServe
+	_, err := workflow.ServeAllWithin(t.Context(), identity, func(_ sdd.WorkflowResumeResult, serve sdd.WorkflowServe) (string, error) {
+		if serve.Instance == explores[0] {
+			return "", nil
+		}
+		if serve.Instance == explores[1] {
+			kept = &serve
+		}
+		return serve.Instructions, nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(omitted) != 1 || omitted[0].Instance != explores[0] {
-		t.Fatalf("the first explore should be left out, got %+v", omitted)
+	if kept == nil {
+		t.Fatal("the second explore should be delivered")
 	}
-	for _, open := range result.Open {
-		if open.Instance != explores[1] {
-			continue
-		}
-		if strings.Contains(open.Instructions, "(held as ⟦") || !strings.Contains(test.Untagged(open.Instructions), repeatTargetBody) {
-			t.Fatalf("the kept explore should serve the target in full:\n%s", open.Instructions)
-		}
-		return
+	if strings.Contains(kept.Instructions, "(held as ⟦") || !strings.Contains(test.Untagged(kept.Instructions), repeatTargetBody) {
+		t.Fatalf("the kept explore should serve the target in full:\n%s", kept.Instructions)
 	}
-	t.Fatalf("the second explore should be kept, got %+v", result.Open)
 }
 
 // chainStepProcedure injects the repeat target's chain, bounded by bound (an

@@ -78,6 +78,32 @@ func (w *WorkflowSession) ServeSchema(name string, schema map[string]any) (Serve
 	return ServedPiece{Tag: served.Anchor.Tag}, served.Anchor.RenderSchema(schema), nil
 }
 
+// ServeMark marks the pieces the call has served so far.
+func (w *WorkflowSession) ServeMark() int { return w.session.PieceMark() }
+
+// WithdrawServedSince withdraws the pieces served after mark, for a result
+// composed again before it reaches the agent.
+func (w *WorkflowSession) WithdrawServedSince(mark int) { w.session.DropPiecesSince(mark) }
+
+// FollowDeferral makes the call follow the instance's deferral: what its
+// last serve sent counts as held. Call it before the call advances the
+// instance.
+func (w *WorkflowSession) FollowDeferral(instance string) {
+	w.session.FollowDeferral(instance)
+}
+
+// EndDeferral ends the instance's deferral, as a serve of it settles it.
+func (w *WorkflowSession) EndDeferral(instance string) {
+	w.session.EndDeferral(instance)
+}
+
+// RecordDeferral records that the call's serve of the instance left parts
+// waiting past the result bound, with every piece the call served whose tag
+// delivered, the result's text, carries.
+func (w *WorkflowSession) RecordDeferral(instance, delivered string) {
+	w.session.RecordDeferral(instance, delivered)
+}
+
 // HoldsEntry reports whether the call holds the entry in full, with the tag
 // it holds it under: proved by the entry's own tag or by a piece that
 // carried it whole. hash is the entry's model.EntryHash. A held entry serves

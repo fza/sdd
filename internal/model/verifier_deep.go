@@ -27,8 +27,10 @@ const DeepRounds = 3
 const DeepRevisions = 3
 
 // DeepPageChars bounds what one page of the deep verifier's reading costs in
-// the result that serves it (ServedChars).
-const DeepPageChars = 50000
+// the result that serves it (ServedChars), leaving the rest of MaxServeChars
+// to the serve around the page: the resume serving page 1 with the proof
+// guide, the verifier's rules lane and the report schema.
+const DeepPageChars = MaxServeChars - 8000
 
 var deepAxes = []string{"contradicts", "duplicates", "outdated", "inconsistent", "ref-fit", "missing-ref", "dismissal", "aspiration", "strain", "evidence"}
 

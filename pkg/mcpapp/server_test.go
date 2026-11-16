@@ -470,6 +470,26 @@ func openSession(t *testing.T, cs *mcp.ClientSession) mcpserver.ServeResult {
 	return serve
 }
 
+// openSessionWhole enters through the door and follows what the opening left
+// waiting past the result bound through the shell's next calls with no
+// report, joining their framing and vocabulary into the opening's.
+func openSessionWhole(t *testing.T, cs *mcp.ClientSession) mcpserver.ServeResult {
+	t.Helper()
+	door := openSession(t, cs)
+	instructions := door.Instructions
+	for calls := 0; strings.Contains(instructions, sizeBoundWait); calls++ {
+		if calls == 3 {
+			t.Fatalf("what the opening left waiting should arrive within 3 calls, still waiting:\n%s", instructions)
+		}
+		var serve mcpserver.ServeResult
+		call(t, cs, "next", map[string]any{"session": door.Session, "instance": door.Instance}, &serve)
+		instructions = serve.Instructions
+		door.Framing = strings.TrimPrefix(door.Framing+"\n\n"+serve.Framing, "\n\n")
+		door.Vocabulary += serve.Vocabulary
+	}
+	return door
+}
+
 // call invokes a tool and decodes its structured content into out. Fails the
 // test on protocol errors or tool errors.
 func call[T any](t *testing.T, cs *mcp.ClientSession, tool string, args map[string]any, out *T) {
@@ -705,7 +725,7 @@ Probe entry %02d: the flux capacitor drill needs observing.
 func TestVocabularyBlockForNonEnglishGraphs(t *testing.T) {
 	env := newTestServerConfig(t, nil, "", "", "de")
 	cs := connect(t, env.srv)
-	door := openSession(t, cs)
+	door := openSessionWhole(t, cs)
 	if !strings.Contains(door.Vocabulary, "Vokabular") {
 		t.Fatalf("a German graph's first serve should carry the vocabulary table, got %q", door.Vocabulary)
 	}
@@ -1125,7 +1145,7 @@ Body with a mismatched index enrollment.
 	}
 
 	env := newTestServer(t, nil, graphDir, "")
-	serve := openSession(t, connect(t, env.srv))
+	serve := openSessionWhole(t, connect(t, env.srv))
 	if !strings.Contains(serve.Framing, "Graph health") {
 		t.Fatalf("opening serve missing graph-health notice:\n%s", serve.Framing)
 	}
@@ -1168,7 +1188,7 @@ Body whose frontmatter will not parse.
 	env := newTestServer(t, nil, graphDir, "")
 	// openSession fails the test internally if the serve does not open — reaching
 	// past it proves the malformed file did not abort the load.
-	serve := openSession(t, connect(t, env.srv))
+	serve := openSessionWhole(t, connect(t, env.srv))
 	if !strings.Contains(serve.Framing, "Graph health") {
 		t.Fatalf("opening serve missing graph-health notice for the unreadable entry:\n%s", serve.Framing)
 	}
@@ -1412,11 +1432,12 @@ func TestEmbeddedCaptureProcedure(t *testing.T) {
 	if serve.Step != "assemble" || serve.Status != "running" {
 		t.Fatalf("expected running at assemble, got %s at %q", serve.Status, serve.Step)
 	}
-	if !strings.Contains(serve.Instructions, "Ground before you draft") {
-		t.Fatalf("expected the embedded assemble unit, got %q", serve.Instructions)
+	assemble := followWaitingLanes(t, cs, session, serve)
+	if !strings.Contains(assemble, "Ground before you draft") {
+		t.Fatalf("expected the embedded assemble unit, got %q", assemble)
 	}
-	if !strings.Contains(serve.Instructions, "testing/fixture") {
-		t.Fatalf("assemble unit should render the injected topic counts, got %q", serve.Instructions)
+	if !strings.Contains(assemble, "testing/fixture") {
+		t.Fatalf("assemble unit should render the injected topic counts, got %q", assemble)
 	}
 
 	// A draft ref'ing an entry never served in full holds the assemble gate —
@@ -1533,8 +1554,10 @@ func TestEmbeddedEvaluateToCaptureHandoff(t *testing.T) {
 	if slices.Contains(cap.Missing, "widenReport") {
 		t.Fatalf("capture should inherit widenReport via the handoff, but it is missing: %v", cap.Missing)
 	}
-	if !strings.Contains(cap.Instructions, "inherited") || !strings.Contains(cap.Instructions, "teardown edge is the only new thing") {
-		t.Errorf("assemble should surface the inherited grounding, got %q", cap.Instructions)
+	// The calls serving lanes past the result bound count apart from the bar.
+	assemble := followWaitingLanes(t, cs, session, cap)
+	if !strings.Contains(assemble, "inherited") || !strings.Contains(assemble, "teardown edge is the only new thing") {
+		t.Errorf("assemble should surface the inherited grounding, got %q", assemble)
 	}
 
 	// Capture #2: draft with NO widenReport — the handoff already satisfied
@@ -2511,6 +2534,12 @@ func jsonSize(t *testing.T, v any) int {
 	return len(raw)
 }
 
+// serveSize is what a serve result costs within the result bound.
+func serveSize(t *testing.T, v any) int {
+	t.Helper()
+	return jsonSize(t, v)
+}
+
 // TestServedMemoryIsPerAgentContext pins the served memory under the anchor
 // proof (d-cpt-aen): the session ledger keeps the
 // issued tags, but only a call proving a piece gets its pointer. The agent
@@ -2629,7 +2658,7 @@ func TestCompactionLosesEveryProof(t *testing.T) {
 func TestShellComposedFraming(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
-	door := openSession(t, cs)
+	door := openSessionWhole(t, cs)
 	if !strings.Contains(door.Framing, "Local participant:") {
 		t.Fatalf("framing must carry the engine-supplied info block, got %q", door.Framing)
 	}
@@ -2796,7 +2825,7 @@ func runCaptureToCompletion(t *testing.T, cs *mcp.ClientSession, session, label 
 func TestFramingLaneDedupAfterWrite(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	csB := connect(t, env.srv)
-	door := openSession(t, csB)
+	door := openSessionWhole(t, csB)
 	if !strings.Contains(door.Framing, "Local participant:") || !strings.Contains(door.Framing, "Recent graph movement") {
 		t.Fatalf("the door should serve the full framing, got %q", door.Framing)
 	}
@@ -2889,7 +2918,7 @@ Body.
 
 	env := newTestServer(t, nil, graphDir, "")
 	cs := connect(t, env.srv)
-	door := openSession(t, cs)
+	door := openSessionWhole(t, cs)
 	stable := []string{"Aspirations", "Guiding directives", "## Focus", "## Participants"}
 	for _, want := range stable {
 		if !strings.Contains(door.Framing, want) {

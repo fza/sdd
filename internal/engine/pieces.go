@@ -94,6 +94,9 @@ type pieceCall struct {
 	spent  map[string]int
 	// steps counts what the call served in full or spent, for PieceMark.
 	steps int
+	// followed is what the deferral this call follows sent, held without a
+	// proof and still pointed at should the call leave parts waiting again.
+	followed map[Piece]string
 }
 
 // pendingAnchor is a piece the call served in full, not yet recorded.
@@ -123,7 +126,9 @@ func (s *Session) BeginCall(held []model.Proof, reread []string) {
 
 // Holds reports whether the call in flight holds the piece, with the tag it
 // holds it under: received earlier in this call, or proved by tag and word.
-// An entry also counts as held when the proved piece carried it whole.
+// An entry also counts as held when the proved piece carried it whole. A
+// piece the deferral the call follows sent counts as held without a proof,
+// unless the call lists it in reread or proves its tag with a wrong word.
 func (s *Session) Holds(p Piece) (string, bool) {
 	tag, _, ok := s.holds(p)
 	return tag, ok
@@ -158,6 +163,14 @@ func (s *Session) holds(p Piece) (string, bool, bool) {
 	}
 	if s.call.full || s.call.reread[strings.ToLower(p.Name)] {
 		return "", false, false
+	}
+	// A follow-up of a deferral continues the serve that sent the piece, so
+	// a right proof of it is not spent there.
+	if tag, ok := s.call.followed[p]; ok && !s.call.reread[tag] {
+		_, proven := s.call.proven[tag]
+		if proven || !slices.ContainsFunc(s.call.held, func(proof model.Proof) bool { return proof.Tag == tag }) {
+			return tag, false, true
+		}
 	}
 	for _, proof := range s.call.held {
 		if s.call.reread[proof.Tag] {
@@ -218,12 +231,7 @@ func (s *Session) DropPiecesSince(mark int) {
 			kept = append(kept, p)
 			continue
 		}
-		delete(s.call.issued, p.piece)
-		for _, id := range p.covers {
-			if s.call.covered[id] == p.tag {
-				delete(s.call.covered, id)
-			}
-		}
+		s.unissue(p)
 	}
 	s.call.pending = kept
 	for tag, step := range s.call.spent {
@@ -231,6 +239,100 @@ func (s *Session) DropPiecesSince(mark int) {
 			delete(s.call.spent, tag)
 		}
 	}
+}
+
+// KeepDelivered withdraws the pieces served in full after mark whose placed
+// tag delivered, the text a result carries of them, does not hold: text
+// composed into a part the result left out or left waiting. Empty delivered
+// withdraws every one, as DropPiecesSince does.
+func (s *Session) KeepDelivered(mark int, delivered string) {
+	if delivered == "" {
+		s.DropPiecesSince(mark)
+		return
+	}
+	kept := s.call.pending[:0]
+	for _, p := range s.call.pending {
+		if p.step < mark || p.tag != "" && strings.Contains(delivered, model.AnchorMark(p.tag)+" ") {
+			kept = append(kept, p)
+			continue
+		}
+		s.unissue(p)
+	}
+	s.call.pending = kept
+}
+
+func (s *Session) unissue(p pendingAnchor) {
+	delete(s.call.issued, p.piece)
+	for _, id := range p.covers {
+		if s.call.covered[id] == p.tag {
+			delete(s.call.covered, id)
+		}
+	}
+}
+
+// FollowDeferral makes the call in flight follow the instance's deferral, a
+// serve of its step that left parts waiting past the result bound: the
+// pieces the deferral sent count as held in it, without a proof, as the
+// result before carried them, so an agent listing no proofs still reaches
+// what waits, by a plain next and by a report alike (Holds). Called before
+// the serve composes, so the entries it carries print as pointers too.
+func (s *Session) FollowDeferral(instance string) {
+	s.call.followed = s.deferred[instance]
+}
+
+// EndDeferral ends the instance's deferral. Every serve of the instance
+// settles it, so the one a call follows is always its last serve's.
+func (s *Session) EndDeferral(instance string) {
+	if _, ok := s.deferred[instance]; !ok {
+		return
+	}
+	ended := map[string]any{"ended": true}
+	s.foldDeferral(instance, ended)
+	s.appendEvent(instance, EventDeferred, ended)
+}
+
+// RecordDeferral records that the call's serve of the instance left parts
+// waiting: every piece the call served in full whose tag the delivered
+// result carries, with those of a deferral it follows, serves as a pointer
+// in the call that follows. An entry composed into a lane that waits carries
+// no tag in the result, so it serves in full with that lane.
+func (s *Session) RecordDeferral(instance, delivered string) {
+	pieces := maps.Clone(s.call.followed)
+	if pieces == nil {
+		pieces = map[Piece]string{}
+	}
+	for _, p := range s.call.pending {
+		if p.tag != "" && strings.Contains(delivered, model.AnchorMark(p.tag)) {
+			pieces[p.piece] = p.tag
+		}
+	}
+	records := make([]any, 0, len(pieces))
+	for p, tag := range pieces {
+		records = append(records, map[string]any{"name": p.Name, "hash": p.Hash, "tag": tag})
+	}
+	data := map[string]any{"sent": records}
+	s.foldDeferral(instance, data)
+	s.appendEvent(instance, EventDeferred, data)
+}
+
+func (s *Session) foldDeferral(instance string, data map[string]any) {
+	if data["ended"] == true {
+		delete(s.deferred, instance)
+		return
+	}
+	pieces := map[Piece]string{}
+	sent, _ := data["sent"].([]any)
+	for _, record := range sent {
+		fields, _ := record.(map[string]any)
+		name, _ := fields["name"].(string)
+		hash, _ := fields["hash"].(string)
+		tag, _ := fields["tag"].(string)
+		pieces[Piece{Name: name, Hash: hash}] = tag
+	}
+	if s.deferred == nil {
+		s.deferred = map[string]map[Piece]string{}
+	}
+	s.deferred[instance] = pieces
 }
 
 // RecordAnchors logs the anchors the call issued since the last record, so a
