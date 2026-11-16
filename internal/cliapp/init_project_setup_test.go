@@ -497,3 +497,44 @@ func TestInitFollowsTheAdviceForARecordedPointerAtAMissingProject(t *testing.T) 
 		t.Fatalf("the work repository should capture into the new project, got %v", entries)
 	}
 }
+
+// On a filesystem that ignores case, a folder spelled in other case is the
+// folder it names.
+func TestInitJudgesAProjectFolderSpelledInOtherCase(t *testing.T) {
+	root := canonicalTemp(t)
+	isolateGitIdentity(t, root)
+	work := filepath.Join(root, "outer", "work")
+	err := os.MkdirAll(work, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = os.Stat(filepath.Join(root, "OUTER"))
+	if err != nil {
+		t.Skip("the temporary filesystem tells names apart by case")
+	}
+	initRepo(t, work)
+	project := filepath.Join(root, "outer", "work-sdd")
+	err = os.MkdirAll(project, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, project, "init", "-q")
+
+	_, err = runAppErr(t, work, "init", "--project-dir", "../../OUTER", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	if err == nil || !strings.Contains(err.Error(), "contains this repository") {
+		t.Errorf("a folder containing the work repository should be refused in any spelling: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "outer", ".git")); statErr == nil {
+		t.Error("a refused setup should create no repository around the work repository")
+	}
+
+	output, err := runAppErr(t, work, "init", "--project-dir", "../WORK-SDD", "--language", "en", "--scope", "project", "--participant", "Ada", "--agents", "claude")
+
+	if err != nil {
+		t.Fatalf("an empty clone spelled in other case should be set up as is: %v\n%s", err, output)
+	}
+	if _, statErr := os.Stat(filepath.Join(project, ".sdd", "config.yaml")); statErr != nil {
+		t.Errorf("the clone should hold the project: %v", statErr)
+	}
+}

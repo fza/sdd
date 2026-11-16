@@ -130,3 +130,43 @@ func TestResolveProjectReportsAMissingProject(t *testing.T) {
 		t.Errorf("a missing project should be reported as not an sdd project: %v", err)
 	}
 }
+
+func TestWithinDir(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "outer")
+	err := os.Mkdir(root, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	err = os.Symlink(root, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCase := filepath.Join(filepath.Dir(root), "OUTER")
+	_, err = os.Stat(otherCase)
+	caseInsensitive := err == nil
+	cases := []struct {
+		name          string
+		path          string
+		within        bool
+		needsCaseFold bool
+	}{
+		{name: "the folder itself", path: root, within: true},
+		{name: "a folder below, not yet created", path: filepath.Join(root, "a", "b"), within: true},
+		{name: "a folder below, through a symlink", path: filepath.Join(link, "a"), within: true},
+		{name: "a folder below, spelled in other case", path: filepath.Join(otherCase, "a"), within: true, needsCaseFold: true},
+		{name: "a sibling sharing the name's prefix", path: root + "-sdd", within: false},
+		{name: "the parent folder", path: filepath.Dir(root), within: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.needsCaseFold && !caseInsensitive {
+				t.Skip("the temporary filesystem tells names apart by case")
+			}
+			got := meta.WithinDir(root, tc.path)
+			if got != tc.within {
+				t.Error("the path should be judged by where it really lies")
+			}
+		})
+	}
+}

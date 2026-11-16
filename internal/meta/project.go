@@ -168,3 +168,60 @@ func ResolvedPath(path string) string {
 		path = parent
 	}
 }
+
+// WithinDir reports whether path is dir or lies below it. Folders on disk
+// compare by identity, so a symlink or a spelling a case-insensitive
+// filesystem accepts names the folder it leads to; the parts of either path
+// not yet created compare by name.
+func WithinDir(dir, path string) bool {
+	dirBase, dirRest := splitExisting(ResolvedPath(dir))
+	dirInfo, err := os.Stat(dirBase)
+	if err != nil {
+		return false
+	}
+	ancestor := ResolvedPath(path)
+	var below []string
+	for {
+		info, err := os.Stat(ancestor)
+		if err == nil && os.SameFile(dirInfo, info) {
+			return len(below) >= len(dirRest) && slices.Equal(below[:len(dirRest)], dirRest)
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return false
+		}
+		below = append([]string{filepath.Base(ancestor)}, below...)
+		ancestor = parent
+	}
+}
+
+// SameDir reports whether a and b name one folder on disk.
+func SameDir(a, b string) bool {
+	infoA, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	infoB, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(infoA, infoB)
+}
+
+// splitExisting splits path into its nearest existing ancestor and the names
+// below it.
+func splitExisting(path string) (string, []string) {
+	var rest []string
+	for {
+		_, err := os.Stat(path)
+		if err == nil {
+			return path, rest
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return path, rest
+		}
+		rest = append([]string{filepath.Base(path)}, rest...)
+		path = parent
+	}
+}
