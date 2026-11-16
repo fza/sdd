@@ -30,7 +30,8 @@ type fetchState struct {
 
 func readState(dir string) (fetchState, error) {
 	var state fetchState
-	data, err := os.ReadFile(filepath.Join(dir, stateFileName))
+	path := filepath.Join(dir, stateFileName)
+	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return state, nil
 	}
@@ -39,7 +40,7 @@ func readState(dir string) (fetchState, error) {
 	}
 	err = json.Unmarshal(data, &state)
 	if err != nil {
-		return fetchState{}, fmt.Errorf("decoding the rule fetch state: %w", err)
+		return fetchState{}, fmt.Errorf("decoding the rule fetch state %s: %w", path, err)
 	}
 	return state, nil
 }

@@ -89,3 +89,23 @@ func TestSourceSetsAsideAChangedCopy(t *testing.T) {
 		t.Errorf("a copy changed after its acceptance should give way to the built-in file, got %+v", got)
 	}
 }
+
+// A fetch state sdd cannot read sets the fetched copy aside; the status says
+// why instead of failing, since sdd info is where a person looks.
+func TestSourceReportsAnUnreadableFetchState(t *testing.T) {
+	dir := t.TempDir()
+	err := os.WriteFile(filepath.Join(dir, "state.json"), []byte("{"), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := secrets.NewSource(t.Context(), dir)
+
+	got, err := source.Status()
+
+	if err != nil {
+		t.Fatalf("the status should report the broken state, not fail: %v", err)
+	}
+	if got.Source != model.SecretRulesBuiltIn || !strings.Contains(got.Unused, filepath.Join(dir, "state.json")) {
+		t.Errorf("the built-in file should be in use and the broken state named, got %+v", got)
+	}
+}

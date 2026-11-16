@@ -212,7 +212,10 @@ func (s *Source) Status() (model.SecretRulesStatus, error) {
 	status.Update = model.SecretRulesDaily
 	state, err := readState(s.dir)
 	if err != nil {
-		return model.SecretRulesStatus{}, err
+		// The next daily pass rewrites the state; until then the built-in
+		// file serves and the status says why.
+		status.Unused = err.Error()
+		return status, nil
 	}
 	status.LastAccepted, status.LastChecked = state.AcceptedAt, state.CheckedAt
 	status.LastFailure, status.LastFailureAt = state.Failure, state.FailedAt
