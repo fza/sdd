@@ -88,19 +88,19 @@ func TestDeepOpenFindings_FollowTheLatestResponse(t *testing.T) {
 // A change settles the deep verdict only where it takes back an edit the
 // proposal wrote, at the spot it wrote it; anything else is new text.
 func TestDeepEditsReverted(t *testing.T) {
-	base := "Fix teh typo here. The parser reads the file; the team agrees.\n"
-	changes := []model.DeepChange{{Finding: "f1", Edits: []model.DeepEdit{{Old: "teh", New: "the"}}}}
-	document := "Fix the typo here. The parser reads the file; the team agrees.\n"
+	base := "A quick fix here. The parser reads the file; the fast team agrees.\n"
+	changes := []model.DeepChange{{Finding: "f1", Edits: []model.DeepEdit{{Old: "quick", New: "fast"}}}}
+	document := "A fast fix here. The parser reads the file; the fast team agrees.\n"
 	cases := map[string]struct {
 		draft string
 		want  bool
 	}{
 		"the edit taken back":            {draft: base, want: true},
 		"unchanged":                      {draft: document, want: false},
-		"the same word elsewhere":        {draft: "Fix the typo here. The parser reads the file; thy team agrees.\n", want: false},
-		"an insertion inside a sentence": {draft: "Fix the typo here. The parser now deletes every production table at startup and reads the file; the team agrees.\n", want: false},
-		"the edit reworded":              {draft: "Fix thee typo here. The parser reads the file; the team agrees.\n", want: false},
-		"a revert beside another change": {draft: "Fix teh typo here. The parser reads the files; the team agrees.\n", want: false},
+		"the same word elsewhere":        {draft: "A fast fix here. The parser reads the file; the slow team agrees.\n", want: false},
+		"an insertion inside a sentence": {draft: "A fast fix here. The parser now deletes every production table at startup and reads the file; the fast team agrees.\n", want: false},
+		"the edit reworded":              {draft: "A faster fix here. The parser reads the file; the fast team agrees.\n", want: false},
+		"a revert beside another change": {draft: "A quick fix here. The parser reads the files; the fast team agrees.\n", want: false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -109,7 +109,7 @@ func TestDeepEditsReverted(t *testing.T) {
 			}
 		})
 	}
-	if model.DeepEditsReverted(base, "Fix the typo here. Something else.\n", base, changes) {
+	if model.DeepEditsReverted(base, "A fast fix here. Something else.\n", base, changes) {
 		t.Fatal("a verdict over a document the proposal did not write settles nothing")
 	}
 }

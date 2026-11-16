@@ -171,13 +171,6 @@ func resultStrings(text string) []string {
 	return out
 }
 
-func abs(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
-}
-
 func (m *agentMemory) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		params, ok := req.GetParams().(*mcp.CallToolParams)
