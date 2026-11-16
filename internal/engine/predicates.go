@@ -421,7 +421,7 @@ func registerBuiltinPredicates(r *Registry) {
 	mustRegisterPredicate(r, Predicate{
 		Doc: FuncDoc{
 			Name:  "hookFindingsWeighed",
-			Doc:   "The current step's findings channel holds exactly the findings the agent last weighed there (recorded by recordHookReview).",
+			Doc:   "The agent weighed the current step's hook findings on the draft as it stands (recorded by recordHookReview).",
 			Reads: []string{fieldHookFindingsWeighed},
 		},
 		Fn:          hookFindingsWeighed,

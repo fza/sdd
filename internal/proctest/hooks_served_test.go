@@ -48,6 +48,23 @@ func TestHooks_AssembleMediumFindingIsServed(t *testing.T) {
 	}
 }
 
+// A hook whose findings differ on every run, such as one stamping a time,
+// still lets the agent proceed once it weighed them for this draft.
+func TestHooks_ProceedingPastVaryingFindingsDoesNotLoop(t *testing.T) {
+	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.assemble", Command: "lint", Findings: true}})
+	finding := func(n string) string {
+		return `{"findings": [{"severity": "medium", "category": "prose-lint", "observation": "run ` + n + `"}]}`
+	}
+	scripted.Scripts["lint"] = proctest.HookScript{Varying: []string{finding("1"), finding("2"), finding("3")}}
+
+	serve := session.Start(t, "capture", nil)
+	instance := serve.Instance
+	serve = session.Report(t, instance, captureDraft())
+	proctest.RequireStep(t, serve, "assembleHookReview")
+	serve = session.Answer(t, instance, "assembleHookReview", "proceed", nil, "")
+	proctest.RequireStep(t, serve, "playback")
+}
+
 func TestHooks_GuideMediumFindingIsServedWithTheGuidesFindings(t *testing.T) {
 	_, session, scripted := newHookedCaptureWorld(t, sdd.Hook{HookConfig: model.HookConfig{Event: "capture.guide", Command: "lint", Findings: true}})
 	scripted.Scripts["lint"] = proctest.HookScript{Output: mediumFindingOutput}

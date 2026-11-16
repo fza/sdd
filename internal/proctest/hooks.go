@@ -14,12 +14,14 @@ func WithHooks(hooks *ScriptedHooks) Option { return func(c *config) { c.hooks =
 
 // HookScript is what one hook command does when it runs: wait Delay or
 // until its context ends, then fail with Err or write Output to stdout. A
-// Block hook waits for its context alone.
+// Block hook waits for its context alone. Varying writes its entries in turn
+// instead of Output, one per run, the last one again once they run out.
 type HookScript struct {
-	Delay  time.Duration
-	Block  bool
-	Output string
-	Err    error
+	Delay   time.Duration
+	Block   bool
+	Output  string
+	Varying []string
+	Err     error
 }
 
 // HookRun is one recorded run: the hook, the payload it read and when it
@@ -38,6 +40,7 @@ type ScriptedHooks struct {
 	Configured []sdd.Hook
 	Scripts    map[string]HookScript
 	runs       []HookRun
+	varied     map[string]int
 }
 
 // Hooks returns the configured hooks.
@@ -65,6 +68,14 @@ func (s *ScriptedHooks) Run(ctx context.Context, hook sdd.Hook, stdin []byte) ([
 		}
 	}
 	s.mu.Lock()
+	output := script.Output
+	if len(script.Varying) > 0 {
+		output = script.Varying[min(s.varied[hook.Command], len(script.Varying)-1)]
+		if s.varied == nil {
+			s.varied = map[string]int{}
+		}
+		s.varied[hook.Command]++
+	}
 	s.runs = append(s.runs, HookRun{Hook: hook, Payload: payload, Finished: time.Now()})
 	s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -73,7 +84,7 @@ func (s *ScriptedHooks) Run(ctx context.Context, hook sdd.Hook, stdin []byte) ([
 	if script.Err != nil {
 		return nil, script.Err
 	}
-	return []byte(script.Output), nil
+	return []byte(output), nil
 }
 
 // Runs returns the recorded runs in finishing order.

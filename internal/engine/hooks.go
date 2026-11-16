@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -301,8 +300,11 @@ func highStepFindings(ctx *Context) ([]query.Finding, error) {
 	return high, nil
 }
 
-// fieldHookFindingsWeighed holds, per findings channel, the findings the
-// agent last weighed there (recordHookReview).
+// fieldHookFindingsWeighed holds, per findings channel, the state snapshot of
+// the draft whose hook findings the agent last weighed there
+// (recordHookReview). Keying on the draft rather than on the findings keeps
+// a hook whose findings vary between runs from serving the review again on
+// an unchanged draft.
 const fieldHookFindingsWeighed = "hookFindingsWeighed"
 
 // noHookFindings passes unless the hooks joined findings into the current
@@ -311,30 +313,29 @@ func noHookFindings(ctx *Context) (bool, error) {
 	return !ctx.hooksJoined, nil
 }
 
-// hookFindingsWeighed passes when the current step's findings channel holds
-// exactly the findings the agent last weighed there.
+// hookFindingsWeighed passes when the agent weighed the current step's hook
+// findings on the draft as it stands.
 func hookFindingsWeighed(ctx *Context) (bool, error) {
 	step := ctx.Store.spec.StepByID[ctx.Step]
 	if step == nil || step.Findings == "" {
 		return false, nil
 	}
-	current, err := channelFindings(ctx.Store, step.Findings)
-	if err != nil {
-		return false, err
-	}
 	weighed, _ := ctx.Store.Get(fieldHookFindingsWeighed)
 	record, _ := weighed.(map[string]any)
-	recorded, ok := record[step.Findings]
-	if !ok {
-		return false, nil
-	}
-	return findingsJSON(current) == findingsJSON(recorded), nil
+	recorded, ok := record[step.Findings].(string)
+	return ok && recorded == ctx.Store.StateSnapshot(), nil
 }
 
-// recordHookReview records each findings channel's current findings as
-// weighed by the agent.
+// recordHookReview records, for each findings channel holding findings, the
+// draft they were weighed on.
 func recordHookReview(ctx *Context) error {
+	weighed, _ := ctx.Store.Get(fieldHookFindingsWeighed)
+	previous, _ := weighed.(map[string]any)
 	record := map[string]any{}
+	for channel, snapshot := range previous {
+		record[channel] = snapshot
+	}
+	snapshot := ctx.Store.StateSnapshot()
 	for _, step := range ctx.Store.spec.Steps {
 		if step.Findings == "" {
 			continue
@@ -344,19 +345,10 @@ func recordHookReview(ctx *Context) error {
 			return err
 		}
 		if len(findings) > 0 {
-			record[step.Findings] = findings
+			record[step.Findings] = snapshot
 		}
 	}
 	return ctx.Store.WriteEngine(fieldHookFindingsWeighed, record)
-}
-
-func findingsJSON(findings any) string {
-	normalized, err := VarType{Base: TypePreflightFindings}.ValidateValue(findings)
-	if err != nil {
-		return ""
-	}
-	encoded, _ := json.Marshal(normalized)
-	return string(encoded)
 }
 
 func highStepFindingsDetail(ctx *Context) string {
