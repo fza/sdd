@@ -225,6 +225,19 @@ func Unlock(lock *flock.Flock) {
 	}
 }
 
+// CloneLocks is the repos.CloneLocker of sdd-owned clones: it waits for the
+// sync lock, then the graph lock, of the clone.
+type CloneLocks struct{}
+
+func (CloneLocks) LockClone(ctx context.Context, dir, graphDir string) (func(), error) {
+	common, err := git.CLI{Dir: dir}.CommonDir(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("locating the sync state of %s: %w", dir, err)
+	}
+	state := &State{dir: filepath.Join(common, "sdd"), graphDir: filepath.Join(dir, filepath.FromSlash(graphDir))}
+	return state.Lock(ctx)
+}
+
 // HandlerOptions returns opts with the git surfaces and sync state automatic
 // sync of graphDir runs on. A graph directory in no repository leaves them
 // unset, which a sync round reports as the graph repository missing.

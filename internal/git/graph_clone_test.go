@@ -222,6 +222,24 @@ func TestKeepGraphCloneDiscardsWhatSddDidNotMake(t *testing.T) {
 	}
 }
 
+// The graph lock a writer holds lives in the graph's runtime directory, which
+// the upkeep keeps even when the graph repository does not ignore it.
+func TestKeepGraphCloneKeepsTheRuntimeDirectory(t *testing.T) {
+	seededRemote(t)
+	dir := sddClone(t, model.ProtocolHTTPS)
+	lock := ".sdd/graph/.sdd-runtime/graph.lock"
+	writeFile(t, dir, lock, "")
+
+	err := git.CLI{Dir: dir}.KeepGraphClone(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, statErr := os.Stat(filepath.Join(dir, filepath.FromSlash(lock)))
+	if statErr != nil {
+		t.Errorf("the upkeep should keep the graph lock: %v", statErr)
+	}
+}
+
 // A hand commit made right before a push is dropped by the push itself.
 func TestKeepGraphCloneRunsBeforeAnyHandCommitIsPushed(t *testing.T) {
 	remote := seededRemote(t)

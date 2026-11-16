@@ -57,7 +57,7 @@ func (r *fakeRound) TimerRound(context.Context, string) (model.TimerRound, error
 
 func testManager(t *testing.T, loc repos.Locations, git repos.GraphCloneGit) *repos.Manager {
 	t.Helper()
-	return repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, synctest.Gate(t.TempDir(), nil)))
+	return repos.NewManager(repos.NewRegistry(loc), repos.NewGraphClones(loc, git, synctest.Gate(t.TempDir(), nil), synctest.CloneLocks{}))
 }
 
 // newRepoTestHandler seeds a handler whose global config already holds a
