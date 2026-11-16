@@ -488,11 +488,11 @@ func (w *world) only(t *testing.T) model.Hook {
 	return resolved[0]
 }
 
-// declaredErr returns the error the one declared hook carries; Declared
-// itself succeeds, so a bad hook fails only the calls that reach it.
+// declaredErr returns the error the one declared hook carries; reading the
+// hooks itself succeeds, so a bad hook fails only the calls that reach it.
 func declaredErr(t *testing.T, w *world) error {
 	t.Helper()
-	declared, err := hooks.Declared(t.Context(), w.sources())
+	declared, err := w.commands().Hooks(t.Context())
 	if err != nil {
 		t.Fatalf("a bad hook should not fail reading the others: %v", err)
 	}
@@ -632,7 +632,8 @@ func TestDeclaredReadsEveryLayerOfAProjectDirLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	declared, err := hooks.Declared(t.Context(), hooks.Sources{GlobalConfig: global, Project: resolved, Tracker: trackedFiles{}})
+	sources := hooks.Sources{GlobalConfig: global, Project: resolved, Tracker: trackedFiles{}}
+	declared, err := hooks.New(sources, hooks.NewAllows(filepath.Join(base, "state"))).Hooks(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

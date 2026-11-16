@@ -67,23 +67,11 @@ func (l declaredLayer) gated() bool {
 	return l.gate != nil && (l.origin.Layer == model.HookLayerCommitted || l.gate.localGated)
 }
 
-// Declared reads every layer's hooks, in the order user-global, work
+// declaredLayers reads every layer's hooks, in the order user-global, work
 // repository, project repository, committed before local, and resolves each
 // command to its file in the layer's hooks folder. A command that does not
 // resolve sets the hook's Err rather than failing the whole list, so it
 // fails only the calls that reach the hook.
-func Declared(ctx context.Context, src Sources) ([]model.Hook, error) {
-	layers, err := declaredLayers(ctx, src)
-	if err != nil {
-		return nil, err
-	}
-	var hooks []model.Hook
-	for _, layer := range layers {
-		hooks = append(hooks, layer.hooks...)
-	}
-	return hooks, nil
-}
-
 func declaredLayers(ctx context.Context, src Sources) ([]declaredLayer, error) {
 	files, err := readLayers(ctx, src)
 	if err != nil {
