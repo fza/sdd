@@ -49,6 +49,8 @@ sdd cannot tell whether a compaction happened, so it repeats a piece of text onl
 
 A step that holds a report it just took, because fields are missing or a check fails, sends a schema of only the fields that hold it; every other field stays reportable. A step that only waits, launches the verifier or confirms a summary carries only the session's basic facts (participant, language, search, branch), not the working principles or the recent graph movement. The recent graph movement lists the newest 5 entries.
 
+No result sdd sends runs past 18,000 characters, counted as the text content the agent receives: the result's JSON. The bound is the same for every agent. Codex prints a result within a budget of 10,000 tokens and drops the middle of a larger one; Claude Code saves a result past 50,000 characters to a file the agent then has to read back. A read too large for one result, such as `show` of many entries, a long attachment or the registry, comes in pages, and each page names the call that serves the next.
+
 In practice it often works better to avoid compaction in long work. Capture the current state, for example as progress notes on the implementation or a partial done, and continue in a fresh agent session.
 
 ## Resume a session in a fresh agent session

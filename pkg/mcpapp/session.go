@@ -15,6 +15,17 @@ import (
 type shellSession struct {
 	mu   sync.Mutex
 	root *sdd.WorkflowSession
+	// pages holds, per tool, the pages of its last result too large for one,
+	// which later calls naming a page serve without running the read again.
+	pages map[string][]string
+	// pageReads holds, per tool, the full reads of its paged result waiting
+	// on the pages not yet served.
+	pageReads map[string]pageRead
+}
+
+type pageRead struct {
+	full     []string
+	unserved map[int]bool
 }
 
 // flushServed records the anchors this call issued into the session ledger.

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -301,6 +300,7 @@ type SearchArgs struct {
 	MaxCitations      *int         `json:"max_citations,omitempty" jsonschema:"citation snippet lines per entry; omitted = 1 (the strongest matching chunk, the match evidence), 0 = headers only"`
 	Repos             []sdd.RepoID `json:"repos,omitempty" jsonschema:"also search these repos of the project's dependency closure by repo-id (additive to the local graph)"`
 	AllRepos          bool         `json:"all_repos,omitempty" jsonschema:"also search every repo in the project's dependency closure"`
+	Page              int          `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
 }
 
 type SearchResult struct {
@@ -316,6 +316,7 @@ type ViewArgs struct {
 	Layout   string       `json:"layout" jsonschema:"sdd view layout pipeline, e.g. 'active:as-counts' or 'top(15)'"`
 	Repos    []sdd.RepoID `json:"repos,omitempty" jsonschema:"also render the layout over these repos of the project's dependency closure (additive to the local graph)"`
 	AllRepos bool         `json:"all_repos,omitempty" jsonschema:"also render the layout over every repo in the project's dependency closure"`
+	Page     int          `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
 }
 
 type ViewResult struct {
@@ -330,6 +331,7 @@ type ShowArgs struct {
 	IDs     []string `json:"ids" jsonschema:"entry IDs to show; accepts an unambiguous short ID ({type}-{layer}-{suffix}) and resolves it to the full entry"`
 	Up      *int     `json:"up,omitempty" jsonschema:"upstream chain depth; omitted = default 2, 0 = no upstream"`
 	Down    *int     `json:"down,omitempty" jsonschema:"downstream chain depth; omitted = default 1, 0 = no downstream"`
+	Page    int      `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
 }
 
 type ShowResult struct {
@@ -343,6 +345,7 @@ type GatherArgs struct {
 	IDs      []string `json:"ids,omitempty" jsonschema:"entries to open in full; an entry the call proves it holds serves its pointer, so the way back to a pointed entry is its id with its tag left out of held"`
 	Draft    string   `json:"draft,omitempty" jsonschema:"without instance: the draft text the searches are written from; credits nothing"`
 	Topics   []string `json:"topics,omitempty" jsonschema:"without instance: the draft's topic labels, each listed in full"`
+	Page     int      `json:"page,omitempty" jsonschema:"a later page of this tool's last result too large for one, as its page line names; it serves the held result and leaves the other arguments aside"`
 }
 
 type GatherResult struct {
@@ -355,7 +358,7 @@ type ReadAttachmentArgs struct {
 	ID       string `json:"id,omitempty" jsonschema:"full ID of the entry whose attachment to read; omit when reading a staged file by handle"`
 	Name     string `json:"name,omitempty" jsonschema:"attachment filename; optional when the entry has exactly one"`
 	Offset   int64  `json:"offset,omitempty" jsonschema:"byte position to continue from (next_offset of the previous page)"`
-	MaxBytes int    `json:"max_bytes,omitempty" jsonschema:"page size cap; default 65536"`
+	MaxBytes int    `json:"max_bytes,omitempty" jsonschema:"page size cap; default 65536. A page stops short of it where the result would grow past its bound; next_offset continues"`
 	Handle   string `json:"handle,omitempty" jsonschema:"read a file staged in this session (before any entry carries it) by its handle, in the same bounded pages; pass instead of id"`
 }
 
@@ -386,6 +389,7 @@ type InfoResult struct {
 type RegistryArgs struct {
 	Session string `json:"session,omitempty" jsonschema:"session handle this connection is attached to (from start_session or resume_session); required"`
 	Class   string `json:"class,omitempty" jsonschema:"filter: predicate, query, or command"`
+	Page    int    `json:"page,omitempty" jsonschema:"the page of the contracts to serve, from 1; next_page names the one after it"`
 }
 
 type RegistryFuncResult struct {
@@ -398,6 +402,7 @@ type RegistryFuncResult struct {
 
 type RegistryResult struct {
 	Functions []RegistryFuncResult `json:"functions"`
+	NextPage  int                  `json:"next_page,omitempty" jsonschema:"set while more contracts follow: pass it as page for them"`
 }
 
 func (s *toolSet) register(srv *mcp.Server) {
@@ -941,7 +946,7 @@ func (s *toolSet) logRootRead(ctx context.Context, req *mcp.CallToolRequest, ss 
 }
 
 func (s *toolSet) search(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, SearchResult, error) {
-	if len(args.Terms) == 0 && args.Query == "" {
+	if len(args.Terms) == 0 && args.Query == "" && args.Page < 2 {
 		return nil, SearchResult{}, toolError("pass terms (text mode), query (vector mode), or both (hybrid)")
 	}
 	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
@@ -949,6 +954,10 @@ func (s *toolSet) search(ctx context.Context, req *mcp.CallToolRequest, args Sea
 		return nil, SearchResult{}, err
 	}
 	defer ss.mu.Unlock()
+	if args.Page > 1 {
+		results, err := heldPage(ss, "search", args.Page)
+		return nil, SearchResult{Results: results}, err
+	}
 	limit := args.Limit
 	if limit == 0 {
 		limit = defaultSearchHits
@@ -979,12 +988,12 @@ func (s *toolSet) search(ctx context.Context, req *mcp.CallToolRequest, args Sea
 	if strings.TrimSpace(out) == "" {
 		out = "(no entries matched — try another phrasing, or proceed if the topic is genuinely new)"
 	}
-	return nil, SearchResult{Results: out, Coverage: result.Coverage, Notice: result.Notice}, nil
+	return nil, SearchResult{Results: pagedText(ss, "search", out), Coverage: result.Coverage, Notice: result.Notice}, nil
 
 }
 
 func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewArgs) (*mcp.CallToolResult, ViewResult, error) {
-	if strings.TrimSpace(args.Layout) == "" {
+	if strings.TrimSpace(args.Layout) == "" && args.Page < 2 {
 		return nil, ViewResult{}, toolError("layout is required")
 	}
 	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
@@ -992,6 +1001,10 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 		return nil, ViewResult{}, err
 	}
 	defer ss.mu.Unlock()
+	if args.Page > 1 {
+		sections, err := s.heldPageRead(ctx, req, ss, "view", args.Page)
+		return nil, ViewResult{Sections: sections}, err
+	}
 	project, branch, branchFromSession, err := s.readScope(ctx, req, ss, args.Project)
 	if err != nil {
 		return nil, ViewResult{}, err
@@ -1015,17 +1028,10 @@ func (s *toolSet) view(ctx context.Context, req *mcp.CallToolRequest, args ViewA
 			sections = msg + "\n\n" + sections
 		}
 	}
-	guarded := guardViewSize(sections)
-	// A cut can drop any body past it, so a cut view counts no body as read
-	// in full: refsInspected must not pass on text the agent never got.
-	full, summary := result.FullIDs, result.SummaryIDs
-	if guarded != sections {
-		full, summary = nil, append(slices.Clone(summary), full...)
-	}
-	if err := s.logRootRead(ctx, req, ss, "view", full, summary); err != nil {
+	sections, err = s.pagedRead(ctx, req, ss, "view", sections, result.FullIDs, result.SummaryIDs)
+	if err != nil {
 		return nil, ViewResult{}, err
 	}
-	sections = guarded
 	hint := viewHint(ss)
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, ViewResult{}, err
@@ -1043,22 +1049,6 @@ func emptyViewMessage(knownParticipants []string) string {
 		msg += " Known participants: " + strings.Join(knownParticipants, ", ") + "."
 	}
 	return msg
-}
-
-// maxViewResultBytes caps a view response over MCP. A pathological layout
-// (e.g. active:as-list on a large graph) can otherwise blow the client's token
-// budget in one call; the cap keeps the tool usable and points at paging.
-const maxViewResultBytes = 40000
-
-// guardViewSize truncates an over-cap view result on a line boundary and
-// appends a notice naming n() paging as the recovery, so an agent that hit the
-// cap knows how to narrow rather than seeing a silently cut result.
-func guardViewSize(s string) string {
-	bounded := truncate.Bytes(s, maxViewResultBytes, "")
-	if bounded.Cut.Clean() {
-		return s
-	}
-	return fmt.Sprintf("%s\n\n[view output truncated at %d of %d bytes — narrow with n(K), tighter filters, or fewer sections]", bounded.Text, bounded.Cut.KeptBytes, bounded.Cut.TotalBytes)
 }
 
 // Value-projection caps, derived from the calibrated serveview budget so the
@@ -1144,7 +1134,7 @@ func collectedString(v any) string {
 }
 
 // capValue truncates an over-cap value on a rune boundary and appends
-// a notice naming the cap, mirroring guardViewSize.
+// a notice naming the cap.
 func capValue(s string) string {
 	bounded := truncate.Bytes(s, maxCollectedValueBytes, "")
 	if bounded.Cut.Clean() {
@@ -1154,7 +1144,7 @@ func capValue(s string) string {
 }
 
 func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowArgs) (*mcp.CallToolResult, ShowResult, error) {
-	if len(args.IDs) == 0 {
+	if len(args.IDs) == 0 && args.Page < 2 {
 		return nil, ShowResult{}, toolError("ids is required")
 	}
 	ss, err := s.attachedSession(ctx, req, args.Session, args.Proofs)
@@ -1162,6 +1152,10 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 		return nil, ShowResult{}, err
 	}
 	defer ss.mu.Unlock()
+	if args.Page > 1 {
+		entries, err := s.heldPageRead(ctx, req, ss, "show", args.Page)
+		return nil, ShowResult{Entries: entries}, err
+	}
 	up := sdd.DefaultShowUpDepth
 	if args.Up != nil {
 		up = *args.Up
@@ -1180,13 +1174,14 @@ func (s *toolSet) show(ctx context.Context, req *mcp.CallToolRequest, args ShowA
 	if err != nil {
 		return nil, ShowResult{}, err
 	}
-	if err := s.logRootRead(ctx, req, ss, "show", result.FullIDs, result.SummaryIDs); err != nil {
+	entries, err := s.pagedRead(ctx, req, ss, "show", result.Entries, result.FullIDs, result.SummaryIDs)
+	if err != nil {
 		return nil, ShowResult{}, err
 	}
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, ShowResult{}, err
 	}
-	return nil, ShowResult{Entries: result.Entries}, nil
+	return nil, ShowResult{Entries: entries}, nil
 
 }
 
@@ -1196,6 +1191,10 @@ func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args Gat
 		return nil, GatherResult{}, err
 	}
 	defer ss.mu.Unlock()
+	if args.Page > 1 {
+		serve, err := heldPage(ss, "gather", args.Page)
+		return nil, GatherResult{Serve: serve}, err
+	}
 	result, err := ss.root.Gather(ctx, s.requestIdentity(req), sdd.WorkflowGatherRequest{
 		Instance: strings.TrimSpace(args.Instance), IDs: args.IDs, Draft: args.Draft, Topics: args.Topics,
 		SyncMode: s.searchSyncMode,
@@ -1206,7 +1205,7 @@ func (s *toolSet) gather(ctx context.Context, req *mcp.CallToolRequest, args Gat
 	if err := ss.flushServed(ctx, s.requestIdentity(req)); err != nil {
 		return nil, GatherResult{}, err
 	}
-	return nil, GatherResult{Serve: result.Text}, nil
+	return nil, GatherResult{Serve: pagedText(ss, "gather", result.Text)}, nil
 }
 
 func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, args ReadAttachmentArgs) (*mcp.CallToolResult, ReadAttachmentResult, error) {
@@ -1230,10 +1229,10 @@ func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, 
 		if err != nil {
 			return nil, ReadAttachmentResult{}, err
 		}
-		return nil, ReadAttachmentResult{
+		return nil, boundedPage(ReadAttachmentResult{
 			Name: page.Filename, Content: string(page.Content), Offset: page.Offset, NextOffset: page.NextOffset,
 			TotalBytes: page.TotalSize, More: page.More, Available: staged,
-		}, nil
+		}), nil
 	}
 	project, branch, branchFromSession, err := s.readScope(ctx, req, ss, args.Project)
 	if err != nil {
@@ -1255,7 +1254,7 @@ func (s *toolSet) readAttachment(ctx context.Context, req *mcp.CallToolRequest, 
 		output.Path = page.LocalPath
 	}
 
-	return nil, output, nil
+	return nil, boundedPage(output), nil
 
 }
 
@@ -1290,9 +1289,21 @@ func (s *toolSet) registryDocs(ctx context.Context, req *mcp.CallToolRequest, ar
 	if err != nil {
 		return nil, RegistryResult{}, err
 	}
-	result := RegistryResult{}
+	functions := make([]RegistryFuncResult, 0, len(docs))
 	for _, doc := range docs {
-		result.Functions = append(result.Functions, RegistryFuncResult{Name: doc.Name, Class: doc.Class, Doc: doc.Doc, Reads: doc.Reads, Writes: doc.Writes})
+		functions = append(functions, RegistryFuncResult{Name: doc.Name, Class: doc.Class, Doc: doc.Doc, Reads: doc.Reads, Writes: doc.Writes})
+	}
+	pages, err := pagedItems(functions)
+	if err != nil {
+		return nil, RegistryResult{}, err
+	}
+	page := max(args.Page, 1)
+	if page > len(pages) {
+		return nil, RegistryResult{}, toolError("page %d does not exist: the contracts fill %d", page, len(pages))
+	}
+	result := RegistryResult{Functions: pages[page-1]}
+	if page < len(pages) {
+		result.NextPage = page + 1
 	}
 	return nil, result, nil
 

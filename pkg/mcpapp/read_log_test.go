@@ -1,6 +1,7 @@
 package mcpapp_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,39 +56,6 @@ func TestViewLogsItsReads(t *testing.T) {
 	}
 }
 
-// A view cut for size may have dropped any body past the cut, so none of its
-// bodies count as read in full.
-func TestViewCutForSizeLogsNoFullRead(t *testing.T) {
-	graphDir := writeFixtureGraph(t)
-	body := strings.Repeat("A long paragraph of the fixture that fills the view past its size bound. ", 350)
-	for _, id := range []string{"s-tac-bg1", "s-tac-bg2", "s-tac-bg3"} {
-		entry := strings.Replace(gapEntry, "Pre-flight verdict oscillation produces contradictory findings across runs on identical input.", body, 1)
-		path := filepath.Join(graphDir, "2026/06/02-100000-"+id+".md")
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(entry), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	env := newTestServer(t, nil, graphDir, "")
-	cs := connect(t, env.srv)
-	session := openSession(t, cs).Session
-
-	var cut mcpserver.ViewResult
-	call(t, cs, "view", map[string]any{"session": session, "layout": "active:as-bodies"}, &cut)
-	reads := readEvents(t, env, session, "view")
-	if len(reads) != 1 {
-		t.Fatalf("the view should log one read event, got %d", len(reads))
-	}
-	if full, ok := reads[0].Data["full"]; ok {
-		t.Fatalf("a view cut for size should log no full read, got %v", full)
-	}
-	if summary, _ := reads[0].Data["summary"].([]any); len(summary) == 0 {
-		t.Fatalf("a view cut for size should log its entries as summary reads: %+v", reads[0].Data)
-	}
-}
-
 func TestGatherPointsAtAnEntryAlreadyServedInFull(t *testing.T) {
 	env := newTestServer(t, nil, "", "")
 	cs := connect(t, env.srv)
@@ -102,6 +70,10 @@ func TestGatherPointsAtAnEntryAlreadyServedInFull(t *testing.T) {
 	var again mcpserver.GatherResult
 	call(t, cs, "gather", map[string]any{"session": session}, &again)
 	served := again.Serve
+	for page := 2; strings.Contains(again.Serve, "for the next;"); page++ {
+		call(t, cs, "gather", map[string]any{"session": session, "page": page}, &again)
+		served += again.Serve
+	}
 	if !strings.Contains(served, fixtureGapID+" — ") || !strings.Contains(served, "(held as ⟦") {
 		t.Fatalf("a later serve should point at the entry served in full:\n%s", served)
 	}
@@ -149,5 +121,84 @@ func TestGatherCreditsTheNamedCapture(t *testing.T) {
 	}
 	if reads := readEvents(t, env, session, "gather"); len(reads) != 1 {
 		t.Fatalf("a refused gather should log no read: %+v", reads)
+	}
+}
+
+// A gather paged past the result bound carries candidate lines on its first
+// page, not the to-judge heading alone.
+func TestGatherFirstPageCarriesCandidatesToJudge(t *testing.T) {
+	graphDir := writeFixtureGraph(t)
+	for n := range 60 {
+		summary := fmt.Sprintf("Gap %d of the paging fixture is a candidate whose brief line runs long enough that sixty of them fill more than one gather result.", n)
+		entry := strings.Replace(gapEntry, "summary: Pre-flight verdict oscillation produces contradictory findings across runs.", "summary: "+summary, 1)
+		path := filepath.Join(graphDir, fmt.Sprintf("2026/06/02-%06d-s-tac-p%02d.md", 100000+n, n))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(entry), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := newTestServer(t, nil, graphDir, "")
+	cs := connect(t, env.srv)
+	session := openSession(t, cs).Session
+
+	var first mcpserver.GatherResult
+	call(t, cs, "gather", map[string]any{"session": session}, &first)
+	if !strings.Contains(first.Serve, "(page 1 of ") {
+		t.Fatalf("the fixture's gather should page past the result bound:\n%.400s", first.Serve)
+	}
+	_, toJudge, ok := strings.Cut(first.Serve, "# to judge (")
+	if !ok {
+		t.Fatalf("the first page should open the to-judge section:\n%.400s", first.Serve)
+	}
+	if !strings.Contains(toJudge, "\n- ") {
+		t.Fatalf("the first page should carry candidates to judge, got:\n%s", toJudge)
+	}
+}
+
+// A view or show paged past the result bound logs its bodies as full reads
+// only once every page has served: refsInspected must not pass on a body the
+// agent never got.
+func TestAPagedReadLogsItsBodiesOnlyOnceEveryPageServed(t *testing.T) {
+	dir, ids, _ := largeGraph(t)
+	for _, tc := range []struct {
+		tool  string
+		field string
+		args  map[string]any
+	}{
+		{tool: "view", field: "sections", args: map[string]any{"layout": "active:n(12):as-bodies"}},
+		{tool: "show", field: "entries", args: map[string]any{"ids": ids[:12]}},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			env := newTestServer(t, nil, dir, "")
+			cs := connect(t, env.srv)
+			tc.args["session"] = openSession(t, cs).Session
+			text := func(result map[string]any) string { s, _ := result[tc.field].(string); return s }
+
+			page := callRaw(t, cs, tc.tool, tc.args)
+			if !strings.Contains(text(page), "for the next;") {
+				t.Fatalf("the read should page past the result bound, got %.200q", text(page))
+			}
+			full := func() []any {
+				var listed []any
+				for _, read := range readEvents(t, env, tc.args["session"].(string), tc.tool) {
+					ids, _ := read.Data["full"].([]any)
+					listed = append(listed, ids...)
+				}
+				return listed
+			}
+			if listed := full(); len(listed) > 0 {
+				t.Fatalf("a body on a page not served yet should not count as read in full: %v", listed)
+			}
+
+			for n := 2; strings.Contains(text(page), "for the next;"); n++ {
+				tc.args["page"] = n
+				page = callRaw(t, cs, tc.tool, tc.args)
+			}
+			if listed := full(); len(listed) != 12 {
+				t.Fatalf("every body should count as read in full once its last page served, got %d: %v", len(listed), listed)
+			}
+		})
 	}
 }
