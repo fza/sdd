@@ -62,15 +62,17 @@ func (c CLI) dirEnv(env []string) []string {
 // command to the hook's repository whatever -C names.
 var repositoryVariables = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"}
 
-// pathEnv is env, nil meaning the process environment, without
+// pathEnv is env, nil meaning the process environment, without the inherited
 // repositoryVariables, for a git command that locates its repository by path.
+// A variable the caller set itself stays, such as graph move's temporary index.
 func pathEnv(env []string) []string {
+	inherited := os.Environ()
 	if env == nil {
-		env = os.Environ()
+		env = inherited
 	}
 	return slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
 		name, _, _ := strings.Cut(kv, "=")
-		return slices.Contains(repositoryVariables, name)
+		return slices.Contains(repositoryVariables, name) && slices.Contains(inherited, kv)
 	})
 }
 
