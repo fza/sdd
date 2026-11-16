@@ -167,6 +167,30 @@ func TestPlan_KeepsEveryCallWithinJevsLimits(t *testing.T) {
 	}
 }
 
+// An error page keeps its opening only, marked as cut: the error reaches the
+// gather note and the stats.
+func TestScore_ExcerptsALongErrorBody(t *testing.T) {
+	page := "<html>" + strings.Repeat("bad gateway ", 20_000) + "</html>"
+	scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, page)
+	})
+	_, err := scorer.Score(t.Context(), request)
+	status, ok := errors.AsType[*systemone.StatusError](err)
+	if !ok || len(err.Error()) > 600 || !strings.HasPrefix(status.Detail, "<html>bad gateway") || !strings.HasSuffix(status.Detail, "(cut)") {
+		t.Fatalf("error of %d bytes: a long body should be cut to its opening and marked", len(err.Error()))
+	}
+}
+
+func TestNew_KeepsEndpointCredentialsOutOfItsError(t *testing.T) {
+	for _, endpoint := range []string{"https://user:s3cret@[::1", "//user:s3cret@example.invalid/v1"} {
+		_, err := systemone.New(systemone.Options{APIKey: "k", Endpoint: endpoint})
+		if err == nil || strings.Contains(err.Error(), "s3cret") {
+			t.Errorf("endpoint %q: refused without the password in the error, got %v", endpoint, err)
+		}
+	}
+}
+
 func TestNew_RefusesMissingKeyAndRelativeEndpoint(t *testing.T) {
 	if _, err := systemone.New(systemone.Options{}); err == nil {
 		t.Fatal("a scorer without a key should be refused")
