@@ -66,7 +66,7 @@ app-sdd/                     # only sdd: commits
 - `sdd config set --local project_dir <path>` writes the work repository's own `.sdd/config.local.yaml`. In a repository holding its own project it is refused: point a repository with `sdd init --project-dir`.
 - Commands run in the work repository act on the project: captures commit there, `sdd serve` serves it, the write gate reads its `meta.json`, `sdd repo add` declares the dependency there, and `sdd sync --pull` pulls its repository.
 - The work stays in the work repository: `sdd init` installs the skills and registers the MCP server there, `sdd wip start` branches it, and closure evidence comes from its history.
-- A `graph_dir` leading into another repository is refused. Make that graph a project of its own and point at it with `project_dir`. A `graph_dir` leading out of the project into no repository is refused too, by `sdd init` as by every later command, and so is a `project_dir` naming a folder inside the work repository or a folder containing it.
+- A `graph_dir` leading into another repository, a repository nested in the project included, is refused. Make that graph a project of its own and point at it with `project_dir`. A `graph_dir` leading out of the project into no repository is refused too, by `sdd init` as by every later command, and so is a `project_dir` naming a folder inside the work repository, a folder containing it, a folder inside another repository rather than at its root, or a project in no repository.
 
 `sdd init --project-dir` writes the pointer and sets up a missing project:
 
