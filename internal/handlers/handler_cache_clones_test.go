@@ -78,6 +78,19 @@ func TestCacheHandlerPruneOwnedClones(t *testing.T) {
 			},
 		},
 		{
+			name: "a clone holding entries a force push set aside stays", repo: "setaside",
+			prepare: func(t *testing.T, _ repos.Locations, dir string, _ gitgate.Target) func() {
+				entry := filepath.Join(dir, ".git", "sdd-set-aside", "files", ".sdd", "graph", "2026", "11", "07-120000-s-tac-abc.md")
+				if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(entry, []byte("set aside\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return nil
+			},
+		},
+		{
 			name: "a clone whose sync lock is held stays", repo: "syncing",
 			prepare: func(t *testing.T, _ repos.Locations, dir string, _ gitgate.Target) func() {
 				release, err := syncstate.OwnedClones{}.TryLockSync(t.Context(), dir)

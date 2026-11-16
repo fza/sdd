@@ -69,7 +69,7 @@ func TestScore_RanksEveryCandidateAgainstTheDraftInOneCall(t *testing.T) {
 	if result.Usage.InputTokens != 42 || result.Usage.CostUSD != 0.0004 || result.Identity.Model != cohere.DefaultModel || result.Identity.Provider != "opper" {
 		t.Errorf("result %+v should carry the reported usage and identity", result)
 	}
-	if scorer.Direction() != relevance.Forward || scorer.MaxBatch() != cohere.MaxBatch || scorer.MaxPairTokens() != cohere.MaxPairTokens {
+	if scorer.Direction() != relevance.Forward || scorer.MaxBatch() != cohere.MaxBatch {
 		t.Error("a reranker scores one direction, up to its batch size, each pair within its window")
 	}
 }
@@ -88,6 +88,33 @@ func TestScore_RateLimitReportsRetryAfter(t *testing.T) {
 	if attributed, ok := errors.AsType[*llm.Error](err); !ok || attributed.Identity.Model != cohere.DefaultModel {
 		t.Fatalf("error %v should be attributed to the model", err)
 	}
+	if delayer, ok := errors.AsType[relevance.RetryDelayer](err); !ok || delayer.RetryDelay() != 9*time.Second {
+		t.Fatalf("error %v should ask for its delay before the next call", err)
+	}
+}
+
+func TestScore_RateLimitReadsAnHTTPDate(t *testing.T) {
+	scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", time.Now().Add(30*time.Second).UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	_, err := scorer.Score(t.Context(), request)
+	status, ok := errors.AsType[*cohere.StatusError](err)
+	if !ok || status.RetryAfter < 25*time.Second || status.RetryAfter > 30*time.Second {
+		t.Fatalf("error %v: a Retry-After date should give the delay until it", err)
+	}
+}
+
+func TestScore_CapsAHugeRetryAfter(t *testing.T) {
+	scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "99999999999")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	_, err := scorer.Score(t.Context(), request)
+	status, ok := errors.AsType[*cohere.StatusError](err)
+	if !ok || status.RetryAfter <= 0 || status.RetryAfter > time.Hour {
+		t.Fatalf("error %v: a huge Retry-After should be capped at an hour", err)
+	}
 }
 
 func TestScore_RefusesMalformedReplies(t *testing.T) {
@@ -98,6 +125,8 @@ func TestScore_RefusesMalformedReplies(t *testing.T) {
 		"index twice":        `{"results":[{"index":0,"relevance_score":0.5},{"index":1,"relevance_score":0.5},{"index":0,"relevance_score":0.4}]}`,
 		"no score":           `{"results":[{"index":0},{"index":1,"relevance_score":0.5}]}`,
 		"score above one":    `{"results":[{"index":0,"relevance_score":1.5},{"index":1,"relevance_score":0.5}]}`,
+		"no index":           `{"results":[{"relevance_score":0.5},{"index":1,"relevance_score":0.5}]}`,
+		"negative index":     `{"results":[{"index":-1,"relevance_score":0.5},{"index":0,"relevance_score":0.5},{"index":1,"relevance_score":0.5}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) })
@@ -106,6 +135,44 @@ func TestScore_RefusesMalformedReplies(t *testing.T) {
 				t.Fatalf("error %v should report a malformed answer", err)
 			}
 		})
+	}
+}
+
+// The pair window counts the instruction the query carries before the draft,
+// so a pair that fits only without it goes to the reader uncut.
+func TestPlan_CountsTheInstructionInThePairWindow(t *testing.T) {
+	scorer := serve(t, func(http.ResponseWriter, *http.Request) {})
+	subject := "kind: gap\n\nThe draft text."
+	room := cohere.MaxPairTokens - relevance.EstimateTokens(subject)
+	fits := strings.Repeat("x", 3*(room-relevance.EstimateTokens(cohere.Instruction)))
+	past := strings.Repeat("x", 3*room)
+	_, oversize := relevance.Plan(scorer, subject, []relevance.Candidate{{ID: "fits", Text: fits}, {ID: "past", Text: past}})
+	if len(oversize) != 1 || oversize[0] != 1 {
+		t.Fatalf("oversize %v: only the pair past the window with the instruction should be left out", oversize)
+	}
+}
+
+// An error page keeps its opening only, marked as cut: the error reaches the
+// gather note and the stats.
+func TestScore_ExcerptsALongErrorBody(t *testing.T) {
+	page := "<html>" + strings.Repeat("bad gateway ", 20_000) + "</html>"
+	scorer := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, page)
+	})
+	_, err := scorer.Score(t.Context(), request)
+	status, ok := errors.AsType[*cohere.StatusError](err)
+	if !ok || len(err.Error()) > 600 || !strings.HasPrefix(status.Message, "<html>bad gateway") || !strings.HasSuffix(status.Message, "(cut)") {
+		t.Fatalf("error of %d bytes: a long body should be cut to its opening and marked", len(err.Error()))
+	}
+}
+
+func TestNew_KeepsEndpointCredentialsOutOfItsError(t *testing.T) {
+	for _, endpoint := range []string{"https://user:s3cret@[::1", "//user:s3cret@example.invalid/v3/rerank", "user:s3cret@api.example/v3/rerank", "ftp://user:s3cret@example.invalid/v3/rerank", "https:///v3/rerank"} {
+		_, err := cohere.New(cohere.Options{APIKey: "k", Endpoint: endpoint})
+		if err == nil || strings.Contains(err.Error(), "s3cret") {
+			t.Errorf("endpoint %q: refused without the password in the error, got %v", endpoint, err)
+		}
 	}
 }
 

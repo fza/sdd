@@ -278,24 +278,58 @@ func TestCapture_RestagedBodyReopensConfirmedPlayback(t *testing.T) {
 }
 
 func TestCapture_HeaderDisagreeingAtTheConfirmIsRefused(t *testing.T) {
-	_, session := newCaptureWorld(t, "staged-body-header-confirm")
-	handle := session.Stage(t, "draft.md", []byte("---\nconfidence: high\n---\nA tactical gap with a header.\n"))
-	serve := session.Start(t, "capture", nil)
-	instance := serve.Instance
-	proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
+	const ambiguous = "reads both as a header and as markdown"
+	tests := []struct {
+		name    string
+		file    string
+		wantKey string
+	}{
+		{name: "a plain header", file: "---\nconfidence: high\n---\nA tactical gap with a header.\n", wantKey: `"confidence"`},
+		{name: "a comment line before the keys", file: "---\n# header\nentryKind: gap\nlayer: ops\n---\nA tactical gap.\n", wantKey: ambiguous},
+		{name: "a heading before a line shaped like a key", file: "---\n# Context\nlayer: the tactical layer is where this lives\n---\nRest\n", wantKey: ambiguous},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, session := newCaptureWorld(t, "staged-body-header-confirm")
+			handle := session.Stage(t, "draft.md", []byte(tt.file))
+			serve := session.Start(t, "capture", nil)
+			instance := serve.Instance
+			proctest.RequireStep(t, session.Report(t, instance, stagedBodyDraft(handle)), "playback")
 
-	_, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "capture it")
-	if err == nil || !strings.Contains(err.Error(), `"confidence"`) {
-		t.Fatalf("a confirm while header and fields disagree should be refused naming the key, got %v", err)
+			_, err := session.AnswerErr(t, instance, "playback", "confirm", nil, "capture it")
+			if err == nil || !strings.Contains(err.Error(), tt.wantKey) {
+				t.Fatalf("a confirm over a header that disagrees or cannot be checked should be refused naming why, got %v", err)
+			}
+			position, err := session.WF.ServeAll(t.Context(), session.World.Identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, open := range position.Open {
+				if open.Instance == instance && open.Step != "playback" {
+					t.Errorf("a refused confirm should leave the capture at playback, got %q", open.Step)
+				}
+			}
+		})
 	}
-	position, err := session.WF.ServeAll(t.Context(), session.World.Identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, open := range position.Open {
-		if open.Instance == instance && open.Step != "playback" {
-			t.Errorf("a refused confirm should leave the capture at playback, got %q", open.Step)
-		}
+}
+
+// A markdown body opening with a --- rule keeps the prose before the second
+// rule: only a block holding a report field key is a header.
+func TestCapture_ProseBetweenRulesStaysInTheBody(t *testing.T) {
+	const file = "---\nThe first section.\n\n---\nThe second section.\n"
+	world, session := newCaptureWorld(t, "staged-body-prose-block")
+	handle := session.Stage(t, "draft.md", []byte(file))
+	serve := session.Start(t, "capture", nil)
+	serve = session.Report(t, serve.Instance, stagedBodyDraft(handle))
+	proctest.RequireStep(t, serve, "playback")
+	serve = session.Answer(t, serve.Instance, "playback", "confirm", nil, "capture it")
+	proctest.RequireStep(t, serve, "verifySummary")
+	serve = session.Answer(t, serve.Instance, "verifySummary", "faithful", map[string]any{"fidelityNote": "matches"}, "")
+	proctest.RequireStatus(t, serve, "completed")
+	entryID, _ := serve.Produced["entryId"].(string)
+	entry := proctest.LoadEntry(t, world.GraphDir, entryID)
+	if !strings.Contains(entry.Content, "The first section.") || !strings.Contains(entry.Content, "The second section.") {
+		t.Errorf("the entry body should keep the prose before the second rule, got %q", entry.Content)
 	}
 }
 
