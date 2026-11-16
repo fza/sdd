@@ -686,7 +686,7 @@ func relayNotices(ctx context.Context, output string) {
 	for scanner.Scan() {
 		_, notice, found := strings.Cut(scanner.Text(), model.MergeNoticePrefix)
 		if found {
-			slogutils.FromContext(ctx).Info("sync: " + notice)
+			slogutils.FromContext(ctx).Warn("sync: " + notice)
 		}
 	}
 }
