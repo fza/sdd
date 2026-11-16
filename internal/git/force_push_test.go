@@ -172,6 +172,29 @@ func TestKeepGraphCloneFollowsAForcePushFetchedBefore(t *testing.T) {
 	}
 }
 
+// A noted upstream tip git cannot read is no force push: the upkeep fails on
+// it and leaves the clone as it was.
+func TestKeepGraphCloneFailsOnAnUnreadableNotedTip(t *testing.T) {
+	seededRemote(t)
+	dir := sddClone(t, model.ProtocolHTTPS)
+	repo := git.CLI{Dir: dir}
+	writeFile(t, dir, pushedEntry, test.ForcePushFixture(t, "plain.md"))
+	err := repo.Commit("sdd: capture", pushedEntry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := strings.TrimSpace(test.Git(t, dir, "rev-parse", "HEAD"))
+	writeFile(t, dir, ".git/sdd-upstream", "unreadable\n")
+
+	err = repo.KeepGraphClone(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "merge-base") {
+		t.Errorf("the upkeep should fail on the unreadable tip, got %v", err)
+	}
+	if strings.TrimSpace(test.Git(t, dir, "rev-parse", "HEAD")) != head {
+		t.Error("the upkeep should leave the clone's branch as it was")
+	}
+}
+
 // A rewrite fetched without its contents, as sdd fetched before the
 // full-content fetch, cannot be followed by the upkeep outside the gate: the
 // upkeep leaves the clone as it was, and the next fetch follows.
