@@ -535,6 +535,7 @@ func TestTheAllowRecordIsAPrivateFileKeyedByRealRoot(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	w.track(t, ".sdd")
 	w.allow(t)
 	hook := w.only(t)
 
@@ -564,6 +565,7 @@ func TestACorruptAllowRecordAllowsNothingUntilTheNextAllow(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	w.track(t, ".sdd")
 	w.allow(t)
 	write(t, hooks.NewAllows(w.stateRoot).Path(), "{")
 
@@ -647,6 +649,7 @@ func TestRunFailsOnANonzeroExitWithItsStderr(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "echo lint broke >&2; exit 3")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	w.track(t, ".sdd")
 	w.allow(t)
 	_, err := w.commands().Run(t.Context(), w.only(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "exit status 3") || !strings.Contains(err.Error(), "lint broke") {
@@ -662,6 +665,7 @@ func TestRunPassesOnlyTheAllowlistedEnvironment(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "env.sh"), "env")
 	w.commit(t, "  - event: entry.written\n    command: env.sh\n")
+	w.track(t, ".sdd")
 	w.allow(t)
 	output, err := w.commands().Run(t.Context(), w.only(t), nil)
 	if err != nil {
@@ -742,6 +746,7 @@ func TestSweepDropsTheAllowsOfVanishedCheckouts(t *testing.T) {
 	w := newWorld(t)
 	script(t, filepath.Join(w.hooksDir(), "lint.sh"), "true")
 	w.commit(t, "  - event: entry.written\n    command: lint.sh\n")
+	w.track(t, ".sdd")
 	w.allow(t)
 	allows := hooks.NewAllows(w.stateRoot)
 	gone := filepath.Join(t.TempDir(), "removed")
